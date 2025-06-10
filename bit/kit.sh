@@ -125,7 +125,7 @@ bit_64() {
 
 # Defines 128 bits (16 bytes) - little endian default
 # Also known as quad double word
-bit_128() {
+bit128() {
         for arg in "$@"; do
                 arg="${arg%,}"
                 if [[ "$arg" =~ ^0x[0-9a-fA-F]+$ ]]; then
