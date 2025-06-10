@@ -1,0 +1,28 @@
+#!/bin/sh
+source script/common
+
+label $YELLOW"EXPERIMENTAL! C compiled to spark format"
+
+compiler=$(key compiler)
+dawning_flags=$(key dawning_flags)
+
+if [ "$3" = "debug" ]; then
+        dawning_flags+=" -g"
+fi
+
+echo $BOLD"Compiling $2" $RESET
+
+$compiler $1.c -o tmp_spark_gen.o $dawning_flags $suppress -Wl,-e,_start -Wl,--no-warn-rwx-segments
+
+objcopy -O binary -j .text -j .rodata -j .data tmp_spark_gen.o $2
+
+if [ "$3" = "debug" ]; then
+        objdump -S tmp_spark_gen.o >$2.s
+fi
+
+rm tmp_spark_gen.o
+
+size $2
+
+chmod +x $2
+echo

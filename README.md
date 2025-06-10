@@ -4,7 +4,8 @@ Foundational Software Development Kit. Zero dependency: C standard Library, Cros
 
 ## Overview
 - Bit Kit: `/bit` Provides foundational primitives for code generation in a bare bones UNIX environment.
-- Dawning C Standard: `/c` A minimal C standard library implementation.
+- C Standard: `/standard` Entirely self-contained C standard library, also pioneering new syntax and clearer semantics.
+- Test Kit: `/test` Testing utilities, cross architecture
 
 ## Bit Kit
 

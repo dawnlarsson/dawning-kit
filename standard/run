@@ -1,0 +1,16 @@
+#!/bin/sh
+
+source_file=$1
+output_file=$2
+
+if [ -z "$source_file" ]; then
+        source_file="src/main.c"
+fi
+
+if [ -z "$output_file" ]; then
+        output_file="bin/$(basename $(pwd))"
+fi
+
+sh /standard/build $source_file $output_file
+
+$output_file

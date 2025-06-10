@@ -1,0 +1,32 @@
+#!/bin/sh
+
+compiler="gcc"
+
+flags_base=" -static -s -flto -nostdlib -nostartfiles -ffreestanding -fno-builtin"
+flags_base+=" -Qn -Wl,--build-id=none -Wl,--gc-sections -Wl,--strip-all -Wl,--strip-debug -Wl,-x -Wl,-s -Wl,--no-warn-rwx-segments"
+flags_base+=" -Wl,-nmagic"
+
+flags_base+=" -O2"
+
+# more aggressive flags
+flags_base+=" -fno-asynchronous-unwind-tables -fomit-frame-pointer -fno-stack-protector"
+
+# VERY aggressive flags
+flags_base+=" -fno-semantic-interposition -D_FORTIFY_SOURCE=0 -fno-unwind-tables -fno-plt -fno-PIE -fno-pie -fno-stack-clash-protection"
+
+source_file=$1
+output_file=$2
+
+if [ -z "$source_file" ]; then
+        source_file="src/main.c"
+fi
+
+if [ -z "$output_file" ]; then
+        output_file="bin/$(basename $(pwd))"
+fi
+
+mkdir -p bin
+
+$compiler $source_file -o $output_file $flags_base $suppress -Wl,-e,_start
+
+chmod +x $output_file
