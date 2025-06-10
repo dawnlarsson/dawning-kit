@@ -62,6 +62,16 @@ The improved clarity aims to make systems programming **safer AND faster** by ha
 
 By carefully re-designing the API and type expression, code can become more effective to think, write and audit.
 
+## Test Kit
+Provides automated test runner for multiple architectures with QEMU.
+
+```sh
+source test/kit.sh
+
+# path / file_name + .<arch>  - becomes the expected usage pattern
+test_all /path/to/bin/folder file_name
+```
+
 
 ## Support
 Did you know this effort has gone 100% out of my pocket?
