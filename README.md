@@ -3,9 +3,9 @@
 Foundational Software Development Kit. Zero dependency: C standard Library, Cross Architecture Assembler.
 
 ## Overview
-- Bit Kit: `/bit` Provides foundational primitives for code generation in a bare bones UNIX environment.
-- C Standard: `/standard` Entirely self-contained C standard library, also pioneering new syntax and clearer semantics.
-- Test Kit: `/test` Testing utilities, cross architecture
+- **`/bit`** Bit Kit: Provides foundational primitives for code generation in a bare bones UNIX environment.
+- **`/standard`** C Standard: Entirely self-contained C standard library, also pioneering new syntax and clearer semantics.
+- **`/test`** Test Kit: Testing utilities, cross architecture
 
 ## Bit Kit
 
@@ -46,7 +46,24 @@ exit_program() {
 elf bin/program exit_program
 ```
 
-### Support
+## Dawning C Standard
+> Syntax shapes the way you think. Better thinking should be standardized.
+
+The Dawning C Standard library is a effort to develop a new entirely self contained standard library,
+It's also trying to lay the ground work for less error prone DX and type semantics in C.
+
+Traditional type systems and APIs prioritize implementation details over clear expression of intent.
+
+The Type system is explicit about ranges, memory layouts, and semantic meaning. 
+
+Types like `positive`, `bipolar`, and `decimal` **communicate intention**, not just implementation.
+The improved clarity aims to make systems programming **safer AND faster** by having **lower cognative load** on the programmer. 
+
+
+By carefully re-designing the API and type expression, code can become more effective to think, write and audit.
+
+
+## Support
 Did you know this effort has gone 100% out of my pocket?
 If you think this project speaks for itself, consider supporting on github sponsors to continue making
 projects like these a reality, open & free.
@@ -54,7 +71,7 @@ projects like these a reality, open & free.
 Supporter or not, you can **always** reach me on <a href="https://discord.gg/cxRvzUyzG8">My Discord Server, my primary communication channel</a>
 Questions, feedback or support related to any of my projects, or if you need consulting.
 
-### License
+## License
 Logos, Branding, Trademarks - Copyright Dawn Larsson 2022
 
 Repository:
