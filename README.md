@@ -52,11 +52,11 @@ elf bin/program elf_example
 ### Wasm (work in progress)
 Bit kit also have wasm primitives for generating WebAssembly modules,
 
-`wasm_var`
-`wasm_section`
-`wasm`
+`wasm_var` `wasm_section` `wasm`
 
 ```sh
+source bit/kit.sh
+
 type_section() {
     wasm_var 1              # 1 type
     bit__8 0x60             # func type  
@@ -88,11 +88,17 @@ wasm_module() {
     wasm_section 10 code_section
 }
 
-wasm example.wasm wasm_module`
+wasm example.wasm wasm_module
 ```
 
 ## Doc Kit
 primitives to generate HTML and Markdown documentation in HTML.
+
+`html_tag` `html_tag_closed` `html_raw` `html_document`
+
+`md_heading` `md_paragraph` `md_code_block` `md_list_item` `md_inline` `md_inline_code` `md_inline_bold` `md_inline_italic` `md_inline_link` `md_inline_image`
+
+`md_to_html` `doc` `doc_batch`
 
 Example turning this readme into a HTML file:
 ```sh
