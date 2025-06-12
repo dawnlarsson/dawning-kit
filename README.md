@@ -94,11 +94,7 @@ wasm example.wasm wasm_module
 ## Doc Kit
 primitives to generate HTML and Markdown documentation in HTML.
 
-`html_tag` `html_tag_closed` `html_raw` `html_document`
-
-`md_heading` `md_paragraph` `md_code_block` `md_list_item` `md_inline` `md_inline_code` `md_inline_bold` `md_inline_italic` `md_inline_link` `md_inline_image`
-
-`md_to_html` `doc` `doc_batch`
+`html_tag` `html_tag_closed` `md_inline_all` `md_to_html` `html_document` `doc` `doc_batch`
 
 Example turning this readme into a HTML file:
 ```sh

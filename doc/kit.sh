@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-#       Dawning Doc Kit
+#       Dawning Doc Kit (Optimized)
 #       Dawn Larsson (dawning.dev) - 2025 - Apache License 2.0
 #
 
@@ -27,122 +27,37 @@ html_tag_closed() {
         fi
 }
 
-html_raw() {
-        echo "$1"
-}
-
-md_heading() {
+md_inline_all() {
         local line="$1"
-        local level=$(echo "$line" | sed 's/^\(#*\).*/\1/' | wc -c)
-        level=$((level - 1))
-
-        if [ $level -gt 0 ] && [ $level -le 6 ]; then
-                local text=$(echo "$line" | sed 's/^#* *//')
-                html_tag "h$level" "$text"
-                return 0
-        fi
-        return 1
-}
-
-md_paragraph() {
-        local line="$1"
-        if [ -n "$line" ]; then
-                html_tag "p" "$line"
-                return 0
-        fi
-        return 1
-}
-
-md_code_block() {
-        local line="$1"
-        # Check for code block markers
-        if echo "$line" | grep -q '^```'; then
-                # Extract language if present (anything after ```)
-                local lang=$(echo "$line" | sed 's/^```//' | tr -d '[:space:]')
-                if [ -n "$lang" ]; then
-                        echo "<pre><code class=\"language-$lang\">"
-                else
-                        echo "<pre><code>"
-                fi
-                return 0
-        fi
-        return 1
-}
-
-md_list_item() {
-        local line="$1"
-        if echo "$line" | grep -q '^[*+-] '; then
-                local text=$(echo "$line" | sed 's/^[*+-] *//')
-                echo "$text"
-                return 0
-        fi
-        return 1
-}
-
-md_inline_code() {
-        local line="$1"
-        echo "$line" | sed 's/`\([^`]*\)`/<code>\1<\/code>/g'
-}
-
-md_inline_bold() {
-        local line="$1"
-        # Handle bold markers, even with special characters inside
-        echo "$line" | sed 's/\*\*\([^*]*\)\*\*/<strong>\1<\/strong>/g'
-}
-
-md_inline_italic() {
-        local line="$1"
-        # Avoid matching bold markers by ensuring single asterisks
-        echo "$line" | sed 's/\(^\|[^*]\)\*\([^*]\+\)\*\($\|[^*]\)/\1<em>\2<\/em>\3/g'
-}
-
-md_inline_link() {
-        local line="$1"
-        echo "$line" | sed 's/\[\([^]]*\)\](\([^)]*\))/<a href="\2">\1<\/a>/g'
-}
-
-md_inline_image() {
-        local line="$1"
-        echo "$line" | sed 's/!\[\([^]]*\)\](\([^)]*\))/<img src="\2" alt="\1" \/>/g'
-}
-
-md_inline() {
-        local line="$1"
-        # Process images first (before links, since they have similar syntax)
-        line=$(md_inline_image "$line")
-        # Process inline code to protect backticks
-        line=$(md_inline_code "$line")
-        # Then process bold
-        line=$(md_inline_bold "$line")
-        # Then italic (careful not to match bold markers)
-        line=$(md_inline_italic "$line")
-        # Finally links
-        line=$(md_inline_link "$line")
-        echo "$line"
+        sed -e 's/!\[\([^]]*\)\](\([^)]*\))/<img src="\2" alt="\1" \/>/g' \
+                -e 's/`\([^`]*\)`/<code>\1<\/code>/g' \
+                -e 's/\*\*\([^*]*\)\*\*/<strong>\1<\/strong>/g' \
+                -e 's/\(^\|[^*]\)\*\([^*]\+\)\*\($\|[^*]\)/\1<em>\2<\/em>\3/g' \
+                -e 's/\[\([^]]*\)\](\([^)]*\))/<a href="\2">\1<\/a>/g' <<<"$line"
 }
 
 md_to_html() {
         local input_file="$1"
         local in_code_block=false
         local in_list=false
+        local line
+        local processed_line
 
         while IFS= read -r line; do
-                # Handle code blocks
-                if echo "$line" | grep -q '^```'; then
+                if [[ "$line" == '```'* ]]; then
                         if $in_code_block; then
-                                # Closing code block
                                 echo "</code></pre>"
                                 in_code_block=false
                         else
-                                # Opening code block
-                                # Close any open list first
+
                                 if $in_list; then
                                         echo "</ul>"
                                         in_list=false
                                 fi
 
-                                # Extract language if present
-                                local lang=$(echo "$line" | sed 's/^```//' | tr -d '[:space:]')
+                                local lang="${line#\`\`\`}"
+                                lang="${lang// /}"
+
                                 if [ -n "$lang" ]; then
                                         echo "<pre><code class=\"language-$lang\">"
                                 else
@@ -153,69 +68,59 @@ md_to_html() {
                         continue
                 fi
 
-                # If in code block, output line as-is
                 if $in_code_block; then
                         echo "$line"
                         continue
                 fi
 
-                # Check if this is a heading FIRST, before outputting
-                if echo "$line" | grep -q '^#'; then
-                        # Close any open list BEFORE the heading
+                if [[ "$line" == '#'* ]]; then
                         if $in_list; then
                                 echo "</ul>"
                                 in_list=false
                         fi
-                        # Now process the heading
-                        md_heading "$line"
+
+                        local temp="${line%%[^#]*}"
+                        local level=${#temp}
+
+                        if [ $level -gt 0 ] && [ $level -le 6 ]; then
+                                local text="${line#*# }"
+                                text="${text# }"
+                                html_tag "h$level" "$text"
+                        fi
                         continue
                 fi
 
-                # Check if this is a list item
-                if echo "$line" | grep -q '^[*+-] '; then
-                        # Start list if not already in one
+                if [[ "$line" == [-*+]' '* ]]; then
                         if ! $in_list; then
                                 echo "<ul>"
                                 in_list=true
                         fi
 
-                        # Extract and process the list item text
-                        local list_text=$(echo "$line" | sed 's/^[*+-] *//')
-                        list_text=$(md_inline "$list_text")
+                        local list_text="${line#[-*+] }"
+                        list_text=$(md_inline_all "$list_text")
                         html_tag "li" "$list_text"
                         continue
                 fi
 
-                # If we were in a list and this line doesn't start with a list marker
                 if $in_list && [ -n "$line" ]; then
                         echo "</ul>"
                         in_list=false
                 fi
 
-                # Skip empty lines
                 if [ -z "$line" ]; then
                         continue
                 fi
 
-                # Check if line starts with an image
-                if echo "$line" | grep -q '^!'; then
-                        # Process the entire line for images
-                        line=$(md_inline "$line")
-                        # Don't wrap in paragraph if it's just an image
-                        if echo "$line" | grep -q '^<img'; then
-                                echo "$line"
-                        else
-                                html_tag "p" "$line"
-                        fi
+                processed_line=$(md_inline_all "$line")
+
+                if [[ "$processed_line" == '<img'* ]] && [[ ! "$processed_line" == *'<'*'<img'* ]]; then
+                        echo "$processed_line"
                 else
-                        # Process as paragraph
-                        line=$(md_inline "$line")
-                        html_tag "p" "$line"
+                        html_tag "p" "$processed_line"
                 fi
 
         done <"$input_file"
 
-        # Close any open structures at end of file
         if $in_code_block; then
                 echo "</code></pre>"
         fi
