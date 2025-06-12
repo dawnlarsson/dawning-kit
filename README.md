@@ -93,14 +93,13 @@ wasm example.wasm wasm_module
 
 ## Doc Kit
 primitives to generate HTML and Markdown documentation in HTML.
-
-`html_tag` `html_tag_closed` `md_inline_all` `md_to_html` `html_document` `doc` `doc_batch`
+Works entirely within shell itself, this outputs ugly HTML to not waste space.
 
 Example turning this readme into a HTML file:
 ```sh
 source doc/kit.sh
 
-doc README.html README.md "Dawning DevKit"
+doc README.md > README.html
 ```
 
 ## Dawning C Standard

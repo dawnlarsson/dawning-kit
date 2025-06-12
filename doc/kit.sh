@@ -4,186 +4,153 @@
 #       Dawn Larsson (dawning.dev) - 2025 - Apache License 2.0
 #
 
-html_tag() {
-        local tag="$1"
-        local content="$2"
-        local attrs="$3"
+inline_format() {
+        local text="$1"
 
-        if [ -n "$attrs" ]; then
-                echo "<$tag $attrs>$content</$tag>"
-        else
-                echo "<$tag>$content</$tag>"
-        fi
-}
+        # Images: ![alt](src) -> <img src="src" alt="alt"/>
+        while [[ "$text" == *'!['*']('*')'* ]]; do
+                local before="${text%%'!['*}"
+                local rest="${text#*'!['}"
+                local alt="${rest%%']('*}"
+                local after="${rest#*']('}"
+                local src="${after%%')'*}"
+                local end="${after#*')'}"
+                text="$before<img src=\"$src\" alt=\"$alt\"/>$end"
+        done
 
-html_tag_closed() {
-        local tag="$1"
-        local attrs="$2"
+        # Code: `code` -> <code>code</code>
+        while [[ "$text" == *'`'*'`'* ]]; do
+                local before="${text%%'`'*}"
+                local rest="${text#*'`'}"
+                local code="${rest%%'`'*}"
+                local after="${rest#*'`'}"
+                text="$before<code>$code</code>$after"
+        done
 
-        if [ -n "$attrs" ]; then
-                echo "<$tag $attrs />"
-        else
-                echo "<$tag />"
-        fi
-}
+        # Bold: **text** -> <strong>text</strong>
+        while [[ "$text" == *'**'*'**'* ]]; do
+                local before="${text%%'**'*}"
+                local rest="${text#*'**'}"
+                local bold="${rest%%'**'*}"
+                local after="${rest#*'**'}"
+                text="$before<strong>$bold</strong>$after"
+        done
 
-md_inline_all() {
-        local line="$1"
-        sed -e 's/!\[\([^]]*\)\](\([^)]*\))/<img src="\2" alt="\1" \/>/g' \
-                -e 's/`\([^`]*\)`/<code>\1<\/code>/g' \
-                -e 's/\*\*\([^*]*\)\*\*/<strong>\1<\/strong>/g' \
-                -e 's/\(^\|[^*]\)\*\([^*]\+\)\*\($\|[^*]\)/\1<em>\2<\/em>\3/g' \
-                -e 's/\[\([^]]*\)\](\([^)]*\))/<a href="\2">\1<\/a>/g' <<<"$line"
-}
+        # Links: [text](url) -> <a href="url">text</a>
+        while [[ "$text" == *'['*']('*')'* ]]; do
+                local before="${text%%'['*}"
+                local rest="${text#*'['}"
+                local link_text="${rest%%']('*}"
+                local after="${rest#*']('}"
+                local url="${after%%')'*}"
+                local end="${after#*')'}"
+                text="$before<a href=\"$url\">$link_text</a>$end"
+        done
 
-md_to_html() {
-        local input_file="$1"
-        local in_code_block=false
-        local in_list=false
-        local line
-        local processed_line
+        # italic: *text* -> <em>text</em>
+        while [[ "$text" == *'*'*'*'* ]] && [[ "$text" != *'**'* ]]; do
+                local before="${text%%'*'*}"
+                local rest="${text#*'*'}"
+                local italic="${rest%%'*'*}"
+                local after="${rest#*'*'}"
 
-        while IFS= read -r line; do
-                if [[ "$line" == '```'* ]]; then
-                        if $in_code_block; then
-                                echo "</code></pre>"
-                                in_code_block=false
-                        else
-
-                                if $in_list; then
-                                        echo "</ul>"
-                                        in_list=false
-                                fi
-
-                                local lang="${line#\`\`\`}"
-                                lang="${lang// /}"
-
-                                if [ -n "$lang" ]; then
-                                        echo "<pre><code class=\"language-$lang\">"
-                                else
-                                        echo "<pre><code>"
-                                fi
-                                in_code_block=true
-                        fi
-                        continue
-                fi
-
-                if $in_code_block; then
-                        echo "$line"
-                        continue
-                fi
-
-                if [[ "$line" == '#'* ]]; then
-                        if $in_list; then
-                                echo "</ul>"
-                                in_list=false
-                        fi
-
-                        local temp="${line%%[^#]*}"
-                        local level=${#temp}
-
-                        if [ $level -gt 0 ] && [ $level -le 6 ]; then
-                                local text="${line#*# }"
-                                text="${text# }"
-                                html_tag "h$level" "$text"
-                        fi
-                        continue
-                fi
-
-                if [[ "$line" == [-*+]' '* ]]; then
-                        if ! $in_list; then
-                                echo "<ul>"
-                                in_list=true
-                        fi
-
-                        local list_text="${line#[-*+] }"
-                        list_text=$(md_inline_all "$list_text")
-                        html_tag "li" "$list_text"
-                        continue
-                fi
-
-                if $in_list && [ -n "$line" ]; then
-                        echo "</ul>"
-                        in_list=false
-                fi
-
-                if [ -z "$line" ]; then
-                        continue
-                fi
-
-                processed_line=$(md_inline_all "$line")
-
-                if [[ "$processed_line" == '<img'* ]] && [[ ! "$processed_line" == *'<'*'<img'* ]]; then
-                        echo "$processed_line"
+                if [[ "$before" != *'*' ]] && [[ "$after" != '*'* ]]; then
+                        text="$before<em>$italic</em>$after"
                 else
-                        html_tag "p" "$processed_line"
+                        break
                 fi
+        done
 
-        done <"$input_file"
-
-        if $in_code_block; then
-                echo "</code></pre>"
-        fi
-        if $in_list; then
-                echo "</ul>"
-        fi
-}
-
-html_document() {
-        local title="$1"
-        local content_generator="$2"
-        local style_file="$3"
-
-        echo "<!DOCTYPE html><html lang=en>"
-
-        echo "<head>"
-        html_tag "title" "$title"
-        html_tag_closed "meta" 'charset="utf-8"'
-        html_tag_closed "meta" 'name=viewport content="width=device-width,initial-scale=1.0"'
-
-        if [ -n "$style_file" ] && [ -f "$style_file" ]; then
-                echo "<style>"
-                cat "$style_file"
-                echo "</style>"
-        fi
-
-        echo "</head><body>"
-
-        $content_generator
-
-        echo "</body></html>"
+        printf '%s' "$text"
 }
 
 doc() {
-        local output="$1"
-        local input_file="$2"
-        local title="$3"
-        local style_file="$4"
+        local input_file="$1"
+        local in_code=false
+        local in_list=false
+        local line processed
 
-        if [ -z "$title" ]; then
-                title=$(basename "$input_file" .md)
+        if [[ -r "$input_file" ]]; then
+                while IFS= read -r line || [[ -n "$line" ]]; do
+
+                        # Code blocks
+                        if [[ "$line" == '```'* ]]; then
+                                if $in_code; then
+                                        printf '</code></pre>'
+                                        in_code=false
+                                else
+                                        $in_list && {
+                                                printf '</ul>'
+                                                in_list=false
+                                        }
+                                        local lang="${line#'```'}"
+                                        lang="${lang// /}" # Remove spaces
+                                        if [[ -n "$lang" ]]; then
+                                                printf '<pre><code code-%s>' "$lang"
+                                        else
+                                                printf '<pre><code>'
+                                        fi
+                                        in_code=true
+                                fi
+                                continue
+                        fi
+
+                        # Inside code block
+                        if $in_code; then
+                                printf '%s\n' "$line"
+                                continue
+                        fi
+
+                        # Headers
+                        if [[ "$line" =~ ^(#{1,6})[[:space:]]*(.+)$ ]]; then
+                                $in_list && {
+                                        printf '</ul>'
+                                        in_list=false
+                                }
+                                local level=${#BASH_REMATCH[1]}
+                                local text="${BASH_REMATCH[2]}"
+                                printf '<h%d>%s</h%d>' "$level" "$text" "$level"
+                                continue
+                        fi
+
+                        # Lists
+                        if [[ "$line" =~ ^[-*+][[:space:]]+(.+)$ ]]; then
+                                $in_list || {
+                                        printf '<ul>'
+                                        in_list=true
+                                }
+                                processed=$(inline_format "${BASH_REMATCH[1]}")
+                                printf '<li>%s</li>' "$processed"
+                                continue
+                        fi
+
+                        # Empty lines end lists
+                        if [[ -z "${line// /}" ]]; then # Empty or whitespace only
+                                $in_list && {
+                                        printf '</ul>'
+                                        in_list=false
+                                }
+                                continue
+                        fi
+
+                        # Regular paragraphs
+                        $in_list && {
+                                printf '</ul>'
+                                in_list=false
+                        }
+                        processed=$(inline_format "$line")
+
+                        # Images get special treatment
+                        if [[ "$processed" =~ ^[[:space:]]*\<img[[:space:]] ]]; then
+                                printf '%s' "$processed"
+                        else
+                                printf '<p>%s</p>' "$processed"
+                        fi
+
+                done <"$input_file"
+
+                # Cleanup
+                $in_code && printf '</code></pre>'
+                $in_list && printf '</ul>'
         fi
-
-        content_generator() {
-                md_to_html "$input_file"
-        }
-
-        html_document "$title" content_generator "$style_file" >"$output"
-}
-
-doc_batch() {
-        local input_dir="$1"
-        local output_dir="$2"
-        local style_file="$3"
-
-        mkdir -p "$output_dir"
-
-        for md_file in "$input_dir"/*.md; do
-                if [ -f "$md_file" ]; then
-                        local basename=$(basename "$md_file" .md)
-                        local output_file="$output_dir/$basename.html"
-                        echo "Processing: $md_file -> $output_file"
-                        doc "$output_file" "$md_file" "$basename" "$style_file"
-                fi
-        done
 }
