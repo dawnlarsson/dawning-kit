@@ -206,3 +206,48 @@ elf() {
         chmod +x "$output"
         rm -f "$code_section"
 }
+
+# variable-length integer encoding
+wasm_var() {
+        local value="$1"
+        while [ $value -ge 128 ]; do
+                bit__8 $((value & 0x7F | 0x80))
+                value=$((value >> 7))
+        done
+        bit__8 $((value & 0x7F))
+}
+
+wasm_section() {
+        local section_id="$1"
+        local content_generator="$2"
+
+        local temp_section="/tmp/wasm_section_$$"
+        $content_generator >"$temp_section"
+        local section_size=$(wc -c <"$temp_section")
+
+        bit__8 $section_id
+        wasm_var $section_size
+        cat "$temp_section"
+        rm -f "$temp_section"
+}
+
+wasm() {
+        local output="$1"
+        local code_generator="$2"
+
+        local code_section="/tmp/wasm_code_section"
+        $code_generator >"$code_section"
+
+        {
+                # WASM header
+                bit__8 0x00, 0x61, 0x73, 0x6d # magic
+                bit_32 0x01                   # version
+
+                # User's code generator output
+                cat "$code_section"
+
+        } >"$output"
+
+        chmod +x "$output"
+        rm -f "$code_section"
+}

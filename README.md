@@ -4,6 +4,7 @@ Foundational Software Development Kit. Zero dependency: C standard Library, Cros
 
 ## Overview
 - **`/bit`** Bit Kit: Provides foundational primitives for code generation in a bare bones UNIX environment.
+- **`/doc`** Doc Kit: HTML & Markdown utilities.
 - **`/standard`** C Standard: Entirely self-contained C standard library, also pioneering new syntax and clearer semantics.
 - **`/test`** Test Kit: Testing utilities, cross architecture
 
@@ -37,13 +38,67 @@ you can input hex (0x7f) or chars ( ELF -> "E", "L" "F" ), or plain ints
 Generates a ELF executable header and outputs a working executable
 
 ```sh
-exit_program() {
+source bit/kit.sh
+
+elf_example() {
         bit__8 0x48, 0xc7, 0xc0, 0x3c, 0x00, 0x00, 0x00 # mov $60, %rax
         bit__8 0x48, 0xc7, 0xc7, 0x00, 0x00, 0x00, 0x00 # mov $0, %rdi
         bit__8 0x0f, 0x05 # x86_64 linux syscall
 }
 
-elf bin/program exit_program
+elf bin/program elf_example
+```
+
+### Wasm (work in progress)
+Bit kit also have wasm primitives for generating WebAssembly modules,
+
+`wasm_var`
+`wasm_section`
+`wasm`
+
+```sh
+type_section() {
+    wasm_var 1              # 1 type
+    bit__8 0x60             # func type  
+    bit__8 0x00, 0x01, 0x7F # () -> i32
+}
+
+function_section() {
+    wasm_var 1              # 1 function
+    wasm_var 0              # uses type 0
+}
+
+export_section() {
+    wasm_var 1              # 1 export
+    wasm_var 4              # name length
+    bit__8 "main"           # name
+    bit__8 0x00, 0x00       # func export, index 0
+}
+
+code_section() {
+    wasm_var 1              # 1 function
+    wasm_var 2              # body size
+    bit__8 0x41, 0x00, 0x0B # i32.const 0, end
+}
+
+wasm_module() {
+    wasm_section 1 type_section
+    wasm_section 3 function_section
+    wasm_section 7 export_section
+    wasm_section 10 code_section
+}
+
+wasm example.wasm wasm_module`
+```
+
+## Doc Kit
+primitives to generate HTML and Markdown documentation in HTML.
+
+Example turning this readme into a HTML file:
+```sh
+source doc/kit.sh
+
+doc README.html README.md "Dawning DevKit"
 ```
 
 ## Dawning C Standard
