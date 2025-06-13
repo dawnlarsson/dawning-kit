@@ -104,7 +104,7 @@ doc README.md > README.html
 ```
 
 ## Linux Kit
-Linux Distro primitives evolved from **Dawning EOS**
+Linux Distro primitives evolved from [**Dawning EOS**](https://github.com/dawnlarsson/dawning-linux)
 
 ### **(Currently moving repositories)**
 
