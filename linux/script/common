@@ -74,11 +74,10 @@ is_file() {
 }
 
 is_safe() {
-        current_dir=$(basename "$(pwd)")
-
-        if [ "$current_dir" != $info_name ]; then
-                echo "ERROR: Not in repository root directory!"
-                echo "This script must be run from the $info_name root directory."
+        # ensure we are in "dawning-kit/linux"
+        if [ "$(basename "$(pwd)")" != "linux" ]; then
+                echo "ERROR: Not in dawning-kit/linux directory!"
+                echo "This script must be run from the dawning-kit/linux directory."
                 echo "Current directory: $(pwd)"
                 exit 1
         fi

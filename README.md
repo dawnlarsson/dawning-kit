@@ -106,7 +106,27 @@ doc README.md > README.html
 ## Linux Kit
 Linux Distro primitives evolved from [**Dawning EOS**](https://github.com/dawnlarsson/dawning-linux)
 
-### **(Currently moving repositories)**
+> [!WARNING]
+> This is currently being moved from the Dawning EOS repository to this one.
+
+### Building
+Ensure to cd into `dawning-kit/linux` before running build.sh
+
+Minimal config for x86_x64
+```
+sudo sh build.sh arch/x64 debug_none
+```
+
+Minimal config for raspberry pis (WIP)
+```
+sudo sh build.sh arch/arm.pi debug_none
+```
+
+if you want to run this in a virtual machine for testing:
+```
+sh build.run.sh
+```
+but, you need https://www.qemu.org/
 
 ## Dawning C Standard
 > Syntax shapes the way you think. Better thinking should be standardized.
