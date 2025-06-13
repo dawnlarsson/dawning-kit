@@ -1,5 +1,10 @@
 ![Dawning Kit](https://github.com/user-attachments/assets/ad148eba-423f-4bc5-9d32-1e9005c8ebb7)
-
+<div align="center">
+  <a href="https://discord.gg/cxRvzUyzG8">Discord<a>
+  —
+  <a> Docs (WIP) <a>
+</div>
+<br>
 Dawning Kit, Foundational Software Development Kit. Zero dependency: C standard Library, Cross Architecture Assembler.
 
 ## Overview
