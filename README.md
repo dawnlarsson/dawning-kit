@@ -1,6 +1,6 @@
-![Dawning DevKit](https://github.com/user-attachments/assets/92b3ab15-8512-4874-bd94-f6b508de8c61)
+![Dawning Kit](https://github.com/user-attachments/assets/ad148eba-423f-4bc5-9d32-1e9005c8ebb7)
 
-Foundational Software Development Kit. Zero dependency: C standard Library, Cross Architecture Assembler.
+Dawning Kit, Foundational Software Development Kit. Zero dependency: C standard Library, Cross Architecture Assembler.
 
 ## Overview
 - **`/bit`** Bit Kit: Provides foundational primitives for code generation in a bare bones UNIX environment.
