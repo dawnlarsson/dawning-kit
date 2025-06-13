@@ -1,0 +1,26 @@
+#!/bin/sh
+source script/common
+
+if [ "$#" -lt 1 ]; then
+    echo "Usage: sh genconfig.sh <profile1> [profile2] [profile3] ..."
+    echo "Example: sh genconfig.sh any debug desktop"
+    exit 1
+fi
+
+echo "# Auto generated, do not edit." > artifacts/.config
+cat artifacts/info >> artifacts/.config
+
+for profile in "$@"; do
+    profile_path="profile/$profile"
+    
+    echo "" >> artifacts/.config
+
+    if [ -f "$profile_path" ]; then
+        echo "Adding profile: $profile"
+        cat "$profile_path" >> artifacts/.config
+    else
+        echo "Warning: Profile '$profile' not found at $profile_path"
+    fi
+done
+
+echo "Configuration generated at artifacts/.config"

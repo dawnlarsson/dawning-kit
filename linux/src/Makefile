@@ -1,0 +1,1 @@
+obj-$(CONFIG_DAWNING_CORE) += dawning_core.o

@@ -1,0 +1,10 @@
+#!/bin/sh
+source script/common
+
+# uncomment this line when not in active development (don't re-download kernel every time lol)
+# rm -rf artifacts/
+
+rm -rf dist/ fs/ linux/ artifacts/merge.config artifacts/.config artifacts/info
+
+# remove all kernel artifacts in /src
+rm -rf src/*.a src/*.o src/*.o.d src/*.cmd src/*.order

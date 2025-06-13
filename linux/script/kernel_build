@@ -1,0 +1,20 @@
+#!/bin/sh
+source script/common
+
+cpu_cores=$(nproc)
+
+make_flags=$(key make_flags)
+shared_flags=$(key shared_flags)
+linker_flags=$(key linker_flags)
+rust_flags=$(key rust_flags)
+
+kernel_image=$(key kernel_image)
+kernel_export=$(key kernel_export)
+
+cd linux
+
+make -j$cpu_cores $make_flags KCPPFLAGS="$shared_flags" KAFLAGS="$shared_flags" LDFLAGS="$linker_flags" RUSTFLAGS="$rust_flags"
+
+cd ..
+
+sudo cp $kernel_image $kernel_export

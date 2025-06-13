@@ -1,0 +1,142 @@
+#!/bin/sh
+info_version="25"
+info_name="dawning-linux"
+info_full_name="$info_name-$info_version"
+
+ANSI=$'\033['
+RESET=$ANSI'0m'
+BOLD=$ANSI'1m'
+RED=$ANSI'91m'
+GREEN=$ANSI'92m'
+YELLOW=$ANSI'93m'
+BLUE=$ANSI'94m'
+MAGENTA=$ANSI'95m'
+CYAN=$ANSI'96m'
+WHITE=$ANSI'97m'
+
+if [ "$(uname)" = "Darwin" ]; then
+        alias nproc="sysctl -n hw.physicalcpu"
+        alias make="gmake"
+        alias cp="cp -X"
+        alias stat_bytes="stat -f %z"
+else
+        alias stat_bytes="stat -c %s"
+fi
+
+build_install=""
+
+# Checks if we are linux, or darwin, then sets a propper install command
+build_environment_check() {
+        if [ "$(uname)" = "Darwin" ]; then
+                build_install="brew install"
+                return 0
+        fi
+
+        if [ "$(uname)" = "MINGW64_NT" ]; then
+                build_install="choco install"
+                return 0
+        fi
+
+        if [ -f /etc/debian_version ]; then
+                build_install="sudo apt-get install"
+        elif [ -f /etc/redhat-release ]; then
+                build_install="sudo yum install"
+        elif [ -f /etc/arch-release ]; then
+                build_install="sudo pacman -S"
+        elif [ -f /etc/alpine-release ]; then
+                build_install="sudo apk add"
+        elif [ -f /etc/SuSE-release ]; then
+                build_install="sudo zypper install"
+        elif [ -f /etc/gentoo-release ]; then
+                build_install="sudo emerge"
+        else
+                echo "Unknown distribution, unable to set up build environment."
+                exit 1
+        fi
+}
+
+label() {
+        echo $CYAN $BOLD
+        echo "    $@"
+        echo "_____________________________________________________________________________"
+        echo $RESET
+}
+
+size() {
+        local size=$(stat_bytes "$1")
+        echo "$size bytes ($(echo "scale=2; $size / 1024" | bc) KB, $(echo "scale=2; $size / 1024 / 1024" | bc) MB)"
+}
+
+is_file() {
+        if [ ! -f "$1" ]; then
+                return 1
+        fi
+}
+
+is_safe() {
+        current_dir=$(basename "$(pwd)")
+
+        if [ "$current_dir" != $info_name ]; then
+                echo "ERROR: Not in repository root directory!"
+                echo "This script must be run from the $info_name root directory."
+                echo "Current directory: $(pwd)"
+                exit 1
+        fi
+}
+
+key() {
+        echo $(grep "#> $1" artifacts/.config | sed "s/#> $1 //")
+}
+
+line_has() {
+        is_file "$1" || return 1
+        [ -z "$2" ] && return 1
+
+        grep -F -q "$2" "$1"
+        return $?
+}
+
+line_add() {
+        line_has "$1" "$2" && return 0
+        echo "$2" >>"$1"
+}
+
+line_add_padded() {
+        line_has "$1" "$2" && return 0
+        echo "" >>"$1"
+        echo "$2" >>"$1"
+        echo "" >>"$1"
+}
+
+is_newer() {
+        is_file "$1" || return 0
+        is_file "$2" || return 0
+
+        local file1=$(stat_bytes "$1")
+        local file2=$(stat_bytes "$2")
+
+        if [ $file1 -ge $file2 ]; then
+                return 0
+        fi
+
+        return 1
+}
+
+is_different_age() {
+        local file1=$(stat_bytes "$1")
+        local file2=$(stat_bytes "$2")
+
+        if [ $file1 -ne $file2 ]; then
+                return 0
+        fi
+
+        return 1
+}
+
+if [ "$(id -u)" != "0" ]; then
+        label $YELLOW WARNING !!!
+        echo "Building must be run with root!" 1>&2
+        echo
+fi
+
+is_safe

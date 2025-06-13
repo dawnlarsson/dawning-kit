@@ -5,6 +5,7 @@ Dawning Kit, Foundational Software Development Kit. Zero dependency: C standard 
 ## Overview
 - **`/bit`** Bit Kit: Provides foundational primitives for code generation in a bare bones UNIX environment.
 - **`/doc`** Doc Kit: HTML & Markdown utilities.
+- **`/linux`** Linux Kit: Modular OS primitives evolved from **Dawning EOS** - a complete experimental Linux distribution that proved zero-dependency, profile-based system building.
 - **`/standard`** C Standard: Entirely self-contained C standard library, also pioneering new syntax and clearer semantics.
 - **`/test`** Test Kit: Testing utilities, cross architecture
 
@@ -101,6 +102,11 @@ source doc/kit.sh
 
 doc README.md > README.html
 ```
+
+## Linux Kit
+Linux Distro primitives evolved from **Dawning EOS**
+
+### **(Currently moving repositories)**
 
 ## Dawning C Standard
 > Syntax shapes the way you think. Better thinking should be standardized.

@@ -1,0 +1,7 @@
+menu "Dawning Eos Extensions"
+    config DAWNING_CORE
+        tristate "Dawning Core Functionality"
+        default y
+        help
+          Enable Dawning Eos core features
+endmenu # Dawning Eos Extensions
