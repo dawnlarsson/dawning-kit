@@ -154,3 +154,42 @@ doc() {
                 $in_list && printf '</ul>'
         fi
 }
+
+html_tag() {
+        if [ -n "$3" ]; then
+                printf "<$1 $3>$2</$1>"
+        else
+                printf "<$1>$2</$1>"
+        fi
+}
+
+html_tag_closed() {
+        if [ -n "$2" ]; then
+                printf "<$1 $2 />"
+        else
+                printf "<$1 />"
+        fi
+}
+
+html() {
+        local title="$1"
+        local content_generator="$2"
+        local style_file="$3"
+
+        printf "<!DOCTYPE html><html lang=en><head>"
+        html_tag "title" "$title"
+        html_tag_closed "meta" 'charset="utf-8"'
+        html_tag_closed "meta" 'name=viewport content="width=device-width,initial-scale=1.0"'
+
+        if [ -n "$style_file" ] && [ -f "$style_file" ]; then
+                printf "<style>"
+                cat "$style_file"
+                printf "</style>"
+        fi
+
+        printf "</head><body>"
+
+        $content_generator
+
+        printf "</body></html>"
+}
