@@ -108,6 +108,16 @@ source doc/kit.sh
 doc README.md > README.html
 ```
 
+### Basic css minification
+```sh
+source doc/kit.sh
+
+less_css "style/*.css"
+```
+
+output: `CSS: 2.0 KB → 1.2 KB (37% smaller)`
+
+
 ## Linux Kit
 Linux Distro primitives evolved from [**Dawning EOS**](https://github.com/dawnlarsson/dawning-linux)
 

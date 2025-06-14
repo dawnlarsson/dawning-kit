@@ -3,6 +3,7 @@
 #       Dawning Doc Kit (Optimized)
 #       Dawn Larsson (dawning.dev) - 2025 - Apache License 2.0
 #
+source ../utils.sh
 
 inline_format() {
         local text="$1"
@@ -192,4 +193,64 @@ html() {
         $content_generator
 
         printf "</body></html>"
+}
+
+# Performs basic minification of CSS files
+# Usage: less_css "style/*.css"
+less_css() {
+
+        # alt with cat: css=$(cat style/*.css)
+        css=""
+        for file in $1; do
+                [ -f "$file" ] && css+="$(<"$file")"
+        done
+
+        start_size=${#css}
+
+        minified=""
+        while IFS= read -r line; do
+
+                # Remove comments
+                while [[ "$line" == *"/*"* ]]; do
+                        if [[ "$line" == *"*/"* ]]; then
+                                before="${line%%/*}"
+                                after="${line#*\*/}"
+                                line="$before$after"
+                        else # Multi-lines
+                                line="${line%%/*}"
+                                break
+                        fi
+                done
+
+                # Remove leading whitespace
+                line="${line#"${line%%[![:space:]]*}"}"
+
+                # Remove trailing whitespace
+                line="${line%"${line##*[![:space:]]}"}"
+
+                # Skip empty lines
+                [ -n "$line" ] && minified="$minified$line"
+        done <<<"$css"
+
+        # Remove spaces around colons
+        minified="${minified//: /:}"
+
+        # Remove spaces around semicolons
+        minified="${minified//; /;}"
+
+        # Remove spaces around commas
+        minified="${minified//, /,}"
+
+        # Remove spaces around opening braces
+        minified="${minified// {/{}"
+
+        # Remove spaces around greater-than selectors
+        minified="${minified// > />}"
+
+        # Remove spaces around plus selectors
+        minified="${minified// + /+}"
+
+        printf '%s' "$minified" >dist/style.css
+
+        size_diff "$start_size" "${#minified}" "CSS"
 }

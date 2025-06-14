@@ -1,0 +1,53 @@
+:root {
+        --00: #00000000;
+        --01: #f9f9f9;
+        --10: #eee;
+        --20: #ddd;
+        --25: #cfcfcf;
+        --30: #bbb;
+        --40: #999;
+        --50: #777;
+        --60: #666;
+        --70: #444;
+        --80: #333;
+        --90: #222;
+        --95: #111;
+        --96: #0f0f0f;
+        --97: #0e0e0e;
+        --98: #0a0a0a;
+        --99: #000;
+}
+
+[row] {
+        display: flex;
+        flex-wrap: wrap;
+        flex-direction: row;
+        row-gap: 24px;
+}
+
+[col] {
+        display: flex;
+        flex-direction: column;
+}
+
+::selection {
+        background: var(--10);
+        color: var(--90);
+}
+
+::-webkit-scrollbar {
+        width: 10px;
+        height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+        background: var(--40);
+        border: 3px solid var(--95);
+        border-radius: 999px;
+}
+
+/* Compare this snippet from .docs/style/style.css: */
+
+::-webkit-scrollbar-track {
+        background: transparent;
+}
