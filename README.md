@@ -112,7 +112,7 @@ doc README.md > README.html
 ```sh
 source doc/kit.sh
 
-less_css "style/*.css"
+less_css "style/*.css" dist/style.css
 ```
 
 output: `CSS: 2.0 KB → 1.2 KB (37% smaller)`

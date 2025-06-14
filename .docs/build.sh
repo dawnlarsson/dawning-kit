@@ -9,4 +9,4 @@ rm -rf dist
 mkdir -p dist
 cp -r assets/* dist/
 
-less_css "style/*.css"
+less_css "style/*.css" dist/style.css

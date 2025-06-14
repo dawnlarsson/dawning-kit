@@ -196,7 +196,7 @@ html() {
 }
 
 # Performs basic minification of CSS files
-# Usage: less_css "style/*.css"
+# Usage: less_css "style/*.css" dist/style.css
 less_css() {
 
         # alt with cat: css=$(cat style/*.css)
@@ -250,7 +250,7 @@ less_css() {
         # Remove spaces around plus selectors
         minified="${minified// + /+}"
 
-        printf '%s' "$minified" >dist/style.css
+        printf '%s' "$minified" >$2
 
         size_diff "$start_size" "${#minified}" "CSS"
 }

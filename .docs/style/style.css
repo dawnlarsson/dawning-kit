@@ -46,8 +46,6 @@
         border-radius: 999px;
 }
 
-/* Compare this snippet from .docs/style/style.css: */
-
 ::-webkit-scrollbar-track {
         background: transparent;
 }
