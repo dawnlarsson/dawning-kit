@@ -247,8 +247,42 @@ less_css() {
         # Remove spaces around greater-than selectors
         minified="${minified// > />}"
 
-        # Remove spaces around plus selectors
-        minified="${minified// + /+}"
+        # Remove semicolon before closing brace
+        minified="${minified//;\}/\}}"
+
+        # Remove space before !important
+        minified="${minified// !important/!important}"
+
+        # Remove single quotes from attribute selectors like [attr='value'] -> [attr=value]
+        # This is safe for simple values like 'button', 'reset', 'submit'
+        minified="${minified//=\'/=}"  # Replace =' with =
+        minified="${minified//\'\]/]}" # Replace '] with ]
+
+        # Remove double quotes around values that don't contain spaces
+        processed_minified=""
+        temp_minified="$minified"
+        while [[ "$temp_minified" == *\"* ]]; do
+                before_first_quote="${temp_minified%%\"*}"
+                processed_minified+="$before_first_quote"
+                rest_after_first_quote="${temp_minified#*\"}"
+
+                if [[ "$rest_after_first_quote" == *\"* ]]; then
+                        content_in_quotes="${rest_after_first_quote%%\"*}"
+                        after_closing_quote="${rest_after_first_quote#*\"}"
+
+                        if [[ "$content_in_quotes" != *" "* && "$content_in_quotes" != "" ]]; then
+                                processed_minified+="$content_in_quotes"
+                        else
+                                processed_minified+="\"$content_in_quotes\""
+                        fi
+                        temp_minified="$after_closing_quote"
+                else
+                        processed_minified+="\"$rest_after_first_quote"
+                        temp_minified=""
+                fi
+        done
+        processed_minified+="$temp_minified"
+        minified="$processed_minified"
 
         printf '%s' "$minified" >$2
 
