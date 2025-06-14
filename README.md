@@ -38,7 +38,7 @@ BIG_ENDIAN=1
 Byte functions take any amount of args, each arg is separately represented in the functions size,
 you can input hex (0x7f) or chars ( ELF -> "E", "L" "F" ), or plain ints
 
-`bit__8` `bit_16` `bit_32` `bit_64` `bit_128` 
+`bit__8` `bit_16` `bit_32` `bit_64` `bit128` 
 
 ### Elf Executable format
 Generates a ELF executable header and outputs a working executable
@@ -118,17 +118,17 @@ Linux Distro primitives evolved from [**Dawning EOS**](https://github.com/dawnla
 Ensure to cd into `dawning-kit/linux` before running build.sh
 
 Minimal config for x86_x64
-```
+```sh
 sudo sh build.sh arch/x64 debug_none
 ```
 
 Minimal config for raspberry pis (WIP)
-```
+```sh
 sudo sh build.sh arch/arm.pi debug_none
 ```
 
 if you want to run this in a virtual machine for testing:
-```
+```sh
 sh build.run.sh
 ```
 but, you need https://www.qemu.org/
