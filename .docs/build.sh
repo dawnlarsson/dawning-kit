@@ -1,5 +1,7 @@
 #!/bin/bash
 
+cd "$(dirname "$0")" || exit 1
+
 #
 # Builds dawning documentation
 #
@@ -45,6 +47,7 @@ build() {
 
 build
 
+# check if "watch" argument is passed
 if [[ "$1" == "watch" ]]; then
         while inotifywait -e modify -r .; do
                 build
