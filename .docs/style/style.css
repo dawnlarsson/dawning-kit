@@ -49,3 +49,26 @@
 ::-webkit-scrollbar-track {
         background: transparent;
 }
+
+nav {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0 max(1.4rem, calc((100vw - 1200px) / 2));
+        height: 82px;
+}
+
+article {
+        max-width: 800px;
+        margin: 0 auto;
+}
+
+article img {
+        max-width: 100%;
+        height: auto;
+}
+
+article p,
+article>ul {
+        opacity: 0.85;
+}
