@@ -79,5 +79,15 @@ code {
         color: #9ff;
         max-width: 100%;
         padding: 0.3rem;
+        text-wrap: wrap;
         background: #ccffff18;
+}
+
+ul {
+        list-style: none;
+        padding-left: 0;
+}
+
+article strong {
+        opacity: 1;
 }
