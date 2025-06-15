@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# ensure we are in .docs directory
 cd "$(dirname "$0")" || exit 1
 
 #
