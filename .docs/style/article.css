@@ -1,0 +1,108 @@
+article {
+        max-width: 800px;
+        margin: 0 auto;
+        padding: 0 1.5rem;
+        line-height: 1.7;
+}
+
+article img {
+        max-width: 100%;
+        height: auto;
+}
+
+article>ul {
+        list-style: none;
+}
+
+article p,
+article>ul {
+        opacity: 0.80;
+        margin-bottom: 1em;
+}
+
+article h1,
+article h2,
+article h3,
+article h4,
+article h5,
+article h6 {
+        margin-top: 2.5em;
+        margin-bottom: 0.8em;
+        line-height: 1.3;
+        font-weight: 700;
+        opacity: 0.98;
+}
+
+article h1 {
+        font-size: 2.4em;
+        border-bottom: 1px solid var(--50);
+        padding-bottom: 0.3em;
+}
+
+article h2 {
+        font-size: 2em;
+        border-bottom: 1px solid var(--80);
+        padding-bottom: 0.3em;
+}
+
+article h3 {
+        font-size: 1.4em;
+}
+
+code {
+        font-size: 0.7em;
+        color: #ff95ca;
+        background-color: var(--90);
+        border-radius: 8px;
+        max-width: 100%;
+        height: 100%;
+        padding: 0 0.5em;
+        margin: 0 0.2em;
+        text-wrap: wrap;
+}
+
+article pre {
+        background-color: var(--97);
+        padding: 1em;
+        overflow-x: auto;
+        font-size: 0.9em;
+}
+
+article pre code {
+        background-color: transparent;
+        border: none;
+        padding: 0;
+        color: inherit;
+}
+
+ul {
+        list-style: none;
+        padding-left: 0.5em;
+}
+
+article ul li {
+        margin-bottom: 0.5em;
+}
+
+article ol:not([class]) {
+        list-style: decimal;
+        padding-left: 1.0em;
+}
+
+article strong {
+        opacity: 1;
+        font-weight: 600;
+}
+
+article blockquote {
+        margin: 1.5em 0;
+        padding: 0.5em 1.5em;
+        border-left: 4px solid #007bff;
+        background-color: #f8f9fa;
+        color: #555;
+        opacity: 0.9;
+}
+
+article blockquote p {
+        margin-bottom: 0.5em;
+}

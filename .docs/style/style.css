@@ -57,37 +57,3 @@ nav {
         padding: 0 max(1.4rem, calc((100vw - 1200px) / 2));
         height: 82px;
 }
-
-article {
-        max-width: 800px;
-        margin: 0 auto;
-        padding: 0 1.5rem;
-}
-
-article img {
-        max-width: 100%;
-        height: auto;
-}
-
-article p,
-article>ul {
-        opacity: 0.85;
-}
-
-code {
-        font-size: 14px;
-        color: #9ff;
-        max-width: 100%;
-        padding: 0.3rem;
-        text-wrap: wrap;
-        background: #ccffff18;
-}
-
-ul {
-        list-style: none;
-        padding-left: 0;
-}
-
-article strong {
-        opacity: 1;
-}

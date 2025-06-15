@@ -2,7 +2,7 @@
 <div align="center">
   <a href="https://discord.gg/cxRvzUyzG8">Discord<a>
   —
-  <a> Docs (WIP) <a>
+  <a href="https://kit.dawning.dev">Docs<a>
 </div>
 <br>
 Dawning Kit, Foundational Software Development Kit. Zero dependency: C standard Library, Cross Architecture Assembler.
