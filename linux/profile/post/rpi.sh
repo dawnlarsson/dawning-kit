@@ -1,5 +1,5 @@
 #!/bin/sh
-source script/common
+. script/common
 
 source="https://github.com/raspberrypi/firmware/raw/master/"
 

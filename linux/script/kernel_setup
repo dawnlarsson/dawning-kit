@@ -1,5 +1,5 @@
 #!/bin/sh
-source script/common
+. script/common
 
 kernel_extract_dir="linux/"
 download_artifacts_dir="artifacts/"

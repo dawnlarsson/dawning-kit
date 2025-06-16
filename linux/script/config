@@ -1,5 +1,5 @@
 #!/bin/sh
-source script/common
+. script/common
 
 if [ "$#" -lt 1 ]; then
     echo "Usage: sh genconfig.sh <profile1> [profile2] [profile3] ..."
@@ -7,17 +7,17 @@ if [ "$#" -lt 1 ]; then
     exit 1
 fi
 
-echo "# Auto generated, do not edit." > artifacts/.config
-cat artifacts/info >> artifacts/.config
+echo "# Auto generated, do not edit." >artifacts/.config
+cat artifacts/info >>artifacts/.config
 
 for profile in "$@"; do
     profile_path="profile/$profile"
-    
-    echo "" >> artifacts/.config
+
+    echo "" >>artifacts/.config
 
     if [ -f "$profile_path" ]; then
         echo "Adding profile: $profile"
-        cat "$profile_path" >> artifacts/.config
+        cat "$profile_path" >>artifacts/.config
     else
         echo "Warning: Profile '$profile' not found at $profile_path"
     fi

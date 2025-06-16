@@ -1,4 +1,4 @@
 #!/bin/sh
-source script/common
+. script/common
 
 mkdir -p artifacts fs dist

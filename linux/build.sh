@@ -1,5 +1,5 @@
 #!/bin/sh
-source script/common
+. script/common
 
 label REPOSITORY SETUP
         echo "Building $info_full_name"

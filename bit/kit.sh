@@ -4,7 +4,7 @@
 #       Provides foundational primitives for code generation in a bare bones UNIX environment.
 #       "starting from nothing"
 #
-#       Usage: source bit/kit.sh
+#       Usage: . bit/kit.sh
 #       Dawn Larsson (dawning.dev) - 2022 - Apache License 2.0
 #       repo: https://github.com/dawnlarsson/dawning-devkit
 #

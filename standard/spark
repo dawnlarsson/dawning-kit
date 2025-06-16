@@ -1,5 +1,5 @@
 #!/bin/sh
-source script/common
+. script/common
 
 label $YELLOW"EXPERIMENTAL! C compiled to spark format"
 

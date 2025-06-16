@@ -1,5 +1,5 @@
 #!/bin/sh
-source script/common
+. script/common
 
 # uncomment this line when not in active development (don't re-download kernel every time lol)
 # rm -rf artifacts/

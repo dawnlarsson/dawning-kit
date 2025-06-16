@@ -1,5 +1,5 @@
 #!/bin/sh
-source script/common
+. script/common
 
 kernel_image=$(key kernel_image)
 kernel_export=$(key kernel_export)

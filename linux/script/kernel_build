@@ -1,5 +1,5 @@
 #!/bin/sh
-source script/common
+. script/common
 
 cpu_cores=$(nproc)
 

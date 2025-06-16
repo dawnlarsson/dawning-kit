@@ -1,5 +1,5 @@
 #!/bin/sh
-source script/common
+. script/common
 
 compiler=$(key compiler)
 dawning_flags=$(key dawning_flags)

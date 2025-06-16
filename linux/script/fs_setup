@@ -1,5 +1,5 @@
 #!/bin/sh
-source script/common
+. script/common
 
 mkdir -p fs/sys
 mkdir -p fs/proc
