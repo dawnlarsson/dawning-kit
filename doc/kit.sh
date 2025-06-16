@@ -9,7 +9,7 @@ inline_format() {
         local text="$1"
 
         # Images: ![alt](src) -> <img src="src" alt="alt"/>
-        while [[ "$text" == *'!['*']('*')'* ]]; do
+        while [ "$text" = *'!['*']('*')'* ]; do
                 local before="${text%%'!['*}"
                 local rest="${text#*'!['}"
                 local alt="${rest%%']('*}"
@@ -20,7 +20,7 @@ inline_format() {
         done
 
         # Code: `code` -> <code>code</code>
-        while [[ "$text" == *'`'*'`'* ]]; do
+        while [ "$text" = *'`'*'`'* ]; do
                 local before="${text%%'`'*}"
                 local rest="${text#*'`'}"
                 local code="${rest%%'`'*}"
@@ -29,7 +29,7 @@ inline_format() {
         done
 
         # Bold: **text** -> <strong>text</strong>
-        while [[ "$text" == *'**'*'**'* ]]; do
+        while [ "$text" = *'**'*'**'* ]; do
                 local before="${text%%'**'*}"
                 local rest="${text#*'**'}"
                 local bold="${rest%%'**'*}"
@@ -38,7 +38,7 @@ inline_format() {
         done
 
         # Links: [text](url) -> <a href="url">text</a>
-        while [[ "$text" == *'['*']('*')'* ]]; do
+        while [ "$text" = *'['*']('*')'* ]; do
                 local before="${text%%'['*}"
                 local rest="${text#*'['}"
                 local link_text="${rest%%']('*}"
@@ -49,13 +49,13 @@ inline_format() {
         done
 
         # italic: *text* -> <em>text</em>
-        while [[ "$text" == *'*'*'*'* ]] && [[ "$text" != *'**'* ]]; do
+        while [ "$text" = *'*'*'*'* ] && [ "$text" != *'**'* ]; do
                 local before="${text%%'*'*}"
                 local rest="${text#*'*'}"
                 local italic="${rest%%'*'*}"
                 local after="${rest#*'*'}"
 
-                if [[ "$before" != *'*' ]] && [[ "$after" != '*'* ]]; then
+                if [ "$before" != *'*' ] && [ "$after" != '*'* ]; then
                         text="$before<em>$italic</em>$after"
                 else
                         break
@@ -71,11 +71,11 @@ doc() {
         local in_list=false
         local line processed
 
-        if [[ -r "$input_file" ]]; then
-                while IFS= read -r line || [[ -n "$line" ]]; do
+        if [ -r "$input_file" ]; then
+                while IFS= read -r line || [ -n "$line" ]; do
 
                         # Code blocks
-                        if [[ "$line" == '```'* ]]; then
+                        if [ "$line" = '```'* ]; then
                                 if $in_code; then
                                         printf '</code></pre>'
                                         in_code=false
@@ -86,7 +86,7 @@ doc() {
                                         }
                                         local lang="${line#'```'}"
                                         lang="${lang// /}" # Remove spaces
-                                        if [[ -n "$lang" ]]; then
+                                        if [ -n "$lang" ]; then
                                                 printf '<pre><code code-%s>' "$lang"
                                         else
                                                 printf '<pre><code>'
@@ -126,7 +126,7 @@ doc() {
                         fi
 
                         # Empty lines end lists
-                        if [[ -z "${line// /}" ]]; then # Empty or whitespace only
+                        if [ -z "${line// /}" ]; then # Empty or whitespace only
                                 $in_list && {
                                         printf '</ul>'
                                         in_list=false
@@ -211,8 +211,8 @@ less_css() {
         while IFS= read -r line; do
 
                 # Remove comments
-                while [[ "$line" == *"/*"* ]]; do
-                        if [[ "$line" == *"*/"* ]]; then
+                while [ "$line" = *"/*"* ]; do
+                        if [ "$line" = *"*/"* ]; then
                                 before="${line%%/*}"
                                 after="${line#*\*/}"
                                 line="$before$after"
@@ -261,16 +261,16 @@ less_css() {
         # Remove double quotes around values that don't contain spaces
         processed_minified=""
         temp_minified="$minified"
-        while [[ "$temp_minified" == *\"* ]]; do
+        while [ "$temp_minified" = *\"* ]; do
                 before_first_quote="${temp_minified%%\"*}"
                 processed_minified+="$before_first_quote"
                 rest_after_first_quote="${temp_minified#*\"}"
 
-                if [[ "$rest_after_first_quote" == *\"* ]]; then
+                if [ "$rest_after_first_quote" = *\"* ]; then
                         content_in_quotes="${rest_after_first_quote%%\"*}"
                         after_closing_quote="${rest_after_first_quote#*\"}"
 
-                        if [[ "$content_in_quotes" != *" "* && "$content_in_quotes" != "" ]]; then
+                        if [ "$content_in_quotes" != *" "* && "$content_in_quotes" != "" ]; then
                                 processed_minified+="$content_in_quotes"
                         else
                                 processed_minified+="\"$content_in_quotes\""

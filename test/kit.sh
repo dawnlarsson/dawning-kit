@@ -54,7 +54,7 @@ test_architecture() {
 
         echo -e "\n${BOLD}${CYAN}$arch_name ${NC} $arch_desc"
 
-        if [ -n "$qemu_bin" ] && ! which "$qemu_bin" >/dev/null 2>&1; then
+        if [ -n "$qemu_bin" ] && ! command -v "$qemu_bin" >/dev/null 2>&1; then
                 echo -e "${YELLOW}SKIPPED${NC} (QEMU not installed: $qemu_bin)"
                 return
         fi

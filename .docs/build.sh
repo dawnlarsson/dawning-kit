@@ -25,7 +25,7 @@ template_replace() {
         template_content="${template_content//$placeholder/$content}"
 
         # Check if any replacement occurred
-        if [[ "$template_content" != "$original_template_content" ]]; then
+        if [ "$template_content" != "$original_template_content" ]; then
                 # Write the modified content back to the original file
                 printf "%s" "$template_content" >"$template_file"
         else
@@ -49,7 +49,7 @@ build() {
 build
 
 # check if "watch" argument is passed
-if [[ "$1" == "watch" ]]; then
+if [ "$1" = "watch" ]; then
         while inotifywait -e modify -r .; do
                 build
                 echo "Rebuilt documentation."

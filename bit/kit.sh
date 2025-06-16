@@ -15,15 +15,15 @@ BIG_ENDIAN=${BIG_ENDIAN:-0}
 bit__8() {
         for arg in "$@"; do
                 arg="${arg%,}"
-                if [[ "$arg" =~ ^0x[0-9a-fA-F]+$ ]]; then
+                if [ "$arg" =~ ^0x[0-9a-fA-F]+$ ]; then
                         printf "\\x${arg#0x}"
-                elif [[ "$arg" =~ ^\".*\"$ ]]; then
+                elif [ "$arg" =~ ^\".*\"$ ]; then
                         local str="${arg#\"}"
                         str="${str%\"}"
                         echo -n "$str"
-                elif [[ "$arg" =~ ^[a-zA-Z]+$ ]]; then
+                elif [ "$arg" =~ ^[a-zA-Z]+$ ]; then
                         echo -n "$arg"
-                elif [[ "$arg" =~ ^[0-9]+$ ]]; then
+                elif [ "$arg" =~ ^[0-9]+$ ]; then
                         printf "\\x$(printf "%02x" "$arg")"
                 fi
         done
@@ -34,19 +34,19 @@ bit__8() {
 bit_16() {
         for arg in "$@"; do
                 arg="${arg%,}"
-                if [[ "$arg" =~ ^0x[0-9a-fA-F]+$ ]]; then
+                if [ "$arg" =~ ^0x[0-9a-fA-F]+$ ]; then
                         local val="${arg#0x}"
                         val=$(printf "%04x" "0x$val")
-                        if [[ $BIG_ENDIAN -eq 1 ]]; then
+                        if [ $BIG_ENDIAN -eq 1 ]; then
                                 # Big endian: most significant byte first
                                 printf "\\x${val:0:2}\\x${val:2:2}"
                         else
                                 # Little endian: least significant byte first
                                 printf "\\x${val:2:2}\\x${val:0:2}"
                         fi
-                elif [[ "$arg" =~ ^[0-9]+$ ]]; then
+                elif [ "$arg" =~ ^[0-9]+$ ]; then
                         local val=$(printf "%04x" "$arg")
-                        if [[ $BIG_ENDIAN -eq 1 ]]; then
+                        if [ $BIG_ENDIAN -eq 1 ]; then
                                 printf "\\x${val:0:2}\\x${val:2:2}"
                         else
                                 printf "\\x${val:2:2}\\x${val:0:2}"
@@ -60,10 +60,10 @@ bit_16() {
 bit_32() {
         for arg in "$@"; do
                 arg="${arg%,}"
-                if [[ "$arg" =~ ^0x[0-9a-fA-F]+$ ]]; then
+                if [ "$arg" =~ ^0x[0-9a-fA-F]+$ ]; then
                         local val="${arg#0x}"
                         val=$(printf "%08x" "0x$val")
-                        if [[ $BIG_ENDIAN -eq 1 ]]; then
+                        if [ $BIG_ENDIAN -eq 1 ]; then
                                 # Big endian: bytes 0,1,2,3
                                 for ((i = 0; i <= 6; i += 2)); do
                                         printf "\\x${val:$i:2}"
@@ -74,9 +74,9 @@ bit_32() {
                                         printf "\\x${val:$i:2}"
                                 done
                         fi
-                elif [[ "$arg" =~ ^[0-9]+$ ]]; then
+                elif [ "$arg" =~ ^[0-9]+$ ]; then
                         local val=$(printf "%08x" "$arg")
-                        if [[ $BIG_ENDIAN -eq 1 ]]; then
+                        if [ $BIG_ENDIAN -eq 1 ]; then
                                 for ((i = 0; i <= 6; i += 2)); do
                                         printf "\\x${val:$i:2}"
                                 done
@@ -94,10 +94,10 @@ bit_32() {
 bit_64() {
         for arg in "$@"; do
                 arg="${arg%,}"
-                if [[ "$arg" =~ ^0x[0-9a-fA-F]+$ ]]; then
+                if [ "$arg" =~ ^0x[0-9a-fA-F]+$ ]; then
                         local val="${arg#0x}"
                         val=$(printf "%016x" "0x$val")
-                        if [[ $BIG_ENDIAN -eq 1 ]]; then
+                        if [ $BIG_ENDIAN -eq 1 ]; then
                                 # Big endian: bytes 0,1,2,3,4,5,6,7
                                 for ((i = 0; i <= 14; i += 2)); do
                                         printf "\\x${val:$i:2}"
@@ -108,9 +108,9 @@ bit_64() {
                                         printf "\\x${val:$i:2}"
                                 done
                         fi
-                elif [[ "$arg" =~ ^[0-9]+$ ]]; then
+                elif [ "$arg" =~ ^[0-9]+$ ]; then
                         local val=$(printf "%016x" "$arg")
-                        if [[ $BIG_ENDIAN -eq 1 ]]; then
+                        if [ $BIG_ENDIAN -eq 1 ]; then
                                 for ((i = 0; i <= 14; i += 2)); do
                                         printf "\\x${val:$i:2}"
                                 done
@@ -128,10 +128,10 @@ bit_64() {
 bit128() {
         for arg in "$@"; do
                 arg="${arg%,}"
-                if [[ "$arg" =~ ^0x[0-9a-fA-F]+$ ]]; then
+                if [ "$arg" =~ ^0x[0-9a-fA-F]+$ ]; then
                         local val="${arg#0x}"
                         val=$(printf "%032x" "0x$val")
-                        if [[ $BIG_ENDIAN -eq 1 ]]; then
+                        if [ $BIG_ENDIAN -eq 1 ]; then
                                 # Big endian: bytes 0-15
                                 for ((i = 0; i <= 30; i += 2)); do
                                         printf "\\x${val:$i:2}"
@@ -142,9 +142,9 @@ bit128() {
                                         printf "\\x${val:$i:2}"
                                 done
                         fi
-                elif [[ "$arg" =~ ^[0-9]+$ ]]; then
+                elif [ "$arg" =~ ^[0-9]+$ ]; then
                         local val=$(printf "%032x" "$arg")
-                        if [[ $BIG_ENDIAN -eq 1 ]]; then
+                        if [ $BIG_ENDIAN -eq 1 ]; then
                                 for ((i = 0; i <= 30; i += 2)); do
                                         printf "\\x${val:$i:2}"
                                 done
