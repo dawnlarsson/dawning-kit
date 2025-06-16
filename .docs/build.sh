@@ -6,7 +6,7 @@ cd "$(dirname "$0")" || exit 1
 #
 # Builds dawning documentation
 #
-source ../doc/kit.sh
+. ../doc/kit.sh
 
 # Replaces <meta template_body> with the content of the second argument file
 template_replace() {

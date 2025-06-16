@@ -22,7 +22,7 @@ This aims for being ideal for boot strapping toolchains from nothing, a full "co
 
 Usage: 
 ```sh
-source bit/kit.sh
+. bit/kit.sh
 ```
 
 ### Primitives:
@@ -44,7 +44,7 @@ you can input hex (0x7f) or chars ( ELF -> "E", "L" "F" ), or plain ints
 Generates a ELF executable header and outputs a working executable
 
 ```sh
-source bit/kit.sh
+. bit/kit.sh
 
 elf_example() {
         bit__8 0x48, 0xc7, 0xc0, 0x3c, 0x00, 0x00, 0x00 # mov $60, %rax
@@ -61,7 +61,7 @@ Bit kit also have wasm primitives for generating WebAssembly modules,
 `wasm_var` `wasm_section` `wasm`
 
 ```sh
-source bit/kit.sh
+. bit/kit.sh
 
 type_section() {
     wasm_var 1              # 1 type
@@ -103,14 +103,14 @@ Works entirely within shell itself, this outputs ugly HTML to not waste space.
 
 Example turning this readme into a HTML file:
 ```sh
-source doc/kit.sh
+. doc/kit.sh
 
 doc README.md > README.html
 ```
 
 ### Basic css minification
 ```sh
-source doc/kit.sh
+. doc/kit.sh
 
 less_css "style/*.css" dist/style.css
 ```
@@ -163,7 +163,7 @@ By carefully re-designing the API and type expression, code can become more effe
 Provides automated test runner for multiple architectures with QEMU.
 
 ```sh
-source test/kit.sh
+. test/kit.sh
 
 # path / file_name + .<arch>  - becomes the expected usage pattern
 test_all /path/to/bin/folder file_name
