@@ -38,7 +38,7 @@ BIG_ENDIAN=1
 Byte functions take any amount of args, each arg is separately represented in the functions size,
 you can input hex (0x7f) or chars ( ELF -> "E", "L" "F" ), or plain ints
 
-`bit__8` `bit_16` `bit_32` `bit_64` `bit128` 
+`bit_8` `bit_16` `bit_32` `bit_64` `bit128` 
 
 ### Elf Executable format
 Generates a ELF executable header and outputs a working executable
@@ -47,9 +47,9 @@ Generates a ELF executable header and outputs a working executable
 . bit/kit.sh
 
 elf_example() {
-        bit__8 0x48, 0xc7, 0xc0, 0x3c, 0x00, 0x00, 0x00 # mov $60, %rax
-        bit__8 0x48, 0xc7, 0xc7, 0x00, 0x00, 0x00, 0x00 # mov $0, %rdi
-        bit__8 0x0f, 0x05 # x86_64 linux syscall
+        bit_8 0x48, 0xc7, 0xc0, 0x3c, 0x00, 0x00, 0x00 # mov $60, %rax
+        bit_8 0x48, 0xc7, 0xc7, 0x00, 0x00, 0x00, 0x00 # mov $0, %rdi
+        bit_8 0x0f, 0x05                               # x86_64 linux syscall
 }
 
 elf bin/program elf_example
@@ -65,8 +65,8 @@ Bit kit also have wasm primitives for generating WebAssembly modules,
 
 type_section() {
     wasm_var 1              # 1 type
-    bit__8 0x60             # func type  
-    bit__8 0x00, 0x01, 0x7F # () -> i32
+    bit_8 0x60             # func type  
+    bit_8 0x00, 0x01, 0x7F # () -> i32
 }
 
 function_section() {
@@ -77,14 +77,14 @@ function_section() {
 export_section() {
     wasm_var 1              # 1 export
     wasm_var 4              # name length
-    bit__8 "main"           # name
-    bit__8 0x00, 0x00       # func export, index 0
+    bit_8 "main"           # name
+    bit_8 0x00, 0x00       # func export, index 0
 }
 
 code_section() {
     wasm_var 1              # 1 function
     wasm_var 2              # body size
-    bit__8 0x41, 0x00, 0x0B # i32.const 0, end
+    bit_8 0x41, 0x00, 0x0B # i32.const 0, end
 }
 
 wasm_module() {
