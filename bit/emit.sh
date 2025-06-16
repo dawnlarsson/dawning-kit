@@ -64,7 +64,21 @@ emit_syscall() {
         esac
 }
 
-emit_mov_imm() {
+emit_mov() {
+        case "$ARCH" in
+        x86_64)
+                bit_8 0x48, 0x89 # mov prefix
+                ;;
+        aarch64)
+                bit_32 0xaa0003e0 # mov prefix
+                ;;
+        riscv64)
+                bit_32 0x00000033 # mv prefix
+                ;;
+        esac
+}
+
+mov_imm() {
         reg_func="$1"
         value="$2"
 
@@ -83,29 +97,6 @@ emit_mov_imm() {
                 bit_32 0x00000013 # li prefix
                 $reg_func         # emit register encoding
                 bit_32 "$value"   # emit immediate value
-                ;;
-        esac
-}
-
-emit_mov() {
-        dest_func="$1"
-        src_func="$2"
-
-        case "$ARCH" in
-        x86_64)
-                bit_8 0x48, 0x89 # mov prefix
-                $dest_func       # emit dest register
-                $src_func        # emit src register
-                ;;
-        aarch64)
-                bit_32 0xaa0003e0 # mov prefix
-                $dest_func        # emit dest register
-                $src_func         # emit src register
-                ;;
-        riscv64)
-                bit_32 0x00000033 # mv prefix
-                $dest_func        # emit dest register
-                $src_func         # emit src register
                 ;;
         esac
 }
