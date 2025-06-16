@@ -38,7 +38,7 @@ BIG_ENDIAN=1
 Byte functions take any amount of args, each arg is separately represented in the functions size,
 you can input hex (0x7f) or chars ( ELF -> "E", "L" "F" ), or plain ints
 
-`bit_8` `bit_16` `bit_32` `bit_64` `bit128` 
+`bit_8` `bit_16` `bit_32` `bit_64` `bit128` `hex_dump` `elf`
 
 ### Elf Executable format
 Generates a ELF executable header and outputs a working executable
@@ -53,6 +53,25 @@ elf_example() {
 }
 
 elf bin/program elf_example
+```
+
+### Hex Dump
+```sh
+. bit/kit.sh
+
+example() {
+        bit_8 0x48, 0xc7, 0xc0, 0x3c, 0x00, 0x00, 0x00 # mov $60, %rax
+        bit_8 0x48, 0xc7, 0xc7, 0x00, 0x00, 0x00, 0x00 # mov $0, %rdi
+        bit_8 0x0f, 0x05                               # x86_64 linux syscall
+}
+
+hex_dump example
+```
+
+output:
+```sh
+example 16 bytes
+00000000   48 c7 c0 3c 00 00 00 48 c7 c7 00 00 00 00 0f 05   H..<...H........
 ```
 
 ### Wasm (work in progress)
