@@ -14,9 +14,9 @@ ARCH=$(uname -m)
 
 reg_0() {
         case "$ARCH" in
-        x86_64) bit_8 0 ;;   # rax encoding
-        aarch64) bit_8 0 ;;  # x0 encoding
-        riscv64) bit_8 10 ;; # a0 encoding
+        x86_64) bit_8 0xc0 ;; # rax encoding
+        aarch64) bit_8 0 ;;   # x0 encoding
+        riscv64) bit_8 10 ;;  # a0 encoding
         esac
 }
 
@@ -36,7 +36,31 @@ reg_2() {
         esac
 }
 
-emit_return() {
+reg_3() {
+        case "$ARCH" in
+        x86_64) bit_8 2 ;;   # rdx encoding
+        aarch64) bit_8 3 ;;  # x3 encoding
+        riscv64) bit_8 13 ;; # a3 encoding
+        esac
+}
+
+reg_4() {
+        case "$ARCH" in
+        x86_64) bit_8 4 ;;   # rsi encoding
+        aarch64) bit_8 4 ;;  # x4 encoding
+        riscv64) bit_8 14 ;; # a4 encoding
+        esac
+}
+
+reg_5() {
+        case "$ARCH" in
+        x86_64) bit_8 0xc7 ;; # rdi encoding
+        aarch64) bit_8 5 ;;   # x5 encoding
+        riscv64) bit_8 15 ;;  # a5 encoding
+        esac
+}
+
+ret() {
         case "$ARCH" in
         x86_64)
                 bit_8 0xc3 # ret
@@ -50,7 +74,7 @@ emit_return() {
         esac
 }
 
-emit_syscall() {
+syscall() {
         case "$ARCH" in
         x86_64)
                 bit_8 0x0f, 0x05 # syscall
@@ -64,10 +88,10 @@ emit_syscall() {
         esac
 }
 
-emit_mov() {
+copy() {
         case "$ARCH" in
         x86_64)
-                bit_8 0x48, 0x89 # mov prefix
+                bit_8 0x48, 0xc7 # mov prefix
                 ;;
         aarch64)
                 bit_32 0xaa0003e0 # mov prefix
@@ -78,7 +102,13 @@ emit_mov() {
         esac
 }
 
-mov_imm() {
+system_call() {
+
+        syscall
+        ret
+}
+
+asm_mov_imm() {
         reg_func="$1"
         value="$2"
 
