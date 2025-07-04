@@ -5,27 +5,27 @@ kernel_extract_dir="linux/"
 download_artifacts_dir="artifacts/"
 keys_dir=$download_artifacts_dir"keys/"
 trusted_keys="torvalds@kernel.org gregkh@kernel.org"
-kernel_version="6.15.3"
-kernel_download="https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.15.3.tar.xz"
+kernel_version="6.15.4"
+kernel_download="https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.15.4.tar.xz"
 kernel_pgp="
 -----BEGIN PGP SIGNATURE-----
 Comment: This signature is for the .tar version of the archive
-Comment: git archive --format tar --prefix=linux-6.15.3/ v6.15.3
-Comment: git version 2.49.0
+Comment: git archive --format tar --prefix=linux-6.15.4/ v6.15.4
+Comment: git version 2.50.0
 
-iQIzBAABCgAdFiEEZH8oZUiU471FcZm+ONu9yGCSaT4FAmhUFBcACgkQONu9yGCS
-aT5P3RAAxEFTUVFJTB61sNYK6xXTk2rY6Q+6TcjDnxPBO5fi3GuHw/jS5qFLlWDN
-WwAMtXBy+9uZwnrfPxRsMYBKrNwVM0/7VvAclG/PnWuAbgPG3tpTmkKm0SDmPCCO
-NocL6tFm9ijLJsBaimbl1Lg4T+Lado1yoIVyVAImmFKO/12q7zFg+tEkGHKt6Wet
-1KvLvDGxTTO1rqDvA796s8htlCY0VCshTHxSYqD/gepx8O0LtTo4QUycaEPn2ADs
-Mr/QBAH05YmZmKPw7OrjciKlC5/7LCBPrU3t8NTWzNYsDvzpicZb+Wi8qU2Ocas7
-/EaYaTL2Didz92zONaPNYZfYG+lPCOZlFZaf4d2I4khxplu48CIx1l2q0aCEul1O
-FaF+tlkWvAOzgXKAtcASKN/oNqhNABp4x/xW9ZG+HEX7bWHxVLZDpgWcd6fr76TI
-inU092YSGhqWGJ9eB9G/i8Zafbn+H/cTBLCfV+k4/8HiDHJ3Af0xH5G751Ov1My3
-/ijJhlG8vTnjfiSC/OuetFbEZDdLT1bPF4WvbIsQgavDaqDpM2Q34X5XHr8HTtZR
-Qr9QpBJNc6oNSNijbByG6SBxQieCf5WuV+mx1El4LoVKLGdpi138dxqECMYtnWEW
-XB9Wc5v7xNsYbYs27M7DcAki3pOYxv39/VojRHGTeHQ2EjKWH1Q=
-=0kxB
+iQIzBAABCgAdFiEEZH8oZUiU471FcZm+ONu9yGCSaT4FAmhebx4ACgkQONu9yGCS
+aT51LQ/+IBletNzAs1SAUwtPsV3mKuypNQxRXlgZN+vOsuOKwk3Y5dGu1PP2uixt
+LeEqv3UkpsqlV8U/INABhWWcqXW4cNZXhT9Tl8lRWEOshwFN57iRQYbUcC/+wCTq
+NbQfl0L8WMb5m30EC6Kfr/IsV6SNQ8vR1ySuktPST6iyWlDLHIJ7Dx5ipM8bBQmb
+P0/QPbLsw9ISezJTjLA6q0c+8c0SWHJ+YFFbiFJDblgIUm1MlvY80v4plwQAnlDA
+F0+7GPl5yBwP/n74Dz9uYmz/05frFlIoBUrrN8DBUSXUQdFjL5GuUOZM5gkxEq9X
+kN1jlZeW7MlbV45jNKj18K+Rn6BAUEe3oqZU0UV1Tc8gS6NIael+Aiqz3zeLKgCR
+TJ+HsoIXy9QCRu8f9k+/5X5ECsS74M86Y9O9W8blyrrCDCNP/qIh5CGBRxeI5L8F
+DaLr7ew+m324yrWKj2niOlJOh3UslDjf4TPpK32cQRXuzVVRdv0Ag3vRmTCKeF9P
+L0ojCm+N5h406At7rVNEVH+J1Yq2BpKGxjtg7bXYUPTrZP9saWBktyTANnPAKZtx
+gbDBXBK/B7OV0xWBnE8zYegnKaocKh3Rwq92jUrqBRj1tj8euMfl1mxnDnUVVk55
+eULyqhc2UtZHSD8rE5GzCsx8gMLtv1w0s/VUo0AEqNfP3yEIoE0=
+=4Hyu
 -----END PGP SIGNATURE-----
 "
 
