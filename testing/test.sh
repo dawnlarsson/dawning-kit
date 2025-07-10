@@ -2,22 +2,30 @@
 
 . ../bit/emit.sh
 
-program() {
+sys_exit() {
         copy
         reg_0
         bit_32 60
 
         copy
         reg_5
-        bit_32 0
+        bit_32 $1
 
         syscall
 }
 
-echo
-hex_dump program
+example() {
 
-elf program program
+        sys_exit 0
+
+        echo "Hello World\n"
+        bit_8 0x0
+}
+
+echo
+hex_dump example
+
+elf program example
 
 echo
 ./program
