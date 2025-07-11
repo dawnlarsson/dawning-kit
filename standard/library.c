@@ -209,7 +209,7 @@ __attribute__((optimize("inline-max-size=" #max_size)))
 
 #endif // LIBRARY_API
 
-#define ANSI "\033["
+#define ANSI "\x1b["
 
 #define TERM_CLEAR_SCREEN ANSI "2J" ANSI "H"
 #define TERM_HIDE_CURSOR ANSI "?25l"
@@ -1184,7 +1184,7 @@ fn positive_to_string(writer write, positive number)
                 number /= 10;
         }
 
-        write(step + 1, digits + 31 - step);
+        write(step + 1, digits + 31 - step - 1);
 }
 
 fn bipolar_to_string(writer write, bipolar number)
