@@ -2,35 +2,25 @@
 
 source_file=${1:-"src/main.c"}
 output_file=${2:-"bin/$(basename "$(pwd)")"}
-instance=""
 
 cleanup() {
-        [ -n "$instance" ] && kill "$instance" 2>/dev/null
-        kill $(jobs -p) 2>/dev/null
+        pkill -f "$output_file" 2>/dev/null
+        wait
         exit 0
 }
 
 clear
 
-trap cleanup INT TERM EXIT
+trap cleanup INT TERM
 
-sh /standard/build "$source_file" "$output_file" && {
-        "$output_file" &
-        instance=$!
-}
+sh /standard/build "$source_file" "$output_file" && "$output_file" &
 
 inotifywait -m -e modify "$source_file" | while read -r path action file; do
-
         clear
-        echo "Detected change in $file, rebuilding..."
 
-        if [ -n "$instance" ] && kill -0 "$instance" 2>/dev/null; then
-                kill "$instance"
-                wait "$instance" 2>/dev/null
-        fi
+        # Kill and wait for process to fully die
+        pkill -f "$output_file" 2>/dev/null
+        sleep 0.1
 
-        if sh /standard/build "$source_file" "$output_file"; then
-                "$output_file" &
-                instance=$!
-        fi
+        sh /standard/build "$source_file" "$output_file" && "$output_file" &
 done
