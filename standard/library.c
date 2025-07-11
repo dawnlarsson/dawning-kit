@@ -97,7 +97,7 @@
 #define address_to *
 #define address_of &
 #define address_any void *
-#define address_bad ((address_any) -1)
+#define address_bad ((address_any) - 1)
 
 #undef null
 #define null ((address_any)0)
@@ -138,56 +138,58 @@ typedef __builtin_va_list var_args;
 // count:       number of arguments to process
 // type:        type of arguments
 // action:      Code block with '_arg' representing each argument
-#define var_list_iter(list, count, type, action) \
-    do { \
-        for (int _i = 0; _i < (count); _i++) { \
-            type _arg = var_list_get(list, type); \
-            action; \
-        } \
-    } while (0)
+#define var_list_iter(list, count, type, action)              \
+        do                                                    \
+        {                                                     \
+                for (int _i = 0; _i < (count); _i++)          \
+                {                                             \
+                        type _arg = var_list_get(list, type); \
+                        action;                               \
+                }                                             \
+        } while (0)
 
-#define bit_test(bit, address)    (address_to(address) & (1u << (bit)))
-#define bit_set(bit, address)     (address_to(address) |= (1u << (bit)))
-#define bit_clear(bit, address)   (address_to(address) &= ~(1u << (bit)))
-#define bit_flip(bit, address)    (address_to(address) ^= (1u << (bit)))
-#define bit_mask(bit)             (1u << (bit))
+#define bit_test(bit, address) (address_to(address) & (1u << (bit)))
+#define bit_set(bit, address) (address_to(address) |= (1u << (bit)))
+#define bit_clear(bit, address) (address_to(address) &= ~(1u << (bit)))
+#define bit_flip(bit, address) (address_to(address) ^= (1u << (bit)))
+#define bit_mask(bit) (1u << (bit))
 
 #undef container_of
-#define container_of(address, type, member) ({ \
+#define container_of(address, type, member) ({                                    \
         const typeof(((type address_to)0)->member) address_to __mptr = (address); \
-        (type address_to)((char address_to)__mptr - offsetof(type, member)); \
-    })
+        (type address_to)((char address_to)__mptr - offsetof(type, member));      \
+})
 
 #define struct_from_field(field_address, struct_type, field_name) \
         container_of(field_address, struct_type, field_name)
 
-#define memory_barrier()           __asm__ __volatile__("" ::: "memory")
-#define memory_read_barrier()      __sync_synchronize()
-#define memory_write_barrier()     __sync_synchronize()
-#define memory_full_barrier()      __sync_synchronize()
+#define memory_barrier() __asm__ __volatile__("" ::: "memory")
+#define memory_read_barrier() __sync_synchronize()
+#define memory_write_barrier() __sync_synchronize()
+#define memory_full_barrier() __sync_synchronize()
 
 #define inline_if_small(max_size) __attribute__((always_inline)) \
-                                __attribute__((optimize("inline-max-size=" #max_size)))
+__attribute__((optimize("inline-max-size=" #max_size)))
 
-#define likely(x)       __builtin_expect(!!(x), 1)
-#define unlikely(x)     __builtin_expect(!!(x), 0)
+#define likely(x) __builtin_expect(!!(x), 1)
+#define unlikely(x) __builtin_expect(!!(x), 0)
 
-#define if_common(cond)   if (likely(cond))
-#define if_rare(cond)     if (unlikely(cond))
+#define if_common(cond) if (likely(cond))
+#define if_rare(cond) if (unlikely(cond))
 
-#define prefetch_read(addr)  __builtin_prefetch((addr), 0, 3)
+#define prefetch_read(addr) __builtin_prefetch((addr), 0, 3)
 #define prefetch_write(addr) __builtin_prefetch((addr), 1, 3)
 
 #define local_var(type, name) \
-    __attribute__((section(".percpu"))) __typeof__(type) name
+        __attribute__((section(".percpu"))) __typeof__(type) name
 
-#define atomic_add(address, val)       __sync_fetch_and_add(address, val)
-#define atomic_sub(address, val)       __sync_fetch_and_sub(address, val)
-#define atomic_inc(address)            atomic_add(address, 1)
-#define atomic_dec(address)            atomic_sub(address, 1)
-#define atomic_exchange(address, val)  __sync_lock_test_and_set(address, val)
+#define atomic_add(address, val) __sync_fetch_and_add(address, val)
+#define atomic_sub(address, val) __sync_fetch_and_sub(address, val)
+#define atomic_inc(address) atomic_add(address, 1)
+#define atomic_dec(address) atomic_sub(address, 1)
+#define atomic_exchange(address, val) __sync_lock_test_and_set(address, val)
 #define atomic_compare_exchange(address, expected, desired) \
-    __sync_bool_compare_and_swap(address, expected, desired)
+        __sync_bool_compare_and_swap(address, expected, desired)
 
 #ifdef LIBRARY_API
 
@@ -650,8 +652,8 @@ typedef typeof(sizeof(0)) sized;
 #define system_invoke ir(ASM(syscall))
 #define call(what) ir("call " ASM(what) ";")
 
-#define register_get(reg, dest) ir(ASM(copy) " %0, " ASM(reg) : "=r" (dest))
-#define register_set(reg, src) ir(ASM(copy) " " ASM(reg) ", %0" : : "r" (src))
+#define register_get(reg, dest) ir(ASM(copy) " %0, " ASM(reg) : "=r"(dest))
+#define register_set(reg, src) ir(ASM(copy) " " ASM(reg) ", %0" : : "r"(src))
 
 // a thread-local storage variable, unique to each thread
 #define local __thread
@@ -674,7 +676,7 @@ typedef struct
 #define string_equals(source, input) (strcmp(source, input) == 0)
 
 #define string_set_if(source, check, value) \
-    ((source) == (check) ? ((source) = (value), true) : false)
+        ((source) == (check) ? ((source) = (value), true) : false)
 
 #undef min
 #define min(value, input) ((value)greater_than(input) ? (input) : (value))
@@ -910,12 +912,15 @@ address_any memory_copy(address_any destination, address_any source, positive si
         b8 address_to src = (b8 address_to)source;
 
         // overlapping regions
-        if (dest > src && dest < src + size) {
+        if (dest > src && dest < src + size)
+        {
                 dest += size - 1;
                 src += size - 1;
                 while (size--)
                         address_to dest-- = address_to src--;
-        } else {
+        }
+        else
+        {
                 while (size--)
                         address_to dest++ = address_to src++;
         }
@@ -946,8 +951,9 @@ positive string_length(string_address source)
 {
         string_address step = source;
 
-        while string_get(step)
-                step++;
+        while
+                string_get(step)
+                    step++;
 
         return step - source;
 }
@@ -961,7 +967,7 @@ b32 string_compare(string_address source, string_address input)
 {
         while (string_get(source) && string_get(input))
         {
-                if string_not(source, address_to input)
+                if string_not (source, address_to input)
                         break;
 
                 source++;
@@ -981,8 +987,9 @@ string_address string_copy(string_address destination, string_address source)
 {
         string_address start = destination;
 
-        while string_get(source)
-                string_set(destination++, string_get(source++));
+        while
+                string_get(source)
+                    string_set(destination++, string_get(source++));
 
         return start;
 }
@@ -1007,13 +1014,14 @@ string_address string_copy_max(string_address destination, string_address source
 // traditional: strchr
 string_address string_first_of(string_address source, p8 character)
 {
-        while string_get(source)
-        {
-                if string_is(source, character)
-                        return source;
+        while
+                string_get(source)
+                {
+                        if string_is (source, character)
+                                return source;
 
-                source++;
-        }
+                        source++;
+                }
 
         return (string_get(source) == character) ? source : null;
 }
@@ -1028,20 +1036,21 @@ string_address string_last_of(string_address source, p8 character)
 {
         string_address last = null;
 
-        while string_get(source)
-        {
-                if string_is(source, character)
-                        last = source;
+        while
+                string_get(source)
+                {
+                        if string_is (source, character)
+                                last = source;
 
-                source++;
-        }
+                        source++;
+                }
 
         return last;
 }
 
-// Performs a single cut forward in a string by inserting a null terminator where the FIRST cut symbol is found. 
+// Performs a single cut forward in a string by inserting a null terminator where the FIRST cut symbol is found.
 // Returns the address AFTER the cut, effectively splitting the string into two parts.
-// searching starts from the beginning of the string, 
+// searching starts from the beginning of the string,
 // linearly steps forward until a cut symbol is found or a string end is reached.
 //
 // # example:
@@ -1049,26 +1058,27 @@ string_address string_last_of(string_address source, p8 character)
 //      string_address second_part = string_cut(input, ' ');
 //      // input = "Hello"
 //      // second_part = "World"
-string_address string_cut(string_address string, b8 cut_symbol) 
+string_address string_cut(string_address string, b8 cut_symbol)
 {
         string_address step = string;
 
-        while string_get(step)
-        {
-                step++;
+        while
+                string_get(step)
+                {
+                        step++;
 
-                if string_not(step, cut_symbol)
-                        continue;
-                
-                string_set(step, end);
+                        if string_not (step, cut_symbol)
+                                continue;
 
-                step++;
+                        string_set(step, end);
 
-                if string_is(step, end)
-                        return null;
+                        step++;
 
-                return step;
-        }
+                        if string_is (step, end)
+                                return null;
+
+                        return step;
+                }
 
         return null;
 }
@@ -1079,27 +1089,29 @@ string_address string_find(string_address string, string_address input)
         string_address step = string;
         string_address step_input = input;
 
-        while string_get(step)
-        {
-                if string_not(step, string_get(step_input))
-                        step++;
-                
-                string_address find = step;
-
-                while string_get(step_input)
+        while
+                string_get(step)
                 {
-                        if string_not(step, string_get(step_input))
-                                break;
+                        if string_not (step, string_get(step_input))
+                                step++;
 
-                        step++;
-                        step_input++;
+                        string_address find = step;
+
+                        while
+                                string_get(step_input)
+                                {
+                                        if string_not (step, string_get(step_input))
+                                                break;
+
+                                        step++;
+                                        step_input++;
+                                }
+
+                        if string_is (step_input, end)
+                                return find;
+
+                        step_input = input;
                 }
-
-                if string_is(step_input, end)
-                        return find;
-                
-                step_input = input;
-        }
 
         return null;
 }
@@ -1108,18 +1120,18 @@ fn string_replace_all(string_address string, b8 cut_symbol, b8 replace_symbol)
 {
         string_address step = string;
 
-        while string_get(step)
-        {
-                if string_is(step, cut_symbol)
-                        string_set(step, replace_symbol);
+        while
+                string_get(step)
+                {
+                        if string_is (step, cut_symbol)
+                                string_set(step, replace_symbol);
 
-                step++;
-        }
+                        step++;
+                }
 }
 
 fn string_get_environment(const b8 address_to name)
 {
-
 }
 
 // performs several cuts depending on number of arguments, each argument
@@ -1138,7 +1150,7 @@ string_address string_split(string_address string, b8 cut_symbol, ...)
 
                 if (step == null)
                         break;
-        
+
                 string_address split_step = var_list_get(args, string_address);
 
                 if (split_step == null)
@@ -1146,7 +1158,7 @@ string_address string_split(string_address string, b8 cut_symbol, ...)
 
                 address_to split_step = (string_address)split_step;
         }
-        
+
         var_list_end(args);
 
         return step;
@@ -1175,14 +1187,15 @@ fn positive_to_string(writer write, positive number)
         write(step + 1, digits + 31 - step);
 }
 
-fn bipolar_to_string(writer write, bipolar number) {
-    if (number >= 0)
-        return positive_to_string(write, (positive)number);
+fn bipolar_to_string(writer write, bipolar number)
+{
+        if (number >= 0)
+                return positive_to_string(write, (positive)number);
 
-    write("-", 1);
+        write("-", 1);
 
-    bipolar abs_number = number * -1;
-    positive_to_string(write, (positive)abs_number);
+        bipolar abs_number = number * -1;
+        positive_to_string(write, (positive)abs_number);
 }
 
 positive string_to_positive(string_address input)
@@ -1203,18 +1216,18 @@ positive string_to_positive(string_address input)
 
 bipolar string_to_bipolar(string_address input)
 {
-        if(string_get(input) == '-')
+        if (string_get(input) == '-')
         {
                 input++;
                 return -string_to_positive(input);
         }
-        
+
         return string_to_positive(input);
 }
 
 fn decimal_to_string(writer write, decimal value)
 {
-        #ifndef KERNEL_MODE // Temporary
+#ifndef KERNEL_MODE // Temporary
 
         if (value < 0)
         {
@@ -1244,93 +1257,106 @@ fn decimal_to_string(writer write, decimal value)
                 write("0", 1);
 
         bipolar_to_string(write, integer_part);
-        #endif
+#endif
 }
 
-fn string_format(writer write, string_address format, ...) {
+fn string_format(writer write, string_address format, ...)
+{
         var_args args;
         var_list(args, format);
-    
+
         string_address segment_start = format;
         positive index = 0;
-        
-        while string_get(format)
-        {
-                if string_not(format, '%') {
+
+        while
+                string_get(format)
+                {
+                        if string_not (format, '%')
+                        {
+                                format++;
+                                index++;
+                                continue;
+                        }
+
+                        if (index > 0)
+                                write(segment_start, format - segment_start);
+
                         format++;
-                        index++;
-                        continue;
+                        index = 0;
+
+                        switch
+                                string_get(format)
+                                {
+                                case 'b':
+                                {
+                                        // todo: fix, long int breaks here...
+                                        int raw_value = var_list_get(args, int);
+                                        bipolar value = (bipolar)raw_value;
+                                        bipolar_to_string(write, value);
+                                        break;
+                                }
+                                case 'p':
+                                {
+                                        positive value = var_list_get(args, positive);
+                                        positive_to_string(write, value);
+                                        break;
+                                }
+#ifndef KERNEL_MODE // Temporary
+                                case 'f':
+                                {
+                                        decimal value = var_list_get(args, decimal);
+                                        decimal_to_string(write, value);
+                                        break;
+                                }
+#endif
+                                case 's':
+                                {
+                                        string_address value = var_list_get(args, string_address);
+                                        write(value, 0);
+                                        break;
+                                }
+                                case '%':
+                                        write("%", 1);
+                                        break;
+
+// Optional user extensions 0 - 9
+// if up to 9 is needed open a pr!
+#ifdef string_format_extension_0
+                                case '0':
+                                {
+                                        string_format_extension_0(write, args);
+                                        break;
+                                }
+#endif
+#ifdef string_format_extension_1
+                                case '1':
+                                {
+                                        string_format_extension_1(write, args);
+                                        break;
+                                }
+#endif
+#ifdef string_format_extension_2
+                                case '2':
+                                {
+                                        string_format_extension_2(write, args);
+                                        break;
+                                }
+#endif
+#ifdef string_format_extension_3
+                                case '3':
+                                {
+                                        string_format_extension_3(write, args);
+                                        break;
+                                }
+#endif
+
+                                case end:
+                                        return;
+                                }
+
+                        format++;
+                        segment_start = format;
                 }
-
-                if(index > 0)
-                        write(segment_start, format - segment_start);
-
-                format++;
-                index = 0;
-
-                switch string_get(format) {
-                        case 'b': {
-                                // todo: fix, long int breaks here...
-                                int raw_value = var_list_get(args, int);
-                                bipolar value = (bipolar)raw_value;
-                                bipolar_to_string(write, value);
-                                break;
-                        }
-                        case 'p': {
-                                positive value = var_list_get(args, positive);
-                                positive_to_string(write, value);
-                                break;
-                        }
-                        #ifndef KERNEL_MODE // Temporary
-                        case 'f': {
-                                decimal value = var_list_get(args, decimal);
-                                decimal_to_string(write, value);
-                                break;
-                        }
-                        #endif
-                        case 's': {
-                                string_address value = var_list_get(args, string_address);
-                                write(value, 0);
-                                break;
-                        }
-                        case '%':
-                                write("%", 1);
-                                break;
-                        
-                        // Optional user extensions 0 - 9
-                        // if up to 9 is needed open a pr!
-                        #ifdef string_format_extension_0
-                        case '0': {
-                                string_format_extension_0(write, args);
-                                break;
-                        }
-                        #endif
-                        #ifdef string_format_extension_1
-                        case '1': {
-                                string_format_extension_1(write, args);
-                                break;
-                        }
-                        #endif
-                        #ifdef string_format_extension_2
-                        case '2': {
-                                string_format_extension_2(write, args);
-                                break;
-                        }
-                        #endif
-                        #ifdef string_format_extension_3
-                        case '3': {
-                                string_format_extension_3(write, args);
-                                break;
-                        }
-                        #endif
-                        
-                        case end:
-                                return;
-                }
-
-                format++;
-                segment_start = format;
-        }
 
         write(segment_start, format - segment_start);
 
@@ -1546,7 +1572,6 @@ b32 main();
 fn exit(b32 code);
 fn sleep(positive seconds, positive nanoseconds);
 
-
 #undef memset
 // for compatibility, makes the linker happy
 address_any memset(address_any destination, int value, long unsigned int size)
@@ -1721,48 +1746,47 @@ typedef struct
         file_status status;
 } file;
 
-#define log_file(write, source) \
-        string_format(write, \
-                "File: %s\n" \
-                "Handle: %p\n" \
-                "Flags: %p\n" \
-                "Data: %p\n" \
-                "Loaded: %b\n", \
-                source.path, \
-                source.handle, \
-                source.flags, \
-                source.data, \
-                source.loaded)
-        
-#define log_file_status(write, source) \
-        string_format(write, \
-                "Device: %p\n" \
-                "Inode: %b\n" \
-                "Protection: %p\n" \
-                "Hard Links: %p\n" \
-                "Owner: %p\n" \
-                "Group: %p\n" \
-                "Special Device ID: %p\n" \
-                "Size: %b\n" \
-                "Blocksize: %b\n" \
-                "Blocks: %b\n" \
-                "Last Access: %b\n" \
-                "Last Edit: %b\n" \
-                "Last Update: %b\n", \
-                source.status.device, \
-                source.status.inode, \
-                source.status.protection, \
-                source.status.hard_links, \
-                source.status.owner, \
-                source.status.group, \
-                source.status.special_device_id, \
-                source.status.size, \
-                source.status.blocksize, \
-                source.status.blocks, \
-                source.status.last_access, \
-                source.status.last_edit, \
-                source.status.last_update)
-        
+#define log_file(write, source)       \
+        string_format(write,          \
+                      "File: %s\n"    \
+                      "Handle: %p\n"  \
+                      "Flags: %p\n"   \
+                      "Data: %p\n"    \
+                      "Loaded: %b\n", \
+                      source.path,    \
+                      source.handle,  \
+                      source.flags,   \
+                      source.data,    \
+                      source.loaded)
+
+#define log_file_status(write, source)                 \
+        string_format(write,                           \
+                      "Device: %p\n"                   \
+                      "Inode: %b\n"                    \
+                      "Protection: %p\n"               \
+                      "Hard Links: %p\n"               \
+                      "Owner: %p\n"                    \
+                      "Group: %p\n"                    \
+                      "Special Device ID: %p\n"        \
+                      "Size: %b\n"                     \
+                      "Blocksize: %b\n"                \
+                      "Blocks: %b\n"                   \
+                      "Last Access: %b\n"              \
+                      "Last Edit: %b\n"                \
+                      "Last Update: %b\n",             \
+                      source.status.device,            \
+                      source.status.inode,             \
+                      source.status.protection,        \
+                      source.status.hard_links,        \
+                      source.status.owner,             \
+                      source.status.group,             \
+                      source.status.special_device_id, \
+                      source.status.size,              \
+                      source.status.blocksize,         \
+                      source.status.blocks,            \
+                      source.status.last_access,       \
+                      source.status.last_edit,         \
+                      source.status.last_update)
 
 #ifdef WINDOWS
 __declspec(dllimport) HMODULE __stdcall LoadLibraryA(LPCSTR);
@@ -1814,11 +1838,10 @@ file file_new(string_address path, positive flags)
         result.flags = flags;
 
 #if defined(WINDOWS)
-        HANDLE h = CreateFileA(path, ((flags & O_RDONLY) ? GENERIC_READ : 0) | ((flags & O_WRONLY) ? GENERIC_WRITE : 0) |
-                                ((flags & O_RDWR) ? (GENERIC_READ | GENERIC_WRITE) : 0),
-                                FILE_SHARE_READ, NULL,
-                                ((flags & O_CREAT) ? ((flags & O_TRUNC) ? CREATE_ALWAYS : OPEN_ALWAYS) : OPEN_EXISTING),
-                                FILE_ATTRIBUTE_NORMAL, NULL);
+        HANDLE h = CreateFileA(path, ((flags & O_RDONLY) ? GENERIC_READ : 0) | ((flags & O_WRONLY) ? GENERIC_WRITE : 0) | ((flags & O_RDWR) ? (GENERIC_READ | GENERIC_WRITE) : 0),
+                               FILE_SHARE_READ, NULL,
+                               ((flags & O_CREAT) ? ((flags & O_TRUNC) ? CREATE_ALWAYS : OPEN_ALWAYS) : OPEN_EXISTING),
+                               FILE_ATTRIBUTE_NORMAL, NULL);
 
         result.handle = (h == INVALID_HANDLE_VALUE) ? -1 : (positive)h;
 #else
@@ -1841,47 +1864,48 @@ address_any file_load(file address_to source)
 
         if (source->loaded && source->data)
                 return source->data;
-        
+
         positive size = source->status.size;
-        
+
         if (size == 0)
                 return null;
-                
+
         positive page_size = 4096;
         positive pages = (size + page_size - 1) / page_size;
-        
+
 #if defined(WINDOWS)
         source->data = VirtualAlloc(NULL, pages * page_size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
         if (!source->data)
                 return null;
-                
+
         DWORD bytes_read;
         SetFilePointer((HANDLE)source->handle, 0, NULL, FILE_BEGIN);
-        if (!ReadFile((HANDLE)source->handle, source->data, (DWORD)size, &bytes_read, NULL) || 
-                bytes_read != size) {
+        if (!ReadFile((HANDLE)source->handle, source->data, (DWORD)size, &bytes_read, NULL) ||
+            bytes_read != size)
+        {
                 VirtualFree(source->data, 0, MEM_RELEASE);
                 source->data = null;
                 return null;
         }
 #else
 
-        source->data = (address_any) system_call_5(syscall(mmap), 
-                0, pages * page_size,
-                FILE_PROTECT_READ | FILE_PROTECT_WRITE,
-                FILE_MAP_PRIVATE | FILE_MAP_ANONYMOUS 
-                -1, 0
-        );
-        
-        if (source->data == address_bad) {
+        source->data = (address_any)system_call_5(syscall(mmap),
+                                                  0, pages * page_size,
+                                                  FILE_PROTECT_READ | FILE_PROTECT_WRITE,
+                                                  FILE_MAP_PRIVATE | FILE_MAP_ANONYMOUS - 1, 0);
+
+        if (source->data == address_bad)
+        {
                 source->data = null;
                 return null;
         }
-        
+
         system_call_3(syscall(lseek), source->handle, 0, FILE_SEEK_SET);
-        
+
         positive bytes_read = system_call_3(syscall(read), source->handle, (positive)source->data, size);
 
-        if (bytes_read != size) {
+        if (bytes_read != size)
+        {
                 system_call_2(syscall(munmap), (positive)source->data, pages * page_size);
                 source->data = null;
                 return null;
@@ -1896,23 +1920,24 @@ positive file_read(file address_to source, address_any buffer, positive size, po
 {
         if (!file_valid(address_to source))
                 return -1;
-        
-        if (source->loaded && source->data) {
-                
+
+        if (source->loaded && source->data)
+        {
+
                 if (offset >= source->status.size)
                         return 0;
-                
+
                 positive available = source->status.size - offset;
                 positive to_read = size < available ? size : available;
-                memory_copy(buffer, (p8*)source->data + offset, to_read);
+                memory_copy(buffer, (p8 *)source->data + offset, to_read);
                 return to_read;
         }
-        
+
 #if defined(WINDOWS)
         LARGE_INTEGER li_offset;
         li_offset.QuadPart = offset;
         SetFilePointerEx((HANDLE)source->handle, li_offset, NULL, FILE_BEGIN);
-        
+
         DWORD bytes_read;
         if (!ReadFile((HANDLE)source->handle, buffer, (DWORD)size, &bytes_read, NULL))
                 return -1;
@@ -1923,22 +1948,21 @@ positive file_read(file address_to source, address_any buffer, positive size, po
 #endif
 }
 
-
 // Unload file data from memory
 fn file_unload(file address_to source)
 {
-        if (!source->loaded && !source->data) 
+        if (!source->loaded && !source->data)
                 return;
 
         positive page_size = 4096;
         positive pages = (source->status.size + page_size - 1) / page_size;
-        
+
 #if defined(WINDOWS)
         VirtualFree(source->data, 0, MEM_RELEASE);
 #else
         system_call_2(syscall(munmap), (positive)source->data, pages * page_size);
 #endif
-        
+
         source->data = null;
         source->loaded = false;
 }
@@ -1948,45 +1972,53 @@ positive file_write(file address_to source, address_any buffer, positive size, p
 {
         if (!file_valid(address_to source))
                 return -1;
-        
+
         bool update_memory = source->loaded && source->data && offset < source->status.size;
-        
+
 #if defined(WINDOWS)
         LARGE_INTEGER li_offset;
         li_offset.QuadPart = offset;
         SetFilePointerEx((HANDLE)source->handle, li_offset, NULL, FILE_BEGIN);
-        
+
         DWORD bytes_written;
         if (!WriteFile((HANDLE)source->handle, buffer, (DWORD)size, &bytes_written, NULL))
                 return -1;
-                
-        if (update_memory && bytes_written > 0) {
+
+        if (update_memory && bytes_written > 0)
+        {
                 positive end_offset = offset + bytes_written;
-                if (end_offset > source->status.size) {
+                if (end_offset > source->status.size)
+                {
                         source->status = file_get_status(source);
                         file_unload(source);
-                } else {
-                        memory_copy((p8*)source->data + offset, buffer, bytes_written);
+                }
+                else
+                {
+                        memory_copy((p8 *)source->data + offset, buffer, bytes_written);
                 }
         }
-        
+
         return bytes_written;
 #else
         system_call_3(syscall(lseek), source->handle, offset, FILE_SEEK_SET);
         positive bytes_written = system_call_3(syscall(write), source->handle, (positive)buffer, size);
-        
-        if (update_memory && bytes_written > 0) {
+
+        if (update_memory && bytes_written > 0)
+        {
 
                 positive end_offset = offset + bytes_written;
 
-                if (end_offset > source->status.size) {
+                if (end_offset > source->status.size)
+                {
                         source->status = file_get_status(source);
                         file_unload(source);
-                } else {
-                        memory_copy((p8*)source->data + offset, buffer, bytes_written);
+                }
+                else
+                {
+                        memory_copy((p8 *)source->data + offset, buffer, bytes_written);
                 }
         }
-        
+
         return bytes_written;
 #endif
 }
@@ -1998,7 +2030,7 @@ fn file_close(file address_to source)
                 return;
 
         file_unload(source);
-        
+
 #if defined(WINDOWS)
         CloseHandle((HANDLE)source->handle);
 #else
@@ -2010,7 +2042,7 @@ fn file_close(file address_to source)
 
 // ### Load library the system
 // Traditional: dlopen
-address_any library_open(string_address library_path) 
+address_any library_open(string_address library_path)
 {
 #ifdef WINDOWS
         return LoadLibraryA(library_path);
@@ -2018,7 +2050,7 @@ address_any library_open(string_address library_path)
 
         string_address is_relative_path = string_first_of(library_path, '/');
 
-        if(!is_relative_path)
+        if (!is_relative_path)
         {
                 file_new(library_path, FILE_READ | FILE_EXECUTE);
         }
@@ -2028,7 +2060,7 @@ address_any library_open(string_address library_path)
 
 // ### Get address of a function/symbol in the library
 // Traditional: dlsym
-address_any library_get(address_any library, string_address name) 
+address_any library_get(address_any library, string_address name)
 {
 #ifdef WINDOWS
         return GetProcAddress(library, name);
@@ -2037,7 +2069,7 @@ address_any library_get(address_any library, string_address name)
 
 // ### Free the library
 // Traditional: dlclose
-fn library_close(address_any library) 
+fn library_close(address_any library)
 {
 #ifdef WINDOWS
         FreeLibrary(library);

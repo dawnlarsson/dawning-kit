@@ -21,4 +21,8 @@ mkdir -p bin
 
 $compiler $source_file -o $output_file $flags_base $suppress -Wl,-e,_start
 
+build_result=$?
+
 chmod +x $output_file
+
+exit $build_result

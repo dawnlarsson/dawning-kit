@@ -7,8 +7,11 @@ dawning_flags=$(key dawning_flags)
 echo $BOLD"Compiling $2" $RESET
 
 $compiler $1.c -o $2 $dawning_flags $suppress -Wl,-e,_start -Wl,--no-warn-rwx-segments
+build_result=$?
 
 size $2
 
 chmod +x $2
 echo
+
+exit $build_result

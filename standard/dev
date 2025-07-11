@@ -21,5 +21,9 @@ inotifywait -m -e modify "$source_file" | while read -r path action file; do
         pkill -f "$output_file" 2>/dev/null
         sleep 0.1
 
-        sh /standard/build "$source_file" "$output_file" && "$output_file" &
+        sh /standard/build "$source_file" "$output_file"
+
+        if [ $? -eq 0 ]; then
+                "$output_file" &
+        fi
 done
