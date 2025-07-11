@@ -1565,12 +1565,18 @@ fn_asm(system_call_6, bipolar, positive syscall, positive argument_1, positive a
 
 p8 address_to program_stack_base = 0;
 
+typedef struct timespec
+{
+        p64 tv_sec;
+        p64 tv_nsec;
+} timespec;
+
 // User required implementations
 b32 main();
 
 // Platform required implementations
 fn exit(b32 code);
-fn sleep(positive seconds, positive nanoseconds);
+fn sleep(timespec address_to time);
 
 #undef memset
 // for compatibility, makes the linker happy

@@ -44,13 +44,9 @@ positive2 term_size()
         return size;
 }
 
-// TODO: fixme
-fn sleep(positive seconds, positive nanoseconds)
+fn sleep(timespec address_to time)
 {
-        return;
-
-        struct timespec time = {seconds, nanoseconds};
-        system_call_1(syscall(nanosleep), (positive)address_of time);
+        system_call_3(syscall(nanosleep), (positive)time, 0, 0);
 }
 
 fn exit(b32 code)
