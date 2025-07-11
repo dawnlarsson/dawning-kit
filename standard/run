@@ -1,16 +1,12 @@
 #!/bin/sh
 
-source_file=$1
-output_file=$2
-
-if [ -z "$source_file" ]; then
-        source_file="src/main.c"
-fi
-
-if [ -z "$output_file" ]; then
-        output_file="bin/$(basename $(pwd))"
-fi
+source_file=${1:-"src/main.c"}
+output_file=${2:-"bin/$(basename "$(pwd)")"}
 
 sh /standard/build $source_file $output_file
 
 $output_file
+
+if [ $? -ne 0 ]; then
+        echo "Exited with $?"
+fi

@@ -1,5 +1,8 @@
 #!/bin/sh
 
+source_file=${1:-"src/main.c"}
+output_file=${2:-"bin/$(basename "$(pwd)")"}
+
 compiler="gcc"
 
 flags_base=" -static -s -flto -nostdlib -nostartfiles -ffreestanding -fno-builtin"
@@ -13,17 +16,6 @@ flags_base+=" -fno-asynchronous-unwind-tables -fomit-frame-pointer -fno-stack-pr
 
 # VERY aggressive flags
 flags_base+=" -fno-semantic-interposition -D_FORTIFY_SOURCE=0 -fno-unwind-tables -fno-plt -fno-PIE -fno-pie -fno-stack-clash-protection"
-
-source_file=$1
-output_file=$2
-
-if [ -z "$source_file" ]; then
-        source_file="src/main.c"
-fi
-
-if [ -z "$output_file" ]; then
-        output_file="bin/$(basename $(pwd))"
-fi
 
 mkdir -p bin
 
