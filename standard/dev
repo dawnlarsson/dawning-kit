@@ -18,9 +18,8 @@ sh /standard/build "$source_file" "$output_file" && "$output_file" &
 inotifywait -m -e modify "$source_file" | while read -r path action file; do
         clear
 
-        # Kill and wait for process to fully die
         pkill -f "$output_file" 2>/dev/null
-        sleep 0.1
+        sleep 0.05
 
         sh /standard/build "$source_file" "$output_file" && "$output_file" &
 done
