@@ -29,7 +29,9 @@ fi
 
 "$output_file" &
 
-inotifywait -m -e modify "$source_file" | while read -r path action file; do
+source_dir=$(dirname "$source_file")
+
+inotifywait -m -r -e modify,create,delete,move "$source_dir" | while read -r path action file; do
         clear
 
         pkill -f "$output_file" 2>/dev/null
