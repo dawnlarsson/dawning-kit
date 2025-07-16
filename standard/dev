@@ -1,7 +1,15 @@
 #!/bin/sh
 
-source_file=${1:-"src/main.c"}
-output_file=${2:-"bin/$(basename "$(pwd)")"}
+# this is a hacky... todo fixup
+verbose=false
+if [ "$1" = "-v" ]; then
+        verbose=true
+        source_file=${2:-"src/main.c"}
+        output_file=${3:-"bin/$(basename "$(pwd)")"}
+else
+        source_file=${1:-"src/main.c"}
+        output_file=${2:-"bin/$(basename "$(pwd)")"}
+fi
 
 cleanup() {
         pkill -f "$output_file" 2>/dev/null
@@ -13,7 +21,13 @@ clear
 
 trap cleanup INT TERM
 
-sh /standard/build "$source_file" "$output_file" && "$output_file" &
+if [ "$verbose" = true ]; then
+        sh /standard/build -v "$source_file" "$output_file"
+else
+        sh /standard/build "$source_file" "$output_file"
+fi
+
+"$output_file" &
 
 inotifywait -m -e modify "$source_file" | while read -r path action file; do
         clear
@@ -21,7 +35,11 @@ inotifywait -m -e modify "$source_file" | while read -r path action file; do
         pkill -f "$output_file" 2>/dev/null
         sleep 0.1
 
-        sh /standard/build "$source_file" "$output_file"
+        if [ "$verbose" = true ]; then
+                sh /standard/build -v "$source_file" "$output_file"
+        else
+                sh /standard/build "$source_file" "$output_file"
+        fi
 
         if [ $? -eq 0 ]; then
                 "$output_file" &

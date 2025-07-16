@@ -1,7 +1,44 @@
 #!/bin/sh
 
-source_file=${1:-"src/main.c"}
-output_file=${2:-"bin/$(basename "$(pwd)")"}
+# Temporary, going to clean this up later
+size_fmt() {
+        local size=$1
+        local formatted_size1
+
+        if [ "$size" -lt 1024 ]; then
+                formatted_size="${size} B"
+        elif [ "$size" -lt 1048576 ]; then # KB
+                local kb_int=$((size / 1024))
+                local kb_rem=$((size % 1024))
+                local kb_dec=$(((kb_rem * 10) / 1024))
+                formatted_size="${kb_int}.${kb_dec} KB"
+        else # MB
+                local mb_int=$((size / 1048576))
+                local mb_rem=$((size % 1048576))
+                local mb_dec=$(((mb_rem * 10) / 1048576))
+                formatted_size="${mb_int}.${mb_dec} MB"
+        fi
+        echo "$formatted_size"
+}
+
+size() {
+        local size=$(stat -c%s "$1")
+        local size_fmt=$(size_fmt "$size")
+        echo "$1: $size bytes ($size_fmt)"
+}
+
+
+
+# this is a hacky... todo fixup
+verbose=false
+if [ "$1" = "-v" ]; then
+        verbose=true
+        source_file=${2:-"src/main.c"}
+        output_file=${3:-"bin/$(basename "$(pwd)")"}
+else
+        source_file=${1:-"src/main.c"}
+        output_file=${2:-"bin/$(basename "$(pwd)")"}
+fi
 
 compiler="gcc"
 
@@ -22,6 +59,10 @@ mkdir -p bin
 $compiler $source_file -o $output_file $flags_base $suppress -Wl,-e,_start
 
 build_result=$?
+
+if [ "$verbose" = true ]; then
+        size $output_file
+fi
 
 chmod +x $output_file
 

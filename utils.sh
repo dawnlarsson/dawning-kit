@@ -37,3 +37,10 @@ size_diff() {
 
         printf "%s: %s → %s (%d%% smaller)\\n" "$label" "$orig_fmt" "$min_fmt" "$percentage"
 }
+
+# just prints the file size in bytes, KB, and MB
+size() {
+        local size=$(stat -c%s "$1")
+        local size_fmt=$(size_fmt "$size")
+        echo "$1: $size bytes ($size_fmt)"
+}

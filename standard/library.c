@@ -242,6 +242,24 @@ __attribute__((optimize("inline-max-size=" #max_size)))
 #define TERM_CYAN ANSI "96m"
 #define TERM_WHITE ANSI "97m"
 
+#define TERM_BG_BLACK ANSI "40m"
+#define TERM_BG_RED ANSI "41m"
+#define TERM_BG_GREEN ANSI "42m"
+#define TERM_BG_YELLOW ANSI "43m"
+#define TERM_BG_BLUE ANSI "44m"
+#define TERM_BG_MAGENTA ANSI "45m"
+#define TERM_BG_CYAN ANSI "46m"
+#define TERM_BG_WHITE ANSI "47m"
+
+#define TERM_MOUSE_ON ANSI "?1003h"
+#define TERM_MOUSE_OFF ANSI "?1003l"
+
+#define TERM_MOUSE_BUTTON_ON ANSI "?1002h"
+#define TERM_MOUSE_BUTTON_OFF ANSI "?1002l"
+
+#define TERM_MOUSE_EXTENDED_ON ANSI "?1006h"
+#define TERM_MOUSE_EXTENDED_OFF ANSI "?1006l"
+
 #define TERM_UP ANSI "A"
 #define TERM_DOWN ANSI "B"
 
