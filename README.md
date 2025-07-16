@@ -136,12 +136,11 @@ less_css "style/*.css" dist/style.css
 
 output: `CSS: 2.0 KB → 1.2 KB (37% smaller)`
 
+## Dawning EOS (Linux Kit)
+aims to provide an easy and highly configurable Linux distro, 
+leveraging Dawning Kit to build an immutable core with zero 3rd party dependencies. 
 
-## Linux Kit
-Linux Distro primitives evolved from [**Dawning EOS**](https://github.com/dawnlarsson/dawning-linux)
-
-> [!WARNING]
-> This is currently being moved from the Dawning EOS repository to this one.
+These primitives evolved from [**Archived Dawning EOS R&D Repo**](https://github.com/dawnlarsson/dawning-linux)
 
 ### Building
 Ensure to cd into `dawning-kit/linux` before running build.sh
