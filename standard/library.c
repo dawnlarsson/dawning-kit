@@ -1877,13 +1877,13 @@ fn file_get_status(file_address source)
 //      file example = {0};
 //
 //      // open or create a file
-//      file file = file_new(address_to example, "vulkan.log", FILE_WRITE | FILE_CREATE | FILE_TRUNCATE);
+//      file_new(address_to example, "vulkan.log", FILE_WRITE | FILE_CREATE | FILE_TRUNCATE);
 //
 //      // open a read only file *if* it exists
-//      file file = file_new(address_to example, "vulkan.log", FILE_READ);
+//      file_new(address_to example, "vulkan.log", FILE_READ);
 //
 //      // open a file for reading and writing, create it if it does not exist
-//      file file = file_new(address_to example, "vulkan.log", FILE_READ_WRITE | FILE_CREATE);
+//      file_new(address_to example, "vulkan.log", FILE_READ_WRITE | FILE_CREATE);
 //
 fn file_new(file_address result, string_address path, positive flags)
 {
