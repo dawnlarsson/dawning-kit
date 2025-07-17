@@ -1773,7 +1773,7 @@ typedef struct
 #define log_file(write, source)       \
         string_format(write,          \
                       "File: %s\n"    \
-                      "Handle: %p\n"  \
+                      "Handle: %b\n"  \
                       "Flags: %p\n"   \
                       "Data: %p\n"    \
                       "Loaded: %b\n", \
@@ -2076,7 +2076,7 @@ address_any library_open(string_address library_path)
 
         if (!is_relative_path)
         {
-                file_new(library_path, FILE_READ | FILE_EXECUTE);
+                file result = file_new(library_path, FILE_READ | FILE_EXECUTE);
         }
 
         return null;
@@ -2098,6 +2098,38 @@ fn library_close(address_any library)
 #ifdef WINDOWS
         FreeLibrary(library);
 #endif
+}
+
+bool raw_windows_paths = false;
+
+p8 working_directory[1024] = {0};
+
+string_address working_directory_get()
+{
+#if defined(WINDOWS)
+        GetCurrentDirectoryA(sizeof(working_directory), working_directory);
+
+        if (!raw_windows_paths)
+                string_replace_all(working_directory, '\\', '/');
+#else
+        system_call_2(syscall(getcwd), (positive)working_directory, sizeof(working_directory));
+#endif
+        return working_directory;
+}
+
+fn working_directory_set(string_address path)
+{
+#if defined(WINDOWS)
+        if (!raw_windows_paths)
+                string_replace_all(path, '/', '\\');
+
+        SetCurrentDirectoryA(path);
+
+#else
+        system_call_1(syscall(chdir), (positive)path);
+#endif
+
+        working_directory_get();
 }
 
 #if defined(LINUX)
