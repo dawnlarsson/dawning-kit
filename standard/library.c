@@ -1953,7 +1953,7 @@ positive file_read(file address_to source, address_any buffer, positive size, po
 
                 positive available = source->status.size - offset;
                 positive to_read = size < available ? size : available;
-                memory_copy(buffer, (p8 *)source->data + offset, to_read);
+                memory_copy(buffer, (p8 address_to)source->data + offset, to_read);
                 return to_read;
         }
 
@@ -2018,7 +2018,7 @@ positive file_write(file address_to source, address_any buffer, positive size, p
                 }
                 else
                 {
-                        memory_copy((p8 *)source->data + offset, buffer, bytes_written);
+                        memory_copy((p8 address_to)source->data + offset, buffer, bytes_written);
                 }
         }
 
@@ -2039,7 +2039,7 @@ positive file_write(file address_to source, address_any buffer, positive size, p
                 }
                 else
                 {
-                        memory_copy((p8 *)source->data + offset, buffer, bytes_written);
+                        memory_copy((p8 address_to)source->data + offset, buffer, bytes_written);
                 }
         }
 
