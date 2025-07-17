@@ -1770,6 +1770,8 @@ typedef struct
         file_status status;
 } file;
 
+#define file_address file address_to
+
 #define log_file(write, source)       \
         string_format(write,          \
                       "File: %s\n"    \
@@ -1821,45 +1823,16 @@ __declspec(dllimport) int __stdcall FreeLibrary(HMODULE);
 positive dawn_limit_max_name_length = 256;
 string dawn_library_fallback_system_paths = "/lib:/usr/local/lib:/usr/lib";
 
-file_status file_get_status(file address_to source)
+bool file_valid(file_address source)
 {
-        file_status result = {0};
-
-#if defined(WINDOWS)
-        BY_HANDLE_FILE_INFORMATION info = {0};
-        if (GetFileInformationByHandle((HANDLE)source->handle, &info))
-        {
-                result.size = info.nFileSizeLow;
-                result.last_access = info.ftLastAccessTime.dwLowDateTime;
-                result.last_edit = info.ftLastWriteTime.dwLowDateTime;
-                result.last_update = info.ftCreationTime.dwLowDateTime;
-        }
-#else
-        system_call_2(syscall(fstat), source->handle, (positive)&result);
-#endif
-
-        return result;
+        return source->handle != -1;
 }
 
-// Lazily-loaded file handle, path relative to the current working directory
-//
 // flags: FILE_WRITE, FILE_READ, FILE_READ_WRITE, FILE_EXECUTE, FILE_TRUNCATE
-//
-// Examples:
-//      // open or create a file
-//      file file = file_new("vulkan.log", FILE_WRITE | FILE_CREATE | FILE_TRUNCATE);
-//
-//      // open a read only file if it exists
-//      file file = file_new("vulkan.log", FILE_READ);
-//
-//      // open a file for reading and writing, create it if it does not exist
-//      file file = file_new("vulkan.log", FILE_READ_WRITE | FILE_CREATE);
-//
-file file_new(string_address path, positive flags)
+fn file_new_lazy(file_address result, string_address path, positive flags)
 {
-        file result = {0};
-        result.path = path;
-        result.flags = flags;
+        result->path = path;
+        result->flags = flags;
 
 #if defined(WINDOWS)
         HANDLE h = CreateFileA(path, ((flags & O_RDONLY) ? GENERIC_READ : 0) | ((flags & O_WRONLY) ? GENERIC_WRITE : 0) | ((flags & O_RDWR) ? (GENERIC_READ | GENERIC_WRITE) : 0),
@@ -1867,23 +1840,62 @@ file file_new(string_address path, positive flags)
                                ((flags & O_CREAT) ? ((flags & O_TRUNC) ? CREATE_ALWAYS : OPEN_ALWAYS) : OPEN_EXISTING),
                                FILE_ATTRIBUTE_NORMAL, NULL);
 
-        result.handle = (h == INVALID_HANDLE_VALUE) ? -1 : (positive)h;
+        result->handle = (h == INVALID_HANDLE_VALUE) ? -1 : (positive)h;
 #else
-        result.handle = system_call_3(syscall(openat), AT_FDCWD, (positive)path, flags);
+        result->handle = system_call_3(syscall(openat), AT_FDCWD, (positive)path, flags);
 #endif
-
-        return result;
 }
 
-bool file_valid(file source)
+// Get file status information, like size, last access time, etc.
+//
+// example usage:
+//      file example = {0};
+//      file_new_lazy(address_of example, "README.md", FILE_READ);
+//      file_get_status(address_of example);
+fn file_get_status(file_address source)
 {
-        return source.handle != -1;
+#if defined(WINDOWS)
+        BY_HANDLE_FILE_INFORMATION info = {0};
+        if (GetFileInformationByHandle((HANDLE)source->handle, address_of info))
+        {
+                result.size = info.nFileSizeLow;
+                result.last_access = info.ftLastAccessTime.dwLowDateTime;
+                result.last_edit = info.ftLastWriteTime.dwLowDateTime;
+                result.last_update = info.ftCreationTime.dwLowDateTime;
+        }
+#else
+        system_call_2(syscall(fstat), source->handle, (positive)address_of source->status);
+#endif
+}
+
+// file handle, path relative to the current working directory
+// use file_new_lazy if you want to open a file without a status syscall
+//
+// flags: FILE_WRITE, FILE_READ, FILE_READ_WRITE, FILE_EXECUTE, FILE_TRUNCATE
+//
+// Examples:
+//      file example = {0};
+//
+//      // open or create a file
+//      file file = file_new(address_to example, "vulkan.log", FILE_WRITE | FILE_CREATE | FILE_TRUNCATE);
+//
+//      // open a read only file *if* it exists
+//      file file = file_new(address_to example, "vulkan.log", FILE_READ);
+//
+//      // open a file for reading and writing, create it if it does not exist
+//      file file = file_new(address_to example, "vulkan.log", FILE_READ_WRITE | FILE_CREATE);
+//
+fn file_new(file_address result, string_address path, positive flags)
+{
+        file_new_lazy(result, path, flags);
+
+        file_get_status(result);
 }
 
 // Load entire file into memory
-address_any file_load(file address_to source)
+address_any file_load(file_address source)
 {
-        if (!file_valid(address_to source))
+        if (!file_valid(source))
                 return null;
 
         if (source->loaded && source->data)
@@ -1904,7 +1916,7 @@ address_any file_load(file address_to source)
 
         DWORD bytes_read;
         SetFilePointer((HANDLE)source->handle, 0, NULL, FILE_BEGIN);
-        if (!ReadFile((HANDLE)source->handle, source->data, (DWORD)size, &bytes_read, NULL) ||
+        if (!ReadFile((HANDLE)source->handle, source->data, (DWORD)size, address_of bytes_read, NULL) ||
             bytes_read != size)
         {
                 VirtualFree(source->data, 0, MEM_RELEASE);
@@ -1940,9 +1952,9 @@ address_any file_load(file address_to source)
         return source->data;
 }
 
-positive file_read(file address_to source, address_any buffer, positive size, positive offset)
+positive file_read(file_address source, address_any buffer, positive size, positive offset)
 {
-        if (!file_valid(address_to source))
+        if (!file_valid(source))
                 return -1;
 
         if (source->loaded && source->data)
@@ -1963,7 +1975,7 @@ positive file_read(file address_to source, address_any buffer, positive size, po
         SetFilePointerEx((HANDLE)source->handle, li_offset, NULL, FILE_BEGIN);
 
         DWORD bytes_read;
-        if (!ReadFile((HANDLE)source->handle, buffer, (DWORD)size, &bytes_read, NULL))
+        if (!ReadFile((HANDLE)source->handle, buffer, (DWORD)size, address_of bytes_read, NULL))
                 return -1;
         return bytes_read;
 #else
@@ -1973,7 +1985,7 @@ positive file_read(file address_to source, address_any buffer, positive size, po
 }
 
 // Unload file data from memory
-fn file_unload(file address_to source)
+fn file_unload(file_address source)
 {
         if (!source->loaded && !source->data)
                 return;
@@ -1992,9 +2004,9 @@ fn file_unload(file address_to source)
 }
 
 // Write to file from provided buffer
-positive file_write(file address_to source, address_any buffer, positive size, positive offset)
+positive file_write(file_address source, address_any buffer, positive size, positive offset)
 {
-        if (!file_valid(address_to source))
+        if (!file_valid(source))
                 return -1;
 
         bool update_memory = source->loaded && source->data && offset < source->status.size;
@@ -2005,7 +2017,7 @@ positive file_write(file address_to source, address_any buffer, positive size, p
         SetFilePointerEx((HANDLE)source->handle, li_offset, NULL, FILE_BEGIN);
 
         DWORD bytes_written;
-        if (!WriteFile((HANDLE)source->handle, buffer, (DWORD)size, &bytes_written, NULL))
+        if (!WriteFile((HANDLE)source->handle, buffer, (DWORD)size, address_of bytes_written, NULL))
                 return -1;
 
         if (update_memory && bytes_written > 0)
@@ -2013,7 +2025,7 @@ positive file_write(file address_to source, address_any buffer, positive size, p
                 positive end_offset = offset + bytes_written;
                 if (end_offset > source->status.size)
                 {
-                        source->status = file_get_status(source);
+                        file_get_status(source);
                         file_unload(source);
                 }
                 else
@@ -2034,7 +2046,7 @@ positive file_write(file address_to source, address_any buffer, positive size, p
 
                 if (end_offset > source->status.size)
                 {
-                        source->status = file_get_status(source);
+                        file_get_status(source);
                         file_unload(source);
                 }
                 else
@@ -2048,9 +2060,9 @@ positive file_write(file address_to source, address_any buffer, positive size, p
 }
 
 // Close file and clean up resources
-fn file_close(file address_to source)
+fn file_close(file_address source)
 {
-        if (!file_valid(address_to source))
+        if (!file_valid(source))
                 return;
 
         file_unload(source);
@@ -2066,7 +2078,7 @@ fn file_close(file address_to source)
 
 // ### Load library the system
 // Traditional: dlopen
-address_any library_open(string_address library_path)
+fn library_open(file_address storage_location, string_address library_path)
 {
 #ifdef WINDOWS
         return LoadLibraryA(library_path);
@@ -2076,10 +2088,8 @@ address_any library_open(string_address library_path)
 
         if (!is_relative_path)
         {
-                file result = file_new(library_path, FILE_READ | FILE_EXECUTE);
+                file_new(storage_location, library_path, FILE_READ | FILE_EXECUTE);
         }
-
-        return null;
 }
 
 // ### Get address of a function/symbol in the library
