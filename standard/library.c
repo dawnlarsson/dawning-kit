@@ -2150,6 +2150,34 @@ fn working_directory_set(string_address path)
 #include "platform/macos.c"
 #endif
 
+// ### Memory allocation
+// Allocates a linear chunk of memory of the specified size.
+address_any memory(positive size)
+{
+        if (size < 4096)
+        {
+                // tbd: bump allocator
+        }
+
+#if defined(WINDOWS)
+        return VirtualAlloc(NULL, size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+#else
+        return (address_any)system_call_3(syscall(mmap), 0, size, FILE_PROTECT_READ | FILE_PROTECT_WRITE | FILE_MAP_PRIVATE | FILE_MAP_ANONYMOUS - 1);
+#endif
+}
+
+fn memory_free(address_any address, positive size)
+{
+        if (!address || size == 0)
+                return;
+
+#if defined(WINDOWS)
+        VirtualFree(address, 0, MEM_RELEASE);
+#else
+        system_call_2(syscall(munmap), (positive)address, size);
+#endif
+}
+
 #endif // DAWN_NO_PLATFORM
 
 #endif // KERNEL_MODE
