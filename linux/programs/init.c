@@ -3,6 +3,11 @@
 #define label TERM_BOLD "[Init]" TERM_RESET " "
 #define init_program "/shell"
 
+struct timespec ts = {
+    .tv_sec = 0,
+    .tv_nsec = 16666667 // 16.67 milliseconds (60 FPS)
+};
+
 b32 main()
 {
         system_call(syscall(setsid));
@@ -12,7 +17,7 @@ b32 main()
         if (process_id == 0)
         {
                 while (1)
-                        sleep(1, 0);
+                        sleep(address_of ts);
         }
 
         p8 address_to argv[] = {init_program};
