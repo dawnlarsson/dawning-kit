@@ -44,6 +44,9 @@ build() {
 
         index=$(doc ../README.md)
         template_replace "<meta template_body>" dist/index.html "$index"
+
+        local side=$(doc side.md)
+        template_replace "<meta template_side>" dist/index.html "$side"
 }
 
 build

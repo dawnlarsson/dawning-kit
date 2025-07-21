@@ -1,3 +1,5 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap');
+
 html,
 body {
         min-height: 100vh;
@@ -7,7 +9,7 @@ body {
         font-size: 16px;
         line-height: 1.45;
         letter-spacing: .016em;
-        font-family: "SF Pro Display", "SF Pro Icons", "Helvetica Neue", "Helvetica", "Arial", sans-serif;
+        font-family: Inter, "SF Pro Display", "SF Pro Icons", "Helvetica Neue", Helvetica, Arial, sans-serif;
 
         overflow-x: hidden !important;
 
