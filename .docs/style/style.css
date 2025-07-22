@@ -272,11 +272,13 @@ article::before {
 
         #menu:checked~[menu_bg] {
                 opacity: 0.7;
+                pointer-events: auto;
         }
 
         [menu_bg] {
                 opacity: 0;
                 transition: opacity 0.2s ease;
+                pointer-events: none;
         }
 
 }
