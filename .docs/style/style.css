@@ -28,9 +28,7 @@
 
 [row] {
         display: flex;
-        flex-wrap: wrap;
         flex-direction: row;
-        row-gap: 24px;
 }
 
 [col] {
@@ -164,16 +162,11 @@ aside li::before {
 }
 
 [mobile] {
-        @media (min-width: 500px) {
-                display: none;
-        }
+        display: none;
 }
 
-[desktop] {
-        @media (max-width: 500px) {
-                display: none;
-        }
-}
+
+[desktop] {}
 
 article {
         padding-top: 48px;
@@ -193,7 +186,54 @@ article::before {
         border-radius: 24px 0 0 0;
 }
 
-@media (max-width: 900px) {
+#menu {
+        display: none;
+}
+
+[menu] {
+        position: fixed;
+        z-index: 4000;
+        left: 0;
+        bottom: 32px;
+        cursor: pointer;
+        font-size: 24px;
+        color: var(--90);
+        background: #e7e7e7;
+        padding: 16px;
+        padding-left: 22px;
+        width: 64px;
+        user-select: none;
+        border-radius: 0 99px 99px 0;
+        transition: scale 0.05s ease;
+}
+
+[menu]:active {
+        scale: 1.2;
+}
+
+[menu_bg] {
+        position: fixed;
+        top: 0;
+        width: 50%;
+        height: 100%;
+        left: 150px;
+        background: radial-gradient(circle at 0% 30%, rgba(0, 255, 255, 0.30) 0%, #ff008c4b 100%, #00000000 3000px);
+        filter: blur(100px);
+        scale: 1.2;
+        z-index: 100;
+        opacity: 0.7;
+}
+
+
+@media (max-width: 870px) {
+
+        [mobile] {
+                display: inherit;
+        }
+
+        [desktop] {
+                display: none;
+        }
 
         article {
                 padding-top: 32px;
@@ -206,6 +246,37 @@ article::before {
         }
 
         aside {
-                display: none !important;
+                position: fixed;
+                top: 0;
+                left: 0;
+                z-index: 1000;
+                background: linear-gradient(90deg, #161616 5%, rgba(0, 0, 0, 0.3) 170%);
+                backdrop-filter: blur(8px);
+                max-width: 300px;
+                width: 100%;
+                height: 100%;
+                padding-left: 24px;
+                padding-top: 25px;
+                border-radius: 0 24px 24px 0;
+                transform: translateX(-100%);
+                transition: transform 0.2s ease;
         }
+
+        aside [logo] p {
+                padding: 0;
+        }
+
+        #menu:checked~aside {
+                transform: translateX(0);
+        }
+
+        #menu:checked~[menu_bg] {
+                opacity: 0.7;
+        }
+
+        [menu_bg] {
+                opacity: 0;
+                transition: opacity 0.2s ease;
+        }
+
 }

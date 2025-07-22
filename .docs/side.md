@@ -11,5 +11,3 @@ C Standard
 - Overview
 - Datatypes
 - Functions
-Python
-- Overview
