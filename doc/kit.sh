@@ -258,13 +258,6 @@ less_css() {
         minified="${minified//=\'/=}"  # Replace =' with =
         minified="${minified//\'\]/]}" # Replace '] with ]
 
-        # Shorten zero values
-        # minified="${minified//0px/0}"
-        # minified="${minified//0em/0}"
-        # minified="${minified//0rem/0}"
-        # minified="${minified//0vh/0}"
-        # minified="${minified//0vw/0}"
-
         # Remove leading zeros from decimal values
         minified="${minified//0\./.}"
 
