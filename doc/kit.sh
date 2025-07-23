@@ -273,6 +273,7 @@ less_css() {
         minified="${minified//url(\'/url(}"
         minified="${minified//\')/)}"
 
+        minified="${minified//font-weight:bolder/font-weight:900}"
         minified="${minified//font-weight:bold/font-weight:700}"
         minified="${minified//font-weight:normal/font-weight:400}"
 
