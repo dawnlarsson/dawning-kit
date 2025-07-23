@@ -1,37 +1,7 @@
-#!/bin/bash
+#!/bin/sh
 
-# ensure we are in .docs directory
-cd "$(dirname "$0")" || exit 1
-
-#
-# Builds dawning documentation
-#
+# Imports utils to build the docs
 . ../doc/kit.sh
-
-# Replaces <meta template_body> with the content of the second argument file
-template_replace() {
-        local placeholder="$1"
-        local template_file="$2"
-        local content="$3"
-        local replacement_content
-        local template_content
-        local original_template_content
-
-        # Read the entire template file into a variable
-        original_template_content=$(<"$template_file")
-        template_content="$original_template_content"
-
-        # Perform the replacement in the variable
-        template_content="${template_content//$placeholder/$content}"
-
-        # Check if any replacement occurred
-        if [ "$template_content" != "$original_template_content" ]; then
-                # Write the modified content back to the original file
-                printf "%s" "$template_content" >"$template_file"
-        else
-                echo "Warning: '$placeholder' not found in $template_file" >&2
-        fi
-}
 
 build() {
         rm -rf dist

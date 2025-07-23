@@ -258,6 +258,27 @@ less_css() {
         minified="${minified//=\'/=}"  # Replace =' with =
         minified="${minified//\'\]/]}" # Replace '] with ]
 
+        # Shorten zero values
+        # minified="${minified//0px/0}"
+        # minified="${minified//0em/0}"
+        # minified="${minified//0rem/0}"
+        # minified="${minified//0vh/0}"
+        # minified="${minified//0vw/0}"
+
+        # Remove leading zeros from decimal values
+        minified="${minified//0\./.}"
+
+        minified="${minified//url(\"/url(}"
+        minified="${minified//\")/)}"
+        minified="${minified//url(\'/url(}"
+        minified="${minified//\')/)}"
+
+        minified="${minified//font-weight:bold/font-weight:700}"
+        minified="${minified//font-weight:normal/font-weight:400}"
+
+        # #00000000 -> #0000
+        minified="${minified//00000000/0000}"
+
         # Remove double quotes around values that don't contain spaces
         processed_minified=""
         temp_minified="$minified"
@@ -287,4 +308,28 @@ less_css() {
         printf '%s' "$minified" >$2
 
         size_diff "$start_size" "${#minified}" "CSS"
+}
+
+# Replaces <meta template_body> with the content of the second argument file
+template_replace() {
+        local placeholder="$1"
+        local template_file="$2"
+        local content="$3"
+        local template_content
+        local original_template_content
+
+        # Read the entire template file into a variable
+        original_template_content=$(<"$template_file")
+        template_content="$original_template_content"
+
+        # Perform the replacement in the variable
+        template_content="${template_content//$placeholder/$content}"
+
+        # Check if any replacement occurred
+        if [ "$template_content" != "$original_template_content" ]; then
+                # Write the modified content back to the original file
+                printf "%s" "$template_content" >"$template_file"
+        else
+                echo "Warning: '$placeholder' not found in $template_file" >&2
+        fi
 }
