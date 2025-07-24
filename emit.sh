@@ -8,7 +8,7 @@
 #       repo: https://github.com/dawnlarsson/dawning-devkit
 #
 
-. ../bit/kit.sh
+. bit.sh
 
 ARCH=$(uname -m)
 

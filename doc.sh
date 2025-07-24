@@ -3,7 +3,7 @@
 #       Dawning Doc Kit (Optimized)
 #       Dawn Larsson (dawning.dev) - 2025 - Apache License 2.0
 #
-. ../utils.sh
+. utils.sh
 
 inline_format() {
         local text="$1"
