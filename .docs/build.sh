@@ -47,7 +47,7 @@ build() {
         local side=$(doc side.md)
         template_replace "<meta template_side>" dist/index.html "$side"
 
-        # doc_folder "dawning" "dist/dawning"
+        doc_folder "dawning" "dist/dawning"
 }
 
 build
