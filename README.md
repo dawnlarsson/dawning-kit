@@ -14,6 +14,22 @@ Dawning Kit, Foundational Software Development Kit. Zero dependency: C standard 
 - **`/standard`** C Standard: Entirely self-contained C standard library, also pioneering new syntax and clearer semantics.
 - **`/test`** Test Kit: Testing utilities, cross architecture
 
+## Example Use
+
+
+```sh
+git clone https://github.com/dawnlarsson/dawning-kit 2>/dev/null || true
+
+. dawning-kit/doc.sh
+```
+
+```sh
+# Required for nested usage of dawning-kit
+KIT_DIR=$(pwd)/dawning-kit
+
+. "$KIT_DIR/bit.sh"
+```
+
 ## Bit Kit
 
 Foundational primitives for code generation, provides "ring zero" level utils for building executables,
