@@ -10,6 +10,7 @@ map_all() {
 
         for file in "$input_folder"/*.md; do
                 if [ -f "$file" ]; then
+                        echo
                 fi
         done
 }
