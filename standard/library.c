@@ -111,7 +111,7 @@ typedef __builtin_va_list var_args;
 
 #if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 202311L
 // ### Initializes a variable argument list.
-#define var_list(list) __builtin_va_start(list, 0)
+#define var_list(list, last_param) __builtin_va_start(list, 0)
 #else
 // ### Initializes a variable argument list.
 // list:        variable argument list to initialize
