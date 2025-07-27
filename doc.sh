@@ -200,8 +200,23 @@ doc() {
                                 continue
                         fi
 
+                        # Images
+                        if [[ "$line" =~ ^[[:space:]]*\!\[.*\]\(.*\)[[:space:]]*$ ]]; then
+                                # Flush paragraph buffer
+                                if [[ -n "$paragraph_buffer" ]]; then
+                                        processed=$(md_inline_format "$paragraph_buffer")
+                                        printf '<p>%s</p>' "$processed"
+                                        paragraph_buffer=""
+                                fi
+                                $in_list && { printf '</ul>'; in_list=false; }
+                                $in_quote && { printf '</blockquote>'; in_quote=false; }
+                                processed=$(md_inline_format "$line")
+                                printf '%s' "$processed"
+                                continue
+                        fi
+
                         # HTML tags
-                        if [[ "$line" =~ ^[[:space:]]*\<[[:alpha:]][[:alnum:]\-]* ]]; then
+                        if [[ "$line" =~ \<[a-zA-Z] ]]; then
                                 # Flush paragraph buffer
                                 if [[ -n "$paragraph_buffer" ]]; then
                                         processed=$(md_inline_format "$paragraph_buffer")
