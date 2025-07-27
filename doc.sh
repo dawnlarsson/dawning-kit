@@ -5,8 +5,12 @@
 #
 . "${KIT_DIR:-./dawning-kit}/utils.sh"
 
-inline_format() {
+md_inline_format() {
         local text="$1"
+
+        # Handle line breaks
+        text="${text//\\\\n/<br>}"
+        text="${text//  $'\n'/<br>}"
 
         # Images: ![alt](src) -> <img src="src" alt="alt"/>
         while [[ "$text" = *'!['*']('*')'* ]]; do
@@ -62,13 +66,23 @@ inline_format() {
                 fi
         done
 
+        # Strikethrough: ~~text~~ -> <del>text</del>
+        while [[ "$text" = *'~~'*'~~'* ]]; do
+                local before="${text%%'~~'*}"
+                local rest="${text#*'~~'}"
+                local strike="${rest%%'~~'*}"
+                local after="${rest#*'~~'}"
+                text="$before<del>$strike</del>$after"
+        done
+
         printf '%s' "$text"
 }
-
 doc() {
         local input_file="$1"
         local in_code=false
         local in_list=false
+        local in_quote=false
+        local paragraph_buffer=""
         local line processed
 
         if [[ -r "$input_file" ]]; then
@@ -76,18 +90,23 @@ doc() {
 
                         # Code blocks
                         if [[ "$line" = '```'* ]]; then
+                                # Flush paragraph buffer
+                                if [[ -n "$paragraph_buffer" ]]; then
+                                        processed=$(md_inline_format "$paragraph_buffer")
+                                        printf '<p>%s</p>' "$processed"
+                                        paragraph_buffer=""
+                                fi
+                                
                                 if $in_code; then
                                         printf '</code></pre>'
                                         in_code=false
                                 else
-                                        $in_list && {
-                                                printf '</ul>'
-                                                in_list=false
-                                        }
+                                        $in_list && { printf '</ul>'; in_list=false; }
+                                        $in_quote && { printf '</blockquote>'; in_quote=false; }
                                         local lang="${line#'```'}"
-                                        lang="${lang// /}" # Remove spaces
+                                        lang="${lang// /}"
                                         if [ -n "$lang" ]; then
-                                                printf '<pre><code code-%s>' "$lang"
+                                                printf '<pre><code class="language-%s">' "$lang"
                                         else
                                                 printf '<pre><code>'
                                         fi
@@ -102,57 +121,116 @@ doc() {
                                 continue
                         fi
 
+                        # Horizontal rules
+                        if [[ "$line" =~ ^([-*_]){3,}[[:space:]]*$ ]]; then
+                                # Flush paragraph buffer
+                                if [[ -n "$paragraph_buffer" ]]; then
+                                        processed=$(md_inline_format "$paragraph_buffer")
+                                        printf '<p>%s</p>' "$processed"
+                                        paragraph_buffer=""
+                                fi
+                                $in_list && { printf '</ul>'; in_list=false; }
+                                $in_quote && { printf '</blockquote>'; in_quote=false; }
+                                printf '<hr>'
+                                continue
+                        fi
+
                         # Headers
                         if [[ "$line" =~ ^(#{1,6})[[:space:]]*(.+)$ ]]; then
-                                $in_list && {
-                                        printf '</ul>'
-                                        in_list=false
-                                }
+                                # Flush paragraph buffer
+                                if [[ -n "$paragraph_buffer" ]]; then
+                                        processed=$(md_inline_format "$paragraph_buffer")
+                                        printf '<p>%s</p>' "$processed"
+                                        paragraph_buffer=""
+                                fi
+                                
+                                $in_list && { printf '</ul>'; in_list=false; }
+                                $in_quote && { printf '</blockquote>'; in_quote=false; }
                                 local level=${#BASH_REMATCH[1]}
                                 local text="${BASH_REMATCH[2]}"
-                                printf '<h%d>%s</h%d>' "$level" "$text" "$level"
+                                processed=$(md_inline_format "$text")
+                                printf '<h%d>%s</h%d>' "$level" "$processed" "$level"
+                                continue
+                        fi
+
+                        # Blockquotes
+                        if [[ "$line" =~ ^">"[[:space:]]*(.*)$ ]]; then
+                                # Flush paragraph buffer
+                                if [[ -n "$paragraph_buffer" ]]; then
+                                        processed=$(md_inline_format "$paragraph_buffer")
+                                        printf '<p>%s</p>' "$processed"
+                                        paragraph_buffer=""
+                                fi
+                                
+                                $in_list && { printf '</ul>'; in_list=false; }
+                                $in_quote || { printf '<blockquote>'; in_quote=true; }
+                                local quote_text="${BASH_REMATCH[1]}"
+                                if [[ -n "$quote_text" ]]; then
+                                        processed=$(md_inline_format "$quote_text")
+                                        printf '<p>%s</p>' "$processed"
+                                fi
                                 continue
                         fi
 
                         # Lists
                         if [[ "$line" =~ ^[-*+][[:space:]]+(.+)$ ]]; then
-                                $in_list || {
-                                        printf '<ul>'
-                                        in_list=true
-                                }
-                                processed=$(inline_format "${BASH_REMATCH[1]}")
+                                # Flush paragraph buffer
+                                if [[ -n "$paragraph_buffer" ]]; then
+                                        processed=$(md_inline_format "$paragraph_buffer")
+                                        printf '<p>%s</p>' "$processed"
+                                        paragraph_buffer=""
+                                fi
+                                
+                                $in_quote && { printf '</blockquote>'; in_quote=false; }
+                                $in_list || { printf '<ul>'; in_list=true; }
+                                processed=$(md_inline_format "${BASH_REMATCH[1]}")
                                 printf '<li>%s</li>' "$processed"
                                 continue
                         fi
 
-                        # Empty lines end lists
-                        if [[ -z "${line// /}" ]]; then # Empty or whitespace only
-                                $in_list && {
-                                        printf '</ul>'
-                                        in_list=false
-                                }
+                        # Empty lines
+                        if [[ -z "${line// /}" ]]; then
+                                if [[ -n "$paragraph_buffer" ]]; then
+                                        processed=$(md_inline_format "$paragraph_buffer")
+                                        printf '<p>%s</p>' "$processed"
+                                        paragraph_buffer=""
+                                fi
+                                $in_list && { printf '</ul>'; in_list=false; }
+                                $in_quote && { printf '</blockquote>'; in_quote=false; }
                                 continue
                         fi
 
-                        # Regular paragraphs
-                        $in_list && {
-                                printf '</ul>'
-                                in_list=false
-                        }
-                        processed=$(inline_format "$line")
+                        # HTML tags
+                        if [[ "$line" =~ ^[[:space:]]*\<[[:alpha:]][[:alnum:]\-]* ]]; then
+                                # Flush paragraph buffer
+                                if [[ -n "$paragraph_buffer" ]]; then
+                                        processed=$(md_inline_format "$paragraph_buffer")
+                                        printf '<p>%s</p>' "$processed"
+                                        paragraph_buffer=""
+                                fi
+                                printf '%s\n' "$line"
+                                continue
+                        fi
 
-                        # Images get special treatment
-                        if [[ "$processed" =~ ^[[:space:]]*\<img[[:space:]] ]]; then
-                                printf '%s' "$processed"
+                        # add to paragraph buffer
+                        $in_list && { printf '</ul>'; in_list=false; }
+                        $in_quote && { printf '</blockquote>'; in_quote=false; }
+                        
+                        if [[ -n "$paragraph_buffer" ]]; then
+                                paragraph_buffer="$paragraph_buffer $line"
                         else
-                                printf '<p>%s</p>' "$processed"
+                                paragraph_buffer="$line"
                         fi
 
                 done <"$input_file"
 
-                # Cleanup
+                if [[ -n "$paragraph_buffer" ]]; then
+                        processed=$(md_inline_format "$paragraph_buffer")
+                        printf '<p>%s</p>' "$processed"
+                fi
                 $in_code && printf '</code></pre>'
                 $in_list && printf '</ul>'
+                $in_quote && printf '</blockquote>'
         fi
 }
 
