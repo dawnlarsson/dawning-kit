@@ -673,18 +673,18 @@ typedef typeof(sizeof(0)) sized;
 #define register_get(reg, dest) ir(ASM(copy) " %0, " ASM(reg) : "=r"(dest))
 #define register_set(reg, src) ir(ASM(copy) " " ASM(reg) ", %0" : : "r"(src))
 
-// a thread-local storage variable, unique to each thread
-#define local __thread
-
 // ### String address
 // a pointer to a string in memory, usually the first p8 character of the string
 typedef p8 address_to string_address;
 typedef p8 string[];
+typedef const p8 address_to const_string;
 
-typedef struct
-{
-        b64 counter;
-} atomic64;
+// Helper function for writing static strings to a writer with data + length
+// example with:
+//      write(str("Hello, world!\n"));
+// example without:
+//      write("Hello, world!\n", 14); // error prone!
+#define str(string) (string), (sizeof(string))
 
 #define string_index(source, index) (address_to((source) + (index)))
 #define string_get(source) (address_to(source))
@@ -711,13 +711,6 @@ typedef struct
 #define clamp(value, min, max) ((value)less_than(min) ? (min) : (value)greater_than(max) ? (max) \
                                                                                          : (value))
 
-// Helper function for writing static strings to a writer with data + length
-// example with:
-//      write(str("Hello, world!\n"));
-// example without:
-//      write("Hello, world!\n", 14); // error prone!
-#define str(string) (string), (sizeof(string))
-
 // Writer functions are intended as flexible outout functions passed to functions as arguments
 // and should be easy for compiler to optimize into a zero cost abstraction
 // if length is zero, the function should write until a null terminator is reached (string_length)
@@ -725,6 +718,14 @@ typedef struct
 typedef fn(address_to writer)(address_any data, positive length);
 typedef fn(address_to writer_string)(string_address string);
 typedef fn(address_to writer_string_len)(string_address string, positive length);
+
+// a thread-local storage variable, unique to each thread
+#define local __thread
+
+typedef struct
+{
+        b64 counter;
+} atomic64;
 
 #ifndef DAWN_MODERN_C_NO_MATH
 
