@@ -5,27 +5,27 @@ kernel_extract_dir="linux/"
 download_artifacts_dir="artifacts/"
 keys_dir=$download_artifacts_dir"keys/"
 trusted_keys="torvalds@kernel.org gregkh@kernel.org"
-kernel_version="6.16"
-kernel_download="https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.16.tar.xz"
+kernel_version="6.16.4"
+kernel_download="https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.16.4.tar.xz"
 kernel_pgp="
 -----BEGIN PGP SIGNATURE-----
 Comment: This signature is for the .tar version of the archive
-Comment: git archive --format tar --prefix=linux-6.16/ v6.16
+Comment: git archive --format tar --prefix=linux-6.16.4/ v6.16.4
 Comment: git version 2.50.1
 
-iQIzBAABCgAdFiEEZH8oZUiU471FcZm+ONu9yGCSaT4FAmiG9nUACgkQONu9yGCS
-aT7fERAAlnGWUA+ggUuKlmN2LbmndlFCwyR/tSUjKn7KMlfSumBA1q/UTICPZWoZ
-RD726j1yXAi2aUdZSem36Ri5IM8/OdqQgL4IQzBiv39yppH0xlkTVqXMQwI8gPpL
-MSfvRUno0D3WeHEY5zircsuj4lTRUb56tBqnFiz1hZ91Z6pWVlNuQV8xfA1lBk/9
-PzO6ZAZ16z4KIyyJbD3dtbP1D1L7w8CsJfR9WDun20AbUE06ypKIG8euLwWSmz1X
-Sg7j9mSORRF8g0U85t8rYv/b1PN0MC1DnFA1+GN0+UMd4rqMLqqqqLx7LscoYPl2
-mJx10uZrSXtaNXBXSKi/FQ/FAhxarJnrF5EMeugPN+Tq5+KjBGccK6D+jjll3MQG
-AgDrGTkTo/yUxGDJcjuJBVo0MTChNcnVioQLYOtbQk6lMrHpkgZSSUIfdMbOwfsf
-/MhMgj4pKbooEvdeI1J2QdqegwuHUer/ZOatEPrQS/T5hGAXHreG2/wMW9LtInAH
-qDKfZyUTYqI3EvvFj6QJuVWdtg2BvLx8aQXAaGr1vrSH9cd9a+N5VhsRKXI4XbE+
-L9le/9Ikix1xP9Phn5TBA2AI+FPBdDQTlC7BQdbA/jaqAOYmHuklc6HcDvQRteqq
-eTn5vbhF4BoVyS/Yr7emxWvMT/n8svMUvOGgQhFgCTVfgBSPIMg=
-=urdi
+iQIzBAABCgAdFiEEZH8oZUiU471FcZm+ONu9yGCSaT4FAmiwaXoACgkQONu9yGCS
+aT7BChAAmu+gwtJvLxb67BjvCVAw/DwFstXZ3mq34Nbgu+ct+oPH6sUDBWnB80YS
+bK5M+B4eLA4qxRsq1FZxNo/tJpIA2qtW1NtVqStnlBeFG3i2IJJX2oZ392I5uFyF
+o2M6HudRjGsSviWNukbu0r/1EJV4AEEqauqu+4C7P8ZbknSJ6Gyjr/319wVDhHnT
+sdm8dCYg2Jpda/lAOiW6j42y+Jt9kEpy9ND2AwCTKDe8063Zbby6IMA9QGfYtO3f
+ZnovEgd8aa0Kvh6iXdrgSJfdddasF8c78bw+p8VEjw69U1L9l6dNXIi1aU1tP819
+Du63U9TjG7coShEpB91lfCDHdHDpkZSXCXlk/zRpb9y5TVcG42Bm3P3aC258dwSS
+L6NG6KBFu1ZtXy0X4xySWxJj1/MYJ5Vdm1SV4+WWZZ0QIo4Bdo4+UVFBl+wv9lPF
+lSBhdfgY3pO/E/TBwGGeAhVrqpIKEImpPWi4W5CKM2LcybCdJ41WCfO/aEBStL/p
+fEYsMyLMm/4q6U2ojPBDCvhJmCH/oCz2ndGVRencMYaCnX/9zb7rk7Z9zUeqWIpC
+Tphy0UOkYPLHc56ioeoSDKrkoMpwAIwLDBUwX9T65c3NmLmowfkZFAkEcYSwEpVA
+9z9iy6QgYTxlqpeE6AieMhr00NM8yUJmFDWVjvIxzQ7YGBGQDdM=
+=arwx
 -----END PGP SIGNATURE-----
 "
 
