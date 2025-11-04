@@ -1,6 +1,8 @@
+#!/bin/bash
+
 size_fmt() {
         local size=$1
-        local formatted_size1
+        local formatted_size
 
         if [ "$size" -lt 1024 ]; then
                 formatted_size="${size} B"
@@ -30,7 +32,8 @@ size_diff() {
                 percentage=$((savings * 100 / original))
         fi
 
-        local orig_fmt min_fmt
+        local orig_fmt
+        local min_fmt
 
         orig_fmt=$(size_fmt "$original")
         min_fmt=$(size_fmt "$minified")
@@ -40,7 +43,11 @@ size_diff() {
 
 # just prints the file size in bytes, KB, and MB
 size() {
-        local size=$(stat -c%s "$1")
-        local size_fmt=$(size_fmt "$size")
+        local size
+        local size_fmt
+        
+        size=$(stat -c%s "$1")
+        size_fmt=$(size_fmt "$size")
+        
         echo "$1: $size bytes ($size_fmt)"
 }
