@@ -3,6 +3,7 @@
 #       Dawning Doc Kit (Optimized)
 #       Dawn Larsson (dawning.dev) - 2025 - Apache License 2.0
 #
+# shellcheck source=/dev/null
 . "${KIT_DIR:-./dawning-kit}/utils.sh"
 
 md_inline_format() {
@@ -251,17 +252,17 @@ doc() {
 
 html_tag() {
         if [ -n "$3" ]; then
-                printf "<$1 $3>$2</$1>"
+                printf "<%s %s>%s</%s>" "$1" "$3" "$2" "$1"
         else
-                printf "<$1>$2</$1>"
+                printf "<%s>%s</%s>" "$1" "$2" "$1"
         fi
 }
 
 html_tag_closed() {
         if [ -n "$2" ]; then
-                printf "<$1 $2 />"
+                printf "<%s %s />" "$1" "$2"
         else
-                printf "<$1 />"
+                printf "<%s />" "$1"
         fi
 }
 
@@ -392,7 +393,7 @@ less_css() {
         processed_minified+="$temp_minified"
         minified="$processed_minified"
 
-        printf '%s' "$minified" >$2
+        printf '%s' "$minified" >"$2"
 
         size_diff "$start_size" "${#minified}" "CSS"
 }
