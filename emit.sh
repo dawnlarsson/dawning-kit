@@ -8,6 +8,7 @@
 #       repo: https://github.com/dawnlarsson/dawning-devkit
 #
 
+# shellcheck disable=SC1091
 . "${KIT_DIR:-./dawning-kit}/bit.sh"
 
 ARCH=$(uname -m)
