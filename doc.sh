@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-#       Dawning Doc Kit (Optimized)
+#       Dawning Doc Kit
 #       Dawn Larsson (dawning.dev) - 2025 - Apache License 2.0
 #
 # shellcheck source=/dev/null
@@ -53,16 +53,25 @@ md_inline_format() {
                 text="$before<a href=\"$url\">$link_text</a>$end"
         done
 
-        # italic: *text* -> <em>text</em>
-        while [[ "$text" = *'*'*'*'* ]] && [[ "$text" != *'**'* ]]; do
+        # Italic: *text* -> <em>text</em>
+        while [[ "$text" = *'*'*'*'* ]]; do
                 local before="${text%%'*'*}"
                 local rest="${text#*'*'}"
                 local italic="${rest%%'*'*}"
                 local after="${rest#*'*'}"
 
-                if [[ "$before" != *'*' ]] && [[ "$after" != '*'* ]]; then
-                        text="$before<em>$italic</em>$after"
+                # Make sure we're not in the middle of a bold tag or already processed content
+                # Check if the asterisk we found is not preceded or followed by another asterisk
+                if [[ "$before" != *'*' && "${after:0:1}" != '*' ]]; then
+                        # Additional check: make sure we actually have content between asterisks
+                        if [[ -n "$italic" ]]; then
+                                text="$before<em>$italic</em>$after"
+                        else
+                                # No content between asterisks, skip this pair
+                                break
+                        fi
                 else
+                        # This is part of a bold marker or adjacent to another asterisk, skip
                         break
                 fi
         done
@@ -78,6 +87,7 @@ md_inline_format() {
 
         printf '%s' "$text"
 }
+
 doc() {
         local input_file="$1"
         local in_code=false
