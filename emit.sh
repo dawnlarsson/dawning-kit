@@ -190,7 +190,7 @@ ret() {
 syscall() {
         case "$ARCH" in
         x86_64)
-                bit_8 0x0f 0x05 # syscall
+                bit_8 0x0f, 0x05 # syscall
                 ;;
         aarch64)
                 bit_32 0xd4000001 # svc #0
