@@ -8,6 +8,7 @@
 #       Dawn Larsson (dawning.dev) - 2022 - Apache License 2.0
 #       repo: https://github.com/dawnlarsson/dawning-devkit
 #
+# shellcheck disable=SC2059
 
 BIG_ENDIAN=${BIG_ENDIAN:-0}
 
@@ -27,7 +28,12 @@ is_decimal() {
 
 is_quoted() {
         case "$1" in
-        \"*\") return 0 ;;
+        \"*\") 
+                case "$1" in
+                *\") return 0 ;;
+                *) return 1 ;;
+                esac
+                ;;
         *) return 1 ;;
         esac
 }
@@ -46,8 +52,8 @@ emit_hex_bytes() {
         if [ "$BIG_ENDIAN" -eq 1 ]; then
                 i=0
                 while [ "$i" -lt "$width" ]; do
-                        byte="${val#"${val%??}"}"
-                        val="${val%??}"
+                        byte="${val%"${val#??}"}"
+                        val="${val#??}"
                         printf "\\x$byte"
                         i=$((i + 2))
                 done
@@ -171,8 +177,8 @@ hex_dump() {
                                 ascii=""
                                 for hex_byte in $line; do
                                         ascii_val=$(printf "%d" "0x$hex_byte")
-                                        if [ $ascii_val -ge 32 ] && [ $ascii_val -le 126 ]; then
-                                                ascii_char=$(printf "\\$(printf %03o $ascii_val)")
+                                        if [ "$ascii_val" -ge 32 ] && [ "$ascii_val" -le 126 ]; then
+                                                ascii_char=$(printf "\\$(printf '%03o' "$ascii_val")")
                                                 ascii="$ascii$ascii_char"
                                         else
                                                 ascii="$ascii."
@@ -189,9 +195,21 @@ hex_dump() {
 elf() {
         output="$1"
         code_generator="$2"
+        
+        if [ -z "$output" ] || [ -z "$code_generator" ]; then
+                echo "Error: missing arguments" >&2
+                return 1
+        fi
 
         code_section="/tmp/code_section_$$"
-        $code_generator >"$code_section"
+        trap 'rm -f "$code_section"' EXIT INT TERM
+        
+        if ! $code_generator >"$code_section" 2>/dev/null; then
+                echo "Error: code generator failed" >&2
+                rm -f "$code_section"
+                return 1
+        fi
+        
         code_size=$(wc -c <"$code_section")
 
         ELF_OFFSET=65536
@@ -203,80 +221,110 @@ elf() {
         {
                 # ELF Header (64 bytes)
                 bit_8 0x7f, "ELF", 2, 1, 1, 0
-                bit_64 0                              # padding
-                bit_16 2                              # e_type: ET_EXEC
-                bit_16 0x3e                           # e_machine: EM_X86_64
-                bit_32 1                              # e_version
-                bit_64 $((ENTRY_OFFSET + ELF_OFFSET)) # e_entry
-                bit_64 $ELF_HEADER_SIZE               # e_phoff
-                bit_64 0                              # e_shoff
-                bit_32 0                              # e_flags
-                bit_16 $ELF_HEADER_SIZE               # e_ehsize
-                bit_16 $PROGRAM_HEADER_SIZE           # e_phentsize
-                bit_16 1                              # e_phnum
-                bit_16 64                             # e_shentsize
-                bit_16 0                              # e_shnum
-                bit_16 0                              # e_shstrndx
+                bit_64 0
+                bit_16 2
+                bit_16 0x3e
+                bit_32 1
+                bit_64 $((ENTRY_OFFSET + ELF_OFFSET))
+                bit_64 $ELF_HEADER_SIZE
+                bit_64 0
+                bit_32 0
+                bit_16 $ELF_HEADER_SIZE
+                bit_16 $PROGRAM_HEADER_SIZE
+                bit_16 1
+                bit_16 64
+                bit_16 0
+                bit_16 0
 
                 # Program Header (56 bytes)
-                bit_32 1           # p_type: PT_LOAD
-                bit_32 7           # p_flags: PF_R | PF_W | PF_X
-                bit_64 0           # p_offset
-                bit_64 $ELF_OFFSET # p_vaddr
-                bit_64 $ELF_OFFSET # p_paddr
-                bit_64 $TOTAL_SIZE # p_filesz
-                bit_64 $TOTAL_SIZE # p_memsz
-                bit_64 0x1000      # p_align
+                bit_32 1
+                bit_32 7
+                bit_64 0
+                bit_64 $ELF_OFFSET
+                bit_64 $ELF_OFFSET
+                bit_64 $TOTAL_SIZE
+                bit_64 $TOTAL_SIZE
+                bit_64 0x1000
 
                 cat "$code_section"
 
-        } >"$output"
+        } >"$output" || { echo "Error: failed to write output" >&2; rm -f "$code_section"; return 1; }
 
-        chmod +x "$output"
+        chmod +x "$output" || { echo "Error: failed to set executable" >&2; rm -f "$code_section"; return 1; }
         rm -f "$code_section"
+        trap - EXIT INT TERM
 }
 
 # variable-length integer encoding
 wasm_var() {
         local value="$1"
-        while [ $value -ge 128 ]; do
+        while [ "$value" -ge 128 ]; do
                 bit_8 $((value & 0x7F | 0x80))
                 value=$((value >> 7))
         done
         bit_8 $((value & 0x7F))
 }
 
+wasm_svar() {
+        local value="$1"
+        local more=1
+        
+        while [ $more -eq 1 ]; do
+                local byte=$((value & 0x7F))
+                value=$((value >> 7))
+                
+                if { [ $value -eq 0 ] && [ $((byte & 0x40)) -eq 0 ]; } || \
+                   { [ $value -eq -1 ] && [ $((byte & 0x40)) -ne 0 ]; }; then
+                        more=0
+                else
+                        byte=$((byte | 0x80))
+                fi
+                
+                bit_8 $byte
+        done
+}
+
 wasm_section() {
         local section_id="$1"
         local content_generator="$2"
 
-        local temp_section="/tmp/wasm_section_$$"
-        $content_generator >"$temp_section"
-        local section_size=$(wc -c <"$temp_section")
+        [ -z "$content_generator" ] && { echo "Error: missing content generator" >&2; return 1; }
 
-        bit_8 $section_id
-        wasm_var $section_size
+        local temp_section="/tmp/wasm_section_$$"
+        local section_size
+        trap 'rm -f "$temp_section"' EXIT INT TERM
+        
+        $content_generator >"$temp_section" || { rm -f "$temp_section"; return 1; }
+        section_size=$(wc -c <"$temp_section")
+
+        bit_8 "$section_id"
+        wasm_var "$section_size"
         cat "$temp_section"
         rm -f "$temp_section"
+        trap - EXIT INT TERM
 }
 
 wasm() {
         local output="$1"
         local code_generator="$2"
 
-        local code_section="/tmp/wasm_code_section"
-        $code_generator >"$code_section"
+        if [ -z "$output" ] || [ -z "$code_generator" ]; then
+                echo "Error: missing arguments" >&2
+                return 1
+        fi
+
+        local code_section="/tmp/code_section_$$"
+        trap 'rm -f "$code_section"' EXIT INT TERM
+        
+        $code_generator >"$code_section" || { rm -f "$code_section"; return 1; }
 
         {
-                # WASM header
-                bit_8 0x00, 0x61, 0x73, 0x6d # magic
-                bit_32 0x01                  # version
-
-                # User's code generator output
+                bit_8 0x00, 0x61, 0x73, 0x6d
+                bit_32 0x01
                 cat "$code_section"
+        } >"$output" || { rm -f "$code_section"; return 1; }
 
-        } >"$output"
-
-        chmod +x "$output"
+        chmod +x "$output" || { rm -f "$code_section"; return 1; }
         rm -f "$code_section"
+        trap - EXIT INT TERM
 }
