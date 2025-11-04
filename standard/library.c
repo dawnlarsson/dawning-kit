@@ -154,12 +154,6 @@ typedef __builtin_va_list var_args;
 #define bit_flip(bit, address) (address_to(address) ^= (1u << (bit)))
 #define bit_mask(bit) (1u << (bit))
 
-#undef container_of
-#define container_of(address, type, member) ({                                    \
-        const typeof(((type address_to)0)->member) address_to __mptr = (address); \
-        (type address_to)((char address_to)__mptr - offsetof(type, member));      \
-})
-
 #define struct_from_field(field_address, struct_type, field_name) \
         container_of(field_address, struct_type, field_name)
 
@@ -366,7 +360,7 @@ typedef bipolar_range int b32;
 // linguistic:  (zero) to (plus) eighteen quintillion...
 // traditional: unsigned long int
 // alt:         array of 64 bits
-typedef positive_range long int p64;
+typedef positive_range long long int p64;
 #define p64_max 18446744073709551615
 #define p64_min 0
 #define p64_char_max 20
@@ -380,40 +374,12 @@ typedef positive_range long int p64;
 // linguistic:  (minus) nine quintillion... to (plus) nine quintillion...
 // traditional: long int
 // alt:         array of 64 bits
-typedef bipolar_range long int b64;
+typedef bipolar_range long long int b64;
 #define b64_max 9223372036854775807
 #define b64_min -9223372036854775808
 #define b64_char_max 21
 #define b64_bytes 8
 #define b64_bits 64
-
-// ### Positive range 128 bit integer
-// range:       0 to +340282366920938463463374607431768211455
-// memory:      2x [ 00000000 | 00000000 | 00000000 | 00000000 | 00000000 | 00000000 | 00000000 | 00000000 ]
-// hex:         2x [ 0x00 | 0x00 | 0x00 | 0x00 | 0x00 | 0x00 | 0x00 | 0x00 ]
-// linguistic:  (zero) to (plus) three hundred forty undecillion...
-// traditional: unsigned long long int
-// alt:         array of 128 bits
-typedef positive_range long long int p128;
-#define p128_max 340282366920938463463374607431768211455
-#define p128_min 0
-#define p128_char_max 39
-#define p128_bytes 16
-#define p128_bits 128
-
-// ### Bipolar range 128 bit integer
-// range:       -170141183460469231731687303715884105727 to +170141183460469231731687303715884105727
-// memory:      2x [ 00000000 | 00000000 | 00000000 | 00000000 | 00000000 | 00000000 | 00000000 | 00000000 ]
-// hex:         2x [ 0x00 | 0x00 | 0x00 | 0x00 | 0x00 | 0x00 | 0x00 | 0x00 ]
-// linguistic:  (minus) one hundred seventy undecillion... to (plus) one hundred seventy undecillion...
-// traditional: long long int
-// alt:         array of 128 bits
-typedef bipolar_range long long int b128;
-#define b128_max 170141183460469231731687303715884105727
-#define b128_min -170141183460469231731687303715884105728
-#define b128_char_max 40
-#define b128_bytes 16
-#define b128_bits 128
 
 #if BITS != 64
 __extension__ typedef bipolar_range long long int i64;
@@ -435,14 +401,6 @@ typedef double f64;
 #define f64_char_max 20
 #define f64_bytes 8
 #define f64_bits 64
-
-typedef long double f128;
-#define f128_max 1.18973149535723176508575932662800702e+4932
-#define f128_min 3.36210314311209350626267781732175260e-4932
-#define f128_epsilon 1.92592994438723585305597794258492732e-34
-#define f128_char_max 40
-#define f128_bytes 16
-#define f128_bits 128
 
 #if BITS == 64
 typedef f64 decimal;
@@ -697,10 +655,10 @@ typedef const p8 address_to const_string;
         ((source) == (check) ? ((source) = (value), true) : false)
 
 #undef min
-#define min(value, input) ((value)greater_than(input) ? (input) : (value))
+#define min(value, input) ((value) > (input) ? (input) : (value))
 
 #undef max
-#define max(value, input) ((value)less_than(input) ? (input) : (value))
+#define max(value, input) ((value) < (input) ? (input) : (value))
 
 #define square(value) ((value) * (value))
 #define cube(value) ((value) * (value) * (value))
@@ -708,8 +666,8 @@ typedef const p8 address_to const_string;
 #define floor(a) ((decimal)((bipolar)(a)))
 
 #undef clamp
-#define clamp(value, min, max) ((value)less_than(min) ? (min) : (value)greater_than(max) ? (max) \
-                                                                                         : (value))
+#define clamp(value, min, max) ((value) < (min) ? (min) : (value) > (max) ? (max) \
+                                                                          : (value))
 
 // Writer functions are intended as flexible outout functions passed to functions as arguments
 // and should be easy for compiler to optimize into a zero cost abstraction
@@ -970,9 +928,8 @@ positive string_length(string_address source)
 {
         string_address step = source;
 
-        while
-                string_get(step)
-                    step++;
+        while (string_get(step))
+                step++;
 
         return step - source;
 }
@@ -1006,9 +963,10 @@ string_address string_copy(string_address destination, string_address source)
 {
         string_address start = destination;
 
-        while
-                string_get(source)
-                    string_set(destination++, string_get(source++));
+        while (string_get(source))
+                string_set(destination++, string_get(source++));
+
+        string_set(destination, end);
 
         return start;
 }
@@ -1022,6 +980,8 @@ string_address string_copy_max(string_address destination, string_address source
         while (length-- && string_get(source))
                 string_set(destination++, string_get(source++));
 
+        string_set(destination, end);
+
         return start;
 }
 
@@ -1033,14 +993,13 @@ string_address string_copy_max(string_address destination, string_address source
 // traditional: strchr
 string_address string_first_of(string_address source, p8 character)
 {
-        while
-                string_get(source)
-                {
-                        if string_is (source, character)
-                                return source;
+        while (string_get(source))
+        {
+                if string_is (source, character)
+                        return source;
 
-                        source++;
-                }
+                source++;
+        }
 
         return (string_get(source) == character) ? source : null;
 }
@@ -1055,14 +1014,13 @@ string_address string_last_of(string_address source, p8 character)
 {
         string_address last = null;
 
-        while
-                string_get(source)
-                {
-                        if string_is (source, character)
-                                last = source;
+        while (string_get(source))
+        {
+                if string_is (source, character)
+                        last = source;
 
-                        source++;
-                }
+                source++;
+        }
 
         return last;
 }
@@ -1081,23 +1039,16 @@ string_address string_cut(string_address string, b8 cut_symbol)
 {
         string_address step = string;
 
-        while
-                string_get(step)
+        while (string_get(step))
+        {
+                if (string_is(step, cut_symbol))
                 {
-                        step++;
-
-                        if string_not (step, cut_symbol)
-                                continue;
-
                         string_set(step, end);
-
                         step++;
-
-                        if string_is (step, end)
-                                return null;
-
-                        return step;
+                        return string_get(step) ? step : null;
                 }
+                step++;
+        }
 
         return null;
 }
@@ -1108,29 +1059,31 @@ string_address string_find(string_address string, string_address input)
         string_address step = string;
         string_address step_input = input;
 
-        while
-                string_get(step)
+        while (string_get(step))
+        {
+                if (string_not(step, string_get(step_input)))
                 {
-                        if string_not (step, string_get(step_input))
-                                step++;
-
-                        string_address find = step;
-
-                        while
-                                string_get(step_input)
-                                {
-                                        if string_not (step, string_get(step_input))
-                                                break;
-
-                                        step++;
-                                        step_input++;
-                                }
-
-                        if string_is (step_input, end)
-                                return find;
-
-                        step_input = input;
+                        step++;
+                        continue;
                 }
+
+                string_address find = step;
+
+                while
+                        string_get(step_input)
+                        {
+                                if string_not (step, string_get(step_input))
+                                        break;
+
+                                step++;
+                                step_input++;
+                        }
+
+                if string_is (step_input, end)
+                        return find;
+
+                step_input = input;
+        }
 
         return null;
 }
@@ -1139,14 +1092,13 @@ fn string_replace_all(string_address string, b8 cut_symbol, b8 replace_symbol)
 {
         string_address step = string;
 
-        while
-                string_get(step)
-                {
-                        if string_is (step, cut_symbol)
-                                string_set(step, replace_symbol);
+        while (string_get(step))
+        {
+                if string_is (step, cut_symbol)
+                        string_set(step, replace_symbol);
 
-                        step++;
-                }
+                step++;
+        }
 }
 
 fn string_get_environment(const b8 address_to name)
@@ -1287,95 +1239,93 @@ fn string_format(writer write, string_address format, ...)
         string_address segment_start = format;
         positive index = 0;
 
-        while
-                string_get(format)
+        while (string_get(format))
+        {
+                if string_not (format, '%')
                 {
-                        if string_not (format, '%')
-                        {
-                                format++;
-                                index++;
-                                continue;
-                        }
-
-                        if (index > 0)
-                                write(segment_start, format - segment_start);
-
                         format++;
-                        index = 0;
+                        index++;
+                        continue;
+                }
 
-                        switch
-                                string_get(format)
-                                {
-                                case 'b':
-                                {
-                                        // todo: fix, long int breaks here...
-                                        int raw_value = var_list_get(args, int);
-                                        bipolar value = (bipolar)raw_value;
-                                        bipolar_to_string(write, value);
-                                        break;
-                                }
-                                case 'p':
-                                {
-                                        positive value = var_list_get(args, positive);
-                                        positive_to_string(write, value);
-                                        break;
-                                }
+                if (index > 0)
+                        write(segment_start, format - segment_start);
+
+                format++;
+                index = 0;
+
+                switch (string_get(format))
+                {
+                case 'b':
+                {
+                        // todo: fix, long int breaks here...
+                        int raw_value = var_list_get(args, int);
+                        bipolar value = (bipolar)raw_value;
+                        bipolar_to_string(write, value);
+                        break;
+                }
+                case 'p':
+                {
+                        positive value = var_list_get(args, positive);
+                        positive_to_string(write, value);
+                        break;
+                }
 #ifndef KERNEL_MODE // Temporary
-                                case 'f':
-                                {
-                                        decimal value = var_list_get(args, decimal);
-                                        decimal_to_string(write, value);
-                                        break;
-                                }
+                case 'f':
+                {
+                        decimal value = var_list_get(args, decimal);
+                        decimal_to_string(write, value);
+                        break;
+                }
 #endif
-                                case 's':
-                                {
-                                        string_address value = var_list_get(args, string_address);
-                                        write(value, 0);
-                                        break;
-                                }
-                                case '%':
-                                        write("%", 1);
-                                        break;
+                case 's':
+                {
+                        string_address value = var_list_get(args, string_address);
+                        write(value, 0);
+                        break;
+                }
+                case '%':
+                        write("%", 1);
+                        break;
 
 // Optional user extensions 0 - 9
 // if up to 9 is needed open a pr!
 #ifdef string_format_extension_0
-                                case '0':
-                                {
-                                        string_format_extension_0(write, args);
-                                        break;
-                                }
+                case '0':
+                {
+                        string_format_extension_0(write, args);
+                        break;
+                }
 #endif
 #ifdef string_format_extension_1
-                                case '1':
-                                {
-                                        string_format_extension_1(write, args);
-                                        break;
-                                }
+                case '1':
+                {
+                        string_format_extension_1(write, args);
+                        break;
+                }
 #endif
 #ifdef string_format_extension_2
-                                case '2':
-                                {
-                                        string_format_extension_2(write, args);
-                                        break;
-                                }
+                case '2':
+                {
+                        string_format_extension_2(write, args);
+                        break;
+                }
 #endif
 #ifdef string_format_extension_3
-                                case '3':
-                                {
-                                        string_format_extension_3(write, args);
-                                        break;
-                                }
+                case '3':
+                {
+                        string_format_extension_3(write, args);
+                        break;
+                }
 #endif
 
-                                case end:
-                                        return;
-                                }
-
-                        format++;
-                        segment_start = format;
+                case end:
+                        return;
                 }
+
+                format++;
+                segment_start = format;
+        }
 
         write(segment_start, format - segment_start);
 
@@ -1480,7 +1430,7 @@ fn_asm(system_call_2, bipolar, positive syscall, positive argument_1, positive a
 // invokes operating system functions externally to the program
 // returns: status code of the system call
 // syscall: the system call number
-fn_asm(system_call_3, bipolar, positive syscall, positive argument_1, positive _startargument_2, positive argument_3)
+fn_asm(system_call_3, bipolar, positive syscall, positive argument_1, positive argument_2, positive argument_3)
 {
         // syscall number
         copy(reg_1, syscall_slot);
@@ -1926,10 +1876,10 @@ address_any file_load(file_address source)
         }
 #else
 
-        source->data = (address_any)system_call_5(syscall(mmap),
+        source->data = (address_any)system_call_6(syscall(mmap),
                                                   0, pages * page_size,
                                                   FILE_PROTECT_READ | FILE_PROTECT_WRITE,
-                                                  FILE_MAP_PRIVATE | FILE_MAP_ANONYMOUS - 1, 0);
+                                                  FILE_MAP_PRIVATE | FILE_MAP_ANONYMOUS, -1, 0);
 
         if (source->data == address_bad)
         {
