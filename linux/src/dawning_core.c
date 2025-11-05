@@ -11,6 +11,9 @@
 #define DAWN_MODERN_C_KERNEL
 #include "../../standard/library.c"
 
+int path_mount(const char *dev_name, struct path *path,
+               const char *type_page, unsigned long flags, void *data_page);
+
 #define log_k(fmt, ...) \
         pr_alert("[Dawning] " fmt, ##__VA_ARGS__)
 
@@ -107,22 +110,22 @@ fn dawn_init_mount()
         while (mount->filesystem)
         {
                 struct path path;
+
                 int ret = kern_path(mount->path, LOOKUP_FOLLOW, &path);
 
                 if (ret)
                 {
-                        log_k("Path lookup for %s failed: %d\n", mount->path, ret);
+                        log_k("Mounting %s to %s failed with error: %d\n", mount->filesystem, mount->path, ret);
                         mount++;
                         continue;
                 }
 
-                // Use do_mount or newer APIs depending on kernel version
-                // For modern kernels (5.9+), mounting is more restricted
-                // This might need to be done from initramfs instead
-                log_k("Would mount %s to %s\n",
-                      mount->filesystem, mount->path);
-
+                ret = path_mount(mount->filesystem, &path, mount->filesystem, mount->mount_flags, null);
                 path_put(&path);
+
+                if (!ret)
+                        log_k("Mounted %s to %s\n", mount->filesystem, mount->path);
+
                 mount++;
         }
 }
@@ -134,8 +137,6 @@ b32 __init dawn_start()
         dawn_init_mount();
 
         register_binfmt(&spark_format);
-
-        log_k("Spark format registered\n");
 
         return 0;
 }
