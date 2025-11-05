@@ -51,3 +51,113 @@ size() {
         
         echo "$1: $size bytes ($size_fmt)"
 }
+
+file() { cat "$1"; }
+write() { echo -n "$2" > "$1"; }
+append() { echo -n "$2" >> "$1"; }
+exists() { [ -f "$1" ]; }
+
+file_itter() {
+        local index=0
+        while IFS= read -r line || [ -n "$line" ]; do
+                "$2" "$line" "$index"
+                index=$((index + 1))
+        done < "$1"
+}
+
+label_finder() {
+        local match="$1"
+        local file="$2"
+        local callback="$3"
+        
+        local found=0
+        local depth=0
+        local index=0
+        local blob=""
+        local use_braces=0
+        local base_indent=0
+        local checking_next_line=0
+        
+        while IFS= read -r line || [ -n "$line" ]; do
+                if [ $found -eq 0 ]; then
+                        # Check if line starts with match
+                        if [[ "$line" =~ ^"$match" ]]; then
+                                found=1
+                                blob="$line"
+                                
+                                # Check if opening brace is on this line
+                                if [[ "$line" =~ \{ ]]; then
+                                        use_braces=1
+                                        depth=$(( depth + $(grep -o '{' <<< "$line" | wc -l) ))
+                                        depth=$(( depth - $(grep -o '}' <<< "$line" | wc -l) ))
+                                        
+                                        [ -n "$callback" ] && "$callback" "$line" "$index"
+                                        index=$((index + 1))
+                                        
+                                        # Check if already balanced (single-line function)
+                                        [ $depth -eq 0 ] && break
+                                else
+                                        # Need to check next line for opening brace
+                                        checking_next_line=1
+                                        base_indent=$(echo "$line" | sed 's/[^ \t].*//' | wc -c)
+                                        base_indent=$((base_indent - 1))
+                                        
+                                        [ -n "$callback" ] && "$callback" "$line" "$index"
+                                        index=$((index + 1))
+                                fi
+                        fi
+                elif [ $checking_next_line -eq 1 ]; then
+                        # Check if this line starts with opening brace
+                        blob="$blob"$'\n'"$line"
+                        
+                        if [[ "$line" =~ ^[[:space:]]*\{ ]]; then
+                                use_braces=1
+                                checking_next_line=0
+                                depth=$(( depth + $(grep -o '{' <<< "$line" | wc -l) ))
+                                depth=$(( depth - $(grep -o '}' <<< "$line" | wc -l) ))
+                        else
+                                # No brace found, must be indent-based
+                                use_braces=0
+                                checking_next_line=0
+                        fi
+                        
+                        [ -n "$callback" ] && "$callback" "$line" "$index"
+                        index=$((index + 1))
+                else
+                        if [ $use_braces -eq 1 ]; then
+                                # Brace-based language
+                                blob="$blob"$'\n'"$line"
+                                
+                                depth=$(( depth + $(grep -o '{' <<< "$line" | wc -l) ))
+                                depth=$(( depth - $(grep -o '}' <<< "$line" | wc -l) ))
+                                
+                                [ -n "$callback" ] && "$callback" "$line" "$index"
+                                index=$((index + 1))
+                                
+                                [ $depth -eq 0 ] && break
+                        else
+                                # Indent-based language
+                                if [[ "$line" =~ ^[[:space:]]*$ ]]; then
+                                        blob="$blob"$'\n'"$line"
+                                        [ -n "$callback" ] && "$callback" "$line" "$index"
+                                        index=$((index + 1))
+                                else
+                                        local curr_indent=$(echo "$line" | sed 's/[^ \t].*//' | wc -c)
+                                        curr_indent=$((curr_indent - 1))
+                                        
+                                        if [ $curr_indent -gt $base_indent ]; then
+                                                blob="$blob"$'\n'"$line"
+                                                [ -n "$callback" ] && "$callback" "$line" "$index"
+                                                index=$((index + 1))
+                                        else
+                                                break
+                                        fi
+                                fi
+                        fi
+                fi
+        done < "$file"
+
+        if [ "$4" = true ]; then
+                echo "$blob"
+        fi
+}
