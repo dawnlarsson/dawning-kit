@@ -4,6 +4,156 @@ const positive page_size = 4096;
 
 bool dawn_shell_styles = true;
 
+#define DAWN_ENV_MAX_ENTRIES 64
+#define DAWN_ENV_STORAGE_SIZE 8192
+
+static p8 dawn_env_storage[DAWN_ENV_STORAGE_SIZE];
+static positive dawn_env_used = 0;
+
+string_address dawn_shell_envp[DAWN_ENV_MAX_ENTRIES + 1];
+
+fn dawn_shell_env_init()
+{
+        memory_fill(dawn_env_storage, 0, DAWN_ENV_STORAGE_SIZE);
+        dawn_env_used = 0;
+
+        string_address defaults[] = {"PATH=/bin:/usr/bin", "SHELL=/bin/sh", null};
+
+        positive idx = 0;
+        positive i = 0;
+
+        while (defaults[i] && idx < DAWN_ENV_MAX_ENTRIES)
+        {
+                string_address dest = dawn_env_storage + dawn_env_used;
+                string_copy(dest, defaults[i]);
+                dawn_shell_envp[idx++] = dest;
+                dawn_env_used += string_length(dest) + 1;
+                i++;
+        }
+
+        dawn_shell_envp[idx] = null;
+}
+
+string_address dawn_getenv(const_string name)
+{
+        if (name == null)
+                return null;
+
+        positive name_len = string_length(name);
+        positive idx = 0;
+
+        while (dawn_shell_envp[idx])
+        {
+                string_address entry = dawn_shell_envp[idx];
+                string_address eq = string_first_of(entry, '=');
+
+                if (eq)
+                {
+                        positive key_len = eq - entry;
+
+                        if (key_len == name_len)
+                        {
+                                positive i = 0;
+                                for (i = 0; i < name_len; i++)
+                                {
+                                        if (string_get(entry + i) != string_get(name + i))
+                                                break;
+                                }
+
+                                if (i == name_len)
+                                        return eq + 1;
+                        }
+                }
+
+                idx++;
+        }
+
+        return null;
+}
+
+bool dawn_setenv(const_string name, const_string value)
+{
+        if (!name || !value)
+                return false;
+
+        positive name_len = string_length(name);
+        positive value_len = string_length(value);
+        positive needed = name_len + 1 + value_len + 1;
+
+        positive idx = 0;
+        while (dawn_shell_envp[idx])
+        {
+                string_address entry = dawn_shell_envp[idx];
+                string_address eq = string_first_of(entry, '=');
+
+                if (eq && (eq - entry) == name_len)
+                {
+                        positive i = 0;
+                        for (i = 0; i < name_len; i++)
+                        {
+                                if (string_get(entry + i) != string_get(name + i))
+                                        break;
+                        }
+
+                        if (i == name_len)
+                        {
+                                string_copy(eq + 1, value);
+                                return true;
+                        }
+                }
+                idx++;
+        }
+
+        if (idx >= DAWN_ENV_MAX_ENTRIES || dawn_env_used + needed > DAWN_ENV_STORAGE_SIZE)
+                return false;
+
+        string_address dest = dawn_env_storage + dawn_env_used;
+        string_copy(dest, name);
+        string_copy(dest + name_len, "=");
+        string_copy(dest + name_len + 1, value);
+
+        dawn_shell_envp[idx] = dest;
+        dawn_shell_envp[idx + 1] = null;
+        dawn_env_used += needed;
+
+        return true;
+}
+
+fn dawn_shell_export(writer write, string_address input)
+{
+        if (input == null)
+        {
+                positive idx = 0;
+                while (dawn_shell_envp[idx])
+                {
+                        string_format(write, "export %s\n", dawn_shell_envp[idx]);
+                        idx++;
+                }
+                return;
+        }
+
+        string_address eq = string_first_of(input, '=');
+        if (!eq)
+                return write(str("export: invalid format (use NAME=value)\n"));
+
+        if (eq == input)
+                return write(str("export: missing variable name\n"));
+
+        *eq = end;
+        dawn_setenv(input, eq + 1);
+        *eq = '=';
+}
+
+fn dawn_shell_env(writer write, string_address input)
+{
+        positive idx = 0;
+        while (dawn_shell_envp[idx])
+        {
+                string_format(write, "%s\n", dawn_shell_envp[idx]);
+                idx++;
+        }
+}
+
 fn dawn_shell_basename(writer write, string_address input)
 {
         if (input == null)
@@ -295,6 +445,8 @@ dawn_shell_command dawn_shell_commands[] = {
     {"pwd", dawn_shell_pwd},
     {"touch", dawn_shell_touch},
     {"help", dawn_shell_help},
+    {"env", dawn_shell_env},
+    {"export", dawn_shell_export},
     {null, null},
 };
 

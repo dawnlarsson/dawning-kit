@@ -27,7 +27,7 @@ fn shell_thread_instance(string_address command, string_address arguments)
 {
         string_address arguments_list[] = {command, arguments, null};
 
-        bipolar exec_result = system_call_3(syscall(execve), (positive)command, (positive)arguments_list, 0);
+        bipolar exec_result = system_call_3(syscall(execve), (positive)command, (positive)arguments_list, (positive)dawn_shell_envp);
 
         string_format(shell_output, "failed with error: %b\n", exec_result);
         log_flush();
@@ -112,6 +112,8 @@ b32 main()
 {
         system_call(syscall(setsid));
         system_call_2(2, (positive) "/dev/console", FILE_READ_WRITE | O_NOCTTY);
+
+        dawn_shell_env_init();
 
         while (1)
         {
