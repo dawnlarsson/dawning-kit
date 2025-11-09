@@ -9,8 +9,7 @@
 #       repo: https://github.com/dawnlarsson/dawning-devkit
 #
 # shellcheck disable=SC2059
-
-BIG_ENDIAN=${BIG_ENDIAN:-0}
+ENDIAN=${ENDIAN:-0}
 
 is_hex() {
         case "$1" in
@@ -47,9 +46,10 @@ is_alpha() {
 
 emit_hex_bytes() {
         val="$1"
-        width="$2" # 4, 8, 16, 32 chars
+        width="$2"
 
-        if [ "$BIG_ENDIAN" -eq 1 ]; then
+        case "$ENDIAN" in
+        big|Big|BIG|BE|be|1)
                 i=0
                 while [ "$i" -lt "$width" ]; do
                         byte="${val%"${val#??}"}"
@@ -57,13 +57,15 @@ emit_hex_bytes() {
                         printf "\\x$byte"
                         i=$((i + 2))
                 done
-        else
+                ;;
+        *)
                 while [ ${#val} -gt 0 ]; do
                         byte="${val#"${val%??}"}"
                         val="${val%??}"
                         printf "\\x$byte"
                 done
-        fi
+                ;;
+        esac
 }
 
 bit_8() {

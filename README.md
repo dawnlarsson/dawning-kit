@@ -45,9 +45,8 @@ Usage:
 
 #### endianness flag
 respects endianness, before running any of the primitives you can set big endianness
-then unset `BIG_ENDIAN=0` to go back to the default little endian target.
 ```sh
-BIG_ENDIAN=1
+ENDIAN=BIG | big | 1
 ```
 
 #### Bytes
