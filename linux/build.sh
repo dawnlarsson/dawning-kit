@@ -73,15 +73,12 @@ label PRE BUILD
         eval "$(key "pre")"
 
 label USER SPACE BUILD
-        sh ../standard/build_kernel programs/init fs/init || die "building init"
-        sh ../standard/build_kernel programs/shell fs/shell || die "building shell"
-        sh ../standard/build_kernel programs/duck fs/duck || die "building duck"
-        sh ../standard/build_kernel programs/edit fs/edit || die "building edit"
-
-        # Built in the spark format rather than as an ELF, so the loader in
-        # src/dawning_core.c is exercised by every image rather than sitting
-        # registered and unused.
-        sh ../standard/spark programs/sparktest fs/sparktest || die "building sparktest"
+        # Every program in the image is spark, including the one the kernel
+        # execs as /init, so no ELF is ever loaded on the boot path.
+        for program in init shell duck edit sparktest; do
+                sh ../standard/spark "programs/$program" "fs/$program" ||
+                        die "building $program"
+        done
 
 label KERNEL BUILD
         sudo sh script/kernel_build || die "kernel build"

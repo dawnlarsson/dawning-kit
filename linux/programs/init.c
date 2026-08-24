@@ -1,32 +1,103 @@
 #include "../../standard/library.c"
+#include "../../standard/spark.h"
 
 #define label TERM_BOLD "[Init]" TERM_RESET " "
 #define init_program "/shell"
 
-struct timespec ts = {
-    .tv_sec = 0,
-    .tv_nsec = 16666667 // 16.67 milliseconds (60 FPS)
-};
+// PID 1 has two jobs: start the first program, and reap every orphan the
+// system ever produces. It must not exec into the shell -- doing that makes
+// the shell PID 1, so the kernel panics the moment the shell exits, and
+// nothing is left to reap anything.
+
+string_address init_argv[] = {init_program, null};
+string_address init_envp[] = {null};
+
+bipolar start_shell(b32 device)
+{
+        if (device >= 0)
+        {
+                struct spark_spawn request;
+                p8 argv_block[64];
+                positive length = string_length(init_program) + 1;
+
+                memory_copy(argv_block, init_program, length);
+
+                request.path = (unsigned long)init_program;
+                request.argv = (unsigned long)argv_block;
+                request.argv_bytes = length;
+                request.argv_count = 1;
+                request.envp = 0;
+                request.envp_bytes = 0;
+                request.envp_count = 0;
+
+                bipolar spawned = system_call_3(syscall(ioctl), device,
+                                                SPARK_IOCTL_SPAWN,
+                                                (positive)address_of request);
+
+                if (spawned > 0)
+                        return spawned;
+        }
+
+        // No spark device, or it refused: fall back to the portable path.
+        // clone takes (flags, child_stack); passing neither leaves both as
+        // whatever happened to be in those registers.
+        bipolar child = system_call_2(syscall(clone), SIGCHLD, 0);
+
+        if (child == 0)
+        {
+                system_call_3(syscall(execve), (positive)init_program,
+                              (positive)init_argv, (positive)init_envp);
+
+                // Only reached if exec failed.
+                system_call_1(syscall(exit), 127);
+        }
+
+        return child;
+}
 
 b32 main()
 {
         system_call(syscall(setsid));
 
-        positive process_id = system_call(syscall(clone));
+        b32 device = system_call_4(syscall(openat), AT_FDCWD,
+                                   (positive)SPARK_DEVICE, FILE_READ_WRITE, 0);
 
-        if (process_id == 0)
+        bipolar shell = start_shell(device);
+
+        if (shell < 0)
         {
-                while (1)
-                        sleep(address_of ts);
+                string_format(log, label "could not start %s: %b\n", init_program, shell);
+                log_flush();
+                return 1;
         }
 
-        p8 address_to argv[] = {init_program};
+        while (1)
+        {
+                positive status = 0;
 
-        bipolar result = system_call_2(syscall(execve), (positive)init_program, (positive)argv);
+                // -1 reaps any child, not just the shell: as PID 1 every
+                // orphan on the system is eventually ours to collect.
+                bipolar reaped = system_call_4(syscall(wait4), -1,
+                                               (positive)address_of status, 0, 0);
 
-        string_format(log, label "Failed to execute init program: %s  error: %b\n", init_program, result);
+                if (reaped < 0)
+                        continue;
 
-        log_flush();
+                if (reaped != shell)
+                        continue;
 
-        return 1;
+                string_format(log, label "%s exited (%p), restarting\n",
+                              init_program, status >> 8 & 0xff);
+                log_flush();
+
+                shell = start_shell(device);
+
+                if (shell < 0)
+                {
+                        string_format(log, label "could not restart %s: %b\n",
+                                      init_program, shell);
+                        log_flush();
+                        return 1;
+                }
+        }
 }
