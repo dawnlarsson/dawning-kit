@@ -1,4 +1,5 @@
 #!/bin/sh
+set -e
 . script/common
 
 cpu_cores=$(nproc)
@@ -8,13 +9,33 @@ shared_flags=$(key shared_flags)
 linker_flags=$(key linker_flags)
 rust_flags=$(key rust_flags)
 
-kernel_image=$(key kernel_image)
-kernel_export=$(key kernel_export)
+kernel_image=$(key_one kernel_image)
+kernel_export=$(key_one kernel_export)
 
-cd linux
+if [ -z "$kernel_image" ] || [ -z "$kernel_export" ]; then
+        echo "kernel_build: kernel_image / kernel_export not set in artifacts/.config" >&2
+        exit 1
+fi
 
-make -j$cpu_cores $make_flags KCPPFLAGS="$shared_flags" KAFLAGS="$shared_flags" LDFLAGS="$linker_flags" RUSTFLAGS="$rust_flags"
+cd linux || exit 1
+
+# make's exit status was discarded, so a failed build still fell through to the
+# copy below and shipped whatever image was left over from a previous run.
+if ! make -j"$cpu_cores" $make_flags \
+        KCPPFLAGS="$shared_flags" \
+        KAFLAGS="$shared_flags" \
+        LDFLAGS="$linker_flags" \
+        RUSTFLAGS="$rust_flags"; then
+        echo "kernel_build: make failed" >&2
+        exit 1
+fi
 
 cd ..
 
-sudo cp $kernel_image $kernel_export
+if [ ! -f "$kernel_image" ]; then
+        echo "kernel_build: expected image '$kernel_image' was not produced" >&2
+        exit 1
+fi
+
+mkdir -p "$(dirname "$kernel_export")"
+sudo cp "$kernel_image" "$kernel_export"

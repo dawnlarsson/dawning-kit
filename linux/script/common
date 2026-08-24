@@ -1,9 +1,14 @@
 #!/bin/sh
+# shellcheck disable=SC2034 # this file is sourced; its variables are used by the callers
+# shellcheck disable=SC3043 # local is supported by every sh this targets (dash, bash, ash)
 info_version="25"
 info_name="dawning-linux"
 info_full_name="$info_name-$info_version"
 
-ANSI=$'\033['
+# $'\033[' is a bash extension. Under dash -- which is /bin/sh on Debian and
+# Ubuntu, where the README tells people to run `sudo sh build.sh` -- it expands
+# literally and every label printed "$[96m" into the build log.
+ANSI=$(printf '\033[')
 RESET=$ANSI'0m'
 BOLD=$ANSI'1m'
 RED=$ANSI'91m'
@@ -14,13 +19,15 @@ MAGENTA=$ANSI'95m'
 CYAN=$ANSI'96m'
 WHITE=$ANSI'97m'
 
+# Aliases are not expanded inside non-interactive shells on every sh, so these
+# are functions. stat takes -c on GNU and -f on BSD/macOS.
 if [ "$(uname)" = "Darwin" ]; then
-        alias nproc="sysctl -n hw.physicalcpu"
-        alias make="gmake"
-        alias cp="cp -X"
-        alias stat_bytes="stat -f %z"
+        nproc() { sysctl -n hw.physicalcpu; }
+        stat_bytes() { stat -f %z "$@"; }
+        stat_mtime() { stat -f %m "$@"; }
 else
-        alias stat_bytes="stat -c %s"
+        stat_bytes() { stat -c %s "$@"; }
+        stat_mtime() { stat -c %Y "$@"; }
 fi
 
 build_install=""
@@ -57,14 +64,21 @@ build_environment_check() {
 
 label() {
         echo $CYAN $BOLD
-        echo "    $@"
+        # "$@" inside a string splits into one word per argument; $* joins them.
+        echo "    $*"
         echo "_____________________________________________________________________________"
         echo $RESET
 }
 
 size() {
-        local size=$(stat_bytes "$1")
-        echo "$size bytes ($(echo "scale=2; $size / 1024" | bc) KB, $(echo "scale=2; $size / 1024 / 1024" | bc) MB)"
+        local size
+        size=$(stat_bytes "$1") || {
+                echo "size: cannot stat '$1'" >&2
+                return 1
+        }
+
+        # bc is not installed everywhere; integer arithmetic is always there.
+        echo "$size bytes ($((size / 1024)).$(((size % 1024) * 10 / 1024)) KB, $((size / 1048576)).$(((size % 1048576) * 10 / 1048576)) MB)"
 }
 
 is_file() {
@@ -83,8 +97,26 @@ is_safe() {
         fi
 }
 
+# Anchored, with a trailing space, so `key pre` cannot also match `#> prefix`.
+# shellcheck disable=SC2046 # unquoted on purpose: joins multiple matches into one line
+# Multiple matching lines are still joined on purpose -- that is how
+# dawning_flags accumulates across profiles.
 key() {
-        echo $(grep "#> $1" artifacts/.config | sed "s/#> $1 //")
+        echo $(grep "^#> $1 " artifacts/.config 2>/dev/null | sed "s/^#> $1 //")
+}
+
+# For scalars like compiler or kernel_image, where two profiles both setting
+# the value would silently concatenate into an unusable command.
+key_one() {
+        local matches
+        matches=$(grep -c "^#> $1 " artifacts/.config 2>/dev/null || echo 0)
+
+        if [ "$matches" -gt 1 ]; then
+                echo "config: '$1' is set $matches times; expected one value" >&2
+                return 1
+        fi
+
+        key "$1"
 }
 
 line_has() {
@@ -107,29 +139,29 @@ line_add_padded() {
         echo "" >>"$1"
 }
 
+# These compared stat_bytes -- the file SIZE -- while being named and used as
+# age comparisons. build.sh gates the kernel reconfiguration on is_newer, so a
+# config edit that did not grow the file was silently ignored and the previous
+# configuration got built.
 is_newer() {
         is_file "$1" || return 0
         is_file "$2" || return 0
 
-        local file1=$(stat_bytes "$1")
-        local file2=$(stat_bytes "$2")
-
-        if [ $file1 -ge $file2 ]; then
-                return 0
-        fi
-
-        return 1
+        [ "$1" -nt "$2" ]
 }
 
 is_different_age() {
-        local file1=$(stat_bytes "$1")
-        local file2=$(stat_bytes "$2")
+        is_file "$1" || return 0
+        is_file "$2" || return 0
 
-        if [ $file1 -ne $file2 ]; then
-                return 0
-        fi
+        [ "$(stat_mtime "$1")" -ne "$(stat_mtime "$2")" ]
+}
 
-        return 1
+is_different_size() {
+        is_file "$1" || return 0
+        is_file "$2" || return 0
+
+        [ "$(stat_bytes "$1")" -ne "$(stat_bytes "$2")" ]
 }
 
 if [ "$(id -u)" != "0" ]; then

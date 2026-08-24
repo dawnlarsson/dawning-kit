@@ -1,7 +1,6 @@
 #!/bin/sh
 . script/common
 
-kernel_image=$(key kernel_image)
 kernel_export=$(key kernel_export)
 
 arch=$(key arch)
