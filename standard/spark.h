@@ -53,4 +53,47 @@ struct spark_header {
         unsigned long reserved[2]; // pads the header to exactly SPARK_HEADER_SIZE
 };
 
+
+/*
+        Spawning
+
+        fork builds a complete copy of the caller -- address space, page
+        tables, file table -- and exec then throws the address space half away
+        microseconds later. For spawning a fresh program none of that copy is
+        ever read. Measured on this kernel it costs about 3us of the ~10.5us a
+        fork+exec spawn takes.
+
+        A spawn that creates the task with no address space to copy skips both
+        the duplication and the teardown. /dev/spark exposes that: write a
+        request, get back a pid you can wait on exactly like a forked child.
+
+        This is a device rather than a syscall on purpose. A syscall would mean
+        patching arch/x86/entry/syscalls/syscall_64.tbl in the kernel tree,
+        which this repo downloads rather than tracks, so it would become a
+        patch to re-apply on every kernel bump.
+
+        argv arrives as one flat block of NUL terminated strings so the whole
+        request copies in with a single copy_from_user:
+
+                "/bin/thing\0-v\0file\0"   argv_count = 3
+*/
+
+#define SPARK_DEVICE "/dev/spark"
+
+// misc major, with a fixed minor from the range reserved for local use, so the
+// node can be created statically in the initramfs without devtmpfs.
+#define SPARK_DEVICE_MAJOR 10
+#define SPARK_DEVICE_MINOR 250
+
+// _IOW('s', 1, struct spark_spawn) -- spelled out so userspace does not need
+// the kernel ioctl macros to talk to it.
+#define SPARK_IOCTL_SPAWN 0x40187301u
+
+struct spark_spawn {
+        unsigned long path;       // user pointer, NUL terminated
+        unsigned long argv;       // user pointer to the flat argv block
+        unsigned int argv_bytes;  // size of that block
+        unsigned int argv_count;  // number of strings in it
+};
+
 #endif

@@ -7,6 +7,10 @@
 #include <linux/mman.h>
 #include <linux/fs.h>
 #include <linux/mount.h>
+#include <linux/miscdevice.h>
+#include <linux/uaccess.h>
+#include <linux/slab.h>
+#include <linux/sched/task.h>
 
 #define DAWN_MODERN_C_KERNEL
 #include "../../standard/library.c"
@@ -50,9 +54,6 @@ static int execute_spark(struct linux_binprm *bprm)
         // intact, so a file that is not ours must be rejected here: returning
         // -ENOEXEC lets the next handler try, and leaves the caller alive.
         // The kernel has already read the first BINPRM_BUF_SIZE bytes for us.
-        if (bprm->buf == NULL)
-                return -ENOEXEC;
-
         header = (const struct spark_header *)bprm->buf;
 
         if (header->magic != SPARK_MAGIC)
@@ -186,6 +187,172 @@ static int execute_spark(struct linux_binprm *bprm)
         return 0;
 }
 
+
+/*
+        Spawning without the fork
+
+        The usual path forks -- duplicating the caller's address space, page
+        tables and file table -- and then execs, which immediately tears the
+        address space back down. Nothing ever reads the copy.
+
+        user_mode_thread creates a task with no address space to copy, and
+        kernel_execve then builds the new one directly. It is the same pair the
+        kernel uses to start /init. The result is a normal child of the caller:
+        it reports through SIGCHLD and is reaped with wait4 like any other.
+*/
+
+struct spark_spawn_work {
+        char *path;
+        char **argv;
+        char *argv_block;
+};
+
+static void spark_spawn_free(struct spark_spawn_work *work)
+{
+        if (!work)
+                return;
+
+        kfree(work->argv_block);
+        kfree(work->argv);
+        kfree(work->path);
+        kfree(work);
+}
+
+static int spark_spawn_enter(void *data)
+{
+        struct spark_spawn_work *work = data;
+        static const char *const empty_envp[] = {NULL};
+        int ret;
+
+        ret = kernel_execve(work->path, (const char *const *)work->argv, empty_envp);
+
+        // kernel_execve has copied everything it needs by now, so the request
+        // can go before anything else touches it.
+        spark_spawn_free(work);
+
+        if (ret)
+        {
+                // The task exists by the time exec is attempted, so a bad path
+                // cannot come back as an ioctl error. Exiting 127 is what a
+                // shell reports for "could not run it", and it keeps the
+                // caller from mistaking the failure for a clean exit.
+                log_k("spawn: exec failed: %d\n", ret);
+                do_exit(127 << 8);
+        }
+
+        return 0;
+}
+
+static long spark_do_spawn(struct spark_spawn __user *request)
+{
+        struct spark_spawn args;
+        struct spark_spawn_work *work;
+        unsigned int i;
+        char *walk;
+        long ret;
+        pid_t pid;
+
+        if (copy_from_user(&args, request, sizeof(args)))
+                return -EFAULT;
+
+        if (args.argv_count == 0 || args.argv_count > 256)
+                return -EINVAL;
+
+        if (args.argv_bytes == 0 || args.argv_bytes > PAGE_SIZE)
+                return -EINVAL;
+
+        work = kzalloc(sizeof(*work), GFP_KERNEL);
+        if (!work)
+                return -ENOMEM;
+
+        work->path = strndup_user((const char __user *)args.path, PATH_MAX);
+        if (IS_ERR(work->path))
+        {
+                ret = PTR_ERR(work->path);
+                work->path = NULL;
+                goto fail;
+        }
+
+        // One copy for the whole argv block, then point into it.
+        work->argv_block = kmalloc(args.argv_bytes + 1, GFP_KERNEL);
+        if (!work->argv_block)
+        {
+                ret = -ENOMEM;
+                goto fail;
+        }
+
+        if (copy_from_user(work->argv_block, (const void __user *)args.argv, args.argv_bytes))
+        {
+                ret = -EFAULT;
+                goto fail;
+        }
+
+        work->argv_block[args.argv_bytes] = 0;
+
+        work->argv = kcalloc(args.argv_count + 1, sizeof(char *), GFP_KERNEL);
+        if (!work->argv)
+        {
+                ret = -ENOMEM;
+                goto fail;
+        }
+
+        walk = work->argv_block;
+        for (i = 0; i < args.argv_count; i++)
+        {
+                if (walk >= work->argv_block + args.argv_bytes)
+                {
+                        ret = -EINVAL;
+                        goto fail;
+                }
+
+                work->argv[i] = walk;
+                walk += strlen(walk) + 1;
+        }
+        work->argv[args.argv_count] = NULL;
+
+        // SIGCHLD alone, so the new task is an ordinary child of the caller
+        // and wait4 works on it the same way it does for a fork.
+        pid = user_mode_thread(spark_spawn_enter, work, SIGCHLD);
+
+        if (pid < 0)
+        {
+                ret = pid;
+                goto fail;
+        }
+
+        // work is owned by the new task from here.
+        return pid;
+
+fail:
+        spark_spawn_free(work);
+        return ret;
+}
+
+static long spark_device_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
+{
+        if (cmd != SPARK_IOCTL_SPAWN)
+                return -ENOTTY;
+
+        return spark_do_spawn((struct spark_spawn __user *)arg);
+}
+
+static const struct file_operations spark_device_ops = {
+    .owner = THIS_MODULE,
+    .unlocked_ioctl = spark_device_ioctl,
+    .llseek = noop_llseek,
+};
+
+// A fixed minor rather than MISC_DYNAMIC_MINOR: there is no devtmpfs here to
+// materialise the node, so script/fs_setup mknods it into the initramfs and
+// both sides have to agree on the number. 240-254 is the range set aside for
+// local use.
+static struct miscdevice spark_device = {
+    .minor = SPARK_DEVICE_MINOR,
+    .name = "spark",
+    .fops = &spark_device_ops,
+    .mode = 0666,
+};
+
 fn dawn_init_mount()
 {
         MountPoints address_to mount = mounts;
@@ -221,11 +388,15 @@ b32 __init dawn_start()
 
         register_binfmt(&spark_format);
 
+        if (misc_register(&spark_device))
+                log_k("could not register /dev/spark\n");
+
         return 0;
 }
 
 static void __exit dawn_exit(void)
 {
+        misc_deregister(&spark_device);
         unregister_binfmt(&spark_format);
         log_k("Spark format unregistered\n");
 }
