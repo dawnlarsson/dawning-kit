@@ -1026,10 +1026,19 @@ string_address string_copy_max(string_address destination, string_address source
 {
         string_address start = destination;
 
-        while (length-- && string_get(source))
+        // length-- in the condition also decrements on the failing test, which
+        // underflows a positive when the loop never runs.
+        while (length && string_get(source))
+        {
                 string_set(destination++, string_get(source++));
+                length--;
+        }
 
-        string_set(destination, end);
+        // Terminate only when the source ended inside the limit. Writing
+        // unconditionally puts the terminator at destination[length], one byte
+        // past the bound the caller asked us to stay within.
+        if (length)
+                string_set(destination, end);
 
         return start;
 }
@@ -2125,6 +2134,13 @@ address_any library_get(address_any library, string_address name)
 {
 #ifdef WINDOWS
         return GetProcAddress(library, name);
+#else
+        // Not implemented outside Windows yet. Returning null is a result the
+        // caller can test; falling off the end is undefined behaviour and
+        // hands back whatever happens to be in the return register.
+        (void)library;
+        (void)name;
+        return null;
 #endif
 }
 

@@ -323,12 +323,13 @@ test(string_copy_max) {
         fail_not_equals(dest[0], 'H');
         fail_not_equals(dest[4], 'o');
 
-        /*
+        // Source shorter than the limit: terminate inside the bound.
         string_copy_max(dest, "Hi", 10);
         fail_not_equals(dest[2], end);
-        */
 
-        string_copy_max(dest, "Hello", 0);
+        // A zero limit must write nothing at all, not even a terminator.
+        memory_fill(dest, 'H', 4);
+        string_copy_max(dest, "Zebra", 0);
         fail_not_equals(dest[0], 'H');
         
         return true;
@@ -596,7 +597,12 @@ dawn_test dawn_tests[] = {
         {null, null},
 };
 
-bipolar report_file = 0;
+// Negative until generate_report opens it, so a stray write cannot land on
+// descriptor 0.
+bipolar report_file = -1;
+
+// Relative to the working directory the runner is launched from.
+const_string report_path = (const_string) "docs/index.html";
 
 fn report_writer(address_any data, positive length)
 {
@@ -608,10 +614,15 @@ fn report_writer(address_any data, positive length)
 
 fn generate_report(writer write)
 {
-        bipolar report_file = system_call_4(syscall(openat), AT_FDCWD, (positive)"../../docs/index.html", FILE_CREATE | FILE_WRITE | O_TRUNC, 0666);
+        // This used to redeclare report_file, shadowing the global that
+        // report_writer actually writes through -- so even when the open
+        // succeeded every write went to descriptor 0 instead of the report.
+        report_file = system_call_4(syscall(openat), AT_FDCWD, (positive)report_path, FILE_CREATE | FILE_WRITE | O_TRUNC, 0666);
 
         if (report_file < 0) {
-                log_direct(str("Failed to open output report file.\n"));
+                // Writing the report is optional; the pass/fail summary above
+                // is the actual test result, so this is a note, not a failure.
+                log_direct(str("(no HTML report written; set REPORT_PATH target directory to enable)\n"));
                 return;
         }
 
