@@ -39,7 +39,7 @@ jobs:
 
       - name: Parse POSIX scripts with dash
         run: |
-          for f in bit.sh emit.sh \
+          for f in launch bit.sh emit.sh \
                    standard/build standard/spark standard/run standard/dev \
                    standard/localinstall.sh standard/build_kernel \
                    linux/build.sh linux/build.run.sh linux/script/*; do
@@ -51,6 +51,7 @@ jobs:
       - name: shellcheck
         run: |
           shellcheck -S warning \
+            launch \
             bit.sh emit.sh doc.sh utils.sh test.sh \
             standard/build standard/spark standard/run standard/dev \
             standard/localinstall.sh standard/build_kernel \

@@ -1,0 +1,113 @@
+#!/bin/sh
+#
+#       Builds an image and boots it in a window.
+#
+#       Usage:
+#           sh launch                    build with the default profiles, boot
+#           sh launch desktop            build with extra profiles, boot
+#           sh launch --run              boot the last image without rebuilding
+#           sh launch --shell            boot with the console on this terminal
+#
+#       The kernel is built on another machine, because building it needs a
+#       Linux toolchain and a case sensitive filesystem, and because it is a
+#       few minutes of work that a laptop should not be doing. Set the host
+#       with DAWNING_BUILD_HOST; it needs to be reachable over ssh and have a
+#       cross compiler, and it keeps its own copy of the kernel source so
+#       rebuilds are incremental.
+#
+#       Everything after the build happens here: QEMU runs locally so the
+#       window, the mouse and the keyboard are real.
+#
+set -u
+
+host=${DAWNING_BUILD_HOST:-box}
+remote=${DAWNING_BUILD_DIR:-/tmp/dawning-build}
+# shellcheck disable=SC1007 # CDPATH= is a deliberate one-shot empty assignment
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+image="$here/dist/bootx64.efi"
+
+profiles="arch/x64 debug_none serial"
+run_only=0
+console=0
+
+for argument in "$@"; do
+        case "$argument" in
+        --run) run_only=1 ;;
+        --shell) console=1 ;;
+        --*)
+                echo "launch: unknown option $argument" >&2
+                exit 1
+                ;;
+        *) profiles="$profiles $argument" ;;
+        esac
+done
+
+say() { printf '\033[1;36m%s\033[0m\n' "$*"; }
+die() {
+        printf '\033[1;31mlaunch: %s\033[0m\n' "$*" >&2
+        exit 1
+}
+
+command -v qemu-system-x86_64 >/dev/null 2>&1 ||
+        die "qemu-system-x86_64 is not installed (brew install qemu)"
+
+if [ "$run_only" -eq 0 ]; then
+        say "Checking $host"
+        ssh -o BatchMode=yes -o ConnectTimeout=20 "$host" true 2>/dev/null ||
+                die "cannot reach $host over ssh (set DAWNING_BUILD_HOST)"
+
+        say "Copying the tree to $host:$remote"
+        ssh "$host" "mkdir -p $remote" || die "could not create $remote"
+
+        # The kernel source, its artifacts and the built filesystem stay on the
+        # build host: they are large, and none of them belong to this checkout.
+        rsync -az --delete \
+                --exclude '.git' \
+                --exclude 'linux/linux' \
+                --exclude 'linux/artifacts' \
+                --exclude 'linux/fs' \
+                --exclude 'linux/dist' \
+                --exclude 'dist' \
+                "$here/" "$host:$remote/" || die "copying the tree failed"
+
+        say "Building: $profiles"
+        # shellcheck disable=SC2029
+        ssh "$host" "cd $remote/linux && sudo sh build.sh $profiles" ||
+                die "the build failed on $host"
+
+        say "Fetching the image"
+        mkdir -p "$here/dist"
+        scp -q "$host:$remote/linux/dist/bootx64.efi" "$image" ||
+                die "could not fetch the built image"
+fi
+
+[ -f "$image" ] || die "no image at $image -- run without --run to build one"
+
+say "Booting $(du -h "$image" | cut -f1) image"
+
+#       virtio-gpu rather than the default VGA: it is the only device here that
+#       offers a hardware cursor plane, which is what lets the compositor move
+#       the pointer without repainting anything.
+#
+#       usb-tablet reports absolute positions, so the pointer inside the guest
+#       follows the one on the host instead of drifting.
+set -- \
+        -m 2G \
+        -smp 2 \
+        -kernel "$image" \
+        -device virtio-gpu-pci \
+        -device qemu-xhci -device usb-tablet -device usb-kbd \
+        -no-reboot
+
+# Use hardware acceleration when the build has it; this QEMU may not.
+if qemu-system-x86_64 -accel help 2>/dev/null | grep -q hvf; then
+        set -- "$@" -accel hvf -cpu host
+fi
+
+if [ "$console" -eq 1 ]; then
+        say "Console on this terminal, ctrl-a x to quit"
+        exec qemu-system-x86_64 "$@" -append "console=ttyS0" -display none -serial mon:stdio
+fi
+
+say "Window opening, ctrl-alt-g releases the mouse"
+exec qemu-system-x86_64 "$@" -append "console=ttyS0" -display cocoa -serial mon:stdio

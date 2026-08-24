@@ -180,6 +180,22 @@ leveraging Dawning Kit to build an immutable core with zero 3rd party dependenci
 
 These primitives evolved from [**Archived Dawning EOS R&D Repo**](https://github.com/dawnlarsson/dawning-linux)
 
+### Trying it
+
+```sh
+sh launch
+```
+
+Builds an image and boots it in a window with a working mouse. The kernel is
+built on another machine over ssh, because building it wants a Linux toolchain
+and a case sensitive filesystem; set `DAWNING_BUILD_HOST` to something you can
+reach (it defaults to `box`). QEMU runs locally, so the window and the pointer
+are real.
+
+`sh launch --shell` puts the console on the terminal instead of opening a
+window, and `sh launch --run` boots the last image without rebuilding. Extra
+profiles can be named: `sh launch desktop`.
+
 ### Building
 Ensure to cd into `dawning-kit/linux` before running build.sh
 
