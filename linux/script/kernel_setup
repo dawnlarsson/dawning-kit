@@ -99,6 +99,32 @@ extract_kernel() {
     rm $kernel_tarball
 
     echo $BOLD "Kernel extracted to $kernel_extract_dir" $RESET
+
+    apply_patches
+}
+
+# Patches live in patch/ and are applied in name order, after the signature
+# has been checked -- never before, or a patch could be what makes a tampered
+# archive look right.
+#
+# A patch that does not apply stops the build. Silently building a kernel
+# missing a change the tree expects is worse than failing here, and the usual
+# cause is a new kernel version having moved the code out from under it.
+apply_patches() {
+    [ -d patch ] || return 0
+
+    for patch_file in patch/*.patch; do
+        [ -f "$patch_file" ] || continue
+
+        echo $BOLD "Applying $(basename "$patch_file")" $RESET
+
+        if ! patch -p1 -d "$kernel_extract_dir" --forward --silent < "$patch_file"; then
+            echo "$RED""ERROR: $patch_file did not apply to $kernel_version." >&2
+            echo "The kernel has probably moved the code it patches. Rebase it" >&2
+            echo "against the new tree, or remove it if it is no longer needed.""$RESET" >&2
+            exit 1
+        fi
+    done
 }
 
 mkdir -p $download_artifacts_dir

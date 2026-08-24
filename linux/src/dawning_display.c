@@ -431,7 +431,8 @@ static const struct drm_client_funcs dawn_client_funcs = {
     .hotplug = dawn_client_hotplug,
 };
 
-static void dawning_display_register(struct drm_device *dev)
+// Called from drm_client_setup, which patch/0001 teaches about us.
+void dawning_display_register(struct drm_device *dev)
 {
         struct dawn_display *display;
 
