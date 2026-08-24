@@ -1427,159 +1427,186 @@ p64 get_cpu_time()
 // Userspace land
 #ifndef KERNEL_MODE
 
-// ### System call
-// invokes operating system functions externally to the program
-// returns: status code of the system call
-// syscall: the system call number
-fn_asm(system_call, bipolar, positive syscall)
-{
-        // syscall number
-        copy(reg_0, syscall_slot);
+#if ARM64
 
-        system_invoke;
-        system_return;
+// The copy(reg_N, reg_M) form below relies on the naked calling convention,
+// which clang does not provide for C on ARM64: fn_asm falls back to a plain
+// function there, so the compiler spills the arguments to the stack, the asm
+// reads registers that were never set, and the inline ret skips the epilogue
+// that would release the frame. Verified by disassembly -- it produced a
+// garbage svc and left sp 48 bytes low.
+//
+// Register constrained operands express the same thing without needing a
+// naked function, so the compiler places each argument where the kernel
+// expects it and the function returns normally.
+#if defined(MACOS) || defined(IOS)
+// Darwin passes the syscall number in x16 and traps with svc #0x80.
+#define SYSCALL_NUMBER_REGISTER "x16"
+#define SYSCALL_INSTRUCTION "svc #0x80"
+#else
+// Linux passes the syscall number in x8 and traps with svc #0.
+#define SYSCALL_NUMBER_REGISTER "x8"
+#define SYSCALL_INSTRUCTION "svc #0"
+#endif
+
+static bipolar system_call(positive syscall)
+{
+        register positive n asm(SYSCALL_NUMBER_REGISTER) = syscall;
+        register positive a0 asm("x0");
+        asm volatile(SYSCALL_INSTRUCTION : "=r"(a0) : "r"(n) : "memory", "cc");
+        return (bipolar)a0;
 }
 
-// ### System call
-// invokes operating system functions externally to the program
-// returns: status code of the system call
-// syscall: the system call number
-fn_asm(system_call_1, bipolar, positive syscall, positive argument_1)
+static bipolar system_call_1(positive syscall, positive argument_1)
 {
-        // syscall number
-        copy(reg_1, syscall_slot);
-
-        // syscall argument
-        copy(reg_2, reg_1);
-
-        system_invoke;
-        system_return;
+        register positive n asm(SYSCALL_NUMBER_REGISTER) = syscall;
+        register positive a0 asm("x0") = argument_1;
+        asm volatile(SYSCALL_INSTRUCTION : "+r"(a0) : "r"(n) : "memory", "cc");
+        return (bipolar)a0;
 }
 
-// ### System call
-// invokes operating system functions externally to the program
-// returns: status code of the system call
-// syscall: the system call number
-fn_asm(system_call_2, bipolar, positive syscall, positive argument_1, positive argument_2)
+static bipolar system_call_2(positive syscall, positive argument_1, positive argument_2)
 {
-        // syscall number
-        copy(reg_1, syscall_slot);
-
-        // syscall argument
-        copy(reg_2, reg_1);
-
-        // syscall argument
-        copy(reg_3, reg_2);
-
-        system_invoke;
-        system_return;
+        register positive n asm(SYSCALL_NUMBER_REGISTER) = syscall;
+        register positive a0 asm("x0") = argument_1;
+        register positive a1 asm("x1") = argument_2;
+        asm volatile(SYSCALL_INSTRUCTION : "+r"(a0) : "r"(n), "r"(a1) : "memory", "cc");
+        return (bipolar)a0;
 }
 
-// ### System call
-// invokes operating system functions externally to the program
-// returns: status code of the system call
-// syscall: the system call number
-fn_asm(system_call_3, bipolar, positive syscall, positive argument_1, positive argument_2, positive argument_3)
+static bipolar system_call_3(positive syscall, positive argument_1, positive argument_2, positive argument_3)
 {
-        // syscall number
-        copy(reg_1, syscall_slot);
-
-        // syscall argument
-        copy(reg_2, reg_1);
-
-        // syscall argument
-        copy(reg_3, reg_2);
-
-        // syscall argument
-        copy(reg_4, reg_3);
-
-        system_invoke;
-        system_return;
+        register positive n asm(SYSCALL_NUMBER_REGISTER) = syscall;
+        register positive a0 asm("x0") = argument_1;
+        register positive a1 asm("x1") = argument_2;
+        register positive a2 asm("x2") = argument_3;
+        asm volatile(SYSCALL_INSTRUCTION : "+r"(a0) : "r"(n), "r"(a1), "r"(a2) : "memory", "cc");
+        return (bipolar)a0;
 }
 
-// ### System call
-// invokes operating system functions externally to the program
-// returns: status code of the system call
-// syscall: the system call number
-fn_asm(system_call_4, bipolar, positive syscall, positive argument_1, positive argument_2, positive argument_3, positive argument_4)
+static bipolar system_call_4(positive syscall, positive argument_1, positive argument_2, positive argument_3, positive argument_4)
 {
-        // syscall number
-        copy(reg_1, syscall_slot);
-
-        // syscall argument
-        copy(reg_2, reg_1);
-
-        // syscall argument
-        copy(reg_3, reg_2);
-
-        // syscall argument
-        copy(reg_4, reg_3);
-
-        // syscall argument
-        copy(reg_5, reg_4);
-
-        system_invoke;
-        system_return;
+        register positive n asm(SYSCALL_NUMBER_REGISTER) = syscall;
+        register positive a0 asm("x0") = argument_1;
+        register positive a1 asm("x1") = argument_2;
+        register positive a2 asm("x2") = argument_3;
+        register positive a3 asm("x3") = argument_4;
+        asm volatile(SYSCALL_INSTRUCTION : "+r"(a0) : "r"(n), "r"(a1), "r"(a2), "r"(a3) : "memory", "cc");
+        return (bipolar)a0;
 }
 
-// ### System call
-// invokes operating system functions externally to the program
-// returns: status code of the system call
-// syscall: the system call number
-fn_asm(system_call_5, bipolar, positive syscall, positive argument_1, positive argument_2, positive argument_3, positive argument_4, positive argument_5)
+static bipolar system_call_5(positive syscall, positive argument_1, positive argument_2, positive argument_3, positive argument_4, positive argument_5)
 {
-        // syscall number
-        copy(reg_1, syscall_slot);
-
-        // syscall argument
-        copy(reg_2, reg_1);
-
-        // syscall argument
-        copy(reg_3, reg_2);
-
-        // syscall argument
-        copy(reg_4, reg_3);
-
-        // syscall argument
-        copy(reg_5, reg_4);
-
-        // syscall argument
-        copy(reg_6, reg_5);
-
-        system_invoke;
-        system_return;
+        register positive n asm(SYSCALL_NUMBER_REGISTER) = syscall;
+        register positive a0 asm("x0") = argument_1;
+        register positive a1 asm("x1") = argument_2;
+        register positive a2 asm("x2") = argument_3;
+        register positive a3 asm("x3") = argument_4;
+        register positive a4 asm("x4") = argument_5;
+        asm volatile(SYSCALL_INSTRUCTION : "+r"(a0) : "r"(n), "r"(a1), "r"(a2), "r"(a3), "r"(a4) : "memory", "cc");
+        return (bipolar)a0;
 }
 
-// ### System call
-// invokes operating system functions externally to the program
-// returns: status code of the system call
-// syscall: the system call number
-fn_asm(system_call_6, bipolar, positive syscall, positive argument_1, positive argument_2, positive argument_3, positive argument_4, positive argument_5, positive argument_6)
+static bipolar system_call_6(positive syscall, positive argument_1, positive argument_2, positive argument_3, positive argument_4, positive argument_5, positive argument_6)
 {
-        // syscall number
-        copy(reg_1, syscall_slot);
-
-        // syscall argument
-        copy(reg_2, reg_1);
-
-        // syscall argument
-        copy(reg_3, reg_2);
-
-        // syscall argument
-        copy(reg_4, reg_3);
-
-        // syscall argument
-        copy(reg_5, reg_4);
-
-        // syscall argument
-        copy(reg_6, reg_5);
-
-        // syscall argument
-        copy(temp_0, reg_6);
-
-        system_invoke;
-        system_return;
+        register positive n asm(SYSCALL_NUMBER_REGISTER) = syscall;
+        register positive a0 asm("x0") = argument_1;
+        register positive a1 asm("x1") = argument_2;
+        register positive a2 asm("x2") = argument_3;
+        register positive a3 asm("x3") = argument_4;
+        register positive a4 asm("x4") = argument_5;
+        register positive a5 asm("x5") = argument_6;
+        asm volatile(SYSCALL_INSTRUCTION : "+r"(a0) : "r"(n), "r"(a1), "r"(a2), "r"(a3), "r"(a4), "r"(a5) : "memory", "cc");
+        return (bipolar)a0;
 }
+
+#elif X64
+
+// The register shuffle in the naked implementation put syscall argument 4 in
+// rcx. Linux takes it in r10, and the syscall instruction itself overwrites
+// rcx with the return address, so every call with four or more arguments got a
+// garbage fourth argument -- openat created its file with a random mode.
+//
+// Register constrained operands put each value where the kernel actually wants
+// it and let the compiler manage the rest.
+#define SYSCALL_CLOBBERS "rcx", "r11", "memory"
+
+static bipolar system_call(positive syscall)
+{
+        bipolar result;
+        asm volatile("syscall" : "=a"(result) : "a"(syscall) : SYSCALL_CLOBBERS);
+        return result;
+}
+
+static bipolar system_call_1(positive syscall, positive argument_1)
+{
+        bipolar result;
+        asm volatile("syscall"
+                     : "=a"(result)
+                     : "a"(syscall), "D"(argument_1)
+                     : SYSCALL_CLOBBERS);
+        return result;
+}
+
+static bipolar system_call_2(positive syscall, positive argument_1, positive argument_2)
+{
+        bipolar result;
+        asm volatile("syscall"
+                     : "=a"(result)
+                     : "a"(syscall), "D"(argument_1), "S"(argument_2)
+                     : SYSCALL_CLOBBERS);
+        return result;
+}
+
+static bipolar system_call_3(positive syscall, positive argument_1, positive argument_2, positive argument_3)
+{
+        bipolar result;
+        asm volatile("syscall"
+                     : "=a"(result)
+                     : "a"(syscall), "D"(argument_1), "S"(argument_2), "d"(argument_3)
+                     : SYSCALL_CLOBBERS);
+        return result;
+}
+
+static bipolar system_call_4(positive syscall, positive argument_1, positive argument_2, positive argument_3, positive argument_4)
+{
+        bipolar result;
+        register positive r10 asm("r10") = argument_4;
+        asm volatile("syscall"
+                     : "=a"(result)
+                     : "a"(syscall), "D"(argument_1), "S"(argument_2), "d"(argument_3), "r"(r10)
+                     : SYSCALL_CLOBBERS);
+        return result;
+}
+
+static bipolar system_call_5(positive syscall, positive argument_1, positive argument_2, positive argument_3, positive argument_4, positive argument_5)
+{
+        bipolar result;
+        register positive r10 asm("r10") = argument_4;
+        register positive r8 asm("r8") = argument_5;
+        asm volatile("syscall"
+                     : "=a"(result)
+                     : "a"(syscall), "D"(argument_1), "S"(argument_2), "d"(argument_3), "r"(r10), "r"(r8)
+                     : SYSCALL_CLOBBERS);
+        return result;
+}
+
+static bipolar system_call_6(positive syscall, positive argument_1, positive argument_2, positive argument_3, positive argument_4, positive argument_5, positive argument_6)
+{
+        bipolar result;
+        register positive r10 asm("r10") = argument_4;
+        register positive r8 asm("r8") = argument_5;
+        register positive r9 asm("r9") = argument_6;
+        asm volatile("syscall"
+                     : "=a"(result)
+                     : "a"(syscall), "D"(argument_1), "S"(argument_2), "d"(argument_3), "r"(r10), "r"(r8), "r"(r9)
+                     : SYSCALL_CLOBBERS);
+        return result;
+}
+
+#else
+#error "no system_call implementation for this architecture"
+#endif // architecture specific system_call
 
 p8 address_to program_stack_base = 0;
 
