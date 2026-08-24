@@ -3,11 +3,13 @@
 Dawning Kit, Foundational Software Development Kit. Zero dependency: C standard Library, Cross Architecture Assembler.
 
 ## Overview
-- **`/bit`** Bit Kit: Provides foundational primitives for code generation in a bare bones UNIX environment.
-- **`/doc`** Doc Kit: HTML & Markdown utilities.
+- **`bit.sh`** Bit Kit: Provides foundational primitives for code generation in a bare bones UNIX environment.
+- **`emit.sh`** Emit Kit: Cross architecture instruction emitters built on top of Bit Kit.
+- **`doc.sh`** Doc Kit: HTML & Markdown utilities.
+- **`test.sh`** Test Kit: Testing utilities, cross architecture.
+- **`utils.sh`** Shared helpers (sizes, file iteration) used by the kits above.
 - **`/linux`** Linux Kit: Modular OS primitives evolved from **Dawning EOS** - a complete experimental Linux distribution that proved zero-dependency, profile-based system building.
 - **`/standard`** C Standard: Entirely self-contained C standard library, also pioneering new syntax and clearer semantics.
-- **`/test`** Test Kit: Testing utilities, cross architecture
 
 ## Example Use
 
@@ -28,8 +30,13 @@ KIT_DIR=$(pwd)/dawning-kit
 ## Bit Kit
 
 Foundational primitives for code generation, provides "ring zero" level utils for building executables,
-it's all in shell so portability isn't a concern, and is transparent for your most critical path, where opaque and complex 3rd party binaries might be a concern.
+it's all in shell and transparent for your most critical path, where opaque and complex 3rd party binaries might be a concern.
 This aims for being ideal for boot strapping toolchains from nothing, a full "compiled yourself down to the last byte"
+
+`bit.sh` and `emit.sh` are POSIX shell and are tested under both `bash` and `dash`.
+`doc.sh`, `utils.sh` and `test.sh` use bash features and need `bash` (3.2 or newer,
+so the version macOS ships is fine). The scripts under `/linux` and `/standard`
+are POSIX and are meant to be run with `sh`.
 
 Usage: 
 ```sh
@@ -50,8 +57,17 @@ you can input hex (0x7f) or chars ( ELF -> "E", "L" "F" ), or plain ints
 
 `bit_8` `bit_16` `bit_32` `bit_64` `bit128` `hex_dump` `elf`
 
+Each function always emits exactly its own width. A value that does not fit is
+masked to the width and a warning goes to stderr, so the byte count never
+changes with the input; set `BIT_QUIET=1` to silence the warnings. Negative
+values are encoded two's complement. Arguments may be separated by spaces,
+commas, or both.
+
 ### Elf Executable format
-Generates a ELF executable header and outputs a working executable
+Generates an ELF executable header and outputs a working executable.
+
+`elf <output> <generator> [arch]` -- `arch` is `x86_64` (the default), `aarch64`
+or `riscv64`. The generator must emit code for the same architecture.
 
 ```sh
 . dawning-kit/bit.sh
@@ -63,6 +79,9 @@ elf_example() {
 }
 
 elf bin/program elf_example
+
+# or for arm64
+elf bin/program elf_example aarch64
 ```
 
 ### Hex Dump
@@ -87,7 +106,7 @@ example 16 bytes
 ### Wasm (work in progress)
 Bit kit also have wasm primitives for generating WebAssembly modules,
 
-`wasm_var` `wasm_section` `wasm`
+`wasm_var` `wasm_svar` `wasm_section` `wasm_body` `wasm`
 
 ```sh
 . dawning-kit/bit.sh
@@ -110,10 +129,14 @@ export_section() {
     bit_8 0x00, 0x00       # func export, index 0
 }
 
+code_body() {
+    wasm_var 0              # 0 local declarations
+    bit_8 0x41, 0x00, 0x0B # i32.const 0, end
+}
+
 code_section() {
     wasm_var 1              # 1 function
-    wasm_var 2              # body size
-    bit_8 0x41, 0x00, 0x0B # i32.const 0, end
+    wasm_body code_body     # length prefixed function body
 }
 
 wasm_module() {
@@ -129,6 +152,11 @@ wasm example.wasm wasm_module
 ## Doc Kit
 primitives to generate HTML and Markdown documentation in HTML.
 Works entirely within shell itself, this outputs ugly HTML to not waste space.
+
+Text, code blocks and attributes are HTML escaped, and `href`/`src` values are
+restricted to `http`, `https`, `mailto`, `tel` and `data:image/` -- anything else
+becomes `#`. Lines that already contain an HTML tag are passed through verbatim,
+so you can drop raw HTML into a document on purpose.
 
 Example turning this readme into a HTML file:
 ```sh
@@ -154,6 +182,11 @@ These primitives evolved from [**Archived Dawning EOS R&D Repo**](https://github
 
 ### Building
 Ensure to cd into `dawning-kit/linux` before running build.sh
+
+The kernel tarball is verified against a PGP signature pinned in
+`script/kernel_setup` before it is extracted. If the signature does not verify,
+the build stops. Note that profiles are shell-evaluated as root during the
+`pre`/`post` build steps, so treat adding a profile as running code as root.
 
 Minimal config for x86_x64
 ```sh
@@ -193,9 +226,15 @@ Provides automated test runner for multiple architectures with QEMU.
 ```sh
 . dawning-kit/test.sh
 
-# path / file_name + .<arch>  - becomes the expected usage pattern
-test_all /path/to/bin/folder file_name
+# expects <bin_folder>/<file_name>.<arch> for each architecture,
+# for example bin/hello.x86_64 and bin/hello.aarch64
+test_all bin hello
 ```
+
+`test_all` prints a summary and returns non-zero if any architecture failed, so
+it can gate CI. Architectures whose QEMU binary is not installed are skipped
+rather than failed. A `timeout` implementation is used when present
+(`timeout`, or `gtimeout` from coreutils on macOS).
 
 
 ## Support

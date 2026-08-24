@@ -1,0 +1,230 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  shell:
+    name: Shell (syntax, shellcheck, dash)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install shellcheck and dash
+        run: sudo apt-get update && sudo apt-get install -y shellcheck dash
+
+      # The sourced kits are bash; the build scripts must stay POSIX because
+      # the README tells people to run them with `sh`, which is dash here.
+      - name: Parse bash scripts
+        run: |
+          for f in bit.sh emit.sh doc.sh utils.sh test.sh; do
+            echo "bash -n $f"
+            bash -n "$f"
+          done
+
+      - name: Parse POSIX scripts with dash
+        run: |
+          for f in bit.sh emit.sh \
+                   standard/build standard/spark standard/run standard/dev \
+                   standard/localinstall.sh standard/build_kernel \
+                   linux/build.sh linux/build.run.sh linux/script/*; do
+            echo "dash -n $f"
+            dash -n "$f"
+          done
+
+      # Every script in the repo is shellcheck clean at -S warning; keep it that way.
+      - name: shellcheck
+        run: |
+          shellcheck -S warning \
+            bit.sh emit.sh doc.sh utils.sh test.sh \
+            standard/build standard/spark standard/run standard/dev \
+            standard/localinstall.sh standard/build_kernel \
+            linux/build.sh linux/build.run.sh linux/script/*
+
+  bit:
+    name: Bit Kit (byte-exact, bash and dash)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dash
+        run: sudo apt-get update && sudo apt-get install -y dash
+
+      # bit_N must emit the same bytes under both shells, and must emit the
+      # right NUMBER of bytes for out of range input.
+      - name: Byte-exactness
+        run: |
+          cat > /tmp/bitcheck.sh <<'EOF'
+          . ./bit.sh
+          BIT_QUIET=1
+          e() { printf '%s=' "$1"; shift; "$@" | od -An -tx1 | tr -d ' \n'; echo; }
+          e b8_hex      bit_8 0x41
+          e b8_dec      bit_8 65
+          e b8_str      bit_8 ELF
+          e b8_overflow bit_8 300
+          e b16         bit_16 0x1234
+          e b16_over    bit_16 0x123456
+          e b16_neg     bit_16 -1
+          e b32         bit_32 0x11223344
+          e b64         bit_64 1
+          e b128        bit128 1
+          e commas      bit_8 0x48,0xc7,0xc0
+          EOF
+          bash /tmp/bitcheck.sh > /tmp/out.bash
+          dash /tmp/bitcheck.sh > /tmp/out.dash
+          echo "--- bash ---"; cat /tmp/out.bash
+          diff /tmp/out.bash /tmp/out.dash || { echo "bash and dash disagree"; exit 1; }
+          cat > /tmp/expected <<'EOF'
+          b8_hex=41
+          b8_dec=41
+          b8_str=454c46
+          b8_overflow=2c
+          b16=3412
+          b16_over=5634
+          b16_neg=ffff
+          b32=44332211
+          b64=0100000000000000
+          b128=01000000000000000000000000000000
+          commas=48c7c0
+          EOF
+          diff /tmp/expected /tmp/out.bash || { echo "byte output changed"; exit 1; }
+
+      - name: ELF output is structurally valid
+        run: |
+          cat > /tmp/elfcheck.sh <<'EOF'
+          . ./bit.sh
+          x64(){ bit_8 0x48,0xc7,0xc0,0x3c,0x00,0x00,0x00; bit_8 0x48,0xc7,0xc7,0x00,0x00,0x00,0x00; bit_8 0x0f,0x05; }
+          arm(){ bit_32 0xd2800ba8; bit_32 0xd2800000; bit_32 0xd4000001; }
+          mkdir -p /tmp/bin
+          elf /tmp/bin/x64 x64
+          elf /tmp/bin/arm arm aarch64
+          EOF
+          sh /tmp/elfcheck.sh
+          python3 - <<'PY'
+          import struct, sys
+          for f, machine in (('/tmp/bin/x64', 62), ('/tmp/bin/arm', 183)):
+              d = open(f, 'rb').read()
+              assert d[:4] == b'\x7fELF', f
+              vals = struct.unpack_from('<HHIQQQIHHHHHH', d, 16)
+              entry, phoff = vals[3], vals[4]
+              p = struct.unpack_from('<IIQQQQQQ', d, 64)
+              assert vals[1] == machine, (f, vals[1])
+              assert p[1] == 5, ('segment must be R+X, got', p[1])
+              assert entry == p[3] + 120, (f, 'entry')
+              assert p[5] == len(d), (f, 'filesz')
+              print(f, 'ok  machine', machine, 'flags', p[1], 'size', len(d))
+          PY
+
+      - name: Generated wasm module validates
+        run: |
+          cat > /tmp/wasmcheck.sh <<'EOF'
+          . ./bit.sh
+          type_section()     { wasm_var 1; bit_8 0x60; bit_8 0x00,0x01,0x7F; }
+          function_section() { wasm_var 1; wasm_var 0; }
+          export_section()   { wasm_var 1; wasm_var 4; bit_8 "main"; bit_8 0x00,0x00; }
+          code_body()        { wasm_var 0; bit_8 0x41,0x00,0x0B; }
+          code_section()     { wasm_var 1; wasm_body code_body; }
+          module()           { wasm_section 1 type_section
+                               wasm_section 3 function_section
+                               wasm_section 7 export_section
+                               wasm_section 10 code_section; }
+          wasm /tmp/example.wasm module
+          EOF
+          sh /tmp/wasmcheck.sh
+          node -e '
+            const b = require("fs").readFileSync("/tmp/example.wasm");
+            if (!WebAssembly.validate(b)) { console.error("module does not validate"); process.exit(1); }
+            const i = new WebAssembly.Instance(new WebAssembly.Module(b));
+            console.log("main() =", i.exports.main());
+          '
+
+  doc:
+    name: Doc Kit (escaping)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Regression guard for the attribute injection and scheme passthrough
+      # that the generator used to allow.
+      - name: HTML escaping
+        run: |
+          printf 'a & b < c > d\n\n[x](javascript:alert(1))\n\n![i](x" onerror="alert(1))\n' > /tmp/x.md
+          out=$(bash -c '. ./doc.sh; doc /tmp/x.md')
+          echo "$out"
+          case "$out" in *'javascript:'*) echo "javascript: URL survived"; exit 1 ;; esac
+          case "$out" in *' onerror='*) echo "attribute injection survived"; exit 1 ;; esac
+          case "$out" in *'a &amp; b &lt; c &gt; d'*) ;; *) echo "text not escaped"; exit 1 ;; esac
+
+      - name: Missing input is an error
+        run: |
+          bash -c '. ./doc.sh; doc /nonexistent.md' && { echo "should have failed"; exit 1; } || true
+
+  standard:
+    name: C standard library
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        cc: [gcc, clang]
+    steps:
+      - uses: actions/checkout@v4
+
+      # The library is freestanding: it supplies its own _start, so a hosted
+      # link collides with libc's. Build it the way the project does.
+      - name: Build the test suite with ${{ matrix.cc }}
+        working-directory: standard
+        run: CC=${{ matrix.cc }} sh build test/src/main.c test/bin/test
+
+      - name: Run the test suite
+        working-directory: standard
+        run: |
+          ./test/bin/test | tee /tmp/report.txt
+          grep -q '0 failed' /tmp/report.txt || { echo "tests failed"; exit 1; }
+
+      # Regression guard for the syscall argument register bug: Linux takes the
+      # fourth syscall argument in r10, and the syscall instruction clobbers
+      # rcx. Passing it in rcx made openat create files with a random mode.
+      - name: Syscalls pass argument four correctly
+        working-directory: standard
+        run: |
+          cat > test/mode_probe.c <<'EOF'
+          #include "../library.c"
+          b32 main(){
+                  bipolar fd = system_call_4(syscall(openat), AT_FDCWD,
+                          (positive)"/tmp/mode_probe", FILE_CREATE|FILE_WRITE|O_TRUNC, 0644);
+                  system_call_1(syscall(close), fd);
+                  return fd < 0 ? 1 : 0;
+          }
+          EOF
+          rm -f /tmp/mode_probe
+          CC=${{ matrix.cc }} sh build test/mode_probe.c /tmp/oaprobe
+          /tmp/oaprobe
+          mode=$(stat -c %a /tmp/mode_probe)
+          echo "openat created mode $mode"
+          [ "$mode" = 644 ] || { echo "expected 644, syscall argument 4 is not reaching the kernel"; exit 1; }
+
+      # The kernel enters _start without pushing a return address, so a plain
+      # C _start leaves the stack 8 bytes out of phase and the aligned SSE
+      # stores the compiler emits for a stack fill fault. Verified to exit 139
+      # against the old entry point and 0 against the current one.
+      - name: Entry point realigns the stack
+        working-directory: standard
+        run: |
+          cat > test/align_probe.c <<'EOF'
+          #include "../library.c"
+          b32 main()
+          {
+                  p8 buffer[4096];
+                  memory_fill(buffer, 0x5a, sizeof(buffer));
+
+                  for (positive i = 0; i < sizeof(buffer); i++)
+                          if (buffer[i] != 0x5a)
+                                  return 1;
+
+                  return 0;
+          }
+          EOF
+          CC=${{ matrix.cc }} sh build test/align_probe.c /tmp/alprobe
+          /tmp/alprobe || { echo "vectorized stack fill faulted: _start is not realigning"; exit 1; }
