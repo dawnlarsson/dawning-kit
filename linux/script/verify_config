@@ -1,0 +1,58 @@
+#!/bin/sh
+#
+#       Reports options a profile asked for that are not in the built config.
+#
+#       merge_config.sh and olddefconfig drop anything whose dependencies are
+#       unmet, and they do it silently. A profile can therefore ask for a
+#       driver, get no warning, and produce a kernel without it -- which only
+#       shows up as hardware that does not work. This makes that visible.
+#
+#       Usage: sh script/verify_config <built .config> [profile ...]
+#
+set -u
+
+. script/common
+
+config="$1"
+shift
+
+if ! is_file "$config"; then
+        echo "verify_config: no such config: $config" >&2
+        exit 1
+fi
+
+missing=0
+requested=0
+
+for profile in "$@"; do
+        profile_path="profile/$profile"
+
+        is_file "$profile_path" || continue
+
+        # Only y and m matter: a profile setting something to n and the build
+        # agreeing is not a discrepancy worth reporting.
+        for option in $(sed -n 's/^\(CONFIG_[A-Z0-9_]*\)=[ym]$/\1/p' "$profile_path"); do
+                requested=$((requested + 1))
+
+                if ! grep -q "^$option=[ym]$" "$config"; then
+                        [ "$missing" -eq 0 ] && echo "$YELLOW""Requested but not in the built kernel:""$RESET"
+                        echo "  $option  ($profile)"
+                        missing=$((missing + 1))
+                fi
+        done
+done
+
+if [ "$missing" -eq 0 ]; then
+        echo "All $requested requested options are present."
+        exit 0
+fi
+
+echo
+echo "$missing of $requested requested options were dropped."
+echo "Usually this means an unmet dependency, or a symbol that was renamed or"
+echo "removed in this kernel version. Check with:"
+echo "  grep -rn '^config OPTION\$' -A5 linux/*/Kconfig*"
+
+# Not fatal: a profile composed for one architecture will legitimately carry
+# options another cannot satisfy.
+exit 0

@@ -26,11 +26,21 @@ label DISTRO INFO
 label KERNEL CONFIGURATION
         sudo sh script/kernel_setup || die "kernel setup"
 
-        [ -z "${1:-}" ] || sudo sh script/config any "$@" || die "profile configuration"
+        # "any" carries what every image needs and "general" the hardware
+        # baseline for an ordinary x86_64 desktop, so both are always composed
+        # in ahead of whatever was asked for.
+        if [ -z "${1:-}" ]; then
+                profiles="any general arch/x64 debug_none limbo desktop"
+        else
+                profiles="any general $*"
+        fi
 
-        is_file artifacts/.config || \
-                sudo sh script/config any arch/x64 debug_none limbo desktop || \
-                die "default configuration"
+        # shellcheck disable=SC2086
+        is_file artifacts/.config ||
+                sudo sh script/config $profiles ||
+                die "configuration"
+
+        [ -z "${1:-}" ] || sudo sh script/config $profiles || die "configuration"
 
         make_flags=$(key make_flags)
 
@@ -68,6 +78,13 @@ label KERNEL CONFIG
         else
                 echo "No changes"
         fi
+
+label CONFIGURATION CHECK
+        # merge_config and olddefconfig drop unmet options without a word, so
+        # anything a profile asked for and did not get is reported here rather
+        # than discovered later as hardware that does not work.
+        # shellcheck disable=SC2086
+        sh script/verify_config linux/.config $profiles
 
 label PRE BUILD
         eval "$(key "pre")"

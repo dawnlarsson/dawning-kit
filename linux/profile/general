@@ -1,0 +1,217 @@
+#
+# General hardware baseline
+#
+# This profile is on by default: build.sh composes it into every image
+# alongside "any". It is what makes the difference between a kernel that
+# boots on one emulated machine and one that boots on a real desktop.
+#
+# Targets any x86_64 desktop from roughly 2012 onward -- Sandy/Ivy Bridge and
+# Bulldozer era through current parts. That cutoff is what lets everything
+# below stay small: it assumes PCIe, AHCI, xHCI or EHCI, UEFI, and a 64-bit
+# CPU, so none of the buses and controllers that existed to support older
+# machines need to be carried.
+#
+# Deliberately absent, and why:
+#
+#   ISA, EISA, MCA, VLB     gone from consumer boards well before 2012
+#   IDE / PATA              AHCI has been the default since ~2008
+#   floppy, parallel port   not present on the target machines
+#   UHCI / OHCI             USB 1.1 host controllers; EHCI and xHCI cover
+#                           full and low speed devices on this hardware
+#   OSS, AC97               superseded by HD Audio
+#   pre-PCIe network cards  ne2000, 3c59x and friends
+#
+# Leave it out only for targets it does not suit -- an embedded ARM board, or
+# a deliberately minimal image -- by editing the composition in build.sh.
+#
+# Graphics beyond the UEFI framebuffer are separate profiles, because a single
+# GPU driver is larger than everything here put together.
+#
+
+#
+# Buses
+#
+CONFIG_PCI=y
+CONFIG_PCIEPORTBUS=y
+CONFIG_PCIEAER=y
+CONFIG_PCIEASPM=y
+CONFIG_PCIEASPM_DEFAULT=y
+CONFIG_PCI_MSI=y
+CONFIG_PCI_QUIRKS=y
+CONFIG_PCI_IOV=y
+CONFIG_HOTPLUG_PCI=y
+CONFIG_HOTPLUG_PCI_PCIE=y
+
+#
+# Firmware and platform
+#
+CONFIG_EFI=y
+CONFIG_EFI_STUB=y
+CONFIG_EFI_MIXED=n
+CONFIG_ACPI=y
+CONFIG_ACPI_BUTTON=y
+CONFIG_ACPI_FAN=y
+CONFIG_ACPI_THERMAL=y
+CONFIG_ACPI_PROCESSOR=y
+CONFIG_ACPI_CPU_FREQ_PSS=y
+CONFIG_DMI=y
+CONFIG_DMIID=y
+
+#
+# CPU: microcode matters for errata and speculative execution fixes, and
+# 32-bit emulation is what lets a 64-bit system run 32-bit game binaries.
+#
+CONFIG_MICROCODE=y
+CONFIG_IA32_EMULATION=y
+CONFIG_X86_MSR=y
+CONFIG_X86_CPUID=y
+CONFIG_CPU_FREQ=y
+CONFIG_CPU_FREQ_GOV_PERFORMANCE=y
+CONFIG_CPU_FREQ_GOV_SCHEDUTIL=y
+CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL=y
+CONFIG_X86_INTEL_PSTATE=y
+CONFIG_X86_AMD_PSTATE=y
+CONFIG_CPU_IDLE=y
+CONFIG_INTEL_IDLE=y
+
+#
+# Storage: AHCI for SATA, NVMe for anything since about 2014.
+#
+CONFIG_BLOCK=y
+CONFIG_ATA=y
+CONFIG_ATA_ACPI=y
+CONFIG_SATA_PMP=y
+CONFIG_SATA_AHCI=y
+CONFIG_ATA_GENERIC=y
+CONFIG_BLK_DEV_SD=y
+CONFIG_BLK_DEV_SR=y
+CONFIG_SCSI=y
+CONFIG_SCSI_MOD=y
+CONFIG_BLK_DEV_NVME=y
+CONFIG_NVME_CORE=y
+CONFIG_BLK_DEV_LOOP=y
+CONFIG_MD=y
+CONFIG_BLK_DEV_DM=y
+
+#
+# USB: xHCI covers USB 3 and everything below it on this hardware, EHCI is
+# there for the 2012 machines that predate native xHCI.
+#
+CONFIG_USB_SUPPORT=y
+CONFIG_USB=y
+CONFIG_USB_PCI=y
+CONFIG_USB_XHCI_HCD=y
+CONFIG_USB_XHCI_PCI=y
+CONFIG_USB_EHCI_HCD=y
+CONFIG_USB_EHCI_PCI=y
+CONFIG_USB_STORAGE=y
+CONFIG_USB_UAS=y
+CONFIG_USB_HID=y
+CONFIG_USB_HIDDEV=y
+
+#
+# Input
+#
+CONFIG_INPUT=y
+CONFIG_INPUT_EVDEV=y
+CONFIG_INPUT_KEYBOARD=y
+CONFIG_INPUT_MOUSE=y
+CONFIG_INPUT_JOYSTICK=y
+CONFIG_HID=y
+CONFIG_HID_GENERIC=y
+CONFIG_HID_MICROSOFT=y
+CONFIG_HIDRAW=y
+CONFIG_LEDS_CLASS=y
+CONFIG_LEDS_CLASS_MULTICOLOR=y
+CONFIG_HID_LOGITECH=y
+CONFIG_HID_LOGITECH_DJ=y
+CONFIG_HID_LOGITECH_HIDPP=y
+CONFIG_HID_SONY=y
+CONFIG_HID_STEAM=y
+CONFIG_JOYSTICK_XPAD=y
+CONFIG_JOYSTICK_XPAD_FF=y
+CONFIG_SERIO=y
+CONFIG_SERIO_I8042=y
+CONFIG_KEYBOARD_ATKBD=y
+CONFIG_MOUSE_PS2=y
+
+#
+# Network: two drivers cover the overwhelming majority of desktops of this
+# era -- Intel on business machines, Realtek on consumer boards.
+#
+CONFIG_NET=y
+CONFIG_INET=y
+CONFIG_IPV6=y
+CONFIG_PACKET=y
+CONFIG_UNIX=y
+CONFIG_NETDEVICES=y
+CONFIG_ETHERNET=y
+CONFIG_NET_VENDOR_INTEL=y
+CONFIG_E1000E=y
+CONFIG_IGB=y
+CONFIG_IGC=y
+CONFIG_NET_VENDOR_REALTEK=y
+CONFIG_R8169=y
+CONFIG_PHYLIB=y
+CONFIG_REALTEK_PHY=y
+
+#
+# Audio
+#
+CONFIG_SOUND=y
+CONFIG_SND=y
+CONFIG_SND_PCM=y
+CONFIG_SND_HDA=y
+CONFIG_SND_HDA_INTEL=y
+CONFIG_SND_HDA_GENERIC=y
+CONFIG_SND_HDA_CODEC_REALTEK=y
+CONFIG_SND_HDA_CODEC_HDMI=y
+CONFIG_SND_USB_AUDIO=y
+
+#
+# Display: the UEFI framebuffer alone gives a console on anything that boots,
+# with no vendor driver and almost no size. Accelerated graphics is a separate
+# profile.
+#
+CONFIG_DRM=y
+CONFIG_DRM_FBDEV_EMULATION=y
+CONFIG_DRM_SIMPLEDRM=y
+CONFIG_SYSFB_SIMPLEFB=y
+CONFIG_FB=y
+CONFIG_FB_EFI=y
+CONFIG_FRAMEBUFFER_CONSOLE=y
+CONFIG_VT=y
+CONFIG_VT_CONSOLE=y
+
+#
+# Filesystems. ntfs3 is here because these machines dual boot with Windows
+# more often than not, and exfat because that is what removable media is
+# formatted as.
+#
+CONFIG_EXT4_FS=y
+CONFIG_EXT4_USE_FOR_EXT2=y
+CONFIG_VFAT_FS=y
+CONFIG_FAT_DEFAULT_UTF8=y
+CONFIG_EXFAT_FS=y
+CONFIG_NTFS3_FS=y
+CONFIG_BTRFS_FS=y
+CONFIG_ISO9660_FS=y
+CONFIG_TMPFS=y
+CONFIG_TMPFS_POSIX_ACL=y
+CONFIG_PROC_FS=y
+CONFIG_SYSFS=y
+CONFIG_DEVTMPFS=y
+CONFIG_DEVTMPFS_MOUNT=y
+CONFIG_NLS=y
+CONFIG_NLS_CODEPAGE_437=y
+CONFIG_NLS_ISO8859_1=y
+CONFIG_NLS_UTF8=y
+
+#
+# Random number generation, needed by anything doing cryptography. Trusting
+# the CPU instruction is a boot parameter now (random.trust_cpu=) rather than
+# a build option.
+#
+CONFIG_HW_RANDOM=y
+CONFIG_HW_RANDOM_INTEL=y
+CONFIG_HW_RANDOM_AMD=y
