@@ -78,6 +78,11 @@ label USER SPACE BUILD
         sh ../standard/build_kernel programs/duck fs/duck || die "building duck"
         sh ../standard/build_kernel programs/edit fs/edit || die "building edit"
 
+        # Built in the spark format rather than as an ELF, so the loader in
+        # src/dawning_core.c is exercised by every image rather than sitting
+        # registered and unused.
+        sh ../standard/spark programs/sparktest fs/sparktest || die "building sparktest"
+
 label KERNEL BUILD
         sudo sh script/kernel_build || die "kernel build"
 

@@ -1,53 +1,158 @@
 #!/bin/sh
 #
-#       EXPERIMENTAL: C compiled to the flat spark format
+#       Compiles C to the flat spark format.
 #
 #       Usage: sh spark <source_without_extension> <output> [debug]
+#
+#       The layout is described in standard/spark.h, which the kernel loader
+#       includes too, so the two sides cannot drift apart. Every region is a
+#       whole number of pages -- see standard/spark.ld for why.
 #
 set -u
 
 . script/common
 
-label "$YELLOW""EXPERIMENTAL! C compiled to spark format"
+# The header is written with the kit's own byte primitives rather than a
+# separate tool, which is the point of having them.
+# shellcheck disable=SC1091
+. "${KIT_DIR:-..}/bit.sh"
+
+SPARK_MAGIC=0x4b525053
 
 if [ "$#" -lt 2 ]; then
         echo "spark: usage: spark <source_without_extension> <output> [debug]" >&2
         exit 1
 fi
 
-compiler=$(key compiler)
+source_file="$1"
+output="$2"
+mode="${3:-}"
+
+compiler=$(key_one compiler) || exit 1
 dawning_flags=$(key dawning_flags)
 
-# dawning_flags+=" -g" is a bash extension that silently does nothing under
-# dash, so the debug build came out identical to the release build.
-if [ "${3:-}" = "debug" ]; then
+if [ "$mode" = debug ]; then
         dawning_flags="$dawning_flags -g"
 fi
 
-echo "$BOLD""Compiling $2""$RESET"
+# shellcheck disable=SC1007
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+linker_script="$script_dir/spark.ld"
 
-temp_object="tmp_spark_gen.o"
+if [ ! -f "$linker_script" ]; then
+        echo "spark: missing linker script at $linker_script" >&2
+        exit 1
+fi
+
+label "$YELLOW""EXPERIMENTAL! C compiled to spark format"
+echo "$BOLD""Compiling $output""$RESET"
+
+work=$(mktemp -d "${TMPDIR:-/tmp}/dawning_spark.XXXXXXXX") || exit 1
+elf="$work/image.elf"
+
+cleanup() { rm -rf "$work"; }
+trap cleanup EXIT INT TERM
+
+# -flto discards the section layout the linker script depends on.
+flags=$(printf '%s' "$dawning_flags" | sed 's/-flto//g')
 
 # shellcheck disable=SC2086
-if ! $compiler "$1.c" -o "$temp_object" $dawning_flags -Wl,-e,_start -Wl,--no-warn-rwx-segments; then
+if ! $compiler "$source_file.c" -o "$elf" $flags -static -nostdlib -nostartfiles \
+        -T "$linker_script" -Wl,--build-id=none -Wl,-e,_start \
+        -Wl,--no-warn-rwx-segments; then
         echo "spark: compilation failed" >&2
-        rm -f "$temp_object"
         exit 1
 fi
 
-if ! objcopy -O binary -j .text -j .rodata -j .data "$temp_object" "$2"; then
-        echo "spark: objcopy failed" >&2
-        rm -f "$temp_object"
+# objdump -h has a stable column layout; readelf -S splits "[ 1]" into two
+# fields for single digit indices and one for double, which does not parse.
+section_size() {
+        objdump -h "$elf" | awk -v s="$1" '$2 == s { print strtonum("0x" $3); exit }'
+}
+
+section_addr() {
+        objdump -h "$elf" | awk -v s="$1" '$2 == s { print strtonum("0x" $4); exit }'
+}
+
+page_round() { echo $((($1 + 4095) / 4096 * 4096)); }
+
+base=$(section_addr .text)
+entry=$(readelf -h -W "$elf" | awk '/Entry point/ { print strtonum($NF) }')
+
+data_addr=$(section_addr .data)
+data_bytes=$(section_size .data)
+bss_addr=$(section_addr .bss)
+bss_bytes=$(section_size .bss)
+
+: "${base:=0}" "${entry:=0}"
+: "${data_addr:=0}" "${data_bytes:=0}" "${bss_addr:=0}" "${bss_bytes:=0}"
+
+if [ "$base" = 0 ] || [ "$entry" = 0 ]; then
+        echo "spark: could not read base/entry from the linked image" >&2
         exit 1
 fi
 
-if [ "${3:-}" = "debug" ]; then
-        objdump -S "$temp_object" >"$2.s" || echo "spark: objdump failed, continuing" >&2
+# A program need not have every section: duck has no .data at all. Text runs
+# up to whichever region actually follows it, or to its own end if none does.
+if [ "$data_bytes" -gt 0 ]; then
+        text_end=$data_addr
+elif [ "$bss_bytes" -gt 0 ]; then
+        text_end=$bss_addr
+else
+        text_end=$((base + $(section_size .text)))
 fi
 
-rm -f "$temp_object"
+text_size=$(page_round $((text_end - base)))
+data_size=$(page_round "$data_bytes")
+bss_size=$(page_round "$bss_bytes")
 
-size "$2"
+if [ "$text_size" -le 0 ]; then
+        echo "spark: computed a non positive text size ($text_size)" >&2
+        exit 1
+fi
 
-chmod +x "$2"
+objcopy -O binary --only-section=.text "$elf" "$work/text.bin" || exit 1
+objcopy -O binary --only-section=.data "$elf" "$work/data.bin" 2>/dev/null || : >"$work/data.bin"
+
+# Emits n zero bytes.
+zeros() {
+        dd if=/dev/zero bs=1 count="$1" 2>/dev/null
+}
+
+pad_file_to() {
+        have=$(wc -c <"$1")
+        [ "$have" -lt "$2" ] && zeros $(($2 - have))
+}
+
+spark_header() {
+        bit_32 $SPARK_MAGIC
+        bit_16 1
+        bit_16 0
+        bit_64 "$base"
+        bit_64 "$entry"
+        bit_64 "$text_size"
+        bit_64 "$data_size"
+        bit_64 "$bss_size"
+        bit_64 0
+        bit_64 0
+}
+
+{
+        spark_header
+        zeros $((4096 - 64))
+
+        cat "$work/text.bin"
+        pad_file_to "$work/text.bin" "$text_size"
+
+        if [ "$data_size" -gt 0 ]; then
+                cat "$work/data.bin"
+                pad_file_to "$work/data.bin" "$data_size"
+        fi
+} >"$output" || exit 1
+
+chmod +x "$output"
+
+printf 'spark: base=%#x entry=%#x text=%s data=%s bss=%s\n' \
+        "$base" "$entry" "$text_size" "$data_size" "$bss_size"
+size "$output"
 echo
