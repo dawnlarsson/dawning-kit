@@ -86,14 +86,18 @@ struct spark_header {
 #define SPARK_DEVICE_MINOR 250
 
 // _IOW('s', 1, struct spark_spawn) -- spelled out so userspace does not need
-// the kernel ioctl macros to talk to it.
-#define SPARK_IOCTL_SPAWN 0x40187301u
+// the kernel ioctl macros to talk to it. The size is part of the encoding, so
+// this changes if the request struct does.
+#define SPARK_IOCTL_SPAWN 0x40287301u
 
 struct spark_spawn {
         unsigned long path;       // user pointer, NUL terminated
         unsigned long argv;       // user pointer to the flat argv block
         unsigned int argv_bytes;  // size of that block
         unsigned int argv_count;  // number of strings in it
+        unsigned long envp;       // same shape as argv; may be 0 for none
+        unsigned int envp_bytes;
+        unsigned int envp_count;
 };
 
 #endif

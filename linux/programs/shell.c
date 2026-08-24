@@ -2,6 +2,7 @@
 // it lobs rocks at the kernel and says ouga boga at the user.
 #include "../../standard/library.c"
 #include "../../standard/platform/shell.c"
+#include "../../standard/spark.h"
 
 #define PROMPT TERM_RESET TERM_BOLD " $ " TERM_RESET
 
@@ -35,30 +36,112 @@ fn shell_thread_instance(string_address command, string_address arguments)
         exit(1);
 }
 
+// Opened once at startup. Spawning through it skips the fork whose address
+// space copy execve would only throw away: about 3us per command here.
+// Negative means the kernel has no spark device and we fall back to forking.
+b32 spawn_device = -1;
+
+// argv and envp go across as flat blocks of NUL terminated strings.
+p8 spawn_argv_block[MAX_INPUT];
+p8 spawn_envp_block[MAX_INPUT];
+
+positive shell_flatten_env(p8 address_to block, positive limit, positive address_to count_out)
+{
+        positive used = 0;
+        positive count = 0;
+        positive index = 0;
+
+        while (dawn_shell_envp[index])
+        {
+                positive length = string_length(dawn_shell_envp[index]) + 1;
+
+                if (used + length > limit)
+                        break;
+
+                memory_copy(block + used, dawn_shell_envp[index], length);
+                used += length;
+                count++;
+                index++;
+        }
+
+        address_to count_out = count;
+        return used;
+}
+
+// Returns the child pid, or a negative error if the device could not take it.
+bipolar shell_spawn_via_device(string_address command, string_address arguments)
+{
+        struct spark_spawn request;
+        positive used = 0;
+        positive argc = 0;
+        positive envc = 0;
+
+        positive length = string_length(command) + 1;
+        memory_copy(spawn_argv_block, command, length);
+        used = length;
+        argc = 1;
+
+        if (arguments)
+        {
+                length = string_length(arguments) + 1;
+
+                if (used + length <= sizeof(spawn_argv_block))
+                {
+                        memory_copy(spawn_argv_block + used, arguments, length);
+                        used += length;
+                        argc++;
+                }
+        }
+
+        request.path = (unsigned long)command;
+        request.argv = (unsigned long)spawn_argv_block;
+        request.argv_bytes = used;
+        request.argv_count = argc;
+        request.envp = (unsigned long)spawn_envp_block;
+        request.envp_bytes = shell_flatten_env(spawn_envp_block, sizeof(spawn_envp_block), address_of envc);
+        request.envp_count = envc;
+
+        return system_call_3(syscall(ioctl), spawn_device, SPARK_IOCTL_SPAWN,
+                             (positive)address_of request);
+}
+
 fn shell_execute_command(string_address command, string_address arguments)
 {
+        bipolar child = -1;
+
         log_flush();
 
-        // clone takes (flags, child_stack, ...). Passing only flags left
-        // child_stack as whatever happened to be in the second argument
-        // register, so the child started on a garbage stack and its arguments
-        // came back as junk -- execve was being handed an empty path, which is
-        // why every command reported ENOENT.
-        //
-        // child_stack must be 0 to mean "copy the parent's stack", and the
-        // exit signal has to be SIGCHLD or the wait4 below never reaps.
-        bipolar fork_result = system_call_2(syscall(clone), SIGCHLD, 0);
+        if (spawn_device >= 0)
+                child = shell_spawn_via_device(command, arguments);
 
-        if (fork_result == 0)
-                shell_thread_instance(command, arguments);
+        if (child < 0)
+        {
+                // No spark device, or it refused the request: fall back to the
+                // portable path so the shell still works on a stock kernel.
+                //
+                // clone takes (flags, child_stack, ...). Passing only flags
+                // left child_stack as whatever happened to be in the second
+                // argument register, so the child started on a garbage stack
+                // and execve was handed an empty path.
+                child = system_call_2(syscall(clone), SIGCHLD, 0);
 
-        if (fork_result > 0)
+                if (child == 0)
+                        shell_thread_instance(command, arguments);
+        }
+
+        if (child > 0)
         {
                 positive status = 0;
-                bipolar wait_result = system_call_4(syscall(wait4), fork_result, (positive)address_of status, 0, 0);
+                system_call_4(syscall(wait4), child, (positive)address_of status, 0, 0);
+
+                // Spawning hands back a pid before the image is loaded, so a
+                // path that cannot be run shows up as the child exiting 127
+                // rather than as an error from the spawn itself.
+                if ((status >> 8 & 0xff) == 127)
+                        string_format(shell_output, "Could not run: '%s'\n", command);
         }
         else
-                string_format(shell_output, "failed with error: %b\n", fork_result);
+                string_format(shell_output, "failed with error: %b\n", child);
 
         log_flush();
 }
@@ -122,6 +205,9 @@ b32 main()
         system_call_2(2, (positive) "/dev/console", FILE_READ_WRITE | O_NOCTTY);
 
         dawn_shell_env_init();
+
+        spawn_device = system_call_4(syscall(openat), AT_FDCWD,
+                                     (positive)SPARK_DEVICE, FILE_READ_WRITE, 0);
 
         while (1)
         {

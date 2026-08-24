@@ -205,6 +205,8 @@ struct spark_spawn_work {
         char *path;
         char **argv;
         char *argv_block;
+        char **envp;
+        char *envp_block;
 };
 
 static void spark_spawn_free(struct spark_spawn_work *work)
@@ -212,6 +214,8 @@ static void spark_spawn_free(struct spark_spawn_work *work)
         if (!work)
                 return;
 
+        kfree(work->envp_block);
+        kfree(work->envp);
         kfree(work->argv_block);
         kfree(work->argv);
         kfree(work->path);
@@ -224,7 +228,8 @@ static int spark_spawn_enter(void *data)
         static const char *const empty_envp[] = {NULL};
         int ret;
 
-        ret = kernel_execve(work->path, (const char *const *)work->argv, empty_envp);
+        ret = kernel_execve(work->path, (const char *const *)work->argv,
+                            work->envp ? (const char *const *)work->envp : empty_envp);
 
         // kernel_execve has copied everything it needs by now, so the request
         // can go before anything else touches it.
@@ -243,23 +248,68 @@ static int spark_spawn_enter(void *data)
         return 0;
 }
 
+// argv and envp arrive the same way: one flat block of NUL terminated strings
+// plus a count, so a single copy_from_user brings each across and the pointer
+// array is built by walking it.
+static int spark_copy_strings(unsigned long user_block, unsigned int bytes,
+                              unsigned int count, char **out_block, char ***out_vector)
+{
+        char *block;
+        char **vector;
+        char *walk;
+        unsigned int i;
+
+        if (count == 0 || count > 256 || bytes == 0 || bytes > PAGE_SIZE)
+                return -EINVAL;
+
+        block = kmalloc(bytes + 1, GFP_KERNEL);
+        if (!block)
+                return -ENOMEM;
+
+        if (copy_from_user(block, (const void __user *)user_block, bytes))
+        {
+                kfree(block);
+                return -EFAULT;
+        }
+
+        block[bytes] = 0;
+
+        vector = kcalloc(count + 1, sizeof(char *), GFP_KERNEL);
+        if (!vector)
+        {
+                kfree(block);
+                return -ENOMEM;
+        }
+
+        walk = block;
+        for (i = 0; i < count; i++)
+        {
+                if (walk >= block + bytes)
+                {
+                        kfree(vector);
+                        kfree(block);
+                        return -EINVAL;
+                }
+
+                vector[i] = walk;
+                walk += strlen(walk) + 1;
+        }
+        vector[count] = NULL;
+
+        *out_block = block;
+        *out_vector = vector;
+        return 0;
+}
+
 static long spark_do_spawn(struct spark_spawn __user *request)
 {
         struct spark_spawn args;
         struct spark_spawn_work *work;
-        unsigned int i;
-        char *walk;
         long ret;
         pid_t pid;
 
         if (copy_from_user(&args, request, sizeof(args)))
                 return -EFAULT;
-
-        if (args.argv_count == 0 || args.argv_count > 256)
-                return -EINVAL;
-
-        if (args.argv_bytes == 0 || args.argv_bytes > PAGE_SIZE)
-                return -EINVAL;
 
         work = kzalloc(sizeof(*work), GFP_KERNEL);
         if (!work)
@@ -273,42 +323,18 @@ static long spark_do_spawn(struct spark_spawn __user *request)
                 goto fail;
         }
 
-        // One copy for the whole argv block, then point into it.
-        work->argv_block = kmalloc(args.argv_bytes + 1, GFP_KERNEL);
-        if (!work->argv_block)
-        {
-                ret = -ENOMEM;
+        ret = spark_copy_strings(args.argv, args.argv_bytes, args.argv_count,
+                                 &work->argv_block, &work->argv);
+        if (ret)
                 goto fail;
-        }
 
-        if (copy_from_user(work->argv_block, (const void __user *)args.argv, args.argv_bytes))
+        if (args.envp && args.envp_count)
         {
-                ret = -EFAULT;
-                goto fail;
-        }
-
-        work->argv_block[args.argv_bytes] = 0;
-
-        work->argv = kcalloc(args.argv_count + 1, sizeof(char *), GFP_KERNEL);
-        if (!work->argv)
-        {
-                ret = -ENOMEM;
-                goto fail;
-        }
-
-        walk = work->argv_block;
-        for (i = 0; i < args.argv_count; i++)
-        {
-                if (walk >= work->argv_block + args.argv_bytes)
-                {
-                        ret = -EINVAL;
+                ret = spark_copy_strings(args.envp, args.envp_bytes, args.envp_count,
+                                         &work->envp_block, &work->envp);
+                if (ret)
                         goto fail;
-                }
-
-                work->argv[i] = walk;
-                walk += strlen(walk) + 1;
         }
-        work->argv[args.argv_count] = NULL;
 
         // SIGCHLD alone, so the new task is an ordinary child of the caller
         // and wait4 works on it the same way it does for a fork.
