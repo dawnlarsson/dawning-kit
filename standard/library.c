@@ -567,8 +567,6 @@ typedef typeof(sizeof(0)) sized;
 #undef bool
 #define bool p8
 
-#define NAKED __attribute__((naked))
-
 #define ir(asm_args...) \
         asm volatile(asm_args)
 
@@ -576,15 +574,6 @@ typedef typeof(sizeof(0)) sized;
 #define b16_data(...) asm volatile(".word " #__VA_ARGS__ "\n")
 #define b32_data(...) asm volatile(".long " #__VA_ARGS__ "\n")
 #define b64_data(...) asm volatile(".quad " #__VA_ARGS__ "\n")
-
-#if ARM64
-#define fn_asm(name, return_type, arguments...) \
-        static return_type name(arguments)
-
-#else
-#define fn_asm(name, return_type, arguments...) \
-        static NAKED return_type name(arguments)
-#endif
 
 #if X64
 #define ASM(name) asm_x64_##name
@@ -669,13 +658,10 @@ typedef typeof(sizeof(0)) sized;
 #define asm_riscv64_frame_pointer "s0"
 #define asm_riscv64_syscall_slot asm_riscv64_reg_0
 
-#define copy(where, from) ir(ASM(copy) " " ASM(where) "," ASM(from) ";")
 #define jump(where) ir(ASM(jump) " " ASM(where) ";")
 #define branch(where) ir(ASM(branch) " " ASM(where) ";")
 #define add(what, with) ir(ASM(add) " " ASM(what) "," ASM(with) ";")
 #define sub(what, with) ir(ASM(sub) " " ASM(what) "," ASM(with) ";")
-#define system_return ir(ASM(ret))
-#define system_invoke ir(ASM(syscall))
 #define call(what) ir("call " ASM(what) ";")
 
 #define register_get(reg, dest) ir(ASM(copy) " %0, " ASM(reg) : "=r"(dest))
