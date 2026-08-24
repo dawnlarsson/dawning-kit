@@ -1,12 +1,28 @@
 #!/bin/sh
+#
+#       Build and run a source file.
+#
+#       Usage: sh run [source_file] [output_file]
+#
+set -u
+
+# Prefer this checkout over the /standard symlink, so the script works from a
+# plain clone without localinstall.sh having been run.
+# shellcheck disable=SC1007 # CDPATH= is a deliberate one-shot empty assignment
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+build="$here/build"
+[ -x "$build" ] || [ -f "$build" ] || build=/standard/build
 
 source_file=${1:-"src/main.c"}
 output_file=${2:-"bin/$(basename "$(pwd)")"}
 
-sh /standard/build $source_file $output_file
+sh "$build" "$source_file" "$output_file" || exit 1
 
-$output_file
+"$output_file"
+status=$?
 
-if [ $? -ne 0 ]; then
-        echo "Exited with $?"
+if [ $status -ne 0 ]; then
+        echo "Exited with $status"
 fi
+
+exit $status

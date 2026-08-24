@@ -1,17 +1,40 @@
 #!/bin/sh
+#
+#       Builds one userspace program for the kernel image, using the compiler
+#       and flags taken from the generated artifacts/.config.
+#
+#       Usage: sh ../standard/build_kernel <source_without_extension> <output>
+#
+set -u
+
 . script/common
 
-compiler=$(key compiler)
+if [ "$#" -lt 2 ]; then
+        echo "build_kernel: usage: build_kernel <source_without_extension> <output>" >&2
+        exit 1
+fi
+
+compiler=$(key_one compiler) || exit 1
 dawning_flags=$(key dawning_flags)
 
-echo $BOLD"Compiling $2" $RESET
+if [ -z "$compiler" ]; then
+        echo "build_kernel: no compiler set in artifacts/.config" >&2
+        exit 1
+fi
 
-$compiler $1.c -o $2 $dawning_flags $suppress -Wl,-e,_start -Wl,--no-warn-rwx-segments
-build_result=$?
+echo "$BOLD""Compiling $2""$RESET"
 
-size $2
+mkdir -p "$(dirname "$2")" || exit 1
 
-chmod +x $2
+# The result of this used to be discarded, so a failed program build still let
+# the kernel build continue and produce an image with a missing binary in it.
+# shellcheck disable=SC2086 # dawning_flags is a deliberately split flag list
+if ! $compiler "$1.c" -o "$2" $dawning_flags -Wl,-e,_start -Wl,--no-warn-rwx-segments; then
+        echo "build_kernel: failed to compile $1.c" >&2
+        exit 1
+fi
+
+size "$2"
+
+chmod +x "$2"
 echo
-
-exit $build_result

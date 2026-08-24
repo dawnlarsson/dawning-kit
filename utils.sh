@@ -41,15 +41,27 @@ size_diff() {
         printf "%s: %s → %s (%d%% smaller)\\n" "$label" "$orig_fmt" "$min_fmt" "$percentage"
 }
 
+# stat takes -c on GNU and -f on BSD/macOS; neither accepts the other's flag.
+size_bytes() {
+        if stat -c%s "$1" 2>/dev/null; then
+                return 0
+        fi
+        stat -f%z "$1" 2>/dev/null
+}
+
 # just prints the file size in bytes, KB, and MB
 size() {
-        local size
-        local size_fmt
-        
-        size=$(stat -c%s "$1")
-        size_fmt=$(size_fmt "$size")
-        
-        echo "$1: $size bytes ($size_fmt)"
+        local bytes
+        local formatted
+
+        if ! bytes=$(size_bytes "$1") || [ -z "$bytes" ]; then
+                echo "size: cannot stat '$1'" >&2
+                return 1
+        fi
+
+        formatted=$(size_fmt "$bytes")
+
+        echo "$1: $bytes bytes ($formatted)"
 }
 
 file() { cat "$1"; }
@@ -142,7 +154,8 @@ label_finder() {
                                         [ -n "$callback" ] && "$callback" "$line" "$index"
                                         index=$((index + 1))
                                 else
-                                        local curr_indent=$(echo "$line" | sed 's/[^ \t].*//' | wc -c)
+                                        local curr_indent
+                                        curr_indent=$(echo "$line" | sed 's/[^ \t].*//' | wc -c)
                                         curr_indent=$((curr_indent - 1))
                                         
                                         if [ $curr_indent -gt $base_indent ]; then

@@ -1,28 +1,53 @@
 #!/bin/sh
+#
+#       EXPERIMENTAL: C compiled to the flat spark format
+#
+#       Usage: sh spark <source_without_extension> <output> [debug]
+#
+set -u
+
 . script/common
 
-label $YELLOW"EXPERIMENTAL! C compiled to spark format"
+label "$YELLOW""EXPERIMENTAL! C compiled to spark format"
+
+if [ "$#" -lt 2 ]; then
+        echo "spark: usage: spark <source_without_extension> <output> [debug]" >&2
+        exit 1
+fi
 
 compiler=$(key compiler)
 dawning_flags=$(key dawning_flags)
 
-if [ "$3" = "debug" ]; then
-        dawning_flags+=" -g"
+# dawning_flags+=" -g" is a bash extension that silently does nothing under
+# dash, so the debug build came out identical to the release build.
+if [ "${3:-}" = "debug" ]; then
+        dawning_flags="$dawning_flags -g"
 fi
 
-echo $BOLD"Compiling $2" $RESET
+echo "$BOLD""Compiling $2""$RESET"
 
-$compiler $1.c -o tmp_spark_gen.o $dawning_flags $suppress -Wl,-e,_start -Wl,--no-warn-rwx-segments
+temp_object="tmp_spark_gen.o"
 
-objcopy -O binary -j .text -j .rodata -j .data tmp_spark_gen.o $2
-
-if [ "$3" = "debug" ]; then
-        objdump -S tmp_spark_gen.o >$2.s
+# shellcheck disable=SC2086
+if ! $compiler "$1.c" -o "$temp_object" $dawning_flags -Wl,-e,_start -Wl,--no-warn-rwx-segments; then
+        echo "spark: compilation failed" >&2
+        rm -f "$temp_object"
+        exit 1
 fi
 
-rm tmp_spark_gen.o
+if ! objcopy -O binary -j .text -j .rodata -j .data "$temp_object" "$2"; then
+        echo "spark: objcopy failed" >&2
+        rm -f "$temp_object"
+        exit 1
+fi
 
-size $2
+if [ "${3:-}" = "debug" ]; then
+        objdump -S "$temp_object" >"$2.s" || echo "spark: objdump failed, continuing" >&2
+fi
 
-chmod +x $2
+rm -f "$temp_object"
+
+size "$2"
+
+chmod +x "$2"
 echo
