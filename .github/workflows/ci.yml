@@ -6,6 +6,9 @@ on:
   pull_request:
   workflow_dispatch:
 
+env:
+  SHELLCHECK_VERSION: "0.10.0"
+
 jobs:
   shell:
     name: Shell (syntax, shellcheck, dash)
@@ -13,8 +16,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install shellcheck and dash
-        run: sudo apt-get update && sudo apt-get install -y shellcheck dash
+      - name: Install dash
+        run: sudo apt-get update && sudo apt-get install -y dash
+
+      # Pinned: the distro's shellcheck version decides which SC3xxx POSIX
+      # compatibility checks fire, so an unpinned one makes CI disagree with
+      # whatever a contributor has installed locally.
+      - name: Install shellcheck ${{ env.SHELLCHECK_VERSION }}
+        run: |
+          curl -fsSL "https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/shellcheck-v${SHELLCHECK_VERSION}.linux.x86_64.tar.xz" \
+            | tar -xJ --strip-components=1 -C /usr/local/bin "shellcheck-v${SHELLCHECK_VERSION}/shellcheck"
+          shellcheck --version
 
       # The sourced kits are bash; the build scripts must stay POSIX because
       # the README tells people to run them with `sh`, which is dash here.
