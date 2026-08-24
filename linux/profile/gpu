@@ -23,6 +23,11 @@
 #
 
 #
+# The in-kernel compositor draws through the DRM client API
+#
+CONFIG_DAWNING_DISPLAY=y
+
+#
 # Core modesetting
 #
 CONFIG_DRM=y

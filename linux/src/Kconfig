@@ -4,4 +4,14 @@ menu "Dawning Eos Extensions"
         default y
         help
           Enable Dawning Eos core features
+
+    config DAWNING_DISPLAY
+        bool "Dawning in-kernel compositor"
+        depends on DAWNING_CORE && DRM && DRM_CLIENT
+        default y
+        help
+          Own the display from kernel space: the compositor draws the
+          desktop, windows and cursor itself through the in-kernel DRM
+          client API rather than handing a device node to a userspace
+          display server.
 endmenu # Dawning Eos Extensions
