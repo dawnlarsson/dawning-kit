@@ -533,12 +533,24 @@ static void __exit dawn_exit(void)
         log_k("Spark format unregistered\n");
 }
 
-// Use late_initcall for built-in, or module_init for module
+/*
+        device_initcall, the same level the display drivers register at.
+
+        Link order puts kernel/ ahead of drivers/, so this runs before them:
+        /dev is mounted and the poll for a display starts while the drivers are
+        still coming up, and the compositor takes the device the moment it
+        appears rather than a hundred milliseconds later. Waiting until every
+        driver had finished cost exactly that.
+
+        Anything earlier is not possible: the initramfs is not unpacked until
+        rootfs_initcall, so before this point there is no /dev to mount onto.
+*/
+// Use device_initcall for built-in, or module_init for module
 #ifdef MODULE
 module_init(dawn_start);
 module_exit(dawn_exit);
 MODULE_AUTHOR("Dawn Larsson");
 MODULE_DESCRIPTION("Spark direct binary format");
 #else
-late_initcall(dawn_start);
+device_initcall(dawn_start);
 #endif

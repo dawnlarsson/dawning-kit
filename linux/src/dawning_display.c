@@ -480,8 +480,10 @@ static int dawning_display_take_over(struct drm_device *dev)
         device outlives our brief handle on it.
 */
 #define DAWN_DISPLAY_NODE "/dev/dri/card0"
-#define DAWN_DISPLAY_RETRY_MS 100
-#define DAWN_DISPLAY_ATTEMPTS 50
+// Retried fast: the node appears the moment devtmpfs is mounted, and every
+// millisecond spent waiting after that is a millisecond of black screen.
+#define DAWN_DISPLAY_RETRY_MS 5
+#define DAWN_DISPLAY_ATTEMPTS 1000
 
 static struct delayed_work dawn_display_probe_work;
 static unsigned int dawn_display_attempts;
@@ -531,6 +533,8 @@ static void dawning_display_probe(struct work_struct *work)
 static void dawning_display_start_probing(void)
 {
         INIT_DELAYED_WORK(&dawn_display_probe_work, dawning_display_probe);
-        schedule_delayed_work(&dawn_display_probe_work,
-                              msecs_to_jiffies(DAWN_DISPLAY_RETRY_MS));
+
+        // No initial delay. The display driver has already probed by the time
+        // this runs, so the first attempt usually succeeds outright.
+        schedule_delayed_work(&dawn_display_probe_work, 0);
 }
