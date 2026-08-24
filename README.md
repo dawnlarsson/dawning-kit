@@ -185,7 +185,13 @@ Ensure to cd into `dawning-kit/linux` before running build.sh
 
 The kernel tarball is verified against a PGP signature pinned in
 `script/kernel_setup` before it is extracted. If the signature does not verify,
-the build stops. Note that profiles are shell-evaluated as root during the
+the build stops.
+
+Currently tracking **Linux 7.2**. Moving to another release means editing
+`kernel_version` in `script/kernel_setup` and pasting the matching signature
+from `cdn.kernel.org/pub/linux/kernel/vX.x/linux-VERSION.tar.sign`; the
+download URL is derived from the version. A longterm release is the safer
+choice if you care more about stability than about being current. Note that profiles are shell-evaluated as root during the
 `pre`/`post` build steps, so treat adding a profile as running code as root.
 
 Minimal config for x86_x64
