@@ -1,0 +1,29 @@
+#
+# AMD graphics
+#
+# Separate from the gpu profile because amdgpu does not work without binary
+# firmware, which this repository does not carry. The driver selects
+# FW_LOADER and will refuse to initialise the card if the blobs are absent --
+# it does not fall back to an unaccelerated mode the way i915 does.
+#
+# To use it, the matching files from linux-firmware have to end up in the
+# image under /lib/firmware, or be built into the kernel with
+# CONFIG_EXTRA_FIRMWARE. Which files depends on the card generation, and they
+# are large: a Polaris card wants roughly 4 MB, a recent one considerably
+# more.
+#
+# Compose it explicitly when you know the machine has an AMD card:
+#
+#       sudo sh build.sh arch/x64 debug_none gpu gpu.amd
+#
+CONFIG_DRM_AMDGPU=y
+
+# Pre-GCN 1.2 parts. Off by default: they are old enough to fall outside what
+# the general profile targets, and each one costs size.
+CONFIG_DRM_AMDGPU_SI=n
+CONFIG_DRM_AMDGPU_CIK=n
+
+CONFIG_DRM_AMD_DC=y
+CONFIG_DRM_AMD_DC_FP=y
+CONFIG_FW_LOADER=y
+CONFIG_FW_LOADER_USER_HELPER=n

@@ -26,13 +26,14 @@ label DISTRO INFO
 label KERNEL CONFIGURATION
         sudo sh script/kernel_setup || die "kernel setup"
 
-        # "any" carries what every image needs and "general" the hardware
-        # baseline for an ordinary x86_64 desktop, so both are always composed
-        # in ahead of whatever was asked for.
+        # "any" carries what every image needs, "general" the hardware baseline
+        # for an ordinary x86_64 desktop, and "gpu" the modesetting the
+        # compositor draws through. All three are composed in ahead of whatever
+        # was asked for.
         if [ -z "${1:-}" ]; then
-                profiles="any general arch/x64 debug_none limbo desktop"
+                profiles="any general gpu arch/x64 debug_none limbo desktop"
         else
-                profiles="any general $*"
+                profiles="any general gpu $*"
         fi
 
         # shellcheck disable=SC2086

@@ -1,0 +1,84 @@
+#
+# Graphics
+#
+# Kernel modesetting with the atomic API, which is what a compositor needs:
+# atomic commits are how you move a cursor plane and flip a framebuffer in one
+# tear-free operation, without any GPU rendering involved.
+#
+# The drivers here are the ones that need no firmware blobs, so an image built
+# from this profile alone still boots and displays on the target hardware and
+# in a virtual machine:
+#
+#   i915        Intel integrated graphics, which is what the great majority of
+#               desktops of this era actually have. Modesetting works without
+#               firmware; only the newest parts want DMC for display power
+#               management, and they still set a mode without it.
+#   virtio-gpu  how a virtual machine gets KMS, and what the compositor is
+#               developed against
+#   bochs, qxl  the other two display devices QEMU commonly presents
+#   simpledrm   whatever the firmware left on the screen, as a last resort
+#
+# AMD and NVIDIA are separate profiles because both need binary firmware that
+# this repository does not carry. See profile/gpu.amd.
+#
+
+#
+# Core modesetting
+#
+CONFIG_DRM=y
+CONFIG_DRM_KMS_HELPER=y
+CONFIG_DRM_CLIENT=y
+CONFIG_DRM_CLIENT_SELECTION=y
+CONFIG_DRM_CLIENT_LIB=y
+CONFIG_DRM_FBDEV_EMULATION=y
+CONFIG_DRM_GEM_SHMEM_HELPER=y
+CONFIG_DRM_TTM=y
+CONFIG_DRM_DISPLAY_HELPER=y
+CONFIG_DRM_DISPLAY_DP_HELPER=y
+CONFIG_DRM_DISPLAY_HDMI_HELPER=y
+
+#
+# Intel
+#
+CONFIG_DRM_I915=y
+CONFIG_DRM_I915_FORCE_PROBE=""
+CONFIG_DRM_I915_CAPTURE_ERROR=n
+CONFIG_DRM_I915_COMPRESS_ERROR=n
+CONFIG_INTEL_GTT=y
+CONFIG_AGP=y
+CONFIG_AGP_INTEL=y
+
+#
+# Virtual machines
+#
+CONFIG_DRM_VIRTIO_GPU=y
+CONFIG_VIRTIO=y
+CONFIG_VIRTIO_PCI=y
+CONFIG_VIRTIO_MENU=y
+CONFIG_DRM_BOCHS=y
+CONFIG_DRM_QXL=y
+
+# vmwgfx additionally depends on HYPERVISOR_GUEST, which is a paravirt option
+# rather than a graphics one, so it is left to whoever actually targets VMware
+# to compose in.
+
+#
+# Fallback: the framebuffer the firmware set up
+#
+CONFIG_DRM_SIMPLEDRM=y
+CONFIG_SYSFB_SIMPLEFB=y
+
+#
+# Console on top of KMS
+#
+CONFIG_FRAMEBUFFER_CONSOLE=y
+CONFIG_FRAMEBUFFER_CONSOLE_DETECT_PRIMARY=y
+CONFIG_FRAMEBUFFER_CONSOLE_ROTATION=y
+CONFIG_FONT_SUPPORT=y
+CONFIG_FONT_8x16=y
+
+#
+# Backlight, which laptops and some all-in-ones need to show anything at all
+#
+CONFIG_BACKLIGHT_CLASS_DEVICE=y
+CONFIG_ACPI_VIDEO=y
