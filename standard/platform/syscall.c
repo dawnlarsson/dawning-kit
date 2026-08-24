@@ -827,6 +827,7 @@
 #define syscall_linux_riscv64_readlinkat 78
 #define syscall_linux_riscv64_newfstatat 79
 #define syscall_linux_riscv64_newfstat 80
+#define syscall_linux_riscv64_fstat 80
 #define syscall_linux_riscv64_sync 81
 #define syscall_linux_riscv64_fsync 82
 #define syscall_linux_riscv64_fdatasync 83
@@ -837,6 +838,8 @@
 #define syscall_linux_riscv64_capget 90
 #define syscall_linux_riscv64_capset 91
 #define syscall_linux_riscv64_personality 92
+#define syscall_linux_riscv64_munmap 215
+#define syscall_linux_riscv64_mmap 222
 #define syscall_linux_riscv64_exit 93
 #define syscall_linux_riscv64_exit_group 94
 #define syscall_linux_riscv64_waitid 95

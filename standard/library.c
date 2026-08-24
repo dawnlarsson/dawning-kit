@@ -85,7 +85,6 @@
 
 #define FLAT __attribute__((flatten))
 #define PURE __attribute__((pure))
-#define NAKED __attribute__((naked))
 #define INLINE __attribute__((always_inline))
 #define NO_FRAME __attribute__((noframe))
 #define KEEP __attribute__((used))
@@ -567,6 +566,8 @@ typedef typeof(sizeof(0)) sized;
 
 #undef bool
 #define bool p8
+
+#define NAKED __attribute__((naked))
 
 #define ir(asm_args...) \
         asm volatile(asm_args)
@@ -1611,6 +1612,83 @@ static bipolar system_call_6(positive syscall, positive argument_1, positive arg
                      : "a"(syscall), "D"(argument_1), "S"(argument_2), "d"(argument_3), "r"(r10), "r"(r8), "r"(r9)
                      : SYSCALL_CLOBBERS);
         return result;
+}
+
+#elif RISCV64
+
+// a7 carries the syscall number, a0..a5 the arguments, and a0 comes back with
+// the result. Same reason as the other two: no naked functions needed.
+#define SYSCALL_CLOBBERS "memory"
+
+static bipolar system_call(positive syscall)
+{
+        register positive n asm("a7") = syscall;
+        register positive a0 asm("a0");
+        asm volatile("ecall" : "=r"(a0) : "r"(n) : SYSCALL_CLOBBERS);
+        return (bipolar)a0;
+}
+
+static bipolar system_call_1(positive syscall, positive argument_1)
+{
+        register positive n asm("a7") = syscall;
+        register positive a0 asm("a0") = argument_1;
+        asm volatile("ecall" : "+r"(a0) : "r"(n) : SYSCALL_CLOBBERS);
+        return (bipolar)a0;
+}
+
+static bipolar system_call_2(positive syscall, positive argument_1, positive argument_2)
+{
+        register positive n asm("a7") = syscall;
+        register positive a0 asm("a0") = argument_1;
+        register positive a1 asm("a1") = argument_2;
+        asm volatile("ecall" : "+r"(a0) : "r"(n), "r"(a1) : SYSCALL_CLOBBERS);
+        return (bipolar)a0;
+}
+
+static bipolar system_call_3(positive syscall, positive argument_1, positive argument_2, positive argument_3)
+{
+        register positive n asm("a7") = syscall;
+        register positive a0 asm("a0") = argument_1;
+        register positive a1 asm("a1") = argument_2;
+        register positive a2 asm("a2") = argument_3;
+        asm volatile("ecall" : "+r"(a0) : "r"(n), "r"(a1), "r"(a2) : SYSCALL_CLOBBERS);
+        return (bipolar)a0;
+}
+
+static bipolar system_call_4(positive syscall, positive argument_1, positive argument_2, positive argument_3, positive argument_4)
+{
+        register positive n asm("a7") = syscall;
+        register positive a0 asm("a0") = argument_1;
+        register positive a1 asm("a1") = argument_2;
+        register positive a2 asm("a2") = argument_3;
+        register positive a3 asm("a3") = argument_4;
+        asm volatile("ecall" : "+r"(a0) : "r"(n), "r"(a1), "r"(a2), "r"(a3) : SYSCALL_CLOBBERS);
+        return (bipolar)a0;
+}
+
+static bipolar system_call_5(positive syscall, positive argument_1, positive argument_2, positive argument_3, positive argument_4, positive argument_5)
+{
+        register positive n asm("a7") = syscall;
+        register positive a0 asm("a0") = argument_1;
+        register positive a1 asm("a1") = argument_2;
+        register positive a2 asm("a2") = argument_3;
+        register positive a3 asm("a3") = argument_4;
+        register positive a4 asm("a4") = argument_5;
+        asm volatile("ecall" : "+r"(a0) : "r"(n), "r"(a1), "r"(a2), "r"(a3), "r"(a4) : SYSCALL_CLOBBERS);
+        return (bipolar)a0;
+}
+
+static bipolar system_call_6(positive syscall, positive argument_1, positive argument_2, positive argument_3, positive argument_4, positive argument_5, positive argument_6)
+{
+        register positive n asm("a7") = syscall;
+        register positive a0 asm("a0") = argument_1;
+        register positive a1 asm("a1") = argument_2;
+        register positive a2 asm("a2") = argument_3;
+        register positive a3 asm("a3") = argument_4;
+        register positive a4 asm("a4") = argument_5;
+        register positive a5 asm("a5") = argument_6;
+        asm volatile("ecall" : "+r"(a0) : "r"(n), "r"(a1), "r"(a2), "r"(a3), "r"(a4), "r"(a5) : SYSCALL_CLOBBERS);
+        return (bipolar)a0;
 }
 
 #else
