@@ -107,6 +107,19 @@ struct spark_stats {
                                  // the part that is actually ours to optimise
 };
 
+// _IOR('s', 3, struct dawn_input_stats). Nanoseconds from a pointer event
+// reaching the kernel to the cursor being on screen.
+#define SPARK_IOCTL_INPUT_STATS 0x80307303u
+
+struct dawn_input_stats {
+        unsigned long events;
+        unsigned long mean_ns;
+        unsigned long worst_ns;
+        unsigned long queue_ns;
+        unsigned long draw_ns;
+        unsigned long flush_ns;
+};
+
 struct spark_spawn {
         unsigned long path;       // user pointer, NUL terminated
         unsigned long argv;       // user pointer to the flat argv block

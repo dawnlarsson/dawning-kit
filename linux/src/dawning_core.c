@@ -32,7 +32,11 @@
 
 #ifdef CONFIG_DAWNING_DISPLAY
 #include <linux/workqueue.h>
+#include <linux/input.h>
+#include <linux/math64.h>
+#include <linux/minmax.h>
 #include <drm/drm_file.h>
+#include <drm/drm_rect.h>
 #include "dawning_display.c"
 #endif
 
@@ -451,6 +455,21 @@ static long spark_report_stats(struct spark_stats __user *out)
         return 0;
 }
 
+#ifdef CONFIG_DAWNING_DISPLAY
+static long spark_report_input(struct dawn_input_stats __user *out)
+{
+        struct dawn_input_stats stats;
+
+        dawning_display_input_stats(&stats.events, &stats.mean_ns, &stats.worst_ns,
+                                    &stats.queue_ns, &stats.draw_ns, &stats.flush_ns);
+
+        if (copy_to_user(out, &stats, sizeof(stats)))
+                return -EFAULT;
+
+        return 0;
+}
+#endif
+
 static long spark_device_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
         switch (cmd)
@@ -459,6 +478,10 @@ static long spark_device_ioctl(struct file *file, unsigned int cmd, unsigned lon
                 return spark_do_spawn((struct spark_spawn __user *)arg);
         case SPARK_IOCTL_STATS:
                 return spark_report_stats((struct spark_stats __user *)arg);
+#ifdef CONFIG_DAWNING_DISPLAY
+        case SPARK_IOCTL_INPUT_STATS:
+                return spark_report_input((struct dawn_input_stats __user *)arg);
+#endif
         }
 
         return -ENOTTY;

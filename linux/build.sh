@@ -93,7 +93,7 @@ label PRE BUILD
 label USER SPACE BUILD
         # Every program in the image is spark, including the one the kernel
         # execs as /init, so no ELF is ever loaded on the boot path.
-        for program in init shell duck edit sparktest; do
+        for program in init shell duck edit sparktest pointer; do
                 sh ../standard/spark "programs/$program" "fs/$program" ||
                         die "building $program"
         done

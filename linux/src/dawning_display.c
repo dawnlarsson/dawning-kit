@@ -42,6 +42,24 @@
 
 #define DAWN_MAX_WINDOWS 8
 
+/*
+        Input
+
+        This is the reason for putting the compositor in the kernel at all. A
+        userspace display server sees a mouse move as: interrupt, input core,
+        wake the server, the server reads the event, composites, and asks the
+        kernel to move the cursor. Every one of those arrows is a context
+        switch.
+
+        An input handler registered here is called by the input core directly,
+        in the same path that received the event. There is one handoff left
+        and it is unavoidable: input events arrive in atomic context and a DRM
+        commit can sleep, so the position is taken immediately and the update
+        runs on a high priority worker.
+*/
+#define DAWN_CURSOR_HOTSPOT_X 0
+#define DAWN_CURSOR_HOTSPOT_Y 0
+
 // Colours are written as plain xrgb8888 and converted once per surface.
 #define DAWN_COLOUR_DESKTOP 0x1b2733
 #define DAWN_COLOUR_FRAME 0x2f3f52
@@ -74,7 +92,34 @@ struct dawn_display {
         int cursor_x, cursor_y;
 
         _Bool started;
+
+        // Written from the input handler in atomic context, read by the
+        // worker. Only ever one writer and one reader.
+        atomic_t pending_x;
+        atomic_t pending_y;
+        atomic_t motion_pending;
+        u64 motion_stamp;
+
+        int drawn_x, drawn_y;
 };
+
+// The compositor owns one display at a time. The input handler reaches it
+// through this rather than being handed it, since the input core calls us
+// with no notion of which screen a pointer belongs to.
+static struct dawn_display *dawn_display_active;
+
+static void dawning_input_start(void);
+
+/*
+        Timing. Nanoseconds from a pointer event arriving to the cursor being
+        on screen, split so the handoff can be told apart from the drawing.
+*/
+static u64 dawn_input_latency_total;
+static u64 dawn_input_latency_worst;
+static unsigned long dawn_input_events;
+static u64 dawn_input_queue_total;  // event to the worker starting
+static u64 dawn_input_draw_total;   // composing the two damage rects
+static u64 dawn_input_flush_total;  // handing the damage to the driver
 
 static struct dawn_display *dawn_display_from_client(struct drm_client_dev *client)
 {
@@ -202,6 +247,122 @@ static u32 dawn_display_colour(u32 xrgb, u32 format)
                 return xrgb | 0xff000000;
 
         return xrgb;
+}
+
+/*
+        Composes one rectangle rather than the whole screen.
+
+        Moving the cursor dirties two small areas: where it was and where it
+        is. Repainting a 1280x800 desktop for a mouse move would be about a
+        megabyte of writes per event; this is a few kilobytes.
+*/
+static void dawn_display_compose_rect(struct dawn_display *display,
+                                      struct dawn_surface *surface,
+                                      u32 *pixels, unsigned int pitch_pixels,
+                                      int rx, int ry, int rw, int rh)
+{
+        unsigned int i;
+
+        dawn_display_fill_rect(pixels, pitch_pixels, surface->width, surface->height,
+                               rx, ry, rw, rh,
+                               dawn_display_colour(DAWN_COLOUR_DESKTOP, surface->format));
+
+        for (i = 0; i < DAWN_MAX_WINDOWS; i++) {
+                struct dawn_window *window = &display->windows[i];
+                int fx, fy, fw, fh;
+
+                if (!window->present)
+                        continue;
+
+                fx = window->x - 2;
+                fy = window->y - 2;
+                fw = window->width + 4;
+                fh = window->height + 26;
+
+                // Skip windows that cannot touch the damaged area at all.
+                if (fx >= rx + rw || fx + fw <= rx || fy >= ry + rh || fy + fh <= ry)
+                        continue;
+
+                dawn_display_fill_rect(pixels, pitch_pixels, surface->width, surface->height,
+                                       fx, fy, fw, fh,
+                                       dawn_display_colour(DAWN_COLOUR_FRAME, surface->format));
+                dawn_display_fill_rect(pixels, pitch_pixels, surface->width, surface->height,
+                                       window->x, window->y, window->width, 20,
+                                       dawn_display_colour(DAWN_COLOUR_TITLE, surface->format));
+                dawn_display_fill_rect(pixels, pitch_pixels, surface->width, surface->height,
+                                       window->x, window->y + 20, window->width, window->height,
+                                       dawn_display_colour(DAWN_COLOUR_BODY, surface->format));
+        }
+}
+
+/*
+        Moves the cursor without repainting the screen.
+
+        Two damage rectangles -- the old position and the new -- are recomposed
+        and the cursor is drawn at the new one. drm_client_buffer_flush tells
+        the driver which region changed, so a device that uploads its
+        framebuffer only sends those bytes.
+*/
+static void dawn_display_move_cursor(struct dawn_display *display,
+                                     struct dawn_surface *surface,
+                                     int new_x, int new_y)
+{
+        struct iosys_map map;
+        unsigned int pitch_pixels;
+        u32 *pixels;
+        struct drm_rect damage;
+        int old_x = display->drawn_x;
+        int old_y = display->drawn_y;
+
+        if (drm_client_buffer_vmap_local(surface->buffer, &map))
+                return;
+
+        pixels = map.vaddr;
+        pitch_pixels = surface->buffer->fb->pitches[0] / sizeof(u32);
+
+        {
+        u64 draw_started = ktime_get_ns();
+
+        dawn_display_compose_rect(display, surface, pixels, pitch_pixels,
+                                  old_x, old_y, DAWN_CURSOR_W, DAWN_CURSOR_H);
+        dawn_display_compose_rect(display, surface, pixels, pitch_pixels,
+                                  new_x, new_y, DAWN_CURSOR_W, DAWN_CURSOR_H);
+
+        dawn_display_draw_cursor(pixels, pitch_pixels, surface->width, surface->height,
+                                 new_x, new_y,
+                                 dawn_display_colour(DAWN_COLOUR_CURSOR, surface->format),
+                                 dawn_display_colour(DAWN_COLOUR_CURSOR_EDGE, surface->format));
+
+        drm_client_buffer_vunmap_local(surface->buffer);
+
+        dawn_input_draw_total += ktime_get_ns() - draw_started;
+        }
+
+        damage.x1 = min(old_x, new_x);
+        damage.y1 = min(old_y, new_y);
+        damage.x2 = max(old_x, new_x) + DAWN_CURSOR_W;
+        damage.y2 = max(old_y, new_y) + DAWN_CURSOR_H;
+
+        {
+        u64 flush_started = ktime_get_ns();
+
+        /*
+                Required, not optional. Skipping it was tried: the cursor's
+                position updated internally but the screen kept showing it
+                where it was, because this driver shadows the framebuffer
+                rather than scanning out what we wrote to.
+
+                It is also the whole cost. The driver implements dirty as
+                drm_atomic_helper_dirtyfb, a full atomic commit that waits for
+                vblank, so a cursor move cannot land in less than a frame. A
+                hardware cursor plane is what avoids this -- moving one does
+                not touch the framebuffer at all -- but this device does not
+                have one.
+        */
+        drm_client_buffer_flush(surface->buffer, &damage);
+
+        dawn_input_flush_total += ktime_get_ns() - flush_started;
+        }
 }
 
 static void dawn_display_compose(struct dawn_display *display, struct dawn_surface *surface)
@@ -360,6 +521,13 @@ static int dawn_display_start(struct dawn_display *display)
         display->surface_count = count;
         dawn_display_seed_windows(display, display->surfaces[0].width,
                           display->surfaces[0].height);
+
+        atomic_set(&display->pending_x, display->cursor_x);
+        atomic_set(&display->pending_y, display->cursor_y);
+        display->drawn_x = display->cursor_x;
+        display->drawn_y = display->cursor_y;
+
+        dawn_display_active = display;
         dawn_display_redraw(display);
 
         log_d("compositing on %u output(s)\n", count);
@@ -468,6 +636,8 @@ static int dawning_display_take_over(struct drm_device *dev)
 
         drm_client_register(&display->client);
         log_d("attached to %s\n", dev->driver->name);
+
+        dawning_input_start();
         return 1;
 }
 
@@ -537,4 +707,211 @@ static void dawning_display_start_probing(void)
         // No initial delay. The display driver has already probed by the time
         // this runs, so the first attempt usually succeeds outright.
         schedule_delayed_work(&dawn_display_probe_work, 0);
+}
+
+/*
+        Input to cursor
+
+        input_handler.event is called by the input core in the path that
+        received the event, so nothing is woken to notice a mouse move. The
+        position is updated there and then; the pixels cannot be, because that
+        context cannot sleep and a DRM commit can. A high priority worker does
+        that part, and the gap between the two is what gets measured.
+*/
+static struct workqueue_struct *dawn_input_wq;
+static void dawn_input_apply(struct work_struct *work);
+static DECLARE_WORK(dawn_input_work, dawn_input_apply);
+
+// Nanoseconds from the event arriving to the cursor being on screen.
+// Declared with the rest of the timing counters near the top of the file.
+
+static void dawn_input_apply(struct work_struct *work)
+{
+        struct dawn_display *display = dawn_display_active;
+        int x, y;
+        u64 started;
+
+        if (!display)
+                return;
+
+        if (!atomic_xchg(&display->motion_pending, 0))
+                return;
+
+        started = display->motion_stamp;
+        x = atomic_read(&display->pending_x);
+        y = atomic_read(&display->pending_y);
+
+        if (started)
+                dawn_input_queue_total += ktime_get_ns() - started;
+
+        mutex_lock(&display->lock);
+
+        if (display->started && display->surface_count) {
+                dawn_display_move_cursor(display, &display->surfaces[0], x, y);
+                display->drawn_x = x;
+                display->drawn_y = y;
+                display->cursor_x = x;
+                display->cursor_y = y;
+        }
+
+        mutex_unlock(&display->lock);
+
+        if (started) {
+                u64 elapsed = ktime_get_ns() - started;
+
+                dawn_input_latency_total += elapsed;
+                dawn_input_events++;
+
+                if (elapsed > dawn_input_latency_worst)
+                        dawn_input_latency_worst = elapsed;
+        }
+}
+
+static void dawn_input_event(struct input_handle *handle, unsigned int type,
+                             unsigned int code, int value)
+{
+        struct dawn_display *display = dawn_display_active;
+        int x, y, limit;
+
+        if (!display || !display->started || !display->surface_count)
+                return;
+
+        x = atomic_read(&display->pending_x);
+        y = atomic_read(&display->pending_y);
+
+        if (type == EV_REL) {
+                if (code == REL_X)
+                        x += value;
+                else if (code == REL_Y)
+                        y += value;
+                else
+                        return;
+        } else if (type == EV_ABS) {
+                // Absolute devices report in their own range, so scale into
+                // the screen. QEMU's tablet is one of these.
+                struct input_absinfo *abs;
+
+                if (code != ABS_X && code != ABS_Y)
+                        return;
+
+                abs = &handle->dev->absinfo[code];
+
+                if (abs->maximum <= abs->minimum)
+                        return;
+
+                if (code == ABS_X)
+                        x = (int)div_u64((u64)(value - abs->minimum) *
+                                         display->surfaces[0].width,
+                                         abs->maximum - abs->minimum);
+                else
+                        y = (int)div_u64((u64)(value - abs->minimum) *
+                                         display->surfaces[0].height,
+                                         abs->maximum - abs->minimum);
+        } else {
+                return;
+        }
+
+        limit = (int)display->surfaces[0].width - 1;
+        x = clamp(x, 0, limit);
+        limit = (int)display->surfaces[0].height - 1;
+        y = clamp(y, 0, limit);
+
+        atomic_set(&display->pending_x, x);
+        atomic_set(&display->pending_y, y);
+
+        // Stamp only the first event of a burst, so the measurement is the age
+        // of the oldest movement not yet on screen.
+        if (!atomic_xchg(&display->motion_pending, 1))
+                display->motion_stamp = ktime_get_ns();
+
+        queue_work(dawn_input_wq, &dawn_input_work);
+}
+
+static int dawn_input_connect(struct input_handler *handler, struct input_dev *dev,
+                              const struct input_device_id *id)
+{
+        struct input_handle *handle;
+        int ret;
+
+        handle = kzalloc(sizeof(*handle), GFP_KERNEL);
+        if (!handle)
+                return -ENOMEM;
+
+        handle->dev = dev;
+        handle->handler = handler;
+        handle->name = "dawning";
+
+        ret = input_register_handle(handle);
+        if (ret)
+                goto err_free;
+
+        ret = input_open_device(handle);
+        if (ret)
+                goto err_unregister;
+
+        log_d("pointer: %s\n", dev->name ? dev->name : "unnamed");
+        return 0;
+
+err_unregister:
+        input_unregister_handle(handle);
+err_free:
+        kfree(handle);
+        return ret;
+}
+
+static void dawn_input_disconnect(struct input_handle *handle)
+{
+        input_close_device(handle);
+        input_unregister_handle(handle);
+        kfree(handle);
+}
+
+// Anything that reports relative or absolute motion: mice, tablets, touchpads.
+static const struct input_device_id dawn_input_ids[] = {
+    {
+        .flags = INPUT_DEVICE_ID_MATCH_EVBIT,
+        .evbit = {BIT_MASK(EV_REL)},
+    },
+    {
+        .flags = INPUT_DEVICE_ID_MATCH_EVBIT,
+        .evbit = {BIT_MASK(EV_ABS)},
+    },
+    {},
+};
+
+static struct input_handler dawn_input_handler = {
+    .event = dawn_input_event,
+    .connect = dawn_input_connect,
+    .disconnect = dawn_input_disconnect,
+    .name = "dawning",
+    .id_table = dawn_input_ids,
+};
+
+static void dawning_input_start(void)
+{
+        // WQ_HIGHPRI so the cursor is not queued behind ordinary work.
+        dawn_input_wq = alloc_workqueue("dawning_input", WQ_HIGHPRI | WQ_UNBOUND, 1);
+
+        if (!dawn_input_wq) {
+                log_d("no workqueue for input\n");
+                return;
+        }
+
+        if (input_register_handler(&dawn_input_handler))
+                log_d("could not register the input handler\n");
+}
+
+// Nanoseconds, for the stats ioctl.
+void dawning_display_input_stats(unsigned long *events, unsigned long *mean,
+                                 unsigned long *worst, unsigned long *queue,
+                                 unsigned long *draw, unsigned long *flush)
+{
+        unsigned long n = dawn_input_events ? dawn_input_events : 1;
+
+        *events = dawn_input_events;
+        *mean = dawn_input_latency_total / n;
+        *worst = dawn_input_latency_worst;
+        *queue = dawn_input_queue_total / n;
+        *draw = dawn_input_draw_total / n;
+        *flush = dawn_input_flush_total / n;
 }
