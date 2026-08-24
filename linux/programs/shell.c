@@ -39,7 +39,15 @@ fn shell_execute_command(string_address command, string_address arguments)
 {
         log_flush();
 
-        bipolar fork_result = system_call_1(syscall(clone), 0);
+        // clone takes (flags, child_stack, ...). Passing only flags left
+        // child_stack as whatever happened to be in the second argument
+        // register, so the child started on a garbage stack and its arguments
+        // came back as junk -- execve was being handed an empty path, which is
+        // why every command reported ENOENT.
+        //
+        // child_stack must be 0 to mean "copy the parent's stack", and the
+        // exit signal has to be SIGCHLD or the wait4 below never reaps.
+        bipolar fork_result = system_call_2(syscall(clone), SIGCHLD, 0);
 
         if (fork_result == 0)
                 shell_thread_instance(command, arguments);

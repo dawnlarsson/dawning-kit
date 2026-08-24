@@ -1,0 +1,30 @@
+#
+# Serial console profile
+#
+# A kernel built without this has no way to say anything to you under
+# -nographic, which makes anything happening in kernel space -- the spark
+# loader especially -- unfalsifiable. Compose this into a build when you need
+# to see what the kernel is doing:
+#
+#       sudo sh build.sh arch/x64 debug_none serial
+#
+# then boot with:
+#
+#       qemu-system-x86_64 -kernel dist/bootx64.efi -nographic -append "console=ttyS0"
+#
+
+CONFIG_TTY=y
+CONFIG_SERIAL_8250=y
+CONFIG_SERIAL_8250_CONSOLE=y
+CONFIG_SERIAL_8250_PNP=y
+CONFIG_SERIAL_8250_NR_UARTS=4
+CONFIG_SERIAL_8250_RUNTIME_UARTS=4
+CONFIG_SERIAL_CORE=y
+CONFIG_SERIAL_CORE_CONSOLE=y
+
+# pr_alert is KERN_ALERT (1), so it survives even a loglevel of 2, but leave
+# room so ordinary driver messages come through while debugging.
+CONFIG_CONSOLE_LOGLEVEL_DEFAULT=7
+CONFIG_MESSAGE_LOGLEVEL_DEFAULT=7
+CONFIG_PRINTK=y
+CONFIG_PRINTK_TIME=y
