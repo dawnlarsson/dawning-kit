@@ -28,8 +28,8 @@
         anonymous mapping, already zero, with nothing to clear by hand.
 */
 
-#ifndef DAWNING_SPARK_H
-#define DAWNING_SPARK_H
+#ifndef DAWNING_SPARK
+#define DAWNING_SPARK
 
 // "SPRK", little endian
 #define SPARK_MAGIC 0x4b525053u

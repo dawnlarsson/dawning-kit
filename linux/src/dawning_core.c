@@ -12,9 +12,27 @@
 #include <linux/slab.h>
 #include <linux/sched/task.h>
 
+// The graphics headers must precede library.c: it defines "end" as a macro
+// and asm/io.h, reached through drm_client.h, uses that word as a variable.
+#ifdef CONFIG_DAWNING_DISPLAY
+#include <drm/drm_client.h>
+#include <drm/drm_crtc.h>
+#include <drm/drm_device.h>
+#include <drm/drm_drv.h>
+#include <drm/drm_fourcc.h>
+#include <drm/drm_framebuffer.h>
+#include <drm/drm_gem.h>
+#include <drm/drm_mode.h>
+#include <drm/drm_print.h>
+#endif
+
 #define DAWN_MODERN_C_KERNEL
 #include "../../standard/library.c"
-#include "../../standard/spark.h"
+#include "../../standard/spark.c"
+
+#ifdef CONFIG_DAWNING_DISPLAY
+#include "dawning_display.c"
+#endif
 
 int path_mount(const char *dev_name, struct path *path,
                const char *type_page, unsigned long flags, void *data_page);

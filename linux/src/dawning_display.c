@@ -11,6 +11,14 @@
         stack. drm_client_buffer_create_dumb gives a scanout buffer, vmap
         gives a pointer to draw through, and modeset_commit puts it on screen.
 
+        Included by dawning_core.c rather than compiled on its own, so the
+        headers it needs are pulled in there, and every symbol carries a
+        dawn_display prefix to stay clear of the rest of that file. _Bool is
+        spelled out where the kernel expects it, because library.c redefines
+        bool as an 8 bit integer. They have to come before
+        library.c: that file defines "end" as a macro, and asm/io.h uses the
+        same word as a variable name.
+
         What is here so far is the surface and the composition pass: a
         background, a stack of windows drawn back to front, and a cursor. It
         composites in software into one dumb buffer, which is the simplest
@@ -18,21 +26,6 @@
         their own hardware planes comes later and is what makes it cheap: an
         atomic commit can move a cursor plane with no drawing at all.
 */
-
-#include <linux/module.h>
-#include <linux/slab.h>
-#include <linux/mutex.h>
-#include <drm/drm_client.h>
-#include <drm/drm_crtc.h>
-#include <drm/drm_device.h>
-#include <drm/drm_drv.h>
-#include <drm/drm_fourcc.h>
-#include <drm/drm_framebuffer.h>
-#include <drm/drm_gem.h>
-#include <drm/drm_mode.h>
-#include <drm/drm_print.h>
-
-#include "dawning_display.h"
 
 #define log_d(fmt, ...) pr_info("[Dawning display] " fmt, ##__VA_ARGS__)
 
@@ -49,7 +42,7 @@
 struct dawn_window {
         int x, y;
         int width, height;
-        bool present;
+        _Bool present;
 };
 
 struct dawn_surface {
@@ -69,10 +62,10 @@ struct dawn_display {
         struct dawn_window windows[DAWN_MAX_WINDOWS];
         int cursor_x, cursor_y;
 
-        bool started;
+        _Bool started;
 };
 
-static struct dawn_display *client_to_display(struct drm_client_dev *client)
+static struct dawn_display *dawn_display_from_client(struct drm_client_dev *client)
 {
         return container_of(client, struct dawn_display, client);
 }
@@ -82,23 +75,23 @@ static struct dawn_display *client_to_display(struct drm_client_dev *client)
         this targets offers one of them for a dumb buffer, and pretending to
         support formats that are not tested would be worse than refusing them.
 */
-static bool dawn_format_supported(u32 format)
+static _Bool dawn_display_format_supported(u32 format)
 {
         return format == DRM_FORMAT_XRGB8888 || format == DRM_FORMAT_ARGB8888;
 }
 
-static u32 dawn_pick_format(struct drm_plane *plane)
+static u32 dawn_display_pick_format(struct drm_plane *plane)
 {
         unsigned int i;
 
         for (i = 0; i < plane->format_count; i++)
-                if (dawn_format_supported(plane->format_types[i]))
+                if (dawn_display_format_supported(plane->format_types[i]))
                         return plane->format_types[i];
 
         return DRM_FORMAT_INVALID;
 }
 
-static void dawn_fill_rect(u32 *pixels, unsigned int pitch_pixels,
+static void dawn_display_fill_rect(u32 *pixels, unsigned int pitch_pixels,
                            unsigned int surface_w, unsigned int surface_h,
                            int x, int y, int width, int height, u32 colour)
 {
@@ -141,7 +134,7 @@ static void dawn_fill_rect(u32 *pixels, unsigned int pitch_pixels,
 #define DAWN_CURSOR_W 12
 #define DAWN_CURSOR_H 19
 
-static const char dawn_cursor[DAWN_CURSOR_H][DAWN_CURSOR_W + 1] = {
+static const char dawn_display_cursor_bitmap[DAWN_CURSOR_H][DAWN_CURSOR_W + 1] = {
     "X           ",
     "XX          ",
     "X.X         ",
@@ -163,7 +156,7 @@ static const char dawn_cursor[DAWN_CURSOR_H][DAWN_CURSOR_W + 1] = {
     "            ",
 };
 
-static void dawn_draw_cursor(u32 *pixels, unsigned int pitch_pixels,
+static void dawn_display_draw_cursor(u32 *pixels, unsigned int pitch_pixels,
                              unsigned int surface_w, unsigned int surface_h,
                              int x, int y, u32 fill, u32 edge)
 {
@@ -177,7 +170,7 @@ static void dawn_draw_cursor(u32 *pixels, unsigned int pitch_pixels,
 
                 for (column = 0; column < DAWN_CURSOR_W; column++) {
                         int px = x + column;
-                        char pixel = dawn_cursor[row][column];
+                        char pixel = dawn_display_cursor_bitmap[row][column];
 
                         if (pixel == ' ')
                                 continue;
@@ -192,7 +185,7 @@ static void dawn_draw_cursor(u32 *pixels, unsigned int pitch_pixels,
 }
 
 // xrgb8888 is the source of truth; argb differs only in the alpha byte.
-static u32 dawn_colour(u32 xrgb, u32 format)
+static u32 dawn_display_colour(u32 xrgb, u32 format)
 {
         if (format == DRM_FORMAT_ARGB8888)
                 return xrgb | 0xff000000;
@@ -200,7 +193,7 @@ static u32 dawn_colour(u32 xrgb, u32 format)
         return xrgb;
 }
 
-static void dawn_compose(struct dawn_display *display, struct dawn_surface *surface)
+static void dawn_display_compose(struct dawn_display *display, struct dawn_surface *surface)
 {
         struct iosys_map map;
         unsigned int pitch_pixels;
@@ -213,9 +206,9 @@ static void dawn_compose(struct dawn_display *display, struct dawn_surface *surf
         pixels = map.vaddr;
         pitch_pixels = surface->buffer->fb->pitches[0] / sizeof(u32);
 
-        dawn_fill_rect(pixels, pitch_pixels, surface->width, surface->height,
+        dawn_display_fill_rect(pixels, pitch_pixels, surface->width, surface->height,
                        0, 0, surface->width, surface->height,
-                       dawn_colour(DAWN_COLOUR_DESKTOP, surface->format));
+                       dawn_display_colour(DAWN_COLOUR_DESKTOP, surface->format));
 
         // Back to front, so a later window overlaps an earlier one.
         for (i = 0; i < DAWN_MAX_WINDOWS; i++) {
@@ -224,46 +217,46 @@ static void dawn_compose(struct dawn_display *display, struct dawn_surface *surf
                 if (!window->present)
                         continue;
 
-                dawn_fill_rect(pixels, pitch_pixels, surface->width, surface->height,
+                dawn_display_fill_rect(pixels, pitch_pixels, surface->width, surface->height,
                                window->x - 2, window->y - 2,
                                window->width + 4, window->height + 26,
-                               dawn_colour(DAWN_COLOUR_FRAME, surface->format));
+                               dawn_display_colour(DAWN_COLOUR_FRAME, surface->format));
 
-                dawn_fill_rect(pixels, pitch_pixels, surface->width, surface->height,
+                dawn_display_fill_rect(pixels, pitch_pixels, surface->width, surface->height,
                                window->x, window->y, window->width, 20,
-                               dawn_colour(DAWN_COLOUR_TITLE, surface->format));
+                               dawn_display_colour(DAWN_COLOUR_TITLE, surface->format));
 
-                dawn_fill_rect(pixels, pitch_pixels, surface->width, surface->height,
+                dawn_display_fill_rect(pixels, pitch_pixels, surface->width, surface->height,
                                window->x, window->y + 20, window->width, window->height,
-                               dawn_colour(DAWN_COLOUR_BODY, surface->format));
+                               dawn_display_colour(DAWN_COLOUR_BODY, surface->format));
         }
 
-        dawn_draw_cursor(pixels, pitch_pixels, surface->width, surface->height,
+        dawn_display_draw_cursor(pixels, pitch_pixels, surface->width, surface->height,
                          display->cursor_x, display->cursor_y,
-                         dawn_colour(DAWN_COLOUR_CURSOR, surface->format),
-                         dawn_colour(DAWN_COLOUR_CURSOR_EDGE, surface->format));
+                         dawn_display_colour(DAWN_COLOUR_CURSOR, surface->format),
+                         dawn_display_colour(DAWN_COLOUR_CURSOR_EDGE, surface->format));
 
         drm_client_buffer_vunmap_local(surface->buffer);
 }
 
-static void dawn_redraw(struct dawn_display *display)
+static void dawn_display_redraw(struct dawn_display *display)
 {
         unsigned int i;
 
         for (i = 0; i < display->surface_count; i++)
-                dawn_compose(display, &display->surfaces[i]);
+                dawn_display_compose(display, &display->surfaces[i]);
 
         drm_client_modeset_commit(&display->client);
 }
 
-static int dawn_setup_surface(struct drm_client_dev *client,
+static int dawn_display_setup_surface(struct drm_client_dev *client,
                               struct drm_mode_set *mode_set,
                               struct dawn_surface *surface)
 {
         struct drm_crtc *crtc = mode_set->crtc;
         unsigned int width = mode_set->mode->hdisplay;
         unsigned int height = mode_set->mode->vdisplay;
-        u32 format = dawn_pick_format(crtc->primary);
+        u32 format = dawn_display_pick_format(crtc->primary);
 
         if (format == DRM_FORMAT_INVALID) {
                 log_d("no 32 bit format on this plane, skipping output\n");
@@ -287,7 +280,7 @@ static int dawn_setup_surface(struct drm_client_dev *client,
         return 0;
 }
 
-static unsigned int dawn_count_modesets(struct drm_client_dev *client)
+static unsigned int dawn_display_count_modesets(struct drm_client_dev *client)
 {
         struct drm_mode_set *mode_set;
         unsigned int count = 0;
@@ -302,7 +295,7 @@ static unsigned int dawn_count_modesets(struct drm_client_dev *client)
 
 // A first arrangement, so there is something recognisable on screen before
 // anything can create a window.
-static void dawn_seed_windows(struct dawn_display *display,
+static void dawn_display_seed_windows(struct dawn_display *display,
                               unsigned int width, unsigned int height)
 {
         display->windows[0] = (struct dawn_window){
@@ -317,7 +310,7 @@ static void dawn_seed_windows(struct dawn_display *display,
         display->cursor_y = height / 2;
 }
 
-static int dawn_start(struct dawn_display *display)
+static int dawn_display_start(struct dawn_display *display)
 {
         struct drm_client_dev *client = &display->client;
         struct drm_mode_set *mode_set;
@@ -327,7 +320,7 @@ static int dawn_start(struct dawn_display *display)
         if (drm_client_modeset_probe(client, 0, 0))
                 return -ENODEV;
 
-        max_surfaces = dawn_count_modesets(client);
+        max_surfaces = dawn_display_count_modesets(client);
         if (!max_surfaces)
                 return -ENODEV;
 
@@ -340,7 +333,7 @@ static int dawn_start(struct dawn_display *display)
                 if (!mode_set->mode)
                         continue;
 
-                if (dawn_setup_surface(client, mode_set, &display->surfaces[count]))
+                if (dawn_display_setup_surface(client, mode_set, &display->surfaces[count]))
                         continue;
 
                 count++;
@@ -354,15 +347,15 @@ static int dawn_start(struct dawn_display *display)
         }
 
         display->surface_count = count;
-        dawn_seed_windows(display, display->surfaces[0].width,
+        dawn_display_seed_windows(display, display->surfaces[0].width,
                           display->surfaces[0].height);
-        dawn_redraw(display);
+        dawn_display_redraw(display);
 
         log_d("compositing on %u output(s)\n", count);
         return 0;
 }
 
-static void dawn_release(struct dawn_display *display)
+static void dawn_display_release(struct dawn_display *display)
 {
         unsigned int i;
 
@@ -377,10 +370,10 @@ static void dawn_release(struct dawn_display *display)
 
 static void dawn_client_unregister(struct drm_client_dev *client)
 {
-        struct dawn_display *display = client_to_display(client);
+        struct dawn_display *display = dawn_display_from_client(client);
 
         mutex_lock(&display->lock);
-        dawn_release(display);
+        dawn_display_release(display);
         mutex_unlock(&display->lock);
 
         drm_client_release(client);
@@ -388,7 +381,7 @@ static void dawn_client_unregister(struct drm_client_dev *client)
 
 static void dawn_client_free(struct drm_client_dev *client)
 {
-        struct dawn_display *display = client_to_display(client);
+        struct dawn_display *display = dawn_display_from_client(client);
 
         mutex_destroy(&display->lock);
         kfree(display);
@@ -396,16 +389,16 @@ static void dawn_client_free(struct drm_client_dev *client)
 
 static int dawn_client_hotplug(struct drm_client_dev *client)
 {
-        struct dawn_display *display = client_to_display(client);
+        struct dawn_display *display = dawn_display_from_client(client);
         int ret = 0;
 
         mutex_lock(&display->lock);
 
         if (!display->started) {
-                ret = dawn_start(display);
+                ret = dawn_display_start(display);
                 display->started = (ret == 0);
         } else {
-                dawn_redraw(display);
+                dawn_display_redraw(display);
         }
 
         mutex_unlock(&display->lock);
@@ -413,9 +406,9 @@ static int dawn_client_hotplug(struct drm_client_dev *client)
 }
 
 // The bool argument is whether the restore happens from an atomic context.
-static int dawn_client_restore(struct drm_client_dev *client, bool in_atomic)
+static int dawn_client_restore(struct drm_client_dev *client, _Bool in_atomic)
 {
-        struct dawn_display *display = client_to_display(client);
+        struct dawn_display *display = dawn_display_from_client(client);
 
         // Nothing here is safe to do without sleeping, so an atomic restore
         // is declined rather than half performed.
@@ -424,7 +417,7 @@ static int dawn_client_restore(struct drm_client_dev *client, bool in_atomic)
 
         mutex_lock(&display->lock);
         if (display->started)
-                dawn_redraw(display);
+                dawn_display_redraw(display);
         mutex_unlock(&display->lock);
 
         return 0;
@@ -438,7 +431,7 @@ static const struct drm_client_funcs dawn_client_funcs = {
     .hotplug = dawn_client_hotplug,
 };
 
-void dawning_display_register(struct drm_device *dev)
+static void dawning_display_register(struct drm_device *dev)
 {
         struct dawn_display *display;
 

@@ -2,7 +2,7 @@
 // it lobs rocks at the kernel and says ouga boga at the user.
 #include "../../standard/library.c"
 #include "../../standard/platform/shell.c"
-#include "../../standard/spark.h"
+#include "../../standard/spark.c"
 
 #define PROMPT TERM_RESET TERM_BOLD " $ " TERM_RESET
 
