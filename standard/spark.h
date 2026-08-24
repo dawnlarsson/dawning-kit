@@ -9,11 +9,14 @@
 
         File layout, every region a whole number of pages:
 
-                offset                  contents          mapped as
-                0                       header page       (not mapped)
-                SPARK_PAGE              text + rodata     read + execute
-                SPARK_PAGE + text_size  data              read + write
-                --                      bss               read + write, zeroed
+                offset          contents                  mapped as
+                0               header, then text+rodata  read + execute
+                text_size       data                      read + write
+                --              bss                       read + write, zeroed
+
+        The header shares the first page with the code rather than occupying a
+        page of its own: it is mapped read only along with the text, entry
+        simply points past it, and every image is 4096 bytes smaller.
 
         The image is not position independent: the code carries absolute
         addresses, so it has to land at the base recorded in the header. The

@@ -17,7 +17,10 @@ ENTRY(_start)
 
 SECTIONS
 {
-        . = SPARK_BASE;
+        /* The spark header lives in the first 64 bytes of the mapped image,
+           so the code starts just past it. The loader maps from SPARK_BASE and
+           jumps to the entry recorded in the header, which points here. */
+        . = SPARK_BASE + 64;
 
         .text : {
                 *(.text .text.*)

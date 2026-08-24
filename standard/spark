@@ -76,7 +76,11 @@ section_addr() {
 
 page_round() { echo $((($1 + 4095) / 4096 * 4096)); }
 
-base=$(section_addr .text)
+# The image is mapped from 64 bytes before .text: that is where the header
+# sits, and spark.ld reserves exactly that much.
+text_addr=$(section_addr .text)
+: "${text_addr:=0}"
+base=$((text_addr - 64))
 entry=$(readelf -h -W "$elf" | awk '/Entry point/ { print strtonum($NF) }')
 
 data_addr=$(section_addr .data)
@@ -84,10 +88,10 @@ data_bytes=$(section_size .data)
 bss_addr=$(section_addr .bss)
 bss_bytes=$(section_size .bss)
 
-: "${base:=0}" "${entry:=0}"
+: "${entry:=0}"
 : "${data_addr:=0}" "${data_bytes:=0}" "${bss_addr:=0}" "${bss_bytes:=0}"
 
-if [ "$base" = 0 ] || [ "$entry" = 0 ]; then
+if [ "$text_addr" = 0 ] || [ "$entry" = 0 ]; then
         echo "spark: could not read base/entry from the linked image" >&2
         exit 1
 fi
@@ -99,7 +103,7 @@ if [ "$data_bytes" -gt 0 ]; then
 elif [ "$bss_bytes" -gt 0 ]; then
         text_end=$bss_addr
 else
-        text_end=$((base + $(section_size .text)))
+        text_end=$((text_addr + $(section_size .text)))
 fi
 
 text_size=$(page_round $((text_end - base)))
@@ -138,11 +142,11 @@ spark_header() {
 }
 
 {
+        # The header occupies the first 64 bytes of the text region itself,
+        # so the image carries no page that nothing maps.
         spark_header
-        zeros $((4096 - 64))
-
         cat "$work/text.bin"
-        pad_file_to "$work/text.bin" "$text_size"
+        pad_file_to "$work/text.bin" $((text_size - 64))
 
         if [ "$data_size" -gt 0 ]; then
                 cat "$work/data.bin"

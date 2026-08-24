@@ -82,7 +82,7 @@ static int execute_spark(struct linux_binprm *bprm)
         if (header->entry < header->base || header->entry >= header->base + header->text_size)
                 return -ENOEXEC;
 
-        if (i_size_read(file_inode(bprm->file)) < (loff_t)(SPARK_PAGE + header->text_size + header->data_size))
+        if (i_size_read(file_inode(bprm->file)) < (loff_t)(header->text_size + header->data_size))
                 return -ENOEXEC;
 
         // Past this point the old mm is gone. Nothing below may return a plain
@@ -102,12 +102,15 @@ static int execute_spark(struct linux_binprm *bprm)
                 return ret;
         }
 
-        // text + rodata, mapped straight from the file. MAP_FIXED because the
-        // image is not position independent.
+        // text + rodata, mapped straight from the file at offset 0: the header
+        // sits in the first 64 bytes of this mapping and entry points past it.
+        // MAP_FIXED because the image is not position independent, and
+        // MAP_POPULATE because these pages are always touched immediately --
+        // faulting them in one at a time is pure latency for a short program.
         text = vm_mmap(bprm->file, header->base, header->text_size,
                        PROT_READ | PROT_EXEC,
-                       MAP_PRIVATE | MAP_FIXED | MAP_EXECUTABLE,
-                       SPARK_PAGE);
+                       MAP_PRIVATE | MAP_FIXED | MAP_POPULATE,
+                       0);
 
         if (IS_ERR_VALUE(text))
         {
@@ -121,8 +124,8 @@ static int execute_spark(struct linux_binprm *bprm)
                 data = vm_mmap(bprm->file, header->base + header->text_size,
                                header->data_size,
                                PROT_READ | PROT_WRITE,
-                               MAP_PRIVATE | MAP_FIXED,
-                               SPARK_PAGE + header->text_size);
+                               MAP_PRIVATE | MAP_FIXED | MAP_POPULATE,
+                               header->text_size);
 
                 if (IS_ERR_VALUE(data))
                 {
