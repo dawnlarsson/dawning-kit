@@ -50,6 +50,14 @@ fn test_writer(address_any data, positive length) {
         test(type_name##_overflow) { fail_not_equals((type_name)(type_name##_max + 1), type_name##_min); return true; } \
         test(type_name##_underflow) { fail_not_equals((type_name)(type_name##_min - 1), type_name##_max); return true; }
 
+// Integers wrap; decimals saturate toward infinity, so f-types get the size
+// and bounds checks without the wrap-around ones.
+#define test_type_decimal(type_name, max, min) \
+        test(type_name##_sizeof) { fail_not_equals(sizeof(type_name), type_name##_bytes); return true; } \
+        test(type_name##_bytes_constant) { fail_not_equals(type_name##_bytes, sizeof(type_name)); return true; } \
+        test(type_name##_max) { fail_not_equals(type_name##_max, max); return true; } \
+        test(type_name##_min) { fail_not_equals(type_name##_min, min); return true; }
+
 #define case_type_basics(type_name) \
         case(type_name##_sizeof), \
         case(type_name##_bytes_constant), \
@@ -57,6 +65,12 @@ fn test_writer(address_any data, positive length) {
         case(type_name##_min), \
         case(type_name##_overflow), \
         case(type_name##_underflow)
+
+#define case_type_decimal(type_name) \
+        case(type_name##_sizeof), \
+        case(type_name##_bytes_constant), \
+        case(type_name##_max), \
+        case(type_name##_min)
 
 test_type_basics(p8, 255, 0);
 test_type_basics(b8, 127, -128);
@@ -70,12 +84,17 @@ test_type_basics(b32, 2147483647, -2147483648);
 test_type_basics(p64, 18446744073709551615U, 0);
 test_type_basics(b64, 9223372036854775807, -9223372036854775808);
 
-test_type_basics(p128, 340282366920938463463374607431768211455U, 0);
-test_type_basics(b128, 170141183460469231731687303715884105727, -170141183460469231731687303715884105728);
+// C has no 128 bit literal syntax, so the expected bounds are built the same
+// way the library builds them rather than written out as constants.
+#ifdef HAS_128
+test_type_basics(p128, (p128) ~ (p128)0, (p128)0);
+test_type_basics(b128, (b128)(((p128)1 << 127) - 1), (b128)((p128)1 << 127));
+#endif
 
-test_type_basics(f32, 3.402823466e+38f, 1.175494351e-38f);
-test_type_basics(f64, 1.7976931348623157e+308, 2.2250738585072014e-308);
-test_type_basics(f128, 1.189731495357231765e+4932L, 3.362103143112093506e-4932L);
+// Decimals have no wrapping overflow, so they get the bounds tests only.
+test_type_decimal(f32, 3.402823466e+38f, 1.175494351e-38f);
+test_type_decimal(f64, 1.7976931348623157e+308, 2.2250738585072014e-308);
+test_type_decimal(f128, __LDBL_MAX__, __LDBL_MIN__);
 
 test(bit_flip_zero_to_one) { 
     p32 value = 0;
@@ -531,11 +550,13 @@ dawn_test dawn_tests[] = {
         case_type_basics(b32),
         case_type_basics(p64),
         case_type_basics(b64),
+#ifdef HAS_128
         case_type_basics(p128),
         case_type_basics(b128),
-        case_type_basics(f32),
-        case_type_basics(f64),
-        case_type_basics(f128),
+#endif
+        case_type_decimal(f32),
+        case_type_decimal(f64),
+        case_type_decimal(f128),
 
         case(bit_flip_zero_to_one),
         case(bit_flip_one_to_zero),

@@ -8,7 +8,7 @@
                 syscall(read) // returns syscall_linux_x64_read ( 0 )
 
         Dawn Larsson - Apache-2.0 license
-        github.com/dawnlarsson/dawning-linux/library/standard.c
+        github.com/dawnlarsson/dawning-kit
 
         www.dawning.dev
 */
@@ -1170,6 +1170,8 @@
 #define syscall_macos_arm64_process_policy 0x143
 #define syscall_macos_arm64_mlockall 0x144
 #define syscall_macos_arm64_munlockall 0x145
+// 326 is __getcwd in XNU's syscalls.master, not a reserved slot.
+#define syscall_macos_arm64_getcwd 0x146
 #define syscall_macos_arm64_reserved_4 0x146
 #define syscall_macos_arm64_issetugid 0x147
 #define syscall_macos_arm64___pthread_kill 0x148

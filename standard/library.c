@@ -4,7 +4,7 @@
         without any runtime requirements (no linking!)
 
         Dawn Larsson - Apache-2.0 license
-        github.com/dawnlarsson/dawning-linux/library/standard.c
+        github.com/dawnlarsson/dawning-kit
 
         www.dawning.dev
 
@@ -386,6 +386,41 @@ __extension__ typedef bipolar_range long long int i64;
 __extension__ typedef positive_range long long int u64;
 #endif
 
+// 128 bit integers exist as a compiler extension on 64 bit targets only, and
+// C has no literal syntax that can express their range, so the bounds are
+// built as expressions rather than written out.
+#if defined(__SIZEOF_INT128__)
+#define HAS_128 1
+
+// ### Positive range 128 bit integer
+// range:       0 to +340282366920938463463374607431768211455
+// memory:      [ 00000000 x16 ]
+// hex:         [ 0x00 x16 ]
+// linguistic:  (zero) to (plus) three hundred forty undecillion...
+// traditional: unsigned __int128
+// alt:         array of 128 bits
+__extension__ typedef positive_range __int128 p128;
+#define p128_max ((p128) ~ (p128)0)
+#define p128_min ((p128)0)
+#define p128_char_max 39
+#define p128_bytes 16
+#define p128_bits 128
+
+// ### Bipolar range 128 bit integer
+// range:       -170141183460469231731687303715884105728
+//         to   +170141183460469231731687303715884105727
+// memory:      [ 00000000 x16 ]
+// hex:         [ 0x00 x16 ]
+// traditional: __int128
+// alt:         array of 128 bits
+__extension__ typedef bipolar_range __int128 b128;
+#define b128_max ((b128)(((p128)1 << 127) - 1))
+#define b128_min ((b128)((p128)1 << 127))
+#define b128_char_max 40
+#define b128_bytes 16
+#define b128_bits 128
+#endif
+
 typedef float f32;
 #define f32_max 3.40282346638528859812e+38F
 #define f32_min 1.17549435082228750797e-38F
@@ -401,6 +436,20 @@ typedef double f64;
 #define f64_char_max 20
 #define f64_bytes 8
 #define f64_bits 64
+
+// ### Extended range decimal
+// long double is the widest decimal the compiler offers, but its width is
+// decided by the target, not by us: 80 bit x87 stored in 16 bytes on x86_64,
+// plain f64 on arm64 macOS, 128 bit quad on arm64 Linux. The bounds therefore
+// come from the compiler rather than being written out, so they stay true on
+// every target instead of only on the one they were typed for.
+typedef long double f128;
+#define f128_max __LDBL_MAX__
+#define f128_min __LDBL_MIN__
+#define f128_epsilon __LDBL_EPSILON__
+#define f128_char_max 45
+#define f128_bytes __SIZEOF_LONG_DOUBLE__
+#define f128_bits (__SIZEOF_LONG_DOUBLE__ * 8)
 
 #if BITS == 64
 typedef f64 decimal;
