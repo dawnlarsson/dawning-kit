@@ -1,0 +1,4 @@
+# Upstream hashes the overlay files in src/linux were taken from.
+# Regenerate after reviewing drift with: sh script/overlay --record
+be6ba3e38eb53e2dc66ac26692dbabb78d79d45e9e41aa71fff132a3cc243cfb  drivers/gpu/drm/clients/drm_client_setup.c
+9bb83596f8b915e4f8a7f79d5dd69ac3dc8225c6bf7132bbb01354f53ca05e73  drivers/gpu/drm/clients/Kconfig

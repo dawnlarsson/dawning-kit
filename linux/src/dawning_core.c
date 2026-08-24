@@ -31,6 +31,8 @@
 #include "../../standard/spark.c"
 
 #ifdef CONFIG_DAWNING_DISPLAY
+#include <linux/workqueue.h>
+#include <drm/drm_file.h>
 #include "dawning_display.c"
 #endif
 
@@ -47,9 +49,16 @@ typedef struct
         positive mount_flags;
 } MountPoints;
 
+/*
+        devtmpfs is what populates /dev. The kernel will not mount it itself
+        when booting from an initramfs, so without this /dev holds only the
+        handful of nodes the initramfs was built with -- no /dev/dri, and so
+        nothing for the compositor to open.
+*/
 MountPoints mounts[] = {
     {"proc", "/proc", 0},
     {"sysfs", "/sys", 0},
+    {"devtmpfs", "/dev", 0},
     {null, null},
 };
 
@@ -509,6 +518,10 @@ b32 __init dawn_start()
 
         if (misc_register(&spark_device))
                 log_k("could not register /dev/spark\n");
+
+#ifdef CONFIG_DAWNING_DISPLAY
+        dawning_display_start_probing();
+#endif
 
         return 0;
 }

@@ -11,6 +11,17 @@
         stack. drm_client_buffer_create_dumb gives a scanout buffer, vmap
         gives a pointer to draw through, and modeset_commit puts it on screen.
 
+        It attaches without modifying the kernel at all. drm_client_setup
+        dispatches to a fixed set of clients and there is no exported way to
+        enumerate DRM devices, but a DRM device can be opened like any other
+        file, and struct drm_file leads back to the drm_device behind it. So
+        the compositor opens /dev/dri/card0, takes the device, and closes the
+        file again -- the client it registered keeps its own reference.
+
+        The retry loop is there because the device node appears when devtmpfs
+        is mounted, which is after the initcalls that could otherwise have
+        started this.
+
         Included by dawning_core.c rather than compiled on its own, so the
         headers it needs are pulled in there, and every symbol carries a
         dawn_display prefix to stay clear of the rest of that file. _Bool is
@@ -431,23 +442,95 @@ static const struct drm_client_funcs dawn_client_funcs = {
     .hotplug = dawn_client_hotplug,
 };
 
-// Called from drm_client_setup, which patch/0001 teaches about us.
-void dawning_display_register(struct drm_device *dev)
+/*
+        Claims a DRM device. Reports whether it was taken, so the replacement
+        for drm_client_setup can fall through to the original for anything we
+        decline -- a device with no modesetting, or an allocation that failed.
+*/
+static int dawning_display_take_over(struct drm_device *dev)
 {
         struct dawn_display *display;
 
+        if (!drm_core_check_feature(dev, DRIVER_MODESET))
+                return 0;
+
         display = kzalloc(sizeof(*display), GFP_KERNEL);
         if (!display)
-                return;
+                return 0;
 
         mutex_init(&display->lock);
 
         if (drm_client_init(dev, &display->client, "dawning", &dawn_client_funcs)) {
                 mutex_destroy(&display->lock);
                 kfree(display);
-                return;
+                return 0;
         }
 
         drm_client_register(&display->client);
         log_d("attached to %s\n", dev->driver->name);
+        return 1;
+}
+
+/*
+        Finding a device to draw on.
+
+        Opening the node runs the driver's open path and hands back a
+        drm_file, which knows its minor, which knows its device. The file is
+        closed immediately: drm_client_init takes its own reference, so the
+        device outlives our brief handle on it.
+*/
+#define DAWN_DISPLAY_NODE "/dev/dri/card0"
+#define DAWN_DISPLAY_RETRY_MS 100
+#define DAWN_DISPLAY_ATTEMPTS 50
+
+static struct delayed_work dawn_display_probe_work;
+static unsigned int dawn_display_attempts;
+
+static int dawning_display_claim(const char *path)
+{
+        struct file *filp;
+        struct drm_file *file_priv;
+        struct drm_device *dev;
+        int taken;
+
+        filp = filp_open(path, O_RDWR, 0);
+        if (IS_ERR(filp))
+                return PTR_ERR(filp);
+
+        file_priv = filp->private_data;
+
+        if (!file_priv || !file_priv->minor || !file_priv->minor->dev) {
+                filp_close(filp, NULL);
+                return -ENODEV;
+        }
+
+        dev = file_priv->minor->dev;
+        taken = dawning_display_take_over(dev);
+
+        filp_close(filp, NULL);
+
+        return taken ? 0 : -EBUSY;
+}
+
+static void dawning_display_probe(struct work_struct *work)
+{
+        int ret = dawning_display_claim(DAWN_DISPLAY_NODE);
+
+        if (ret == 0)
+                return;
+
+        if (++dawn_display_attempts >= DAWN_DISPLAY_ATTEMPTS) {
+                log_d("gave up waiting for %s (%d)\n", DAWN_DISPLAY_NODE, ret);
+                return;
+        }
+
+        schedule_delayed_work(&dawn_display_probe_work,
+                              msecs_to_jiffies(DAWN_DISPLAY_RETRY_MS));
+}
+
+static void dawning_display_start_probing(void)
+{
+        INIT_DELAYED_WORK(&dawn_display_probe_work, dawning_display_probe);
+        schedule_delayed_work(&dawn_display_probe_work,
+                              msecs_to_jiffies(DAWN_DISPLAY_RETRY_MS));
 }

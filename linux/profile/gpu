@@ -26,8 +26,6 @@
 # The in-kernel compositor draws through the DRM client API
 #
 CONFIG_DAWNING_DISPLAY=y
-CONFIG_DRM_CLIENT_DEFAULT_DAWNING=y
-CONFIG_DRM_CLIENT_DEFAULT_FBDEV=n
 
 #
 # Core modesetting
