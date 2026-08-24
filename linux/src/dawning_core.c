@@ -22,7 +22,6 @@ int path_mount(const char *dev_name, struct path *path,
 #define log_k(fmt, ...) \
         pr_alert("[Dawning] " fmt, ##__VA_ARGS__)
 
-
 typedef struct
 {
         string_address filesystem;
@@ -36,6 +35,15 @@ MountPoints mounts[] = {
     {null, null},
 };
 
+// Spawns are serialised by the caller waiting on each one, so plain counters
+// are accurate enough here and cost nothing.
+static unsigned long spark_stat_spawns;
+static unsigned long spark_stat_task_ns;
+static unsigned long spark_stat_exec_ns;
+static unsigned long spark_stat_loader_ns;
+static unsigned long spark_stat_loads;
+static unsigned long spark_stat_map_ns;
+
 static int execute_spark(struct linux_binprm *bprm);
 
 static struct linux_binfmt spark_format = {
@@ -45,9 +53,12 @@ static struct linux_binfmt spark_format = {
 
 static int execute_spark(struct linux_binprm *bprm)
 {
+        u64 loader_started = ktime_get_ns();
+        u64 map_started;
         struct pt_regs *regs = task_pt_regs(current);
         const struct spark_header *header;
-        unsigned long text, data, bss, stack_addr;
+        unsigned long text, data = 0, bss = 0, stack_addr;
+        unsigned long text_populate = 0, data_populate = 0, bss_populate = 0;
         int ret;
 
         // Everything up to begin_new_exec runs while the old process is still
@@ -103,18 +114,28 @@ static int execute_spark(struct linux_binprm *bprm)
                 return ret;
         }
 
-        // text + rodata, mapped straight from the file at offset 0: the header
-        // sits in the first 64 bytes of this mapping and entry points past it.
-        // MAP_FIXED because the image is not position independent, and
-        // MAP_POPULATE because these pages are always touched immediately --
-        // faulting them in one at a time is pure latency for a short program.
-        text = vm_mmap(bprm->file, header->base, header->text_size,
+        map_started = ktime_get_ns();
+
+        // vm_mmap takes and drops mmap_lock around every call. This address
+        // space was created moments ago and nothing else can see it yet, so
+        // the three regions go up under one write lock instead of three
+        // acquire/release cycles, using do_mmap directly.
+        //
+        // do_mmap does not populate; it reports how much wants populating and
+        // the caller does it after dropping the lock.
+        if (mmap_write_lock_killable(current->mm))
+        {
+                force_fatal_sig(SIGKILL);
+                return -EINTR;
+        }
+
+        text = do_mmap(bprm->file, header->base, header->text_size,
                        PROT_READ | PROT_EXEC,
-                       MAP_PRIVATE | MAP_FIXED | MAP_POPULATE,
-                       0);
+                       MAP_PRIVATE | MAP_FIXED, 0, 0, &text_populate, NULL);
 
         if (IS_ERR_VALUE(text))
         {
+                mmap_write_unlock(current->mm);
                 log_k("mapping text failed: %ld\n", (long)text);
                 force_fatal_sig(SIGKILL);
                 return (int)text;
@@ -122,14 +143,16 @@ static int execute_spark(struct linux_binprm *bprm)
 
         if (header->data_size)
         {
-                data = vm_mmap(bprm->file, header->base + header->text_size,
+                data = do_mmap(bprm->file, header->base + header->text_size,
                                header->data_size,
                                PROT_READ | PROT_WRITE,
-                               MAP_PRIVATE | MAP_FIXED | MAP_POPULATE,
-                               header->text_size);
+                               MAP_PRIVATE | MAP_FIXED,
+                               0, header->text_size >> PAGE_SHIFT,
+                               &data_populate, NULL);
 
                 if (IS_ERR_VALUE(data))
                 {
+                        mmap_write_unlock(current->mm);
                         log_k("mapping data failed: %ld\n", (long)data);
                         force_fatal_sig(SIGKILL);
                         return (int)data;
@@ -140,20 +163,35 @@ static int execute_spark(struct linux_binprm *bprm)
         // file backed page to clear by hand.
         if (header->bss_size)
         {
-                bss = vm_mmap(NULL,
+                bss = do_mmap(NULL,
                               header->base + header->text_size + header->data_size,
                               header->bss_size,
                               PROT_READ | PROT_WRITE,
                               MAP_PRIVATE | MAP_FIXED | MAP_ANONYMOUS,
-                              0);
+                              0, 0, &bss_populate, NULL);
 
                 if (IS_ERR_VALUE(bss))
                 {
+                        mmap_write_unlock(current->mm);
                         log_k("mapping bss failed: %ld\n", (long)bss);
                         force_fatal_sig(SIGKILL);
                         return (int)bss;
                 }
         }
+
+        mmap_write_unlock(current->mm);
+
+        // Populating eagerly was measured to move about 800ns out of page
+        // faults and into here, with no end to end difference at these sizes,
+        // so the regions are left to fault in. The hooks stay because a larger
+        // image may well tip the other way -- do_mmap reports what wants
+        // populating and MAP_POPULATE is all it takes to turn back on.
+        if (text_populate)
+                mm_populate(header->base, text_populate);
+        if (data_populate)
+                mm_populate(header->base + header->text_size, data_populate);
+
+        spark_stat_map_ns += ktime_get_ns() - map_started;
 
         current->mm->start_code = header->base;
         current->mm->end_code = header->base + header->text_size;
@@ -184,9 +222,14 @@ static int execute_spark(struct linux_binprm *bprm)
 
         finalize_exec(bprm);
 
+        // Everything before this in kernel_execve is the generic prologue:
+        // allocating a bprm, opening the file, building a throwaway mm to hold
+        // argv and then transplanting its stack. This counter is only our part.
+        spark_stat_loader_ns += ktime_get_ns() - loader_started;
+        spark_stat_loads++;
+
         return 0;
 }
-
 
 /*
         Spawning without the fork
@@ -201,7 +244,8 @@ static int execute_spark(struct linux_binprm *bprm)
         it reports through SIGCHLD and is reaped with wait4 like any other.
 */
 
-struct spark_spawn_work {
+struct spark_spawn_work
+{
         char *path;
         char **argv;
         char *argv_block;
@@ -224,12 +268,16 @@ static void spark_spawn_free(struct spark_spawn_work *work)
 
 static int spark_spawn_enter(void *data)
 {
+        u64 started = ktime_get_ns();
+
         struct spark_spawn_work *work = data;
         static const char *const empty_envp[] = {NULL};
         int ret;
 
         ret = kernel_execve(work->path, (const char *const *)work->argv,
                             work->envp ? (const char *const *)work->envp : empty_envp);
+
+        spark_stat_exec_ns += ktime_get_ns() - started;
 
         // kernel_execve has copied everything it needs by now, so the request
         // can go before anything else touches it.
@@ -338,7 +386,12 @@ static long spark_do_spawn(struct spark_spawn __user *request)
 
         // SIGCHLD alone, so the new task is an ordinary child of the caller
         // and wait4 works on it the same way it does for a fork.
-        pid = user_mode_thread(spark_spawn_enter, work, SIGCHLD);
+        {
+                u64 started = ktime_get_ns();
+                pid = user_mode_thread(spark_spawn_enter, work, SIGCHLD);
+                spark_stat_task_ns += ktime_get_ns() - started;
+                spark_stat_spawns++;
+        }
 
         if (pid < 0)
         {
@@ -354,12 +407,34 @@ fail:
         return ret;
 }
 
+static long spark_report_stats(struct spark_stats __user *out)
+{
+        struct spark_stats stats = {
+            .spawns = spark_stat_spawns,
+            .task_ns = spark_stat_task_ns,
+            .exec_ns = spark_stat_exec_ns,
+            .loader_ns = spark_stat_loader_ns,
+            .loads = spark_stat_loads,
+            .map_ns = spark_stat_map_ns,
+        };
+
+        if (copy_to_user(out, &stats, sizeof(stats)))
+                return -EFAULT;
+
+        return 0;
+}
+
 static long spark_device_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
-        if (cmd != SPARK_IOCTL_SPAWN)
-                return -ENOTTY;
+        switch (cmd)
+        {
+        case SPARK_IOCTL_SPAWN:
+                return spark_do_spawn((struct spark_spawn __user *)arg);
+        case SPARK_IOCTL_STATS:
+                return spark_report_stats((struct spark_stats __user *)arg);
+        }
 
-        return spark_do_spawn((struct spark_spawn __user *)arg);
+        return -ENOTTY;
 }
 
 static const struct file_operations spark_device_ops = {

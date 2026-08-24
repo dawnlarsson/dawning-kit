@@ -90,6 +90,23 @@ struct spark_header {
 // this changes if the request struct does.
 #define SPARK_IOCTL_SPAWN 0x40287301u
 
+// _IOR('s', 2, struct spark_stats). Nanoseconds accumulated inside the kernel,
+// so the split between creating the task and loading the image is measured
+// where it happens rather than inferred from the outside.
+#define SPARK_IOCTL_STATS 0x80307302u
+
+struct spark_stats {
+        unsigned long spawns;
+        unsigned long task_ns; // time inside user_mode_thread
+        unsigned long exec_ns;   // time inside kernel_execve
+        unsigned long loader_ns; // time inside the spark binfmt handler
+        unsigned long loads;     // binfmt invocations, which exceed spawns:
+                                 // a spark image run by ordinary exec loads
+                                 // too, without going through the device
+        unsigned long map_ns;    // of the handler, just the region mapping --
+                                 // the part that is actually ours to optimise
+};
+
 struct spark_spawn {
         unsigned long path;       // user pointer, NUL terminated
         unsigned long argv;       // user pointer to the flat argv block
