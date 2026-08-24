@@ -3,11 +3,88 @@
 #       Dawning Doc Kit
 #       Dawn Larsson (dawning.dev) - 2025 - Apache License 2.0
 #
+# This file is meant to be sourced, so $0 is the caller, not this script.
+kit_dir_find() {
+        local c
+        for c in "$KIT_DIR" "${BASH_SOURCE%/*}" "$(dirname -- "$0" 2>/dev/null)" . ./dawning-kit; do
+                if [ -n "$c" ] && [ -r "$c/utils.sh" ]; then
+                        printf '%s' "$c"
+                        return 0
+                fi
+        done
+        return 1
+}
+
+if ! KIT_DIR=$(kit_dir_find); then
+        echo "doc.sh: cannot locate utils.sh -- set KIT_DIR to the dawning-kit directory" >&2
+        return 1 2>/dev/null || exit 1
+fi
+
 # shellcheck source=/dev/null
-. "${KIT_DIR:-./dawning-kit}/utils.sh"
+. "$KIT_DIR/utils.sh" || {
+        echo "doc.sh: failed to load $KIT_DIR/utils.sh" >&2
+        return 1 2>/dev/null || exit 1
+}
+
+# A literal '&' cannot be written portably in a ${var//pat/repl} replacement:
+# bash 3.2 treats '&' literally and '\&' as a backslash-ampersand, while bash
+# 5.2+ treats bare '&' as the matched text and needs '\&' for a literal.
+# Building with a sentinel byte and converting it with tr behaves the same on
+# both, so every escape helper here routes through this.
+ESCAPE_MARK=$'\001'
+
+escape_finish() {
+        printf '%s' "$1" | tr "$ESCAPE_MARK" '&'
+}
+
+# Escapes a text node. & must be first or it double-escapes the others.
+html_escape_text() {
+        local s="$1"
+        s="${s//&/${ESCAPE_MARK}amp;}"
+        s="${s//</${ESCAPE_MARK}lt;}"
+        s="${s//>/${ESCAPE_MARK}gt;}"
+        escape_finish "$s"
+}
+
+# Neutralizes a URL destined for href/src. The surrounding text has already
+# been entity escaped, so this only rejects dangerous schemes and quotes.
+# Anything not on the allowlist becomes '#' rather than being emitted.
+safe_url() {
+        local url="$1" lower
+
+        # Whitespace and control characters are used to smuggle schemes past
+        # naive filters ("java\tscript:").
+        url="${url//[$'\t\r\n\f\v ']/}"
+        lower=$(printf '%s' "$url" | tr '[:upper:]' '[:lower:]')
+
+        case "$lower" in
+        http://* | https://* | mailto:* | tel:* | data:image/*) ;;
+        *:*)
+                # A colon before the first slash is a scheme we do not allow.
+                case "${lower%%:*}" in
+                */*) ;;
+                *) url="#" ;;
+                esac
+                ;;
+        esac
+
+        url="${url//\"/${ESCAPE_MARK}quot;}"
+        url="${url//\'/${ESCAPE_MARK}#39;}"
+        escape_finish "$url"
+}
+
+# Escapes a value going into a double quoted attribute. Assumes the caller
+# already ran html_escape_text over the surrounding text.
+html_escape_attr() {
+        local s="$1"
+        s="${s//\"/${ESCAPE_MARK}quot;}"
+        s="${s//\'/${ESCAPE_MARK}#39;}"
+        escape_finish "$s"
+}
 
 md_inline_format() {
-        local text="$1"
+        local text
+        text=$(html_escape_text "$1")
 
         # Handle line breaks
         text="${text//\\\\n/<br>}"
@@ -21,7 +98,7 @@ md_inline_format() {
                 local after="${rest#*']('}"
                 local src="${after%%')'*}"
                 local end="${after#*')'}"
-                text="$before<img src=\"$src\" alt=\"$alt\"/>$end"
+                text="$before<img src=\"$(safe_url "$src")\" alt=\"$(html_escape_attr "$alt")\"/>$end"
         done
 
         # Code: `code` -> <code>code</code>
@@ -50,7 +127,7 @@ md_inline_format() {
                 local after="${rest#*']('}"
                 local url="${after%%')'*}"
                 local end="${after#*')'}"
-                text="$before<a href=\"$url\">$link_text</a>$end"
+                text="$before<a href=\"$(safe_url "$url")\">$link_text</a>$end"
         done
 
         # Italic: *text* -> <em>text</em>
@@ -96,6 +173,11 @@ doc() {
         local paragraph_buffer=""
         local line processed
 
+        if [[ ! -r "$input_file" ]]; then
+                echo "doc: cannot read '$input_file'" >&2
+                return 1
+        fi
+
         if [[ -r "$input_file" ]]; then
                 while IFS= read -r line || [[ -n "$line" ]]; do
 
@@ -117,7 +199,7 @@ doc() {
                                         local lang="${line#'```'}"
                                         lang="${lang// /}"
                                         if [ -n "$lang" ]; then
-                                                printf '<pre><code class="language-%s">' "$lang"
+                                                printf '<pre><code class="language-%s">' "$(html_escape_attr "$(html_escape_text "$lang")")"
                                         else
                                                 printf '<pre><code>'
                                         fi
@@ -126,9 +208,10 @@ doc() {
                                 continue
                         fi
 
-                        # Inside code block
+                        # Inside code block -- escaped, or a '<' in a sample
+                        # silently becomes a tag in the output.
                         if $in_code; then
-                                printf '%s\n' "$line"
+                                printf '%s\n' "$(html_escape_text "$line")"
                                 continue
                         fi
 
@@ -258,6 +341,10 @@ doc() {
                 $in_list && printf '</ul>'
                 $in_quote && printf '</blockquote>'
         fi
+
+        # These trailing tests are false in the common case; without this the
+        # function reports failure on every well formed document.
+        return 0
 }
 
 html_tag() {
