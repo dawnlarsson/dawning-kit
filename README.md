@@ -246,6 +246,79 @@ sh build.run.sh
 ```
 but, you need https://www.qemu.org/
 
+### Glue: assembly for every architecture, in one file
+
+Assembly in `linux/src` goes in a `.asm` file, one file per thing rather than
+one per machine. Each block names the architectures it is for; the rest are
+deleted before the file ever reaches a compiler, and what survives is handed
+to whatever assembler the toolchain provides.
+
+```asm
+#include <linux/linkage.h>
+
+SYM_FUNC_START(dawning_ticks)
+
+#> arch x86_64
+        rdtsc
+        shl     $32, %rdx
+        or      %rdx, %rax
+        RET
+
+#> arch arm64
+        mrs     x0, cntvct_el0
+        ret
+
+#> arch other
+#error "dawning_ticks: no tick counter for this architecture"
+
+#> shared
+
+SYM_FUNC_END(dawning_ticks)
+```
+
+The directives:
+
+| | |
+| --- | --- |
+| `#> arch <name> [name ...]` | begin a block for these architectures |
+| `#> arch other` | begin the block for every architecture no other block claimed |
+| `#> shared` | go back to emitting for all of them |
+
+Everything before the first `#> arch` is shared, which is where the includes
+and anything portable belong. A `#> arch` ends the block before it, and so
+does the end of the file.
+
+Nothing is translated. A block holds the native syntax of its architecture
+verbatim, so kernel assembly can be pasted in unchanged, and an assembler
+error names a line of the `.asm` rather than a line of anything generated.
+Architecture names are the ones `emit.sh` accepts and are normalized the same
+way, so `arm64` and `aarch64` are one machine. An unknown name is an error,
+and so is a file with architecture blocks but none for the one being built --
+`#> arch other` with nothing under it says the omission was deliberate.
+
+A `.asm` dropped in `linux/src` is picked up by `src/Makefile`, translated for
+whichever architecture the kernel is configured for, and linked into the
+Dawning module. Declare what it defines near the top of `src/dawning_core.c`
+to call it from C.
+
+To put one in the place of a file the kernel itself builds, a profile says
+
+```sh
+#> glue entry_dawning.asm arch/x86/entry/entry_64.S
+```
+
+The target has to be a file the kernel's Makefiles already compile -- this
+replaces it, it cannot add a new object to somebody else's directory. What was
+there is kept beside it as `entry_64.S.dawning-orig`, every build regenerates
+from the `.asm` rather than from the replaced file, and removing the line puts
+the original back on the next build.
+
+The translator is `linux/src/glue` and runs standalone:
+
+```sh
+sh linux/src/glue arm64 some.asm some.S
+```
+
 ## Dawning C Standard
 > Syntax shapes the way you think. Better thinking should be standardized.
 

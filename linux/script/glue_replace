@@ -1,0 +1,138 @@
+#!/bin/sh
+#
+#       Puts a .asm from src/ in the place of a file the kernel already
+#       builds, which is the other half of what glue is for: not everything
+#       worth writing in assembly can live in a module.
+#
+#       A profile asks for one with
+#
+#               #> glue <file in src/> <path under linux/>
+#
+#       for example
+#
+#               #> glue entry_dawning.asm arch/x86/entry/entry_64.S
+#
+#       The target has to be a file the kernel's own Makefiles already
+#       compile. This replaces what is there; it cannot add a new object to
+#       somebody else's directory, because nothing would reference it.
+#
+#       The original is kept beside it as <name>.dawning-orig the first time
+#       it is replaced, and never read again -- every build regenerates from
+#       the .asm, so building twice does the same thing as building once.
+#       Removing the #> glue line from the profile puts the original back on
+#       the next build, which is what artifacts/glue.applied is for.
+#
+set -e
+
+. script/common
+
+manifest=artifacts/glue.applied
+stamp=artifacts/glue.arch
+
+arch=$(key_one arch) || exit 1
+
+# Read here rather than through key(), which joins every match onto one line.
+# That is what dawning_flags wants and the opposite of what a pair of paths
+# wants: two #> glue lines would come back as four words with nothing saying
+# where one ended.
+requested=artifacts/glue.requested
+sed -n 's/^#> glue //p' artifacts/.config > "$requested"
+
+cleanup() { rm -f "$requested"; }
+trap cleanup EXIT INT TERM
+
+if [ ! -s "$requested" ] && [ ! -f "$manifest" ]; then
+        echo "Nothing to replace"
+        exit 0
+fi
+
+if [ -z "$arch" ]; then
+        echo "glue_replace: no '#> arch' in artifacts/.config" >&2
+        exit 1
+fi
+
+# A different architecture means every replacement has to be generated again
+# even where nothing was edited, since the .S is only ever right for one.
+rearch=0
+
+if [ "$(cat "$stamp" 2>/dev/null)" != "$arch" ]; then
+        rearch=1
+fi
+
+# Anything a previous build replaced and this one does not ask for goes back
+# to what the kernel shipped, before the kernel build reads any of it.
+if [ -f "$manifest" ]; then
+        while read -r target; do
+                [ -n "$target" ] || continue
+
+                if awk -v t="$target" '$2 == t { found = 1 } END { exit !found }' "$requested"; then
+                        continue
+                fi
+
+                original="linux/$target.dawning-orig"
+
+                if [ -f "$original" ]; then
+                        echo "Restoring $target"
+                        mv "$original" "linux/$target"
+                fi
+        done < "$manifest"
+fi
+
+: > "$manifest.new"
+
+while read -r source target extra; do
+        [ -n "${source:-}" ] || continue
+
+        if [ -z "${target:-}" ] || [ -n "${extra:-}" ]; then
+                echo "glue_replace: '#> glue $source $target $extra' is not <source.asm> <target>" >&2
+                exit 1
+        fi
+
+        # A target escaping the kernel tree would be a profile writing
+        # anywhere on the machine as root.
+        case "$target" in
+        /* | *..*)
+                echo "glue_replace: target must be a path inside linux/: $target" >&2
+                exit 1
+                ;;
+        esac
+
+        asm="src/$source"
+        destination="linux/$target"
+        original="$destination.dawning-orig"
+
+        if [ ! -f "$asm" ]; then
+                echo "glue_replace: no such source: $asm" >&2
+                exit 1
+        fi
+
+        if [ ! -f "$destination" ] && [ ! -f "$original" ]; then
+                echo "glue_replace: $target is not a file in the kernel tree" >&2
+                echo "glue_replace: only a file the kernel already builds can be replaced" >&2
+                exit 1
+        fi
+
+        # Still the file the kernel shipped: it has to be written whatever
+        # the timestamps say, since a freshly unpacked tarball is newer than
+        # the .asm that replaces it.
+        untouched=0
+
+        if [ ! -f "$original" ]; then
+                cp "$destination" "$original"
+                untouched=1
+        fi
+
+        echo "$target" >> "$manifest.new"
+
+        # Rewriting an unchanged file would give it a new timestamp and make
+        # the kernel rebuild everything downstream of it on every build.
+        if [ "$untouched" = 0 ] && [ "$rearch" = 0 ] && ! is_newer "$asm" "$destination"; then
+                continue
+        fi
+
+        echo "Replacing $target with $source"
+        sh src/glue "$arch" "$asm" "$destination"
+done < "$requested"
+
+mv "$manifest.new" "$manifest"
+echo "$arch" > "$stamp"

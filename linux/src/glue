@@ -1,0 +1,262 @@
+#!/bin/sh
+#
+#       Glue -- one assembly source, every architecture.
+#
+#       Usage: sh glue <arch> <input.asm> <output.S>
+#
+#       A .asm file holds the assembly for every architecture at once, split
+#       into blocks. This translates one down to a .S for a single
+#       architecture, which the kernel's own build then hands to whatever
+#       assembler that toolchain provides. Nothing here assembles anything and
+#       nothing here rewrites an instruction: a block holds the native syntax
+#       of its architecture verbatim, so real kernel assembly can be pasted in
+#       unchanged and an error from the assembler names an instruction that
+#       was actually written.
+#
+#       The same file with #ifdef CONFIG_X86_64 around each half would build
+#       too. The difference is that there, every architecture reaches the
+#       preprocessor and has to stay valid enough to survive it, and the two
+#       interleave line by line, which stops being readable at about the
+#       second function. Here the blocks that were not selected are gone
+#       before the file is a .S at all.
+#
+#       The directives -- each of which is only a comment to the assembler,
+#       and none of which reach it:
+#
+#           #> arch <name> [name ...]   begin a block for these architectures
+#           #> arch other               begin the block for every architecture
+#                                       no other block claimed
+#           #> shared                   go back to emitting for all of them
+#
+#       Everything before the first #> arch is shared, which is where the
+#       includes and anything portable belong. A #> arch ends the block before
+#       it, and so does the end of the file.
+#
+#       Architecture names are the ones emit.sh accepts -- x86_64/amd64/x64,
+#       aarch64/arm64, riscv64/riscv -- normalized here the same way, so a
+#       profile saying "arm64" and a block saying "aarch64" are the same
+#       machine. Anything else is an error rather than a block that quietly
+#       never matches. So is a file that has architecture blocks but none for
+#       the one being built: say "#> arch other" with nothing under it to mean
+#       there is deliberately nothing to do here.
+#
+#       One thing to know about comments: the output is a .S, so it meets the
+#       C preprocessor, and a line whose first token after # is a number
+#       followed by a quoted string is a line number directive there --
+#       "# 5 \"elsewhere\"" in a comment would move the assembler's idea of
+#       where it is. A number alone is safe; that is why "# 32 bit halves"
+#       reads as the comment it is.
+#
+#       This lives beside the sources rather than in linux/script because
+#       kbuild reaches it as $(src)/glue, and $(src) is a symlink into this
+#       directory. It needs nothing from script/common and runs standalone.
+#
+set -u
+
+if [ "$#" -ne 3 ]; then
+        echo "glue: usage: glue <arch> <input.asm> <output.S>" >&2
+        exit 1
+fi
+
+arch="$1"
+input="$2"
+output="$3"
+
+if [ -z "$arch" ]; then
+        echo "glue: no target architecture given for $input" >&2
+        echo "glue: nothing in the kernel config names an architecture glue knows" >&2
+        exit 1
+fi
+
+if [ ! -f "$input" ]; then
+        echo "glue: no such file: $input" >&2
+        exit 1
+fi
+
+# Written beside the output so the rename is atomic and a failed run leaves
+# the previous .S alone rather than a half written one the build would trust.
+temporary="$output.glue_tmp"
+
+cleanup() { rm -f "$temporary"; }
+trap cleanup EXIT INT TERM
+
+# The file is read twice: once to find out whether any block claims this
+# architecture, which is what decides whether the "other" block is emitted,
+# and once to write. Deciding it at the end instead would move the "other"
+# block to the end of the output.
+awk -v want="$arch" -v source="$input" '
+        function normalize(name) {
+                if (name == "x86_64" || name == "amd64" || name == "x64")
+                        return "x86_64"
+                if (name == "aarch64" || name == "arm64")
+                        return "aarch64"
+                if (name == "riscv64" || name == "riscv")
+                        return "riscv64"
+                return ""
+        }
+
+        function fail(line, message) {
+                printf "glue: %s:%d: %s\n", source, line, message > "/dev/stderr"
+                failed = 1
+                exit 1
+        }
+
+        BEGIN {
+                target = normalize(want)
+
+                if (target == "") {
+                        printf "glue: unknown architecture: %s\n", want > "/dev/stderr"
+                        failed = 1
+                        exit 1
+                }
+        }
+
+        # Between the two readings awk applies the pass=2 assignment, so this
+        # is the one place that runs after everything the first pass learned
+        # and before anything is written. END is no use for it: awk runs END
+        # once, after both readings.
+        pass == 2 && !started {
+                started = 1
+
+                if (seen_arch && !matched && !seen_other) {
+                        printf "glue: %s has no block for %s\n", source, target > "/dev/stderr"
+                        printf "glue: add \"#> arch %s\", or \"#> arch other\" to say there is nothing to do here\n", target > "/dev/stderr"
+                        failed = 1
+                        exit 1
+                }
+
+                # What comes before the first #> arch belongs to everyone.
+                emitting = 1
+                marker = 1
+        }
+
+        # A directive is any line whose first non blank is "#>". Keying on
+        # that rather than on column one lets a block be indented with the
+        # code it introduces.
+        /^[ \t]*#>/ {
+                directive = $0
+                sub(/^[ \t]*#>[ \t]*/, "", directive)
+                sub(/[ \t]+$/, "", directive)
+
+                count = split(directive, word, /[ \t]+/)
+
+                if (count == 0)
+                        fail(FNR, "#> with no directive")
+
+                if (word[1] == "shared") {
+                        if (count != 1)
+                                fail(FNR, "#> shared takes no arguments")
+
+                        emitting = 1
+                        marker = 1
+                        next
+                }
+
+                if (word[1] != "arch")
+                        fail(FNR, "unknown directive: #> " word[1])
+
+                if (count < 2)
+                        fail(FNR, "#> arch names no architecture")
+
+                if (word[2] == "other") {
+                        if (count != 2)
+                                fail(FNR, "#> arch other cannot be combined with an architecture")
+
+                        if (pass == 1) {
+                                if (seen_other)
+                                        fail(FNR, "a second #> arch other; there can be only one")
+
+                                seen_other = 1
+                        }
+
+                        emitting = !matched
+                        marker = 1
+                        next
+                }
+
+                claimed = 0
+
+                for (i = 2; i <= count; i++) {
+                        if (word[i] == "other")
+                                fail(FNR, "#> arch other cannot be combined with an architecture")
+
+                        name = normalize(word[i])
+
+                        if (name == "")
+                                fail(FNR, "unknown architecture: " word[i])
+
+                        if (name == target)
+                                claimed = 1
+                }
+
+                if (pass == 1) {
+                        seen_arch = 1
+
+                        if (claimed)
+                                matched = 1
+                }
+
+                emitting = claimed
+                marker = 1
+                next
+        }
+
+        # The first reading is only after the directives above; its bodies are
+        # nothing.
+        pass == 1 { next }
+
+        {
+                if (!emitting) {
+                        marker = 1
+                        next
+                }
+
+                # The assembler is told which line of the .asm this came
+                # from, so a diagnostic names the file that was written
+                # rather than the one that was generated. One marker per run
+                # of kept lines is enough -- the assembler counts on from
+                # there.
+                #
+                # .linefile, and not the "# 12 \"file\"" form a .S would
+                # normally carry, because that form does not survive the trip.
+                # The output is preprocessed before it is assembled, and cpp
+                # rewrites a # line that follows a macro expansion to start
+                # with a space, so that the next stage cannot read it as a
+                # directive. The assembler then ignores it, a marker being a
+                # marker only in column one. Every function here opens with
+                # SYM_FUNC_START, which is a macro, so the marker that
+                # matters most -- the one at the head of the first
+                # architecture block -- was precisely the one being discarded.
+                # gcc and clang both do this.
+                #
+                # .linefile is not a # line, so cpp hands it through
+                # untouched. GNU as has known it since binutils 2.35, which
+                # is five years older than anything that can build this
+                # kernel. The clang assembler does not know it and would stop
+                # on it, so under clang no marker is written and a diagnostic
+                # names the .S instead. Nothing else differs.
+                if (marker) {
+                        printf "#ifndef __clang__\n"
+                        printf "\t.linefile %d \"%s\"\n", FNR, source
+                        printf "#endif\n"
+                        marker = 0
+                }
+
+                print
+        }
+' pass=1 "$input" pass=2 "$input" > "$temporary.body" || {
+        rm -f "$temporary.body"
+        exit 1
+}
+
+# The banner is a C++ comment on purpose: the output is always a .S, so the
+# preprocessor removes it before any assembler has an opinion about which
+# character starts a comment on this architecture.
+{
+        echo "// Generated by glue from $input for $arch. Do not edit."
+        echo "// Edit the .asm and build again; this file is overwritten."
+        cat "$temporary.body"
+} > "$temporary"
+
+rm -f "$temporary.body"
+mv "$temporary" "$output"
