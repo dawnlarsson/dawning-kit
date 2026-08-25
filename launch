@@ -56,11 +56,11 @@ command -v qemu-system-x86_64 >/dev/null 2>&1 ||
 
 if [ "$run_only" -eq 0 ]; then
         say "Checking $host"
-        ssh -o BatchMode=yes -o ConnectTimeout=20 "$host" true 2>/dev/null ||
+        ssh -n -o BatchMode=yes -o ConnectTimeout=20 "$host" true 2>/dev/null ||
                 die "cannot reach $host over ssh (set DAWNING_BUILD_HOST)"
 
         say "Copying the tree to $host:$remote"
-        ssh "$host" "mkdir -p $remote" || die "could not create $remote"
+        ssh -n "$host" "mkdir -p $remote" || die "could not create $remote"
 
         # The kernel source, its artifacts and the built filesystem stay on the
         # build host: they are large, and none of them belong to this checkout.
@@ -74,8 +74,11 @@ if [ "$run_only" -eq 0 ]; then
                 "$here/" "$host:$remote/" || die "copying the tree failed"
 
         say "Building: $profiles"
+        # -n so the build does not swallow this script's stdin. Without it the
+        # prompts below read nothing, because ssh forwards whatever is on
+        # stdin to the remote command.
         # shellcheck disable=SC2029
-        ssh "$host" "cd $remote/linux && sudo sh build.sh $profiles" ||
+        ssh -n "$host" "cd $remote/linux && sudo sh build.sh $profiles" ||
                 die "the build failed on $host"
 
         say "Fetching the image"
@@ -128,14 +131,23 @@ if [ "$usb" -eq 1 ]; then
         target=$(echo "$disks" | sed -n "${choice}p")
         [ -n "$target" ] || die "no disk $choice in that list"
 
-        # Refuse anything that does not still look removable when asked
-        # directly. The listing and the write are separate moments, and a
-        # mistake here erases the wrong drive.
+        # Ask about the chosen disk directly rather than trusting the listing:
+        # the two are separate moments, and a mistake here erases the wrong
+        # drive. Which field says so varies between macOS versions, so this
+        # wants positive evidence from one of them and a contradiction from
+        # none -- anything unrecognised is refused rather than assumed safe.
+        info=$(diskutil info "$target" 2>/dev/null)
+        location=$(echo "$info" | awk -F": *" '/Device Location:/ { print $2; exit }')
+        removable=$(echo "$info" | awk -F": *" '/Removable Media:/ { print $2; exit }')
         internal=$(diskutil info "$target" 2>/dev/null |
                 awk -F": *" '/^ *Internal:/ { print $2; exit }')
 
-        [ "$internal" = "No" ] ||
-                die "$target reports Internal: ${internal:-unknown} -- refusing"
+        [ "$internal" != "Yes" ] || die "$target is an internal disk -- refusing"
+
+        case "${location:-}${removable:-}" in
+        *External* | *Removable*) ;;
+        *) die "$target does not look removable (location ${location:-unknown}, media ${removable:-unknown}) -- refusing" ;;
+        esac
 
         name=$(diskutil info "$target" 2>/dev/null |
                 awk -F": *" '/Device \/ Media Name/ { print $2; exit }')
