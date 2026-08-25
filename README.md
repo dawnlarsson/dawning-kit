@@ -9,7 +9,7 @@ Dawning Kit, Foundational Software Development Kit. Zero dependency: C standard 
 - **`kit/test.sh`** Test Kit: Testing utilities, cross architecture.
 - **`kit/utils.sh`** Shared helpers (sizes, file iteration) used by the kits above.
 - **`/src`** Moonwater: the in-kernel module -- spark binary format, `/dev/spark`, and the compositor.
-- **`/profile`**, **`/programs`**, **`/script`**, `build.sh`, `launch`: the config fragments the kernel is built from, the spark programs that run on it, and the machinery that puts an image together.
+- **`/profile`**, **`/programs`**, **`/script`**, `build.sh`: the config fragments the kernel is built from, the spark programs that run on it, and the one script that puts an image together, boots it, or writes it to a stick.
 - **`/std`** C Standard: Entirely self-contained C standard library, also pioneering new syntax and clearer semantics.
 
 ## Example Use
@@ -184,27 +184,38 @@ These primitives evolved from [**Archived Dawning EOS R&D Repo**](https://github
 ### Trying it
 
 ```sh
-sh launch
+sudo sh build.sh --run
 ```
 
-Builds an image and boots it in a window with a working mouse. The kernel is
-built on another machine over ssh, because building it wants a Linux toolchain
-and a case sensitive filesystem; set `MOONWATER_BUILD_HOST` to something you can
-reach (it defaults to `box`). QEMU runs locally, so the window and the pointer
-are real.
+Builds an image and boots it in a window with a working mouse. QEMU runs on
+this machine, so the window and the pointer are real.
 
-`sh launch --shell` puts the console on the terminal instead of opening a
-window, and `sh launch --run` boots the last image without rebuilding. Extra
-profiles can be named: `sh launch desktop`.
+`--shell` puts the console on this terminal instead of opening a window,
+`--boot` boots the last image without rebuilding, and extra profiles can be
+named alongside any of them: `sudo sh build.sh --run desktop`.
+
+Building a kernel wants a Linux toolchain and a case sensitive filesystem. On
+anything else -- a Mac, most obviously -- name a machine that has them:
+
+```sh
+sh build.sh --run --host box
+```
+
+That copies the tree over, builds there, and brings the image back. Set
+`MOONWATER_BUILD_HOST` to skip the flag. The remote keeps its own copy of the
+kernel source, so rebuilds there are incremental.
 
 ### On real hardware
 
 ```sh
-sh launch --usb
+sh build.sh --usb
 ```
 
 Builds an image and writes it to a USB stick, after showing you which
 removable disks it can see and making you type the name of the one to erase.
+That last part is macOS only -- elsewhere it lists the candidates and prints
+the commands rather than running them, because the checks that make erasing
+the wrong disk hard are diskutil's.
 The kernel is built with the EFI stub, so it is itself an EFI application and
 goes straight to `\EFI\BOOT\BOOTX64.EFI` with no bootloader involved.
 
@@ -212,7 +223,7 @@ On the machine: boot it, pick the stick from the firmware boot menu, and make
 sure it is booting UEFI rather than legacy. Secure Boot has to be off, because
 this kernel is not signed.
 
-If the screen stays black, write `sh launch --usb console` instead. That
+If the screen stays black, write `sh build.sh --usb console` instead. That
 builds the same system with the compositor turned off so the framebuffer
 console takes the screen and prints the boot log -- which on a desktop with no
 serial port is the difference between reading the failure and guessing at it.
@@ -241,9 +252,8 @@ Minimal config for raspberry pis (WIP)
 sudo sh build.sh arch/arm.pi debug_none
 ```
 
-To build and boot in one step, on a machine that is not the build host, see
-`sh launch` above -- it does the ssh build, fetches the image and runs QEMU
-locally with a working pointer.
+Add `--run` to boot the result, or `--usb` to write it to a stick; see
+**Trying it** above.
 
 ### Glue: assembly for every architecture, in one file
 

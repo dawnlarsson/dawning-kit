@@ -39,7 +39,7 @@ jobs:
 
       - name: Parse POSIX scripts with dash
         run: |
-          for f in launch kit/bit.sh kit/emit.sh \
+          for f in kit/bit.sh kit/emit.sh \
                    std/build std/spark std/run std/dev \
                    std/localinstall.sh std/build_kernel \
                    build.sh script/*; do
@@ -51,7 +51,6 @@ jobs:
       - name: shellcheck
         run: |
           shellcheck -S warning \
-            launch \
             kit/bit.sh kit/emit.sh kit/doc.sh kit/utils.sh kit/test.sh \
             std/build std/spark std/run std/dev \
             std/localinstall.sh std/build_kernel \

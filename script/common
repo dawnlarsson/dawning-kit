@@ -162,10 +162,4 @@ is_different_age() {
         [ "$(stat_mtime "$1")" -ne "$(stat_mtime "$2")" ]
 }
 
-if [ "$(id -u)" != "0" ]; then
-        label $YELLOW WARNING !!!
-        echo "Building must be run with root!" 1>&2
-        echo
-fi
-
 is_safe
