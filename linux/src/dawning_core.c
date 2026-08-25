@@ -88,7 +88,7 @@ static int execute_spark(struct linux_binprm *bprm)
         u64 map_started;
         struct pt_regs *regs = task_pt_regs(current);
         const struct spark_header *header;
-        unsigned long text, data = 0, bss = 0, stack_addr;
+        unsigned long text, data = 0, bss = 0, stack_addr, span;
         unsigned long text_populate = 0, data_populate = 0, bss_populate = 0;
         int ret;
 
@@ -122,10 +122,39 @@ static int execute_spark(struct linux_binprm *bprm)
         if ((header->data_size & (SPARK_PAGE - 1)) || (header->bss_size & (SPARK_PAGE - 1)))
                 return -ENOEXEC;
 
-        if (header->entry < header->base || header->entry >= header->base + header->text_size)
+        /*
+                Every size below comes from the file, so the arithmetic has to
+                assume it is hostile. Adding two of them can wrap, and a wrapped
+                sum compares small enough to pass a bound it should have failed.
+                Each total is therefore checked against what remains rather than
+                being formed first.
+
+                SPARK_MAX_IMAGE is not a real limit on anything: it is far more
+                than a flat binary has any business being, and it means the
+                sums below cannot come near overflowing.
+        */
+        if (header->text_size > SPARK_MAX_IMAGE ||
+            header->data_size > SPARK_MAX_IMAGE ||
+            header->bss_size > SPARK_MAX_IMAGE)
                 return -ENOEXEC;
 
-        if (i_size_read(file_inode(bprm->file)) < (loff_t)(header->text_size + header->data_size))
+        span = header->text_size + header->data_size + header->bss_size;
+
+        if (span > SPARK_MAX_IMAGE)
+                return -ENOEXEC;
+
+        // The whole image has to fit above base without wrapping, and inside
+        // the address space the process will actually have.
+        if (header->base > TASK_SIZE || span > TASK_SIZE - header->base)
+                return -ENOEXEC;
+
+        if (header->entry < header->base ||
+            header->entry - header->base >= header->text_size)
+                return -ENOEXEC;
+
+        // What must be present in the file, as opposed to zero filled.
+        if (i_size_read(file_inode(bprm->file)) <
+            (loff_t)(header->text_size + header->data_size))
                 return -ENOEXEC;
 
         // Past this point the old mm is gone. Nothing below may return a plain

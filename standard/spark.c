@@ -41,6 +41,10 @@
 // pre-reads BINPRM_BUF_SIZE (256) bytes for us, so the header must fit there.
 #define SPARK_HEADER_SIZE 64
 
+// An arbitrary ceiling, well past anything a flat binary should be, that keeps
+// the loader's arithmetic on file supplied sizes far from overflowing.
+#define SPARK_MAX_IMAGE (256UL << 20)
+
 struct spark_header {
         unsigned int magic;    // SPARK_MAGIC
         unsigned short version;// SPARK_VERSION

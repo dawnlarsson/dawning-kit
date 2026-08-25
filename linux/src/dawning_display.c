@@ -101,6 +101,17 @@ struct dawn_display {
         u64 motion_stamp;
 
         int drawn_x, drawn_y;
+
+        /*
+                The bounds the input handler clamps against.
+
+                It runs in the input core's context, where it cannot take the
+                mutex, so it must not follow the surfaces pointer -- that array
+                is freed when a device goes away. These are plain scalars that
+                live as long as the display does; reading a stale one clamps
+                to the wrong edge for an instant, which is nothing.
+        */
+        int screen_w, screen_h;
 };
 
 // The compositor owns one display at a time. The input handler reaches it
@@ -109,6 +120,7 @@ struct dawn_display {
 static struct dawn_display *dawn_display_active;
 
 static void dawning_input_start(void);
+static void dawning_input_stop(void);
 
 /*
         Timing. Nanoseconds from a pointer event arriving to the cursor being
@@ -338,10 +350,16 @@ static void dawn_display_move_cursor(struct dawn_display *display,
         dawn_input_draw_total += ktime_get_ns() - draw_started;
         }
 
-        damage.x1 = min(old_x, new_x);
-        damage.y1 = min(old_y, new_y);
-        damage.x2 = max(old_x, new_x) + DAWN_CURSOR_W;
-        damage.y2 = max(old_y, new_y) + DAWN_CURSOR_H;
+        // Clamped: the cursor is allowed to sit against the right or bottom
+        // edge, so the rectangle around it would otherwise reach past the
+        // surface and be handed to the driver that way.
+        damage.x1 = max(min(old_x, new_x), 0);
+        damage.y1 = max(min(old_y, new_y), 0);
+        damage.x2 = min(max(old_x, new_x) + DAWN_CURSOR_W, (int)surface->width);
+        damage.y2 = min(max(old_y, new_y) + DAWN_CURSOR_H, (int)surface->height);
+
+        if (damage.x2 <= damage.x1 || damage.y2 <= damage.y1)
+                return;
 
         {
         u64 flush_started = ktime_get_ns();
@@ -522,6 +540,9 @@ static int dawn_display_start(struct dawn_display *display)
         dawn_display_seed_windows(display, display->surfaces[0].width,
                           display->surfaces[0].height);
 
+        display->screen_w = (int)display->surfaces[0].width;
+        display->screen_h = (int)display->surfaces[0].height;
+
         atomic_set(&display->pending_x, display->cursor_x);
         atomic_set(&display->pending_y, display->cursor_y);
         display->drawn_x = display->cursor_x;
@@ -551,7 +572,21 @@ static void dawn_client_unregister(struct drm_client_dev *client)
 {
         struct dawn_display *display = dawn_display_from_client(client);
 
+        /*
+                Order matters. The input handler and its worker reach the
+                display through dawn_display_active, so that has to stop
+                pointing at it before anything it owns is freed, and the
+                worker has to be known finished rather than merely asked to
+                stop. Getting this wrong is a use after free on every mouse
+                move after a device goes away.
+        */
+        if (dawn_display_active == display) {
+                dawning_input_stop();
+                dawn_display_active = NULL;
+        }
+
         mutex_lock(&display->lock);
+        display->started = 0;
         dawn_display_release(display);
         mutex_unlock(&display->lock);
 
@@ -620,6 +655,16 @@ static int dawning_display_take_over(struct drm_device *dev)
         struct dawn_display *display;
 
         if (!drm_core_check_feature(dev, DRIVER_MODESET))
+                return 0;
+
+        /*
+                One display, once. A machine can easily present two cards --
+                the first boot on real hardware had virtio-gpu and a standard
+                VGA both probing -- and taking the second would register the
+                input handler twice, leak the first workqueue, and leave
+                dawn_display_active pointing at whichever won the race.
+        */
+        if (dawn_display_active)
                 return 0;
 
         display = kzalloc(sizeof(*display), GFP_KERNEL);
@@ -773,7 +818,7 @@ static void dawn_input_event(struct input_handle *handle, unsigned int type,
         struct dawn_display *display = dawn_display_active;
         int x, y, limit;
 
-        if (!display || !display->started || !display->surface_count)
+        if (!display || !display->started || !display->screen_w)
                 return;
 
         x = atomic_read(&display->pending_x);
@@ -801,19 +846,19 @@ static void dawn_input_event(struct input_handle *handle, unsigned int type,
 
                 if (code == ABS_X)
                         x = (int)div_u64((u64)(value - abs->minimum) *
-                                         display->surfaces[0].width,
+                                         (u32)display->screen_w,
                                          abs->maximum - abs->minimum);
                 else
                         y = (int)div_u64((u64)(value - abs->minimum) *
-                                         display->surfaces[0].height,
+                                         (u32)display->screen_h,
                                          abs->maximum - abs->minimum);
         } else {
                 return;
         }
 
-        limit = (int)display->surfaces[0].width - 1;
+        limit = display->screen_w - 1;
         x = clamp(x, 0, limit);
-        limit = (int)display->surfaces[0].height - 1;
+        limit = display->screen_h - 1;
         y = clamp(y, 0, limit);
 
         atomic_set(&display->pending_x, x);
@@ -886,6 +931,22 @@ static struct input_handler dawn_input_handler = {
     .name = "dawning",
     .id_table = dawn_input_ids,
 };
+
+/*
+        Unregistering the handler stops new events; cancelling the work waits
+        for the one that may already be running. Both have to happen before
+        the display it draws through is freed.
+*/
+static void dawning_input_stop(void)
+{
+        if (!dawn_input_wq)
+                return;
+
+        input_unregister_handler(&dawn_input_handler);
+        cancel_work_sync(&dawn_input_work);
+        destroy_workqueue(dawn_input_wq);
+        dawn_input_wq = NULL;
+}
 
 static void dawning_input_start(void)
 {

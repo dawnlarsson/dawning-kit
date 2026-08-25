@@ -4,6 +4,14 @@
 #define label TERM_BOLD "[Init]" TERM_RESET " "
 #define init_program "/shell"
 
+// A shell that dies immediately would otherwise be restarted as fast as the
+// machine can fork, forever. Backing off turns that into something a person
+// can read and interrupt rather than a spin.
+#define RESTART_BACKOFF_NS 250000000
+#define RESTART_BACKOFF_AFTER 3
+
+timespec restart_pause = {0, RESTART_BACKOFF_NS};
+
 // PID 1 has two jobs: start the first program, and reap every orphan the
 // system ever produces. It must not exec into the shell -- doing that makes
 // the shell PID 1, so the kernel panics the moment the shell exits, and
@@ -71,6 +79,8 @@ b32 main()
                 return 1;
         }
 
+        positive quick_exits = 0;
+
         while (1)
         {
                 positive status = 0;
@@ -89,6 +99,11 @@ b32 main()
                 string_format(log, label "%s exited (%p), restarting\n",
                               init_program, status >> 8 & 0xff);
                 log_flush();
+
+                // Only pause once restarts start coming back to back; a shell
+                // someone exited on purpose should come straight back.
+                if (++quick_exits > RESTART_BACKOFF_AFTER)
+                        sleep(address_of restart_pause);
 
                 shell = start_shell(device);
 
