@@ -345,7 +345,11 @@ wgcVXSeiHcXa9SSFDvKn0L1q5nSLQGHp38qUi1ZPf/1uQSuB3ME=
                 #
                 for line in \
                         "#define __HAVE_ARCH_STRLEN" \
-                        "extern __kernel_size_t strlen(const char *);"; do
+                        "extern __kernel_size_t strlen(const char *);" \
+                        "#define __HAVE_ARCH_STRNCMP" \
+                        "extern int strncmp(const char *, const char *, __kernel_size_t);" \
+                        "#define __HAVE_ARCH_STRNLEN" \
+                        "extern __kernel_size_t strnlen(const char *, __kernel_size_t);"; do
                         line_add "linux/arch/x86/include/asm/string_64.h" "$line"
                 done
 
