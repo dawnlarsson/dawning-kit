@@ -241,15 +241,13 @@ Minimal config for raspberry pis (WIP)
 sudo sh build.sh arch/arm.pi debug_none
 ```
 
-if you want to run this in a virtual machine for testing:
-```sh
-sh build.run.sh
-```
-but, you need https://www.qemu.org/
+To build and boot in one step, on a machine that is not the build host, see
+`sh launch` above -- it does the ssh build, fetches the image and runs QEMU
+locally with a working pointer.
 
 ### Glue: assembly for every architecture, in one file
 
-Assembly in `linux/src` goes in a `.asm` file, one file per thing rather than
+Assembly in `src/` goes in a `.asm` file, one file per thing rather than
 one per machine. Each block names the architectures it is for; the rest are
 deleted before the file ever reaches a compiler, and what survives is handed
 to whatever assembler the toolchain provides.

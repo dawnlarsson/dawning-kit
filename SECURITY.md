@@ -14,7 +14,7 @@ produced binary or kernel image until it has been addressed.
 
 ### Kernel source integrity
 
-`linux/script/kernel_setup` pins a PGP signature for the exact kernel tarball it
+`script/kernel_setup` pins a PGP signature for the exact kernel tarball it
 downloads and verifies the archive against it. Verification is a gate: if the
 key fetch, the decompression, or the signature check fails, the script exits and
 nothing is extracted or built.
@@ -27,7 +27,7 @@ offline.
 
 ### What it does not guarantee
 
-- **Profiles are executed as root.** `linux/build.sh` runs `eval` on the `pre`
+- **Profiles are executed as root.** `build.sh` runs `eval` on the `pre`
   and `post` values read out of the profile files during a `sudo` build. Adding
   a profile is equivalent to running arbitrary code as root. Only use profiles
   you have read.

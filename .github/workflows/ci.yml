@@ -42,7 +42,7 @@ jobs:
           for f in launch kit/bit.sh kit/emit.sh \
                    std/build std/spark std/run std/dev \
                    std/localinstall.sh std/build_kernel \
-                   build.sh build.run.sh script/*; do
+                   build.sh script/*; do
             echo "dash -n $f"
             dash -n "$f"
           done
@@ -55,7 +55,7 @@ jobs:
             kit/bit.sh kit/emit.sh kit/doc.sh kit/utils.sh kit/test.sh \
             std/build std/spark std/run std/dev \
             std/localinstall.sh std/build_kernel \
-            build.sh build.run.sh script/*
+            build.sh script/*
 
   bit:
     name: Bit Kit (byte-exact, bash and dash)
