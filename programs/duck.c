@@ -1,4 +1,4 @@
-#include "../../standard/library.c"
+#include "../std/library.c"
 
 b32 main()
 {

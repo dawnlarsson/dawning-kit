@@ -1,12 +1,30 @@
-dist/
-dev/
-
+.vscode/
 .DS_Store
 
-standard/test/bin/
+# Build output and everything downloaded to produce it. The kernel source
+# unpacks to linux/, which is what that directory is: the upstream tree, not
+# part of this repository.
+/artifacts/
+/dist/
+/fs/
+/linux/
+/dev/
 docs/
+std/test/bin/
 
-# glue writes a .S beside each .asm, and kbuild assembles it there, because
-# linux/src is the kernel tree's kernel/moonwater. Generated, never edited.
-linux/src/*.S
-linux/src/*.glue_tmp
+# glue writes a .S beside each .asm and kbuild assembles it there, because
+# src/ is symlinked into the kernel tree as kernel/moonwater.
+/src/*.S
+/src/*.glue_tmp
+
+*.log
+*.a
+*.o
+*.o.d
+*.cmd
+*.order
+*.exe
+*.dll
+*.so
+*.dylib
+*.dwo

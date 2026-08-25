@@ -1,4 +1,4 @@
-#include "../../standard/library.c"
+#include "../std/library.c"
 
 // Exits with a distinctive status so a spawner can prove it really waited.
 b32 main()

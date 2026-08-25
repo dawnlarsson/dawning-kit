@@ -3,13 +3,14 @@
 Dawning Kit, Foundational Software Development Kit. Zero dependency: C standard Library, Cross Architecture Assembler.
 
 ## Overview
-- **`bit.sh`** Bit Kit: Provides foundational primitives for code generation in a bare bones UNIX environment.
-- **`emit.sh`** Emit Kit: Cross architecture instruction emitters built on top of Bit Kit.
-- **`doc.sh`** Doc Kit: HTML & Markdown utilities.
-- **`test.sh`** Test Kit: Testing utilities, cross architecture.
-- **`utils.sh`** Shared helpers (sizes, file iteration) used by the kits above.
-- **`/linux`** Linux Kit: Modular OS primitives behind **Moonwater** - a complete experimental Linux distribution that proved zero-dependency, profile-based system building.
-- **`/standard`** C Standard: Entirely self-contained C standard library, also pioneering new syntax and clearer semantics.
+- **`kit/bit.sh`** Bit Kit: Provides foundational primitives for code generation in a bare bones UNIX environment.
+- **`kit/emit.sh`** Emit Kit: Cross architecture instruction emitters built on top of Bit Kit.
+- **`kit/doc.sh`** Doc Kit: HTML & Markdown utilities.
+- **`kit/test.sh`** Test Kit: Testing utilities, cross architecture.
+- **`kit/utils.sh`** Shared helpers (sizes, file iteration) used by the kits above.
+- **`/src`** Moonwater: the in-kernel module -- spark binary format, `/dev/spark`, and the compositor.
+- **`/profile`**, **`/programs`**, **`/script`**, `build.sh`, `launch`: the config fragments the kernel is built from, the spark programs that run on it, and the machinery that puts an image together.
+- **`/std`** C Standard: Entirely self-contained C standard library, also pioneering new syntax and clearer semantics.
 
 ## Example Use
 
@@ -17,7 +18,7 @@ Dawning Kit, Foundational Software Development Kit. Zero dependency: C standard 
 ```sh
 git clone https://github.com/dawnlarsson/dawning-kit 2>/dev/null || true
 
-. dawning-kit/doc.sh
+. dawning-kit/kit/doc.sh
 ```
 
 ```sh
@@ -40,7 +41,7 @@ are POSIX and are meant to be run with `sh`.
 
 Usage: 
 ```sh
-. dawning-kit/bit.sh
+. dawning-kit/kit/bit.sh
 ```
 
 ### Primitives:
@@ -70,7 +71,7 @@ Generates an ELF executable header and outputs a working executable.
 or `riscv64`. The generator must emit code for the same architecture.
 
 ```sh
-. dawning-kit/bit.sh
+. dawning-kit/kit/bit.sh
 
 elf_example() {
         bit_8 0x48, 0xc7, 0xc0, 0x3c, 0x00, 0x00, 0x00 # mov $60, %rax
@@ -86,7 +87,7 @@ elf bin/program elf_example aarch64
 
 ### Hex Dump
 ```sh
-. dawning-kit/bit.sh
+. dawning-kit/kit/bit.sh
 
 example() {
         bit_8 0x48, 0xc7, 0xc0, 0x3c, 0x00, 0x00, 0x00 # mov $60, %rax
@@ -109,7 +110,7 @@ Bit kit also have wasm primitives for generating WebAssembly modules,
 `wasm_var` `wasm_svar` `wasm_section` `wasm_body` `wasm`
 
 ```sh
-. dawning-kit/bit.sh
+. dawning-kit/kit/bit.sh
 
 type_section() {
     wasm_var 1              # 1 type
@@ -160,14 +161,14 @@ so you can drop raw HTML into a document on purpose.
 
 Example turning this readme into a HTML file:
 ```sh
-. dawning-kit/doc.sh
+. dawning-kit/kit/doc.sh
 
 doc README.md > README.html
 ```
 
 ### Basic css minification
 ```sh
-. dawning-kit/doc.sh
+. dawning-kit/kit/doc.sh
 
 less_css "style/*.css" dist/style.css
 ```
@@ -217,7 +218,7 @@ console takes the screen and prints the boot log -- which on a desktop with no
 serial port is the difference between reading the failure and guessing at it.
 
 ### Building
-Ensure to cd into `dawning-kit/linux` before running build.sh
+Ensure to cd into `dawning-kit` before running build.sh
 
 The kernel tarball is verified against a PGP signature pinned in
 `script/kernel_setup` before it is extracted. If the signature does not verify,
@@ -296,7 +297,7 @@ way, so `arm64` and `aarch64` are one machine. An unknown name is an error,
 and so is a file with architecture blocks but none for the one being built --
 `#> arch other` with nothing under it says the omission was deliberate.
 
-A `.asm` dropped in `linux/src` is picked up by `src/Makefile`, translated for
+A `.asm` dropped in `src/` is picked up by `src/Makefile`, translated for
 whichever architecture the kernel is configured for, and linked into the
 Moonwater module. Declare what it defines near the top of `src/core.c`
 to call it from C.
@@ -313,10 +314,10 @@ there is kept beside it as `entry_64.S.original`, every build regenerates
 from the `.asm` rather than from the replaced file, and removing the line puts
 the original back on the next build.
 
-The translator is `linux/src/glue` and runs standalone:
+The translator is `src/glue` and runs standalone:
 
 ```sh
-sh linux/src/glue arm64 some.asm some.S
+sh src/glue arm64 some.asm some.S
 ```
 
 ## C Standard
@@ -339,7 +340,7 @@ By carefully re-designing the API and type expression, code can become more effe
 Provides automated test runner for multiple architectures with QEMU.
 
 ```sh
-. dawning-kit/test.sh
+. dawning-kit/kit/test.sh
 
 # expects <bin_folder>/<file_name>.<arch> for each architecture,
 # for example bin/hello.x86_64 and bin/hello.aarch64

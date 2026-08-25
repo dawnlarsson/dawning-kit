@@ -4,18 +4,24 @@
 #
 #       Usage: sh spark <source_without_extension> <output> [debug]
 #
-#       The layout is described in standard/spark.h, which the kernel loader
+#       The layout is described in std/spark.c, which the kernel loader
 #       includes too, so the two sides cannot drift apart. Every region is a
-#       whole number of pages -- see standard/spark.ld for why.
+#       whole number of pages -- see std/spark.ld for why.
 #
 set -u
 
 . script/common
 
+# Found from this script's own directory rather than from the working one,
+# which used to be assumed to be one level below the root and stopped being
+# true the moment the tree was rearranged.
+# shellcheck disable=SC1007
+spark_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+
 # The header is written with the kit's own byte primitives rather than a
 # separate tool, which is the point of having them.
 # shellcheck disable=SC1091
-. "${KIT_DIR:-..}/bit.sh"
+. "${KIT_DIR:-$spark_dir/../kit}/bit.sh"
 
 SPARK_MAGIC=0x4b525053
 
@@ -35,9 +41,7 @@ if [ "$mode" = debug ]; then
         program_flags="$program_flags -g"
 fi
 
-# shellcheck disable=SC1007
-script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-linker_script="$script_dir/spark.ld"
+linker_script="$spark_dir/spark.ld"
 
 if [ ! -f "$linker_script" ]; then
         echo "spark: missing linker script at $linker_script" >&2

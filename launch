@@ -62,14 +62,14 @@ if [ "$run_only" -eq 0 ]; then
         say "Copying the tree to $host:$remote"
         ssh -n "$host" "mkdir -p $remote" || die "could not create $remote"
 
-        # The kernel source, its artifacts and the built filesystem stay on the
-        # build host: they are large, and none of them belong to this checkout.
+        # The kernel source, its artifacts and the built filesystem stay on
+        # the build host: they are large, and none of them belong to this
+        # checkout. linux/ is the upstream tree, not part of this repository.
         rsync -az --delete \
                 --exclude '.git' \
-                --exclude 'linux/linux' \
-                --exclude 'linux/artifacts' \
-                --exclude 'linux/fs' \
-                --exclude 'linux/dist' \
+                --exclude 'linux' \
+                --exclude 'artifacts' \
+                --exclude 'fs' \
                 --exclude 'dist' \
                 "$here/" "$host:$remote/" || die "copying the tree failed"
 
@@ -78,12 +78,12 @@ if [ "$run_only" -eq 0 ]; then
         # prompts below read nothing, because ssh forwards whatever is on
         # stdin to the remote command.
         # shellcheck disable=SC2029
-        ssh -n "$host" "cd $remote/linux && sudo sh build.sh $profiles" ||
+        ssh -n "$host" "cd $remote && sudo sh build.sh $profiles" ||
                 die "the build failed on $host"
 
         say "Fetching the image"
         mkdir -p "$here/dist"
-        scp -q "$host:$remote/linux/dist/bootx64.efi" "$image" ||
+        scp -q "$host:$remote/dist/bootx64.efi" "$image" ||
                 die "could not fetch the built image"
 fi
 

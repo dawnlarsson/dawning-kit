@@ -1,8 +1,8 @@
 // A primitive pre-historic shell,
 // it lobs rocks at the kernel and says ouga boga at the user.
-#include "../../standard/library.c"
-#include "../../standard/platform/shell.c"
-#include "../../standard/spark.c"
+#include "../std/library.c"
+#include "../std/platform/shell.c"
+#include "../std/spark.c"
 
 #define PROMPT TERM_RESET TERM_BOLD " $ " TERM_RESET
 

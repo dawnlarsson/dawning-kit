@@ -30,8 +30,8 @@
 #endif
 
 #define STANDARD_MODERN_C_KERNEL
-#include "../../standard/library.c"
-#include "../../standard/spark.c"
+#include "../std/library.c"
+#include "../std/spark.c"
 
 #ifdef CONFIG_MOONWATER_DISPLAY
 #include <linux/workqueue.h>

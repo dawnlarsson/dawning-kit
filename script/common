@@ -87,12 +87,15 @@ is_file() {
         fi
 }
 
+# Every path in these scripts is relative to the repository root, so running
+# one from anywhere else quietly writes into the wrong place. Checked by
+# looking for something only the root has, rather than by the directory's
+# name, which was the old test and broke the moment the tree was rearranged.
 is_safe() {
-        # ensure we are in "dawning-kit/linux"
-        if [ "$(basename "$(pwd)")" != "linux" ]; then
-                echo "ERROR: Not in dawning-kit/linux directory!"
-                echo "This script must be run from the dawning-kit/linux directory."
-                echo "Current directory: $(pwd)"
+        if [ ! -d profile ] || [ ! -d script ] || [ ! -f build.sh ]; then
+                echo "ERROR: not in the repository root." >&2
+                echo "These scripts expect to run from the directory holding" >&2
+                echo "build.sh, profile/ and script/. Current directory: $(pwd)" >&2
                 exit 1
         fi
 }

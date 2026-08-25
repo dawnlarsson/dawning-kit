@@ -1,5 +1,5 @@
-#include "../../standard/library.c"
-#include "../../standard/spark.c"
+#include "../std/library.c"
+#include "../std/spark.c"
 
 // Times fork + exec + wait for a target, repeatedly. The fork and wait cost is
 // identical for both formats, so the difference between two runs is the cost

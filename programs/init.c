@@ -1,5 +1,5 @@
-#include "../../standard/library.c"
-#include "../../standard/spark.c"
+#include "../std/library.c"
+#include "../std/spark.c"
 
 #define label TERM_BOLD "[Init]" TERM_RESET " "
 #define init_program "/shell"

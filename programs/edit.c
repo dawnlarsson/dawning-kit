@@ -1,5 +1,5 @@
-#include "../../standard/library.c"
-#include "../../standard/platform/shell.c"
+#include "../std/library.c"
+#include "../std/platform/shell.c"
 
 positive2 res;
 positive2 last_res;

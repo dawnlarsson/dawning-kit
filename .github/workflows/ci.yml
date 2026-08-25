@@ -32,17 +32,17 @@ jobs:
       # the README tells people to run them with `sh`, which is dash here.
       - name: Parse bash scripts
         run: |
-          for f in bit.sh emit.sh doc.sh utils.sh test.sh; do
+          for f in kit/bit.sh kit/emit.sh kit/doc.sh kit/utils.sh kit/test.sh; do
             echo "bash -n $f"
             bash -n "$f"
           done
 
       - name: Parse POSIX scripts with dash
         run: |
-          for f in launch bit.sh emit.sh \
-                   standard/build standard/spark standard/run standard/dev \
-                   standard/localinstall.sh standard/build_kernel \
-                   linux/build.sh linux/build.run.sh linux/script/*; do
+          for f in launch kit/bit.sh kit/emit.sh \
+                   std/build std/spark std/run std/dev \
+                   std/localinstall.sh std/build_kernel \
+                   build.sh build.run.sh script/*; do
             echo "dash -n $f"
             dash -n "$f"
           done
@@ -52,10 +52,10 @@ jobs:
         run: |
           shellcheck -S warning \
             launch \
-            bit.sh emit.sh doc.sh utils.sh test.sh \
-            standard/build standard/spark standard/run standard/dev \
-            standard/localinstall.sh standard/build_kernel \
-            linux/build.sh linux/build.run.sh linux/script/*
+            kit/bit.sh kit/emit.sh kit/doc.sh kit/utils.sh kit/test.sh \
+            std/build std/spark std/run std/dev \
+            std/localinstall.sh std/build_kernel \
+            build.sh build.run.sh script/*
 
   bit:
     name: Bit Kit (byte-exact, bash and dash)
@@ -71,7 +71,7 @@ jobs:
       - name: Byte-exactness
         run: |
           cat > /tmp/bitcheck.sh <<'EOF'
-          . ./bit.sh
+          . ./kit/bit.sh
           BIT_QUIET=1
           e() { printf '%s=' "$1"; shift; "$@" | od -An -tx1 | tr -d ' \n'; echo; }
           e b8_hex      bit_8 0x41
@@ -108,7 +108,7 @@ jobs:
       - name: ELF output is structurally valid
         run: |
           cat > /tmp/elfcheck.sh <<'EOF'
-          . ./bit.sh
+          . ./kit/bit.sh
           x64(){ bit_8 0x48,0xc7,0xc0,0x3c,0x00,0x00,0x00; bit_8 0x48,0xc7,0xc7,0x00,0x00,0x00,0x00; bit_8 0x0f,0x05; }
           arm(){ bit_32 0xd2800ba8; bit_32 0xd2800000; bit_32 0xd4000001; }
           mkdir -p /tmp/bin
@@ -134,7 +134,7 @@ jobs:
       - name: Generated wasm module validates
         run: |
           cat > /tmp/wasmcheck.sh <<'EOF'
-          . ./bit.sh
+          . ./kit/bit.sh
           type_section()     { wasm_var 1; bit_8 0x60; bit_8 0x00,0x01,0x7F; }
           function_section() { wasm_var 1; wasm_var 0; }
           export_section()   { wasm_var 1; wasm_var 4; bit_8 "main"; bit_8 0x00,0x00; }
@@ -165,7 +165,7 @@ jobs:
       - name: HTML escaping
         run: |
           printf 'a & b < c > d\n\n[x](javascript:alert(1))\n\n![i](x" onerror="alert(1))\n' > /tmp/x.md
-          out=$(bash -c '. ./doc.sh; doc /tmp/x.md')
+          out=$(bash -c '. ./kit/doc.sh; doc /tmp/x.md')
           echo "$out"
           case "$out" in *'javascript:'*) echo "javascript: URL survived"; exit 1 ;; esac
           case "$out" in *' onerror='*) echo "attribute injection survived"; exit 1 ;; esac
@@ -173,7 +173,7 @@ jobs:
 
       - name: Missing input is an error
         run: |
-          bash -c '. ./doc.sh; doc /nonexistent.md' && { echo "should have failed"; exit 1; } || true
+          bash -c '. ./kit/doc.sh; doc /nonexistent.md' && { echo "should have failed"; exit 1; } || true
 
   standard:
     name: C standard library
@@ -187,11 +187,11 @@ jobs:
       # The library is freestanding: it supplies its own _start, so a hosted
       # link collides with libc's. Build it the way the project does.
       - name: Build the test suite with ${{ matrix.cc }}
-        working-directory: standard
+        working-directory: std
         run: CC=${{ matrix.cc }} sh build test/src/main.c test/bin/test
 
       - name: Run the test suite
-        working-directory: standard
+        working-directory: std
         run: |
           ./test/bin/test | tee /tmp/report.txt
           grep -q '0 failed' /tmp/report.txt || { echo "tests failed"; exit 1; }
@@ -200,7 +200,7 @@ jobs:
       # fourth syscall argument in r10, and the syscall instruction clobbers
       # rcx. Passing it in rcx made openat create files with a random mode.
       - name: Syscalls pass argument four correctly
-        working-directory: standard
+        working-directory: std
         run: |
           cat > test/mode_probe.c <<'EOF'
           #include "../library.c"
@@ -223,7 +223,7 @@ jobs:
       # stores the compiler emits for a stack fill fault. Verified to exit 139
       # against the old entry point and 0 against the current one.
       - name: Entry point realigns the stack
-        working-directory: standard
+        working-directory: std
         run: |
           cat > test/align_probe.c <<'EOF'
           #include "../library.c"

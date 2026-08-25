@@ -3,7 +3,7 @@
 #       Builds one userspace program for the kernel image, using the compiler
 #       and flags taken from the generated artifacts/.config.
 #
-#       Usage: sh ../standard/build_kernel <source_without_extension> <output>
+#       Usage: sh std/build_kernel <source_without_extension> <output>
 #
 set -u
 

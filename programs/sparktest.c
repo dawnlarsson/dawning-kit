@@ -1,4 +1,4 @@
-#include "../../standard/library.c"
+#include "../std/library.c"
 
 // Proves the three spark regions are mapped with the right permissions:
 // a writable global lives in .data, a zeroed one in .bss, and the code
