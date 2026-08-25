@@ -1,5 +1,5 @@
 #
-#       dawning_ticks -- the machine's own free running counter.
+#       moonwater_ticks -- the machine's own free running counter.
 #
 #       One instruction on every architecture that has it, and no architecture
 #       spells it the same way, which is the smallest honest example of what
@@ -13,13 +13,13 @@
 #       ktime_get() is the right answer for anything that needs a unit; this
 #       is for the places already too hot to call it.
 #
-#       Declared in dawning_core.c, beside the code that calls it.
+#       Declared in core.c, beside the code that calls it.
 #
 #include <linux/linkage.h>
 
         .text
 
-SYM_FUNC_START(dawning_ticks)
+SYM_FUNC_START(moonwater_ticks)
 
 #> arch x86_64
         #
@@ -68,8 +68,8 @@ SYM_FUNC_START(dawning_ticks)
         #       than a function that returns whatever was in the return
         #       register.
         #
-#error "dawning_ticks: no tick counter for this architecture"
+#error "moonwater_ticks: no tick counter for this architecture"
 
 #> shared
 
-SYM_FUNC_END(dawning_ticks)
+SYM_FUNC_END(moonwater_ticks)

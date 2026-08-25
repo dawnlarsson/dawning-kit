@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-#       Dawning Standard - build a freestanding binary
+#       Standard - build a freestanding binary
 #
 #       Usage: sh build [-v] [source_file] [output_file]
 #

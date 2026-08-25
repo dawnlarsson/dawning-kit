@@ -8,7 +8,7 @@ Dawning Kit, Foundational Software Development Kit. Zero dependency: C standard 
 - **`doc.sh`** Doc Kit: HTML & Markdown utilities.
 - **`test.sh`** Test Kit: Testing utilities, cross architecture.
 - **`utils.sh`** Shared helpers (sizes, file iteration) used by the kits above.
-- **`/linux`** Linux Kit: Modular OS primitives evolved from **Dawning EOS** - a complete experimental Linux distribution that proved zero-dependency, profile-based system building.
+- **`/linux`** Linux Kit: Modular OS primitives behind **Moonwater** - a complete experimental Linux distribution that proved zero-dependency, profile-based system building.
 - **`/standard`** C Standard: Entirely self-contained C standard library, also pioneering new syntax and clearer semantics.
 
 ## Example Use
@@ -174,9 +174,9 @@ less_css "style/*.css" dist/style.css
 
 output: `CSS: 2.0 KB → 1.2 KB (37% smaller)`
 
-## Dawning EOS (Linux Kit)
+## Moonwater (Linux Kit)
 aims to provide an easy and highly configurable Linux distro, 
-leveraging Dawning Kit to build an immutable core with zero 3rd party dependencies. 
+leveraging this kit to build an immutable core with zero 3rd party dependencies. 
 
 These primitives evolved from [**Archived Dawning EOS R&D Repo**](https://github.com/dawnlarsson/dawning-linux)
 
@@ -188,7 +188,7 @@ sh launch
 
 Builds an image and boots it in a window with a working mouse. The kernel is
 built on another machine over ssh, because building it wants a Linux toolchain
-and a case sensitive filesystem; set `DAWNING_BUILD_HOST` to something you can
+and a case sensitive filesystem; set `MOONWATER_BUILD_HOST` to something you can
 reach (it defaults to `box`). QEMU runs locally, so the window and the pointer
 are real.
 
@@ -256,7 +256,7 @@ to whatever assembler the toolchain provides.
 ```asm
 #include <linux/linkage.h>
 
-SYM_FUNC_START(dawning_ticks)
+SYM_FUNC_START(moonwater_ticks)
 
 #> arch x86_64
         rdtsc
@@ -269,11 +269,11 @@ SYM_FUNC_START(dawning_ticks)
         ret
 
 #> arch other
-#error "dawning_ticks: no tick counter for this architecture"
+#error "moonwater_ticks: no tick counter for this architecture"
 
 #> shared
 
-SYM_FUNC_END(dawning_ticks)
+SYM_FUNC_END(moonwater_ticks)
 ```
 
 The directives:
@@ -298,18 +298,18 @@ and so is a file with architecture blocks but none for the one being built --
 
 A `.asm` dropped in `linux/src` is picked up by `src/Makefile`, translated for
 whichever architecture the kernel is configured for, and linked into the
-Dawning module. Declare what it defines near the top of `src/dawning_core.c`
+Moonwater module. Declare what it defines near the top of `src/core.c`
 to call it from C.
 
 To put one in the place of a file the kernel itself builds, a profile says
 
 ```sh
-#> glue entry_dawning.asm arch/x86/entry/entry_64.S
+#> glue entry.asm arch/x86/entry/entry_64.S
 ```
 
 The target has to be a file the kernel's Makefiles already compile -- this
 replaces it, it cannot add a new object to somebody else's directory. What was
-there is kept beside it as `entry_64.S.dawning-orig`, every build regenerates
+there is kept beside it as `entry_64.S.original`, every build regenerates
 from the `.asm` rather than from the replaced file, and removing the line puts
 the original back on the next build.
 
@@ -319,10 +319,10 @@ The translator is `linux/src/glue` and runs standalone:
 sh linux/src/glue arm64 some.asm some.S
 ```
 
-## Dawning C Standard
+## C Standard
 > Syntax shapes the way you think. Better thinking should be standardized.
 
-The Dawning C Standard library is a effort to develop a new entirely self contained standard library,
+The C Standard library is a effort to develop a new entirely self contained standard library,
 It's also trying to lay the ground work for less error prone DX and type semantics in C.
 
 Traditional type systems and APIs prioritize implementation details over clear expression of intent.

@@ -2,39 +2,39 @@
 
 const positive page_size = 4096;
 
-bool dawn_shell_styles = true;
+bool shell_styles = true;
 
-#define DAWN_ENV_MAX_ENTRIES 64
-#define DAWN_ENV_STORAGE_SIZE 8192
+#define ENV_MAX_ENTRIES 64
+#define ENV_STORAGE_SIZE 8192
 
-static p8 dawn_env_storage[DAWN_ENV_STORAGE_SIZE];
-static positive dawn_env_used = 0;
+static p8 env_storage[ENV_STORAGE_SIZE];
+static positive env_used = 0;
 
-string_address dawn_shell_envp[DAWN_ENV_MAX_ENTRIES + 1];
+string_address shell_envp[ENV_MAX_ENTRIES + 1];
 
-fn dawn_shell_env_init()
+fn shell_env_init()
 {
-        memory_fill(dawn_env_storage, 0, DAWN_ENV_STORAGE_SIZE);
-        dawn_env_used = 0;
+        memory_fill(env_storage, 0, ENV_STORAGE_SIZE);
+        env_used = 0;
 
         string_address defaults[] = {"PATH=/bin:/usr/bin", "SHELL=/bin/sh", null};
 
         positive idx = 0;
         positive i = 0;
 
-        while (defaults[i] && idx < DAWN_ENV_MAX_ENTRIES)
+        while (defaults[i] && idx < ENV_MAX_ENTRIES)
         {
-                string_address dest = dawn_env_storage + dawn_env_used;
+                string_address dest = env_storage + env_used;
                 string_copy(dest, defaults[i]);
-                dawn_shell_envp[idx++] = dest;
-                dawn_env_used += string_length(dest) + 1;
+                shell_envp[idx++] = dest;
+                env_used += string_length(dest) + 1;
                 i++;
         }
 
-        dawn_shell_envp[idx] = null;
+        shell_envp[idx] = null;
 }
 
-string_address dawn_getenv(const_string name)
+string_address env_get(const_string name)
 {
         if (name == null)
                 return null;
@@ -42,9 +42,9 @@ string_address dawn_getenv(const_string name)
         positive name_len = string_length(name);
         positive idx = 0;
 
-        while (dawn_shell_envp[idx])
+        while (shell_envp[idx])
         {
-                string_address entry = dawn_shell_envp[idx];
+                string_address entry = shell_envp[idx];
                 string_address eq = string_first_of(entry, '=');
 
                 if (eq)
@@ -71,7 +71,7 @@ string_address dawn_getenv(const_string name)
         return null;
 }
 
-bool dawn_setenv(const_string name, const_string value)
+bool env_set(const_string name, const_string value)
 {
         if (!name || !value)
                 return false;
@@ -81,9 +81,9 @@ bool dawn_setenv(const_string name, const_string value)
         positive needed = name_len + 1 + value_len + 1;
 
         positive idx = 0;
-        while (dawn_shell_envp[idx])
+        while (shell_envp[idx])
         {
-                string_address entry = dawn_shell_envp[idx];
+                string_address entry = shell_envp[idx];
                 string_address eq = string_first_of(entry, '=');
 
                 if (eq && (eq - entry) == name_len)
@@ -104,29 +104,29 @@ bool dawn_setenv(const_string name, const_string value)
                 idx++;
         }
 
-        if (idx >= DAWN_ENV_MAX_ENTRIES || dawn_env_used + needed > DAWN_ENV_STORAGE_SIZE)
+        if (idx >= ENV_MAX_ENTRIES || env_used + needed > ENV_STORAGE_SIZE)
                 return false;
 
-        string_address dest = dawn_env_storage + dawn_env_used;
+        string_address dest = env_storage + env_used;
         string_copy(dest, name);
         string_copy(dest + name_len, "=");
         string_copy(dest + name_len + 1, value);
 
-        dawn_shell_envp[idx] = dest;
-        dawn_shell_envp[idx + 1] = null;
-        dawn_env_used += needed;
+        shell_envp[idx] = dest;
+        shell_envp[idx + 1] = null;
+        env_used += needed;
 
         return true;
 }
 
-fn dawn_shell_export(writer write, string_address input)
+fn shell_export(writer write, string_address input)
 {
         if (input == null)
         {
                 positive idx = 0;
-                while (dawn_shell_envp[idx])
+                while (shell_envp[idx])
                 {
-                        string_format(write, "export %s\n", dawn_shell_envp[idx]);
+                        string_format(write, "export %s\n", shell_envp[idx]);
                         idx++;
                 }
                 return;
@@ -140,21 +140,21 @@ fn dawn_shell_export(writer write, string_address input)
                 return write(str("export: missing variable name\n"));
 
         *eq = end;
-        dawn_setenv(input, eq + 1);
+        env_set(input, eq + 1);
         *eq = '=';
 }
 
-fn dawn_shell_env(writer write, string_address input)
+fn shell_env(writer write, string_address input)
 {
         positive idx = 0;
-        while (dawn_shell_envp[idx])
+        while (shell_envp[idx])
         {
-                string_format(write, "%s\n", dawn_shell_envp[idx]);
+                string_format(write, "%s\n", shell_envp[idx]);
                 idx++;
         }
 }
 
-fn dawn_shell_basename(writer write, string_address input)
+fn shell_basename(writer write, string_address input)
 {
         if (input == null)
                 return write(str("basename: missing operand\n"));
@@ -164,7 +164,7 @@ fn dawn_shell_basename(writer write, string_address input)
         write(str("\n"));
 }
 
-fn dawn_shell_cat(writer write, string_address input)
+fn shell_cat(writer write, string_address input)
 {
         if (input == null)
                 return write(str("cat: missing operand\n"));
@@ -192,7 +192,7 @@ fn dawn_shell_cat(writer write, string_address input)
 // TODOs:
 // - empty buffer should go to home directory & handle ~
 // - "cd -" aka cd $OLDPWD
-fn dawn_shell_cd(writer write, string_address input)
+fn shell_cd(writer write, string_address input)
 {
         if (input == null)
                 input = "/";
@@ -203,12 +203,12 @@ fn dawn_shell_cd(writer write, string_address input)
         string_format(write, "cd: No such directory: %s\n", input);
 }
 
-fn dawn_shell_clear(writer write, string_address input)
+fn shell_clear(writer write, string_address input)
 {
         write(str(TERM_CLEAR_SCREEN));
 }
 
-fn dawn_shell_chmod(writer write, string_address input)
+fn shell_chmod(writer write, string_address input)
 {
         if (input == null)
                 return write(str("chmod: missing operand\n"));
@@ -219,7 +219,7 @@ fn dawn_shell_chmod(writer write, string_address input)
         string_format(write, "chmod: Cannot change permissions: %s\n", input);
 }
 
-fn dawn_shell_cp(writer write, string_address input)
+fn shell_cp(writer write, string_address input)
 {
         if (input == null)
                 return write(str("cp: missing operand\n"));
@@ -256,7 +256,7 @@ fn dawn_shell_cp(writer write, string_address input)
         system_call_1(syscall(close), dest_file);
 }
 
-fn dawn_shell_echo(writer write, string_address input)
+fn shell_echo(writer write, string_address input)
 {
         if (input != null)
                 write(input, 0);
@@ -264,7 +264,7 @@ fn dawn_shell_echo(writer write, string_address input)
         write(str("\n"));
 }
 
-fn dawn_shell_exec(writer write, string_address input)
+fn shell_exec(writer write, string_address input)
 {
         p8 address_to argv[] = {input};
 
@@ -275,7 +275,7 @@ fn dawn_shell_exec(writer write, string_address input)
 // - Cyan: Symbolic links
 // - Default: Regular files
 // - Yellow: Special files (FIFO, sockets, devices, etc.)
-fn dawn_shell_ls(writer write, string_address input)
+fn shell_ls(writer write, string_address input)
 {
         const p32 max_line_entries = 8;
 
@@ -311,7 +311,7 @@ fn dawn_shell_ls(writer write, string_address input)
                                 continue;
                         }
 
-                        if (dawn_shell_styles)
+                        if (shell_styles)
                         {
                                 if (entry->d_type == DT_DIR)
                                         write(str(TERM_BOLD TERM_BLUE));
@@ -325,7 +325,7 @@ fn dawn_shell_ls(writer write, string_address input)
 
                         string_format(write, "%s ", entry->d_name);
 
-                        if (dawn_shell_styles)
+                        if (shell_styles)
                                 write(str(TERM_RESET));
 
                         entries_count++;
@@ -343,7 +343,7 @@ fn dawn_shell_ls(writer write, string_address input)
         system_call_1(syscall(close), file_descriptor);
 }
 
-fn dawn_shell_mkdir(writer write, string_address input)
+fn shell_mkdir(writer write, string_address input)
 {
         if (input == null)
                 return write(str("mkdir: missing operand\n"));
@@ -354,7 +354,7 @@ fn dawn_shell_mkdir(writer write, string_address input)
         string_format(write, "mkdir: Cannot create directory: %s\n", input);
 }
 
-fn dawn_shell_mv(writer write, string_address input)
+fn shell_mv(writer write, string_address input)
 {
         if (input == null)
                 return write(str("mv: missing operand\n"));
@@ -370,7 +370,7 @@ fn dawn_shell_mv(writer write, string_address input)
         string_format(write, "mv: Cannot move file: %s\n", input);
 }
 
-fn dawn_shell_mount(writer write, string_address input)
+fn shell_mount(writer write, string_address input)
 {
         if (input == null)
                 return write(str("mount: missing operand\n"));
@@ -386,7 +386,7 @@ fn dawn_shell_mount(writer write, string_address input)
         string_format(write, "mount: Cannot mount filesystem: %s\n", input);
 }
 
-fn dawn_shell_pwd(writer write, string_address input)
+fn shell_pwd(writer write, string_address input)
 {
         p8 out_buffer[4096];
 
@@ -395,7 +395,7 @@ fn dawn_shell_pwd(writer write, string_address input)
         string_format(write, "%s\n", out_buffer);
 }
 
-fn dawn_shell_exit(writer write, string_address input)
+fn shell_exit(writer write, string_address input)
 {
         bipolar exit_code = 0;
 
@@ -405,7 +405,7 @@ fn dawn_shell_exit(writer write, string_address input)
         exit(exit_code);
 }
 
-fn dawn_shell_touch(writer write, string_address input)
+fn shell_touch(writer write, string_address input)
 {
         if (input == null)
                 return write(str("touch: missing operand\n"));
@@ -418,43 +418,43 @@ fn dawn_shell_touch(writer write, string_address input)
         system_call_1(syscall(close), file_descriptor);
 }
 
-fn dawn_shell_help(writer write, string_address input);
+fn shell_help(writer write, string_address input);
 
-typedef fn(address_to dawn_shell_command_function)(writer write, string_address input);
+typedef fn(address_to shell_command_function)(writer write, string_address input);
 
 typedef struct
 {
         string_address name;
-        dawn_shell_command_function function;
-} dawn_shell_command;
+        shell_command_function function;
+} shell_command;
 
-dawn_shell_command dawn_shell_commands[] = {
-    {"basename", dawn_shell_basename},
-    {"cat", dawn_shell_cat},
-    {"cd", dawn_shell_cd},
-    {"clear", dawn_shell_clear},
-    {"cp", dawn_shell_cp},
-    {"chmod", dawn_shell_chmod},
-    {"echo", dawn_shell_echo},
-    {"exec", dawn_shell_exec},
-    {"exit", dawn_shell_exit},
-    {"ls", dawn_shell_ls},
-    {"mkdir", dawn_shell_mkdir},
-    {"mv", dawn_shell_mv},
-    {"mount", dawn_shell_mount},
-    {"pwd", dawn_shell_pwd},
-    {"touch", dawn_shell_touch},
-    {"help", dawn_shell_help},
-    {"env", dawn_shell_env},
-    {"export", dawn_shell_export},
+shell_command shell_commands[] = {
+    {"basename", shell_basename},
+    {"cat", shell_cat},
+    {"cd", shell_cd},
+    {"clear", shell_clear},
+    {"cp", shell_cp},
+    {"chmod", shell_chmod},
+    {"echo", shell_echo},
+    {"exec", shell_exec},
+    {"exit", shell_exit},
+    {"ls", shell_ls},
+    {"mkdir", shell_mkdir},
+    {"mv", shell_mv},
+    {"mount", shell_mount},
+    {"pwd", shell_pwd},
+    {"touch", shell_touch},
+    {"help", shell_help},
+    {"env", shell_env},
+    {"export", shell_export},
     {null, null},
 };
 
-fn dawn_shell_help(writer write, string_address input)
+fn shell_help(writer write, string_address input)
 {
-        string_format(write, "Dawning Shell, WIP, " TERM_RED TERM_BOLD "expect crashes! \n\n" TERM_RESET "Available built-in commands:\n");
+        string_format(write, "Moonwater shell, WIP, " TERM_RED TERM_BOLD "expect crashes! \n\n" TERM_RESET "Available built-in commands:\n");
 
-        dawn_shell_command address_to command = dawn_shell_commands;
+        shell_command address_to command = shell_commands;
 
         while (command->name)
         {

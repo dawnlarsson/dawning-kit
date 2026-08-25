@@ -22,14 +22,14 @@
         return false; \
     }
 
-typedef bool(address_to dawn_test_function)();
+typedef bool(address_to test_function)();
 
 typedef struct
 {
         string_address name;
-        dawn_test_function function;
+        test_function function;
         bool result;
-} dawn_test;
+} test_case;
 
 p32 address_to p32_nulled = ((address_any)0);
 
@@ -267,7 +267,7 @@ test(string_length) {
         fail_not_equals(string_length(""), 0);
         fail_not_equals(string_length("a"), 1);
         fail_not_equals(string_length("Hello"), 5);
-        fail_not_equals(string_length("Dawning\0Hidden"), 7);
+        fail_not_equals(string_length("Visible\0Hidden"), 7);
         
         p8 buffer[100];
         memory_fill(buffer, 'A', 99);
@@ -468,11 +468,11 @@ test(string_format_mixed) {
         test_write_pos = 0;
         memory_fill(test_write_buffer, 0, 1000);
         
-        string_format(test_writer, "%s has %p items worth %b each", "Dawn", 5, -10);
+        string_format(test_writer, "%s has %p items worth %b each", "Ada", 5, -10);
 
         test_write_buffer[test_write_pos] = end;
 
-        fail_not_equals(string_compare(test_write_buffer, "Dawn has 5 items worth -10 each"), 0);
+        fail_not_equals(string_compare(test_write_buffer, "Ada has 5 items worth -10 each"), 0);
         
         return true;
 }
@@ -541,7 +541,7 @@ test(writer_pattern) {
 }
 
 
-dawn_test dawn_tests[] = {
+test_case test_cases[] = {
 
         case_type_basics(p8),
         case_type_basics(b8),
@@ -626,13 +626,13 @@ fn generate_report(writer write)
                 return;
         }
 
-        write(str("<html><head><title>Dawning C Library Tests</title></head>"));
-        write(str("<body><h1>Dawning C Library Tests</h1>"));
+        write(str("<html><head><title>C library tests</title></head>"));
+        write(str("<body><h1>C library tests</h1>"));
 
         // table
         write(str("<table border=\"1\"><tr><th>Test</th><th>Result</th></tr>"));
         
-        dawn_test address_to test = dawn_tests;
+        test_case address_to test = test_cases;
 
         while (test->name)
         {
@@ -657,11 +657,11 @@ fn generate_report(writer write)
 
 b32 main()
 {
-        dawn_test address_to test = dawn_tests;
+        test_case address_to test = test_cases;
         positive passed = 0;
         positive failed = 0;
 
-        log_direct(str("Dawning C Library Tests\n\n"));
+        log_direct(str("C library tests\n\n"));
 
         while (test->name)
         {

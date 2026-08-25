@@ -5,3 +5,8 @@ dev/
 
 standard/test/bin/
 docs/
+
+# glue writes a .S beside each .asm, and kbuild assembles it there, because
+# linux/src is the kernel tree's kernel/moonwater. Generated, never edited.
+linux/src/*.S
+linux/src/*.glue_tmp

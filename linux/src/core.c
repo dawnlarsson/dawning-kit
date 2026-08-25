@@ -15,7 +15,7 @@
 
 // The graphics headers must precede library.c: it defines "end" as a macro
 // and asm/io.h, reached through drm_client.h, uses that word as a variable.
-#ifdef CONFIG_DAWNING_DISPLAY
+#ifdef CONFIG_MOONWATER_DISPLAY
 #include <drm/drm_client.h>
 #include <drm/drm_crtc.h>
 #include <drm/drm_device.h>
@@ -29,32 +29,32 @@
 #include <drm/drm_print.h>
 #endif
 
-#define DAWN_MODERN_C_KERNEL
+#define STANDARD_MODERN_C_KERNEL
 #include "../../standard/library.c"
 #include "../../standard/spark.c"
 
-#ifdef CONFIG_DAWNING_DISPLAY
+#ifdef CONFIG_MOONWATER_DISPLAY
 #include <linux/workqueue.h>
 #include <linux/input.h>
 #include <linux/math64.h>
 #include <linux/minmax.h>
 #include <drm/drm_file.h>
 #include <drm/drm_rect.h>
-#include "dawning_display.c"
+#include "display.c"
 #endif
 
 // The assembly in this directory. Each .asm is its own object -- assembly
-// cannot be included into this translation unit the way dawning_display.c is
+// cannot be included into this translation unit the way display.c is
 // -- so the compiler is told its shape here, in the file that calls it.
 //
-// dawning_ticks.asm
-u64 dawning_ticks(void);
+// moonwater_ticks.asm
+u64 moonwater_ticks(void);
 
 int path_mount(const char *dev_name, struct path *path,
                const char *type_page, unsigned long flags, void *data_page);
 
 #define log_k(fmt, ...) \
-        pr_alert("[Dawning] " fmt, ##__VA_ARGS__)
+        pr_alert("[moonwater] " fmt, ##__VA_ARGS__)
 
 typedef struct
 {
@@ -78,16 +78,16 @@ MountPoints mounts[] = {
 
 // Spawns are serialised by the caller waiting on each one, so plain counters
 // are accurate enough here and cost nothing.
-static unsigned long spark_stat_spawns;
-static unsigned long spark_stat_task_ns;
-static unsigned long spark_stat_exec_ns;
-static unsigned long spark_stat_loader_ns;
-static unsigned long spark_stat_loads;
-static unsigned long spark_stat_map_ns;
+static unsigned long stat_spawns;
+static unsigned long stat_task_ns;
+static unsigned long stat_exec_ns;
+static unsigned long stat_loader_ns;
+static unsigned long stat_loads;
+static unsigned long stat_map_ns;
 
 static int execute_spark(struct linux_binprm *bprm);
 
-static struct linux_binfmt spark_format = {
+static struct linux_binfmt format = {
     .module = THIS_MODULE,
     .load_binary = execute_spark,
 };
@@ -97,7 +97,7 @@ static int execute_spark(struct linux_binprm *bprm)
         u64 loader_started = ktime_get_ns();
         u64 map_started;
         struct pt_regs *regs = task_pt_regs(current);
-        const struct spark_header *header;
+        const struct header *header;
         unsigned long text, data = 0, bss = 0, stack_addr, span;
         unsigned long text_populate = 0, data_populate = 0, bss_populate = 0;
         int ret;
@@ -106,7 +106,7 @@ static int execute_spark(struct linux_binprm *bprm)
         // intact, so a file that is not ours must be rejected here: returning
         // -ENOEXEC lets the next handler try, and leaves the caller alive.
         // The kernel has already read the first BINPRM_BUF_SIZE bytes for us.
-        header = (const struct spark_header *)bprm->buf;
+        header = (const struct header *)bprm->buf;
 
         if (header->magic != SPARK_MAGIC)
                 return -ENOEXEC;
@@ -261,7 +261,7 @@ static int execute_spark(struct linux_binprm *bprm)
         if (data_populate)
                 mm_populate(header->base + header->text_size, data_populate);
 
-        spark_stat_map_ns += ktime_get_ns() - map_started;
+        stat_map_ns += ktime_get_ns() - map_started;
 
         current->mm->start_code = header->base;
         current->mm->end_code = header->base + header->text_size;
@@ -270,7 +270,7 @@ static int execute_spark(struct linux_binprm *bprm)
         current->mm->brk = current->mm->start_brk =
             header->base + header->text_size + header->data_size + header->bss_size;
 
-        set_binfmt(&spark_format);
+        set_binfmt(&format);
 
         stack_addr = current->mm->start_stack;
 
@@ -295,8 +295,8 @@ static int execute_spark(struct linux_binprm *bprm)
         // Everything before this in kernel_execve is the generic prologue:
         // allocating a bprm, opening the file, building a throwaway mm to hold
         // argv and then transplanting its stack. This counter is only our part.
-        spark_stat_loader_ns += ktime_get_ns() - loader_started;
-        spark_stat_loads++;
+        stat_loader_ns += ktime_get_ns() - loader_started;
+        stat_loads++;
 
         return 0;
 }
@@ -314,7 +314,7 @@ static int execute_spark(struct linux_binprm *bprm)
         it reports through SIGCHLD and is reaped with wait4 like any other.
 */
 
-struct spark_spawn_work
+struct spawn_work
 {
         char *path;
         char **argv;
@@ -323,7 +323,7 @@ struct spark_spawn_work
         char *envp_block;
 };
 
-static void spark_spawn_free(struct spark_spawn_work *work)
+static void spawn_free(struct spawn_work *work)
 {
         if (!work)
                 return;
@@ -336,22 +336,22 @@ static void spark_spawn_free(struct spark_spawn_work *work)
         kfree(work);
 }
 
-static int spark_spawn_enter(void *data)
+static int spawn_enter(void *data)
 {
         u64 started = ktime_get_ns();
 
-        struct spark_spawn_work *work = data;
+        struct spawn_work *work = data;
         static const char *const empty_envp[] = {NULL};
         int ret;
 
         ret = kernel_execve(work->path, (const char *const *)work->argv,
                             work->envp ? (const char *const *)work->envp : empty_envp);
 
-        spark_stat_exec_ns += ktime_get_ns() - started;
+        stat_exec_ns += ktime_get_ns() - started;
 
         // kernel_execve has copied everything it needs by now, so the request
         // can go before anything else touches it.
-        spark_spawn_free(work);
+        spawn_free(work);
 
         if (ret)
         {
@@ -369,7 +369,7 @@ static int spark_spawn_enter(void *data)
 // argv and envp arrive the same way: one flat block of NUL terminated strings
 // plus a count, so a single copy_from_user brings each across and the pointer
 // array is built by walking it.
-static int spark_copy_strings(unsigned long user_block, unsigned int bytes,
+static int copy_strings(unsigned long user_block, unsigned int bytes,
                               unsigned int count, char **out_block, char ***out_vector)
 {
         char *block;
@@ -419,10 +419,10 @@ static int spark_copy_strings(unsigned long user_block, unsigned int bytes,
         return 0;
 }
 
-static long spark_do_spawn(struct spark_spawn __user *request)
+static long do_spawn(struct spawn __user *request)
 {
-        struct spark_spawn args;
-        struct spark_spawn_work *work;
+        struct spawn args;
+        struct spawn_work *work;
         long ret;
         pid_t pid;
 
@@ -441,14 +441,14 @@ static long spark_do_spawn(struct spark_spawn __user *request)
                 goto fail;
         }
 
-        ret = spark_copy_strings(args.argv, args.argv_bytes, args.argv_count,
+        ret = copy_strings(args.argv, args.argv_bytes, args.argv_count,
                                  &work->argv_block, &work->argv);
         if (ret)
                 goto fail;
 
         if (args.envp && args.envp_count)
         {
-                ret = spark_copy_strings(args.envp, args.envp_bytes, args.envp_count,
+                ret = copy_strings(args.envp, args.envp_bytes, args.envp_count,
                                          &work->envp_block, &work->envp);
                 if (ret)
                         goto fail;
@@ -458,9 +458,9 @@ static long spark_do_spawn(struct spark_spawn __user *request)
         // and wait4 works on it the same way it does for a fork.
         {
                 u64 started = ktime_get_ns();
-                pid = user_mode_thread(spark_spawn_enter, work, SIGCHLD);
-                spark_stat_task_ns += ktime_get_ns() - started;
-                spark_stat_spawns++;
+                pid = user_mode_thread(spawn_enter, work, SIGCHLD);
+                stat_task_ns += ktime_get_ns() - started;
+                stat_spawns++;
         }
 
         if (pid < 0)
@@ -473,19 +473,19 @@ static long spark_do_spawn(struct spark_spawn __user *request)
         return pid;
 
 fail:
-        spark_spawn_free(work);
+        spawn_free(work);
         return ret;
 }
 
-static long spark_report_stats(struct spark_stats __user *out)
+static long report_stats(struct stats __user *out)
 {
-        struct spark_stats stats = {
-            .spawns = spark_stat_spawns,
-            .task_ns = spark_stat_task_ns,
-            .exec_ns = spark_stat_exec_ns,
-            .loader_ns = spark_stat_loader_ns,
-            .loads = spark_stat_loads,
-            .map_ns = spark_stat_map_ns,
+        struct stats stats = {
+            .spawns = stat_spawns,
+            .task_ns = stat_task_ns,
+            .exec_ns = stat_exec_ns,
+            .loader_ns = stat_loader_ns,
+            .loads = stat_loads,
+            .map_ns = stat_map_ns,
         };
 
         if (copy_to_user(out, &stats, sizeof(stats)))
@@ -494,12 +494,12 @@ static long spark_report_stats(struct spark_stats __user *out)
         return 0;
 }
 
-#ifdef CONFIG_DAWNING_DISPLAY
-static long spark_report_input(struct dawn_input_stats __user *out)
+#ifdef CONFIG_MOONWATER_DISPLAY
+static long report_input(struct input_stats __user *out)
 {
-        struct dawn_input_stats stats;
+        struct input_stats stats;
 
-        dawning_display_input_stats(&stats.events, &stats.mean_ns, &stats.worst_ns,
+        display_input_stats(&stats.events, &stats.mean_ns, &stats.worst_ns,
                                     &stats.queue_ns, &stats.draw_ns, &stats.flush_ns);
 
         if (copy_to_user(out, &stats, sizeof(stats)))
@@ -509,26 +509,26 @@ static long spark_report_input(struct dawn_input_stats __user *out)
 }
 #endif
 
-static long spark_device_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
+static long device_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
         switch (cmd)
         {
         case SPARK_IOCTL_SPAWN:
-                return spark_do_spawn((struct spark_spawn __user *)arg);
+                return do_spawn((struct spawn __user *)arg);
         case SPARK_IOCTL_STATS:
-                return spark_report_stats((struct spark_stats __user *)arg);
-#ifdef CONFIG_DAWNING_DISPLAY
+                return report_stats((struct stats __user *)arg);
+#ifdef CONFIG_MOONWATER_DISPLAY
         case SPARK_IOCTL_INPUT_STATS:
-                return spark_report_input((struct dawn_input_stats __user *)arg);
+                return report_input((struct input_stats __user *)arg);
 #endif
         }
 
         return -ENOTTY;
 }
 
-static const struct file_operations spark_device_ops = {
+static const struct file_operations device_ops = {
     .owner = THIS_MODULE,
-    .unlocked_ioctl = spark_device_ioctl,
+    .unlocked_ioctl = device_ioctl,
     .llseek = noop_llseek,
 };
 
@@ -536,14 +536,17 @@ static const struct file_operations spark_device_ops = {
 // materialise the node, so script/fs_setup mknods it into the initramfs and
 // both sides have to agree on the number. 240-254 is the range set aside for
 // local use.
-static struct miscdevice spark_device = {
+static struct miscdevice device = {
     .minor = SPARK_DEVICE_MINOR,
     .name = "spark",
-    .fops = &spark_device_ops,
+    .fops = &device_ops,
     .mode = 0666,
 };
 
-fn dawn_init_mount()
+// static, because the kernel has its own init_mount in fs/init.c and the
+// module's symbols share one namespace with it. Nothing outside this file
+// calls it, so internal linkage is the answer rather than a prefix.
+static fn init_mount()
 {
         MountPoints address_to mount = mounts;
 
@@ -570,9 +573,10 @@ fn dawn_init_mount()
         }
 }
 
-b32 __init dawn_start()
+// Likewise: an initcall does not need external linkage.
+static b32 __init start()
 {
-        log_k("Dawning Eos - starting...\n");
+        log_k("Moonwater starting...\n");
 
         /*
                 The initramfs is unpacked on a workqueue, not inline, so at
@@ -590,24 +594,24 @@ b32 __init dawn_start()
         */
         wait_for_initramfs();
 
-        dawn_init_mount();
+        init_mount();
 
-        register_binfmt(&spark_format);
+        register_binfmt(&format);
 
-        if (misc_register(&spark_device))
+        if (misc_register(&device))
                 log_k("could not register /dev/spark\n");
 
-#ifdef CONFIG_DAWNING_DISPLAY
-        dawning_display_start_probing();
+#ifdef CONFIG_MOONWATER_DISPLAY
+        display_start_probing();
 #endif
 
         return 0;
 }
 
-static void __exit dawn_exit(void)
+static void __exit exit_module(void)
 {
-        misc_deregister(&spark_device);
-        unregister_binfmt(&spark_format);
+        misc_deregister(&device);
+        unregister_binfmt(&format);
         log_k("Spark format unregistered\n");
 }
 
@@ -625,10 +629,10 @@ static void __exit dawn_exit(void)
 */
 // Use device_initcall for built-in, or module_init for module
 #ifdef MODULE
-module_init(dawn_start);
-module_exit(dawn_exit);
+module_init(start);
+module_exit(exit_module);
 MODULE_AUTHOR("Dawn Larsson");
 MODULE_DESCRIPTION("Spark direct binary format");
 #else
-device_initcall(dawn_start);
+device_initcall(start);
 #endif

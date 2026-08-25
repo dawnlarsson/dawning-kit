@@ -1,17 +1,17 @@
-menu "Dawning Eos Extensions"
-    config DAWNING_CORE
-        tristate "Dawning Core Functionality"
+menu "Moonwater"
+    config MOONWATER_CORE
+        tristate "Moonwater core"
         default y
         help
-          Enable Dawning Eos core features
+          Enable the Moonwater core: the spark binary format, /dev/spark and the compositor
 
-    config DAWNING_DISPLAY
-        bool "Dawning in-kernel compositor"
-        depends on DAWNING_CORE && DRM && DRM_CLIENT
+    config MOONWATER_DISPLAY
+        bool "Moonwater in-kernel compositor"
+        depends on MOONWATER_CORE && DRM && DRM_CLIENT
         default y
         help
           Own the display from kernel space: the compositor draws the
           desktop, windows and cursor itself through the in-kernel DRM
           client API rather than handing a device node to a userspace
           display server.
-endmenu # Dawning Eos Extensions
+endmenu # Moonwater

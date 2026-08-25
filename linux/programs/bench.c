@@ -85,11 +85,11 @@ positive best_of(string_address path, positive tries)
 
 // Spawns through /dev/spark, which creates the task with no address space to
 // copy instead of forking one and throwing it away.
-b32 spark_device = -1;
+b32 device = -1;
 
 positive bench_spawn_device(string_address path)
 {
-        struct spark_spawn request;
+        struct spawn request;
         p8 argv_block[128];
         positive path_length = string_length(path);
 
@@ -107,7 +107,7 @@ positive bench_spawn_device(string_address path)
 
         for (positive i = 0; i < ROUNDS; i++)
         {
-                bipolar child = system_call_3(syscall(ioctl), spark_device,
+                bipolar child = system_call_3(syscall(ioctl), device,
                                               SPARK_IOCTL_SPAWN,
                                               (positive)address_of request);
 
@@ -164,7 +164,7 @@ b32 spawned_pids[ROUNDS];
 
 positive bench_spawn_nowait(string_address path)
 {
-        struct spark_spawn request;
+        struct spawn request;
         p8 argv_block[128];
         positive path_length = string_length(path);
 
@@ -181,7 +181,7 @@ positive bench_spawn_nowait(string_address path)
         positive start = now_ns();
 
         for (positive i = 0; i < ROUNDS; i++)
-                spawned_pids[i] = system_call_3(syscall(ioctl), spark_device,
+                spawned_pids[i] = system_call_3(syscall(ioctl), device,
                                                 SPARK_IOCTL_SPAWN,
                                                 (positive)address_of request);
 
@@ -219,11 +219,11 @@ b32 main()
         positive vspark = best_of_flags("/tiny.spark", vfl, 5);
         positive velf = best_of_flags("/tiny.elf", vfl, 5);
 
-        spark_device = system_call_4(syscall(openat), AT_FDCWD,
+        device = system_call_4(syscall(openat), AT_FDCWD,
                                      (positive)SPARK_DEVICE, FILE_READ_WRITE, 0);
 
         positive dev = 0;
-        if (spark_device >= 0)
+        if (device >= 0)
         {
                 bench_spawn_device("/tiny.spark");
                 dev = bench_spawn_device("/tiny.spark");
@@ -233,7 +233,7 @@ b32 main()
         }
         else
         {
-                string_format(log, "could not open %s: %b\n", SPARK_DEVICE, spark_device);
+                string_format(log, "could not open %s: %b\n", SPARK_DEVICE, device);
                 log_flush();
         }
 
@@ -244,7 +244,7 @@ b32 main()
                 at_fd = at2;
 
         positive nowait = 0;
-        if (spark_device >= 0)
+        if (device >= 0)
         {
                 bench_spawn_nowait("/tiny.spark");
                 nowait = bench_spawn_nowait("/tiny.spark");
@@ -265,9 +265,9 @@ b32 main()
         if (nowait)
                 report("/dev/spark nowait", nowait);
 
-        struct spark_stats stats;
-        if (spark_device >= 0 &&
-            system_call_3(syscall(ioctl), spark_device, SPARK_IOCTL_STATS,
+        struct stats stats;
+        if (device >= 0 &&
+            system_call_3(syscall(ioctl), device, SPARK_IOCTL_STATS,
                           (positive)address_of stats) == 0 && stats.spawns)
         {
                 string_format(log, "\nkernel side, averaged over %p spawns:\n", stats.spawns);

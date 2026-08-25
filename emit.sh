@@ -1,7 +1,7 @@
 #!/bin/sh
 
 #
-#       Dawning Bit/kit Emit
+#       Emit
 #       cross architecture instruction emitters
 #
 #       Dawn Larsson (dawning.dev) - 2022 - Apache License 2.0

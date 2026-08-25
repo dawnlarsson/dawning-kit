@@ -1,5 +1,5 @@
 /*
-        Dawning display
+        Moonwater display
 
         An in-kernel compositor. The kernel owns the screen directly rather
         than handing a device node to a userspace server, which is closer to
@@ -22,9 +22,9 @@
         is mounted, which is after the initcalls that could otherwise have
         started this.
 
-        Included by dawning_core.c rather than compiled on its own, so the
+        Included by core.c rather than compiled on its own, so the
         headers it needs are pulled in there, and every symbol carries a
-        dawn_display prefix to stay clear of the rest of that file. _Bool is
+        display prefix to stay clear of the rest of that file. _Bool is
         spelled out where the kernel expects it, because library.c redefines
         bool as an 8 bit integer. They have to come before
         library.c: that file defines "end" as a macro, and asm/io.h uses the
@@ -38,9 +38,9 @@
         atomic commit can move a cursor plane with no drawing at all.
 */
 
-#define log_d(fmt, ...) pr_info("[Dawning display] " fmt, ##__VA_ARGS__)
+#define log_d(fmt, ...) pr_info("[moonwater/display] " fmt, ##__VA_ARGS__)
 
-#define DAWN_MAX_WINDOWS 8
+#define MAX_WINDOWS 8
 
 /*
         Input
@@ -57,24 +57,24 @@
         commit can sleep, so the position is taken immediately and the update
         runs on a high priority worker.
 */
-#define DAWN_CURSOR_HOTSPOT_X 0
-#define DAWN_CURSOR_HOTSPOT_Y 0
+#define CURSOR_HOTSPOT_X 0
+#define CURSOR_HOTSPOT_Y 0
 
 // Colours are written as plain xrgb8888 and converted once per surface.
-#define DAWN_COLOUR_DESKTOP 0x1b2733
-#define DAWN_COLOUR_FRAME 0x2f3f52
-#define DAWN_COLOUR_TITLE 0x4c6785
-#define DAWN_COLOUR_BODY 0x101820
-#define DAWN_COLOUR_CURSOR 0xffffff
-#define DAWN_COLOUR_CURSOR_EDGE 0x000000
+#define COLOUR_DESKTOP 0x1b2733
+#define COLOUR_FRAME 0x2f3f52
+#define COLOUR_TITLE 0x4c6785
+#define COLOUR_BODY 0x101820
+#define COLOUR_CURSOR 0xffffff
+#define COLOUR_CURSOR_EDGE 0x000000
 
-struct dawn_window {
+struct window {
         int x, y;
         int width, height;
         _Bool present;
 };
 
-struct dawn_surface {
+struct surface {
         struct drm_client_buffer *buffer;
         struct drm_mode_set *mode_set;
         unsigned int width, height;
@@ -89,14 +89,14 @@ struct dawn_surface {
         struct drm_client_buffer *cursor_buffer;
 };
 
-struct dawn_display {
+struct display {
         struct drm_client_dev client;
         struct mutex lock;
 
-        struct dawn_surface *surfaces;
+        struct surface *surfaces;
         unsigned int surface_count;
 
-        struct dawn_window windows[DAWN_MAX_WINDOWS];
+        struct window windows[MAX_WINDOWS];
         int cursor_x, cursor_y;
 
         _Bool started;
@@ -125,25 +125,25 @@ struct dawn_display {
 // The compositor owns one display at a time. The input handler reaches it
 // through this rather than being handed it, since the input core calls us
 // with no notion of which screen a pointer belongs to.
-static struct dawn_display *dawn_display_active;
+static struct display *display_active;
 
-static void dawning_input_start(void);
-static void dawning_input_stop(void);
+static void pointer_start(void);
+static void pointer_stop(void);
 
 /*
         Timing. Nanoseconds from a pointer event arriving to the cursor being
         on screen, split so the handoff can be told apart from the drawing.
 */
-static u64 dawn_input_latency_total;
-static u64 dawn_input_latency_worst;
-static unsigned long dawn_input_events;
-static u64 dawn_input_queue_total;  // event to the worker starting
-static u64 dawn_input_draw_total;   // composing the two damage rects
-static u64 dawn_input_flush_total;  // handing the damage to the driver
+static u64 pointer_latency_total;
+static u64 pointer_latency_worst;
+static unsigned long pointer_events;
+static u64 pointer_queue_total;  // event to the worker starting
+static u64 pointer_draw_total;   // composing the two damage rects
+static u64 pointer_flush_total;  // handing the damage to the driver
 
-static struct dawn_display *dawn_display_from_client(struct drm_client_dev *client)
+static struct display *display_from_client(struct drm_client_dev *client)
 {
-        return container_of(client, struct dawn_display, client);
+        return container_of(client, struct display, client);
 }
 
 /*
@@ -151,23 +151,23 @@ static struct dawn_display *dawn_display_from_client(struct drm_client_dev *clie
         this targets offers one of them for a dumb buffer, and pretending to
         support formats that are not tested would be worse than refusing them.
 */
-static _Bool dawn_display_format_supported(u32 format)
+static _Bool display_format_supported(u32 format)
 {
         return format == DRM_FORMAT_XRGB8888 || format == DRM_FORMAT_ARGB8888;
 }
 
-static u32 dawn_display_pick_format(struct drm_plane *plane)
+static u32 display_pick_format(struct drm_plane *plane)
 {
         unsigned int i;
 
         for (i = 0; i < plane->format_count; i++)
-                if (dawn_display_format_supported(plane->format_types[i]))
+                if (display_format_supported(plane->format_types[i]))
                         return plane->format_types[i];
 
         return DRM_FORMAT_INVALID;
 }
 
-static void dawn_display_fill_rect(u32 *pixels, unsigned int pitch_pixels,
+static void display_fill_rect(u32 *pixels, unsigned int pitch_pixels,
                            unsigned int surface_w, unsigned int surface_h,
                            int x, int y, int width, int height, u32 colour)
 {
@@ -207,8 +207,8 @@ static void dawn_display_fill_rect(u32 *pixels, unsigned int pitch_pixels,
         a hardware cursor plane exists to avoid, and moving it there is the
         next step.
 */
-#define DAWN_CURSOR_W 12
-#define DAWN_CURSOR_H 19
+#define CURSOR_W 12
+#define CURSOR_H 19
 
 /*
         The hardware cursor buffer is square and larger than the arrow drawn
@@ -217,10 +217,10 @@ static void dawn_display_fill_rect(u32 *pixels, unsigned int pitch_pixels,
         else -- so the arrow sits in the top left corner and the rest of the
         buffer is transparent.
 */
-#define DAWN_CURSOR_PLANE_W 64
-#define DAWN_CURSOR_PLANE_H 64
+#define CURSOR_PLANE_W 64
+#define CURSOR_PLANE_H 64
 
-static const char dawn_display_cursor_bitmap[DAWN_CURSOR_H][DAWN_CURSOR_W + 1] = {
+static const char display_cursor_bitmap[CURSOR_H][CURSOR_W + 1] = {
     "X           ",
     "XX          ",
     "X.X         ",
@@ -242,21 +242,21 @@ static const char dawn_display_cursor_bitmap[DAWN_CURSOR_H][DAWN_CURSOR_W + 1] =
     "            ",
 };
 
-static void dawn_display_draw_cursor(u32 *pixels, unsigned int pitch_pixels,
+static void display_draw_cursor(u32 *pixels, unsigned int pitch_pixels,
                              unsigned int surface_w, unsigned int surface_h,
                              int x, int y, u32 fill, u32 edge)
 {
         int row, column;
 
-        for (row = 0; row < DAWN_CURSOR_H; row++) {
+        for (row = 0; row < CURSOR_H; row++) {
                 int py = y + row;
 
                 if (py < 0 || py >= (int)surface_h)
                         continue;
 
-                for (column = 0; column < DAWN_CURSOR_W; column++) {
+                for (column = 0; column < CURSOR_W; column++) {
                         int px = x + column;
-                        char pixel = dawn_display_cursor_bitmap[row][column];
+                        char pixel = display_cursor_bitmap[row][column];
 
                         if (pixel == ' ')
                                 continue;
@@ -271,7 +271,7 @@ static void dawn_display_draw_cursor(u32 *pixels, unsigned int pitch_pixels,
 }
 
 // xrgb8888 is the source of truth; argb differs only in the alpha byte.
-static u32 dawn_display_colour(u32 xrgb, u32 format)
+static u32 display_colour(u32 xrgb, u32 format)
 {
         if (format == DRM_FORMAT_ARGB8888)
                 return xrgb | 0xff000000;
@@ -286,19 +286,19 @@ static u32 dawn_display_colour(u32 xrgb, u32 format)
         is. Repainting a 1280x800 desktop for a mouse move would be about a
         megabyte of writes per event; this is a few kilobytes.
 */
-static void dawn_display_compose_rect(struct dawn_display *display,
-                                      struct dawn_surface *surface,
+static void display_compose_rect(struct display *display,
+                                      struct surface *surface,
                                       u32 *pixels, unsigned int pitch_pixels,
                                       int rx, int ry, int rw, int rh)
 {
         unsigned int i;
 
-        dawn_display_fill_rect(pixels, pitch_pixels, surface->width, surface->height,
+        display_fill_rect(pixels, pitch_pixels, surface->width, surface->height,
                                rx, ry, rw, rh,
-                               dawn_display_colour(DAWN_COLOUR_DESKTOP, surface->format));
+                               display_colour(COLOUR_DESKTOP, surface->format));
 
-        for (i = 0; i < DAWN_MAX_WINDOWS; i++) {
-                struct dawn_window *window = &display->windows[i];
+        for (i = 0; i < MAX_WINDOWS; i++) {
+                struct window *window = &display->windows[i];
                 int fx, fy, fw, fh;
 
                 if (!window->present)
@@ -313,15 +313,15 @@ static void dawn_display_compose_rect(struct dawn_display *display,
                 if (fx >= rx + rw || fx + fw <= rx || fy >= ry + rh || fy + fh <= ry)
                         continue;
 
-                dawn_display_fill_rect(pixels, pitch_pixels, surface->width, surface->height,
+                display_fill_rect(pixels, pitch_pixels, surface->width, surface->height,
                                        fx, fy, fw, fh,
-                                       dawn_display_colour(DAWN_COLOUR_FRAME, surface->format));
-                dawn_display_fill_rect(pixels, pitch_pixels, surface->width, surface->height,
+                                       display_colour(COLOUR_FRAME, surface->format));
+                display_fill_rect(pixels, pitch_pixels, surface->width, surface->height,
                                        window->x, window->y, window->width, 20,
-                                       dawn_display_colour(DAWN_COLOUR_TITLE, surface->format));
-                dawn_display_fill_rect(pixels, pitch_pixels, surface->width, surface->height,
+                                       display_colour(COLOUR_TITLE, surface->format));
+                display_fill_rect(pixels, pitch_pixels, surface->width, surface->height,
                                        window->x, window->y + 20, window->width, window->height,
-                                       dawn_display_colour(DAWN_COLOUR_BODY, surface->format));
+                                       display_colour(COLOUR_BODY, surface->format));
         }
 }
 
@@ -343,7 +343,7 @@ static void dawn_display_compose_rect(struct dawn_display *display,
         is both the hardware plane and the unsynced commit, without asking for
         either by name.
 */
-static _Bool dawn_display_plane_takes_argb(struct drm_plane *plane)
+static _Bool display_plane_takes_argb(struct drm_plane *plane)
 {
         unsigned int i;
 
@@ -367,7 +367,7 @@ static _Bool dawn_display_plane_takes_argb(struct drm_plane *plane)
         return to a signal handler; this one is a worker with no signals to
         take, where -ERESTARTSYS would only mean a dropped mouse move.
 */
-static int dawn_display_place_cursor_plane(struct dawn_surface *surface, int x, int y)
+static int display_place_cursor_plane(struct surface *surface, int x, int y)
 {
         struct drm_plane *plane = surface->cursor_plane;
         struct drm_crtc *crtc = surface->mode_set->crtc;
@@ -385,12 +385,12 @@ retry:
                 goto out;
 
         ret = plane->funcs->update_plane(plane, crtc, surface->cursor_buffer->fb,
-                                         x - DAWN_CURSOR_HOTSPOT_X,
-                                         y - DAWN_CURSOR_HOTSPOT_Y,
-                                         DAWN_CURSOR_PLANE_W, DAWN_CURSOR_PLANE_H,
+                                         x - CURSOR_HOTSPOT_X,
+                                         y - CURSOR_HOTSPOT_Y,
+                                         CURSOR_PLANE_W, CURSOR_PLANE_H,
                                          0, 0,
-                                         DAWN_CURSOR_PLANE_W << 16,
-                                         DAWN_CURSOR_PLANE_H << 16,
+                                         CURSOR_PLANE_W << 16,
+                                         CURSOR_PLANE_H << 16,
                                          &ctx);
 out:
         if (ret == -EDEADLK) {
@@ -404,7 +404,7 @@ out:
         return ret;
 }
 
-static void dawn_display_drop_cursor_plane(struct dawn_surface *surface)
+static void display_drop_cursor_plane(struct surface *surface)
 {
         surface->cursor_plane = NULL;
 
@@ -424,18 +424,18 @@ static void dawn_display_drop_cursor_plane(struct dawn_surface *surface)
         behaviour that makes this cheap. An image drawn after arming would
         never be sent.
 */
-static int dawn_display_setup_cursor_plane(struct drm_client_dev *client,
-                                           struct dawn_surface *surface)
+static int display_setup_cursor_plane(struct drm_client_dev *client,
+                                           struct surface *surface)
 {
         struct drm_plane *plane = surface->mode_set->crtc->cursor;
         struct iosys_map map;
         unsigned int pitch_pixels;
 
-        if (!plane || !dawn_display_plane_takes_argb(plane))
+        if (!plane || !display_plane_takes_argb(plane))
                 return -ENODEV;
 
         surface->cursor_buffer = drm_client_buffer_create_dumb(
-            client, DAWN_CURSOR_PLANE_W, DAWN_CURSOR_PLANE_H, DRM_FORMAT_ARGB8888);
+            client, CURSOR_PLANE_W, CURSOR_PLANE_H, DRM_FORMAT_ARGB8888);
         if (IS_ERR(surface->cursor_buffer)) {
                 surface->cursor_buffer = NULL;
                 return -ENOMEM;
@@ -452,15 +452,15 @@ static int dawn_display_setup_cursor_plane(struct drm_client_dev *client,
         // Transparent everywhere the arrow does not cover. draw_cursor skips
         // the blank cells of its bitmap, so without this the buffer keeps
         // whatever it was allocated holding and the arrow wears a black box.
-        dawn_display_fill_rect(map.vaddr, pitch_pixels,
-                               DAWN_CURSOR_PLANE_W, DAWN_CURSOR_PLANE_H,
-                               0, 0, DAWN_CURSOR_PLANE_W, DAWN_CURSOR_PLANE_H,
+        display_fill_rect(map.vaddr, pitch_pixels,
+                               CURSOR_PLANE_W, CURSOR_PLANE_H,
+                               0, 0, CURSOR_PLANE_W, CURSOR_PLANE_H,
                                0x00000000);
 
-        dawn_display_draw_cursor(map.vaddr, pitch_pixels,
-                                 DAWN_CURSOR_PLANE_W, DAWN_CURSOR_PLANE_H, 0, 0,
-                                 dawn_display_colour(DAWN_COLOUR_CURSOR, DRM_FORMAT_ARGB8888),
-                                 dawn_display_colour(DAWN_COLOUR_CURSOR_EDGE, DRM_FORMAT_ARGB8888));
+        display_draw_cursor(map.vaddr, pitch_pixels,
+                                 CURSOR_PLANE_W, CURSOR_PLANE_H, 0, 0,
+                                 display_colour(COLOUR_CURSOR, DRM_FORMAT_ARGB8888),
+                                 display_colour(COLOUR_CURSOR_EDGE, DRM_FORMAT_ARGB8888));
 
         drm_client_buffer_vunmap_local(surface->cursor_buffer);
 
@@ -477,9 +477,9 @@ static int dawn_display_setup_cursor_plane(struct drm_client_dev *client,
         behind by the last one. Our cursor is one of those planes. Every
         commit turns it off, and this is what turns it back on.
 */
-static void dawn_display_arm_cursor(struct dawn_display *display)
+static void display_arm_cursor(struct display *display)
 {
-        struct dawn_surface *surface;
+        struct surface *surface;
         int ret;
 
         /*
@@ -497,7 +497,7 @@ static void dawn_display_arm_cursor(struct dawn_display *display)
         if (!surface->cursor_plane)
                 return;
 
-        ret = dawn_display_place_cursor_plane(surface, display->cursor_x, display->cursor_y);
+        ret = display_place_cursor_plane(surface, display->cursor_x, display->cursor_y);
         if (!ret)
                 return;
 
@@ -505,7 +505,7 @@ static void dawn_display_arm_cursor(struct dawn_display *display)
         // pointer event repaints through the software path, which needs
         // nothing from the display beyond a framebuffer.
         log_d("cursor plane refused an update (%d), drawing the cursor instead\n", ret);
-        dawn_display_drop_cursor_plane(surface);
+        display_drop_cursor_plane(surface);
 }
 
 /*
@@ -516,8 +516,8 @@ static void dawn_display_arm_cursor(struct dawn_display *display)
         the driver which region changed, so a device that uploads its
         framebuffer only sends those bytes.
 */
-static void dawn_display_move_cursor(struct dawn_display *display,
-                                     struct dawn_surface *surface,
+static void display_move_cursor(struct display *display,
+                                     struct surface *surface,
                                      int new_x, int new_y)
 {
         struct iosys_map map;
@@ -535,15 +535,15 @@ static void dawn_display_move_cursor(struct dawn_display *display,
         */
         if (surface->cursor_plane) {
                 u64 flush_started = ktime_get_ns();
-                int ret = dawn_display_place_cursor_plane(surface, new_x, new_y);
+                int ret = display_place_cursor_plane(surface, new_x, new_y);
 
-                dawn_input_flush_total += ktime_get_ns() - flush_started;
+                pointer_flush_total += ktime_get_ns() - flush_started;
 
                 if (!ret)
                         return;
 
                 log_d("cursor plane refused an update (%d), drawing the cursor instead\n", ret);
-                dawn_display_drop_cursor_plane(surface);
+                display_drop_cursor_plane(surface);
         }
 
         if (drm_client_buffer_vmap_local(surface->buffer, &map))
@@ -555,19 +555,19 @@ static void dawn_display_move_cursor(struct dawn_display *display,
         {
         u64 draw_started = ktime_get_ns();
 
-        dawn_display_compose_rect(display, surface, pixels, pitch_pixels,
-                                  old_x, old_y, DAWN_CURSOR_W, DAWN_CURSOR_H);
-        dawn_display_compose_rect(display, surface, pixels, pitch_pixels,
-                                  new_x, new_y, DAWN_CURSOR_W, DAWN_CURSOR_H);
+        display_compose_rect(display, surface, pixels, pitch_pixels,
+                                  old_x, old_y, CURSOR_W, CURSOR_H);
+        display_compose_rect(display, surface, pixels, pitch_pixels,
+                                  new_x, new_y, CURSOR_W, CURSOR_H);
 
-        dawn_display_draw_cursor(pixels, pitch_pixels, surface->width, surface->height,
+        display_draw_cursor(pixels, pitch_pixels, surface->width, surface->height,
                                  new_x, new_y,
-                                 dawn_display_colour(DAWN_COLOUR_CURSOR, surface->format),
-                                 dawn_display_colour(DAWN_COLOUR_CURSOR_EDGE, surface->format));
+                                 display_colour(COLOUR_CURSOR, surface->format),
+                                 display_colour(COLOUR_CURSOR_EDGE, surface->format));
 
         drm_client_buffer_vunmap_local(surface->buffer);
 
-        dawn_input_draw_total += ktime_get_ns() - draw_started;
+        pointer_draw_total += ktime_get_ns() - draw_started;
         }
 
         // Clamped: the cursor is allowed to sit against the right or bottom
@@ -575,8 +575,8 @@ static void dawn_display_move_cursor(struct dawn_display *display,
         // surface and be handed to the driver that way.
         damage.x1 = max(min(old_x, new_x), 0);
         damage.y1 = max(min(old_y, new_y), 0);
-        damage.x2 = min(max(old_x, new_x) + DAWN_CURSOR_W, (int)surface->width);
-        damage.y2 = min(max(old_y, new_y) + DAWN_CURSOR_H, (int)surface->height);
+        damage.x2 = min(max(old_x, new_x) + CURSOR_W, (int)surface->width);
+        damage.y2 = min(max(old_y, new_y) + CURSOR_H, (int)surface->height);
 
         if (damage.x2 <= damage.x1 || damage.y2 <= damage.y1)
                 return;
@@ -599,11 +599,11 @@ static void dawn_display_move_cursor(struct dawn_display *display,
         */
         drm_client_buffer_flush(surface->buffer, &damage);
 
-        dawn_input_flush_total += ktime_get_ns() - flush_started;
+        pointer_flush_total += ktime_get_ns() - flush_started;
         }
 }
 
-static void dawn_display_compose(struct dawn_display *display, struct dawn_surface *surface)
+static void display_compose(struct display *display, struct surface *surface)
 {
         struct iosys_map map;
         unsigned int pitch_pixels;
@@ -616,62 +616,62 @@ static void dawn_display_compose(struct dawn_display *display, struct dawn_surfa
         pixels = map.vaddr;
         pitch_pixels = surface->buffer->fb->pitches[0] / sizeof(u32);
 
-        dawn_display_fill_rect(pixels, pitch_pixels, surface->width, surface->height,
+        display_fill_rect(pixels, pitch_pixels, surface->width, surface->height,
                        0, 0, surface->width, surface->height,
-                       dawn_display_colour(DAWN_COLOUR_DESKTOP, surface->format));
+                       display_colour(COLOUR_DESKTOP, surface->format));
 
         // Back to front, so a later window overlaps an earlier one.
-        for (i = 0; i < DAWN_MAX_WINDOWS; i++) {
-                struct dawn_window *window = &display->windows[i];
+        for (i = 0; i < MAX_WINDOWS; i++) {
+                struct window *window = &display->windows[i];
 
                 if (!window->present)
                         continue;
 
-                dawn_display_fill_rect(pixels, pitch_pixels, surface->width, surface->height,
+                display_fill_rect(pixels, pitch_pixels, surface->width, surface->height,
                                window->x - 2, window->y - 2,
                                window->width + 4, window->height + 26,
-                               dawn_display_colour(DAWN_COLOUR_FRAME, surface->format));
+                               display_colour(COLOUR_FRAME, surface->format));
 
-                dawn_display_fill_rect(pixels, pitch_pixels, surface->width, surface->height,
+                display_fill_rect(pixels, pitch_pixels, surface->width, surface->height,
                                window->x, window->y, window->width, 20,
-                               dawn_display_colour(DAWN_COLOUR_TITLE, surface->format));
+                               display_colour(COLOUR_TITLE, surface->format));
 
-                dawn_display_fill_rect(pixels, pitch_pixels, surface->width, surface->height,
+                display_fill_rect(pixels, pitch_pixels, surface->width, surface->height,
                                window->x, window->y + 20, window->width, window->height,
-                               dawn_display_colour(DAWN_COLOUR_BODY, surface->format));
+                               display_colour(COLOUR_BODY, surface->format));
         }
 
         // Skipped when the cursor lives on its own plane, or the arrow would
         // be baked into the desktop underneath the real one and left behind
         // wherever the pointer last was.
         if (!surface->cursor_plane)
-                dawn_display_draw_cursor(pixels, pitch_pixels, surface->width, surface->height,
+                display_draw_cursor(pixels, pitch_pixels, surface->width, surface->height,
                                  display->cursor_x, display->cursor_y,
-                                 dawn_display_colour(DAWN_COLOUR_CURSOR, surface->format),
-                                 dawn_display_colour(DAWN_COLOUR_CURSOR_EDGE, surface->format));
+                                 display_colour(COLOUR_CURSOR, surface->format),
+                                 display_colour(COLOUR_CURSOR_EDGE, surface->format));
 
         drm_client_buffer_vunmap_local(surface->buffer);
 }
 
-static void dawn_display_redraw(struct dawn_display *display)
+static void display_redraw(struct display *display)
 {
         unsigned int i;
 
         for (i = 0; i < display->surface_count; i++)
-                dawn_display_compose(display, &display->surfaces[i]);
+                display_compose(display, &display->surfaces[i]);
 
         drm_client_modeset_commit(&display->client);
-        dawn_display_arm_cursor(display);
+        display_arm_cursor(display);
 }
 
-static int dawn_display_setup_surface(struct drm_client_dev *client,
+static int display_setup_surface(struct drm_client_dev *client,
                               struct drm_mode_set *mode_set,
-                              struct dawn_surface *surface)
+                              struct surface *surface)
 {
         struct drm_crtc *crtc = mode_set->crtc;
         unsigned int width = mode_set->mode->hdisplay;
         unsigned int height = mode_set->mode->vdisplay;
-        u32 format = dawn_display_pick_format(crtc->primary);
+        u32 format = display_pick_format(crtc->primary);
 
         if (format == DRM_FORMAT_INVALID) {
                 log_d("no 32 bit format on this plane, skipping output\n");
@@ -695,7 +695,7 @@ static int dawn_display_setup_surface(struct drm_client_dev *client,
         return 0;
 }
 
-static unsigned int dawn_display_count_modesets(struct drm_client_dev *client)
+static unsigned int display_count_modesets(struct drm_client_dev *client)
 {
         struct drm_mode_set *mode_set;
         unsigned int count = 0;
@@ -710,14 +710,14 @@ static unsigned int dawn_display_count_modesets(struct drm_client_dev *client)
 
 // A first arrangement, so there is something recognisable on screen before
 // anything can create a window.
-static void dawn_display_seed_windows(struct dawn_display *display,
+static void display_seed_windows(struct display *display,
                               unsigned int width, unsigned int height)
 {
-        display->windows[0] = (struct dawn_window){
+        display->windows[0] = (struct window){
             .x = width / 10, .y = height / 8,
             .width = width / 3, .height = height / 3, .present = true};
 
-        display->windows[1] = (struct dawn_window){
+        display->windows[1] = (struct window){
             .x = width / 3, .y = height / 3,
             .width = width / 3, .height = height / 3, .present = true};
 
@@ -725,7 +725,7 @@ static void dawn_display_seed_windows(struct dawn_display *display,
         display->cursor_y = height / 2;
 }
 
-static int dawn_display_start(struct dawn_display *display)
+static int display_start(struct display *display)
 {
         struct drm_client_dev *client = &display->client;
         struct drm_mode_set *mode_set;
@@ -735,7 +735,7 @@ static int dawn_display_start(struct dawn_display *display)
         if (drm_client_modeset_probe(client, 0, 0))
                 return -ENODEV;
 
-        max_surfaces = dawn_display_count_modesets(client);
+        max_surfaces = display_count_modesets(client);
         if (!max_surfaces)
                 return -ENODEV;
 
@@ -748,7 +748,7 @@ static int dawn_display_start(struct dawn_display *display)
                 if (!mode_set->mode)
                         continue;
 
-                if (dawn_display_setup_surface(client, mode_set, &display->surfaces[count]))
+                if (display_setup_surface(client, mode_set, &display->surfaces[count]))
                         continue;
 
                 count++;
@@ -762,7 +762,7 @@ static int dawn_display_start(struct dawn_display *display)
         }
 
         display->surface_count = count;
-        dawn_display_seed_windows(display, display->surfaces[0].width,
+        display_seed_windows(display, display->surfaces[0].width,
                           display->surfaces[0].height);
 
         display->screen_w = (int)display->surfaces[0].width;
@@ -773,25 +773,25 @@ static int dawn_display_start(struct dawn_display *display)
         display->drawn_x = display->cursor_x;
         display->drawn_y = display->cursor_y;
 
-        if (dawn_display_setup_cursor_plane(client, &display->surfaces[0]))
+        if (display_setup_cursor_plane(client, &display->surfaces[0]))
                 log_d("no hardware cursor here, drawing the cursor into the framebuffer\n");
         else
                 log_d("cursor on hardware plane %u\n",
                       display->surfaces[0].cursor_plane->base.id);
 
-        dawn_display_active = display;
-        dawn_display_redraw(display);
+        display_active = display;
+        display_redraw(display);
 
         log_d("compositing on %u output(s)\n", count);
         return 0;
 }
 
-static void dawn_display_release(struct dawn_display *display)
+static void display_release(struct display *display)
 {
         unsigned int i;
 
         for (i = 0; i < display->surface_count; i++) {
-                dawn_display_drop_cursor_plane(&display->surfaces[i]);
+                display_drop_cursor_plane(&display->surfaces[i]);
 
                 if (display->surfaces[i].buffer)
                         drm_client_buffer_delete(display->surfaces[i].buffer);
@@ -802,51 +802,51 @@ static void dawn_display_release(struct dawn_display *display)
         display->surface_count = 0;
 }
 
-static void dawn_client_unregister(struct drm_client_dev *client)
+static void client_unregister(struct drm_client_dev *client)
 {
-        struct dawn_display *display = dawn_display_from_client(client);
+        struct display *display = display_from_client(client);
 
         /*
                 Order matters. The input handler and its worker reach the
-                display through dawn_display_active, so that has to stop
+                display through display_active, so that has to stop
                 pointing at it before anything it owns is freed, and the
                 worker has to be known finished rather than merely asked to
                 stop. Getting this wrong is a use after free on every mouse
                 move after a device goes away.
         */
-        if (dawn_display_active == display) {
-                dawning_input_stop();
-                dawn_display_active = NULL;
+        if (display_active == display) {
+                pointer_stop();
+                display_active = NULL;
         }
 
         mutex_lock(&display->lock);
         display->started = 0;
-        dawn_display_release(display);
+        display_release(display);
         mutex_unlock(&display->lock);
 
         drm_client_release(client);
 }
 
-static void dawn_client_free(struct drm_client_dev *client)
+static void client_free(struct drm_client_dev *client)
 {
-        struct dawn_display *display = dawn_display_from_client(client);
+        struct display *display = display_from_client(client);
 
         mutex_destroy(&display->lock);
         kfree(display);
 }
 
-static int dawn_client_hotplug(struct drm_client_dev *client)
+static int client_hotplug(struct drm_client_dev *client)
 {
-        struct dawn_display *display = dawn_display_from_client(client);
+        struct display *display = display_from_client(client);
         int ret = 0;
 
         mutex_lock(&display->lock);
 
         if (!display->started) {
-                ret = dawn_display_start(display);
+                ret = display_start(display);
                 display->started = (ret == 0);
         } else {
-                dawn_display_redraw(display);
+                display_redraw(display);
         }
 
         mutex_unlock(&display->lock);
@@ -854,9 +854,9 @@ static int dawn_client_hotplug(struct drm_client_dev *client)
 }
 
 // The bool argument is whether the restore happens from an atomic context.
-static int dawn_client_restore(struct drm_client_dev *client, _Bool in_atomic)
+static int client_restore(struct drm_client_dev *client, _Bool in_atomic)
 {
-        struct dawn_display *display = dawn_display_from_client(client);
+        struct display *display = display_from_client(client);
 
         // Nothing here is safe to do without sleeping, so an atomic restore
         // is declined rather than half performed.
@@ -865,18 +865,18 @@ static int dawn_client_restore(struct drm_client_dev *client, _Bool in_atomic)
 
         mutex_lock(&display->lock);
         if (display->started)
-                dawn_display_redraw(display);
+                display_redraw(display);
         mutex_unlock(&display->lock);
 
         return 0;
 }
 
-static const struct drm_client_funcs dawn_client_funcs = {
+static const struct drm_client_funcs client_funcs = {
     .owner = THIS_MODULE,
-    .unregister = dawn_client_unregister,
-    .free = dawn_client_free,
-    .restore = dawn_client_restore,
-    .hotplug = dawn_client_hotplug,
+    .unregister = client_unregister,
+    .free = client_free,
+    .restore = client_restore,
+    .hotplug = client_hotplug,
 };
 
 /*
@@ -884,9 +884,9 @@ static const struct drm_client_funcs dawn_client_funcs = {
         for drm_client_setup can fall through to the original for anything we
         decline -- a device with no modesetting, or an allocation that failed.
 */
-static int dawning_display_take_over(struct drm_device *dev)
+static int display_take_over(struct drm_device *dev)
 {
-        struct dawn_display *display;
+        struct display *display;
 
         if (!drm_core_check_feature(dev, DRIVER_MODESET))
                 return 0;
@@ -896,9 +896,9 @@ static int dawning_display_take_over(struct drm_device *dev)
                 the first boot on real hardware had virtio-gpu and a standard
                 VGA both probing -- and taking the second would register the
                 input handler twice, leak the first workqueue, and leave
-                dawn_display_active pointing at whichever won the race.
+                display_active pointing at whichever won the race.
         */
-        if (dawn_display_active)
+        if (display_active)
                 return 0;
 
         display = kzalloc(sizeof(*display), GFP_KERNEL);
@@ -907,7 +907,7 @@ static int dawning_display_take_over(struct drm_device *dev)
 
         mutex_init(&display->lock);
 
-        if (drm_client_init(dev, &display->client, "dawning", &dawn_client_funcs)) {
+        if (drm_client_init(dev, &display->client, "moonwater", &client_funcs)) {
                 mutex_destroy(&display->lock);
                 kfree(display);
                 return 0;
@@ -916,7 +916,7 @@ static int dawning_display_take_over(struct drm_device *dev)
         drm_client_register(&display->client);
         log_d("attached to %s\n", dev->driver->name);
 
-        dawning_input_start();
+        pointer_start();
         return 1;
 }
 
@@ -928,16 +928,16 @@ static int dawning_display_take_over(struct drm_device *dev)
         closed immediately: drm_client_init takes its own reference, so the
         device outlives our brief handle on it.
 */
-#define DAWN_DISPLAY_NODE "/dev/dri/card0"
+#define SPARK_DISPLAY_NODE "/dev/dri/card0"
 // Retried fast: the node appears the moment devtmpfs is mounted, and every
 // millisecond spent waiting after that is a millisecond of black screen.
-#define DAWN_DISPLAY_RETRY_MS 5
-#define DAWN_DISPLAY_ATTEMPTS 1000
+#define SPARK_DISPLAY_RETRY_MS 5
+#define SPARK_DISPLAY_ATTEMPTS 1000
 
-static struct delayed_work dawn_display_probe_work;
-static unsigned int dawn_display_attempts;
+static struct delayed_work display_probe_work;
+static unsigned int display_attempts;
 
-static int dawning_display_claim(const char *path)
+static int display_claim(const char *path)
 {
         struct file *filp;
         struct drm_file *file_priv;
@@ -956,36 +956,36 @@ static int dawning_display_claim(const char *path)
         }
 
         dev = file_priv->minor->dev;
-        taken = dawning_display_take_over(dev);
+        taken = display_take_over(dev);
 
         filp_close(filp, NULL);
 
         return taken ? 0 : -EBUSY;
 }
 
-static void dawning_display_probe(struct work_struct *work)
+static void display_probe(struct work_struct *work)
 {
-        int ret = dawning_display_claim(DAWN_DISPLAY_NODE);
+        int ret = display_claim(SPARK_DISPLAY_NODE);
 
         if (ret == 0)
                 return;
 
-        if (++dawn_display_attempts >= DAWN_DISPLAY_ATTEMPTS) {
-                log_d("gave up waiting for %s (%d)\n", DAWN_DISPLAY_NODE, ret);
+        if (++display_attempts >= SPARK_DISPLAY_ATTEMPTS) {
+                log_d("gave up waiting for %s (%d)\n", SPARK_DISPLAY_NODE, ret);
                 return;
         }
 
-        schedule_delayed_work(&dawn_display_probe_work,
-                              msecs_to_jiffies(DAWN_DISPLAY_RETRY_MS));
+        schedule_delayed_work(&display_probe_work,
+                              msecs_to_jiffies(SPARK_DISPLAY_RETRY_MS));
 }
 
-static void dawning_display_start_probing(void)
+static void display_start_probing(void)
 {
-        INIT_DELAYED_WORK(&dawn_display_probe_work, dawning_display_probe);
+        INIT_DELAYED_WORK(&display_probe_work, display_probe);
 
         // No initial delay. The display driver has already probed by the time
         // this runs, so the first attempt usually succeeds outright.
-        schedule_delayed_work(&dawn_display_probe_work, 0);
+        schedule_delayed_work(&display_probe_work, 0);
 }
 
 /*
@@ -997,16 +997,16 @@ static void dawning_display_start_probing(void)
         context cannot sleep and a DRM commit can. A high priority worker does
         that part, and the gap between the two is what gets measured.
 */
-static struct workqueue_struct *dawn_input_wq;
-static void dawn_input_apply(struct work_struct *work);
-static DECLARE_WORK(dawn_input_work, dawn_input_apply);
+static struct workqueue_struct *pointer_wq;
+static void pointer_apply(struct work_struct *work);
+static DECLARE_WORK(pointer_work, pointer_apply);
 
 // Nanoseconds from the event arriving to the cursor being on screen.
 // Declared with the rest of the timing counters near the top of the file.
 
-static void dawn_input_apply(struct work_struct *work)
+static void pointer_apply(struct work_struct *work)
 {
-        struct dawn_display *display = dawn_display_active;
+        struct display *display = display_active;
         int x, y;
         u64 started;
 
@@ -1021,12 +1021,12 @@ static void dawn_input_apply(struct work_struct *work)
         y = atomic_read(&display->pending_y);
 
         if (started)
-                dawn_input_queue_total += ktime_get_ns() - started;
+                pointer_queue_total += ktime_get_ns() - started;
 
         mutex_lock(&display->lock);
 
         if (display->started && display->surface_count) {
-                dawn_display_move_cursor(display, &display->surfaces[0], x, y);
+                display_move_cursor(display, &display->surfaces[0], x, y);
                 display->drawn_x = x;
                 display->drawn_y = y;
                 display->cursor_x = x;
@@ -1038,18 +1038,18 @@ static void dawn_input_apply(struct work_struct *work)
         if (started) {
                 u64 elapsed = ktime_get_ns() - started;
 
-                dawn_input_latency_total += elapsed;
-                dawn_input_events++;
+                pointer_latency_total += elapsed;
+                pointer_events++;
 
-                if (elapsed > dawn_input_latency_worst)
-                        dawn_input_latency_worst = elapsed;
+                if (elapsed > pointer_latency_worst)
+                        pointer_latency_worst = elapsed;
         }
 }
 
-static void dawn_input_event(struct input_handle *handle, unsigned int type,
+static void pointer_event(struct input_handle *handle, unsigned int type,
                              unsigned int code, int value)
 {
-        struct dawn_display *display = dawn_display_active;
+        struct display *display = display_active;
         int x, y, limit;
 
         if (!display || !display->started || !display->screen_w)
@@ -1103,10 +1103,10 @@ static void dawn_input_event(struct input_handle *handle, unsigned int type,
         if (!atomic_xchg(&display->motion_pending, 1))
                 display->motion_stamp = ktime_get_ns();
 
-        queue_work(dawn_input_wq, &dawn_input_work);
+        queue_work(pointer_wq, &pointer_work);
 }
 
-static int dawn_input_connect(struct input_handler *handler, struct input_dev *dev,
+static int pointer_connect(struct input_handler *handler, struct input_dev *dev,
                               const struct input_device_id *id)
 {
         struct input_handle *handle;
@@ -1118,7 +1118,7 @@ static int dawn_input_connect(struct input_handler *handler, struct input_dev *d
 
         handle->dev = dev;
         handle->handler = handler;
-        handle->name = "dawning";
+        handle->name = "moonwater";
 
         ret = input_register_handle(handle);
         if (ret)
@@ -1138,7 +1138,7 @@ err_free:
         return ret;
 }
 
-static void dawn_input_disconnect(struct input_handle *handle)
+static void pointer_disconnect(struct input_handle *handle)
 {
         input_close_device(handle);
         input_unregister_handle(handle);
@@ -1146,7 +1146,7 @@ static void dawn_input_disconnect(struct input_handle *handle)
 }
 
 // Anything that reports relative or absolute motion: mice, tablets, touchpads.
-static const struct input_device_id dawn_input_ids[] = {
+static const struct input_device_id pointer_ids[] = {
     {
         .flags = INPUT_DEVICE_ID_MATCH_EVBIT,
         .evbit = {BIT_MASK(EV_REL)},
@@ -1158,12 +1158,12 @@ static const struct input_device_id dawn_input_ids[] = {
     {},
 };
 
-static struct input_handler dawn_input_handler = {
-    .event = dawn_input_event,
-    .connect = dawn_input_connect,
-    .disconnect = dawn_input_disconnect,
-    .name = "dawning",
-    .id_table = dawn_input_ids,
+static struct input_handler pointer_handler = {
+    .event = pointer_event,
+    .connect = pointer_connect,
+    .disconnect = pointer_disconnect,
+    .name = "moonwater",
+    .id_table = pointer_ids,
 };
 
 /*
@@ -1171,18 +1171,18 @@ static struct input_handler dawn_input_handler = {
         for the one that may already be running. Both have to happen before
         the display it draws through is freed.
 */
-static void dawning_input_stop(void)
+static void pointer_stop(void)
 {
-        if (!dawn_input_wq)
+        if (!pointer_wq)
                 return;
 
-        input_unregister_handler(&dawn_input_handler);
-        cancel_work_sync(&dawn_input_work);
-        destroy_workqueue(dawn_input_wq);
-        dawn_input_wq = NULL;
+        input_unregister_handler(&pointer_handler);
+        cancel_work_sync(&pointer_work);
+        destroy_workqueue(pointer_wq);
+        pointer_wq = NULL;
 }
 
-static void dawning_input_start(void)
+static void pointer_start(void)
 {
         /*
                 WQ_HIGHPRI so the cursor is not queued behind ordinary work,
@@ -1196,28 +1196,28 @@ static void dawning_input_start(void)
                 A bound queue hands the work to this CPU's high priority pool,
                 which is the one already holding the event.
         */
-        dawn_input_wq = alloc_workqueue("dawning_input", WQ_HIGHPRI, 1);
+        pointer_wq = alloc_workqueue("input", WQ_HIGHPRI, 1);
 
-        if (!dawn_input_wq) {
+        if (!pointer_wq) {
                 log_d("no workqueue for input\n");
                 return;
         }
 
-        if (input_register_handler(&dawn_input_handler))
+        if (input_register_handler(&pointer_handler))
                 log_d("could not register the input handler\n");
 }
 
 // Nanoseconds, for the stats ioctl.
-void dawning_display_input_stats(unsigned long *events, unsigned long *mean,
+static void display_input_stats(unsigned long *events, unsigned long *mean,
                                  unsigned long *worst, unsigned long *queue,
                                  unsigned long *draw, unsigned long *flush)
 {
-        unsigned long n = dawn_input_events ? dawn_input_events : 1;
+        unsigned long n = pointer_events ? pointer_events : 1;
 
-        *events = dawn_input_events;
-        *mean = dawn_input_latency_total / n;
-        *worst = dawn_input_latency_worst;
-        *queue = dawn_input_queue_total / n;
-        *draw = dawn_input_draw_total / n;
-        *flush = dawn_input_flush_total / n;
+        *events = pointer_events;
+        *mean = pointer_latency_total / n;
+        *worst = pointer_latency_worst;
+        *queue = pointer_queue_total / n;
+        *draw = pointer_draw_total / n;
+        *flush = pointer_flush_total / n;
 }

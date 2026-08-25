@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-#       Dawning Test Kit
+#       Test Kit
 #       Testing binaries across multiple architectures using QEMU.
 #
 #       Dawn Larsson (dawning.dev) - 2022 - Apache License 2.0
@@ -134,7 +134,7 @@ test_all() {
         TOTAL=0
 
         local work_dir
-        work_dir=$(mktemp -d "${TMPDIR:-/tmp}/dawning_test.XXXXXXXX") || {
+        work_dir=$(mktemp -d "${TMPDIR:-/tmp}/test.XXXXXXXX") || {
                 echo "test_all: could not create temp directory" >&2
                 return 2
         }

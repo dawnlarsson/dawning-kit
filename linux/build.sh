@@ -66,11 +66,11 @@ label BUILD ENVIRONMENT CHECK
         fi
 
 label KERNEL CONFIG
-        line_add_padded "linux/Kconfig" "source \"kernel/dawning/Kconfig\""
-        line_add_padded "linux/kernel/Makefile" "obj-y += dawning/"
+        line_add_padded "linux/Kconfig" "source \"kernel/moonwater/Kconfig\""
+        line_add_padded "linux/kernel/Makefile" "obj-y += moonwater/"
 
-        if [ ! -e linux/kernel/dawning ]; then
-                sudo ln -s "$(pwd)/src" linux/kernel/dawning || die "linking kernel module source"
+        if [ ! -e linux/kernel/moonwater ]; then
+                sudo ln -s "$(pwd)/src" linux/kernel/moonwater || die "linking kernel module source"
         fi
 
         if is_newer artifacts/.config linux/.config; then

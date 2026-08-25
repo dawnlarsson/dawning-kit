@@ -5,7 +5,7 @@
 // exit status has to come back through wait4 like any other child.
 positive spawn(b32 device, string_address path, positive status_out)
 {
-        struct spark_spawn request;
+        struct spawn request;
         p8 block[256];
         positive length = string_length(path);
 

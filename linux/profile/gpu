@@ -25,7 +25,7 @@
 #
 # The in-kernel compositor draws through the DRM client API
 #
-CONFIG_DAWNING_DISPLAY=y
+CONFIG_MOONWATER_DISPLAY=y
 
 # Booted from a USB stick there is no bootloader to pass a command line, and
 # the EFI stub falls back to this one. A bootloader that does pass a command

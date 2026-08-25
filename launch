@@ -12,7 +12,7 @@
 #       The kernel is built on another machine, because building it needs a
 #       Linux toolchain and a case sensitive filesystem, and because it is a
 #       few minutes of work that a laptop should not be doing. Set the host
-#       with DAWNING_BUILD_HOST; it needs to be reachable over ssh and have a
+#       with MOONWATER_BUILD_HOST; it needs to be reachable over ssh and have a
 #       cross compiler, and it keeps its own copy of the kernel source so
 #       rebuilds are incremental.
 #
@@ -21,8 +21,8 @@
 #
 set -u
 
-host=${DAWNING_BUILD_HOST:-box}
-remote=${DAWNING_BUILD_DIR:-/tmp/dawning-build}
+host=${MOONWATER_BUILD_HOST:-box}
+remote=${MOONWATER_BUILD_DIR:-/tmp/moonwater-build}
 # shellcheck disable=SC1007 # CDPATH= is a deliberate one-shot empty assignment
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 image="$here/dist/bootx64.efi"
@@ -57,7 +57,7 @@ command -v qemu-system-x86_64 >/dev/null 2>&1 ||
 if [ "$run_only" -eq 0 ]; then
         say "Checking $host"
         ssh -n -o BatchMode=yes -o ConnectTimeout=20 "$host" true 2>/dev/null ||
-                die "cannot reach $host over ssh (set DAWNING_BUILD_HOST)"
+                die "cannot reach $host over ssh (set MOONWATER_BUILD_HOST)"
 
         say "Copying the tree to $host:$remote"
         ssh -n "$host" "mkdir -p $remote" || die "could not create $remote"
@@ -163,10 +163,10 @@ if [ "$usb" -eq 1 ]; then
 
         say "Erasing $target"
         diskutil unmountDisk "$target" >/dev/null 2>&1
-        diskutil eraseDisk FAT32 DAWNING GPT "$target" ||
+        diskutil eraseDisk FAT32 MOONWATER GPT "$target" ||
                 die "could not format $target"
 
-        volume="/Volumes/DAWNING"
+        volume="/Volumes/MOONWATER"
         [ -d "$volume" ] || die "formatted, but $volume did not appear"
 
         say "Writing the image"

@@ -15,7 +15,7 @@ b32 main()
                 return 1;
         }
 
-        struct dawn_input_stats stats;
+        struct input_stats stats;
 
         if (system_call_3(syscall(ioctl), device, SPARK_IOCTL_INPUT_STATS,
                           (positive)address_of stats) != 0)

@@ -28,7 +28,7 @@ fn shell_thread_instance(string_address command, string_address arguments)
 {
         string_address arguments_list[] = {command, arguments, null};
 
-        bipolar exec_result = system_call_3(syscall(execve), (positive)command, (positive)arguments_list, (positive)dawn_shell_envp);
+        bipolar exec_result = system_call_3(syscall(execve), (positive)command, (positive)arguments_list, (positive)shell_envp);
 
         string_format(shell_output, "failed with error: %b\n", exec_result);
         log_flush();
@@ -51,14 +51,14 @@ positive shell_flatten_env(p8 address_to block, positive limit, positive address
         positive count = 0;
         positive index = 0;
 
-        while (dawn_shell_envp[index])
+        while (shell_envp[index])
         {
-                positive length = string_length(dawn_shell_envp[index]) + 1;
+                positive length = string_length(shell_envp[index]) + 1;
 
                 if (used + length > limit)
                         break;
 
-                memory_copy(block + used, dawn_shell_envp[index], length);
+                memory_copy(block + used, shell_envp[index], length);
                 used += length;
                 count++;
                 index++;
@@ -71,7 +71,7 @@ positive shell_flatten_env(p8 address_to block, positive limit, positive address
 // Returns the child pid, or a negative error if the device could not take it.
 bipolar shell_spawn_via_device(string_address command, string_address arguments)
 {
-        struct spark_spawn request;
+        struct spawn request;
         positive used = 0;
         positive argc = 0;
         positive envc = 0;
@@ -148,7 +148,7 @@ fn shell_execute_command(string_address command, string_address arguments)
 
 bool shell_builtin(string_address arguments)
 {
-        dawn_shell_command address_to command = dawn_shell_commands;
+        shell_command address_to command = shell_commands;
 
         while (command->name)
         {
@@ -204,7 +204,7 @@ b32 main()
         system_call(syscall(setsid));
         system_call_2(2, (positive) "/dev/console", FILE_READ_WRITE | O_NOCTTY);
 
-        dawn_shell_env_init();
+        shell_env_init();
 
         spawn_device = system_call_4(syscall(openat), AT_FDCWD,
                                      (positive)SPARK_DEVICE, FILE_READ_WRITE, 0);

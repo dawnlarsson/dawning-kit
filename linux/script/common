@@ -2,7 +2,7 @@
 # shellcheck disable=SC2034 # this file is sourced; its variables are used by the callers
 # shellcheck disable=SC3043 # local is supported by every sh this targets (dash, bash, ash)
 info_version="25"
-info_name="dawning-linux"
+info_name="moonwater"
 info_full_name="$info_name-$info_version"
 
 # $'\033[' is a bash extension. Under dash -- which is /bin/sh on Debian and
@@ -100,7 +100,7 @@ is_safe() {
 # Anchored, with a trailing space, so `key pre` cannot also match `#> prefix`.
 # shellcheck disable=SC2046 # unquoted on purpose: joins multiple matches into one line
 # Multiple matching lines are still joined on purpose -- that is how
-# dawning_flags accumulates across profiles.
+# flags accumulates across profiles.
 key() {
         echo $(grep "^#> $1 " artifacts/.config 2>/dev/null | sed "s/^#> $1 //")
 }

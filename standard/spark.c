@@ -1,5 +1,5 @@
 /*
-        Dawning spark binary format
+        spark binary format
 
         A flat executable with no relocations, no dynamic linking and no
         section table -- just three regions the kernel maps directly.
@@ -28,8 +28,8 @@
         anonymous mapping, already zero, with nothing to clear by hand.
 */
 
-#ifndef DAWNING_SPARK
-#define DAWNING_SPARK
+#ifndef SPARK_INCLUDED
+#define SPARK_INCLUDED
 
 // "SPRK", little endian
 #define SPARK_MAGIC 0x4b525053u
@@ -45,7 +45,7 @@
 // the loader's arithmetic on file supplied sizes far from overflowing.
 #define SPARK_MAX_IMAGE (256UL << 20)
 
-struct spark_header {
+struct header {
         unsigned int magic;    // SPARK_MAGIC
         unsigned short version;// SPARK_VERSION
         unsigned short flags;  // reserved, must be 0
@@ -89,17 +89,17 @@ struct spark_header {
 #define SPARK_DEVICE_MAJOR 10
 #define SPARK_DEVICE_MINOR 250
 
-// _IOW('s', 1, struct spark_spawn) -- spelled out so userspace does not need
+// _IOW('s', 1, struct spawn) -- spelled out so userspace does not need
 // the kernel ioctl macros to talk to it. The size is part of the encoding, so
 // this changes if the request struct does.
 #define SPARK_IOCTL_SPAWN 0x40287301u
 
-// _IOR('s', 2, struct spark_stats). Nanoseconds accumulated inside the kernel,
+// _IOR('s', 2, struct stats). Nanoseconds accumulated inside the kernel,
 // so the split between creating the task and loading the image is measured
 // where it happens rather than inferred from the outside.
 #define SPARK_IOCTL_STATS 0x80307302u
 
-struct spark_stats {
+struct stats {
         unsigned long spawns;
         unsigned long task_ns; // time inside user_mode_thread
         unsigned long exec_ns;   // time inside kernel_execve
@@ -111,11 +111,11 @@ struct spark_stats {
                                  // the part that is actually ours to optimise
 };
 
-// _IOR('s', 3, struct dawn_input_stats). Nanoseconds from a pointer event
+// _IOR('s', 3, struct input_stats). Nanoseconds from a pointer event
 // reaching the kernel to the cursor being on screen.
 #define SPARK_IOCTL_INPUT_STATS 0x80307303u
 
-struct dawn_input_stats {
+struct input_stats {
         unsigned long events;
         unsigned long mean_ns;
         unsigned long worst_ns;
@@ -124,7 +124,7 @@ struct dawn_input_stats {
         unsigned long flush_ns;
 };
 
-struct spark_spawn {
+struct spawn {
         unsigned long path;       // user pointer, NUL terminated
         unsigned long argv;       // user pointer to the flat argv block
         unsigned int argv_bytes;  // size of that block

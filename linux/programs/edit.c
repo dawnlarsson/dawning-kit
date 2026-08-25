@@ -13,7 +13,7 @@ fn set_cursor(positive x, positive y)
 {
         cursor.x = x;
         cursor.y = y;
-        dawn_shell_set_cursor(log, cursor);
+        shell_set_cursor(log, cursor);
 }
 
 fn interface()
@@ -31,7 +31,7 @@ fn interface()
 
         log_flush();
 
-        dawn_shell_ls(log, ".");
+        shell_ls(log, ".");
 }
 
 fn frame()
@@ -44,7 +44,7 @@ fn frame()
 
 b32 main()
 {
-        dawn_shell_styles = false;
+        shell_styles = false;
         log(str(TERM_CLEAR_SCREEN TERM_HIDE_CURSOR TERM_ALT_BUFFER TERM_RESET));
 
         while (1)

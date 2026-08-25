@@ -1,5 +1,5 @@
 /*
-        Dawning Experimental C standard library
+        Experimental C standard library
 
         Linux platform specific functions and definitions
 
@@ -9,8 +9,8 @@
         www.dawning.dev
 */
 
-#ifndef DAWN_MODERN_C_PLATFORM_LINUX
-#define DAWN_MODERN_C_PLATFORM_LINUX
+#ifndef STANDARD_MODERN_C_PLATFORM_LINUX
+#define STANDARD_MODERN_C_PLATFORM_LINUX
 
 #include "../library.c"
 

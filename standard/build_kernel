@@ -15,7 +15,7 @@ if [ "$#" -lt 2 ]; then
 fi
 
 compiler=$(key_one compiler) || exit 1
-dawning_flags=$(key dawning_flags)
+program_flags=$(key program_flags)
 
 if [ -z "$compiler" ]; then
         echo "build_kernel: no compiler set in artifacts/.config" >&2
@@ -28,8 +28,8 @@ mkdir -p "$(dirname "$2")" || exit 1
 
 # The result of this used to be discarded, so a failed program build still let
 # the kernel build continue and produce an image with a missing binary in it.
-# shellcheck disable=SC2086 # dawning_flags is a deliberately split flag list
-if ! $compiler "$1.c" -o "$2" $dawning_flags -Wl,-e,_start -Wl,--no-warn-rwx-segments; then
+# shellcheck disable=SC2086 # program_flags is a deliberately split flag list
+if ! $compiler "$1.c" -o "$2" $program_flags -Wl,-e,_start -Wl,--no-warn-rwx-segments; then
         echo "build_kernel: failed to compile $1.c" >&2
         exit 1
 fi

@@ -1,5 +1,5 @@
 /*
-        Dawning Experimental C standard library
+        Experimental C standard library
 
         macOS platform specific functions and definitions
 
@@ -9,8 +9,8 @@
         www.dawning.dev
 */
 
-#ifndef DAWN_MODERN_C_PLATFORM_MACOS
-#define DAWN_MODERN_C_PLATFORM_MACOS
+#ifndef STANDARD_MODERN_C_PLATFORM_MACOS
+#define STANDARD_MODERN_C_PLATFORM_MACOS
 
 #include "../library.c"
 

@@ -29,10 +29,10 @@ output="$2"
 mode="${3:-}"
 
 compiler=$(key_one compiler) || exit 1
-dawning_flags=$(key dawning_flags)
+program_flags=$(key program_flags)
 
 if [ "$mode" = debug ]; then
-        dawning_flags="$dawning_flags -g"
+        program_flags="$program_flags -g"
 fi
 
 # shellcheck disable=SC1007
@@ -47,14 +47,14 @@ fi
 label "$YELLOW""EXPERIMENTAL! C compiled to spark format"
 echo "$BOLD""Compiling $output""$RESET"
 
-work=$(mktemp -d "${TMPDIR:-/tmp}/dawning_spark.XXXXXXXX") || exit 1
+work=$(mktemp -d "${TMPDIR:-/tmp}/spark.XXXXXXXX") || exit 1
 elf="$work/image.elf"
 
 cleanup() { rm -rf "$work"; }
 trap cleanup EXIT INT TERM
 
 # -flto discards the section layout the linker script depends on.
-flags=$(printf '%s' "$dawning_flags" | sed 's/-flto//g')
+flags=$(printf '%s' "$program_flags" | sed 's/-flto//g')
 
 # shellcheck disable=SC2086
 if ! $compiler "$source_file.c" -o "$elf" $flags -static -nostdlib -nostartfiles \

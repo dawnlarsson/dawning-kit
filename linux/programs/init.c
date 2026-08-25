@@ -24,7 +24,7 @@ bipolar start_shell(b32 device)
 {
         if (device >= 0)
         {
-                struct spark_spawn request;
+                struct spawn request;
                 p8 argv_block[64];
                 positive length = string_length(init_program) + 1;
 

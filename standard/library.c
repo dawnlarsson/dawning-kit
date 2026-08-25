@@ -1,5 +1,5 @@
 /*
-        Dawning Experimental C standard library
+        Experimental C standard library
         intended for tiny C programs that run in the distro
         without any runtime requirements (no linking!)
 
@@ -12,8 +12,8 @@
         $ sh build <source_file.c> <output_file_name>
 */
 
-#ifndef DAWN_MODERN_C
-#define DAWN_MODERN_C
+#ifndef STANDARD_MODERN_C
+#define STANDARD_MODERN_C
 
 #if defined(__clang__)
 
@@ -79,7 +79,7 @@
 #define SIMD 1
 #endif
 
-#if defined(__MODULE__) || defined(DAWN_MODERN_C_KERNEL)
+#if defined(__MODULE__) || defined(STANDARD_MODERN_C_KERNEL)
 #define KERNEL_MODE 1
 #endif
 
@@ -721,7 +721,7 @@ typedef struct
         b64 counter;
 } atomic64;
 
-#ifndef DAWN_MODERN_C_NO_MATH
+#ifndef STANDARD_MODERN_C_NO_MATH
 
 #define PI 3.14159265359f
 #define PI2 6.28318530718f
@@ -896,7 +896,7 @@ typedef union matrix4
         vector4 colum[4];
 } matrix4;
 
-#endif // DAWN_MODERN_C_NO_MATH
+#endif // STANDARD_MODERN_C_NO_MATH
 
 // ### Fill a memory block with the same value
 // fills a memory block with the same value
@@ -1396,7 +1396,7 @@ fn path_basename(writer write, string_address input)
         write(input + step, length - step);
 }
 
-fn dawn_shell_set_cursor(writer write, positive2 pos)
+fn shell_set_cursor(writer write, positive2 pos)
 {
         string_format(write, ANSI "%p;%pH", pos.y, pos.x);
 }
@@ -1703,7 +1703,7 @@ address_any memset(address_any destination, int value, long unsigned int size)
         return memory_fill(destination, value, size);
 }
 
-#ifdef DAWN_MODERN_C_COMPATIBILITY
+#ifdef STANDARD_MODERN_C_COMPATIBILITY
 // tbd: https://pubs.opengroup.org/onlinepubs/9799919799/
 
 typedef b8 int8_t;
@@ -1801,9 +1801,9 @@ char address_to strrchr(char address_to source, int character)
         return string_last_of(source, character);
 }
 
-#endif // DAWN_MODERN_C_COMPATIBILITY
+#endif // STANDARD_MODERN_C_COMPATIBILITY
 
-#ifndef DAWN_NO_PLATFORM
+#ifndef STANDARD_NO_PLATFORM
 
 #define stdin 0
 #define stdout 1
@@ -1920,8 +1920,8 @@ __declspec(dllimport) FARPROC __stdcall GetProcAddress(HMODULE, LPCSTR);
 __declspec(dllimport) int __stdcall FreeLibrary(HMODULE);
 #endif
 
-positive dawn_limit_max_name_length = 256;
-string dawn_library_fallback_system_paths = "/lib:/usr/local/lib:/usr/lib";
+positive limit_max_name_length = 256;
+string library_fallback_system_paths = "/lib:/usr/local/lib:/usr/lib";
 
 bool file_valid(file_address source)
 {
@@ -2285,8 +2285,8 @@ fn memory_free(address_any address, positive size)
 #endif
 }
 
-#endif // DAWN_NO_PLATFORM
+#endif // STANDARD_NO_PLATFORM
 
 #endif // KERNEL_MODE
 
-#endif // DAWN_MODERN_C
+#endif // STANDARD_MODERN_C

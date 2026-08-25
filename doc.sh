@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-#       Dawning Doc Kit
+#       Doc Kit
 #       Dawn Larsson (dawning.dev) - 2025 - Apache License 2.0
 #
 # This file is meant to be sourced, so $0 is the caller, not this script.

@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-#       Dawning Bit Kit
+#       Bit Kit
 #       Provides foundational primitives for code generation in a bare bones UNIX environment.
 #       "starting from nothing"
 #
@@ -295,10 +295,10 @@ hex_dump() {
 # is unavailable, in which case O_EXCL-ish semantics are approximated.
 bit_tempfile() {
         if command -v mktemp >/dev/null 2>&1; then
-                mktemp "${TMPDIR:-/tmp}/dawning_bit.XXXXXXXXXX" && return 0
+                mktemp "${TMPDIR:-/tmp}/bit.XXXXXXXXXX" && return 0
         fi
 
-        _fallback="${TMPDIR:-/tmp}/dawning_bit_$$_$1"
+        _fallback="${TMPDIR:-/tmp}/bit_$$_$1"
         [ -e "$_fallback" ] && rm -f "$_fallback"
         (umask 077 && : >"$_fallback") || return 1
         printf '%s' "$_fallback"

@@ -10,13 +10,13 @@
 #
 #       for example
 #
-#               #> glue entry_dawning.asm arch/x86/entry/entry_64.S
+#               #> glue entry.asm arch/x86/entry/entry_64.S
 #
 #       The target has to be a file the kernel's own Makefiles already
 #       compile. This replaces what is there; it cannot add a new object to
 #       somebody else's directory, because nothing would reference it.
 #
-#       The original is kept beside it as <name>.dawning-orig the first time
+#       The original is kept beside it as <name>.original the first time
 #       it is replaced, and never read again -- every build regenerates from
 #       the .asm, so building twice does the same thing as building once.
 #       Removing the #> glue line from the profile puts the original back on
@@ -32,13 +32,13 @@ stamp=artifacts/glue.arch
 arch=$(key_one arch) || exit 1
 
 # Read here rather than through key(), which joins every match onto one line.
-# That is what dawning_flags wants and the opposite of what a pair of paths
+# That is what flags wants and the opposite of what a pair of paths
 # wants: two #> glue lines would come back as four words with nothing saying
 # where one ended.
 requested=artifacts/glue.requested
 sed -n 's/^#> glue //p' artifacts/.config > "$requested"
 
-cleanup() { rm -f "$requested"; }
+cleanup() { rm -f "$requested" "$manifest.keep"; }
 trap cleanup EXIT INT TERM
 
 if [ ! -s "$requested" ] && [ ! -f "$manifest" ]; then
@@ -62,23 +62,51 @@ fi
 # Anything a previous build replaced and this one does not ask for goes back
 # to what the kernel shipped, before the kernel build reads any of it.
 if [ -f "$manifest" ]; then
+        : > "$manifest.keep"
+
         while read -r target; do
                 [ -n "$target" ] || continue
 
                 if awk -v t="$target" '$2 == t { found = 1 } END { exit !found }' "$requested"; then
+                        echo "$target" >> "$manifest.keep"
                         continue
                 fi
 
-                original="linux/$target.dawning-orig"
+                original="linux/$target.original"
 
                 if [ -f "$original" ]; then
                         echo "Restoring $target"
                         mv "$original" "linux/$target"
                 fi
         done < "$manifest"
+
+        mv "$manifest.keep" "$manifest"
 fi
 
-: > "$manifest.new"
+#
+#       The manifest has to be true at every moment, not only once the loop
+#       below has run to the end.
+#
+#       It was written to a second file and moved into place afterwards. A
+#       malformed "#> glue" line stops the loop, and anything replaced before
+#       that line had already had its original moved aside and the kernel file
+#       overwritten -- but the move never happened, so the manifest still
+#       described the previous build. Take the bad line back out along with
+#       the good one next to it and nothing would ever restore that file: the
+#       kernel tree keeps our assembly in place of its own, silently, until
+#       somebody deletes the tree.
+#
+#       So each target is recorded as it is claimed, before the file is
+#       touched. Recording one that then fails to generate costs a restore
+#       that puts back a file that was never changed, which is harmless; the
+#       other way round loses a kernel source file.
+#
+claim() {
+        grep -qxF "$1" "$manifest" 2>/dev/null && return 0
+        echo "$1" >> "$manifest"
+}
+
+[ -f "$manifest" ] || : > "$manifest"
 
 while read -r source target extra; do
         [ -n "${source:-}" ] || continue
@@ -99,7 +127,7 @@ while read -r source target extra; do
 
         asm="src/$source"
         destination="linux/$target"
-        original="$destination.dawning-orig"
+        original="$destination.original"
 
         if [ ! -f "$asm" ]; then
                 echo "glue_replace: no such source: $asm" >&2
@@ -112,6 +140,8 @@ while read -r source target extra; do
                 exit 1
         fi
 
+        claim "$target"
+
         # Still the file the kernel shipped: it has to be written whatever
         # the timestamps say, since a freshly unpacked tarball is newer than
         # the .asm that replaces it.
@@ -121,8 +151,6 @@ while read -r source target extra; do
                 cp "$destination" "$original"
                 untouched=1
         fi
-
-        echo "$target" >> "$manifest.new"
 
         # Rewriting an unchanged file would give it a new timestamp and make
         # the kernel rebuild everything downstream of it on every build.
@@ -134,5 +162,4 @@ while read -r source target extra; do
         sh src/glue "$arch" "$asm" "$destination"
 done < "$requested"
 
-mv "$manifest.new" "$manifest"
 echo "$arch" > "$stamp"

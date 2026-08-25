@@ -1,10 +1,10 @@
 /*
-        Dawning Experimental C standard library
+        Experimental C standard library
 
         single file syscall table for Linux and Apple platforms,
-        can be used standalone or as part of the Dawning C standard library
+        can be used standalone or as part of the C standard library
 
-        example usage without of Dawning C:
+        example usage without of C:
                 syscall(read) // returns syscall_linux_x64_read ( 0 )
 
         Dawn Larsson - Apache-2.0 license

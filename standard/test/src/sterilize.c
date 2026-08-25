@@ -1,6 +1,6 @@
 // performs a reset of the compiler definitions before using the library
 
-#undef DAWN_MODERN_C
+#undef STANDARD_MODERN_C
 
 #undef __clang__
 #undef __GNUC__
@@ -37,7 +37,7 @@
 #undef __ARM_NEON
 
 #undef __MODULE__
-#undef DAWN_MODERN_C_KERNEL
+#undef STANDARD_MODERN_C_KERNEL
 #undef KERNEL_MODE
-#undef DAWN_MODERN_C_COMPATIBILITY
-#undef DAWN_NO_PLATFORM
+#undef STANDARD_MODERN_C_COMPATIBILITY
+#undef STANDARD_NO_PLATFORM
