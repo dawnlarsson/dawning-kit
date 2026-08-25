@@ -335,6 +335,20 @@ wgcVXSeiHcXa9SSFDvKn0L1q5nSLQGHp38qUi1ZPf/1uQSuB3ME=
                 fi
 
         label KERNEL CONFIG
+                #
+                #       x86_64's asm/string_64.h claims memcpy, memmove and
+                #       memset and leaves the rest to the generic byte loops in
+                #       lib/string.c. arm64 and riscv both claim strlen and
+                #       ship their own; this is x86 catching up, so the header
+                #       has to say so or lib/string.c defines it too and
+                #       vmlinux does not link.
+                #
+                for line in \
+                        "#define __HAVE_ARCH_STRLEN" \
+                        "extern __kernel_size_t strlen(const char *);"; do
+                        line_add "linux/arch/x86/include/asm/string_64.h" "$line"
+                done
+
                 line_add_padded "linux/Kconfig" "source \"kernel/moonwater/Kconfig\""
                 line_add_padded "linux/kernel/Makefile" "obj-y += moonwater/"
 
