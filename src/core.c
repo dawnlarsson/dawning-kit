@@ -36,6 +36,7 @@
 #ifdef CONFIG_MOONWATER_DISPLAY
 #include <linux/workqueue.h>
 #include <linux/kthread.h>
+#include <linux/pm_qos.h>
 #include <linux/input.h>
 #include <linux/math64.h>
 #include <linux/minmax.h>

@@ -1000,6 +1000,27 @@ static void display_start_probing(void)
 static struct task_struct *pointer_thread;
 static void pointer_apply(void);
 
+/*
+        How long the processor is allowed to take waking up.
+
+        The largest cost in the path from a pointer moving to the thread that
+        draws it is the processor coming back from an idle state, and the
+        deeper the state the longer that takes -- a cursor moving after a pause
+        is exactly the case that pays it.
+
+        cpu_latency_qos is how a driver says so. It is the generic interface
+        cpuidle governors already honour, so it holds on every architecture
+        with cpuidle rather than only where a boot argument exists: x86 has
+        intel_idle.max_cstate, arm64 has cpuidle-psci and no such argument,
+        and this reaches both.
+
+        Held for as long as there is a pointer, rather than taken around each
+        movement. Taking it on the way in would be exactly backwards: the move
+        that pays the wakeup is the first one after a pause, and at that moment
+        the request has not been made yet.
+*/
+static struct pm_qos_request pointer_qos;
+
 // Nanoseconds from the event arriving to the cursor being on screen.
 // Declared with the rest of the timing counters near the top of the file.
 
@@ -1183,6 +1204,7 @@ static void pointer_stop(void)
                 return;
 
         input_unregister_handler(&pointer_handler);
+        cpu_latency_qos_remove_request(&pointer_qos);
         kthread_stop(pointer_thread);
         pointer_thread = NULL;
 }
@@ -1234,6 +1256,9 @@ static void pointer_start(void)
         }
 
         sched_set_fifo_low(pointer_thread);
+
+        // 0 microseconds: no idle state whose exit can be measured.
+        cpu_latency_qos_add_request(&pointer_qos, 0);
 
         if (input_register_handler(&pointer_handler))
                 log_d("could not register the input handler\n");
