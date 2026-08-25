@@ -1,4 +1,4 @@
-#include "../../library.c"
+#include "../library.c"
 
 // Reduces compiler noise for tests
 #if defined(__clang__)

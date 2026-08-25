@@ -4,9 +4,9 @@
 #
 #       Usage: sh spark <source_without_extension> <output> [debug]
 #
-#       The layout is described in std/spark.c, which the kernel loader
+#       The layout is described in src/spark.c, which the kernel loader
 #       includes too, so the two sides cannot drift apart. Every region is a
-#       whole number of pages -- see std/spark.ld for why.
+#       whole number of pages -- see kit/spark.ld for why.
 #
 set -u
 
@@ -21,7 +21,7 @@ spark_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 # The header is written with the kit's own byte primitives rather than a
 # separate tool, which is the point of having them.
 # shellcheck disable=SC1091
-. "${KIT_DIR:-$spark_dir/../kit}/bit.sh"
+. "${KIT_DIR:-$spark_dir}/bit.sh"
 
 SPARK_MAGIC=0x4b525053
 

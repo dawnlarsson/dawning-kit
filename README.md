@@ -10,7 +10,7 @@ Dawning Kit, Foundational Software Development Kit. Zero dependency: C standard 
 - **`kit/utils.sh`** Shared helpers (sizes, file iteration) used by the kits above.
 - **`/src`** Moonwater: the in-kernel module -- spark binary format, `/dev/spark`, and the compositor.
 - **`/profile`**, **`/programs`**, **`/script`**, `build.sh`: the config fragments the kernel is built from, the spark programs that run on it, and the one script that puts an image together, boots it, or writes it to a stick.
-- **`/std`** C Standard: Entirely self-contained C standard library, also pioneering new syntax and clearer semantics.
+- **`/src`** also holds the C Standard: `library.c`, `platform/` and the spark format's own header. Entirely self-contained, and pioneering new syntax and clearer semantics.
 
 ## Example Use
 

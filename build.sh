@@ -233,7 +233,7 @@ sensitive filesystem, and this is $(uname). Name a machine that has them with
                 # Every program in the image is spark, including the one the kernel
                 # execs as /init, so no ELF is ever loaded on the boot path.
                 for program in init shell duck edit sparktest pointer; do
-                        sh std/spark "programs/$program" "fs/$program" ||
+                        sh kit/spark "programs/$program" "fs/$program" ||
                                 die "building $program"
                 done
 

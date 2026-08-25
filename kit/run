@@ -6,12 +6,13 @@
 #
 set -u
 
-# Prefer this checkout over the /standard symlink, so the script works from a
-# plain clone without localinstall.sh having been run.
+# build is a sibling in kit/, so this always finds it from a plain clone.
+# It used to fall back to /standard/build, which was the symlink localinstall.sh
+# makes; that link points at src/ now, where the library is and the scripts are
+# not, so the fallback would have been a path that cannot exist.
 # shellcheck disable=SC1007 # CDPATH= is a deliberate one-shot empty assignment
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 build="$here/build"
-[ -x "$build" ] || [ -f "$build" ] || build=/standard/build
 
 source_file=${1:-"src/main.c"}
 output_file=${2:-"bin/$(basename "$(pwd)")"}

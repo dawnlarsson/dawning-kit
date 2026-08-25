@@ -40,8 +40,8 @@ jobs:
       - name: Parse POSIX scripts with dash
         run: |
           for f in kit/bit.sh kit/emit.sh \
-                   std/build std/spark std/run std/dev \
-                   std/localinstall.sh std/build_kernel \
+                   kit/build kit/spark kit/run kit/dev \
+                   kit/localinstall.sh kit/build_kernel \
                    build.sh script/*; do
             echo "dash -n $f"
             dash -n "$f"
@@ -52,8 +52,8 @@ jobs:
         run: |
           shellcheck -S warning \
             kit/bit.sh kit/emit.sh kit/doc.sh kit/utils.sh kit/test.sh \
-            std/build std/spark std/run std/dev \
-            std/localinstall.sh std/build_kernel \
+            kit/build kit/spark kit/run kit/dev \
+            kit/localinstall.sh kit/build_kernel \
             build.sh script/*
 
   bit:
@@ -186,22 +186,19 @@ jobs:
       # The library is freestanding: it supplies its own _start, so a hosted
       # link collides with libc's. Build it the way the project does.
       - name: Build the test suite with ${{ matrix.cc }}
-        working-directory: std
-        run: CC=${{ matrix.cc }} sh build test/src/main.c test/bin/test
+        run: CC=${{ matrix.cc }} sh kit/build src/test/main.c src/test/bin/test
 
       - name: Run the test suite
-        working-directory: std
         run: |
-          ./test/bin/test | tee /tmp/report.txt
+          ./src/test/bin/test | tee /tmp/report.txt
           grep -q '0 failed' /tmp/report.txt || { echo "tests failed"; exit 1; }
 
       # Regression guard for the syscall argument register bug: Linux takes the
       # fourth syscall argument in r10, and the syscall instruction clobbers
       # rcx. Passing it in rcx made openat create files with a random mode.
       - name: Syscalls pass argument four correctly
-        working-directory: std
         run: |
-          cat > test/mode_probe.c <<'EOF'
+          cat > src/test/mode_probe.c <<'EOF'
           #include "../library.c"
           b32 main(){
                   bipolar fd = system_call_4(syscall(openat), AT_FDCWD,
@@ -211,7 +208,7 @@ jobs:
           }
           EOF
           rm -f /tmp/mode_probe
-          CC=${{ matrix.cc }} sh build test/mode_probe.c /tmp/oaprobe
+          CC=${{ matrix.cc }} sh kit/build src/test/mode_probe.c /tmp/oaprobe
           /tmp/oaprobe
           mode=$(stat -c %a /tmp/mode_probe)
           echo "openat created mode $mode"
@@ -222,9 +219,8 @@ jobs:
       # stores the compiler emits for a stack fill fault. Verified to exit 139
       # against the old entry point and 0 against the current one.
       - name: Entry point realigns the stack
-        working-directory: std
         run: |
-          cat > test/align_probe.c <<'EOF'
+          cat > src/test/align_probe.c <<'EOF'
           #include "../library.c"
           b32 main()
           {
@@ -238,5 +234,5 @@ jobs:
                   return 0;
           }
           EOF
-          CC=${{ matrix.cc }} sh build test/align_probe.c /tmp/alprobe
+          CC=${{ matrix.cc }} sh kit/build src/test/align_probe.c /tmp/alprobe
           /tmp/alprobe || { echo "vectorized stack fill faulted: _start is not realigning"; exit 1; }

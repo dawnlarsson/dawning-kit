@@ -1,5 +1,5 @@
-#include "../std/library.c"
-#include "../std/spark.c"
+#include "../src/library.c"
+#include "../src/spark.c"
 
 // Reports how long the kernel takes from a pointer event arriving to the
 // cursor being on screen. Move the mouse, then run this.

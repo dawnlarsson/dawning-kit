@@ -1,20 +1,26 @@
 #!/bin/sh
 #
-#       Installs a symlink to this checkout of /standard at the filesystem root,
-#       which is what the dev and run scripts look for.
+#       Installs a symlink to this checkout's src/ at /standard, which is what
+#       the dev and run scripts look for and what a C file including
+#       </standard/library.c> from outside the tree resolves through.
+#
+#       The link keeps its old name. It is a path other people's files may
+#       already have written down, and renaming it would break those without
+#       buying anything.
 #
 set -u
 
 link=/standard
 
-if [ "$(basename "$(pwd)")" != "standard" ]; then
-        cd standard 2>/dev/null || {
-                echo "localinstall: run this from the standard directory" >&2
-                exit 1
-        }
-fi
+# shellcheck disable=SC1007
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 
-target=$(pwd)
+target="$here/../src"
+# shellcheck disable=SC1007
+target=$(CDPATH= cd -- "$target" 2>/dev/null && pwd) || {
+        echo "localinstall: cannot find src/ next to $here" >&2
+        exit 1
+}
 
 if [ -L "$link" ]; then
         current=$(readlink "$link")
