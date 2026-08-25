@@ -7,6 +7,7 @@
 #           sh launch desktop            build with extra profiles, boot
 #           sh launch --run              boot the last image without rebuilding
 #           sh launch --shell            boot with the console on this terminal
+#           sh launch --usb              build, then write it to a USB stick
 #
 #       The kernel is built on another machine, because building it needs a
 #       Linux toolchain and a case sensitive filesystem, and because it is a
@@ -29,11 +30,13 @@ image="$here/dist/bootx64.efi"
 profiles="arch/x64 debug_none serial"
 run_only=0
 console=0
+usb=0
 
 for argument in "$@"; do
         case "$argument" in
         --run) run_only=1 ;;
         --shell) console=1 ;;
+        --usb) usb=1 ;;
         --*)
                 echo "launch: unknown option $argument" >&2
                 exit 1
@@ -82,6 +85,92 @@ if [ "$run_only" -eq 0 ]; then
 fi
 
 [ -f "$image" ] || die "no image at $image -- run without --run to build one"
+
+#
+#       Writing to a USB stick.
+#
+#       The image is already an EFI application -- the kernel is built with the
+#       EFI stub, which is why it is called bootx64.efi -- so firmware can load
+#       it directly and there is no bootloader to install. It goes at the path
+#       the UEFI spec reserves for removable media, \EFI\BOOT\BOOTX64.EFI,
+#       which is what a machine looks for when told to boot from USB.
+#
+if [ "$usb" -eq 1 ]; then
+        command -v diskutil >/dev/null 2>&1 ||
+                die "--usb is written for macOS (diskutil is missing)"
+
+        say "Removable disks"
+
+        # external and physical together exclude internal drives and disk
+        # images, so nothing here can be the machine you are sitting at.
+        disks=$(diskutil list external physical 2>/dev/null |
+                awk '/^\/dev\/disk/ { print $1 }')
+
+        [ -n "$disks" ] || die "no removable disk found -- plug the stick in first"
+
+        index=0
+        for disk in $disks; do
+                index=$((index + 1))
+                name=$(diskutil info "$disk" 2>/dev/null |
+                        awk -F": *" '/Device \/ Media Name/ { print $2; exit }')
+                size=$(diskutil info "$disk" 2>/dev/null |
+                        awk -F": *" '/Disk Size/ { print $2; exit }')
+                printf "  %d) %-12s %-28s %s\n" "$index" "$disk" "${name:-unknown}" "${size:-}"
+        done
+
+        printf "\nWhich one? (number, or anything else to stop) "
+        read -r choice
+
+        case "$choice" in
+        ''|*[!0-9]*) die "nothing written" ;;
+        esac
+
+        target=$(echo "$disks" | sed -n "${choice}p")
+        [ -n "$target" ] || die "no disk $choice in that list"
+
+        # Refuse anything that does not still look removable when asked
+        # directly. The listing and the write are separate moments, and a
+        # mistake here erases the wrong drive.
+        internal=$(diskutil info "$target" 2>/dev/null |
+                awk -F": *" '/^ *Internal:/ { print $2; exit }')
+
+        [ "$internal" = "No" ] ||
+                die "$target reports Internal: ${internal:-unknown} -- refusing"
+
+        name=$(diskutil info "$target" 2>/dev/null |
+                awk -F": *" '/Device \/ Media Name/ { print $2; exit }')
+        size=$(diskutil info "$target" 2>/dev/null |
+                awk -F": *" '/Disk Size/ { print $2; exit }')
+
+        printf "\n\033[1;31mThis erases %s (%s, %s) completely.\033[0m\n" \
+                "$target" "${name:-unknown}" "${size:-unknown size}"
+        printf "Type the disk name to confirm (%s): " "$(basename "$target")"
+        read -r confirmation
+
+        [ "$confirmation" = "$(basename "$target")" ] || die "nothing written"
+
+        say "Erasing $target"
+        diskutil unmountDisk "$target" >/dev/null 2>&1
+        diskutil eraseDisk FAT32 DAWNING GPT "$target" ||
+                die "could not format $target"
+
+        volume="/Volumes/DAWNING"
+        [ -d "$volume" ] || die "formatted, but $volume did not appear"
+
+        say "Writing the image"
+        mkdir -p "$volume/EFI/BOOT" || die "could not create $volume/EFI/BOOT"
+        cp "$image" "$volume/EFI/BOOT/BOOTX64.EFI" || die "could not copy the image"
+        sync
+
+        diskutil eject "$target" >/dev/null 2>&1
+
+        say "Done -- $target is bootable and safe to unplug"
+        echo
+        echo "On the machine: boot it, choose the USB stick from the firmware"
+        echo "boot menu, and make sure it is booting UEFI rather than legacy."
+        echo "Secure Boot has to be off: this kernel is not signed."
+        exit 0
+fi
 
 #       drm_client_lib.active= stops the fbdev client claiming the display.
 #       It has to be built (DRM_CLIENT_LIB depends on it) but it must not take

@@ -177,10 +177,8 @@ CONFIG_DRM=y
 CONFIG_DRM_SIMPLEDRM=y
 CONFIG_SYSFB_SIMPLEFB=y
 
-# No framebuffer console: the compositor owns the screen, and fbcon would
-# paint the kernel log over it. See profile/gpu.
-CONFIG_FRAMEBUFFER_CONSOLE=n
-CONFIG_VT=n
+# The framebuffer console is configured in profile/gpu, where the reasoning
+# about who owns the screen belongs.
 
 #
 # Filesystems. ntfs3 is here because these machines dual boot with Windows

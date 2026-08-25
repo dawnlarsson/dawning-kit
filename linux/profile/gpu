@@ -27,6 +27,13 @@
 #
 CONFIG_DAWNING_DISPLAY=y
 
+# Booted from a USB stick there is no bootloader to pass a command line, and
+# the EFI stub falls back to this one. It keeps the fbdev client away from the
+# display, which is the one argument the compositor cannot do without.
+# A bootloader that does pass a command line still wins, so QEMU is unaffected.
+CONFIG_CMDLINE_BOOL=y
+CONFIG_CMDLINE="drm_client_lib.active="
+
 #
 # Core modesetting
 #
@@ -81,13 +88,22 @@ CONFIG_DRM_SIMPLEDRM=y
 CONFIG_SYSFB_SIMPLEFB=y
 
 #
-# No framebuffer console.
+# The framebuffer console is built but normally has nothing to attach to.
 #
-# The compositor owns the display. fbcon would paint the kernel log straight
-# over whatever it drew -- the two cannot share a screen. The log goes to the
-# serial console instead, which is where a machine being developed on wants it.
-CONFIG_FRAMEBUFFER_CONSOLE=n
-CONFIG_VT=n
+# fbcon binds to an fbdev device, and the only thing that creates one is the
+# fbdev DRM client -- which drm_client_lib.active= keeps from registering. So
+# with the usual command line the compositor owns the screen and fbcon sits
+# idle; boot the same image without that argument and you get the kernel log
+# on the monitor instead. On a machine with no serial port that is the
+# difference between debugging a black screen and guessing at it.
+CONFIG_FB=y
+CONFIG_FB_EFI=y
+CONFIG_FRAMEBUFFER_CONSOLE=y
+CONFIG_FRAMEBUFFER_CONSOLE_DETECT_PRIMARY=y
+CONFIG_VT=y
+CONFIG_VT_CONSOLE=y
+CONFIG_FONT_SUPPORT=y
+CONFIG_FONT_8x16=y
 
 #
 # Backlight, which laptops and some all-in-ones need to show anything at all

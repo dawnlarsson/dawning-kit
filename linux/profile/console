@@ -1,0 +1,29 @@
+#
+# Kernel log on the monitor instead of a desktop.
+#
+# The compositor owns the display, and when it is working that is what you
+# want. When it is not -- a machine that boots to a black screen and has no
+# serial port, which is most desktops -- there is nothing to look at and
+# nothing to go on.
+#
+# This turns the compositor off entirely so the framebuffer console takes the
+# screen the ordinary way and prints the boot log. It is the image to write
+# when the normal one shows nothing:
+#
+#       sh launch --usb console
+#
+# Nothing else changes, so anything that goes wrong before graphics comes up
+# goes wrong identically and is visible this time.
+#
+CONFIG_DAWNING_DISPLAY=n
+
+# With no compositor to keep it away, the fbdev client is wanted after all.
+CONFIG_DRM_FBDEV_EMULATION=y
+CONFIG_FB=y
+CONFIG_FRAMEBUFFER_CONSOLE=y
+CONFIG_VT=y
+CONFIG_VT_CONSOLE=y
+
+# The built-in command line otherwise tells the fbdev client to stay away,
+# which would leave this image with nothing on screen either.
+CONFIG_CMDLINE=""

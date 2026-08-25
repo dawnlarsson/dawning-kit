@@ -196,6 +196,26 @@ are real.
 window, and `sh launch --run` boots the last image without rebuilding. Extra
 profiles can be named: `sh launch desktop`.
 
+### On real hardware
+
+```sh
+sh launch --usb
+```
+
+Builds an image and writes it to a USB stick, after showing you which
+removable disks it can see and making you type the name of the one to erase.
+The kernel is built with the EFI stub, so it is itself an EFI application and
+goes straight to `\EFI\BOOT\BOOTX64.EFI` with no bootloader involved.
+
+On the machine: boot it, pick the stick from the firmware boot menu, and make
+sure it is booting UEFI rather than legacy. Secure Boot has to be off, because
+this kernel is not signed.
+
+If the screen stays black, write `sh launch --usb console` instead. That
+builds the same system with the compositor turned off so the framebuffer
+console takes the screen and prints the boot log -- which on a desktop with no
+serial port is the difference between reading the failure and guessing at it.
+
 ### Building
 Ensure to cd into `dawning-kit/linux` before running build.sh
 
