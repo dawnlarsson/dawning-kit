@@ -28,6 +28,10 @@
 #                                       no other block claimed
 #           #> shared                   go back to emitting for all of them
 #
+#       A #> shared also closes the run of blocks before it, so a file can hold
+#       more than one function: each run gets its own architectures and its own
+#       "other".
+#
 #       Everything before the first #> arch is shared, which is where the
 #       includes and anything portable belong. A #> arch ends the block before
 #       it, and so does the end of the file.
@@ -117,8 +121,13 @@ awk -v want="$arch" -v source="$input" '
         # once, after both readings.
         pass == 2 && !started {
                 started = 1
+                group = 0
+                open_group = 0
 
-                if (seen_arch && !matched && !seen_other) {
+                for (g = 1; g <= groups; g++) {
+                        if (matched[g] || other[g])
+                                continue
+
                         printf "asm: %s has no block for %s\n", source, target > "/dev/stderr"
                         printf "asm: add \"#> arch %s\", or \"#> arch other\" to say there is nothing to do here\n", target > "/dev/stderr"
                         failed = 1
@@ -149,6 +158,12 @@ awk -v want="$arch" -v source="$input" '
 
                         emitting = 1
                         marker = 1
+
+                        # A #> shared closes the run of blocks before it, so
+                        # the next #> arch opens a new one. That is what lets
+                        # one file hold more than one function: each run gets
+                        # its own architectures and its own "other".
+                        open_group = 0
                         next
                 }
 
@@ -158,18 +173,26 @@ awk -v want="$arch" -v source="$input" '
                 if (count < 2)
                         fail(FNR, "#> arch names no architecture")
 
+                if (!open_group) {
+                        open_group = 1
+                        group++
+
+                        if (pass == 1 && group > groups)
+                                groups = group
+                }
+
                 if (word[2] == "other") {
                         if (count != 2)
                                 fail(FNR, "#> arch other cannot be combined with an architecture")
 
                         if (pass == 1) {
-                                if (seen_other)
-                                        fail(FNR, "a second #> arch other; there can be only one")
+                                if (other[group])
+                                        fail(FNR, "a second #> arch other in one run of blocks")
 
-                                seen_other = 1
+                                other[group] = 1
                         }
 
-                        emitting = !matched
+                        emitting = !matched[group]
                         marker = 1
                         next
                 }
@@ -189,12 +212,8 @@ awk -v want="$arch" -v source="$input" '
                                 claimed = 1
                 }
 
-                if (pass == 1) {
-                        seen_arch = 1
-
-                        if (claimed)
-                                matched = 1
-                }
+                if (pass == 1 && claimed)
+                        matched[group] = 1
 
                 emitting = claimed
                 marker = 1
