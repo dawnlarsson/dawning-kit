@@ -172,8 +172,125 @@ sensitive filesystem, and this is $(uname). Name a machine that has them with
                 # SPARK_DEVICE_MINOR in src/spark.c.
                 make_node fs/dev/spark   c 10 250
 
+        label KERNEL SOURCE
+                kernel_extract_dir="linux/"
+                download_artifacts_dir="artifacts/"
+                trusted_keys="torvalds@kernel.org gregkh@kernel.org"
+                kernel_version="7.2"
+
+                # Derived rather than written out, so moving to another release means editing
+                # the version and the signature and nothing else. kernel.org lays every series
+                # out under vMAJOR.x.
+                kernel_series="v${kernel_version%%.*}.x"
+                kernel_download="https://cdn.kernel.org/pub/linux/kernel/$kernel_series/linux-$kernel_version.tar.xz"
+
+                # The signature is pinned here rather than downloaded next to the tarball.
+                # Fetching both would still verify, but only that the archive is signed by a
+                # trusted key -- pinning ties the build to this exact release, so a validly
+                # signed but different kernel cannot be substituted.
+                #
+                # To move to a new release: take the .sign file from
+                # cdn.kernel.org/pub/linux/kernel/vX.x/linux-VERSION.tar.sign and paste it
+                # here along with the version and URL above.
+                kernel_pgp="
+-----BEGIN PGP SIGNATURE-----
+Comment: This signature is for the .tar version of the archive
+Comment: git archive --format tar --prefix=linux-7.2/ v7.2
+Comment: git version 2.55.0
+
+iQIzBAABCgAdFiEEZH8oZUiU471FcZm+ONu9yGCSaT4FAmqCjM4ACgkQONu9yGCS
+aT6jEBAAi+dDv3sQNuZPoSOjnv3be79xilhgbYRjXjYGyYr/axHwyCfRxYkV/sL0
+SHOXT9ZGKp/GPjc8i21Pgca4c4UhckX48RTH7xNO3dR9X8n3g+8OLqP8FF2iFqdv
+TWnagMo6CFyMmWj75WRwcZGKw2fOjCr9tSTSklAkLc8gytgUyHJKxcDHrYDpcdRF
+GbhXn9GauSYu0ablmf6pSInjicXDMzPj9QVSt9NkO6FcrSoAfUfmU4c9EEsKW9T6
+K5LsiyhRgcQfE0zrw1hYQBr2gFSXt8pa2u2XPVVukIBB9XSPdSG2x228b+yHmp/Y
+zPRUzPDVkkK1BkU1D7XJdVmt2C3kfeBUJEcAlVKcDWf9rY80SU6FVyc45TwRfw8h
+kq86+ERAmWOCwYsZjMK4i3PK4Zs60Q0rQZgmMY/mfqSxzMoCV2O9FGea8ZZQIlGH
+m3qZw79igreY852bLihddRDgXAz47VFAwRnqzKaSJVMtUdigEPb34idC2ZE0yp07
+PnHgCqFYktDu3+Enpm7RItsK0b0oQHdmeB8eOPgGSJ3gcJVmGKVaS4zd46gGDgJC
+yt0LTonkwQO8q3jTN/2ffkVjzdrvk4IeYX5k3SQ6rinfebi0OMCQ9xDyR7MYvdwu
+wgcVXSeiHcXa9SSFDvKn0L1q5nSLQGHp38qUi1ZPf/1uQSuB3ME=
+=D53G
+-----END PGP SIGNATURE-----
+"
+
+                kernel_tarball=$download_artifacts_dir"linux-$kernel_version.tar"
+                kernel_archive=$kernel_tarball".xz"
+
+                # check for build dependencies -- this used to sit after the early exit below,
+                # so it never ran on any build after the first.
+                build_required="bison flex bc gpg make gcc clang rustc"
+
+                for pkg in $build_required; do
+                    if ! command -v "$pkg" > /dev/null 2>&1; then
+                        echo "$pkg is required to build the kernel. Please install it and try again." >&2
+                        exit 1
+                    fi
+                done
+
+                # A Makefile is the marker that the tree is really there. Testing only for the
+                # directory treated an empty or half extracted linux/ as a finished extraction.
+                # Was "exit 0" when this was its own script; inlined, that would end the
+                # build rather than this step.
+                kernel_present=0
+                if [ -f "$kernel_extract_dir/Makefile" ]; then
+                    echo $BOLD "Kernel already extracted..." $RESET
+                    kernel_present=1
+                fi
+
+                [ "$kernel_present" -eq 1 ] || extract_kernel() {
+                    echo $BOLD "Checking kernel signature" $RESET
+
+                    # Every step below gates the next one. None of these exit statuses were
+                    # checked before, so a failed download, a failed key fetch or a failed
+                    # signature verification all still ended in a compiled kernel.
+                    if ! gpg --locate-keys $trusted_keys; then
+                        echo "$RED""ERROR: could not fetch the kernel signing keys ($trusted_keys)." >&2
+                        echo "Refusing to build an unverified kernel.""$RESET" >&2
+                        exit 1
+                    fi
+
+                    if ! unxz -k $kernel_archive; then
+                        echo "$RED""ERROR: could not decompress $kernel_archive""$RESET" >&2
+                        exit 1
+                    fi
+
+                    echo "$kernel_pgp" >$kernel_tarball".sign"
+
+                    if ! gpg --verify $kernel_tarball".sign" $kernel_tarball; then
+                        echo "$RED""ERROR: SIGNATURE VERIFICATION FAILED for $kernel_tarball" >&2
+                        echo "The archive does not match the signature pinned in this script." >&2
+                        echo "Refusing to extract or build it. Delete $kernel_archive and retry.""$RESET" >&2
+                        rm -f $kernel_tarball
+                        exit 1
+                    fi
+
+                    if ! tar -xf $kernel_tarball --strip-components=1 -C $kernel_extract_dir; then
+                        echo "$RED""ERROR: could not extract $kernel_tarball""$RESET" >&2
+                        rm -f $kernel_tarball
+                        exit 1
+                    fi
+
+                    rm $kernel_tarball
+
+                    echo $BOLD "Kernel extracted to $kernel_extract_dir" $RESET
+                }
+
+
+                mkdir -p $download_artifacts_dir
+                mkdir -p $kernel_extract_dir
+
+                if [ "$kernel_present" -eq 0 ] && ! is_file $kernel_archive; then
+                    if ! curl -fL $kernel_download -o $kernel_archive; then
+                        echo "ERROR: failed to download $kernel_download" >&2
+                        rm -f $kernel_archive
+                        exit 1
+                    fi
+                fi
+
+                [ "$kernel_present" -eq 1 ] || extract_kernel
+
         label KERNEL CONFIGURATION
-                sudo sh kit/kernel_setup || die "kernel setup"
 
                 # "any" carries what every image needs, "general" the hardware
                 # baseline for an ordinary x86_64 desktop, "gpu" the modesetting the
@@ -275,7 +392,40 @@ sensitive filesystem, and this is $(uname). Name a machine that has them with
                 done
 
         label KERNEL BUILD
-                sudo sh kit/kernel_build || die "kernel build"
+                cpu_cores=$(nproc)
+
+                make_flags=$(key make_flags)
+
+                # The kernel used to be built with whatever arch/x86/Makefile chose, because
+                # nothing reached the C compiler. KCFLAGS is that gap closed.
+                kernel_cflags=$(key kernel_cflags)
+
+                kernel_image=$(key_one kernel_image)
+                kernel_export=$(key_one kernel_export)
+
+                [ -n "$kernel_image" ] && [ -n "$kernel_export" ] ||
+                        die "kernel_image / kernel_export not set in artifacts/.config"
+
+                # In a subshell, so the working directory comes back on its
+                # own. This used to be a separate script and got it back by
+                # being a separate process.
+                #
+                # make's exit status was discarded once, so a failed build fell
+                # through to the copy below and shipped whatever image was left
+                # over from the run before.
+                #
+                # KCPPFLAGS, KAFLAGS, LDFLAGS and RUSTFLAGS were passed here too,
+                # from keys no profile has ever set -- four empty variables
+                # handed to make on every build.
+                # shellcheck disable=SC2086
+                ( cd linux && make -j"$cpu_cores" $make_flags KCFLAGS="$kernel_cflags" ) ||
+                        die "kernel build"
+
+                [ -f "$kernel_image" ] ||
+                        die "expected image '$kernel_image' was not produced"
+
+                mkdir -p "$(dirname "$kernel_export")"
+                sudo cp "$kernel_image" "$kernel_export"
 
         label POST BUILD
                 eval "$(key "post")"
