@@ -42,7 +42,7 @@ jobs:
           for f in kit/bit.sh kit/emit.sh \
                    kit/build kit/spark kit/asm kit/common \
                    kit/config kit/verify_config kit/kernel_setup \
-                   kit/kernel_build kit/asm_replace kit/localinstall.sh \
+                   kit/kernel_build kit/asm_replace \
                    build.sh; do
             echo "dash -n $f"
             dash -n "$f"
@@ -55,7 +55,7 @@ jobs:
             kit/bit.sh kit/emit.sh kit/doc.sh kit/utils.sh kit/test.sh \
             kit/build kit/spark kit/asm kit/common \
             kit/config kit/verify_config kit/kernel_setup \
-            kit/kernel_build kit/asm_replace kit/localinstall.sh \
+            kit/kernel_build kit/asm_replace \
             build.sh
 
   bit:

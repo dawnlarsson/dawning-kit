@@ -3,19 +3,19 @@ set -e
 . kit/common
 
 if [ "$#" -lt 1 ]; then
-    echo "Usage: sh kit/config <profile1> [profile2] [profile3] ..." >&2
-    echo "Example: sh kit/config any arch/x64 debug_none" >&2
-    exit 1
+        echo "Usage: sh kit/config <profile1> [profile2] [profile3] ..." >&2
+        echo "Example: sh kit/config any arch/x64 debug_none" >&2
+        exit 1
 fi
 
 # A missing profile used to print a warning and carry on, producing a config
 # silently missing whole feature sets. Check them all before writing anything.
 missing=0
 for profile in "$@"; do
-    if [ ! -f "profile/$profile" ]; then
+        if [ ! -f "profile/$profile" ]; then
         echo "config: no such profile: profile/$profile" >&2
         missing=1
-    fi
+        fi
 done
 
 [ "$missing" -eq 0 ] || exit 1
@@ -24,9 +24,9 @@ echo "# Auto generated, do not edit." >artifacts/.config
 cat artifacts/info >>artifacts/.config
 
 for profile in "$@"; do
-    echo "" >>artifacts/.config
-    echo "Adding profile: $profile"
-    cat "profile/$profile" >>artifacts/.config
+        echo "" >>artifacts/.config
+        echo "Adding profile: $profile"
+        cat "profile/$profile" >>artifacts/.config
 done
 
 #

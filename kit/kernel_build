@@ -5,19 +5,9 @@ set -e
 cpu_cores=$(nproc)
 
 make_flags=$(key make_flags)
-shared_flags=$(key shared_flags)
-linker_flags=$(key linker_flags)
-rust_flags=$(key rust_flags)
 
-# Flags for the C compiler building the kernel, which had no way in at all:
-# shared_flags reaches the preprocessor and the assembler and stops there, so
-# the kernel was built with whatever arch/x86/Makefile chose and nothing could
-# say otherwise.
-#
-# Deliberately its own key rather than folding it into shared_flags. That one
-# also feeds KAFLAGS, which reaches the 16-bit real mode boot code that
-# arch/x86/Makefile builds with -march=i386, and an x86-64 flag arriving there
-# is the one place this could go wrong.
+# The kernel used to be built with whatever arch/x86/Makefile chose, because
+# nothing reached the C compiler. KCFLAGS is that gap closed.
 kernel_cflags=$(key kernel_cflags)
 
 kernel_image=$(key_one kernel_image)
@@ -32,12 +22,10 @@ cd linux || exit 1
 
 # make's exit status was discarded, so a failed build still fell through to the
 # copy below and shipped whatever image was left over from a previous run.
-if ! make -j"$cpu_cores" $make_flags \
-        KCPPFLAGS="$shared_flags" \
-        KAFLAGS="$shared_flags" \
-        KCFLAGS="$kernel_cflags" \
-        LDFLAGS="$linker_flags" \
-        RUSTFLAGS="$rust_flags"; then
+#
+# KCPPFLAGS, KAFLAGS, LDFLAGS and RUSTFLAGS were passed here too, from keys no
+# profile has ever set -- four empty variables handed to make on every build.
+if ! make -j"$cpu_cores" $make_flags KCFLAGS="$kernel_cflags"; then
         echo "kernel_build: make failed" >&2
         exit 1
 fi

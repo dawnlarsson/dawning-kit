@@ -46,6 +46,13 @@ compiler=${CC:-gcc}
 # Under dash -- /bin/sh on Debian and Ubuntu -- every append after the first
 # silently failed, so the compiler ran without -O2 or any hardening flag.
 # A single quoted assignment is POSIX and cannot partially apply.
+# Close to profile/any's program_flags, which is the same list for the image's
+# programs, and deliberately not identical. That one carries -ffunction-sections
+# and -fdata-sections; this one does not need them, because kit/spark strips
+# -flto (it discards the section layout its linker script depends on) and this
+# keeps it, and LTO already collects what --gc-sections would. Checked: adding
+# them changes the output by zero bytes, on a small program and on the test
+# suite alike.
 flags_base="-static -s -flto -nostdlib -nostartfiles -ffreestanding -fno-builtin \
 -Qn -Wl,--build-id=none -Wl,--gc-sections -Wl,--strip-all -Wl,--strip-debug -Wl,-x -Wl,-s \
 -Wl,--no-warn-rwx-segments -Wl,-nmagic \

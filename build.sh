@@ -190,12 +190,14 @@ sensitive filesystem, and this is $(uname). Name a machine that has them with
                         profiles="any general gpu guests latency prod $extra"
                 fi
 
-                # shellcheck disable=SC2086
-                is_file artifacts/.config ||
-                        sudo sh kit/config $profiles ||
-                        die "configuration"
-
-                [ -z "$extra" ] || sudo sh kit/config $profiles || die "configuration"
+                # Regenerated whenever profiles were named, and otherwise
+                # only when there is nothing to reuse. This used to be two
+                # conditionals that between them ran config twice on any build
+                # with arguments.
+                if [ -n "$extra" ] || ! is_file artifacts/.config; then
+                        # shellcheck disable=SC2086
+                        sudo sh kit/config $profiles || die "configuration"
+                fi
 
                 make_flags=$(key make_flags)
 
@@ -227,20 +229,18 @@ sensitive filesystem, and this is $(uname). Name a machine that has them with
                         (
                                 cd linux || exit 1
                                 sudo make allnoconfig "$make_flags" > /dev/null || exit 1
-                                # Quiet on purpose. merge_config compares the one
-                                # combined fragment against an allnoconfig baseline, so
-                                # it reports a "redefined" line for most of what the
-                                # profiles ask for -- 125 of them, none of which mean
-                                # anything. Where two profiles genuinely disagree is
-                                # inside that fragment, and kit/config reports it.
+                                # Quiet: merge_config compares the combined
+                                # fragment against an allnoconfig baseline and
+                                # calls most of what the profiles ask for a
+                                # "redefinition" -- 125 lines meaning nothing.
+                                # kit/config reports the disagreements that
+                                # matter, between profiles.
                                 #
-                                # make_flags goes in the environment rather than on the
-                                # command line: merge_config.sh takes fragment paths as
-                                # its trailing arguments, so an "ARCH=arm64" handed to
-                                # it positionally is read as a file that does not exist
-                                # and the build stops -- which is what every cross
-                                # build has been doing. It runs make internally, so the
-                                # environment reaches the same place anyway.
+                                # make_flags goes in the environment, not on
+                                # the command line: merge_config.sh reads
+                                # trailing arguments as fragment paths, so
+                                # "ARCH=arm64" became a file that did not
+                                # exist and stopped every cross build.
                                 # shellcheck disable=SC2086
                                 env $make_flags sh scripts/kconfig/merge_config.sh -m .config ../artifacts/.config > /dev/null || exit 1
                                 sudo make olddefconfig "$make_flags" > /dev/null || exit 1
