@@ -1,10 +1,10 @@
 #!/bin/sh
 set -e
-. script/common
+. kit/common
 
 if [ "$#" -lt 1 ]; then
-    echo "Usage: sh script/config <profile1> [profile2] [profile3] ..." >&2
-    echo "Example: sh script/config any arch/x64 debug_none" >&2
+    echo "Usage: sh kit/config <profile1> [profile2] [profile3] ..." >&2
+    echo "Example: sh kit/config any arch/x64 debug_none" >&2
     exit 1
 fi
 

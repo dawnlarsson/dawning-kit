@@ -22,11 +22,11 @@
 #       for an option wins, which is how merge_config resolves them too, so a
 #       profile deliberately overriding an earlier one is not reported.
 #
-#       Usage: sh script/verify_config <built .config> [profile ...]
+#       Usage: sh kit/verify_config <built .config> [profile ...]
 #
 set -u
 
-. script/common
+. kit/common
 
 config="$1"
 shift

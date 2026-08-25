@@ -9,6 +9,7 @@
 #           sh build.sh --run --shell         boot with the console on this terminal
 #           sh build.sh --boot                boot the last image, do not rebuild
 #           sh build.sh --usb                 build, then write a USB stick
+#           sh build.sh --clean                remove what a build produced
 #           sh build.sh --host box            build on another machine over ssh
 #
 #       The build happens here by default. Building a kernel wants a Linux
@@ -29,7 +30,18 @@
 # "Done Building Kernel" and a stale image copied to dist/.
 set -e
 
-. script/common
+# Sourced by this script's own path rather than a relative one, so that being
+# in the wrong directory produces is_safe's explanation rather than a bare
+# "kit/common: No such file or directory" from the shell.
+# shellcheck disable=SC1007
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+# shellcheck disable=SC1091
+. "$here/kit/common"
+
+# Every path below is relative to the repository root. kit/common no longer
+# checks that on being sourced -- it is a library, and libraries that refuse to
+# load are why its helpers got copied around -- so the entry point checks.
+is_safe
 
 die() {
         echo "$RED""build failed: $*""$RESET" >&2
@@ -49,11 +61,13 @@ remote=${MOONWATER_BUILD_DIR:-/tmp/moonwater-build}
 extra=""
 do_run=0
 do_build=1
+do_clean=0
 do_usb=0
 console=0
 
 while [ "$#" -gt 0 ]; do
         case "$1" in
+        --clean) do_clean=1 ;;
         --run) do_run=1 ;;
         --boot) do_run=1; do_build=0 ;;
         --shell) console=1 ;;
@@ -128,15 +142,38 @@ sensitive filesystem, and this is $(uname). Name a machine that has them with
 
         label REPOSITORY SETUP
                 echo "Building $info_full_name"
-                sudo sh script/setup || die "repository setup"
+                mkdir -p artifacts fs dist || die "repository setup"
 
         label DISTRO INFO
                 echo "CONFIG_LOCALVERSION=\"$info_full_name\"" > artifacts/info
                 echo "CONFIG_DEFAULT_HOSTNAME=\"$info_name-box\"" >> artifacts/info
-                sudo sh script/fs_setup || die "filesystem setup"
+                #
+                #       The device nodes the image boots with. mknod fails
+                #       when the node already exists, which made every rebuild
+                #       after the first noisy and, under set -e, fatal -- so
+                #       each is created only when missing.
+                #
+                mkdir -p fs/sys fs/proc fs/dev || die "filesystem setup"
+
+                make_node() {
+                        [ -e "$1" ] && return 0
+                        mknod "$1" "$2" "$3" "$4"
+                }
+
+                make_node fs/dev/tty     c 5 0
+                make_node fs/dev/console c 5 1
+                make_node fs/dev/null    c 1 3
+                make_node fs/dev/zero    c 1 5
+                make_node fs/dev/random  c 1 8
+                make_node fs/dev/urandom c 1 9
+
+                # /dev/spark is how userspace asks the kernel to spawn a
+                # program without forking first. The minor has to match
+                # SPARK_DEVICE_MINOR in src/spark.c.
+                make_node fs/dev/spark   c 10 250
 
         label KERNEL CONFIGURATION
-                sudo sh script/kernel_setup || die "kernel setup"
+                sudo sh kit/kernel_setup || die "kernel setup"
 
                 # "any" carries what every image needs, "general" the hardware
                 # baseline for an ordinary x86_64 desktop, "gpu" the modesetting the
@@ -155,10 +192,10 @@ sensitive filesystem, and this is $(uname). Name a machine that has them with
 
                 # shellcheck disable=SC2086
                 is_file artifacts/.config ||
-                        sudo sh script/config $profiles ||
+                        sudo sh kit/config $profiles ||
                         die "configuration"
 
-                [ -z "$extra" ] || sudo sh script/config $profiles || die "configuration"
+                [ -z "$extra" ] || sudo sh kit/config $profiles || die "configuration"
 
                 make_flags=$(key make_flags)
 
@@ -195,7 +232,7 @@ sensitive filesystem, and this is $(uname). Name a machine that has them with
                                 # it reports a "redefined" line for most of what the
                                 # profiles ask for -- 125 of them, none of which mean
                                 # anything. Where two profiles genuinely disagree is
-                                # inside that fragment, and script/config reports it.
+                                # inside that fragment, and kit/config reports it.
                                 #
                                 # make_flags goes in the environment rather than on the
                                 # command line: merge_config.sh takes fragment paths as
@@ -217,14 +254,14 @@ sensitive filesystem, and this is $(uname). Name a machine that has them with
                 # anything a profile asked for and did not get is reported here rather
                 # than discovered later as hardware that does not work.
                 # shellcheck disable=SC2086
-                sh script/verify_config linux/.config $profiles
+                sh kit/verify_config linux/.config $profiles
 
         label ASSEMBLY
                 # Where a profile asked for a .asm from src/ to stand in for a file
                 # the kernel already builds. The .asm files that belong to the module
                 # rather than to the kernel need nothing here -- src/Makefile builds
                 # those as part of it.
-                sudo sh script/asm_replace || die "assembly"
+                sudo sh kit/asm_replace || die "assembly"
 
         label PRE BUILD
                 eval "$(key "pre")"
@@ -238,7 +275,7 @@ sensitive filesystem, and this is $(uname). Name a machine that has them with
                 done
 
         label KERNEL BUILD
-                sudo sh script/kernel_build || die "kernel build"
+                sudo sh kit/kernel_build || die "kernel build"
 
         label POST BUILD
                 eval "$(key "post")"
@@ -246,6 +283,25 @@ sensitive filesystem, and this is $(uname). Name a machine that has them with
                 size "$(key kernel_export)"
                 echo "$RESET"
 }
+
+#
+#       Removing what a build produced.
+#
+#       artifacts/ keeps the downloaded kernel tarball and is left alone on
+#       purpose: throwing it away means fetching a hundred and fifty megabytes
+#       again to get back where you were.
+#
+if [ "$do_clean" -eq 1 ]; then
+        say "Removing build output"
+        rm -rf dist fs linux \
+                artifacts/merge.config artifacts/.config artifacts/info \
+                artifacts/asm.applied artifacts/asm.arch artifacts/asm.requested
+        rm -f src/*.a src/*.o src/*.o.d src/*.cmd src/*.order
+        # The .S kit/asm generates from each .asm, which kbuild writes here
+        # because src/ is the kernel tree's kernel/moonwater.
+        rm -f src/*.S src/*.asm_tmp
+        exit 0
+fi
 
 if [ "$do_build" -eq 1 ]; then
         if [ -n "$host" ]; then

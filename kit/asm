@@ -49,7 +49,7 @@
 #
 #       This lives beside the sources rather than in linux/script because
 #       kbuild reaches it through the symlink that puts src/ in the kernel
-#       directory. It needs nothing from script/common and runs standalone.
+#       directory. It needs nothing from kit/common and runs standalone.
 #
 set -u
 

@@ -534,7 +534,7 @@ static const struct file_operations device_ops = {
 };
 
 // A fixed minor rather than MISC_DYNAMIC_MINOR: there is no devtmpfs here to
-// materialise the node, so script/fs_setup mknods it into the initramfs and
+// materialise the node, so build.sh mknods it into the initramfs and
 // both sides have to agree on the number. 240-254 is the range set aside for
 // local use.
 static struct miscdevice device = {

@@ -92,10 +92,10 @@ is_file() {
 # looking for something only the root has, rather than by the directory's
 # name, which was the old test and broke the moment the tree was rearranged.
 is_safe() {
-        if [ ! -d profile ] || [ ! -d script ] || [ ! -f build.sh ]; then
+        if [ ! -d profile ] || [ ! -d kit ] || [ ! -f build.sh ]; then
                 echo "ERROR: not in the repository root." >&2
                 echo "These scripts expect to run from the directory holding" >&2
-                echo "build.sh, profile/ and script/. Current directory: $(pwd)" >&2
+                echo "build.sh, kit/ and profile/. Current directory: $(pwd)" >&2
                 exit 1
         fi
 }
@@ -162,4 +162,8 @@ is_different_age() {
         [ "$(stat_mtime "$1")" -ne "$(stat_mtime "$2")" ]
 }
 
-is_safe
+# is_safe is deliberately not called here. This file used to run it on being
+# sourced, which made it a library that refused to load anywhere but the
+# repository root -- so anything needing its helpers from elsewhere copied them
+# instead, and the size formatter ended up existing three times. Whatever needs
+# the guard calls it; build.sh does, first thing.

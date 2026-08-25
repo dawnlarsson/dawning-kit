@@ -51,7 +51,7 @@ CONFIG_ACPI_DEBUG=n
 #                     read the other end are gone, but the driver the OptiPlex
 #                     needs pulls the pipe in regardless.
 #
-# Each was asked for as =n first and script/verify_config reported it, which
+# Each was asked for as =n first and kit/verify_config reported it, which
 # is what that check is for. Asking again only produces the same warning.
 #
 

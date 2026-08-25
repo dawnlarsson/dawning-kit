@@ -7,44 +7,16 @@
 #           --run     run it once the build succeeds
 #           --watch   rebuild and rerun on every change under the source tree
 #
-#       This is deliberately not sourcing script/common, even though the three
-#       size helpers below are copies of the ones in it: script/common runs
-#       is_safe, which refuses to load outside the repository root, and the
-#       whole point of this script is that it works on a source file anywhere.
+#       The size helpers come from kit/common, sourced from this script's own
+#       directory rather than the working one: the point of this script is
+#       building a file anywhere, and the working directory could be anything.
 #
 set -u
 
-# stat takes -c on GNU and -f on BSD/macOS; neither accepts the other's flag.
-size_bytes() {
-        if stat -c%s "$1" 2>/dev/null; then
-                return 0
-        fi
-        stat -f%z "$1" 2>/dev/null
-}
-
-size_fmt() {
-        size=$1
-
-        if [ "$size" -lt 1024 ]; then
-                echo "${size} B"
-        elif [ "$size" -lt 1048576 ]; then # KB
-                kb_int=$((size / 1024))
-                kb_dec=$((((size % 1024) * 10) / 1024))
-                echo "${kb_int}.${kb_dec} KB"
-        else # MB
-                mb_int=$((size / 1048576))
-                mb_dec=$((((size % 1048576) * 10) / 1048576))
-                echo "${mb_int}.${mb_dec} MB"
-        fi
-}
-
-size() {
-        bytes=$(size_bytes "$1") || {
-                echo "size: cannot stat '$1'" >&2
-                return 1
-        }
-        echo "$1: $bytes bytes ($(size_fmt "$bytes"))"
-}
+# shellcheck disable=SC1007
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+# shellcheck disable=SC1091
+. "$here/common"
 
 verbose=false
 do_run=false

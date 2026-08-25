@@ -21,7 +21,7 @@ moonwater-y := core.o
 #       Which architecture that is comes from the kernel's own configuration
 #       rather than from the build scripts, so the answer cannot disagree with
 #       what is actually being compiled. That holds for the .asm files built
-#       here and nowhere else: script/asm_replace, which puts a .asm in the
+#       here and nowhere else: kit/asm_replace, which puts a .asm in the
 #       place of a file the kernel already builds, runs before any of this and
 #       has only the profile's "#> arch" to go on. The two agree because the
 #       profile sets both, not because anything checks.

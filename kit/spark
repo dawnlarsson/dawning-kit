@@ -10,7 +10,7 @@
 #
 set -u
 
-. script/common
+. kit/common
 
 # Found from this script's own directory rather than from the working one,
 # which used to be assumed to be one level below the root and stopped being

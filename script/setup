@@ -1,5 +1,0 @@
-#!/bin/sh
-set -e
-. script/common
-
-mkdir -p artifacts fs dist

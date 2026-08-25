@@ -11,7 +11,7 @@
 # fragment saying =n for an invisible symbol is discarded by olddefconfig
 # without a word. Eleven of the options below were being ignored that way, so
 # a kernel built from a profile named debug_none shipped SLUB_DEBUG,
-# DEBUG_MEMORY_INIT and core dump support. script/verify_config now reports
+# DEBUG_MEMORY_INIT and core dump support. kit/verify_config now reports
 # this rather than leaving it to be discovered.
 #
 CONFIG_EXPERT=y

@@ -24,7 +24,7 @@
 #
 set -e
 
-. script/common
+. kit/common
 
 manifest=artifacts/asm.applied
 stamp=artifacts/asm.arch

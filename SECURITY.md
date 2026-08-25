@@ -14,7 +14,7 @@ produced binary or kernel image until it has been addressed.
 
 ### Kernel source integrity
 
-`script/kernel_setup` pins a PGP signature for the exact kernel tarball it
+`kit/kernel_setup` pins a PGP signature for the exact kernel tarball it
 downloads and verifies the archive against it. Verification is a gate: if the
 key fetch, the decompression, or the signature check fails, the script exits and
 nothing is extracted or built.

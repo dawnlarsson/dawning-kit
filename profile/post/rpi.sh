@@ -1,5 +1,5 @@
 #!/bin/sh
-. script/common
+. kit/common
 
 source="https://github.com/raspberrypi/firmware/raw/master/"
 

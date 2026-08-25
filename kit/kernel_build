@@ -1,6 +1,6 @@
 #!/bin/sh
 set -e
-. script/common
+. kit/common
 
 cpu_cores=$(nproc)
 
