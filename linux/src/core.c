@@ -47,8 +47,9 @@
 // cannot be included into this translation unit the way display.c is
 // -- so the compiler is told its shape here, in the file that calls it.
 //
-// moonwater_ticks.asm
+// ticks.asm
 u64 moonwater_ticks(void);
+
 
 int path_mount(const char *dev_name, struct path *path,
                const char *type_page, unsigned long flags, void *data_page);
@@ -573,6 +574,35 @@ static fn init_mount()
         }
 }
 
+/*
+        Proves the assembly runs.
+
+        A .asm that assembles and links is not a .asm that works: until
+        something calls it, the only thing the build has shown is that the
+        file is syntactically valid for this architecture. This reads the
+        counter twice with a barrier between, which catches the two ways a
+        wrong block fails -- a counter that never advances, and one that goes
+        backwards because the halves were put together the wrong way round.
+
+        Two reads and no delay. The delta is printed rather than the value,
+        because a raw counter says nothing and a delta says it is counting.
+*/
+static void __init check_ticks(void)
+{
+        u64 first = moonwater_ticks();
+        u64 second;
+
+        barrier();
+        second = moonwater_ticks();
+
+        if (second > first)
+                log_k("ticks: counting, %llu between two reads\n",
+                      (unsigned long long)(second - first));
+        else
+                log_k("ticks: did not advance (%llu then %llu)\n",
+                      (unsigned long long)first, (unsigned long long)second);
+}
+
 // Likewise: an initcall does not need external linkage.
 static b32 __init start()
 {
@@ -594,6 +624,7 @@ static b32 __init start()
         */
         wait_for_initramfs();
 
+        check_ticks();
         init_mount();
 
         register_binfmt(&format);
