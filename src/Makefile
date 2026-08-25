@@ -18,6 +18,11 @@ moonwater-y := core.o
 #       assembled by the toolchain's own assembler through the kernel's
 #       ordinary rule for .S files. See kit/asm for the dialect.
 #
+#       The glob is one level deep on purpose. src/replace/ holds the other
+#       kind of .asm -- the ones that stand in for a file the kernel already
+#       builds -- and those must not be linked into the module as well, or the
+#       symbol they define exists twice and vmlinux does not link.
+#
 #       Which architecture that is comes from the kernel's own configuration
 #       rather than from the build scripts, so the answer cannot disagree with
 #       what is actually being compiled. That holds for the .asm files built

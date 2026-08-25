@@ -1,12 +1,19 @@
 #!/bin/sh
 #
-#       Puts a .asm from src/ in the place of a file the kernel already
+#       Puts a .asm from src/replace/ in the place of a file the kernel already
 #       builds, which is the other half of what kit/asm is for: not everything
 #       worth writing in assembly can live in a module.
 #
+#       Its own directory, and that is not tidiness. src/Makefile globs every
+#       .asm beside it and links the result into the module, so a replacement
+#       left in src/ is built twice -- once as part of moonwater and once over
+#       the kernel file it replaces -- and the link fails on a multiple
+#       definition of whatever it defines. The two kinds of .asm are different
+#       things: one is module source, the other is a patch to the kernel.
+#
 #       A profile asks for one with
 #
-#               #> asm <file in src/> <path under linux/>
+#               #> asm <file in src/replace/> <path under linux/>
 #
 #       for example
 #
@@ -125,7 +132,7 @@ while read -r source target extra; do
                 ;;
         esac
 
-        asm="src/$source"
+        asm="src/replace/$source"
         destination="linux/$target"
         original="$destination.original"
 

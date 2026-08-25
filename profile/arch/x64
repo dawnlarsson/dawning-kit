@@ -26,6 +26,21 @@
 #
 #> kernel_cflags -march=x86-64-v2
 
+#
+#       Population count, at the floor the line above sets.
+#
+#       arch/x86/lib/hweight.S carries a software fallback for processors
+#       without POPCNT, reached through an ALTERNATIVE that rewrites all 332
+#       call sites to a single popcntq on anything that has it. x86-64-v2
+#       includes POPCNT, so that fallback cannot run on a machine this kernel
+#       can boot on -- gcc is already emitting the instruction in plain C.
+#
+#       src/replace/hweight.asm is that file with the twiddling replaced by the
+#       instruction. Not faster, since the call sites are patched either way;
+#       it removes unreachable code and states the floor where it is visible.
+#
+#> asm hweight.asm arch/x86/lib/hweight.S
+
 #       The spark programs stay at the baseline, and that is a correction
 #       rather than an oversight. Raising them to v2 as well looked free --
 #       they are ordinary static userspace with no -mno-sse -- and it killed
