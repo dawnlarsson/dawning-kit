@@ -83,6 +83,11 @@ fi
 
 [ -f "$image" ] || die "no image at $image -- run without --run to build one"
 
+#       drm_client_lib.active= stops the fbdev client claiming the display.
+#       It has to be built (DRM_CLIENT_LIB depends on it) but it must not take
+#       the screen, or the compositor is drawing underneath something else.
+cmdline="console=ttyS0 drm_client_lib.active="
+
 say "Booting $(du -h "$image" | cut -f1) image"
 
 #       virtio-gpu rather than the default VGA: it is the only device here that
@@ -91,10 +96,14 @@ say "Booting $(du -h "$image" | cut -f1) image"
 #
 #       usb-tablet reports absolute positions, so the pointer inside the guest
 #       follows the one on the host instead of drifting.
+#       -vga none matters: without it QEMU also creates a standard VGA device,
+#       the window shows that one because it is the boot VGA, and the
+#       compositor ends up drawing on the other card where nobody can see it.
 set -- \
         -m 2G \
         -smp 2 \
         -kernel "$image" \
+        -vga none \
         -device virtio-gpu-pci \
         -device qemu-xhci -device usb-tablet -device usb-kbd \
         -no-reboot
@@ -106,8 +115,8 @@ fi
 
 if [ "$console" -eq 1 ]; then
         say "Console on this terminal, ctrl-a x to quit"
-        exec qemu-system-x86_64 "$@" -append "console=ttyS0" -display none -serial mon:stdio
+        exec qemu-system-x86_64 "$@" -append "$cmdline" -display none -serial mon:stdio
 fi
 
 say "Window opening, ctrl-alt-g releases the mouse"
-exec qemu-system-x86_64 "$@" -append "console=ttyS0" -display cocoa -serial mon:stdio
+exec qemu-system-x86_64 "$@" -append "$cmdline" -display cocoa -serial mon:stdio

@@ -35,7 +35,14 @@ CONFIG_DRM_KMS_HELPER=y
 CONFIG_DRM_CLIENT=y
 CONFIG_DRM_CLIENT_SELECTION=y
 CONFIG_DRM_CLIENT_LIB=y
+
+# On despite nothing here wanting an fbdev: DRM_CLIENT_LIB, which the
+# compositor is built on, is only selected by this or by DRM_CLIENT_LOG.
+# Turning it off takes DRM_CLIENT with it and the compositor stops existing.
+# The client it registers is kept away from the display at boot instead, with
+# drm_client_lib.active= on the kernel command line.
 CONFIG_DRM_FBDEV_EMULATION=y
+
 CONFIG_DRM_GEM_SHMEM_HELPER=y
 CONFIG_DRM_TTM=y
 CONFIG_DRM_DISPLAY_HELPER=y
@@ -74,13 +81,13 @@ CONFIG_DRM_SIMPLEDRM=y
 CONFIG_SYSFB_SIMPLEFB=y
 
 #
-# Console on top of KMS
+# No framebuffer console.
 #
-CONFIG_FRAMEBUFFER_CONSOLE=y
-CONFIG_FRAMEBUFFER_CONSOLE_DETECT_PRIMARY=y
-CONFIG_FRAMEBUFFER_CONSOLE_ROTATION=y
-CONFIG_FONT_SUPPORT=y
-CONFIG_FONT_8x16=y
+# The compositor owns the display. fbcon would paint the kernel log straight
+# over whatever it drew -- the two cannot share a screen. The log goes to the
+# serial console instead, which is where a machine being developed on wants it.
+CONFIG_FRAMEBUFFER_CONSOLE=n
+CONFIG_VT=n
 
 #
 # Backlight, which laptops and some all-in-ones need to show anything at all

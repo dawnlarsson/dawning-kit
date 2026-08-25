@@ -174,14 +174,13 @@ CONFIG_SND_USB_AUDIO=y
 # profile.
 #
 CONFIG_DRM=y
-CONFIG_DRM_FBDEV_EMULATION=y
 CONFIG_DRM_SIMPLEDRM=y
 CONFIG_SYSFB_SIMPLEFB=y
-CONFIG_FB=y
-CONFIG_FB_EFI=y
-CONFIG_FRAMEBUFFER_CONSOLE=y
-CONFIG_VT=y
-CONFIG_VT_CONSOLE=y
+
+# No framebuffer console: the compositor owns the screen, and fbcon would
+# paint the kernel log over it. See profile/gpu.
+CONFIG_FRAMEBUFFER_CONSOLE=n
+CONFIG_VT=n
 
 #
 # Filesystems. ntfs3 is here because these machines dual boot with Windows
