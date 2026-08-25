@@ -1,3 +1,21 @@
+#
+# Debugging: none of it.
+#
+# CONFIG_EXPERT is what makes the rest of this file mean anything. A large
+# number of kernel options are written
+#
+#       bool "Something" if EXPERT
+#       default y
+#
+# which makes them invisible and forced on unless EXPERT is set -- and a
+# fragment saying =n for an invisible symbol is discarded by olddefconfig
+# without a word. Eleven of the options below were being ignored that way, so
+# a kernel built from a profile named debug_none shipped SLUB_DEBUG,
+# DEBUG_MEMORY_INIT and core dump support. script/verify_config now reports
+# this rather than leaving it to be discovered.
+#
+CONFIG_EXPERT=y
+
 CONFIG_PRINTK=y
 CONFIG_TTY_PRINTK=y
 CONFIG_PRINTK_TIME=n
@@ -14,7 +32,11 @@ CONFIG_DEBUG_INFO_SPLIT=n
 CONFIG_DEBUG_INFO_DWARF4=n
 CONFIG_DEBUG_INFO_BTF=n
 
-CONFIG_BUG=n
+# BUG stays. It buys nothing to remove: a BUG_ON is a trap instruction that
+# costs nothing until it fires, and turning it off does not make the kernel
+# faster, it makes it carry on quietly through a condition it knows is wrong.
+# In a kernel we are actively changing that is a bad trade at any size saving.
+CONFIG_BUG=y
 CONFIG_CRASH_DUMP=n
 
 CONFIG_FTRACE=n
@@ -23,9 +45,9 @@ CONFIG_SYMBOLIC_ERRNAME=n
 
 CONFIG_KPROBES=n
 
-CONFIG_UNWINDER_GUESS=n
-CONFIG_UNWINDER_ORC=n
-CONFIG_UNWINDER_FRAME_POINTER=n
+# The unwinder choice belongs to the latency profile: on x86_64 the
+# alternative to ORC is frame pointers, which is a runtime cost rather than a
+# saving.
 
 CONFIG_ELF_CORE=n
 CONFIG_COREDUMP=n
@@ -34,7 +56,12 @@ CONFIG_MAGIC_SYSRQ=n
 CONFIG_IO_DELAY_0X80=n
 
 CONFIG_STACKTRACE=n
-CONFIG_DEBUG_KERNEL=n
+
+# DEBUG_KERNEL is not a debug feature, it is a visibility switch, and EXPERT
+# selects it on purpose -- "unhide debug options, to make the on-by-default
+# options visible". It turns nothing on by itself; it is what lets the lines
+# above turn things off. Asking for n only produces a warning that it cannot.
+CONFIG_DEBUG_KERNEL=y
 CONFIG_DEBUG_MISC=n
 CONFIG_FRAME_POINTER=n
 CONFIG_DEBUG_MEMORY_INIT=n
@@ -46,7 +73,6 @@ CONFIG_LDISC_AUTOLOAD=n
 CONFIG_SOFTLOCKUP_DETECTOR=n
 CONFIG_HARDLOCKUP_DETECTOR=n
 
-CONFIG_DEBUG_BUGVERBOSE=n
 CONFIG_DEBUG_FS=n
 CONFIG_DEBUG_VM=n
 CONFIG_DEBUG_STACK_USAGE=n
@@ -61,12 +87,21 @@ CONFIG_ENABLE_DEFAULT_TRACERS=n
 CONFIG_PNP_DEBUG_MESSAGES=n
 
 CONFIG_SLUB_DEBUG=n
-CONFIG_SLUB_TINY=y
 
-CONFIG_GENERIC_BUG=n
-CONFIG_GENERIC_BUG_RELATIVE_POINTERS=n
+# SLUB_TINY is a size option, not a speed one: it drops the per-cpu partial
+# lists that make the fast path fast. It was being asked for and quietly not
+# granted, which was the better outcome.
+CONFIG_SLUB_TINY=n
+
+# Both follow BUG, which is staying.
+CONFIG_GENERIC_BUG=y
+CONFIG_GENERIC_BUG_RELATIVE_POINTERS=y
+
+# 70K of file names and line numbers to print when something has already gone
+# wrong. It is image size rather than runtime, but a trap that reports the
+# instruction pointer is enough to find the line it came from.
+CONFIG_DEBUG_BUGVERBOSE=n
 
 # all yes for prod
-CONFIG_UNWINDER_NONE=y
 CONFIG_STRIP_ASM_SYMS=y
 CONFIG_DEBUG_INFO_NONE=y

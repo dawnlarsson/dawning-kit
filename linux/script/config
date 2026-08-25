@@ -29,4 +29,36 @@ for profile in "$@"; do
     cat "profile/$profile" >>artifacts/.config
 done
 
+#
+#       Where two profiles disagree.
+#
+#       The profiles are concatenated into one fragment, so merge_config sees
+#       a single file and can only compare it against the kernel's defaults --
+#       it has no way to say that "gpu" and "console" asked for opposite
+#       things. The last value written wins, silently. This is the only place
+#       that comparison can be made.
+#
+conflicts=$(
+        sed -n 's|^\(CONFIG_[A-Z0-9_]*\)=\(.*\)$|\1 \2|p' artifacts/.config |
+                sort -u |
+                awk '{ print $1 }' |
+                uniq -d
+)
+
+if [ -n "$conflicts" ]; then
+        echo
+        echo "Profiles disagree -- the last value wins:"
+
+        for option in $conflicts; do
+                printf "  %s\n" "$option"
+
+                for profile in "$@"; do
+                        value=$(sed -n "s|^$option=\(.*\)\$|\1|p" "profile/$profile" | tail -1)
+                        [ -n "$value" ] && printf "      %-14s %s\n" "$profile" "$value"
+                done
+        done
+
+        echo
+fi
+
 echo "Configuration generated at artifacts/.config"

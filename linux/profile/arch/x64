@@ -6,13 +6,47 @@
 #> arch x86_64
 #> virt qemu-system-x86_64
 
+#
+#       What the compiler is allowed to assume about the machine.
+#
+#       The kernel was built at -march=x86-64 -mtune=generic, which is the
+#       2003 baseline: no SSE4.2, no POPCNT, no CMPXCHG16B, and tuning blended
+#       across every x86 ever made including Atom. Nothing could change it --
+#       there was no way to pass a C flag to the kernel build at all.
+#
+#       x86-64-v2 is Nehalem and Bulldozer onward, which is the floor this
+#       distribution already claims: any desktop from about 2012. v3 (Haswell,
+#       AVX2, BMI) is available and produces better code again, but it would
+#       drop Sandy and Ivy Bridge, and those are inside the target.
+#
+#       Safe despite arch/x86/Makefile disabling SSE for kernel code: -mno-sse
+#       and friends are not undone by a later -march. Checked rather than
+#       assumed -- compiling with both and disassembling gives zero vector
+#       registers at v2 and at v3, and popcnt appears where it should.
+#
+#> kernel_cflags -march=x86-64-v2
+
+#       The spark programs stay at the baseline, and that is a correction
+#       rather than an oversight. Raising them to v2 as well looked free --
+#       they are ordinary static userspace with no -mno-sse -- and it killed
+#       PID 1 on the first boot:
+#
+#           traps: init[1] trap invalid opcode ip:4006d9
+#
+#       which disassembles to pinsrq, an SSE4.1 instruction GCC reached for in
+#       a structure copy. Real hardware from 2012 has SSE4.1; QEMU's default
+#       CPU model does not, so it cost the ability to boot the image in the
+#       loop used to develop it, in exchange for better code in programs that
+#       are syscall wrappers and were measured spawning in 7.6 us. The kernel
+#       is a different case: it is compiled with -mno-sse, so v2 there means
+#       integer instructions only and there is no vector code to trip over.
 #> dawning_flags -march=x86-64
 
 
 CONFIG_64BIT=y
 
 CONFIG_X86_64=y
-CONFIG_X86_32=y
+# X86_32 is the other architecture and can never be y in this profile.
 CONFIG_X86=y
 CONFIG_INSTRUCTION_DECODER=y
 CONFIG_OUTPUT_FORMAT="elf64-x86-64"
@@ -30,21 +64,25 @@ CONFIG_ARCH_HAS_CPU_RELAX=y
 CONFIG_ARCH_HIBERNATION_POSSIBLE=y
 CONFIG_ARCH_SUSPEND_POSSIBLE=y
 CONFIG_AUDIT_ARCH=y
-CONFIG_HAVE_INTEL_TXT=y
-CONFIG_X86_64_SMP=y
+# HAVE_INTEL_TXT is a capability bool selected by INTEL_TXT, not a setting.
+# X86_64_SMP no longer exists; SMP alone covers it.
 CONFIG_ARCH_SUPPORTS_UPROBES=y
 CONFIG_FIX_EARLYCON_MEM=y
 CONFIG_PGTABLE_LEVELS=5
-CONFIG_CC_HAS_SANE_STACKPROTECTOR=y
+# CC_HAS_SANE_STACKPROTECTOR was a compiler capability probe, not a
+# setting, and has been removed.
 
 CONFIG_X86_MSR=y
 CONFIG_X86_IOPL_IOPERM=y
 CONFIG_X86_64_ACPI_NUMA=y
 CONFIG_X86_CPUID=y
-CONFIG_X86_X32_ABI=y
-CONFIG_X86_16BIT=y
+# X86_X32_ABI and X86_16BIT used to be asserted here. Both default to y,
+# so naming them changed nothing except the order of the argument: this
+# profile is passed on the build line and lands after prod, which quietly
+# undid prod's decision to remove them. Whether they are wanted is policy,
+# not architecture, and prod owns it.
 CONFIG_X86_FRED=y
-CONFIG_X86_5LEVEL=y
+# X86_5LEVEL no longer exists: five level paging is decided at runtime.
 CONFIG_X86_REROUTE_FOR_BROKEN_BOOT_IRQS=y
 CONFIG_X86_MPPARSE=y
 CONFIG_X86_CPU_RESCTRL=y

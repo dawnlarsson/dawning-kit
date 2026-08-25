@@ -200,9 +200,16 @@ say "Booting $(du -h "$image" | cut -f1) image"
 #       -vga none matters: without it QEMU also creates a standard VGA device,
 #       the window shows that one because it is the boot VGA, and the
 #       compositor ends up drawing on the other card where nobody can see it.
+#       -cpu Nehalem, not the default. The kernel is compiled -march=x86-64-v2,
+#       whose floor is Nehalem, and QEMU's default model is older than any
+#       machine this targets. The image does still boot on the default -- that
+#       was checked rather than assumed -- so this is not a requirement; it is
+#       so the loop runs on a machine inside the stated hardware range instead
+#       of one below all of it.
 set -- \
         -m 2G \
         -smp 2 \
+        -cpu Nehalem \
         -kernel "$image" \
         -vga none \
         -device virtio-gpu-pci \

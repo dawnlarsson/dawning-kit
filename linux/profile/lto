@@ -1,0 +1,35 @@
+#
+# Link time optimisation
+#
+# Opt in, not composed by default:
+#
+#       sh launch lto
+#       sudo sh build.sh arch/x64 debug_none serial lto
+#
+# The kernel's LTO is Clang's and only Clang's -- there is no GCC path -- so
+# this is not a flag, it is the whole toolchain. Everything gets compiled by a
+# different compiler with different codegen, and the build host needs clang,
+# lld and the llvm binutils rather than gcc and binutils.
+#
+# It works. It builds clean, boots, brings the compositor up and claims the
+# cursor plane, and the image comes out 258 KB smaller -- 8,373,248 down to
+# 8,115,200, about 3%.
+#
+# What it does not do is show up in the number this project measures. Eight
+# paired runs under KVM, 300 pointer events each: 25.1 us against gcc's 25.0.
+# Dead even, and the two worst runs of the sixteen were both this build.
+#
+# So it stays opt in. Switching the entire kernel to another compiler for
+# three percent of image size and no measured latency, on a config that has
+# only ever been validated on one machine, is the user's call rather than a
+# default -- and it wants a boot on real hardware before it becomes one.
+# Kconfig marks it EXPERIMENTAL, which is fair.
+#
+# One warning is expected and benign: ld.lld reports HUF_readCTable in the
+# zstd decompressor using 1288 bytes of stack against a 1280 limit.
+#
+
+#> make_flags LLVM=1
+
+CONFIG_LTO_CLANG_THIN=y
+CONFIG_LTO_NONE=n

@@ -12,7 +12,18 @@ CONFIG_DAWNING_CORE=y
 CONFIG_INITRAMFS_SOURCE="../fs"
 
 CONFIG_RD_GZIP=y
-CONFIG_KERNEL_GZIP=y
+#
+# Nine options were removed from this file because they could never take:
+# GENERIC_IRQ_CHIP, GENERIC_IRQ_INJECTION, GENERIC_IRQ_STAT_SNAPSHOT,
+# IRQ_SIM and IRQ_MSI_IOMMU are internal bools a driver selects and no
+# fragment can set; ZONE_DEVICE and MEMORY_FAILURE need memory hotplug
+# and machine check support that this kernel does not build; KEXEC_ELF
+# follows KEXEC, which debug_none turns off on purpose; and KERNEL_GZIP
+# is the other half of a choice already settled as zstd.
+#
+# They cost nothing except nine lines in verify_config's report on every
+# build, which is how a check stops being read.
+#
 CONFIG_HAVE_KERNEL_GZIP=y
 CONFIG_HAVE_KERNEL_ZSTD=y
 CONFIG_KERNEL_ZSTD=y
@@ -62,7 +73,6 @@ CONFIG_ACPI_PCI_SLOT=y
 #
 # Memory
 #
-CONFIG_MEMORY_FAILURE=y
 CONFIG_TRANSPARENT_HUGEPAGE=y
 
 CONFIG_SWAP=y
@@ -73,7 +83,6 @@ CONFIG_ZSWAP_COMPRESSOR_DEFAULT="zstd"
 
 CONFIG_ZONE_DMA=y
 CONFIG_ZONE_DMA32=y
-CONFIG_ZONE_DEVICE=y
 
 
 #
@@ -84,17 +93,12 @@ CONFIG_GENERIC_IRQ_SHOW=y
 CONFIG_GENERIC_IRQ_EFFECTIVE_AFF_MASK=y
 CONFIG_GENERIC_PENDING_IRQ=y
 CONFIG_GENERIC_IRQ_MIGRATION=y
-CONFIG_GENERIC_IRQ_INJECTION=y
 CONFIG_HARDIRQS_SW_RESEND=y
-CONFIG_GENERIC_IRQ_CHIP=y
 CONFIG_IRQ_DOMAIN=y
-CONFIG_IRQ_SIM=y
 CONFIG_IRQ_DOMAIN_HIERARCHY=y
 CONFIG_GENERIC_MSI_IRQ=y
-CONFIG_IRQ_MSI_IOMMU=y
 CONFIG_GENERIC_IRQ_MATRIX_ALLOCATOR=y
 CONFIG_GENERIC_IRQ_RESERVATION_MODE=y
-CONFIG_GENERIC_IRQ_STAT_SNAPSHOT=y
 CONFIG_IRQ_FORCED_THREADING=y
 CONFIG_SPARSE_IRQ=y
 
@@ -104,9 +108,9 @@ CONFIG_SPARSE_IRQ=y
 CONFIG_BINFMT_ELF=y
 CONFIG_BINFMT_SCRIPT=y
 CONFIG_BINFMT_MISC=y
-CONFIG_LIBELF=y
-CONFIG_ELF_SYSCALLS=y
-CONFIG_KEXEC_ELF=y
+# LIBELF and ELF_SYSCALLS were asked for here and are not kernel symbols
+# at all -- the first is a host build dependency, the second never
+# existed. Both showed in verify_config's dropped list every build.
 
 #
 # EFI
@@ -142,7 +146,6 @@ CONFIG_POSIX_MQUEUE_SYSCTL=y
 CONFIG_WATCH_QUEUE=y
 CONFIG_SATA_AHCI=y
 CONFIG_SATA_AHCI_PLATFORM=y
-CONFIG_SATA_AHCI_PCI=y
 CONFIG_DEVTMPFS=y
 CONFIG_DEVTMPFS_MOUNT=y
 CONFIG_TMPFS=y
@@ -193,10 +196,12 @@ CONFIG_HIDRAW=y
 CONFIG_HID_SUPPORT=y
 CONFIG_USB_HID=y
 CONFIG_HID_GENERIC=y
-CONFIG_USB_HIDINPUT=y
 CONFIG_USB_HIDDEV=y
-CONFIG_USB_HIDRAW=y
-CONFIG_USB_HID_QUIRKS=y
+
+# USB_HIDRAW, USB_HIDINPUT, USB_HID_QUIRKS and SATA_AHCI_PCI used to be listed
+# here as well. All four were the old names for things already asked for above
+# under their current ones, so they did nothing but appear in verify_config's
+# dropped list on every build.
 
 # Hardware random number generator
 CONFIG_HW_RANDOM=y

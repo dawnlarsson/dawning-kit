@@ -1,0 +1,191 @@
+#
+# Production
+#
+# The machinery a kernel developer needs and nobody else does. Not debug
+# options -- debug_none covers those -- but whole subsystems that exist so a
+# running kernel can be inspected, traced and taken apart: performance
+# counters, the tracing substrate, kernel memory exposed as a file, the symbol
+# table, the unwinder that makes a backtrace readable.
+#
+# This is a deliberate trade and it goes one way: what it removes is what you
+# would use to work out why the kernel misbehaved. What is left is printk,
+# which is what has actually been used here -- the initramfs race that broke
+# the compositor was found by reading "-2" out of dmesg, not from a trace.
+#
+# For a kernel you need to debug, put debug_all after this on the build line
+# and it wins the options it names.
+#
+
+#
+# Runtime cost, on the path this project measures.
+#
+# Both of these arrived by accident. CONFIG_EXPERT selects DEBUG_KERNEL on
+# purpose -- to unhide the on-by-default debug options so they can be turned
+# off -- and these two are written "depends on DEBUG_KERNEL / default y", so
+# unhiding them switched them on. They are not free: the FPU checks run on
+# every context switch, and the RCU tracepoints sit in every read side
+# critical section, which on this kernel includes the display commit path.
+#
+CONFIG_X86_DEBUG_FPU=n
+CONFIG_RCU_TRACE=n
+CONFIG_TRACE_CLOCK=n
+
+#
+# Whole subsystems.
+#
+# ACPICA's debug output, about 50K of message infrastructure reachable only by
+# setting acpi.debug_level on the command line.
+CONFIG_ACPI_DEBUG=n
+
+#
+# Three that cannot go, written down so nobody spends the afternoon again.
+#
+#   PERF_EVENTS       arch/x86/Kconfig selects it unconditionally. It is part
+#                     of x86 on this kernel, not an option.
+#
+#   TRACING_SUPPORT   has no prompt at all: "bool / default y", derived from
+#                     the architecture having TRACE_IRQFLAGS and STACKTRACE
+#                     support. Nothing in a config fragment can reach it.
+#
+#   RELAY             selected by drivers/gpu/drm/i915. The tracing tools that
+#                     read the other end are gone, but the driver the OptiPlex
+#                     needs pulls the pipe in regardless.
+#
+# Each was asked for as =n first and script/verify_config reported it, which
+# is what that check is for. Asking again only produces the same warning.
+#
+
+#
+# Kernel memory as a file.
+#
+# /proc/kcore is the running kernel's memory presented as an ELF core file for
+# a debugger to read, and /proc/*/pagemap exposes physical page numbers. Both
+# are inspection tools, and both are the kind of thing that turns a small bug
+# into a readable copy of everything.
+#
+CONFIG_PROC_KCORE=n
+CONFIG_PROC_PAGE_MONITOR=n
+
+#
+# Symbols and unwinding.
+#
+# Together these are what make an oops readable, and together they are the
+# largest thing in this file. Without them a panic prints raw addresses and a
+# guessed stack.
+#
+# KALLSYMS carries every kernel symbol in the image so a fault can be reported
+# by name. With CONFIG_MODULES off nothing else needs it: no module loader to
+# resolve against, no ftrace, no kprobes, no BPF.
+#
+# The guess unwinder scans the stack and prints every kernel text address it
+# finds, some of which are stale and wrong. ORC is accurate and costs image
+# size for its tables; frame pointers are accurate and cost a register and a
+# prologue in every function, which is why they are not the alternative here.
+#
+# Worth saying once: RANDOMIZE_BASE stays on, so those raw addresses are also
+# randomised per boot. If a machine is crashing and has to be understood, the
+# way back is nokaslr on the command line and a build without this profile --
+# not one of these three settings on its own.
+#
+CONFIG_KALLSYMS=n
+CONFIG_UNWINDER_GUESS=y
+CONFIG_UNWINDER_ORC=n
+
+#
+# Driver debug that came in with the drivers.
+#
+# None of this is a debug option in the menuconfig sense. It is verbose error
+# tables, procfs surfaces and selftest hooks that individual subsystems turn
+# on by default because their maintainers assume somebody is watching.
+#
+
+# libata's human readable error decoding, a table of strings for faults that
+# print a status register either way.
+CONFIG_ATA_VERBOSE_ERROR=n
+
+# ALSA's procfs tree, and the verbose half of it. The compositor image has no
+# tool that reads /proc/asound.
+CONFIG_SND_VERBOSE_PROCFS=n
+
+# /proc/scsi, which predates sysfs and exists for tools that have not used it
+# in twenty years.
+CONFIG_SCSI_PROC_FS=n
+
+# Benchmarks eight RAID6 syndrome routines at boot to pick the fastest. Real
+# boot time, on a machine with no RAID6 array -- RAID6_PQ is here because
+# btrfs selects it, not because anything assembles a stripe. Without this the
+# first working routine is used.
+CONFIG_RAID6_PQ_BENCHMARK=n
+
+#
+# Rarely used in 2026.
+#
+
+# The x32 ABI: 32-bit pointers with the 64-bit instruction set. It has had
+# essentially no users since it was merged and removing it has been proposed
+# upstream more than once. Not to be confused with IA32_EMULATION, which is
+# ordinary 32-bit userspace and stays -- Steam and Wine need it.
+CONFIG_X86_X32_ABI=n
+
+# 16-bit segment support, which is there for DOSEMU and 16-bit Windows
+# programs under Wine. Turning it off also takes ESPFIX64, which exists only
+# to work around a leak in 16-bit stack segments and has no other purpose.
+CONFIG_X86_16BIT=n
+
+# /dev/input/mice, the single merged mouse device X11 read. The compositor is
+# called by the input core directly and never opens an input node.
+CONFIG_INPUT_MOUSEDEV=n
+
+# Disk quotas. TMPFS_QUOTA has to go with them -- it selects QUOTA, which is
+# the only reason the whole subsystem was here, and per-mount limits on a
+# tmpfs is not something anything in this image sets.
+CONFIG_TMPFS_QUOTA=n
+CONFIG_QUOTA=n
+CONFIG_QUOTACTL=n
+
+# Two cgroup controllers with nothing on the other end: the perf one needs
+# perf tooling that is not here, and the RDMA one needs an Infiniband card.
+CONFIG_CGROUP_PERF=n
+CONFIG_CGROUP_RDMA=n
+
+#
+# Two more that cannot go, for the same reason as the three above.
+#
+#   SYSCTL_EXCEPTION_TRACE   selected unconditionally by arch/x86, like
+#                            PERF_EVENTS.
+#
+#   NET_SELFTESTS            "def_tristate PHYLIB" -- it is not a setting, it
+#                            follows the ethernet PHY layer, and removing that
+#                            removes wired networking.
+#
+
+#
+# Performance counter hardware drivers.
+#
+# PERF_EVENTS itself cannot go -- arch/x86 selects it -- but the PMU drivers
+# under it are ordinary options that default to y, and they are the bulk of
+# the code. Uncore counts memory controller and last level cache events, RAPL
+# reads the energy counters, CSTATE counts idle residency. All three exist to
+# be sampled by perf, which is not in this image, and together they are the
+# largest single thing left that nothing here can reach.
+#
+CONFIG_PERF_EVENTS_INTEL_UNCORE=n
+CONFIG_PERF_EVENTS_INTEL_RAPL=n
+CONFIG_PERF_EVENTS_INTEL_CSTATE=n
+
+#
+# CPU vendors that are not the target.
+#
+# The stated hardware is any desktop from about 2012 onward, which means Intel
+# and AMD. Hygon is an AMD derivative sold in China, Centaur is VIA, and
+# Zhaoxin is its successor. Each brings its own errata handling, cache
+# topology quirks and feature detection for silicon this will not run on.
+#
+# PROCESSOR_SELECT is the switch that makes the per-vendor options visible at
+# all -- the same "bool ... if SOMETHING / default y" shape as the EXPERT
+# options above, and the same silent discard without it.
+CONFIG_PROCESSOR_SELECT=y
+
+CONFIG_CPU_SUP_HYGON=n
+CONFIG_CPU_SUP_CENTAUR=n
+CONFIG_CPU_SUP_ZHAOXIN=n

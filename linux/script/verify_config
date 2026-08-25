@@ -1,11 +1,26 @@
 #!/bin/sh
 #
-#       Reports options a profile asked for that are not in the built config.
+#       Reports where the built kernel disagrees with what the profiles asked
+#       for, in both directions.
 #
-#       merge_config.sh and olddefconfig drop anything whose dependencies are
-#       unmet, and they do it silently. A profile can therefore ask for a
-#       driver, get no warning, and produce a kernel without it -- which only
-#       shows up as hardware that does not work. This makes that visible.
+#       merge_config.sh and olddefconfig drop unmet options silently, so a
+#       profile can ask for a driver, get no warning, and produce a kernel
+#       without it -- which shows up later as hardware that does not work.
+#
+#       The other direction is quieter and was missed for longer. A great many
+#       kernel options read
+#
+#               bool "Something" if EXPERT
+#               default y
+#
+#       which means that without CONFIG_EXPERT the symbol is invisible, forced
+#       on, and a profile line saying =n is discarded without a word. That is
+#       how a kernel built from a profile named debug_none shipped SLUB_DEBUG,
+#       DEBUG_BUGVERBOSE and DEBUG_MEMORY_INIT for as long as it did.
+#
+#       Profiles are read in the order they are composed and the last request
+#       for an option wins, which is how merge_config resolves them too, so a
+#       profile deliberately overriding an earlier one is not reported.
 #
 #       Usage: sh script/verify_config <built .config> [profile ...]
 #
@@ -21,36 +36,85 @@ if ! is_file "$config"; then
         exit 1
 fi
 
-missing=0
-requested=0
+requests=$(mktemp)
+effective=$(mktemp)
+trap 'rm -f "$requests" "$effective"' EXIT
 
 for profile in "$@"; do
         profile_path="profile/$profile"
 
         is_file "$profile_path" || continue
 
-        # Only y and m matter: a profile setting something to n and the build
-        # agreeing is not a discrepancy worth reporting.
-        for option in $(sed -n 's/^\(CONFIG_[A-Z0-9_]*\)=[ym]$/\1/p' "$profile_path"); do
-                requested=$((requested + 1))
+        # Only the tri-state settings can be checked this way. A string or an
+        # integer option is left alone: it has no "present or absent" reading.
+        # | as the delimiter, because a profile name can contain a slash.
+        sed -n "s|^\(CONFIG_[A-Z0-9_]*\)=\([ymn]\)\$|\1 \2 $profile|p" "$profile_path"
+done >"$requests"
 
-                if ! grep -q "^$option=[ym]$" "$config"; then
-                        [ "$missing" -eq 0 ] && echo "$YELLOW""Requested but not in the built kernel:""$RESET"
-                        echo "  $option  ($profile)"
-                        missing=$((missing + 1))
-                fi
-        done
-done
+# Last request wins, so read the list backwards and keep the first sighting.
+awk '{ line[NR] = $0 }
+     END {
+             for (i = NR; i >= 1; i--) {
+                     split(line[i], f, " ")
+                     if (f[1] in seen)
+                             continue
+                     seen[f[1]] = 1
+                     print line[i]
+             }
+     }' "$requests" >"$effective"
 
-if [ "$missing" -eq 0 ]; then
-        echo "All $requested requested options are present."
+dropped=$(mktemp)
+forced=$(mktemp)
+trap 'rm -f "$requests" "$effective" "$dropped" "$forced"' EXIT
+
+requested=0
+
+# Collected first and printed after, rather than as they are found: the two
+# kinds are interleaved in the request list, and printing a heading the first
+# time each kind appears files half the entries under the wrong one.
+while read -r option value profile; do
+        requested=$((requested + 1))
+
+        case "$value" in
+        y | m)
+                grep -q "^$option=[ym]\$" "$config" ||
+                        echo "  $option  ($profile)" >>"$dropped"
+                ;;
+        n)
+                ! grep -q "^$option=" "$config" ||
+                        echo "  $option  ($profile)" >>"$forced"
+                ;;
+        esac
+done <"$effective"
+
+missing=$(wc -l <"$dropped" | tr -d " ")
+lingering=$(wc -l <"$forced" | tr -d " ")
+
+if [ "$missing" -ne 0 ]; then
+        echo "$YELLOW""Requested but not in the built kernel:""$RESET"
+        cat "$dropped"
+fi
+
+if [ "$lingering" -ne 0 ]; then
+        echo "$YELLOW""Asked to be off but built in anyway:""$RESET"
+        cat "$forced"
+fi
+
+if [ "$missing" -eq 0 ] && [ "$lingering" -eq 0 ]; then
+        echo "All $requested requested options took effect."
         exit 0
 fi
 
 echo
-echo "$missing of $requested requested options were dropped."
-echo "Usually this means an unmet dependency, or a symbol that was renamed or"
-echo "removed in this kernel version. Check with:"
+[ "$missing" -eq 0 ] ||
+        echo "$missing of $requested requested options were dropped -- usually an
+unmet dependency, or a symbol renamed or removed in this kernel version."
+
+[ "$lingering" -eq 0 ] ||
+        echo "$lingering of $requested options could not be turned off -- usually a
+symbol that is invisible and forced on without CONFIG_EXPERT."
+
+echo "Check either with:"
 echo "  grep -rn '^config OPTION\$' -A5 linux/*/Kconfig*"
 
 # Not fatal: a profile composed for one architecture will legitimately carry

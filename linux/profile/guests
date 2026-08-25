@@ -1,0 +1,116 @@
+#
+# Running other distributions
+#
+# The core of this system is its own thing -- spark binaries, an in-kernel
+# compositor -- and deliberately small. Everything else comes from somewhere
+# that already solved it: an Alpine, Debian or Arch userspace in a namespace,
+# with its own package manager, sharing this kernel.
+#
+# That sharing is the whole point and it is why there is no overhead to
+# measure. A guest is not emulated or translated; its processes are processes
+# on this kernel making the same syscalls as anything else. What a namespace
+# changes is only what they can see.
+#
+# Composed in by default: a kernel that cannot run other people's userspace is
+# not useful for this.
+#
+# The two lines below that could have cost something are MEMCG and
+# CGROUP_SCHED: memory cgroups charge pages in the allocator, and group
+# scheduling walks a hierarchy on every enqueue and dequeue, which is the
+# path the compositor's cursor worker is woken on. They were measured against
+# a build without them -- 300 pointer events per run, three runs each, under
+# KVM -- and the handoff came out 33 us with them against 31 without, on a run
+# to run spread of 8 us either side and one run that stalled to 74. Below the
+# noise, so they stay. Note SCHED_AUTOGROUP depends on
+# CGROUP_SCHED, so removing it would take desktop session grouping with it.
+#
+
+# The namespaces a container is made of. PID and USER were the two missing
+# pieces -- without PID a guest sees every process on the machine, and without
+# USER it cannot have its own root.
+CONFIG_NAMESPACES=y
+CONFIG_UTS_NS=y
+CONFIG_IPC_NS=y
+CONFIG_PID_NS=y
+CONFIG_USER_NS=y
+CONFIG_NET_NS=y
+CONFIG_TIME_NS=y
+
+# Accounting and limits, so one guest cannot take the machine down.
+CONFIG_CGROUPS=y
+CONFIG_MEMCG=y
+CONFIG_CGROUP_SCHED=y
+CONFIG_CGROUP_PIDS=y
+CONFIG_CGROUP_FREEZER=y
+CONFIG_CGROUP_DEVICE=y
+CONFIG_CPUSETS=y
+
+# Guests bring their own binaries, which are ordinary dynamically linked ELF.
+CONFIG_BINFMT_ELF=y
+CONFIG_BINFMT_SCRIPT=y
+CONFIG_BINFMT_MISC=y
+
+# Layered roots, so several guests share one base rather than each carrying a
+# copy of it.
+CONFIG_OVERLAY_FS=y
+CONFIG_TMPFS=y
+CONFIG_TMPFS_POSIX_ACL=y
+#
+# The read only half of that: a guest's base is an image, mounted once and
+# shared, with a writable layer over it.
+#
+# EROFS rather than squashfs. Squashfs was here first and was quietly broken
+# -- it sits under the MISC_FILESYSTEMS menu, which was off, so all of it was
+# dropped on every build and the layered roots this profile is built around
+# could not have worked at all. EROFS is what replaced it: container and
+# Android images moved over because it reads through the page cache directly
+# rather than decompressing into a buffer and copying out, which is one less
+# copy on every page fault against a guest's binaries.
+#
+# BACKED_BY_FILE matters more than it sounds: an image can be mounted from an
+# ordinary file with no loop device in between, so a guest root is a file on
+# disk rather than a block device somebody had to set up.
+#
+# The decompression kthreads are per cpu, so a fault against a guest's text is
+# decompressed on the core that took it rather than handed across, and asked
+# for at high priority so it does not queue behind ordinary work.
+#
+CONFIG_MISC_FILESYSTEMS=y
+CONFIG_EROFS_FS=y
+CONFIG_EROFS_FS_XATTR=y
+CONFIG_EROFS_FS_POSIX_ACL=y
+CONFIG_EROFS_FS_SECURITY=y
+CONFIG_EROFS_FS_BACKED_BY_FILE=y
+CONFIG_EROFS_FS_ZIP=y
+CONFIG_EROFS_FS_ZIP_ZSTD=y
+
+# lz4 comes with ZIP and is erofs's default compressor, so it stays. The lzma
+# decompressor defaults on as well and is a third one for the same job.
+CONFIG_EROFS_FS_ZIP_LZMA=n
+CONFIG_EROFS_FS_PCPU_KTHREAD=y
+CONFIG_EROFS_FS_PCPU_KTHREAD_HIPRI=y
+
+# Squashfs is deliberately not built. An image that ships as squashfs has to
+# be repacked -- mkfs.erofs reads a directory tree, so that is one command,
+# and it buys not carrying two read only filesystems for the same job.
+
+# A guest's own filtering, and the ability to drop privileges properly.
+CONFIG_SECCOMP=y
+CONFIG_SECCOMP_FILTER=y
+
+# Enough of a POSIX surface for a normal libc to be happy.
+CONFIG_POSIX_MQUEUE=y
+CONFIG_EVENTFD=y
+CONFIG_SIGNALFD=y
+CONFIG_TIMERFD=y
+CONFIG_EPOLL=y
+CONFIG_FUTEX=y
+CONFIG_AIO=y
+CONFIG_ADVISE_SYSCALLS=y
+CONFIG_MEMBARRIER=y
+CONFIG_KALLSYMS=y
+CONFIG_PROC_FS=y
+CONFIG_PROC_SYSCTL=y
+CONFIG_SYSFS=y
+# devpts is not a separate option any more -- UNIX98_PTYS above brings it.
+CONFIG_UNIX98_PTYS=y

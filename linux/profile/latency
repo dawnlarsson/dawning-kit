@@ -1,0 +1,214 @@
+#
+# Latency
+#
+# Everything here is chosen for the time between an event and a response, not
+# for throughput, power or size. It is composed into every image, because the
+# whole point of a compositor living in the kernel is that the path from a
+# mouse moving to the screen changing is short, and a kernel ticking at 250 Hz
+# with no high resolution timers throws that away before any of our code runs.
+#
+# Measured, not assumed: the numbers each of these is worth are in the input
+# latency research, and the ones that could be measured here were.
+#
+
+#
+# Timer resolution.
+#
+# This was off, and it is the largest single setting in the file. Without it
+# there are no high resolution timers at all: every sleep, every timeout and
+# every scheduler deadline rounds up to the next tick, which at the 250 Hz
+# this used to build at is 4 ms of granularity on everything.
+#
+CONFIG_HIGH_RES_TIMERS=y
+
+#
+# The tick itself.
+#
+# 1000 Hz, so the coarsest scheduling decision is 1 ms rather than 4. And
+# dynticks, so an idle core stops being interrupted a thousand times a second
+# for nothing -- HZ_PERIODIC was on, which is the opposite of what a desktop
+# wants. NO_HZ_FULL is deliberately not the choice: it stops the tick on busy
+# cores too, and pays for it with IPIs and accounting work that hurt exactly
+# the interactive case this is for.
+#
+CONFIG_HZ_1000=y
+CONFIG_HZ=1000
+CONFIG_HZ_250=n
+CONFIG_HZ_PERIODIC=n
+CONFIG_NO_HZ_IDLE=y
+CONFIG_NO_HZ_FULL=n
+
+#
+# Preemption.
+#
+# The kernel was building with PREEMPT_LAZY, which defers preempting an
+# ordinary task until it would leave the kernel anyway. That is a good default
+# for a server and the wrong one here: the worker that moves the cursor is an
+# ordinary SCHED_OTHER kworker, so lazy preemption is precisely the case where
+# it waits. Full preemption takes the CPU as soon as the worker is runnable.
+#
+CONFIG_PREEMPT=y
+CONFIG_PREEMPT_NONE=n
+CONFIG_PREEMPT_VOLUNTARY=n
+CONFIG_PREEMPT_LAZY=n
+
+# Dynamic preemption compiles all the models in and picks one at boot. It
+# costs a static branch at every preemption point to buy a boot flag nobody is
+# going to use, when the model is decided here.
+CONFIG_PREEMPT_DYNAMIC=n
+
+#
+# Idle.
+#
+# The ladder governor was the only one built, and it is meant for systems with
+# a periodic tick -- it steps down one C state at a time and cannot look at
+# what the workload actually does. TEO predicts the next wakeup from history,
+# which for a machine being poked by a mouse means staying out of the deep C
+# states whose exit latency is the cost.
+#
+CONFIG_CPU_IDLE_GOV_TEO=y
+CONFIG_CPU_IDLE_GOV_LADDER=n
+CONFIG_CPU_IDLE_GOV_MENU=n
+
+#
+# Frequency.
+#
+# schedutil ramps the clock from scheduler utilisation, which means a burst of
+# work after an idle period runs at low clock until it has been going long
+# enough to be noticed. That ramp is milliseconds, and every interactive event
+# is exactly that shape. The performance governor does not ramp.
+#
+CONFIG_CPU_FREQ_DEFAULT_GOV_PERFORMANCE=y
+CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL=n
+
+#
+# Memory.
+#
+# Huge pages on request rather than for everything. THP=always is a throughput
+# setting: it hands out huge pages by default and pays for them with direct
+# compaction stalls in whichever process happens to fault next, which is a
+# latency spike landing on an innocent bystander.
+#
+CONFIG_TRANSPARENT_HUGEPAGE_MADVISE=y
+CONFIG_TRANSPARENT_HUGEPAGE_ALWAYS=n
+
+# The multi-generational LRU, which was off. It is the newer of the two page
+# reclaim implementations in the tree and the one every distribution now
+# ships: it ages pages in generations rather than shuffling two lists, which
+# makes finding something to evict cheaper and makes it likelier the thing
+# evicted was actually cold. Reclaim is the memory path that stalls a process
+# outright, so which implementation runs it is a latency question.
+#
+# LRU_GEN alone only compiles it in; ENABLED is what makes it the default
+# rather than something to switch on through sysfs.
+#
+# Not measured here, and honestly so: the two implementations only differ
+# under reclaim pressure, and a test that never fills memory never reaches
+# either of them.
+CONFIG_LRU_GEN=y
+CONFIG_LRU_GEN_ENABLED=y
+
+# LRU_GEN_WALKS_MMU comes with the two above rather than being asked for. It
+# ages pages by walking page tables instead of only reverse mapping, which is
+# the cheaper of the two when many pages are mapped -- named here so it is a
+# choice on the record rather than something inherited quietly.
+CONFIG_LRU_GEN_WALKS_MMU=y
+
+#
+# Writeback throttling, so a large background write does not starve the reads
+# in front of it. The algorithm is loosely CoDel: it watches how the device is
+# actually performing and throttles background writeback to keep foreground
+# latency down. WBT_MQ is what makes it the default rather than a knob.
+#
+# Not measured here. There is no disk workload in this image to stall against,
+# which is also why it costs nothing to carry.
+#
+CONFIG_BLK_WBT=y
+CONFIG_BLK_WBT_MQ=y
+
+#
+# Congestion control.
+#
+# Only cubic was built, which is the kernel's default and the wrong shape for
+# this. Cubic finds the limit of a link by filling the buffer in front of it
+# until something drops -- so on a home connection it works by keeping the
+# router's queue full, and everything sharing that queue waits behind it. BBR
+# models the link's actual bandwidth and round trip time and paces to that
+# instead, so the queue stays short. That is bufferbloat, and it is the
+# difference between a game feeling fine and feeling fine until somebody
+# starts an upload.
+#
+# Not measured here: nothing in this image sends a packet.
+#
+# TCP_CONG_ADVANCED is the menu that has to be open before any congestion
+# control other than the default is visible -- the same shape as EXPERT,
+# PROCESSOR_SELECT and MISC_FILESYSTEMS, and the same silent discard
+# without it.
+CONFIG_TCP_CONG_ADVANCED=y
+CONFIG_TCP_CONG_BBR=y
+CONFIG_DEFAULT_BBR=y
+CONFIG_DEFAULT_CUBIC=n
+
+#
+# PCIe link power.
+#
+# ASPM lets a PCIe link drop to a low power state when it is idle, and the
+# link then has to be woken before the next transaction crosses it. That wake
+# is paid by whatever arrives first after a pause -- which for a cursor is
+# exactly the movement after the user stopped to read something. It is a tail
+# cost, not a mean one, and this is a machine plugged into a wall.
+#
+# PCIEASPM_DEFAULT, which was the setting, does not mean off: it means leave
+# whatever the firmware chose. So on a board whose BIOS enables ASPM this
+# changes something and on one whose BIOS disables it this changes nothing.
+#
+CONFIG_PCIEASPM_PERFORMANCE=y
+CONFIG_PCIEASPM_DEFAULT=n
+
+#
+# Scheduler.
+#
+# Core scheduling exists so that two hyperthreads on one core can be kept from
+# running untrusted code side by side. It costs work at every context switch
+# and there is nothing here it is protecting.
+#
+CONFIG_SCHED_CORE=n
+
+# Accounting that runs on the context switch path and is only ever read by
+# tooling this image does not have.
+CONFIG_SCHEDSTATS=n
+CONFIG_PSI=n
+CONFIG_TASKSTATS=n
+
+#
+# Hardening that is being traded away.
+#
+# Stated plainly because it is a real trade, not a free win. CPU_MITIGATIONS
+# is already off in this build, so the machine has already chosen speed over
+# speculative execution defences; leaving these on would be inconsistent
+# rather than safe. Anything running untrusted code wants a different profile.
+#
+# Zeroing every stack frame on entry costs on every call with locals.
+CONFIG_INIT_STACK_NONE=y
+CONFIG_INIT_STACK_ALL_ZERO=n
+CONFIG_INIT_ON_ALLOC_DEFAULT_ON=n
+CONFIG_INIT_ON_FREE_DEFAULT_ON=n
+
+# Indirect branch tracking puts an endbr64 at every indirect call target and
+# checks it at every indirect call.
+CONFIG_X86_KERNEL_IBT=n
+
+#
+# Unwinding.
+#
+# ORC rather than frame pointers, which is the performance choice and not the
+# obvious one: FRAME_POINTER reserves a register and adds a prologue to every
+# function in the kernel, while ORC costs image size for its tables and
+# nothing at all until something actually unwinds.
+#
+# The prod profile is composed after this one and replaces ORC with the guess
+# unwinder, which costs neither and is accurate about nothing. This line is
+# what the choice falls back to when prod is not in the build.
+#
+CONFIG_UNWINDER_ORC=y
+CONFIG_UNWINDER_FRAME_POINTER=n

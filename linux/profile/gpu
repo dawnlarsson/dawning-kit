@@ -28,11 +28,22 @@
 CONFIG_DAWNING_DISPLAY=y
 
 # Booted from a USB stick there is no bootloader to pass a command line, and
-# the EFI stub falls back to this one. It keeps the fbdev client away from the
-# display, which is the one argument the compositor cannot do without.
-# A bootloader that does pass a command line still wins, so QEMU is unaffected.
+# the EFI stub falls back to this one. A bootloader that does pass a command
+# line still wins, so QEMU is unaffected.
+#
+# drm_client_lib.active= keeps the fbdev client away from the display, which
+# is the one argument the compositor cannot do without.
+#
+# usbhid.mousepoll=1 asks USB mice for a report every millisecond. The HID
+# default follows whatever interval the device reports, which for cheap mice
+# is 8 ms -- the largest single number in the input path once the vblank wait
+# is out of it, and one that no amount of work further down can recover.
+#
+# This is the whole command line for the image, not a line to append to. There
+# is one CONFIG_CMDLINE and the last profile to set it wins outright, so every
+# argument belongs here.
 CONFIG_CMDLINE_BOOL=y
-CONFIG_CMDLINE="drm_client_lib.active="
+CONFIG_CMDLINE="drm_client_lib.active= usbhid.mousepoll=1"
 
 #
 # Core modesetting
