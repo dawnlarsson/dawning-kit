@@ -1,16 +1,16 @@
 #!/bin/sh
 #
 #       Puts a .asm from src/ in the place of a file the kernel already
-#       builds, which is the other half of what glue is for: not everything
+#       builds, which is the other half of what kit/asm is for: not everything
 #       worth writing in assembly can live in a module.
 #
 #       A profile asks for one with
 #
-#               #> glue <file in src/> <path under linux/>
+#               #> asm <file in src/> <path under linux/>
 #
 #       for example
 #
-#               #> glue entry.asm arch/x86/entry/entry_64.S
+#               #> asm entry.asm arch/x86/entry/entry_64.S
 #
 #       The target has to be a file the kernel's own Makefiles already
 #       compile. This replaces what is there; it cannot add a new object to
@@ -19,24 +19,24 @@
 #       The original is kept beside it as <name>.original the first time
 #       it is replaced, and never read again -- every build regenerates from
 #       the .asm, so building twice does the same thing as building once.
-#       Removing the #> glue line from the profile puts the original back on
-#       the next build, which is what artifacts/glue.applied is for.
+#       Removing the #> asm line from the profile puts the original back on
+#       the next build, which is what artifacts/asm.applied is for.
 #
 set -e
 
 . script/common
 
-manifest=artifacts/glue.applied
-stamp=artifacts/glue.arch
+manifest=artifacts/asm.applied
+stamp=artifacts/asm.arch
 
 arch=$(key_one arch) || exit 1
 
 # Read here rather than through key(), which joins every match onto one line.
 # That is what flags wants and the opposite of what a pair of paths
-# wants: two #> glue lines would come back as four words with nothing saying
+# wants: two #> asm lines would come back as four words with nothing saying
 # where one ended.
-requested=artifacts/glue.requested
-sed -n 's/^#> glue //p' artifacts/.config > "$requested"
+requested=artifacts/asm.requested
+sed -n 's/^#> asm //p' artifacts/.config > "$requested"
 
 cleanup() { rm -f "$requested" "$manifest.keep"; }
 trap cleanup EXIT INT TERM
@@ -47,7 +47,7 @@ if [ ! -s "$requested" ] && [ ! -f "$manifest" ]; then
 fi
 
 if [ -z "$arch" ]; then
-        echo "glue_replace: no '#> arch' in artifacts/.config" >&2
+        echo "asm_replace: no '#> arch' in artifacts/.config" >&2
         exit 1
 fi
 
@@ -88,7 +88,7 @@ fi
 #       below has run to the end.
 #
 #       It was written to a second file and moved into place afterwards. A
-#       malformed "#> glue" line stops the loop, and anything replaced before
+#       malformed "#> asm" line stops the loop, and anything replaced before
 #       that line had already had its original moved aside and the kernel file
 #       overwritten -- but the move never happened, so the manifest still
 #       described the previous build. Take the bad line back out along with
@@ -112,7 +112,7 @@ while read -r source target extra; do
         [ -n "${source:-}" ] || continue
 
         if [ -z "${target:-}" ] || [ -n "${extra:-}" ]; then
-                echo "glue_replace: '#> glue $source $target $extra' is not <source.asm> <target>" >&2
+                echo "asm_replace: '#> asm $source $target $extra' is not <source.asm> <target>" >&2
                 exit 1
         fi
 
@@ -120,7 +120,7 @@ while read -r source target extra; do
         # anywhere on the machine as root.
         case "$target" in
         /* | *..*)
-                echo "glue_replace: target must be a path inside linux/: $target" >&2
+                echo "asm_replace: target must be a path inside linux/: $target" >&2
                 exit 1
                 ;;
         esac
@@ -130,13 +130,13 @@ while read -r source target extra; do
         original="$destination.original"
 
         if [ ! -f "$asm" ]; then
-                echo "glue_replace: no such source: $asm" >&2
+                echo "asm_replace: no such source: $asm" >&2
                 exit 1
         fi
 
         if [ ! -f "$destination" ] && [ ! -f "$original" ]; then
-                echo "glue_replace: $target is not a file in the kernel tree" >&2
-                echo "glue_replace: only a file the kernel already builds can be replaced" >&2
+                echo "asm_replace: $target is not a file in the kernel tree" >&2
+                echo "asm_replace: only a file the kernel already builds can be replaced" >&2
                 exit 1
         fi
 
@@ -159,7 +159,7 @@ while read -r source target extra; do
         fi
 
         echo "Replacing $target with $source"
-        sh src/glue "$arch" "$asm" "$destination"
+        sh kit/asm "$arch" "$asm" "$destination"
 done < "$requested"
 
 echo "$arch" > "$stamp"

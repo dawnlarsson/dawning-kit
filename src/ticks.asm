@@ -63,7 +63,7 @@ SYM_FUNC_START(moonwater_ticks)
 
 #> arch other
         #
-        #       Reached only by an architecture added to glue without being
+        #       Reached only by an architecture added to kit/asm without being
         #       given a counter here. Better a compile error naming the file
         #       than a function that returns whatever was in the return
         #       register.

@@ -219,12 +219,12 @@ sensitive filesystem, and this is $(uname). Name a machine that has them with
                 # shellcheck disable=SC2086
                 sh script/verify_config linux/.config $profiles
 
-        label GLUE ASSEMBLY
+        label ASSEMBLY
                 # Where a profile asked for a .asm from src/ to stand in for a file
                 # the kernel already builds. The .asm files that belong to the module
                 # rather than to the kernel need nothing here -- src/Makefile builds
                 # those as part of it.
-                sudo sh script/glue_replace || die "glue"
+                sudo sh script/asm_replace || die "assembly"
 
         label PRE BUILD
                 eval "$(key "pre")"

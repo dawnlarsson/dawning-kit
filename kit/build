@@ -1,10 +1,17 @@
 #!/bin/sh
 #
-#       Standard - build a freestanding binary
+#       Builds a freestanding binary, and optionally runs it.
 #
-#       Usage: sh build [-v] [source_file] [output_file]
+#       Usage: sh build [-v] [--run] [--watch] [source_file] [output_file]
 #
-
+#           --run     run it once the build succeeds
+#           --watch   rebuild and rerun on every change under the source tree
+#
+#       This is deliberately not sourcing script/common, even though the three
+#       size helpers below are copies of the ones in it: script/common runs
+#       is_safe, which refuses to load outside the repository root, and the
+#       whole point of this script is that it works on a source file anywhere.
+#
 set -u
 
 # stat takes -c on GNU and -f on BSD/macOS; neither accepts the other's flag.
@@ -40,10 +47,23 @@ size() {
 }
 
 verbose=false
-if [ "${1:-}" = "-v" ]; then
-        verbose=true
+do_run=false
+do_watch=false
+positional=""
+
+while [ "$#" -gt 0 ]; do
+        case "$1" in
+        -v) verbose=true ;;
+        --run) do_run=true ;;
+        --watch) do_run=true; do_watch=true ;;
+        --*) echo "build: unknown option $1" >&2; exit 1 ;;
+        *) positional="$positional $1" ;;
+        esac
         shift
-fi
+done
+
+# shellcheck disable=SC2086
+set -- $positional
 
 source_file=${1:-"src/main.c"}
 output_file=${2:-"bin/$(basename "$(pwd)")"}
@@ -67,16 +87,76 @@ if [ ! -f "$source_file" ]; then
         exit 1
 fi
 
-mkdir -p "$(dirname "$output_file")" || exit 1
+compile() {
+        mkdir -p "$(dirname "$output_file")" || return 1
 
-# shellcheck disable=SC2086
-if ! "$compiler" "$source_file" -o "$output_file" $flags_base -Wl,-e,_start; then
-        echo "build: compilation failed" >&2
+        # shellcheck disable=SC2086
+        "$compiler" "$source_file" -o "$output_file" $flags_base -Wl,-e,_start || {
+                echo "build: compilation failed" >&2
+                return 1
+        }
+
+        chmod +x "$output_file" || return 1
+
+        if [ "$verbose" = true ]; then
+                size "$output_file"
+        fi
+}
+
+if [ "$do_watch" = false ]; then
+        compile || exit 1
+
+        [ "$do_run" = true ] || exit 0
+
+        "$output_file"
+        status=$?
+        [ "$status" -eq 0 ] || echo "Exited with $status"
+        exit "$status"
+fi
+
+#
+#       Watching.
+#
+#       The pid of what was started is tracked rather than matched by name.
+#       pkill -f on the output path used to match anything whose command line
+#       merely contained it -- including this script and the watcher.
+#
+app_pid=""
+
+stop_app() {
+        [ -n "$app_pid" ] || return 0
+        kill "$app_pid" 2>/dev/null
+        wait "$app_pid" 2>/dev/null
+        app_pid=""
+}
+
+trap 'stop_app; exit 0' INT TERM
+
+rebuild() {
+        stop_app
+        clear
+
+        if compile; then
+                "$output_file" &
+                app_pid=$!
+        else
+                echo "build: waiting for the next change" >&2
+        fi
+}
+
+source_dir=$(dirname "$source_file")
+
+if command -v inotifywait >/dev/null 2>&1; then
+        watch() { inotifywait -q -m -r -e modify,create,delete,move "$source_dir"; }
+elif command -v fswatch >/dev/null 2>&1; then
+        watch() { fswatch -r "$source_dir"; }
+else
+        echo "build: --watch needs inotifywait (inotify-tools) or fswatch" >&2
         exit 1
 fi
 
-chmod +x "$output_file" || exit 1
+rebuild
 
-if [ "$verbose" = true ]; then
-        size "$output_file"
-fi
+watch | while read -r _; do
+        rebuild
+done

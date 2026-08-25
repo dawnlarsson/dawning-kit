@@ -313,7 +313,7 @@ to call it from C.
 To put one in the place of a file the kernel itself builds, a profile says
 
 ```sh
-#> glue entry.asm arch/x86/entry/entry_64.S
+#> asm entry.asm arch/x86/entry/entry_64.S
 ```
 
 The target has to be a file the kernel's Makefiles already compile -- this
@@ -322,10 +322,10 @@ there is kept beside it as `entry_64.S.original`, every build regenerates
 from the `.asm` rather than from the replaced file, and removing the line puts
 the original back on the next build.
 
-The translator is `src/glue` and runs standalone:
+The translator is `kit/asm` and runs standalone:
 
 ```sh
-sh src/glue arm64 some.asm some.S
+sh kit/asm arm64 some.asm some.S
 ```
 
 ## C Standard

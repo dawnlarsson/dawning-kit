@@ -5,10 +5,10 @@
 # rm -rf artifacts/
 
 rm -rf dist/ fs/ linux/ artifacts/merge.config artifacts/.config artifacts/info \
-        artifacts/glue.applied artifacts/glue.arch artifacts/glue.requested
+        artifacts/asm.applied artifacts/asm.arch artifacts/asm.requested
 
 # remove all kernel artifacts in /src
 rm -rf src/*.a src/*.o src/*.o.d src/*.cmd src/*.order
 
-# the .S that glue generates from each .asm, which kbuild writes here
-rm -rf src/*.S src/*.glue_tmp
+# the .S that kit/asm generates from each .asm, which kbuild writes here
+rm -rf src/*.S src/*.asm_tmp

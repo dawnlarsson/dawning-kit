@@ -12,10 +12,10 @@
 docs/
 src/test/bin/
 
-# glue writes a .S beside each .asm and kbuild assembles it there, because
+# kit/asm writes a .S beside each .asm and kbuild assembles it there, because
 # src/ is symlinked into the kernel tree as kernel/moonwater.
 /src/*.S
-/src/*.glue_tmp
+/src/*.asm_tmp
 
 *.log
 *.a

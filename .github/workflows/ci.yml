@@ -40,8 +40,8 @@ jobs:
       - name: Parse POSIX scripts with dash
         run: |
           for f in kit/bit.sh kit/emit.sh \
-                   kit/build kit/spark kit/run kit/dev \
-                   kit/localinstall.sh kit/build_kernel \
+                   kit/build kit/spark kit/asm \
+                   kit/localinstall.sh \
                    build.sh script/*; do
             echo "dash -n $f"
             dash -n "$f"
@@ -52,8 +52,8 @@ jobs:
         run: |
           shellcheck -S warning \
             kit/bit.sh kit/emit.sh kit/doc.sh kit/utils.sh kit/test.sh \
-            kit/build kit/spark kit/run kit/dev \
-            kit/localinstall.sh kit/build_kernel \
+            kit/build kit/spark kit/asm \
+            kit/localinstall.sh \
             build.sh script/*
 
   bit:
