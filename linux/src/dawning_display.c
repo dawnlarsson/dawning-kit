@@ -79,6 +79,14 @@ struct dawn_surface {
         struct drm_mode_set *mode_set;
         unsigned int width, height;
         u32 format;
+
+        /*
+                The hardware cursor, when the display has one. Null means the
+                cursor is drawn into the framebuffer like anything else, which
+                is what every path below falls back to.
+        */
+        struct drm_plane *cursor_plane;
+        struct drm_client_buffer *cursor_buffer;
 };
 
 struct dawn_display {
@@ -202,6 +210,16 @@ static void dawn_display_fill_rect(u32 *pixels, unsigned int pitch_pixels,
 #define DAWN_CURSOR_W 12
 #define DAWN_CURSOR_H 19
 
+/*
+        The hardware cursor buffer is square and larger than the arrow drawn
+        into it. 64x64 is the one size every cursor plane accepts -- older
+        display engines require a square power of two, and some accept nothing
+        else -- so the arrow sits in the top left corner and the rest of the
+        buffer is transparent.
+*/
+#define DAWN_CURSOR_PLANE_W 64
+#define DAWN_CURSOR_PLANE_H 64
+
 static const char dawn_display_cursor_bitmap[DAWN_CURSOR_H][DAWN_CURSOR_W + 1] = {
     "X           ",
     "XX          ",
@@ -308,6 +326,189 @@ static void dawn_display_compose_rect(struct dawn_display *display,
 }
 
 /*
+        The hardware cursor.
+
+        A cursor plane is composited by the display engine during scanout, so
+        moving it touches no pixels at all: the commit carries a position and
+        nothing else. That is the whole point. Drawing the cursor into the
+        framebuffer means handing the driver a damage rectangle, and on an
+        atomic driver that is a full commit that waits for vblank -- a cursor
+        move cannot land in less than a frame however little is drawn.
+
+        The path out is one the kernel already has. drm_atomic_helper_update_plane
+        sets legacy_cursor_update on the state whenever the plane being updated
+        is the crtc's cursor, and the commit helper then completes the flip
+        immediately rather than waiting: "Legacy cursor updates are fully
+        unsynced". So going through plane->funcs->update_plane on crtc->cursor
+        is both the hardware plane and the unsynced commit, without asking for
+        either by name.
+*/
+static _Bool dawn_display_plane_takes_argb(struct drm_plane *plane)
+{
+        unsigned int i;
+
+        for (i = 0; i < plane->format_count; i++)
+                if (plane->format_types[i] == DRM_FORMAT_ARGB8888)
+                        return true;
+
+        return false;
+}
+
+/*
+        Places the cursor plane at a position, creating no damage and drawing
+        nothing.
+
+        The lock dance is the one drm_mode_cursor_common does: take the crtc
+        and the plane, and back off and retry the whole thing on -EDEADLK. The
+        retry has to cover update_plane as well as the two locks above it,
+        because it takes more locks of its own on the way to the commit.
+
+        Uninterruptible, unlike the ioctl. That path is a syscall and wants to
+        return to a signal handler; this one is a worker with no signals to
+        take, where -ERESTARTSYS would only mean a dropped mouse move.
+*/
+static int dawn_display_place_cursor_plane(struct dawn_surface *surface, int x, int y)
+{
+        struct drm_plane *plane = surface->cursor_plane;
+        struct drm_crtc *crtc = surface->mode_set->crtc;
+        struct drm_modeset_acquire_ctx ctx;
+        int ret;
+
+        drm_modeset_acquire_init(&ctx, 0);
+retry:
+        ret = drm_modeset_lock(&crtc->mutex, &ctx);
+        if (ret)
+                goto out;
+
+        ret = drm_modeset_lock(&plane->mutex, &ctx);
+        if (ret)
+                goto out;
+
+        ret = plane->funcs->update_plane(plane, crtc, surface->cursor_buffer->fb,
+                                         x - DAWN_CURSOR_HOTSPOT_X,
+                                         y - DAWN_CURSOR_HOTSPOT_Y,
+                                         DAWN_CURSOR_PLANE_W, DAWN_CURSOR_PLANE_H,
+                                         0, 0,
+                                         DAWN_CURSOR_PLANE_W << 16,
+                                         DAWN_CURSOR_PLANE_H << 16,
+                                         &ctx);
+out:
+        if (ret == -EDEADLK) {
+                drm_modeset_backoff(&ctx);
+                goto retry;
+        }
+
+        drm_modeset_drop_locks(&ctx);
+        drm_modeset_acquire_fini(&ctx);
+
+        return ret;
+}
+
+static void dawn_display_drop_cursor_plane(struct dawn_surface *surface)
+{
+        surface->cursor_plane = NULL;
+
+        if (surface->cursor_buffer) {
+                drm_client_buffer_delete(surface->cursor_buffer);
+                surface->cursor_buffer = NULL;
+        }
+}
+
+/*
+        Claims the crtc's cursor plane and paints the arrow into it once.
+
+        The image is written before the plane is ever armed, because a driver
+        that keeps its framebuffer somewhere else only uploads it when the
+        plane's framebuffer changes -- virtio-gpu transfers the image on that
+        edge and sends nothing but a position afterwards, which is exactly the
+        behaviour that makes this cheap. An image drawn after arming would
+        never be sent.
+*/
+static int dawn_display_setup_cursor_plane(struct drm_client_dev *client,
+                                           struct dawn_surface *surface)
+{
+        struct drm_plane *plane = surface->mode_set->crtc->cursor;
+        struct iosys_map map;
+        unsigned int pitch_pixels;
+
+        if (!plane || !dawn_display_plane_takes_argb(plane))
+                return -ENODEV;
+
+        surface->cursor_buffer = drm_client_buffer_create_dumb(
+            client, DAWN_CURSOR_PLANE_W, DAWN_CURSOR_PLANE_H, DRM_FORMAT_ARGB8888);
+        if (IS_ERR(surface->cursor_buffer)) {
+                surface->cursor_buffer = NULL;
+                return -ENOMEM;
+        }
+
+        if (drm_client_buffer_vmap_local(surface->cursor_buffer, &map)) {
+                drm_client_buffer_delete(surface->cursor_buffer);
+                surface->cursor_buffer = NULL;
+                return -EIO;
+        }
+
+        pitch_pixels = surface->cursor_buffer->fb->pitches[0] / sizeof(u32);
+
+        // Transparent everywhere the arrow does not cover. draw_cursor skips
+        // the blank cells of its bitmap, so without this the buffer keeps
+        // whatever it was allocated holding and the arrow wears a black box.
+        dawn_display_fill_rect(map.vaddr, pitch_pixels,
+                               DAWN_CURSOR_PLANE_W, DAWN_CURSOR_PLANE_H,
+                               0, 0, DAWN_CURSOR_PLANE_W, DAWN_CURSOR_PLANE_H,
+                               0x00000000);
+
+        dawn_display_draw_cursor(map.vaddr, pitch_pixels,
+                                 DAWN_CURSOR_PLANE_W, DAWN_CURSOR_PLANE_H, 0, 0,
+                                 dawn_display_colour(DAWN_COLOUR_CURSOR, DRM_FORMAT_ARGB8888),
+                                 dawn_display_colour(DAWN_COLOUR_CURSOR_EDGE, DRM_FORMAT_ARGB8888));
+
+        drm_client_buffer_vunmap_local(surface->cursor_buffer);
+
+        surface->cursor_plane = plane;
+        return 0;
+}
+
+/*
+        Puts the cursor plane back after a modeset.
+
+        Not optional and not a formality: drm_client_modeset_commit disables
+        every non-primary plane on the device before it commits, so that a
+        client inheriting the display does not also inherit an overlay left
+        behind by the last one. Our cursor is one of those planes. Every
+        commit turns it off, and this is what turns it back on.
+*/
+static void dawn_display_arm_cursor(struct dawn_display *display)
+{
+        struct dawn_surface *surface;
+        int ret;
+
+        /*
+                cursor_x is the position to arm at, and it is written by the
+                worker just after it moves the plane. Both run under
+                display->lock, so this cannot read a position the plane has
+                already moved past -- a second commit site that did not hold
+                the lock would make the pointer snap back on every redraw.
+        */
+
+        if (!display->surface_count)
+                return;
+
+        surface = &display->surfaces[0];
+        if (!surface->cursor_plane)
+                return;
+
+        ret = dawn_display_place_cursor_plane(surface, display->cursor_x, display->cursor_y);
+        if (!ret)
+                return;
+
+        // Give it up rather than leave a cursor that cannot move. The next
+        // pointer event repaints through the software path, which needs
+        // nothing from the display beyond a framebuffer.
+        log_d("cursor plane refused an update (%d), drawing the cursor instead\n", ret);
+        dawn_display_drop_cursor_plane(surface);
+}
+
+/*
         Moves the cursor without repainting the screen.
 
         Two damage rectangles -- the old position and the new -- are recomposed
@@ -325,6 +526,25 @@ static void dawn_display_move_cursor(struct dawn_display *display,
         struct drm_rect damage;
         int old_x = display->drawn_x;
         int old_y = display->drawn_y;
+
+        /*
+                On a display with a cursor plane none of the rest of this
+                happens. No pixels are read, none are written, and no damage
+                is handed to the driver -- the commit carries two coordinates
+                and returns without waiting for vblank.
+        */
+        if (surface->cursor_plane) {
+                u64 flush_started = ktime_get_ns();
+                int ret = dawn_display_place_cursor_plane(surface, new_x, new_y);
+
+                dawn_input_flush_total += ktime_get_ns() - flush_started;
+
+                if (!ret)
+                        return;
+
+                log_d("cursor plane refused an update (%d), drawing the cursor instead\n", ret);
+                dawn_display_drop_cursor_plane(surface);
+        }
 
         if (drm_client_buffer_vmap_local(surface->buffer, &map))
                 return;
@@ -421,10 +641,14 @@ static void dawn_display_compose(struct dawn_display *display, struct dawn_surfa
                                dawn_display_colour(DAWN_COLOUR_BODY, surface->format));
         }
 
-        dawn_display_draw_cursor(pixels, pitch_pixels, surface->width, surface->height,
-                         display->cursor_x, display->cursor_y,
-                         dawn_display_colour(DAWN_COLOUR_CURSOR, surface->format),
-                         dawn_display_colour(DAWN_COLOUR_CURSOR_EDGE, surface->format));
+        // Skipped when the cursor lives on its own plane, or the arrow would
+        // be baked into the desktop underneath the real one and left behind
+        // wherever the pointer last was.
+        if (!surface->cursor_plane)
+                dawn_display_draw_cursor(pixels, pitch_pixels, surface->width, surface->height,
+                                 display->cursor_x, display->cursor_y,
+                                 dawn_display_colour(DAWN_COLOUR_CURSOR, surface->format),
+                                 dawn_display_colour(DAWN_COLOUR_CURSOR_EDGE, surface->format));
 
         drm_client_buffer_vunmap_local(surface->buffer);
 }
@@ -437,6 +661,7 @@ static void dawn_display_redraw(struct dawn_display *display)
                 dawn_display_compose(display, &display->surfaces[i]);
 
         drm_client_modeset_commit(&display->client);
+        dawn_display_arm_cursor(display);
 }
 
 static int dawn_display_setup_surface(struct drm_client_dev *client,
@@ -548,6 +773,12 @@ static int dawn_display_start(struct dawn_display *display)
         display->drawn_x = display->cursor_x;
         display->drawn_y = display->cursor_y;
 
+        if (dawn_display_setup_cursor_plane(client, &display->surfaces[0]))
+                log_d("no hardware cursor here, drawing the cursor into the framebuffer\n");
+        else
+                log_d("cursor on hardware plane %u\n",
+                      display->surfaces[0].cursor_plane->base.id);
+
         dawn_display_active = display;
         dawn_display_redraw(display);
 
@@ -559,9 +790,12 @@ static void dawn_display_release(struct dawn_display *display)
 {
         unsigned int i;
 
-        for (i = 0; i < display->surface_count; i++)
+        for (i = 0; i < display->surface_count; i++) {
+                dawn_display_drop_cursor_plane(&display->surfaces[i]);
+
                 if (display->surfaces[i].buffer)
                         drm_client_buffer_delete(display->surfaces[i].buffer);
+        }
 
         kfree(display->surfaces);
         display->surfaces = NULL;
@@ -950,8 +1184,19 @@ static void dawning_input_stop(void)
 
 static void dawning_input_start(void)
 {
-        // WQ_HIGHPRI so the cursor is not queued behind ordinary work.
-        dawn_input_wq = alloc_workqueue("dawning_input", WQ_HIGHPRI | WQ_UNBOUND, 1);
+        /*
+                WQ_HIGHPRI so the cursor is not queued behind ordinary work,
+                and bound rather than unbound so it runs where the event
+                arrived.
+
+                An unbound queue lets any CPU pick the work up, which sounds
+                like the faster answer and is the slower one: the worker is
+                then usually not the CPU that took the input interrupt, so
+                waking it means an inter-processor interrupt and a cold cache.
+                A bound queue hands the work to this CPU's high priority pool,
+                which is the one already holding the event.
+        */
+        dawn_input_wq = alloc_workqueue("dawning_input", WQ_HIGHPRI, 1);
 
         if (!dawn_input_wq) {
                 log_d("no workqueue for input\n");

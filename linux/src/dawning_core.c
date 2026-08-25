@@ -11,6 +11,7 @@
 #include <linux/uaccess.h>
 #include <linux/slab.h>
 #include <linux/sched/task.h>
+#include <linux/initrd.h>
 
 // The graphics headers must precede library.c: it defines "end" as a macro
 // and asm/io.h, reached through drm_client.h, uses that word as a variable.
@@ -23,6 +24,8 @@
 #include <drm/drm_framebuffer.h>
 #include <drm/drm_gem.h>
 #include <drm/drm_mode.h>
+#include <drm/drm_modeset_lock.h>
+#include <drm/drm_plane.h>
 #include <drm/drm_print.h>
 #endif
 
@@ -39,6 +42,13 @@
 #include <drm/drm_rect.h>
 #include "dawning_display.c"
 #endif
+
+// The assembly in this directory. Each .asm is its own object -- assembly
+// cannot be included into this translation unit the way dawning_display.c is
+// -- so the compiler is told its shape here, in the file that calls it.
+//
+// dawning_ticks.asm
+u64 dawning_ticks(void);
 
 int path_mount(const char *dev_name, struct path *path,
                const char *type_page, unsigned long flags, void *data_page);
@@ -563,6 +573,22 @@ fn dawn_init_mount()
 b32 __init dawn_start()
 {
         log_k("Dawning Eos - starting...\n");
+
+        /*
+                The initramfs is unpacked on a workqueue, not inline, so at
+                device_initcall time the root filesystem may still be empty --
+                and mounting /proc onto a directory that does not exist yet
+                fails with ENOENT rather than waiting. This is the call that
+                exists to close that race, and every other early user of the
+                rootfs makes it.
+
+                It was missing and nothing went wrong, because the unpack
+                happened to finish first. Tuning the kernel for latency made
+                the rest of the boot quick enough to lose that race, which
+                looked like the compositor breaking: no /dev, so no
+                /dev/dri/card0, so nothing to attach to.
+        */
+        wait_for_initramfs();
 
         dawn_init_mount();
 
