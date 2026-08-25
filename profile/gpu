@@ -43,7 +43,24 @@ CONFIG_MOONWATER_DISPLAY=y
 # is one CONFIG_CMDLINE and the last profile to set it wins outright, so every
 # argument belongs here.
 CONFIG_CMDLINE_BOOL=y
-CONFIG_CMDLINE="drm_client_lib.active= usbhid.mousepoll=1"
+#
+# intel_idle.max_cstate=1 / processor.max_cstate=1 keep the processor out of
+# the deep idle states. Coming back from one is the largest single cost in the
+# path from a pointer event to the worker that draws it, because a cursor that
+# moves after a pause is exactly the case that pays it.
+#
+# Measured under KVM, where the only idle is a halt and its exit is a vmexit:
+# the handoff goes from 31.3 us to 23.1 us. On real hardware the states being
+# refused are C3 and C6, whose documented exit latencies are tens to hundreds
+# of microseconds, so the number there should be larger -- that part is
+# inference and wants measuring on the OptiPlex.
+#
+# idle=poll goes further, refusing to halt at all: 17.4 us under KVM, another
+# 5.7. It is not here because it costs every core spinning at full power for
+# a desktop's whole uptime, which is a decision about the machine rather than
+# about latency. Add it to this line to take it.
+#
+CONFIG_CMDLINE="drm_client_lib.active= usbhid.mousepoll=1 intel_idle.max_cstate=1 processor.max_cstate=1"
 
 #
 # Core modesetting

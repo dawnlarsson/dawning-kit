@@ -997,14 +997,13 @@ static void display_start_probing(void)
         context cannot sleep and a DRM commit can. A high priority worker does
         that part, and the gap between the two is what gets measured.
 */
-static struct workqueue_struct *pointer_wq;
-static void pointer_apply(struct work_struct *work);
-static DECLARE_WORK(pointer_work, pointer_apply);
+static struct task_struct *pointer_thread;
+static void pointer_apply(void);
 
 // Nanoseconds from the event arriving to the cursor being on screen.
 // Declared with the rest of the timing counters near the top of the file.
 
-static void pointer_apply(struct work_struct *work)
+static void pointer_apply(void)
 {
         struct display *display = display_active;
         int x, y;
@@ -1103,7 +1102,14 @@ static void pointer_event(struct input_handle *handle, unsigned int type,
         if (!atomic_xchg(&display->motion_pending, 1))
                 display->motion_stamp = ktime_get_ns();
 
-        queue_work(pointer_wq, &pointer_work);
+        /*
+                A wake, not a queue. The work this does is one atomic commit
+                that returns without waiting, so the machinery a workqueue
+                brings -- a pool, a dispatch, a kworker that is still an
+                ordinary task -- is all overhead around it. A thread of our
+                own, at a real time priority, is woken and runs.
+        */
+        wake_up_process(pointer_thread);
 }
 
 static int pointer_connect(struct input_handler *handler, struct input_dev *dev,
@@ -1173,35 +1179,61 @@ static struct input_handler pointer_handler = {
 */
 static void pointer_stop(void)
 {
-        if (!pointer_wq)
+        if (!pointer_thread)
                 return;
 
         input_unregister_handler(&pointer_handler);
-        cancel_work_sync(&pointer_work);
-        destroy_workqueue(pointer_wq);
-        pointer_wq = NULL;
+        kthread_stop(pointer_thread);
+        pointer_thread = NULL;
+}
+
+/*
+        Sleeps until something moves, then draws it.
+
+        set_current_state before the flag is read, which is what makes the
+        sleep safe: a wake arriving between the two finds the task already
+        marked and schedule() returns at once rather than losing the event.
+*/
+static int pointer_loop(void *unused)
+{
+        while (!kthread_should_stop()) {
+                set_current_state(TASK_IDLE);
+
+                if (!display_active ||
+                    !atomic_read(&display_active->motion_pending))
+                        schedule();
+
+                __set_current_state(TASK_RUNNING);
+                pointer_apply();
+        }
+
+        return 0;
 }
 
 static void pointer_start(void)
 {
         /*
-                WQ_HIGHPRI so the cursor is not queued behind ordinary work,
-                and bound rather than unbound so it runs where the event
-                arrived.
+                A thread rather than a workqueue.
 
-                An unbound queue lets any CPU pick the work up, which sounds
-                like the faster answer and is the slower one: the worker is
-                then usually not the CPU that took the input interrupt, so
-                waking it means an inter-processor interrupt and a cold cache.
-                A bound queue hands the work to this CPU's high priority pool,
-                which is the one already holding the event.
+                WQ_HIGHPRI raises a kworker's nice level and leaves it an
+                ordinary task, so it is still scheduled against everything
+                else running. SCHED_FIFO is a different queue entirely: the
+                scheduler picks it before any normal task, which is the whole
+                of what this thread is for.
+
+                fifo_low rather than fifo: priority 1 is ahead of every
+                SCHED_OTHER task and behind anything the machine considers
+                more urgent than a cursor, which is the honest place for it.
         */
-        pointer_wq = alloc_workqueue("input", WQ_HIGHPRI, 1);
+        pointer_thread = kthread_run(pointer_loop, NULL, "moonwater/pointer");
 
-        if (!pointer_wq) {
-                log_d("no workqueue for input\n");
+        if (IS_ERR(pointer_thread)) {
+                log_d("no thread for input\n");
+                pointer_thread = NULL;
                 return;
         }
+
+        sched_set_fifo_low(pointer_thread);
 
         if (input_register_handler(&pointer_handler))
                 log_d("could not register the input handler\n");
