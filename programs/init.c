@@ -63,9 +63,26 @@ bipolar start_shell(b32 device)
         return child;
 }
 
+/*
+        A pty needs somewhere for its other end to appear.
+
+        Not the kernel's job here even though the kernel does the other
+        mounts: devpts registers itself with module_init, which for built-in
+        code runs at the same initcall level the compositor starts at, and
+        kernel/ links before fs/. By the time there is an init there is a
+        devpts, and this is where a system mounts it anyway.
+*/
+fn mount_devpts()
+{
+        system_call_3(syscall(mkdirat), AT_FDCWD, (positive)"/dev/pts", 0755);
+        system_call_5(syscall(mount), (positive)"devpts", (positive)"/dev/pts",
+                      (positive)"devpts", 0, 0);
+}
+
 b32 main()
 {
         system_call(syscall(setsid));
+        mount_devpts();
 
         b32 device = system_call_4(syscall(openat), AT_FDCWD,
                                    (positive)SPARK_DEVICE, FILE_READ_WRITE, 0);

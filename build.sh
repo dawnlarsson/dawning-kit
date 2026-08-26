@@ -473,7 +473,7 @@ STRNCHR:char *strnchr(const char *, __kernel_size_t, int)"
         label USER SPACE BUILD
                 # Every program in the image is spark, including the one the kernel
                 # execs as /init, so no ELF is ever loaded on the boot path.
-                for program in init shell duck edit sparktest pointer window text; do
+                for program in init shell duck edit sparktest pointer window text term; do
                         sh kit/spark "programs/$program" "fs/$program" ||
                                 die "building $program"
                 done

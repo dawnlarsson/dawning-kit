@@ -61,6 +61,10 @@ u64 moonwater_ticks(void);
 int path_mount(const char *dev_name, struct path *path,
                const char *type_page, unsigned long flags, void *data_page);
 
+// Declared rather than included: linux/init_syscalls.h also declares an
+// init_mount, and this file has one of its own.
+int init_mkdir(const char *pathname, umode_t mode);
+
 #define log_k(fmt, ...) \
         pr_alert("[moonwater] " fmt, ##__VA_ARGS__)
 
@@ -69,6 +73,7 @@ typedef struct
         string_address filesystem;
         string_address path;
         positive mount_flags;
+
 } MountPoints;
 
 /*
@@ -81,6 +86,14 @@ MountPoints mounts[] = {
     {"proc", "/proc", 0},
     {"sysfs", "/sys", 0},
     {"devtmpfs", "/dev", 0},
+
+    /*
+            Not devpts. It registers itself with module_init, which for
+            built-in code is device_initcall -- the level this file starts at,
+            and kernel/ links before fs/. Even late_initcall was too early.
+            init mounts it, which is where a system does it anyway, and it
+            needs no pty before then.
+    */
     {null, null},
 };
 
@@ -596,6 +609,9 @@ static fn init_mount()
 
                 int ret = kern_path(mount->path, LOOKUP_FOLLOW, &path);
 
+                if (ret == -ENOENT && !init_mkdir(mount->path, 0755))
+                        ret = kern_path(mount->path, LOOKUP_FOLLOW, &path);
+
                 if (ret)
                 {
                         log_k("Mounting %s to %s failed with error: %d\n", mount->filesystem, mount->path, ret);
@@ -606,7 +622,10 @@ static fn init_mount()
                 ret = path_mount(mount->filesystem, &path, mount->filesystem, mount->mount_flags, null);
                 path_put(&path);
 
-                if (!ret)
+                if (ret)
+                        log_k("Mounting %s on %s failed with error: %d\n",
+                              mount->filesystem, mount->path, ret);
+                else
                         log_k("Mounted %s to %s\n", mount->filesystem, mount->path);
 
                 mount++;
