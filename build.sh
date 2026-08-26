@@ -355,7 +355,13 @@ wgcVXSeiHcXa9SSFDvKn0L1q5nSLQGHp38qUi1ZPf/1uQSuB3ME=
                         "#define __HAVE_ARCH_MEMCHR" \
                         "extern void *memchr(const void *, int, __kernel_size_t);" \
                         "#define __HAVE_ARCH_STRCMP" \
-                        "extern int strcmp(const char *, const char *);"; do
+                        "extern int strcmp(const char *, const char *);" \
+                        "#define __HAVE_ARCH_STRRCHR" \
+                        "extern char *strrchr(const char *, int);" \
+                        "#define __HAVE_ARCH_STRCHRNUL" \
+                        "extern char *strchrnul(const char *, int);" \
+                        "#define __HAVE_ARCH_STRNCHR" \
+                        "extern char *strnchr(const char *, __kernel_size_t, int);"; do
                         line_add "linux/arch/x86/include/asm/string_64.h" "$line"
                 done
 
