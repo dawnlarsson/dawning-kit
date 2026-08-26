@@ -309,12 +309,73 @@ static void pane_focus(struct pane *pane)
         }
 }
 
+static void desktop_damage(int x, int y, int w, int h)
+{
+        if (desktop.damage_all)
+                return;
+
+        if (desktop.damage_count == ARRAY_SIZE(desktop.damage))
+        {
+                desktop.damage_all = true;
+                return;
+        }
+
+        rect_set(&desktop.damage[desktop.damage_count++], x, y, w, h);
+}
+
+/*
+        Reads every shared page and records what moved.
+
+        A program that changed a few rows of text should not cost a repaint of
+        every screen, which is what committing used to mean -- and resizing a
+        window of cells relaid every row, so a drag was a full recompose per
+        step of it.
+*/
 static void desktop_refresh_panes(void)
 {
         struct pane *pane;
 
+        desktop.damage_count = 0;
+        desktop.damage_all = false;
+
         list_for_each_entry(pane, &desktop.windows, link)
+        {
+                int was_x = pane->x, was_y = pane->y;
+                int was_w = pane->width, was_h = pane->height;
+                unsigned int was_z = (unsigned int)pane->z;
+                unsigned int was_style = pane->style;
+                unsigned int was_sequence = pane->sequence;
+                int fx, fy, fw, fh;
+
+                if (!pane->shared)
+                        continue;
+
+                pane_frame(pane, &fx, &fy, &fw, &fh);
                 pane_refresh(pane);
+
+                if (pane->sequence == was_sequence && pane->x == was_x &&
+                    pane->y == was_y && pane->width == was_w &&
+                    pane->height == was_h && (unsigned int)pane->z == was_z &&
+                    pane->style == was_style)
+                        continue;
+
+                // Anything but text changing in place is easier to repaint
+                // whole than to reason about.
+                if (pane->x != was_x || pane->y != was_y || pane->width != was_w ||
+                    pane->height != was_h || (unsigned int)pane->z != was_z ||
+                    pane->style != was_style || !pane->cells || !pane->damage_rows)
+                {
+                        desktop_damage(fx, fy, fw, fh);
+                        pane_frame(pane, &fx, &fy, &fw, &fh);
+                        desktop_damage(fx, fy, fw, fh);
+                        continue;
+                }
+
+                desktop_damage(pane->x,
+                               pane->y + (pane->style & WINDOW_FRAME ? WINDOW_TITLE : 0) +
+                                   (int)pane->damage_row * WINDOW_CELL_H,
+                               pane->width, (int)pane->damage_rows * WINDOW_CELL_H);
+        }
 
         list_sort(NULL, &desktop.windows, pane_by_z);
 }
@@ -365,7 +426,7 @@ static long window_ioctl_commit(struct file *file)
         mutex_lock(&desktop.lock);
         desktop_watch();
         desktop_refresh_panes();
-        desktop_redraw();
+        desktop_repaint();
         mutex_unlock(&desktop.lock);
 
         return 0;
@@ -497,7 +558,7 @@ static void desktop_frame_pass(void)
         if (desktop_sequence_changed())
         {
                 desktop_refresh_panes();
-                desktop_redraw();
+                desktop_repaint();
                 desktop.idle_frames = 0;
         }
         else if (desktop.cursor_scale > 1)
@@ -519,7 +580,7 @@ static void desktop_frame_pass(void)
                 if (desktop_sequence_changed())
                 {
                         desktop_refresh_panes();
-                        desktop_redraw();
+                        desktop_repaint();
                 }
         }
 

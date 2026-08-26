@@ -316,23 +316,60 @@ fn claim_standard_descriptors()
 }
 
 /*
-        The window was resized, so there are a different number of cells and
-        they are laid out differently. Everything is cleared and the shell is
-        told, which is the honest thing to do without a scrollback to reflow.
+        The window was resized.
+
+        The cells are one array with a row stride, so changing how many
+        columns there are moves every row: growing means walking backwards so
+        a row is never written over one not yet read, shrinking means walking
+        forwards. What was on the screen stays on it -- lines do not reflow,
+        they are kept and clipped, which is what a terminal without a
+        scrollback can honestly do.
 */
 fn regrid(b32 master)
 {
+        unsigned int was_columns = COLUMNS;
+        unsigned int was_rows = ROWS;
+        unsigned int columns = window->columns;
+        unsigned int rows = window->rows;
+        unsigned int keep = was_columns < columns ? was_columns : columns;
+        unsigned int carry = was_rows < rows ? was_rows : rows;
         winsize size;
 
-        COLUMNS = window->columns;
-        ROWS = window->rows;
+        if (columns > was_columns)
+        {
+                for (unsigned int r = carry; r-- > 0;)
+                {
+                        for (unsigned int c = keep; c-- > 0;)
+                                cells[r * columns + c] = cells[r * was_columns + c];
 
-        for (unsigned int r = 0; r < ROWS; r++)
-                for (unsigned int c = 0; c < COLUMNS; c++)
+                        for (unsigned int c = keep; c < columns; c++)
+                        {
+                                cells[r * columns + c].character = ' ';
+                                cells[r * columns + c].ink = 7;
+                                cells[r * columns + c].paper = 0;
+                        }
+                }
+        }
+        else if (columns < was_columns)
+        {
+                for (unsigned int r = 0; r < carry; r++)
+                        for (unsigned int c = 0; c < keep; c++)
+                                cells[r * columns + c] = cells[r * was_columns + c];
+        }
+
+        COLUMNS = columns;
+        ROWS = rows;
+
+        for (unsigned int r = carry; r < rows; r++)
+                for (unsigned int c = 0; c < columns; c++)
                         cell_clear(r, c);
 
-        row = 0;
-        column = 0;
+        if (row >= ROWS)
+                row = ROWS - 1;
+
+        if (column >= COLUMNS)
+                column = COLUMNS - 1;
+
         shown = false;
         touched_top = 0;
         touched_bottom = ROWS;

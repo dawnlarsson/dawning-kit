@@ -187,6 +187,16 @@ static struct desktop
                 itself once nothing has changed for a while. awake is what the
                 programs read to know whether it is still looking.
         */
+        /*
+                What changed since the last commit, so a program saying so
+                repaints its own window rather than every screen. Four is a
+                working set, not a limit: past it the whole desktop is cheaper
+                than tracking the pieces.
+        */
+        struct drm_rect damage[4];
+        unsigned int damage_count;
+        _Bool damage_all;
+
         struct hrtimer frame;
         atomic_t frame_pending;
         unsigned int idle_frames;
@@ -235,6 +245,8 @@ static void canvas_thread_start(void);
 static void canvas_thread_stop(void);
 static void canvas_thread_wake(void);
 static void desktop_redraw(void);
+static void desktop_repaint(void);
+static void rect_set(struct drm_rect *rect, int x, int y, int w, int h);
 static void desktop_watch(void);
 static void cursor_move(int x, int y);
 

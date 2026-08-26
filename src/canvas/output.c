@@ -127,6 +127,39 @@ static void desktop_redraw(void)
         desktop_commit();
 }
 
+// Whatever desktop_refresh_panes recorded, or the whole thing when it gave up
+// counting.
+static void desktop_repaint(void)
+{
+        struct output *output;
+
+        // Nothing recorded means nothing changed. It used to mean repaint
+        // every screen, which is the opposite.
+        if (!desktop.damage_count && !desktop.damage_all)
+                return;
+
+        if (desktop.damage_all)
+        {
+                desktop.damage_count = 0;
+                desktop.damage_all = false;
+                desktop_redraw();
+                return;
+        }
+
+        list_for_each_entry(output, &desktop.outputs, link)
+        {
+                if (!output_touched(output, desktop.damage, desktop.damage_count))
+                        continue;
+
+                if (output->cursor_plane)
+                        cursor_arm_output(output);
+
+                output_repaint(output, desktop.damage, desktop.damage_count);
+        }
+
+        desktop.damage_count = 0;
+}
+
 static int canvas_start(struct canvas *canvas)
 {
         struct drm_client_dev *client = &canvas->client;
