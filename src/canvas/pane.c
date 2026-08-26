@@ -43,8 +43,6 @@ static void pane_place(struct pane *pane)
 
         if (pane->style & WINDOW_FULLSCREEN)
         {
-                // As much of the output as the buffer the program asked for
-                // will cover, from its corner.
                 pane->x = output->x;
                 pane->y = output->y;
                 return;
@@ -55,6 +53,28 @@ static void pane_place(struct pane *pane)
 
         pane->x = output->x + ((int)output->width - pane->width) / 2;
         pane->y = output->y + ((int)output->height - (pane->height + title)) / 2;
+}
+
+/*
+        What a style says the size should be, before the grid rounds it.
+
+        Fullscreen used to move a window to the corner of its output and leave
+        it whatever size it was, which is not what the flag says. A window of
+        cells grows to the whole screen; one with a buffer covers as much of it
+        as the buffer it asked for will reach.
+*/
+static void pane_size(struct pane *pane)
+{
+        struct output *output = output_by_index(pane->display);
+        int title;
+
+        if (!output || !(pane->style & WINDOW_FULLSCREEN))
+                return;
+
+        title = pane->style & WINDOW_FRAME ? WINDOW_TITLE : 0;
+
+        pane->width = (int)min(output->width, pane->max_width);
+        pane->height = (int)min(output->height - (unsigned int)title, pane->max_height);
 }
 
 static void pane_raise(struct pane *raised)
@@ -283,6 +303,7 @@ static void pane_refresh(struct pane *pane)
         pane->title[WINDOW_TITLE_MAX - 1] = 0;
         pane->title_length = strnlen(pane->title, WINDOW_TITLE_MAX);
 
+        pane_size(pane);
         pane_regrid(pane);
         pane_place(pane);
 
@@ -314,6 +335,37 @@ static void pane_focus(struct pane *pane)
 
                 if (other->shared)
                         WRITE_ONCE(other->shared->state, other->state);
+        }
+}
+
+/*
+        Windows the desktop no longer reaches.
+
+        Unplugging a screen shrinks the desktop, and anything that was on it
+        is then outside every output -- drawn nowhere and impossible to take
+        hold of, because the pointer is confined to the outputs. Each one is
+        pulled back far enough that its titlebar is on a screen.
+*/
+static void desktop_gather_panes(void)
+{
+        struct pane *pane;
+
+        list_for_each_entry(pane, &desktop.windows, link)
+        {
+                int x = clamp(pane->x, 0, max(desktop.width - WINDOW_MIN_WIDTH, 0));
+                int y = clamp(pane->y, 0, max(desktop.height - WINDOW_TITLE, 0));
+
+                if (x == pane->x && y == pane->y)
+                        continue;
+
+                pane->x = x;
+                pane->y = y;
+
+                if (pane->shared)
+                {
+                        WRITE_ONCE(pane->shared->x, x);
+                        WRITE_ONCE(pane->shared->y, y);
+                }
         }
 }
 

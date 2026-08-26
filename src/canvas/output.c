@@ -38,6 +38,8 @@ static void desktop_place_outputs(void)
 
         desktop.width = x;
         desktop.height = height;
+
+        desktop_gather_panes();
 }
 
 static struct output *output_add(struct canvas *canvas, struct drm_mode_set *mode_set)

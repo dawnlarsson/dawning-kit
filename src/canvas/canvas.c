@@ -132,6 +132,16 @@ struct canvas
 static struct desktop
 {
         struct mutex lock;
+
+        /*
+                Serialises the input handler against itself.
+
+                It is called straight from the input core, once per device,
+                and every device has its own lock there -- so a tablet and a
+                mouse reporting at the same moment were two writers on one set
+                of counters. A leaf lock held for the length of one event.
+        */
+        spinlock_t input_lock;
         struct list_head outputs;
         struct list_head windows;
 
@@ -233,6 +243,7 @@ static struct desktop
         atomic_t button_y;
 } desktop = {
     .lock = __MUTEX_INITIALIZER(desktop.lock),
+    .input_lock = __SPIN_LOCK_UNLOCKED(desktop.input_lock),
     .outputs = LIST_HEAD_INIT(desktop.outputs),
     .windows = LIST_HEAD_INIT(desktop.windows),
 };

@@ -287,13 +287,10 @@ static void pointer_frame(void)
                            accel_apply(dy, &desktop.accel_y, gain));
 }
 
-static void pointer_event(struct input_handle *handle, unsigned int type,
-                          unsigned int code, int value)
+static void pointer_event_locked(struct input_handle *handle, unsigned int type,
+                                 unsigned int code, int value)
 {
         int x, y;
-
-        if (!desktop.width)
-                return;
 
         x = atomic_read(&desktop.pending_x);
         y = atomic_read(&desktop.pending_y);
@@ -384,6 +381,19 @@ static void pointer_event(struct input_handle *handle, unsigned int type,
                 wake_up_process(canvas_thread);
                 return;
         }
+}
+
+static void pointer_event(struct input_handle *handle, unsigned int type,
+                          unsigned int code, int value)
+{
+        unsigned long flags;
+
+        if (!READ_ONCE(desktop.width))
+                return;
+
+        spin_lock_irqsave(&desktop.input_lock, flags);
+        pointer_event_locked(handle, type, code, value);
+        spin_unlock_irqrestore(&desktop.input_lock, flags);
 }
 
 static int pointer_connect(struct input_handler *handler, struct input_dev *dev,
