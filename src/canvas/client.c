@@ -51,6 +51,18 @@ static int client_hotplug(struct drm_client_dev *client)
                 ret = canvas_start(canvas); 
                 canvas->started = (ret == 0);
         }
+        else if (canvas_modes_changed(canvas))
+        {
+                /*
+                        A screen arrived, left, or only now said what it can
+                        do. The modes were read once at the first hotplug and
+                        kept forever, so a monitor whose EDID landed a moment
+                        later was driven at whatever the probe had guessed.
+                */
+                canvas_release(canvas);
+                ret = canvas_start(canvas);
+                canvas->started = (ret == 0);
+        }
         else
         {
                 desktop_redraw();

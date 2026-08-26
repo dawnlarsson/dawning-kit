@@ -25,6 +25,8 @@
 #include <drm/drm_framebuffer.h>
 #include <drm/drm_gem.h>
 #include <drm/drm_mode.h>
+#include <drm/drm_modes.h>
+#include <drm/drm_connector.h>
 #include <drm/drm_modeset_lock.h>
 #include <drm/drm_plane.h>
 #include <drm/drm_print.h>
