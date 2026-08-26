@@ -114,7 +114,10 @@ static int canvas_take_over(struct drm_device *dev)
         // The face the whole machine draws with. The kernel already carries
         // it for its own console.
         if (!canvas_font)
+        {
                 canvas_font = find_font("VGA8x16");
+                canvas_cursor_bits();
+        }
 
         canvas = kzalloc(sizeof(*canvas), GFP_KERNEL);
         if (!canvas)

@@ -40,7 +40,7 @@ static void glyph_draw(const struct target *t, int x, int y, int scale,
                 canvas_painted += canvas_font->height * 8;
                 canvas_runs++;
                 canvas_glyph(t->pixels + (size_t)y * t->pitch + x, t->pitch,
-                             glyph, canvas_font->height, colour);
+                             glyph, 1, canvas_font->height, colour);
                 return;
         }
 

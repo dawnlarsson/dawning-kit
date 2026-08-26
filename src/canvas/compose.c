@@ -189,6 +189,17 @@ static void compose_pane(struct pane *pane, const struct target *t)
 
         pane_frame(pane, &fx, &fy, &fw, &fh);
 
+        /*
+                Nothing at all for a window the damage does not touch, and for
+                a cursor move that is every window but one. Without this every
+                pane laid out its own text on every mouse move, whether or not
+                a pixel of it could land.
+        */
+        if (!rects_overlap(fx - t->x, fy - t->y, fw, fh,
+                           t->clip.x1, t->clip.y1,
+                           t->clip.x2 - t->clip.x1, t->clip.y2 - t->clip.y1))
+                return;
+
         shape.x = fx - t->x;
         shape.y = fy - t->y;
         shape.w = fw;

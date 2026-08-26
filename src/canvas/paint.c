@@ -162,6 +162,34 @@ static const char canvas_cursors[CURSOR_SHAPES][CURSOR_H][CURSOR_W + 1] = {
     },
 };
 
+/*
+        The same shapes as bits, two bytes a row, built once.
+
+        Drawing from the character art meant a test and a branch per pixel in
+        C. As bits it is the same primitive a glyph uses, twice for the two
+        halves of a sixteen wide row and twice again for the two colours.
+*/
+static u8 cursor_edge[CURSOR_SHAPES][CURSOR_H][2];
+static u8 cursor_fill[CURSOR_SHAPES][CURSOR_H][2];
+
+static void canvas_cursor_bits(void)
+{
+        unsigned int shape, row, column;
+
+        for (shape = 0; shape < CURSOR_SHAPES; shape++)
+                for (row = 0; row < CURSOR_H; row++)
+                        for (column = 0; column < CURSOR_W; column++)
+                        {
+                                char pixel = canvas_cursors[shape][row][column];
+                                u8 bit = 0x80 >> (column % 8);
+
+                                if (pixel == 'X')
+                                        cursor_edge[shape][row][column / 8] |= bit;
+                                else if (pixel == '.')
+                                        cursor_fill[shape][row][column / 8] |= bit;
+                        }
+}
+
 static const int canvas_cursor_hot[CURSOR_SHAPES][2] = {
     {0, 0}, {7, 7}, {7, 7}, {7, 7}, {7, 7},
 };
@@ -179,6 +207,25 @@ static void canvas_draw_cursor(const struct target *t, int x, int y,
 
         x -= canvas_cursor_hot[shape][0] * (int)scale;
         y -= canvas_cursor_hot[shape][1] * (int)scale;
+
+        // The whole cell in four calls, when it is at its own size and
+        // entirely inside the damage. Two halves of a row, two colours.
+        if (scale == 1 &&
+            x >= max(t->clip.x1, 0) && x + CURSOR_W <= min(t->clip.x2, t->width) &&
+            y >= max(t->clip.y1, 0) && y + CURSOR_H <= min(t->clip.y2, t->height))
+        {
+                u32 *at = t->pixels + (size_t)y * t->pitch + x;
+
+                canvas_glyph(at, t->pitch, &cursor_fill[shape][0][0], 2,
+                             CURSOR_H, t->ink[INK_CURSOR]);
+                canvas_glyph(at + 8, t->pitch, &cursor_fill[shape][0][1], 2,
+                             CURSOR_H, t->ink[INK_CURSOR]);
+                canvas_glyph(at, t->pitch, &cursor_edge[shape][0][0], 2,
+                             CURSOR_H, t->ink[INK_CURSOR_EDGE]);
+                canvas_glyph(at + 8, t->pitch, &cursor_edge[shape][0][1], 2,
+                             CURSOR_H, t->ink[INK_CURSOR_EDGE]);
+                return;
+        }
 
         for (row = 0; row < CURSOR_H; row++)
         {
