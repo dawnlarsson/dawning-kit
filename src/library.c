@@ -1713,6 +1713,517 @@ __asm__(
     "4:      \n"
     ASM_RET
     ASM_END(moonwater_move)
+    //
+    //       The small string routines: copy, bounded copy, last-of, replace-all
+    //       and cut. All five were byte loops in C and stay byte loops here,
+    //       because four of the five write as they walk and two of those decide
+    //       where to stop from a byte they may themselves have just changed --
+    //       string_replace_all keeps going past a terminator it wrote, and
+    //       string_cut stops at one. A scan that reads a word ahead of the store
+    //       is answering a question about memory that no longer exists.
+    //
+    //       Staying a byte loop is not the same as writing the obvious one. The
+    //       first version of these was, and it lost to the C by half again on
+    //       string_copy and by two to one on string_last_of, measured on a 9950X
+    //       at 20000 calls a size:
+    //
+    //           last_of  16 bytes    C 298162 ticks    naive 596281
+    //           last_of  64 bytes    C 1105745         naive 2183798
+    //           last_of 1024 bytes   C 19005398        naive 33881205
+    //
+    //       Nothing to do with byte versus word. The naive loop spends three
+    //       branch slots on every byte and takes two of them -- one to skip the
+    //       store, one to jump back -- and a core retires one taken branch a
+    //       cycle. What follows peels the first load, tests at the bottom so the
+    //       back edge is the only branch that is taken, and conditionally moves
+    //       the match instead of jumping around it. One taken branch a byte, and
+    //       the gap closes.
+    //
+    //       Sign extension is not decoration. cut_symbol is b8, a signed char,
+    //       and the byte read out of the string is p8, unsigned. C promotes both
+    //       to int before comparing, so a cut symbol at or below zero can never
+    //       match anything: zero loses to the terminator test, and a negative
+    //       never equals a byte that widened to 0..255. That is the behaviour
+    //       being replaced, so it is the behaviour reproduced -- and since it is
+    //       decidable before the first load, it is also the fast exit.
+    //       string_last_of takes p8 and is zero extended, which is a different
+    //       answer to a different question.
+    //
+    ASM_FUNC(moonwater_string_copy)
+    "        mov     %rdi, %rax\n"
+    "        sub     %rdi, %rsi              # one pointer to step, not two\n"
+    "        .balign 16\n"
+    "1:      movzbl  (%rdi,%rsi), %ecx\n"
+    "        mov     %cl, (%rdi)\n"
+    "        inc     %rdi\n"
+    "        test    %cl, %cl                # the terminator is copied too\n"
+    "        jnz     1b\n"
+    ASM_RET
+    ASM_END(moonwater_string_copy)
+    //
+    //       Not strncpy: no padding, and no terminator at all when the source
+    //       filled the whole bound. Writing one unconditionally would put it at
+    //       destination[length], one past what the caller allowed.
+    //
+    ASM_FUNC(moonwater_string_copy_max)
+    "        mov     %rdi, %rax\n"
+    "        test    %rdx, %rdx\n"
+    "        jz      3f\n"
+    "        .balign 16\n"
+    "1:      movzbl  (%rsi), %ecx\n"
+    "        test    %cl, %cl\n"
+    "        jz      2f\n"
+    "        mov     %cl, (%rdi)\n"
+    "        inc     %rdi\n"
+    "        inc     %rsi\n"
+    "        dec     %rdx\n"
+    "        jnz     1b\n"
+    "        jmp     3f                      # bound filled: no terminator\n"
+    "2:      movb    $0, (%rdi)              # source ended inside the bound\n"
+    "3:\n"
+    ASM_RET
+    ASM_END(moonwater_string_copy_max)
+    //
+    //       Not the strrchr above it: this one answers null for the terminator
+    //       rather than the end of the string, which is why it cannot borrow it.
+    //
+    ASM_FUNC(moonwater_string_last_of)
+    "        movzbl  %sil, %ecx\n"
+    "        xor     %eax, %eax              # no match yet\n"
+    "        movzbl  (%rdi), %edx\n"
+    "        test    %dl, %dl\n"
+    "        jz      2f\n"
+    "        .balign 16\n"
+    "1:      cmp     %ecx, %edx\n"
+    "        cmove   %rdi, %rax              # moved, not jumped around\n"
+    "        inc     %rdi\n"
+    "        movzbl  (%rdi), %edx\n"
+    "        test    %dl, %dl\n"
+    "        jnz     1b\n"
+    "2:\n"
+    ASM_RET
+    ASM_END(moonwater_string_last_of)
+    //
+    //       The byte tested is always the one that was there before the store,
+    //       so replacing with a terminator does not end the walk early. The
+    //       store is off the straight path: a match is the rare case, and a
+    //       conditional store would have to write every byte back to avoid the
+    //       branch, which faults on a string the caller only meant to read.
+    //
+    ASM_FUNC(moonwater_string_replace_all)
+    "        movsbl  %sil, %ecx\n"
+    "        test    %ecx, %ecx\n"
+    "        jle     2f                      # b8 at or below zero never matches\n"
+    "        movzbl  (%rdi), %eax\n"
+    "        test    %al, %al\n"
+    "        jz      2f\n"
+    "        .balign 16\n"
+    "1:      cmp     %ecx, %eax\n"
+    "        je      4f\n"
+    "3:      inc     %rdi\n"
+    "        movzbl  (%rdi), %eax\n"
+    "        test    %al, %al\n"
+    "        jnz     1b\n"
+    "2:\n"
+    ASM_RET
+    "4:      mov     %dl, (%rdi)\n"
+    "        jmp     3b\n"
+    ASM_END(moonwater_string_replace_all)
+    //
+    //       Cut at the first occurrence and answer with what follows it -- but
+    //       null when what follows is the terminator, so a cut at the last byte
+    //       reads as no second half rather than an empty one.
+    //
+    ASM_FUNC(moonwater_string_cut)
+    "        movsbl  %sil, %ecx\n"
+    "        test    %ecx, %ecx\n"
+    "        jle     4f\n"
+    "        movzbl  (%rdi), %eax\n"
+    "        test    %al, %al\n"
+    "        jz      4f\n"
+    "        .balign 16\n"
+    "1:      cmp     %ecx, %eax\n"
+    "        je      2f\n"
+    "        inc     %rdi\n"
+    "        movzbl  (%rdi), %eax\n"
+    "        test    %al, %al\n"
+    "        jnz     1b\n"
+    "4:      xor     %eax, %eax\n"
+    ASM_RET
+    "2:      movb    $0, (%rdi)\n"
+    "        inc     %rdi\n"
+    "        cmpb    $0, (%rdi)\n"
+    "        je      4b\n"
+    "        mov     %rdi, %rax\n"
+    ASM_RET
+    ASM_END(moonwater_string_cut)
+
+    //
+    //       path_basename. The single write at the end of every path is a tail
+    //       jump, so this needs no frame of its own once string_length has
+    //       returned. The writer is staged in a caller-saved register before
+    //       the callee-saved ones are restored -- popping rbx first would put
+    //       the caller's value back over the pointer being jumped to.
+    //
+    //       A kernel built with a retpoline mitigation would want the thunked
+    //       form of that jump; the macro for it lives in a header this file
+    //       does not include.
+    //
+    ASM_FUNC(moonwater_basename)
+    "        push    %rbx\n"
+    "        push    %rbp\n"
+    "        sub     $8, %rsp\n"
+    "        mov     %rdi, %rbx\n"
+    "        mov     %rsi, %rbp\n"
+    "        mov     %rsi, %rdi\n"
+    "        call    string_length\n"
+    "        mov     %rax, %rcx\n"
+    // trailing slashes go, except when the slash is the whole path
+    "1:      cmp     $1, %rcx\n"
+    "        jbe     2f\n"
+    "        cmpb    $47, -1(%rbp,%rcx,1)\n"
+    "        jne     2f\n"
+    "        dec     %rcx\n"
+    "        jmp     1b\n"
+    "2:      cmp     $1, %rcx\n"
+    "        jne     3f\n"
+    "        cmpb    $47, (%rbp)\n"
+    "        jne     3f\n"
+    // the root: its own first byte is the slash the C writes from a literal
+    "        mov     %rbp, %rdi\n"
+    "        mov     $1, %esi\n"
+    "        jmp     7f\n"
+    "3:      mov     %rcx, %rdx\n"
+    "4:      test    %rdx, %rdx\n"
+    "        jz      5f\n"
+    "        cmpb    $47, -1(%rbp,%rdx,1)\n"
+    "        je      5f\n"
+    "        dec     %rdx\n"
+    "        jmp     4b\n"
+    "5:      lea     (%rbp,%rdx,1), %rdi\n"
+    "        sub     %rdx, %rcx\n"
+    "        mov     %rcx, %rsi\n"
+    "7:      mov     %rbx, %r11\n"
+    "        add     $8, %rsp\n"
+    "        pop     %rbp\n"
+    "        pop     %rbx\n"
+    "        jmp     *%r11\n"
+    ASM_END(moonwater_basename)
+
+    //
+    //       string_get_environment has no body in C. It is here so the name is
+    //       assembly like the rest of the file rather than the one C function
+    //       left behind, and it stays a return until somebody decides what a
+    //       shell environment lookup means in this tree.
+    //
+    ASM_FUNC(moonwater_get_environment)
+    ASM_RET
+    ASM_END(moonwater_get_environment)
+    //
+    "        .section .rodata\n"
+    "        .balign 2\n"
+    "moonwater_digit_pairs:\n"
+    "        .ascii \"00010203040506070809101112131415161718192021222324252627282930313233343536373839404142434445464748495051525354555657585960616263646566676869707172737475767778798081828384858687888990919293949596979899\"\n"
+    "        .text\n"
+ASM_FUNC(moonwater_positive_to_string)
+    //
+    //       Nothing is saved and nothing is restored. The writer is wanted only
+    //       up to the call and not after it, so it lives in r11, which the call
+    //       is free to destroy.
+    //
+    "        mov     %rdi, %r11\n"
+    "        sub     $40, %rsp                # 40, not 32: aligned at the call\n"
+    "        lea     40(%rsp), %rcx           # one past the end of the buffer\n"
+    "        lea     moonwater_digit_pairs(%rip), %r9\n"
+    "        cmp     $99, %rsi\n"
+    "        jbe     3f\n"
+    //
+    //       n / 100 as gcc spells it: shift two off the bottom first, because
+    //       the reciprocal of a hundred does not fit in sixty four bits and the
+    //       reciprocal of twenty five does.
+    //
+    "        movabs  $0x28F5C28F5C28F5C3, %r10\n"
+    "1:      mov     %rsi, %rax\n"
+    "        shr     $2, %rax\n"
+    "        mul     %r10\n"
+    "        shr     $2, %rdx                 # n / 100\n"
+    "        imul    $100, %rdx, %rax\n"
+    "        mov     %rsi, %r8\n"
+    "        sub     %rax, %r8                # n % 100, and rsi keeps n\n"
+    "        movzwl  (%r9,%r8,2), %eax        # both characters at once\n"
+    "        sub     $2, %rcx\n"
+    "        mov     %ax, (%rcx)\n"
+    //
+    //       The test is on the number this pass consumed, not on the quotient it
+    //       produced, so the branch does not wait on the multiply.
+    //
+    "        cmp     $9999, %rsi\n"
+    "        mov     %rdx, %rsi\n"
+    "        ja      1b\n"
+    "3:      cmp     $9, %rsi\n"
+    "        jbe     4f\n"
+    "        movzwl  (%r9,%rsi,2), %eax\n"
+    "        sub     $2, %rcx\n"
+    "        mov     %ax, (%rcx)\n"
+    "        jmp     5f\n"
+    //
+    //       One digit left over, and zero arrives here too: the pair table would
+    //       have written it as 00.
+    //
+    "4:      add     $48, %esi\n"
+    "        dec     %rcx\n"
+    "        mov     %sil, (%rcx)\n"
+    "5:      mov     %rcx, %rdi\n"
+    "        lea     40(%rsp), %rsi\n"
+    "        sub     %rcx, %rsi               # how many digits\n"
+    "        call    *%r11\n"
+    "        add     $40, %rsp\n"
+    ASM_RET
+    ASM_END(moonwater_positive_to_string)
+    //
+    //
+    //       bipolar_to_string -- a sign, then the digits.
+    //
+    //       The non-negative case is a jump rather than a call, taken before
+    //       anything is pushed, so a positive number costs one test more than
+    //       positive_to_string and nothing else.
+    //
+    //       The minus sign goes through the stack buffer rather than a constant
+    //       in .rodata: the writer is handed a pointer and a length either way,
+    //       and this keeps the whole routine inside .text.
+    //
+    ASM_FUNC(moonwater_bipolar_to_string)
+    "        test    %rsi, %rsi\n"
+    "        jns     moonwater_positive_to_string\n"
+    "        push    %rbx\n"
+    "        push    %r12\n"
+    "        sub     $24, %rsp                # two pushes and 24: aligned at the call\n"
+    "        mov     %rdi, %rbx\n"
+    //
+    //       neg, not a multiply by minus one. They are the same instruction for
+    //       every value including the most negative, where the C this replaces
+    //       was relying on signed overflow.
+    //
+    "        neg     %rsi\n"
+    "        mov     %rsi, %r12\n"
+    "        movb    $45, (%rsp)\n"
+    "        mov     %rsp, %rdi\n"
+    "        mov     $1, %esi\n"
+    "        call    *%rbx\n"
+    "        mov     %rbx, %rdi\n"
+    "        mov     %r12, %rsi\n"
+    "        add     $24, %rsp\n"
+    "        pop     %r12\n"
+    "        pop     %rbx\n"
+    "        jmp     moonwater_positive_to_string\n"
+    ASM_END(moonwater_bipolar_to_string)
+    //
+    //
+    //       string_to_positive -- the trailing digits of a string.
+    //
+    //       It reads backwards from the terminator and stops at the first thing
+    //       that is not a digit, which is why "12a34" is thirty four and not
+    //       twelve. That is what the C did and programs depend on it, so the
+    //       assembly does the same rather than the obvious thing.
+    //
+    //       Finding the terminator is half the work, and on x86_64 the C called
+    //       string_length, which is the word-at-a-time strlen above. A byte loop
+    //       here would have been slower than what it replaced, so the same scan
+    //       is inlined: align down, force the bytes before the string to ones so
+    //       they cannot look like a terminator, then hunt a zero byte a word at
+    //       a time. Aligning down cannot cross into a page the caller did not
+    //       give us.
+    //
+    ASM_FUNC(moonwater_string_to_positive)
+    "        mov     %rdi, %r8               # keep the start\n"
+    "        mov     %edi, %ecx\n"
+    "        and     $7, %ecx\n"
+    "        and     $-8, %rdi\n"
+    "        mov     (%rdi), %rdx\n"
+    "        shl     $3, %ecx\n"
+    "        mov     $1, %rax\n"
+    "        shl     %cl, %rax\n"
+    "        dec     %rax\n"
+    "        or      %rax, %rdx\n"
+    "        movabs  $0x0101010101010101, %r10\n"
+    "        movabs  $0x8080808080808080, %r11\n"
+    "1:      mov     %rdx, %rax\n"
+    "        sub     %r10, %rax\n"
+    "        mov     %rdx, %rsi\n"
+    "        not     %rsi\n"
+    "        and     %rsi, %rax\n"
+    "        and     %r11, %rax\n"
+    "        jnz     2f\n"
+    "        add     $8, %rdi\n"
+    "        mov     (%rdi), %rdx\n"
+    "        jmp     1b\n"
+    "2:      bsf     %rax, %rax\n"
+    "        shr     $3, %rax\n"
+    "        add     %rdi, %rax              # the terminator\n"
+    "        xor     %r9d, %r9d              # the number so far\n"
+    "        mov     $1, %esi                # what the next digit is worth\n"
+    "        dec     %rax\n"
+    //
+    //       Unsigned compare: an empty string steps to one before the start,
+    //       which is below it and not above.
+    //
+    "3:      cmp     %r8, %rax\n"
+    "        jb      4f\n"
+    "        movzbl  (%rax), %ecx\n"
+    "        sub     $48, %ecx\n"
+    "        cmp     $9, %ecx\n"
+    "        ja      4f                      # one compare, both ends\n"
+    "        imul    %rsi, %rcx\n"
+    "        add     %rcx, %r9\n"
+    "        lea     (%rsi,%rsi,4), %rsi\n"
+    "        add     %rsi, %rsi              # times ten\n"
+    "        dec     %rax\n"
+    "        jmp     3b\n"
+    "4:      mov     %r9, %rax\n"
+    ASM_RET
+    ASM_END(moonwater_string_to_positive)
+    //
+    //
+    //       string_to_bipolar -- a leading minus, or not.
+    //
+    ASM_FUNC(moonwater_string_to_bipolar)
+    "        cmpb    $45, (%rdi)\n"
+    "        je      1f\n"
+    "        jmp     moonwater_string_to_positive\n"
+    "1:      inc     %rdi\n"
+    "        sub     $8, %rsp                # aligned at the call\n"
+    "        call    moonwater_string_to_positive\n"
+    "        add     $8, %rsp\n"
+    "        neg     %rax\n"
+    ASM_RET
+    ASM_END(moonwater_string_to_bipolar)
+    //
+    //       string_address moonwater_find(string_address string, string_address input)
+    //
+    //       Two loops. The outer one is strchrnul on the first byte of input:
+    //       the only places a match can begin are where that byte is, and the
+    //       terminator ends the search. The inner one walks the two strings
+    //       while they agree.
+    //
+    //       The broadcast of that first byte and the two constants are set up
+    //       once, outside both loops, so a restart costs the align-down and
+    //       the mask and nothing else.
+    //
+    //       An empty input answers nothing, which looks wrong beside strstr
+    //       and is what the C did: its outer test compares the string's byte
+    //       against the input's terminator, never matches, and walks off the
+    //       end.
+    //
+    ASM_FUNC(moonwater_find)
+    "        movzbl  (%rsi), %ecx\n"
+    "        xor     %eax, %eax\n"
+    "        test    %cl, %cl\n"
+    "        jnz     2f                      # an empty input matches nothing\n"
+    ASM_RET
+    "2:      push    %rbx\n"
+    "        push    %r12\n"
+    "        push    %r14\n"
+    "        mov     %rcx, %r14              # the byte a match has to start with\n"
+    "        movabs  $0x0101010101010101, %r10\n"
+    "        mov     %rcx, %r8\n"
+    "        imul    %r10, %r8               # it, in all eight positions\n"
+    "        movabs  $0x8080808080808080, %r11\n"
+    //
+    //      Four bytes by hand first, every time the scan restarts. Where
+    //      that byte is common -- a text over three symbols, a column of
+    //      digits -- the next candidate is two or three bytes away and the
+    //      word machinery never pays for itself. Where it is rare the four
+    //      run out and the words take over, which is the case that wins.
+    //
+    //      Four rather than eight or sixteen because it was measured: on a
+    //      9950X, 4096 bytes of text over three symbols, 65536 calls, four
+    //      is 230M ticks against the C's 237M, eight is 264M and sixteen is
+    //      296M. The longer the hand window the more of a sparse text it
+    //      takes away from the words, which are what make this worth doing.
+    //
+    "1:      movzbl  (%rdi), %eax\n"
+    "        test    %al, %al\n"
+    "        jz      8f\n"
+    "        cmp     %r14b, %al\n"
+    "        je      3f\n"
+    "        inc     %rdi\n"
+    "        movzbl  (%rdi), %eax\n"
+    "        test    %al, %al\n"
+    "        jz      8f\n"
+    "        cmp     %r14b, %al\n"
+    "        je      3f\n"
+    "        inc     %rdi\n"
+    "        movzbl  (%rdi), %eax\n"
+    "        test    %al, %al\n"
+    "        jz      8f\n"
+    "        cmp     %r14b, %al\n"
+    "        je      3f\n"
+    "        inc     %rdi\n"
+    "        movzbl  (%rdi), %eax\n"
+    "        test    %al, %al\n"
+    "        jz      8f\n"
+    "        cmp     %r14b, %al\n"
+    "        je      3f\n"
+    "        inc     %rdi\n"
+    "        mov     %rdi, %rbx\n"
+    "        mov     %edi, %ecx\n"
+    "        and     $7, %ecx\n"
+    "        and     $-8, %rbx               # align down: same page, cannot fault\n"
+    "        mov     (%rbx), %rdx\n"
+    "        shl     $3, %ecx\n"
+    "        mov     $-1, %r9\n"
+    "        shl     %cl, %r9                # which bytes of this word count\n"
+    "6:      mov     %rdx, %rax\n"
+    "        xor     %r8, %rax               # the byte that matched is now zero\n"
+    "        mov     %rax, %rcx\n"
+    "        not     %rcx\n"
+    "        sub     %r10, %rax\n"
+    "        and     %rcx, %rax\n"
+    "        and     %r11, %rax\n"
+    "        mov     %rdx, %r12\n"
+    "        sub     %r10, %r12              # and the terminator, the same way\n"
+    "        mov     %rdx, %rcx\n"
+    "        not     %rcx\n"
+    "        and     %rcx, %r12\n"
+    "        and     %r11, %r12\n"
+    "        or      %r12, %rax\n"
+    "        and     %r9, %rax\n"
+    "        jnz     0f\n"
+    "        mov     $-1, %r9\n"
+    "        add     $8, %rbx\n"
+    "        mov     (%rbx), %rdx\n"
+    "        jmp     6b\n"
+    "0:      bsf     %rax, %rax\n"
+    "        shr     $3, %rax\n"
+    "        lea     (%rbx,%rax), %rdi       # the byte or the terminator\n"
+    "        movzbl  (%rdi), %eax\n"
+    "        test    %al, %al\n"
+    "        jz      8f\n"
+    //
+    //      A borrow out of the bytes before the string can set a bit that
+    //      is neither. Carrying on from here is what the C would do with a
+    //      byte that does not match, so it costs a probe and nothing else.
+    //
+    "        cmp     %r14b, %al\n"
+    "        jne     1b\n"
+    "3:      mov     %rdi, %rdx              # where this candidate starts\n"
+    "        mov     %rsi, %r12\n"
+    "4:      movzbl  (%r12), %eax\n"
+    "        test    %al, %al\n"
+    "        jz      7f                      # input ran out: this is the answer\n"
+    "        cmp     (%rdi), %al\n"
+    "        jne     1b                      # carry on from here, as the C did\n"
+    "        inc     %rdi\n"
+    "        inc     %r12\n"
+    "        jmp     4b\n"
+    "7:      mov     %rdx, %rax\n"
+    "        jmp     5f\n"
+    "8:      xor     %eax, %eax\n"
+    "5:      pop     %r14\n"
+    "        pop     %r12\n"
+    "        pop     %rbx\n"
+    ASM_RET
+    ASM_END(moonwater_find)
 );
 #ifdef KERNEL_MODE
 ASM_EXPORT(memchr);
@@ -2125,6 +2636,404 @@ __asm__(
     "8:      mov     x0, x3\n"
     ASM_RET
     ASM_END(moonwater_move)
+    //
+    //       The small string routines: copy, bounded copy, last-of, replace-all
+    //       and cut. Byte loops, and rotated ones, for the reasons set out in
+    //       the x86_64 block: four of the five write as they walk, so a word
+    //       ahead scan would be reading memory the store has already changed,
+    //       and the branch topology is what the naive version lost on rather
+    //       than the width of the load.
+    //
+    //       csel for the match in string_last_of, a peeled first load, and the
+    //       test at the bottom so the back edge is the only taken branch.
+    //
+    //       sxtb where the C had b8 and uxtb where it had p8. The signedness is
+    //       load bearing: a b8 cut symbol at or below zero never matches an
+    //       unsigned byte once both are promoted, so that case is decided before
+    //       the first load rather than never taken inside it.
+    //
+    ASM_FUNC(moonwater_string_copy)
+    "        mov     x2, x0\n"
+    "1:      ldrb    w3, [x1], #1\n"
+    "        strb    w3, [x0], #1            // the terminator is copied too\n"
+    "        cbnz    w3, 1b\n"
+    "        mov     x0, x2\n"
+    ASM_RET
+    ASM_END(moonwater_string_copy)
+    //
+    //       Not strncpy: no padding, and no terminator at all when the source
+    //       filled the whole bound.
+    //
+    ASM_FUNC(moonwater_string_copy_max)
+    "        mov     x3, x0\n"
+    "        cbz     x2, 3f\n"
+    "1:      ldrb    w4, [x1]\n"
+    "        cbz     w4, 2f\n"
+    "        strb    w4, [x0], #1\n"
+    "        add     x1, x1, #1\n"
+    "        sub     x2, x2, #1\n"
+    "        cbnz    x2, 1b\n"
+    "        b       3f                      // bound filled: no terminator\n"
+    "2:      strb    wzr, [x0]               // source ended inside the bound\n"
+    "3:      mov     x0, x3\n"
+    ASM_RET
+    ASM_END(moonwater_string_copy_max)
+    //
+    //       null for the terminator rather than the end of the string, which is
+    //       what keeps this from being strrchr.
+    //
+    ASM_FUNC(moonwater_string_last_of)
+    "        uxtb    w1, w1\n"
+    "        mov     x2, #0                  // no match yet\n"
+    "        ldrb    w3, [x0]\n"
+    "        cbz     w3, 2f\n"
+    "1:      cmp     w3, w1\n"
+    "        csel    x2, x0, x2, eq          // moved, not jumped around\n"
+    "        add     x0, x0, #1\n"
+    "        ldrb    w3, [x0]\n"
+    "        cbnz    w3, 1b\n"
+    "2:      mov     x0, x2\n"
+    ASM_RET
+    ASM_END(moonwater_string_last_of)
+    //
+    //       The byte tested is always the one that was there before the store,
+    //       so replacing with a terminator does not end the walk early. The
+    //       store is off the straight path on purpose: a conditional store would
+    //       have to write every byte back, which faults on a string the caller
+    //       only meant to read.
+    //
+    ASM_FUNC(moonwater_string_replace_all)
+    "        sxtb    w1, w1\n"
+    "        cmp     w1, #0\n"
+    "        b.le    2f                      // b8 at or below zero never matches\n"
+    "        ldrb    w3, [x0]\n"
+    "        cbz     w3, 2f\n"
+    "1:      cmp     w3, w1\n"
+    "        b.eq    4f\n"
+    "3:      add     x0, x0, #1\n"
+    "        ldrb    w3, [x0]\n"
+    "        cbnz    w3, 1b\n"
+    "2:\n"
+    ASM_RET
+    "4:      strb    w2, [x0]\n"
+    "        b       3b\n"
+    ASM_END(moonwater_string_replace_all)
+    //
+    //       Cut at the first occurrence and answer with what follows it -- but
+    //       null when what follows is the terminator.
+    //
+    ASM_FUNC(moonwater_string_cut)
+    "        sxtb    w1, w1\n"
+    "        cmp     w1, #0\n"
+    "        b.le    4f\n"
+    "        ldrb    w3, [x0]\n"
+    "        cbz     w3, 4f\n"
+    "1:      cmp     w3, w1\n"
+    "        b.eq    2f\n"
+    "        add     x0, x0, #1\n"
+    "        ldrb    w3, [x0]\n"
+    "        cbnz    w3, 1b\n"
+    "4:      mov     x0, #0\n"
+    ASM_RET
+    "2:      strb    wzr, [x0]\n"
+    "        add     x0, x0, #1\n"
+    "        ldrb    w3, [x0]\n"
+    "        cbz     w3, 4b\n"
+    ASM_RET
+    ASM_END(moonwater_string_cut)
+
+    //
+    //       path_basename. One write ends every path, so it is a tail jump
+    //       through x16 -- staged there before x19 and x20 are restored, since
+    //       restoring them puts the caller's values back.
+    //
+    ASM_FUNC(moonwater_basename)
+    "        stp     x29, x30, [sp, #-32]!\n"
+    "        stp     x19, x20, [sp, #16]\n"
+    "        mov     x19, x0\n"
+    "        mov     x20, x1\n"
+    "        mov     x0, x1\n"
+    "        bl      string_length\n"
+    "        mov     x2, x0\n"
+    // trailing slashes go, except when the slash is the whole path
+    "1:      cmp     x2, #1\n"
+    "        b.ls    2f\n"
+    "        sub     x3, x2, #1\n"
+    "        ldrb    w4, [x20, x3]\n"
+    "        cmp     w4, #47\n"
+    "        b.ne    2f\n"
+    "        mov     x2, x3\n"
+    "        b       1b\n"
+    "2:      cmp     x2, #1\n"
+    "        b.ne    3f\n"
+    "        ldrb    w4, [x20]\n"
+    "        cmp     w4, #47\n"
+    "        b.ne    3f\n"
+    // the root: its own first byte is the slash the C writes from a literal
+    "        mov     x0, x20\n"
+    "        mov     x1, #1\n"
+    "        b       7f\n"
+    "3:      mov     x3, x2\n"
+    "4:      cbz     x3, 5f\n"
+    "        sub     x5, x3, #1\n"
+    "        ldrb    w4, [x20, x5]\n"
+    "        cmp     w4, #47\n"
+    "        b.eq    5f\n"
+    "        mov     x3, x5\n"
+    "        b       4b\n"
+    "5:      add     x0, x20, x3\n"
+    "        sub     x1, x2, x3\n"
+    "7:      mov     x16, x19\n"
+    "        ldp     x19, x20, [sp, #16]\n"
+    "        ldp     x29, x30, [sp], #32\n"
+    "        br      x16\n"
+    ASM_END(moonwater_basename)
+
+    //
+    //       string_get_environment has no body in C; see the x86_64 block.
+    //
+    ASM_FUNC(moonwater_get_environment)
+    ASM_RET
+    ASM_END(moonwater_get_environment)
+    //
+    "        .section .rodata\n"
+    "        .balign 2\n"
+    "moonwater_digit_pairs:\n"
+    "        .ascii \"00010203040506070809101112131415161718192021222324252627282930313233343536373839404142434445464748495051525354555657585960616263646566676869707172737475767778798081828384858687888990919293949596979899\"\n"
+    "        .text\n"
+ASM_FUNC(moonwater_positive_to_string)
+    //
+    //       x19 is not saved because it is not used: the writer is wanted only
+    //       up to the call, so x9 holds it and the call is welcome to it.
+    //
+    "        stp     x29, x30, [sp, #-48]!\n"
+    "        mov     x29, sp\n"
+    "        mov     x9, x0\n"
+    "        add     x3, sp, #48             // one past the end of the buffer\n"
+    "        adrp    x8, moonwater_digit_pairs\n"
+    "        add     x8, x8, :lo12:moonwater_digit_pairs\n"
+    "        mov     x7, #100\n"
+    "        mov     x10, #9999\n"
+    "        cmp     x1, #99\n"
+    "        b.ls    3f\n"
+    "        mov     x4, #0xf5c3\n"
+    "        movk    x4, #0x5c28, lsl #16\n"
+    "        movk    x4, #0xc28f, lsl #32\n"
+    "        movk    x4, #0x28f5, lsl #48\n"
+    "1:      lsr     x5, x1, #2\n"
+    "        umulh   x5, x5, x4\n"
+    "        lsr     x5, x5, #2              // n / 100\n"
+    "        msub    x6, x5, x7, x1          // n % 100\n"
+    "        ldrh    w6, [x8, x6, lsl #1]    // both characters at once\n"
+    "        sub     x3, x3, #2\n"
+    "        strh    w6, [x3]\n"
+    //
+    //       The test is on the number this pass consumed, not on the quotient it
+    //       produced, so the branch does not wait on the multiply.
+    //
+    "        cmp     x1, x10\n"
+    "        mov     x1, x5\n"
+    "        b.hi    1b\n"
+    "3:      cmp     x1, #9\n"
+    "        b.ls    4f\n"
+    "        ldrh    w6, [x8, x1, lsl #1]\n"
+    "        sub     x3, x3, #2\n"
+    "        strh    w6, [x3]\n"
+    "        b       5f\n"
+    //
+    //       One digit left over, and zero arrives here too: the pair table would
+    //       have written it as 00.
+    //
+    "4:      add     w1, w1, #48\n"
+    "        strb    w1, [x3, #-1]!\n"
+    "5:      mov     x0, x3\n"
+    "        add     x1, sp, #48\n"
+    "        sub     x1, x1, x3              // how many digits\n"
+    "        blr     x9\n"
+    "        ldp     x29, x30, [sp], #48\n"
+    ASM_RET
+    ASM_END(moonwater_positive_to_string)
+    //
+    //
+    //       bipolar_to_string -- a sign, then the digits. See the x86_64 block.
+    //
+    ASM_FUNC(moonwater_bipolar_to_string)
+    "        tbnz    x1, #63, 1f\n"
+    "        b       moonwater_positive_to_string\n"
+    "1:      stp     x29, x30, [sp, #-48]!\n"
+    "        mov     x29, sp\n"
+    "        stp     x19, x20, [sp, #16]\n"
+    "        mov     x19, x0\n"
+    "        neg     x20, x1                 // the same bits as times minus one\n"
+    "        mov     w2, #45\n"
+    "        strb    w2, [sp, #32]\n"
+    "        add     x0, sp, #32\n"
+    "        mov     x1, #1\n"
+    "        blr     x19\n"
+    "        mov     x0, x19\n"
+    "        mov     x1, x20\n"
+    "        ldp     x19, x20, [sp, #16]\n"
+    "        ldp     x29, x30, [sp], #48\n"
+    "        b       moonwater_positive_to_string\n"
+    ASM_END(moonwater_bipolar_to_string)
+    //
+    //
+    //       string_to_positive -- the trailing digits of a string.
+    //
+    //       Backwards from the terminator, stopping at the first thing that is
+    //       not a digit: "12a34" is thirty four. That is what the C did.
+    //
+    //       The scan for the terminator is a byte loop here on purpose. arm64
+    //       defines __HAVE_ARCH_STRLEN and the C this replaces called
+    //       string_length, which on this machine is the byte loop in the file --
+    //       so a byte loop with no call is already the faster of the two, and a
+    //       word-at-a-time scan would be optimising the wrong half.
+    //
+    ASM_FUNC(moonwater_string_to_positive)
+    "        mov     x8, x0                  // keep the start\n"
+    "1:      ldrb    w9, [x0], #1\n"
+    "        cbnz    w9, 1b\n"
+    "        sub     x0, x0, #2              // the last character\n"
+    "        mov     x2, xzr                 // the number so far\n"
+    "        mov     x3, #1                  // what the next digit is worth\n"
+    "        mov     x4, #10\n"
+    //
+    //       Unsigned compare: an empty string steps to one before the start.
+    //
+    "2:      cmp     x0, x8\n"
+    "        b.lo    3f\n"
+    "        ldrb    w9, [x0]\n"
+    "        sub     w9, w9, #48\n"
+    "        cmp     w9, #9\n"
+    "        b.hi    3f                      // one compare, both ends\n"
+    "        madd    x2, x9, x3, x2\n"
+    "        mul     x3, x3, x4\n"
+    "        sub     x0, x0, #1\n"
+    "        b       2b\n"
+    "3:      mov     x0, x2\n"
+    ASM_RET
+    ASM_END(moonwater_string_to_positive)
+    //
+    //
+    //       string_to_bipolar -- a leading minus, or not.
+    //
+    ASM_FUNC(moonwater_string_to_bipolar)
+    "        ldrb    w1, [x0]\n"
+    "        cmp     w1, #45\n"
+    "        b.eq    1f\n"
+    "        b       moonwater_string_to_positive\n"
+    "1:      stp     x29, x30, [sp, #-16]!\n"
+    "        add     x0, x0, #1\n"
+    "        bl      moonwater_string_to_positive\n"
+    "        neg     x0, x0\n"
+    "        ldp     x29, x30, [sp], #16\n"
+    ASM_RET
+    ASM_END(moonwater_string_to_bipolar)
+    //
+    //       string_address moonwater_find(string_address string, string_address input)
+    //
+    //       Two loops. The outer one is strchrnul on the first byte of input:
+    //       the only places a match can begin are where that byte is, and the
+    //       terminator ends the search. The inner one walks the two strings
+    //       while they agree.
+    //
+    //       The broadcast of that first byte and the two constants are set up
+    //       once, outside both loops, so a restart costs the align-down and
+    //       the mask and nothing else.
+    //
+    //       An empty input answers nothing, which looks wrong beside strstr
+    //       and is what the C did.
+    //
+    ASM_FUNC(moonwater_find)
+    "        ldrb    w3, [x1]\n"
+    "        cbz     w3, 9f                  // an empty input matches nothing\n"
+    "        mov     x10, #0x0101\n"
+    "        movk    x10, #0x0101, lsl #16\n"
+    "        movk    x10, #0x0101, lsl #32\n"
+    "        movk    x10, #0x0101, lsl #48   // 0x0101010101010101\n"
+    "        lsl     x11, x10, #7            // 0x8080808080808080\n"
+    "        mul     x2, x3, x10             // it, in all eight positions\n"
+    //
+    //      Four bytes by hand first, every time the scan restarts. Where
+    //      that byte is common -- a text over three symbols, a column of
+    //      digits -- the next candidate is two or three bytes away and the
+    //      word machinery never pays for itself. Where it is rare the four
+    //      run out and the words take over, which is the case that wins.
+    //
+    //      Four rather than eight or sixteen because it was measured: on a
+    //      9950X, 4096 bytes of text over three symbols, 65536 calls, four
+    //      is 230M ticks against the C's 237M, eight is 264M and sixteen is
+    //      296M. The longer the hand window the more of a sparse text it
+    //      takes away from the words, which are what make this worth doing.
+    //
+    "1:      ldrb    w8, [x0]\n"
+    "        cbz     w8, 9f\n"
+    "        cmp     w8, w3\n"
+    "        b.eq    3f\n"
+    "        add     x0, x0, #1\n"
+    "        ldrb    w8, [x0]\n"
+    "        cbz     w8, 9f\n"
+    "        cmp     w8, w3\n"
+    "        b.eq    3f\n"
+    "        add     x0, x0, #1\n"
+    "        ldrb    w8, [x0]\n"
+    "        cbz     w8, 9f\n"
+    "        cmp     w8, w3\n"
+    "        b.eq    3f\n"
+    "        add     x0, x0, #1\n"
+    "        ldrb    w8, [x0]\n"
+    "        cbz     w8, 9f\n"
+    "        cmp     w8, w3\n"
+    "        b.eq    3f\n"
+    "        add     x0, x0, #1\n"
+    "        and     x13, x0, #7\n"
+    "        bic     x5, x0, #7              // align down: same page, cannot fault\n"
+    "        ldr     x6, [x5]\n"
+    "        lsl     x13, x13, #3\n"
+    "        mov     x7, #-1\n"
+    "        lsl     x7, x7, x13             // which bytes of this word count\n"
+    "5:      eor     x8, x6, x2              // the byte that matched is now zero\n"
+    "        sub     x9, x8, x10\n"
+    "        bic     x9, x9, x8\n"
+    "        and     x9, x9, x11\n"
+    "        sub     x12, x6, x10            // and the terminator, the same way\n"
+    "        bic     x12, x12, x6\n"
+    "        and     x12, x12, x11\n"
+    "        orr     x9, x9, x12\n"
+    "        and     x9, x9, x7\n"
+    "        cbnz    x9, 6f\n"
+    "        mov     x7, #-1\n"
+    "        add     x5, x5, #8\n"
+    "        ldr     x6, [x5]\n"
+    "        b       5b\n"
+    "6:      rbit    x9, x9\n"
+    "        clz     x9, x9                  // first set high bit\n"
+    "        lsr     x9, x9, #3              // its byte within the word\n"
+    "        add     x0, x5, x9\n"
+    "        ldrb    w8, [x0]\n"
+    "        cbz     w8, 9f                  // the string ended first\n"
+    //
+    //      A borrow out of the bytes before the string can set a bit that
+    //      is neither. Carrying on from here is what the C would do with a
+    //      byte that does not match, so it costs a probe and nothing else.
+    //
+    "        cmp     w8, w3\n"
+    "        b.ne    1b\n"
+    "3:      mov     x14, x0                 // where this candidate starts\n"
+    "        mov     x15, x1\n"
+    "4:      ldrb    w8, [x15]\n"
+    "        cbz     w8, 7f                  // input ran out: this is the answer\n"
+    "        ldrb    w9, [x0]\n"
+    "        cmp     w9, w8\n"
+    "        b.ne    1b                      // carry on from here, as the C did\n"
+    "        add     x0, x0, #1\n"
+    "        add     x15, x15, #1\n"
+    "        b       4b\n"
+    "7:      mov     x0, x14\n"
+    ASM_RET
+    "9:      mov     x0, #0\n"
+    ASM_RET
+    ASM_END(moonwater_find)
 );
 #ifdef KERNEL_MODE
 ASM_EXPORT(strchrnul);
@@ -2564,6 +3473,424 @@ __asm__(
     "8:      mv      a0, a3\n"
     ASM_RET
     ASM_END(moonwater_move)
+    //
+    //       The small string routines: copy, bounded copy, last-of, replace-all
+    //       and cut. Byte loops, and rotated ones, for the reasons set out in
+    //       the x86_64 block: four of the five write as they walk, so a word
+    //       ahead scan would be reading memory the store has already changed,
+    //       and the branch topology is what the naive version lost on rather
+    //       than the width of the load.
+    //
+    //       There is no conditional move in base RV64I, so string_last_of makes
+    //       the mismatch test be the back edge instead: the common byte falls
+    //       through one not-taken branch and is carried back by the one that
+    //       tests for the match, and only an actual match steps aside.
+    //
+    //       There is no sign extending byte compare either, so a b8 argument is
+    //       widened by hand with a shift pair. It matters: an unsigned byte out
+    //       of the string can never equal a cut symbol at or below zero, and
+    //       that case is decided before the first load.
+    //
+    ASM_FUNC(moonwater_string_copy)
+    "        mv      a2, a0\n"
+    "1:      lbu     t0, 0(a1)\n"
+    "        sb      t0, 0(a0)               # the terminator is copied too\n"
+    "        addi    a1, a1, 1\n"
+    "        addi    a0, a0, 1\n"
+    "        bnez    t0, 1b\n"
+    "        mv      a0, a2\n"
+    ASM_RET
+    ASM_END(moonwater_string_copy)
+    //
+    //       Not strncpy: no padding, and no terminator at all when the source
+    //       filled the whole bound.
+    //
+    ASM_FUNC(moonwater_string_copy_max)
+    "        mv      a3, a0\n"
+    "        beqz    a2, 3f\n"
+    "1:      lbu     t0, 0(a1)\n"
+    "        beqz    t0, 2f\n"
+    "        sb      t0, 0(a0)\n"
+    "        addi    a0, a0, 1\n"
+    "        addi    a1, a1, 1\n"
+    "        addi    a2, a2, -1\n"
+    "        bnez    a2, 1b\n"
+    "        j       3f                      # bound filled: no terminator\n"
+    "2:      sb      zero, 0(a0)             # source ended inside the bound\n"
+    "3:      mv      a0, a3\n"
+    ASM_RET
+    ASM_END(moonwater_string_copy_max)
+    //
+    //       null for the terminator rather than the end of the string, which is
+    //       what keeps this from being strrchr.
+    //
+    ASM_FUNC(moonwater_string_last_of)
+    "        andi    a1, a1, 0xff\n"
+    "        li      a2, 0                   # no match yet\n"
+    "1:      lbu     t0, 0(a0)\n"
+    "        addi    a0, a0, 1\n"
+    "        beqz    t0, 3f\n"
+    "        bne     t0, a1, 1b              # the mismatch is the back edge\n"
+    "        addi    a2, a0, -1\n"
+    "        j       1b\n"
+    "3:      mv      a0, a2\n"
+    ASM_RET
+    ASM_END(moonwater_string_last_of)
+    //
+    //       The byte tested is always the one that was there before the store,
+    //       so replacing with a terminator does not end the walk early. The
+    //       store is off the straight path on purpose: a conditional store would
+    //       have to write every byte back, which faults on a string the caller
+    //       only meant to read.
+    //
+    ASM_FUNC(moonwater_string_replace_all)
+    "        slli    a1, a1, 56\n"
+    "        srai    a1, a1, 56              # b8 is signed; widen it that way\n"
+    "        blez    a1, 2f                  # at or below zero never matches\n"
+    "        lbu     t0, 0(a0)\n"
+    "        beqz    t0, 2f\n"
+    "1:      beq     t0, a1, 4f\n"
+    "3:      addi    a0, a0, 1\n"
+    "        lbu     t0, 0(a0)\n"
+    "        bnez    t0, 1b\n"
+    "2:\n"
+    ASM_RET
+    "4:      sb      a2, 0(a0)\n"
+    "        j       3b\n"
+    ASM_END(moonwater_string_replace_all)
+    //
+    //       Cut at the first occurrence and answer with what follows it -- but
+    //       null when what follows is the terminator.
+    //
+    ASM_FUNC(moonwater_string_cut)
+    "        slli    a1, a1, 56\n"
+    "        srai    a1, a1, 56\n"
+    "        blez    a1, 4f\n"
+    "        lbu     t0, 0(a0)\n"
+    "        beqz    t0, 4f\n"
+    "1:      beq     t0, a1, 2f\n"
+    "        addi    a0, a0, 1\n"
+    "        lbu     t0, 0(a0)\n"
+    "        bnez    t0, 1b\n"
+    "4:      li      a0, 0\n"
+    ASM_RET
+    "2:      sb      zero, 0(a0)\n"
+    "        addi    a0, a0, 1\n"
+    "        lbu     t0, 0(a0)\n"
+    "        beqz    t0, 4b\n"
+    ASM_RET
+    ASM_END(moonwater_string_cut)
+
+    //
+    //       path_basename. One write ends every path, so it is a tail jump
+    //       through t5 -- staged there before s1 and s2 are restored, since
+    //       restoring them puts the caller's values back.
+    //
+    ASM_FUNC(moonwater_basename)
+    "        addi    sp, sp, -32\n"
+    "        sd      ra, 24(sp)\n"
+    "        sd      s1, 16(sp)\n"
+    "        sd      s2, 8(sp)\n"
+    "        mv      s1, a0\n"
+    "        mv      s2, a1\n"
+    "        mv      a0, a1\n"
+    "        call    string_length\n"
+    "        mv      a2, a0\n"
+    "        li      t3, 47\n"
+    "        li      t0, 2\n"
+    // trailing slashes go, except when the slash is the whole path
+    "1:      bltu    a2, t0, 2f\n"
+    "        add     t1, s2, a2\n"
+    "        lbu     t2, -1(t1)\n"
+    "        bne     t2, t3, 2f\n"
+    "        addi    a2, a2, -1\n"
+    "        j       1b\n"
+    "2:      li      t1, 1\n"
+    "        bne     a2, t1, 3f\n"
+    "        lbu     t2, 0(s2)\n"
+    "        bne     t2, t3, 3f\n"
+    // the root: its own first byte is the slash the C writes from a literal
+    "        mv      a0, s2\n"
+    "        li      a1, 1\n"
+    "        j       7f\n"
+    "3:      mv      t4, a2\n"
+    "4:      beqz    t4, 5f\n"
+    "        add     t1, s2, t4\n"
+    "        lbu     t2, -1(t1)\n"
+    "        beq     t2, t3, 5f\n"
+    "        addi    t4, t4, -1\n"
+    "        j       4b\n"
+    "5:      add     a0, s2, t4\n"
+    "        sub     a1, a2, t4\n"
+    "7:      mv      t5, s1\n"
+    "        ld      ra, 24(sp)\n"
+    "        ld      s1, 16(sp)\n"
+    "        ld      s2, 8(sp)\n"
+    "        addi    sp, sp, 32\n"
+    "        jr      t5\n"
+    ASM_END(moonwater_basename)
+
+    //
+    //       string_get_environment has no body in C; see the x86_64 block.
+    //
+    ASM_FUNC(moonwater_get_environment)
+    ASM_RET
+    ASM_END(moonwater_get_environment)
+    //
+    "        .section .rodata\n"
+    "        .balign 2\n"
+    "moonwater_digit_pairs:\n"
+    "        .ascii \"00010203040506070809101112131415161718192021222324252627282930313233343536373839404142434445464748495051525354555657585960616263646566676869707172737475767778798081828384858687888990919293949596979899\"\n"
+    "        .text\n"
+ASM_FUNC(moonwater_positive_to_string)
+    //
+    //       s1 is not saved because it is not used: the writer is wanted only up
+    //       to the call, so t6 holds it. Only ra has to survive.
+    //
+    //       The pair comes out as two byte loads and two byte stores rather than
+    //       a halfword of each: the halfword would be unaligned half the time,
+    //       and riscv is the one of the three where that is not always allowed.
+    //
+    "        addi    sp, sp, -48\n"
+    "        sd      ra, 40(sp)\n"
+    "        mv      t6, a0\n"
+    "        addi    t0, sp, 32              # one past the end of the buffer\n"
+    "        la      t3, moonwater_digit_pairs\n"
+    "        li      t5, 99\n"
+    "        bgeu    t5, a1, 3f\n"
+    "        li      t1, 2951479051793528259\n"
+    "        li      t2, 100\n"
+    "        li      a6, 9999\n"
+    "1:      srli    t4, a1, 2\n"
+    "        mulhu   t4, t4, t1\n"
+    "        srli    t4, t4, 2               # n / 100\n"
+    "        mul     a2, t4, t2\n"
+    "        sub     a2, a1, a2              # n % 100\n"
+    "        slli    a2, a2, 1\n"
+    "        add     a2, t3, a2\n"
+    "        lbu     a3, 0(a2)\n"
+    "        lbu     a4, 1(a2)\n"
+    "        addi    t0, t0, -2\n"
+    "        sb      a3, 0(t0)\n"
+    "        sb      a4, 1(t0)\n"
+    //
+    //       The test is on the number this pass consumed, not on the quotient it
+    //       produced, so the branch does not wait on the multiply.
+    //
+    "        sltu    a5, a6, a1\n"
+    "        mv      a1, t4\n"
+    "        bnez    a5, 1b\n"
+    "3:      li      t5, 9\n"
+    "        bgeu    t5, a1, 4f\n"
+    "        slli    a2, a1, 1\n"
+    "        add     a2, t3, a2\n"
+    "        lbu     a3, 0(a2)\n"
+    "        lbu     a4, 1(a2)\n"
+    "        addi    t0, t0, -2\n"
+    "        sb      a3, 0(t0)\n"
+    "        sb      a4, 1(t0)\n"
+    "        j       5f\n"
+    //
+    //       One digit left over, and zero arrives here too: the pair table would
+    //       have written it as 00.
+    //
+    "4:      addi    a1, a1, 48\n"
+    "        addi    t0, t0, -1\n"
+    "        sb      a1, 0(t0)\n"
+    "5:      mv      a0, t0\n"
+    "        addi    t5, sp, 32\n"
+    "        sub     a1, t5, t0              # how many digits\n"
+    "        jalr    t6\n"
+    "        ld      ra, 40(sp)\n"
+    "        addi    sp, sp, 48\n"
+    ASM_RET
+    ASM_END(moonwater_positive_to_string)
+    //
+    //
+    //       bipolar_to_string -- a sign, then the digits. See the x86_64 block.
+    //
+    ASM_FUNC(moonwater_bipolar_to_string)
+    "        bltz    a1, 1f\n"
+    "        tail    moonwater_positive_to_string\n"
+    "1:      addi    sp, sp, -48\n"
+    "        sd      ra, 40(sp)\n"
+    "        sd      s1, 32(sp)\n"
+    "        sd      s2, 24(sp)\n"
+    "        mv      s1, a0\n"
+    "        neg     s2, a1                  # the same bits as times minus one\n"
+    "        li      t0, 45\n"
+    "        sb      t0, 0(sp)\n"
+    "        mv      a0, sp\n"
+    "        li      a1, 1\n"
+    "        jalr    s1\n"
+    "        mv      a0, s1\n"
+    "        mv      a1, s2\n"
+    "        ld      ra, 40(sp)\n"
+    "        ld      s1, 32(sp)\n"
+    "        ld      s2, 24(sp)\n"
+    "        addi    sp, sp, 48\n"
+    "        tail    moonwater_positive_to_string\n"
+    ASM_END(moonwater_bipolar_to_string)
+    //
+    //
+    //       string_to_positive -- the trailing digits of a string.
+    //
+    //       Backwards from the terminator, stopping at the first thing that is
+    //       not a digit: "12a34" is thirty four, which is what the C did.
+    //
+    //       A byte loop finds the terminator, for the same reason as on arm64:
+    //       riscv defines __HAVE_ARCH_STRLEN and the string_length this replaces
+    //       is itself a byte loop here, so this is already one call cheaper.
+    //
+    ASM_FUNC(moonwater_string_to_positive)
+    "        mv      t0, a0                  # keep the start\n"
+    "1:      lbu     t1, 0(a0)\n"
+    "        addi    a0, a0, 1\n"
+    "        bnez    t1, 1b\n"
+    "        addi    a0, a0, -2              # the last character\n"
+    "        li      a1, 0                   # the number so far\n"
+    "        li      a2, 1                   # what the next digit is worth\n"
+    "        li      a3, 10\n"
+    "        li      a4, 9\n"
+    //
+    //       Unsigned compare: an empty string steps to one before the start.
+    //
+    "2:      bltu    a0, t0, 3f\n"
+    "        lbu     t1, 0(a0)\n"
+    "        addi    t1, t1, -48\n"
+    "        bltu    a4, t1, 3f              # one compare, both ends\n"
+    "        mul     t2, t1, a2\n"
+    "        add     a1, a1, t2\n"
+    "        mul     a2, a2, a3\n"
+    "        addi    a0, a0, -1\n"
+    "        j       2b\n"
+    "3:      mv      a0, a1\n"
+    ASM_RET
+    ASM_END(moonwater_string_to_positive)
+    //
+    //
+    //       string_to_bipolar -- a leading minus, or not.
+    //
+    ASM_FUNC(moonwater_string_to_bipolar)
+    "        lbu     t0, 0(a0)\n"
+    "        li      t1, 45\n"
+    "        beq     t0, t1, 1f\n"
+    "        tail    moonwater_string_to_positive\n"
+    "1:      addi    sp, sp, -16\n"
+    "        sd      ra, 8(sp)\n"
+    "        addi    a0, a0, 1\n"
+    "        call    moonwater_string_to_positive\n"
+    "        neg     a0, a0\n"
+    "        ld      ra, 8(sp)\n"
+    "        addi    sp, sp, 16\n"
+    ASM_RET
+    ASM_END(moonwater_string_to_bipolar)
+    //
+    //       string_address moonwater_find(string_address string, string_address input)
+    //
+    //       Two loops. The outer one is strchrnul on the first byte of input:
+    //       the only places a match can begin are where that byte is, and the
+    //       terminator ends the search. The inner one walks the two strings
+    //       while they agree.
+    //
+    //       The broadcast of that first byte and the two constants are set up
+    //       once, outside both loops, so a restart costs the align-down and
+    //       the mask and nothing else.
+    //
+    //       An empty input answers nothing, which looks wrong beside strstr
+    //       and is what the C did.
+    //
+    ASM_FUNC(moonwater_find)
+    "        lbu     a3, 0(a1)\n"
+    "        beqz    a3, 9f                  # an empty input matches nothing\n"
+    "        li      t0, 0x0101010101010101\n"
+    "        slli    t1, t0, 7               # 0x8080808080808080\n"
+    "        mul     a2, a3, t0              # it, in all eight positions\n"
+    //
+    //      Four bytes by hand first, every time the scan restarts. Where
+    //      that byte is common -- a text over three symbols, a column of
+    //      digits -- the next candidate is two or three bytes away and the
+    //      word machinery never pays for itself. Where it is rare the four
+    //      run out and the words take over, which is the case that wins.
+    //
+    //      Four rather than eight or sixteen because it was measured: on a
+    //      9950X, 4096 bytes of text over three symbols, 65536 calls, four
+    //      is 230M ticks against the C's 237M, eight is 264M and sixteen is
+    //      296M. The longer the hand window the more of a sparse text it
+    //      takes away from the words, which are what make this worth doing.
+    //
+    "1:      lbu     t2, 0(a0)\n"
+    "        beqz    t2, 9f\n"
+    "        beq     t2, a3, 3f\n"
+    "        addi    a0, a0, 1\n"
+    "        lbu     t2, 0(a0)\n"
+    "        beqz    t2, 9f\n"
+    "        beq     t2, a3, 3f\n"
+    "        addi    a0, a0, 1\n"
+    "        lbu     t2, 0(a0)\n"
+    "        beqz    t2, 9f\n"
+    "        beq     t2, a3, 3f\n"
+    "        addi    a0, a0, 1\n"
+    "        lbu     t2, 0(a0)\n"
+    "        beqz    t2, 9f\n"
+    "        beq     t2, a3, 3f\n"
+    "        addi    a0, a0, 1\n"
+    "        andi    t3, a0, 7\n"
+    "        andi    a5, a0, -8              # align down: same page, cannot fault\n"
+    "        ld      a6, 0(a5)\n"
+    "        slli    t3, t3, 3\n"
+    "        li      a7, -1\n"
+    "        sll     a7, a7, t3              # which bytes of this word count\n"
+    "5:      xor     t2, a6, a2              # the byte that matched is now zero\n"
+    "        sub     t3, t2, t0\n"
+    "        not     t4, t2\n"
+    "        and     t3, t3, t4\n"
+    "        and     t3, t3, t1\n"
+    "        sub     t5, a6, t0              # and the terminator, the same way\n"
+    "        not     t6, a6\n"
+    "        and     t5, t5, t6\n"
+    "        and     t5, t5, t1\n"
+    "        or      t3, t3, t5\n"
+    "        and     t3, t3, a7\n"
+    "        bnez    t3, 6f\n"
+    "        li      a7, -1\n"
+    "        addi    a5, a5, 8\n"
+    "        ld      a6, 0(a5)\n"
+    "        j       5b\n"
+    //
+    //      The same count-the-bytes-below sequence the other hunts use,
+    //      since base rv64 has no ctz.
+    //
+    "6:      sub     t5, zero, t3\n"
+    "        and     t3, t3, t5              # lowest set high bit\n"
+    "        addi    t3, t3, -1\n"
+    "        and     t3, t3, t0\n"
+    "        mul     t3, t3, t0\n"
+    "        srli    t3, t3, 56\n"
+    "        addi    t3, t3, -1              # its byte within the word\n"
+    "        add     a0, a5, t3\n"
+    "        lbu     t2, 0(a0)\n"
+    "        beqz    t2, 9f                  # the string ended first\n"
+    //
+    //      A borrow out of the bytes before the string can set a bit that
+    //      is neither. Carrying on from here is what the C would do with a
+    //      byte that does not match, so it costs a probe and nothing else.
+    //
+    "        bne     t2, a3, 1b\n"
+    "3:      mv      a4, a0                  # where this candidate starts\n"
+    "        mv      t6, a1\n"
+    "4:      lbu     t2, 0(t6)\n"
+    "        beqz    t2, 7f                  # input ran out: this is the answer\n"
+    "        lbu     t3, 0(a0)\n"
+    "        bne     t3, t2, 1b              # carry on from here, as the C did\n"
+    "        addi    a0, a0, 1\n"
+    "        addi    t6, t6, 1\n"
+    "        j       4b\n"
+    "7:      mv      a0, a4\n"
+    ASM_RET
+    "9:      li      a0, 0\n"
+    ASM_RET
+    ASM_END(moonwater_find)
 );
 #ifdef KERNEL_MODE
 ASM_EXPORT(strchrnul);
@@ -2596,6 +3923,18 @@ ASM_EXPORT(strnchr);
 #define MOONWATER_HAVE_STRNCHR 1
 #endif
 
+string_address moonwater_string_copy(string_address destination, string_address source);
+string_address moonwater_string_copy_max(string_address destination, string_address source, positive length);
+string_address moonwater_string_last_of(string_address source, p8 character);
+fn moonwater_string_replace_all(string_address string, b8 cut_symbol, b8 replace_symbol);
+string_address moonwater_string_cut(string_address string, b8 cut_symbol);
+fn moonwater_basename(writer write, string_address input);
+fn moonwater_get_environment(const b8 address_to name);
+fn moonwater_positive_to_string(writer write, positive number);
+fn moonwater_bipolar_to_string(writer write, bipolar number);
+positive moonwater_string_to_positive(string_address input);
+bipolar moonwater_string_to_bipolar(string_address input);
+string_address moonwater_find(string_address string, string_address input);
 address_any moonwater_fill(address_any destination, b8 value, positive size);
 address_any moonwater_copy(address_any destination, address_any source, positive size);
 address_any moonwater_move(address_any destination, address_any source, positive size);
@@ -2708,38 +4047,17 @@ b32 string_compare(string_address source, string_address input)
 // traditional: strcpy
 string_address string_copy(string_address destination, string_address source)
 {
-        string_address start = destination;
-
-        while (string_get(source))
-                string_set(destination++, string_get(source++));
-
-        string_set(destination, end);
-
-        return start;
+        return moonwater_string_copy(destination, source);
 }
+
 
 // ### Copy string segment with a maximum length
 // traditional: strncpy
 string_address string_copy_max(string_address destination, string_address source, positive length)
 {
-        string_address start = destination;
-
-        // length-- in the condition also decrements on the failing test, which
-        // underflows a positive when the loop never runs.
-        while (length && string_get(source))
-        {
-                string_set(destination++, string_get(source++));
-                length--;
-        }
-
-        // Terminate only when the source ended inside the limit. Writing
-        // unconditionally puts the terminator at destination[length], one byte
-        // past the bound the caller asked us to stay within.
-        if (length)
-                string_set(destination, end);
-
-        return start;
+        return moonwater_string_copy_max(destination, source, length);
 }
+
 
 // ### Find first character in string segment
 // returns: address of the first occurrence of the character
@@ -2777,18 +4095,9 @@ string_address string_first_of(string_address source, p8 character)
 // input: strrchr(source, 0) is the terminator there and null here.
 string_address string_last_of(string_address source, p8 character)
 {
-        string_address last = null;
-
-        while (string_get(source))
-        {
-                if string_is (source, character)
-                        last = source;
-
-                source++;
-        }
-
-        return last;
+        return moonwater_string_last_of(source, character);
 }
+
 
 // Performs a single cut forward in a string by inserting a null terminator where the FIRST cut symbol is found.
 // Returns the address AFTER the cut, effectively splitting the string into two parts.
@@ -2802,73 +4111,28 @@ string_address string_last_of(string_address source, p8 character)
 //      // second_part = "World"
 string_address string_cut(string_address string, b8 cut_symbol)
 {
-        string_address step = string;
-
-        while (string_get(step))
-        {
-                if (string_is(step, cut_symbol))
-                {
-                        string_set(step, end);
-                        step++;
-                        return string_get(step) ? step : null;
-                }
-                step++;
-        }
-
-        return null;
+        return moonwater_string_cut(string, cut_symbol);
 }
+
 
 // returns the the start address of the first occurrence input, null if not found
 string_address string_find(string_address string, string_address input)
 {
-        string_address step = string;
-        string_address step_input = input;
-
-        while (string_get(step))
-        {
-                if (string_not(step, string_get(step_input)))
-                {
-                        step++;
-                        continue;
-                }
-
-                string_address find = step;
-
-                while
-                        string_get(step_input)
-                        {
-                                if string_not (step, string_get(step_input))
-                                        break;
-
-                                step++;
-                                step_input++;
-                        }
-
-                if string_is (step_input, end)
-                        return find;
-
-                step_input = input;
-        }
-
-        return null;
+        return moonwater_find(string, input);
 }
+
 
 fn string_replace_all(string_address string, b8 cut_symbol, b8 replace_symbol)
 {
-        string_address step = string;
-
-        while (string_get(step))
-        {
-                if string_is (step, cut_symbol)
-                        string_set(step, replace_symbol);
-
-                step++;
-        }
+        moonwater_string_replace_all(string, cut_symbol, replace_symbol);
 }
+
 
 fn string_get_environment(const b8 address_to name)
 {
+        moonwater_get_environment(name);
 }
+
 
 // performs several cuts depending on number of arguments, each argument
 // will be written to at the start of the cut string
@@ -2904,62 +4168,27 @@ string_address string_split(string_address string, b8 cut_symbol, ...)
 // ### Takes a positive number and writes out the string representation
 fn positive_to_string(writer write, positive number)
 {
-        if (number == 0)
-                return write("0", 1);
-
-        // No thread safety for you >:) (wip) TODO: fix
-        static p8 digits[32] = {0};
-        digits[0] = end;
-
-        p8 address_to step = digits + 31;
-        address_to step-- = end;
-
-        while (number > 0 && step > digits)
-        {
-                address_to step-- = '0' + (number % 10);
-                number /= 10;
-        }
-
-        write(step + 1, digits + 31 - step - 1);
+        moonwater_positive_to_string(write, number);
 }
+
 
 fn bipolar_to_string(writer write, bipolar number)
 {
-        if (number >= 0)
-                return positive_to_string(write, (positive)number);
-
-        write("-", 1);
-
-        bipolar abs_number = number * -1;
-        positive_to_string(write, (positive)abs_number);
+        moonwater_bipolar_to_string(write, number);
 }
+
 
 positive string_to_positive(string_address input)
 {
-        positive result = 0;
-        positive multiplier = 1;
-        string_address step = input + string_length(input) - 1;
-
-        while (step >= input && string_get(step) >= '0' && string_get(step) <= '9')
-        {
-                result += (string_get(step) - '0') * multiplier;
-                multiplier *= 10;
-                step--;
-        }
-
-        return result;
+        return moonwater_string_to_positive(input);
 }
+
 
 bipolar string_to_bipolar(string_address input)
 {
-        if (string_get(input) == '-')
-        {
-                input++;
-                return -string_to_positive(input);
-        }
-
-        return string_to_positive(input);
+        return moonwater_string_to_bipolar(input);
 }
+
 
 //
 //      The guard has to be outside the signature, not just around the body.
@@ -3111,21 +4340,9 @@ fn string_format(writer write, string_address format, ...)
 // ### Takes a path and writes out the last directory name
 fn path_basename(writer write, string_address input)
 {
-        positive length = string_length(input);
-
-        while (length > 1 && input[length - 1] == '/')
-                length--;
-
-        if (length == 1 && input[0] == '/')
-                return write("/", 1);
-
-        positive step = length;
-
-        while (step > 0 && input[step - 1] != '/')
-                step--;
-
-        write(input + step, length - step);
+        moonwater_basename(write, input);
 }
+
 
 fn shell_set_cursor(writer write, positive2 pos)
 {
