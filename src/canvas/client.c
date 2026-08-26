@@ -10,40 +10,33 @@
         otherwise have started this.
 */
 
+/*
+        The outputs come off the desktop before the card they belong to is
+        released, or output->canvas dangles for anything still composing.
+        pointer_stop joins a thread that takes desktop.lock, so it runs under
+        canvas_list_lock and never under desktop.lock.
+*/
 static void client_unregister(struct drm_client_dev *client)
 {
         struct canvas *canvas = canvas_from_client(client);
-        _Bool last;
 
-        /*
-                The pointer has to stop reaching this canvas before anything it
-                owns is freed. synchronize_rcu waits out the input handler;
-                pointer_stop runs outside canvas->lock because it joins a
-                thread that takes that lock.
-        */
         mutex_lock(&canvas_list_lock);
         list_del(&canvas->link);
-        if (rcu_access_pointer(pointer_canvas) == canvas)
-                rcu_assign_pointer(pointer_canvas,
-                                   list_first_entry_or_null(&canvas_list, struct canvas, link));
-        last = list_empty(&canvas_list);
-        if (last)
+        if (list_empty(&canvas_list))
                 pointer_stop();
         mutex_unlock(&canvas_list_lock);
 
-        synchronize_rcu();
-
-        mutex_lock(&canvas->lock);
+        mutex_lock(&desktop.lock);
         canvas->started = 0;
         canvas_release(canvas);
-        mutex_unlock(&canvas->lock);
+        mutex_unlock(&desktop.lock);
 
         drm_client_release(client);
 }
 
 static void client_free(struct drm_client_dev *client)
 {
-        canvas_put(canvas_from_client(client));
+        kfree(canvas_from_client(client));
 }
 
 static int client_hotplug(struct drm_client_dev *client)
@@ -51,7 +44,7 @@ static int client_hotplug(struct drm_client_dev *client)
         struct canvas *canvas = canvas_from_client(client);
         int ret = 0;
 
-        mutex_lock(&canvas->lock);
+        mutex_lock(&desktop.lock);
 
         if (!canvas->started)
         {
@@ -60,10 +53,10 @@ static int client_hotplug(struct drm_client_dev *client)
         }
         else
         {
-                canvas_redraw(canvas);
+                desktop_redraw();
         }
 
-        mutex_unlock(&canvas->lock);
+        mutex_unlock(&desktop.lock);
         return ret;
 }
 
@@ -75,10 +68,10 @@ static int client_restore(struct drm_client_dev *client, _Bool in_atomic)
         if (in_atomic)
                 return -EBUSY;
 
-        mutex_lock(&canvas->lock);
+        mutex_lock(&desktop.lock);
         if (canvas->started)
-                canvas_redraw(canvas);
-        mutex_unlock(&canvas->lock);
+                desktop_redraw();
+        mutex_unlock(&desktop.lock);
 
         return 0;
 }
@@ -122,14 +115,9 @@ static int canvas_take_over(struct drm_device *dev)
         if (!canvas)
                 return 0;
 
-        kref_init(&canvas->ref);
-        mutex_init(&canvas->lock);
-        INIT_LIST_HEAD(&canvas->outputs);
-        INIT_LIST_HEAD(&canvas->windows);
-
         if (drm_client_init(dev, &canvas->client, "moonwater", &client_funcs))
         {
-                canvas_put(canvas);
+                kfree(canvas);
                 return 0;
         }
 
@@ -137,10 +125,7 @@ static int canvas_take_over(struct drm_device *dev)
         first = list_empty(&canvas_list);
         list_add_tail(&canvas->link, &canvas_list);
         if (first)
-        {
-                rcu_assign_pointer(pointer_canvas, canvas);
                 pointer_start();
-        }
         mutex_unlock(&canvas_list_lock);
 
         drm_client_register(&canvas->client);

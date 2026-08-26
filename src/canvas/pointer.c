@@ -14,76 +14,79 @@
         thread applies it.
 */
 
-/*
-        Input to cursor
-
-        input_handler.event is called by the input core in the path that
-        received the event, so nothing is woken to notice a mouse move. The
-        position is updated there and then; the pixels cannot be, because that
-        context cannot sleep and a DRM commit can. A high priority worker does
-        that part, and the gap between the two is what gets measured.
-*/
 static struct task_struct *pointer_thread;
-static void pointer_apply(void);
 
 /*
         How long the processor is allowed to take waking up.
 
-        The largest cost in the path from a pointer moving to the thread that
-        draws it is the processor coming back from an idle state, and the
-        deeper the state the longer that takes -- a cursor moving after a pause
-        is exactly the case that pays it.
-
-        cpu_latency_qos is how a driver says so. It is the generic interface
-        cpuidle governors already honour, so it holds on every architecture
-        with cpuidle rather than only where a boot argument exists: x86 has
-        intel_idle.max_cstate, arm64 has cpuidle-psci and no such argument,
-        and this reaches both.
-
-        Held for as long as there is a pointer, rather than taken around each
-        movement. Taking it on the way in would be exactly backwards: the move
-        that pays the wakeup is the first one after a pause, and at that moment
-        the request has not been made yet.
+        The largest cost from a pointer moving to the thread that draws it is
+        the processor coming back from an idle state, and the deeper the state
+        the longer that takes. Held for as long as there is a pointer rather
+        than taken per movement: the move that pays the wakeup is the first
+        after a pause, and at that moment the request would not exist yet.
 */
 static struct pm_qos_request pointer_qos;
 
-// Nanoseconds from the event arriving to the cursor being on screen.
-// Declared with the rest of the timing counters near the top of the file.
+/*
+        Keeps the cursor on a screen. The desktop is the bounding box of the
+        outputs, so with screens of different heights it has corners no crtc
+        scans out; a cursor left there would vanish.
+*/
+static void desktop_confine_cursor(int *x, int *y)
+{
+        struct output *output, *nearest = NULL;
+        int best = INT_MAX;
+
+        list_for_each_entry(output, &desktop.outputs, link)
+        {
+                int dx = clamp(*x, output->x, output->x + (int)output->width - 1) - *x;
+                int dy = clamp(*y, output->y, output->y + (int)output->height - 1) - *y;
+                int distance = abs(dx) + abs(dy);
+
+                if (output_holds(output, *x, *y))
+                        return;
+
+                if (distance < best)
+                {
+                        best = distance;
+                        nearest = output;
+                }
+        }
+
+        if (!nearest)
+                return;
+
+        *x = clamp(*x, nearest->x, nearest->x + (int)nearest->width - 1);
+        *y = clamp(*y, nearest->y, nearest->y + (int)nearest->height - 1);
+}
 
 static void pointer_apply(void)
 {
-        struct canvas *canvas = pointer_canvas_get();
-        struct surface *surface;
         int x, y;
         u64 started;
 
-        if (!canvas)
+        if (!atomic_xchg(&desktop.motion_pending, 0))
                 return;
 
-        if (!atomic_xchg(&canvas->motion_pending, 0))
-                goto out;
-
-        started = canvas->motion_stamp;
-        x = atomic_read(&canvas->pending_x);
-        y = atomic_read(&canvas->pending_y);
+        started = desktop.motion_stamp;
+        x = atomic_read(&desktop.pending_x);
+        y = atomic_read(&desktop.pending_y);
 
         if (started)
                 pointer_queue_total += ktime_get_ns() - started;
 
-        mutex_lock(&canvas->lock);
+        mutex_lock(&desktop.lock);
 
-        surface = canvas_first_output(canvas);
-
-        if (canvas->started && surface)
+        if (!list_empty(&desktop.outputs))
         {
-                canvas_move_cursor(canvas, surface, x, y);
-                canvas->drawn_x = x;
-                canvas->drawn_y = y;
-                canvas->cursor_x = x;
-                canvas->cursor_y = y;
+                desktop_confine_cursor(&x, &y);
+                atomic_set(&desktop.pending_x, x);
+                atomic_set(&desktop.pending_y, y);
+
+                cursor_move(x, y);
         }
 
-        mutex_unlock(&canvas->lock);
+        mutex_unlock(&desktop.lock);
 
         if (started)
         {
@@ -95,25 +98,18 @@ static void pointer_apply(void)
                 if (elapsed > pointer_latency_worst)
                         pointer_latency_worst = elapsed;
         }
-
-out:
-        canvas_put(canvas);
 }
 
 static void pointer_event(struct input_handle *handle, unsigned int type,
                           unsigned int code, int value)
 {
-        struct canvas *canvas;
-        int x, y, limit;
+        int x, y;
 
-        rcu_read_lock();
+        if (!desktop.width)
+                return;
 
-        canvas = rcu_dereference(pointer_canvas);
-        if (!canvas || !canvas->started || !canvas->screen_w)
-                goto out;
-
-        x = atomic_read(&canvas->pending_x);
-        y = atomic_read(&canvas->pending_y);
+        x = atomic_read(&desktop.pending_x);
+        y = atomic_read(&desktop.pending_y);
 
         if (type == EV_REL)
         {
@@ -122,60 +118,48 @@ static void pointer_event(struct input_handle *handle, unsigned int type,
                 else if (code == REL_Y)
                         y += value;
                 else
-                        goto out;
+                        return;
         }
         else if (type == EV_ABS)
         {
                 // Absolute devices report in their own range, so scale into
-                // the screen. QEMU's tablet is one of these.
+                // the desktop. QEMU's tablet is one of these.
                 struct input_absinfo *abs;
 
                 if (code != ABS_X && code != ABS_Y)
-                        goto out;
+                        return;
 
                 abs = &handle->dev->absinfo[code];
 
                 if (abs->maximum <= abs->minimum)
-                        goto out;
+                        return;
 
                 if (code == ABS_X)
-                        x = (int)div_u64((u64)(value - abs->minimum) *
-                                             (u32)canvas->screen_w,
+                        x = (int)div_u64((u64)(value - abs->minimum) * (u32)desktop.width,
                                          abs->maximum - abs->minimum);
                 else
-                        y = (int)div_u64((u64)(value - abs->minimum) *
-                                             (u32)canvas->screen_h,
+                        y = (int)div_u64((u64)(value - abs->minimum) * (u32)desktop.height,
                                          abs->maximum - abs->minimum);
         }
         else
         {
-                goto out;
+                return;
         }
 
-        limit = canvas->screen_w - 1;
-        x = clamp(x, 0, limit);
-        limit = canvas->screen_h - 1;
-        y = clamp(y, 0, limit);
-
-        atomic_set(&canvas->pending_x, x);
-        atomic_set(&canvas->pending_y, y);
+        atomic_set(&desktop.pending_x, clamp(x, 0, desktop.width - 1));
+        atomic_set(&desktop.pending_y, clamp(y, 0, desktop.height - 1));
 
         // Stamp only the first event of a burst, so the measurement is the age
         // of the oldest movement not yet on screen.
-        if (!atomic_xchg(&canvas->motion_pending, 1))
-                canvas->motion_stamp = ktime_get_ns();
+        if (!atomic_xchg(&desktop.motion_pending, 1))
+                desktop.motion_stamp = ktime_get_ns();
 
         /*
-                A wake, not a queue. The work this does is one atomic commit
-                that returns without waiting, so the machinery a workqueue
-                brings -- a pool, a dispatch, a kworker that is still an
-                ordinary task -- is all overhead around it. A thread of our
-                own, at a real time priority, is woken and runs.
+                A wake, not a queue. The work is one atomic commit that returns
+                without waiting, so a workqueue's pool and dispatch and kworker
+                would all be overhead around it.
         */
         wake_up_process(pointer_thread);
-
-out:
-        rcu_read_unlock();
 }
 
 static int pointer_connect(struct input_handler *handler, struct input_dev *dev,
@@ -249,19 +233,6 @@ static void pointer_stop(void)
         pointer_thread = NULL;
 }
 
-static _Bool pointer_motion_pending(void)
-{
-        struct canvas *canvas;
-        _Bool pending;
-
-        rcu_read_lock();
-        canvas = rcu_dereference(pointer_canvas);
-        pending = canvas && atomic_read(&canvas->motion_pending);
-        rcu_read_unlock();
-
-        return pending;
-}
-
 /*
         Sleeps until something moves, then draws it.
 
@@ -275,7 +246,7 @@ static int pointer_loop(void *unused)
         {
                 set_current_state(TASK_IDLE);
 
-                if (!pointer_motion_pending())
+                if (!atomic_read(&desktop.motion_pending))
                         schedule();
 
                 __set_current_state(TASK_RUNNING);

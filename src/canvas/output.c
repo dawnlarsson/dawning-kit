@@ -1,8 +1,9 @@
 /*
         Canvas -- outputs
 
-        One screen: its format, its scanout buffer, its modeset. Starting and
-        stopping the compositor is here too, since both are per output.
+        An output is a rectangle of the desktop that one crtc scans out. They
+        are laid left to right in the order their cards attached, which is the
+        placement; the desktop is their bounding box.
 */
 
 static _Bool canvas_format_supported(u32 format)
@@ -21,24 +22,30 @@ static u32 canvas_pick_format(struct drm_plane *plane)
         return DRM_FORMAT_INVALID;
 }
 
-static void canvas_redraw(struct canvas *canvas)
+static void desktop_place_outputs(void)
 {
-        struct surface *surface;
+        struct output *output;
+        int x = 0, height = 0;
 
-        list_for_each_entry(surface, &canvas->outputs, link)
-                canvas_compose(canvas, surface);
+        list_for_each_entry(output, &desktop.outputs, link)
+        {
+                output->x = x;
+                output->y = 0;
 
-        drm_client_modeset_commit(&canvas->client);
-        canvas_arm_cursor(canvas);
+                x += (int)output->width;
+                height = max(height, (int)output->height);
+        }
+
+        desktop.width = x;
+        desktop.height = height;
 }
 
-static struct surface *canvas_add_output(struct drm_client_dev *client,
-                                         struct drm_mode_set *mode_set)
+static struct output *output_add(struct canvas *canvas, struct drm_mode_set *mode_set)
 {
         unsigned int width = mode_set->mode->hdisplay;
         unsigned int height = mode_set->mode->vdisplay;
         u32 format = canvas_pick_format(mode_set->crtc->primary);
-        struct surface *surface;
+        struct output *output;
 
         if (format == DRM_FORMAT_INVALID)
         {
@@ -46,49 +53,51 @@ static struct surface *canvas_add_output(struct drm_client_dev *client,
                 return NULL;
         }
 
-        surface = kzalloc(sizeof(*surface), GFP_KERNEL);
-        if (!surface)
+        output = kzalloc(sizeof(*output), GFP_KERNEL);
+        if (!output)
                 return NULL;
 
-        surface->buffer = drm_client_buffer_create_dumb(client, width, height, format);
-        if (IS_ERR(surface->buffer))
+        output->buffer = drm_client_buffer_create_dumb(&canvas->client, width, height, format);
+        if (IS_ERR(output->buffer))
         {
                 log_canvas("could not create a %ux%u scanout buffer\n", width, height);
-                kfree(surface);
+                kfree(output);
                 return NULL;
         }
 
-        surface->mode_set = mode_set;
-        surface->width = width;
-        surface->height = height;
-        surface->format = format;
-        mode_set->fb = surface->buffer->fb;
+        output->canvas = canvas;
+        output->mode_set = mode_set;
+        output->width = width;
+        output->height = height;
+        output->format = format;
+        mode_set->fb = output->buffer->fb;
 
-        log_canvas("output %ux%u ready\n", width, height);
-        return surface;
+        if (plane_claim(&canvas->client, output))
+                output->cursor_plane = NULL;
+
+        return output;
 }
 
-static void canvas_drop_output(struct surface *surface)
+static void output_drop(struct output *output)
 {
-        canvas_drop_cursor_plane(surface);
+        plane_drop(output);
 
-        if (surface->buffer)
-                drm_client_buffer_delete(surface->buffer);
+        if (output->buffer)
+                drm_client_buffer_delete(output->buffer);
 
-        list_del(&surface->link);
-        kfree(surface);
+        list_del(&output->link);
+        kfree(output);
 }
 
 /*
         A first arrangement, so there is something on screen before anything
-        can create a window. Sized to the screen rather than counted, so it
-        also stands in for a window list of no particular length.
+        can create a window. Once, for the desktop, not once per card.
 */
-static unsigned int canvas_seed_windows(struct canvas *canvas, unsigned int width, unsigned int height)
+static void desktop_seed_windows(void)
 {
-        unsigned int columns = max(width / 320u, 1u);
-        unsigned int rows = max(height / 260u, 1u);
-        unsigned int column, row, seeded = 0;
+        unsigned int columns = max(desktop.width / 320, 1);
+        unsigned int rows = max(desktop.height / 260, 1);
+        unsigned int column, row;
 
         for (row = 0; row < rows; row++)
         {
@@ -97,104 +106,135 @@ static unsigned int canvas_seed_windows(struct canvas *canvas, unsigned int widt
                         struct window *window = kzalloc(sizeof(*window), GFP_KERNEL);
 
                         if (!window)
-                                goto done;
+                                return;
 
                         window->x = 40 + column * 300;
                         window->y = 40 + row * 240;
                         window->width = 240;
                         window->height = 170;
 
-                        list_add_tail(&window->link, &canvas->windows);
-                        seeded++;
+                        list_add_tail(&window->link, &desktop.windows);
                 }
         }
-
-done:
-        canvas->cursor_x = width / 2;
-        canvas->cursor_y = height / 2;
-
-        return seeded;
 }
 
-static void canvas_drop_windows(struct canvas *canvas)
+static void desktop_drop_windows(void)
 {
         struct window *window, *next;
 
-        list_for_each_entry_safe(window, next, &canvas->windows, link)
+        list_for_each_entry_safe(window, next, &desktop.windows, link)
         {
                 list_del(&window->link);
                 kfree(window);
         }
 }
 
-static unsigned int canvas_probe_outputs(struct canvas *canvas)
+/*
+        A card's outputs are added together, so they are consecutive here and
+        remembering the last one is enough to commit each card once.
+*/
+static void desktop_commit(void)
 {
-        struct drm_client_dev *client = &canvas->client;
-        struct drm_mode_set *mode_set;
+        struct canvas *committed = NULL;
+        struct output *output;
+
+        list_for_each_entry(output, &desktop.outputs, link)
+        {
+                if (output->canvas == committed)
+                        continue;
+
+                committed = output->canvas;
+                drm_client_modeset_commit(&committed->client);
+        }
+
+        list_for_each_entry(output, &desktop.outputs, link)
+                cursor_arm_output(output);
+}
+
+static void desktop_redraw(void)
+{
+        struct output *output;
+
+        list_for_each_entry(output, &desktop.outputs, link)
+                compose_output(output);
+
+        desktop_commit();
+}
+
+static unsigned int desktop_count_windows(void)
+{
+        struct window *window;
         unsigned int count = 0;
 
-        mutex_lock(&client->modeset_mutex);
-        drm_client_for_each_modeset(mode_set, client)
-        {
-                struct surface *surface;
-
-                if (!mode_set->mode)
-                        continue;
-
-                surface = canvas_add_output(client, mode_set);
-                if (!surface)
-                        continue;
-
-                list_add_tail(&surface->link, &canvas->outputs);
+        list_for_each_entry(window, &desktop.windows, link)
                 count++;
-        }
-        mutex_unlock(&client->modeset_mutex);
 
         return count;
 }
 
 static int canvas_start(struct canvas *canvas)
 {
-        struct surface *first;
-        unsigned int count, windows;
+        struct drm_client_dev *client = &canvas->client;
+        struct drm_mode_set *mode_set;
+        unsigned int count = 0;
 
-        if (drm_client_modeset_probe(&canvas->client, 0, 0))
+        if (drm_client_modeset_probe(client, 0, 0))
                 return -ENODEV;
 
-        count = canvas_probe_outputs(canvas);
+        mutex_lock(&client->modeset_mutex);
+        drm_client_for_each_modeset(mode_set, client)
+        {
+                struct output *output;
+
+                if (!mode_set->mode)
+                        continue;
+
+                output = output_add(canvas, mode_set);
+                if (!output)
+                        continue;
+
+                list_add_tail(&output->link, &desktop.outputs);
+                count++;
+        }
+        mutex_unlock(&client->modeset_mutex);
+
         if (!count)
                 return -ENODEV;
 
-        first = canvas_first_output(canvas);
+        desktop_place_outputs();
 
-        windows = canvas_seed_windows(canvas, first->width, first->height);
+        if (list_empty(&desktop.windows))
+        {
+                desktop_seed_windows();
+                desktop.cursor_x = desktop.width / 2;
+                desktop.cursor_y = desktop.height / 2;
+                desktop.drawn_x = desktop.cursor_x;
+                desktop.drawn_y = desktop.cursor_y;
+                atomic_set(&desktop.pending_x, desktop.cursor_x);
+                atomic_set(&desktop.pending_y, desktop.cursor_y);
+        }
 
-        canvas->screen_w = (int)first->width;
-        canvas->screen_h = (int)first->height;
+        desktop_redraw();
 
-        atomic_set(&canvas->pending_x, canvas->cursor_x);
-        atomic_set(&canvas->pending_y, canvas->cursor_y);
-        canvas->drawn_x = canvas->cursor_x;
-        canvas->drawn_y = canvas->cursor_y;
+        log_canvas("desktop %dx%d, %u output(s), %u window(s)\n",
+                   desktop.width, desktop.height,
+                   count, desktop_count_windows());
 
-        if (canvas_setup_cursor_plane(&canvas->client, first))
-                log_canvas("no hardware cursor here, drawing the cursor into the framebuffer\n");
-        else
-                log_canvas("cursor on hardware plane %u, %ux%u\n",
-                           first->cursor_plane->base.id, first->cursor_w, first->cursor_h);
-
-        canvas_redraw(canvas);
-
-        log_canvas("compositing on %u output(s), %u window(s)\n", count, windows);
         return 0;
 }
 
 static void canvas_release(struct canvas *canvas)
 {
-        struct surface *surface, *next;
+        struct output *output, *next;
 
-        list_for_each_entry_safe(surface, next, &canvas->outputs, link)
-                canvas_drop_output(surface);
+        list_for_each_entry_safe(output, next, &desktop.outputs, link)
+                if (output->canvas == canvas)
+                        output_drop(output);
 
-        canvas_drop_windows(canvas);
+        desktop_place_outputs();
+
+        if (list_empty(&desktop.outputs))
+                desktop_drop_windows();
+        else
+                desktop_redraw();
 }

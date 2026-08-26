@@ -8,8 +8,8 @@
 
             paint.c     pixels: a pointer, a pitch, a rectangle
             compose.c   what a window looks like and in what order
-            plane.c     the hardware cursor plane
-            output.c    one screen, and starting and stopping all of them
+            plane.c     the cursor, on a hardware plane or in the framebuffer
+            output.c    outputs, their placement, and starting and stopping
             client.c    attaching to DRM, and finding cards to attach to
             pointer.c   input
 
@@ -17,8 +17,9 @@
         order. Included by core.c in turn, which is where the headers are, and
         before library.c, which redefines bool and defines "end" as a macro.
 
-        Nothing here has a fixed maximum. Windows, outputs and cards are lists,
-        and the cursor plane is sized from what the device reports.
+        There is one desktop across every card, and one cursor on it. Windows
+        and the cursor are in desktop coordinates; an output is a rectangle of
+        the desktop that some crtc scans out. Nothing has a fixed maximum.
 */
 
 #define log_canvas(fmt, ...) pr_info("[moonwater canvas] " fmt, ##__VA_ARGS__)
@@ -33,56 +34,56 @@ struct window
         int width, height;
 };
 
-struct surface
+struct output
 {
         struct list_head link;
+        struct canvas *canvas;
         struct drm_client_buffer *buffer;
         struct drm_mode_set *mode_set;
+
+        int x, y;
         unsigned int width, height;
         u32 format;
 
-        // Null means the cursor is drawn into the framebuffer instead.
+        // Null means the cursor is drawn into this output's framebuffer.
         struct drm_plane *cursor_plane;
         struct drm_client_buffer *cursor_buffer;
         unsigned int cursor_w, cursor_h;
+        _Bool cursor_shown;
 };
 
 struct canvas
 {
         struct list_head link;
-        struct kref ref;
         struct drm_client_dev client;
-        struct mutex lock;
+        _Bool started;
+};
 
+static struct desktop
+{
+        struct mutex lock;
         struct list_head outputs;
         struct list_head windows;
 
         int cursor_x, cursor_y;
-        _Bool started;
+        int drawn_x, drawn_y;
 
-        // Written by the input handler in atomic context, read by the thread.
+        // The bounding box of every output. Read by the input handler in
+        // atomic context, where it cannot walk the list.
+        int width, height;
+
         atomic_t pending_x;
         atomic_t pending_y;
         atomic_t motion_pending;
         u64 motion_stamp;
-
-        int drawn_x, drawn_y;
-
-        // What the input handler clamps against. It cannot take the mutex, so
-        // it cannot walk the output list; a stale value clamps to the wrong
-        // edge for an instant.
-        int screen_w, screen_h;
+} desktop = {
+    .lock = __MUTEX_INITIALIZER(desktop.lock),
+    .outputs = LIST_HEAD_INIT(desktop.outputs),
+    .windows = LIST_HEAD_INIT(desktop.windows),
 };
 
 static DEFINE_MUTEX(canvas_list_lock);
 static LIST_HEAD(canvas_list);
-
-/*
-        The pointer is single, so it is on one canvas at a time. The input
-        handler reads this in atomic context and outlives any one canvas, so it
-        is RCU published and the readers take a reference before sleeping.
-*/
-static struct canvas __rcu *pointer_canvas;
 
 static void pointer_start(void);
 static void pointer_stop(void);
@@ -100,36 +101,16 @@ static struct canvas *canvas_from_client(struct drm_client_dev *client)
         return container_of(client, struct canvas, client);
 }
 
-static struct surface *canvas_first_output(struct canvas *canvas)
+static _Bool rects_overlap(int ax, int ay, int aw, int ah,
+                           int bx, int by, int bw, int bh)
 {
-        return list_first_entry_or_null(&canvas->outputs, struct surface, link);
+        return ax < bx + bw && bx < ax + aw && ay < by + bh && by < ay + ah;
 }
 
-static void canvas_destroy(struct kref *ref)
+static _Bool output_holds(struct output *output, int x, int y)
 {
-        struct canvas *canvas = container_of(ref, struct canvas, ref);
-
-        mutex_destroy(&canvas->lock);
-        kfree(canvas);
-}
-
-static void canvas_put(struct canvas *canvas)
-{
-        kref_put(&canvas->ref, canvas_destroy);
-}
-
-// Null once the canvas is on its way out, so callers that can sleep must check.
-static struct canvas *pointer_canvas_get(void)
-{
-        struct canvas *canvas;
-
-        rcu_read_lock();
-        canvas = rcu_dereference(pointer_canvas);
-        if (canvas && !kref_get_unless_zero(&canvas->ref))
-                canvas = NULL;
-        rcu_read_unlock();
-
-        return canvas;
+        return x >= output->x && x < output->x + (int)output->width &&
+               y >= output->y && y < output->y + (int)output->height;
 }
 
 #include "paint.c"

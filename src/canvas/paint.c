@@ -7,7 +7,7 @@
         be read without the DRM stack in your head.
 */
 
-// Colours are written as plain xrgb8888 and converted once per surface.
+// Colours are written as plain xrgb8888 and converted once per output.
 #define COLOUR_DESKTOP 0x1b2733
 #define COLOUR_FRAME 0x2f3f52
 #define COLOUR_TITLE 0x4c6785
@@ -16,7 +16,7 @@
 #define COLOUR_CURSOR_EDGE 0x000000
 
 static void canvas_fill_rect(u32 *pixels, unsigned int pitch_pixels,
-                             unsigned int surface_w, unsigned int surface_h,
+                             unsigned int target_w, unsigned int target_h,
                              int x, int y, int width, int height, u32 colour)
 {
         int row, column;
@@ -35,11 +35,11 @@ static void canvas_fill_rect(u32 *pixels, unsigned int pitch_pixels,
                 y = 0;
         }
 
-        if (x + width > (int)surface_w)
-                width = (int)surface_w - x;
+        if (x + width > (int)target_w)
+                width = (int)target_w - x;
 
-        if (y + height > (int)surface_h)
-                height = (int)surface_h - y;
+        if (y + height > (int)target_h)
+                height = (int)target_h - y;
 
         if (width <= 0 || height <= 0)
                 return;
@@ -86,7 +86,7 @@ static const char canvas_cursor_bitmap[CURSOR_H][CURSOR_W + 1] = {
 };
 
 static void canvas_draw_cursor(u32 *pixels, unsigned int pitch_pixels,
-                               unsigned int surface_w, unsigned int surface_h,
+                               unsigned int target_w, unsigned int target_h,
                                int x, int y, u32 fill, u32 edge)
 {
         int row, column;
@@ -95,7 +95,7 @@ static void canvas_draw_cursor(u32 *pixels, unsigned int pitch_pixels,
         {
                 int py = y + row;
 
-                if (py < 0 || py >= (int)surface_h)
+                if (py < 0 || py >= (int)target_h)
                         continue;
 
                 for (column = 0; column < CURSOR_W; column++)
@@ -106,7 +106,7 @@ static void canvas_draw_cursor(u32 *pixels, unsigned int pitch_pixels,
                         if (pixel == ' ')
                                 continue;
 
-                        if (px < 0 || px >= (int)surface_w)
+                        if (px < 0 || px >= (int)target_w)
                                 continue;
 
                         pixels[(size_t)py * pitch_pixels + px] =
