@@ -52,7 +52,8 @@ static struct pm_qos_request pointer_qos;
 
 static void pointer_apply(void)
 {
-        struct canvas *canvas = canvas_active;
+        struct canvas *canvas = pointer_canvas_get();
+        struct surface *surface;
         int x, y;
         u64 started;
 
@@ -60,7 +61,7 @@ static void pointer_apply(void)
                 return;
 
         if (!atomic_xchg(&canvas->motion_pending, 0))
-                return;
+                goto out;
 
         started = canvas->motion_stamp;
         x = atomic_read(&canvas->pending_x);
@@ -71,8 +72,11 @@ static void pointer_apply(void)
 
         mutex_lock(&canvas->lock);
 
-        if (canvas->started && canvas->surface_count) {
-                canvas_move_cursor(canvas, &canvas->surfaces[0], x, y);
+        surface = canvas_first_output(canvas);
+
+        if (canvas->started && surface)
+        {
+                canvas_move_cursor(canvas, surface, x, y);
                 canvas->drawn_x = x;
                 canvas->drawn_y = y;
                 canvas->cursor_x = x;
@@ -81,7 +85,8 @@ static void pointer_apply(void)
 
         mutex_unlock(&canvas->lock);
 
-        if (started) {
+        if (started)
+        {
                 u64 elapsed = ktime_get_ns() - started;
 
                 pointer_latency_total += elapsed;
@@ -90,50 +95,61 @@ static void pointer_apply(void)
                 if (elapsed > pointer_latency_worst)
                         pointer_latency_worst = elapsed;
         }
+
+out:
+        canvas_put(canvas);
 }
 
 static void pointer_event(struct input_handle *handle, unsigned int type,
-                             unsigned int code, int value)
+                          unsigned int code, int value)
 {
-        struct canvas *canvas = canvas_active;
+        struct canvas *canvas;
         int x, y, limit;
 
+        rcu_read_lock();
+
+        canvas = rcu_dereference(pointer_canvas);
         if (!canvas || !canvas->started || !canvas->screen_w)
-                return;
+                goto out;
 
         x = atomic_read(&canvas->pending_x);
         y = atomic_read(&canvas->pending_y);
 
-        if (type == EV_REL) {
+        if (type == EV_REL)
+        {
                 if (code == REL_X)
                         x += value;
                 else if (code == REL_Y)
                         y += value;
                 else
-                        return;
-        } else if (type == EV_ABS) {
+                        goto out;
+        }
+        else if (type == EV_ABS)
+        {
                 // Absolute devices report in their own range, so scale into
                 // the screen. QEMU's tablet is one of these.
                 struct input_absinfo *abs;
 
                 if (code != ABS_X && code != ABS_Y)
-                        return;
+                        goto out;
 
                 abs = &handle->dev->absinfo[code];
 
                 if (abs->maximum <= abs->minimum)
-                        return;
+                        goto out;
 
                 if (code == ABS_X)
                         x = (int)div_u64((u64)(value - abs->minimum) *
-                                         (u32)canvas->screen_w,
+                                             (u32)canvas->screen_w,
                                          abs->maximum - abs->minimum);
                 else
                         y = (int)div_u64((u64)(value - abs->minimum) *
-                                         (u32)canvas->screen_h,
+                                             (u32)canvas->screen_h,
                                          abs->maximum - abs->minimum);
-        } else {
-                return;
+        }
+        else
+        {
+                goto out;
         }
 
         limit = canvas->screen_w - 1;
@@ -157,10 +173,13 @@ static void pointer_event(struct input_handle *handle, unsigned int type,
                 own, at a real time priority, is woken and runs.
         */
         wake_up_process(pointer_thread);
+
+out:
+        rcu_read_unlock();
 }
 
 static int pointer_connect(struct input_handler *handler, struct input_dev *dev,
-                              const struct input_device_id *id)
+                           const struct input_device_id *id)
 {
         struct input_handle *handle;
         int ret;
@@ -219,11 +238,6 @@ static struct input_handler pointer_handler = {
     .id_table = pointer_ids,
 };
 
-/*
-        Unregistering the handler stops new events; cancelling the work waits
-        for the one that may already be running. Both have to happen before
-        the display it draws through is freed.
-*/
 static void pointer_stop(void)
 {
         if (!pointer_thread)
@@ -235,6 +249,19 @@ static void pointer_stop(void)
         pointer_thread = NULL;
 }
 
+static _Bool pointer_motion_pending(void)
+{
+        struct canvas *canvas;
+        _Bool pending;
+
+        rcu_read_lock();
+        canvas = rcu_dereference(pointer_canvas);
+        pending = canvas && atomic_read(&canvas->motion_pending);
+        rcu_read_unlock();
+
+        return pending;
+}
+
 /*
         Sleeps until something moves, then draws it.
 
@@ -244,11 +271,11 @@ static void pointer_stop(void)
 */
 static int pointer_loop(void *unused)
 {
-        while (!kthread_should_stop()) {
+        while (!kthread_should_stop())
+        {
                 set_current_state(TASK_IDLE);
 
-                if (!canvas_active ||
-                    !atomic_read(&canvas_active->motion_pending))
+                if (!pointer_motion_pending())
                         schedule();
 
                 __set_current_state(TASK_RUNNING);
@@ -275,7 +302,8 @@ static void pointer_start(void)
         */
         pointer_thread = kthread_run(pointer_loop, NULL, "moonwater/pointer");
 
-        if (IS_ERR(pointer_thread)) {
+        if (IS_ERR(pointer_thread))
+        {
                 log_canvas("no thread for input\n");
                 pointer_thread = NULL;
                 return;
@@ -292,8 +320,8 @@ static void pointer_start(void)
 
 // Nanoseconds, for the stats ioctl.
 static void canvas_input_stats(unsigned long *events, unsigned long *mean,
-                                 unsigned long *worst, unsigned long *queue,
-                                 unsigned long *draw, unsigned long *flush)
+                               unsigned long *worst, unsigned long *queue,
+                               unsigned long *draw, unsigned long *flush)
 {
         unsigned long n = pointer_events ? pointer_events : 1;
 

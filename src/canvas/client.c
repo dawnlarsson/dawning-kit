@@ -1,30 +1,37 @@
 /*
         Canvas -- attaching to DRM
 
-        Taking the device, the client callbacks DRM calls back on, and the
-        poll that waits for /dev/dri/card0 to exist.
+        Opening the node runs the driver's open path and hands back a
+        drm_file, which knows its minor, which knows its device. The file is
+        closed immediately; drm_client_init takes its own reference.
 
-        The retry loop is here because the device node appears when devtmpfs
-        is mounted, which is after the initcalls that could otherwise have
-        started this.
+        Every card is taken, not just the first. The poll is here because the
+        nodes appear when devtmpfs is mounted, after the initcalls that could
+        otherwise have started this.
 */
 
 static void client_unregister(struct drm_client_dev *client)
 {
         struct canvas *canvas = canvas_from_client(client);
+        _Bool last;
 
         /*
-                Order matters. The input handler and its worker reach the
-                display through canvas_active, so that has to stop
-                pointing at it before anything it owns is freed, and the
-                worker has to be known finished rather than merely asked to
-                stop. Getting this wrong is a use after free on every mouse
-                move after a device goes away.
+                The pointer has to stop reaching this canvas before anything it
+                owns is freed. synchronize_rcu waits out the input handler;
+                pointer_stop runs outside canvas->lock because it joins a
+                thread that takes that lock.
         */
-        if (canvas_active == canvas) {
+        mutex_lock(&canvas_list_lock);
+        list_del(&canvas->link);
+        if (rcu_access_pointer(pointer_canvas) == canvas)
+                rcu_assign_pointer(pointer_canvas,
+                                   list_first_entry_or_null(&canvas_list, struct canvas, link));
+        last = list_empty(&canvas_list);
+        if (last)
                 pointer_stop();
-                canvas_active = NULL;
-        }
+        mutex_unlock(&canvas_list_lock);
+
+        synchronize_rcu();
 
         mutex_lock(&canvas->lock);
         canvas->started = 0;
@@ -36,10 +43,7 @@ static void client_unregister(struct drm_client_dev *client)
 
 static void client_free(struct drm_client_dev *client)
 {
-        struct canvas *canvas = canvas_from_client(client);
-
-        mutex_destroy(&canvas->lock);
-        kfree(canvas);
+        canvas_put(canvas_from_client(client));
 }
 
 static int client_hotplug(struct drm_client_dev *client)
@@ -49,10 +53,13 @@ static int client_hotplug(struct drm_client_dev *client)
 
         mutex_lock(&canvas->lock);
 
-        if (!canvas->started) {
+        if (!canvas->started)
+        {
                 ret = canvas_start(canvas);
                 canvas->started = (ret == 0);
-        } else {
+        }
+        else
+        {
                 canvas_redraw(canvas);
         }
 
@@ -65,8 +72,6 @@ static int client_restore(struct drm_client_dev *client, _Bool in_atomic)
 {
         struct canvas *canvas = canvas_from_client(client);
 
-        // Nothing here is safe to do without sleeping, so an atomic restore
-        // is declined rather than half performed.
         if (in_atomic)
                 return -EBUSY;
 
@@ -86,69 +91,81 @@ static const struct drm_client_funcs client_funcs = {
     .hotplug = client_hotplug,
 };
 
-/*
-        Claims a DRM device. Reports whether it was taken, so the replacement
-        for drm_client_setup can fall through to the original for anything we
-        decline -- a device with no modesetting, or an allocation that failed.
-*/
+static _Bool canvas_holds(struct drm_device *dev)
+{
+        struct canvas *canvas;
+        _Bool held = false;
+
+        mutex_lock(&canvas_list_lock);
+        list_for_each_entry(canvas, &canvas_list, link)
+        {
+                if (canvas->client.dev == dev)
+                {
+                        held = true;
+                        break;
+                }
+        }
+        mutex_unlock(&canvas_list_lock);
+
+        return held;
+}
+
 static int canvas_take_over(struct drm_device *dev)
 {
         struct canvas *canvas;
+        _Bool first;
 
-        if (!drm_core_check_feature(dev, DRIVER_MODESET))
-                return 0;
-
-        /*
-                One display, once. A machine can easily present two cards --
-                the first boot on real hardware had virtio-gpu and a standard
-                VGA both probing -- and taking the second would register the
-                input handler twice, leak the first workqueue, and leave
-                canvas_active pointing at whichever won the race.
-        */
-        if (canvas_active)
+        if (!drm_core_check_feature(dev, DRIVER_MODESET) || canvas_holds(dev))
                 return 0;
 
         canvas = kzalloc(sizeof(*canvas), GFP_KERNEL);
         if (!canvas)
                 return 0;
 
+        kref_init(&canvas->ref);
         mutex_init(&canvas->lock);
+        INIT_LIST_HEAD(&canvas->outputs);
+        INIT_LIST_HEAD(&canvas->windows);
 
-        if (drm_client_init(dev, &canvas->client, "moonwater", &client_funcs)) {
-                mutex_destroy(&canvas->lock);
-                kfree(canvas);
+        if (drm_client_init(dev, &canvas->client, "moonwater", &client_funcs))
+        {
+                canvas_put(canvas);
                 return 0;
         }
+
+        mutex_lock(&canvas_list_lock);
+        first = list_empty(&canvas_list);
+        list_add_tail(&canvas->link, &canvas_list);
+        if (first)
+        {
+                rcu_assign_pointer(pointer_canvas, canvas);
+                pointer_start();
+        }
+        mutex_unlock(&canvas_list_lock);
 
         drm_client_register(&canvas->client);
         log_canvas("attached to %s\n", dev->driver->name);
 
-        pointer_start();
         return 1;
 }
 
-/*
-        Finding a device to draw on.
-
-        Opening the node runs the driver's open path and hands back a
-        drm_file, which knows its minor, which knows its device. The file is
-        closed immediately: drm_client_init takes its own reference, so the
-        device outlives our brief handle on it.
-*/
-#define CANVAS_NODE "/dev/dri/card0"
 // Retried fast: the node appears the moment devtmpfs is mounted, and every
 // millisecond spent waiting after that is a millisecond of black screen.
 #define CANVAS_RETRY_MS 5
 #define CANVAS_ATTEMPTS 1000
 
+// Rounds to keep looking after the first card, so a sibling that probes late
+// is found too.
+#define CANVAS_SETTLE 100
+
 static struct delayed_work canvas_probe_work;
 static unsigned int canvas_attempts;
+static unsigned int canvas_settled_at;
 
 static int canvas_claim(const char *path)
 {
         struct file *filp;
         struct drm_file *file_priv;
-        struct drm_device *dev;
         int taken;
 
         filp = filp_open(path, O_RDWR, 0);
@@ -157,40 +174,63 @@ static int canvas_claim(const char *path)
 
         file_priv = filp->private_data;
 
-        if (!file_priv || !file_priv->minor || !file_priv->minor->dev) {
+        if (!file_priv || !file_priv->minor || !file_priv->minor->dev)
+        {
                 filp_close(filp, NULL);
                 return -ENODEV;
         }
 
-        dev = file_priv->minor->dev;
-        taken = canvas_take_over(dev);
+        taken = canvas_take_over(file_priv->minor->dev);
 
         filp_close(filp, NULL);
 
         return taken ? 0 : -EBUSY;
 }
 
+/*
+        Every primary node, every round. DRM allocates card minors out of an
+        idr with no promise they are contiguous, and a card that probes late
+        would be missed by a scan that stopped at the first gap. The whole
+        minor space is cheap to try: an absent node fails in filp_open.
+*/
+static unsigned int canvas_claim_all(void)
+{
+        char path[24];
+        unsigned int minor, taken = 0;
+
+        for (minor = 0; minor < 64; minor++)
+        {
+                snprintf(path, sizeof(path), "/dev/dri/card%u", minor);
+
+                if (canvas_claim(path) == 0)
+                        taken++;
+        }
+
+        return taken;
+}
+
 static void canvas_probe(struct work_struct *work)
 {
-        int ret = canvas_claim(CANVAS_NODE);
+        canvas_claim_all();
+        canvas_attempts++;
 
-        if (ret == 0)
+        if (!canvas_settled_at && !list_empty(&canvas_list))
+                canvas_settled_at = canvas_attempts + CANVAS_SETTLE;
+
+        if (canvas_settled_at && canvas_attempts >= canvas_settled_at)
                 return;
 
-        if (++canvas_attempts >= CANVAS_ATTEMPTS) {
-                log_canvas("gave up waiting for %s (%d)\n", CANVAS_NODE, ret);
+        if (canvas_attempts >= CANVAS_ATTEMPTS)
+        {
+                log_canvas("gave up waiting for a card\n");
                 return;
         }
 
-        schedule_delayed_work(&canvas_probe_work,
-                              msecs_to_jiffies(CANVAS_RETRY_MS));
+        schedule_delayed_work(&canvas_probe_work, msecs_to_jiffies(CANVAS_RETRY_MS));
 }
 
 static void canvas_start_probing(void)
 {
         INIT_DELAYED_WORK(&canvas_probe_work, canvas_probe);
-
-        // No initial delay. The display driver has already probed by the time
-        // this runs, so the first attempt usually succeeds outright.
         schedule_delayed_work(&canvas_probe_work, 0);
 }

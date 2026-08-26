@@ -16,19 +16,21 @@
 #define COLOUR_CURSOR_EDGE 0x000000
 
 static void canvas_fill_rect(u32 *pixels, unsigned int pitch_pixels,
-                           unsigned int surface_w, unsigned int surface_h,
-                           int x, int y, int width, int height, u32 colour)
+                             unsigned int surface_w, unsigned int surface_h,
+                             int x, int y, int width, int height, u32 colour)
 {
         int row, column;
 
         // Clip rather than trusting callers: a window dragged off the edge is
         // the normal case, not an error.
-        if (x < 0) {
+        if (x < 0)
+        {
                 width += x;
                 x = 0;
         }
 
-        if (y < 0) {
+        if (y < 0)
+        {
                 height += y;
                 y = 0;
         }
@@ -42,7 +44,8 @@ static void canvas_fill_rect(u32 *pixels, unsigned int pitch_pixels,
         if (width <= 0 || height <= 0)
                 return;
 
-        for (row = 0; row < height; row++) {
+        for (row = 0; row < height; row++)
+        {
                 u32 *line = pixels + (size_t)(y + row) * pitch_pixels + x;
 
                 for (column = 0; column < width; column++)
@@ -58,16 +61,8 @@ static void canvas_fill_rect(u32 *pixels, unsigned int pitch_pixels,
 #define CURSOR_W 12
 #define CURSOR_H 19
 
-/*
-        The hardware cursor buffer is square and larger than the arrow drawn
-        into it. 64x64 is the one size every cursor plane accepts -- older
-        display engines require a square power of two, and some accept nothing
-        else -- so the arrow sits in the top left corner and the rest of the
-        buffer is transparent.
-*/
-#define CURSOR_PLANE_W 64
-#define CURSOR_PLANE_H 64
-
+// The arrow sits in the top left of the cursor buffer; the rest is
+// transparent, since the buffer is whatever size the device asked for.
 static const char canvas_cursor_bitmap[CURSOR_H][CURSOR_W + 1] = {
     "X           ",
     "XX          ",
@@ -91,18 +86,20 @@ static const char canvas_cursor_bitmap[CURSOR_H][CURSOR_W + 1] = {
 };
 
 static void canvas_draw_cursor(u32 *pixels, unsigned int pitch_pixels,
-                             unsigned int surface_w, unsigned int surface_h,
-                             int x, int y, u32 fill, u32 edge)
+                               unsigned int surface_w, unsigned int surface_h,
+                               int x, int y, u32 fill, u32 edge)
 {
         int row, column;
 
-        for (row = 0; row < CURSOR_H; row++) {
+        for (row = 0; row < CURSOR_H; row++)
+        {
                 int py = y + row;
 
                 if (py < 0 || py >= (int)surface_h)
                         continue;
 
-                for (column = 0; column < CURSOR_W; column++) {
+                for (column = 0; column < CURSOR_W; column++)
+                {
                         int px = x + column;
                         char pixel = canvas_cursor_bitmap[row][column];
 

@@ -73,13 +73,14 @@ retry:
         ret = plane->funcs->update_plane(plane, crtc, surface->cursor_buffer->fb,
                                          x - CURSOR_HOTSPOT_X,
                                          y - CURSOR_HOTSPOT_Y,
-                                         CURSOR_PLANE_W, CURSOR_PLANE_H,
+                                         surface->cursor_w, surface->cursor_h,
                                          0, 0,
-                                         CURSOR_PLANE_W << 16,
-                                         CURSOR_PLANE_H << 16,
+                                         surface->cursor_w << 16,
+                                         surface->cursor_h << 16,
                                          &ctx);
 out:
-        if (ret == -EDEADLK) {
+        if (ret == -EDEADLK)
+        {
                 drm_modeset_backoff(&ctx);
                 goto retry;
         }
@@ -94,7 +95,8 @@ static void canvas_drop_cursor_plane(struct surface *surface)
 {
         surface->cursor_plane = NULL;
 
-        if (surface->cursor_buffer) {
+        if (surface->cursor_buffer)
+        {
                 drm_client_buffer_delete(surface->cursor_buffer);
                 surface->cursor_buffer = NULL;
         }
@@ -111,7 +113,7 @@ static void canvas_drop_cursor_plane(struct surface *surface)
         never be sent.
 */
 static int canvas_setup_cursor_plane(struct drm_client_dev *client,
-                                           struct surface *surface)
+                                     struct surface *surface)
 {
         struct drm_plane *plane = surface->mode_set->crtc->cursor;
         struct iosys_map map;
@@ -120,14 +122,24 @@ static int canvas_setup_cursor_plane(struct drm_client_dev *client,
         if (!plane || !canvas_plane_takes_argb(plane))
                 return -ENODEV;
 
+        // What the device reports through DRM_CAP_CURSOR_WIDTH, which is what
+        // userspace would be told. Zero means the driver never set one.
+        surface->cursor_w = client->dev->mode_config.cursor_width ?: CURSOR_W;
+        surface->cursor_h = client->dev->mode_config.cursor_height ?: CURSOR_H;
+
+        if (surface->cursor_w < CURSOR_W || surface->cursor_h < CURSOR_H)
+                return -ENODEV;
+
         surface->cursor_buffer = drm_client_buffer_create_dumb(
-            client, CURSOR_PLANE_W, CURSOR_PLANE_H, DRM_FORMAT_ARGB8888);
-        if (IS_ERR(surface->cursor_buffer)) {
+            client, surface->cursor_w, surface->cursor_h, DRM_FORMAT_ARGB8888);
+        if (IS_ERR(surface->cursor_buffer))
+        {
                 surface->cursor_buffer = NULL;
                 return -ENOMEM;
         }
 
-        if (drm_client_buffer_vmap_local(surface->cursor_buffer, &map)) {
+        if (drm_client_buffer_vmap_local(surface->cursor_buffer, &map))
+        {
                 drm_client_buffer_delete(surface->cursor_buffer);
                 surface->cursor_buffer = NULL;
                 return -EIO;
@@ -139,14 +151,14 @@ static int canvas_setup_cursor_plane(struct drm_client_dev *client,
         // the blank cells of its bitmap, so without this the buffer keeps
         // whatever it was allocated holding and the arrow wears a black box.
         canvas_fill_rect(map.vaddr, pitch_pixels,
-                               CURSOR_PLANE_W, CURSOR_PLANE_H,
-                               0, 0, CURSOR_PLANE_W, CURSOR_PLANE_H,
-                               0x00000000);
+                         surface->cursor_w, surface->cursor_h,
+                         0, 0, surface->cursor_w, surface->cursor_h,
+                         0x00000000);
 
         canvas_draw_cursor(map.vaddr, pitch_pixels,
-                                 CURSOR_PLANE_W, CURSOR_PLANE_H, 0, 0,
-                                 canvas_colour(COLOUR_CURSOR, DRM_FORMAT_ARGB8888),
-                                 canvas_colour(COLOUR_CURSOR_EDGE, DRM_FORMAT_ARGB8888));
+                           surface->cursor_w, surface->cursor_h, 0, 0,
+                           canvas_colour(COLOUR_CURSOR, DRM_FORMAT_ARGB8888),
+                           canvas_colour(COLOUR_CURSOR_EDGE, DRM_FORMAT_ARGB8888));
 
         drm_client_buffer_vunmap_local(surface->cursor_buffer);
 
@@ -176,11 +188,8 @@ static void canvas_arm_cursor(struct canvas *canvas)
                 the lock would make the pointer snap back on every redraw.
         */
 
-        if (!canvas->surface_count)
-                return;
-
-        surface = &canvas->surfaces[0];
-        if (!surface->cursor_plane)
+        surface = canvas_first_output(canvas);
+        if (!surface || !surface->cursor_plane)
                 return;
 
         ret = canvas_place_cursor_plane(surface, canvas->cursor_x, canvas->cursor_y);
@@ -203,8 +212,8 @@ static void canvas_arm_cursor(struct canvas *canvas)
         framebuffer only sends those bytes.
 */
 static void canvas_move_cursor(struct canvas *canvas,
-                                     struct surface *surface,
-                                     int new_x, int new_y)
+                               struct surface *surface,
+                               int new_x, int new_y)
 {
         struct iosys_map map;
         unsigned int pitch_pixels;
@@ -219,7 +228,8 @@ static void canvas_move_cursor(struct canvas *canvas,
                 is handed to the driver -- the commit carries two coordinates
                 and returns without waiting for vblank.
         */
-        if (surface->cursor_plane) {
+        if (surface->cursor_plane)
+        {
                 u64 flush_started = ktime_get_ns();
                 int ret = canvas_place_cursor_plane(surface, new_x, new_y);
 
@@ -239,21 +249,21 @@ static void canvas_move_cursor(struct canvas *canvas,
         pitch_pixels = surface->buffer->fb->pitches[0] / sizeof(u32);
 
         {
-        u64 draw_started = ktime_get_ns();
+                u64 draw_started = ktime_get_ns();
 
-        canvas_compose_rect(canvas, surface, pixels, pitch_pixels,
-                                  old_x, old_y, CURSOR_W, CURSOR_H);
-        canvas_compose_rect(canvas, surface, pixels, pitch_pixels,
-                                  new_x, new_y, CURSOR_W, CURSOR_H);
+                canvas_compose_rect(canvas, surface, pixels, pitch_pixels,
+                                    old_x, old_y, CURSOR_W, CURSOR_H);
+                canvas_compose_rect(canvas, surface, pixels, pitch_pixels,
+                                    new_x, new_y, CURSOR_W, CURSOR_H);
 
-        canvas_draw_cursor(pixels, pitch_pixels, surface->width, surface->height,
-                                 new_x, new_y,
-                                 canvas_colour(COLOUR_CURSOR, surface->format),
-                                 canvas_colour(COLOUR_CURSOR_EDGE, surface->format));
+                canvas_draw_cursor(pixels, pitch_pixels, surface->width, surface->height,
+                                   new_x, new_y,
+                                   canvas_colour(COLOUR_CURSOR, surface->format),
+                                   canvas_colour(COLOUR_CURSOR_EDGE, surface->format));
 
-        drm_client_buffer_vunmap_local(surface->buffer);
+                drm_client_buffer_vunmap_local(surface->buffer);
 
-        pointer_draw_total += ktime_get_ns() - draw_started;
+                pointer_draw_total += ktime_get_ns() - draw_started;
         }
 
         // Clamped: the cursor is allowed to sit against the right or bottom
@@ -268,23 +278,23 @@ static void canvas_move_cursor(struct canvas *canvas,
                 return;
 
         {
-        u64 flush_started = ktime_get_ns();
+                u64 flush_started = ktime_get_ns();
 
-        /*
-                Required, not optional. Skipping it was tried: the cursor's
-                position updated internally but the screen kept showing it
-                where it was, because this driver shadows the framebuffer
-                rather than scanning out what we wrote to.
+                /*
+                        Required, not optional. Skipping it was tried: the cursor's
+                        position updated internally but the screen kept showing it
+                        where it was, because this driver shadows the framebuffer
+                        rather than scanning out what we wrote to.
 
-                It is also the whole cost. The driver implements dirty as
-                drm_atomic_helper_dirtyfb, a full atomic commit that waits for
-                vblank, so a cursor move cannot land in less than a frame. A
-                hardware cursor plane is what avoids this -- moving one does
-                not touch the framebuffer at all -- but this device does not
-                have one.
-        */
-        drm_client_buffer_flush(surface->buffer, &damage);
+                        It is also the whole cost. The driver implements dirty as
+                        drm_atomic_helper_dirtyfb, a full atomic commit that waits for
+                        vblank, so a cursor move cannot land in less than a frame. A
+                        hardware cursor plane is what avoids this -- moving one does
+                        not touch the framebuffer at all -- but this device does not
+                        have one.
+                */
+                drm_client_buffer_flush(surface->buffer, &damage);
 
-        pointer_flush_total += ktime_get_ns() - flush_started;
+                pointer_flush_total += ktime_get_ns() - flush_started;
         }
 }
