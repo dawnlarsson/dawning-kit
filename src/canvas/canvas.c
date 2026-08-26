@@ -279,6 +279,8 @@ void canvas_rect_fill(u32 *at, unsigned long pitch, unsigned long width,
                       unsigned long height, u32 colour);
 void canvas_glyph(u32 *at, unsigned long pitch, const u8 *bits,
                   unsigned long stride, unsigned long rows, u32 colour);
+void canvas_cell(u32 *at, unsigned long pitch, const u8 *bits,
+                 unsigned long rows, u32 ink, u32 paper);
 void canvas_row_blit(u32 *at, const u32 *from, unsigned long count, u32 opaque);
 
 /*

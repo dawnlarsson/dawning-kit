@@ -12,6 +12,14 @@
 #
 #       void canvas_glyph(u32 *at, unsigned long pitch, const u8 *bits,
 #                         unsigned long stride, unsigned long rows, u32 colour)
+#       void canvas_cell(u32 *at, unsigned long pitch, const u8 *bits,
+#                        unsigned long rows, u32 ink, u32 paper)
+#
+#       canvas_cell is the same glyph with its background, written in one pass.
+#       There is one framebuffer and the display is reading it, so filling the
+#       paper and then drawing the glyph over it is every letter on the screen
+#       flashing its background whenever it is repainted. Every pixel here is
+#       stored once, already the colour it ends up.
 #
 #       pitch is in pixels. bits is one byte a row, most significant bit
 #       leftmost, which is how the kernel's console fonts are stored, and
@@ -65,6 +73,97 @@ SYM_FUNC_START(canvas_glyph)
         jnz     1b
         RET
 SYM_FUNC_END(canvas_glyph)
+
+#> arch x86_64
+SYM_FUNC_START(canvas_cell)
+        shl     $2, %rsi                # pitch, pixels to bytes
+
+        .macro  cell_pixel bit, offset
+        mov     %r9d, %r10d
+        test    $\bit, %al
+        cmovne  %r8d, %r10d
+        mov     %r10d, \offset(%rdi)
+        .endm
+
+1:      movzbl  (%rdx), %eax
+        inc     %rdx
+
+        cell_pixel 0x80, 0
+        cell_pixel 0x40, 4
+        cell_pixel 0x20, 8
+        cell_pixel 0x10, 12
+        cell_pixel 0x08, 16
+        cell_pixel 0x04, 20
+        cell_pixel 0x02, 24
+        cell_pixel 0x01, 28
+
+        add     %rsi, %rdi
+        dec     %rcx
+        jnz     1b
+        RET
+SYM_FUNC_END(canvas_cell)
+
+#> arch arm64
+SYM_FUNC_START(canvas_cell)
+        lsl     x1, x1, #2
+
+        .macro  cell_pixel bit, offset
+        tst     w6, #\bit
+        csel    w7, w4, w5, ne
+        str     w7, [x0, #\offset]
+        .endm
+
+1:      ldrb    w6, [x2], #1
+
+        cell_pixel 0x80, 0
+        cell_pixel 0x40, 4
+        cell_pixel 0x20, 8
+        cell_pixel 0x10, 12
+        cell_pixel 0x08, 16
+        cell_pixel 0x04, 20
+        cell_pixel 0x02, 24
+        cell_pixel 0x01, 28
+
+        add     x0, x0, x1
+        subs    x3, x3, #1
+        b.ne    1b
+        ret
+SYM_FUNC_END(canvas_cell)
+
+#> arch riscv64
+SYM_FUNC_START(canvas_cell)
+        slli    a1, a1, 2
+
+        .macro  cell_pixel bit, offset
+        mv      t0, a5
+        andi    t1, a6, \bit
+        beqz    t1, 8f
+        mv      t0, a4
+8:      sw      t0, \offset(a0)
+        .endm
+
+1:      lbu     a6, 0(a2)
+        addi    a2, a2, 1
+
+        cell_pixel 0x80, 0
+        cell_pixel 0x40, 4
+        cell_pixel 0x20, 8
+        cell_pixel 0x10, 12
+        cell_pixel 0x08, 16
+        cell_pixel 0x04, 20
+        cell_pixel 0x02, 24
+        cell_pixel 0x01, 28
+
+        add     a0, a0, a1
+        addi    a3, a3, -1
+        bnez    a3, 1b
+        ret
+SYM_FUNC_END(canvas_cell)
+
+#> arch other
+
+#> shared
+
 
 #> arch arm64
 SYM_FUNC_START(canvas_glyph)

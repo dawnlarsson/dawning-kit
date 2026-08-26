@@ -13,6 +13,22 @@
 
 static const struct font_desc *canvas_font;
 
+static const unsigned char *glyph_bits(unsigned int character)
+{
+        return font_data_buf(canvas_font->data) +
+               (size_t)character *
+                   font_glyph_size(canvas_font->width, canvas_font->height);
+}
+
+// Whether the face is the one canvas_cell assumes: eight wide, a byte a row,
+// and a cell tall.
+static _Bool glyph_is_cell(void)
+{
+        return canvas_font && canvas_font->width == WINDOW_CELL_W &&
+               canvas_font->height == WINDOW_CELL_H &&
+               font_glyph_pitch(canvas_font->width) == 1;
+}
+
 /*
         One glyph. The set bits of a row are drawn as runs rather than one at a
         time: a call for every lit pixel is thousands of calls for a line of
@@ -22,9 +38,7 @@ static void glyph_draw(const struct target *t, int x, int y, int scale,
                        unsigned char character, u32 colour)
 {
         unsigned int pitch = font_glyph_pitch(canvas_font->width);
-        const unsigned char *glyph =
-            font_data_buf(canvas_font->data) +
-            (size_t)character * font_glyph_size(canvas_font->width, canvas_font->height);
+        const unsigned char *glyph = glyph_bits(character);
         unsigned int row, column;
 
         /*

@@ -162,6 +162,44 @@ static void shape_blit(const struct target *t, const struct shape *shape,
         mostly one colour behind everything, and then the glyphs. Only the
         cells the damage reaches.
 */
+/*
+        One cell, background and glyph together.
+
+        The whole point is the single pass: filling the paper and then drawing
+        the letter over it writes most of the cell twice, and the display is
+        reading the buffer while that happens. A cell at the edge of the damage
+        or inside a rounded corner still goes the long way round, where a
+        double write is worth more than the case is worth handling.
+*/
+static void cell_draw(const struct target *t, const struct shape *shape,
+                      int x, int y, const struct window_cell *cell,
+                      u32 ink, u32 paper)
+{
+        if (glyph_is_cell() &&
+            x >= max(t->clip.x1, 0) && x + WINDOW_CELL_W <= min(t->clip.x2, t->width) &&
+            y >= max(t->clip.y1, 0) && y + WINDOW_CELL_H <= min(t->clip.y2, t->height) &&
+            !round_inset(y - shape->y, shape->h, shape->radius) &&
+            !round_inset(y + WINDOW_CELL_H - 1 - shape->y, shape->h, shape->radius))
+        {
+                canvas_painted += WINDOW_CELL_W * WINDOW_CELL_H;
+                canvas_runs++;
+                canvas_cell(t->pixels + (size_t)y * t->pitch + x, t->pitch,
+                            glyph_bits(cell->character), WINDOW_CELL_H, ink, paper);
+                return;
+        }
+
+        shape_fill(t, shape, x, y, WINDOW_CELL_W, WINDOW_CELL_H, paper);
+        glyph_draw(t, x, y, 1, (unsigned char)cell->character, ink);
+}
+
+/*
+        A window made of text.
+
+        A cell with a letter in it is drawn whole, one pixel one store. Runs of
+        blank cells sharing a background go out as one rectangle, since a
+        terminal is mostly empty and a rectangle is what the fill is fastest
+        at. Only the cells the damage reaches.
+*/
 static void compose_cells(struct pane *pane, const struct target *t,
                           const struct shape *shape, int x, int y)
 {
@@ -193,30 +231,38 @@ static void compose_cells(struct pane *pane, const struct target *t,
 
                 for (column = first; column < last;)
                 {
-                        int run = column;
-                        u32 paper = canvas_terminal[cells[column].paper & 15];
+                        unsigned int character = cells[column].character;
+                        u32 paper = canvas_terminal[cells[column].paper & 15] | t->opaque;
+                        int run;
 
-                        while (run < last &&
-                               canvas_terminal[cells[run].paper & 15] == paper)
-                                run++;
+                        if (character > ' ' && character <= 126)
+                        {
+                                cell_draw(t, shape, x + column * WINDOW_CELL_W, cy,
+                                          &cells[column],
+                                          canvas_terminal[cells[column].ink & 15] |
+                                              t->opaque,
+                                          paper);
+                                column++;
+                                continue;
+                        }
+
+                        for (run = column; run < last; run++)
+                        {
+                                unsigned int c = cells[run].character;
+
+                                if (c > ' ' && c <= 126)
+                                        break;
+
+                                if ((canvas_terminal[cells[run].paper & 15] |
+                                     t->opaque) != paper)
+                                        break;
+                        }
 
                         shape_fill(t, shape, x + column * WINDOW_CELL_W, cy,
                                    (run - column) * WINDOW_CELL_W, WINDOW_CELL_H,
-                                   paper | t->opaque);
+                                   paper);
 
                         column = run;
-                }
-
-                for (column = first; column < last; column++)
-                {
-                        unsigned int character = cells[column].character;
-
-                        if (character < ' ' || character > 126)
-                                continue;
-
-                        glyph_draw(t, x + column * WINDOW_CELL_W, cy, 1,
-                                   (unsigned char)character,
-                                   canvas_terminal[cells[column].ink & 15] | t->opaque);
                 }
         }
 }
@@ -313,42 +359,107 @@ static void compose_pane(struct pane *pane, const struct target *t)
 }
 
 /*
-        Whether some window already covers all of this, so the desktop behind
-        it need not be painted first.
+        The desktop, everywhere a window is not.
 
-        There is one buffer and the display is scanning it, so every pixel
-        written twice is a pixel seen twice. Painting the desktop under a
-        window that is about to cover it is a flash of the background at every
-        repaint, which during a resize is the whole body of the window,
-        sixty times a second.
+        There is one buffer and the display is scanning it, so a pixel written
+        twice is a pixel seen twice: painting the background and then a window
+        over it is a flash of the desktop through that window, and during a
+        resize that is its whole body, sixty times a second. So the windows are
+        cut out of the rectangle first and only what is left is painted.
 
-        Inset by the corner radius, because a rounded corner is the one place
-        a window does not cover its own rectangle.
+        Windows are cut inset by their corner radius, which is the one place a
+        window does not cover its own rectangle.
 */
-static _Bool clip_covered(const struct target *t, int x1, int y1, int x2, int y2)
+#define DESKTOP_PIECES 8
+
+static unsigned int rect_subtract(struct drm_rect *out, const struct drm_rect *a,
+                                  const struct drm_rect *b)
 {
+        unsigned int n = 0;
+
+        if (b->x1 >= a->x2 || b->x2 <= a->x1 || b->y1 >= a->y2 || b->y2 <= a->y1)
+        {
+                out[0] = *a;
+                return 1;
+        }
+
+        if (b->y1 > a->y1)
+                rect_set(&out[n++], a->x1, a->y1, a->x2 - a->x1, b->y1 - a->y1);
+
+        if (b->y2 < a->y2)
+                rect_set(&out[n++], a->x1, b->y2, a->x2 - a->x1, a->y2 - b->y2);
+
+        {
+                int top = max(a->y1, b->y1);
+                int bottom = min(a->y2, b->y2);
+
+                if (b->x1 > a->x1)
+                        rect_set(&out[n++], a->x1, top, b->x1 - a->x1, bottom - top);
+
+                if (b->x2 < a->x2)
+                        rect_set(&out[n++], b->x2, top, a->x2 - b->x2, bottom - top);
+        }
+
+        return n;
+}
+
+static void desktop_fill(const struct target *t, int x1, int y1, int x2, int y2)
+{
+        struct drm_rect piece[DESKTOP_PIECES], spare[DESKTOP_PIECES];
+        unsigned int count = 1, i;
         struct pane *pane;
+
+        rect_set(&piece[0], x1, y1, x2 - x1, y2 - y1);
 
         list_for_each_entry_reverse(pane, &desktop.windows, link)
         {
+                unsigned int kept = 0;
+                struct drm_rect cut;
                 int fx, fy, fw, fh, radius;
+
+                if (!count)
+                        return;
 
                 if (pane->style & WINDOW_MINIMIZED)
                         continue;
 
                 pane_frame(pane, &fx, &fy, &fw, &fh);
                 radius = min(pane->edge, min(fw, fh) / 2);
+                rect_set(&cut, fx + radius - t->x, fy + radius - t->y,
+                         fw - radius * 2, fh - radius * 2);
 
-                fx += radius - t->x;
-                fy += radius - t->y;
-                fw -= radius * 2;
-                fh -= radius * 2;
+                for (i = 0; i < count; i++)
+                {
+                        // Four is the most one cut can make of one piece, and
+                        // past the array the pieces cost more than the paint.
+                        if (kept + 4 > DESKTOP_PIECES)
+                        {
+                                kept = count;
+                                memcpy(spare, piece, count * sizeof(*piece));
+                                break;
+                        }
 
-                if (x1 >= fx && y1 >= fy && x2 <= fx + fw && y2 <= fy + fh)
-                        return true;
+                        kept += rect_subtract(&spare[kept], &piece[i], &cut);
+                }
+
+                memcpy(piece, spare, kept * sizeof(*piece));
+                count = kept;
         }
 
-        return false;
+        for (i = 0; i < count; i++)
+        {
+                int w = piece[i].x2 - piece[i].x1;
+                int h = piece[i].y2 - piece[i].y1;
+
+                if (w <= 0 || h <= 0)
+                        continue;
+
+                canvas_painted += (unsigned long)w * h;
+                canvas_runs++;
+                canvas_rect_fill(t->pixels + (size_t)piece[i].y1 * t->pitch + piece[i].x1,
+                                 t->pitch, (unsigned long)w, (unsigned long)h,
+                                 t->ink[INK_DESKTOP]);
+        }
 }
 
 static void compose_clip(const struct target *t)
@@ -359,14 +470,8 @@ static void compose_clip(const struct target *t)
         int y2 = min(t->clip.y2, t->height);
         struct pane *pane;
 
-        if (x2 > x1 && y2 > y1 && !clip_covered(t, x1, y1, x2, y2))
-        {
-                canvas_painted += (unsigned long)(x2 - x1) * (y2 - y1);
-                canvas_runs++;
-                canvas_rect_fill(t->pixels + (size_t)y1 * t->pitch + x1, t->pitch,
-                                 (unsigned long)(x2 - x1), (unsigned long)(y2 - y1),
-                                 t->ink[INK_DESKTOP]);
-        }
+        if (x2 > x1 && y2 > y1)
+                desktop_fill(t, x1, y1, x2, y2);
 
         list_for_each_entry(pane, &desktop.windows, link)
                 compose_pane(pane, t);
