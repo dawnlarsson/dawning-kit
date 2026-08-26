@@ -397,6 +397,28 @@ static int spawn_program(const char *path)
         return 0;
 }
 
+/*
+        A program starts able to be interrupted.
+
+        execve resets handled signals to default but carries ignored ones
+        across, so a shell that ignores SIGINT so it survives control-C would
+        hand that same deafness to everything it runs, and nothing could ever
+        be cancelled.
+*/
+static void spawn_default_signals(void)
+{
+        struct k_sigaction *action = current->sighand->action;
+        int signal;
+
+        spin_lock_irq(&current->sighand->siglock);
+
+        for (signal = 0; signal < _NSIG; signal++)
+                if (action[signal].sa.sa_handler == SIG_IGN)
+                        action[signal].sa.sa_handler = SIG_DFL;
+
+        spin_unlock_irq(&current->sighand->siglock);
+}
+
 static int spawn_enter(void *data)
 {
         u64 started = ktime_get_ns();
@@ -404,6 +426,8 @@ static int spawn_enter(void *data)
         struct spawn_work *work = data;
         static const char *const empty_envp[] = {NULL};
         int ret;
+
+        spawn_default_signals();
 
         ret = kernel_execve(work->path, (const char *const *)work->argv,
                             work->envp ? (const char *const *)work->envp : empty_envp);

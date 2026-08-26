@@ -199,10 +199,32 @@ fn process()
         string_format(shell_output, "Command not found: '%s'\n", shell_buffer);
 }
 
+/*
+        Control-C cancels the command, not the shell.
+
+        The line discipline sends SIGINT to everything in the terminal's
+        foreground group, which is this and whatever it is running. Ignoring it
+        here leaves the shell standing; the kernel gives every program it
+        spawns its own default disposition back, so the command still dies.
+
+        SIG_IGN needs no restorer, which is the whole reason this is three
+        words and not a per-architecture trampoline.
+*/
+#define SIGNAL_INTERRUPT 2
+#define SIGNAL_QUIT 3
+#define SIGNAL_IGNORE 1
+
+fn shell_ignore(b32 number)
+{
+        positive action[4] = {SIGNAL_IGNORE, 0, 0, 0};
+
+        system_call_4(syscall(rt_sigaction), number, (positive)address_of action, 0, 8);
+}
+
 b32 main()
 {
-        system_call(syscall(setsid));
-        system_call_2(2, (positive) "/dev/console", FILE_READ_WRITE | O_NOCTTY);
+        shell_ignore(SIGNAL_INTERRUPT);
+        shell_ignore(SIGNAL_QUIT);
 
         shell_env_init();
 
@@ -215,7 +237,23 @@ b32 main()
 
                 log_direct(str(TERM_MAIN_BUFFER TERM_RESET TERM_SHOW_CURSOR PROMPT));
 
-                input_length = system_call_3(syscall(read), 0, (positive)shell_buffer, MAX_INPUT) - 1;
+                bipolar got = system_call_3(syscall(read), 0, (positive)shell_buffer,
+                                            MAX_INPUT);
+
+                /*
+                        Nothing, or an error. input_length is unsigned and used
+                        to index the buffer, so letting a read of 0 become -1
+                        was a write a long way past the end of it.
+                */
+                if (got <= 0)
+                {
+                        if (got == 0)
+                                break;
+
+                        continue;
+                }
+
+                input_length = (positive)got - 1;
 
                 if (input_length)
                         process();

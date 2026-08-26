@@ -12,10 +12,17 @@
 
 #define KEY_TABLE 58
 
+/*
+        Backspace is DEL, not BS.
+
+        A terminal line discipline erases on VERASE, which is 127 everywhere,
+        and treats 8 as an ordinary character -- so sending 8 echoed as ^H and
+        made the line two characters longer for every press.
+*/
 static const char key_plain[KEY_TABLE] = {
     [2] = '1',  [3] = '2',  [4] = '3',  [5] = '4',  [6] = '5',
     [7] = '6',  [8] = '7',  [9] = '8',  [10] = '9', [11] = '0',
-    [12] = '-', [13] = '=', [14] = '\b', [15] = '\t',
+    [12] = '-', [13] = '=', [14] = 127, [15] = '\t',
     [16] = 'q', [17] = 'w', [18] = 'e', [19] = 'r', [20] = 't',
     [21] = 'y', [22] = 'u', [23] = 'i', [24] = 'o', [25] = 'p',
     [26] = '[', [27] = ']', [28] = '\n',
@@ -30,7 +37,7 @@ static const char key_plain[KEY_TABLE] = {
 static const char key_shifted[KEY_TABLE] = {
     [2] = '!',  [3] = '@',  [4] = '#',  [5] = '$',  [6] = '%',
     [7] = '^',  [8] = '&',  [9] = '*',  [10] = '(', [11] = ')',
-    [12] = '_', [13] = '+', [14] = '\b', [15] = '\t',
+    [12] = '_', [13] = '+', [14] = 127, [15] = '\t',
     [16] = 'Q', [17] = 'W', [18] = 'E', [19] = 'R', [20] = 'T',
     [21] = 'Y', [22] = 'U', [23] = 'I', [24] = 'O', [25] = 'P',
     [26] = '{', [27] = '}', [28] = '\n',
