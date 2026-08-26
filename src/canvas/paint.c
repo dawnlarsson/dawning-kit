@@ -21,7 +21,7 @@ static void canvas_fill_rect(u32 *pixels, unsigned int pitch_pixels,
                              unsigned int target_w, unsigned int target_h,
                              int x, int y, int width, int height, u32 colour)
 {
-        int row, column;
+        int row;
 
         // Clip rather than trusting callers: a window dragged off the edge is
         // the normal case, not an error.
@@ -47,12 +47,8 @@ static void canvas_fill_rect(u32 *pixels, unsigned int pitch_pixels,
                 return;
 
         for (row = 0; row < height; row++)
-        {
-                u32 *line = pixels + (size_t)(y + row) * pitch_pixels + x;
-
-                for (column = 0; column < width; column++)
-                        line[column] = colour;
-        }
+                canvas_row_fill(pixels + (size_t)(y + row) * pitch_pixels + x,
+                                (unsigned long)width, colour);
 }
 
 /*
@@ -278,22 +274,3 @@ static int round_inset(int row, int height, int radius)
         return radius - (int)int_sqrt((unsigned long)(radius * radius - dy * dy));
 }
 
-static void canvas_row_fill(u32 *pixels, unsigned int pitch_pixels,
-                            int x1, int x2, int y, u32 colour)
-{
-        u32 *line = pixels + (size_t)y * pitch_pixels;
-        int x;
-
-        for (x = x1; x < x2; x++)
-                line[x] = colour;
-}
-
-static void canvas_row_blit(u32 *pixels, unsigned int pitch_pixels,
-                            int x1, int x2, int y, const u32 *source, u32 opaque)
-{
-        u32 *line = pixels + (size_t)y * pitch_pixels;
-        int x;
-
-        for (x = x1; x < x2; x++)
-                line[x] = source[x - x1] | opaque;
-}

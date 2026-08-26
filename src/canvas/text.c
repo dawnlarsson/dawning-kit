@@ -23,6 +23,11 @@ static int text_cell_height(int scale)
         return (int)canvas_font->height * scale;
 }
 
+/*
+        One glyph. The set bits of a row are drawn as runs rather than one at a
+        time: a call for every lit pixel is thousands of calls for a line of
+        text, and a run of a few is what the fill is cheapest at.
+*/
 static void glyph_draw(u32 *pixels, unsigned int pitch_pixels, struct output *output,
                        const struct drm_rect *clip,
                        int x, int y, int scale, unsigned char character, u32 colour)
@@ -32,33 +37,44 @@ static void glyph_draw(u32 *pixels, unsigned int pitch_pixels, struct output *ou
             font_data_buf(canvas_font->data) +
             (size_t)character * font_glyph_size(canvas_font->width, canvas_font->height);
         unsigned int row, column;
-        int line;
 
         for (row = 0; row < canvas_font->height; row++)
         {
-                for (column = 0; column < canvas_font->width; column++)
-                {
-                        int px, x1, x2;
+                const unsigned char *bits = glyph + row * pitch;
 
-                        if (!(glyph[row * pitch + column / 8] & (0x80 >> (column % 8))))
+                for (column = 0; column < canvas_font->width;)
+                {
+                        unsigned int run = column;
+                        int px, x1, x2, line;
+
+                        if (!(bits[column / 8] & (0x80 >> (column % 8))))
+                        {
+                                column++;
                                 continue;
+                        }
+
+                        while (run < canvas_font->width &&
+                               (bits[run / 8] & (0x80 >> (run % 8))))
+                                run++;
 
                         px = x + (int)column * scale;
                         x1 = max(max(px, clip->x1), 0);
-                        x2 = min(min(px + scale, clip->x2), (int)output->width);
+                        x2 = min(min(px + (int)(run - column) * scale, clip->x2),
+                                 (int)output->width);
 
-                        if (x2 <= x1)
-                                continue;
-
-                        for (line = 0; line < scale; line++)
+                        for (line = 0; x2 > x1 && line < scale; line++)
                         {
                                 int py = y + (int)row * scale + line;
 
-                                if (py < max(clip->y1, 0) || py >= min(clip->y2, (int)output->height))
+                                if (py < max(clip->y1, 0) ||
+                                    py >= min(clip->y2, (int)output->height))
                                         continue;
 
-                                canvas_row_fill(pixels, pitch_pixels, x1, x2, py, colour);
+                                canvas_row_fill(pixels + (size_t)py * pitch_pixels + x1,
+                                                (unsigned long)(x2 - x1), colour);
                         }
+
+                        column = run;
                 }
         }
 }

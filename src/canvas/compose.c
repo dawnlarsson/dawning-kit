@@ -69,7 +69,8 @@ static void shape_fill(u32 *pixels, unsigned int pitch_pixels, struct output *ou
                 if (y < 0 || y >= (int)output->height || x2 <= x1)
                         continue;
 
-                canvas_row_fill(pixels, pitch_pixels, x1, x2, y, colour);
+                canvas_row_fill(pixels + (size_t)y * pitch_pixels + x1,
+                                (unsigned long)(x2 - x1), colour);
         }
 }
 
@@ -92,9 +93,9 @@ static void shape_blit(u32 *pixels, unsigned int pitch_pixels, struct output *ou
                 if (y < 0 || y >= (int)output->height || x2 <= x1)
                         continue;
 
-                canvas_row_blit(pixels, pitch_pixels, x1, x2, y,
+                canvas_row_blit(pixels + (size_t)y * pitch_pixels + x1,
                                 source + (size_t)(y - band_y) * source_pitch + (x1 - band_x),
-                                opaque);
+                                (unsigned long)(x2 - x1), opaque);
         }
 }
 

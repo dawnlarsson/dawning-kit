@@ -10,6 +10,8 @@
                         interface it needs -- see there first
             pane.c      windows: creating, destroying, and reading the shared
                         page without trusting it
+            ../fill.asm one run of pixels, per architecture. Everything
+                        Canvas draws goes through it.
             paint.c     pixels: a pointer, a pitch, a rectangle
             text.c      words: a box, where the lines break, where they sit
             compose.c   what a window looks like and in what order
@@ -191,6 +193,15 @@ static u64 pointer_draw_total;
 static u64 pointer_flush_total;
 static unsigned long pointer_counts;
 static unsigned long pointer_moved;
+
+/*
+        The two loops every pixel goes through, in src/fill.asm. They are
+        assembly because a full compose is four megabytes of stores and the
+        kernel is built with no vector instructions on x86, so what the C
+        turned into was two four byte stores an iteration.
+*/
+void canvas_row_fill(u32 *at, unsigned long count, u32 colour);
+void canvas_row_blit(u32 *at, const u32 *from, unsigned long count, u32 opaque);
 
 static struct canvas *canvas_from_client(struct drm_client_dev *client)
 {
