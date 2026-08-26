@@ -8,6 +8,8 @@ menu "Moonwater"
     config MOONWATER_CANVAS
         bool "Moonwater Canvas, the in-kernel compositor"
         depends on MOONWATER_CORE && DRM && DRM_CLIENT
+        select FONT_SUPPORT
+        select FONT_8x16
         default y
         help
           Own the display from kernel space: Canvas draws the desktop,

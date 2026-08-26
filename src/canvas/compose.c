@@ -16,6 +16,13 @@
         curve, and a band that is not at a corner is a plain run of pixels.
 */
 
+// What a window with no program behind it says, and the one place wrapping is
+// exercised until a program can ask for text of its own.
+static const char pane_placeholder[] =
+    "This window is the compositor's own. A program draws its contents "
+    "through the page it shares, and this is what one looks like before "
+    "anything has.";
+
 static _Bool output_shows_cursor(struct output *output, int x, int y)
 {
         return rects_overlap(x, y, CURSOR_W, CURSOR_H,
@@ -115,6 +122,13 @@ static void compose_pane(struct pane *pane, struct output *output,
                            shape.x, shape.y, shape.w, shape.h, frame);
                 shape_fill(pixels, pitch_pixels, output, clip, &shape,
                            x, y, pane->width, title, bar);
+
+                if (pane->title_length)
+                        text_draw(pixels, pitch_pixels, output, clip,
+                                  x + 8, y, pane->width - 16, title,
+                                  pane->title, pane->title_length,
+                                  TEXT_CENTRE | TEXT_MIDDLE, 1,
+                                  canvas_colour(COLOUR_TEXT, output->format));
         }
 
         if (pane->pixels)
@@ -122,9 +136,17 @@ static void compose_pane(struct pane *pane, struct output *output,
                            x, y + title, pane->width, pane->height,
                            pane->pixels, pane->pitch, output->format);
         else
+        {
                 shape_fill(pixels, pitch_pixels, output, clip, &shape,
                            x, y + title, pane->width, pane->height,
                            canvas_colour(COLOUR_BODY, output->format));
+
+                text_draw(pixels, pitch_pixels, output, clip,
+                          x + 8, y + title + 8, pane->width - 16, pane->height - 16,
+                          pane_placeholder, sizeof(pane_placeholder) - 1,
+                          TEXT_LEFT | TEXT_TOP | TEXT_WRAP, 1,
+                          canvas_colour(COLOUR_TEXT, output->format));
+        }
 }
 
 static void compose_clip(struct output *output, u32 *pixels, unsigned int pitch_pixels,

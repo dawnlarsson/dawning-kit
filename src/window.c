@@ -72,6 +72,23 @@
 // state
 #define WINDOW_FOCUSED 1u
 
+/*
+        Text layout. Alignment is one field: a horizontal one, a vertical one,
+        and whether long text wraps at the width of its box or runs off the end
+        of one line.
+*/
+#define TEXT_LEFT 0u
+#define TEXT_CENTRE 1u
+#define TEXT_RIGHT 2u
+#define TEXT_TOP 0u
+#define TEXT_MIDDLE 4u
+#define TEXT_BOTTOM 8u
+#define TEXT_WRAP 16u
+
+// How long a title can be, which is the one string that lives in this page
+// rather than in a window's own content.
+#define WINDOW_TITLE_MAX 128
+
 struct window
 {
         // The program writes these, and the compositor writes x, y and z back
@@ -83,6 +100,7 @@ struct window
         unsigned int style;
         unsigned int edge;     // corner radius
         unsigned int sequence; // bump after drawing
+        char title[WINDOW_TITLE_MAX];
 
         // The compositor writes these.
         unsigned int state;         // WINDOW_FOCUSED

@@ -11,6 +11,7 @@
             pane.c      windows: creating, destroying, and reading the shared
                         page without trusting it
             paint.c     pixels: a pointer, a pitch, a rectangle
+            text.c      words: a box, where the lines break, where they sit
             compose.c   what a window looks like and in what order
             plane.c     the cursor, on a hardware plane or in the framebuffer
             drag.c      moving a window, across a seam if it comes to that
@@ -55,6 +56,8 @@ struct pane
         unsigned int state;
         int edge;
         unsigned int sequence;
+        char title[WINDOW_TITLE_MAX];
+        unsigned int title_length;
 
         struct window *shared;
         u32 *pixels;
@@ -190,6 +193,7 @@ static _Bool output_holds(struct output *output, int x, int y)
 }
 
 #include "paint.c"
+#include "text.c"
 #include "pane.c"
 #include "compose.c"
 #include "plane.c"

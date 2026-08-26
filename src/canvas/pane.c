@@ -171,6 +171,15 @@ static void pane_refresh(struct pane *pane)
         pane->edge = (int)min(READ_ONCE(shared->edge), 256u);
         pane->sequence = READ_ONCE(shared->sequence);
 
+        /*
+                Copied, not pointed at. Composing walks this string every time
+                it draws a titlebar, and the program can be rewriting the page
+                underneath at any instant.
+        */
+        memcpy(pane->title, shared->title, WINDOW_TITLE_MAX);
+        pane->title[WINDOW_TITLE_MAX - 1] = 0;
+        pane->title_length = strnlen(pane->title, WINDOW_TITLE_MAX);
+
         pane_place(pane);
 
         // Where a region put it, so the program can read where it ended up.

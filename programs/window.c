@@ -15,6 +15,16 @@ static void fill(struct window *window, unsigned int colour)
                         pixels[y * window->pitch + x] = colour;
 }
 
+static void title(struct window *window, const char *text)
+{
+        unsigned int i;
+
+        for (i = 0; i + 1 < WINDOW_TITLE_MAX && text[i]; i++)
+                window->title[i] = text[i];
+
+        window->title[i] = 0;
+}
+
 static void hold(long seconds)
 {
         long timespec[2] = {seconds, 0};
@@ -37,11 +47,13 @@ b32 main()
         fill(back, INK_BACK);
         back->region = WINDOW_CENTRED;
         back->edge = 16;
+        title(back, "Centred, rounded");
         window_commit(back);
 
         fill(front, INK_FRONT);
         front->x = back->x + 60;
         front->y = back->y + 60;
+        title(front, "On top");
         window_commit(front);
 
         // No frame, so no titlebar, no border, and nothing to drag it by.

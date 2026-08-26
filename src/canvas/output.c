@@ -114,6 +114,9 @@ static void desktop_seed_windows(void)
                         pane->height = 170;
                         pane->style = WINDOW_FRAME;
                         pane->z = (int)(row * columns + column);
+                        pane->title_length =
+                            (unsigned int)scnprintf(pane->title, WINDOW_TITLE_MAX,
+                                                    "Window %u", pane->z + 1);
 
                         list_add_tail(&pane->link, &desktop.windows);
                 }
