@@ -58,21 +58,17 @@ static int pointer_gain(int speed)
                                (ACCEL_CEILING - ACCEL_FLOOR);
 }
 
-static int pointer_accelerate(int delta, int *remainder, u64 interval)
+static int accel_apply(int delta, int *remainder, int gain)
 {
-        int speed, whole;
+        int whole;
 
         if (!delta)
                 return 0;
 
-        // Both axes of one movement arrive back to back, so the second would
-        // divide by nothing and read as infinitely fast.
-        if (interval < NSEC_PER_MSEC)
-                interval = NSEC_PER_MSEC;
-
-        speed = (int)div_u64((u64)abs(delta) * NSEC_PER_MSEC, interval);
-
-        *remainder += delta * pointer_gain(speed);
+        // The remainder is what stops a gain that is not a whole number from
+        // dropping the fraction of every movement: a slow drag would come up
+        // short of where it was aimed.
+        *remainder += delta * gain;
         whole = *remainder / ACCEL_ONE;
         *remainder -= whole * ACCEL_ONE;
 
@@ -229,6 +225,68 @@ static void pointer_apply(void)
         }
 }
 
+static void pointer_commit(int x, int y)
+{
+        atomic_set(&desktop.pending_x, clamp(x, 0, desktop.width - 1));
+        atomic_set(&desktop.pending_y, clamp(y, 0, desktop.height - 1));
+
+        // Stamp only the first event of a burst, so the measurement is the age
+        // of the oldest movement not yet on screen.
+        if (!atomic_xchg(&desktop.motion_pending, 1))
+                desktop.motion_stamp = ktime_get_ns();
+
+        /*
+                A wake, not a queue. The work is one atomic commit that returns
+                without waiting, so a workqueue's pool and dispatch and kworker
+                would all be overhead around it.
+        */
+        wake_up_process(canvas_thread);
+}
+
+/*
+        One movement of the hand, once the device has said it is over.
+
+        Measuring each axis on its own was a bug you could feel. A mouse sends
+        REL_X and REL_Y back to back for one movement, so X was timed against
+        the gap since the last report and Y against nothing at all -- floored
+        to a millisecond, which read as several times faster and earned
+        several times the gain. Left and right moved at one speed, up and down
+        at another.
+
+        So the speed is the speed of the movement, not of an axis, and both
+        axes are given the same gain.
+*/
+static void pointer_frame(void)
+{
+        int dx = desktop.raw_x;
+        int dy = desktop.raw_y;
+        u64 now, interval;
+        int gain, speed;
+
+        desktop.raw_x = 0;
+        desktop.raw_y = 0;
+
+        if (!dx && !dy)
+                return;
+
+        now = ktime_get_ns();
+        interval = now - desktop.accel_stamp;
+        desktop.accel_stamp = now;
+
+        if (interval < NSEC_PER_MSEC)
+                interval = NSEC_PER_MSEC;
+
+        speed = (int)div_u64((u64)int_sqrt((unsigned long)(dx * dx + dy * dy)) *
+                                 NSEC_PER_MSEC,
+                             interval);
+        gain = pointer_gain(speed);
+
+        pointer_commit(atomic_read(&desktop.pending_x) +
+                           accel_apply(dx, &desktop.accel_x, gain),
+                       atomic_read(&desktop.pending_y) +
+                           accel_apply(dy, &desktop.accel_y, gain));
+}
+
 static void pointer_event(struct input_handle *handle, unsigned int type,
                           unsigned int code, int value)
 {
@@ -242,26 +300,30 @@ static void pointer_event(struct input_handle *handle, unsigned int type,
 
         if (type == EV_REL)
         {
-                u64 now = ktime_get_ns();
-                u64 interval = now - desktop.accel_stamp;
-
-                desktop.accel_stamp = now;
-
+                // Only remembered here. What it means depends on what else
+                // arrives before the device says the movement is over.
                 if (code == REL_X)
                 {
-                        pointer_shake(value, now);
-                        x += pointer_accelerate(value, &desktop.accel_x, interval);
+                        desktop.raw_x += value;
+                        pointer_shake(value, ktime_get_ns());
                 }
                 else if (code == REL_Y)
                 {
-                        y += pointer_accelerate(value, &desktop.accel_y, interval);
+                        desktop.raw_y += value;
                 }
-                else
-                {
-                        return;
-                }
+
+                return;
         }
-        else if (type == EV_ABS)
+
+        if (type == EV_SYN)
+        {
+                if (code == SYN_REPORT)
+                        pointer_frame();
+
+                return;
+        }
+
+        if (type == EV_ABS)
         {
                 // Absolute devices report in their own range, so scale into
                 // the desktop. QEMU's tablet is one of these.
@@ -282,7 +344,8 @@ static void pointer_event(struct input_handle *handle, unsigned int type,
                         y = (int)div_u64((u64)(value - abs->minimum) * (u32)desktop.height,
                                          abs->maximum - abs->minimum);
         }
-        else if (type == EV_KEY)
+
+        if (type == EV_KEY)
         {
                 if (code != BTN_LEFT && code != BTN_TOUCH)
                         return;
@@ -295,25 +358,11 @@ static void pointer_event(struct input_handle *handle, unsigned int type,
                 wake_up_process(canvas_thread);
                 return;
         }
-        else
-        {
+
+        if (type != EV_ABS)
                 return;
-        }
 
-        atomic_set(&desktop.pending_x, clamp(x, 0, desktop.width - 1));
-        atomic_set(&desktop.pending_y, clamp(y, 0, desktop.height - 1));
-
-        // Stamp only the first event of a burst, so the measurement is the age
-        // of the oldest movement not yet on screen.
-        if (!atomic_xchg(&desktop.motion_pending, 1))
-                desktop.motion_stamp = ktime_get_ns();
-
-        /*
-                A wake, not a queue. The work is one atomic commit that returns
-                without waiting, so a workqueue's pool and dispatch and kworker
-                would all be overhead around it.
-        */
-        wake_up_process(canvas_thread);
+        pointer_commit(x, y);
 }
 
 static int pointer_connect(struct input_handler *handler, struct input_dev *dev,

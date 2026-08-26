@@ -166,6 +166,11 @@ static struct desktop
         u64 accel_stamp;
         int accel_x, accel_y;
 
+        // What a device has reported so far this frame. A mouse sends each
+        // axis as its own event and then says it is done, and a movement is
+        // the whole of what arrived between those.
+        int raw_x, raw_y;
+
         /*
                 A program changes a window by storing into its shared page and
                 bumping a sequence, which costs no call. Something has to look,
