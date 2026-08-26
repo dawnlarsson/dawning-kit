@@ -96,11 +96,17 @@ static void pointer_apply(void)
                         atomic_set(&desktop.pending_x, x);
                         atomic_set(&desktop.pending_y, y);
 
-                        if (desktop.dragging)
+                        desktop.cursor_shape = cursor_shape_at(x, y);
+
+                        if (desktop.dragging || desktop.resizing)
                         {
                                 desktop.cursor_x = x;
                                 desktop.cursor_y = y;
-                                drag_move(x, y);
+
+                                if (desktop.dragging)
+                                        drag_move(x, y);
+                                else
+                                        resize_move(x, y);
                         }
                         else
                         {

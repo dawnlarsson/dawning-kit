@@ -85,6 +85,10 @@
 #define TEXT_BOTTOM 8u
 #define TEXT_WRAP 16u
 
+// A window is never resized below this, whatever is dragged.
+#define WINDOW_MIN_WIDTH 96
+#define WINDOW_MIN_HEIGHT 48
+
 // How long a title can be, which is the one string that lives in this page
 // rather than in a window's own content.
 #define WINDOW_TITLE_MAX 128

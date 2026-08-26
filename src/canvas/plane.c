@@ -53,8 +53,8 @@ retry:
                 goto out;
 
         ret = plane->funcs->update_plane(plane, crtc, output->cursor_buffer->fb,
-                                         x - CURSOR_HOTSPOT_X,
-                                         y - CURSOR_HOTSPOT_Y,
+                                         x - cursor_hot_x(output->cursor_shape),
+                                         y - cursor_hot_y(output->cursor_shape),
                                          output->cursor_w, output->cursor_h,
                                          0, 0,
                                          output->cursor_w << 16,
@@ -118,17 +118,51 @@ static void plane_drop(struct output *output)
         sends nothing but a position afterwards, which is what makes this
         cheap. An image drawn after arming would never be sent.
 */
+/*
+        Paints one shape into the plane's buffer.
+
+        The image is written before the plane is ever armed, because a driver
+        that keeps its framebuffer elsewhere only uploads it when the plane's
+        framebuffer changes -- virtio-gpu transfers the image on that edge and
+        sends nothing but a position afterwards, which is what makes this
+        cheap. Changing shape is therefore a repaint here, not per move.
+*/
+static int plane_paint(struct output *output, unsigned int shape)
+{
+        struct iosys_map map;
+        unsigned int pitch_pixels;
+
+        if (drm_client_buffer_vmap_local(output->cursor_buffer, &map))
+                return -EIO;
+
+        pitch_pixels = output->cursor_buffer->fb->pitches[0] / sizeof(u32);
+
+        // Transparent everywhere the shape does not cover, or it wears a box
+        // of whatever the buffer was allocated holding.
+        canvas_fill_rect(map.vaddr, pitch_pixels,
+                         output->cursor_w, output->cursor_h,
+                         0, 0, output->cursor_w, output->cursor_h,
+                         0x00000000);
+
+        canvas_draw_cursor(map.vaddr, pitch_pixels,
+                           output->cursor_w, output->cursor_h,
+                           cursor_hot_x(shape), cursor_hot_y(shape), shape,
+                           canvas_colour(COLOUR_CURSOR, DRM_FORMAT_ARGB8888),
+                           canvas_colour(COLOUR_CURSOR_EDGE, DRM_FORMAT_ARGB8888));
+
+        drm_client_buffer_vunmap_local(output->cursor_buffer);
+
+        output->cursor_shape = shape;
+        return 0;
+}
+
 static int plane_claim(struct drm_client_dev *client, struct output *output)
 {
         struct drm_plane *plane = output->mode_set->crtc->cursor;
-        struct iosys_map map;
-        unsigned int pitch_pixels;
 
         if (!plane || !plane->funcs->disable_plane || !canvas_plane_takes_argb(plane))
                 return -ENODEV;
 
-        // What the device reports through DRM_CAP_CURSOR_WIDTH, which is what
-        // userspace would be told. Zero means the driver never set one.
         output->cursor_w = client->dev->mode_config.cursor_width ?: CURSOR_W;
         output->cursor_h = client->dev->mode_config.cursor_height ?: CURSOR_H;
 
@@ -143,28 +177,12 @@ static int plane_claim(struct drm_client_dev *client, struct output *output)
                 return -ENOMEM;
         }
 
-        if (drm_client_buffer_vmap_local(output->cursor_buffer, &map))
+        if (plane_paint(output, CURSOR_ARROW))
         {
                 drm_client_buffer_delete(output->cursor_buffer);
                 output->cursor_buffer = NULL;
                 return -EIO;
         }
-
-        pitch_pixels = output->cursor_buffer->fb->pitches[0] / sizeof(u32);
-
-        // Transparent everywhere the arrow does not cover, or it wears a box
-        // of whatever the buffer was allocated holding.
-        canvas_fill_rect(map.vaddr, pitch_pixels,
-                         output->cursor_w, output->cursor_h,
-                         0, 0, output->cursor_w, output->cursor_h,
-                         0x00000000);
-
-        canvas_draw_cursor(map.vaddr, pitch_pixels,
-                           output->cursor_w, output->cursor_h, 0, 0,
-                           canvas_colour(COLOUR_CURSOR, DRM_FORMAT_ARGB8888),
-                           canvas_colour(COLOUR_CURSOR_EDGE, DRM_FORMAT_ARGB8888));
-
-        drm_client_buffer_vunmap_local(output->cursor_buffer);
 
         output->cursor_plane = plane;
         return 0;
@@ -177,6 +195,13 @@ static void cursor_arm_output(struct output *output)
 
         if (!output->cursor_plane)
                 return;
+
+        if (wanted && output->cursor_shape != desktop.cursor_shape &&
+            plane_paint(output, desktop.cursor_shape))
+        {
+                plane_drop(output);
+                return;
+        }
 
         ret = wanted ? plane_place(output, desktop.cursor_x - output->x,
                                    desktop.cursor_y - output->y)
@@ -194,12 +219,17 @@ static void cursor_arm_output(struct output *output)
         plane_drop(output);
 }
 
-static void cursor_paint(struct output *output, int old_x, int old_y, int new_x, int new_y)
+static void cursor_paint(struct output *output, int old_x, int old_y,
+                         unsigned int old_shape, int new_x, int new_y)
 {
         struct iosys_map map;
         unsigned int pitch_pixels;
         u32 *pixels;
         struct drm_rect damage;
+        int ax = old_x - cursor_hot_x(old_shape);
+        int ay = old_y - cursor_hot_y(old_shape);
+        int bx = new_x - cursor_hot_x(desktop.cursor_shape);
+        int by = new_y - cursor_hot_y(desktop.cursor_shape);
         u64 started;
 
         if (drm_client_buffer_vmap_local(output->buffer, &map))
@@ -209,14 +239,15 @@ static void cursor_paint(struct output *output, int old_x, int old_y, int new_x,
         pitch_pixels = output->buffer->fb->pitches[0] / sizeof(u32);
         started = ktime_get_ns();
 
-        compose_rect(output, pixels, pitch_pixels, old_x, old_y, CURSOR_W, CURSOR_H);
-        compose_rect(output, pixels, pitch_pixels, new_x, new_y, CURSOR_W, CURSOR_H);
+        compose_rect(output, pixels, pitch_pixels, ax, ay, CURSOR_W, CURSOR_H);
+        compose_rect(output, pixels, pitch_pixels, bx, by, CURSOR_W, CURSOR_H);
 
         output->cursor_shown = output_shows_cursor(output, new_x, new_y);
 
         if (output->cursor_shown)
                 canvas_draw_cursor(pixels, pitch_pixels, output->width, output->height,
                                    new_x - output->x, new_y - output->y,
+                                   desktop.cursor_shape,
                                    canvas_colour(COLOUR_CURSOR, output->format),
                                    canvas_colour(COLOUR_CURSOR_EDGE, output->format));
 
@@ -225,10 +256,10 @@ static void cursor_paint(struct output *output, int old_x, int old_y, int new_x,
 
         // Clipped: the cursor may sit against an edge, or half of it may be on
         // the next screen along.
-        damage.x1 = max(min(old_x, new_x) - output->x, 0);
-        damage.y1 = max(min(old_y, new_y) - output->y, 0);
-        damage.x2 = min(max(old_x, new_x) + CURSOR_W - output->x, (int)output->width);
-        damage.y2 = min(max(old_y, new_y) + CURSOR_H - output->y, (int)output->height);
+        damage.x1 = max(min(ax, bx) - output->x, 0);
+        damage.y1 = max(min(ay, by) - output->y, 0);
+        damage.x2 = min(max(ax, bx) + CURSOR_W - output->x, (int)output->width);
+        damage.y2 = min(max(ay, by) + CURSOR_H - output->y, (int)output->height);
 
         if (damage.x2 <= damage.x1 || damage.y2 <= damage.y1)
                 return;
@@ -239,22 +270,25 @@ static void cursor_paint(struct output *output, int old_x, int old_y, int new_x,
 }
 
 /*
-        Moves the one cursor. Only the outputs it left and the outputs it
-        arrived on are touched, which for a move inside one screen is one
-        output and for a move across a seam is two.
+        Moves the one cursor, and changes its shape where that is what changed.
+        Only the outputs it left and the outputs it arrived on are touched.
 */
 static void cursor_move(int new_x, int new_y)
 {
         int old_x = desktop.drawn_x;
         int old_y = desktop.drawn_y;
+        unsigned int old_shape = desktop.drawn_shape;
         struct output *output;
+
+        if (old_x == new_x && old_y == new_y && old_shape == desktop.cursor_shape)
+                return;
 
         desktop.cursor_x = new_x;
         desktop.cursor_y = new_y;
 
         list_for_each_entry(output, &desktop.outputs, link)
         {
-                if (!output_shows_cursor(output, old_x, old_y) &&
+                if (!output_shows_cursor_shape(output, old_x, old_y, old_shape) &&
                     !output_shows_cursor(output, new_x, new_y))
                         continue;
 
@@ -269,9 +303,10 @@ static void cursor_move(int new_x, int new_y)
                                 continue;
                 }
 
-                cursor_paint(output, old_x, old_y, new_x, new_y);
+                cursor_paint(output, old_x, old_y, old_shape, new_x, new_y);
         }
 
         desktop.drawn_x = new_x;
         desktop.drawn_y = new_y;
+        desktop.drawn_shape = desktop.cursor_shape;
 }

@@ -56,42 +56,162 @@ static void canvas_fill_rect(u32 *pixels, unsigned int pitch_pixels,
 }
 
 /*
-        An arrow, as a bitmap. Drawn in software for now; this is exactly what
-        a hardware cursor plane exists to avoid, and moving it there is the
-        next step.
-*/
-#define CURSOR_W 12
-#define CURSOR_H 19
+        Cursors.
 
-// The arrow sits in the top left of the cursor buffer; the rest is
-// transparent, since the buffer is whatever size the device asked for.
-static const char canvas_cursor_bitmap[CURSOR_H][CURSOR_W + 1] = {
-    "X           ",
-    "XX          ",
-    "X.X         ",
-    "X..X        ",
-    "X...X       ",
-    "X....X      ",
-    "X.....X     ",
-    "X......X    ",
-    "X.......X   ",
-    "X........X  ",
-    "X.....XXXXX ",
-    "X..X..X     ",
-    "X.X X..X    ",
-    "XX  X..X    ",
-    "X    X..X   ",
-    "     X..X   ",
-    "      X.X   ",
-    "      XXX   ",
-    "            ",
+        One cell for every shape so a shape change is a different bitmap and
+        nothing else -- same buffer, same damage, same hardware plane. X is the
+        outline, . the fill, a space transparent.
+
+        The hotspot is the pixel the pointer actually is. It is the corner for
+        an arrow and the centre for the resize shapes, which is why it is per
+        shape rather than one constant.
+*/
+#define CURSOR_W 16
+#define CURSOR_H 20
+
+#define CURSOR_ARROW 0
+#define CURSOR_RESIZE_H 1
+#define CURSOR_RESIZE_V 2
+#define CURSOR_RESIZE_NWSE 3
+#define CURSOR_RESIZE_NESW 4
+#define CURSOR_SHAPES 5
+
+static const char canvas_cursors[CURSOR_SHAPES][CURSOR_H][CURSOR_W + 1] = {
+    {
+    "X               ",
+    "XX              ",
+    "X.X             ",
+    "X..X            ",
+    "X...X           ",
+    "X....X          ",
+    "X.....X         ",
+    "X......X        ",
+    "X.......X       ",
+    "X........X      ",
+    "X.....XXXXX     ",
+    "X..X..X         ",
+    "X.X X..X        ",
+    "XX  X..X        ",
+    "X    X..X       ",
+    "     X..X       ",
+    "      X.X       ",
+    "      XXX       ",
+    "                ",
+    "                ",
+    },
+    {
+    "                ",
+    "                ",
+    "                ",
+    "    X     X     ",
+    "   XX     XX    ",
+    "  X.X     X.X   ",
+    " X..XXXXXXX..X  ",
+    "X.............X ",
+    " X..XXXXXXX..X  ",
+    "  X.X     X.X   ",
+    "   XX     XX    ",
+    "    X     X     ",
+    "                ",
+    "                ",
+    "                ",
+    "                ",
+    "                ",
+    "                ",
+    "                ",
+    "                ",
+    },
+    {
+    "       X        ",
+    "      X.X       ",
+    "     X...X      ",
+    "    X.....X     ",
+    "   XXXX.XXXX    ",
+    "      X.X       ",
+    "      X.X       ",
+    "      X.X       ",
+    "      X.X       ",
+    "      X.X       ",
+    "   XXXX.XXXX    ",
+    "    X.....X     ",
+    "     X...X      ",
+    "      X.X       ",
+    "       X        ",
+    "                ",
+    "                ",
+    "                ",
+    "                ",
+    "                ",
+    },
+    {
+    "                ",
+    " XXXXXXX        ",
+    " X....X         ",
+    " X...X          ",
+    " X..XX          ",
+    " X.XX.X         ",
+    " XX  X.X        ",
+    " X    X.X    X  ",
+    "       X.X  XX  ",
+    "        X.XX.X  ",
+    "         XX..X  ",
+    "         X...X  ",
+    "        X....X  ",
+    "       XXXXXXX  ",
+    "                ",
+    "                ",
+    "                ",
+    "                ",
+    "                ",
+    "                ",
+    },
+    {
+    "                ",
+    "       XXXXXXX  ",
+    "        X....X  ",
+    "         X...X  ",
+    "         XX..X  ",
+    "        X.XX.X  ",
+    "       X.X  XX  ",
+    " X    X.X    X  ",
+    " XX  X.X        ",
+    " X.XX.X         ",
+    " X..XX          ",
+    " X...X          ",
+    " X....X         ",
+    " XXXXXXX        ",
+    "                ",
+    "                ",
+    "                ",
+    "                ",
+    "                ",
+    "                ",
+    },
 };
+
+static const int canvas_cursor_hot[CURSOR_SHAPES][2] = {
+    {0, 0}, {7, 7}, {7, 7}, {7, 7}, {7, 7},
+};
+
+static int cursor_hot_x(unsigned int shape)
+{
+        return canvas_cursor_hot[shape][0];
+}
+
+static int cursor_hot_y(unsigned int shape)
+{
+        return canvas_cursor_hot[shape][1];
+}
 
 static void canvas_draw_cursor(u32 *pixels, unsigned int pitch_pixels,
                                unsigned int target_w, unsigned int target_h,
-                               int x, int y, u32 fill, u32 edge)
+                               int x, int y, unsigned int shape,
+                               u32 fill, u32 edge)
 {
         int row, column;
+
+        x -= cursor_hot_x(shape);
+        y -= cursor_hot_y(shape);
 
         for (row = 0; row < CURSOR_H; row++)
         {
@@ -102,8 +222,8 @@ static void canvas_draw_cursor(u32 *pixels, unsigned int pitch_pixels,
 
                 for (column = 0; column < CURSOR_W; column++)
                 {
+                        char pixel = canvas_cursors[shape][row][column];
                         int px = x + column;
-                        char pixel = canvas_cursor_bitmap[row][column];
 
                         if (pixel == ' ')
                                 continue;
@@ -112,7 +232,7 @@ static void canvas_draw_cursor(u32 *pixels, unsigned int pitch_pixels,
                                 continue;
 
                         pixels[(size_t)py * pitch_pixels + px] =
-                            (pixel == 'X') ? edge : fill;
+                            pixel == 'X' ? edge : fill;
                 }
         }
 }

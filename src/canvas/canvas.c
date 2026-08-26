@@ -32,9 +32,6 @@
 
 #define log_canvas(fmt, ...) pr_info("[moonwater canvas] " fmt, ##__VA_ARGS__)
 
-#define CURSOR_HOTSPOT_X 0
-#define CURSOR_HOTSPOT_Y 0
-
 /*
         A pane is the compositor's side of a window: where it is, and the
         pixels behind it. struct window, in ../window.c, is the page the
@@ -82,6 +79,7 @@ struct output
         struct drm_plane *cursor_plane;
         struct drm_client_buffer *cursor_buffer;
         unsigned int cursor_w, cursor_h;
+        unsigned int cursor_shape;
         _Bool cursor_shown;
 };
 
@@ -105,6 +103,17 @@ static struct desktop
         struct pane *dragging;
         int grab_x, grab_y;
         struct pane *focused;
+
+        // Resizing: which edges are held, and the rectangle and pointer
+        // position they were held at, so every step measures from the grab
+        // rather than accumulating.
+        struct pane *resizing;
+        unsigned int resize_edges;
+        int resize_x, resize_y, resize_w, resize_h;
+        int press_x, press_y;
+
+        unsigned int cursor_shape;
+        unsigned int drawn_shape;
 
         /*
                 A program changes a window by storing into its shared page and
@@ -185,6 +194,13 @@ static _Bool pane_titlebar_holds(struct pane *pane, int x, int y)
         return x >= pane->x && x < pane->x + pane->width &&
                y >= pane->y && y < pane->y + WINDOW_TITLE;
 }
+
+// Which edges of a window's frame a point is close enough to take hold of.
+#define EDGE_LEFT 1u
+#define EDGE_RIGHT 2u
+#define EDGE_TOP 4u
+#define EDGE_BOTTOM 8u
+#define EDGE_GRIP 6
 
 static _Bool output_holds(struct output *output, int x, int y)
 {

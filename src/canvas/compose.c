@@ -23,11 +23,19 @@ static const char pane_placeholder[] =
     "through the page it shares, and this is what one looks like before "
     "anything has.";
 
-static _Bool output_shows_cursor(struct output *output, int x, int y)
+// The cell the cursor occupies, which moves with the hotspot of its shape.
+static _Bool output_shows_cursor_shape(struct output *output, int x, int y,
+                                       unsigned int shape)
 {
-        return rects_overlap(x, y, CURSOR_W, CURSOR_H,
+        return rects_overlap(x - cursor_hot_x(shape), y - cursor_hot_y(shape),
+                             CURSOR_W, CURSOR_H,
                              output->x, output->y,
                              (int)output->width, (int)output->height);
+}
+
+static _Bool output_shows_cursor(struct output *output, int x, int y)
+{
+        return output_shows_cursor_shape(output, x, y, desktop.cursor_shape);
 }
 
 struct shape
@@ -208,6 +216,7 @@ static void compose_output(struct output *output)
                 canvas_draw_cursor(pixels, pitch_pixels, output->width, output->height,
                                    desktop.cursor_x - output->x,
                                    desktop.cursor_y - output->y,
+                                   desktop.cursor_shape,
                                    canvas_colour(COLOUR_CURSOR, output->format),
                                    canvas_colour(COLOUR_CURSOR_EDGE, output->format));
                 output->cursor_shown = true;
