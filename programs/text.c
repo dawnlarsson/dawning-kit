@@ -2,16 +2,31 @@
 #include "../src/canvas/window.c"
 
 // A window of text: the program writes cells, Canvas draws the glyphs.
-#define COLUMNS 60
-#define ROWS 18
+//
+// The size is the compositor's, not this program's: dragging an edge changes
+// how many cells there are, and the layout is done again at whatever it
+// becomes. window_grid is what says the cells are in that shape now.
+#define COLUMNS_WANTED 60
+#define ROWS_WANTED 18
+#define TYPED_MAX 46
 
-static void say(struct window *window, unsigned int row, unsigned int column,
-                const char *text, unsigned char ink, unsigned char paper)
+static struct window *window;
+static unsigned int columns, rows;
+static char typed[TYPED_MAX];
+static unsigned int at;
+
+static void say(unsigned int row, unsigned int column, const char *text,
+                unsigned char ink, unsigned char paper)
 {
-        struct window_cell *cells = window_cells(window) + row * COLUMNS;
+        struct window_cell *cells;
         unsigned int i;
 
-        for (i = 0; text[i] && column + i < COLUMNS; i++)
+        if (row >= rows)
+                return;
+
+        cells = window_cells(window) + row * columns;
+
+        for (i = 0; text[i] && column + i < columns; i++)
         {
                 cells[column + i].character = (unsigned char)text[i];
                 cells[column + i].ink = ink;
@@ -19,6 +34,44 @@ static void say(struct window *window, unsigned int row, unsigned int column,
         }
 
         window_damage(window, row, 1);
+}
+
+static void lay_out(void)
+{
+        struct window_cell *cells = window_cells(window);
+        unsigned int row, column;
+
+        columns = window->columns;
+        rows = window->rows;
+
+        for (row = 0; row < rows; row++)
+                for (column = 0; column < columns; column++)
+                {
+                        cells[row * columns + column].character = ' ';
+                        cells[row * columns + column].ink = 7;
+                        cells[row * columns + column].paper = 0;
+                }
+
+        for (unsigned int i = 0; i < 8; i++)
+                say(1, 2 + i * 6, "colour", (unsigned char)(8 + i), 0);
+
+        say(3, 2, "Moonwater Canvas draws these glyphs.", 15, 0);
+        say(4, 2, "This window is cells, not pixels.", 7, 0);
+        say(6, 2, "Type here:", 11, 0);
+
+        for (unsigned int i = 0; i < at; i++)
+                if (rows > 6 && 13 + i < columns)
+                {
+                        struct window_cell *cell =
+                            window_cells(window) + 6 * columns + 13 + i;
+
+                        cell->character = (unsigned char)typed[i];
+                        cell->ink = 15;
+                        cell->paper = 4;
+                }
+
+        window_grid(window, columns, rows);
+        window_damage(window, 0, rows);
 }
 
 static void hold_ms(long milliseconds)
@@ -30,9 +83,7 @@ static void hold_ms(long milliseconds)
 
 b32 main()
 {
-        struct window *window = window_open_text(COLUMNS, ROWS);
-        struct window_cell *cells;
-        unsigned int row, column, at = 0;
+        window = window_open_text(COLUMNS_WANTED, ROWS_WANTED);
 
         if (!window)
         {
@@ -40,25 +91,8 @@ b32 main()
                 return 1;
         }
 
-        cells = window_cells(window);
-
-        for (row = 0; row < ROWS; row++)
-                for (column = 0; column < COLUMNS; column++)
-                {
-                        cells[row * COLUMNS + column].character = ' ';
-                        cells[row * COLUMNS + column].ink = 7;
-                        cells[row * COLUMNS + column].paper = 0;
-                }
-
-        for (unsigned int i = 0; i < 8; i++)
-                say(window, 1, 2 + i * 6, "colour", (unsigned char)(8 + i), 0);
-
-        say(window, 3, 2, "Moonwater Canvas draws these glyphs.", 15, 0);
-        say(window, 4, 2, "This window is cells, not pixels.", 7, 0);
-        say(window, 6, 2, "Type here:", 11, 0);
-
+        lay_out();
         window->region = WINDOW_CENTRED;
-        window_damage(window, 0, ROWS);
         window_commit(window);
 
         for (int tick = 0; tick < 800; tick++)
@@ -66,20 +100,26 @@ b32 main()
                 struct window_key key;
                 b32 changed = 0;
 
+                if (window_regrid(window))
+                {
+                        lay_out();
+                        changed = 1;
+                }
+
                 while (window_key(window, &key))
                 {
                         if (!(key.flags & WINDOW_KEY_DOWN) || key.character < ' ')
                                 continue;
 
-                        if (at < COLUMNS - 14)
+                        if (at < TYPED_MAX && rows > 6 && 13 + at < columns)
                         {
                                 struct window_cell *cell =
-                                    window_cells(window) + 6 * COLUMNS + 13 + at;
+                                    window_cells(window) + 6 * columns + 13 + at;
 
                                 cell->character = key.character;
                                 cell->ink = 15;
                                 cell->paper = 4;
-                                at++;
+                                typed[at++] = (char)key.character;
                                 window_damage(window, 6, 1);
                                 changed = 1;
                         }

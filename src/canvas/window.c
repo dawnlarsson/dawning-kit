@@ -243,12 +243,21 @@ static inline struct window_cell *window_cells(struct window *window)
 }
 
 // Says the cells are now laid out this way. Until a program calls this the
-// compositor keeps drawing the shape it last confirmed.
+// compositor keeps drawing the shape it last confirmed, so a window of cells
+// that never calls it never reflows.
 static inline void window_grid(struct window *window, unsigned int columns,
                                unsigned int rows)
 {
         window->grid_columns = columns;
         window->grid_rows = rows;
+}
+
+// The window has been given a different shape than its cells are laid out in.
+// Lay them out again at columns by rows, then say so with window_grid.
+static inline int window_regrid(struct window *window)
+{
+        return window->columns != window->grid_columns ||
+               window->rows != window->grid_rows;
 }
 
 // The next key, or false when there is none waiting.
