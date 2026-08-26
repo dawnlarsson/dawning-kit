@@ -222,51 +222,12 @@ static void cursor_arm_output(struct output *output)
 static void cursor_paint(struct output *output, int old_x, int old_y,
                          unsigned int old_shape, int new_x, int new_y)
 {
-        struct iosys_map map;
-        unsigned int pitch_pixels;
-        u32 *pixels;
-        struct drm_rect damage;
-        int ax = old_x - cursor_hot_x(old_shape);
-        int ay = old_y - cursor_hot_y(old_shape);
-        int bx = new_x - cursor_hot_x(desktop.cursor_shape);
-        int by = new_y - cursor_hot_y(desktop.cursor_shape);
-        u64 started;
+        struct drm_rect damage[2];
 
-        if (drm_client_buffer_vmap_local(output->buffer, &map))
-                return;
+        cursor_cell(&damage[0], old_x, old_y, old_shape);
+        cursor_cell(&damage[1], new_x, new_y, desktop.cursor_shape);
 
-        pixels = map.vaddr;
-        pitch_pixels = output->buffer->fb->pitches[0] / sizeof(u32);
-        started = ktime_get_ns();
-
-        compose_rect(output, pixels, pitch_pixels, ax, ay, CURSOR_W, CURSOR_H);
-        compose_rect(output, pixels, pitch_pixels, bx, by, CURSOR_W, CURSOR_H);
-
-        output->cursor_shown = output_shows_cursor(output, new_x, new_y);
-
-        if (output->cursor_shown)
-                canvas_draw_cursor(pixels, pitch_pixels, output->width, output->height,
-                                   new_x - output->x, new_y - output->y,
-                                   desktop.cursor_shape,
-                                   canvas_colour(COLOUR_CURSOR, output->format),
-                                   canvas_colour(COLOUR_CURSOR_EDGE, output->format));
-
-        drm_client_buffer_vunmap_local(output->buffer);
-        pointer_draw_total += ktime_get_ns() - started;
-
-        // Clipped: the cursor may sit against an edge, or half of it may be on
-        // the next screen along.
-        damage.x1 = max(min(ax, bx) - output->x, 0);
-        damage.y1 = max(min(ay, by) - output->y, 0);
-        damage.x2 = min(max(ax, bx) + CURSOR_W - output->x, (int)output->width);
-        damage.y2 = min(max(ay, by) + CURSOR_H - output->y, (int)output->height);
-
-        if (damage.x2 <= damage.x1 || damage.y2 <= damage.y1)
-                return;
-
-        started = ktime_get_ns();
-        drm_client_buffer_flush(output->buffer, &damage);
-        pointer_flush_total += ktime_get_ns() - started;
+        output_repaint(output, damage, 2);
 }
 
 /*

@@ -100,64 +100,31 @@ static unsigned int cursor_shape_at(int x, int y)
         return cursor_for_edges(edges);
 }
 
-static void output_repaint(struct output *output,
-                           int ax, int ay, int aw, int ah,
-                           int bx, int by, int bw, int bh)
-{
-        struct iosys_map map;
-        unsigned int pitch_pixels;
-        u32 *pixels;
-        struct drm_rect damage;
-
-        if (drm_client_buffer_vmap_local(output->buffer, &map))
-                return;
-
-        pixels = map.vaddr;
-        pitch_pixels = output->buffer->fb->pitches[0] / sizeof(u32);
-
-        compose_rect(output, pixels, pitch_pixels, ax, ay, aw, ah);
-        compose_rect(output, pixels, pitch_pixels, bx, by, bw, bh);
-
-        output->cursor_shown =
-            !output->cursor_plane &&
-            output_shows_cursor(output, desktop.cursor_x, desktop.cursor_y);
-
-        if (output->cursor_shown)
-                canvas_draw_cursor(pixels, pitch_pixels, output->width, output->height,
-                                   desktop.cursor_x - output->x,
-                                   desktop.cursor_y - output->y,
-                                   desktop.cursor_shape,
-                                   canvas_colour(COLOUR_CURSOR, output->format),
-                                   canvas_colour(COLOUR_CURSOR_EDGE, output->format));
-
-        drm_client_buffer_vunmap_local(output->buffer);
-
-        damage.x1 = max(min(ax, bx) - output->x, 0);
-        damage.y1 = max(min(ay, by) - output->y, 0);
-        damage.x2 = min(max(ax + aw, bx + bw) - output->x, (int)output->width);
-        damage.y2 = min(max(ay + ah, by + bh) - output->y, (int)output->height);
-
-        if (damage.x2 > damage.x1 && damage.y2 > damage.y1)
-                drm_client_buffer_flush(output->buffer, &damage);
-}
-
 /*
         The one way a window's rectangle changes. Everything else -- a drag, a
         resize, a region -- decides what the new rectangle is and comes here.
 */
 static void pane_reshape(struct pane *pane, int x, int y, int w, int h)
 {
+        struct drm_rect damage[4];
         struct output *output;
-        int ax, ay, aw, ah, bx, by, bw, bh;
+        int fx, fy, fw, fh;
 
-        pane_frame(pane, &ax, &ay, &aw, &ah);
+        pane_frame(pane, &fx, &fy, &fw, &fh);
+        rect_set(&damage[0], fx, fy, fw, fh);
 
         pane->x = x;
         pane->y = y;
         pane->width = w;
         pane->height = h;
 
-        pane_frame(pane, &bx, &by, &bw, &bh);
+        pane_frame(pane, &fx, &fy, &fw, &fh);
+        rect_set(&damage[1], fx, fy, fw, fh);
+
+        // The cursor is dragging this, so where it was and where it is are
+        // damaged too, and its cell reaches outside the frame.
+        cursor_cell(&damage[2], desktop.drawn_x, desktop.drawn_y, desktop.drawn_shape);
+        cursor_cell(&damage[3], desktop.cursor_x, desktop.cursor_y, desktop.cursor_shape);
 
         if (pane->shared)
         {
@@ -169,19 +136,13 @@ static void pane_reshape(struct pane *pane, int x, int y, int w, int h)
 
         list_for_each_entry(output, &desktop.outputs, link)
         {
-                _Bool touched =
-                    rects_overlap(ax, ay, aw, ah, output->x, output->y,
-                                  (int)output->width, (int)output->height) ||
-                    rects_overlap(bx, by, bw, bh, output->x, output->y,
-                                  (int)output->width, (int)output->height);
-
-                if (!touched)
+                if (!output_touched(output, damage, 4))
                         continue;
 
                 if (output->cursor_plane)
                         cursor_arm_output(output);
 
-                output_repaint(output, ax, ay, aw, ah, bx, by, bw, bh);
+                output_repaint(output, damage, 4);
         }
 
         desktop.drawn_x = desktop.cursor_x;

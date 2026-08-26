@@ -191,6 +191,108 @@ static void compose_rect(struct output *output, u32 *pixels, unsigned int pitch_
         compose_clip(output, pixels, pitch_pixels, &clip);
 }
 
+static void rect_set(struct drm_rect *rect, int x, int y, int w, int h)
+{
+        rect->x1 = x;
+        rect->y1 = y;
+        rect->x2 = x + w;
+        rect->y2 = y + h;
+}
+
+// The cell the cursor occupies on the desktop, which moves with the hotspot of
+// whichever shape it is wearing.
+static void cursor_cell(struct drm_rect *rect, int x, int y, unsigned int shape)
+{
+        rect_set(rect, x - cursor_hot_x(shape), y - cursor_hot_y(shape),
+                 CURSOR_W, CURSOR_H);
+}
+
+static _Bool output_touched(struct output *output, const struct drm_rect *damage,
+                            unsigned int count)
+{
+        unsigned int i;
+
+        for (i = 0; i < count; i++)
+                if (rects_overlap(damage[i].x1, damage[i].y1,
+                                  damage[i].x2 - damage[i].x1,
+                                  damage[i].y2 - damage[i].y1,
+                                  output->x, output->y,
+                                  (int)output->width, (int)output->height))
+                        return true;
+
+        return false;
+}
+
+/*
+        Repaints a set of damaged rectangles on one output and hands the driver
+        their union. A set rather than a pair because moving a window damages
+        four things: where its frame was and is, and where the cursor was and
+        is. The cursor's cell reaches outside the frame it is dragging, so
+        leaving it out of the damage leaves a trail of it behind.
+
+        Every rectangle is in desktop coordinates.
+*/
+static void output_repaint(struct output *output, const struct drm_rect *damage,
+                           unsigned int count)
+{
+        struct iosys_map map;
+        unsigned int pitch_pixels;
+        struct drm_rect flush;
+        u32 *pixels;
+        unsigned int i;
+        u64 started;
+
+        if (!count || drm_client_buffer_vmap_local(output->buffer, &map))
+                return;
+
+        pixels = map.vaddr;
+        pitch_pixels = output->buffer->fb->pitches[0] / sizeof(u32);
+        started = ktime_get_ns();
+
+        for (i = 0; i < count; i++)
+                compose_rect(output, pixels, pitch_pixels,
+                             damage[i].x1, damage[i].y1,
+                             damage[i].x2 - damage[i].x1,
+                             damage[i].y2 - damage[i].y1);
+
+        output->cursor_shown =
+            !output->cursor_plane &&
+            output_shows_cursor(output, desktop.cursor_x, desktop.cursor_y);
+
+        if (output->cursor_shown)
+                canvas_draw_cursor(pixels, pitch_pixels, output->width, output->height,
+                                   desktop.cursor_x - output->x,
+                                   desktop.cursor_y - output->y,
+                                   desktop.cursor_shape,
+                                   canvas_colour(COLOUR_CURSOR, output->format),
+                                   canvas_colour(COLOUR_CURSOR_EDGE, output->format));
+
+        drm_client_buffer_vunmap_local(output->buffer);
+        pointer_draw_total += ktime_get_ns() - started;
+
+        flush = damage[0];
+
+        for (i = 1; i < count; i++)
+        {
+                flush.x1 = min(flush.x1, damage[i].x1);
+                flush.y1 = min(flush.y1, damage[i].y1);
+                flush.x2 = max(flush.x2, damage[i].x2);
+                flush.y2 = max(flush.y2, damage[i].y2);
+        }
+
+        flush.x1 = max(flush.x1 - output->x, 0);
+        flush.y1 = max(flush.y1 - output->y, 0);
+        flush.x2 = min(flush.x2 - output->x, (int)output->width);
+        flush.y2 = min(flush.y2 - output->y, (int)output->height);
+
+        if (flush.x2 <= flush.x1 || flush.y2 <= flush.y1)
+                return;
+
+        started = ktime_get_ns();
+        drm_client_buffer_flush(output->buffer, &flush);
+        pointer_flush_total += ktime_get_ns() - started;
+}
+
 static void compose_output(struct output *output)
 {
         struct drm_rect whole = {0, 0, (int)output->width, (int)output->height};
