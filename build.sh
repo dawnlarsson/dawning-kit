@@ -649,12 +649,16 @@ if [ "$do_usb" -eq 1 ]; then
         name=$(echo "$info" | awk -F": *" '/Device \/ Media Name/ { print $2; exit }')
         size=$(echo "$info" | awk -F": *" '/Disk Size/ { print $2; exit }')
 
+        # The number above was the choice. Asking for the name as well made a
+        # second decision out of one, and typing a disk name is not a safety
+        # check -- what keeps this off the wrong drive is the refusal above to
+        # touch anything internal or not removable.
         printf "\n%sThis erases %s (%s, %s) completely.%s\n" \
                 "$RED$BOLD" "$target" "${name:-unknown}" "${size:-unknown size}" "$RESET"
-        printf "Type the disk name to confirm (%s): " "$(basename "$target")"
+        printf "Enter to write, anything else to stop: "
         read -r confirmation
 
-        [ "$confirmation" = "$(basename "$target")" ] || die "nothing written"
+        [ -z "$confirmation" ] || die "nothing written"
 
         say "Erasing $target"
         diskutil unmountDisk "$target" >/dev/null 2>&1

@@ -95,12 +95,50 @@ static _Bool shape_span(const struct target *t, const struct shape *shape,
         return *x2 > *x1;
 }
 
+/*
+        A band of the shape.
+
+        Split three ways, because only the rows inside a corner have an inset
+        and only they need looking at one at a time. The straight middle is one
+        rectangle and goes out as one call: a window's two sides are two pixels
+        wide and a hundred and ninety rows tall, which was 4560 calls a compose
+        before this, each of them to write two pixels.
+*/
 static void shape_fill(const struct target *t, const struct shape *shape,
                        int band_x, int band_y, int band_w, int band_h, u32 colour)
 {
+        int top = max(max(band_y, t->clip.y1), 0);
+        int bottom = min(min(band_y + band_h, t->clip.y2), t->height);
+        // Clamped to the band, not just to the shape: a titlebar starts below
+        // the shape's top, and a rectangle measured from the shape would paint
+        // the whole window.
+        int curve_top = clamp(shape->y + shape->radius, top, bottom);
+        int curve_bottom = clamp(shape->y + shape->h - shape->radius, top, bottom);
         int y, x1, x2;
 
-        for (y = band_y; y < band_y + band_h; y++)
+        for (y = top; y < curve_top; y++)
+                if (shape_span(t, shape, band_x, band_w, y, &x1, &x2))
+                        target_row(t, y, x1, x2, colour);
+
+        if (curve_bottom > curve_top)
+        {
+                x1 = max(max(shape->x, band_x), t->clip.x1);
+                x2 = min(min(shape->x + shape->w, band_x + band_w),
+                         min(t->clip.x2, t->width));
+
+                if (x2 > x1)
+                {
+                        canvas_painted += (unsigned long)(x2 - x1) *
+                                          (curve_bottom - curve_top);
+                        canvas_runs++;
+                        canvas_rect_fill(t->pixels + (size_t)curve_top * t->pitch + x1,
+                                         t->pitch, (unsigned long)(x2 - x1),
+                                         (unsigned long)(curve_bottom - curve_top),
+                                         colour);
+                }
+        }
+
+        for (y = curve_bottom; y < bottom; y++)
                 if (shape_span(t, shape, band_x, band_w, y, &x1, &x2))
                         target_row(t, y, x1, x2, colour);
 }
@@ -195,12 +233,20 @@ static void compose_pane(struct pane *pane, const struct target *t)
 
 static void compose_clip(const struct target *t)
 {
+        int x1 = max(t->clip.x1, 0);
+        int y1 = max(t->clip.y1, 0);
+        int x2 = min(t->clip.x2, t->width);
+        int y2 = min(t->clip.y2, t->height);
         struct pane *pane;
-        int y;
 
-        for (y = max(t->clip.y1, 0); y < min(t->clip.y2, t->height); y++)
-                target_row(t, y, max(t->clip.x1, 0), min(t->clip.x2, t->width),
-                           t->ink[INK_DESKTOP]);
+        if (x2 > x1 && y2 > y1)
+        {
+                canvas_painted += (unsigned long)(x2 - x1) * (y2 - y1);
+                canvas_runs++;
+                canvas_rect_fill(t->pixels + (size_t)y1 * t->pitch + x1, t->pitch,
+                                 (unsigned long)(x2 - x1), (unsigned long)(y2 - y1),
+                                 t->ink[INK_DESKTOP]);
+        }
 
         list_for_each_entry(pane, &desktop.windows, link)
                 compose_pane(pane, t);
