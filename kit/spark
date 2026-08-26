@@ -35,6 +35,45 @@ output="$2"
 mode="${3:-}"
 
 compiler=$(key_one compiler) || exit 1
+
+#
+#       binutils has to match the compiler, not the machine this runs on.
+#
+#       objdump, readelf and objcopy below all read the ELF the compiler just
+#       produced. Building for another architecture with the host's copies gets
+#       as far as
+#
+#           objcopy: Unable to recognise the architecture of the input file
+#
+#       so the prefix comes off the compiler's own name: aarch64-linux-gnu-gcc
+#       means aarch64-linux-gnu-objcopy. A plain "gcc" leaves the prefix empty,
+#       which is the native case and what was assumed before.
+#
+prefix=${compiler%gcc}
+prefix=${prefix%clang}
+prefix=${prefix%cc}
+
+#
+#       Prefer the matching tool, fall back to the host's. x86_64-linux-gnu-gcc
+#       is a perfectly ordinary way to name a native compiler and there is
+#       usually no x86_64-linux-gnu-objdump beside it, only objdump -- which is
+#       the same program. Insisting on the prefix breaks the native build to fix
+#       the cross one.
+#
+pick() {
+        if command -v "$prefix$1" > /dev/null 2>&1; then
+                echo "$prefix$1"
+        elif command -v "$1" > /dev/null 2>&1; then
+                echo "$1"
+        else
+                echo "spark: neither $prefix$1 nor $1 found" >&2
+                return 1
+        fi
+}
+
+objdump_cmd=$(pick objdump) || exit 1
+readelf_cmd=$(pick readelf) || exit 1
+objcopy_cmd=$(pick objcopy) || exit 1
 program_flags=$(key program_flags)
 
 if [ "$mode" = debug ]; then
@@ -71,11 +110,11 @@ fi
 # objdump -h has a stable column layout; readelf -S splits "[ 1]" into two
 # fields for single digit indices and one for double, which does not parse.
 section_size() {
-        objdump -h "$elf" | awk -v s="$1" '$2 == s { print strtonum("0x" $3); exit }'
+        "$objdump_cmd" -h "$elf" | awk -v s="$1" '$2 == s { print strtonum("0x" $3); exit }'
 }
 
 section_addr() {
-        objdump -h "$elf" | awk -v s="$1" '$2 == s { print strtonum("0x" $4); exit }'
+        "$objdump_cmd" -h "$elf" | awk -v s="$1" '$2 == s { print strtonum("0x" $4); exit }'
 }
 
 page_round() { echo $((($1 + 4095) / 4096 * 4096)); }
@@ -85,7 +124,7 @@ page_round() { echo $((($1 + 4095) / 4096 * 4096)); }
 text_addr=$(section_addr .text)
 : "${text_addr:=0}"
 base=$((text_addr - 64))
-entry=$(readelf -h -W "$elf" | awk '/Entry point/ { print strtonum($NF) }')
+entry=$("$readelf_cmd" -h -W "$elf" | awk '/Entry point/ { print strtonum($NF) }')
 
 data_addr=$(section_addr .data)
 data_bytes=$(section_size .data)
@@ -119,8 +158,8 @@ if [ "$text_size" -le 0 ]; then
         exit 1
 fi
 
-objcopy -O binary --only-section=.text "$elf" "$work/text.bin" || exit 1
-objcopy -O binary --only-section=.data "$elf" "$work/data.bin" 2>/dev/null || : >"$work/data.bin"
+"$objcopy_cmd" -O binary --only-section=.text "$elf" "$work/text.bin" || exit 1
+"$objcopy_cmd" -O binary --only-section=.data "$elf" "$work/data.bin" 2>/dev/null || : >"$work/data.bin"
 
 # Emits n zero bytes.
 zeros() {

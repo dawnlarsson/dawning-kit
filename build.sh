@@ -375,7 +375,8 @@ wgcVXSeiHcXa9SSFDvKn0L1q5nSLQGHp38qUi1ZPf/1uQSuB3ME=
                 if is_newer artifacts/.config linux/.config; then
                         (
                                 cd linux || exit 1
-                                sudo make allnoconfig "$make_flags" > /dev/null || exit 1
+                                # shellcheck disable=SC2086 # two arguments, not one
+                        sudo make allnoconfig $make_flags > /dev/null || exit 1
                                 # Quiet: merge_config compares the combined
                                 # fragment against an allnoconfig baseline and
                                 # calls most of what the profiles ask for a
@@ -390,7 +391,8 @@ wgcVXSeiHcXa9SSFDvKn0L1q5nSLQGHp38qUi1ZPf/1uQSuB3ME=
                                 # exist and stopped every cross build.
                                 # shellcheck disable=SC2086
                                 env $make_flags sh scripts/kconfig/merge_config.sh -m .config ../artifacts/.config > /dev/null || exit 1
-                                sudo make olddefconfig "$make_flags" > /dev/null || exit 1
+                                # shellcheck disable=SC2086 # two arguments, not one
+                        sudo make olddefconfig $make_flags > /dev/null || exit 1
                         ) || die "kernel configuration"
                 else
                         echo "No changes"

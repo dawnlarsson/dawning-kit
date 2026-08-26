@@ -1241,9 +1241,20 @@ bipolar string_to_bipolar(string_address input)
         return string_to_positive(input);
 }
 
+//
+//      The guard has to be outside the signature, not just around the body.
+//      decimal is a floating point type, and arm64 builds the kernel with
+//      -mgeneral-regs-only, which refuses one in a prototype whether or not
+//      anything reaches the code inside:
+//
+//          error: '-mgeneral-regs-only' is incompatible with the use of
+//                 floating-point types
+//
+//      x86 let it through because nothing in the body needed an SSE register.
+//
+#ifndef KERNEL_MODE // Temporary
 fn decimal_to_string(writer write, decimal value)
 {
-#ifndef KERNEL_MODE // Temporary
 
         if (value < 0)
         {
@@ -1273,8 +1284,8 @@ fn decimal_to_string(writer write, decimal value)
                 write("0", 1);
 
         bipolar_to_string(write, integer_part);
-#endif
 }
+#endif // KERNEL_MODE
 
 fn string_format(writer write, string_address format, ...)
 {
