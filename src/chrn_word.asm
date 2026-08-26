@@ -69,22 +69,103 @@ SYM_FUNC_START(strchrnul)
 SYM_FUNC_END(strchrnul)
 EXPORT_SYMBOL(strchrnul)
 
+#> arch arm64
+SYM_FUNC_START(strchrnul)
+        and     w1, w1, #0xff
+        mov     x10, #0x0101
+        movk    x10, #0x0101, lsl #16
+        movk    x10, #0x0101, lsl #32
+        movk    x10, #0x0101, lsl #48   // 0x0101010101010101
+        lsl     x11, x10, #7            // 0x8080808080808080
+        mul     x3, x1, x10             // the byte, in all eight positions
+
+        and     x4, x0, #7              // how far into the word it begins
+        bic     x5, x0, #7              // align down: same page, cannot fault
+        ldr     x6, [x5]
+        lsl     x4, x4, #3              // bytes -> bits
+        mov     x7, #-1
+        lsl     x7, x7, x4              // which bytes of the first word count
+
+1:      eor     x8, x6, x3              // the byte that matched is now zero
+        sub     x9, x8, x10
+        bic     x9, x9, x8
+        and     x9, x9, x11
+
+        sub     x12, x6, x10            // and the terminator, the same way
+        bic     x12, x12, x6
+        and     x12, x12, x11
+
+        orr     x9, x9, x12
+        and     x9, x9, x7
+        cbnz    x9, 2f
+
+        mov     x7, #-1                 // every byte of every later word counts
+        add     x5, x5, #8
+        ldr     x6, [x5]
+        b       1b
+
+2:      rbit    x9, x9
+        clz     x9, x9                  // first set high bit
+        lsr     x9, x9, #3              // its byte within the word
+        add     x0, x5, x9
+        ret
+SYM_FUNC_END(strchrnul)
+EXPORT_SYMBOL(strchrnul)
+
+#> arch riscv64
+        //
+        //      ctz is Zbb. RVA22 requires it, which is the same sort of floor
+        //      profile/arch/x64 sets with -march=x86-64-v2 on the other side.
+        //
+        .option arch, +zbb
+
+SYM_FUNC_START(strchrnul)
+        andi    a1, a1, 0xff
+        li      t0, 0x0101010101010101
+        slli    t1, t0, 7               // 0x8080808080808080
+        mul     a3, a1, t0              // the byte, in all eight positions
+
+        andi    a4, a0, 7               // how far into the word it begins
+        andi    a5, a0, -8              // align down: same page, cannot fault
+        ld      a6, 0(a5)
+        slli    a4, a4, 3               // bytes -> bits
+        li      a7, -1
+        sll     a7, a7, a4              // which bytes of the first word count
+
+1:      xor     t2, a6, a3              // the byte that matched is now zero
+        sub     t3, t2, t0
+        not     t4, t2
+        and     t3, t3, t4
+        and     t3, t3, t1
+
+        sub     t5, a6, t0              // and the terminator, the same way
+        not     t6, a6
+        and     t5, t5, t6
+        and     t5, t5, t1
+
+        or      t3, t3, t5
+        and     t3, t3, a7
+        bnez    t3, 2f
+
+        li      a7, -1                  // every byte of every later word counts
+        addi    a5, a5, 8
+        ld      a6, 0(a5)
+        j       1b
+
+2:      ctz     t3, t3                  // first set high bit
+        srli    t3, t3, 3               // its byte within the word
+        add     a0, a5, t3
+        ret
+SYM_FUNC_END(strchrnul)
+EXPORT_SYMBOL(strchrnul)
+
 #> arch other
-//
+        //
         //      Nothing, deliberately, and this is what "#> arch other" with an
-        //      empty block is for.
-        //
-        //      This file is in src/, so src/Makefile builds it for whichever
-        //      architecture the kernel is being configured for. An #error here
-        //      -- which is what stood in this place -- does not mean "not
-        //      implemented", it means the arm64 and riscv builds stop on the
-        //      first of these files they reach.
-        //
-        //      They do not need it. arm64 and riscv both ship their own, and
-        //      where they do not the generic C in lib/string.c is what runs,
-        //      exactly as it did before any of this. Emitting nothing leaves
-        //      them where they were; the header claim that hands the symbol
-        //      over is in build.sh and only ever touches x86's header.
+        //      empty block is for: this file is in src/, so src/Makefile
+        //      builds it for whichever architecture is being configured, and
+        //      an architecture with no block of its own keeps the generic C
+        //      in lib/string.c exactly as it had it.
         //
 
 #> shared
@@ -166,6 +247,117 @@ SYM_FUNC_START(strnchr)
 3:      add     $8, %rsp
 9:      RET
 
+SYM_FUNC_END(strnchr)
+EXPORT_SYMBOL(strnchr)
+
+#> arch arm64
+SYM_FUNC_START(strnchr)
+        mov     x9, #0
+        cbz     x1, 9f
+
+        and     w2, w2, #0xff
+        mov     x10, #0x0101
+        movk    x10, #0x0101, lsl #16
+        movk    x10, #0x0101, lsl #32
+        movk    x10, #0x0101, lsl #48
+        lsl     x11, x10, #7
+        mul     x3, x2, x10
+        add     x13, x0, x1             // one past the last byte we may report
+
+        and     x4, x0, #7
+        bic     x5, x0, #7
+        ldr     x6, [x5]
+        lsl     x4, x4, #3
+        mov     x7, #-1
+        lsl     x7, x7, x4
+
+1:      eor     x8, x6, x3
+        sub     x9, x8, x10
+        bic     x9, x9, x8
+        and     x9, x9, x11
+
+        sub     x12, x6, x10
+        bic     x12, x12, x6
+        and     x12, x12, x11
+
+        orr     x9, x9, x12
+        and     x9, x9, x7
+        cbnz    x9, 2f
+
+        mov     x7, #-1
+        add     x5, x5, #8
+        cmp     x5, x13
+        b.hs    8f
+        ldr     x6, [x5]
+        b       1b
+
+2:      rbit    x9, x9
+        clz     x9, x9
+        lsr     x9, x9, #3
+        add     x9, x5, x9
+        cmp     x9, x13
+        b.hs    8f                      // beyond the count
+        ldrb    w4, [x9]
+        cmp     w4, w2
+        b.eq    9f                      // it was the byte, not the terminator
+
+8:      mov     x9, #0
+9:      mov     x0, x9
+        ret
+SYM_FUNC_END(strnchr)
+EXPORT_SYMBOL(strnchr)
+
+#> arch riscv64
+        .option arch, +zbb
+
+SYM_FUNC_START(strnchr)
+        beqz    a1, 8f
+
+        andi    a2, a2, 0xff
+        li      t0, 0x0101010101010101
+        slli    t1, t0, 7
+        mul     a3, a2, t0
+        add     a4, a0, a1              // one past the last byte we may report
+
+        andi    t2, a0, 7
+        andi    a5, a0, -8
+        ld      a6, 0(a5)
+        slli    t2, t2, 3
+        li      a7, -1
+        sll     a7, a7, t2
+
+1:      xor     t3, a6, a3
+        sub     t4, t3, t0
+        not     t5, t3
+        and     t4, t4, t5
+        and     t4, t4, t1
+
+        sub     t6, a6, t0
+        not     t2, a6
+        and     t6, t6, t2
+        and     t6, t6, t1
+
+        or      t4, t4, t6
+        and     t4, t4, a7
+        bnez    t4, 2f
+
+        li      a7, -1
+        addi    a5, a5, 8
+        bgeu    a5, a4, 8f
+        ld      a6, 0(a5)
+        j       1b
+
+2:      ctz     t4, t4
+        srli    t4, t4, 3
+        add     t4, a5, t4
+        bgeu    t4, a4, 8f              // beyond the count
+        lbu     t5, 0(t4)
+        bne     t5, a2, 8f              // the terminator, not the byte
+        mv      a0, t4
+        ret
+
+8:      li      a0, 0
+        ret
 SYM_FUNC_END(strnchr)
 EXPORT_SYMBOL(strnchr)
 

@@ -336,34 +336,57 @@ wgcVXSeiHcXa9SSFDvKn0L1q5nSLQGHp38qUi1ZPf/1uQSuB3ME=
 
         label KERNEL CONFIG
                 #
-                #       x86_64's asm/string_64.h claims memcpy, memmove and
-                #       memset and leaves the rest to the generic byte loops in
-                #       lib/string.c. arm64 and riscv both claim strlen and
-                #       ship their own; this is x86 catching up, so the header
-                #       has to say so or lib/string.c defines it too and
-                #       vmlinux does not link.
+                #       Handing a symbol over to src/*.asm means telling the
+                #       architecture's own string.h that it owns it, or
+                #       lib/string.c defines it as well and vmlinux does not
+                #       link. Which symbols there are to hand over differs per
+                #       architecture, and that is the whole shape of this:
                 #
-                for line in \
-                        "#define __HAVE_ARCH_STRLEN" \
-                        "extern __kernel_size_t strlen(const char *);" \
-                        "#define __HAVE_ARCH_STRNCMP" \
-                        "extern int strncmp(const char *, const char *, __kernel_size_t);" \
-                        "#define __HAVE_ARCH_STRNLEN" \
-                        "extern __kernel_size_t strnlen(const char *, __kernel_size_t);" \
-                        "#define __HAVE_ARCH_STRCHR" \
-                        "extern char *strchr(const char *, int);" \
-                        "#define __HAVE_ARCH_MEMCHR" \
-                        "extern void *memchr(const void *, int, __kernel_size_t);" \
-                        "#define __HAVE_ARCH_STRCMP" \
-                        "extern int strcmp(const char *, const char *);" \
-                        "#define __HAVE_ARCH_STRRCHR" \
-                        "extern char *strrchr(const char *, int);" \
-                        "#define __HAVE_ARCH_STRCHRNUL" \
-                        "extern char *strchrnul(const char *, int);" \
-                        "#define __HAVE_ARCH_STRNCHR" \
-                        "extern char *strnchr(const char *, __kernel_size_t, int);"; do
-                        line_add "linux/arch/x86/include/asm/string_64.h" "$line"
-                done
+                #       x86_64's asm/string_64.h claims memcpy, memmove and
+                #       memset and leaves the other nine to the byte loops, so
+                #       x86 is catching up on all nine. arm64 and riscv did
+                #       most of that work already and ship their own; what is
+                #       left is what nobody bothered with -- strchrnul and
+                #       strnchr on both, and memchr on riscv, which are still
+                #       running the byte loop in lib/string.c today.
+                #
+                case "$(key_one arch)" in
+                x86_64)
+                        header=linux/arch/x86/include/asm/string_64.h
+                        claims="STRLEN:__kernel_size_t strlen(const char *)
+STRNCMP:int strncmp(const char *, const char *, __kernel_size_t)
+STRNLEN:__kernel_size_t strnlen(const char *, __kernel_size_t)
+STRCHR:char *strchr(const char *, int)
+MEMCHR:void *memchr(const void *, int, __kernel_size_t)
+STRCMP:int strcmp(const char *, const char *)
+STRRCHR:char *strrchr(const char *, int)
+STRCHRNUL:char *strchrnul(const char *, int)
+STRNCHR:char *strnchr(const char *, __kernel_size_t, int)"
+                        ;;
+                arm64)
+                        header=linux/arch/arm64/include/asm/string.h
+                        claims="STRCHRNUL:char *strchrnul(const char *, int)
+STRNCHR:char *strnchr(const char *, __kernel_size_t, int)"
+                        ;;
+                riscv64)
+                        header=linux/arch/riscv/include/asm/string.h
+                        claims="MEMCHR:void *memchr(const void *, int, __kernel_size_t)
+STRCHRNUL:char *strchrnul(const char *, int)
+STRNCHR:char *strnchr(const char *, __kernel_size_t, int)"
+                        ;;
+                *)
+                        header=
+                        claims=
+                        ;;
+                esac
+
+                if [ -n "$header" ]; then
+                        echo "$claims" | while IFS=: read -r name signature; do
+                                [ -n "$name" ] || continue
+                                line_add "$header" "#define __HAVE_ARCH_$name"
+                                line_add "$header" "extern $signature;"
+                        done
+                fi
 
                 line_add_padded "linux/Kconfig" "source \"kernel/moonwater/Kconfig\""
                 line_add_padded "linux/kernel/Makefile" "obj-y += moonwater/"

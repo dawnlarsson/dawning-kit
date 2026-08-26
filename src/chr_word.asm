@@ -162,6 +162,57 @@ SYM_FUNC_START(memchr)
 SYM_FUNC_END(memchr)
 EXPORT_SYMBOL(memchr)
 
+#> arch riscv64
+        //
+        //      arm64 claims memchr and ships its own; riscv does not, so this
+        //      is the one architecture of the three that still runs the byte
+        //      loop here. ctz is Zbb, which RVA22 requires.
+        //
+        .option arch, +zbb
+
+SYM_FUNC_START(memchr)
+        beqz    a2, 8f
+
+        andi    a1, a1, 0xff
+        li      t0, 0x0101010101010101
+        slli    t1, t0, 7
+        mul     a3, a1, t0              // the byte, in all eight positions
+        add     a4, a0, a2              // one past the last byte we may report
+
+        andi    t2, a0, 7               // how far into the word it begins
+        andi    a5, a0, -8              // align down: same page, cannot fault
+        ld      a6, 0(a5)
+        xor     a6, a6, a3              // the byte that matched is now zero
+        slli    t2, t2, 3
+        li      a7, -1
+        sll     a7, a7, t2              // which bytes of the first word count
+
+1:      sub     t3, a6, t0
+        not     t4, a6
+        and     t3, t3, t4
+        and     t3, t3, t1
+        and     t3, t3, a7
+        bnez    t3, 2f
+
+        li      a7, -1
+        addi    a5, a5, 8
+        bgeu    a5, a4, 8f
+        ld      a6, 0(a5)
+        xor     a6, a6, a3
+        j       1b
+
+2:      ctz     t3, t3
+        srli    t3, t3, 3
+        add     t3, a5, t3
+        bgeu    t3, a4, 8f              // the word ran past the bound
+        mv      a0, t3
+        ret
+
+8:      li      a0, 0
+        ret
+SYM_FUNC_END(memchr)
+EXPORT_SYMBOL(memchr)
+
 #> arch other
         // As above: nothing here on purpose.
 
