@@ -15,6 +15,8 @@
 #define SHELL "/shell"
 
 #define O_NONBLOCK 04000
+#define EINTR 4
+#define EAGAIN 11
 #define TIOCSPTLCK 0x40045431u
 #define TIOCGPTN 0x80045430u
 #define TIOCSCTTY 0x540Eu
@@ -203,10 +205,20 @@ static fn consume(unsigned int c)
                         return;
                 }
 
+                /*
+                        A separator ends the parameter it follows, so an empty
+                        one before it counts. Beginning a parameter here
+                        instead read ESC[;5H as ESC[5H, and a row nobody asked
+                        to move became the row moved to.
+                */
                 if (c == ';')
                 {
+                        if (!parameter_count)
+                                parameter_count = 1;
+
                         if (parameter_count < 8)
                                 parameters[parameter_count++] = 0;
+
                         return;
                 }
 
@@ -227,12 +239,16 @@ static fn consume(unsigned int c)
                         in_csi = true;
                         parameter_count = 0;
                         parameters[0] = 0;
-                }
-                else
-                {
-                        in_escape = false;
+                        return;
                 }
 
+                // ESC ( B and its like: an intermediate byte says the sequence
+                // carries on to a final one. Ending the sequence at the first
+                // of them printed the rest of it on the screen.
+                if (c >= ' ' && c <= '/')
+                        return;
+
+                in_escape = false;
                 return;
         }
 
@@ -297,6 +313,36 @@ static fn cursor_show()
         shown_column = at;
         shown = true;
         touch(row);
+}
+
+/*
+        A key that is no character is still a key.
+
+        Arrows, Home, the function keys: a program is handed the code and
+        nothing else, and a terminal owes its shell the sequence ANSI names
+        for each of them. TERM=ansi is exported below, and this is what makes
+        that true rather than a claim.
+*/
+static const struct
+{
+        unsigned int code;
+        const char address_to sequence;
+} key_sequences[] = {
+    {103, "\x1b[A"}, {108, "\x1b[B"}, {106, "\x1b[C"}, {105, "\x1b[D"},
+    {102, "\x1b[H"}, {107, "\x1b[F"}, {104, "\x1b[5~"}, {109, "\x1b[6~"},
+    {110, "\x1b[2~"}, {111, "\x1b[3~"},
+    {59, "\x1bOP"}, {60, "\x1bOQ"}, {61, "\x1bOR"}, {62, "\x1bOS"},
+    {63, "\x1b[15~"}, {64, "\x1b[17~"}, {65, "\x1b[18~"}, {66, "\x1b[19~"},
+    {67, "\x1b[20~"}, {68, "\x1b[21~"}, {87, "\x1b[23~"}, {88, "\x1b[24~"},
+};
+
+static string_address key_sequence(unsigned int code)
+{
+        for (positive i = 0; i < sizeof(key_sequences) / sizeof(key_sequences[0]); i++)
+                if (key_sequences[i].code == code)
+                        return (string_address)key_sequences[i].sequence;
+
+        return null;
 }
 
 #define F_GETFD 1
@@ -505,6 +551,7 @@ b32 main()
         for (;;)
         {
                 b32 changed = false;
+                b32 gone = false;
                 struct window_key key;
 
                 touched_top = ROWS;
@@ -519,12 +566,24 @@ b32 main()
                 // Keys go out; they change nothing here until they come back.
                 while (window_key(window, &key))
                 {
-                        if (!(key.flags & WINDOW_KEY_DOWN) || !key.character)
+                        if (!(key.flags & WINDOW_KEY_DOWN))
                                 continue;
 
-                        p8 byte = (p8)key.character;
+                        if (key.character)
+                        {
+                                p8 byte = (p8)key.character;
 
-                        system_call_3(syscall(write), master, (positive)address_of byte, 1);
+                                system_call_3(syscall(write), master,
+                                              (positive)address_of byte, 1);
+                                continue;
+                        }
+
+                        string_address sequence = key_sequence(key.code);
+
+                        if (sequence)
+                                system_call_3(syscall(write), master,
+                                              (positive)sequence,
+                                              string_length(sequence));
                 }
 
                 for (;;)
@@ -533,16 +592,31 @@ b32 main()
                                                     (positive)from_shell,
                                                     sizeof(from_shell));
 
-                        if (got <= 0)
-                                break;
+                        if (got > 0)
+                        {
+                                if (!changed)
+                                        cursor_hide();
 
-                        if (!changed)
-                                cursor_hide();
+                                for (bipolar i = 0; i < got; i++)
+                                        consume(from_shell[i]);
 
-                        for (bipolar i = 0; i < got; i++)
-                                consume(from_shell[i]);
+                                changed = true;
+                                continue;
+                        }
 
-                        changed = true;
+                        /*
+                                Nothing waiting is EAGAIN and only EAGAIN.
+
+                                Everything else is the shell gone -- zero, or
+                                EIO once the session went with it -- and
+                                reading that as nothing waiting left this
+                                spinning on a dead pty forever, with a zombie
+                                behind it and a window nothing could dismiss.
+                        */
+                        if (got != -EAGAIN && got != -EINTR)
+                                gone = true;
+
+                        break;
                 }
 
                 /*
@@ -561,8 +635,17 @@ b32 main()
                         window_flush(window);
                 }
 
+                if (gone)
+                        break;
+
                 system_call_2(syscall(nanosleep), (positive)address_of nap, 0);
         }
+
+        positive status = 0;
+
+        system_call_4(syscall(wait4), child, (positive)address_of status, 0, 0);
+        system_call_1(syscall(close), master);
+        window_close(window);
 
         return 0;
 }

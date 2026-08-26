@@ -7,8 +7,10 @@
 //       a word, exclusive-or, and the byte that matched is the byte that is
 //       now zero -- so what follows is mostly the differences.
 //
+#ifndef MOONWATER_FREESTANDING_ASM
 #include <linux/export.h>
 #include <linux/linkage.h>
+#endif
 
         .text
 

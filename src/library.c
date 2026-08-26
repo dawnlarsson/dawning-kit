@@ -954,6 +954,36 @@ address_any memory_copy_fast(address_any destination, address_any source, positi
         return destination;
 }
 
+/*
+        The word at a time versions of the three below live in the .asm files
+        in src/, and are what the kernel links in place of lib/string.c. Where
+        kit/spark assembled them into this program too, these are that same
+        code and there is no second copy to keep in step; where it did not --
+        an architecture with only an empty "#> arch other" block -- the C
+        loops under the #else are what runs, which is the same answer the
+        kernel gets there.
+
+        MOONWATER_STRING_ASSEMBLY is set by kit/spark and by nothing else, so
+        library.c compiled on its own still has working string functions.
+*/
+#ifdef MOONWATER_STRING_ASSEMBLY
+
+positive strlen(string_address source);
+b32 strcmp(string_address source, string_address input);
+char address_to strchr(char address_to source, int character);
+
+positive string_length(string_address source)
+{
+        return strlen(source);
+}
+
+b32 string_compare(string_address source, string_address input)
+{
+        return strcmp(source, input);
+}
+
+#else
+
 // ### Length of string segment in linear memory
 // returns the length of a string terminated by a null character
 // NOT a entire array length
@@ -988,6 +1018,8 @@ b32 string_compare(string_address source, string_address input)
 
         return string_get(source) - string_get(input);
 }
+
+#endif
 
 // ### Copy string segment
 // copies a string segment from source to destination
@@ -1038,6 +1070,11 @@ string_address string_copy_max(string_address destination, string_address source
 // traditional: strchr
 string_address string_first_of(string_address source, p8 character)
 {
+#ifdef MOONWATER_STRING_ASSEMBLY
+        // Same answer at the terminator: strchr(s, 0) returns it rather than
+        // nothing, which is what the line under the #else does too.
+        return (string_address)strchr((char address_to)source, character);
+#else
         while (string_get(source))
         {
                 if string_is (source, character)
@@ -1047,6 +1084,7 @@ string_address string_first_of(string_address source, p8 character)
         }
 
         return (string_get(source) == character) ? source : null;
+#endif
 }
 
 // ### Find last character in string segment
@@ -1055,6 +1093,9 @@ string_address string_first_of(string_address source, p8 character)
 // source: the memory block to search
 // character: the character to search for
 // traditional: strrchr
+//
+// Not the strrchr in src/chrn_word.asm, which is a different function at one
+// input: strrchr(source, 0) is the terminator there and null here.
 string_address string_last_of(string_address source, p8 character)
 {
         string_address last = null;
@@ -1770,6 +1811,14 @@ address_any memcpy(address_any destination, address_any source, long unsigned in
         return memory_copy(destination, source, size);
 }
 
+/*
+        Under MOONWATER_STRING_ASSEMBLY these three are the assembled symbols
+        themselves rather than wrappers around the C, and string_length,
+        string_compare and string_first_of are what call them. Defining them
+        here as well is the same name twice and the link fails.
+*/
+#ifndef MOONWATER_STRING_ASSEMBLY
+
 #undef strlen
 // use string_length instead, this is for compatibility
 positive strlen(string_address source)
@@ -1783,6 +1832,8 @@ b32 strcmp(string_address source, string_address input)
 {
         return string_compare(source, input);
 }
+
+#endif
 
 #undef strcpy
 // use string_copy instead, this is for compatibility
@@ -1798,12 +1849,14 @@ string_address strncpy(string_address destination, string_address source, positi
         return string_copy_max(destination, source, length);
 }
 
+#ifndef MOONWATER_STRING_ASSEMBLY
 #undef strchr
 // use string_first_of instead, this is for compatibility
 char address_to strchr(char address_to source, int character)
 {
         return string_first_of(source, character);
 }
+#endif
 
 #undef strrchr
 // use string_last_of instead, this is for compatibility

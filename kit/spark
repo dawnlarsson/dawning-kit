@@ -35,6 +35,12 @@ output="$2"
 mode="${3:-}"
 
 compiler=$(key_one compiler) || exit 1
+arch=$(key_one arch) || exit 1
+
+if [ -z "$arch" ]; then
+        echo "spark: no '#> arch' in artifacts/.config" >&2
+        exit 1
+fi
 
 #
 #       binutils has to match the compiler, not the machine this runs on.
@@ -96,11 +102,49 @@ elf="$work/image.elf"
 cleanup() { rm -rf "$work"; }
 trap cleanup EXIT INT TERM
 
+#
+#       The word at a time string routines, from the same src/*.asm the kernel
+#       links.
+#
+#       A program used to get library.c's byte loop while the kernel got the
+#       assembly, which is the same algorithm written twice and only one of
+#       them measured. These go through kit/asm exactly as src/Makefile sends
+#       them, so there is one file to be right about.
+#
+#       Only the files whose symbols library.c routes to, and only where a
+#       block claims the architecture. Where there is no block there is
+#       nothing to assemble and nothing to define, and library.c's C is what
+#       runs -- the userspace half of what "#> arch other" means.
+#
+string_asm=
+string_define=
+
+case "$arch" in
+x86_64 | amd64 | x64)
+        string_asm="strlen_word strcmp_word chr_word"
+        string_define=-DMOONWATER_STRING_ASSEMBLY
+        ;;
+esac
+
+assembly=
+
+for name in $string_asm; do
+        if ! sh "$spark_dir/asm" "$arch" "$spark_dir/../src/$name.asm" "$work/$name.S"; then
+                echo "spark: could not translate src/$name.asm" >&2
+                exit 1
+        fi
+
+        assembly="$assembly $work/$name.S"
+done
+
 # -flto discards the section layout the linker script depends on.
 flags=$(printf '%s' "$program_flags" | sed 's/-flto//g')
 
+# MOONWATER_FREESTANDING_ASM is what makes the .S assemble without the kernel
+# headers; see kit/asm for why it is defined here rather than assumed there.
 # shellcheck disable=SC2086
-if ! $compiler "$source_file.c" -o "$elf" $flags -static -nostdlib -nostartfiles \
+if ! $compiler "$source_file.c" $assembly -o "$elf" $flags -static -nostdlib -nostartfiles \
+        -DMOONWATER_FREESTANDING_ASM $string_define \
         -T "$linker_script" -Wl,--build-id=none -Wl,-e,_start \
         -Wl,--no-warn-rwx-segments; then
         echo "spark: compilation failed" >&2

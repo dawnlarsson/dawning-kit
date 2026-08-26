@@ -99,9 +99,25 @@ static int pane_by_z(void *unused, const struct list_head *a, const struct list_
         return za < zb ? -1 : za > zb;
 }
 
+/*
+        How much of the machine every window may hold between them.
+
+        There is no cap on how many windows there are and there must not be,
+        but /dev/spark is open to anything, so without a ceiling on the total
+        one program can ask until there are no pages left. A quarter of memory,
+        which no honest desktop comes near.
+*/
+static unsigned long canvas_pane_bytes;
+
+static unsigned long canvas_pane_budget(void)
+{
+        return (totalram_pages() / 4) * PAGE_SIZE;
+}
+
 static void pane_free(struct pane *pane)
 {
         list_del(&pane->link);
+        canvas_pane_bytes -= pane->bytes;
         vfree(pane->mapping);
         kfree(pane);
 }
@@ -145,6 +161,12 @@ static struct pane *pane_create(unsigned int width, unsigned int height,
         bytes = PAGE_ALIGN(WINDOW_PIXELS +
                            (columns ? cell_bytes : (unsigned long)width * height * 4));
 
+        if (canvas_pane_bytes + bytes > canvas_pane_budget())
+        {
+                kfree(pane);
+                return NULL;
+        }
+
         pane->mapping = vmalloc_user(bytes);
         if (!pane->mapping)
         {
@@ -152,6 +174,7 @@ static struct pane *pane_create(unsigned int width, unsigned int height,
                 return NULL;
         }
 
+        canvas_pane_bytes += bytes;
         pane->bytes = bytes;
         pane->shared = pane->mapping;
         pane->pitch = width;
@@ -210,6 +233,63 @@ static struct pane *pane_create(unsigned int width, unsigned int height,
 }
 
 /*
+        A window of cells the compositor draws into itself: no shared page, and
+        the cells are its own rather than a program's mapping. Everything that
+        reads a page checks for one first, so one of these is placed, moved and
+        composed like any other window.
+*/
+static __maybe_unused struct pane *pane_create_owned(unsigned int columns,
+                                                     unsigned int rows)
+{
+        unsigned int max_columns = (unsigned int)desktop.width / WINDOW_CELL_W;
+        unsigned int max_rows = (unsigned int)desktop.height / WINDOW_CELL_H;
+        unsigned long bytes = PAGE_ALIGN((unsigned long)max_columns * max_rows *
+                                         sizeof(struct window_cell));
+        struct pane *pane;
+
+        if (!columns || !rows || !max_columns || !max_rows)
+                return NULL;
+
+        if (canvas_pane_bytes + bytes > canvas_pane_budget())
+                return NULL;
+
+        pane = kzalloc(sizeof(*pane), GFP_KERNEL);
+        if (!pane)
+                return NULL;
+
+        // Not vmalloc_user: nothing maps this one.
+        pane->mapping = vzalloc(bytes);
+        if (!pane->mapping)
+        {
+                kfree(pane);
+                return NULL;
+        }
+
+        canvas_pane_bytes += bytes;
+        pane->bytes = bytes;
+        pane->cells = pane->mapping;
+        pane->columns = min(columns, max_columns);
+        pane->rows = min(rows, max_rows);
+        pane->grid_columns = pane->columns;
+        pane->grid_rows = pane->rows;
+        pane->max_columns = max_columns;
+        pane->max_rows = max_rows;
+        pane->max_width = max_columns * WINDOW_CELL_W;
+        pane->max_height = max_rows * WINDOW_CELL_H;
+        pane->width = (int)pane->columns * WINDOW_CELL_W;
+        pane->height = (int)pane->rows * WINDOW_CELL_H;
+        pane->pitch = (unsigned int)pane->width;
+        pane->x = 80;
+        pane->y = 80;
+        pane->style = WINDOW_FRAME;
+
+        list_add_tail(&pane->link, &desktop.windows);
+        pane_raise(pane);
+
+        return pane;
+}
+
+/*
         A grid follows the window it is in.
 
         The size of a window of cells is a whole number of them, so a resize
@@ -232,6 +312,16 @@ static void pane_regrid(struct pane *pane)
 
         pane->width = (int)pane->columns * WINDOW_CELL_W;
         pane->height = (int)pane->rows * WINDOW_CELL_H;
+
+        /*
+                A resize reaches here from drag.c without going through
+                pane_refresh, so a pane the compositor owns has no page to be
+                told. Its grid is left alone for the same reason a program's
+                is: the cells are still in the shape they were laid out in
+                until whoever owns them says otherwise.
+        */
+        if (!pane->shared)
+                return;
 
         WRITE_ONCE(pane->shared->columns, pane->columns);
         WRITE_ONCE(pane->shared->rows, pane->rows);
@@ -407,8 +497,32 @@ static void desktop_refresh_panes(void)
                 unsigned int was_sequence = pane->sequence;
                 int fx, fy, fw, fh;
 
+                /*
+                        The compositor's own. There is no page to read back, so
+                        what changed is already recorded on the pane; taking it
+                        clears it, the way pane_refresh clears a program's.
+                */
                 if (!pane->shared)
+                {
+                        if (pane->cells && pane->damage_rows)
+                        {
+                                unsigned int row = min(pane->damage_row, pane->grid_rows);
+                                unsigned int count = min(pane->damage_rows,
+                                                         pane->grid_rows - row);
+
+                                if (count)
+                                        desktop_damage(pane->x,
+                                                       pane->y +
+                                                           (pane->style & WINDOW_FRAME ? WINDOW_TITLE : 0) +
+                                                           (int)row * WINDOW_CELL_H,
+                                                       pane->width,
+                                                       (int)count * WINDOW_CELL_H);
+
+                                pane->damage_row = 0;
+                                pane->damage_rows = 0;
+                        }
                         continue;
+                }
 
                 pane_frame(pane, &fx, &fy, &fw, &fh);
                 pane_refresh(pane);
@@ -444,14 +558,21 @@ static long window_ioctl_create(struct file *file, unsigned long argument)
 {
         struct window_request request;
         struct pane *pane;
-
-        if (file->private_data)
-                return -EBUSY;
+        unsigned long bytes;
 
         if (copy_from_user(&request, (void __user *)argument, sizeof(request)))
                 return -EFAULT;
 
         mutex_lock(&desktop.lock);
+
+        // Tested and stored under the one lock: two threads on one file used
+        // to be able to both create, and the window one of them made was then
+        // reachable from nothing and freed by nothing.
+        if (file->private_data)
+        {
+                mutex_unlock(&desktop.lock);
+                return -EBUSY;
+        }
 
         if (list_empty(&desktop.outputs))
         {
@@ -461,21 +582,21 @@ static long window_ioctl_create(struct file *file, unsigned long argument)
 
         pane = pane_create(request.width, request.height,
                            request.columns, request.rows);
-        if (pane)
+        if (!pane)
         {
-                pane_focus(pane);
-                desktop_redraw();
+                mutex_unlock(&desktop.lock);
+                return -EINVAL;
         }
+
+        bytes = pane->bytes;
+        file->private_data = pane;
+        pane_focus(pane);
+        desktop_redraw();
 
         mutex_unlock(&desktop.lock);
 
-        if (!pane)
-                return -EINVAL;
-
-        file->private_data = pane;
-
         // How much to map, which the program cannot work out for itself.
-        return (long)pane->bytes;
+        return (long)bytes;
 }
 
 static long window_ioctl_commit(struct file *file)
@@ -572,6 +693,8 @@ static enum hrtimer_restart desktop_frame(struct hrtimer *timer)
         return HRTIMER_RESTART;
 }
 
+static _Bool canvas_thread_running(void);
+
 static void desktop_watch(void)
 {
         if (desktop.awake)
@@ -579,6 +702,12 @@ static void desktop_watch(void)
                 desktop.idle_frames = 0;
                 return;
         }
+
+        // A frame with nothing to service it wakes nobody and re-arms itself
+        // forever, and every program would sit waiting on an awake that no
+        // longer means anything.
+        if (!canvas_thread_running())
+                return;
 
         desktop_set_awake(true);
         desktop.idle_frames = 0;
@@ -590,8 +719,18 @@ static _Bool desktop_sequence_changed(void)
         struct pane *pane;
 
         list_for_each_entry(pane, &desktop.windows, link)
-                if (pane->shared && READ_ONCE(pane->shared->sequence) != pane->sequence)
+        {
+                if (!pane->shared)
+                {
+                        if (pane->damage_rows)
+                                return true;
+
+                        continue;
+                }
+
+                if (READ_ONCE(pane->shared->sequence) != pane->sequence)
                         return true;
+        }
 
         return false;
 }

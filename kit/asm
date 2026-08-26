@@ -55,6 +55,21 @@
 #       kbuild reaches it through the symlink that puts src/ in the kernel
 #       directory. It needs nothing from kit/common and runs standalone.
 #
+#       One more consumer than the kernel: kit/spark hands the same .asm
+#       through here and assembles the result into a program, so that a word
+#       at a time strlen exists once rather than once per side. What stops
+#       that is that the files are written in the kernel's assembly dialect --
+#       SYM_FUNC_START, EXPORT_SYMBOL, RET -- which comes from headers a
+#       freestanding program has not got.
+#
+#       Defining MOONWATER_FREESTANDING_ASM when the .S is assembled supplies
+#       those four names instead, and the .asm files take their includes out
+#       under the same macro. It is a positive macro rather than #ifndef
+#       __KERNEL__ on purpose: if the definition is ever forgotten the
+#       program's build stops on a missing linux/export.h, where the other
+#       spelling would quietly hand the kernel a bare ret in place of the one
+#       its return thunk mitigation needs.
+#
 set -u
 
 if [ "$#" -ne 3 ]; then
@@ -310,6 +325,12 @@ awk -v want="$arch" -v source="$input" '
         echo "#define asm_line(number, file)"
         echo "#else"
         echo "#define asm_line(number, file) .linefile number file"
+        echo "#endif"
+        echo "#ifdef MOONWATER_FREESTANDING_ASM"
+        echo "#define SYM_FUNC_START(name) .globl name ; .balign 16 ; name:"
+        echo "#define SYM_FUNC_END(name) .size name, . - name"
+        echo "#define EXPORT_SYMBOL(name)"
+        echo "#define RET ret"
         echo "#endif"
         cat "$temporary.body"
 } > "$temporary"

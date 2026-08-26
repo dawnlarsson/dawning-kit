@@ -8,9 +8,20 @@
 // machine can fork, forever. Backing off turns that into something a person
 // can read and interrupt rather than a spin.
 #define RESTART_BACKOFF_NS 250000000
+#define RESTART_BACKOFF_MAX_NS 4000000000
 #define RESTART_BACKOFF_AFTER 3
 
-timespec restart_pause = {0, RESTART_BACKOFF_NS};
+// A shell that stayed up this long was doing its job, so whatever came before
+// it is not a crash loop and the backoff starts over.
+#define SHELL_SETTLED_NS 2000000000
+
+#define CLOCK_MONOTONIC 1
+
+// Raw kernel return values: there is no errno here, a failed call comes back
+// as the negated error itself.
+#define ERROR_INTERRUPTED (-4)
+#define ERROR_NO_CHILDREN (-10)
+#define ERROR_EXISTS (-17)
 
 // PID 1 has two jobs: start the first program, and reap every orphan the
 // system ever produces. It must not exec into the shell -- doing that makes
@@ -19,6 +30,27 @@ timespec restart_pause = {0, RESTART_BACKOFF_NS};
 
 string_address init_argv[] = {init_program, null};
 string_address init_envp[] = {null};
+
+positive now_ns()
+{
+        timespec now = {0, 0};
+
+        // A clock that will not answer leaves every lifetime measured as zero,
+        // which counts every restart as a quick one: the backoff comes on
+        // early rather than never.
+        if (system_call_2(syscall(clock_gettime), CLOCK_MONOTONIC,
+                          (positive)address_of now))
+                return 0;
+
+        return (positive)now.tv_sec * 1000000000 + (positive)now.tv_nsec;
+}
+
+fn pause_for(positive nanoseconds)
+{
+        timespec span = {nanoseconds / 1000000000, nanoseconds % 1000000000};
+
+        sleep(address_of span);
+}
 
 bipolar start_shell(b32 device)
 {
@@ -63,6 +95,24 @@ bipolar start_shell(b32 device)
         return child;
 }
 
+// A wait status carries the signal in the low seven bits and the exit code in
+// the next eight, so reading it as an exit code alone reports a crash as a
+// clean exit of zero -- which is the one thing this line exists to make
+// visible.
+fn report_exit(positive status)
+{
+        positive signal = status & 0x7f;
+
+        if (signal)
+                string_format(log, label "%s killed by signal %p, restarting\n",
+                              init_program, signal);
+        else
+                string_format(log, label "%s exited (%p), restarting\n",
+                              init_program, status >> 8 & 0xff);
+
+        log_flush();
+}
+
 /*
         A pty needs somewhere for its other end to appear.
 
@@ -74,9 +124,28 @@ bipolar start_shell(b32 device)
 */
 fn mount_devpts()
 {
-        system_call_3(syscall(mkdirat), AT_FDCWD, (positive)"/dev/pts", 0755);
-        system_call_5(syscall(mount), (positive)"devpts", (positive)"/dev/pts",
-                      (positive)"devpts", 0, 0);
+        bipolar made = system_call_3(syscall(mkdirat), AT_FDCWD,
+                                     (positive)"/dev/pts", 0755);
+
+        if (made < 0 && made != ERROR_EXISTS)
+        {
+                string_format(log, label "/dev/pts could not be created: %b\n", made);
+                log_flush();
+        }
+
+        bipolar mounted = system_call_5(syscall(mount), (positive)"devpts",
+                                        (positive)"/dev/pts",
+                                        (positive)"devpts", 0, 0);
+
+        // Nothing needs a pty this early, so this is not worth refusing to
+        // boot over. It is worth saying: without it the terminal fails much
+        // later, and for a reason that looks nothing like this one.
+        if (mounted < 0)
+        {
+                string_format(log, label "devpts mount failed: %b, terminals will not work\n",
+                              mounted);
+                log_flush();
+        }
 }
 
 b32 main()
@@ -87,16 +156,26 @@ b32 main()
         b32 device = system_call_4(syscall(openat), AT_FDCWD,
                                    (positive)SPARK_DEVICE, FILE_READ_WRITE, 0);
 
+        positive quick_exits = 0;
+        positive backoff = 0;
+        positive started = now_ns();
+        bipolar wait_error = 0;
+
         bipolar shell = start_shell(device);
 
-        if (shell < 0)
+        // Returning from PID 1 panics the kernel, which on a machine with no
+        // serial console says nothing at all. Retrying at a bounded rate keeps
+        // the reason on screen instead.
+        while (shell < 0)
         {
-                string_format(log, label "could not start %s: %b\n", init_program, shell);
+                string_format(log, label "could not start %s: %b\n",
+                              init_program, shell);
                 log_flush();
-                return 1;
-        }
+                pause_for(RESTART_BACKOFF_MAX_NS);
 
-        positive quick_exits = 0;
+                started = now_ns();
+                shell = start_shell(device);
+        }
 
         while (1)
         {
@@ -107,29 +186,78 @@ b32 main()
                 bipolar reaped = system_call_4(syscall(wait4), -1,
                                                (positive)address_of status, 0, 0);
 
-                if (reaped < 0)
+                if (reaped == ERROR_INTERRUPTED)
                         continue;
 
-                if (reaped != shell)
+                // Retrying a failing wait as fast as the CPU allows is the one
+                // way PID 1 can spin with nothing to show for it. Say it once
+                // per run of the same error, then slow down.
+                if (reaped < 0 && reaped != ERROR_NO_CHILDREN)
+                {
+                        if (reaped != wait_error)
+                        {
+                                wait_error = reaped;
+                                string_format(log, label "wait failed: %b\n", reaped);
+                                log_flush();
+                        }
+
+                        pause_for(RESTART_BACKOFF_NS);
                         continue;
+                }
 
-                string_format(log, label "%s exited (%p), restarting\n",
-                              init_program, status >> 8 & 0xff);
-                log_flush();
+                if (reaped > 0)
+                {
+                        wait_error = 0;
 
-                // Only pause once restarts start coming back to back; a shell
-                // someone exited on purpose should come straight back.
-                if (++quick_exits > RESTART_BACKOFF_AFTER)
-                        sleep(address_of restart_pause);
+                        if (reaped != shell)
+                                continue;
+                }
 
+                // ECHILD means there is nothing left to wait for at all, so
+                // the shell is gone whether or not anyone reported it.
+                if (reaped == ERROR_NO_CHILDREN)
+                {
+                        string_format(log, label "nothing left to wait for, restarting %s\n",
+                                      init_program);
+                        log_flush();
+                }
+                else
+                        report_exit(status);
+
+                if (now_ns() - started >= SHELL_SETTLED_NS)
+                {
+                        quick_exits = 0;
+                        backoff = 0;
+                }
+                else if (++quick_exits > RESTART_BACKOFF_AFTER)
+                {
+                        backoff = backoff ? backoff * 2 : RESTART_BACKOFF_NS;
+
+                        if (backoff > RESTART_BACKOFF_MAX_NS)
+                                backoff = RESTART_BACKOFF_MAX_NS;
+
+                        string_format(log, label "%p restarts in a row, waiting %p ms\n",
+                                      quick_exits, backoff / 1000000);
+                        log_flush();
+
+                        pause_for(backoff);
+                }
+
+                started = now_ns();
                 shell = start_shell(device);
 
-                if (shell < 0)
+                // Retried here rather than by falling back into wait4,
+                // which would have no children to wait for and would report
+                // the shell as having died when it never started.
+                while (shell < 0)
                 {
-                        string_format(log, label "could not restart %s: %b\n",
+                        string_format(log, label "could not start %s: %b\n",
                                       init_program, shell);
                         log_flush();
-                        return 1;
+                        pause_for(RESTART_BACKOFF_MAX_NS);
+
+                        started = now_ns();
+                        shell = start_shell(device);
                 }
         }
 }

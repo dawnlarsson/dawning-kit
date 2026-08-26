@@ -10,7 +10,14 @@
         larger table and the same shape of code.
 */
 
-#define KEY_TABLE 58
+/*
+        Wide enough for the keypad, which is the last thing on a keyboard that
+        means a character. Everything past it -- the arrows, Home and its
+        neighbours, the function keys -- means no character at all, and is
+        carried to a program as key.code with a character of zero, which is
+        what code exists for.
+*/
+#define KEY_TABLE 128
 
 /*
         Backspace is DEL, not BS.
@@ -20,6 +27,7 @@
         made the line two characters longer for every press.
 */
 static const char key_plain[KEY_TABLE] = {
+    [1] = 27,
     [2] = '1',  [3] = '2',  [4] = '3',  [5] = '4',  [6] = '5',
     [7] = '6',  [8] = '7',  [9] = '8',  [10] = '9', [11] = '0',
     [12] = '-', [13] = '=', [14] = 127, [15] = '\t',
@@ -31,10 +39,16 @@ static const char key_plain[KEY_TABLE] = {
     [39] = ';', [40] = '\'', [41] = '`', [43] = '\\',
     [44] = 'z', [45] = 'x', [46] = 'c', [47] = 'v', [48] = 'b',
     [49] = 'n', [50] = 'm', [51] = ',', [52] = '.', [53] = '/',
-    [57] = ' ',
+    [55] = '*', [57] = ' ',
+    // The keypad as NumLock on, there being nothing here that turns it off.
+    [71] = '7', [72] = '8', [73] = '9', [74] = '-',
+    [75] = '4', [76] = '5', [77] = '6', [78] = '+',
+    [79] = '1', [80] = '2', [81] = '3', [82] = '0',
+    [83] = '.', [96] = '\n', [98] = '/',
 };
 
 static const char key_shifted[KEY_TABLE] = {
+    [1] = 27,
     [2] = '!',  [3] = '@',  [4] = '#',  [5] = '$',  [6] = '%',
     [7] = '^',  [8] = '&',  [9] = '*',  [10] = '(', [11] = ')',
     [12] = '_', [13] = '+', [14] = 127, [15] = '\t',
@@ -46,7 +60,11 @@ static const char key_shifted[KEY_TABLE] = {
     [39] = ':', [40] = '"', [41] = '~', [43] = '|',
     [44] = 'Z', [45] = 'X', [46] = 'C', [47] = 'V', [48] = 'B',
     [49] = 'N', [50] = 'M', [51] = '<', [52] = '>', [53] = '?',
-    [57] = ' ',
+    [55] = '*', [57] = ' ',
+    [71] = '7', [72] = '8', [73] = '9', [74] = '-',
+    [75] = '4', [76] = '5', [77] = '6', [78] = '+',
+    [79] = '1', [80] = '2', [81] = '3', [82] = '0',
+    [83] = '.', [96] = '\n', [98] = '/',
 };
 
 static unsigned int key_modifier(unsigned int code)
@@ -121,6 +139,13 @@ static void keyboard_event(unsigned int code, int value)
         head = (unsigned int)atomic_read(&desktop.key_head);
         tail = (unsigned int)atomic_read(&desktop.key_tail);
 
+        /*
+                One writer each: this moves head, the thread moves tail. A full
+                ring therefore loses the newest, because losing the oldest
+                would mean moving tail from here as well, and two writers on
+                one index is a ring that delivers a key twice or reads a slot
+                while it is being overwritten.
+        */
         if (head - tail >= WINDOW_KEYS)
                 return;
 
@@ -166,6 +191,9 @@ static void keys_deliver(void)
                 struct window *shared = pane->shared;
                 unsigned int at = READ_ONCE(shared->key_head);
 
+                // Tail belongs to the program. Moving it from here to make
+                // room would put two writers on it, and window_key is the
+                // other one.
                 if (at - READ_ONCE(shared->key_tail) < WINDOW_KEYS)
                 {
                         shared->keys[at % WINDOW_KEYS] = desktop.key_ring[tail % WINDOW_KEYS];

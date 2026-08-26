@@ -488,6 +488,12 @@ static void canvas_thread_wake(void)
                 wake_up_process(canvas_thread);
 }
 
+// Whether there is anything to answer a frame. Nothing arms one otherwise.
+static _Bool canvas_thread_running(void)
+{
+        return canvas_thread != NULL;
+}
+
 static int canvas_loop(void *unused)
 {
         while (!kthread_should_stop())

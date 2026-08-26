@@ -13,8 +13,10 @@
 #       which keeps the byte being searched for out of it -- forcing those
 #       bytes to 0xff would false-match a search for 0xff.
 #
+#ifndef MOONWATER_FREESTANDING_ASM
 #include <linux/export.h>
 #include <linux/linkage.h>
+#endif
 
         .text
 

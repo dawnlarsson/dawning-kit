@@ -21,8 +21,10 @@
 //       loop steps a byte at a time until it is past, which happens for at
 //       most seven bytes out of every four thousand and ninety six.
 //
+#ifndef MOONWATER_FREESTANDING_ASM
 #include <linux/export.h>
 #include <linux/linkage.h>
+#endif
 
         .text
 

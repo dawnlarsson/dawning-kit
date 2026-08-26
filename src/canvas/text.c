@@ -166,12 +166,29 @@ static void text_draw(const struct target *t, int x, int y, int w, int h,
                       unsigned int align, int scale, u32 colour)
 {
         u64 started = ktime_get_ns();
+        struct target box;
         int cell_w, cell_h;
         _Bool wrap = align & TEXT_WRAP;
         unsigned int columns, start = 0;
         int line_y;
 
         if (!canvas_font || !length)
+                return;
+
+        /*
+                The box is a clip like the damage is. A caller asks for a title
+                in a titlebar and hands over whatever string the window has;
+                one newline in it and the second line lands on the contents
+                below, so the box is met at the same place the damage is rather
+                than trusted to the layout above.
+        */
+        box = *t;
+        box.clip.x1 = max(t->clip.x1, x);
+        box.clip.y1 = max(t->clip.y1, y);
+        box.clip.x2 = min(t->clip.x2, x + w);
+        box.clip.y2 = min(t->clip.y2, y + h);
+
+        if (box.clip.x2 <= box.clip.x1 || box.clip.y2 <= box.clip.y1)
                 return;
 
         cell_w = (int)canvas_font->width * scale;
@@ -208,7 +225,7 @@ static void text_draw(const struct target *t, int x, int y, int w, int h,
                 // the ones after it start in the right place, but nothing in
                 // it needs looking at glyph by glyph. Repainting under a
                 // cursor is twenty rows of a paragraph that is a hundred.
-                if (line_y + cell_h <= t->clip.y1 || line_y >= t->clip.y2)
+                if (line_y + cell_h <= box.clip.y1 || line_y >= box.clip.y2)
                 {
                         line_y += cell_h;
                         start = text_line_next(text, length, stop);
@@ -235,11 +252,10 @@ static void text_draw(const struct target *t, int x, int y, int w, int h,
 
                         // Nothing to do for a glyph entirely outside the box or
                         // the damage.
-                        if (px + cell_w <= x || px >= x + w ||
-                            px + cell_w <= t->clip.x1 || px >= t->clip.x2)
+                        if (px + cell_w <= box.clip.x1 || px >= box.clip.x2)
                                 continue;
 
-                        glyph_draw(t, px, line_y, scale,
+                        glyph_draw(&box, px, line_y, scale,
                                    (unsigned char)text[start + i], colour);
                 }
 

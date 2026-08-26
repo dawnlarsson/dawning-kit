@@ -53,6 +53,10 @@
 
 #define WINDOW_DEVICE "/dev/spark"
 
+// O_RDWR | O_CLOEXEC, which are the same numbers on all three architectures.
+// A window is this program's, not whatever it goes on to exec.
+#define WINDOW_OPEN_FLAGS 0x80002u
+
 // The contents start one page in, so the struct and the pixels are one mapping
 // and the pixels stay page aligned.
 #define WINDOW_PIXELS 4096
@@ -98,8 +102,10 @@
 
         The compositor writes at head and the program reads at tail, so a
         program that draws every frame reads its input the same way it reads
-        everything else: no call. A ring that fills drops what is oldest,
-        which is what a keyboard buffer does.
+        everything else: no call. One side writes head and the other writes
+        tail, and nothing writes both -- so a ring that fills drops what
+        arrived last, because making room for it would mean moving the other
+        side's index.
 */
 #define WINDOW_KEYS 64
 
@@ -189,14 +195,31 @@ struct window
 static inline void window_damage(struct window *window, unsigned int row,
                                  unsigned int rows)
 {
-        unsigned int last = window->damage_rows ? window->damage_row + window->damage_rows
-                                                : row;
+        unsigned int last = row + rows;
+        unsigned int previous;
 
-        if (!window->damage_rows || row < window->damage_row)
+        if (!rows)
+                return;
+
+        // A count that runs off the end saturates: wrapping would turn the
+        // widest possible damage into none at all.
+        if (last < row)
+                last = ~0u;
+
+        if (!window->damage_rows)
+        {
+                window->damage_row = row;
+                window->damage_rows = last - row;
+                return;
+        }
+
+        previous = window->damage_row + window->damage_rows;
+
+        if (row < window->damage_row)
                 window->damage_row = row;
 
-        if (row + rows > last)
-                last = row + rows;
+        if (previous > last)
+                last = previous;
 
         window->damage_rows = last - window->damage_row;
 }
@@ -263,11 +286,17 @@ static inline int window_regrid(struct window *window)
 // The next key, or false when there is none waiting.
 static inline int window_key(struct window *window, struct window_key *key)
 {
-        if (window->key_tail == window->key_head)
+        // The entry was written before head was bumped, so head has to be
+        // read before the entry for that order to hold on arm64 and riscv.
+        unsigned int head = __atomic_load_n(&window->key_head, __ATOMIC_ACQUIRE);
+
+        if (window->key_tail == head)
                 return 0;
 
         *key = window->keys[window->key_tail % WINDOW_KEYS];
-        window->key_tail++;
+
+        // The slot is only free once it has been read out of.
+        __atomic_store_n(&window->key_tail, window->key_tail + 1, __ATOMIC_RELEASE);
 
         return 1;
 }
@@ -360,7 +389,8 @@ static struct window *window_request_open(struct window_request request)
         struct window *window;
         long file, mapped;
 
-        file = window_call(WINDOW_SYS_OPENAT, -100, (long)WINDOW_DEVICE, 2, 0, 0, 0);
+        file = window_call(WINDOW_SYS_OPENAT, -100, (long)WINDOW_DEVICE,
+                           WINDOW_OPEN_FLAGS, 0, 0, 0);
         if (file < 0)
                 return 0;
 
@@ -411,9 +441,19 @@ static struct window *window_open_text(unsigned int columns, unsigned int rows)
 */
 static void window_commit(struct window *window)
 {
-        window->sequence++;
+        // Release, so the compositor cannot see the bump before the pixels,
+        // cells or damage rows it is the announcement of.
+        __atomic_store_n(&window->sequence, window->sequence + 1, __ATOMIC_RELEASE);
 
-        if (!window->awake)
+        /*
+                The compositor clears awake and then looks at sequence one more
+                time. This store has to be visible before that load for the
+                pair to work, or the last frame of an animation is the one that
+                never arrives.
+        */
+        __atomic_thread_fence(__ATOMIC_SEQ_CST);
+
+        if (!__atomic_load_n(&window->awake, __ATOMIC_ACQUIRE))
                 window_call(WINDOW_SYS_IOCTL, window->handle, WINDOW_IOCTL_COMMIT, 0, 0, 0, 0);
 }
 
@@ -427,7 +467,7 @@ static void window_commit(struct window *window)
 */
 static void window_flush(struct window *window)
 {
-        window->sequence++;
+        __atomic_store_n(&window->sequence, window->sequence + 1, __ATOMIC_RELEASE);
         window_call(WINDOW_SYS_IOCTL, window->handle, WINDOW_IOCTL_COMMIT, 0, 0, 0, 0);
 }
 

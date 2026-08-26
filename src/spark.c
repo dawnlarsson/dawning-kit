@@ -57,6 +57,11 @@ struct header {
         unsigned long reserved[2]; // pads the header to exactly SPARK_HEADER_SIZE
 };
 
+// The loader reads the header out of the kernel's pre-read buffer and the
+// producer writes it byte by byte, so the two only agree while this holds.
+_Static_assert(sizeof(struct header) == SPARK_HEADER_SIZE,
+               "spark header must be exactly SPARK_HEADER_SIZE bytes");
+
 
 /*
         Spawning

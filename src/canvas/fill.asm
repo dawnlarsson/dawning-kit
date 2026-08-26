@@ -130,6 +130,19 @@ SYM_FUNC_START(canvas_row_fill)
         li      t1, 2
         blt     a1, t1, 2f
 
+        #
+        #       A pixel is four bytes, so a run can start halfway through the
+        #       eight the wide path stores. Misaligned there is a trap on the
+        #       cores that do not take it and a slow path on the ones that do,
+        #       so the odd first pixel goes on its own.
+        #
+        andi    t2, a0, 7
+        beqz    t2, 1f
+        sw      a2, 0(a0)
+        addi    a0, a0, 4
+        addi    a1, a1, -1
+        blt     a1, t1, 2f
+
 1:      sd      t0, 0(a0)
         addi    a0, a0, 8
         addi    a1, a1, -2
@@ -250,6 +263,16 @@ SYM_FUNC_START(canvas_rect_fill)
         mv      t2, a2
 
         blt     t2, t3, 3f
+
+        # A row at a time, because an odd pitch puts every other row half a
+        # pair out of step with the one above it.
+        andi    t4, t1, 7
+        beqz    t4, 2f
+        sw      a4, 0(t1)
+        addi    t1, t1, 4
+        addi    t2, t2, -1
+        blt     t2, t3, 3f
+
 2:      sd      t0, 0(t1)
         addi    t1, t1, 8
         addi    t2, t2, -2
@@ -342,6 +365,23 @@ SYM_FUNC_START(canvas_row_blit)
         li      t1, 2
         blt     a2, t1, 2f
 
+        # Both ends have to be eight byte aligned for the pair path, and a
+        # pixel pointer is only aligned to four, so one pixel goes first to
+        # bring the destination up. A source that is still out of step after
+        # that cannot be brought into it, and goes a pixel at a time.
+        andi    t2, a0, 7
+        beqz    t2, 4f
+        lw      t2, 0(a1)
+        or      t2, t2, a3
+        sw      t2, 0(a0)
+        addi    a1, a1, 4
+        addi    a0, a0, 4
+        addi    a2, a2, -1
+        blt     a2, t1, 2f
+
+4:      andi    t2, a1, 7
+        bnez    t2, 5f
+
 1:      ld      t2, 0(a1)
         or      t2, t2, t0
         sd      t2, 0(a0)
@@ -355,6 +395,15 @@ SYM_FUNC_START(canvas_row_blit)
         or      t2, t2, a3
         sw      t2, 0(a0)
 3:      ret
+
+5:      lw      t2, 0(a1)
+        or      t2, t2, a3
+        sw      t2, 0(a0)
+        addi    a1, a1, 4
+        addi    a0, a0, 4
+        addi    a2, a2, -1
+        bnez    a2, 5b
+        ret
 SYM_FUNC_END(canvas_row_blit)
 
 #> arch other

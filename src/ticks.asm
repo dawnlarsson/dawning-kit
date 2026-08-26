@@ -15,7 +15,9 @@
 #
 #       Declared in core.c, beside the code that calls it.
 #
+#ifndef MOONWATER_FREESTANDING_ASM
 #include <linux/linkage.h>
+#endif
 
         .text
 

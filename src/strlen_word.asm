@@ -24,8 +24,10 @@
 #       forced to 0xff afterwards so they cannot be mistaken for the
 #       terminator.
 #
+#ifndef MOONWATER_FREESTANDING_ASM
 #include <linux/export.h>
 #include <linux/linkage.h>
+#endif
 
         .text
 

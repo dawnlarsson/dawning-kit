@@ -202,7 +202,7 @@ SYM_FUNC_START(canvas_glyph)
 
 1:      lbu     a6, 0(a2)
         add     a2, a2, a3
-        beqz    a6, 2f                  // a blank row, and most rows are
+        beqz    a6, 2f                  # a blank row, and most rows are
 
         andi    t0, a6, 0x80
         beqz    t0, 3f

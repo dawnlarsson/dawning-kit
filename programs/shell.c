@@ -50,17 +50,321 @@ fn shell_signal(b32 number, positive disposition)
 #define shell_ignore(n) shell_signal(n, SIGNAL_IGNORE)
 #define shell_default(n) shell_signal(n, SIGNAL_DEFAULT)
 
-fn shell_thread_instance(string_address command, string_address arguments)
-{
-        string_address arguments_list[] = {command, arguments, null};
+/*
+        A line becomes argv here and nowhere else, so the builtin path and the
+        spawn path see the same words. Expansion can make a line longer than it
+        was read at, so the words get storage of their own instead of being cut
+        out of shell_buffer in place.
+*/
+#define MAX_TOKENS 64
+#define TOKEN_STORAGE 8192
 
+p8 token_storage[TOKEN_STORAGE];
+positive token_used;
+bool token_overflow;
+
+string_address shell_argv[MAX_TOKENS + 1];
+positive shell_argc;
+
+// Which words arrived as a bare > or >>. A quoted ">" is a file name and must
+// not be mistaken for the operator, and by then the two look identical.
+bool shell_operator[MAX_TOKENS + 1];
+
+p8 argument_line[TOKEN_STORAGE];
+
+fn token_push(p8 value)
+{
+        if (token_used + 1 >= TOKEN_STORAGE)
+        {
+                token_overflow = true;
+                return;
+        }
+
+        token_storage[token_used++] = value;
+}
+
+fn token_push_string(string_address text)
+{
+        while (text && string_get(text))
+                token_push(string_get(text++));
+}
+
+bool shell_name_character(p8 value)
+{
+        return (value >= 'a' && value <= 'z') ||
+               (value >= 'A' && value <= 'Z') ||
+               (value >= '0' && value <= '9') ||
+               value == '_';
+}
+
+bool shell_separator(p8 value)
+{
+        return value == ' ' || value == '\t';
+}
+
+// Steps over a $NAME or ${NAME} and appends what it stands for. A name that
+// was never exported expands to nothing, the way every other shell does it.
+string_address shell_expand(string_address step)
+{
+        p8 name[128];
+        positive length = 0;
+
+        step++;
+
+        bool braced = string_is(step, '{');
+
+        if (braced)
+                step++;
+
+        while (shell_name_character(string_get(step)) && length < sizeof(name) - 1)
+                name[length++] = string_get(step++);
+
+        name[length] = end;
+
+        if (braced && string_is(step, '}'))
+                step++;
+
+        if (!length)
+        {
+                token_push('$');
+                return step;
+        }
+
+        token_push_string(env_get(name));
+
+        return step;
+}
+
+string_address shell_single_quoted(string_address step)
+{
+        step++;
+
+        while (string_get(step) && string_not(step, '\''))
+                token_push(string_get(step++));
+
+        if (string_get(step))
+                step++;
+
+        return step;
+}
+
+string_address shell_double_quoted(string_address step)
+{
+        step++;
+
+        while (string_get(step) && string_not(step, '"'))
+        {
+                p8 next = string_get(step + 1);
+
+                if (string_is(step, '\\') && (next == '"' || next == '\\' || next == '$'))
+                {
+                        step++;
+                        token_push(string_get(step++));
+                        continue;
+                }
+
+                if (string_is(step, '$'))
+                {
+                        step = shell_expand(step);
+                        continue;
+                }
+
+                token_push(string_get(step++));
+        }
+
+        if (string_get(step))
+                step++;
+
+        return step;
+}
+
+// Returns the number of words, or negative when the line did not fit.
+b32 shell_tokenize(string_address line)
+{
+        string_address step = line;
+        b32 count = 0;
+
+        token_used = 0;
+        token_overflow = false;
+
+        while (string_get(step))
+        {
+                while (shell_separator(string_get(step)))
+                        step++;
+
+                if (string_is(step, end))
+                        break;
+
+                if (count >= MAX_TOKENS)
+                        return -1;
+
+                string_address token = token_storage + token_used;
+                bool is_operator = false;
+
+                if (string_is(step, '>'))
+                {
+                        is_operator = true;
+                        token_push(string_get(step++));
+
+                        if (string_is(step, '>'))
+                                token_push(string_get(step++));
+                }
+                else
+                {
+                        while (string_get(step) && !shell_separator(string_get(step)) &&
+                               string_not(step, '>'))
+                        {
+                                if (string_is(step, '\\'))
+                                {
+                                        step++;
+
+                                        if (string_get(step))
+                                                token_push(string_get(step++));
+
+                                        continue;
+                                }
+
+                                if (string_is(step, '\''))
+                                {
+                                        step = shell_single_quoted(step);
+                                        continue;
+                                }
+
+                                if (string_is(step, '"'))
+                                {
+                                        step = shell_double_quoted(step);
+                                        continue;
+                                }
+
+                                if (string_is(step, '$'))
+                                {
+                                        step = shell_expand(step);
+                                        continue;
+                                }
+
+                                token_push(string_get(step++));
+                        }
+                }
+
+                token_push(end);
+
+                if (token_overflow)
+                        return -1;
+
+                shell_operator[count] = is_operator;
+                shell_argv[count] = token;
+                count++;
+        }
+
+        shell_argv[count] = null;
+        shell_operator[count] = false;
+
+        return count;
+}
+
+// The builtins still take the rest of the line as a single string, so the
+// words are handed back joined. Quoting survives as far as argv, no further.
+string_address shell_arguments()
+{
+        positive used = 0;
+        positive index = 1;
+
+        if (shell_argc < 2)
+                return null;
+
+        while (index < shell_argc)
+        {
+                positive length = string_length(shell_argv[index]);
+
+                if (used + length + 2 > TOKEN_STORAGE)
+                        break;
+
+                if (used)
+                        argument_line[used++] = ' ';
+
+                memory_copy(argument_line + used, shell_argv[index], length);
+                used += length;
+                index++;
+        }
+
+        argument_line[used] = end;
+
+        return argument_line;
+}
+
+// Takes "> file" and ">> file" back out of argv and opens the target.
+bool shell_redirect()
+{
+        positive index = 0;
+
+        while (index < shell_argc)
+        {
+                if (!shell_operator[index])
+                {
+                        index++;
+                        continue;
+                }
+
+                bool append = string_is(shell_argv[index] + 1, '>');
+
+                if (index + 1 >= shell_argc || shell_operator[index + 1])
+                {
+                        string_format(shell_output, "Missing file name for redirection\n");
+                        return false;
+                }
+
+                string_address name = shell_argv[index + 1];
+
+                bipolar file_descriptor = system_call_4(syscall(openat), AT_FDCWD, (positive)name,
+                                                        append ? (FILE_READ | FILE_APPEND | FILE_CREATE)
+                                                               : (FILE_WRITE | FILE_CREATE),
+                                                        0666);
+
+                if (file_descriptor < 0)
+                {
+                        string_format(shell_output, "Cannot open file for redirection: %s\n", name);
+                        return false;
+                }
+
+                // Last one on the line wins, so an earlier target is closed
+                // rather than leaked.
+                if (shell_output_file)
+                        system_call_1(syscall(close), shell_output_file);
+
+                shell_output = redirect_writer;
+                shell_output_file = file_descriptor;
+
+                positive move = index;
+
+                while (move + 2 <= shell_argc)
+                {
+                        shell_argv[move] = shell_argv[move + 2];
+                        shell_operator[move] = shell_operator[move + 2];
+                        move++;
+                }
+
+                shell_argc -= 2;
+                shell_argv[shell_argc] = null;
+        }
+
+        return true;
+}
+
+fn shell_thread_instance()
+{
         // Ignored signals cross execve, and this shell ignores interrupt so
         // that control-C does not take it down with the command. Handing that
         // deafness on would leave the command uninterruptible.
         shell_default(SIGNAL_INTERRUPT);
         shell_default(SIGNAL_QUIT);
 
-        bipolar exec_result = system_call_3(syscall(execve), (positive)command, (positive)arguments_list, (positive)shell_envp);
+        // The child owns its own descriptors, so a redirection lands here and
+        // never touches the shell's own output.
+        if (shell_output_file)
+                system_call_3(syscall(dup3), shell_output_file, stdout, 0);
+
+        bipolar exec_result = system_call_3(syscall(execve), (positive)shell_argv[0],
+                                            (positive)shell_argv, (positive)shell_envp);
 
         string_format(shell_output, "failed with error: %b\n", exec_result);
         log_flush();
@@ -101,34 +405,32 @@ positive shell_flatten_env(p8 address_to block, positive limit, positive address
 }
 
 // Returns the child pid, or a negative error if the device could not take it.
-bipolar shell_spawn_via_device(string_address command, string_address arguments)
+bipolar shell_spawn_via_device()
 {
         struct spawn request;
         positive used = 0;
-        positive argc = 0;
+        positive index = 0;
         positive envc = 0;
 
-        positive length = string_length(command) + 1;
-        memory_copy(spawn_argv_block, command, length);
-        used = length;
-        argc = 1;
-
-        if (arguments)
+        while (index < shell_argc)
         {
-                length = string_length(arguments) + 1;
+                positive length = string_length(shell_argv[index]) + 1;
 
-                if (used + length <= sizeof(spawn_argv_block))
-                {
-                        memory_copy(spawn_argv_block + used, arguments, length);
-                        used += length;
-                        argc++;
-                }
+                // A word that does not fit is not a word that can be dropped:
+                // refuse, and the caller forks instead, where there is no
+                // single block to run out of.
+                if (used + length > sizeof(spawn_argv_block))
+                        return -1;
+
+                memory_copy(spawn_argv_block + used, shell_argv[index], length);
+                used += length;
+                index++;
         }
 
-        request.path = (unsigned long)command;
+        request.path = (unsigned long)shell_argv[0];
         request.argv = (unsigned long)spawn_argv_block;
         request.argv_bytes = used;
-        request.argv_count = argc;
+        request.argv_count = shell_argc;
         request.envp = (unsigned long)spawn_envp_block;
         request.envp_bytes = shell_flatten_env(spawn_envp_block, sizeof(spawn_envp_block), address_of envc);
         request.envp_count = envc;
@@ -137,14 +439,36 @@ bipolar shell_spawn_via_device(string_address command, string_address arguments)
                              (positive)address_of request);
 }
 
-fn shell_execute_command(string_address command, string_address arguments)
+fn shell_execute_command()
 {
         bipolar child = -1;
+        bipolar saved_output = -1;
 
         log_flush();
 
-        if (spawn_device >= 0)
-                child = shell_spawn_via_device(command, arguments);
+        /*
+                The device spawn copies the caller's descriptor table, so a
+                redirection has to be in place on this side before the ioctl
+                and gone again the moment it returns. The copy happens inside
+                the call, which is why putting stdout back straight after is
+                enough.
+        */
+        if (shell_output_file && spawn_device >= 0)
+        {
+                saved_output = system_call_1(syscall(dup), stdout);
+
+                if (saved_output >= 0)
+                        system_call_3(syscall(dup3), shell_output_file, stdout, 0);
+        }
+
+        if (spawn_device >= 0 && (!shell_output_file || saved_output >= 0))
+                child = shell_spawn_via_device();
+
+        if (saved_output >= 0)
+        {
+                system_call_3(syscall(dup3), saved_output, stdout, 0);
+                system_call_1(syscall(close), saved_output);
+        }
 
         if (child < 0)
         {
@@ -158,7 +482,7 @@ fn shell_execute_command(string_address command, string_address arguments)
                 child = system_call_2(syscall(clone), SIGCHLD, 0);
 
                 if (child == 0)
-                        shell_thread_instance(command, arguments);
+                        shell_thread_instance();
         }
 
         if (child > 0)
@@ -170,7 +494,7 @@ fn shell_execute_command(string_address command, string_address arguments)
                 // path that cannot be run shows up as the child exiting 127
                 // rather than as an error from the spawn itself.
                 if ((status >> 8 & 0xff) == 127)
-                        string_format(shell_output, "Could not run: '%s'\n", command);
+                        string_format(shell_output, "Could not run: '%s'\n", shell_argv[0]);
         }
         else
                 string_format(shell_output, "failed with error: %b\n", child);
@@ -184,7 +508,7 @@ bool shell_builtin(string_address arguments)
 
         while (command->name)
         {
-                if (string_compare(command->name, shell_buffer))
+                if (string_compare(command->name, shell_argv[0]))
                 {
                         command++;
                         continue;
@@ -201,37 +525,29 @@ fn process()
 {
         string_set_if(shell_buffer[input_length], '\n', end);
 
-        string_address redirect = string_find(shell_buffer, " >>");
+        b32 count = shell_tokenize(shell_buffer);
 
-        if (redirect)
-        {
-                memory_fill(redirect, end, 3);
-                redirect += 3;
+        if (count < 0)
+                return string_format(shell_output, "Command line too long\n");
 
-                while (string_is(redirect, ' '))
-                        redirect++;
+        shell_argc = count;
 
-                if string_is (redirect, end)
-                        return string_format(shell_output, "Missing file name for redirection\n");
-
-                bipolar file_descriptor = system_call_4(syscall(openat), AT_FDCWD, (positive)redirect, FILE_READ | FILE_APPEND | FILE_CREATE, 0666);
-
-                if (file_descriptor < 0)
-                        return string_format(shell_output, "Cannot open file for redirection: %s\n", redirect);
-
-                shell_output = redirect_writer;
-                shell_output_file = file_descriptor;
-        }
-
-        string_address step = string_cut(shell_buffer, ' ');
-
-        if (string_is(shell_buffer, '.') || string_is(shell_buffer, '/'))
-                return shell_execute_command(shell_buffer, step);
-
-        if (shell_builtin(step))
+        if (!shell_argc)
                 return;
 
-        string_format(shell_output, "Command not found: '%s'\n", shell_buffer);
+        if (!shell_redirect())
+                return;
+
+        if (!shell_argc)
+                return;
+
+        if (string_is(shell_argv[0], '.') || string_is(shell_argv[0], '/'))
+                return shell_execute_command();
+
+        if (shell_builtin(shell_arguments()))
+                return;
+
+        string_format(shell_output, "Command not found: '%s'\n", shell_argv[0]);
 }
 
 b32 main()
@@ -250,8 +566,10 @@ b32 main()
 
                 log_direct(str(TERM_MAIN_BUFFER TERM_RESET TERM_SHOW_CURSOR PROMPT));
 
+                // One short of the buffer, so a line long enough to fill it
+                // still has the terminator every walk over it stops at.
                 bipolar got = system_call_3(syscall(read), 0, (positive)shell_buffer,
-                                            MAX_INPUT);
+                                            MAX_INPUT - 1);
 
                 /*
                         Nothing, or an error. input_length is unsigned and used

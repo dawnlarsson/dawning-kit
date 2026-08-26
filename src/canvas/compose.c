@@ -377,7 +377,10 @@ static unsigned int rect_subtract(struct drm_rect *out, const struct drm_rect *a
 {
         unsigned int n = 0;
 
-        if (b->x1 >= a->x2 || b->x2 <= a->x1 || b->y1 >= a->y2 || b->y2 <= a->y1)
+        // An empty cut takes nothing away, and going the long way round for it
+        // returns the whole of a as four pieces that then cost four slots.
+        if (b->x2 <= b->x1 || b->y2 <= b->y1 ||
+            b->x1 >= a->x2 || b->x2 <= a->x1 || b->y1 >= a->y2 || b->y2 <= a->y1)
         {
                 out[0] = *a;
                 return 1;
@@ -430,16 +433,28 @@ static void desktop_fill(const struct target *t, int x1, int y1, int x2, int y2)
 
                 for (i = 0; i < count; i++)
                 {
-                        // Four is the most one cut can make of one piece, and
-                        // past the array the pieces cost more than the paint.
-                        if (kept + 4 > DESKTOP_PIECES)
+                        struct drm_rect part[4];
+                        unsigned int n = rect_subtract(part, &piece[i], &cut);
+
+                        /*
+                                Past the array the pieces cost more than the
+                                paint, so a split that would not leave room for
+                                the pieces still to come is dropped and that
+                                piece kept whole. What it counts is what the
+                                cut actually made, not the four a cut can make
+                                at worst: on the worst case a window several
+                                windows down was never cut out at all, and the
+                                desktop under it is a flash of the background
+                                through it every compose.
+                        */
+                        if (kept + n + (count - i - 1) > DESKTOP_PIECES)
                         {
-                                kept = count;
-                                memcpy(spare, piece, count * sizeof(*piece));
-                                break;
+                                spare[kept++] = piece[i];
+                                continue;
                         }
 
-                        kept += rect_subtract(&spare[kept], &piece[i], &cut);
+                        memcpy(&spare[kept], part, n * sizeof(*part));
+                        kept += n;
                 }
 
                 memcpy(piece, spare, kept * sizeof(*piece));

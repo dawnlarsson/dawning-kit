@@ -11,8 +11,10 @@
 #       did not give us. That is what makes the unbounded scan safe; where a
 #       length is given the reads are bounded anyway.
 #
+#ifndef MOONWATER_FREESTANDING_ASM
 #include <linux/export.h>
 #include <linux/linkage.h>
+#endif
 
         .text
 
