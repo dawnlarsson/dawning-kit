@@ -1,0 +1,67 @@
+#!/bin/sh
+#
+#       Runs kit/verify.c on every architecture.
+#
+#       The assembly in library.c is written three times and only one of them
+#       can be run on the machine it was written on. qemu runs the other two,
+#       so a routine that is only right on x86_64 fails here rather than on
+#       somebody's board.
+#
+#       Freestanding and static, the same shape as a spark program, because
+#       library.c is what is being tested and it must not be linked against a
+#       libc that would supply the very functions in question.
+#
+set -e
+
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT INT TERM
+
+failures=0
+
+check() {
+        name=$1
+        compiler=$2
+        runner=$3
+
+        if ! command -v "$compiler" >/dev/null 2>&1; then
+                echo "$name: no $compiler, skipped"
+                return 0
+        fi
+
+        if [ -n "$runner" ] && ! command -v "$runner" >/dev/null 2>&1; then
+                echo "$name: no $runner, skipped"
+                return 0
+        fi
+
+        # The same link a program gets. Without the script the placement is
+        # the toolchain's default, which riscv64 does not survive -- and a test
+        # that does not build what ships is testing something else.
+        if ! "$compiler" -O2 -static -nostdlib -nostartfiles -fno-stack-protector \
+                -fno-builtin -T kit/spark.ld -Wl,-e,_start -Wl,--build-id=none \
+                -Wl,--no-warn-rwx-segments \
+                -o "$work/$name" kit/verify.c 2>"$work/$name.err"; then
+                echo "$name: did not build"
+                sed 's/^/    /' "$work/$name.err" | head -20
+                failures=$((failures + 1))
+                return 0
+        fi
+
+        echo "$name:"
+
+        if $runner "$work/$name"; then
+                return 0
+        fi
+
+        failures=$((failures + 1))
+}
+
+check x86_64 gcc ""
+check arm64 aarch64-linux-gnu-gcc qemu-aarch64
+check riscv64 riscv64-linux-gnu-gcc qemu-riscv64
+
+if [ "$failures" != 0 ]; then
+        echo "$failures architecture(s) failed"
+        exit 1
+fi
+
+echo "every architecture agrees with the C it replaced"
