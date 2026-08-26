@@ -51,6 +51,10 @@ struct pane
         int width, height;
         unsigned int region;
         unsigned int display;
+        unsigned int style;
+        unsigned int state;
+        int edge;
+        unsigned int sequence;
 
         struct window *shared;
         u32 *pixels;
@@ -97,6 +101,19 @@ static struct desktop
         // The pane being dragged, and where inside it the cursor took hold.
         struct pane *dragging;
         int grab_x, grab_y;
+        struct pane *focused;
+
+        /*
+                A program changes a window by storing into its shared page and
+                bumping a sequence, which costs no call. Something has to look,
+                so this ticks while there is anything to look at and stops
+                itself once nothing has changed for a while. awake is what the
+                programs read to know whether it is still looking.
+        */
+        struct hrtimer frame;
+        atomic_t frame_pending;
+        unsigned int idle_frames;
+        _Bool awake;
 
         // The bounding box of every output. Read by the input handler in
         // atomic context, where it cannot walk the list.
@@ -123,9 +140,11 @@ static struct desktop
 static DEFINE_MUTEX(canvas_list_lock);
 static LIST_HEAD(canvas_list);
 
-static void pointer_start(void);
-static void pointer_stop(void);
+static void canvas_thread_start(void);
+static void canvas_thread_stop(void);
+static void canvas_thread_wake(void);
 static void desktop_redraw(void);
+static void desktop_watch(void);
 
 // Nanoseconds from an event arriving to the cursor being on screen.
 static u64 pointer_latency_total;
@@ -144,6 +163,18 @@ static _Bool rects_overlap(int ax, int ay, int aw, int ah,
                            int bx, int by, int bw, int bh)
 {
         return ax < bx + bw && bx < ax + aw && ay < by + bh && by < ay + ah;
+}
+
+// The border and titlebar a framed window wears, and nothing when it does not.
+static void pane_frame(struct pane *pane, int *x, int *y, int *w, int *h)
+{
+        int title = pane->style & WINDOW_FRAME ? WINDOW_TITLE : 0;
+        int border = pane->style & WINDOW_FRAME ? 2 : 0;
+
+        *x = pane->x - border;
+        *y = pane->y - border;
+        *w = pane->width + border * 2;
+        *h = pane->height + title + border * 3;
 }
 
 static _Bool pane_titlebar_holds(struct pane *pane, int x, int y)

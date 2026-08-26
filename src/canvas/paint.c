@@ -10,7 +10,8 @@
 // Colours are written as plain xrgb8888 and converted once per output.
 #define COLOUR_DESKTOP 0x1b2733
 #define COLOUR_FRAME 0x2f3f52
-#define COLOUR_TITLE 0x4c6785
+#define COLOUR_TITLE 0x2b3a4c
+#define COLOUR_TITLE_FOCUSED 0x4c6785
 #define COLOUR_BODY 0x101820
 #define COLOUR_CURSOR 0xffffff
 #define COLOUR_CURSOR_EDGE 0x000000
@@ -125,47 +126,43 @@ static u32 canvas_colour(u32 xrgb, u32 format)
 }
 
 /*
-        The same clipping as canvas_fill_rect, from a source rather than a
-        colour. The source is whatever a program wrote into its window, so it
-        is read once per pixel and never trusted for anything but its value.
+        How far a row of a rounded rectangle is inset from its edge. Zero
+        everywhere except within radius of the top and bottom, where it follows
+        the circle those corners are quarters of.
 */
-static void canvas_blit_rect(u32 *pixels, unsigned int pitch_pixels,
-                             unsigned int target_w, unsigned int target_h,
-                             int x, int y, int width, int height,
-                             const u32 *source, unsigned int source_pitch, u32 format)
+static int round_inset(int row, int height, int radius)
 {
-        u32 opaque = format == DRM_FORMAT_ARGB8888 ? 0xff000000 : 0;
-        int row, column, skip_x = 0, skip_y = 0;
+        int dy;
 
-        if (x < 0)
-        {
-                skip_x = -x;
-                width += x;
-                x = 0;
-        }
+        if (radius <= 0)
+                return 0;
 
-        if (y < 0)
-        {
-                skip_y = -y;
-                height += y;
-                y = 0;
-        }
+        if (row < radius)
+                dy = radius - 1 - row;
+        else if (row >= height - radius)
+                dy = radius - (height - row);
+        else
+                return 0;
 
-        if (x + width > (int)target_w)
-                width = (int)target_w - x;
+        return radius - (int)int_sqrt((unsigned long)(radius * radius - dy * dy));
+}
 
-        if (y + height > (int)target_h)
-                height = (int)target_h - y;
+static void canvas_row_fill(u32 *pixels, unsigned int pitch_pixels,
+                            int x1, int x2, int y, u32 colour)
+{
+        u32 *line = pixels + (size_t)y * pitch_pixels;
+        int x;
 
-        if (width <= 0 || height <= 0)
-                return;
+        for (x = x1; x < x2; x++)
+                line[x] = colour;
+}
 
-        for (row = 0; row < height; row++)
-        {
-                u32 *line = pixels + (size_t)(y + row) * pitch_pixels + x;
-                const u32 *from = source + (size_t)(skip_y + row) * source_pitch + skip_x;
+static void canvas_row_blit(u32 *pixels, unsigned int pitch_pixels,
+                            int x1, int x2, int y, const u32 *source, u32 opaque)
+{
+        u32 *line = pixels + (size_t)y * pitch_pixels;
+        int x;
 
-                for (column = 0; column < width; column++)
-                        line[column] = from[column] | opaque;
-        }
+        for (x = x1; x < x2; x++)
+                line[x] = source[x - x1] | opaque;
 }

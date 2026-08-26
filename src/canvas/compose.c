@@ -6,10 +6,14 @@
         that output sits. Back to front, which is the list order, which
         pane_by_z keeps in z order.
 
-        Everything here takes a clip in output coordinates. Repainting damage
-        rather than a whole screen is the reason: a pane that merely overlaps
-        the damage would otherwise repaint all of itself, over whatever was
-        drawn above it outside that rectangle.
+        Everything takes a clip in output coordinates. Repainting damage rather
+        than a whole screen is the reason: a pane that merely overlaps the
+        damage would otherwise repaint all of itself, over whatever was drawn
+        above it outside that rectangle.
+
+        A pane is drawn as bands of one rounded rectangle -- the frame, the
+        titlebar, the contents -- so every band's corners follow the same
+        curve, and a band that is not at a corner is a plain run of pixels.
 */
 
 static _Bool output_shows_cursor(struct output *output, int x, int y)
@@ -19,76 +23,108 @@ static _Bool output_shows_cursor(struct output *output, int x, int y)
                              (int)output->width, (int)output->height);
 }
 
-static void pane_frame(struct pane *pane, int *x, int *y, int *w, int *h)
+struct shape
 {
-        *x = pane->x - 2;
-        *y = pane->y - 2;
-        *w = pane->width + 4;
-        *h = pane->height + WINDOW_TITLE + 6;
+        int x, y, w, h;
+        int radius;
+};
+
+/*
+        A band of the shape: the corners follow the shape's curve, the sides
+        are the band's own. The frame is a band the full width of the shape;
+        the titlebar and the contents are inset by the border, and only meet
+        the curve where they reach a corner.
+*/
+static void shape_fill(u32 *pixels, unsigned int pitch_pixels, struct output *output,
+                       const struct drm_rect *clip, const struct shape *shape,
+                       int band_x, int band_y, int band_w, int band_h, u32 colour)
+{
+        int y;
+
+        for (y = max(band_y, clip->y1); y < min(band_y + band_h, clip->y2); y++)
+        {
+                int inset = round_inset(y - shape->y, shape->h, shape->radius);
+                int x1 = max(max(max(shape->x + inset, band_x), clip->x1), 0);
+                int x2 = min(min(min(shape->x + shape->w - inset, band_x + band_w),
+                                 clip->x2),
+                             (int)output->width);
+
+                if (y < 0 || y >= (int)output->height || x2 <= x1)
+                        continue;
+
+                canvas_row_fill(pixels, pitch_pixels, x1, x2, y, colour);
+        }
 }
 
-static void fill_within(u32 *pixels, unsigned int pitch_pixels, struct output *output,
-                        const struct drm_rect *clip,
-                        int x, int y, int w, int h, u32 colour)
+static void shape_blit(u32 *pixels, unsigned int pitch_pixels, struct output *output,
+                       const struct drm_rect *clip, const struct shape *shape,
+                       int band_x, int band_y, int band_w, int band_h,
+                       const u32 *source, unsigned int source_pitch, u32 format)
 {
-        int x1 = max(x, clip->x1);
-        int y1 = max(y, clip->y1);
-        int x2 = min(x + w, clip->x2);
-        int y2 = min(y + h, clip->y2);
+        u32 opaque = format == DRM_FORMAT_ARGB8888 ? 0xff000000 : 0;
+        int y;
 
-        if (x2 <= x1 || y2 <= y1)
-                return;
+        for (y = max(band_y, clip->y1); y < min(band_y + band_h, clip->y2); y++)
+        {
+                int inset = round_inset(y - shape->y, shape->h, shape->radius);
+                int x1 = max(max(max(shape->x + inset, band_x), clip->x1), 0);
+                int x2 = min(min(min(shape->x + shape->w - inset, band_x + band_w),
+                                 clip->x2),
+                             (int)output->width);
 
-        canvas_fill_rect(pixels, pitch_pixels, output->width, output->height,
-                         x1, y1, x2 - x1, y2 - y1, colour);
-}
+                if (y < 0 || y >= (int)output->height || x2 <= x1)
+                        continue;
 
-static void blit_within(u32 *pixels, unsigned int pitch_pixels, struct output *output,
-                        const struct drm_rect *clip,
-                        int x, int y, int w, int h,
-                        const u32 *source, unsigned int source_pitch, u32 format)
-{
-        int x1 = max(x, clip->x1);
-        int y1 = max(y, clip->y1);
-        int x2 = min(x + w, clip->x2);
-        int y2 = min(y + h, clip->y2);
-
-        if (x2 <= x1 || y2 <= y1)
-                return;
-
-        // The source moves with the corner the clip cut off.
-        source += (size_t)(y1 - y) * source_pitch + (x1 - x);
-
-        canvas_blit_rect(pixels, pitch_pixels, output->width, output->height,
-                         x1, y1, x2 - x1, y2 - y1, source, source_pitch, format);
+                canvas_row_blit(pixels, pitch_pixels, x1, x2, y,
+                                source + (size_t)(y - band_y) * source_pitch + (x1 - band_x),
+                                opaque);
+        }
 }
 
 static void compose_pane(struct pane *pane, struct output *output,
                          u32 *pixels, unsigned int pitch_pixels,
                          const struct drm_rect *clip)
 {
+        _Bool framed = pane->style & WINDOW_FRAME;
+        int title = framed ? WINDOW_TITLE : 0;
         int x = pane->x - output->x;
         int y = pane->y - output->y;
+        struct shape shape;
         int fx, fy, fw, fh;
+
+        if (pane->style & WINDOW_MINIMIZED)
+                return;
 
         pane_frame(pane, &fx, &fy, &fw, &fh);
 
-        fill_within(pixels, pitch_pixels, output, clip,
-                    fx - output->x, fy - output->y, fw, fh,
-                    canvas_colour(COLOUR_FRAME, output->format));
+        shape.x = fx - output->x;
+        shape.y = fy - output->y;
+        shape.w = fw;
+        shape.h = fh;
+        shape.radius = min(pane->edge, min(shape.w, shape.h) / 2);
 
-        fill_within(pixels, pitch_pixels, output, clip,
-                    x, y, pane->width, WINDOW_TITLE,
-                    canvas_colour(COLOUR_TITLE, output->format));
+        if (framed)
+        {
+                u32 frame = canvas_colour(COLOUR_FRAME, output->format);
+                u32 bar = canvas_colour(pane->state & WINDOW_FOCUSED
+                                            ? COLOUR_TITLE_FOCUSED
+                                            : COLOUR_TITLE,
+                                        output->format);
+
+                shape_fill(pixels, pitch_pixels, output, clip, &shape,
+                           shape.x, shape.y, shape.w, shape.h, frame);
+                shape_fill(pixels, pitch_pixels, output, clip, &shape,
+                           x, y, pane->width, title, bar);
+        }
 
         if (pane->pixels)
-                blit_within(pixels, pitch_pixels, output, clip,
-                            x, y + WINDOW_TITLE, pane->width, pane->height,
-                            pane->pixels, pane->pitch, output->format);
+                shape_blit(pixels, pitch_pixels, output, clip, &shape,
+                           x, y + title, pane->width, pane->height,
+                           pane->pixels, pane->pitch, output->format);
         else
-                fill_within(pixels, pitch_pixels, output, clip,
-                            x, y + WINDOW_TITLE, pane->width, pane->height,
-                            canvas_colour(COLOUR_BODY, output->format));
+                shape_fill(pixels, pitch_pixels, output, clip, &shape,
+                           x, y + title, pane->width, pane->height,
+                           canvas_colour(COLOUR_BODY, output->format));
 }
 
 static void compose_clip(struct output *output, u32 *pixels, unsigned int pitch_pixels,

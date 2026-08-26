@@ -112,6 +112,7 @@ static void desktop_seed_windows(void)
                         pane->y = 40 + row * 240;
                         pane->width = 240;
                         pane->height = 170;
+                        pane->style = WINDOW_FRAME;
                         pane->z = (int)(row * columns + column);
 
                         list_add_tail(&pane->link, &desktop.windows);

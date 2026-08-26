@@ -13,7 +13,7 @@
 /*
         The outputs come off the desktop before the card they belong to is
         released, or output->canvas dangles for anything still composing.
-        pointer_stop joins a thread that takes desktop.lock, so it runs under
+        canvas_thread_stop joins a thread that takes desktop.lock, so it runs under
         canvas_list_lock and never under desktop.lock.
 */
 static void client_unregister(struct drm_client_dev *client)
@@ -23,7 +23,7 @@ static void client_unregister(struct drm_client_dev *client)
         mutex_lock(&canvas_list_lock);
         list_del(&canvas->link);
         if (list_empty(&canvas_list))
-                pointer_stop();
+                canvas_thread_stop();
         mutex_unlock(&canvas_list_lock);
 
         mutex_lock(&desktop.lock);
@@ -125,7 +125,7 @@ static int canvas_take_over(struct drm_device *dev)
         first = list_empty(&canvas_list);
         list_add_tail(&canvas->link, &canvas_list);
         if (first)
-                pointer_start();
+                canvas_thread_start();
         mutex_unlock(&canvas_list_lock);
 
         drm_client_register(&canvas->client);

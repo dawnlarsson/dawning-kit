@@ -1,5 +1,5 @@
 /*
-        Moonwater windows
+        Moonwater window
 
         The whole interface a program needs to put something on screen. Include
         this one file and nothing else: it carries its own syscalls, so it
@@ -33,6 +33,19 @@
         compositor's placement and it writes x,y to say where that landed. It
         is a number and not a flag because there is more than one answer --
         centred is the one that exists so far.
+
+        style is what the window looks like: whether it wears a frame, whether
+        it covers its display, whether it is put away. A new window starts
+        framed.
+
+        edge is the corner radius, in pixels. Zero is square.
+
+        awake says whether the compositor is currently watching the shared
+        pages. window_commit only makes a call when it is not, so a program
+        drawing every frame makes none at all. The first commit after opening a
+        window is always a call, so whatever the compositor decides -- where a
+        region put the window, how large its display is -- is there to read as
+        soon as it returns.
 */
 
 #ifndef WINDOW_INCLUDED
@@ -51,29 +64,39 @@
 #define WINDOW_FREE 0
 #define WINDOW_CENTRED 1
 
+// style
+#define WINDOW_FRAME 1u
+#define WINDOW_FULLSCREEN 2u
+#define WINDOW_MINIMIZED 4u
+
+// state
+#define WINDOW_FOCUSED 1u
+
 struct window
 {
         // The program writes these, and the compositor writes x, y and z back
         // when it is the one that moved them.
-        int x, y;
-        int z;                 // higher is in front
+        int x, y, z; // higher is in front
         unsigned int width, height;
-        unsigned int region;   // WINDOW_FREE, WINDOW_CENTRED
-        unsigned int display;  // which output a region is measured against
+        unsigned int region;  // WINDOW_FREE, WINDOW_CENTRED
+        unsigned int display; // which output a region is measured against
         unsigned int style;
         unsigned int edge;     // corner radius
         unsigned int sequence; // bump after drawing
 
         // The compositor writes these.
-        unsigned int state;
-        unsigned int pitch;      // pixels per row of the contents
-        unsigned int max_width;  // what the mapping actually holds
+        unsigned int state;         // WINDOW_FOCUSED
+        unsigned int pitch;         // pixels per row of the contents
+        unsigned int max_width;     // what the mapping actually holds
         unsigned int max_height;
+        unsigned int display_width; // the output this window is on
+        unsigned int display_height;
+        unsigned int awake;         // whether the compositor is watching
 
         // window_open's own bookkeeping. The compositor never reads it.
         unsigned int handle;
 
-        unsigned int reserved[3];
+        unsigned int reserved[4];
 };
 
 // _IOW('s', 4, struct window_request)
@@ -203,12 +226,17 @@ static struct window *window_open(unsigned int width, unsigned int height)
         return window;
 }
 
-// Everything except the first frame after the compositor has gone to sleep is
-// a store to the shared page; this is what wakes it.
+/*
+        Bumping sequence is what says a window changed. While the compositor is
+        awake it is already reading that, so there is nothing else to do; the
+        call below only happens on the first change after it went to sleep.
+*/
 static void window_commit(struct window *window)
 {
         window->sequence++;
-        window_call(WINDOW_SYS_IOCTL, window->handle, WINDOW_IOCTL_COMMIT, 0, 0, 0, 0);
+
+        if (!window->awake)
+                window_call(WINDOW_SYS_IOCTL, window->handle, WINDOW_IOCTL_COMMIT, 0, 0, 0, 0);
 }
 
 static void window_close(struct window *window)

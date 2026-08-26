@@ -1,10 +1,10 @@
 #include "../src/library.c"
 #include "../src/window.c"
 
-// Two colours in no compositor palette, so a screenshot can tell the windows
-// apart and say which one is in front.
+// Colours in no compositor palette, so a screenshot can tell them apart.
 #define INK_BACK 0x00ff9900
 #define INK_FRONT 0x000066cc
+#define INK_BARE 0x0022bb55
 
 static void fill(struct window *window, unsigned int colour)
 {
@@ -26,8 +26,9 @@ b32 main()
 {
         struct window *back = window_open(400, 260);
         struct window *front = window_open(200, 120);
+        struct window *bare = window_open(160, 100);
 
-        if (!back || !front)
+        if (!back || !front || !bare)
         {
                 log_direct(str("no window\n"));
                 return 1;
@@ -35,6 +36,7 @@ b32 main()
 
         fill(back, INK_BACK);
         back->region = WINDOW_CENTRED;
+        back->edge = 16;
         window_commit(back);
 
         fill(front, INK_FRONT);
@@ -42,8 +44,25 @@ b32 main()
         front->y = back->y + 60;
         window_commit(front);
 
-        hold(8);
+        // No frame, so no titlebar, no border, and nothing to drag it by.
+        fill(bare, INK_BARE);
+        bare->style = 0;
+        bare->x = 100;
+        bare->y = 620;
+        window_commit(bare);
 
+        hold(5);
+
+        // Put one away and let the other cover its display.
+        front->style |= WINDOW_MINIMIZED;
+        window_commit(front);
+
+        bare->style |= WINDOW_FULLSCREEN;
+        window_commit(bare);
+
+        hold(7);
+
+        window_close(bare);
         window_close(front);
         window_close(back);
         return 0;

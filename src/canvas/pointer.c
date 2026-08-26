@@ -14,7 +14,7 @@
         thread applies it.
 */
 
-static struct task_struct *pointer_thread;
+static struct task_struct *canvas_thread;
 
 /*
         How long the processor is allowed to take waking up.
@@ -174,7 +174,7 @@ static void pointer_event(struct input_handle *handle, unsigned int type,
                 atomic_set(&desktop.button_down, !!value);
                 atomic_set(&desktop.button_changed, 1);
 
-                wake_up_process(pointer_thread);
+                wake_up_process(canvas_thread);
                 return;
         }
         else
@@ -195,7 +195,7 @@ static void pointer_event(struct input_handle *handle, unsigned int type,
                 without waiting, so a workqueue's pool and dispatch and kworker
                 would all be overhead around it.
         */
-        wake_up_process(pointer_thread);
+        wake_up_process(canvas_thread);
 }
 
 static int pointer_connect(struct input_handler *handler, struct input_dev *dev,
@@ -258,15 +258,19 @@ static struct input_handler pointer_handler = {
     .id_table = pointer_ids,
 };
 
-static void pointer_stop(void)
+static void canvas_thread_stop(void)
 {
-        if (!pointer_thread)
+        if (!canvas_thread)
                 return;
 
         input_unregister_handler(&pointer_handler);
         cpu_latency_qos_remove_request(&pointer_qos);
-        kthread_stop(pointer_thread);
-        pointer_thread = NULL;
+
+        desktop.awake = false;
+        hrtimer_cancel(&desktop.frame);
+
+        kthread_stop(canvas_thread);
+        canvas_thread = NULL;
 }
 
 /*
@@ -276,24 +280,35 @@ static void pointer_stop(void)
         sleep safe: a wake arriving between the two finds the task already
         marked and schedule() returns at once rather than losing the event.
 */
-static int pointer_loop(void *unused)
+static void canvas_thread_wake(void)
+{
+        if (canvas_thread)
+                wake_up_process(canvas_thread);
+}
+
+static int canvas_loop(void *unused)
 {
         while (!kthread_should_stop())
         {
                 set_current_state(TASK_IDLE);
 
                 if (!atomic_read(&desktop.motion_pending) &&
-                    !atomic_read(&desktop.button_changed))
+                    !atomic_read(&desktop.button_changed) &&
+                    !atomic_read(&desktop.frame_pending))
                         schedule();
 
                 __set_current_state(TASK_RUNNING);
+
                 pointer_apply();
+
+                if (atomic_xchg(&desktop.frame_pending, 0))
+                        desktop_frame_pass();
         }
 
         return 0;
 }
 
-static void pointer_start(void)
+static void canvas_thread_start(void)
 {
         /*
                 A thread rather than a workqueue.
@@ -308,16 +323,18 @@ static void pointer_start(void)
                 SCHED_OTHER task and behind anything the machine considers
                 more urgent than a cursor, which is the honest place for it.
         */
-        pointer_thread = kthread_run(pointer_loop, NULL, "moonwater/pointer");
+        hrtimer_setup(&desktop.frame, desktop_frame, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
 
-        if (IS_ERR(pointer_thread))
+        canvas_thread = kthread_run(canvas_loop, NULL, "moonwater/canvas");
+
+        if (IS_ERR(canvas_thread))
         {
                 log_canvas("no thread for input\n");
-                pointer_thread = NULL;
+                canvas_thread = NULL;
                 return;
         }
 
-        sched_set_fifo_low(pointer_thread);
+        sched_set_fifo_low(canvas_thread);
 
         // 0 microseconds: no idle state whose exit can be measured.
         cpu_latency_qos_add_request(&pointer_qos, 0);

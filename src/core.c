@@ -42,6 +42,7 @@
 #include <linux/math64.h>
 #include <linux/minmax.h>
 #include <linux/list_sort.h>
+#include <linux/hrtimer.h>
 #include <drm/drm_file.h>
 #include <drm/drm_rect.h>
 #include "canvas/canvas.c"

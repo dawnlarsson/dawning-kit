@@ -13,7 +13,9 @@ static struct pane *pane_at(int x, int y)
 
         // Front to back is the reverse of the drawing order.
         list_for_each_entry(pane, &desktop.windows, link)
-                if (pane_titlebar_holds(pane, x, y))
+                if (!(pane->style & WINDOW_MINIMIZED) &&
+                    (pane->style & WINDOW_FRAME) &&
+                    pane_titlebar_holds(pane, x, y))
                         found = pane;
 
         return found;
@@ -116,6 +118,7 @@ static void drag_press(int x, int y)
         if (pane->shared)
                 WRITE_ONCE(pane->shared->region, WINDOW_FREE);
 
+        pane_focus(pane);
         pane_raise(pane);
         list_sort(NULL, &desktop.windows, pane_by_z);
 
