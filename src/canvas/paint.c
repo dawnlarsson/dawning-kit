@@ -123,3 +123,49 @@ static u32 canvas_colour(u32 xrgb, u32 format)
 
         return xrgb;
 }
+
+/*
+        The same clipping as canvas_fill_rect, from a source rather than a
+        colour. The source is whatever a program wrote into its window, so it
+        is read once per pixel and never trusted for anything but its value.
+*/
+static void canvas_blit_rect(u32 *pixels, unsigned int pitch_pixels,
+                             unsigned int target_w, unsigned int target_h,
+                             int x, int y, int width, int height,
+                             const u32 *source, unsigned int source_pitch, u32 format)
+{
+        u32 opaque = format == DRM_FORMAT_ARGB8888 ? 0xff000000 : 0;
+        int row, column, skip_x = 0, skip_y = 0;
+
+        if (x < 0)
+        {
+                skip_x = -x;
+                width += x;
+                x = 0;
+        }
+
+        if (y < 0)
+        {
+                skip_y = -y;
+                height += y;
+                y = 0;
+        }
+
+        if (x + width > (int)target_w)
+                width = (int)target_w - x;
+
+        if (y + height > (int)target_h)
+                height = (int)target_h - y;
+
+        if (width <= 0 || height <= 0)
+                return;
+
+        for (row = 0; row < height; row++)
+        {
+                u32 *line = pixels + (size_t)(y + row) * pitch_pixels + x;
+                const u32 *from = source + (size_t)(skip_y + row) * source_pitch + skip_x;
+
+                for (column = 0; column < width; column++)
+                        line[column] = from[column] | opaque;
+        }
+}

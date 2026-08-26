@@ -103,30 +103,32 @@ static void desktop_seed_windows(void)
         {
                 for (column = 0; column < columns; column++)
                 {
-                        struct window *window = kzalloc(sizeof(*window), GFP_KERNEL);
+                        struct pane *pane = kzalloc(sizeof(*pane), GFP_KERNEL);
 
-                        if (!window)
+                        if (!pane)
                                 return;
 
-                        window->x = 40 + column * 300;
-                        window->y = 40 + row * 240;
-                        window->width = 240;
-                        window->height = 170;
+                        pane->x = 40 + column * 300;
+                        pane->y = 40 + row * 240;
+                        pane->width = 240;
+                        pane->height = 170;
 
-                        list_add_tail(&window->link, &desktop.windows);
+                        list_add_tail(&pane->link, &desktop.windows);
                 }
         }
 }
 
+// Only the compositor's own. A program's goes when it closes its file.
 static void desktop_drop_windows(void)
 {
-        struct window *window, *next;
+        struct pane *pane, *next;
 
-        list_for_each_entry_safe(window, next, &desktop.windows, link)
-        {
-                list_del(&window->link);
-                kfree(window);
-        }
+        list_for_each_entry_safe(pane, next, &desktop.windows, link)
+                if (!pane->shared)
+                {
+                        list_del(&pane->link);
+                        kfree(pane);
+                }
 }
 
 /*
@@ -163,10 +165,10 @@ static void desktop_redraw(void)
 
 static unsigned int desktop_count_windows(void)
 {
-        struct window *window;
+        struct pane *pane;
         unsigned int count = 0;
 
-        list_for_each_entry(window, &desktop.windows, link)
+        list_for_each_entry(pane, &desktop.windows, link)
                 count++;
 
         return count;

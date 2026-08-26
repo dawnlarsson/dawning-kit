@@ -1,9 +1,9 @@
 /*
         Canvas -- compose
 
-        Windows are in desktop coordinates and outputs are rectangles of the
+        Panes are in desktop coordinates and outputs are rectangles of the
         desktop, so composing one output is drawing the desktop offset by where
-        that output sits. Back to front, so a later window overlaps an earlier.
+        that output sits. Back to front, so a later pane overlaps an earlier.
 */
 
 static _Bool output_shows_cursor(struct output *output, int x, int y)
@@ -13,34 +13,39 @@ static _Bool output_shows_cursor(struct output *output, int x, int y)
                              (int)output->width, (int)output->height);
 }
 
-static void window_frame(struct window *window, int *x, int *y, int *w, int *h)
+static void pane_frame(struct pane *pane, int *x, int *y, int *w, int *h)
 {
-        *x = window->x - 2;
-        *y = window->y - 2;
-        *w = window->width + 4;
-        *h = window->height + 26;
+        *x = pane->x - 2;
+        *y = pane->y - 2;
+        *w = pane->width + 4;
+        *h = pane->height + WINDOW_TITLE + 6;
 }
 
-static void compose_window(struct window *window, struct output *output,
-                           u32 *pixels, unsigned int pitch_pixels)
+static void compose_pane(struct pane *pane, struct output *output,
+                         u32 *pixels, unsigned int pitch_pixels)
 {
-        int x = window->x - output->x;
-        int y = window->y - output->y;
+        int x = pane->x - output->x;
+        int y = pane->y - output->y;
         int fx, fy, fw, fh;
 
-        window_frame(window, &fx, &fy, &fw, &fh);
+        pane_frame(pane, &fx, &fy, &fw, &fh);
 
         canvas_fill_rect(pixels, pitch_pixels, output->width, output->height,
                          fx - output->x, fy - output->y, fw, fh,
                          canvas_colour(COLOUR_FRAME, output->format));
 
         canvas_fill_rect(pixels, pitch_pixels, output->width, output->height,
-                         x, y, window->width, 20,
+                         x, y, pane->width, WINDOW_TITLE,
                          canvas_colour(COLOUR_TITLE, output->format));
 
-        canvas_fill_rect(pixels, pitch_pixels, output->width, output->height,
-                         x, y + 20, window->width, window->height,
-                         canvas_colour(COLOUR_BODY, output->format));
+        if (pane->pixels)
+                canvas_blit_rect(pixels, pitch_pixels, output->width, output->height,
+                                 x, y + WINDOW_TITLE, pane->width, pane->height,
+                                 pane->pixels, pane->pitch, output->format);
+        else
+                canvas_fill_rect(pixels, pitch_pixels, output->width, output->height,
+                                 x, y + WINDOW_TITLE, pane->width, pane->height,
+                                 canvas_colour(COLOUR_BODY, output->format));
 }
 
 /*
@@ -52,20 +57,20 @@ static void compose_window(struct window *window, struct output *output,
 static void compose_rect(struct output *output, u32 *pixels, unsigned int pitch_pixels,
                          int rx, int ry, int rw, int rh)
 {
-        struct window *window;
+        struct pane *pane;
 
         canvas_fill_rect(pixels, pitch_pixels, output->width, output->height,
                          rx - output->x, ry - output->y, rw, rh,
                          canvas_colour(COLOUR_DESKTOP, output->format));
 
-        list_for_each_entry(window, &desktop.windows, link)
+        list_for_each_entry(pane, &desktop.windows, link)
         {
                 int fx, fy, fw, fh;
 
-                window_frame(window, &fx, &fy, &fw, &fh);
+                pane_frame(pane, &fx, &fy, &fw, &fh);
 
                 if (rects_overlap(fx, fy, fw, fh, rx, ry, rw, rh))
-                        compose_window(window, output, pixels, pitch_pixels);
+                        compose_pane(pane, output, pixels, pitch_pixels);
         }
 }
 
@@ -73,7 +78,7 @@ static void compose_output(struct output *output)
 {
         struct iosys_map map;
         unsigned int pitch_pixels;
-        struct window *window;
+        struct pane *pane;
         u32 *pixels;
 
         if (drm_client_buffer_vmap_local(output->buffer, &map))
@@ -86,8 +91,8 @@ static void compose_output(struct output *output)
                          0, 0, output->width, output->height,
                          canvas_colour(COLOUR_DESKTOP, output->format));
 
-        list_for_each_entry(window, &desktop.windows, link)
-                compose_window(window, output, pixels, pitch_pixels);
+        list_for_each_entry(pane, &desktop.windows, link)
+                compose_pane(pane, output, pixels, pitch_pixels);
 
         output->cursor_shown = false;
 

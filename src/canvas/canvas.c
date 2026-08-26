@@ -6,6 +6,10 @@
         device can be opened like any other file, and struct drm_file leads
         back to the drm_device behind it.
 
+            ../window.c the page a program shares with this, and the whole
+                        interface it needs -- see there first
+            pane.c      windows: creating, destroying, and reading the shared
+                        page without trusting it
             paint.c     pixels: a pointer, a pitch, a rectangle
             compose.c   what a window looks like and in what order
             plane.c     the cursor, on a hardware plane or in the framebuffer
@@ -23,16 +27,35 @@
         the desktop that some crtc scans out. Nothing has a fixed maximum.
 */
 
+#include "../window.c"
+
 #define log_canvas(fmt, ...) pr_info("[moonwater canvas] " fmt, ##__VA_ARGS__)
 
 #define CURSOR_HOTSPOT_X 0
 #define CURSOR_HOTSPOT_Y 0
 
-struct window
+/*
+        A pane is the compositor's side of a window: where it is, and the
+        pixels behind it. struct window, in ../window.c, is the page the
+        program that owns it has mapped. Panes without one are the compositor's
+        own.
+
+        The geometry here is a checked copy of the geometry there. Nothing
+        composes from the shared page directly: a program can store into it
+        between a bounds check and a read.
+*/
+struct pane
 {
         struct list_head link;
         int x, y;
         int width, height;
+
+        struct window *shared;
+        u32 *pixels;
+        unsigned int pitch;
+        unsigned int max_width, max_height;
+        unsigned long bytes;
+        void *mapping;
 };
 
 struct output
@@ -69,8 +92,8 @@ static struct desktop
         int cursor_x, cursor_y;
         int drawn_x, drawn_y;
 
-        // The window being dragged, and where inside it the cursor took hold.
-        struct window *dragging;
+        // The pane being dragged, and where inside it the cursor took hold.
+        struct pane *dragging;
         int grab_x, grab_y;
 
         // The bounding box of every output. Read by the input handler in
@@ -121,10 +144,10 @@ static _Bool rects_overlap(int ax, int ay, int aw, int ah,
         return ax < bx + bw && bx < ax + aw && ay < by + bh && by < ay + ah;
 }
 
-static _Bool window_titlebar_holds(struct window *window, int x, int y)
+static _Bool pane_titlebar_holds(struct pane *pane, int x, int y)
 {
-        return x >= window->x && x < window->x + window->width &&
-               y >= window->y && y < window->y + 20;
+        return x >= pane->x && x < pane->x + pane->width &&
+               y >= pane->y && y < pane->y + WINDOW_TITLE;
 }
 
 static _Bool output_holds(struct output *output, int x, int y)
@@ -134,6 +157,7 @@ static _Bool output_holds(struct output *output, int x, int y)
 }
 
 #include "paint.c"
+#include "pane.c"
 #include "compose.c"
 #include "plane.c"
 #include "drag.c"

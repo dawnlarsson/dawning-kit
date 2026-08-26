@@ -1,20 +1,20 @@
 /*
         Canvas -- dragging a window
 
-        A window is moved by repainting the desktop where it was and where it
-        is, on every output either rectangle touches. Because windows are in
+        A pane is moved by repainting the desktop where it was and where it
+        is, on every output either rectangle touches. Because panes are in
         desktop coordinates that is the same code whether the window stays on
         one screen or crosses to the next.
 */
 
-static struct window *window_at(int x, int y)
+static struct pane *pane_at(int x, int y)
 {
-        struct window *window, *found = NULL;
+        struct pane *pane, *found = NULL;
 
         // Front to back is the reverse of the drawing order.
-        list_for_each_entry(window, &desktop.windows, link)
-                if (window_titlebar_holds(window, x, y))
-                        found = window;
+        list_for_each_entry(pane, &desktop.windows, link)
+                if (pane_titlebar_holds(pane, x, y))
+                        found = pane;
 
         return found;
 }
@@ -60,16 +60,23 @@ static void output_repaint(struct output *output,
 
 static void drag_move(int x, int y)
 {
-        struct window *window = desktop.dragging;
+        struct pane *pane = desktop.dragging;
         struct output *output;
         int ax, ay, aw, ah, bx, by, bw, bh;
 
-        window_frame(window, &ax, &ay, &aw, &ah);
+        pane_frame(pane, &ax, &ay, &aw, &ah);
 
-        window->x = x - desktop.grab_x;
-        window->y = y - desktop.grab_y;
+        pane->x = x - desktop.grab_x;
+        pane->y = y - desktop.grab_y;
 
-        window_frame(window, &bx, &by, &bw, &bh);
+        // The program sees where its window ended up without asking.
+        if (pane->shared)
+        {
+                WRITE_ONCE(pane->shared->x, pane->x);
+                WRITE_ONCE(pane->shared->y, pane->y);
+        }
+
+        pane_frame(pane, &bx, &by, &bw, &bh);
 
         list_for_each_entry(output, &desktop.outputs, link)
         {
@@ -94,17 +101,17 @@ static void drag_move(int x, int y)
 
 static void drag_press(int x, int y)
 {
-        struct window *window = window_at(x, y);
+        struct pane *pane = pane_at(x, y);
 
-        if (!window)
+        if (!pane)
                 return;
 
-        desktop.dragging = window;
-        desktop.grab_x = x - window->x;
-        desktop.grab_y = y - window->y;
+        desktop.dragging = pane;
+        desktop.grab_x = x - pane->x;
+        desktop.grab_y = y - pane->y;
 
         // Raise it. Drawing is back to front, so the tail is the front.
-        list_move_tail(&window->link, &desktop.windows);
+        list_move_tail(&pane->link, &desktop.windows);
 
         desktop_redraw();
 }

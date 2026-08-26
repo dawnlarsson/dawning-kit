@@ -525,15 +525,48 @@ static long device_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 #ifdef CONFIG_MOONWATER_CANVAS
         case SPARK_IOCTL_INPUT_STATS:
                 return report_input((struct input_stats __user *)arg);
+        case WINDOW_IOCTL_CREATE:
+                return window_ioctl_create(file, arg);
+        case WINDOW_IOCTL_COMMIT:
+                return window_ioctl_commit(file);
 #endif
         }
 
         return -ENOTTY;
 }
 
+/*
+        misc_open leaves the miscdevice in private_data for the file operations
+        to use. None here want it, and a window needs the field: one open of
+        this device is one window, and private_data is what says which.
+*/
+static int device_open(struct inode *inode, struct file *file)
+{
+        file->private_data = NULL;
+        return 0;
+}
+
+#ifdef CONFIG_MOONWATER_CANVAS
+static int device_mmap(struct file *file, struct vm_area_struct *vma)
+{
+        return window_mmap(file, vma);
+}
+
+static int device_close(struct inode *inode, struct file *file)
+{
+        window_release(file);
+        return 0;
+}
+#endif
+
 static const struct file_operations device_ops = {
     .owner = THIS_MODULE,
+    .open = device_open,
     .unlocked_ioctl = device_ioctl,
+#ifdef CONFIG_MOONWATER_CANVAS
+    .mmap = device_mmap,
+    .release = device_close,
+#endif
     .llseek = noop_llseek,
 };
 
