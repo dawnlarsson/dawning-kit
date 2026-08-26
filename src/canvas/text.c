@@ -186,6 +186,21 @@ static void text_draw(const struct target *t, int x, int y, int w, int h,
                 int line_x = x;
                 int i;
 
+                // A line the damage cannot reach still has to be measured, so
+                // the ones after it start in the right place, but nothing in
+                // it needs looking at glyph by glyph. Repainting under a
+                // cursor is twenty rows of a paragraph that is a hundred.
+                if (line_y + cell_h <= t->clip.y1 || line_y >= t->clip.y2)
+                {
+                        line_y += cell_h;
+                        start = text_line_next(text, length, stop);
+
+                        if (stop == length)
+                                break;
+
+                        continue;
+                }
+
                 switch (align & (TEXT_CENTRE | TEXT_RIGHT))
                 {
                 case TEXT_CENTRE:

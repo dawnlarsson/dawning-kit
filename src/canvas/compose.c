@@ -369,18 +369,53 @@ static void output_repaint(struct output *output, const struct drm_rect *damage,
         unsigned int i;
         u64 started;
 
-        if (!count || drm_client_buffer_vmap_local(output->buffer, &map))
+        struct drm_rect merged[4];
+        unsigned int kept = 0;
+
+        if (!count || count > ARRAY_SIZE(merged) ||
+            drm_client_buffer_vmap_local(output->buffer, &map))
                 return;
+
+        /*
+                Overlapping damage composed twice is composed twice: a cursor
+                that moved four pixels leaves two cells that are nearly the
+                same cell, and every window and every glyph under them was
+                laid out once for each.
+        */
+        for (i = 0; i < count; i++)
+        {
+                unsigned int j;
+
+                for (j = 0; j < kept; j++)
+                {
+                        if (!rects_overlap(merged[j].x1, merged[j].y1,
+                                           merged[j].x2 - merged[j].x1,
+                                           merged[j].y2 - merged[j].y1,
+                                           damage[i].x1, damage[i].y1,
+                                           damage[i].x2 - damage[i].x1,
+                                           damage[i].y2 - damage[i].y1))
+                                continue;
+
+                        merged[j].x1 = min(merged[j].x1, damage[i].x1);
+                        merged[j].y1 = min(merged[j].y1, damage[i].y1);
+                        merged[j].x2 = max(merged[j].x2, damage[i].x2);
+                        merged[j].y2 = max(merged[j].y2, damage[i].y2);
+                        break;
+                }
+
+                if (j == kept)
+                        merged[kept++] = damage[i];
+        }
 
         pixels = map.vaddr;
         pitch_pixels = output->buffer->fb->pitches[0] / sizeof(u32);
         started = ktime_get_ns();
 
-        for (i = 0; i < count; i++)
+        for (i = 0; i < kept; i++)
                 compose_rect(output, pixels,
-                             damage[i].x1, damage[i].y1,
-                             damage[i].x2 - damage[i].x1,
-                             damage[i].y2 - damage[i].y1);
+                             merged[i].x1, merged[i].y1,
+                             merged[i].x2 - merged[i].x1,
+                             merged[i].y2 - merged[i].y1);
 
         output_draw_cursor(output, pixels);
 
