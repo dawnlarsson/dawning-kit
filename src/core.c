@@ -4,6 +4,7 @@
 #include <linux/binfmts.h>
 #include <linux/sched/task_stack.h>
 #include <linux/mm.h>
+#include <linux/vmalloc.h>
 #include <linux/mman.h>
 #include <linux/fs.h>
 #include <linux/mount.h>
