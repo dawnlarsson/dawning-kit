@@ -86,10 +86,19 @@ static void pane_free(struct pane *pane)
         kfree(pane);
 }
 
-static struct pane *pane_create(unsigned int width, unsigned int height)
+static struct pane *pane_create(unsigned int width, unsigned int height,
+                                unsigned int columns, unsigned int rows)
 {
+        unsigned long cell_bytes = (unsigned long)columns * rows *
+                                   sizeof(struct window_cell);
         struct pane *pane;
         unsigned long bytes;
+
+        if (columns)
+        {
+                width = columns * WINDOW_CELL_W;
+                height = rows * WINDOW_CELL_H;
+        }
 
         // A window is allowed to be as large as the desktop and no larger.
         // Not the kind of ceiling the rest of this refuses: it is what stops
@@ -102,7 +111,8 @@ static struct pane *pane_create(unsigned int width, unsigned int height)
         if (!pane)
                 return NULL;
 
-        bytes = PAGE_ALIGN(WINDOW_PIXELS + (unsigned long)width * height * 4);
+        bytes = PAGE_ALIGN(WINDOW_PIXELS +
+                           (columns ? cell_bytes : (unsigned long)width * height * 4));
 
         pane->mapping = vmalloc_user(bytes);
         if (!pane->mapping)
@@ -113,8 +123,20 @@ static struct pane *pane_create(unsigned int width, unsigned int height)
 
         pane->bytes = bytes;
         pane->shared = pane->mapping;
-        pane->pixels = pane->mapping + WINDOW_PIXELS;
         pane->pitch = width;
+
+        if (columns)
+        {
+                pane->cells = pane->mapping + WINDOW_PIXELS;
+                pane->columns = columns;
+                pane->rows = rows;
+                pane->shared->columns = columns;
+                pane->shared->rows = rows;
+        }
+        else
+        {
+                pane->pixels = pane->mapping + WINDOW_PIXELS;
+        }
         pane->max_width = width;
         pane->max_height = height;
 
@@ -165,6 +187,19 @@ static void pane_refresh(struct pane *pane)
         pane->style = READ_ONCE(shared->style);
         pane->edge = (int)min(READ_ONCE(shared->edge), 256u);
         pane->sequence = READ_ONCE(shared->sequence);
+
+        if (pane->cells)
+        {
+                // What the program says it changed, clamped to what it has.
+                unsigned int row = READ_ONCE(shared->damage_row);
+                unsigned int count = READ_ONCE(shared->damage_rows);
+
+                pane->damage_row = min(row, pane->rows);
+                pane->damage_rows = min(count, pane->rows - pane->damage_row);
+
+                WRITE_ONCE(shared->damage_row, 0);
+                WRITE_ONCE(shared->damage_rows, 0);
+        }
 
         /*
                 Copied, not pointed at. Composing walks this string every time
@@ -239,7 +274,8 @@ static long window_ioctl_create(struct file *file, unsigned long argument)
                 return -ENODEV;
         }
 
-        pane = pane_create(request.width, request.height);
+        pane = pane_create(request.width, request.height,
+                           request.columns, request.rows);
         if (pane)
         {
                 pane_focus(pane);

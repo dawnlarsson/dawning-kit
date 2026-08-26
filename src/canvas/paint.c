@@ -18,6 +18,16 @@ static const u32 canvas_ink[INK_COUNT] = {
     [INK_CURSOR_EDGE] = 0x000000,
 };
 
+/*
+        The sixteen a terminal has always had, so a cell carries an index
+        rather than a colour and a program says "red" the way everything since
+        1979 has.
+*/
+static const u32 canvas_terminal[16] = {
+    0x000000, 0xcd0000, 0x00cd00, 0xcdcd00, 0x0000ee, 0xcd00cd, 0x00cdcd, 0xe5e5e5,
+    0x7f7f7f, 0xff0000, 0x00ff00, 0xffff00, 0x5c5cff, 0xff00ff, 0x00ffff, 0xffffff,
+};
+
 static void canvas_palette(u32 *palette, u32 format)
 {
         u32 opaque = format == DRM_FORMAT_ARGB8888 ? 0xff000000 : 0;

@@ -156,10 +156,33 @@ struct window
         unsigned int key_head;
         unsigned int key_tail;
         struct window_key keys[WINDOW_KEYS];
+
+        // For a window of cells: its shape, and which rows have changed since
+        // the compositor last looked. Rows rather than a rectangle because
+        // that is what text changes.
+        unsigned int columns;
+        unsigned int rows;
+        unsigned int damage_row;
+        unsigned int damage_rows;
 };
 
+static inline void window_damage(struct window *window, unsigned int row,
+                                 unsigned int rows)
+{
+        unsigned int last = window->damage_rows ? window->damage_row + window->damage_rows
+                                                : row;
+
+        if (!window->damage_rows || row < window->damage_row)
+                window->damage_row = row;
+
+        if (row + rows > last)
+                last = row + rows;
+
+        window->damage_rows = last - window->damage_row;
+}
+
 // _IOW('s', 4, struct window_request)
-#define WINDOW_IOCTL_CREATE 0x40087304u
+#define WINDOW_IOCTL_CREATE 0x40107304u
 
 // _IO('s', 5) -- redraw what changed
 #define WINDOW_IOCTL_COMMIT 0x00007305u
@@ -168,7 +191,36 @@ struct window_request
 {
         unsigned int width;
         unsigned int height;
+        unsigned int columns; // non-zero asks for cells rather than pixels,
+        unsigned int rows;    // and decides the size
 };
+
+/*
+        A cell, for a window made of text.
+
+        A program that draws with words writes eight bytes a character and the
+        compositor draws the glyph, rather than the program writing the five
+        hundred and twelve bytes of an eight by sixteen cell itself with a font
+        of its own. It is also what makes scrolling a memmove of cells instead
+        of a copy of a framebuffer.
+
+        The colours are indices into the sixteen a terminal has always had.
+*/
+struct window_cell
+{
+        unsigned int character;
+        unsigned char ink;
+        unsigned char paper;
+        unsigned short flags;
+};
+
+#define WINDOW_CELL_W 8
+#define WINDOW_CELL_H 16
+
+static inline struct window_cell *window_cells(struct window *window)
+{
+        return (struct window_cell *)((char *)window + WINDOW_PIXELS);
+}
 
 // The next key, or false when there is none waiting.
 static inline int window_key(struct window *window, struct window_key *key)
@@ -256,6 +308,10 @@ static long window_call(long number, long a, long b, long c, long d, long e, lon
 
 static unsigned long window_bytes(struct window *window)
 {
+        if (window->columns)
+                return WINDOW_PIXELS + (unsigned long)window->columns *
+                                           window->rows * sizeof(struct window_cell);
+
         return WINDOW_PIXELS +
                (unsigned long)window->pitch * window->max_height * 4;
 }
@@ -265,9 +321,8 @@ static unsigned long window_bytes(struct window *window)
         zero, so there is no offset for either side to get wrong, and closing
         the file is what destroys the window.
 */
-static struct window *window_open(unsigned int width, unsigned int height)
+static struct window *window_request_open(struct window_request request)
 {
-        struct window_request request = {width, height};
         struct window *window;
         long file, mapped;
 
@@ -283,7 +338,12 @@ static struct window *window_open(unsigned int width, unsigned int height)
 
         // PROT_READ | PROT_WRITE, MAP_SHARED
         mapped = window_call(WINDOW_SYS_MMAP, 0,
-                             WINDOW_PIXELS + (unsigned long)width * height * 4,
+                             request.columns
+                                 ? WINDOW_PIXELS + (unsigned long)request.columns *
+                                                       request.rows *
+                                                       sizeof(struct window_cell)
+                                 : WINDOW_PIXELS + (unsigned long)request.width *
+                                                       request.height * 4,
                              3, 1, file, 0);
         if (mapped < 0 && mapped > -4096)
         {
@@ -297,6 +357,21 @@ static struct window *window_open(unsigned int width, unsigned int height)
         return window;
 }
 
+static struct window *window_open(unsigned int width, unsigned int height)
+{
+        struct window_request request = {width, height, 0, 0};
+
+        return window_request_open(request);
+}
+
+// A window of text. The compositor decides how large that is in pixels.
+static struct window *window_open_text(unsigned int columns, unsigned int rows)
+{
+        struct window_request request = {0, 0, columns, rows};
+
+        return window_request_open(request);
+}
+
 /*
         Bumping sequence is what says a window changed. While the compositor is
         awake it is already reading that, so there is nothing else to do; the
@@ -308,6 +383,20 @@ static void window_commit(struct window *window)
 
         if (!window->awake)
                 window_call(WINDOW_SYS_IOCTL, window->handle, WINDOW_IOCTL_COMMIT, 0, 0, 0, 0);
+}
+
+/*
+        The same, but now rather than within a frame.
+
+        window_commit leaves it to the compositor's own timer while that is
+        running, which is right for something animating and wrong for
+        something echoing a keystroke: the letter would wait up to a frame for
+        a clock it has no reason to be on. This one always makes the call.
+*/
+static void window_flush(struct window *window)
+{
+        window->sequence++;
+        window_call(WINDOW_SYS_IOCTL, window->handle, WINDOW_IOCTL_COMMIT, 0, 0, 0, 0);
 }
 
 static void window_close(struct window *window)

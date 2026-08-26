@@ -84,6 +84,12 @@ struct pane
 
         struct window *shared;
         u32 *pixels;
+
+        // A window of text instead: cells the compositor draws the glyphs for.
+        struct window_cell *cells;
+        unsigned int columns, rows;
+        unsigned int damage_row, damage_rows;
+
         unsigned int pitch;
         unsigned int max_width, max_height;
         unsigned long bytes;

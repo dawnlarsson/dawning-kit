@@ -174,6 +174,59 @@ static void shape_blit(const struct target *t, const struct shape *shape,
         is why there is no separate border function: the band clamp already
         measures from the row's inset, so a side follows the curve for free.
 */
+/*
+        A window made of text.
+
+        Runs of one paper colour go out as one rectangle, since a terminal is
+        mostly one colour behind everything, and then the glyphs. Only the rows
+        the program said it changed, and only where they meet the damage.
+*/
+static void compose_cells(struct pane *pane, const struct target *t,
+                          const struct shape *shape, int x, int y)
+{
+        unsigned int row, column;
+        int first = max((t->clip.y1 - y) / WINDOW_CELL_H, 0);
+        int last = min((t->clip.y2 - y + WINDOW_CELL_H - 1) / WINDOW_CELL_H,
+                       (int)pane->rows);
+
+        for (row = (unsigned int)first; row < (unsigned int)last; row++)
+        {
+                const struct window_cell *cells = pane->cells + row * pane->columns;
+                int cy = y + (int)row * WINDOW_CELL_H;
+
+                for (column = 0; column < pane->columns;)
+                {
+                        unsigned int run = column;
+                        u32 paper = canvas_terminal[cells[column].paper & 15];
+
+                        while (run < pane->columns &&
+                               canvas_terminal[cells[run].paper & 15] == paper)
+                                run++;
+
+                        shape_fill(t, shape, x + (int)column * WINDOW_CELL_W, cy,
+                                   (int)(run - column) * WINDOW_CELL_W, WINDOW_CELL_H,
+                                   paper | t->opaque);
+
+                        column = run;
+                }
+
+                for (column = 0; column < pane->columns; column++)
+                {
+                        unsigned int character = cells[column].character;
+                        int cx = x + (int)column * WINDOW_CELL_W;
+
+                        if (character < ' ' || character > 126)
+                                continue;
+
+                        if (cx + WINDOW_CELL_W <= t->clip.x1 || cx >= t->clip.x2)
+                                continue;
+
+                        glyph_draw(t, cx, cy, 1, (unsigned char)character,
+                                   canvas_terminal[cells[column].ink & 15] | t->opaque);
+                }
+        }
+}
+
 static void compose_pane(struct pane *pane, const struct target *t)
 {
         _Bool framed = pane->style & WINDOW_FRAME;
@@ -228,7 +281,9 @@ static void compose_pane(struct pane *pane, const struct target *t)
                                   TEXT_CENTRE | TEXT_MIDDLE, 1, t->ink[INK_TEXT]);
         }
 
-        if (pane->pixels)
+        if (pane->cells)
+                compose_cells(pane, t, &shape, x, y + title);
+        else if (pane->pixels)
                 shape_blit(t, &shape, x, y + title, pane->width, pane->height,
                            pane->pixels, pane->pitch);
         else
