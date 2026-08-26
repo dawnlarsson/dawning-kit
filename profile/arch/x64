@@ -24,6 +24,21 @@
 #       assumed -- compiling with both and disassembling gives zero vector
 #       registers at v2 and at v3, and popcnt appears where it should.
 #
+#       That popcnt is also the floor biting. There are 334 of them in
+#       vmlinux, and QEMU's default CPU model -- qemu64, which is SSE3-era --
+#       does not have the instruction, so the image dies on it before the
+#       console comes up and prints nothing at all. This is why build.sh
+#       passes -cpu Nehalem rather than leaving the model to QEMU; booting it
+#       by hand needs the same:
+#
+#           qemu-system-x86_64 -cpu Nehalem ...
+#           qemu-system-x86_64 -cpu qemu64,+popcnt,+sse4.1,+sse4.2,+cx16 ...
+#
+#       both of which were checked against this image. Unlike the Zbb floor
+#       profile/arch/riscv declines to set, this one is worth keeping: every
+#       machine in the stated range has it, and the loop this is developed in
+#       already runs on a model that does.
+#
 #> kernel_cflags -march=x86-64-v2
 
 #

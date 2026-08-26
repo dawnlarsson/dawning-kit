@@ -397,6 +397,16 @@ STRNCHR:char *strnchr(const char *, __kernel_size_t, int)"
 STRNCHR:char *strnchr(const char *, __kernel_size_t, int)"
                         ;;
                 *)
+                        #
+                        #       An architecture with no arm here claims
+                        #       nothing, which is correct only because every
+                        #       src/*.asm carries an empty "#> arch other"
+                        #       block and so emits no symbol for it either.
+                        #       Those two facts have to move together: an asm
+                        #       block for a new architecture without an arm
+                        #       here defines what lib/string.c also defines,
+                        #       and vmlinux does not link.
+                        #
                         header=
                         claims=
                         ;;
@@ -694,12 +704,15 @@ size "$image"
 #       the window shows that one because it is the boot VGA, and the
 #       compositor ends up drawing on the other card where nobody can see it.
 #
-#       -cpu Nehalem, not the default. The kernel is compiled -march=x86-64-v2,
-#       whose floor is Nehalem, and QEMU's default model is older than any
-#       machine this targets. The image does still boot on the default -- that
-#       was checked rather than assumed -- so this is not a requirement; it is
-#       so the loop runs on a machine inside the stated hardware range instead
-#       of one below all of it.
+#       -cpu Nehalem, not the default, and this is a requirement rather than a
+#       preference. The kernel is compiled -march=x86-64-v2, whose floor is
+#       Nehalem, and QEMU's default model is qemu64 -- SSE3-era, no POPCNT.
+#       There are 334 popcnt instructions in vmlinux, so on the default model
+#       the image takes an invalid opcode before the console exists and prints
+#       nothing whatsoever. This line is what stands between that and here.
+#
+#       This comment used to say the image booted on the default too. It does
+#       not, and did not; see profile/arch/x64.
 set -- \
         -m 2G \
         -smp 2 \
