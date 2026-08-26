@@ -1,5 +1,5 @@
-# display.c is included by core.c rather than compiled
-# separately, so the C side stays one translation unit.
+# canvas/ is included by core.c rather than compiled separately, so the C
+# side stays one translation unit.
 #
 # It is a composite now rather than obj-y += core.o, because assembly
 # cannot be included into a translation unit -- every .asm becomes its own

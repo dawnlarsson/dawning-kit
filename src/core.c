@@ -16,7 +16,7 @@
 
 // The graphics headers must precede library.c: it defines "end" as a macro
 // and asm/io.h, reached through drm_client.h, uses that word as a variable.
-#ifdef CONFIG_MOONWATER_DISPLAY
+#ifdef CONFIG_MOONWATER_CANVAS
 #include <drm/drm_client.h>
 #include <drm/drm_crtc.h>
 #include <drm/drm_device.h>
@@ -34,7 +34,7 @@
 #include "library.c"
 #include "spark.c"
 
-#ifdef CONFIG_MOONWATER_DISPLAY
+#ifdef CONFIG_MOONWATER_CANVAS
 #include <linux/workqueue.h>
 #include <linux/kthread.h>
 #include <linux/pm_qos.h>
@@ -43,7 +43,7 @@
 #include <linux/minmax.h>
 #include <drm/drm_file.h>
 #include <drm/drm_rect.h>
-#include "display.c"
+#include "canvas/canvas.c"
 #endif
 
 // The assembly in this directory. Each .asm is its own object -- assembly
@@ -499,12 +499,12 @@ static long report_stats(struct stats __user *out)
         return 0;
 }
 
-#ifdef CONFIG_MOONWATER_DISPLAY
+#ifdef CONFIG_MOONWATER_CANVAS
 static long report_input(struct input_stats __user *out)
 {
         struct input_stats stats;
 
-        display_input_stats(&stats.events, &stats.mean_ns, &stats.worst_ns,
+        canvas_input_stats(&stats.events, &stats.mean_ns, &stats.worst_ns,
                                     &stats.queue_ns, &stats.draw_ns, &stats.flush_ns);
 
         if (copy_to_user(out, &stats, sizeof(stats)))
@@ -522,7 +522,7 @@ static long device_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
                 return do_spawn((struct spawn __user *)arg);
         case SPARK_IOCTL_STATS:
                 return report_stats((struct stats __user *)arg);
-#ifdef CONFIG_MOONWATER_DISPLAY
+#ifdef CONFIG_MOONWATER_CANVAS
         case SPARK_IOCTL_INPUT_STATS:
                 return report_input((struct input_stats __user *)arg);
 #endif
@@ -636,8 +636,8 @@ static b32 __init start()
         if (misc_register(&device))
                 log_k("could not register /dev/spark\n");
 
-#ifdef CONFIG_MOONWATER_DISPLAY
-        display_start_probing();
+#ifdef CONFIG_MOONWATER_CANVAS
+        canvas_start_probing();
 #endif
 
         return 0;

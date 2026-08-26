@@ -3,15 +3,15 @@ menu "Moonwater"
         tristate "Moonwater core"
         default y
         help
-          Enable the Moonwater core: the spark binary format, /dev/spark and the compositor
+          Enable the Moonwater core: the spark binary format, /dev/spark and Canvas
 
-    config MOONWATER_DISPLAY
-        bool "Moonwater in-kernel compositor"
+    config MOONWATER_CANVAS
+        bool "Moonwater Canvas, the in-kernel compositor"
         depends on MOONWATER_CORE && DRM && DRM_CLIENT
         default y
         help
-          Own the display from kernel space: the compositor draws the
-          desktop, windows and cursor itself through the in-kernel DRM
-          client API rather than handing a device node to a userspace
-          display server.
+          Own the display from kernel space: Canvas draws the desktop,
+          windows and cursor itself through the in-kernel DRM client API
+          rather than handing a device node to a userspace display
+          server. Its source is src/canvas/.
 endmenu # Moonwater

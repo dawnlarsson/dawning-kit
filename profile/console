@@ -15,7 +15,7 @@
 # Nothing else changes, so anything that goes wrong before graphics comes up
 # goes wrong identically and is visible this time.
 #
-CONFIG_MOONWATER_DISPLAY=n
+CONFIG_MOONWATER_CANVAS=n
 
 # With no compositor to keep it away, the fbdev client is wanted after all.
 CONFIG_DRM_FBDEV_EMULATION=y
