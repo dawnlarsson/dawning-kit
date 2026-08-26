@@ -67,7 +67,22 @@ SYM_FUNC_START(strchrnul)
         RET
 
 #> arch other
-#error "this strchrnul is the x86_64 catch-up; other architectures have their own"
+//
+        //      Nothing, deliberately, and this is what "#> arch other" with an
+        //      empty block is for.
+        //
+        //      This file is in src/, so src/Makefile builds it for whichever
+        //      architecture the kernel is being configured for. An #error here
+        //      -- which is what stood in this place -- does not mean "not
+        //      implemented", it means the arm64 and riscv builds stop on the
+        //      first of these files they reach.
+        //
+        //      They do not need it. arm64 and riscv both ship their own, and
+        //      where they do not the generic C in lib/string.c is what runs,
+        //      exactly as it did before any of this. Emitting nothing leaves
+        //      them where they were; the header claim that hands the symbol
+        //      over is in build.sh and only ever touches x86's header.
+        //
 
 #> shared
 
@@ -151,7 +166,7 @@ SYM_FUNC_START(strnchr)
 9:      RET
 
 #> arch other
-#error "this strnchr is the x86_64 catch-up; other architectures have their own"
+        // As above: nothing here on purpose.
 
 #> shared
 
@@ -256,7 +271,7 @@ SYM_FUNC_START(strrchr)
         RET
 
 #> arch other
-#error "this strrchr is the x86_64 catch-up; other architectures have their own"
+        // As above: nothing here on purpose.
 
 #> shared
 
