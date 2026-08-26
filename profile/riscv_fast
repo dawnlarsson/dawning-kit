@@ -1,0 +1,34 @@
+#
+#       Composed onto arch/riscv, for machines that do unaligned access in
+#       hardware.
+#
+#               sh build.sh arch/riscv debug_none riscv_fast
+#
+#       Not in arch/riscv itself, and for the reason that profile already
+#       gives about Zbb: it names a VisionFive and an Unmatched as targets, and
+#       the U74 in both of those traps an unaligned access to firmware, which
+#       emulates it an instruction at a time. Turning this on there would not
+#       be slower at the margin, it would be catastrophic -- Kconfig's own
+#       words for that case are "much more slowly, or will not be able to run
+#       at all". A floor nothing here can boot is not a floor.
+#
+#       What it is worth where it does apply, measured on the built image:
+#
+#       riscv64 has no CONFIG_HAVE_EFFICIENT_UNALIGNED_ACCESS, so every
+#       get_unaligned and put_unaligned in the kernel expands to a byte-wise
+#       packed-struct access. That is not a nuance at one call site, it is the
+#       shape of every one of them. memcpy_toio spends eighteen memory
+#       operations moving eight bytes, routed through a stack frame it
+#       allocates for the purpose, where memset_io beside it -- which needs no
+#       get_unaligned -- emits one store per eight bytes and is already right.
+#
+#       It also gates DCACHE_WORD_ACCESS, which x86_64 and arm64 both have and
+#       riscv64 does not. Without it full_name_hash reads one byte at a time,
+#       so every path lookup on the system hashes bytewise.
+#
+#       QEMU's virt machine does unaligned access in hardware, as do the newer
+#       cores, so this is the profile to build with when that is what is being
+#       run on.
+#
+CONFIG_NONPORTABLE=y
+CONFIG_RISCV_EFFICIENT_UNALIGNED_ACCESS=y
