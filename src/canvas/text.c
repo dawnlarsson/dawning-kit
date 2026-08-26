@@ -28,9 +28,8 @@ static int text_cell_height(int scale)
         time: a call for every lit pixel is thousands of calls for a line of
         text, and a run of a few is what the fill is cheapest at.
 */
-static void glyph_draw(u32 *pixels, unsigned int pitch_pixels, struct output *output,
-                       const struct drm_rect *clip,
-                       int x, int y, int scale, unsigned char character, u32 colour)
+static void glyph_draw(const struct target *t, int x, int y, int scale,
+                       unsigned char character, u32 colour)
 {
         unsigned int pitch = font_glyph_pitch(canvas_font->width);
         const unsigned char *glyph =
@@ -58,21 +57,17 @@ static void glyph_draw(u32 *pixels, unsigned int pitch_pixels, struct output *ou
                                 run++;
 
                         px = x + (int)column * scale;
-                        x1 = max(max(px, clip->x1), 0);
-                        x2 = min(min(px + (int)(run - column) * scale, clip->x2),
-                                 (int)output->width);
+                        x1 = max(max(px, t->clip.x1), 0);
+                        x2 = min(min(px + (int)(run - column) * scale, t->clip.x2),
+                                 t->width);
 
                         for (line = 0; x2 > x1 && line < scale; line++)
                         {
                                 int py = y + (int)row * scale + line;
 
-                                if (py < max(clip->y1, 0) ||
-                                    py >= min(clip->y2, (int)output->height))
-                                        continue;
-
-                                canvas_painted += (unsigned long)(x2 - x1);
-                                canvas_row_fill(pixels + (size_t)py * pitch_pixels + x1,
-                                                (unsigned long)(x2 - x1), colour);
+                                if (py >= max(t->clip.y1, 0) &&
+                                    py < min(t->clip.y2, t->height))
+                                        target_row(t, py, x1, x2, colour);
                         }
 
                         column = run;
@@ -145,9 +140,7 @@ static unsigned int text_line_count(const char *text, unsigned int length,
         Lays a string out in a box and draws it. Coordinates are the output's,
         the clip is the damage, and nothing is drawn outside either.
 */
-static void text_draw(u32 *pixels, unsigned int pitch_pixels, struct output *output,
-                      const struct drm_rect *clip,
-                      int x, int y, int w, int h,
+static void text_draw(const struct target *t, int x, int y, int w, int h,
                       const char *text, unsigned int length,
                       unsigned int align, int scale, u32 colour)
 {
@@ -201,10 +194,10 @@ static void text_draw(u32 *pixels, unsigned int pitch_pixels, struct output *out
                         // Nothing to do for a glyph entirely outside the box or
                         // the damage.
                         if (px + cell_w <= x || px >= x + w ||
-                            px + cell_w <= clip->x1 || px >= clip->x2)
+                            px + cell_w <= t->clip.x1 || px >= t->clip.x2)
                                 continue;
 
-                        glyph_draw(pixels, pitch_pixels, output, clip, px, line_y, scale,
+                        glyph_draw(t, px, line_y, scale,
                                    (unsigned char)text[start + i], colour);
                 }
 

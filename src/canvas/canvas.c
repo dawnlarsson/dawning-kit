@@ -35,6 +35,28 @@
 #define log_canvas(fmt, ...) pr_info("[moonwater canvas] " fmt, ##__VA_ARGS__)
 
 /*
+        Colours are an index, not a value.
+
+        Every one has to be converted for the format of the screen it lands
+        on, and that used to happen at each of the hundreds of thousands of
+        draw calls a compose makes. An output converts the whole palette once
+        when it learns its format, and the drawing code indexes what it was
+        handed without knowing what a format is.
+*/
+enum
+{
+        INK_DESKTOP,
+        INK_FRAME,
+        INK_TITLE,
+        INK_TITLE_LIT,
+        INK_BODY,
+        INK_TEXT,
+        INK_CURSOR,
+        INK_CURSOR_EDGE,
+        INK_COUNT,
+};
+
+/*
         A pane is the compositor's side of a window: where it is, and the
         pixels behind it. struct window, in window.c, is the page the
         program that owns it has mapped. Panes without one are the compositor's
@@ -76,6 +98,10 @@ struct output
         int x, y;
         unsigned int width, height;
         u32 format;
+
+        // Every colour, converted once for this output's format.
+        u32 palette[INK_COUNT];
+        u32 opaque;
 
         // Null means the cursor is drawn into this output's framebuffer.
         struct drm_plane *cursor_plane;
@@ -208,6 +234,32 @@ static unsigned long canvas_painted;
 */
 void canvas_row_fill(u32 *at, unsigned long count, u32 colour);
 void canvas_row_blit(u32 *at, const u32 *from, unsigned long count, u32 opaque);
+
+/*
+        Somewhere to draw, and the only thing the drawing code is given.
+
+        It used to take a pixel pointer, a pitch, an output and a clip, four
+        arguments threaded through every function down to the innermost loop,
+        and the innermost loop was the only place all four were wanted. Now
+        the caller assembles one of these and the drawing knows nothing about
+        outputs, formats or windows.
+
+        The origin is where the target sits on the desktop, so drawing can be
+        in desktop coordinates and land in target ones. The clip is the damage,
+        in target coordinates.
+*/
+struct target
+{
+        u32 *pixels;
+        unsigned int pitch;
+        int width, height;
+        int x, y;
+        u32 opaque;
+        const u32 *ink;
+        struct drm_rect clip;
+};
+
+static void target_row(const struct target *t, int y, int x1, int x2, u32 colour);
 
 static struct canvas *canvas_from_client(struct drm_client_dev *client)
 {

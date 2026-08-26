@@ -46,118 +46,89 @@ struct shape
         int radius;
 };
 
+// One run of one row, already clipped. Everything that draws ends here.
+static void target_row(const struct target *t, int y, int x1, int x2, u32 colour)
+{
+        if (x2 <= x1)
+                return;
+
+        canvas_painted += (unsigned long)(x2 - x1);
+        canvas_row_fill(t->pixels + (size_t)y * t->pitch + x1,
+                        (unsigned long)(x2 - x1), colour);
+}
+
 /*
-        A band of the shape: the corners follow the shape's curve, the sides
-        are the band's own. The frame is a band the full width of the shape;
-        the titlebar and the contents are inset by the border, and only meet
-        the curve where they reach a corner.
+        The run of one row of a shape that survives its band and the clip, or
+        false when nothing does.
+
+        This is the whole of what the rounded corners cost: an inset per row,
+        and every band measured from there rather than from the edge.
 */
-static void shape_fill(u32 *pixels, unsigned int pitch_pixels, struct output *output,
-                       const struct drm_rect *clip, const struct shape *shape,
+static _Bool shape_span(const struct target *t, const struct shape *shape,
+                        int band_x, int band_w, int y, int *x1, int *x2)
+{
+        int inset;
+
+        if (y < max(t->clip.y1, 0) || y >= min(t->clip.y2, t->height))
+                return false;
+
+        inset = round_inset(y - shape->y, shape->h, shape->radius);
+
+        *x1 = max(max(shape->x + inset, band_x), t->clip.x1);
+        *x2 = min(min(shape->x + shape->w - inset, band_x + band_w),
+                  min(t->clip.x2, t->width));
+
+        return *x2 > *x1;
+}
+
+static void shape_fill(const struct target *t, const struct shape *shape,
                        int band_x, int band_y, int band_w, int band_h, u32 colour)
 {
-        int y;
+        int y, x1, x2;
 
-        for (y = max(band_y, clip->y1); y < min(band_y + band_h, clip->y2); y++)
-        {
-                int inset = round_inset(y - shape->y, shape->h, shape->radius);
-                int x1 = max(max(max(shape->x + inset, band_x), clip->x1), 0);
-                int x2 = min(min(min(shape->x + shape->w - inset, band_x + band_w),
-                                 clip->x2),
-                             (int)output->width);
-
-                if (y < 0 || y >= (int)output->height || x2 <= x1)
-                        continue;
-
-                canvas_painted += (unsigned long)(x2 - x1);
-                canvas_row_fill(pixels + (size_t)y * pitch_pixels + x1,
-                                (unsigned long)(x2 - x1), colour);
-        }
+        for (y = band_y; y < band_y + band_h; y++)
+                if (shape_span(t, shape, band_x, band_w, y, &x1, &x2))
+                        target_row(t, y, x1, x2, colour);
 }
 
-static void shape_blit(u32 *pixels, unsigned int pitch_pixels, struct output *output,
-                       const struct drm_rect *clip, const struct shape *shape,
+static void shape_blit(const struct target *t, const struct shape *shape,
                        int band_x, int band_y, int band_w, int band_h,
-                       const u32 *source, unsigned int source_pitch, u32 format)
+                       const u32 *source, unsigned int source_pitch)
 {
-        u32 opaque = format == DRM_FORMAT_ARGB8888 ? 0xff000000 : 0;
-        int y;
+        int y, x1, x2;
 
-        for (y = max(band_y, clip->y1); y < min(band_y + band_h, clip->y2); y++)
+        for (y = band_y; y < band_y + band_h; y++)
         {
-                int inset = round_inset(y - shape->y, shape->h, shape->radius);
-                int x1 = max(max(max(shape->x + inset, band_x), clip->x1), 0);
-                int x2 = min(min(min(shape->x + shape->w - inset, band_x + band_w),
-                                 clip->x2),
-                             (int)output->width);
-
-                if (y < 0 || y >= (int)output->height || x2 <= x1)
+                if (!shape_span(t, shape, band_x, band_w, y, &x1, &x2))
                         continue;
 
                 canvas_painted += (unsigned long)(x2 - x1);
-                canvas_row_blit(pixels + (size_t)y * pitch_pixels + x1,
-                                source + (size_t)(y - band_y) * source_pitch + (x1 - band_x),
-                                (unsigned long)(x2 - x1), opaque);
+                canvas_row_blit(t->pixels + (size_t)y * t->pitch + x1,
+                                source + (size_t)(y - band_y) * source_pitch +
+                                    (x1 - band_x),
+                                (unsigned long)(x2 - x1), t->opaque);
         }
 }
 
 /*
-        The part of the shape that is left over beside an inner rectangle.
+        A pane, in target coordinates.
 
-        A frame is a border, not a filled rectangle with a window painted over
-        it. Painting the whole of it and covering it up cost more pixels than
-        the window itself: 47824 written for 2224 that could be seen.
+        The frame is drawn as the parts of it something is not about to cover:
+        the strip above the titlebar, the strip below the contents, and the two
+        sides. Painting the whole rectangle and covering it up cost 47824
+        pixels a window where 2224 could be seen.
 
-        The curve is why this is not four thin bands. On a rounded corner the
-        edge is not at the shape's edge, it is at the inset for that row, so
-        the border has to be measured from there.
+        The sides are shape_fill with a band that stops at the contents, which
+        is why there is no separate border function: the band clamp already
+        measures from the row's inset, so a side follows the curve for free.
 */
-static void shape_border(u32 *pixels, unsigned int pitch_pixels, struct output *output,
-                         const struct drm_rect *clip, const struct shape *shape,
-                         int inner_x, int inner_w, int band_y, int band_h, u32 colour)
-{
-        int y;
-
-        for (y = max(band_y, clip->y1); y < min(band_y + band_h, clip->y2); y++)
-        {
-                int inset = round_inset(y - shape->y, shape->h, shape->radius);
-                int outer_left = shape->x + inset;
-                int outer_right = shape->x + shape->w - inset;
-                int x1, x2;
-
-                if (y < 0 || y >= (int)output->height)
-                        continue;
-
-                x1 = max(max(outer_left, clip->x1), 0);
-                x2 = min(min(min(inner_x, outer_right), clip->x2), (int)output->width);
-
-                if (x2 > x1)
-                {
-                        canvas_painted += (unsigned long)(x2 - x1);
-                        canvas_row_fill(pixels + (size_t)y * pitch_pixels + x1,
-                                        (unsigned long)(x2 - x1), colour);
-                }
-
-                x1 = max(max(max(inner_x + inner_w, outer_left), clip->x1), 0);
-                x2 = min(min(outer_right, clip->x2), (int)output->width);
-
-                if (x2 > x1)
-                {
-                        canvas_painted += (unsigned long)(x2 - x1);
-                        canvas_row_fill(pixels + (size_t)y * pitch_pixels + x1,
-                                        (unsigned long)(x2 - x1), colour);
-                }
-        }
-}
-
-static void compose_pane(struct pane *pane, struct output *output,
-                         u32 *pixels, unsigned int pitch_pixels,
-                         const struct drm_rect *clip)
+static void compose_pane(struct pane *pane, const struct target *t)
 {
         _Bool framed = pane->style & WINDOW_FRAME;
         int title = framed ? WINDOW_TITLE : 0;
-        int x = pane->x - output->x;
-        int y = pane->y - output->y;
+        int x = pane->x - t->x;
+        int y = pane->y - t->y;
+        int bottom = y + title + pane->height;
         struct shape shape;
         int fx, fy, fw, fh;
 
@@ -166,70 +137,84 @@ static void compose_pane(struct pane *pane, struct output *output,
 
         pane_frame(pane, &fx, &fy, &fw, &fh);
 
-        shape.x = fx - output->x;
-        shape.y = fy - output->y;
+        shape.x = fx - t->x;
+        shape.y = fy - t->y;
         shape.w = fw;
         shape.h = fh;
         shape.radius = min(pane->edge, min(shape.w, shape.h) / 2);
 
         if (framed)
         {
-                u32 frame = canvas_colour(COLOUR_FRAME, output->format);
-                u32 bar = canvas_colour(pane->state & WINDOW_FOCUSED
-                                            ? COLOUR_TITLE_FOCUSED
-                                            : COLOUR_TITLE,
-                                        output->format);
+                u32 frame = t->ink[INK_FRAME];
 
-                // Only the parts of the frame something is not about to
-                // cover: the strip above, the strip below, and the two sides.
-                shape_fill(pixels, pitch_pixels, output, clip, &shape,
-                           shape.x, shape.y, shape.w, y - shape.y, frame);
-                shape_fill(pixels, pitch_pixels, output, clip, &shape,
-                           shape.x, y + title + pane->height, shape.w,
-                           shape.y + shape.h - (y + title + pane->height), frame);
-                shape_border(pixels, pitch_pixels, output, clip, &shape,
-                             x, pane->width, y, title + pane->height, frame);
+                shape_fill(t, &shape, shape.x, shape.y, shape.w, y - shape.y, frame);
+                shape_fill(t, &shape, shape.x, bottom, shape.w,
+                           shape.y + shape.h - bottom, frame);
+                shape_fill(t, &shape, shape.x, y, x - shape.x, title + pane->height, frame);
+                shape_fill(t, &shape, x + pane->width, y,
+                           shape.x + shape.w - (x + pane->width),
+                           title + pane->height, frame);
 
-                shape_fill(pixels, pitch_pixels, output, clip, &shape,
-                           x, y, pane->width, title, bar);
+                shape_fill(t, &shape, x, y, pane->width, title,
+                           t->ink[pane->state & WINDOW_FOCUSED ? INK_TITLE_LIT
+                                                              : INK_TITLE]);
 
                 if (pane->title_length)
-                        text_draw(pixels, pitch_pixels, output, clip,
-                                  x + 8, y, pane->width - 16, title,
+                        text_draw(t, x + 8, y, pane->width - 16, title,
                                   pane->title, pane->title_length,
-                                  TEXT_CENTRE | TEXT_MIDDLE, 1,
-                                  canvas_colour(COLOUR_TEXT, output->format));
+                                  TEXT_CENTRE | TEXT_MIDDLE, 1, t->ink[INK_TEXT]);
         }
 
         if (pane->pixels)
-                shape_blit(pixels, pitch_pixels, output, clip, &shape,
-                           x, y + title, pane->width, pane->height,
-                           pane->pixels, pane->pitch, output->format);
+                shape_blit(t, &shape, x, y + title, pane->width, pane->height,
+                           pane->pixels, pane->pitch);
         else
         {
-                shape_fill(pixels, pitch_pixels, output, clip, &shape,
-                           x, y + title, pane->width, pane->height,
-                           canvas_colour(COLOUR_BODY, output->format));
+                shape_fill(t, &shape, x, y + title, pane->width, pane->height,
+                           t->ink[INK_BODY]);
 
-                text_draw(pixels, pitch_pixels, output, clip,
-                          x + 8, y + title + 8, pane->width - 16, pane->height - 16,
+                text_draw(t, x + 8, y + title + 8, pane->width - 16, pane->height - 16,
                           pane_placeholder, sizeof(pane_placeholder) - 1,
-                          TEXT_LEFT | TEXT_TOP | TEXT_WRAP, 1,
-                          canvas_colour(COLOUR_TEXT, output->format));
+                          TEXT_LEFT | TEXT_TOP | TEXT_WRAP, 1, t->ink[INK_TEXT]);
         }
 }
 
-static void compose_clip(struct output *output, u32 *pixels, unsigned int pitch_pixels,
-                         const struct drm_rect *clip)
+static void compose_clip(const struct target *t)
 {
         struct pane *pane;
+        int y;
 
-        canvas_fill_rect(pixels, pitch_pixels, output->width, output->height,
-                         clip->x1, clip->y1, clip->x2 - clip->x1, clip->y2 - clip->y1,
-                         canvas_colour(COLOUR_DESKTOP, output->format));
+        for (y = max(t->clip.y1, 0); y < min(t->clip.y2, t->height); y++)
+                target_row(t, y, max(t->clip.x1, 0), min(t->clip.x2, t->width),
+                           t->ink[INK_DESKTOP]);
 
         list_for_each_entry(pane, &desktop.windows, link)
-                compose_pane(pane, output, pixels, pitch_pixels, clip);
+                compose_pane(pane, t);
+}
+
+// Somewhere to draw: an output, a pointer into its scanout buffer, and the
+// damage. The clip is in target coordinates; the rectangle asked for is in
+// desktop ones.
+static struct target target_of(struct output *output, u32 *pixels,
+                               int rx, int ry, int rw, int rh)
+{
+        struct target t;
+
+        t.pixels = pixels;
+        t.pitch = output->buffer->fb->pitches[0] / sizeof(u32);
+        t.width = (int)output->width;
+        t.height = (int)output->height;
+        t.x = output->x;
+        t.y = output->y;
+        t.opaque = output->opaque;
+        t.ink = output->palette;
+
+        t.clip.x1 = max(rx - output->x, 0);
+        t.clip.y1 = max(ry - output->y, 0);
+        t.clip.x2 = min(rx + rw - output->x, t.width);
+        t.clip.y2 = min(ry + rh - output->y, t.height);
+
+        return t;
 }
 
 /*
@@ -237,20 +222,36 @@ static void compose_clip(struct output *output, u32 *pixels, unsigned int pitch_
         dirties two small areas; repainting 1280x800 for it would be a megabyte
         of writes. The rectangle is in desktop coordinates.
 */
-static void compose_rect(struct output *output, u32 *pixels, unsigned int pitch_pixels,
+static void compose_rect(struct output *output, u32 *pixels,
                          int rx, int ry, int rw, int rh)
 {
-        struct drm_rect clip;
+        struct target t = target_of(output, pixels, rx, ry, rw, rh);
 
-        clip.x1 = max(rx - output->x, 0);
-        clip.y1 = max(ry - output->y, 0);
-        clip.x2 = min(rx + rw - output->x, (int)output->width);
-        clip.y2 = min(ry + rh - output->y, (int)output->height);
+        if (t.clip.x2 > t.clip.x1 && t.clip.y2 > t.clip.y1)
+                compose_clip(&t);
+}
 
-        if (clip.x2 <= clip.x1 || clip.y2 <= clip.y1)
+/*
+        The cursor, where this output shows it. On a hardware plane it is never
+        drawn in, and on the outputs it is not over there is nothing to draw.
+*/
+static void output_draw_cursor(struct output *output, u32 *pixels)
+{
+        struct target t;
+
+        output->cursor_shown =
+            !output->cursor_plane &&
+            output_shows_cursor(output, desktop.cursor_x, desktop.cursor_y);
+
+        if (!output->cursor_shown)
                 return;
 
-        compose_clip(output, pixels, pitch_pixels, &clip);
+        t = target_of(output, pixels, output->x, output->y,
+                      (int)output->width, (int)output->height);
+
+        canvas_draw_cursor(&t, desktop.cursor_x - output->x,
+                           desktop.cursor_y - output->y,
+                           desktop.cursor_shape, desktop.cursor_scale);
 }
 
 static void rect_set(struct drm_rect *rect, int x, int y, int w, int h)
@@ -296,12 +297,21 @@ static _Bool output_touched(struct output *output, const struct drm_rect *damage
 
         Every rectangle is in desktop coordinates.
 */
+/*
+        Repaints a set of damaged rectangles on one output and hands the driver
+        their union. A set rather than a pair because moving a window damages
+        four things: where its frame was and is, and where the cursor was and
+        is. The cursor's cell reaches outside the frame it is dragging, so
+        leaving it out of the damage leaves a trail of it behind.
+
+        Every rectangle is in desktop coordinates.
+*/
 static void output_repaint(struct output *output, const struct drm_rect *damage,
                            unsigned int count)
 {
         struct iosys_map map;
-        unsigned int pitch_pixels;
         struct drm_rect flush;
+        unsigned int pitch_pixels;
         u32 *pixels;
         unsigned int i;
         u64 started;
@@ -314,22 +324,12 @@ static void output_repaint(struct output *output, const struct drm_rect *damage,
         started = ktime_get_ns();
 
         for (i = 0; i < count; i++)
-                compose_rect(output, pixels, pitch_pixels,
+                compose_rect(output, pixels,
                              damage[i].x1, damage[i].y1,
                              damage[i].x2 - damage[i].x1,
                              damage[i].y2 - damage[i].y1);
 
-        output->cursor_shown =
-            !output->cursor_plane &&
-            output_shows_cursor(output, desktop.cursor_x, desktop.cursor_y);
-
-        if (output->cursor_shown)
-                canvas_draw_cursor(pixels, pitch_pixels, output->width, output->height,
-                                   desktop.cursor_x - output->x,
-                                   desktop.cursor_y - output->y,
-                                   desktop.cursor_shape, desktop.cursor_scale,
-                                   canvas_colour(COLOUR_CURSOR, output->format),
-                                   canvas_colour(COLOUR_CURSOR_EDGE, output->format));
+        output_draw_cursor(output, pixels);
 
         drm_client_buffer_vunmap_local(output->buffer);
         pointer_draw_total += ktime_get_ns() - started;
@@ -359,34 +359,36 @@ static void output_repaint(struct output *output, const struct drm_rect *damage,
 
 static void compose_output(struct output *output)
 {
-        struct drm_rect whole = {0, 0, (int)output->width, (int)output->height};
         struct iosys_map map;
-        unsigned int pitch_pixels;
         u32 *pixels;
 
         if (drm_client_buffer_vmap_local(output->buffer, &map))
                 return;
 
         pixels = map.vaddr;
-        pitch_pixels = output->buffer->fb->pitches[0] / sizeof(u32);
 
-        compose_clip(output, pixels, pitch_pixels, &whole);
-
-        output->cursor_shown = false;
-
-        // Only where the cursor actually is. On a plane it is never drawn in,
-        // and on the outputs it is not over there is nothing to draw.
-        if (!output->cursor_plane &&
-            output_shows_cursor(output, desktop.cursor_x, desktop.cursor_y))
         {
-                canvas_draw_cursor(pixels, pitch_pixels, output->width, output->height,
-                                   desktop.cursor_x - output->x,
-                                   desktop.cursor_y - output->y,
-                                   desktop.cursor_shape, desktop.cursor_scale,
-                                   canvas_colour(COLOUR_CURSOR, output->format),
-                                   canvas_colour(COLOUR_CURSOR_EDGE, output->format));
-                output->cursor_shown = true;
+                struct target t = target_of(output, pixels, output->x, output->y,
+                                            (int)output->width, (int)output->height);
+
+                compose_clip(&t);
         }
 
+        output_draw_cursor(output, pixels);
+
         drm_client_buffer_vunmap_local(output->buffer);
+
+        /*
+                Telling the driver the whole buffer changed, which the damage
+                path did and this one did not.
+
+                It is not only for drivers that shadow the framebuffer. i915
+                maps a dumb buffer write-back cached and implements dirty as a
+                frontbuffer flush, which is what invalidates framebuffer
+                compression and panel self refresh. Without it the display
+                keeps serving the compressed copy it already had for regions we
+                have just painted, and what reaches the screen is the new
+                picture with holes of the old one through it.
+        */
+        drm_client_buffer_flush(output->buffer, NULL);
 }

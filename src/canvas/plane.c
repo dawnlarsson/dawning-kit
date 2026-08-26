@@ -141,32 +141,42 @@ static unsigned int plane_scale(struct output *output, unsigned int scale)
 
 static int plane_paint(struct output *output, unsigned int shape, unsigned int scale)
 {
+        u32 opaque_ink[INK_COUNT];
         struct iosys_map map;
-        unsigned int pitch_pixels;
+        struct target t;
+        int row;
 
         scale = plane_scale(output, scale);
+        canvas_palette(opaque_ink, DRM_FORMAT_ARGB8888);
 
         if (drm_client_buffer_vmap_local(output->cursor_buffer, &map))
                 return -EIO;
 
-        pitch_pixels = output->cursor_buffer->fb->pitches[0] / sizeof(u32);
+        // The plane's own buffer is a target like any other: its own size,
+        // no clip beyond itself, and a palette that is always opaque.
+        t.pixels = map.vaddr;
+        t.pitch = output->cursor_buffer->fb->pitches[0] / sizeof(u32);
+        t.width = (int)output->cursor_w;
+        t.height = (int)output->cursor_h;
+        t.x = 0;
+        t.y = 0;
+        t.opaque = 0xff000000;
+        t.ink = opaque_ink;
+        t.clip.x1 = 0;
+        t.clip.y1 = 0;
+        t.clip.x2 = t.width;
+        t.clip.y2 = t.height;
 
         // Transparent everywhere the shape does not cover, or it wears a box
         // of whatever the buffer was allocated holding.
-        canvas_fill_rect(map.vaddr, pitch_pixels,
-                         output->cursor_w, output->cursor_h,
-                         0, 0, output->cursor_w, output->cursor_h,
-                         0x00000000);
+        for (row = 0; row < t.height; row++)
+                target_row(&t, row, 0, t.width, 0x00000000);
 
-        canvas_draw_cursor(map.vaddr, pitch_pixels,
-                           output->cursor_w, output->cursor_h,
-                           cursor_hot_x(shape) * (int)scale,
-                           cursor_hot_y(shape) * (int)scale,
-                           shape, scale,
-                           canvas_colour(COLOUR_CURSOR, DRM_FORMAT_ARGB8888),
-                           canvas_colour(COLOUR_CURSOR_EDGE, DRM_FORMAT_ARGB8888));
+        canvas_draw_cursor(&t, cursor_hot_x(shape) * (int)scale,
+                           cursor_hot_y(shape) * (int)scale, shape, scale);
 
         drm_client_buffer_vunmap_local(output->cursor_buffer);
+        drm_client_buffer_flush(output->cursor_buffer, NULL);
 
         output->cursor_shape = shape;
         output->cursor_scale = scale;

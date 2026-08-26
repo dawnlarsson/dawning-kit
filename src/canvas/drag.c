@@ -65,25 +65,25 @@ static struct pane *pane_under(int x, int y, unsigned int *edges)
         return found;
 }
 
+/*
+        Which shape an edge mask wears. Sixteen entries because the mask is
+        four bits; the impossible ones -- left and right at once -- read as an
+        arrow, which is what a mask of no edges means too.
+*/
+static const unsigned char cursor_by_edges[16] = {
+    [EDGE_LEFT] = CURSOR_RESIZE_H,
+    [EDGE_RIGHT] = CURSOR_RESIZE_H,
+    [EDGE_TOP] = CURSOR_RESIZE_V,
+    [EDGE_BOTTOM] = CURSOR_RESIZE_V,
+    [EDGE_TOP | EDGE_LEFT] = CURSOR_RESIZE_NWSE,
+    [EDGE_BOTTOM | EDGE_RIGHT] = CURSOR_RESIZE_NWSE,
+    [EDGE_TOP | EDGE_RIGHT] = CURSOR_RESIZE_NESW,
+    [EDGE_BOTTOM | EDGE_LEFT] = CURSOR_RESIZE_NESW,
+};
+
 static unsigned int cursor_for_edges(unsigned int edges)
 {
-        switch (edges)
-        {
-        case EDGE_LEFT:
-        case EDGE_RIGHT:
-                return CURSOR_RESIZE_H;
-        case EDGE_TOP:
-        case EDGE_BOTTOM:
-                return CURSOR_RESIZE_V;
-        case EDGE_TOP | EDGE_LEFT:
-        case EDGE_BOTTOM | EDGE_RIGHT:
-                return CURSOR_RESIZE_NWSE;
-        case EDGE_TOP | EDGE_RIGHT:
-        case EDGE_BOTTOM | EDGE_LEFT:
-                return CURSOR_RESIZE_NESW;
-        default:
-                return CURSOR_ARROW;
-        }
+        return cursor_by_edges[edges & 15];
 }
 
 static unsigned int cursor_shape_at(int x, int y)

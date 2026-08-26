@@ -7,51 +7,26 @@
         be read without the DRM stack in your head.
 */
 
-// Colours are written as plain xrgb8888 and converted once per output.
-#define COLOUR_DESKTOP 0x1b2733
-#define COLOUR_FRAME 0x2f3f52
-#define COLOUR_TITLE 0x2b3a4c
-#define COLOUR_TITLE_FOCUSED 0x4c6785
-#define COLOUR_BODY 0x101820
-#define COLOUR_TEXT 0xdfe7ef
-#define COLOUR_CURSOR 0xffffff
-#define COLOUR_CURSOR_EDGE 0x000000
+static const u32 canvas_ink[INK_COUNT] = {
+    [INK_DESKTOP] = 0x1b2733,
+    [INK_FRAME] = 0x2f3f52,
+    [INK_TITLE] = 0x2b3a4c,
+    [INK_TITLE_LIT] = 0x4c6785,
+    [INK_BODY] = 0x101820,
+    [INK_TEXT] = 0xdfe7ef,
+    [INK_CURSOR] = 0xffffff,
+    [INK_CURSOR_EDGE] = 0x000000,
+};
 
-static void canvas_fill_rect(u32 *pixels, unsigned int pitch_pixels,
-                             unsigned int target_w, unsigned int target_h,
-                             int x, int y, int width, int height, u32 colour)
+static void canvas_palette(u32 *palette, u32 format)
 {
-        int row;
+        u32 opaque = format == DRM_FORMAT_ARGB8888 ? 0xff000000 : 0;
+        unsigned int i;
 
-        // Clip rather than trusting callers: a window dragged off the edge is
-        // the normal case, not an error.
-        if (x < 0)
-        {
-                width += x;
-                x = 0;
-        }
-
-        if (y < 0)
-        {
-                height += y;
-                y = 0;
-        }
-
-        if (x + width > (int)target_w)
-                width = (int)target_w - x;
-
-        if (y + height > (int)target_h)
-                height = (int)target_h - y;
-
-        if (width <= 0 || height <= 0)
-                return;
-
-        canvas_painted += (unsigned long)width * height;
-
-        for (row = 0; row < height; row++)
-                canvas_row_fill(pixels + (size_t)(y + row) * pitch_pixels + x,
-                                (unsigned long)width, colour);
+        for (i = 0; i < INK_COUNT; i++)
+                palette[i] = canvas_ink[i] | opaque;
 }
+
 
 /*
         Cursors.
@@ -201,58 +176,55 @@ static int cursor_hot_y(unsigned int shape)
         return canvas_cursor_hot[shape][1];
 }
 
-static void canvas_draw_cursor(u32 *pixels, unsigned int pitch_pixels,
-                               unsigned int target_w, unsigned int target_h,
-                               int x, int y, unsigned int shape, unsigned int scale,
-                               u32 fill, u32 edge)
+/*
+        The cursor, into whatever it is given. Runs of the same colour go out
+        together, the same reason a glyph does: a store per pixel would be a
+        call per pixel at scale one.
+*/
+static void canvas_draw_cursor(const struct target *t, int x, int y,
+                               unsigned int shape, unsigned int scale)
 {
         int row, column;
-        unsigned int sx, sy;
+        unsigned int line;
 
         x -= cursor_hot_x(shape) * (int)scale;
         y -= cursor_hot_y(shape) * (int)scale;
 
         for (row = 0; row < CURSOR_H; row++)
         {
-                for (column = 0; column < CURSOR_W; column++)
+                for (column = 0; column < CURSOR_W;)
                 {
                         char pixel = canvas_cursors[shape][row][column];
-                        u32 colour;
+                        int run = column, x1, x2;
 
                         if (pixel == ' ')
-                                continue;
-
-                        colour = pixel == 'X' ? edge : fill;
-
-                        for (sy = 0; sy < scale; sy++)
                         {
-                                int py = y + row * (int)scale + (int)sy;
-
-                                if (py < 0 || py >= (int)target_h)
-                                        continue;
-
-                                for (sx = 0; sx < scale; sx++)
-                                {
-                                        int px = x + column * (int)scale + (int)sx;
-
-                                        if (px < 0 || px >= (int)target_w)
-                                                continue;
-
-                                        pixels[(size_t)py * pitch_pixels + px] = colour;
-                                }
+                                column++;
+                                continue;
                         }
+
+                        while (run < CURSOR_W && canvas_cursors[shape][row][run] == pixel)
+                                run++;
+
+                        x1 = max(max(x + column * (int)scale, t->clip.x1), 0);
+                        x2 = min(min(x + run * (int)scale, t->clip.x2), t->width);
+
+                        for (line = 0; x2 > x1 && line < scale; line++)
+                        {
+                                int py = y + row * (int)scale + (int)line;
+
+                                if (py >= max(t->clip.y1, 0) && py < min(t->clip.y2, t->height))
+                                        target_row(t, py, x1, x2,
+                                                   t->ink[pixel == 'X' ? INK_CURSOR_EDGE
+                                                                       : INK_CURSOR]);
+                        }
+
+                        column = run;
                 }
         }
 }
 
 // xrgb8888 is the source of truth; argb differs only in the alpha byte.
-static u32 canvas_colour(u32 xrgb, u32 format)
-{
-        if (format == DRM_FORMAT_ARGB8888)
-                return xrgb | 0xff000000;
-
-        return xrgb;
-}
 
 /*
         How far a row of a rounded rectangle is inset from its edge. Zero
