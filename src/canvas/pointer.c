@@ -28,6 +28,99 @@ static struct task_struct *canvas_thread;
 static struct pm_qos_request pointer_qos;
 
 /*
+        Acceleration, the way a desktop does it.
+
+        A mouse reports counts, not pixels, and the same count means different
+        things depending on how fast the hand is moving: slow is aiming and
+        fast is crossing the screen. So the gain is a curve on speed rather
+        than a constant. Below the floor it is exactly one to one, which is
+        what makes careful movement land where it is aimed; above the ceiling
+        it is flat, because past that the hand is already travelling and more
+        gain only makes it hard to stop.
+
+        Fixed point, since there is no floating point in here. Speed is counts
+        per millisecond.
+*/
+#define ACCEL_ONE 1024
+#define ACCEL_FLOOR 1
+#define ACCEL_CEILING 8
+#define ACCEL_MAX (ACCEL_ONE * 5 / 2)
+
+static int pointer_gain(int speed)
+{
+        if (speed <= ACCEL_FLOOR)
+                return ACCEL_ONE;
+
+        if (speed >= ACCEL_CEILING)
+                return ACCEL_MAX;
+
+        return ACCEL_ONE + (ACCEL_MAX - ACCEL_ONE) * (speed - ACCEL_FLOOR) /
+                               (ACCEL_CEILING - ACCEL_FLOOR);
+}
+
+static int pointer_accelerate(int delta, int *remainder, u64 interval)
+{
+        int speed, whole;
+
+        if (!delta)
+                return 0;
+
+        // Both axes of one movement arrive back to back, so the second would
+        // divide by nothing and read as infinitely fast.
+        if (interval < NSEC_PER_MSEC)
+                interval = NSEC_PER_MSEC;
+
+        speed = (int)div_u64((u64)abs(delta) * NSEC_PER_MSEC, interval);
+
+        *remainder += delta * pointer_gain(speed);
+        whole = *remainder / ACCEL_ONE;
+        *remainder -= whole * ACCEL_ONE;
+
+        pointer_counts += abs(delta);
+        pointer_moved += abs(whole);
+
+        return whole;
+}
+
+/*
+        Shake to find it.
+
+        Reversing direction takes a real movement each time, so a slow wobble
+        or a hand resting on the mouse is not a shake, and the reversals have
+        to arrive inside one window or the count starts again.
+*/
+#define SHAKE_WINDOW_NS (700ULL * NSEC_PER_MSEC)
+#define SHAKE_STEP 6
+#define SHAKE_REVERSALS 5
+#define CURSOR_MAGNIFIED 3
+#define MAGNIFIED_NS (1200ULL * NSEC_PER_MSEC)
+
+static void pointer_shake(int delta, u64 now)
+{
+        int direction = delta > 0 ? 1 : -1;
+
+        if (abs(delta) < SHAKE_STEP)
+                return;
+
+        if (now - desktop.shake_window > SHAKE_WINDOW_NS)
+        {
+                desktop.shake_window = now;
+                atomic_set(&desktop.shake_count, 0);
+        }
+
+        if (direction == atomic_read(&desktop.shake_dir))
+                return;
+
+        atomic_set(&desktop.shake_dir, direction);
+
+        if (atomic_inc_return(&desktop.shake_count) >= SHAKE_REVERSALS)
+        {
+                atomic_set(&desktop.shake_count, 0);
+                atomic_set(&desktop.magnify, 1);
+        }
+}
+
+/*
         Keeps the cursor on a screen. The desktop is the bounding box of the
         outputs, so with screens of different heights it has corners no crtc
         scans out; a cursor left there would vanish.
@@ -98,6 +191,13 @@ static void pointer_apply(void)
 
                         desktop.cursor_shape = cursor_shape_at(x, y);
 
+                        if (atomic_xchg(&desktop.magnify, 0))
+                        {
+                                desktop.cursor_scale = CURSOR_MAGNIFIED;
+                                desktop.magnified_until = ktime_get_ns() + MAGNIFIED_NS;
+                                desktop_watch();
+                        }
+
                         if (desktop.dragging || desktop.resizing)
                         {
                                 desktop.cursor_x = x;
@@ -142,12 +242,24 @@ static void pointer_event(struct input_handle *handle, unsigned int type,
 
         if (type == EV_REL)
         {
+                u64 now = ktime_get_ns();
+                u64 interval = now - desktop.accel_stamp;
+
+                desktop.accel_stamp = now;
+
                 if (code == REL_X)
-                        x += value;
+                {
+                        pointer_shake(value, now);
+                        x += pointer_accelerate(value, &desktop.accel_x, interval);
+                }
                 else if (code == REL_Y)
-                        y += value;
+                {
+                        y += pointer_accelerate(value, &desktop.accel_y, interval);
+                }
                 else
+                {
                         return;
+                }
         }
         else if (type == EV_ABS)
         {
@@ -352,7 +464,8 @@ static void canvas_thread_start(void)
 // Nanoseconds, for the stats ioctl.
 static void canvas_input_stats(unsigned long *events, unsigned long *mean,
                                unsigned long *worst, unsigned long *queue,
-                               unsigned long *draw, unsigned long *flush)
+                               unsigned long *draw, unsigned long *flush,
+                               unsigned long *counts, unsigned long *moved)
 {
         unsigned long n = pointer_events ? pointer_events : 1;
 
@@ -362,4 +475,6 @@ static void canvas_input_stats(unsigned long *events, unsigned long *mean,
         *queue = pointer_queue_total / n;
         *draw = pointer_draw_total / n;
         *flush = pointer_flush_total / n;
+        *counts = pointer_counts;
+        *moved = pointer_moved;
 }

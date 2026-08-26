@@ -375,14 +375,36 @@ static _Bool desktop_sequence_changed(void)
         return false;
 }
 
+/*
+        A magnified cursor goes back on its own. Nothing else is watching the
+        clock, so the frame the shake armed is what notices.
+*/
+static void cursor_settle(void)
+{
+        if (desktop.cursor_scale <= 1)
+                return;
+
+        if (ktime_get_ns() < desktop.magnified_until)
+                return;
+
+        desktop.cursor_scale = 1;
+        cursor_move(desktop.cursor_x, desktop.cursor_y);
+}
+
 static void desktop_frame_pass(void)
 {
         mutex_lock(&desktop.lock);
+
+        cursor_settle();
 
         if (desktop_sequence_changed())
         {
                 desktop_refresh_panes();
                 desktop_redraw();
+                desktop.idle_frames = 0;
+        }
+        else if (desktop.cursor_scale > 1)
+        {
                 desktop.idle_frames = 0;
         }
         else if (++desktop.idle_frames > CANVAS_IDLE_FRAMES)

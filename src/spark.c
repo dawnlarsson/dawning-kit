@@ -112,8 +112,9 @@ struct stats {
 };
 
 // _IOR('s', 3, struct input_stats). Nanoseconds from a pointer event
-// reaching the kernel to the cursor being on screen.
-#define SPARK_IOCTL_INPUT_STATS 0x80307303u
+// reaching the kernel to the cursor being on screen, and what the
+// acceleration curve did with the counts a mouse reported.
+#define SPARK_IOCTL_INPUT_STATS 0x80407303u
 
 struct input_stats {
         unsigned long events;
@@ -122,6 +123,8 @@ struct input_stats {
         unsigned long queue_ns;
         unsigned long draw_ns;
         unsigned long flush_ns;
+        unsigned long counts; // reported by the device
+        unsigned long moved;  // pixels the cursor was moved by them
 };
 
 struct spawn {

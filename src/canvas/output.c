@@ -210,6 +210,9 @@ static int canvas_start(struct canvas *canvas)
 
         desktop_place_outputs();
 
+        desktop.cursor_scale = 1;
+        desktop.drawn_scale = 1;
+
         if (list_empty(&desktop.windows))
         {
                 desktop_seed_windows();

@@ -123,8 +123,10 @@ static void pane_reshape(struct pane *pane, int x, int y, int w, int h)
 
         // The cursor is dragging this, so where it was and where it is are
         // damaged too, and its cell reaches outside the frame.
-        cursor_cell(&damage[2], desktop.drawn_x, desktop.drawn_y, desktop.drawn_shape);
-        cursor_cell(&damage[3], desktop.cursor_x, desktop.cursor_y, desktop.cursor_shape);
+        cursor_cell(&damage[2], desktop.drawn_x, desktop.drawn_y,
+                    desktop.drawn_shape, desktop.drawn_scale);
+        cursor_cell(&damage[3], desktop.cursor_x, desktop.cursor_y,
+                    desktop.cursor_shape, desktop.cursor_scale);
 
         if (pane->shared)
         {
@@ -148,6 +150,7 @@ static void pane_reshape(struct pane *pane, int x, int y, int w, int h)
         desktop.drawn_x = desktop.cursor_x;
         desktop.drawn_y = desktop.cursor_y;
         desktop.drawn_shape = desktop.cursor_shape;
+        desktop.drawn_scale = desktop.cursor_scale;
 }
 
 static void drag_move(int x, int y)

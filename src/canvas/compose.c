@@ -25,17 +25,19 @@ static const char pane_placeholder[] =
 
 // The cell the cursor occupies, which moves with the hotspot of its shape.
 static _Bool output_shows_cursor_shape(struct output *output, int x, int y,
-                                       unsigned int shape)
+                                       unsigned int shape, unsigned int scale)
 {
-        return rects_overlap(x - cursor_hot_x(shape), y - cursor_hot_y(shape),
-                             CURSOR_W, CURSOR_H,
+        return rects_overlap(x - cursor_hot_x(shape) * (int)scale,
+                             y - cursor_hot_y(shape) * (int)scale,
+                             CURSOR_W * (int)scale, CURSOR_H * (int)scale,
                              output->x, output->y,
                              (int)output->width, (int)output->height);
 }
 
 static _Bool output_shows_cursor(struct output *output, int x, int y)
 {
-        return output_shows_cursor_shape(output, x, y, desktop.cursor_shape);
+        return output_shows_cursor_shape(output, x, y, desktop.cursor_shape,
+                                         desktop.cursor_scale);
 }
 
 struct shape
@@ -201,10 +203,12 @@ static void rect_set(struct drm_rect *rect, int x, int y, int w, int h)
 
 // The cell the cursor occupies on the desktop, which moves with the hotspot of
 // whichever shape it is wearing.
-static void cursor_cell(struct drm_rect *rect, int x, int y, unsigned int shape)
+static void cursor_cell(struct drm_rect *rect, int x, int y,
+                        unsigned int shape, unsigned int scale)
 {
-        rect_set(rect, x - cursor_hot_x(shape), y - cursor_hot_y(shape),
-                 CURSOR_W, CURSOR_H);
+        rect_set(rect, x - cursor_hot_x(shape) * (int)scale,
+                 y - cursor_hot_y(shape) * (int)scale,
+                 CURSOR_W * (int)scale, CURSOR_H * (int)scale);
 }
 
 static _Bool output_touched(struct output *output, const struct drm_rect *damage,
@@ -263,7 +267,7 @@ static void output_repaint(struct output *output, const struct drm_rect *damage,
                 canvas_draw_cursor(pixels, pitch_pixels, output->width, output->height,
                                    desktop.cursor_x - output->x,
                                    desktop.cursor_y - output->y,
-                                   desktop.cursor_shape,
+                                   desktop.cursor_shape, desktop.cursor_scale,
                                    canvas_colour(COLOUR_CURSOR, output->format),
                                    canvas_colour(COLOUR_CURSOR_EDGE, output->format));
 
@@ -318,7 +322,7 @@ static void compose_output(struct output *output)
                 canvas_draw_cursor(pixels, pitch_pixels, output->width, output->height,
                                    desktop.cursor_x - output->x,
                                    desktop.cursor_y - output->y,
-                                   desktop.cursor_shape,
+                                   desktop.cursor_shape, desktop.cursor_scale,
                                    canvas_colour(COLOUR_CURSOR, output->format),
                                    canvas_colour(COLOUR_CURSOR_EDGE, output->format));
                 output->cursor_shown = true;

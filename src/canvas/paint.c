@@ -205,34 +205,44 @@ static int cursor_hot_y(unsigned int shape)
 
 static void canvas_draw_cursor(u32 *pixels, unsigned int pitch_pixels,
                                unsigned int target_w, unsigned int target_h,
-                               int x, int y, unsigned int shape,
+                               int x, int y, unsigned int shape, unsigned int scale,
                                u32 fill, u32 edge)
 {
         int row, column;
+        unsigned int sx, sy;
 
-        x -= cursor_hot_x(shape);
-        y -= cursor_hot_y(shape);
+        x -= cursor_hot_x(shape) * (int)scale;
+        y -= cursor_hot_y(shape) * (int)scale;
 
         for (row = 0; row < CURSOR_H; row++)
         {
-                int py = y + row;
-
-                if (py < 0 || py >= (int)target_h)
-                        continue;
-
                 for (column = 0; column < CURSOR_W; column++)
                 {
                         char pixel = canvas_cursors[shape][row][column];
-                        int px = x + column;
+                        u32 colour;
 
                         if (pixel == ' ')
                                 continue;
 
-                        if (px < 0 || px >= (int)target_w)
-                                continue;
+                        colour = pixel == 'X' ? edge : fill;
 
-                        pixels[(size_t)py * pitch_pixels + px] =
-                            pixel == 'X' ? edge : fill;
+                        for (sy = 0; sy < scale; sy++)
+                        {
+                                int py = y + row * (int)scale + (int)sy;
+
+                                if (py < 0 || py >= (int)target_h)
+                                        continue;
+
+                                for (sx = 0; sx < scale; sx++)
+                                {
+                                        int px = x + column * (int)scale + (int)sx;
+
+                                        if (px < 0 || px >= (int)target_w)
+                                                continue;
+
+                                        pixels[(size_t)py * pitch_pixels + px] = colour;
+                                }
+                        }
                 }
         }
 }

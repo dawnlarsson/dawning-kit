@@ -80,6 +80,7 @@ struct output
         struct drm_client_buffer *cursor_buffer;
         unsigned int cursor_w, cursor_h;
         unsigned int cursor_shape;
+        unsigned int cursor_scale;
         _Bool cursor_shown;
 };
 
@@ -114,6 +115,28 @@ static struct desktop
 
         unsigned int cursor_shape;
         unsigned int drawn_shape;
+
+        /*
+                Shake to find it, the way a desktop does: reverse direction
+                enough times in a short enough window and the cursor grows,
+                then goes back on its own.
+        */
+        unsigned int cursor_scale;
+        unsigned int drawn_scale;
+        u64 magnified_until;
+        atomic_t magnify;
+        atomic_t shake_dir;
+        atomic_t shake_count;
+        u64 shake_window;
+
+        /*
+                Acceleration. The remainder is what stops a gain that is not a
+                whole number from quietly dropping the fraction of every
+                movement: a slow drag would come up short of where it was
+                aimed, which is the thing people notice.
+        */
+        u64 accel_stamp;
+        int accel_x, accel_y;
 
         /*
                 A program changes a window by storing into its shared page and
@@ -157,6 +180,7 @@ static void canvas_thread_stop(void);
 static void canvas_thread_wake(void);
 static void desktop_redraw(void);
 static void desktop_watch(void);
+static void cursor_move(int x, int y);
 
 // Nanoseconds from an event arriving to the cursor being on screen.
 static u64 pointer_latency_total;
@@ -165,6 +189,8 @@ static unsigned long pointer_events;
 static u64 pointer_queue_total;
 static u64 pointer_draw_total;
 static u64 pointer_flush_total;
+static unsigned long pointer_counts;
+static unsigned long pointer_moved;
 
 static struct canvas *canvas_from_client(struct drm_client_dev *client)
 {

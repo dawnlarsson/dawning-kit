@@ -38,6 +38,8 @@ b32 main()
         string_format(log, "  queued         %p ns\n", stats.queue_ns);
         string_format(log, "  drawing        %p ns\n", stats.draw_ns);
         string_format(log, "  flush          %p ns\n", stats.flush_ns);
+        string_format(log, "counts reported  %p\n", stats.counts);
+        string_format(log, "pixels moved     %p\n", stats.moved);
         log_flush();
         return 0;
 }

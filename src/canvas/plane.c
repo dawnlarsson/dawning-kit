@@ -53,8 +53,10 @@ retry:
                 goto out;
 
         ret = plane->funcs->update_plane(plane, crtc, output->cursor_buffer->fb,
-                                         x - cursor_hot_x(output->cursor_shape),
-                                         y - cursor_hot_y(output->cursor_shape),
+                                         x - cursor_hot_x(output->cursor_shape) *
+                                                 (int)output->cursor_scale,
+                                         y - cursor_hot_y(output->cursor_shape) *
+                                                 (int)output->cursor_scale,
                                          output->cursor_w, output->cursor_h,
                                          0, 0,
                                          output->cursor_w << 16,
@@ -127,10 +129,22 @@ static void plane_drop(struct output *output)
         sends nothing but a position afterwards, which is what makes this
         cheap. Changing shape is therefore a repaint here, not per move.
 */
-static int plane_paint(struct output *output, unsigned int shape)
+// The largest whole scale of a shape that fits the plane's buffer.
+static unsigned int plane_scale(struct output *output, unsigned int scale)
+{
+        while (scale > 1 && (CURSOR_W * scale > output->cursor_w ||
+                             CURSOR_H * scale > output->cursor_h))
+                scale--;
+
+        return scale;
+}
+
+static int plane_paint(struct output *output, unsigned int shape, unsigned int scale)
 {
         struct iosys_map map;
         unsigned int pitch_pixels;
+
+        scale = plane_scale(output, scale);
 
         if (drm_client_buffer_vmap_local(output->cursor_buffer, &map))
                 return -EIO;
@@ -146,13 +160,16 @@ static int plane_paint(struct output *output, unsigned int shape)
 
         canvas_draw_cursor(map.vaddr, pitch_pixels,
                            output->cursor_w, output->cursor_h,
-                           cursor_hot_x(shape), cursor_hot_y(shape), shape,
+                           cursor_hot_x(shape) * (int)scale,
+                           cursor_hot_y(shape) * (int)scale,
+                           shape, scale,
                            canvas_colour(COLOUR_CURSOR, DRM_FORMAT_ARGB8888),
                            canvas_colour(COLOUR_CURSOR_EDGE, DRM_FORMAT_ARGB8888));
 
         drm_client_buffer_vunmap_local(output->cursor_buffer);
 
         output->cursor_shape = shape;
+        output->cursor_scale = scale;
         return 0;
 }
 
@@ -177,7 +194,7 @@ static int plane_claim(struct drm_client_dev *client, struct output *output)
                 return -ENOMEM;
         }
 
-        if (plane_paint(output, CURSOR_ARROW))
+        if (plane_paint(output, CURSOR_ARROW, 1))
         {
                 drm_client_buffer_delete(output->cursor_buffer);
                 output->cursor_buffer = NULL;
@@ -196,8 +213,10 @@ static void cursor_arm_output(struct output *output)
         if (!output->cursor_plane)
                 return;
 
-        if (wanted && output->cursor_shape != desktop.cursor_shape &&
-            plane_paint(output, desktop.cursor_shape))
+        if (wanted &&
+            (output->cursor_shape != desktop.cursor_shape ||
+             output->cursor_scale != plane_scale(output, desktop.cursor_scale)) &&
+            plane_paint(output, desktop.cursor_shape, desktop.cursor_scale))
         {
                 plane_drop(output);
                 return;
@@ -224,8 +243,8 @@ static void cursor_paint(struct output *output, int old_x, int old_y,
 {
         struct drm_rect damage[2];
 
-        cursor_cell(&damage[0], old_x, old_y, old_shape);
-        cursor_cell(&damage[1], new_x, new_y, desktop.cursor_shape);
+        cursor_cell(&damage[0], old_x, old_y, old_shape, desktop.drawn_scale);
+        cursor_cell(&damage[1], new_x, new_y, desktop.cursor_shape, desktop.cursor_scale);
 
         output_repaint(output, damage, 2);
 }
@@ -239,9 +258,11 @@ static void cursor_move(int new_x, int new_y)
         int old_x = desktop.drawn_x;
         int old_y = desktop.drawn_y;
         unsigned int old_shape = desktop.drawn_shape;
+        unsigned int old_scale = desktop.drawn_scale;
         struct output *output;
 
-        if (old_x == new_x && old_y == new_y && old_shape == desktop.cursor_shape)
+        if (old_x == new_x && old_y == new_y &&
+            old_shape == desktop.cursor_shape && old_scale == desktop.cursor_scale)
                 return;
 
         desktop.cursor_x = new_x;
@@ -249,7 +270,7 @@ static void cursor_move(int new_x, int new_y)
 
         list_for_each_entry(output, &desktop.outputs, link)
         {
-                if (!output_shows_cursor_shape(output, old_x, old_y, old_shape) &&
+                if (!output_shows_cursor_shape(output, old_x, old_y, old_shape, old_scale) &&
                     !output_shows_cursor(output, new_x, new_y))
                         continue;
 
@@ -270,4 +291,5 @@ static void cursor_move(int new_x, int new_y)
         desktop.drawn_x = new_x;
         desktop.drawn_y = new_y;
         desktop.drawn_shape = desktop.cursor_shape;
+        desktop.drawn_scale = desktop.cursor_scale;
 }
