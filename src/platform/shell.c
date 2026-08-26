@@ -81,6 +81,8 @@ bool env_set(const_string name, const_string value)
         positive needed = name_len + 1 + value_len + 1;
 
         positive idx = 0;
+        bool replacing = false;
+
         while (shell_envp[idx])
         {
                 string_address entry = shell_envp[idx];
@@ -95,16 +97,26 @@ bool env_set(const_string name, const_string value)
                                         break;
                         }
 
-                        if (i == name_len)
+                        // Only where it fits. The entries sit end to end in one
+                        // block, so a longer value written in place runs over
+                        // the name of whatever comes next.
+                        if (i == name_len && value_len <= string_length(eq + 1))
                         {
                                 string_copy(eq + 1, value);
                                 return true;
+                        }
+
+                        if (i == name_len)
+                        {
+                                replacing = true;
+                                break;
                         }
                 }
                 idx++;
         }
 
-        if (idx >= ENV_MAX_ENTRIES || env_used + needed > ENV_STORAGE_SIZE)
+        if ((!replacing && idx >= ENV_MAX_ENTRIES) ||
+            env_used + needed > ENV_STORAGE_SIZE)
                 return false;
 
         string_address dest = env_storage + env_used;
@@ -113,7 +125,12 @@ bool env_set(const_string name, const_string value)
         string_copy(dest + name_len + 1, value);
 
         shell_envp[idx] = dest;
-        shell_envp[idx + 1] = null;
+
+        // Replacing an entry keeps the list the length it was; the terminator
+        // is already past it.
+        if (!replacing)
+                shell_envp[idx + 1] = null;
+
         env_used += needed;
 
         return true;
@@ -414,7 +431,10 @@ fn shell_touch(writer write, string_address input)
         if (input == null)
                 return write(str("touch: missing operand\n"));
 
-        bipolar file_descriptor = system_call_4(syscall(openat), AT_FDCWD, (positive)input, FILE_CREATE | FILE_WRITE | O_TRUNC, 0666);
+        // No truncation. FILE_WRITE already carries O_TRUNC, so this emptied
+        // any file that was already there, which is the one thing touch must
+        // never do.
+        bipolar file_descriptor = system_call_4(syscall(openat), AT_FDCWD, (positive)input, FILE_CREATE | FILE_READ, 0666);
 
         if (file_descriptor < 0)
                 return string_format(write, "touch: Cannot create file: %s\n", input);

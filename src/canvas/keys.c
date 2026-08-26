@@ -151,19 +151,28 @@ static void keys_deliver(void)
 
         smp_rmb();
 
-        // Consumed as they land, not before: a program whose own ring is full
-        // leaves the rest here rather than losing them.
+        /*
+                Every one is consumed here whether or not it lands.
+
+                Nothing obliges a program to read its keys, and holding the
+                desktop's ring until it does makes one window able to stop the
+                keyboard for every other -- and to spin the thread, which sleeps
+                only while the ring is empty. A window that will not listen
+                loses what was said to it, which is what a keyboard buffer has
+                always done.
+        */
         for (; tail != head; tail++)
         {
                 struct window *shared = pane->shared;
                 unsigned int at = READ_ONCE(shared->key_head);
 
-                if (at - READ_ONCE(shared->key_tail) >= WINDOW_KEYS)
-                        break;
-
-                shared->keys[at % WINDOW_KEYS] = desktop.key_ring[tail % WINDOW_KEYS];
-                smp_wmb();
-                WRITE_ONCE(shared->key_head, at + 1);
-                atomic_set(&desktop.key_tail, (int)(tail + 1));
+                if (at - READ_ONCE(shared->key_tail) < WINDOW_KEYS)
+                {
+                        shared->keys[at % WINDOW_KEYS] = desktop.key_ring[tail % WINDOW_KEYS];
+                        smp_wmb();
+                        WRITE_ONCE(shared->key_head, at + 1);
+                }
         }
+
+        atomic_set(&desktop.key_tail, (int)head);
 }

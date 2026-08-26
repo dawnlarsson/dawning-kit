@@ -24,9 +24,41 @@ fn redirect_writer(address_any data, positive length)
         system_call_3(syscall(write), shell_output_file, (positive)data, length);
 }
 
+/*
+        Control-C cancels the command, not the shell.
+
+        The line discipline sends SIGINT to everything in the terminal's
+        foreground group, which is this and whatever it is running. Ignoring it
+        here leaves the shell standing; the kernel gives every program it
+        spawns its own default disposition back, so the command still dies.
+
+        SIG_IGN needs no restorer, which is the whole reason this is three
+        words and not a per-architecture trampoline.
+*/
+#define SIGNAL_INTERRUPT 2
+#define SIGNAL_QUIT 3
+#define SIGNAL_IGNORE 1
+#define SIGNAL_DEFAULT 0
+
+fn shell_signal(b32 number, positive disposition)
+{
+        positive action[4] = {disposition, 0, 0, 0};
+
+        system_call_4(syscall(rt_sigaction), number, (positive)address_of action, 0, 8);
+}
+
+#define shell_ignore(n) shell_signal(n, SIGNAL_IGNORE)
+#define shell_default(n) shell_signal(n, SIGNAL_DEFAULT)
+
 fn shell_thread_instance(string_address command, string_address arguments)
 {
         string_address arguments_list[] = {command, arguments, null};
+
+        // Ignored signals cross execve, and this shell ignores interrupt so
+        // that control-C does not take it down with the command. Handing that
+        // deafness on would leave the command uninterruptible.
+        shell_default(SIGNAL_INTERRUPT);
+        shell_default(SIGNAL_QUIT);
 
         bipolar exec_result = system_call_3(syscall(execve), (positive)command, (positive)arguments_list, (positive)shell_envp);
 
@@ -173,8 +205,11 @@ fn process()
 
         if (redirect)
         {
-                memory_fill(redirect, end, 4);
-                redirect += 4;
+                memory_fill(redirect, end, 3);
+                redirect += 3;
+
+                while (string_is(redirect, ' '))
+                        redirect++;
 
                 if string_is (redirect, end)
                         return string_format(shell_output, "Missing file name for redirection\n");
@@ -197,28 +232,6 @@ fn process()
                 return;
 
         string_format(shell_output, "Command not found: '%s'\n", shell_buffer);
-}
-
-/*
-        Control-C cancels the command, not the shell.
-
-        The line discipline sends SIGINT to everything in the terminal's
-        foreground group, which is this and whatever it is running. Ignoring it
-        here leaves the shell standing; the kernel gives every program it
-        spawns its own default disposition back, so the command still dies.
-
-        SIG_IGN needs no restorer, which is the whole reason this is three
-        words and not a per-architecture trampoline.
-*/
-#define SIGNAL_INTERRUPT 2
-#define SIGNAL_QUIT 3
-#define SIGNAL_IGNORE 1
-
-fn shell_ignore(b32 number)
-{
-        positive action[4] = {SIGNAL_IGNORE, 0, 0, 0};
-
-        system_call_4(syscall(rt_sigaction), number, (positive)address_of action, 0, 8);
 }
 
 b32 main()

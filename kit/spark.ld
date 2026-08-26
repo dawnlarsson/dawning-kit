@@ -25,6 +25,8 @@ SECTIONS
         .text : {
                 *(.text .text.*)
                 *(.rodata .rodata.*)
+                /* riscv64 puts read only globals of a few bytes here. */
+                *(.srodata .srodata.*)
         }
 
         . = ALIGN(4096);
@@ -32,6 +34,11 @@ SECTIONS
         .data : {
                 *(.data .data.*)
                 *(.got .got.plt)
+                /* And small writable ones here, one section each because the
+                   programs are built with -fdata-sections. Unmatched, they
+                   were placed wherever the linker felt like, which on riscv64
+                   is outside every region the loader maps. */
+                *(.sdata .sdata.*)
         }
 
         . = ALIGN(4096);
@@ -39,6 +46,7 @@ SECTIONS
         .bss : {
                 __bss_start = .;
                 *(.bss .bss.*)
+                *(.sbss .sbss.*)
                 *(COMMON)
                 . = ALIGN(4096);
                 __bss_end = .;
