@@ -47,8 +47,10 @@
 struct pane
 {
         struct list_head link;
-        int x, y;
+        int x, y, z;
         int width, height;
+        unsigned int region;
+        unsigned int display;
 
         struct window *shared;
         u32 *pixels;

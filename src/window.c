@@ -23,6 +23,16 @@
         The pixels are the window's contents. The compositor draws the frame
         and the titlebar around them, so x,y is the top left of the whole
         window and the contents land WINDOW_TITLE below it.
+
+        z is the order they stack in: higher is in front. Clicking a window
+        puts it above every other, and the compositor writes the new value
+        back, so a program can always read where it ended up.
+
+        region is where a window wants to be rather than where it is. Zero is
+        free floating and x,y are the program's; anything else is the
+        compositor's placement and it writes x,y to say where that landed. It
+        is a number and not a flag because there is more than one answer --
+        centred is the one that exists so far.
 */
 
 #ifndef WINDOW_INCLUDED
@@ -37,12 +47,19 @@
 // The titlebar the compositor draws above the contents.
 #define WINDOW_TITLE 20
 
+// region
+#define WINDOW_FREE 0
+#define WINDOW_CENTRED 1
+
 struct window
 {
-        // The program writes these.
+        // The program writes these, and the compositor writes x, y and z back
+        // when it is the one that moved them.
         int x, y;
+        int z;                 // higher is in front
         unsigned int width, height;
-        unsigned int display;  // which output to go fullscreen on
+        unsigned int region;   // WINDOW_FREE, WINDOW_CENTRED
+        unsigned int display;  // which output a region is measured against
         unsigned int style;
         unsigned int edge;     // corner radius
         unsigned int sequence; // bump after drawing
@@ -56,7 +73,7 @@ struct window
         // window_open's own bookkeeping. The compositor never reads it.
         unsigned int handle;
 
-        unsigned int reserved[5];
+        unsigned int reserved[3];
 };
 
 // _IOW('s', 4, struct window_request)

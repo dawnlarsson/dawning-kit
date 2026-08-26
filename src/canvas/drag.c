@@ -110,8 +110,14 @@ static void drag_press(int x, int y)
         desktop.grab_x = x - pane->x;
         desktop.grab_y = y - pane->y;
 
-        // Raise it. Drawing is back to front, so the tail is the front.
-        list_move_tail(&pane->link, &desktop.windows);
+        // Dragging is what free floating means, so taking hold of a window
+        // the compositor placed hands it back to the program.
+        pane->region = WINDOW_FREE;
+        if (pane->shared)
+                WRITE_ONCE(pane->shared->region, WINDOW_FREE);
+
+        pane_raise(pane);
+        list_sort(NULL, &desktop.windows, pane_by_z);
 
         desktop_redraw();
 }

@@ -11,6 +11,62 @@
         page at all.
 */
 
+static struct output *output_by_index(unsigned int index)
+{
+        struct output *output;
+        unsigned int i = 0;
+
+        list_for_each_entry(output, &desktop.outputs, link)
+                if (i++ == index)
+                        return output;
+
+        return list_first_entry_or_null(&desktop.outputs, struct output, link);
+}
+
+// Where a region puts a window. Free floating is the program's own x and y.
+static void pane_place(struct pane *pane)
+{
+        struct output *output;
+
+        if (pane->region != WINDOW_CENTRED)
+                return;
+
+        output = output_by_index(pane->display);
+        if (!output)
+                return;
+
+        pane->x = output->x + ((int)output->width - pane->width) / 2;
+        pane->y = output->y +
+                  ((int)output->height - (pane->height + WINDOW_TITLE)) / 2;
+}
+
+static int pane_top_z(void)
+{
+        struct pane *pane;
+        int top = 0;
+
+        list_for_each_entry(pane, &desktop.windows, link)
+                top = max(top, pane->z);
+
+        return top;
+}
+
+static void pane_raise(struct pane *pane)
+{
+        pane->z = pane_top_z() + 1;
+
+        if (pane->shared)
+                WRITE_ONCE(pane->shared->z, pane->z);
+}
+
+static int pane_by_z(void *unused, const struct list_head *a, const struct list_head *b)
+{
+        int za = list_entry(a, struct pane, link)->z;
+        int zb = list_entry(b, struct pane, link)->z;
+
+        return za < zb ? -1 : za > zb;
+}
+
 static void pane_free(struct pane *pane)
 {
         list_del(&pane->link);
@@ -55,15 +111,17 @@ static struct pane *pane_create(unsigned int width, unsigned int height)
         pane->x = 80;
         pane->y = 80;
 
+        list_add_tail(&pane->link, &desktop.windows);
+        pane_raise(pane);
+
         pane->shared->x = pane->x;
         pane->shared->y = pane->y;
+        pane->shared->z = pane->z;
         pane->shared->width = width;
         pane->shared->height = height;
         pane->shared->pitch = pane->pitch;
         pane->shared->max_width = width;
         pane->shared->max_height = height;
-
-        list_add_tail(&pane->link, &desktop.windows);
 
         return pane;
 }
@@ -87,14 +145,30 @@ static void pane_refresh(struct pane *pane)
         pane->height = (int)min(height, pane->max_height);
         pane->x = READ_ONCE(shared->x);
         pane->y = READ_ONCE(shared->y);
+        pane->z = READ_ONCE(shared->z);
+        pane->region = READ_ONCE(shared->region);
+        pane->display = READ_ONCE(shared->display);
+
+        pane_place(pane);
+
+        // Where a region put it, so the program can read where it ended up.
+        if (pane->region != WINDOW_FREE)
+        {
+                WRITE_ONCE(shared->x, pane->x);
+                WRITE_ONCE(shared->y, pane->y);
+        }
 }
 
+// Drawing is the list order, so the list is kept in z order. list_sort is
+// stable, which is what keeps windows that share a z where they were.
 static void desktop_refresh_panes(void)
 {
         struct pane *pane;
 
         list_for_each_entry(pane, &desktop.windows, link)
                 pane_refresh(pane);
+
+        list_sort(NULL, &desktop.windows, pane_by_z);
 }
 
 static long window_ioctl_create(struct file *file, unsigned long argument)
