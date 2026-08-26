@@ -166,16 +166,6 @@ static const int canvas_cursor_hot[CURSOR_SHAPES][2] = {
     {0, 0}, {7, 7}, {7, 7}, {7, 7}, {7, 7},
 };
 
-static int cursor_hot_x(unsigned int shape)
-{
-        return canvas_cursor_hot[shape][0];
-}
-
-static int cursor_hot_y(unsigned int shape)
-{
-        return canvas_cursor_hot[shape][1];
-}
-
 /*
         The cursor, into whatever it is given. Runs of the same colour go out
         together, the same reason a glyph does: a store per pixel would be a
@@ -187,8 +177,8 @@ static void canvas_draw_cursor(const struct target *t, int x, int y,
         int row, column;
         unsigned int line;
 
-        x -= cursor_hot_x(shape) * (int)scale;
-        y -= cursor_hot_y(shape) * (int)scale;
+        x -= canvas_cursor_hot[shape][0] * (int)scale;
+        y -= canvas_cursor_hot[shape][1] * (int)scale;
 
         for (row = 0; row < CURSOR_H; row++)
         {

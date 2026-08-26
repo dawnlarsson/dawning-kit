@@ -35,57 +35,29 @@ static _Bool canvas_plane_takes_argb(struct drm_plane *plane)
         Uninterruptible, unlike the ioctl: this is a thread with no signals to
         take, where -ERESTARTSYS would only mean a dropped mouse move.
 */
-static int plane_place(struct output *output, int x, int y)
+static int plane_update(struct output *output, _Bool show, int x, int y)
 {
         struct drm_plane *plane = output->cursor_plane;
         struct drm_crtc *crtc = output->mode_set->crtc;
-        struct drm_modeset_acquire_ctx ctx;
-        int ret;
-
-        drm_modeset_acquire_init(&ctx, 0);
-retry:
-        ret = drm_modeset_lock(&crtc->mutex, &ctx);
-        if (ret)
-                goto out;
-
-        ret = drm_modeset_lock(&plane->mutex, &ctx);
-        if (ret)
-                goto out;
-
-        ret = plane->funcs->update_plane(plane, crtc, output->cursor_buffer->fb,
-                                         x - cursor_hot_x(output->cursor_shape) *
-                                                 (int)output->cursor_scale,
-                                         y - cursor_hot_y(output->cursor_shape) *
-                                                 (int)output->cursor_scale,
-                                         output->cursor_w, output->cursor_h,
-                                         0, 0,
-                                         output->cursor_w << 16,
-                                         output->cursor_h << 16,
-                                         &ctx);
-out:
-        if (ret == -EDEADLK)
-        {
-                drm_modeset_backoff(&ctx);
-                goto retry;
-        }
-
-        drm_modeset_drop_locks(&ctx);
-        drm_modeset_acquire_fini(&ctx);
-
-        return ret;
-}
-
-static int plane_hide(struct output *output)
-{
-        struct drm_plane *plane = output->cursor_plane;
+        int hot = (int)output->cursor_scale;
         struct drm_modeset_acquire_ctx ctx;
         int ret;
 
         drm_modeset_acquire_init(&ctx, 0);
 retry:
         ret = drm_modeset_lock(&plane->mutex, &ctx);
+
+        if (!ret && show)
+                ret = drm_modeset_lock(&crtc->mutex, &ctx);
+
         if (!ret)
-                ret = plane->funcs->disable_plane(plane, &ctx);
+                ret = show ? plane->funcs->update_plane(
+                                 plane, crtc, output->cursor_buffer->fb,
+                                 x - canvas_cursor_hot[output->cursor_shape][0] * hot,
+                                 y - canvas_cursor_hot[output->cursor_shape][1] * hot,
+                                 output->cursor_w, output->cursor_h, 0, 0,
+                                 output->cursor_w << 16, output->cursor_h << 16, &ctx)
+                           : plane->funcs->disable_plane(plane, &ctx);
 
         if (ret == -EDEADLK)
         {
@@ -172,8 +144,8 @@ static int plane_paint(struct output *output, unsigned int shape, unsigned int s
         for (row = 0; row < t.height; row++)
                 target_row(&t, row, 0, t.width, 0x00000000);
 
-        canvas_draw_cursor(&t, cursor_hot_x(shape) * (int)scale,
-                           cursor_hot_y(shape) * (int)scale, shape, scale);
+        canvas_draw_cursor(&t, canvas_cursor_hot[shape][0] * (int)scale,
+                           canvas_cursor_hot[shape][1] * (int)scale, shape, scale);
 
         drm_client_buffer_vunmap_local(output->cursor_buffer);
         drm_client_buffer_flush(output->cursor_buffer, NULL);
@@ -232,9 +204,8 @@ static void cursor_arm_output(struct output *output)
                 return;
         }
 
-        ret = wanted ? plane_place(output, desktop.cursor_x - output->x,
-                                   desktop.cursor_y - output->y)
-                     : plane_hide(output);
+        ret = plane_update(output, wanted, desktop.cursor_x - output->x,
+                           desktop.cursor_y - output->y);
 
         if (!ret)
         {
@@ -280,7 +251,13 @@ static void cursor_move(int new_x, int new_y)
 
         list_for_each_entry(output, &desktop.outputs, link)
         {
-                if (!output_shows_cursor_shape(output, old_x, old_y, old_shape, old_scale) &&
+                struct drm_rect was;
+
+                cursor_cell(&was, old_x, old_y, old_shape, old_scale);
+
+                if (!rects_overlap(was.x1, was.y1, was.x2 - was.x1, was.y2 - was.y1,
+                                   output->x, output->y,
+                                   (int)output->width, (int)output->height) &&
                     !output_shows_cursor(output, new_x, new_y))
                         continue;
 

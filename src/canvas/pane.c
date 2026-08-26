@@ -57,7 +57,7 @@ static void pane_place(struct pane *pane)
         pane->y = output->y + ((int)output->height - (pane->height + title)) / 2;
 }
 
-static int pane_top_z(void)
+static void pane_raise(struct pane *raised)
 {
         struct pane *pane;
         int top = 0;
@@ -65,15 +65,10 @@ static int pane_top_z(void)
         list_for_each_entry(pane, &desktop.windows, link)
                 top = max(top, pane->z);
 
-        return top;
-}
+        raised->z = top + 1;
 
-static void pane_raise(struct pane *pane)
-{
-        pane->z = pane_top_z() + 1;
-
-        if (pane->shared)
-                WRITE_ONCE(pane->shared->z, pane->z);
+        if (raised->shared)
+                WRITE_ONCE(raised->shared->z, raised->z);
 }
 
 static int pane_by_z(void *unused, const struct list_head *a, const struct list_head *b)

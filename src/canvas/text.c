@@ -13,16 +13,6 @@
 
 static const struct font_desc *canvas_font;
 
-static int text_cell_width(int scale)
-{
-        return (int)canvas_font->width * scale;
-}
-
-static int text_cell_height(int scale)
-{
-        return (int)canvas_font->height * scale;
-}
-
 /*
         One glyph. The set bits of a row are drawn as runs rather than one at a
         time: a call for every lit pixel is thousands of calls for a line of
@@ -144,8 +134,8 @@ static void text_draw(const struct target *t, int x, int y, int w, int h,
                       const char *text, unsigned int length,
                       unsigned int align, int scale, u32 colour)
 {
-        int cell_w = text_cell_width(scale);
-        int cell_h = text_cell_height(scale);
+        int cell_w = (int)canvas_font->width * scale;
+        int cell_h = (int)canvas_font->height * scale;
         _Bool wrap = align & TEXT_WRAP;
         unsigned int columns = cell_w > 0 && w > 0 ? (unsigned int)(w / cell_w) : 0;
         unsigned int start = 0;

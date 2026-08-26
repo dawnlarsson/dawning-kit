@@ -24,20 +24,33 @@ static const char pane_placeholder[] =
     "anything has.";
 
 // The cell the cursor occupies, which moves with the hotspot of its shape.
-static _Bool output_shows_cursor_shape(struct output *output, int x, int y,
-                                       unsigned int shape, unsigned int scale)
+static void rect_set(struct drm_rect *rect, int x, int y, int w, int h)
 {
-        return rects_overlap(x - cursor_hot_x(shape) * (int)scale,
-                             y - cursor_hot_y(shape) * (int)scale,
-                             CURSOR_W * (int)scale, CURSOR_H * (int)scale,
-                             output->x, output->y,
-                             (int)output->width, (int)output->height);
+        rect->x1 = x;
+        rect->y1 = y;
+        rect->x2 = x + w;
+        rect->y2 = y + h;
+}
+
+// The cell the cursor occupies on the desktop, which moves with the hotspot of
+// whichever shape it is wearing.
+static void cursor_cell(struct drm_rect *rect, int x, int y,
+                        unsigned int shape, unsigned int scale)
+{
+        rect_set(rect, x - canvas_cursor_hot[shape][0] * (int)scale,
+                 y - canvas_cursor_hot[shape][1] * (int)scale,
+                 CURSOR_W * (int)scale, CURSOR_H * (int)scale);
 }
 
 static _Bool output_shows_cursor(struct output *output, int x, int y)
 {
-        return output_shows_cursor_shape(output, x, y, desktop.cursor_shape,
-                                         desktop.cursor_scale);
+        struct drm_rect cell;
+
+        cursor_cell(&cell, x, y, desktop.cursor_shape, desktop.cursor_scale);
+
+        return rects_overlap(cell.x1, cell.y1, cell.x2 - cell.x1, cell.y2 - cell.y1,
+                             output->x, output->y,
+                             (int)output->width, (int)output->height);
 }
 
 struct shape
@@ -252,24 +265,6 @@ static void output_draw_cursor(struct output *output, u32 *pixels)
         canvas_draw_cursor(&t, desktop.cursor_x - output->x,
                            desktop.cursor_y - output->y,
                            desktop.cursor_shape, desktop.cursor_scale);
-}
-
-static void rect_set(struct drm_rect *rect, int x, int y, int w, int h)
-{
-        rect->x1 = x;
-        rect->y1 = y;
-        rect->x2 = x + w;
-        rect->y2 = y + h;
-}
-
-// The cell the cursor occupies on the desktop, which moves with the hotspot of
-// whichever shape it is wearing.
-static void cursor_cell(struct drm_rect *rect, int x, int y,
-                        unsigned int shape, unsigned int scale)
-{
-        rect_set(rect, x - cursor_hot_x(shape) * (int)scale,
-                 y - cursor_hot_y(shape) * (int)scale,
-                 CURSOR_W * (int)scale, CURSOR_H * (int)scale);
 }
 
 static _Bool output_touched(struct output *output, const struct drm_rect *damage,

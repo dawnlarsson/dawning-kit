@@ -95,11 +95,11 @@ static void output_drop(struct output *output)
         A first arrangement, so there is something on screen before anything
         can create a window. Once, for the desktop, not once per card.
 */
-static void desktop_seed_windows(void)
+static unsigned int desktop_seed_windows(void)
 {
         unsigned int columns = max(desktop.width / 320, 1);
         unsigned int rows = max(desktop.height / 260, 1);
-        unsigned int column, row;
+        unsigned int column, row, seeded = 0;
 
         for (row = 0; row < rows; row++)
         {
@@ -108,7 +108,7 @@ static void desktop_seed_windows(void)
                         struct pane *pane = kzalloc(sizeof(*pane), GFP_KERNEL);
 
                         if (!pane)
-                                return;
+                                return seeded;
 
                         pane->x = 40 + column * 300;
                         pane->y = 40 + row * 240;
@@ -121,8 +121,11 @@ static void desktop_seed_windows(void)
                                                     "Window %u", pane->z + 1);
 
                         list_add_tail(&pane->link, &desktop.windows);
+                        seeded++;
                 }
         }
+
+        return seeded;
 }
 
 // Only the compositor's own. A program's goes when it closes its file.
@@ -174,22 +177,11 @@ static void desktop_redraw(void)
         desktop_commit();
 }
 
-static unsigned int desktop_count_windows(void)
-{
-        struct pane *pane;
-        unsigned int count = 0;
-
-        list_for_each_entry(pane, &desktop.windows, link)
-                count++;
-
-        return count;
-}
-
 static int canvas_start(struct canvas *canvas)
 {
         struct drm_client_dev *client = &canvas->client;
         struct drm_mode_set *mode_set;
-        unsigned int count = 0;
+        unsigned int count = 0, windows = 0;
 
         if (drm_client_modeset_probe(client, 0, 0))
                 return -ENODEV;
@@ -221,7 +213,7 @@ static int canvas_start(struct canvas *canvas)
 
         if (list_empty(&desktop.windows))
         {
-                desktop_seed_windows();
+                windows = desktop_seed_windows();
                 desktop.cursor_x = desktop.width / 2;
                 desktop.cursor_y = desktop.height / 2;
                 desktop.drawn_x = desktop.cursor_x;
@@ -233,8 +225,7 @@ static int canvas_start(struct canvas *canvas)
         desktop_redraw();
 
         log_canvas("desktop %dx%d, %u output(s), %u window(s)\n",
-                   desktop.width, desktop.height,
-                   count, desktop_count_windows());
+                   desktop.width, desktop.height, count, windows);
 
         return 0;
 }

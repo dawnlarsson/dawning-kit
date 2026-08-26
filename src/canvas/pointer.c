@@ -511,24 +511,19 @@ static void canvas_thread_start(void)
 }
 
 // Nanoseconds, for the stats ioctl.
-static void canvas_input_stats(unsigned long *events, unsigned long *mean,
-                               unsigned long *worst, unsigned long *queue,
-                               unsigned long *draw, unsigned long *flush,
-                               unsigned long *counts, unsigned long *moved,
-                               unsigned long *composes, unsigned long *compose_ns,
-                               unsigned long *painted)
+static void canvas_input_stats(struct input_stats *out)
 {
         unsigned long n = pointer_events ? pointer_events : 1;
 
-        *events = pointer_events;
-        *mean = pointer_latency_total / n;
-        *worst = pointer_latency_worst;
-        *queue = pointer_queue_total / n;
-        *draw = pointer_draw_total / n;
-        *flush = pointer_flush_total / n;
-        *counts = pointer_counts;
-        *moved = pointer_moved;
-        *composes = canvas_composes;
-        *compose_ns = canvas_compose_ns;
-        *painted = canvas_painted;
+        out->events = pointer_events;
+        out->mean_ns = pointer_latency_total / n;
+        out->worst_ns = pointer_latency_worst;
+        out->queue_ns = pointer_queue_total / n;
+        out->draw_ns = pointer_draw_total / n;
+        out->flush_ns = pointer_flush_total / n;
+        out->counts = pointer_counts;
+        out->moved = pointer_moved;
+        out->composes = canvas_composes;
+        out->compose_ns = canvas_compose_ns;
+        out->painted = canvas_painted;
 }
