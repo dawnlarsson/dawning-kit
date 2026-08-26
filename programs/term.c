@@ -283,13 +283,18 @@ static fn cursor_hide()
 
 static fn cursor_show()
 {
-        struct window_cell address_to cell = cells + row * COLUMNS + column;
+        // put leaves column at COLUMNS after filling the last cell of a row and
+        // only wraps on the next character, so the cursor has to be clamped:
+        // unclamped it landed on the first cell of the row below, and on the
+        // last row that is one cell past the grid.
+        unsigned int at = column < COLUMNS ? column : COLUMNS - 1;
+        struct window_cell address_to cell = cells + row * COLUMNS + at;
         unsigned char was = cell->ink;
 
         cell->ink = cell->paper;
         cell->paper = was;
         shown_row = row;
-        shown_column = column;
+        shown_column = at;
         shown = true;
         touch(row);
 }
@@ -327,8 +332,16 @@ fn claim_standard_descriptors()
 */
 fn regrid(b32 master)
 {
-        unsigned int was_columns = COLUMNS;
-        unsigned int was_rows = ROWS;
+        unsigned int was_columns;
+        unsigned int was_rows;
+
+        // Undone in the geometry it was made in. cursor_show inverts a cell in
+        // place, so clearing "shown" and moving on left that cell inverted for
+        // good, and the copy below carried it into the new layout.
+        cursor_hide();
+
+        was_columns = COLUMNS;
+        was_rows = ROWS;
         unsigned int columns = window->columns;
         unsigned int rows = window->rows;
         unsigned int keep = was_columns < columns ? was_columns : columns;
