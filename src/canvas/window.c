@@ -69,6 +69,14 @@
 #define WINDOW_FULLSCREEN 2u
 #define WINDOW_MINIMIZED 4u
 
+/*
+        A window takes the pointer over the whole of itself, not only over the
+        parts that do something with it: hovering its middle must not offer to
+        resize whatever is buried underneath. WINDOW_PASSTHROUGH says not to,
+        for a window that is meant to be looked through rather than used.
+*/
+#define WINDOW_PASSTHROUGH 8u
+
 // state
 #define WINDOW_FOCUSED 1u
 
@@ -84,6 +92,30 @@
 #define TEXT_MIDDLE 4u
 #define TEXT_BOTTOM 8u
 #define TEXT_WRAP 16u
+
+/*
+        Keys reach the window that has focus, through a ring in this page.
+
+        The compositor writes at head and the program reads at tail, so a
+        program that draws every frame reads its input the same way it reads
+        everything else: no call. A ring that fills drops what is oldest,
+        which is what a keyboard buffer does.
+*/
+#define WINDOW_KEYS 64
+
+#define WINDOW_KEY_DOWN 1u
+#define WINDOW_KEY_SHIFT 2u
+#define WINDOW_KEY_CONTROL 4u
+#define WINDOW_KEY_ALT 8u
+
+struct window_key
+{
+        unsigned int code;      // the key itself, as Linux numbers them
+        unsigned int character; // what it means, or zero for a key that means
+                                // nothing on its own
+        unsigned int flags;
+        unsigned int reserved;
+};
 
 // A window is never resized below this, whatever is dragged.
 #define WINDOW_MIN_WIDTH 96
@@ -119,6 +151,11 @@ struct window
         unsigned int handle;
 
         unsigned int reserved[4];
+
+        // The compositor writes head, the program writes tail.
+        unsigned int key_head;
+        unsigned int key_tail;
+        struct window_key keys[WINDOW_KEYS];
 };
 
 // _IOW('s', 4, struct window_request)
@@ -132,6 +169,18 @@ struct window_request
         unsigned int width;
         unsigned int height;
 };
+
+// The next key, or false when there is none waiting.
+static inline int window_key(struct window *window, struct window_key *key)
+{
+        if (window->key_tail == window->key_head)
+                return 0;
+
+        *key = window->keys[window->key_tail % WINDOW_KEYS];
+        window->key_tail++;
+
+        return 1;
+}
 
 static inline unsigned int *window_pixels(struct window *window)
 {

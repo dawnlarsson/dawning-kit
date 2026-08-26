@@ -32,6 +32,13 @@ static void hold(long seconds)
         system_call_2(syscall(nanosleep), (positive)timespec, 0);
 }
 
+static void hold_ms(long milliseconds)
+{
+        long timespec[2] = {0, milliseconds * 1000000};
+
+        system_call_2(syscall(nanosleep), (positive)timespec, 0);
+}
+
 b32 main()
 {
         struct window *back = window_open(400, 260);
@@ -63,7 +70,37 @@ b32 main()
         bare->y = 620;
         window_commit(bare);
 
-        hold(5);
+        // Show what a keyboard says, in the titlebar of the window that has
+        // focus. Nothing is polled: keys arrive in the page.
+        for (int i = 0; i < 240; i++)
+        {
+                struct window_key key;
+                unsigned int typed = 0;
+                char line[WINDOW_TITLE_MAX];
+                unsigned int at = 0;
+
+                while (window_key(back, &key))
+                        if ((key.flags & WINDOW_KEY_DOWN) && key.character >= ' ')
+                                typed = key.character;
+
+                if (typed)
+                {
+                        const char *label = "typed: ";
+
+                        while (label[at])
+                        {
+                                line[at] = label[at];
+                                at++;
+                        }
+
+                        line[at++] = (char)typed;
+                        line[at] = 0;
+                        title(back, line);
+                        window_commit(back);
+                }
+
+                hold_ms(25);
+        }
 
         // Put one away and let the other cover its display.
         front->style |= WINDOW_MINIMIZED;

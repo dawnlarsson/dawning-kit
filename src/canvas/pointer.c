@@ -348,7 +348,10 @@ static void pointer_event(struct input_handle *handle, unsigned int type,
         if (type == EV_KEY)
         {
                 if (code != BTN_LEFT && code != BTN_TOUCH)
+                {
+                        keyboard_event(code, value);
                         return;
+                }
 
                 atomic_set(&desktop.button_x, x);
                 atomic_set(&desktop.button_y, y);
@@ -387,7 +390,7 @@ static int pointer_connect(struct input_handler *handler, struct input_dev *dev,
         if (ret)
                 goto err_unregister;
 
-        log_canvas("pointer: %s\n", dev->name ? dev->name : "unnamed");
+        log_canvas("input: %s\n", dev->name ? dev->name : "unnamed");
         return 0;
 
 err_unregister:
@@ -404,7 +407,7 @@ static void pointer_disconnect(struct input_handle *handle)
         kfree(handle);
 }
 
-// Anything that reports relative or absolute motion: mice, tablets, touchpads.
+// Anything that reports motion or keys: mice, tablets, touchpads, keyboards.
 static const struct input_device_id pointer_ids[] = {
     {
         .flags = INPUT_DEVICE_ID_MATCH_EVBIT,
@@ -413,6 +416,10 @@ static const struct input_device_id pointer_ids[] = {
     {
         .flags = INPUT_DEVICE_ID_MATCH_EVBIT,
         .evbit = {BIT_MASK(EV_ABS)},
+    },
+    {
+        .flags = INPUT_DEVICE_ID_MATCH_EVBIT,
+        .evbit = {BIT_MASK(EV_KEY)},
     },
     {},
 };
@@ -467,6 +474,13 @@ static int canvas_loop(void *unused)
                 __set_current_state(TASK_RUNNING);
 
                 pointer_apply();
+
+                if (atomic_read(&desktop.key_head) != atomic_read(&desktop.key_tail))
+                {
+                        mutex_lock(&desktop.lock);
+                        keys_deliver();
+                        mutex_unlock(&desktop.lock);
+                }
 
                 if (atomic_xchg(&desktop.frame_pending, 0))
                         desktop_frame_pass();

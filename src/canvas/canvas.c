@@ -19,6 +19,7 @@
             plane.c     the cursor, on a hardware plane or in the framebuffer
             drag.c      moving a window, across a seam if it comes to that
             output.c    outputs, their placement, and starting and stopping
+            keys.c      what a keyboard means, and which window hears it
             client.c    attaching to DRM, and finding cards to attach to
             pointer.c   input
 
@@ -193,6 +194,18 @@ static struct desktop
         atomic_t motion_pending;
         u64 motion_stamp;
 
+        /*
+                Keys as they arrive, before anything knows which window they
+                belong to. The handler cannot take the lock that says which
+                window has focus, and cannot follow a pointer to one that may
+                be freed underneath it, so it records here and the thread
+                delivers.
+        */
+        struct window_key key_ring[WINDOW_KEYS];
+        atomic_t key_head;
+        atomic_t key_tail;
+        atomic_t modifiers;
+
         // The button, and where it went down. Picking a window needs the list,
         // which the input handler cannot walk, so it records and the thread
         // picks.
@@ -323,5 +336,6 @@ static _Bool output_holds(struct output *output, int x, int y)
 #include "plane.c"
 #include "drag.c"
 #include "output.c"
+#include "keys.c"
 #include "client.c"
 #include "pointer.c"

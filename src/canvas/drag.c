@@ -37,7 +37,14 @@ static unsigned int pane_edges_at(struct pane *pane, int x, int y)
         return edges;
 }
 
-// Front to back is the reverse of the drawing order.
+/*
+        The window the pointer is over, and which of its edges it has hold of.
+
+        A window blocks over all of itself, not only over the parts that
+        answer: its middle is not a hole through to whatever is behind. The
+        list is walked back to front and the last match wins, which is the
+        topmost, and a window can opt out with WINDOW_PASSTHROUGH.
+*/
 static struct pane *pane_under(int x, int y, unsigned int *edges)
 {
         struct pane *pane, *found = NULL;
@@ -45,20 +52,18 @@ static struct pane *pane_under(int x, int y, unsigned int *edges)
 
         list_for_each_entry(pane, &desktop.windows, link)
         {
-                unsigned int e = pane_edges_at(pane, x, y);
+                int fx, fy, fw, fh;
 
-                if (e)
-                {
-                        found = pane;
-                        found_edges = e;
-                }
-                else if (pane_titlebar_holds(pane, x, y) &&
-                         (pane->style & WINDOW_FRAME) &&
-                         !(pane->style & WINDOW_MINIMIZED))
-                {
-                        found = pane;
-                        found_edges = 0;
-                }
+                if (pane->style & (WINDOW_MINIMIZED | WINDOW_PASSTHROUGH))
+                        continue;
+
+                pane_frame(pane, &fx, &fy, &fw, &fh);
+
+                if (x < fx || x >= fx + fw || y < fy || y >= fy + fh)
+                        continue;
+
+                found = pane;
+                found_edges = pane_edges_at(pane, x, y);
         }
 
         *edges = found_edges;
@@ -240,7 +245,7 @@ static void drag_press(int x, int y)
                 desktop.resize_w = pane->width;
                 desktop.resize_h = pane->height;
         }
-        else
+        else if ((pane->style & WINDOW_FRAME) && pane_titlebar_holds(pane, x, y))
         {
                 desktop.dragging = pane;
                 desktop.grab_x = x - pane->x;
