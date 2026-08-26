@@ -116,6 +116,13 @@ static int canvas_take_over(struct drm_device *dev)
         if (!canvas_font)
         {
                 canvas_font = find_font("VGA8x16");
+
+                if (!canvas_font)
+                {
+                        log_canvas("no console font to draw with\n");
+                        return 0;
+                }
+
                 canvas_cursor_bits();
         }
 

@@ -83,24 +83,6 @@ static void plane_drop(struct output *output)
         }
 }
 
-/*
-        Claims the crtc's cursor plane and paints the arrow into it once.
-
-        The image is written before the plane is ever armed, because a driver
-        that keeps its framebuffer elsewhere only uploads it when the plane's
-        framebuffer changes -- virtio-gpu transfers the image on that edge and
-        sends nothing but a position afterwards, which is what makes this
-        cheap. An image drawn after arming would never be sent.
-*/
-/*
-        Paints one shape into the plane's buffer.
-
-        The image is written before the plane is ever armed, because a driver
-        that keeps its framebuffer elsewhere only uploads it when the plane's
-        framebuffer changes -- virtio-gpu transfers the image on that edge and
-        sends nothing but a position afterwards, which is what makes this
-        cheap. Changing shape is therefore a repaint here, not per move.
-*/
 // The largest whole scale of a shape that fits the plane's buffer.
 static unsigned int plane_scale(struct output *output, unsigned int scale)
 {
@@ -111,6 +93,15 @@ static unsigned int plane_scale(struct output *output, unsigned int scale)
         return scale;
 }
 
+/*
+        Paints one shape into the plane's buffer.
+
+        The image is written before the plane is ever armed, because a driver
+        that keeps its framebuffer elsewhere only uploads it when the plane's
+        framebuffer changes -- virtio-gpu transfers the image on that edge and
+        sends nothing but a position afterwards, which is what makes this
+        cheap. Changing shape is therefore a repaint here, not per move.
+*/
 static int plane_paint(struct output *output, unsigned int shape, unsigned int scale)
 {
         u32 opaque_ink[INK_COUNT];

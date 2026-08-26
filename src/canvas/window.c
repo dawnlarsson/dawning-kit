@@ -165,6 +165,19 @@ struct window
         unsigned int damage_row;
         unsigned int damage_rows;
 
+        /*
+                The shape the cells are actually laid out in, which the
+                program writes and the compositor composes from.
+
+                columns and rows above are a request: the compositor rounds a
+                resize to whole cells and says so, and until the program has
+                relaid its text the buffer is still in the old shape. Reading
+                it at the new stride during a drag is a row of text taken from
+                the middle of the row before it.
+        */
+        unsigned int grid_columns;
+        unsigned int grid_rows;
+
         // What the compositor allocated, which is what has to be mapped: a
         // window of cells is given room for as many as the desktop could hold
         // so that resizing it has somewhere to grow into.
@@ -227,6 +240,15 @@ struct window_cell
 static inline struct window_cell *window_cells(struct window *window)
 {
         return (struct window_cell *)((char *)window + WINDOW_PIXELS);
+}
+
+// Says the cells are now laid out this way. Until a program calls this the
+// compositor keeps drawing the shape it last confirmed.
+static inline void window_grid(struct window *window, unsigned int columns,
+                               unsigned int rows)
+{
+        window->grid_columns = columns;
+        window->grid_rows = rows;
 }
 
 // The next key, or false when there is none waiting.

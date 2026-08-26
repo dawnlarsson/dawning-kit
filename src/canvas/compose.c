@@ -147,6 +147,7 @@ static void shape_blit(const struct target *t, const struct shape *shape,
                         continue;
 
                 canvas_painted += (unsigned long)(x2 - x1);
+                canvas_runs++;
                 canvas_row_blit(t->pixels + (size_t)y * t->pitch + x1,
                                 source + (size_t)(y - band_y) * source_pitch +
                                     (x1 - band_x),
@@ -155,42 +156,30 @@ static void shape_blit(const struct target *t, const struct shape *shape,
 }
 
 /*
-        A pane, in target coordinates.
-
-        The frame is drawn as the parts of it something is not about to cover:
-        the strip above the titlebar, the strip below the contents, and the two
-        sides. Painting the whole rectangle and covering it up cost 47824
-        pixels a window where 2224 could be seen.
-
-        The sides are shape_fill with a band that stops at the contents, which
-        is why there is no separate border function: the band clamp already
-        measures from the row's inset, so a side follows the curve for free.
-*/
-/*
         A window made of text.
 
         Runs of one paper colour go out as one rectangle, since a terminal is
-        mostly one colour behind everything, and then the glyphs. Only the rows
-        the program said it changed, and only where they meet the damage.
+        mostly one colour behind everything, and then the glyphs. Only the
+        cells the damage reaches.
 */
 static void compose_cells(struct pane *pane, const struct target *t,
                           const struct shape *shape, int x, int y)
 {
         int first_row = max((t->clip.y1 - y) / WINDOW_CELL_H, 0);
         int last_row = min((t->clip.y2 - y + WINDOW_CELL_H - 1) / WINDOW_CELL_H,
-                           (int)pane->rows);
+                           (int)pane->grid_rows);
 
         // Columns as well as rows. Clipping only the rows meant a cursor
         // moving over a terminal repainted two whole lines of it, eighty
         // cells wide, to put sixteen pixels somewhere.
         int first = max((t->clip.x1 - x) / WINDOW_CELL_W, 0);
         int last = min((t->clip.x2 - x + WINDOW_CELL_W - 1) / WINDOW_CELL_W,
-                       (int)pane->columns);
+                       (int)pane->grid_columns);
         int row, column;
 
         for (row = first_row; row < last_row; row++)
         {
-                const struct window_cell *cells = pane->cells + row * pane->columns;
+                const struct window_cell *cells = pane->cells + row * pane->grid_columns;
                 int cy = y + row * WINDOW_CELL_H;
 
                 for (column = first; column < last;)
@@ -223,6 +212,18 @@ static void compose_cells(struct pane *pane, const struct target *t,
         }
 }
 
+/*
+        A pane, in target coordinates.
+
+        The frame is drawn as the parts of it something is not about to cover:
+        the strip above the titlebar, the strip below the contents, and the two
+        sides. Painting the whole rectangle and covering it up cost 47824
+        pixels a window where 2224 could be seen.
+
+        The sides are shape_fill with a band that stops at the contents, which
+        is why there is no separate border function: the band clamp already
+        measures from the row's inset, so a side follows the curve for free.
+*/
 static void compose_pane(struct pane *pane, const struct target *t)
 {
         _Bool framed = pane->style & WINDOW_FRAME;
@@ -278,7 +279,22 @@ static void compose_pane(struct pane *pane, const struct target *t)
         }
 
         if (pane->cells)
+        {
+                int gw = (int)pane->grid_columns * WINDOW_CELL_W;
+                int gh = (int)pane->grid_rows * WINDOW_CELL_H;
+
                 compose_cells(pane, t, &shape, x, y + title);
+
+                // What the window has grown into but the program has not laid
+                // out yet, which would otherwise show the desktop through it.
+                if (gw < pane->width)
+                        shape_fill(t, &shape, x + gw, y + title,
+                                   pane->width - gw, pane->height, t->ink[INK_BODY]);
+
+                if (gh < pane->height)
+                        shape_fill(t, &shape, x, y + title + gh, min(gw, pane->width),
+                                   pane->height - gh, t->ink[INK_BODY]);
+        }
         else if (pane->pixels)
                 shape_blit(t, &shape, x, y + title, pane->width, pane->height,
                            pane->pixels, pane->pitch);
@@ -386,15 +402,6 @@ static _Bool output_touched(struct output *output, const struct drm_rect *damage
         return false;
 }
 
-/*
-        Repaints a set of damaged rectangles on one output and hands the driver
-        their union. A set rather than a pair because moving a window damages
-        four things: where its frame was and is, and where the cursor was and
-        is. The cursor's cell reaches outside the frame it is dragging, so
-        leaving it out of the damage leaves a trail of it behind.
-
-        Every rectangle is in desktop coordinates.
-*/
 /*
         Repaints a set of damaged rectangles on one output and hands the driver
         their union. A set rather than a pair because moving a window damages

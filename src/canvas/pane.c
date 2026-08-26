@@ -149,6 +149,10 @@ static struct pane *pane_create(unsigned int width, unsigned int height,
                 pane->max_height = max_rows * WINDOW_CELL_H;
                 pane->shared->columns = columns;
                 pane->shared->rows = rows;
+                pane->grid_columns = columns;
+                pane->grid_rows = rows;
+                pane->shared->grid_columns = columns;
+                pane->shared->grid_rows = rows;
         }
         else
         {
@@ -185,10 +189,6 @@ static struct pane *pane_create(unsigned int width, unsigned int height,
         return pane;
 }
 
-/*
-        The only place a program's numbers get believed, and only after they are
-        clamped to the buffer that was actually allocated for it.
-*/
 /*
         A grid follows the window it is in.
 
@@ -257,8 +257,18 @@ static void pane_refresh(struct pane *pane)
                 unsigned int row = READ_ONCE(shared->damage_row);
                 unsigned int count = READ_ONCE(shared->damage_rows);
 
-                pane->damage_row = min(row, pane->rows);
-                pane->damage_rows = min(count, pane->rows - pane->damage_row);
+                /*
+                        The shape the program says its cells are in, which is
+                        not the shape they were asked to be in until it has
+                        caught up. Composing from the requested one mid-resize
+                        reads every row at the wrong stride.
+                */
+                pane->grid_columns = min(READ_ONCE(shared->grid_columns),
+                                         pane->max_columns);
+                pane->grid_rows = min(READ_ONCE(shared->grid_rows), pane->max_rows);
+
+                pane->damage_row = min(row, pane->grid_rows);
+                pane->damage_rows = min(count, pane->grid_rows - pane->damage_row);
 
                 WRITE_ONCE(shared->damage_row, 0);
                 WRITE_ONCE(shared->damage_rows, 0);
@@ -284,8 +294,6 @@ static void pane_refresh(struct pane *pane)
         }
 }
 
-// Drawing is the list order, so the list is kept in z order. list_sort is
-// stable, which is what keeps windows that share a z where they were.
 /*
         Focus is a pointer here and a bit in every shared page, so a program
         can see it without being told and the compositor can colour a titlebar
@@ -459,6 +467,9 @@ static void window_release(struct file *file)
 
         if (desktop.dragging == pane)
                 desktop.dragging = NULL;
+
+        if (desktop.resizing == pane)
+                desktop.resizing = NULL;
 
         if (desktop.focused == pane)
                 desktop.focused = NULL;

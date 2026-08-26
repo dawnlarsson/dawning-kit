@@ -151,16 +151,20 @@ static void text_draw(const struct target *t, int x, int y, int w, int h,
                       const char *text, unsigned int length,
                       unsigned int align, int scale, u32 colour)
 {
-        int cell_w = (int)canvas_font->width * scale;
-        int cell_h = (int)canvas_font->height * scale;
+        u64 started = ktime_get_ns();
+        int cell_w, cell_h;
         _Bool wrap = align & TEXT_WRAP;
-        unsigned int columns = cell_w > 0 && w > 0 ? (unsigned int)(w / cell_w) : 0;
-        unsigned int start = 0;
+        unsigned int columns, start = 0;
         int line_y;
 
-        u64 started = ktime_get_ns();
+        if (!canvas_font || !length)
+                return;
 
-        if (!canvas_font || !length || !columns)
+        cell_w = (int)canvas_font->width * scale;
+        cell_h = (int)canvas_font->height * scale;
+        columns = cell_w > 0 && w > 0 ? (unsigned int)(w / cell_w) : 0;
+
+        if (!columns)
                 return;
 
         if (!wrap)

@@ -220,6 +220,8 @@ static void drag_press(int x, int y)
 {
         unsigned int edges;
         struct pane *pane = pane_under(x, y, &edges);
+        struct pane *was = desktop.focused;
+        int fx, fy, fw, fh;
 
         if (!pane)
                 return;
@@ -253,7 +255,19 @@ static void drag_press(int x, int y)
                 desktop.grab_y = y - pane->y;
         }
 
-        desktop_redraw();
+        // The titlebar that lost focus and the window that came to the front.
+        desktop.damage_count = 0;
+        desktop.damage_all = false;
+
+        if (was && was != pane)
+        {
+                pane_frame(was, &fx, &fy, &fw, &fh);
+                desktop_damage(fx, fy, fw, fh);
+        }
+
+        pane_frame(pane, &fx, &fy, &fw, &fh);
+        desktop_damage(fx, fy, fw, fh);
+        desktop_repaint();
 }
 
 static void drag_release(void)

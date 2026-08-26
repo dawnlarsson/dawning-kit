@@ -374,6 +374,8 @@ fn regrid(b32 master)
         touched_top = 0;
         touched_bottom = ROWS;
 
+        window_grid(window, COLUMNS, ROWS);
+
         size.rows = (unsigned short)ROWS;
         size.columns = (unsigned short)COLUMNS;
         size.x_pixels = (unsigned short)(COLUMNS * WINDOW_CELL_W);

@@ -136,13 +136,16 @@ static void keys_deliver(void)
         if (head == tail)
                 return;
 
-        atomic_set(&desktop.key_tail, (int)head);
-
         if (!pane || !pane->shared)
+        {
+                atomic_set(&desktop.key_tail, (int)head);
                 return;
+        }
 
         smp_rmb();
 
+        // Consumed as they land, not before: a program whose own ring is full
+        // leaves the rest here rather than losing them.
         for (; tail != head; tail++)
         {
                 struct window *shared = pane->shared;
@@ -154,5 +157,6 @@ static void keys_deliver(void)
                 shared->keys[at % WINDOW_KEYS] = desktop.key_ring[tail % WINDOW_KEYS];
                 smp_wmb();
                 WRITE_ONCE(shared->key_head, at + 1);
+                atomic_set(&desktop.key_tail, (int)(tail + 1));
         }
 }

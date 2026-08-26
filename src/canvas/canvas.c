@@ -88,6 +88,7 @@ struct pane
         // A window of text instead: cells the compositor draws the glyphs for.
         struct window_cell *cells;
         unsigned int columns, rows;
+        unsigned int grid_columns, grid_rows;
         unsigned int max_columns, max_rows;
         unsigned int damage_row, damage_rows;
 
@@ -180,13 +181,11 @@ static struct desktop
         // the whole of what arrived between those.
         int raw_x, raw_y;
 
-        /*
-                A program changes a window by storing into its shared page and
-                bumping a sequence, which costs no call. Something has to look,
-                so this ticks while there is anything to look at and stops
-                itself once nothing has changed for a while. awake is what the
-                programs read to know whether it is still looking.
-        */
+        // The same for a tablet, which reports where it is rather than how far
+        // it moved. abs_have says which axes this report has carried.
+        int abs_x, abs_y;
+        unsigned int abs_have;
+
         /*
                 What changed since the last commit, so a program saying so
                 repaints its own window rather than every screen. Four is a

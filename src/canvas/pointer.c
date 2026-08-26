@@ -317,9 +317,22 @@ static void pointer_event(struct input_handle *handle, unsigned int type,
 
         if (type == EV_SYN)
         {
-                if (code == SYN_REPORT)
-                        pointer_frame();
+                if (code != SYN_REPORT)
+                        return;
 
+                // A tablet reports both axes and then says it is done, the
+                // same as a mouse. Committing each axis as it arrived moved
+                // the cursor twice for one movement, the second time with the
+                // other axis a report out of date.
+                if (desktop.abs_have)
+                {
+                        pointer_commit(desktop.abs_have & 1 ? desktop.abs_x : x,
+                                       desktop.abs_have & 2 ? desktop.abs_y : y);
+                        desktop.abs_have = 0;
+                        return;
+                }
+
+                pointer_frame();
                 return;
         }
 
@@ -338,11 +351,21 @@ static void pointer_event(struct input_handle *handle, unsigned int type,
                         return;
 
                 if (code == ABS_X)
-                        x = (int)div_u64((u64)(value - abs->minimum) * (u32)desktop.width,
-                                         abs->maximum - abs->minimum);
+                {
+                        desktop.abs_x = (int)div_u64(
+                            (u64)(value - abs->minimum) * (u32)desktop.width,
+                            abs->maximum - abs->minimum);
+                        desktop.abs_have |= 1;
+                }
                 else
-                        y = (int)div_u64((u64)(value - abs->minimum) * (u32)desktop.height,
-                                         abs->maximum - abs->minimum);
+                {
+                        desktop.abs_y = (int)div_u64(
+                            (u64)(value - abs->minimum) * (u32)desktop.height,
+                            abs->maximum - abs->minimum);
+                        desktop.abs_have |= 2;
+                }
+
+                return;
         }
 
         if (type == EV_KEY)
@@ -361,11 +384,6 @@ static void pointer_event(struct input_handle *handle, unsigned int type,
                 wake_up_process(canvas_thread);
                 return;
         }
-
-        if (type != EV_ABS)
-                return;
-
-        pointer_commit(x, y);
 }
 
 static int pointer_connect(struct input_handler *handler, struct input_dev *dev,
@@ -468,7 +486,8 @@ static int canvas_loop(void *unused)
 
                 if (!atomic_read(&desktop.motion_pending) &&
                     !atomic_read(&desktop.button_changed) &&
-                    !atomic_read(&desktop.frame_pending))
+                    !atomic_read(&desktop.frame_pending) &&
+                    atomic_read(&desktop.key_head) == atomic_read(&desktop.key_tail))
                         schedule();
 
                 __set_current_state(TASK_RUNNING);
