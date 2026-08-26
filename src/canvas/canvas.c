@@ -190,6 +190,8 @@ static struct desktop
         atomic_t frame_pending;
         unsigned int idle_frames;
         _Bool awake;
+        _Bool started;
+        _Bool terminal;
 
         // The bounding box of every output. Read by the input handler in
         // atomic context, where it cannot walk the list.

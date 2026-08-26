@@ -34,6 +34,10 @@
 #include "library.c"
 #include "spark.c"
 
+// Defined below, next to the rest of the spawning, and called by the
+// compositor when it has a screen to put something on.
+static int spawn_program(const char *path);
+
 #ifdef CONFIG_MOONWATER_CANVAS
 #include <linux/workqueue.h>
 #include <linux/kthread.h>
@@ -355,6 +359,42 @@ static void spawn_free(struct spawn_work *work)
         kfree(work->argv);
         kfree(work->path);
         kfree(work);
+}
+
+/*
+        Starts one program with no arguments and no environment.
+
+        The ioctl path exists for a program that wants to start another; this
+        is for the kernel starting the first one, which is a much smaller
+        request and needs none of the copying from userspace.
+*/
+static int spawn_enter(void *data);
+
+static int spawn_program(const char *path)
+{
+        struct spawn_work *work = kzalloc(sizeof(*work), GFP_KERNEL);
+
+        if (!work)
+                return -ENOMEM;
+
+        work->path = kstrdup(path, GFP_KERNEL);
+        work->argv = kcalloc(2, sizeof(char *), GFP_KERNEL);
+
+        if (!work->path || !work->argv)
+        {
+                spawn_free(work);
+                return -ENOMEM;
+        }
+
+        work->argv[0] = work->path;
+
+        if (user_mode_thread(spawn_enter, work, SIGCHLD) <= 0)
+        {
+                spawn_free(work);
+                return -EAGAIN;
+        }
+
+        return 0;
 }
 
 static int spawn_enter(void *data)

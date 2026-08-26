@@ -92,56 +92,6 @@ static void output_drop(struct output *output)
 }
 
 /*
-        A first arrangement, so there is something on screen before anything
-        can create a window. Once, for the desktop, not once per card.
-*/
-static unsigned int desktop_seed_windows(void)
-{
-        unsigned int columns = max(desktop.width / 320, 1);
-        unsigned int rows = max(desktop.height / 260, 1);
-        unsigned int column, row, seeded = 0;
-
-        for (row = 0; row < rows; row++)
-        {
-                for (column = 0; column < columns; column++)
-                {
-                        struct pane *pane = kzalloc(sizeof(*pane), GFP_KERNEL);
-
-                        if (!pane)
-                                return seeded;
-
-                        pane->x = 40 + column * 300;
-                        pane->y = 40 + row * 240;
-                        pane->width = 240;
-                        pane->height = 170;
-                        pane->style = WINDOW_FRAME;
-                        pane->z = (int)(row * columns + column);
-                        pane->title_length =
-                            (unsigned int)scnprintf(pane->title, WINDOW_TITLE_MAX,
-                                                    "Window %u", pane->z + 1);
-
-                        list_add_tail(&pane->link, &desktop.windows);
-                        seeded++;
-                }
-        }
-
-        return seeded;
-}
-
-// Only the compositor's own. A program's goes when it closes its file.
-static void desktop_drop_windows(void)
-{
-        struct pane *pane, *next;
-
-        list_for_each_entry_safe(pane, next, &desktop.windows, link)
-                if (!pane->shared)
-                {
-                        list_del(&pane->link);
-                        kfree(pane);
-                }
-}
-
-/*
         A card's outputs are added together, so they are consecutive here and
         remembering the last one is enough to commit each card once.
 */
@@ -181,7 +131,7 @@ static int canvas_start(struct canvas *canvas)
 {
         struct drm_client_dev *client = &canvas->client;
         struct drm_mode_set *mode_set;
-        unsigned int count = 0, windows = 0;
+        unsigned int count = 0;
 
         if (drm_client_modeset_probe(client, 0, 0))
                 return -ENODEV;
@@ -211,9 +161,9 @@ static int canvas_start(struct canvas *canvas)
         desktop.cursor_scale = 1;
         desktop.drawn_scale = 1;
 
-        if (list_empty(&desktop.windows))
+        if (!desktop.started)
         {
-                windows = desktop_seed_windows();
+                desktop.started = true;
                 desktop.cursor_x = desktop.width / 2;
                 desktop.cursor_y = desktop.height / 2;
                 desktop.drawn_x = desktop.cursor_x;
@@ -224,8 +174,18 @@ static int canvas_start(struct canvas *canvas)
 
         desktop_redraw();
 
-        log_canvas("desktop %dx%d, %u output(s), %u window(s)\n",
-                   desktop.width, desktop.height, count, windows);
+        log_canvas("desktop %dx%d, %u output(s)\n",
+                   desktop.width, desktop.height, count);
+
+        // Something to use it with. A desktop with nothing on it is not a
+        // desktop, and this is the first program a screen is worth having.
+        if (!desktop.terminal)
+        {
+                int ret = spawn_program("/term");
+
+                desktop.terminal = true;
+                log_canvas("terminal: %d\n", ret);
+        }
 
         return 0;
 }
@@ -240,8 +200,6 @@ static void canvas_release(struct canvas *canvas)
 
         desktop_place_outputs();
 
-        if (list_empty(&desktop.outputs))
-                desktop_drop_windows();
-        else
+        if (!list_empty(&desktop.outputs))
                 desktop_redraw();
 }

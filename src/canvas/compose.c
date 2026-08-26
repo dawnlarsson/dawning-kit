@@ -16,14 +16,6 @@
         curve, and a band that is not at a corner is a plain run of pixels.
 */
 
-// What a window with no program behind it says, and the one place wrapping is
-// exercised until a program can ask for text of its own.
-static const char pane_placeholder[] =
-    "This window is the compositor's own. A program draws its contents "
-    "through the page it shares, and this is what one looks like before "
-    "anything has.";
-
-// The cell the cursor occupies, which moves with the hotspot of its shape.
 static void rect_set(struct drm_rect *rect, int x, int y, int w, int h)
 {
         rect->x1 = x;
@@ -287,14 +279,8 @@ static void compose_pane(struct pane *pane, const struct target *t)
                 shape_blit(t, &shape, x, y + title, pane->width, pane->height,
                            pane->pixels, pane->pitch);
         else
-        {
                 shape_fill(t, &shape, x, y + title, pane->width, pane->height,
                            t->ink[INK_BODY]);
-
-                text_draw(t, x + 8, y + title + 8, pane->width - 16, pane->height - 16,
-                          pane_placeholder, sizeof(pane_placeholder) - 1,
-                          TEXT_LEFT | TEXT_TOP | TEXT_WRAP, 1, t->ink[INK_TEXT]);
-        }
 }
 
 static void compose_clip(const struct target *t)

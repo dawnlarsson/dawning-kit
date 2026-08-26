@@ -290,8 +290,31 @@ static fn cursor_show()
         touch(row);
 }
 
+#define F_GETFD 1
+
+/*
+        Making sure the first three descriptors are taken.
+
+        A program the kernel started has none open at all, so the pty would be
+        descriptor zero and its other end descriptor one -- and then handing
+        those to a shell as its input and output means dup3 onto a descriptor
+        that is already the thing being duplicated, and closing the master
+        closes what was just set up. Started from a shell the three are
+        already taken and none of this is visible, which is exactly why it was
+        not.
+*/
+fn claim_standard_descriptors()
+{
+        for (b32 i = 0; i < 3; i++)
+                if (system_call_3(syscall(fcntl), i, F_GETFD, 0) < 0)
+                        system_call_4(syscall(openat), AT_FDCWD, (positive)"/dev/null",
+                                      FILE_READ_WRITE, 0);
+}
+
 b32 main()
 {
+        claim_standard_descriptors();
+
         window = window_open_text(COLUMNS, ROWS);
 
         if (!window)
@@ -303,8 +326,25 @@ b32 main()
         cells = window_cells(window);
         erase(0, 0, ROWS - 1, COLUMNS - 1);
 
-        b32 master = system_call_4(syscall(openat), AT_FDCWD, (positive)"/dev/ptmx",
-                                   FILE_READ_WRITE | O_NONBLOCK, 0);
+        /*
+                Waiting for the other end to exist.
+
+                The compositor starts this the moment it has a screen, which
+                is before init has mounted devpts -- there is no ordering
+                between the two and there does not need to be, so long as this
+                is willing to wait a moment for it.
+        */
+        timespec wait = {0, 20000000};
+        b32 master = -1;
+
+        for (int tries = 0; tries < 200 && master < 0; tries++)
+        {
+                master = system_call_4(syscall(openat), AT_FDCWD, (positive)"/dev/ptmx",
+                                       FILE_READ_WRITE | O_NONBLOCK, 0);
+
+                if (master < 0)
+                        system_call_2(syscall(nanosleep), (positive)address_of wait, 0);
+        }
 
         if (master < 0)
         {
