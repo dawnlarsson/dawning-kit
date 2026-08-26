@@ -1575,6 +1575,120 @@ __asm__(
     //
     ASM_RET
     ASM_END(moonwater_ticks)
+    // memcpy and memset, which were the last byte loops in here.
+    //
+    // rep movsb and rep stosb are a single instruction the memory controller
+    // runs at its own width on anything since Ivy Bridge, and they need no
+    // alignment work to get there. Below the point where starting one pays,
+    // eight bytes at a time out of a plain loop is cheaper.
+    ASM_FUNC(moonwater_fill)
+    "        mov     %rdi, %r10\n"
+    "        movzbl  %sil, %eax\n"
+    "        movabs  $0x0101010101010101, %r9\n"
+    "        imul    %r9, %rax\n"
+    "        cmp     $256, %rdx\n"
+    "        jae     5f\n"
+    "        sub     $8, %rdx\n"
+    "        jb      2f\n"
+    "1:      mov     %rax, (%rdi)\n"
+    "        add     $8, %rdi\n"
+    "        sub     $8, %rdx\n"
+    "        jae     1b\n"
+    "2:      add     $8, %rdx\n"
+    "        jz      4f\n"
+    "3:      mov     %al, (%rdi)\n"
+    "        inc     %rdi\n"
+    "        dec     %rdx\n"
+    "        jnz     3b\n"
+    "4:      mov     %r10, %rax\n"
+    ASM_RET
+    "5:      mov     %rdx, %rcx\n"
+    "        shr     $3, %rcx\n"
+    "        rep stosq\n"
+    "        mov     %edx, %ecx\n"
+    "        and     $7, %ecx\n"
+    "        rep stosb\n"
+    "        mov     %r10, %rax\n"
+    ASM_RET
+    ASM_END(moonwater_fill)
+
+    ASM_FUNC(moonwater_copy)
+    "        mov     %rdi, %rax\n"
+    "        cmp     $16, %rdx\n"
+    "        jae     6f\n"
+    // Under sixteen, two loads that overlap in the middle cover the whole of
+    // it with no loop and no tail: the bytes written twice are written the
+    // same both times.
+    "        cmp     $8, %rdx\n"
+    "        jb      7f\n"
+    "        mov     (%rsi), %r9\n"
+    "        mov     -8(%rsi,%rdx), %r11\n"
+    "        mov     %r9, (%rdi)\n"
+    "        mov     %r11, -8(%rdi,%rdx)\n"
+    ASM_RET
+    "7:      cmp     $4, %rdx\n"
+    "        jb      8f\n"
+    "        mov     (%rsi), %r9d\n"
+    "        mov     -4(%rsi,%rdx), %r11d\n"
+    "        mov     %r9d, (%rdi)\n"
+    "        mov     %r11d, -4(%rdi,%rdx)\n"
+    ASM_RET
+    "8:      test    %rdx, %rdx\n"
+    "        jz      4f\n"
+    "3:      mov     (%rsi), %r9b\n"
+    "        mov     %r9b, (%rdi)\n"
+    "        inc     %rsi\n"
+    "        inc     %rdi\n"
+    "        dec     %rdx\n"
+    "        jnz     3b\n"
+    "4:      \n"
+    ASM_RET
+    "6:      cmp     $256, %rdx\n"
+    "        jae     5f\n"
+    "1:      mov     (%rsi), %r9\n"
+    "        mov     %r9, (%rdi)\n"
+    "        add     $8, %rsi\n"
+    "        add     $8, %rdi\n"
+    "        sub     $8, %rdx\n"
+    "        cmp     $8, %rdx\n"
+    "        jae     1b\n"
+    "        test    %rdx, %rdx\n"
+    "        jz      4b\n"
+    "        mov     -8(%rsi,%rdx), %r9\n"
+    "        mov     %r9, -8(%rdi,%rdx)\n"
+    ASM_RET
+    "5:      mov     %rdx, %rcx\n"
+    "        rep movsb\n"
+    ASM_RET
+    ASM_END(moonwater_copy)
+
+    // Backwards only where the regions overlap the wrong way. A plain loop
+    // rather than the direction flag: the kernel requires it clear on every
+    // path out, and one that faults mid-copy would not have cleared it.
+    ASM_FUNC(moonwater_move)
+    "        mov     %rdi, %rax\n"
+    "        cmp     %rsi, %rdi\n"
+    "        jbe     1f\n"
+    "        mov     %rsi, %r8\n"
+    "        add     %rdx, %r8\n"
+    "        cmp     %r8, %rdi\n"
+    "        jb      2f\n"
+    "1:      mov     %rdx, %rcx\n"
+    "        rep movsb\n"
+    ASM_RET
+    "2:      test    %rdx, %rdx\n"
+    "        jz      4f\n"
+    "        lea     -1(%rdi,%rdx), %rdi\n"
+    "        lea     -1(%rsi,%rdx), %rsi\n"
+    "3:      mov     (%rsi), %r9b\n"
+    "        mov     %r9b, (%rdi)\n"
+    "        dec     %rsi\n"
+    "        dec     %rdi\n"
+    "        dec     %rdx\n"
+    "        jnz     3b\n"
+    "4:      \n"
+    ASM_RET
+    ASM_END(moonwater_move)
 );
 #ifdef KERNEL_MODE
 ASM_EXPORT(memchr);
@@ -1917,6 +2031,76 @@ __asm__(
     "        mrs     x0, cntvct_el0\n"
     "        ret\n"
     ASM_END(moonwater_ticks)
+    // memcpy and memset, which were the last byte loops in here.
+    ASM_FUNC(moonwater_fill)
+    "        mov     x3, x0\n"
+    "        and     w1, w1, #0xff\n"
+    "        orr     w1, w1, w1, lsl #8\n"
+    "        orr     w1, w1, w1, lsl #16\n"
+    "        orr     x1, x1, x1, lsl #32\n"
+    "1:      cmp     x2, #16\n"
+    "        b.lo    2f\n"
+    "        stp     x1, x1, [x0], #16\n"
+    "        sub     x2, x2, #16\n"
+    "        b       1b\n"
+    "2:      cmp     x2, #8\n"
+    "        b.lo    3f\n"
+    "        str     x1, [x0], #8\n"
+    "        sub     x2, x2, #8\n"
+    "3:      cbz     x2, 4f\n"
+    "        strb    w1, [x0], #1\n"
+    "        sub     x2, x2, #1\n"
+    "        b       3b\n"
+    "4:      mov     x0, x3\n"
+    ASM_RET
+    ASM_END(moonwater_fill)
+
+    ASM_FUNC(moonwater_copy)
+    "        mov     x3, x0\n"
+    "1:      cmp     x2, #16\n"
+    "        b.lo    2f\n"
+    "        ldp     x4, x5, [x1], #16\n"
+    "        stp     x4, x5, [x0], #16\n"
+    "        sub     x2, x2, #16\n"
+    "        b       1b\n"
+    "2:      cmp     x2, #8\n"
+    "        b.lo    3f\n"
+    "        ldr     x4, [x1], #8\n"
+    "        str     x4, [x0], #8\n"
+    "        sub     x2, x2, #8\n"
+    "3:      cbz     x2, 4f\n"
+    "        ldrb    w4, [x1], #1\n"
+    "        strb    w4, [x0], #1\n"
+    "        sub     x2, x2, #1\n"
+    "        b       3b\n"
+    "4:      mov     x0, x3\n"
+    ASM_RET
+    ASM_END(moonwater_copy)
+
+    ASM_FUNC(moonwater_move)
+    "        mov     x3, x0\n"
+    "        cmp     x0, x1\n"
+    "        b.ls    5f\n"
+    "        add     x4, x1, x2\n"
+    "        cmp     x0, x4\n"
+    "        b.hs    5f\n"
+    "        add     x0, x0, x2\n"
+    "        add     x1, x1, x2\n"
+    "6:      cbz     x2, 7f\n"
+    "        ldrb    w4, [x1, #-1]!\n"
+    "        strb    w4, [x0, #-1]!\n"
+    "        sub     x2, x2, #1\n"
+    "        b       6b\n"
+    "7:      mov     x0, x3\n"
+    ASM_RET
+    "5:      cbz     x2, 8f\n"
+    "        ldrb    w4, [x1], #1\n"
+    "        strb    w4, [x0], #1\n"
+    "        sub     x2, x2, #1\n"
+    "        b       5b\n"
+    "8:      mov     x0, x3\n"
+    ASM_RET
+    ASM_END(moonwater_move)
 );
 #ifdef KERNEL_MODE
 ASM_EXPORT(strchrnul);
@@ -2284,6 +2468,78 @@ __asm__(
     "        csrr    a0, time\n"
     "        ret\n"
     ASM_END(moonwater_ticks)
+    // memcpy and memset, which were the last byte loops in here.
+    ASM_FUNC(moonwater_fill)
+    "        mv      a3, a0\n"
+    "        andi    a1, a1, 0xff\n"
+    "        slli    t0, a1, 8\n"
+    "        or      a1, a1, t0\n"
+    "        slli    t0, a1, 16\n"
+    "        or      a1, a1, t0\n"
+    "        slli    t0, a1, 32\n"
+    "        or      a1, a1, t0\n"
+    "        li      t1, 8\n"
+    "1:      blt     a2, t1, 2f\n"
+    "        sd      a1, 0(a0)\n"
+    "        addi    a0, a0, 8\n"
+    "        addi    a2, a2, -8\n"
+    "        j       1b\n"
+    "2:      beqz    a2, 3f\n"
+    "        sb      a1, 0(a0)\n"
+    "        addi    a0, a0, 1\n"
+    "        addi    a2, a2, -1\n"
+    "        j       2b\n"
+    "3:      mv      a0, a3\n"
+    ASM_RET
+    ASM_END(moonwater_fill)
+
+    ASM_FUNC(moonwater_copy)
+    "        mv      a3, a0\n"
+    "        li      t1, 8\n"
+    "1:      blt     a2, t1, 2f\n"
+    "        ld      t0, 0(a1)\n"
+    "        sd      t0, 0(a0)\n"
+    "        addi    a1, a1, 8\n"
+    "        addi    a0, a0, 8\n"
+    "        addi    a2, a2, -8\n"
+    "        j       1b\n"
+    "2:      beqz    a2, 3f\n"
+    "        lbu     t0, 0(a1)\n"
+    "        sb      t0, 0(a0)\n"
+    "        addi    a1, a1, 1\n"
+    "        addi    a0, a0, 1\n"
+    "        addi    a2, a2, -1\n"
+    "        j       2b\n"
+    "3:      mv      a0, a3\n"
+    ASM_RET
+    ASM_END(moonwater_copy)
+
+    ASM_FUNC(moonwater_move)
+    "        mv      a3, a0\n"
+    "        bleu    a0, a1, 5f\n"
+    "        add     t0, a1, a2\n"
+    "        bgeu    a0, t0, 5f\n"
+    "        add     a0, a0, a2\n"
+    "        add     a1, a1, a2\n"
+    "6:      beqz    a2, 7f\n"
+    "        addi    a1, a1, -1\n"
+    "        addi    a0, a0, -1\n"
+    "        lbu     t0, 0(a1)\n"
+    "        sb      t0, 0(a0)\n"
+    "        addi    a2, a2, -1\n"
+    "        j       6b\n"
+    "7:      mv      a0, a3\n"
+    ASM_RET
+    "5:      beqz    a2, 8f\n"
+    "        lbu     t0, 0(a1)\n"
+    "        sb      t0, 0(a0)\n"
+    "        addi    a1, a1, 1\n"
+    "        addi    a0, a0, 1\n"
+    "        addi    a2, a2, -1\n"
+    "        j       5b\n"
+    "8:      mv      a0, a3\n"
+    ASM_RET
+    ASM_END(moonwater_move)
 );
 #ifdef KERNEL_MODE
 ASM_EXPORT(strchrnul);
@@ -2316,6 +2572,10 @@ ASM_EXPORT(strnchr);
 #define MOONWATER_HAVE_STRNCHR 1
 #endif
 
+address_any moonwater_fill(address_any destination, b8 value, positive size);
+address_any moonwater_copy(address_any destination, address_any source, positive size);
+address_any moonwater_move(address_any destination, address_any source, positive size);
+
 // ### Fill a memory block with the same value
 // fills a memory block with the same value
 // returns: destination address
@@ -2323,12 +2583,7 @@ ASM_EXPORT(strnchr);
 // traditional: memset
 address_any memory_fill(address_any destination, b8 value, positive size)
 {
-        b8 address_to dest = (b8 address_to)destination;
-
-        while (size--)
-                address_to dest++ = (b8)value;
-
-        return destination;
+        return moonwater_fill(destination, value, size);
 }
 
 // ### Fill source memory block with destination memory block
@@ -2339,52 +2594,16 @@ address_any memory_fill(address_any destination, b8 value, positive size)
 // traditional: memcpy
 address_any memory_copy(address_any destination, address_any source, positive size)
 {
-        b8 address_to dest = (b8 address_to)destination;
-        b8 address_to src = (b8 address_to)source;
-
-        // overlapping regions
-        if (dest > src && dest < src + size)
-        {
-                dest += size - 1;
-                src += size - 1;
-                while (size--)
-                        address_to dest-- = address_to src--;
-        }
-        else
-        {
-                while (size--)
-                        address_to dest++ = address_to src++;
-        }
-
-        return destination;
+        return moonwater_move(destination, source, size);
 }
 
 // ### Fast memory copy
 // copies a memory block from source to destination but dosn't handle overlapping regions
 address_any memory_copy_fast(address_any destination, address_any source, positive size)
 {
-        b8 address_to dest = (b8 address_to)destination;
-        b8 address_to src = (b8 address_to)source;
-
-        while (size--)
-                address_to dest++ = address_to src++;
-
-        return destination;
+        return moonwater_copy(destination, source, size);
 }
 
-/*
-        The word at a time versions of the three below live in the .asm files
-        in src/, and are what the kernel links in place of lib/string.c. Where
-        kit/spark assembled them into this program too, these are that same
-        code and there is no second copy to keep in step; where it did not --
-        an architecture with only an empty "#> arch other" block -- the C
-        loops under the #else are what runs, which is the same answer the
-        kernel gets there.
-
-        Which of them exist here is per architecture: the assembly above only
-        carries what the machine was missing, so x86_64 gets all of these and
-        arm64 and riscv64 get the two nobody had written.
-*/
 /*
         Declared here only where nothing else has.
 
@@ -2431,7 +2650,7 @@ positive string_length(string_address source)
 
 b32 string_compare(string_address source, string_address input)
 {
-        return strcmp(source, input);
+        return (b32)strcmp((const char address_to)source, (const char address_to)input);
 }
 
 #else
