@@ -114,10 +114,24 @@ EXPORT_SYMBOL(strchrnul)
 
 #> arch riscv64
         //
-        //      ctz is Zbb. RVA22 requires it, which is the same sort of floor
-        //      profile/arch/x64 sets with -march=x86-64-v2 on the other side.
+        //      Where x86 has bsf and arm64 has rbit+clz, base rv64 has
+        //      neither: ctz is Zbb, and QEMU's virt machine does not have it
+        //      ("riscv: base ISA extensions acdfhim"), so requiring it would
+        //      mean an illegal instruction on the machine this is developed
+        //      on. So the byte index comes out of the multiply the M
+        //      extension already guarantees:
         //
-        .option arch, +zbb
+        //          x & -x                  keep only the lowest set bit
+        //          - 1                     ones below it
+        //          & 0x0101..01            one per byte below it
+        //          * 0x0101..01 >> 56      count them, since each contributes
+        //                                  1 to the top byte and there are at
+        //                                  most eight
+        //          - 1                     that count is the index plus one
+        //
+        //      Seven instructions where Zbb would take two, and only on the
+        //      way out. The alternative was a floor that cannot be tested.
+        //
 
 SYM_FUNC_START(strchrnul)
         andi    a1, a1, 0xff
@@ -152,8 +166,13 @@ SYM_FUNC_START(strchrnul)
         ld      a6, 0(a5)
         j       1b
 
-2:      ctz     t3, t3                  // first set high bit
-        srli    t3, t3, 3               // its byte within the word
+2:      sub     t5, zero, t3
+        and     t3, t3, t5              // lowest set high bit
+        addi    t3, t3, -1
+        and     t3, t3, t0
+        mul     t3, t3, t0
+        srli    t3, t3, 56
+        addi    t3, t3, -1              // its byte within the word
         add     a0, a5, t3
         ret
 SYM_FUNC_END(strchrnul)
@@ -308,8 +327,7 @@ SYM_FUNC_END(strnchr)
 EXPORT_SYMBOL(strnchr)
 
 #> arch riscv64
-        .option arch, +zbb
-
+        //      The same count-the-bytes-below sequence as strchrnul above.
 SYM_FUNC_START(strnchr)
         beqz    a1, 8f
 
@@ -347,8 +365,13 @@ SYM_FUNC_START(strnchr)
         ld      a6, 0(a5)
         j       1b
 
-2:      ctz     t4, t4
-        srli    t4, t4, 3
+2:      sub     t5, zero, t4
+        and     t4, t4, t5              // lowest set high bit
+        addi    t4, t4, -1
+        and     t4, t4, t0
+        mul     t4, t4, t0
+        srli    t4, t4, 56
+        addi    t4, t4, -1              // its byte within the word
         add     t4, a5, t4
         bgeu    t4, a4, 8f              // beyond the count
         lbu     t5, 0(t4)

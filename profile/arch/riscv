@@ -1,0 +1,100 @@
+#> compiler riscv64-linux-gnu-gcc
+
+#> kernel_image linux/arch/riscv/boot/Image
+#> kernel_export dist/kernel-riscv64.img
+
+#> arch riscv64
+#> make_flags ARCH=riscv CROSS_COMPILE=riscv64-linux-gnu-
+#> virt qemu-system-riscv64
+
+#
+#       Unlike arch/arm, which targets a Raspberry Pi and needs profile/arm_virt
+#       bolted on before it can be watched booting, this profile is the generic
+#       RISC-V platform: SBI firmware, a device tree, PLIC and CLINT. That is
+#       what QEMU's "virt" machine is and also what a VisionFive or an
+#       Unmatched is, so there is no second profile to compose. The console is
+#       in here for the same reason.
+#
+
+CONFIG_64BIT=y
+CONFIG_RISCV=y
+CONFIG_ARCH_RV64I=y
+CONFIG_MMU=y
+CONFIG_PAGE_OFFSET=0xff60000000000000
+CONFIG_ARCH_VIRT=y
+
+#
+#       Supervisor mode under firmware, which is every RISC-V machine that is
+#       not a microcontroller. RISCV_M_MODE is the other half of that choice
+#       and would build a kernel that owns machine mode itself.
+#
+CONFIG_RISCV_SBI=y
+CONFIG_RISCV_SBI_V01=y
+CONFIG_RISCV_BOOT_SPINWAIT=y
+
+CONFIG_SMP=y
+CONFIG_NR_CPUS=8
+CONFIG_FPU=y
+
+#
+#       Instruction set.
+#
+#       Base rv64gc, and no more than that. src/chrn_word.asm counts trailing
+#       bytes with a multiply rather than Zbb's ctz for exactly this reason:
+#       QEMU's virt machine reports "riscv: base ISA extensions acdfhim", so a
+#       kernel that assumed Zbb would take an illegal instruction inside
+#       strchrnul on the machine it is developed on. A floor nothing here can
+#       boot is not a floor.
+#
+#       The symbols below are about the kernel's own use of the extensions,
+#       which goes through RISCV_ALTERNATIVE and is decided at runtime against
+#       what the hardware actually reports. That is safe on any machine; ours
+#       would not have been.
+#
+CONFIG_RISCV_ALTERNATIVE=y
+CONFIG_RISCV_ISA_C=y
+CONFIG_RISCV_ISA_ZBA=y
+CONFIG_RISCV_ISA_ZBB=y
+CONFIG_RISCV_ISA_ZICBOM=y
+CONFIG_RISCV_ISA_ZICBOZ=y
+
+# Interrupts and time: the two controllers every SBI platform has.
+CONFIG_RISCV_INTC=y
+CONFIG_SIFIVE_PLIC=y
+CONFIG_RISCV_TIMER=y
+CONFIG_CLINT_TIMER=y
+
+# Device tree, which is how any of the above is found.
+CONFIG_OF=y
+CONFIG_OF_FLATTREE=y
+CONFIG_OF_EARLY_FLATTREE=y
+CONFIG_OF_ADDRESS=y
+CONFIG_OF_IRQ=y
+CONFIG_OF_RESERVED_MEM=y
+
+#
+#       Console. virt exposes an ns16550a; SBI's debug console is what
+#       earlycon speaks before the 8250 driver is up, and is the difference
+#       between a silent boot and a watchable one.
+#
+CONFIG_TTY=y
+CONFIG_SERIAL_8250=y
+CONFIG_SERIAL_8250_CONSOLE=y
+CONFIG_SERIAL_OF_PLATFORM=y
+CONFIG_SERIAL_EARLYCON=y
+CONFIG_SERIAL_EARLYCON_RISCV_SBI=y
+
+# virt puts its disks and network behind virtio-mmio and a generic PCIe host.
+CONFIG_VIRTIO=y
+CONFIG_VIRTIO_MENU=y
+CONFIG_VIRTIO_MMIO=y
+CONFIG_VIRTIO_PCI=y
+CONFIG_VIRTIO_BLK=y
+CONFIG_PCI=y
+CONFIG_PCI_HOST_GENERIC=y
+CONFIG_PCI_HOST_COMMON=y
+
+# Display, for the same reason the other architectures carry it.
+CONFIG_DRM=y
+CONFIG_DRM_VIRTIO_GPU=y
+CONFIG_DRM_BOCHS=y

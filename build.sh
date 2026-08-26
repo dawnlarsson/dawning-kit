@@ -350,8 +350,12 @@ wgcVXSeiHcXa9SSFDvKn0L1q5nSLQGHp38qUi1ZPf/1uQSuB3ME=
                 #       strnchr on both, and memchr on riscv, which are still
                 #       running the byte loop in lib/string.c today.
                 #
+                #       The spellings below are the ones kit/asm normalizes, so
+                #       a profile is free to say arm64 or aarch64 and mean the
+                #       same machine here as it does there.
+                #
                 case "$(key_one arch)" in
-                x86_64)
+                x86_64 | amd64 | x64)
                         header=linux/arch/x86/include/asm/string_64.h
                         claims="STRLEN:__kernel_size_t strlen(const char *)
 STRNCMP:int strncmp(const char *, const char *, __kernel_size_t)
@@ -363,15 +367,33 @@ STRRCHR:char *strrchr(const char *, int)
 STRCHRNUL:char *strchrnul(const char *, int)
 STRNCHR:char *strnchr(const char *, __kernel_size_t, int)"
                         ;;
-                arm64)
+                arm64 | aarch64)
                         header=linux/arch/arm64/include/asm/string.h
                         claims="STRCHRNUL:char *strchrnul(const char *, int)
 STRNCHR:char *strnchr(const char *, __kernel_size_t, int)"
                         ;;
-                riscv64)
+                riscv64 | riscv)
+                        #
+                        #       Not memchr, which riscv leaves to lib/string.c
+                        #       and this cannot take: arch/riscv/kernel/pi
+                        #       compiles a second private copy of lib/string.c
+                        #       into .init.pi and objcopies every symbol to
+                        #       __pi_, because that code runs before the MMU
+                        #       and cannot call the ordinary kernel. libfdt
+                        #       uses memchr, so claiming it here leaves
+                        #       __pi_memchr with nothing behind it:
+                        #
+                        #           hidden symbol `__pi_memchr' isn't defined
+                        #
+                        #       arm64 does not hit this -- its pi builds no
+                        #       string.c at all and aliases __pi_ onto its own
+                        #       assembly. Handing riscv's pi an alias to a
+                        #       function outside .init.pi would link and might
+                        #       even boot, and would be a wrong answer about
+                        #       what that code is allowed to reach.
+                        #
                         header=linux/arch/riscv/include/asm/string.h
-                        claims="MEMCHR:void *memchr(const void *, int, __kernel_size_t)
-STRCHRNUL:char *strchrnul(const char *, int)
+                        claims="STRCHRNUL:char *strchrnul(const char *, int)
 STRNCHR:char *strnchr(const char *, __kernel_size_t, int)"
                         ;;
                 *)

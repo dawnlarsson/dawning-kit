@@ -23,8 +23,24 @@
 #define syscall(name) syscall_linux_arm64_##name
 #endif
 
+//
+//      riscv64 is the same numbering as arm64, not a table of its own: both
+//      are the asm-generic syscall ABI, and every one of the 306 entries below
+//      that resolves to a number was checked against the riscv64 toolchain's
+//      own asm/unistd.h and agreed.
+//
+//      There used to be a separate riscv64 table here. It had 113 of the 322
+//      entries, so a program calling clone, execve, setsid or wait4 did not
+//      compile -- and four of the entries it did have (timer_gettime,
+//      timerfd_settime, timerfd_gettime, utimensat) carried the 32-bit time32
+//      numbers, 408 and 410 through 412, where rv64 uses 108 and 86 through
+//      88. Those would have compiled and called the wrong thing.
+//
+//      The one place the two genuinely differ is renameat, which riscv never
+//      had; see shell_mv, which calls renameat2 for that reason.
+//
 #if defined(__riscv)
-#define syscall(name) syscall_linux_riscv64_##name
+#define syscall(name) syscall_linux_arm64_##name
 #endif
 
 #endif
@@ -745,121 +761,6 @@
 #define syscall_linux_arm64_getxattrat 464
 #define syscall_linux_arm64_listxattrat 465
 #define syscall_linux_arm64_removexattrat 466
-
-#define syscall_linux_riscv64_io_setup 0
-#define syscall_linux_riscv64_io_destroy 1
-#define syscall_linux_riscv64_io_submit 2
-#define syscall_linux_riscv64_io_cancel 3
-#define syscall_linux_riscv64_io_getevents 4
-#define syscall_linux_riscv64_setxattr 5
-#define syscall_linux_riscv64_lsetxattr 6
-#define syscall_linux_riscv64_fsetxattr 7
-#define syscall_linux_riscv64_getxattr 8
-#define syscall_linux_riscv64_lgetxattr 9
-#define syscall_linux_riscv64_fgetxattr 10
-#define syscall_linux_riscv64_listxattr 11
-#define syscall_linux_riscv64_llistxattr 12
-#define syscall_linux_riscv64_flistxattr 13
-#define syscall_linux_riscv64_removexattr 14
-#define syscall_linux_riscv64_lremovexattr 15
-#define syscall_linux_riscv64_fremovexattr 16
-#define syscall_linux_riscv64_getcwd 17
-#define syscall_linux_riscv64_lookup_dcookie 18
-#define syscall_linux_riscv64_eventfd2 19
-#define syscall_linux_riscv64_epoll_create1 20
-#define syscall_linux_riscv64_epoll_ctl 21
-#define syscall_linux_riscv64_epoll_pwait 22
-#define syscall_linux_riscv64_dup 23
-#define syscall_linux_riscv64_dup3 24
-#define syscall_linux_riscv64_fcntl 25
-#define syscall_linux_riscv64_inotify_init1 26
-#define syscall_linux_riscv64_inotify_add_watch 27
-#define syscall_linux_riscv64_inotify_rm_watch 28
-#define syscall_linux_riscv64_ioctl 29
-#define syscall_linux_riscv64_ioprio_set 30
-#define syscall_linux_riscv64_ioprio_get 31
-#define syscall_linux_riscv64_flock 32
-#define syscall_linux_riscv64_mknodat 33
-#define syscall_linux_riscv64_mkdirat 34
-#define syscall_linux_riscv64_unlinkat 35
-#define syscall_linux_riscv64_symlinkat 36
-#define syscall_linux_riscv64_linkat 37
-#define syscall_linux_riscv64_renameat 38
-#define syscall_linux_riscv64_umount 39
-#define syscall_linux_riscv64_mount 40
-#define syscall_linux_riscv64_pivot_root 41
-#define syscall_linux_riscv64_ni_syscall 42
-#define syscall_linux_riscv64_statfs64 43
-#define syscall_linux_riscv64_fstatfs64 44
-#define syscall_linux_riscv64_truncate64 45
-#define syscall_linux_riscv64_ftruncate64 46
-#define syscall_linux_riscv64_fallocate 47
-#define syscall_linux_riscv64_faccessat 48
-#define syscall_linux_riscv64_chdir 49
-#define syscall_linux_riscv64_fchdir 50
-#define syscall_linux_riscv64_chroot 51
-#define syscall_linux_riscv64_fchmod 52
-#define syscall_linux_riscv64_fchmodat 53
-#define syscall_linux_riscv64_fchownat 54
-#define syscall_linux_riscv64_fchown 55
-#define syscall_linux_riscv64_openat 56
-#define syscall_linux_riscv64_close 57
-#define syscall_linux_riscv64_vhangup 58
-#define syscall_linux_riscv64_pipe2 59
-#define syscall_linux_riscv64_quotactl 60
-#define syscall_linux_riscv64_getdents64 61
-#define syscall_linux_riscv64_lseek 62
-#define syscall_linux_riscv64_read 63
-#define syscall_linux_riscv64_write 64
-#define syscall_linux_riscv64_readv 65
-#define syscall_linux_riscv64_writev 66
-#define syscall_linux_riscv64_pread64 67
-#define syscall_linux_riscv64_pwrite64 68
-#define syscall_linux_riscv64_preadv 69
-#define syscall_linux_riscv64_pwritev 70
-#define syscall_linux_riscv64_sendfile64 71
-#define syscall_linux_riscv64_pselect6_time32 72
-#define syscall_linux_riscv64_ppoll_time32 73
-#define syscall_linux_riscv64_signalfd4 74
-#define syscall_linux_riscv64_vmsplice 75
-#define syscall_linux_riscv64_splice 76
-#define syscall_linux_riscv64_tee 77
-#define syscall_linux_riscv64_readlinkat 78
-#define syscall_linux_riscv64_newfstatat 79
-#define syscall_linux_riscv64_newfstat 80
-#define syscall_linux_riscv64_fstat 80
-#define syscall_linux_riscv64_sync 81
-#define syscall_linux_riscv64_fsync 82
-#define syscall_linux_riscv64_fdatasync 83
-#define syscall_linux_riscv64_sync_file_range 84
-// #define syscall_linux_riscv64_sync_file_range2 84
-#define syscall_linux_riscv64_timerfd_create 85
-#define syscall_linux_riscv64_acct 89
-#define syscall_linux_riscv64_capget 90
-#define syscall_linux_riscv64_capset 91
-#define syscall_linux_riscv64_personality 92
-#define syscall_linux_riscv64_munmap 215
-#define syscall_linux_riscv64_mmap 222
-#define syscall_linux_riscv64_exit 93
-#define syscall_linux_riscv64_exit_group 94
-#define syscall_linux_riscv64_waitid 95
-#define syscall_linux_riscv64_set_tid_address 96
-#define syscall_linux_riscv64_unshare 97
-#define syscall_linux_riscv64_futex 98
-#define syscall_linux_riscv64_set_robust_list 99
-#define syscall_linux_riscv64_get_robust_list 100
-#define syscall_linux_riscv64_nanosleep 101
-#define syscall_linux_riscv64_getitimer 102
-#define syscall_linux_riscv64_setitimer 103
-#define syscall_linux_riscv64_kexec_load 104
-#define syscall_linux_riscv64_init_module 105
-#define syscall_linux_riscv64_delete_module 106
-#define syscall_linux_riscv64_timer_create 107
-#define syscall_linux_riscv64_timer_gettime 408
-#define syscall_linux_riscv64_timer_getoverrun 109
-#define syscall_linux_riscv64_timerfd_gettime 410
-#define syscall_linux_riscv64_timerfd_settime 411
-#define syscall_linux_riscv64_utimensat 412
 
 // Macos
 

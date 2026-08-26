@@ -364,7 +364,11 @@ fn shell_mv(writer write, string_address input)
         if (destination == null)
                 return write(str("mv: missing destination\n"));
 
-        if (!system_call_4(syscall(renameat), AT_FDCWD, (positive)input, AT_FDCWD, (positive)destination))
+        // renameat2 with no flags is renameat. riscv64 never got renameat --
+        // the generic syscall ABI dropped it before riscv was added -- and
+        // renameat2 is the one call all three architectures have.
+        if (!system_call_5(syscall(renameat2), AT_FDCWD, (positive)input, AT_FDCWD,
+                           (positive)destination, 0))
                 return;
 
         string_format(write, "mv: Cannot move file: %s\n", input);
