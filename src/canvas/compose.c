@@ -165,16 +165,25 @@ static void shape_blit(const struct target *t, const struct shape *shape,
 static void compose_cells(struct pane *pane, const struct target *t,
                           const struct shape *shape, int x, int y)
 {
+        /*
+                Both the grid the program laid out and the room the window has
+                now. They are the same at rest and not during a resize: a
+                window that has shrunk still has the larger grid until the
+                program catches up, and drawing all of it puts the inside of
+                the window on the desktop beside it.
+        */
+        int columns = (int)min(pane->grid_columns, pane->columns);
+        int grid_rows = (int)min(pane->grid_rows, pane->rows);
+
         int first_row = max((t->clip.y1 - y) / WINDOW_CELL_H, 0);
         int last_row = min((t->clip.y2 - y + WINDOW_CELL_H - 1) / WINDOW_CELL_H,
-                           (int)pane->grid_rows);
+                           grid_rows);
 
         // Columns as well as rows. Clipping only the rows meant a cursor
         // moving over a terminal repainted two whole lines of it, eighty
         // cells wide, to put sixteen pixels somewhere.
         int first = max((t->clip.x1 - x) / WINDOW_CELL_W, 0);
-        int last = min((t->clip.x2 - x + WINDOW_CELL_W - 1) / WINDOW_CELL_W,
-                       (int)pane->grid_columns);
+        int last = min((t->clip.x2 - x + WINDOW_CELL_W - 1) / WINDOW_CELL_W, columns);
         int row, column;
 
         for (row = first_row; row < last_row; row++)
@@ -280,8 +289,8 @@ static void compose_pane(struct pane *pane, const struct target *t)
 
         if (pane->cells)
         {
-                int gw = (int)pane->grid_columns * WINDOW_CELL_W;
-                int gh = (int)pane->grid_rows * WINDOW_CELL_H;
+                int gw = (int)min(pane->grid_columns, pane->columns) * WINDOW_CELL_W;
+                int gh = (int)min(pane->grid_rows, pane->rows) * WINDOW_CELL_H;
 
                 compose_cells(pane, t, &shape, x, y + title);
 
@@ -303,6 +312,45 @@ static void compose_pane(struct pane *pane, const struct target *t)
                            t->ink[INK_BODY]);
 }
 
+/*
+        Whether some window already covers all of this, so the desktop behind
+        it need not be painted first.
+
+        There is one buffer and the display is scanning it, so every pixel
+        written twice is a pixel seen twice. Painting the desktop under a
+        window that is about to cover it is a flash of the background at every
+        repaint, which during a resize is the whole body of the window,
+        sixty times a second.
+
+        Inset by the corner radius, because a rounded corner is the one place
+        a window does not cover its own rectangle.
+*/
+static _Bool clip_covered(const struct target *t, int x1, int y1, int x2, int y2)
+{
+        struct pane *pane;
+
+        list_for_each_entry_reverse(pane, &desktop.windows, link)
+        {
+                int fx, fy, fw, fh, radius;
+
+                if (pane->style & WINDOW_MINIMIZED)
+                        continue;
+
+                pane_frame(pane, &fx, &fy, &fw, &fh);
+                radius = min(pane->edge, min(fw, fh) / 2);
+
+                fx += radius - t->x;
+                fy += radius - t->y;
+                fw -= radius * 2;
+                fh -= radius * 2;
+
+                if (x1 >= fx && y1 >= fy && x2 <= fx + fw && y2 <= fy + fh)
+                        return true;
+        }
+
+        return false;
+}
+
 static void compose_clip(const struct target *t)
 {
         int x1 = max(t->clip.x1, 0);
@@ -311,7 +359,7 @@ static void compose_clip(const struct target *t)
         int y2 = min(t->clip.y2, t->height);
         struct pane *pane;
 
-        if (x2 > x1 && y2 > y1)
+        if (x2 > x1 && y2 > y1 && !clip_covered(t, x1, y1, x2, y2))
         {
                 canvas_painted += (unsigned long)(x2 - x1) * (y2 - y1);
                 canvas_runs++;
