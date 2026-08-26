@@ -10,8 +10,8 @@
         a keystroke is eight bytes, and scrolling is a memmove.
 */
 
-#define COLUMNS 80
-#define ROWS 24
+#define COLUMNS_WANTED 80
+#define ROWS_WANTED 24
 #define SHELL "/shell"
 
 #define O_NONBLOCK 04000
@@ -27,6 +27,10 @@ typedef struct
 
 static struct window *window;
 static struct window_cell *cells;
+
+// However many the compositor says there are, which changes when the window
+// is resized.
+static unsigned int COLUMNS, ROWS;
 static unsigned int row, column;
 static unsigned char ink = 7, paper = 0;
 static unsigned int touched_top, touched_bottom;
@@ -311,11 +315,41 @@ fn claim_standard_descriptors()
                                       FILE_READ_WRITE, 0);
 }
 
+/*
+        The window was resized, so there are a different number of cells and
+        they are laid out differently. Everything is cleared and the shell is
+        told, which is the honest thing to do without a scrollback to reflow.
+*/
+fn regrid(b32 master)
+{
+        winsize size;
+
+        COLUMNS = window->columns;
+        ROWS = window->rows;
+
+        for (unsigned int r = 0; r < ROWS; r++)
+                for (unsigned int c = 0; c < COLUMNS; c++)
+                        cell_clear(r, c);
+
+        row = 0;
+        column = 0;
+        shown = false;
+        touched_top = 0;
+        touched_bottom = ROWS;
+
+        size.rows = (unsigned short)ROWS;
+        size.columns = (unsigned short)COLUMNS;
+        size.x_pixels = (unsigned short)(COLUMNS * WINDOW_CELL_W);
+        size.y_pixels = (unsigned short)(ROWS * WINDOW_CELL_H);
+
+        system_call_3(syscall(ioctl), master, TIOCSWINSZ, (positive)address_of size);
+}
+
 b32 main()
 {
         claim_standard_descriptors();
 
-        window = window_open_text(COLUMNS, ROWS);
+        window = window_open_text(COLUMNS_WANTED, ROWS_WANTED);
 
         if (!window)
         {
@@ -324,6 +358,8 @@ b32 main()
         }
 
         cells = window_cells(window);
+        COLUMNS = window->columns;
+        ROWS = window->rows;
         erase(0, 0, ROWS - 1, COLUMNS - 1);
 
         /*
@@ -376,7 +412,9 @@ b32 main()
                 return 1;
         }
 
-        winsize size = {ROWS, COLUMNS, COLUMNS * WINDOW_CELL_W, ROWS * WINDOW_CELL_H};
+        winsize size = {(unsigned short)ROWS, (unsigned short)COLUMNS,
+                        (unsigned short)(COLUMNS * WINDOW_CELL_W),
+                        (unsigned short)(ROWS * WINDOW_CELL_H)};
 
         system_call_3(syscall(ioctl), master, TIOCSWINSZ, (positive)address_of size);
 
@@ -408,15 +446,25 @@ b32 main()
         p8 from_shell[1024];
         timespec nap = {0, 4000000};
 
+        cursor_show();
+        window_damage(window, 0, ROWS);
+        window_commit(window);
+
         for (;;)
         {
+                b32 changed = false;
+                struct window_key key;
+
                 touched_top = ROWS;
                 touched_bottom = 0;
 
-                cursor_hide();
+                if (window->columns != COLUMNS || window->rows != ROWS)
+                {
+                        regrid(master);
+                        changed = true;
+                }
 
-                struct window_key key;
-
+                // Keys go out; they change nothing here until they come back.
                 while (window_key(window, &key))
                 {
                         if (!(key.flags & WINDOW_KEY_DOWN) || !key.character)
@@ -436,19 +484,28 @@ b32 main()
                         if (got <= 0)
                                 break;
 
+                        if (!changed)
+                                cursor_hide();
+
                         for (bipolar i = 0; i < got; i++)
                                 consume(from_shell[i]);
 
+                        changed = true;
                 }
 
-                cursor_show();
+                /*
+                        Only when something actually arrived.
 
-                if (touched_bottom > touched_top)
+                        Taking the cursor off and putting it back marks a row
+                        changed whether or not anything did, and asking for a
+                        redraw every four milliseconds because of that is a
+                        whole screen recomposed two hundred and fifty times a
+                        second for nothing.
+                */
+                if (changed)
                 {
+                        cursor_show();
                         window_damage(window, touched_top, touched_bottom - touched_top);
-
-                        // Now, not on the compositor's clock: what has been
-                        // typed should not wait for a frame it is not on.
                         window_flush(window);
                 }
 

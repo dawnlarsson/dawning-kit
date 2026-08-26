@@ -164,6 +164,13 @@ struct window
         unsigned int rows;
         unsigned int damage_row;
         unsigned int damage_rows;
+
+        // What the compositor allocated, which is what has to be mapped: a
+        // window of cells is given room for as many as the desktop could hold
+        // so that resizing it has somewhere to grow into.
+        unsigned int max_columns;
+        unsigned int max_rows;
+        unsigned int mapping;
 };
 
 static inline void window_damage(struct window *window, unsigned int row,
@@ -308,12 +315,7 @@ static long window_call(long number, long a, long b, long c, long d, long e, lon
 
 static unsigned long window_bytes(struct window *window)
 {
-        if (window->columns)
-                return WINDOW_PIXELS + (unsigned long)window->columns *
-                                           window->rows * sizeof(struct window_cell);
-
-        return WINDOW_PIXELS +
-               (unsigned long)window->pitch * window->max_height * 4;
+        return window->mapping;
 }
 
 /*
@@ -323,6 +325,7 @@ static unsigned long window_bytes(struct window *window)
 */
 static struct window *window_request_open(struct window_request request)
 {
+        long bytes;
         struct window *window;
         long file, mapped;
 
@@ -330,21 +333,19 @@ static struct window *window_request_open(struct window_request request)
         if (file < 0)
                 return 0;
 
-        if (window_call(WINDOW_SYS_IOCTL, file, WINDOW_IOCTL_CREATE, (long)&request, 0, 0, 0) < 0)
+        // The compositor answers with how much it allocated, which is not
+        // always what was asked for.
+        bytes = window_call(WINDOW_SYS_IOCTL, file, WINDOW_IOCTL_CREATE,
+                            (long)&request, 0, 0, 0);
+
+        if (bytes <= 0)
         {
                 window_call(WINDOW_SYS_CLOSE, file, 0, 0, 0, 0, 0);
                 return 0;
         }
 
         // PROT_READ | PROT_WRITE, MAP_SHARED
-        mapped = window_call(WINDOW_SYS_MMAP, 0,
-                             request.columns
-                                 ? WINDOW_PIXELS + (unsigned long)request.columns *
-                                                       request.rows *
-                                                       sizeof(struct window_cell)
-                                 : WINDOW_PIXELS + (unsigned long)request.width *
-                                                       request.height * 4,
-                             3, 1, file, 0);
+        mapped = window_call(WINDOW_SYS_MMAP, 0, (unsigned long)bytes, 3, 1, file, 0);
         if (mapped < 0 && mapped > -4096)
         {
                 window_call(WINDOW_SYS_CLOSE, file, 0, 0, 0, 0, 0);

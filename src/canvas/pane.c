@@ -89,13 +89,24 @@ static void pane_free(struct pane *pane)
 static struct pane *pane_create(unsigned int width, unsigned int height,
                                 unsigned int columns, unsigned int rows)
 {
-        unsigned long cell_bytes = (unsigned long)columns * rows *
+        unsigned int max_columns = (unsigned int)desktop.width / WINDOW_CELL_W;
+        unsigned int max_rows = (unsigned int)desktop.height / WINDOW_CELL_H;
+        unsigned long cell_bytes = (unsigned long)max_columns * max_rows *
                                    sizeof(struct window_cell);
         struct pane *pane;
         unsigned long bytes;
 
+        /*
+                A window of cells is allocated for as many as the desktop
+                could hold, not for as many as it asked for, because its size
+                is its grid: resizing it changes how many cells there are, and
+                a program cannot be handed a larger mapping than the one it
+                already has.
+        */
         if (columns)
         {
+                columns = min(columns, max_columns);
+                rows = min(rows, max_rows);
                 width = columns * WINDOW_CELL_W;
                 height = rows * WINDOW_CELL_H;
         }
@@ -130,6 +141,12 @@ static struct pane *pane_create(unsigned int width, unsigned int height,
                 pane->cells = pane->mapping + WINDOW_PIXELS;
                 pane->columns = columns;
                 pane->rows = rows;
+                pane->max_columns = max_columns;
+                pane->max_rows = max_rows;
+                pane->shared->max_columns = max_columns;
+                pane->shared->max_rows = max_rows;
+                pane->max_width = max_columns * WINDOW_CELL_W;
+                pane->max_height = max_rows * WINDOW_CELL_H;
                 pane->shared->columns = columns;
                 pane->shared->rows = rows;
         }
@@ -158,6 +175,7 @@ static struct pane *pane_create(unsigned int width, unsigned int height,
         pane->shared->pitch = pane->pitch;
         pane->shared->max_width = width;
         pane->shared->max_height = height;
+        pane->shared->mapping = (unsigned int)bytes;
 
         return pane;
 }
@@ -166,6 +184,36 @@ static struct pane *pane_create(unsigned int width, unsigned int height,
         The only place a program's numbers get believed, and only after they are
         clamped to the buffer that was actually allocated for it.
 */
+/*
+        A grid follows the window it is in.
+
+        The size of a window of cells is a whole number of them, so a resize
+        is rounded down to one and the program is told how many it now has --
+        it is the program that has to lay its text out again.
+*/
+static void pane_regrid(struct pane *pane)
+{
+        if (!pane->cells)
+                return;
+
+        pane->columns = min((unsigned int)pane->width / WINDOW_CELL_W, pane->max_columns);
+        pane->rows = min((unsigned int)pane->height / WINDOW_CELL_H, pane->max_rows);
+
+        if (!pane->columns)
+                pane->columns = 1;
+
+        if (!pane->rows)
+                pane->rows = 1;
+
+        pane->width = (int)pane->columns * WINDOW_CELL_W;
+        pane->height = (int)pane->rows * WINDOW_CELL_H;
+
+        WRITE_ONCE(pane->shared->columns, pane->columns);
+        WRITE_ONCE(pane->shared->rows, pane->rows);
+        WRITE_ONCE(pane->shared->width, (unsigned int)pane->width);
+        WRITE_ONCE(pane->shared->height, (unsigned int)pane->height);
+}
+
 static void pane_refresh(struct pane *pane)
 {
         struct window *shared = pane->shared;
@@ -210,6 +258,7 @@ static void pane_refresh(struct pane *pane)
         pane->title[WINDOW_TITLE_MAX - 1] = 0;
         pane->title_length = strnlen(pane->title, WINDOW_TITLE_MAX);
 
+        pane_regrid(pane);
         pane_place(pane);
 
         // Where a region put it, so the program can read where it ended up.
@@ -288,7 +337,9 @@ static long window_ioctl_create(struct file *file, unsigned long argument)
                 return -EINVAL;
 
         file->private_data = pane;
-        return 0;
+
+        // How much to map, which the program cannot work out for itself.
+        return (long)pane->bytes;
 }
 
 static long window_ioctl_commit(struct file *file)

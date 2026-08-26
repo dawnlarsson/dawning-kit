@@ -176,44 +176,48 @@ static void shape_blit(const struct target *t, const struct shape *shape,
 static void compose_cells(struct pane *pane, const struct target *t,
                           const struct shape *shape, int x, int y)
 {
-        unsigned int row, column;
-        int first = max((t->clip.y1 - y) / WINDOW_CELL_H, 0);
-        int last = min((t->clip.y2 - y + WINDOW_CELL_H - 1) / WINDOW_CELL_H,
-                       (int)pane->rows);
+        int first_row = max((t->clip.y1 - y) / WINDOW_CELL_H, 0);
+        int last_row = min((t->clip.y2 - y + WINDOW_CELL_H - 1) / WINDOW_CELL_H,
+                           (int)pane->rows);
 
-        for (row = (unsigned int)first; row < (unsigned int)last; row++)
+        // Columns as well as rows. Clipping only the rows meant a cursor
+        // moving over a terminal repainted two whole lines of it, eighty
+        // cells wide, to put sixteen pixels somewhere.
+        int first = max((t->clip.x1 - x) / WINDOW_CELL_W, 0);
+        int last = min((t->clip.x2 - x + WINDOW_CELL_W - 1) / WINDOW_CELL_W,
+                       (int)pane->columns);
+        int row, column;
+
+        for (row = first_row; row < last_row; row++)
         {
                 const struct window_cell *cells = pane->cells + row * pane->columns;
-                int cy = y + (int)row * WINDOW_CELL_H;
+                int cy = y + row * WINDOW_CELL_H;
 
-                for (column = 0; column < pane->columns;)
+                for (column = first; column < last;)
                 {
-                        unsigned int run = column;
+                        int run = column;
                         u32 paper = canvas_terminal[cells[column].paper & 15];
 
-                        while (run < pane->columns &&
+                        while (run < last &&
                                canvas_terminal[cells[run].paper & 15] == paper)
                                 run++;
 
-                        shape_fill(t, shape, x + (int)column * WINDOW_CELL_W, cy,
-                                   (int)(run - column) * WINDOW_CELL_W, WINDOW_CELL_H,
+                        shape_fill(t, shape, x + column * WINDOW_CELL_W, cy,
+                                   (run - column) * WINDOW_CELL_W, WINDOW_CELL_H,
                                    paper | t->opaque);
 
                         column = run;
                 }
 
-                for (column = 0; column < pane->columns; column++)
+                for (column = first; column < last; column++)
                 {
                         unsigned int character = cells[column].character;
-                        int cx = x + (int)column * WINDOW_CELL_W;
 
                         if (character < ' ' || character > 126)
                                 continue;
 
-                        if (cx + WINDOW_CELL_W <= t->clip.x1 || cx >= t->clip.x2)
-                                continue;
-
-                        glyph_draw(t, cx, cy, 1, (unsigned char)character,
+                        glyph_draw(t, x + column * WINDOW_CELL_W, cy, 1,
+                                   (unsigned char)character,
                                    canvas_terminal[cells[column].ink & 15] | t->opaque);
                 }
         }

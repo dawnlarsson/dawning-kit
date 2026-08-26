@@ -123,6 +123,7 @@ static void pane_reshape(struct pane *pane, int x, int y, int w, int h)
         pane->width = w;
         pane->height = h;
 
+        pane_regrid(pane);
         pane_frame(pane, &fx, &fy, &fw, &fh);
         rect_set(&damage[1], fx, fy, fw, fh);
 
