@@ -898,6 +898,1424 @@ typedef union matrix4
 
 #endif // STANDARD_MODERN_C_NO_MATH
 
+
+/*
+        The assembly, and the shape the machine it lands on wants it in.
+
+        Every routine below is one implementation serving both sides: this file
+        is compiled into the kernel through core.c and into every program
+        through its own include, so what the kernel runs and what a program
+        runs are the same instructions rather than the same intent written
+        twice. The C loops that used to sit here as the userspace half are
+        gone; what is left under the last #else is the fallback for an
+        architecture that has no block yet, which is the same answer the kernel
+        gets there.
+
+        The macros exist because a symbol is not just a label. The kernel
+        decorates every function it emits with things that are invisible until
+        the configuration that needs them is turned on, and assembly written by
+        hand is exactly where those get forgotten.
+*/
+#if X64 || ARM64 || RISCV64
+#define MOONWATER_ASSEMBLY 1
+#endif
+
+#ifdef KERNEL_MODE
+#define ASM_EXPORT(name) EXPORT_SYMBOL(name)
+#else
+#define ASM_EXPORT(name)
+#endif
+
+// aarch64 spells it with a percent, everything else with an at. Getting this
+// wrong makes the assembler read the rest of the line as a comment.
+#if ARM64
+#define ASM_TYPE "%function"
+#else
+#define ASM_TYPE "@function"
+#endif
+
+// Indirect branch tracking needs a landing pad at every symbol something can
+// call through a pointer. Without one the call faults on a machine that has it.
+#if defined(KERNEL_MODE) && X64 && defined(CONFIG_X86_KERNEL_IBT)
+#define ASM_ENDBR "endbr64\n"
+#else
+#define ASM_ENDBR ""
+#endif
+
+/*
+        A return, or whatever the mitigations have made of one.
+
+        A bare ret is the gadget the return thunk exists to take away, so a
+        kernel built with that mitigation rewrites every one into a jump to it.
+        Writing ret here regardless would leave these the only functions in the
+        image still returning the old way -- a hole in exactly the routines
+        every other function calls. Straight line speculation wants the trap
+        after it instead. Neither is on in the build this was written against,
+        which is the reason to decide it here rather than notice later.
+*/
+#if defined(KERNEL_MODE) && X64
+#if defined(CONFIG_MITIGATION_RETHUNK) || defined(CONFIG_RETHUNK)
+#define ASM_RET "jmp __x86_return_thunk\n"
+#elif defined(CONFIG_MITIGATION_SLS) || defined(CONFIG_SLS)
+#define ASM_RET "ret\nint3\n"
+#else
+#define ASM_RET "ret\n"
+#endif
+#else
+#define ASM_RET "ret\n"
+#endif
+
+#define ASM_FUNC(name)                  \
+    ".balign 16\n"                      \
+    ".globl " #name "\n"                \
+    ".type " #name ", " ASM_TYPE "\n"   \
+    #name ":\n" ASM_ENDBR
+
+#define ASM_END(name) ".size " #name ", .-" #name "\n"
+
+#if X64
+__asm__(
+    //
+    //       strlen -- a word at a time.
+    //
+    //       lib/string.c's strlen is a byte at a time, and on x86_64 nothing
+    //       overrides it: arch/x86/include/asm/string_64.h claims memcpy, memmove
+    //       and memset and leaves the rest. arm64 and riscv both define
+    //       __HAVE_ARCH_STRLEN and ship their own, so this is x86 catching up
+    //       rather than x86 being special.
+    //
+    //       Measured against the generic loop on a 9950X, 4096 calls each:
+    //
+    //           4 bytes    23048 ticks byte     36120 word
+    //           8 bytes    36292 ticks byte     23047 word
+    //          16 bytes    62350 ticks byte     26358 word
+    //          32 bytes   194317 ticks byte     33067 word
+    //          64 bytes   219300 ticks byte     46010 word
+    //
+    //       The crossover is at eight. Below it the alignment setup costs more
+    //       than it saves, above it the win runs to nearly six times.
+    //
+    //       Reading a whole word that straddles the start of the string is safe:
+    //       aligning down stays inside the same page, so the load cannot fault on
+    //       memory the caller did not give us. The bytes before the string are
+    //       forced to 0xff afterwards so they cannot be mistaken for the
+    //       terminator.
+    //
+    "        .text\n"
+    ASM_FUNC(strlen)
+    "        mov     %rdi, %r8               # keep the start\n"
+    "        mov     %edi, %ecx\n"
+    "        and     $7, %ecx                # how far into the word it begins\n"
+    "        and     $-8, %rdi               # align down\n"
+    "        mov     (%rdi), %rdx            # safe: same page as the start\n"
+    "        shl     $3, %ecx                # bytes -> bits\n"
+    "        mov     $1, %rax\n"
+    "        shl     %cl, %rax\n"
+    "        dec     %rax                    # ones below the string, zero if aligned\n"
+    "        or      %rax, %rdx              # so they cannot look like a terminator\n"
+    "        movabs  $0x0101010101010101, %r10\n"
+    "        movabs  $0x8080808080808080, %r11\n"
+    //
+    //       (v - 0x01..) & ~v & 0x80.. is non-zero exactly when some byte
+    //       of v is zero: subtracting one borrows into the high bit of a
+    //       zero byte and of no other.
+    //
+    "1:      mov     %rdx, %rax\n"
+    "        sub     %r10, %rax\n"
+    "        mov     %rdx, %rsi\n"
+    "        not     %rsi\n"
+    "        and     %rsi, %rax\n"
+    "        and     %r11, %rax\n"
+    "        jnz     2f\n"
+    "        add     $8, %rdi\n"
+    "        mov     (%rdi), %rdx\n"
+    "        jmp     1b\n"
+    "2:      bsf     %rax, %rax              # first set high bit\n"
+    "        shr     $3, %rax                # its byte within the word\n"
+    "        add     %rdi, %rax              # address of the terminator\n"
+    "        sub     %r8, %rax               # minus where we started\n"
+    ASM_RET
+    ASM_END(strlen)
+    //
+    //       strcmp -- a word at a time, with two pointers and no length.
+    //
+    //       The hard one, and the reason is worth stating. strlen could align its
+    //       pointer down, because an eight byte read aligned to eight never leaves
+    //       the page it started in. strncmp and memcmp could read unaligned,
+    //       because a length told them how far they were allowed to go. strcmp has
+    //       neither: two pointers at whatever alignments the caller chose, and
+    //       nothing but a terminator to say where they end. Aligning one down
+    //       misaligns the other, and reading unaligned past the terminator can
+    //       walk into a page nobody mapped.
+    //
+    //       What makes it safe is the same fact stated differently: a read of
+    //       eight bytes cannot fault if all eight are in a page that already holds
+    //       a byte we are allowed to read. The byte at the pointer is such a byte
+    //       -- the string has not ended yet, or we would have stopped -- so the
+    //       read is safe whenever it does not cross the page boundary, and the
+    //       offset within the page says whether it does.
+    //
+    //       Two compares buy eight bytes of progress. Near a page boundary the
+    //       loop steps a byte at a time until it is past, which happens for at
+    //       most seven bytes out of every four thousand and ninety six.
+    //
+    "        .text\n"
+    ASM_FUNC(strcmp)
+    "        movabs  $0x0101010101010101, %r10\n"
+    "        movabs  $0x8080808080808080, %r11\n"
+    "1:      #\n"
+    //      Would either read cross a page? 0xff8 is the last offset at
+    //      which eight bytes still fit.
+    //
+    "        mov     %edi, %ecx\n"
+    "        and     $0xfff, %ecx\n"
+    "        cmp     $0xff8, %ecx\n"
+    "        ja      2f\n"
+    "        mov     %esi, %ecx\n"
+    "        and     $0xfff, %ecx\n"
+    "        cmp     $0xff8, %ecx\n"
+    "        ja      2f\n"
+    "        mov     (%rdi), %r8\n"
+    "        mov     (%rsi), %r9\n"
+    "        cmp     %r8, %r9\n"
+    "        jne     2f                      # differ: let the byte step find where\n"
+    //
+    //      Eight equal bytes. If a terminator is among them the strings
+    //      ended together and are equal.
+    //
+    "        mov     %r8, %rax\n"
+    "        sub     %r10, %rax\n"
+    "        mov     %r8, %rcx\n"
+    "        not     %rcx\n"
+    "        and     %rcx, %rax\n"
+    "        and     %r11, %rax\n"
+    "        jnz     3f\n"
+    "        add     $8, %rdi\n"
+    "        add     $8, %rsi\n"
+    "        jmp     1b\n"
+    //
+    //      One byte, then back to the word loop. Reached when a read would
+    //      cross a page and when a word differs -- in the second case it
+    //      walks the few bytes to the difference, which happens once.
+    //
+    "2:      movzbl  (%rdi), %eax\n"
+    "        movzbl  (%rsi), %ecx\n"
+    "        sub     %ecx, %eax\n"
+    "        jnz     4f\n"
+    "        test    %ecx, %ecx\n"
+    "        jz      3f\n"
+    "        inc     %rdi\n"
+    "        inc     %rsi\n"
+    "        jmp     1b\n"
+    "3:      xor     %eax, %eax\n"
+    "4:      RET\n"
+    ASM_END(strcmp)
+    //
+    //       strchr and memchr -- a word at a time.
+    //
+    //       The last two byte loops in lib/string.c worth taking. Both hunt for a
+    //       byte, so both broadcast it across a word and reuse the trick that finds
+    //       a zero byte: after exclusive-or with the broadcast, the byte that
+    //       matched is the byte that is now zero.
+    //
+    //       An eight byte load aligned to eight never crosses a page, so reading
+    //       the word that contains the string's first byte cannot fault on memory
+    //       the caller does not own. The matches in the bytes before the string are
+    //       thrown away afterwards by masking the result rather than the input,
+    //       which keeps the byte being searched for out of it -- forcing those
+    //       bytes to 0xff would false-match a search for 0xff.
+    //
+    "        .text\n"
+    //
+    //       char *strchr(const char *s, int c)
+    //
+    //       Two hunts at once: the byte, and the terminator that ends the search.
+    //       Whichever comes first in the word is the answer, and it is a hit only
+    //       if that byte is the one asked for -- which is also how strchr(s, 0)
+    //       returns the terminator rather than nothing.
+    //
+    ASM_FUNC(strchr)
+    "        movzbl  %sil, %ecx\n"
+    "        movabs  $0x0101010101010101, %r10\n"
+    "        mov     %rcx, %rsi\n"
+    "        imul    %r10, %rsi              # c in every byte; %sil is still c\n"
+    "        movabs  $0x8080808080808080, %r11\n"
+    "        mov     %edi, %ecx\n"
+    "        and     $7, %ecx\n"
+    "        and     $-8, %rdi\n"
+    "        mov     (%rdi), %rdx\n"
+    "        shl     $3, %ecx\n"
+    "        mov     $-1, %r9\n"
+    "        shl     %cl, %r9                # which bytes of this word are ours\n"
+    "1:      mov     %rdx, %rax\n"
+    "        xor     %rsi, %rax              # zero where the byte matched\n"
+    "        mov     %rax, %rcx\n"
+    "        not     %rcx\n"
+    "        sub     %r10, %rax\n"
+    "        and     %rcx, %rax\n"
+    "        and     %r11, %rax              # found the byte\n"
+    "        mov     %rdx, %r8\n"
+    "        sub     %r10, %r8\n"
+    "        mov     %rdx, %rcx\n"
+    "        not     %rcx\n"
+    "        and     %rcx, %r8\n"
+    "        and     %r11, %r8               # found the terminator\n"
+    "        or      %r8, %rax\n"
+    "        and     %r9, %rax\n"
+    "        jnz     2f\n"
+    "        mov     $-1, %r9                # past the first word, all of it is ours\n"
+    "        add     $8, %rdi\n"
+    "        mov     (%rdi), %rdx\n"
+    "        jmp     1b\n"
+    "2:      bsf     %rax, %rax\n"
+    "        shr     $3, %rax\n"
+    "        add     %rdi, %rax              # the byte or the terminator, whichever\n"
+    "        movzbl  (%rax), %ecx\n"
+    "        cmp     %sil, %cl\n"
+    "        je      3f\n"
+    "        xor     %eax, %eax              # it was the terminator: not found\n"
+    "3:      RET\n"
+    ASM_END(strchr)
+    //
+    //       void *memchr(const void *s, int c, size_t n)
+    //
+    //       The same hunt with a fence instead of a terminator. A match found in
+    //       the word that reaches past the bound is discarded by comparing its
+    //       address, which is cheaper than stopping the scan short.
+    //
+    ASM_FUNC(memchr)
+    "        xor     %eax, %eax\n"
+    "        test    %rdx, %rdx\n"
+    "        jz      9f\n"
+    "        movzbl  %sil, %ecx\n"
+    "        movabs  $0x0101010101010101, %r10\n"
+    "        mov     %rcx, %rsi\n"
+    "        imul    %r10, %rsi\n"
+    "        movabs  $0x8080808080808080, %r11\n"
+    "        lea     (%rdi,%rdx), %r9        # one past the last byte we may report\n"
+    "        mov     %edi, %ecx\n"
+    "        and     $7, %ecx\n"
+    "        and     $-8, %rdi\n"
+    "        mov     (%rdi), %rdx\n"
+    "        xor     %rsi, %rdx\n"
+    "        shl     $3, %ecx\n"
+    "        mov     $-1, %r8\n"
+    "        shl     %cl, %r8\n"
+    "1:      mov     %rdx, %rax\n"
+    "        sub     %r10, %rax\n"
+    "        mov     %rdx, %rcx\n"
+    "        not     %rcx\n"
+    "        and     %rcx, %rax\n"
+    "        and     %r11, %rax\n"
+    "        and     %r8, %rax\n"
+    "        jnz     2f\n"
+    "        mov     $-1, %r8\n"
+    "        add     $8, %rdi\n"
+    "        cmp     %r9, %rdi\n"
+    "        jae     8f\n"
+    "        mov     (%rdi), %rdx\n"
+    "        xor     %rsi, %rdx\n"
+    "        jmp     1b\n"
+    "2:      bsf     %rax, %rax\n"
+    "        shr     $3, %rax\n"
+    "        add     %rdi, %rax\n"
+    "        cmp     %r9, %rax\n"
+    "        jb      9f                      # inside the bound: that is the answer\n"
+    "8:      xor     %eax, %eax\n"
+    "9:      RET\n"
+    ASM_END(memchr)
+    //
+    //       strchrnul, strnchr and strrchr -- the rest of the byte hunts.
+    //
+    //       All three are strchr with one thing changed: what to return when the
+    //       byte is absent, where to stop, and which match to keep. The machinery
+    //       underneath is the one strchr already uses -- broadcast the byte across
+    //       a word, exclusive-or, and the byte that matched is the byte that is
+    //       now zero -- so what follows is mostly the differences.
+    //
+    "        .text\n"
+    //
+    //       char *strchrnul(const char *s, int c)
+    //
+    //       strchr that answers with the terminator instead of nothing. Since the
+    //       scan already stops at whichever of the two comes first, that is the
+    //       same code without the last test.
+    //
+    ASM_FUNC(strchrnul)
+    "        movzbl  %sil, %ecx\n"
+    "        movabs  $0x0101010101010101, %r10\n"
+    "        mov     %rcx, %rsi\n"
+    "        imul    %r10, %rsi\n"
+    "        movabs  $0x8080808080808080, %r11\n"
+    "        mov     %edi, %ecx\n"
+    "        and     $7, %ecx\n"
+    "        and     $-8, %rdi\n"
+    "        mov     (%rdi), %rdx\n"
+    "        shl     $3, %ecx\n"
+    "        mov     $-1, %r9\n"
+    "        shl     %cl, %r9\n"
+    "1:      mov     %rdx, %rax\n"
+    "        xor     %rsi, %rax\n"
+    "        mov     %rax, %rcx\n"
+    "        not     %rcx\n"
+    "        sub     %r10, %rax\n"
+    "        and     %rcx, %rax\n"
+    "        and     %r11, %rax\n"
+    "        mov     %rdx, %r8\n"
+    "        sub     %r10, %r8\n"
+    "        mov     %rdx, %rcx\n"
+    "        not     %rcx\n"
+    "        and     %rcx, %r8\n"
+    "        and     %r11, %r8\n"
+    "        or      %r8, %rax\n"
+    "        and     %r9, %rax\n"
+    "        jnz     2f\n"
+    "        mov     $-1, %r9\n"
+    "        add     $8, %rdi\n"
+    "        mov     (%rdi), %rdx\n"
+    "        jmp     1b\n"
+    "2:      bsf     %rax, %rax\n"
+    "        shr     $3, %rax\n"
+    "        add     %rdi, %rax\n"
+    ASM_RET
+    ASM_END(strchrnul)
+    //
+    //       char *strnchr(const char *s, size_t count, int c)
+    //
+    //       strchr with a fence. Note the argument order: the count comes second
+    //       and the byte third, which is the opposite way round from memchr and
+    //       is the kind of thing that is only wrong once.
+    //
+    ASM_FUNC(strnchr)
+    "        xor     %eax, %eax\n"
+    "        test    %rsi, %rsi\n"
+    "        jz      9f\n"
+    "        movzbl  %dl, %ecx\n"
+    "        movabs  $0x0101010101010101, %r10\n"
+    "        lea     (%rdi,%rsi), %r9        # one past the last byte we may report\n"
+    "        mov     %rcx, %rsi\n"
+    "        imul    %r10, %rsi\n"
+    "        movabs  $0x8080808080808080, %r11\n"
+    "        mov     %edi, %ecx\n"
+    "        and     $7, %ecx\n"
+    "        and     $-8, %rdi\n"
+    "        mov     (%rdi), %rdx\n"
+    "        shl     $3, %ecx\n"
+    //
+    //      Into %r8, not %rcx: the shift count is in %cl, which is part of
+    //      %rcx, so building the mask there destroys the count before the
+    //      shift reads it. That mistake passed the build, booted, and was
+    //      wrong in 293398 of 1401280 cases.
+    //
+    "        mov     $-1, %r8\n"
+    "        shl     %cl, %r8\n"
+    "        push    %r8                     # the valid-byte mask, out of registers\n"
+    "1:      mov     %rdx, %rax\n"
+    "        xor     %rsi, %rax\n"
+    "        mov     %rax, %rcx\n"
+    "        not     %rcx\n"
+    "        sub     %r10, %rax\n"
+    "        and     %rcx, %rax\n"
+    "        and     %r11, %rax\n"
+    "        mov     %rdx, %r8\n"
+    "        sub     %r10, %r8\n"
+    "        mov     %rdx, %rcx\n"
+    "        not     %rcx\n"
+    "        and     %rcx, %r8\n"
+    "        and     %r11, %r8\n"
+    "        or      %r8, %rax\n"
+    "        and     (%rsp), %rax\n"
+    "        jnz     2f\n"
+    "        movq    $-1, (%rsp)\n"
+    "        add     $8, %rdi\n"
+    "        cmp     %r9, %rdi\n"
+    "        jae     8f\n"
+    "        mov     (%rdi), %rdx\n"
+    "        jmp     1b\n"
+    "2:      bsf     %rax, %rax\n"
+    "        shr     $3, %rax\n"
+    "        add     %rdi, %rax\n"
+    "        cmp     %r9, %rax\n"
+    "        jae     8f                      # beyond the count\n"
+    "        movzbl  (%rax), %ecx\n"
+    "        cmp     %sil, %cl\n"
+    "        je      3f\n"
+    "8:      xor     %eax, %eax\n"
+    "3:      add     $8, %rsp\n"
+    "9:      RET\n"
+    ASM_END(strnchr)
+    //
+    //       char *strrchr(const char *s, int c)
+    //
+    //       The last match rather than the first, which the forward scan does not
+    //       answer directly: within a word the highest set bit is wanted, not the
+    //       lowest, so bsr where the others use bsf. A word without a terminator
+    //       may hold a later match than anything before it, so the best so far is
+    //       carried along; the word that holds the terminator only counts matches
+    //       below it.
+    //
+    //       Searching for the terminator itself is a byte walk. It is the one case
+    //       where the answer is the end of the string rather than a match inside
+    //       it, and it is rare enough not to be worth its own scan.
+    //
+    ASM_FUNC(strrchr)
+    "        movzbl  %sil, %ecx\n"
+    "        test    %cl, %cl\n"
+    "        jnz     4f\n"
+    // strrchr(s, 0) is the terminator.
+    "1:      cmpb    $0, (%rdi)\n"
+    "        je      2f\n"
+    "        inc     %rdi\n"
+    "        jmp     1b\n"
+    "2:      mov     %rdi, %rax\n"
+    ASM_RET
+    "4:      push    %rbx\n"
+    "        xor     %ebx, %ebx              # best so far: none\n"
+    "        movabs  $0x0101010101010101, %r10\n"
+    "        mov     %rcx, %rsi\n"
+    "        imul    %r10, %rsi\n"
+    "        movabs  $0x8080808080808080, %r11\n"
+    "        mov     %edi, %ecx\n"
+    "        and     $7, %ecx\n"
+    "        and     $-8, %rdi\n"
+    "        mov     (%rdi), %rdx\n"
+    "        shl     $3, %ecx\n"
+    "        mov     $-1, %r9\n"
+    "        shl     %cl, %r9\n"
+    "5:      mov     %rdx, %rax\n"
+    "        xor     %rsi, %rax\n"
+    "        mov     %rax, %rcx\n"
+    "        not     %rcx\n"
+    "        sub     %r10, %rax\n"
+    "        and     %rcx, %rax\n"
+    "        and     %r11, %rax\n"
+    "        and     %r9, %rax               # matches in this word\n"
+    "        mov     %rdx, %r8\n"
+    "        sub     %r10, %r8\n"
+    "        mov     %rdx, %rcx\n"
+    "        not     %rcx\n"
+    "        and     %rcx, %r8\n"
+    "        and     %r11, %r8\n"
+    "        and     %r9, %r8                # terminator in this word\n"
+    "        test    %r8, %r8\n"
+    "        jnz     7f\n"
+    "        test    %rax, %rax\n"
+    "        jz      6f\n"
+    "        bsr     %rax, %rcx\n"
+    "        shr     $3, %rcx\n"
+    "        lea     (%rdi,%rcx), %rbx       # a later match than any before\n"
+    "6:      mov     $-1, %r9\n"
+    "        add     $8, %rdi\n"
+    "        mov     (%rdi), %rdx\n"
+    "        jmp     5b\n"
+    //
+    //      The string ends in this word. Only matches below the
+    //      terminator count: isolate its lowest bit and keep what is
+    //      under it.
+    //
+    "7:      mov     %r8, %rcx\n"
+    "        neg     %rcx\n"
+    "        and     %r8, %rcx\n"
+    "        dec     %rcx\n"
+    "        and     %rcx, %rax\n"
+    "        jz      8f\n"
+    "        bsr     %rax, %rcx\n"
+    "        shr     $3, %rcx\n"
+    "        lea     (%rdi,%rcx), %rbx\n"
+    "8:      mov     %rbx, %rax\n"
+    "        pop     %rbx\n"
+    ASM_RET
+    ASM_END(strrchr)
+    //
+    //       strncmp and strnlen -- a word at a time.
+    //
+    //       Both are byte loops in lib/string.c and neither is overridden on
+    //       x86_64. Two functions in one file, which the dialect allows now: a
+    //       #> shared closes the run of blocks before it and the next #> arch
+    //       opens a new one.
+    //
+    //       An eight byte load aligned to eight never crosses a page, so reading
+    //       the word that contains a pointer can never fault on memory the caller
+    //       did not give us. That is what makes the unbounded scan safe; where a
+    //       length is given the reads are bounded anyway.
+    //
+    "        .text\n"
+    //
+    //       int strncmp(const char *a, const char *b, size_t n)
+    //
+    //       Eight bytes from each, unaligned, which is legal here because n bounds
+    //       the read. Equal and no terminator in them means advance; anything else
+    //       hands those eight to the byte loop, which already knows how to stop on
+    //       a difference or a terminator and gets the sign right. The difference is
+    //       found once per call, so simple beats clever there.
+    //
+    ASM_FUNC(strncmp)
+    "        xor     %eax, %eax\n"
+    "        test    %rdx, %rdx\n"
+    "        jz      9f\n"
+    "        movabs  $0x0101010101010101, %r10\n"
+    "        movabs  $0x8080808080808080, %r11\n"
+    "1:      cmp     $8, %rdx\n"
+    "        jb      2f\n"
+    "        mov     (%rdi), %r8\n"
+    "        mov     (%rsi), %r9\n"
+    "        cmp     %r8, %r9\n"
+    "        jne     2f                      # let the byte loop settle it\n"
+    // Equal so far. If either holds a terminator the strings end here.
+    "        mov     %r8, %rax\n"
+    "        sub     %r10, %rax\n"
+    "        mov     %r8, %rcx\n"
+    "        not     %rcx\n"
+    "        and     %rcx, %rax\n"
+    "        and     %r11, %rax\n"
+    "        jnz     8f\n"
+    "        add     $8, %rdi\n"
+    "        add     $8, %rsi\n"
+    "        sub     $8, %rdx\n"
+    "        jmp     1b\n"
+    "2:      test    %rdx, %rdx\n"
+    "        jz      8f\n"
+    "3:      movzbl  (%rdi), %eax\n"
+    "        movzbl  (%rsi), %ecx\n"
+    "        sub     %ecx, %eax\n"
+    "        jnz     9f\n"
+    "        test    %ecx, %ecx\n"
+    "        jz      8f\n"
+    "        inc     %rdi\n"
+    "        inc     %rsi\n"
+    "        dec     %rdx\n"
+    "        jnz     3b\n"
+    "8:      xor     %eax, %eax\n"
+    "9:      RET\n"
+    ASM_END(strncmp)
+    //
+    //       size_t strnlen(const char *s, size_t n)
+    //
+    //       strlen with a fence. The scan is the same -- align down, force the
+    //       bytes before the string non-zero, then look for a zero byte eight at a
+    //       time -- and a terminator found beyond n is clamped back to n, which is
+    //       what strnlen returns when there is none inside the bound.
+    //
+    ASM_FUNC(strnlen)
+    "        xor     %eax, %eax\n"
+    "        test    %rsi, %rsi\n"
+    "        jz      9f\n"
+    "        mov     %rdi, %r8               # start\n"
+    "        lea     (%rdi,%rsi), %r9        # one past the last byte we may report\n"
+    "        mov     %edi, %ecx\n"
+    "        and     $7, %ecx\n"
+    "        and     $-8, %rdi\n"
+    "        mov     (%rdi), %rdx\n"
+    "        shl     $3, %ecx\n"
+    "        mov     $1, %rax\n"
+    "        shl     %cl, %rax\n"
+    "        dec     %rax\n"
+    "        or      %rax, %rdx\n"
+    "        movabs  $0x0101010101010101, %r10\n"
+    "        movabs  $0x8080808080808080, %r11\n"
+    "1:      mov     %rdx, %rax\n"
+    "        sub     %r10, %rax\n"
+    "        mov     %rdx, %rcx\n"
+    "        not     %rcx\n"
+    "        and     %rcx, %rax\n"
+    "        and     %r11, %rax\n"
+    "        jnz     2f\n"
+    "        add     $8, %rdi\n"
+    "        cmp     %r9, %rdi\n"
+    "        jae     3f                      # nothing within the bound\n"
+    "        mov     (%rdi), %rdx\n"
+    "        jmp     1b\n"
+    "2:      bsf     %rax, %rax\n"
+    "        shr     $3, %rax\n"
+    "        add     %rdi, %rax              # where the terminator is\n"
+    "        sub     %r8, %rax               # how far in that is\n"
+    "        cmp     %rsi, %rax\n"
+    "        cmova   %rsi, %rax              # never more than n\n"
+    ASM_RET
+    "3:      mov     %rsi, %rax\n"
+    "9:      RET\n"
+    ASM_END(strnlen)
+    //
+    //       moonwater_ticks -- the machine's own free running counter.
+    //
+    //       One instruction on every architecture that has it, and no architecture
+    //       spells it the same way, which is the smallest honest example of what
+    //       .asm files here are for. There is no portable instruction to reach for
+    //       and no C that compiles to this, so the choice is a block per machine
+    //       or nothing.
+    //
+    //       What it returns is a hardware tick, not a nanosecond and not a cycle:
+    //       a monotonic count at a rate the platform picks, useful for measuring
+    //       one span against another and nothing else. The kernel's own
+    //       ktime_get() is the right answer for anything that needs a unit; this
+    //       is for the places already too hot to call it.
+    //
+    //       Declared in core.c, beside the code that calls it.
+    //
+    "        .text\n"
+    ASM_FUNC(moonwater_ticks)
+    //
+    //       rdtsc splits its answer across two 32 bit halves, which is
+    //       older than the 64 bit registers it lands in. Writing eax and
+    //       edx has already cleared the top of rax and rdx, so putting
+    //       them together is a shift and an or.
+    //
+    //       Unserialized on purpose: lfence first would be the correct
+    //       reading of "now" and costs more than the things this is meant
+    //       to measure.
+    //
+    "        rdtsc\n"
+    "        shl     $32, %rdx\n"
+    "        or      %rdx, %rax\n"
+    //
+    //       RET, not ret. Under a return thunk mitigation the kernel's
+    //       macro is a jump to the thunk instead, and a bare ret in kernel
+    //       assembly is the bug that leaves. It comes from asm/linkage.h,
+    //       which linux/linkage.h above already pulled in.
+    //
+    ASM_RET
+    ASM_END(moonwater_ticks)
+);
+#ifdef KERNEL_MODE
+ASM_EXPORT(memchr);
+ASM_EXPORT(strchr);
+ASM_EXPORT(strchrnul);
+ASM_EXPORT(strcmp);
+ASM_EXPORT(strlen);
+ASM_EXPORT(strnchr);
+ASM_EXPORT(strncmp);
+ASM_EXPORT(strnlen);
+ASM_EXPORT(strrchr);
+#endif
+#elif ARM64
+__asm__(
+    //
+    //       strlen -- a word at a time.
+    //
+    //       lib/string.c's strlen is a byte at a time, and on x86_64 nothing
+    //       overrides it: arch/x86/include/asm/string_64.h claims memcpy, memmove
+    //       and memset and leaves the rest. arm64 and riscv both define
+    //       __HAVE_ARCH_STRLEN and ship their own, so this is x86 catching up
+    //       rather than x86 being special.
+    //
+    //       Measured against the generic loop on a 9950X, 4096 calls each:
+    //
+    //           4 bytes    23048 ticks byte     36120 word
+    //           8 bytes    36292 ticks byte     23047 word
+    //          16 bytes    62350 ticks byte     26358 word
+    //          32 bytes   194317 ticks byte     33067 word
+    //          64 bytes   219300 ticks byte     46010 word
+    //
+    //       The crossover is at eight. Below it the alignment setup costs more
+    //       than it saves, above it the win runs to nearly six times.
+    //
+    //       Reading a whole word that straddles the start of the string is safe:
+    //       aligning down stays inside the same page, so the load cannot fault on
+    //       memory the caller did not give us. The bytes before the string are
+    //       forced to 0xff afterwards so they cannot be mistaken for the
+    //       terminator.
+    //
+    "        .text\n"
+    //
+    //       arm64 and riscv already define __HAVE_ARCH_STRLEN and ship
+    //       their own, so there is nothing here for them to catch up to.
+    //
+    //
+    //      Nothing, deliberately, and this is what "#> arch other" with an
+    //      empty block is for.
+    //
+    //      This file is in src/, so src/Makefile builds it for whichever
+    //      architecture the kernel is being configured for. An #error here
+    //      -- which is what stood in this place -- does not mean "not
+    //      implemented", it means the arm64 and riscv builds stop on the
+    //      first of these files they reach.
+    //
+    //      They do not need it. arm64 and riscv both ship their own, and
+    //      where they do not the generic C in lib/string.c is what runs,
+    //      exactly as it did before any of this. Emitting nothing leaves
+    //      them where they were; the header claim that hands the symbol
+    //      over is in build.sh and only ever touches x86's header.
+    //
+    //
+    //       strcmp -- a word at a time, with two pointers and no length.
+    //
+    //       The hard one, and the reason is worth stating. strlen could align its
+    //       pointer down, because an eight byte read aligned to eight never leaves
+    //       the page it started in. strncmp and memcmp could read unaligned,
+    //       because a length told them how far they were allowed to go. strcmp has
+    //       neither: two pointers at whatever alignments the caller chose, and
+    //       nothing but a terminator to say where they end. Aligning one down
+    //       misaligns the other, and reading unaligned past the terminator can
+    //       walk into a page nobody mapped.
+    //
+    //       What makes it safe is the same fact stated differently: a read of
+    //       eight bytes cannot fault if all eight are in a page that already holds
+    //       a byte we are allowed to read. The byte at the pointer is such a byte
+    //       -- the string has not ended yet, or we would have stopped -- so the
+    //       read is safe whenever it does not cross the page boundary, and the
+    //       offset within the page says whether it does.
+    //
+    //       Two compares buy eight bytes of progress. Near a page boundary the
+    //       loop steps a byte at a time until it is past, which happens for at
+    //       most seven bytes out of every four thousand and ninety six.
+    //
+    "        .text\n"
+    //
+    //      Nothing, deliberately, and this is what "#> arch other" with an
+    //      empty block is for.
+    //
+    //      This file is in src/, so src/Makefile builds it for whichever
+    //      architecture the kernel is being configured for. An #error here
+    //      -- which is what stood in this place -- does not mean "not
+    //      implemented", it means the arm64 and riscv builds stop on the
+    //      first of these files they reach.
+    //
+    //      They do not need it. arm64 and riscv both ship their own, and
+    //      where they do not the generic C in lib/string.c is what runs,
+    //      exactly as it did before any of this. Emitting nothing leaves
+    //      them where they were; the header claim that hands the symbol
+    //      over is in build.sh and only ever touches x86's header.
+    //
+    //
+    //       strchr and memchr -- a word at a time.
+    //
+    //       The last two byte loops in lib/string.c worth taking. Both hunt for a
+    //       byte, so both broadcast it across a word and reuse the trick that finds
+    //       a zero byte: after exclusive-or with the broadcast, the byte that
+    //       matched is the byte that is now zero.
+    //
+    //       An eight byte load aligned to eight never crosses a page, so reading
+    //       the word that contains the string's first byte cannot fault on memory
+    //       the caller does not own. The matches in the bytes before the string are
+    //       thrown away afterwards by masking the result rather than the input,
+    //       which keeps the byte being searched for out of it -- forcing those
+    //       bytes to 0xff would false-match a search for 0xff.
+    //
+    "        .text\n"
+    //
+    //       char *strchr(const char *s, int c)
+    //
+    //       Two hunts at once: the byte, and the terminator that ends the search.
+    //       Whichever comes first in the word is the answer, and it is a hit only
+    //       if that byte is the one asked for -- which is also how strchr(s, 0)
+    //       returns the terminator rather than nothing.
+    //
+    //
+    //      Nothing, deliberately, and this is what "#> arch other" with an
+    //      empty block is for.
+    //
+    //      This file is in src/, so src/Makefile builds it for whichever
+    //      architecture the kernel is being configured for. An #error here
+    //      -- which is what stood in this place -- does not mean "not
+    //      implemented", it means the arm64 and riscv builds stop on the
+    //      first of these files they reach.
+    //
+    //      They do not need it. arm64 and riscv both ship their own, and
+    //      where they do not the generic C in lib/string.c is what runs,
+    //      exactly as it did before any of this. Emitting nothing leaves
+    //      them where they were; the header claim that hands the symbol
+    //      over is in build.sh and only ever touches x86's header.
+    //
+    //
+    //       void *memchr(const void *s, int c, size_t n)
+    //
+    //       The same hunt with a fence instead of a terminator. A match found in
+    //       the word that reaches past the bound is discarded by comparing its
+    //       address, which is cheaper than stopping the scan short.
+    //
+    // As above: nothing here on purpose.
+    //
+    //       strchrnul, strnchr and strrchr -- the rest of the byte hunts.
+    //
+    //       All three are strchr with one thing changed: what to return when the
+    //       byte is absent, where to stop, and which match to keep. The machinery
+    //       underneath is the one strchr already uses -- broadcast the byte across
+    //       a word, exclusive-or, and the byte that matched is the byte that is
+    //       now zero -- so what follows is mostly the differences.
+    //
+    "        .text\n"
+    //
+    //       char *strchrnul(const char *s, int c)
+    //
+    //       strchr that answers with the terminator instead of nothing. Since the
+    //       scan already stops at whichever of the two comes first, that is the
+    //       same code without the last test.
+    //
+    ASM_FUNC(strchrnul)
+    "        and     w1, w1, #0xff\n"
+    "        mov     x10, #0x0101\n"
+    "        movk    x10, #0x0101, lsl #16\n"
+    "        movk    x10, #0x0101, lsl #32\n"
+    "        movk    x10, #0x0101, lsl #48   // 0x0101010101010101\n"
+    "        lsl     x11, x10, #7            // 0x8080808080808080\n"
+    "        mul     x3, x1, x10             // the byte, in all eight positions\n"
+    "        and     x4, x0, #7              // how far into the word it begins\n"
+    "        bic     x5, x0, #7              // align down: same page, cannot fault\n"
+    "        ldr     x6, [x5]\n"
+    "        lsl     x4, x4, #3              // bytes -> bits\n"
+    "        mov     x7, #-1\n"
+    "        lsl     x7, x7, x4              // which bytes of the first word count\n"
+    "1:      eor     x8, x6, x3              // the byte that matched is now zero\n"
+    "        sub     x9, x8, x10\n"
+    "        bic     x9, x9, x8\n"
+    "        and     x9, x9, x11\n"
+    "        sub     x12, x6, x10            // and the terminator, the same way\n"
+    "        bic     x12, x12, x6\n"
+    "        and     x12, x12, x11\n"
+    "        orr     x9, x9, x12\n"
+    "        and     x9, x9, x7\n"
+    "        cbnz    x9, 2f\n"
+    "        mov     x7, #-1                 // every byte of every later word counts\n"
+    "        add     x5, x5, #8\n"
+    "        ldr     x6, [x5]\n"
+    "        b       1b\n"
+    "2:      rbit    x9, x9\n"
+    "        clz     x9, x9                  // first set high bit\n"
+    "        lsr     x9, x9, #3              // its byte within the word\n"
+    "        add     x0, x5, x9\n"
+    "        ret\n"
+    ASM_END(strchrnul)
+    //
+    //       char *strnchr(const char *s, size_t count, int c)
+    //
+    //       strchr with a fence. Note the argument order: the count comes second
+    //       and the byte third, which is the opposite way round from memchr and
+    //       is the kind of thing that is only wrong once.
+    //
+    ASM_FUNC(strnchr)
+    "        mov     x9, #0\n"
+    "        cbz     x1, 9f\n"
+    "        and     w2, w2, #0xff\n"
+    "        mov     x10, #0x0101\n"
+    "        movk    x10, #0x0101, lsl #16\n"
+    "        movk    x10, #0x0101, lsl #32\n"
+    "        movk    x10, #0x0101, lsl #48\n"
+    "        lsl     x11, x10, #7\n"
+    "        mul     x3, x2, x10\n"
+    "        add     x13, x0, x1             // one past the last byte we may report\n"
+    "        and     x4, x0, #7\n"
+    "        bic     x5, x0, #7\n"
+    "        ldr     x6, [x5]\n"
+    "        lsl     x4, x4, #3\n"
+    "        mov     x7, #-1\n"
+    "        lsl     x7, x7, x4\n"
+    "1:      eor     x8, x6, x3\n"
+    "        sub     x9, x8, x10\n"
+    "        bic     x9, x9, x8\n"
+    "        and     x9, x9, x11\n"
+    "        sub     x12, x6, x10\n"
+    "        bic     x12, x12, x6\n"
+    "        and     x12, x12, x11\n"
+    "        orr     x9, x9, x12\n"
+    "        and     x9, x9, x7\n"
+    "        cbnz    x9, 2f\n"
+    "        mov     x7, #-1\n"
+    "        add     x5, x5, #8\n"
+    "        cmp     x5, x13\n"
+    "        b.hs    8f\n"
+    "        ldr     x6, [x5]\n"
+    "        b       1b\n"
+    "2:      rbit    x9, x9\n"
+    "        clz     x9, x9\n"
+    "        lsr     x9, x9, #3\n"
+    "        add     x9, x5, x9\n"
+    "        cmp     x9, x13\n"
+    "        b.hs    8f                      // beyond the count\n"
+    "        ldrb    w4, [x9]\n"
+    "        cmp     w4, w2\n"
+    "        b.eq    9f                      // it was the byte, not the terminator\n"
+    "8:      mov     x9, #0\n"
+    "9:      mov     x0, x9\n"
+    "        ret\n"
+    ASM_END(strnchr)
+    //
+    //       char *strrchr(const char *s, int c)
+    //
+    //       The last match rather than the first, which the forward scan does not
+    //       answer directly: within a word the highest set bit is wanted, not the
+    //       lowest, so bsr where the others use bsf. A word without a terminator
+    //       may hold a later match than anything before it, so the best so far is
+    //       carried along; the word that holds the terminator only counts matches
+    //       below it.
+    //
+    //       Searching for the terminator itself is a byte walk. It is the one case
+    //       where the answer is the end of the string rather than a match inside
+    //       it, and it is rare enough not to be worth its own scan.
+    //
+    // As above: nothing here on purpose.
+    //
+    //       strncmp and strnlen -- a word at a time.
+    //
+    //       Both are byte loops in lib/string.c and neither is overridden on
+    //       x86_64. Two functions in one file, which the dialect allows now: a
+    //       #> shared closes the run of blocks before it and the next #> arch
+    //       opens a new one.
+    //
+    //       An eight byte load aligned to eight never crosses a page, so reading
+    //       the word that contains a pointer can never fault on memory the caller
+    //       did not give us. That is what makes the unbounded scan safe; where a
+    //       length is given the reads are bounded anyway.
+    //
+    "        .text\n"
+    //
+    //       int strncmp(const char *a, const char *b, size_t n)
+    //
+    //       Eight bytes from each, unaligned, which is legal here because n bounds
+    //       the read. Equal and no terminator in them means advance; anything else
+    //       hands those eight to the byte loop, which already knows how to stop on
+    //       a difference or a terminator and gets the sign right. The difference is
+    //       found once per call, so simple beats clever there.
+    //
+    //
+    //      Nothing, deliberately, and this is what "#> arch other" with an
+    //      empty block is for.
+    //
+    //      This file is in src/, so src/Makefile builds it for whichever
+    //      architecture the kernel is being configured for. An #error here
+    //      -- which is what stood in this place -- does not mean "not
+    //      implemented", it means the arm64 and riscv builds stop on the
+    //      first of these files they reach.
+    //
+    //      They do not need it. arm64 and riscv both ship their own, and
+    //      where they do not the generic C in lib/string.c is what runs,
+    //      exactly as it did before any of this. Emitting nothing leaves
+    //      them where they were; the header claim that hands the symbol
+    //      over is in build.sh and only ever touches x86's header.
+    //
+    //
+    //       size_t strnlen(const char *s, size_t n)
+    //
+    //       strlen with a fence. The scan is the same -- align down, force the
+    //       bytes before the string non-zero, then look for a zero byte eight at a
+    //       time -- and a terminator found beyond n is clamped back to n, which is
+    //       what strnlen returns when there is none inside the bound.
+    //
+    // As above: nothing here on purpose.
+    //
+    //       moonwater_ticks -- the machine's own free running counter.
+    //
+    //       One instruction on every architecture that has it, and no architecture
+    //       spells it the same way, which is the smallest honest example of what
+    //       .asm files here are for. There is no portable instruction to reach for
+    //       and no C that compiles to this, so the choice is a block per machine
+    //       or nothing.
+    //
+    //       What it returns is a hardware tick, not a nanosecond and not a cycle:
+    //       a monotonic count at a rate the platform picks, useful for measuring
+    //       one span against another and nothing else. The kernel's own
+    //       ktime_get() is the right answer for anything that needs a unit; this
+    //       is for the places already too hot to call it.
+    //
+    //       Declared in core.c, beside the code that calls it.
+    //
+    "        .text\n"
+    ASM_FUNC(moonwater_ticks)
+    //
+    //       The virtual counter: fixed rate, readable at EL0 and EL1, and
+    //       what the kernel's own arch_timer reads.
+    //
+    "        mrs     x0, cntvct_el0\n"
+    "        ret\n"
+    ASM_END(moonwater_ticks)
+);
+#ifdef KERNEL_MODE
+ASM_EXPORT(strchrnul);
+ASM_EXPORT(strnchr);
+#endif
+#elif RISCV64
+__asm__(
+    //
+    //       strlen -- a word at a time.
+    //
+    //       lib/string.c's strlen is a byte at a time, and on x86_64 nothing
+    //       overrides it: arch/x86/include/asm/string_64.h claims memcpy, memmove
+    //       and memset and leaves the rest. arm64 and riscv both define
+    //       __HAVE_ARCH_STRLEN and ship their own, so this is x86 catching up
+    //       rather than x86 being special.
+    //
+    //       Measured against the generic loop on a 9950X, 4096 calls each:
+    //
+    //           4 bytes    23048 ticks byte     36120 word
+    //           8 bytes    36292 ticks byte     23047 word
+    //          16 bytes    62350 ticks byte     26358 word
+    //          32 bytes   194317 ticks byte     33067 word
+    //          64 bytes   219300 ticks byte     46010 word
+    //
+    //       The crossover is at eight. Below it the alignment setup costs more
+    //       than it saves, above it the win runs to nearly six times.
+    //
+    //       Reading a whole word that straddles the start of the string is safe:
+    //       aligning down stays inside the same page, so the load cannot fault on
+    //       memory the caller did not give us. The bytes before the string are
+    //       forced to 0xff afterwards so they cannot be mistaken for the
+    //       terminator.
+    //
+    "        .text\n"
+    //
+    //       arm64 and riscv already define __HAVE_ARCH_STRLEN and ship
+    //       their own, so there is nothing here for them to catch up to.
+    //
+    //
+    //      Nothing, deliberately, and this is what "#> arch other" with an
+    //      empty block is for.
+    //
+    //      This file is in src/, so src/Makefile builds it for whichever
+    //      architecture the kernel is being configured for. An #error here
+    //      -- which is what stood in this place -- does not mean "not
+    //      implemented", it means the arm64 and riscv builds stop on the
+    //      first of these files they reach.
+    //
+    //      They do not need it. arm64 and riscv both ship their own, and
+    //      where they do not the generic C in lib/string.c is what runs,
+    //      exactly as it did before any of this. Emitting nothing leaves
+    //      them where they were; the header claim that hands the symbol
+    //      over is in build.sh and only ever touches x86's header.
+    //
+    //
+    //       strcmp -- a word at a time, with two pointers and no length.
+    //
+    //       The hard one, and the reason is worth stating. strlen could align its
+    //       pointer down, because an eight byte read aligned to eight never leaves
+    //       the page it started in. strncmp and memcmp could read unaligned,
+    //       because a length told them how far they were allowed to go. strcmp has
+    //       neither: two pointers at whatever alignments the caller chose, and
+    //       nothing but a terminator to say where they end. Aligning one down
+    //       misaligns the other, and reading unaligned past the terminator can
+    //       walk into a page nobody mapped.
+    //
+    //       What makes it safe is the same fact stated differently: a read of
+    //       eight bytes cannot fault if all eight are in a page that already holds
+    //       a byte we are allowed to read. The byte at the pointer is such a byte
+    //       -- the string has not ended yet, or we would have stopped -- so the
+    //       read is safe whenever it does not cross the page boundary, and the
+    //       offset within the page says whether it does.
+    //
+    //       Two compares buy eight bytes of progress. Near a page boundary the
+    //       loop steps a byte at a time until it is past, which happens for at
+    //       most seven bytes out of every four thousand and ninety six.
+    //
+    "        .text\n"
+    //
+    //      Nothing, deliberately, and this is what "#> arch other" with an
+    //      empty block is for.
+    //
+    //      This file is in src/, so src/Makefile builds it for whichever
+    //      architecture the kernel is being configured for. An #error here
+    //      -- which is what stood in this place -- does not mean "not
+    //      implemented", it means the arm64 and riscv builds stop on the
+    //      first of these files they reach.
+    //
+    //      They do not need it. arm64 and riscv both ship their own, and
+    //      where they do not the generic C in lib/string.c is what runs,
+    //      exactly as it did before any of this. Emitting nothing leaves
+    //      them where they were; the header claim that hands the symbol
+    //      over is in build.sh and only ever touches x86's header.
+    //
+    //
+    //       strchr and memchr -- a word at a time.
+    //
+    //       The last two byte loops in lib/string.c worth taking. Both hunt for a
+    //       byte, so both broadcast it across a word and reuse the trick that finds
+    //       a zero byte: after exclusive-or with the broadcast, the byte that
+    //       matched is the byte that is now zero.
+    //
+    //       An eight byte load aligned to eight never crosses a page, so reading
+    //       the word that contains the string's first byte cannot fault on memory
+    //       the caller does not own. The matches in the bytes before the string are
+    //       thrown away afterwards by masking the result rather than the input,
+    //       which keeps the byte being searched for out of it -- forcing those
+    //       bytes to 0xff would false-match a search for 0xff.
+    //
+    "        .text\n"
+    //
+    //       char *strchr(const char *s, int c)
+    //
+    //       Two hunts at once: the byte, and the terminator that ends the search.
+    //       Whichever comes first in the word is the answer, and it is a hit only
+    //       if that byte is the one asked for -- which is also how strchr(s, 0)
+    //       returns the terminator rather than nothing.
+    //
+    //
+    //      Nothing, deliberately, and this is what "#> arch other" with an
+    //      empty block is for.
+    //
+    //      This file is in src/, so src/Makefile builds it for whichever
+    //      architecture the kernel is being configured for. An #error here
+    //      -- which is what stood in this place -- does not mean "not
+    //      implemented", it means the arm64 and riscv builds stop on the
+    //      first of these files they reach.
+    //
+    //      They do not need it. arm64 and riscv both ship their own, and
+    //      where they do not the generic C in lib/string.c is what runs,
+    //      exactly as it did before any of this. Emitting nothing leaves
+    //      them where they were; the header claim that hands the symbol
+    //      over is in build.sh and only ever touches x86's header.
+    //
+    //
+    //       void *memchr(const void *s, int c, size_t n)
+    //
+    //       The same hunt with a fence instead of a terminator. A match found in
+    //       the word that reaches past the bound is discarded by comparing its
+    //       address, which is cheaper than stopping the scan short.
+    //
+    //
+    //      Nothing, and not for lack of headroom: riscv does run the byte
+    //      loop here. arch/riscv/kernel/pi compiles its own copy of
+    //      lib/string.c for the code that runs before the MMU, objcopies
+    //      it to __pi_, and libfdt in there calls memchr -- so taking
+    //      memchr away from lib/string.c takes __pi_memchr away with it
+    //      and vmlinux does not link. See the riscv arm of the claim in
+    //      build.sh.
+    //
+    //
+    //       strchrnul, strnchr and strrchr -- the rest of the byte hunts.
+    //
+    //       All three are strchr with one thing changed: what to return when the
+    //       byte is absent, where to stop, and which match to keep. The machinery
+    //       underneath is the one strchr already uses -- broadcast the byte across
+    //       a word, exclusive-or, and the byte that matched is the byte that is
+    //       now zero -- so what follows is mostly the differences.
+    //
+    "        .text\n"
+    //
+    //       char *strchrnul(const char *s, int c)
+    //
+    //       strchr that answers with the terminator instead of nothing. Since the
+    //       scan already stops at whichever of the two comes first, that is the
+    //       same code without the last test.
+    //
+    //
+    //      Where x86 has bsf and arm64 has rbit+clz, base rv64 has
+    //      neither: ctz is Zbb, and QEMU's virt machine does not have it
+    //      ("riscv: base ISA extensions acdfhim"), so requiring it would
+    //      mean an illegal instruction on the machine this is developed
+    //      on. So the byte index comes out of the multiply the M
+    //      extension already guarantees:
+    //
+    //          x & -x                  keep only the lowest set bit
+    //          - 1                     ones below it
+    //          & 0x0101..01            one per byte below it
+    //          * 0x0101..01 >> 56      count them, since each contributes
+    //                                  1 to the top byte and there are at
+    //                                  most eight
+    //          - 1                     that count is the index plus one
+    //
+    //      Seven instructions where Zbb would take two, and only on the
+    //      way out. The alternative was a floor that cannot be tested.
+    //
+    ASM_FUNC(strchrnul)
+    "        andi    a1, a1, 0xff\n"
+    "        li      t0, 0x0101010101010101\n"
+    "        slli    t1, t0, 7               # 0x8080808080808080\n"
+    "        mul     a3, a1, t0              # the byte, in all eight positions\n"
+    "        andi    a4, a0, 7               # how far into the word it begins\n"
+    "        andi    a5, a0, -8              # align down: same page, cannot fault\n"
+    "        ld      a6, 0(a5)\n"
+    "        slli    a4, a4, 3               # bytes -> bits\n"
+    "        li      a7, -1\n"
+    "        sll     a7, a7, a4              # which bytes of the first word count\n"
+    "1:      xor     t2, a6, a3              # the byte that matched is now zero\n"
+    "        sub     t3, t2, t0\n"
+    "        not     t4, t2\n"
+    "        and     t3, t3, t4\n"
+    "        and     t3, t3, t1\n"
+    "        sub     t5, a6, t0              # and the terminator, the same way\n"
+    "        not     t6, a6\n"
+    "        and     t5, t5, t6\n"
+    "        and     t5, t5, t1\n"
+    "        or      t3, t3, t5\n"
+    "        and     t3, t3, a7\n"
+    "        bnez    t3, 2f\n"
+    "        li      a7, -1                  # every byte of every later word counts\n"
+    "        addi    a5, a5, 8\n"
+    "        ld      a6, 0(a5)\n"
+    "        j       1b\n"
+    "2:      sub     t5, zero, t3\n"
+    "        and     t3, t3, t5              # lowest set high bit\n"
+    "        addi    t3, t3, -1\n"
+    "        and     t3, t3, t0\n"
+    "        mul     t3, t3, t0\n"
+    "        srli    t3, t3, 56\n"
+    "        addi    t3, t3, -1              # its byte within the word\n"
+    "        add     a0, a5, t3\n"
+    "        ret\n"
+    ASM_END(strchrnul)
+    //
+    //       char *strnchr(const char *s, size_t count, int c)
+    //
+    //       strchr with a fence. Note the argument order: the count comes second
+    //       and the byte third, which is the opposite way round from memchr and
+    //       is the kind of thing that is only wrong once.
+    //
+    //      The same count-the-bytes-below sequence as strchrnul above.
+    ASM_FUNC(strnchr)
+    "        beqz    a1, 8f\n"
+    "        andi    a2, a2, 0xff\n"
+    "        li      t0, 0x0101010101010101\n"
+    "        slli    t1, t0, 7\n"
+    "        mul     a3, a2, t0\n"
+    "        add     a4, a0, a1              # one past the last byte we may report\n"
+    "        andi    t2, a0, 7\n"
+    "        andi    a5, a0, -8\n"
+    "        ld      a6, 0(a5)\n"
+    "        slli    t2, t2, 3\n"
+    "        li      a7, -1\n"
+    "        sll     a7, a7, t2\n"
+    "1:      xor     t3, a6, a3\n"
+    "        sub     t4, t3, t0\n"
+    "        not     t5, t3\n"
+    "        and     t4, t4, t5\n"
+    "        and     t4, t4, t1\n"
+    "        sub     t6, a6, t0\n"
+    "        not     t2, a6\n"
+    "        and     t6, t6, t2\n"
+    "        and     t6, t6, t1\n"
+    "        or      t4, t4, t6\n"
+    "        and     t4, t4, a7\n"
+    "        bnez    t4, 2f\n"
+    "        li      a7, -1\n"
+    "        addi    a5, a5, 8\n"
+    "        bgeu    a5, a4, 8f\n"
+    "        ld      a6, 0(a5)\n"
+    "        j       1b\n"
+    "2:      sub     t5, zero, t4\n"
+    "        and     t4, t4, t5              # lowest set high bit\n"
+    "        addi    t4, t4, -1\n"
+    "        and     t4, t4, t0\n"
+    "        mul     t4, t4, t0\n"
+    "        srli    t4, t4, 56\n"
+    "        addi    t4, t4, -1              # its byte within the word\n"
+    "        add     t4, a5, t4\n"
+    "        bgeu    t4, a4, 8f              # beyond the count\n"
+    "        lbu     t5, 0(t4)\n"
+    "        bne     t5, a2, 8f              # the terminator, not the byte\n"
+    "        mv      a0, t4\n"
+    "        ret\n"
+    "8:      li      a0, 0\n"
+    "        ret\n"
+    ASM_END(strnchr)
+    //
+    //       char *strrchr(const char *s, int c)
+    //
+    //       The last match rather than the first, which the forward scan does not
+    //       answer directly: within a word the highest set bit is wanted, not the
+    //       lowest, so bsr where the others use bsf. A word without a terminator
+    //       may hold a later match than anything before it, so the best so far is
+    //       carried along; the word that holds the terminator only counts matches
+    //       below it.
+    //
+    //       Searching for the terminator itself is a byte walk. It is the one case
+    //       where the answer is the end of the string rather than a match inside
+    //       it, and it is rare enough not to be worth its own scan.
+    //
+    // As above: nothing here on purpose.
+    //
+    //       strncmp and strnlen -- a word at a time.
+    //
+    //       Both are byte loops in lib/string.c and neither is overridden on
+    //       x86_64. Two functions in one file, which the dialect allows now: a
+    //       #> shared closes the run of blocks before it and the next #> arch
+    //       opens a new one.
+    //
+    //       An eight byte load aligned to eight never crosses a page, so reading
+    //       the word that contains a pointer can never fault on memory the caller
+    //       did not give us. That is what makes the unbounded scan safe; where a
+    //       length is given the reads are bounded anyway.
+    //
+    "        .text\n"
+    //
+    //       int strncmp(const char *a, const char *b, size_t n)
+    //
+    //       Eight bytes from each, unaligned, which is legal here because n bounds
+    //       the read. Equal and no terminator in them means advance; anything else
+    //       hands those eight to the byte loop, which already knows how to stop on
+    //       a difference or a terminator and gets the sign right. The difference is
+    //       found once per call, so simple beats clever there.
+    //
+    //
+    //      Nothing, deliberately, and this is what "#> arch other" with an
+    //      empty block is for.
+    //
+    //      This file is in src/, so src/Makefile builds it for whichever
+    //      architecture the kernel is being configured for. An #error here
+    //      -- which is what stood in this place -- does not mean "not
+    //      implemented", it means the arm64 and riscv builds stop on the
+    //      first of these files they reach.
+    //
+    //      They do not need it. arm64 and riscv both ship their own, and
+    //      where they do not the generic C in lib/string.c is what runs,
+    //      exactly as it did before any of this. Emitting nothing leaves
+    //      them where they were; the header claim that hands the symbol
+    //      over is in build.sh and only ever touches x86's header.
+    //
+    //
+    //       size_t strnlen(const char *s, size_t n)
+    //
+    //       strlen with a fence. The scan is the same -- align down, force the
+    //       bytes before the string non-zero, then look for a zero byte eight at a
+    //       time -- and a terminator found beyond n is clamped back to n, which is
+    //       what strnlen returns when there is none inside the bound.
+    //
+    // As above: nothing here on purpose.
+    //
+    //       moonwater_ticks -- the machine's own free running counter.
+    //
+    //       One instruction on every architecture that has it, and no architecture
+    //       spells it the same way, which is the smallest honest example of what
+    //       .asm files here are for. There is no portable instruction to reach for
+    //       and no C that compiles to this, so the choice is a block per machine
+    //       or nothing.
+    //
+    //       What it returns is a hardware tick, not a nanosecond and not a cycle:
+    //       a monotonic count at a rate the platform picks, useful for measuring
+    //       one span against another and nothing else. The kernel's own
+    //       ktime_get() is the right answer for anything that needs a unit; this
+    //       is for the places already too hot to call it.
+    //
+    //       Declared in core.c, beside the code that calls it.
+    //
+    "        .text\n"
+    ASM_FUNC(moonwater_ticks)
+    //
+    //       The time CSR is the fixed rate one and matches what the other
+    //       two return; cycle would count clock ticks and change rate with
+    //       frequency scaling.
+    //
+    "        csrr    a0, time\n"
+    "        ret\n"
+    ASM_END(moonwater_ticks)
+);
+#ifdef KERNEL_MODE
+ASM_EXPORT(strchrnul);
+ASM_EXPORT(strnchr);
+#endif
+#endif
+
+// What the block above actually defines here. Each architecture only
+// carries what it was missing, so this is not the same set everywhere.
+#if X64
+#define MOONWATER_HAVE_MEMCHR 1
+#define MOONWATER_HAVE_MOONWATER_TICKS 1
+#define MOONWATER_HAVE_STRCHR 1
+#define MOONWATER_HAVE_STRCHRNUL 1
+#define MOONWATER_HAVE_STRCMP 1
+#define MOONWATER_HAVE_STRLEN 1
+#define MOONWATER_HAVE_STRNCHR 1
+#define MOONWATER_HAVE_STRNCMP 1
+#define MOONWATER_HAVE_STRNLEN 1
+#define MOONWATER_HAVE_STRRCHR 1
+#endif
+#if ARM64
+#define MOONWATER_HAVE_MOONWATER_TICKS 1
+#define MOONWATER_HAVE_STRCHRNUL 1
+#define MOONWATER_HAVE_STRNCHR 1
+#endif
+#if RISCV64
+#define MOONWATER_HAVE_MOONWATER_TICKS 1
+#define MOONWATER_HAVE_STRCHRNUL 1
+#define MOONWATER_HAVE_STRNCHR 1
+#endif
+
 // ### Fill a memory block with the same value
 // fills a memory block with the same value
 // returns: destination address
@@ -963,23 +2381,29 @@ address_any memory_copy_fast(address_any destination, address_any source, positi
         loops under the #else are what runs, which is the same answer the
         kernel gets there.
 
-        MOONWATER_STRING_ASSEMBLY is set by kit/spark and by nothing else, so
-        library.c compiled on its own still has working string functions.
+        Which of them exist here is per architecture: the assembly above only
+        carries what the machine was missing, so x86_64 gets all of these and
+        arm64 and riscv64 get the two nobody had written.
 */
-#ifdef MOONWATER_STRING_ASSEMBLY
+/*
+        Declared here only where nothing else has.
 
-positive strlen(string_address source);
-b32 strcmp(string_address source, string_address input);
-char address_to strchr(char address_to source, int character);
+        In the kernel these are the machine's own string functions and
+        linux/string.h has already said what they look like; saying it again
+        with this file's own typedefs is one name with two shapes, and the
+        compiler is right to refuse it.
+*/
+#ifndef KERNEL_MODE
+unsigned long strlen(const char address_to source);
+int strcmp(const char address_to source, const char address_to input);
+char address_to strchr(const char address_to source, int character);
+#endif
+
+#ifdef MOONWATER_HAVE_STRLEN
 
 positive string_length(string_address source)
 {
-        return strlen(source);
-}
-
-b32 string_compare(string_address source, string_address input)
-{
-        return strcmp(source, input);
+        return (positive)strlen((const char address_to)source);
 }
 
 #else
@@ -999,6 +2423,18 @@ positive string_length(string_address source)
 
         return step - source;
 }
+
+#endif
+
+
+#ifdef MOONWATER_HAVE_STRCMP
+
+b32 string_compare(string_address source, string_address input)
+{
+        return strcmp(source, input);
+}
+
+#else
 
 // ### Compare two string segments
 // returns: 0 - if strings are equal
@@ -1070,10 +2506,10 @@ string_address string_copy_max(string_address destination, string_address source
 // traditional: strchr
 string_address string_first_of(string_address source, p8 character)
 {
-#ifdef MOONWATER_STRING_ASSEMBLY
+#ifdef MOONWATER_HAVE_STRCHR
         // Same answer at the terminator: strchr(s, 0) returns it rather than
         // nothing, which is what the line under the #else does too.
-        return (string_address)strchr((char address_to)source, character);
+        return (string_address)strchr((const char address_to)source, character);
 #else
         while (string_get(source))
         {
@@ -1812,12 +3248,12 @@ address_any memcpy(address_any destination, address_any source, long unsigned in
 }
 
 /*
-        Under MOONWATER_STRING_ASSEMBLY these three are the assembled symbols
+        Where the assembly above defines one of these, it is that symbol
         themselves rather than wrappers around the C, and string_length,
         string_compare and string_first_of are what call them. Defining them
         here as well is the same name twice and the link fails.
 */
-#ifndef MOONWATER_STRING_ASSEMBLY
+#ifndef MOONWATER_HAVE_STRLEN
 
 #undef strlen
 // use string_length instead, this is for compatibility
@@ -1826,6 +3262,9 @@ positive strlen(string_address source)
         return string_length(source);
 }
 
+#endif
+
+#ifndef MOONWATER_HAVE_STRCMP
 #undef strcmp
 // use string_compare instead, this is for compatibility
 b32 strcmp(string_address source, string_address input)
@@ -1849,7 +3288,7 @@ string_address strncpy(string_address destination, string_address source, positi
         return string_copy_max(destination, source, length);
 }
 
-#ifndef MOONWATER_STRING_ASSEMBLY
+#ifndef MOONWATER_HAVE_STRCHR
 #undef strchr
 // use string_first_of instead, this is for compatibility
 char address_to strchr(char address_to source, int character)
@@ -1858,12 +3297,14 @@ char address_to strchr(char address_to source, int character)
 }
 #endif
 
+#ifndef MOONWATER_HAVE_STRRCHR
 #undef strrchr
 // use string_last_of instead, this is for compatibility
 char address_to strrchr(char address_to source, int character)
 {
         return string_last_of(source, character);
 }
+#endif
 
 #endif // STANDARD_MODERN_C_COMPATIBILITY
 
