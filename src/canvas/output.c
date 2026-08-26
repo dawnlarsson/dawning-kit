@@ -160,10 +160,14 @@ static void desktop_commit(void)
 
 static void desktop_redraw(void)
 {
+        u64 started = ktime_get_ns();
         struct output *output;
 
         list_for_each_entry(output, &desktop.outputs, link)
                 compose_output(output);
+
+        canvas_composes++;
+        canvas_compose_ns += ktime_get_ns() - started;
 
         desktop_commit();
 }

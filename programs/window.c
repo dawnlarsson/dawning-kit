@@ -1,5 +1,5 @@
 #include "../src/library.c"
-#include "../src/window.c"
+#include "../src/canvas/window.c"
 
 // Colours in no compositor palette, so a screenshot can tell them apart.
 #define INK_BACK 0x00ff9900

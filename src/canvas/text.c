@@ -70,6 +70,7 @@ static void glyph_draw(u32 *pixels, unsigned int pitch_pixels, struct output *ou
                                     py >= min(clip->y2, (int)output->height))
                                         continue;
 
+                                canvas_painted += (unsigned long)(x2 - x1);
                                 canvas_row_fill(pixels + (size_t)py * pitch_pixels + x1,
                                                 (unsigned long)(x2 - x1), colour);
                         }

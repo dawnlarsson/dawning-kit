@@ -465,7 +465,9 @@ static void canvas_thread_start(void)
 static void canvas_input_stats(unsigned long *events, unsigned long *mean,
                                unsigned long *worst, unsigned long *queue,
                                unsigned long *draw, unsigned long *flush,
-                               unsigned long *counts, unsigned long *moved)
+                               unsigned long *counts, unsigned long *moved,
+                               unsigned long *composes, unsigned long *compose_ns,
+                               unsigned long *painted)
 {
         unsigned long n = pointer_events ? pointer_events : 1;
 
@@ -477,4 +479,7 @@ static void canvas_input_stats(unsigned long *events, unsigned long *mean,
         *flush = pointer_flush_total / n;
         *counts = pointer_counts;
         *moved = pointer_moved;
+        *composes = canvas_composes;
+        *compose_ns = canvas_compose_ns;
+        *painted = canvas_painted;
 }

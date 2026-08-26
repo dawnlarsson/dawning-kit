@@ -46,6 +46,8 @@ static void canvas_fill_rect(u32 *pixels, unsigned int pitch_pixels,
         if (width <= 0 || height <= 0)
                 return;
 
+        canvas_painted += (unsigned long)width * height;
+
         for (row = 0; row < height; row++)
                 canvas_row_fill(pixels + (size_t)(y + row) * pitch_pixels + x,
                                 (unsigned long)width, colour);

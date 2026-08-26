@@ -509,7 +509,8 @@ static long report_input(struct input_stats __user *out)
 
         canvas_input_stats(&stats.events, &stats.mean_ns, &stats.worst_ns,
                            &stats.queue_ns, &stats.draw_ns, &stats.flush_ns,
-                           &stats.counts, &stats.moved);
+                           &stats.counts, &stats.moved,
+                           &stats.composes, &stats.compose_ns, &stats.painted);
 
         if (copy_to_user(out, &stats, sizeof(stats)))
                 return -EFAULT;

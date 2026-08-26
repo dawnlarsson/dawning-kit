@@ -18,10 +18,11 @@ moonwater-y := core.o
 #       assembled by the toolchain's own assembler through the kernel's
 #       ordinary rule for .S files. See kit/asm for the dialect.
 #
-#       The glob is one level deep on purpose. src/replace/ holds the other
-#       kind of .asm -- the ones that stand in for a file the kernel already
-#       builds -- and those must not be linked into the module as well, or the
-#       symbol they define exists twice and vmlinux does not link.
+#       Two directories, named rather than found recursively. src/replace/
+#       holds the other kind of .asm -- the ones that stand in for a file the
+#       kernel already builds -- and those must not be linked into the module
+#       as well, or the symbol they define exists twice and vmlinux does not
+#       link. Everything that draws lives in canvas/, assembly included.
 #
 #       Which architecture that is comes from the kernel's own configuration
 #       rather than from the build scripts, so the answer cannot disagree with
@@ -38,7 +39,8 @@ asm-arch-$(CONFIG_X86_64) := x86_64
 asm-arch-$(CONFIG_ARM64) := arm64
 asm-arch-$(CONFIG_ARCH_RV64I) := riscv64
 
-asm-sources := $(notdir $(wildcard $(src)/*.asm))
+asm-sources := $(notdir $(wildcard $(src)/*.asm)) \
+               $(patsubst $(src)/%,%,$(wildcard $(src)/canvas/*.asm))
 
 moonwater-y += $(asm-sources:.asm=.o)
 targets += $(asm-sources:.asm=.S)

@@ -69,6 +69,7 @@ static void shape_fill(u32 *pixels, unsigned int pitch_pixels, struct output *ou
                 if (y < 0 || y >= (int)output->height || x2 <= x1)
                         continue;
 
+                canvas_painted += (unsigned long)(x2 - x1);
                 canvas_row_fill(pixels + (size_t)y * pitch_pixels + x1,
                                 (unsigned long)(x2 - x1), colour);
         }
@@ -93,9 +94,59 @@ static void shape_blit(u32 *pixels, unsigned int pitch_pixels, struct output *ou
                 if (y < 0 || y >= (int)output->height || x2 <= x1)
                         continue;
 
+                canvas_painted += (unsigned long)(x2 - x1);
                 canvas_row_blit(pixels + (size_t)y * pitch_pixels + x1,
                                 source + (size_t)(y - band_y) * source_pitch + (x1 - band_x),
                                 (unsigned long)(x2 - x1), opaque);
+        }
+}
+
+/*
+        The part of the shape that is left over beside an inner rectangle.
+
+        A frame is a border, not a filled rectangle with a window painted over
+        it. Painting the whole of it and covering it up cost more pixels than
+        the window itself: 47824 written for 2224 that could be seen.
+
+        The curve is why this is not four thin bands. On a rounded corner the
+        edge is not at the shape's edge, it is at the inset for that row, so
+        the border has to be measured from there.
+*/
+static void shape_border(u32 *pixels, unsigned int pitch_pixels, struct output *output,
+                         const struct drm_rect *clip, const struct shape *shape,
+                         int inner_x, int inner_w, int band_y, int band_h, u32 colour)
+{
+        int y;
+
+        for (y = max(band_y, clip->y1); y < min(band_y + band_h, clip->y2); y++)
+        {
+                int inset = round_inset(y - shape->y, shape->h, shape->radius);
+                int outer_left = shape->x + inset;
+                int outer_right = shape->x + shape->w - inset;
+                int x1, x2;
+
+                if (y < 0 || y >= (int)output->height)
+                        continue;
+
+                x1 = max(max(outer_left, clip->x1), 0);
+                x2 = min(min(min(inner_x, outer_right), clip->x2), (int)output->width);
+
+                if (x2 > x1)
+                {
+                        canvas_painted += (unsigned long)(x2 - x1);
+                        canvas_row_fill(pixels + (size_t)y * pitch_pixels + x1,
+                                        (unsigned long)(x2 - x1), colour);
+                }
+
+                x1 = max(max(max(inner_x + inner_w, outer_left), clip->x1), 0);
+                x2 = min(min(outer_right, clip->x2), (int)output->width);
+
+                if (x2 > x1)
+                {
+                        canvas_painted += (unsigned long)(x2 - x1);
+                        canvas_row_fill(pixels + (size_t)y * pitch_pixels + x1,
+                                        (unsigned long)(x2 - x1), colour);
+                }
         }
 }
 
@@ -129,8 +180,16 @@ static void compose_pane(struct pane *pane, struct output *output,
                                             : COLOUR_TITLE,
                                         output->format);
 
+                // Only the parts of the frame something is not about to
+                // cover: the strip above, the strip below, and the two sides.
                 shape_fill(pixels, pitch_pixels, output, clip, &shape,
-                           shape.x, shape.y, shape.w, shape.h, frame);
+                           shape.x, shape.y, shape.w, y - shape.y, frame);
+                shape_fill(pixels, pitch_pixels, output, clip, &shape,
+                           shape.x, y + title + pane->height, shape.w,
+                           shape.y + shape.h - (y + title + pane->height), frame);
+                shape_border(pixels, pitch_pixels, output, clip, &shape,
+                             x, pane->width, y, title + pane->height, frame);
+
                 shape_fill(pixels, pitch_pixels, output, clip, &shape,
                            x, y, pane->width, title, bar);
 

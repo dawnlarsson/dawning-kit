@@ -25,6 +25,11 @@ b32 main()
                 return 1;
         }
 
+        // Drawing happens whether or not anything has touched the mouse.
+        string_format(log, "composes         %p\n", stats.composes);
+        string_format(log, "compose ns       %p\n", stats.compose_ns);
+        string_format(log, "pixels painted   %p\n", stats.painted);
+
         if (!stats.events)
         {
                 string_format(log, "no pointer movement seen yet\n");

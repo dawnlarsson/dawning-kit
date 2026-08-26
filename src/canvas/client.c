@@ -48,7 +48,7 @@ static int client_hotplug(struct drm_client_dev *client)
 
         if (!canvas->started)
         {
-                ret = canvas_start(canvas);
+                ret = canvas_start(canvas); 
                 canvas->started = (ret == 0);
         }
         else
@@ -152,11 +152,28 @@ static struct delayed_work canvas_probe_work;
 static unsigned int canvas_attempts;
 static unsigned int canvas_settled_at;
 
-static int canvas_claim(const char *path)
+/*
+        Which primary nodes are already ours.
+
+        Not an optimisation. Opening a node we already hold and closing it
+        again is a client releasing the device as far as DRM is concerned, and
+        it answers by telling every client to restore -- a full repaint of
+        every screen. The poll below runs for a hundred rounds, so booting
+        cost a hundred and one full composes, about two hundred milliseconds
+        of drawing nobody asked for.
+
+        One bit per minor, which is the whole of DRM's minor space.
+*/
+static u64 canvas_claimed;
+
+static int canvas_claim(const char *path, unsigned int minor)
 {
         struct file *filp;
         struct drm_file *file_priv;
         int taken;
+
+        if (canvas_claimed & BIT_ULL(minor))
+                return -EBUSY;
 
         filp = filp_open(path, O_RDWR, 0);
         if (IS_ERR(filp))
@@ -171,6 +188,9 @@ static int canvas_claim(const char *path)
         }
 
         taken = canvas_take_over(file_priv->minor->dev);
+
+        if (taken)
+                canvas_claimed |= BIT_ULL(minor);
 
         filp_close(filp, NULL);
 
@@ -190,9 +210,12 @@ static unsigned int canvas_claim_all(void)
 
         for (minor = 0; minor < 64; minor++)
         {
+                if (canvas_claimed & BIT_ULL(minor))
+                        continue;
+
                 snprintf(path, sizeof(path), "/dev/dri/card%u", minor);
 
-                if (canvas_claim(path) == 0)
+                if (canvas_claim(path, minor) == 0)
                         taken++;
         }
 

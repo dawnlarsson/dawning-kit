@@ -6,11 +6,11 @@
         device can be opened like any other file, and struct drm_file leads
         back to the drm_device behind it.
 
-            ../window.c the page a program shares with this, and the whole
+            window.c    the page a program shares with this, and the whole
                         interface it needs -- see there first
             pane.c      windows: creating, destroying, and reading the shared
                         page without trusting it
-            ../fill.asm one run of pixels, per architecture. Everything
+            fill.asm    one run of pixels, per architecture. Everything
                         Canvas draws goes through it.
             paint.c     pixels: a pointer, a pitch, a rectangle
             text.c      words: a box, where the lines break, where they sit
@@ -30,13 +30,13 @@
         the desktop that some crtc scans out. Nothing has a fixed maximum.
 */
 
-#include "../window.c"
+#include "window.c"
 
 #define log_canvas(fmt, ...) pr_info("[moonwater canvas] " fmt, ##__VA_ARGS__)
 
 /*
         A pane is the compositor's side of a window: where it is, and the
-        pixels behind it. struct window, in ../window.c, is the page the
+        pixels behind it. struct window, in window.c, is the page the
         program that owns it has mapped. Panes without one are the compositor's
         own.
 
@@ -194,8 +194,14 @@ static u64 pointer_flush_total;
 static unsigned long pointer_counts;
 static unsigned long pointer_moved;
 
+// What drawing costs: passes over every output, the time in them, and the
+// pixels written, which against the size of the desktop is the overdraw.
+static unsigned long canvas_composes;
+static u64 canvas_compose_ns;
+static unsigned long canvas_painted;
+
 /*
-        The two loops every pixel goes through, in src/fill.asm. They are
+        The two loops every pixel goes through, in fill.asm. They are
         assembly because a full compose is four megabytes of stores and the
         kernel is built with no vector instructions on x86, so what the C
         turned into was two four byte stores an iteration.
