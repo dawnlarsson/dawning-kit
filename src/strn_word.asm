@@ -25,9 +25,9 @@
 #       a difference or a terminator and gets the sign right. The difference is
 #       found once per call, so simple beats clever there.
 #
-SYM_FUNC_START(strncmp)
 
 #> arch x86_64
+SYM_FUNC_START(strncmp)
         xor     %eax, %eax
         test    %rdx, %rdx
         jz      9f
@@ -75,6 +75,9 @@ SYM_FUNC_START(strncmp)
 8:      xor     %eax, %eax
 9:      RET
 
+SYM_FUNC_END(strncmp)
+EXPORT_SYMBOL(strncmp)
+
 #> arch other
 //
         //      Nothing, deliberately, and this is what "#> arch other" with an
@@ -95,8 +98,6 @@ SYM_FUNC_START(strncmp)
 
 #> shared
 
-SYM_FUNC_END(strncmp)
-EXPORT_SYMBOL(strncmp)
 
 #
 #       size_t strnlen(const char *s, size_t n)
@@ -106,9 +107,9 @@ EXPORT_SYMBOL(strncmp)
 #       time -- and a terminator found beyond n is clamped back to n, which is
 #       what strnlen returns when there is none inside the bound.
 #
-SYM_FUNC_START(strnlen)
 
 #> arch x86_64
+SYM_FUNC_START(strnlen)
         xor     %eax, %eax
         test    %rsi, %rsi
         jz      9f
@@ -155,10 +156,11 @@ SYM_FUNC_START(strnlen)
 3:      mov     %rsi, %rax
 9:      RET
 
+SYM_FUNC_END(strnlen)
+EXPORT_SYMBOL(strnlen)
+
 #> arch other
         // As above: nothing here on purpose.
 
 #> shared
 
-SYM_FUNC_END(strnlen)
-EXPORT_SYMBOL(strnlen)

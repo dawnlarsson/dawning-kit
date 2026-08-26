@@ -26,9 +26,9 @@
 
         .text
 
-SYM_FUNC_START(strcmp)
 
 #> arch x86_64
+SYM_FUNC_START(strcmp)
         movabs  $0x0101010101010101, %r10
         movabs  $0x8080808080808080, %r11
 
@@ -86,6 +86,9 @@ SYM_FUNC_START(strcmp)
 3:      xor     %eax, %eax
 4:      RET
 
+SYM_FUNC_END(strcmp)
+EXPORT_SYMBOL(strcmp)
+
 #> arch other
 //
         //      Nothing, deliberately, and this is what "#> arch other" with an
@@ -106,5 +109,3 @@ SYM_FUNC_START(strcmp)
 
 #> shared
 
-SYM_FUNC_END(strcmp)
-EXPORT_SYMBOL(strcmp)

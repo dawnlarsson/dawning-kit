@@ -29,9 +29,9 @@
 
         .text
 
-SYM_FUNC_START(strlen)
 
 #> arch x86_64
+SYM_FUNC_START(strlen)
         mov     %rdi, %r8               # keep the start
         mov     %edi, %ecx
         and     $7, %ecx                # how far into the word it begins
@@ -70,6 +70,9 @@ SYM_FUNC_START(strlen)
         sub     %r8, %rax               # minus where we started
         RET
 
+SYM_FUNC_END(strlen)
+EXPORT_SYMBOL(strlen)
+
 #> arch other
         #
         #       arm64 and riscv already define __HAVE_ARCH_STRLEN and ship
@@ -94,5 +97,3 @@ SYM_FUNC_START(strlen)
 
 #> shared
 
-SYM_FUNC_END(strlen)
-EXPORT_SYMBOL(strlen)

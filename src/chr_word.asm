@@ -26,9 +26,9 @@
 #       if that byte is the one asked for -- which is also how strchr(s, 0)
 #       returns the terminator rather than nothing.
 #
-SYM_FUNC_START(strchr)
 
 #> arch x86_64
+SYM_FUNC_START(strchr)
         movzbl  %sil, %ecx
         movabs  $0x0101010101010101, %r10
         mov     %rcx, %rsi
@@ -77,6 +77,9 @@ SYM_FUNC_START(strchr)
         xor     %eax, %eax              # it was the terminator: not found
 3:      RET
 
+SYM_FUNC_END(strchr)
+EXPORT_SYMBOL(strchr)
+
 #> arch other
 //
         //      Nothing, deliberately, and this is what "#> arch other" with an
@@ -97,8 +100,6 @@ SYM_FUNC_START(strchr)
 
 #> shared
 
-SYM_FUNC_END(strchr)
-EXPORT_SYMBOL(strchr)
 
 #
 #       void *memchr(const void *s, int c, size_t n)
@@ -107,9 +108,9 @@ EXPORT_SYMBOL(strchr)
 #       the word that reaches past the bound is discarded by comparing its
 #       address, which is cheaper than stopping the scan short.
 #
-SYM_FUNC_START(memchr)
 
 #> arch x86_64
+SYM_FUNC_START(memchr)
         xor     %eax, %eax
         test    %rdx, %rdx
         jz      9f
@@ -158,10 +159,11 @@ SYM_FUNC_START(memchr)
 8:      xor     %eax, %eax
 9:      RET
 
+SYM_FUNC_END(memchr)
+EXPORT_SYMBOL(memchr)
+
 #> arch other
         // As above: nothing here on purpose.
 
 #> shared
 
-SYM_FUNC_END(memchr)
-EXPORT_SYMBOL(memchr)

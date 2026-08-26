@@ -19,9 +19,9 @@
 //       scan already stops at whichever of the two comes first, that is the
 //       same code without the last test.
 //
-SYM_FUNC_START(strchrnul)
 
 #> arch x86_64
+SYM_FUNC_START(strchrnul)
         movzbl  %sil, %ecx
         movabs  $0x0101010101010101, %r10
         mov     %rcx, %rsi
@@ -66,6 +66,9 @@ SYM_FUNC_START(strchrnul)
         add     %rdi, %rax
         RET
 
+SYM_FUNC_END(strchrnul)
+EXPORT_SYMBOL(strchrnul)
+
 #> arch other
 //
         //      Nothing, deliberately, and this is what "#> arch other" with an
@@ -86,8 +89,6 @@ SYM_FUNC_START(strchrnul)
 
 #> shared
 
-SYM_FUNC_END(strchrnul)
-EXPORT_SYMBOL(strchrnul)
 
 //
 //       char *strnchr(const char *s, size_t count, int c)
@@ -96,9 +97,9 @@ EXPORT_SYMBOL(strchrnul)
 //       and the byte third, which is the opposite way round from memchr and
 //       is the kind of thing that is only wrong once.
 //
-SYM_FUNC_START(strnchr)
 
 #> arch x86_64
+SYM_FUNC_START(strnchr)
         xor     %eax, %eax
         test    %rsi, %rsi
         jz      9f
@@ -165,13 +166,14 @@ SYM_FUNC_START(strnchr)
 3:      add     $8, %rsp
 9:      RET
 
+SYM_FUNC_END(strnchr)
+EXPORT_SYMBOL(strnchr)
+
 #> arch other
         // As above: nothing here on purpose.
 
 #> shared
 
-SYM_FUNC_END(strnchr)
-EXPORT_SYMBOL(strnchr)
 
 //
 //       char *strrchr(const char *s, int c)
@@ -187,9 +189,9 @@ EXPORT_SYMBOL(strnchr)
 //       where the answer is the end of the string rather than a match inside
 //       it, and it is rare enough not to be worth its own scan.
 //
-SYM_FUNC_START(strrchr)
 
 #> arch x86_64
+SYM_FUNC_START(strrchr)
         movzbl  %sil, %ecx
         test    %cl, %cl
         jnz     4f
@@ -270,10 +272,11 @@ SYM_FUNC_START(strrchr)
         pop     %rbx
         RET
 
+SYM_FUNC_END(strrchr)
+EXPORT_SYMBOL(strrchr)
+
 #> arch other
         // As above: nothing here on purpose.
 
 #> shared
 
-SYM_FUNC_END(strrchr)
-EXPORT_SYMBOL(strrchr)
