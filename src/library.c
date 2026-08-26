@@ -4808,6 +4808,21 @@ char address_to strrchr(char address_to source, int character)
 #include "platform/syscall.c"
 #include "platform/any.c"
 
+/*
+        What fstat writes into, which is bigger than this was.
+
+        The kernel writes its own struct stat here: 144 bytes on x86_64, 128 on
+        arm64 and riscv64. This was 96, and it is the last field of struct
+        file, so every file ever opened scribbled up to forty-eight bytes past
+        the end of whatever held it -- and a file on the stack is a smashed
+        return address.
+
+        The tail is reserved rather than named because the layout is not the
+        same on the three machines: st_size and st_blocks agree at 48 and 64,
+        and st_mode and st_nlink do not. Only size is read anywhere, and it is
+        at the offset the kernel puts it. Naming the rest would mean three
+        layouts, and nothing wants them.
+*/
 typedef struct
 {
         p32 device;
@@ -4823,6 +4838,7 @@ typedef struct
         b64 last_access;
         b64 last_edit;
         b64 last_update;
+        b64 reserved[6];
 } file_status;
 
 typedef struct
