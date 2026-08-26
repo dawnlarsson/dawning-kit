@@ -9,6 +9,7 @@
             paint.c     pixels: a pointer, a pitch, a rectangle
             compose.c   what a window looks like and in what order
             plane.c     the cursor, on a hardware plane or in the framebuffer
+            drag.c      moving a window, across a seam if it comes to that
             output.c    outputs, their placement, and starting and stopping
             client.c    attaching to DRM, and finding cards to attach to
             pointer.c   input
@@ -68,6 +69,10 @@ static struct desktop
         int cursor_x, cursor_y;
         int drawn_x, drawn_y;
 
+        // The window being dragged, and where inside it the cursor took hold.
+        struct window *dragging;
+        int grab_x, grab_y;
+
         // The bounding box of every output. Read by the input handler in
         // atomic context, where it cannot walk the list.
         int width, height;
@@ -76,6 +81,14 @@ static struct desktop
         atomic_t pending_y;
         atomic_t motion_pending;
         u64 motion_stamp;
+
+        // The button, and where it went down. Picking a window needs the list,
+        // which the input handler cannot walk, so it records and the thread
+        // picks.
+        atomic_t button_down;
+        atomic_t button_changed;
+        atomic_t button_x;
+        atomic_t button_y;
 } desktop = {
     .lock = __MUTEX_INITIALIZER(desktop.lock),
     .outputs = LIST_HEAD_INIT(desktop.outputs),
@@ -87,6 +100,7 @@ static LIST_HEAD(canvas_list);
 
 static void pointer_start(void);
 static void pointer_stop(void);
+static void desktop_redraw(void);
 
 // Nanoseconds from an event arriving to the cursor being on screen.
 static u64 pointer_latency_total;
@@ -107,6 +121,12 @@ static _Bool rects_overlap(int ax, int ay, int aw, int ah,
         return ax < bx + bw && bx < ax + aw && ay < by + bh && by < ay + ah;
 }
 
+static _Bool window_titlebar_holds(struct window *window, int x, int y)
+{
+        return x >= window->x && x < window->x + window->width &&
+               y >= window->y && y < window->y + 20;
+}
+
 static _Bool output_holds(struct output *output, int x, int y)
 {
         return x >= output->x && x < output->x + (int)output->width &&
@@ -116,6 +136,7 @@ static _Bool output_holds(struct output *output, int x, int y)
 #include "paint.c"
 #include "compose.c"
 #include "plane.c"
+#include "drag.c"
 #include "output.c"
 #include "client.c"
 #include "pointer.c"

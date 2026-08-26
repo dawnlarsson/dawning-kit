@@ -62,13 +62,15 @@ static void desktop_confine_cursor(int *x, int *y)
 
 static void pointer_apply(void)
 {
+        _Bool button = atomic_xchg(&desktop.button_changed, 0);
+        _Bool motion = atomic_xchg(&desktop.motion_pending, 0);
         int x, y;
         u64 started;
 
-        if (!atomic_xchg(&desktop.motion_pending, 0))
+        if (!button && !motion)
                 return;
 
-        started = desktop.motion_stamp;
+        started = motion ? desktop.motion_stamp : 0;
         x = atomic_read(&desktop.pending_x);
         y = atomic_read(&desktop.pending_y);
 
@@ -79,11 +81,32 @@ static void pointer_apply(void)
 
         if (!list_empty(&desktop.outputs))
         {
-                desktop_confine_cursor(&x, &y);
-                atomic_set(&desktop.pending_x, x);
-                atomic_set(&desktop.pending_y, y);
+                if (button)
+                {
+                        if (atomic_read(&desktop.button_down))
+                                drag_press(atomic_read(&desktop.button_x),
+                                           atomic_read(&desktop.button_y));
+                        else
+                                drag_release();
+                }
 
-                cursor_move(x, y);
+                if (motion)
+                {
+                        desktop_confine_cursor(&x, &y);
+                        atomic_set(&desktop.pending_x, x);
+                        atomic_set(&desktop.pending_y, y);
+
+                        if (desktop.dragging)
+                        {
+                                desktop.cursor_x = x;
+                                desktop.cursor_y = y;
+                                drag_move(x, y);
+                        }
+                        else
+                        {
+                                cursor_move(x, y);
+                        }
+                }
         }
 
         mutex_unlock(&desktop.lock);
@@ -140,6 +163,19 @@ static void pointer_event(struct input_handle *handle, unsigned int type,
                 else
                         y = (int)div_u64((u64)(value - abs->minimum) * (u32)desktop.height,
                                          abs->maximum - abs->minimum);
+        }
+        else if (type == EV_KEY)
+        {
+                if (code != BTN_LEFT && code != BTN_TOUCH)
+                        return;
+
+                atomic_set(&desktop.button_x, x);
+                atomic_set(&desktop.button_y, y);
+                atomic_set(&desktop.button_down, !!value);
+                atomic_set(&desktop.button_changed, 1);
+
+                wake_up_process(pointer_thread);
+                return;
         }
         else
         {
@@ -246,7 +282,8 @@ static int pointer_loop(void *unused)
         {
                 set_current_state(TASK_IDLE);
 
-                if (!atomic_read(&desktop.motion_pending))
+                if (!atomic_read(&desktop.motion_pending) &&
+                    !atomic_read(&desktop.button_changed))
                         schedule();
 
                 __set_current_state(TASK_RUNNING);
