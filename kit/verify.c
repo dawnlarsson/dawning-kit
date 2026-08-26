@@ -277,12 +277,235 @@ fn check_strings()
         }
 }
 
+/*
+        The routines converted in bulk. References first, then one check each.
+
+        A routine that reports through a writer is captured into a buffer, so
+        the comparison is over what it actually emitted rather than over a
+        return value it does not have.
+*/
+static b8 caught[512];
+static positive caught_length;
+
+fn catch_writer(address_any data, positive length)
+{
+        b8 address_to from = (b8 address_to)data;
+
+        if (!length)
+                while (from[length])
+                        length++;
+
+        for (positive i = 0; i < length && caught_length < sizeof(caught) - 1; i++)
+                caught[caught_length++] = from[i];
+
+        caught[caught_length] = 0;
+}
+
+fn catch_reset()
+{
+        caught_length = 0;
+        caught[0] = 0;
+}
+
+string_address reference_string_last_of(string_address source, p8 character)
+{
+        string_address found = null;
+
+        while (string_get(source))
+        {
+                if string_is (source, character)
+                        found = source;
+
+                source++;
+        }
+
+        return character ? found : source;
+}
+
+positive reference_to_positive(string_address input)
+{
+        positive value = 0;
+
+        while (string_get(input) >= '0' && string_get(input) <= '9')
+                value = value * 10 + (positive)(string_get(input++) - '0');
+
+        return value;
+}
+
+bipolar reference_to_bipolar(string_address input)
+{
+        b32 negative = string_is(input, '-');
+
+        if (negative || string_is(input, '+'))
+                input++;
+
+        bipolar value = (bipolar)reference_to_positive(input);
+
+        return negative ? -value : value;
+}
+
+string_address reference_find(string_address string, string_address input)
+{
+        string_address step = string;
+        string_address step_input = input;
+
+        while (string_get(step))
+        {
+                if (string_not(step, string_get(step_input)))
+                {
+                        step++;
+                        continue;
+                }
+
+                string_address find = step;
+
+                while
+                        string_get(step_input)
+                        {
+                                if string_not (step, string_get(step_input))
+                                        break;
+
+                                step++;
+                                step_input++;
+                        }
+
+                if string_is (step_input, end)
+                        return find;
+
+                step_input = input;
+        }
+
+        return null;
+}
+
+fn check_bulk_strings()
+{
+        static p8 subject[512];
+        static p8 spare[512];
+
+        for (positive e = 0; e < EDGE_COUNT; e++)
+        {
+                positive size = edges[e];
+
+                if (size >= sizeof(subject) - 2)
+                        continue;
+
+                for (positive i = 0; i < size; i++)
+                        subject[i] = (p8)(next() % 4 + 'a');
+
+                subject[size] = 0;
+
+                // string_copy and string_copy_max, into a poisoned buffer so a
+                // byte written past the terminator is caught.
+                reference_fill(spare, 0xA5, sizeof(spare));
+                string_copy(spare, subject);
+                same("string_copy", "length", string_length(spare), size);
+                same("string_copy", "content",
+                     (positive)string_compare(spare, subject), 0);
+
+                for (positive limit = 0; limit <= size + 2 && limit < 64; limit++)
+                {
+                        reference_fill(spare, 0xA5, sizeof(spare));
+                        string_copy_max(spare, subject, limit);
+
+                        // Nothing at all for a limit of zero, and never a byte
+                        // past the limit.
+                        for (positive i = limit; i < sizeof(spare); i++)
+                                if (spare[i] != 0xA5)
+                                {
+                                        report("string_copy_max", "wrote past the limit",
+                                               i, limit);
+                                        break;
+                                }
+
+                        checks++;
+                }
+
+                same("string_last_of", "found",
+                     (positive)string_last_of(subject, 'a'),
+                     (positive)reference_string_last_of(subject, 'a'));
+                same("string_last_of", "absent",
+                     (positive)string_last_of(subject, 'z'),
+                     (positive)reference_string_last_of(subject, 'z'));
+
+                // string_cut and string_replace_all change the string, so each
+                // works on its own copy of it.
+                string_copy(spare, subject);
+                string_address after = string_cut(spare, 'b');
+                same("string_cut", "terminated before the cut",
+                     (positive)(after == null || string_first_of(spare, 'b') == null), 1);
+
+                string_copy(spare, subject);
+                string_replace_all(spare, 'a', 'z');
+                same("string_replace_all", "none left",
+                     (positive)(string_first_of(spare, 'a') == null), 1);
+                same("string_replace_all", "same length", string_length(spare), size);
+
+                // Against the C it replaced, not against an assumption: an
+                // empty haystack answers null, which is not what "find
+                // yourself in yourself" would suggest.
+                same("string_find", "itself",
+                     (positive)string_find(subject, subject),
+                     (positive)reference_find(subject, subject));
+
+                if (size > 2)
+                {
+                        same("string_find", "a tail of itself",
+                             (positive)string_find(subject, subject + size - 2),
+                             (positive)reference_find(subject, subject + size - 2));
+
+                        same("string_find", "absent",
+                             (positive)string_find(subject, (string_address)"qqq"),
+                             (positive)reference_find(subject, (string_address)"qqq"));
+                }
+        }
+}
+
+fn check_bulk_numbers()
+{
+        static positive samples[] = {0, 1, 7, 9, 10, 99, 100, 255, 999, 1000,
+                                     65535, 1000000, 4294967295u};
+
+        for (positive i = 0; i < sizeof(samples) / sizeof(samples[0]); i++)
+        {
+                positive n = samples[i];
+
+                catch_reset();
+                positive_to_string(catch_writer, n);
+                same("positive_to_string", "round trip",
+                     reference_to_positive(caught), n);
+
+                catch_reset();
+                bipolar_to_string(catch_writer, (bipolar)n);
+                same("bipolar_to_string", "round trip",
+                     (positive)reference_to_bipolar(caught), n);
+
+                catch_reset();
+                bipolar_to_string(catch_writer, -(bipolar)n);
+                same("bipolar_to_string", "negative round trip",
+                     (positive)(-reference_to_bipolar(caught)), n);
+
+                catch_reset();
+                positive_to_string(catch_writer, n);
+                same("string_to_positive", "agrees",
+                     string_to_positive(caught), reference_to_positive(caught));
+
+                catch_reset();
+                bipolar_to_string(catch_writer, -(bipolar)n);
+                same("string_to_bipolar", "agrees",
+                     (positive)string_to_bipolar(caught),
+                     (positive)reference_to_bipolar(caught));
+        }
+}
+
 b32 main()
 {
         check_fill();
         check_copy();
         check_move();
         check_strings();
+        check_bulk_strings();
+        check_bulk_numbers();
 
         string_format(log, "%p checks, %p failures\n", checks, failures);
         log_flush();
