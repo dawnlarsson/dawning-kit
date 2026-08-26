@@ -973,6 +973,30 @@ typedef union matrix4
 
 #define ASM_END(name) ".size " #name ", .-" #name "\n"
 
+/*
+        An indirect call, or whatever the mitigations have made of one.
+
+        A bare "call *%reg" is the branch target injection gadget retpoline
+        exists to take away, and a kernel built with that mitigation routes
+        every indirect call through a thunk instead. Assembly written by hand
+        is the one place the compiler cannot do that for you, so a routine that
+        calls through a function pointer -- which is every one of these that
+        takes a writer -- has to ask for it.
+
+        The register is named rather than chosen here because there is a thunk
+        per register and the caller knows which one it loaded.
+*/
+#if defined(KERNEL_MODE) && X64 && \
+    (defined(CONFIG_MITIGATION_RETPOLINE) || defined(CONFIG_RETPOLINE))
+#define ASM_CALL(reg) "call __x86_indirect_thunk_" reg "\n"
+#elif X64
+#define ASM_CALL(reg) "call *%" reg "\n"
+#elif ARM64
+#define ASM_CALL(reg) "blr " reg "\n"
+#else
+#define ASM_CALL(reg) "jalr " reg "\n"
+#endif
+
 #if X64
 __asm__(
     //
