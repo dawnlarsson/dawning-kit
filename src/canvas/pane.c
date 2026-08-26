@@ -153,9 +153,14 @@ static struct pane *pane_create(unsigned int width, unsigned int height,
         else
         {
                 pane->pixels = pane->mapping + WINDOW_PIXELS;
+
+                // A window of pixels can never outgrow the buffer it asked
+                // for. A window of cells has room for the whole desktop, and
+                // setting this from the requested size here is what clamped
+                // every attempt to resize one back to the size it started at.
+                pane->max_width = width;
+                pane->max_height = height;
         }
-        pane->max_width = width;
-        pane->max_height = height;
 
         pane->width = (int)width;
         pane->height = (int)height;
@@ -173,8 +178,8 @@ static struct pane *pane_create(unsigned int width, unsigned int height,
         pane->shared->width = width;
         pane->shared->height = height;
         pane->shared->pitch = pane->pitch;
-        pane->shared->max_width = width;
-        pane->shared->max_height = height;
+        pane->shared->max_width = (unsigned int)pane->max_width;
+        pane->shared->max_height = (unsigned int)pane->max_height;
         pane->shared->mapping = (unsigned int)bytes;
 
         return pane;
@@ -222,13 +227,23 @@ static void pane_refresh(struct pane *pane)
         if (!shared)
                 return;
 
-        width = READ_ONCE(shared->width);
-        height = READ_ONCE(shared->height);
+        /*
+                Not while it is being dragged or resized. The compositor owns
+                the rectangle for as long as a hand is on it, and reading the
+                program's copy back mid-drag is two writers fighting over one
+                number -- which looks like a window that will not stay where
+                it is put.
+        */
+        if (desktop.dragging != pane && desktop.resizing != pane)
+        {
+                width = READ_ONCE(shared->width);
+                height = READ_ONCE(shared->height);
 
-        pane->width = (int)min(width, pane->max_width);
-        pane->height = (int)min(height, pane->max_height);
-        pane->x = READ_ONCE(shared->x);
-        pane->y = READ_ONCE(shared->y);
+                pane->width = (int)min(width, pane->max_width);
+                pane->height = (int)min(height, pane->max_height);
+                pane->x = READ_ONCE(shared->x);
+                pane->y = READ_ONCE(shared->y);
+        }
         pane->z = READ_ONCE(shared->z);
         pane->region = READ_ONCE(shared->region);
         pane->display = READ_ONCE(shared->display);
