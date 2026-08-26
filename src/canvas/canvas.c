@@ -12,6 +12,7 @@
                         page without trusting it
             fill.asm    one run of pixels, per architecture. Everything
                         Canvas draws goes through it.
+            glyph.asm   one glyph, for the same reason
             paint.c     pixels: a pointer, a pitch, a rectangle
             text.c      words: a box, where the lines break, where they sit
             compose.c   what a window looks like and in what order
@@ -230,6 +231,9 @@ static unsigned long pointer_moved;
 static unsigned long canvas_composes;
 static u64 canvas_compose_ns;
 static unsigned long canvas_painted;
+static unsigned long canvas_runs;
+static u64 canvas_flush_ns;
+static u64 canvas_text_ns;
 
 /*
         The two loops every pixel goes through, in fill.asm. They are
@@ -238,6 +242,8 @@ static unsigned long canvas_painted;
         turned into was two four byte stores an iteration.
 */
 void canvas_row_fill(u32 *at, unsigned long count, u32 colour);
+void canvas_glyph(u32 *at, unsigned long pitch, const u8 *bits,
+                  unsigned long rows, u32 colour);
 void canvas_row_blit(u32 *at, const u32 *from, unsigned long count, u32 opaque);
 
 /*

@@ -66,6 +66,7 @@ static void target_row(const struct target *t, int y, int x1, int x2, u32 colour
                 return;
 
         canvas_painted += (unsigned long)(x2 - x1);
+        canvas_runs++;
         canvas_row_fill(t->pixels + (size_t)y * t->pitch + x1,
                         (unsigned long)(x2 - x1), colour);
 }
@@ -385,5 +386,10 @@ static void compose_output(struct output *output)
                 have just painted, and what reaches the screen is the new
                 picture with holes of the old one through it.
         */
-        drm_client_buffer_flush(output->buffer, NULL);
+        {
+                u64 started = ktime_get_ns();
+
+                drm_client_buffer_flush(output->buffer, NULL);
+                canvas_flush_ns += ktime_get_ns() - started;
+        }
 }

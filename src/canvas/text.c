@@ -27,6 +27,23 @@ static void glyph_draw(const struct target *t, int x, int y, int scale,
             (size_t)character * font_glyph_size(canvas_font->width, canvas_font->height);
         unsigned int row, column;
 
+        /*
+                The whole glyph in one call, when it is entirely inside the
+                damage and drawn at its own size. That is nearly every glyph;
+                the rest go the long way round below.
+        */
+        if (scale == 1 && canvas_font->width == 8 && pitch == 1 &&
+            x >= max(t->clip.x1, 0) && x + 8 <= min(t->clip.x2, t->width) &&
+            y >= max(t->clip.y1, 0) &&
+            y + (int)canvas_font->height <= min(t->clip.y2, t->height))
+        {
+                canvas_painted += canvas_font->height * 8;
+                canvas_runs++;
+                canvas_glyph(t->pixels + (size_t)y * t->pitch + x, t->pitch,
+                             glyph, canvas_font->height, colour);
+                return;
+        }
+
         for (row = 0; row < canvas_font->height; row++)
         {
                 const unsigned char *bits = glyph + row * pitch;
@@ -141,6 +158,8 @@ static void text_draw(const struct target *t, int x, int y, int w, int h,
         unsigned int start = 0;
         int line_y;
 
+        u64 started = ktime_get_ns();
+
         if (!canvas_font || !length || !columns)
                 return;
 
@@ -197,4 +216,6 @@ static void text_draw(const struct target *t, int x, int y, int w, int h,
                 if (stop == length)
                         break;
         }
+
+        canvas_text_ns += ktime_get_ns() - started;
 }

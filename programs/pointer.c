@@ -29,6 +29,9 @@ b32 main()
         string_format(log, "composes         %p\n", stats.composes);
         string_format(log, "compose ns       %p\n", stats.compose_ns);
         string_format(log, "pixels painted   %p\n", stats.painted);
+        string_format(log, "runs             %p\n", stats.runs);
+        string_format(log, "driver ns        %p\n", stats.driver_ns);
+        string_format(log, "text ns          %p\n", stats.text_ns);
 
         if (!stats.events)
         {

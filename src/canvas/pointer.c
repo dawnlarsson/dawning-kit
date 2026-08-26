@@ -526,4 +526,7 @@ static void canvas_input_stats(struct input_stats *out)
         out->composes = canvas_composes;
         out->compose_ns = canvas_compose_ns;
         out->painted = canvas_painted;
+        out->runs = canvas_runs;
+        out->driver_ns = canvas_flush_ns;
+        out->text_ns = canvas_text_ns;
 }
