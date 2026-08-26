@@ -267,6 +267,28 @@ awk -v want="$arch" -v source="$input" '
                         marker = 0
                 }
 
+                #
+                #       A prose comment goes out as //, not #.
+                #
+                #       These files reach the C preprocessor, where a line
+                #       beginning with # is a directive. A comment starting
+                #       "#\tif that byte is the one asked for" is read as an
+                #       #if, and the error names a token in the middle of an
+                #       English sentence:
+                #
+                #           missing binary operator before token 'byte'
+                #
+                #       # followed by whitespace is a comment and # followed by
+                #       a word is a directive, which is what tells them apart:
+                #       #include and #error still work, and prose stops having
+                #       to avoid the twelve words cpp has opinions about.
+                #
+                if ($0 ~ /^[ \t]*#[ \t]/ || $0 ~ /^[ \t]*#$/) {
+                        sub(/#/, "//")
+                        print
+                        next
+                }
+
                 print
         }
 ' pass=1 "$input" pass=2 "$input" > "$temporary.body" || {
