@@ -49,6 +49,17 @@ static _Bool canvas_is_virtual(struct drm_device *dev)
         return false;
 }
 
+static unsigned int output_mode_count(struct drm_connector *connector)
+{
+        struct drm_display_mode *mode;
+        unsigned int count = 0;
+
+        list_for_each_entry(mode, &connector->modes, head)
+                count++;
+
+        return count;
+}
+
 static struct drm_display_mode *output_best_mode(struct drm_connector *connector,
                                                  unsigned int want_width)
 {
@@ -410,6 +421,7 @@ static void canvas_release(struct canvas *canvas);
 static int canvas_build(struct canvas *canvas, _Bool biggest)
 {
         struct drm_client_dev *client = &canvas->client;
+        struct drm_connector *connector;
         struct drm_mode_set *mode_set;
         unsigned int count = 0;
 
@@ -430,9 +442,19 @@ static int canvas_build(struct canvas *canvas, _Bool biggest)
                 if (!mode_set->mode)
                         continue;
 
-                log_canvas("screen %ux%u at %u Hz, drawn %ux\n",
+                /*
+                        Which screen, and how much of a choice there was. A
+                        mode that turns out to be wrong on a machine that is
+                        not here is answered by what its connector offered,
+                        not by what was picked out of it.
+                */
+                connector = mode_set->num_connectors ? mode_set->connectors[0] : NULL;
+
+                log_canvas("screen %s %ux%u at %u Hz, drawn %ux, %u mode(s) offered\n",
+                           connector && connector->name ? connector->name : "?",
                            mode_set->mode->hdisplay, mode_set->mode->vdisplay,
-                           drm_mode_vrefresh(mode_set->mode), desktop.scale);
+                           drm_mode_vrefresh(mode_set->mode), desktop.scale,
+                           connector ? output_mode_count(connector) : 0);
 
                 output = output_add(canvas, mode_set);
                 if (!output)
