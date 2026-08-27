@@ -1,4 +1,4 @@
-#include "../src/library.c"
+#include "../library.c"
 
 /*
         Differential test for the assembly in library.c.
