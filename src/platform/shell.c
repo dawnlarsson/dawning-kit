@@ -17,7 +17,8 @@ fn shell_env_init()
         memory_fill(env_storage, 0, ENV_STORAGE_SIZE);
         env_used = 0;
 
-        string_address defaults[] = {"PATH=/bin:/usr/bin", "SHELL=/bin/sh", null};
+        // Programs live at the root of the image, so it is on the path.
+        string_address defaults[] = {"PATH=/bin:/usr/bin:/", "SHELL=/bin/sh", null};
 
         positive idx = 0;
         positive i = 0;
@@ -1418,6 +1419,70 @@ shell_command shell_commands[] = {
     {null, null},
 };
 
+/*
+        Where a bare command name is actually found.
+
+        Shared with the shell itself, which needs the same answer before it can
+        run anything typed without a slash -- and had no way to ask, so every
+        program had to be named by its full path.
+*/
+b32 shell_find_in_path(string_address name, p8 address_to into, positive room)
+{
+        // On a copy: PATH points into env_storage, and cutting it apart there
+        // would leave the environment holding only its first directory.
+        p8 search[512];
+        string_address value = env_get("PATH");
+        string_address segment;
+        positive name_length;
+
+        if (name == null)
+                return false;
+
+        if (string_first_of(name, '/'))
+        {
+                if (system_call_4(syscall(faccessat), AT_FDCWD, (positive)name,
+                                  ACCESS_EXECUTE, 0))
+                        return false;
+
+                string_copy_max(into, name, room - 1);
+                into[room - 1] = end;
+                return true;
+        }
+
+        if (value == null)
+                value = "/bin:/usr/bin:/";
+
+        string_copy_max(search, value, sizeof(search) - 1);
+        search[sizeof(search) - 1] = end;
+
+        segment = search;
+        name_length = string_length(name);
+
+        while (segment)
+        {
+                string_address next = string_cut(segment, ':');
+                positive length = string_length(segment);
+
+                if (length && length + name_length + 2 <= room)
+                {
+                        string_copy(into, segment);
+
+                        if (into[length - 1] != '/')
+                                into[length++] = '/';
+
+                        string_copy(into + length, name);
+
+                        if (!system_call_4(syscall(faccessat), AT_FDCWD,
+                                           (positive)into, ACCESS_EXECUTE, 0))
+                                return true;
+                }
+
+                segment = next;
+        }
+
+        return false;
+}
+
 fn shell_which(writer write, string_address input)
 {
         if (input == null)
@@ -1433,50 +1498,10 @@ fn shell_which(writer write, string_address input)
                 command++;
         }
 
-        if (string_first_of(input, '/'))
-        {
-                if (!system_call_4(syscall(faccessat), AT_FDCWD, (positive)input, ACCESS_EXECUTE, 0))
-                        return string_format(write, "%s\n", input);
+        p8 found[768];
 
-                return string_format(write, "which: %s: not found\n", input);
-        }
-
-        // On a copy: PATH points into env_storage, and cutting it apart there
-        // would leave the environment holding only its first directory.
-        p8 search[512];
-        p8 candidate[768];
-
-        string_address value = env_get("PATH");
-
-        if (value == null)
-                value = "/bin:/usr/bin";
-
-        string_copy_max(search, value, sizeof(search) - 1);
-        search[sizeof(search) - 1] = end;
-
-        string_address segment = search;
-        positive name_length = string_length(input);
-
-        while (segment)
-        {
-                string_address next = string_cut(segment, ':');
-                positive length = string_length(segment);
-
-                if (length && length + name_length + 2 <= sizeof(candidate))
-                {
-                        string_copy(candidate, segment);
-
-                        if (candidate[length - 1] != '/')
-                                candidate[length++] = '/';
-
-                        string_copy(candidate + length, input);
-
-                        if (!system_call_4(syscall(faccessat), AT_FDCWD, (positive)candidate, ACCESS_EXECUTE, 0))
-                                return string_format(write, "%s\n", candidate);
-                }
-
-                segment = next;
-        }
+        if (shell_find_in_path(input, found, sizeof(found)))
+                return string_format(write, "%s\n", found);
 
         string_format(write, "which: %s: not found\n", input);
 }

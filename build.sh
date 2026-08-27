@@ -153,7 +153,10 @@ sensitive filesystem, and this is $(uname). Name a machine that has them with
                 #       after the first noisy and, under set -e, fatal -- so
                 #       each is created only when missing.
                 #
-                mkdir -p fs/sys fs/proc fs/dev || die "filesystem setup"
+                # tmp, etc and root because everything expects them to be there:
+                # a redirection into /tmp is the first thing anybody tries.
+                mkdir -p fs/sys fs/proc fs/dev fs/tmp fs/etc fs/root ||
+                        die "filesystem setup"
 
                 make_node() {
                         [ -e "$1" ] && return 0

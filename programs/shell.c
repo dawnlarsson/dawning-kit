@@ -547,6 +547,22 @@ fn process()
         if (shell_builtin(shell_arguments()))
                 return;
 
+        /*
+                A bare name, looked for on the path. A builtin wins over one --
+                that is the order every shell uses, and it is checked above --
+                but anything else typed without a slash used to be refused
+                however plainly it was sitting in a directory on the path.
+        */
+        {
+                static p8 found[768];
+
+                if (shell_find_in_path(shell_argv[0], found, sizeof(found)))
+                {
+                        shell_argv[0] = found;
+                        return shell_execute_command();
+                }
+        }
+
         string_format(shell_output, "Command not found: '%s'\n", shell_argv[0]);
 }
 
