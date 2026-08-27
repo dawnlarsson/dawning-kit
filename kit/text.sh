@@ -1,0 +1,516 @@
+#!/bin/sh
+#
+#       The text utilities against the ones already on the machine.
+#
+#           sh programs/text_check.sh [directory of our binaries]
+#
+#       Every case runs the same input through the system's grep, sed, cut --
+#       whatever the case names -- and through ours, and compares standard
+#       output and the exit status. Agreeing is passing; there is no separate
+#       idea here of what the right answer is.
+#
+#       LC_ALL=C is not politeness. GNU sort collates by locale, and a
+#       byte-wise sort disagrees with it on almost any mixed case input, so
+#       without this every sort case fails and looks like a bug in the
+#       comparison rather than in the question being asked.
+
+LC_ALL=C
+export LC_ALL
+
+bin=${1:-/tmp/sh-text/bin}
+
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT INT TERM
+
+pass=0
+fail=0
+group=""
+
+printf 'alpha beta gamma\ndelta epsilon\n\nzeta eta theta iota\nalpha beta gamma\n' > "$work/a"
+printf 'one:two:three\nfour:five:six\nnodelim\nseven::nine\n' > "$work/b"
+printf '10\n9\n100\n2\n-3\n2.5\n0\n' > "$work/c"
+printf 'b 2 x\na 10 y\nc 1 z\na 3 w\nb 2 x\n' > "$work/d"
+printf 'apple\napple\nbanana\ncherry\ncherry\ncherry\ndate\n' > "$work/e"
+printf 'Hello World\nHELLO world\nhello WORLD\n' > "$work/f"
+printf 'aaa\tbbb\tccc\nddd\teee\tfff\n' > "$work/g"
+printf 'no newline at the end' > "$work/h"
+printf '1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n' > "$work/i"
+printf 'foo123bar\nbaz456qux\nnothing here\nFOO789BAR\n' > "$work/j"
+printf 'x\n\ny\n\n\nz\n' > "$work/k"
+
+case_start()
+{
+        group=$1
+}
+
+# Runs one command both ways. The tool is the first argument; everything
+# after it is passed to both, and standard input comes from the named file.
+compare()
+{
+        name=$1
+        tool=$2
+        feed=$3
+        shift 3
+
+        if [ "$feed" = "-" ]; then
+                "$tool" "$@" > "$work/want" 2> /dev/null
+                want_status=$?
+                "$bin/$tool" "$@" > "$work/got" 2> /dev/null
+                got_status=$?
+        else
+                "$tool" "$@" < "$work/$feed" > "$work/want" 2> /dev/null
+                want_status=$?
+                "$bin/$tool" "$@" < "$work/$feed" > "$work/got" 2> /dev/null
+                got_status=$?
+        fi
+
+        if cmp -s "$work/want" "$work/got" && [ "$want_status" = "$got_status" ]; then
+                pass=$((pass + 1))
+                return 0
+        fi
+
+        fail=$((fail + 1))
+        printf '  %-8s %-30s want %-24s got %s\n' \
+                "$group" "$name" \
+                "$(head -c 34 "$work/want" | tr '\n\t' '|>')[$want_status]" \
+                "$(head -c 34 "$work/got" | tr '\n\t' '|>')[$got_status]"
+}
+
+case_start grep
+compare 'literal'        grep a  alpha
+compare 'anchor start'   grep a  '^delta'
+compare 'anchor end'     grep a  'gamma$'
+compare 'any'            grep a  'd.lta'
+compare 'star'           grep a  'al*pha'
+compare 'star greedy'    grep a  'a.*a'
+compare 'class'          grep a  '[dz]'
+compare 'class range'    grep j  '[0-9]'
+compare 'class negated'  grep j  '[^0-9a-z]'
+compare 'class named'    grep j  '[[:digit:]]'
+compare 'group basic'    grep a  '\(al\)pha'
+compare 'backref'        grep a  '\(a\)lph\1'
+compare 'alternation'    grep a  'delta\|zeta'
+compare 'interval'       grep j  '[0-9]\{3\}'
+compare 'plus gnu'       grep j  '[0-9]\+'
+compare 'question gnu'   grep a  'alphas\?'
+compare 'word start'     grep a  '\<beta'
+compare 'word boundary'  grep a  '\bbeta\b'
+compare 'ignore case'    grep f  -i hello
+compare 'invert'         grep a  -v alpha
+compare 'numbered'       grep a  -n a
+compare 'count'          grep a  -c a
+compare 'quiet hit'      grep a  -q alpha
+compare 'quiet miss'     grep a  -q nowhere
+compare 'no match'       grep a  nowhere
+compare 'combined'       grep a  -in ALPHA
+compare 'extended alt'   grep -  -E 'delta|zeta' "$work/a"
+compare 'extended plus'  grep -  -E '[0-9]+' "$work/j"
+compare 'extended group' grep -  -E '(al)+pha' "$work/a"
+compare 'extended count' grep -  -E '[0-9]{3}' "$work/j"
+compare 'extended opt'   grep -  -E 'alphas?' "$work/a"
+compare 'fixed'          grep a  -F 'alpha beta'
+compare 'files listed'   grep -  -l a "$work/a" "$work/b"
+compare 'two files'      grep -  a "$work/a" "$work/b"
+compare 'two files count' grep - -c a "$work/a" "$work/b"
+compare 'whole line'     grep a  -x 'delta epsilon'
+compare 'whole word'     grep a  -w beta
+compare 'empty pattern'  grep a  ''
+compare 'dot star'       grep a  '.*'
+compare 'no trailing nl' grep h  newline
+compare 'expression flag' grep a -e alpha
+
+case_start sed
+compare 'substitute'     sed a  's/alpha/ALPHA/'
+compare 'global'         sed a  's/a/A/g'
+compare 'nth'            sed a  's/a/A/2'
+compare 'nth global'     sed a  's/a/A/2g'
+compare 'print flag'     sed a  -n 's/alpha/X/p'
+compare 'ampersand'      sed a  's/alpha/[&]/'
+compare 'group ref'      sed a  's/\(al\)pha/\1/'
+compare 'two groups'     sed b  's/\(one\):\(two\)/\2:\1/'
+compare 'empty match'    sed a  's/x*/-/g'
+compare 'delete'         sed a  '/alpha/d'
+compare 'delete range'   sed i  '2,4d'
+compare 'quiet print'    sed a  -n '2p'
+compare 'last line'      sed a  -n '$p'
+compare 'line range'     sed i  -n '3,7p'
+compare 'regex range'    sed a  -n '/delta/,/zeta/p'
+compare 'negated'        sed a  -n '/alpha/!p'
+compare 'quit'           sed i  '3q'
+compare 'line number'    sed a  -n '='
+compare 'transliterate'  sed a  'y/abc/xyz/'
+compare 'other delim'    sed b  's,one,ONE,'
+compare 'escaped delim'  sed b  's/one:two/X/'
+compare 'block'          sed i  -n '2,4{p}'
+compare 'two scripts'    sed a  -e 's/a/1/' -e 's/b/2/'
+compare 'semicolons'     sed a  's/a/1/;s/b/2/'
+compare 'anchor'         sed a  's/^alpha/X/'
+compare 'anchor end'     sed a  's/gamma$/X/'
+compare 'class'          sed j  's/[0-9]\+/N/'
+compare 'case flag'      sed f  's/hello/X/I'
+compare 'append'         sed k  '2a added'
+compare 'insert'         sed k  '2i added'
+compare 'change'         sed k  '2c changed'
+compare 'hold'           sed a  -n '1h;$ {x;p}'
+compare 'no trailing nl' sed h  's/newline/NEWLINE/'
+compare 'delete blank'   sed k  '/^$/d'
+compare 'sub blank'      sed k  's/^$/EMPTY/'
+compare 'multiple files' sed -  's/a/A/' "$work/a" "$work/b"
+
+case_start cut
+compare 'field one'      cut b  -d: -f1
+compare 'field two'      cut b  -d: -f2
+compare 'field list'     cut b  -d: -f1,3
+compare 'field range'    cut b  -d: -f1-2
+compare 'field open'     cut b  -d: -f2-
+compare 'suppress'       cut b  -d: -f2 -s
+compare 'tab default'    cut g  -f2
+compare 'characters'     cut a  -c1-5
+compare 'character list' cut a  -c1,3,5
+compare 'character open' cut a  -c6-
+compare 'bytes'          cut a  -b1-3
+compare 'field high'     cut b  -d: -f9
+compare 'no newline'     cut h  -c1-4
+
+case_start tr
+compare 'translate'      tr a  a-z A-Z
+compare 'single'         tr a  a X
+compare 'short set'      tr a  abc X
+compare 'delete'         tr a  -d aeiou
+compare 'squeeze'        tr a  -s ' '
+compare 'squeeze set'    tr e  -s a
+compare 'complement'     tr j  -d -c '0-9\n'
+compare 'class upper'    tr a  '[:lower:]' '[:upper:]'
+compare 'class digit'    tr j  -d '[:digit:]'
+compare 'escape'         tr a  ' ' '\n'
+compare 'range map'      tr a  'a-e' '1-5'
+compare 'delete squeeze' tr a  -ds aeiou ' '
+
+case_start sort
+compare 'plain'          sort a
+compare 'reverse'        sort a  -r
+compare 'numeric'        sort c  -n
+compare 'numeric rev'    sort c  -nr
+compare 'unique'         sort e  -u
+compare 'unique plain'   sort a  -u
+compare 'fold'           sort f  -f
+compare 'key two'        sort d  -k2
+compare 'key two numeric' sort d -k2n
+compare 'key range'      sort d  -k1,1
+compare 'key two only'   sort d  -k2,2
+compare 'separator'      sort b  -t: -k2
+compare 'separator num'  sort b  -t: -k1
+compare 'blanks'         sort d  -b -k2
+compare 'key reverse'    sort d  -k2r
+compare 'two keys'       sort d  -k1,1 -k2n
+compare 'numeric unique' sort c  -nu
+compare 'no newline'     sort h
+
+case_start uniq
+compare 'plain'          uniq e
+compare 'count'          uniq e  -c
+compare 'repeated'       uniq e  -d
+compare 'unique only'    uniq e  -u
+compare 'ignore case'    uniq f  -i
+compare 'skip fields'    uniq d  -f1
+compare 'skip chars'     uniq e  -s1
+compare 'width'          uniq e  -w2
+compare 'count repeated' uniq e  -cd
+
+case_start head
+compare 'default'        head i
+compare 'count'          head i  -n 3
+compare 'joined'         head i  -n3
+compare 'short'          head i  -3
+compare 'zero'           head i  -n 0
+compare 'bytes'          head a  -c 10
+compare 'more than have' head a  -n 100
+compare 'two files'      head -  -n 2 "$work/a" "$work/b"
+compare 'no newline'     head h  -n 1
+
+case_start tail
+compare 'default'        tail i
+compare 'count'          tail i  -n 3
+compare 'joined'         tail i  -n3
+compare 'short'          tail i  -3
+compare 'from line'      tail i  -n +12
+compare 'bytes'          tail a  -c 10
+compare 'more than have' tail a  -n 100
+compare 'two files'      tail -  -n 2 "$work/a" "$work/b"
+compare 'no newline'     tail h  -n 1
+
+case_start wc
+compare 'default'        wc a
+compare 'lines'          wc a  -l
+compare 'words'          wc a  -w
+compare 'bytes'          wc a  -c
+compare 'characters'     wc a  -m
+compare 'named'          wc -  "$work/a"
+compare 'two files'      wc -  "$work/a" "$work/b"
+compare 'lines named'    wc -  -l "$work/a"
+compare 'lines two'      wc -  -l "$work/a" "$work/b"
+compare 'no newline'     wc h
+compare 'empty'          wc k  -l
+
+case_start rev
+compare 'plain'          rev a
+compare 'blank lines'    rev k
+compare 'no newline'     rev h
+
+case_start nl
+compare 'default'        nl a
+compare 'all lines'      nl a  -ba
+compare 'width'          nl a  -w3
+compare 'separator'      nl a  -s:
+compare 'start'          nl a  -v5
+compare 'step'           nl a  -i2
+compare 'blank heavy'    nl k
+
+case_start fold
+compare 'default'        fold a
+compare 'width'          fold a  -w 8
+compare 'joined width'   fold a  -w8
+compare 'spaces'         fold a  -w 8 -s
+compare 'narrow'         fold a  -w 3
+compare 'bytes'          fold g  -w 4 -b
+compare 'no newline'     fold h  -w 5
+
+case_start tee
+compare 'passthrough'    tee a  "$work/tee1"
+compare 'append'         tee a  -a "$work/tee2"
+
+
+#       Harder cases. Everything above was written alongside the code and
+#       agrees for that reason; these were written to disagree.
+
+printf 'aaa\nab\nabab\na\n\nbbb\n' > "$work/m"
+printf '  leading blanks\n\ttab first\nx  y   z\n' > "$work/n"
+printf '0005\n5\n5.10\n5.9\n-0\n+7\n007\nnotanumber\n' > "$work/o"
+printf 'a,b,,c\n,x,y\nsingle\n' > "$work/p"
+printf 'AAA\naaa\nBBB\nbbb\nAAA\n' > "$work/q"
+printf 'field1 field2 field3\nz1 a2 m3\nz1 b2 a3\n' > "$work/r"
+printf 'one\ntwo\nthree\n' > "$work/s"
+printf 'x\ty\tz\n' > "$work/t"
+printf 'The quick brown fox jumps over the lazy dog again and again today\n' > "$work/u"
+
+case_start grep2
+compare 'nested star'    grep m  '\(ab\)*'
+compare 'group star'     grep m  '^\(ab\)*$'
+compare 'empty star'     grep m  '^a*$'
+compare 'dot anchor'     grep m  '^.$'
+compare 'star of dot'    grep m  '^.*b$'
+compare 'escaped dot'    grep p  '\.'
+compare 'literal dot'    grep b  'one\.two'
+compare 'bracket rbrack' grep p  '[],]'
+compare 'bracket dash'   grep p  '[a-]'
+compare 'bracket caret'  grep p  '[^abc]'
+compare 'interval exact' grep m  '^a\{3\}$'
+compare 'interval range' grep m  '^a\{1,2\}$'
+compare 'interval open'  grep m  '^a\{2,\}$'
+compare 'ere interval'   grep -  -E '^(ab){2}$' "$work/m"
+compare 'ere group opt'  grep -  -E '^(ab)?a$' "$work/m"
+compare 'ere nested'     grep -  -E '^((a|b)+)$' "$work/m"
+compare 'ere alt anchor' grep -  -E '^(aaa|bbb)$' "$work/m"
+compare 'ere dollar alt' grep -  -E 'a$|b$' "$work/m"
+compare 'backref twice'  grep m  '\(a\)\1'
+compare 'case class'     grep q  -i '[a-b]\{3\}'
+compare 'count invert'   grep m  -cv a
+compare 'line num inv'   grep m  -nv a
+compare 'multiple e'     grep m  -e aaa -e bbb
+compare 'pattern star1'  grep m  '*a'
+compare 'caret middle'   grep m  'a^b'
+compare 'dollar middle'  grep m  'a$b'
+compare 'blank line'     grep m  '^$'
+compare 'not blank'      grep m  -v '^$'
+compare 'word only'      grep u  -w the
+compare 'word case'      grep u  -iw the
+
+case_start sed2
+compare 'star empty g'   sed m  's/a*/X/g'
+compare 'anchor empty g' sed m  's/^/> /'
+compare 'end append'     sed m  's/$/ </'
+compare 'group swap'     sed r  's/\([a-z]*\)\([0-9]\)/\2\1/'
+compare 'nested group'   sed r  's/\(\([a-z]\)[0-9]\)/[\1|\2]/'
+compare 'amp escape'     sed s  's/one/\&/'
+compare 'newline in rep' sed s  's/one/a\nb/'
+compare 'tab in rep'     sed s  's/one/a\tb/'
+compare 'backslash rep'  sed s  's/one/a\\b/'
+compare 'range to end'   sed i  -n '10,$p'
+compare 'range one line' sed i  -n '5,3p'
+compare 'regex to num'   sed i  -n '/3/,5p'
+compare 'step of range'  sed i  '2,4s/^/> /'
+compare 'negate range'   sed i  -n '2,4!p'
+compare 'block many'     sed i  -n '3,5{s/^/> /;p}'
+compare 'quit after sub' sed i  '3{s/^/> /;q}'
+compare 'last only'      sed i  -n '$='
+compare 'delete last'    sed i  '$d'
+compare 'y with escape'  sed t  'y/\t/ /'
+compare 'sub then sub'   sed s  's/one/two/;s/two/three/'
+compare 'global anchor'  sed u  's/a/A/g'
+compare 'no match keep'  sed s  's/zzz/X/'
+compare 'print doubles'  sed s  'p'
+compare 'N join'         sed s  'N;s/\n/+/'
+compare 'multiple files' sed -  -n '$p' "$work/s" "$work/m"
+compare 'char class rep' sed n  's/[[:blank:]]\+/ /g'
+compare 'leading blanks' sed n  's/^[ \t]*//'
+
+case_start cut2
+compare 'comma delim'    cut p  -d, -f2
+compare 'empty fields'   cut p  -d, -f3
+compare 'out of order'   cut p  -d, -f3,1
+compare 'repeat field'   cut p  -d, -f2,2
+compare 'char past end'  cut s  -c1-100
+compare 'char single'    cut s  -c2
+compare 'field all'      cut p  -d, -f1-
+compare 'space delim'    cut u  '-d ' -f2,4
+
+case_start tr2
+compare 'octal'          tr s  '\157' O
+compare 'repeat set'     tr s  'one' '[X*]'
+compare 'complement sub' tr s  -c 'o\n' X
+compare 'squeeze all'    tr q  -s '[:upper:]'
+compare 'delete class'   tr n  -d '[:blank:]'
+compare 'upper to lower' tr q  '[:upper:]' '[:lower:]'
+compare 'longer set two' tr s  ab abcdef
+compare 'newline delete' tr s  -d '\n'
+
+case_start sort2
+compare 'numeric mixed'  sort o  -n
+compare 'numeric rev'    sort o  -nr
+compare 'numeric unique' sort o  -nu
+compare 'fold unique'    sort q  -fu
+compare 'stable keys'    sort r  -k1,1
+compare 'key char off'   sort r  -k1.2
+compare 'key two fields' sort r  -k2,3
+compare 'key numeric b'  sort n  -k2b
+compare 'blank lines'    sort k
+compare 'reverse unique' sort q  -ru
+compare 'tab separator'  sort t  -t'	' -k2
+compare 'key past end'   sort r  -k9
+compare 'whole then key' sort r  -k2 -k1
+
+case_start uniq2
+compare 'all same'       uniq q  -c
+compare 'no repeats'     uniq s  -c
+compare 'd on unique'    uniq s  -d
+compare 'u on all dup'   uniq q  -u
+compare 'skip two'       uniq r  -f2
+compare 'width one'      uniq q  -w1
+compare 'ignore case c'  uniq q  -ic
+
+case_start format
+compare 'wc pipe wide'   wc a
+compare 'wc lines pipe'  wc i  -l
+compare 'wc all flags'   wc a  -lwc
+compare 'wc chars named' wc -  -m "$work/a"
+compare 'nl no number'   nl k  -bn
+compare 'nl left'        nl a  -nln
+compare 'nl zeros'       nl a  -nrz
+compare 'nl width one'   nl a  -w1
+compare 'fold long'      fold u  -w 20
+compare 'fold spaces'    fold u  -w 20 -s
+compare 'fold tabs'      fold g  -w 6
+compare 'head bytes big' head a  -c 1000
+compare 'tail bytes big' tail a  -c 1000
+compare 'tail plus one'  tail i  -n +1
+compare 'rev tabs'       rev t
+
+
+#       A third batch: empty inputs, missing files, long lines, and the
+#       places where a backtracking machine is expected to be slow or wrong.
+
+: > "$work/empty"
+awk 'BEGIN { for (i = 0; i < 4000; i++) printf "a"; printf "\n" }' > "$work/long"
+awk 'BEGIN { for (i = 0; i < 20000; i++) printf "%d line %d\n", (i * 7919) % 20000, i }' > "$work/big"
+printf 'a b\tc  d\n' > "$work/w"
+printf 'x\n' > "$work/one"
+
+case_start empty
+compare 'grep'           grep empty  a
+compare 'sed'            sed empty   's/a/b/'
+compare 'cut'            cut empty   -c1
+compare 'tr'             tr empty    a b
+compare 'sort'           sort empty
+compare 'uniq'           uniq empty
+compare 'head'           head empty
+compare 'tail'           tail empty
+compare 'wc'             wc empty
+compare 'rev'            rev empty
+compare 'nl'             nl empty
+compare 'fold'           fold empty
+compare 'sort unique'    sort empty  -u
+compare 'uniq count'     uniq empty  -c
+compare 'wc lines'       wc empty    -l
+
+case_start missing
+compare 'grep gone'      grep -  a "$work/nosuchfile"
+compare 'wc gone'        wc -    "$work/nosuchfile"
+compare 'head gone'      head -  "$work/nosuchfile"
+compare 'grep one gone'  grep -  a "$work/a" "$work/nosuchfile"
+
+case_start long
+compare 'grep dot star'  grep long  '^a*$'
+compare 'grep anchored'  grep long  'a\{4000\}'
+compare 'grep tail'      grep long  'aaaa$'
+compare 'sed whole'      sed long   's/a*/X/'
+compare 'sed each'       sed long   's/a/b/g'
+compare 'wc'             wc long
+compare 'fold'           fold long  -w 100
+compare 'rev'            rev long
+compare 'cut'            cut long   -c3990-
+
+case_start big
+compare 'sort'           sort big
+compare 'sort numeric'   sort big   -n
+compare 'sort key'       sort big   -k3n
+compare 'sort unique'    sort big   -u
+compare 'uniq'           uniq big
+compare 'wc'             wc big
+compare 'grep count'     grep big   -c '^1'
+compare 'head'           head big   -n 5
+compare 'tail'           tail big   -n 5
+compare 'sed'            sed big    -n '19999p'
+
+case_start edges
+compare 'cut mixed sep'  cut w   '-d ' -f2
+compare 'cut tab sep'    cut w   -f2
+compare 'sort one line'  sort one
+compare 'uniq one line'  uniq one -c
+compare 'nl one line'    nl one
+compare 'tail one'       tail one -n 5
+compare 'head zero c'    head one -c 0
+compare 'grep both'      grep one -c x
+compare 'tr no set two'  tr one  -d x
+compare 'fold width 1'   fold one -w 1
+compare 'sed s empty re' sed one 's///'
+compare 'sed multiple !' sed i   -n '3!!p'
+compare 'wc four flags'  wc a    -lwmc
+compare 'sort t missing' sort b  -t: -k3
+compare 'uniq f past'    uniq a  -f9
+compare 'cut f zero pad' cut b   -d: -f1,1,1
+
+
+#       Several files at once, which is where one arena shared between an
+#       index, the lines and the key bounds either holds up or does not.
+
+case_start manyfiles
+compare 'tail three'     tail -  -n 2 "$work/a" "$work/b" "$work/e"
+compare 'tail three all' tail -  -n 100 "$work/s" "$work/one" "$work/k"
+compare 'tail bytes two' tail -  -c 5 "$work/a" "$work/b"
+compare 'tail bytes q'   tail -  -q -c 5 "$work/a" "$work/b"
+compare 'head three'     head -  -n 2 "$work/a" "$work/b" "$work/e"
+compare 'head bytes two' head -  -c 5 "$work/a" "$work/b"
+compare 'sort two'       sort -  "$work/a" "$work/e"
+compare 'sort key two'   sort -  -k2 "$work/d" "$work/r"
+compare 'sort numeric two' sort - -n "$work/c" "$work/o"
+compare 'sort unique two' sort - -u "$work/e" "$work/q"
+compare 'wc three'       wc -    "$work/a" "$work/b" "$work/e"
+compare 'grep three'     grep -  -n a "$work/a" "$work/b" "$work/e"
+compare 'nl two'         nl -    "$work/s" "$work/one"
+compare 'rev two'        rev -   "$work/a" "$work/b"
+compare 'cut two'        cut -   -d: -f2 "$work/b" "$work/p"
+compare 'fold two'       fold -  -w 6 "$work/a" "$work/s"
+compare 'tail empty mix' tail -  -n 2 "$work/empty" "$work/s"
+compare 'sort empty mix' sort -  "$work/empty" "$work/s"
+
+printf '\n  %s of %s\n' "$pass" "$((pass + fail))"
