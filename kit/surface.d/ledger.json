@@ -1,0 +1,6 @@
+{
+  "uname --all": "deliberate: the operating system name is not in struct utsname and is not ours to claim on another system's behalf. This one answers Moonwater, and -a stops at the machine for the same reason.",
+  "uname --operating-system": "deliberate: the operating system name is not in struct utsname and is not ours to claim on another system's behalf. This one answers Moonwater, and -a stops at the machine for the same reason.",
+  "uname -a": "deliberate: the operating system name is not in struct utsname and is not ours to claim on another system's behalf. This one answers Moonwater, and -a stops at the machine for the same reason.",
+  "uname -o": "deliberate: the operating system name is not in struct utsname and is not ours to claim on another system's behalf. This one answers Moonwater, and -a stops at the machine for the same reason."
+}

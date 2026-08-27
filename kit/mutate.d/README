@@ -1,0 +1,59 @@
+        What can the test suite not see?
+
+            python3 kit/mutate.d/mutate.py --list         what would be tried
+            python3 kit/mutate.d/mutate.py                the run
+            python3 kit/mutate.d/mutate.py --target text  one target
+
+        A suite that passes proves nothing by itself: it passes on the code it
+        was written against. Change the code, and if it still passes, that
+        change is invisible to it -- and so is the bug that would look the
+        same. This makes those changes one at a time and reports what nothing
+        noticed. A survivor is a gap in the tests, not a bug in the code.
+
+        Counts are not coverage. 732223 checks agreeing is what the suite says
+        about itself; this is what somebody else says about the suite.
+
+        Three outcomes, never two:
+
+            caught     the lane failed, which is what should happen
+            survived   the lane passed, so nothing can tell the difference
+            invalid    it did not build, or it did not stop
+
+        Folding invalid into either of the others ruins it: into survived and
+        the list drowns in noise, into caught and real gaps disappear.
+
+        Each mutation is named by the routine it is in and a hash of the text
+        around it, never by a line number, because these files move. That is
+        what lets ledger.json hold a verdict on a survivor that has been
+        looked at -- some genuinely change nothing -- and lets the next run
+        separate the ones already judged from the ones nobody has seen.
+
+        Each target names the lane that would have to notice it. Mutating
+        text.c and running verify proves nothing, so the pairing is written
+        down in TARGETS rather than assumed.
+
+        The operators, in the order they earn their keep:
+
+            plusminus   a number, one either way. Both real bugs found in this
+                        library were this shape: a restart one label out and a
+                        flag one byte out.
+            target      where a branch goes, rather than whether it is taken.
+                        A condition flip cannot produce the string_find bug;
+                        this can.
+            branch      the sense of a branch, and C relational operators
+            swar        one of the three SWAR constants for another. Plus one
+                        on those means nothing -- every byte carries a bit
+                        pattern the algorithm rests on -- so they are swapped
+                        instead. The strrchr bug was exactly this shape.
+
+        Calibrated against both bugs this library actually had: the swar
+        operator over string_last_of_or_end is caught 12 of 12, and the
+        string_find restart is caught by the cases in verify.c written for it.
+        A harness that cannot find a bug you have already proved is a broken
+        harness, so that check comes first.
+
+        What this does not tell you. It measures whether the tests can detect
+        changes to code that is here. It says nothing about behaviour never
+        written -- a coreutils flag not implemented, an exit status never
+        emitted. That is the other half of being 1:1 with the system's tools
+        and it needs a different probe. A clean run here is not that claim.

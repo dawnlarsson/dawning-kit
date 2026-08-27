@@ -1,0 +1,60 @@
+#!/bin/sh
+#
+#       Run the suite where the reference tools are.
+#
+#           sh kit/onbox <name> [lane ...]      run lanes for this working copy
+#           sh kit/onbox <name> --surface       the flag surface, tool by tool
+#           sh kit/onbox <name> --surface grep  one tool
+#
+#       This tree is developed on a Mac and compared against GNU coreutils and
+#       dash, which are not on a Mac: BSD's head, sed and sort answer different
+#       questions and comparing against them proves the wrong thing. So the
+#       working copy is copied to the build machine and the lanes run there.
+#
+#       <name> is this working copy's own directory on that machine, so two
+#       people -- or two agents -- working at once do not overwrite each other.
+#
+set -u
+
+[ "$#" -ge 1 ] || { echo "onbox: needs a name for this working copy" >&2; exit 1; }
+
+name=$1
+shift
+
+case "$name" in
+        */*|"") echo "onbox: the name is one word, not a path" >&2; exit 1 ;;
+esac
+
+host=${MOONWATER_BUILD_HOST:-box}
+remote="dawning-$name"
+
+# shellcheck disable=SC1007
+here=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+
+rsync -az --delete \
+      --exclude '.git' --exclude 'dist' --exclude 'linux' --exclude 'artifacts' \
+      --exclude 'fs' --exclude '*.o' \
+      "$here/" "$host:~/$remote/" || {
+        echo "onbox: could not copy to $host" >&2
+        exit 1
+}
+
+# TMPDIR inside the copy, because /tmp on that machine has a per user quota
+# and a build that cannot write its assembly file fails in a way that reads
+# like a test failure rather than like a full disk.
+if [ "${1:-}" = "--surface" ]; then
+        shift
+        tools=""
+        for t in "$@"; do tools="$tools --tool $t"; done
+        # shellcheck disable=SC2029,SC2086
+        ssh "$host" "cd ~/$remote && mkdir -p scratch bin && \
+                TMPDIR=\$PWD/scratch sh kit/build programs/shell.c bin/shell >/dev/null 2>&1 && \
+                for n in cat grep sed cut tr sort uniq head tail wc tee rev nl fold \
+                         basename dirname seq yes env id uname readlink realpath; do \
+                        ln -sf shell bin/\$n; done && \
+                python3 kit/surface.d/surface.py --bin \$PWD/bin$tools"
+        exit $?
+fi
+
+# shellcheck disable=SC2029
+ssh "$host" "cd ~/$remote && mkdir -p scratch && TMPDIR=\$PWD/scratch sh src/test/run $*"
