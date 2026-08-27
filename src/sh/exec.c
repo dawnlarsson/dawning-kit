@@ -572,13 +572,28 @@ static b32 exec_simple(b32 index)
         token_overflow = false;
 
         for (at = 0; at < node->word_count && count < MAX_TOKENS; at++)
-                shell_argv[count++] = shell_expand_word(parse_words[node->word + at]);
+        {
+                string_address word = parse_words[node->word + at];
+
+                /*
+                        An assignment in front of a command is expanded whole:
+                        x="a b" sets x to one value, not two words, and does
+                        not glob. Only in front -- past the command name the
+                        same text is an ordinary argument.
+                */
+                if (count == first && exec_is_assignment(word))
+                {
+                        shell_argv[count++] = shell_expand_word(word);
+                        first++;
+                        continue;
+                }
+
+                count += (b32)shell_expand_fields(word, shell_argv + count,
+                                                  MAX_TOKENS - count);
+        }
 
         shell_argv[count] = null;
         shell_argc = count;
-
-        while (first < count && exec_is_assignment(shell_argv[first]))
-                first++;
 
         // Assignments with nothing after them are the command; assignments in
         // front of one are its environment.

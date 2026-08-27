@@ -621,6 +621,7 @@ fn run_line(string_address line)
 
         exec_program(root);
         parse_reset();
+        shell_expand_reset();
 
         /*
                 A terminal wants each line the moment it happens. A script does
