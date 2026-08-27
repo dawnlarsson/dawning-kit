@@ -34,6 +34,8 @@ export TZ=UTC0
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT INT TERM
 
+started=$(date +%s)
+
 pass=0
 fail=0
 current=""
@@ -85,6 +87,24 @@ near() {
         report bad "$name" "want [$(head -c 60 "$work/want" | tr '\n' '|')] got [$(head -c 60 "$work/got" | tr '\n' '|')]"
 }
 
+# When a file was last written, or the word now.
+#
+# The two trees are built one after the other and the two tools run one after
+# the other, so anything either of them creates carries the second it happened
+# to be created in. Comparing those fails whenever the pair falls either side
+# of a tick -- a coin flip with nothing to do with the tools. A time from
+# before the suite started is compared exactly, which is what touch -d and
+# cp -p are for.
+modified() {
+        stamp=$(stat -c '%Y' "$1" 2>/dev/null)
+
+        if [ -n "$stamp" ] && [ "$stamp" -ge "$started" ]; then
+                echo now
+        else
+                echo "$stamp"
+        fi
+}
+
 # A dump of a tree that captures everything the mutating tools are for.
 dump() {
         (
@@ -94,8 +114,9 @@ dump() {
                         # dump it, so the access times differ between the two
                         # dumps by construction. The modify time is the one
                         # touch and cp -p are for.
-                        printf '%s %s %s' "$entry" \
-                                "$(stat -c '%a %F %s %Y' "$entry" 2>/dev/null)" \
+                        printf '%s %s %s %s' "$entry" \
+                                "$(stat -c '%a %F %s' "$entry" 2>/dev/null)" \
+                                "$(modified "$entry")" \
                                 "$(readlink "$entry" 2>/dev/null)"
                         if [ -f "$entry" ] && [ ! -L "$entry" ]; then
                                 printf ' %s' "$(cksum < "$entry")"
@@ -455,4 +476,53 @@ effect 'forced missing' rm '$TOOL -f nothing'
 effect 'recursive force' rm '$TOOL -rf tree plain nothing'
 effect 'link'           rm '$TOOL link'
 
-printf '\n  %s of %s\n' "$pass" "$((pass + fail))"
+#
+#       Names that are awkward to hold.
+#
+#       A space, a leading dash, a newline: every one of these has been a
+#       whole class of bug in a tool that built its output by pasting words
+#       together, and nothing above uses a name harder than "beta.txt".
+#
+
+odd=$work/odd
+mkdir -p "$odd/a dir"
+printf 'x\n' > "$odd/with space"
+printf 'x\n' > "$odd/-dash"
+printf 'xx\n' > "$odd/two  spaces"
+printf 'x\n' > "$odd/a dir/inner file"
+printf 'x\n' > "$odd/dot.in.the.middle"
+ln -s "with space" "$odd/link to space"
+ln -s nowhere "$odd/broken"
+ln -s loop "$odd/loop"
+
+group awkward
+same 'basename space'   basename "$odd/with space"
+same 'basename dash'    basename "$odd/-dash"
+same 'dirname space'    dirname "$odd/a dir/inner file"
+same 'realpath space'   realpath "$odd/with space"
+same 'readlink space'   readlink "$odd/link to space"
+same 'readlink broken'  readlink "$odd/broken"
+same 'stat space'       stat "$odd/with space"
+near 'stat link'        "grep -v '^Access: 2'" stat "$odd/link to space"
+near 'stat broken'      "grep -v '^Access: 2'" stat "$odd/broken"
+near 'stat loop'        "grep -v '^Access: 2'" stat "$odd/loop"
+same 'long listing'     ls -l "$odd"
+same 'long inner'       ls -l "$odd/a dir"
+near 'listed'           'cat' ls "$odd"
+near 'found'            "LC_ALL=C sort" find "$odd"
+near 'measured'         "LC_ALL=C sort" du -a "$odd"
+same 'realpath of link' realpath "$odd/link to space"
+same 'realpath broken'  realpath "$odd/broken"
+same 'realpath loop'    realpath "$odd/loop"
+effect 'copy a space'   cp '$TOOL tree/one "a name with spaces"'
+effect 'move a space'   mv '$TOOL tree/one "a name with spaces"'
+effect 'remove a space' rm '$TOOL "nothing here" 2>/dev/null'
+effect 'make a space'   mkdir '$TOOL "a made dir"'
+effect 'touch a space'  touch '$TOOL "a touched file"'
+effect 'link a space'   ln '$TOOL -s "tree/one" "a linked name"'
+
+printf '  %-12s %s of %s\n' files "$pass" "$((pass + fail))"
+[ -z "${TEST_TALLY:-}" ] ||
+        printf 'files %s %s\n' "$pass" "$((pass + fail))" >> "$TEST_TALLY"
+
+[ "$fail" = 0 ]
