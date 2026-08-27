@@ -25,6 +25,10 @@ static b32 screen_term()
                 return 1;
         }
 
+        // Named, because the compositor puts a window of its own beside this
+        // one and two untitled terminals are a guessing game.
+        string_copy((string_address)window->title, (string_address) "shell");
+
         cells = window_cells(window);
         COLUMNS = window->columns;
         ROWS = window->rows;
