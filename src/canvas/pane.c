@@ -122,15 +122,35 @@ static void pane_free(struct pane *pane)
         kfree(pane);
 }
 
+/*
+        How many cells the desktop has room for, the frame counted.
+
+        A window wears a titlebar and a border, so a grid measured against the
+        bare screen is a window larger than the screen it has to fit on. At a
+        scale of one the terminal never asked for enough cells to notice; at
+        two it did, and came out taller than the display, centred to a negative
+        y with its titlebar off the top of it.
+*/
+static void desktop_grid(unsigned int *columns, unsigned int *rows)
+{
+        int width = desktop.width - canvas_border * 2;
+        int height = desktop.height - (canvas_title + canvas_border * 3);
+
+        *columns = (unsigned int)(max(width, 0) / canvas_cell_w);
+        *rows = (unsigned int)(max(height, 0) / canvas_cell_h);
+}
+
 static struct pane *pane_create(unsigned int width, unsigned int height,
                                 unsigned int columns, unsigned int rows)
 {
-        unsigned int max_columns = (unsigned int)(desktop.width / canvas_cell_w);
-        unsigned int max_rows = (unsigned int)(desktop.height / canvas_cell_h);
-        unsigned long cell_bytes = (unsigned long)max_columns * max_rows *
-                                   sizeof(struct window_cell);
+        unsigned int max_columns, max_rows;
+        unsigned long cell_bytes;
         struct pane *pane;
         unsigned long bytes;
+
+        desktop_grid(&max_columns, &max_rows);
+        cell_bytes = (unsigned long)max_columns * max_rows *
+                     sizeof(struct window_cell);
 
         /*
                 A window of cells is allocated for as many as the desktop
@@ -241,11 +261,13 @@ static struct pane *pane_create(unsigned int width, unsigned int height,
 static __maybe_unused struct pane *pane_create_owned(unsigned int columns,
                                                      unsigned int rows)
 {
-        unsigned int max_columns = (unsigned int)(desktop.width / canvas_cell_w);
-        unsigned int max_rows = (unsigned int)(desktop.height / canvas_cell_h);
-        unsigned long bytes = PAGE_ALIGN((unsigned long)max_columns * max_rows *
-                                         sizeof(struct window_cell));
+        unsigned int max_columns, max_rows;
+        unsigned long bytes;
         struct pane *pane;
+
+        desktop_grid(&max_columns, &max_rows);
+        bytes = PAGE_ALIGN((unsigned long)max_columns * max_rows *
+                           sizeof(struct window_cell));
 
         if (!columns || !rows || !max_columns || !max_rows)
                 return NULL;
