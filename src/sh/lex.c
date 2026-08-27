@@ -63,6 +63,22 @@ static b32 lex_count;
                      which is the complement of the two above plus the things
                      that begin a quote or an expansion
 */
+/*
+        One class per byte, not one set per question.
+
+        The scanner asks what kind of byte it is holding once, and the answer
+        is a single load. Three separate membership tests would be three, and
+        the assembly below is built around this table being the only thing it
+        has to consult.
+*/
+#define LEX_ORDINARY 0
+#define LEX_BLANK 1
+#define LEX_OP 2
+#define LEX_QUOTE 3
+#define LEX_ESCAPE 4
+#define LEX_STOP 5
+
+static b8 lex_class[256];
 static b8 lex_blank[STRING_SET_BYTES];
 static b8 lex_ordinary[STRING_SET_BYTES];
 static b8 lex_operator[STRING_SET_BYTES];
@@ -95,6 +111,25 @@ fn lex_prepare()
 
                 for (positive i = 0; decides[i]; i++)
                         lex_ordinary[decides[i]] = 0;
+        }
+
+        // The same knowledge as the sets above, as one byte per byte value.
+        memory_fill(lex_class, LEX_ORDINARY, sizeof(lex_class));
+
+        lex_class[0] = LEX_STOP;
+        lex_class['\n'] = LEX_STOP;
+        lex_class['#'] = LEX_STOP;
+        lex_class[' '] = LEX_BLANK;
+        lex_class['\t'] = LEX_BLANK;
+        lex_class['\''] = LEX_QUOTE;
+        lex_class['"'] = LEX_QUOTE;
+        lex_class['\\'] = LEX_ESCAPE;
+
+        {
+                static const string_address ops = "|&;<>()";
+
+                for (positive i = 0; ops[i]; i++)
+                        lex_class[ops[i]] = LEX_OP;
         }
 
         lex_ready = true;

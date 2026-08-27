@@ -2583,6 +2583,86 @@ ASM_FUNC(moonwater_positive_to_string)
     "9:      \n"
     ASM_RET
     ASM_END(moonwater_span)
+    // The lexer's inner loop.
+    //
+    //   moonwater_lex_word(source, into, class) -> packed result
+    //
+    // Copies one word out of a line, quotes and escapes intact, stopping at
+    // the first byte that ends a word. Returns how many bytes it read in the
+    // low half and how many it wrote in the high half, because a word with a
+    // quote in it produces fewer bytes than it consumes and both numbers are
+    // wanted.
+    //
+    // This is where a lexer spends its time: everything else is deciding what
+    // to do once per token, and this is a byte per byte.
+    ASM_FUNC(moonwater_lex_word)
+    "        push    %rbx\n"
+    "        xor     %r8, %r8\n"                 // bytes read
+    "        xor     %r9, %r9\n"                 // bytes written
+    // The ordinary run: the common case, and the whole reason this is here.
+    "1:      movzbl  (%rdi,%r8), %eax\n"
+    "        movzbl  (%rdx,%rax), %ecx\n"
+    "        test    %ecx, %ecx\n"
+    "        jnz     2f\n"
+    "        mov     %al, (%rsi,%r9)\n"
+    "        inc     %r8\n"
+    "        inc     %r9\n"
+    "        jmp     1b\n"
+    // Not ordinary. Blank, operator and stop all end the word.
+    "2:      cmp     $3, %ecx\n"
+    "        jb      8f\n"
+    "        cmp     $5, %ecx\n"
+    "        je      8f\n"
+    "        cmp     $4, %ecx\n"
+    "        je      5f\n"
+    // A quote: copy it, then everything up to its partner, then the partner.
+    "        mov     %al, %bl\n"
+    "        mov     %al, (%rsi,%r9)\n"
+    "        inc     %r8\n"
+    "        inc     %r9\n"
+    "3:      movzbl  (%rdi,%r8), %eax\n"
+    "        test    %al, %al\n"
+    "        jz      1b\n"
+    "        cmp     %al, %bl\n"
+    "        je      4f\n"
+    // Inside a double quote a backslash still escapes the byte after it.
+    "        cmp     $0x22, %bl\n"
+    "        jne     31f\n"
+    "        cmp     $0x5c, %al\n"
+    "        jne     31f\n"
+    "        movzbl  1(%rdi,%r8), %ecx\n"
+    "        test    %cl, %cl\n"
+    "        jz      31f\n"
+    "        mov     %al, (%rsi,%r9)\n"
+    "        inc     %r8\n"
+    "        inc     %r9\n"
+    "        movzbl  (%rdi,%r8), %eax\n"
+    "31:     mov     %al, (%rsi,%r9)\n"
+    "        inc     %r8\n"
+    "        inc     %r9\n"
+    "        jmp     3b\n"
+    "4:      mov     %al, (%rsi,%r9)\n"
+    "        inc     %r8\n"
+    "        inc     %r9\n"
+    "        jmp     1b\n"
+    // A backslash: it and whatever follows are one unit and both are kept.
+    "5:      mov     %al, (%rsi,%r9)\n"
+    "        inc     %r8\n"
+    "        inc     %r9\n"
+    "        movzbl  (%rdi,%r8), %eax\n"
+    "        test    %al, %al\n"
+    "        jz      1b\n"
+    "        mov     %al, (%rsi,%r9)\n"
+    "        inc     %r8\n"
+    "        inc     %r9\n"
+    "        jmp     1b\n"
+    "8:      movb    $0, (%rsi,%r9)\n"
+    "        mov     %r9, %rax\n"
+    "        shl     $32, %rax\n"
+    "        or      %r8, %rax\n"
+    "        pop     %rbx\n"
+    ASM_RET
+    ASM_END(moonwater_lex_word)
 );
 #ifdef KERNEL_MODE
 ASM_EXPORT(memchr);
@@ -3851,6 +3931,81 @@ ASM_FUNC(moonwater_positive_to_string)
     "3:      mov     x0, x2\n"
     ASM_RET
     ASM_END(moonwater_span)
+    // The lexer's inner loop.
+    //
+    //   moonwater_lex_word(source, into, class) -> packed result
+    //
+    // Copies one word out of a line, quotes and escapes intact, stopping at
+    // the first byte that ends a word. Returns how many bytes it read in the
+    // low half and how many it wrote in the high half, because a word with a
+    // quote in it produces fewer bytes than it consumes and both numbers are
+    // wanted.
+    //
+    // Nothing here is callee saved. x86_64 pushes rbx because it has run out
+    // of registers by the time it needs somewhere to keep the quote it is
+    // looking for; here x3 through x7 are all scratch and the quote fits.
+    ASM_FUNC(moonwater_lex_word)
+    "        mov     x3, xzr\n"                  // bytes read
+    "        mov     x4, xzr\n"                  // bytes written
+    // The ordinary run: the common case, and the whole reason this is here.
+    "1:      ldrb    w5, [x0, x3]\n"
+    "        ldrb    w6, [x2, x5]\n"
+    "        cbnz    w6, 2f\n"
+    "        strb    w5, [x1, x4]\n"
+    "        add     x3, x3, #1\n"
+    "        add     x4, x4, #1\n"
+    "        b       1b\n"
+    // Not ordinary. Blank, operator and stop all end the word.
+    "2:      cmp     w6, #3\n"
+    "        b.lo    8f\n"
+    "        cmp     w6, #5\n"
+    "        b.eq    8f\n"
+    "        cmp     w6, #4\n"
+    "        b.eq    5f\n"
+    // A quote: copy it, then everything up to its partner, then the partner.
+    "        mov     w7, w5\n"
+    "        strb    w5, [x1, x4]\n"
+    "        add     x3, x3, #1\n"
+    "        add     x4, x4, #1\n"
+    "3:      ldrb    w5, [x0, x3]\n"
+    "        cbz     w5, 1b\n"
+    "        cmp     w5, w7\n"
+    "        b.eq    4f\n"
+    // Inside a double quote a backslash still escapes the byte after it.
+    "        cmp     w7, #34\n"
+    "        b.ne    31f\n"
+    "        cmp     w5, #92\n"
+    "        b.ne    31f\n"
+    "        add     x6, x3, #1\n"
+    "        ldrb    w6, [x0, x6]\n"
+    "        cbz     w6, 31f\n"
+    "        strb    w5, [x1, x4]\n"
+    "        add     x3, x3, #1\n"
+    "        add     x4, x4, #1\n"
+    "        ldrb    w5, [x0, x3]\n"
+    "31:     strb    w5, [x1, x4]\n"
+    "        add     x3, x3, #1\n"
+    "        add     x4, x4, #1\n"
+    "        b       3b\n"
+    "4:      strb    w5, [x1, x4]\n"
+    "        add     x3, x3, #1\n"
+    "        add     x4, x4, #1\n"
+    "        b       1b\n"
+    // A backslash: it and whatever follows are one unit and both are kept.
+    "5:      strb    w5, [x1, x4]\n"
+    "        add     x3, x3, #1\n"
+    "        add     x4, x4, #1\n"
+    "        ldrb    w5, [x0, x3]\n"
+    "        cbz     w5, 1b\n"
+    "        strb    w5, [x1, x4]\n"
+    "        add     x3, x3, #1\n"
+    "        add     x4, x4, #1\n"
+    "        b       1b\n"
+    "8:      strb    wzr, [x1, x4]\n"
+    "        lsl     x0, x4, #32\n"
+    "        orr     x0, x0, x3\n"
+    ASM_RET
+    ASM_END(moonwater_lex_word)
 );
 #ifdef KERNEL_MODE
 ASM_EXPORT(strchrnul);
@@ -5175,6 +5330,93 @@ ASM_FUNC(moonwater_positive_to_string)
     "3:      mv      a0, a2\n"
     ASM_RET
     ASM_END(moonwater_span)
+    // The lexer's inner loop.
+    //
+    //   moonwater_lex_word(source, into, class) -> packed result
+    //
+    // Copies one word out of a line, quotes and escapes intact, stopping at
+    // the first byte that ends a word. Returns how many bytes it read in the
+    // low half and how many it wrote in the high half, because a word with a
+    // quote in it produces fewer bytes than it consumes and both numbers are
+    // wanted.
+    //
+    // No index addressing here, so every load and store is an add and then a
+    // byte: base plus offset is the only form riscv has. Nothing is callee
+    // saved -- a3, a4 and t0 through t4 are all scratch and the whole of the
+    // state fits in them.
+    ASM_FUNC(moonwater_lex_word)
+    "        mv      a3, zero\n"
+    "        mv      a4, zero\n"
+    // The ordinary run: the common case, and the whole reason this is here.
+    "1:      add     t3, a0, a3\n"
+    "        lbu     t0, 0(t3)\n"
+    "        add     t4, a2, t0\n"
+    "        lbu     t1, 0(t4)\n"
+    "        bnez    t1, 2f\n"
+    "        add     t3, a1, a4\n"
+    "        sb      t0, 0(t3)\n"
+    "        addi    a3, a3, 1\n"
+    "        addi    a4, a4, 1\n"
+    "        j       1b\n"
+    // Not ordinary. Blank, operator and stop all end the word.
+    "2:      li      t4, 3\n"
+    "        bltu    t1, t4, 8f\n"
+    "        li      t4, 5\n"
+    "        beq     t1, t4, 8f\n"
+    "        li      t4, 4\n"
+    "        beq     t1, t4, 5f\n"
+    // A quote: copy it, then everything up to its partner, then the partner.
+    "        mv      t2, t0\n"
+    "        add     t3, a1, a4\n"
+    "        sb      t0, 0(t3)\n"
+    "        addi    a3, a3, 1\n"
+    "        addi    a4, a4, 1\n"
+    "3:      add     t3, a0, a3\n"
+    "        lbu     t0, 0(t3)\n"
+    "        beqz    t0, 1b\n"
+    "        beq     t0, t2, 4f\n"
+    // Inside a double quote a backslash still escapes the byte after it.
+    "        li      t4, 34\n"
+    "        bne     t2, t4, 31f\n"
+    "        li      t4, 92\n"
+    "        bne     t0, t4, 31f\n"
+    "        lbu     t4, 1(t3)\n"
+    "        beqz    t4, 31f\n"
+    "        add     t3, a1, a4\n"
+    "        sb      t0, 0(t3)\n"
+    "        addi    a3, a3, 1\n"
+    "        addi    a4, a4, 1\n"
+    "        add     t3, a0, a3\n"
+    "        lbu     t0, 0(t3)\n"
+    "31:     add     t3, a1, a4\n"
+    "        sb      t0, 0(t3)\n"
+    "        addi    a3, a3, 1\n"
+    "        addi    a4, a4, 1\n"
+    "        j       3b\n"
+    "4:      add     t3, a1, a4\n"
+    "        sb      t0, 0(t3)\n"
+    "        addi    a3, a3, 1\n"
+    "        addi    a4, a4, 1\n"
+    "        j       1b\n"
+    // A backslash: it and whatever follows are one unit and both are kept.
+    "5:      add     t3, a1, a4\n"
+    "        sb      t0, 0(t3)\n"
+    "        addi    a3, a3, 1\n"
+    "        addi    a4, a4, 1\n"
+    "        add     t3, a0, a3\n"
+    "        lbu     t0, 0(t3)\n"
+    "        beqz    t0, 1b\n"
+    "        add     t3, a1, a4\n"
+    "        sb      t0, 0(t3)\n"
+    "        addi    a3, a3, 1\n"
+    "        addi    a4, a4, 1\n"
+    "        j       1b\n"
+    "8:      add     t3, a1, a4\n"
+    "        sb      zero, 0(t3)\n"
+    "        slli    a0, a4, 32\n"
+    "        or      a0, a0, a3\n"
+    ASM_RET
+    ASM_END(moonwater_lex_word)
 );
 #ifdef KERNEL_MODE
 ASM_EXPORT(strchrnul);
@@ -5714,6 +5956,8 @@ b32 moonwater_strcmp(string_address source, string_address input);
 string_address moonwater_strchr(string_address source, p8 character);
 
 positive moonwater_span(string_address source, const b8 address_to set);
+positive moonwater_lex_word(string_address source, p8 address_to into,
+                            const b8 address_to class);
 address_any moonwater_fill(address_any destination, b8 value, positive size);
 address_any moonwater_copy(address_any destination, address_any source, positive size);
 address_any moonwater_move(address_any destination, address_any source, positive size);
