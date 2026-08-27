@@ -686,6 +686,7 @@ differs 'missing input'  '1|' 0 'cat < /nonexistent12345; echo $?'
 differs 'closed fd'      '0|' 0 'echo x >&- 2>/dev/null; echo $?'
 differs 'local goes on'  '2|after|' 0 'local v=1 2>/dev/null; echo $?; echo after'
 differs 'kill takes sig' '1|' 0 'kill -SIGTERM 999999 2>/dev/null; echo $?'
+differs 'expr is sixty four' '-9223372036854775808|' 0 'expr 9223372036854775807 + 1'
 
 #
 #       What the shell has no answer for at all.
