@@ -443,7 +443,7 @@ static void desktop_gather_panes(void)
         list_for_each_entry(pane, &desktop.windows, link)
         {
                 int x = clamp(pane->x, 0, max(desktop.width - WINDOW_MIN_WIDTH, 0));
-                int y = clamp(pane->y, 0, max(desktop.height - WINDOW_TITLE, 0));
+                int y = clamp(pane->y, 0, max(desktop.height - canvas_title, 0));
 
                 if (x == pane->x && y == pane->y)
                         continue;
@@ -513,10 +513,10 @@ static void desktop_refresh_panes(void)
                                 if (count)
                                         desktop_damage(pane->x,
                                                        pane->y +
-                                                           (pane->style & WINDOW_FRAME ? WINDOW_TITLE : 0) +
-                                                           (int)row * WINDOW_CELL_H,
+                                                           (pane->style & WINDOW_FRAME ? canvas_title : 0) +
+                                                           (int)row * canvas_cell_h,
                                                        pane->width,
-                                                       (int)count * WINDOW_CELL_H);
+                                                       (int)count * canvas_cell_h);
 
                                 pane->damage_row = 0;
                                 pane->damage_rows = 0;
