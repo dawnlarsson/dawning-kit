@@ -334,6 +334,26 @@ section strict
 
 group status
 answer 'pipeline last'   'false | true; echo $?'
+answer 'pipeline fails'  'true | false; echo $?'
+answer 'builtin succeeds' 'false; echo hi; echo $?'
+answer 'subshell exit'   '(exit 5); echo $?'
+answer 'function return' 'f() { return 4; }; f; echo $?'
+answer 'function body'   'f() { false; }; f; echo $?'
+answer 'loop body'       'for i in 1; do false; done; echo $?'
+answer 'branch taken'    'if true; then if false; then echo a; else echo b; fi; fi'
+answer 'not a command'   'nosuchcommand12345; echo $?'
+
+# A builtin that cannot fail still has to say it did not, and each of these
+# runs one after a failure so the old status is there to be left behind.
+answer 'export says so'  'false; export E=1; echo $?'
+answer 'pwd says so'     'false; pwd > /dev/null; echo $?'
+answer 'shift says so'   'false; set -- a b; shift; echo $?'
+answer 'read says so'    'false; echo x | { read v; echo $?; }'
+answer 'trap says so'    'false; trap > /dev/null; echo $?'
+answer 'test no words'   '[ ] ; echo $?'
+answer 'test bad word'   '[ 1 -zz 2 ] 2>/dev/null; echo $?'
+answer 'cd missing'      'cd /nosuchdir12345 2>/dev/null; echo $?'
+answer 'cd missing runs' 'cd /nosuchdir12345 2>/dev/null || echo refused'
 answer 'group status'    '{ exit 0; }; echo $?'
 answer 'assignment'      'x=1; echo $?'
 answer 'nothing at all'  ''
@@ -560,15 +580,7 @@ fi
 section differs
 
 group status
-differs 'builtin clears it' 'hi|1|' 1 'false; echo hi; echo $?'
-differs 'pipeline leaves it' '1|' 1 'true | false; echo $?'
-differs 'subshell keeps it' '5|' 5 '(exit 5); echo $?'
-differs 'function keeps it' '4|' 4 'f() { return 4; }; f; echo $?'
-differs 'body keeps it'  '1|' 1 'f() { false; }; f; echo $?'
-differs 'loop keeps it'  '1|' 1 'for i in 1; do false; done; echo $?'
-differs 'branch keeps it' 'b|' 1 'if true; then if false; then echo a; else echo b; fi; fi'
 differs 'sub status lost' '0|' 0 'x=$(exit 3); echo $?'
-differs 'unknown command' '127|' 127 'nosuchcommand12345; echo $?'
 differs 'negative exit'  '' 255 'exit -1'
 
 group arithmetic
@@ -588,14 +600,14 @@ differs 'no dash heredoc' '' 0 'cat <<-EOF
 	indented
 	EOF'
 differs 'no exec fd'     '' 0 'exec 4>/tmp/sd1; echo hi >&4; exec 4>&-; cat /tmp/sd1'
-differs 'no set e'       'not reached|' 1 'set -e; false; echo not reached'
+differs 'no set e'       'not reached|' 0 'set -e; false; echo not reached'
 differs 'no set u'       '|after|' 0 'set -u; echo $nosuch; echo after'
-differs 'no cd dash'     '/|' 1 'cd /tmp; cd /; cd - > /dev/null; pwd'
+differs 'no cd dash'     '/|' 0 'cd /tmp; cd /; cd - > /dev/null; pwd'
 differs 'read ignores ifs' 'a:b-|' 0 'IFS=: ; echo a:b | { read x y; echo "$x-$y"; }'
 differs 'readonly is not' '0|' 0 'readonly r=1; r=2; echo $?'
 differs 'unset dash f'   'a|0|' 0 'f() { echo a; }; unset -f f; f 2>/dev/null; echo $?'
-differs 'shift past end' '1|' 1 'set -- a; shift 2; echo $?'
-differs 'missing input'  '1|' 1 'cat < /nonexistent12345; echo $?'
+differs 'shift past end' '1|' 0 'set -- a; shift 2; echo $?'
+differs 'missing input'  '1|' 0 'cat < /nonexistent12345; echo $?'
 differs 'closed fd'      '0|' 0 'echo x >&- 2>/dev/null; echo $?'
 
 #
