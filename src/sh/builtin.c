@@ -2831,6 +2831,7 @@ typedef struct
 
 static shell_tool shell_tools[] = {
     {"cat", text_cat},
+    {"cmp", text_cmp},
     {"cut", text_cut},
     {"expr", text_expr},
     {"fold", text_fold},

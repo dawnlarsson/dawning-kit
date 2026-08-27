@@ -536,6 +536,42 @@ compare 'cat missing'    cat -   "$work/nosuch"
 compare 'cat empty'      cat -   "$work/empty"
 compare 'cat bad option' cat -   -Z "$work/a"
 
+#       cmp, whose answer is often nothing at all -- so the exit status is
+#       most of what there is to compare, and compare looks at both.
+
+i=0
+while [ $i -lt 30 ]; do printf '0123456789'; i=$((i + 1)); done > "$work/cl1"
+tr 5 x < "$work/cl1" > "$work/cl2"
+head -c 250 "$work/cl1" > "$work/cl3"
+cp "$work/a" "$work/a2"
+sed 's/gamma/gammX/' "$work/a" > "$work/a3"
+head -c 12 "$work/a" > "$work/a4"
+
+case_start cmp
+compare 'same'           cmp -  "$work/a" "$work/a2"
+compare 'differ'         cmp -  "$work/a" "$work/a3"
+compare 'differ other way' cmp - "$work/a3" "$work/a"
+compare 'prefix'         cmp -  "$work/a" "$work/a4"
+compare 'prefix first'   cmp -  "$work/a4" "$work/a"
+compare 'empty against'  cmp -  "$work/a" "$work/empty"
+compare 'both empty'     cmp -  "$work/empty" "$work/empty"
+compare 'silent same'    cmp -  -s "$work/a" "$work/a2"
+compare 'silent differ'  cmp -  -s "$work/a" "$work/a3"
+compare 'silent prefix'  cmp -  -s "$work/a" "$work/a4"
+compare 'listed'         cmp -  -l "$work/a" "$work/a3"
+compare 'listed columns' cmp -  -l "$work/cl1" "$work/cl2"
+compare 'listed prefix'  cmp -  -l "$work/cl1" "$work/cl3"
+compare 'listed same'    cmp -  -l "$work/cl1" "$work/cl1"
+compare 'no newline'     cmp -  "$work/h" "$work/a"
+compare 'missing file'   cmp -  "$work/a" "$work/nosuch"
+compare 'both missing'   cmp -  "$work/nosuch" "$work/nosuch2"
+compare 'end of options' cmp -  -- "$work/a" "$work/a3"
+compare 'standard input' cmp a  "$work/a"
+compare 'named as dash'  cmp a  "$work/a" -
+compare 'dash is first'  cmp a  - "$work/a3"
+compare 'no operands'    cmp -
+compare 'three operands' cmp -  "$work/a" "$work/a" "$work/a"
+
 #       expr, whose answer is on standard output and whose verdict is the exit
 #       status, so both halves of compare matter here.
 

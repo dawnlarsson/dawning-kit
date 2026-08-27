@@ -557,6 +557,7 @@ emits 'called basename'  'c|'      "'$names/basename' /a/b/c"
 emits 'called seq'       '1|2|3|'  "'$names/seq' 3"
 emits 'called uname'     'Linux|'  "'$names/uname'"
 emits 'called expr'      '2|'      "'$names/expr' 1 + 1"
+emits 'called cmp'       '0|'      "'$names/cmp' -s /etc/hostname /etc/hostname; echo \$?"
 emits 'through a dot'    'cba|'    "printf 'abc\n' | '$names/./rev'"
 emits 'link elsewhere'   'cba|'    "mkdir -p /tmp/sn && ln -sf '$names/rev' /tmp/sn/rev && printf 'abc\n' | /tmp/sn/rev"
 emits 'another name'     'hi|'     "ln -sf '$names/rev' /tmp/notatool && printf 'echo hi\n' | /tmp/notatool"
@@ -627,7 +628,6 @@ absent 'date'     '127|' 'date; echo $?'
 absent 'xargs'    '127|' 'echo a | xargs echo; echo $?'
 absent 'kill'     '127|' 'kill -0 $$; echo $?'
 absent 'dd'       '127|' 'dd if=/dev/null; echo $?'
-absent 'cmp'      '127|' 'cmp /etc/hostname /etc/hostname; echo $?'
 absent 'local'    '127|' 'f() { local v=1; }; f; echo $?'
 absent 'command v awk' '127|' 'command -v awk > /dev/null; echo $?'
 absent 'type awk' '127|' 'type awk > /dev/null 2>&1; echo $?'

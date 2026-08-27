@@ -502,7 +502,7 @@ STRNCHR:char *strnchr(const char *, __kernel_size_t, int)"
                 #       shell that also holds it.
                 #
                 for utility in cat grep sed cut tr sort uniq head tail wc tee \
-                        expr \
+                        expr cmp \
                         rev nl fold ls find stat du df chmod chown ln readlink \
                         basename dirname realpath mkdir rmdir cp mv rm touch \
                         sleep seq yes env id hostname uname \

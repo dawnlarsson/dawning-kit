@@ -410,8 +410,18 @@ static bool text_number_of(string_address value, positive address_to result)
 */
 static b32 text_argument_count;
 
+#define TEXT_ARGUMENTS_MAX 256
+
+static string_address text_arguments[TEXT_ARGUMENTS_MAX];
+static p8 text_spellings[TEXT_ARGUMENTS_MAX][3];
+static bool text_arguments_own;
+
 static string_address text_argument(b32 which)
 {
+        if (text_arguments_own)
+                return which >= 0 && which < text_argument_count ? text_arguments[which]
+                                                                 : null;
+
         return program_argument(which);
 }
 
@@ -419,6 +429,147 @@ static fn text_begin(string_address name)
 {
         text_name = name;
         text_argument_count = program_argument_count();
+        text_arguments_own = false;
+}
+
+/*
+        The long spellings.
+
+        Every tool below was written to its short flags, so a long name is
+        turned into the letter it stands for before the parser ever sees it:
+        --ignore-case arrives at grep's switch as -i. The table belongs to
+        the tool and sits beside that switch, which is the only way the two
+        stay in step.
+
+        A name with no short spelling at all -- cut's --complement, grep's
+        --label -- is given a byte no keyboard sends, so it reaches the same
+        switch without also making "cut -\002" mean something.
+
+        GNU takes any unambiguous abbreviation of a long name. This wants the
+        whole name. An abbreviation table is a second copy of the first, and
+        the once it disagrees is the once somebody typed --no and meant
+        --no-messages.
+*/
+enum
+{
+        TEXT_LONG_ALONE = 0,
+        TEXT_LONG_NEEDS = 1,
+        TEXT_LONG_MAYBE = 2
+};
+
+typedef struct
+{
+        string_address name;
+        p8 letter;
+        p8 wants;
+} text_long;
+
+static bool text_long_match(string_address argument, string_address name,
+                            string_address address_to value)
+{
+        positive c = 0;
+
+        for (; name[c]; c++)
+                if (argument[c + 2] != name[c])
+                        return false;
+
+        if (!argument[c + 2])
+        {
+                address_to value = null;
+                return true;
+        }
+
+        if (argument[c + 2] != '=')
+                return false;
+
+        address_to value = argument + c + 3;
+        return true;
+}
+
+// The rewritten vector is handed back through text_argument, so the loops in
+// every tool keep reading arguments the one way they already do.
+static bool text_expand_long(text_long address_to table)
+{
+        b32 count = program_argument_count();
+        b32 out = 0;
+        b32 spelled = 0;
+        bool any = false;
+
+        for (b32 i = 0; i < count; i++)
+        {
+                string_address argument = program_argument(i);
+
+                if (i == 0 || argument[0] != '-' || argument[1] != '-' || !argument[2])
+                {
+                        if (out < TEXT_ARGUMENTS_MAX)
+                                text_arguments[out++] = argument;
+
+                        // Everything after a bare -- is an operand, even when
+                        // it is spelled like a long option.
+                        if (i && argument[0] == '-' && argument[1] == '-' && !argument[2])
+                        {
+                                for (b32 j = i + 1; j < count && out < TEXT_ARGUMENTS_MAX; j++)
+                                        text_arguments[out++] = program_argument(j);
+
+                                i = count;
+                        }
+
+                        continue;
+                }
+
+                b32 which = -1;
+                string_address value = null;
+
+                for (b32 t = 0; table[t].name; t++)
+                        if (text_long_match(argument, table[t].name, address_of value))
+                        {
+                                which = t;
+                                break;
+                        }
+
+                if (which < 0)
+                {
+                        text_error(null, "unrecognized option");
+                        return false;
+                }
+
+                if (value && table[which].wants == TEXT_LONG_ALONE)
+                {
+                        text_error(null, "option does not take an argument");
+                        return false;
+                }
+
+                if (!value && table[which].wants == TEXT_LONG_NEEDS)
+                {
+                        if (i + 1 >= count)
+                        {
+                                text_error(null, "option requires an argument");
+                                return false;
+                        }
+
+                        value = program_argument(++i);
+                }
+
+                if (out >= TEXT_ARGUMENTS_MAX || spelled >= TEXT_ARGUMENTS_MAX)
+                        return false;
+
+                text_spellings[spelled][0] = '-';
+                text_spellings[spelled][1] = table[which].letter;
+                text_spellings[spelled][2] = '\0';
+                text_arguments[out++] = (string_address)text_spellings[spelled++];
+
+                if (value && out < TEXT_ARGUMENTS_MAX)
+                        text_arguments[out++] = value;
+
+                any = true;
+        }
+
+        if (!any)
+                return true;
+
+        text_arguments_own = true;
+        text_argument_count = out;
+        return true;
 }
 
 /*
@@ -6225,6 +6376,309 @@ static b32 text_sort()
         return text_done(text_status);
 }
 
+// cmp -------------------------------------------------------------
+/*
+        Two files, byte for byte.
+
+        Nothing at all when they are the same, where the first difference is
+        when they are not, and a complaint on the error stream when one of
+        them is a prefix of the other. -s answers with the status alone.
+
+        -l lists every difference in octal, and is the only part that needs
+        to know how large the files are before it starts: the columns are
+        lined up to the width of the shorter one, which cannot be known from
+        the bytes as they go past.
+*/
+#define CMP_BLOCK 65536
+
+typedef struct
+{
+        positive handle;
+        positive filled;
+        positive position;
+        bool finished;
+        bool opened;
+        string_address name;
+        p8 buffer[CMP_BLOCK];
+} cmp_side;
+
+static cmp_side cmp_left;
+static cmp_side cmp_right;
+
+static bool cmp_open(cmp_side address_to side, string_address path)
+{
+        bipolar handle;
+
+        side->filled = 0;
+        side->position = 0;
+        side->finished = false;
+        side->opened = false;
+        side->name = path;
+
+        if (path[0] == '-' && !path[1])
+        {
+                side->handle = 0;
+                return true;
+        }
+
+        handle = text_open_handle(path, FILE_READ, 0);
+
+        if (handle < 0)
+        {
+                text_error(path, "No such file or directory");
+                return false;
+        }
+
+        side->handle = (positive)handle;
+        side->opened = true;
+
+        return true;
+}
+
+static positive text_digits(p8 address_to into, positive value)
+{
+        p8 digits[24];
+        positive have = 0;
+        positive at = 0;
+
+        if (!value)
+                digits[have++] = '0';
+
+        while (value)
+        {
+                digits[have++] = (p8)('0' + value % 10);
+                value /= 10;
+        }
+
+        while (have)
+                into[at++] = digits[--have];
+
+        into[at] = end;
+
+        return at;
+}
+
+static bipolar cmp_byte(cmp_side address_to side)
+{
+        if (side->position == side->filled)
+        {
+                bipolar got;
+
+                if (side->finished)
+                        return -1;
+
+                got = system_call_3(syscall(read), side->handle,
+                                    (positive)side->buffer, CMP_BLOCK);
+
+                if (got <= 0)
+                {
+                        side->finished = true;
+                        return -1;
+                }
+
+                side->filled = (positive)got;
+                side->position = 0;
+        }
+
+        return side->buffer[side->position++];
+}
+
+// Nothing, for a pipe: what is behind one has no length until it has ended.
+static positive cmp_length(cmp_side address_to side)
+{
+        bipolar here = system_call_3(syscall(lseek), side->handle, 0, FILE_SEEK_CUR);
+        bipolar last;
+
+        if (here < 0)
+                return 0;
+
+        last = system_call_3(syscall(lseek), side->handle, 0, FILE_SEEK_END);
+        system_call_3(syscall(lseek), side->handle, (positive)here, FILE_SEEK_SET);
+
+        return last < 0 ? 0 : (positive)last;
+}
+
+// The line is left out when the differences were listed, because that is
+// what the tool this is measured against does.
+static fn cmp_ended(cmp_side address_to side, positive at, positive line,
+                    bool newline, bool listing)
+{
+        p8 text[24];
+
+        text_flush();
+        text_error_raw("cmp: EOF on '");
+        text_error_raw(side->name);
+        text_error_raw("'");
+
+        if (!at)
+        {
+                text_error_raw(" which is empty\n");
+                return;
+        }
+
+        text_error_raw(" after byte ");
+        text_digits(text, at);
+        text_error_raw(text);
+
+        if (!listing)
+        {
+                text_error_raw(", line ");
+                text_digits(text, newline ? line : line + 1);
+                text_error_raw(text);
+        }
+
+        text_error_raw("\n");
+}
+
+static fn cmp_octal(positive value)
+{
+        p8 digits[4];
+        positive have = 0;
+
+        if (!value)
+                digits[have++] = '0';
+
+        while (value)
+        {
+                digits[have++] = (p8)('0' + (value & 7));
+                value >>= 3;
+        }
+
+        for (positive pad = have; pad < 3; pad++)
+                text_put_character(' ');
+
+        while (have)
+                text_put_character(digits[--have]);
+}
+
+static b32 text_cmp()
+{
+        bool silent = false;
+        bool listing = false;
+        b32 index = 1;
+        positive at = 0;
+        positive lines = 0;
+        bool newline = true;
+        positive width = 1;
+        b32 answer = 0;
+
+        text_begin("cmp");
+
+        while (index < text_argument_count)
+        {
+                string_address argument = text_argument(index);
+
+                if (argument[0] != '-' || !argument[1])
+                        break;
+
+                if (argument[1] == '-' && !argument[2])
+                {
+                        index++;
+                        break;
+                }
+
+                for (positive letter = 1; argument[letter]; letter++)
+                {
+                        if (argument[letter] == 's')
+                                silent = true;
+                        else if (argument[letter] == 'l')
+                                listing = true;
+                        else
+                        {
+                                text_error(null, "invalid option");
+                                return text_done(2);
+                        }
+                }
+
+                index++;
+        }
+
+        if (index >= text_argument_count || index + 2 < text_argument_count)
+        {
+                text_error(null, index < text_argument_count ? "extra operand"
+                                                             : "missing operand");
+                return text_done(2);
+        }
+
+        // A second name that was not given is standard input, which is how
+        // "cmp saved" reads a pipe against a file.
+        if (!cmp_open(address_of cmp_left, text_argument(index)) ||
+            !cmp_open(address_of cmp_right,
+                      index + 2 == text_argument_count
+                          ? text_argument(index + 1)
+                          : (string_address) "-"))
+                return text_done(2);
+
+        if (listing)
+        {
+                positive one = cmp_length(address_of cmp_left);
+                positive two = cmp_length(address_of cmp_right);
+                positive smaller = one < two ? one : two;
+
+                while (smaller >= 10)
+                {
+                        smaller /= 10;
+                        width++;
+                }
+        }
+
+        for (;;)
+        {
+                bipolar a = cmp_byte(address_of cmp_left);
+                bipolar b = cmp_byte(address_of cmp_right);
+
+                if (a < 0 && b < 0)
+                        break;
+
+                if (a < 0 || b < 0)
+                {
+                        if (!silent)
+                                cmp_ended(a < 0 ? address_of cmp_left
+                                                : address_of cmp_right,
+                                          at, lines, newline, listing);
+
+                        answer = 1;
+                        break;
+                }
+
+                at++;
+                newline = a == '\n';
+
+                if (a != b)
+                {
+                        if (silent)
+                                return text_done(1);
+
+                        answer = 1;
+
+                        if (!listing)
+                        {
+                                text_put_string(cmp_left.name);
+                                text_put_character(' ');
+                                text_put_string(cmp_right.name);
+                                text_put_string(" differ: char ");
+                                text_put_number(at, 0);
+                                text_put_string(", line ");
+                                text_put_number(lines + 1, 0);
+                                text_put_character('\n');
+                                break;
+                        }
+
+                        text_put_number(at, width);
+                        text_put_character(' ');
+                        cmp_octal((positive)a);
+                        text_put_character(' ');
+                        cmp_octal((positive)b);
+                        text_put_character('\n');
+                }
+
+                if (newline)
+                        lines++;
+        }
+
+        return text_done(answer);
+}
+
 // expr ------------------------------------------------------------
 /*
         One expression spread across the words, and its value on standard
@@ -6286,29 +6740,6 @@ static string_address expr_keep(string_address from, positive length)
         return made;
 }
 
-static positive expr_digits(p8 address_to into, positive value)
-{
-        p8 digits[24];
-        positive have = 0;
-        positive at = 0;
-
-        if (!value)
-                digits[have++] = '0';
-
-        while (value)
-        {
-                digits[have++] = (p8)('0' + value % 10);
-                value /= 10;
-        }
-
-        while (have)
-                into[at++] = digits[--have];
-
-        into[at] = end;
-
-        return at;
-}
-
 static string_address expr_shown(expr_value address_to value)
 {
         p8 text[32];
@@ -6320,10 +6751,10 @@ static string_address expr_shown(expr_value address_to value)
         if (value->number < 0)
         {
                 text[0] = '-';
-                length = 1 + expr_digits(text + 1, (positive)(-value->number));
+                length = 1 + text_digits(text + 1, (positive)(-value->number));
         }
         else
-                length = expr_digits(text, (positive)value->number);
+                length = text_digits(text, (positive)value->number);
 
         value->text = expr_keep(text, length);
 
