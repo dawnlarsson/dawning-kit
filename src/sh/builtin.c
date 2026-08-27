@@ -250,11 +250,15 @@ bool env_set(const_string name, const_string value)
 #define SHELL_MAX_DEPTH 24
 
 /*
-        statx, not fstat: the kernel's struct stat has a different shape on
-        x86_64, arm64 and riscv64, while statx has one layout everywhere. Only
-        the head of it is spelled out; the rest is timestamps and device
-        numbers nothing here asks for, and the kernel writes all 256 bytes.
+        file_facts is statx's 256 bytes, and file.c beside this spells all of
+        them out. This file used to carry its own shorter copy of the same
+        layout, which was the same struct written twice.
+
+        Where there is no file.c -- programs/edit.c takes this file on its own
+        -- the short form is still here, because what is wanted from it is the
+        mode and nothing further in.
 */
+#ifndef FILE_MAX_DEPTH
 typedef struct
 {
         p32 mask;
@@ -270,6 +274,7 @@ typedef struct
         p64 blocks;
         p8 remainder[200];
 } file_facts;
+#endif
 
 bool shell_facts(bipolar directory, string_address path, file_facts address_to out)
 {
@@ -3362,6 +3367,149 @@ fn shell_return(writer write, string_address input)
         shell_answer(shell_status);
 }
 
+
+/*
+        The utilities, which are programs that do not need to be.
+
+        Each of these is the same body that ships as its own binary: one
+        implementation, reached either way. They are run in a child rather than
+        here, and not to isolate them -- because a program that is exec'd gets
+        its file scope as the linker left it, every single time, and a builtin
+        does not. This process never runs one, so its copy stays untouched and
+        every fork starts from it. A hundred greps in a loop each begin the way
+        the first one did.
+*/
+typedef b32 (address_to shell_tool_function)();
+
+typedef struct
+{
+        string_address name;
+        shell_tool_function function;
+} shell_tool;
+
+static shell_tool shell_tools[] = {
+    {"cat", text_cat},
+    {"cut", text_cut},
+    {"fold", text_fold},
+    {"grep", text_grep},
+    {"head", text_head},
+    {"nl", text_nl},
+    {"rev", text_rev},
+    {"sed", text_sed},
+    {"sort", text_sort},
+    {"tail", text_tail},
+    {"tee", text_tee},
+    {"tr", text_tr},
+    {"uniq", text_uniq},
+    {"wc", text_wc},
+
+    {"basename", file_basename},
+    {"chmod", file_chmod},
+    {"chown", file_chown},
+    {"cp", file_cp},
+    {"df", file_df},
+    {"dirname", file_dirname},
+    {"du", file_du},
+    {"env", file_env},
+    {"find", file_find},
+    {"hostname", file_hostname},
+    {"id", file_id},
+    {"ln", file_ln},
+    {"ls", file_ls},
+    {"mkdir", file_mkdir},
+    {"mv", file_mv},
+    {"readlink", file_readlink},
+    {"realpath", file_realpath},
+    {"rm", file_rm},
+    {"rmdir", file_rmdir},
+    {"seq", file_seq},
+    {"sleep", file_sleep},
+    {"stat", file_stat},
+    {"touch", file_touch},
+    {"uname", file_uname},
+    {"yes", file_yes},
+    {null, null},
+};
+
+#define SHELL_TOOLS (sizeof(shell_tools) / sizeof(shell_tools[0]) - 1)
+
+/*
+        The last element of a path, so that /bin/grep is grep.
+
+        What a program was called is the first thing on its stack, and for one
+        binary answering to forty names it is the only thing that says which.
+*/
+static string_address shell_tool_name(string_address path)
+{
+        string_address last = path;
+
+        if (!path)
+                return null;
+
+        for (string_address step = path; string_get(step); step++)
+                if (string_get(step) == '/' && string_get(step + 1))
+                        last = step + 1;
+
+        return last;
+}
+
+/*
+        Run as the tool the binary was called as, if it was called as one.
+
+        Returns what it answered, or -1 when the name is not a tool's and this
+        is an ordinary shell after all. Nothing is forked: this process is the
+        invocation, and it is about to end.
+*/
+b32 shell_tool_as_called()
+{
+        string_address name = shell_tool_name(program_argument(0));
+        positive which;
+
+        if (!name)
+                return -1;
+
+        which = string_table_find(name, shell_tools, sizeof(shell_tool), SHELL_TOOLS);
+
+        if (which == SHELL_TOOLS)
+                return -1;
+
+        return shell_tools[which].function() & 0xff;
+}
+
+static bool shell_tool_run(string_address name)
+{
+        positive which = string_table_find(name, shell_tools, sizeof(shell_tool),
+                                           SHELL_TOOLS);
+        bipolar child;
+        positive status = 0;
+
+        if (which == SHELL_TOOLS)
+                return false;
+
+        // Before the fork, or the child inherits a copy of what is waiting in
+        // the buffer and writes it out a second time.
+        log_flush();
+
+        child = system_call_2(syscall(clone), SIGCHLD, 0);
+
+        if (child == 0)
+        {
+                program_arguments_use(shell_argv, (b32)shell_argc);
+                exit(shell_tools[which].function() & 0xff);
+        }
+
+        if (child < 0)
+        {
+                shell_answer(1);
+                return true;
+        }
+
+        system_call_4(syscall(wait4), child, (positive)address_of status, 0, 0);
+        shell_answer((b32)((status >> 8) & 0xff));
+
+        return true;
+}
+
 fn shell_help(writer write, string_address input);
 fn shell_which(writer write, string_address input);
 
@@ -3377,22 +3525,14 @@ shell_command shell_commands[] = {
     {":", shell_true},
     {"[", shell_test},
     {"alias", shell_alias},
-    {"basename", shell_basename},
-    {"cat", shell_cat},
     {"cd", shell_cd},
     {"clear", shell_clear},
-    {"cp", shell_cp},
-    {"chmod", shell_chmod},
     {"echo", shell_echo},
     {"eval", shell_eval},
     {"exec", shell_exec},
     {"exit", shell_exit},
     {"false", shell_false},
     {"getopts", shell_getopts},
-    {"head", shell_head},
-    {"ls", shell_ls},
-    {"mkdir", shell_mkdir},
-    {"mv", shell_mv},
     {"mount", shell_mount},
     {"poweroff", shell_poweroff},
     {"printf", shell_printf},
@@ -3401,24 +3541,17 @@ shell_command shell_commands[] = {
     {"readonly", shell_readonly},
     {"reboot", shell_reboot},
     {"return", shell_return},
-    {"rm", shell_rm},
     {"set", shell_set},
     {"shift", shell_shift},
-    {"sleep", shell_sleep},
-    {"tail", shell_tail},
     {"test", shell_test},
     {"times", shell_times},
-    {"touch", shell_touch},
     {"trap", shell_trap},
     {"true", shell_true},
     {"umask", shell_umask},
     {"unalias", shell_unalias},
-    {"uname", shell_uname},
     {"unset", shell_unset},
-    {"wc", shell_wc},
     {"which", shell_which},
     {"help", shell_help},
-    {"env", shell_env},
     {"export", shell_export},
     {null, null},
 };

@@ -2082,6 +2082,76 @@ static fn text_banner(b32 which, bool first)
         something whose size cannot be known ahead of reading it -- a pipe,
         or a device.
 */
+/*
+        cat.
+
+        No line splitting and no interpretation: what came in goes out, block
+        for block. Every other tool here reads lines because it has to look at
+        them; this one only has to move them, so it moves as much as the
+        reader will hand over at a time.
+*/
+static b32 text_cat()
+{
+        b32 inputs = 0;
+
+        text_begin("cat");
+
+        for (b32 i = 1; i < text_argument_count; i++)
+        {
+                string_address argument = text_argument(i);
+
+                // Only "-" is a name here. cat takes flags nothing in a script
+                // relies on, and reading one as a file is worse than ignoring
+                // it would be.
+                if (argument[0] == '-' && argument[1])
+                        continue;
+
+                inputs++;
+        }
+
+        if (!inputs)
+        {
+                if (text_open(null))
+                {
+                        while (text_fill())
+                        {
+                                text_put(text_input.buffer + text_input.position,
+                                         text_input.filled - text_input.position);
+                                text_input.position = text_input.filled;
+                        }
+                }
+
+                text_close();
+                text_flush();
+
+                return text_status;
+        }
+
+        for (b32 i = 1; i < text_argument_count; i++)
+        {
+                string_address argument = text_argument(i);
+
+                if (argument[0] == '-' && argument[1])
+                        continue;
+
+                if (!text_open(argument))
+                        continue;
+
+                while (text_fill())
+                {
+                        text_put(text_input.buffer + text_input.position,
+                                 text_input.filled - text_input.position);
+                        text_input.position = text_input.filled;
+                }
+
+                text_close();
+        }
+
+        text_flush();
+
+        return text_status;
+}
+
 static b32 text_wc()
 {
         bool want_lines = false, want_words = false, want_bytes = false, want_chars = false;

@@ -2,7 +2,7 @@
 #
 #       The file utilities against the system's own, diffed.
 #
-#           sh programs/file-compare.sh [directory for the binaries]
+#           sh kit/files.sh [directory holding our binaries]
 #
 #       Three kinds of case, because three kinds of thing are being checked
 #       and pretending they are one kind is how a comparison gets rigged:
@@ -28,7 +28,7 @@
 #
 set -e
 
-binaries=${1:-/tmp/fu}
+binaries=${1:-/tmp/multi}
 export TZ=UTC0
 
 work=$(mktemp -d)
@@ -57,7 +57,7 @@ same() {
         shift 2
 
         "$tool" "$@" > "$work/want" 2> "$work/want.err" || true
-        "$binaries-$tool" "$@" > "$work/got" 2> "$work/got.err" || true
+        "$binaries/$tool" "$@" > "$work/got" 2> "$work/got.err" || true
 
         if cmp -s "$work/want" "$work/got"; then
                 report ok
@@ -75,7 +75,7 @@ near() {
         shift 3
 
         "$tool" "$@" 2>/dev/null | eval "$filter" > "$work/want" || true
-        "$binaries-$tool" "$@" 2>/dev/null | eval "$filter" > "$work/got" || true
+        "$binaries/$tool" "$@" 2>/dev/null | eval "$filter" > "$work/got" || true
 
         if cmp -s "$work/want" "$work/got"; then
                 report ok
@@ -119,7 +119,7 @@ effect() {
         seed "$work/b"
 
         ( cd "$work/a" && eval "TOOL=$tool; $recipe" ) > "$work/want.out" 2>&1 || true
-        ( cd "$work/b" && eval "TOOL=$binaries-$tool; $recipe" ) > "$work/got.out" 2>&1 || true
+        ( cd "$work/b" && eval "TOOL=$binaries/$tool; $recipe" ) > "$work/got.out" 2>&1 || true
 
         dump "$work/a" > "$work/want"
         dump "$work/b" > "$work/got"
@@ -162,7 +162,7 @@ timing() {
         shift
 
         want=$(tenths sleep "$@")
-        got=$(tenths "$binaries-sleep" "$@")
+        got=$(tenths "$binaries/sleep" "$@")
 
         if [ "$want" = "$got" ]; then
                 report ok

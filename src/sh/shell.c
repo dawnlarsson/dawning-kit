@@ -8,6 +8,8 @@
 */
 
 #include "lex.c"
+#include "text.c"
+#include "file.c"
 #include "builtin.c"
 #include "expand.c"
 
@@ -540,6 +542,9 @@ fn shell_execute_command()
 bool shell_builtin(string_address arguments)
 {
         shell_command address_to command = shell_commands;
+
+        if (shell_tool_run(shell_argv[0]))
+                return true;
 
         while (command->name)
         {

@@ -1494,6 +1494,53 @@ fn check_table_find()
                                   sizeof(find_entry), count));
 
         entries[5].name = names[5];
+
+        /*
+                The same names, looked up through a copy sitting somewhere
+                else.
+
+                Every needle above is a literal, and literals are laid out end
+                to end by the compiler -- so a routine that reads past one
+                terminator reads the next literal, which is stable and often
+                happens to give the right answer. A name of exactly seven
+                characters did read past, and this is the shape that says so:
+                the needle is copied into a buffer at a shifting offset, so
+                what follows it is different every time.
+        */
+        {
+                static p8 room[64];
+                static find_entry sized[17];
+                static p8 made[17][20];
+                positive many = 0;
+
+                // One name of every length from one to sixteen, so the eight
+                // byte boundary is crossed from both sides and landed on.
+                for (positive length = 1; length <= 16; length++)
+                {
+                        for (positive at = 0; at < length; at++)
+                                made[many][at] = (p8)('a' + (length + at) % 26);
+
+                        made[many][length] = 0;
+                        sized[many].name = made[many];
+                        sized[many].marker = many;
+                        many++;
+                }
+
+                for (positive i = 0; i < many; i++)
+                        for (positive shift = 0; shift + 20 < sizeof(room); shift++)
+                        {
+                                string_address moved = room + shift;
+
+                                memory_fill(room, 'x', sizeof(room));
+                                string_copy(moved, sized[i].name);
+
+                                same("table_find", "needle copied elsewhere",
+                                     string_table_find(moved, sized,
+                                                       sizeof(find_entry), many),
+                                     reference_table_find(moved, sized,
+                                                          sizeof(find_entry), many));
+                        }
+        }
 }
 
 b32 main()

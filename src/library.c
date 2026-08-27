@@ -2765,7 +2765,18 @@ ASM_FUNC(moonwater_positive_to_string)
     ASM_FUNC(moonwater_table_find)
     "        push    %rbx\n"
     "        push    %rbp\n"
+    "        push    %r12\n"
     "        mov     (%rdi), %r11\n"
+    //
+    //       Whether the name runs past the first eight bytes, which the mask
+    //       cannot say on its own: a name of exactly seven characters ends on
+    //       the eighth byte, so every bit of the mask matters and it comes out
+    //       as all ones -- the same value the no-terminator case uses. Read as
+    //       "keep going", that walked off the end of both strings and compared
+    //       whatever was after them, which is why it depended on where the
+    //       name happened to sit. "dirname" is seven characters.
+    //
+    "        xor     %r12d, %r12d\n"
     // Where the wanted name ends, as a mask of the bytes that matter.
     "        movabs  $0x0101010101010101, %rbx\n"
     "        mov     %r11, %rbp\n"
@@ -2786,6 +2797,7 @@ ASM_FUNC(moonwater_positive_to_string)
     // No terminator in the first eight, so all eight matter and the rest is
     // compared a byte at a time.
     "3:      mov     $-1, %rbp\n"
+    "        mov     $1, %r12d\n"
     "4:      xor     %eax, %eax\n"
     "        mov     %rsi, %r8\n"
     "5:      cmp     %rcx, %rax\n"
@@ -2799,8 +2811,8 @@ ASM_FUNC(moonwater_positive_to_string)
     "        jnz     8f\n"
     // The first eight agree as far as they matter. If the name ended inside
     // them that is the whole answer.
-    "        cmp     $-1, %rbp\n"
-    "        jne     7f\n"
+    "        test    %r12d, %r12d\n"
+    "        jz      7f\n"
     "        mov     %rdi, %rbx\n"
     "        add     $8, %rbx\n"
     "        add     $8, %r9\n"
@@ -2817,7 +2829,8 @@ ASM_FUNC(moonwater_positive_to_string)
     "        inc     %rax\n"
     "        jmp     5b\n"
     "9:      mov     %rcx, %rax\n"
-    "7:      pop     %rbp\n"
+    "7:      pop     %r12\n"
+    "        pop     %rbp\n"
     "        pop     %rbx\n"
     ASM_RET
     ASM_END(moonwater_table_find)
@@ -6883,8 +6896,35 @@ p8 address_to program_stack_base = 0;
         Counted rather than handed over as a vector, because main() takes no
         arguments and changing that would touch every program at once.
 */
+/*
+        Words handed in rather than found on the stack.
+
+        A program reads its arguments off the stack the kernel built for it,
+        which works exactly once: when it is the program. The same body run as
+        a shell builtin was never exec'd and has no stack of its own, so the
+        shell points these two at the words it already has and puts them back
+        afterwards.
+*/
+static string_address address_to program_words;
+static b32 program_words_count;
+
+fn program_arguments_use(string_address address_to words, b32 count)
+{
+        program_words = words;
+        program_words_count = count;
+}
+
+fn program_arguments_own()
+{
+        program_words = null;
+        program_words_count = 0;
+}
+
 b32 program_argument_count()
 {
+        if (program_words)
+                return program_words_count;
+
         if (!program_stack_base)
                 return 0;
 
@@ -6895,7 +6935,13 @@ string_address program_argument(b32 index)
 {
         positive address_to stack = (positive address_to)program_stack_base;
 
-        if (!program_stack_base || index < 0 || index >= program_argument_count())
+        if (index < 0 || index >= program_argument_count())
+                return null;
+
+        if (program_words)
+                return program_words[index];
+
+        if (!program_stack_base)
                 return null;
 
         return (string_address)stack[1 + index];

@@ -1642,3 +1642,3821 @@ bool file_make_parents(string_address path, positive mode)
 
         return made == 0 || made == -ERROR_EXISTS;
 }
+
+/*
+        The utilities themselves.
+
+        Each was its own program, with only the layer above shared. They are
+        one file now because the shell runs them too, and two copies of ls is
+        one copy too many. Every one keeps the name it had: file_ls is what
+        ls's main was, reading its words through program_argument the same way
+        it did when it was the only thing in the process.
+*/
+
+// ls ------------------------------------------------------------
+/*
+        ls [-laARtShr1din]
+
+        There is an ls builtin in the shell as well. This is the one with the
+        flags, and the builtin should call it rather than grow a second copy:
+        a listing is not the shell's business, and a program can be replaced
+        on its own.
+
+        Output is one name per line. The system's ls does the same the moment
+        it is not writing to a terminal, which is every case a script cares
+        about, and columns are a terminal's problem rather than a listing's.
+
+        Times are UTC. Nothing in this tree reads /usr/share/zoneinfo, and a
+        listing that quietly used the wrong zone would be worse than one that
+        says which zone it used.
+*/
+#define LS_MAX_ENTRIES 8192
+#define LS_ARENA (1 << 20)
+
+typedef struct
+{
+        positive name;
+        positive mode;
+        positive links;
+        positive owner;
+        positive group;
+        p64 size;
+        b64 modified;
+        p32 modified_fraction;
+        p64 inode;
+        p64 blocks;
+        bool known;
+} ls_entry;
+
+static ls_entry ls_entries[LS_MAX_ENTRIES];
+static positive ls_count;
+static p8 ls_arena[LS_ARENA];
+static positive ls_used;
+
+static bool ls_long;
+static bool ls_hidden;
+static bool ls_almost;
+static bool ls_recursive;
+static bool ls_by_time;
+static bool ls_by_size;
+static bool ls_human;
+static bool ls_reversed;
+static bool ls_inode;
+static bool ls_numeric;
+static bool ls_as_itself;
+static bool ls_headings;
+
+static b32 ls_status;
+static bool ls_written;
+static b64 ls_now;
+
+static positive ls_keep(string_address name)
+{
+        positive length = string_length(name);
+
+        if (ls_used + length + 1 > LS_ARENA)
+                return 0;
+
+        positive at = ls_used;
+
+        for (positive i = 0; i <= length; i++)
+                ls_arena[at + i] = string_get(name + i);
+
+        ls_used += length + 1;
+
+        return at;
+}
+
+static bipolar ls_order(ls_entry address_to left, ls_entry address_to right)
+{
+        if (ls_by_time)
+        {
+                if (left->modified != right->modified)
+                        return left->modified > right->modified ? -1 : 1;
+
+                // Two files written in the same second are not the same age,
+                // and sorting them by name instead puts them in the wrong
+                // order rather than an arbitrary one.
+                if (left->modified_fraction != right->modified_fraction)
+                        return left->modified_fraction > right->modified_fraction ? -1 : 1;
+        }
+        else if (ls_by_size)
+        {
+                if (left->size != right->size)
+                        return left->size > right->size ? -1 : 1;
+        }
+
+        string_address a = ls_arena + left->name;
+        string_address b = ls_arena + right->name;
+
+        while (string_get(a) && string_get(a) == string_get(b))
+        {
+                a++;
+                b++;
+        }
+
+        if (string_get(a) == string_get(b))
+                return 0;
+
+        return string_get(a) < string_get(b) ? -1 : 1;
+}
+
+// Shell sort with Ciura's gaps: no recursion, no second array, and a
+// directory of any size this program will hold sorts in well under the
+// quadratic time an insertion sort would take on it.
+static fn ls_sort()
+{
+        positive gaps[8] = {701, 301, 132, 57, 23, 10, 4, 1};
+
+        for (positive g = 0; g < 8; g++)
+        {
+                positive gap = gaps[g];
+
+                for (positive i = gap; i < ls_count; i++)
+                {
+                        ls_entry held = ls_entries[i];
+                        positive j = i;
+
+                        while (j >= gap && ls_order(address_of ls_entries[j - gap],
+                                                    address_of held) > 0)
+                        {
+                                ls_entries[j] = ls_entries[j - gap];
+                                j -= gap;
+                        }
+
+                        ls_entries[j] = held;
+                }
+        }
+}
+
+static fn ls_size_field(p64 value)
+{
+        if (ls_human)
+                return file_human(log, value);
+
+        file_number(log, value);
+}
+
+static positive ls_width_of(p64 value)
+{
+        p8 text[24];
+
+        return file_digits(text, value);
+}
+
+static positive ls_human_width(p64 value)
+{
+        if (!ls_human)
+                return ls_width_of(value);
+
+        positive divisor = 1;
+        positive unit = 0;
+
+        while (value / divisor >= 1024 && unit < 7)
+        {
+                divisor *= 1024;
+                unit++;
+        }
+
+        if (unit == 0)
+                return ls_width_of(value);
+
+        positive whole = (value + divisor - 1) / divisor;
+
+        if (whole >= 10)
+                return ls_width_of(whole) + 1;
+
+        return 3 + 1;
+}
+
+static fn ls_owner_text(positive id, bool group, p8 address_to into)
+{
+        if (!ls_numeric)
+        {
+                bool known = group ? file_group_name(id, into, FILE_NAME_MAX)
+                                   : file_user_name(id, into, FILE_NAME_MAX);
+
+                if (known)
+                        return;
+        }
+
+        file_digits(into, id);
+}
+
+static fn ls_print(string_address directory)
+{
+        positive link_width = 1;
+        positive size_width = 1;
+        positive owner_width = 1;
+        positive group_width = 1;
+        positive inode_width = 1;
+        p64 blocks = 0;
+
+        for (positive i = 0; i < ls_count; i++)
+        {
+                ls_entry address_to entry = address_of ls_entries[i];
+
+                if (ls_inode && ls_width_of(entry->inode) > inode_width)
+                        inode_width = ls_width_of(entry->inode);
+
+                if (!ls_long)
+                        continue;
+
+                if (ls_width_of(entry->links) > link_width)
+                        link_width = ls_width_of(entry->links);
+
+                if (ls_human_width(entry->size) > size_width)
+                        size_width = ls_human_width(entry->size);
+
+                p8 name[FILE_NAME_MAX];
+
+                ls_owner_text(entry->owner, false, name);
+
+                if (string_length(name) > owner_width)
+                        owner_width = string_length(name);
+
+                ls_owner_text(entry->group, true, name);
+
+                if (string_length(name) > group_width)
+                        group_width = string_length(name);
+        }
+
+        if (ls_long)
+        {
+                for (positive i = 0; i < ls_count; i++)
+                        blocks += ls_entries[i].blocks;
+
+                // The kernel counts in 512 byte blocks and ls has always
+                // reported in 1024 byte ones.
+                blocks /= 2;
+
+                log("total ", 0);
+
+                if (ls_human)
+                        file_human(log, blocks * 1024);
+                else
+                        file_number(log, blocks);
+
+                log("\n", 1);
+        }
+
+        for (positive k = 0; k < ls_count; k++)
+        {
+                positive i = ls_reversed ? ls_count - 1 - k : k;
+                ls_entry address_to entry = address_of ls_entries[i];
+                string_address name = ls_arena + entry->name;
+
+                if (ls_inode)
+                {
+                        file_number_padded(log, entry->inode, inode_width);
+                        log(" ", 1);
+                }
+
+                if (ls_long)
+                {
+                        p8 letters[12];
+                        p8 who[FILE_NAME_MAX];
+
+                        file_mode_letters(letters, entry->mode);
+                        log(letters, 10);
+                        log(" ", 1);
+                        file_number_padded(log, entry->links, link_width);
+                        log(" ", 1);
+
+                        ls_owner_text(entry->owner, false, who);
+                        file_text_padded(log, who, owner_width);
+                        log(" ", 1);
+
+                        ls_owner_text(entry->group, true, who);
+                        file_text_padded(log, who, group_width);
+                        log(" ", 1);
+
+                        for (positive pad = ls_human_width(entry->size); pad < size_width; pad++)
+                                log(" ", 1);
+
+                        ls_size_field(entry->size);
+                        log(" ", 1);
+                        file_stamp_short(log, entry->modified, ls_now);
+                        log(" ", 1);
+                }
+
+                log(name, 0);
+
+                if (ls_long && (entry->mode & MODE_FORMAT) == MODE_LINK)
+                {
+                        p8 where[FILE_PATH_MAX];
+                        p8 full[FILE_PATH_MAX];
+
+                        if (directory)
+                                file_join(full, FILE_PATH_MAX, directory, name);
+                        else
+                                string_copy_max(full, name, FILE_PATH_MAX - 1);
+
+                        if (file_link_text(full, where, FILE_PATH_MAX) >= 0)
+                        {
+                                log(" -> ", 0);
+                                log(where, 0);
+                        }
+                }
+
+                log("\n", 1);
+        }
+}
+
+static fn ls_add(bipolar directory, string_address path, string_address shown)
+{
+        if (ls_count >= LS_MAX_ENTRIES)
+                return;
+
+        file_facts facts;
+        ls_entry address_to entry = address_of ls_entries[ls_count];
+
+        memory_fill(entry, 0, sizeof(ls_entry));
+        entry->name = ls_keep(shown);
+
+        if (file_look(directory, path, AT_SYMLINK_NOFOLLOW, address_of facts))
+        {
+                entry->known = true;
+                entry->mode = facts.mode;
+                entry->links = facts.hard_links;
+                entry->owner = facts.owner;
+                entry->group = facts.group;
+                entry->size = facts.size;
+                entry->modified = facts.modified.seconds;
+                entry->modified_fraction = facts.modified.nanoseconds;
+                entry->inode = facts.inode;
+                entry->blocks = facts.blocks;
+        }
+
+        ls_count++;
+}
+
+static fn ls_directory(string_address path, bool heading, positive depth);
+
+static fn ls_below(string_address path, positive depth)
+{
+        // The names of the subdirectories are taken out of the listing before
+        // descending, because the listing buffers are about to be filled with
+        // whatever is inside the first of them.
+        p8 keep[LS_ARENA / 8];
+        positive kept = 0;
+        positive found = 0;
+
+        for (positive k = 0; k < ls_count; k++)
+        {
+                positive i = ls_reversed ? ls_count - 1 - k : k;
+                ls_entry address_to entry = address_of ls_entries[i];
+
+                if ((entry->mode & MODE_FORMAT) != MODE_DIRECTORY)
+                        continue;
+
+                string_address name = ls_arena + entry->name;
+
+                if (file_is_dot(name))
+                        continue;
+
+                positive length = string_length(name);
+
+                if (kept + length + 1 > sizeof(keep))
+                        break;
+
+                for (positive j = 0; j <= length; j++)
+                        keep[kept + j] = string_get(name + j);
+
+                kept += length + 1;
+                found++;
+        }
+
+        positive at = 0;
+
+        for (positive i = 0; i < found; i++)
+        {
+                p8 below[FILE_PATH_MAX];
+
+                file_join(below, FILE_PATH_MAX, path, keep + at);
+                at += string_length(keep + at) + 1;
+
+                ls_directory(below, true, depth - 1);
+        }
+}
+
+static fn ls_directory(string_address path, bool heading, positive depth)
+{
+        file_walk walk;
+
+        if (!file_walk_open(address_of walk, AT_FDCWD, path))
+        {
+                string_format(file_fail, "ls: cannot open directory '%s': No such file or directory\n",
+                              path);
+                ls_status = 1;
+                return;
+        }
+
+        ls_count = 0;
+        ls_used = 0;
+
+        struct linux_dirent64 address_to entry;
+
+        while ((entry = file_walk_next(address_of walk)))
+        {
+                if (entry->d_name[0] == '.' && !ls_hidden && !ls_almost)
+                        continue;
+
+                if (ls_almost && file_is_dot(entry->d_name))
+                        continue;
+
+                ls_add(walk.handle, entry->d_name, entry->d_name);
+        }
+
+        file_walk_close(address_of walk);
+
+        ls_sort();
+
+        if (heading)
+        {
+                if (ls_written)
+                        log("\n", 1);
+
+                log(path, 0);
+                log(":\n", 0);
+        }
+
+        ls_written = true;
+
+        ls_print(path);
+
+        // Each level of -R holds a listing and a block of names on the stack,
+        // so a tree that links into itself stops here rather than by running
+        // out of stack.
+        if (ls_recursive && depth > 0)
+                ls_below(path, depth);
+}
+
+static b32 file_ls()
+{
+        positive first = 0;
+        positive count = (positive)program_argument_count();
+        positive flags = file_take_options((string_address) "laARtShr1dinF", address_of first);
+
+        ls_now = file_now();
+
+        ls_long = (flags & FILE_FLAG('l')) != 0 || (flags & FILE_FLAG('n')) != 0;
+        ls_hidden = (flags & FILE_FLAG('a')) != 0;
+        ls_almost = (flags & FILE_FLAG('A')) != 0;
+        ls_recursive = (flags & FILE_FLAG('R')) != 0;
+        ls_by_time = (flags & FILE_FLAG('t')) != 0;
+        ls_by_size = (flags & FILE_FLAG('S')) != 0;
+        ls_human = (flags & FILE_FLAG('h')) != 0;
+        ls_reversed = (flags & FILE_FLAG('r')) != 0;
+        ls_inode = (flags & FILE_FLAG('i')) != 0;
+        ls_numeric = (flags & FILE_FLAG('n')) != 0;
+        ls_as_itself = (flags & FILE_FLAG('d')) != 0;
+
+        if (first >= count)
+        {
+                ls_directory((string_address) ".", false, FILE_MAX_DEPTH);
+                log_flush();
+                return ls_status;
+        }
+
+        positive given = count - first;
+
+        if (ls_as_itself)
+        {
+                ls_count = 0;
+                ls_used = 0;
+
+                for (positive i = first; i < count; i++)
+                        ls_add(AT_FDCWD, program_argument((b32)i), program_argument((b32)i));
+
+                ls_sort();
+                ls_print(null);
+                log_flush();
+
+                return ls_status;
+        }
+
+        // Everything that is not a directory is listed first, together, and
+        // then each directory in turn -- which is the order the system's own
+        // ls uses and the only one where a mixed set of operands reads.
+        ls_count = 0;
+        ls_used = 0;
+
+        positive directories = 0;
+
+        for (positive i = first; i < count; i++)
+        {
+                string_address path = program_argument((b32)i);
+
+                if (!file_exists(AT_FDCWD, path))
+                {
+                        string_format(file_fail,
+                                      "ls: cannot access '%s': No such file or directory\n",
+                                      path);
+                        ls_status = 1;
+                        continue;
+                }
+
+                if (file_is_directory_through(path))
+                {
+                        directories++;
+                        continue;
+                }
+
+                ls_add(AT_FDCWD, path, path);
+        }
+
+        ls_headings = given > 1 || ls_recursive;
+
+        if (ls_count > 0)
+        {
+                ls_sort();
+                ls_print(null);
+                ls_written = true;
+        }
+
+        // The directory operands are listed in name order however they were
+        // typed, which is what ls does with every other list of names.
+        positive order[LS_MAX_ENTRIES];
+        positive have = 0;
+
+        for (positive i = first; i < count && have < LS_MAX_ENTRIES; i++)
+        {
+                string_address path = program_argument((b32)i);
+
+                if (!file_exists(AT_FDCWD, path) || !file_is_directory_through(path))
+                        continue;
+
+                order[have++] = i;
+        }
+
+        for (positive i = 1; i < have; i++)
+        {
+                positive held = order[i];
+                positive j = i;
+
+                while (j > 0 &&
+                       string_compare(program_argument((b32)order[j - 1]),
+                                      program_argument((b32)held)) > 0)
+                {
+                        order[j] = order[j - 1];
+                        j--;
+                }
+
+                order[j] = held;
+        }
+
+        for (positive i = 0; i < have; i++)
+                ls_directory(program_argument((b32)order[i]), ls_headings,
+                             FILE_MAX_DEPTH);
+
+        log_flush();
+
+        return ls_status;
+}
+
+// find ------------------------------------------------------------
+/*
+        find [PATH...] [-maxdepth N] [-mindepth N] [-name PATTERN]
+             [-type C] [-size N] [-empty] [-print]
+
+        Every test given has to hold, which is the and that find's expression
+        language spells by juxtaposition. There is no -exec: running a command
+        is the shell's job, and everything here can be piped into one.
+*/
+#define FIND_TESTS_MAX 32
+
+typedef struct
+{
+        p8 kind;
+        string_address text;
+        b64 number;
+        p8 unit;
+        p8 comparison;
+} find_test;
+
+static find_test find_tests[FIND_TESTS_MAX];
+static positive find_have;
+static positive find_maximum = FILE_MAX_DEPTH;
+static positive find_minimum;
+static b32 find_status;
+
+static bool find_size_holds(find_test address_to test, file_facts address_to facts)
+{
+        p64 divisor = 512;
+
+        if (test->unit == 'c')
+                divisor = 1;
+        else if (test->unit == 'k')
+                divisor = 1024;
+        else if (test->unit == 'M')
+                divisor = 1024 * 1024;
+        else if (test->unit == 'G')
+                divisor = 1024 * 1024 * 1024;
+
+        // find rounds up: a file of one byte is one block, and "-size 1" is
+        // meant to find it.
+        p64 units = (facts->size + divisor - 1) / divisor;
+
+        if (test->comparison == '+')
+                return units > (p64)test->number;
+
+        if (test->comparison == '-')
+                return units < (p64)test->number;
+
+        return units == (p64)test->number;
+}
+
+static bool find_type_holds(p8 wanted, positive mode)
+{
+        positive kind = mode & MODE_FORMAT;
+
+        if (wanted == 'f')
+                return kind == MODE_FILE;
+
+        if (wanted == 'd')
+                return kind == MODE_DIRECTORY;
+
+        if (wanted == 'l')
+                return kind == MODE_LINK;
+
+        if (wanted == 'b')
+                return kind == MODE_BLOCK;
+
+        if (wanted == 'c')
+                return kind == MODE_CHARACTER;
+
+        if (wanted == 'p')
+                return kind == MODE_PIPE;
+
+        if (wanted == 's')
+                return kind == MODE_SOCKET;
+
+        return false;
+}
+
+static bool find_empty(string_address path, file_facts address_to facts)
+{
+        if ((facts->mode & MODE_FORMAT) != MODE_DIRECTORY)
+                return facts->size == 0;
+
+        file_walk walk;
+
+        if (!file_walk_open(address_of walk, AT_FDCWD, path))
+                return false;
+
+        struct linux_dirent64 address_to entry;
+        bool empty = true;
+
+        while ((entry = file_walk_next(address_of walk)))
+        {
+                if (file_is_dot(entry->d_name))
+                        continue;
+
+                empty = false;
+                break;
+        }
+
+        file_walk_close(address_of walk);
+
+        return empty;
+}
+
+static bool find_holds(string_address path, string_address name, file_facts address_to facts,
+                       positive depth)
+{
+        if (depth < find_minimum)
+                return false;
+
+        for (positive i = 0; i < find_have; i++)
+        {
+                find_test address_to test = address_of find_tests[i];
+
+                if (test->kind == 'n' && !file_match(test->text, name))
+                        return false;
+
+                if (test->kind == 'p' && !file_match(test->text, path))
+                        return false;
+
+                if (test->kind == 't' && !find_type_holds((p8)test->number, facts->mode))
+                        return false;
+
+                if (test->kind == 's' && !find_size_holds(test, facts))
+                        return false;
+
+                if (test->kind == 'e' && !find_empty(path, facts))
+                        return false;
+
+                if (test->kind == 'm' && (facts->mode & 07777) != (positive)test->number)
+                        return false;
+        }
+
+        return true;
+}
+
+static fn find_walk(string_address path, string_address name, positive depth)
+{
+        file_facts facts;
+
+        if (!file_look_link(path, address_of facts))
+        {
+                string_format(file_fail, "find: '%s': No such file or directory\n", path);
+                find_status = 1;
+                return;
+        }
+
+        if (find_holds(path, name, address_of facts, depth))
+                file_line(path);
+
+        if ((facts.mode & MODE_FORMAT) != MODE_DIRECTORY || depth >= find_maximum)
+                return;
+
+        file_walk walk;
+
+        if (!file_walk_open(address_of walk, AT_FDCWD, path))
+        {
+                string_format(file_fail, "find: '%s': Permission denied\n", path);
+                find_status = 1;
+                return;
+        }
+
+        struct linux_dirent64 address_to entry;
+
+        while ((entry = file_walk_next(address_of walk)))
+        {
+                if (file_is_dot(entry->d_name))
+                        continue;
+
+                p8 below[FILE_PATH_MAX];
+                p8 held[FILE_NAME_MAX];
+
+                string_copy_max(held, entry->d_name, FILE_NAME_MAX - 1);
+                held[FILE_NAME_MAX - 1] = end;
+
+                file_join(below, FILE_PATH_MAX, path, held);
+
+                find_walk(below, held, depth + 1);
+        }
+
+        file_walk_close(address_of walk);
+}
+
+static b32 file_find()
+{
+        positive count = (positive)program_argument_count();
+        positive index = 1;
+        positive roots_first = 1;
+        positive roots_last = 1;
+
+        while (index < count && !string_is(program_argument((b32)index), '-'))
+                index++;
+
+        roots_last = index;
+
+        while (index < count)
+        {
+                string_address word = program_argument((b32)index);
+                string_address value = index + 1 < count ? program_argument((b32)(index + 1)) : null;
+
+                if (string_compare(word, (string_address) "-print") == 0 ||
+                    string_compare(word, (string_address) "-print0") == 0)
+                {
+                        index++;
+                        continue;
+                }
+
+                if (string_compare(word, (string_address) "-empty") == 0)
+                {
+                        if (find_have < FIND_TESTS_MAX)
+                                find_tests[find_have++].kind = 'e';
+
+                        index++;
+                        continue;
+                }
+
+                if (!value)
+                {
+                        string_format(file_fail, "find: %s needs a value\n", word);
+                        return 1;
+                }
+
+                if (string_compare(word, (string_address) "-maxdepth") == 0)
+                {
+                        find_maximum = file_count(value);
+                        index += 2;
+                        continue;
+                }
+
+                if (string_compare(word, (string_address) "-mindepth") == 0)
+                {
+                        find_minimum = file_count(value);
+                        index += 2;
+                        continue;
+                }
+
+                if (find_have >= FIND_TESTS_MAX)
+                {
+                        file_fail("find: too many tests\n", 0);
+                        return 1;
+                }
+
+                find_test address_to test = address_of find_tests[find_have];
+
+                if (string_compare(word, (string_address) "-name") == 0)
+                {
+                        test->kind = 'n';
+                        test->text = value;
+                }
+                else if (string_compare(word, (string_address) "-path") == 0 ||
+                         string_compare(word, (string_address) "-wholename") == 0)
+                {
+                        test->kind = 'p';
+                        test->text = value;
+                }
+                else if (string_compare(word, (string_address) "-type") == 0)
+                {
+                        test->kind = 't';
+                        test->number = string_get(value);
+                }
+                else if (string_compare(word, (string_address) "-perm") == 0)
+                {
+                        positive mode = 0;
+
+                        if (!file_mode_of(value, 0, false, address_of mode))
+                        {
+                                string_format(file_fail, "find: invalid mode %s\n", value);
+                                return 1;
+                        }
+
+                        test->kind = 'm';
+                        test->number = (b64)mode;
+                }
+                else if (string_compare(word, (string_address) "-size") == 0)
+                {
+                        string_address step = value;
+
+                        test->kind = 's';
+                        test->comparison = ' ';
+
+                        if (string_is(step, '+') || string_is(step, '-'))
+                        {
+                                test->comparison = string_get(step);
+                                step++;
+                        }
+
+                        test->number = (b64)file_count(step);
+
+                        while (string_get(step) >= '0' && string_get(step) <= '9')
+                                step++;
+
+                        test->unit = string_get(step) ? string_get(step) : 'b';
+                }
+                else
+                {
+                        string_format(file_fail, "find: unknown test: %s\n", word);
+                        return 1;
+                }
+
+                find_have++;
+                index += 2;
+        }
+
+        if (roots_last == roots_first)
+        {
+                find_walk((string_address) ".", (string_address) ".", 0);
+                log_flush();
+                return find_status;
+        }
+
+        for (positive i = roots_first; i < roots_last; i++)
+        {
+                string_address root = program_argument((b32)i);
+                p8 name[FILE_PATH_MAX];
+
+                file_tail(root, name);
+                find_walk(root, name, 0);
+        }
+
+        log_flush();
+
+        return find_status;
+}
+
+// stat ------------------------------------------------------------
+/*
+        stat [-L] [-c FORMAT] FILE...
+
+        The default is a readable block. -c is the one that is meant to be
+        parsed, so every specifier there prints exactly one field and nothing
+        else -- %s is the size and not "size: 12".
+
+        Times are UTC, and say so in the +0000 they carry.
+*/
+static bool stat_follow;
+static b32 stat_status;
+
+static fn stat_one_specifier(p8 letter, string_address path, file_facts address_to facts)
+{
+        p8 text[FILE_PATH_MAX];
+
+        switch (letter)
+        {
+        case 'n':
+                log(path, 0);
+                return;
+
+        case 'N':
+                log("'", 1);
+                log(path, 0);
+                log("'", 1);
+
+                if ((facts->mode & MODE_FORMAT) == MODE_LINK &&
+                    file_link_text(path, text, FILE_PATH_MAX) >= 0)
+                {
+                        log(" -> '", 0);
+                        log(text, 0);
+                        log("'", 1);
+                }
+
+                return;
+
+        case 's':
+                return file_number(log, facts->size);
+
+        case 'b':
+                return file_number(log, facts->blocks);
+
+        case 'B':
+                return file_number(log, 512);
+
+        case 'a':
+                return file_octal(log, facts->mode & 07777, 1);
+
+        case 'A':
+                file_mode_letters(text, facts->mode);
+                return log(text, 10);
+
+        case 'f':
+                return file_hexadecimal(log, facts->mode, 1);
+
+        case 'F':
+                return log(file_kind_name(facts->mode), 0);
+
+        case 'h':
+                return file_number(log, facts->hard_links);
+
+        case 'i':
+                return file_number(log, facts->inode);
+
+        case 'u':
+                return file_number(log, facts->owner);
+
+        case 'g':
+                return file_number(log, facts->group);
+
+        case 'U':
+                if (file_user_name(facts->owner, text, FILE_NAME_MAX))
+                        return log(text, 0);
+
+                return file_number(log, facts->owner);
+
+        case 'G':
+                if (file_group_name(facts->group, text, FILE_NAME_MAX))
+                        return log(text, 0);
+
+                return file_number(log, facts->group);
+
+        case 'o':
+                return file_number(log, facts->blocksize);
+
+        case 'd':
+                return file_number(log, facts->device_major * 256 + facts->device_minor);
+
+        case 't':
+                return file_hexadecimal(log, facts->rdev_major, 1);
+
+        case 'T':
+                return file_hexadecimal(log, facts->rdev_minor, 1);
+
+        case 'X':
+                return file_number(log, (positive)facts->accessed.seconds);
+
+        case 'Y':
+                return file_number(log, (positive)facts->modified.seconds);
+
+        case 'Z':
+                return file_number(log, (positive)facts->changed.seconds);
+
+        case 'W':
+                return file_number(log, (facts->mask & STATX_BIRTH)
+                                            ? (positive)facts->created.seconds
+                                            : 0);
+
+        case 'x':
+                return file_stamp(log, facts->accessed.seconds, facts->accessed.nanoseconds);
+
+        case 'y':
+                return file_stamp(log, facts->modified.seconds, facts->modified.nanoseconds);
+
+        case 'z':
+                return file_stamp(log, facts->changed.seconds, facts->changed.nanoseconds);
+
+        case 'w':
+                if (!(facts->mask & STATX_BIRTH))
+                        return log("-", 1);
+
+                return file_stamp(log, facts->created.seconds, facts->created.nanoseconds);
+
+        case '%':
+                return log("%", 1);
+        }
+
+        log("?", 1);
+}
+
+/*
+        -c is a format, not a printf: the system's own stat reads backslash
+        escapes only under --printf, and a format that said \t would print
+        those two characters. So does this one.
+*/
+static fn stat_formatted(string_address format, string_address path,
+                         file_facts address_to facts)
+{
+        string_address step = format;
+
+        while (string_get(step))
+        {
+                if (string_is(step, '%') && string_get(step + 1))
+                {
+                        stat_one_specifier(string_get(step + 1), path, facts);
+                        step += 2;
+                        continue;
+                }
+
+                log(step, 1);
+                step++;
+        }
+
+        log("\n", 1);
+}
+
+static fn stat_readable(string_address path, file_facts address_to facts)
+{
+        p8 text[FILE_PATH_MAX];
+
+        log("  File: ", 0);
+        log(path, 0);
+
+        if ((facts->mode & MODE_FORMAT) == MODE_LINK &&
+            file_link_text(path, text, FILE_PATH_MAX) >= 0)
+        {
+                log(" -> ", 0);
+                log(text, 0);
+        }
+
+        log("\n  Size: ", 0);
+        file_digits(text, facts->size);
+        file_text_padded(log, text, 10);
+        log("\tBlocks: ", 0);
+        file_digits(text, facts->blocks);
+        file_text_padded(log, text, 10);
+        log(" IO Block: ", 0);
+        file_digits(text, facts->blocksize);
+        file_text_padded(log, text, 6);
+        log(" ", 1);
+        log(file_kind_name(facts->mode), 0);
+
+        log("\nDevice: ", 0);
+        file_number(log, facts->device_major);
+        log(",", 1);
+        file_number(log, facts->device_minor);
+        log("\tInode: ", 0);
+        file_digits(text, facts->inode);
+        file_text_padded(log, text, 10);
+        log("  Links: ", 0);
+        file_number(log, facts->hard_links);
+
+        log("\nAccess: (", 0);
+        file_octal(log, facts->mode & 07777, 4);
+        log("/", 1);
+        file_mode_letters(text, facts->mode);
+        log(text, 10);
+        log(")  Uid: (", 0);
+        file_number_padded(log, facts->owner, 5);
+        log("/", 1);
+
+        if (!file_user_name(facts->owner, text, FILE_NAME_MAX))
+                file_digits(text, facts->owner);
+
+        file_text_aligned(log, text, 8);
+
+        log(")   Gid: (", 0);
+        file_number_padded(log, facts->group, 5);
+        log("/", 1);
+
+        if (!file_group_name(facts->group, text, FILE_NAME_MAX))
+                file_digits(text, facts->group);
+
+        file_text_aligned(log, text, 8);
+
+        log(")\nAccess: ", 0);
+        file_stamp(log, facts->accessed.seconds, facts->accessed.nanoseconds);
+        log("\nModify: ", 0);
+        file_stamp(log, facts->modified.seconds, facts->modified.nanoseconds);
+        log("\nChange: ", 0);
+        file_stamp(log, facts->changed.seconds, facts->changed.nanoseconds);
+        log("\n Birth: ", 0);
+
+        if (facts->mask & STATX_BIRTH)
+                file_stamp(log, facts->created.seconds, facts->created.nanoseconds);
+        else
+                log("-", 1);
+
+        log("\n", 1);
+}
+
+static b32 file_stat()
+{
+        positive count = (positive)program_argument_count();
+        positive index = 1;
+        string_address format = null;
+
+        while (index < count)
+        {
+                string_address argument = program_argument((b32)index);
+
+                if (string_is(argument, '-') && string_is(argument + 1, '-') &&
+                    string_is(argument + 2, end))
+                {
+                        index++;
+                        break;
+                }
+
+                if (!string_is(argument, '-') || string_is(argument + 1, end))
+                        break;
+
+                if (string_is(argument + 1, 'L') && string_is(argument + 2, end))
+                {
+                        stat_follow = true;
+                        index++;
+                        continue;
+                }
+
+                if ((string_is(argument + 1, 'c') || string_is(argument + 1, 'f')) &&
+                    string_is(argument + 2, end) && index + 1 < count)
+                {
+                        format = program_argument((b32)(index + 1));
+                        index += 2;
+                        continue;
+                }
+
+                if (string_is(argument + 1, 'c') && string_get(argument + 2))
+                {
+                        format = argument + 2;
+                        index++;
+                        continue;
+                }
+
+                string_format(file_fail, "stat: unknown option: %s\n", argument);
+                return 1;
+        }
+
+        if (index >= count)
+        {
+                file_fail("stat: missing operand\n", 0);
+                return 1;
+        }
+
+        while (index < count)
+        {
+                string_address path = program_argument((b32)index++);
+                file_facts facts;
+
+                if (!file_look(AT_FDCWD, path, stat_follow ? 0 : AT_SYMLINK_NOFOLLOW,
+                               address_of facts))
+                {
+                        string_format(file_fail,
+                                      "stat: cannot statx '%s': No such file or directory\n",
+                                      path);
+                        stat_status = 1;
+                        continue;
+                }
+
+                if (format)
+                        stat_formatted(format, path, address_of facts);
+                else
+                        stat_readable(path, address_of facts);
+        }
+
+        log_flush();
+
+        return stat_status;
+}
+
+// du ------------------------------------------------------------
+/*
+        du [-a] [-s] [-h] [-k] [-b] [-c] [PATH...]
+
+        What a file costs on the disk, not how long it is: the kernel's block
+        count, which is what makes a sparse file cheap and a tiny file cost a
+        whole block. -b is the other question, and asks for the length.
+*/
+static bool du_all;
+static bool du_summary;
+static bool du_human;
+static bool du_apparent;
+static bool du_total;
+static b32 du_status;
+static p64 du_grand;
+
+static fn du_report(p64 blocks, string_address path)
+{
+        if (du_human)
+                file_human(log, du_apparent ? blocks : blocks * 512);
+        else if (du_apparent)
+                file_number(log, blocks);
+        else
+                file_number(log, blocks / 2);
+
+        log("\t", 1);
+        log(path, 0);
+        log("\n", 1);
+}
+
+// Returns what the tree costs, and prints the parts of it that were asked for
+// on the way back up, which is the order du has always reported in.
+static p64 du_walk(string_address path, positive depth, bool named)
+{
+        file_facts facts;
+
+        if (!file_look_link(path, address_of facts))
+        {
+                string_format(file_fail, "du: cannot access '%s': No such file or directory\n",
+                              path);
+                du_status = 1;
+                return 0;
+        }
+
+        p64 mine = du_apparent ? facts.size : facts.blocks;
+
+        // --apparent-size is asking how much was written, and nothing was
+        // written into the directory itself; only what is under it counts.
+        if (du_apparent && (facts.mode & MODE_FORMAT) == MODE_DIRECTORY)
+                mine = 0;
+
+        if ((facts.mode & MODE_FORMAT) != MODE_DIRECTORY)
+        {
+                if (du_all || named)
+                        du_report(mine, path);
+
+                return mine;
+        }
+
+        p64 total = mine;
+
+        if (depth > 0)
+        {
+                file_walk walk;
+
+                if (file_walk_open(address_of walk, AT_FDCWD, path))
+                {
+                        struct linux_dirent64 address_to entry;
+
+                        while ((entry = file_walk_next(address_of walk)))
+                        {
+                                if (file_is_dot(entry->d_name))
+                                        continue;
+
+                                p8 below[FILE_PATH_MAX];
+
+                                file_join(below, FILE_PATH_MAX, path, entry->d_name);
+                                total += du_walk(below, depth - 1, false);
+                        }
+
+                        file_walk_close(address_of walk);
+                }
+                else
+                {
+                        string_format(file_fail, "du: cannot read directory '%s'\n", path);
+                        du_status = 1;
+                }
+        }
+
+        if (named || !du_summary)
+                du_report(total, path);
+
+        return total;
+}
+
+static b32 file_du()
+{
+        positive first = 0;
+        positive count = (positive)program_argument_count();
+        positive flags = file_take_options((string_address) "ashkbcSx", address_of first);
+
+        du_all = (flags & FILE_FLAG('a')) != 0;
+        du_summary = (flags & FILE_FLAG('s')) != 0;
+        du_human = (flags & FILE_FLAG('h')) != 0;
+        du_apparent = (flags & FILE_FLAG('b')) != 0;
+        du_total = (flags & FILE_FLAG('c')) != 0;
+
+        if (first >= count)
+        {
+                du_grand += du_walk((string_address) ".", FILE_MAX_DEPTH, true);
+        }
+        else
+        {
+                while (first < count)
+                        du_grand += du_walk(program_argument((b32)first++),
+                                            FILE_MAX_DEPTH, true);
+        }
+
+        if (du_total)
+                du_report(du_grand, (string_address) "total");
+
+        log_flush();
+
+        return du_status;
+}
+
+// df ------------------------------------------------------------
+/*
+        df [-h] [PATH...]
+
+        The mounted filesystems come from /proc/mounts, because the kernel is
+        the only thing that knows what is mounted and this is where it says
+        so. A filesystem with no blocks at all is one of the kernel's own
+        bookkeeping mounts and is left out, the way df has always left it out.
+
+        The whole table is measured before any of it is written: each column
+        ends up as wide as the widest thing under it and no wider, which is
+        why the file is read twice and why the second pass prints.
+*/
+#define DF_TEXT (1 << 18)
+
+static p8 df_text[DF_TEXT];
+static bool df_human;
+
+static positive df_device_width;
+static positive df_blocks_width;
+static positive df_used_width;
+static positive df_free_width;
+
+// The kernel counts in whatever unit the filesystem uses; df has always
+// reported in 1024 byte ones, and rounds a part of one up to a whole.
+static positive df_amount(p8 address_to into, p64 blocks, p64 size)
+{
+        p64 bytes = blocks * size;
+
+        if (!df_human)
+                return file_digits(into, (bytes + 1023) / 1024);
+
+        positive divisor = 1;
+        positive unit = 0;
+        p8 units[8] = "BKMGTPEZ";
+
+        while (bytes / divisor >= 1024 && unit < 7)
+        {
+                divisor *= 1024;
+                unit++;
+        }
+
+        if (unit == 0)
+                return file_digits(into, bytes);
+
+        positive whole = (bytes + divisor - 1) / divisor;
+        positive length;
+
+        if (whole >= 10)
+                length = file_digits(into, whole);
+        else
+        {
+                positive quotient = bytes / divisor;
+                positive leftover = bytes % divisor;
+                positive tenths = quotient * 10 + (leftover * 10 + divisor - 1) / divisor;
+
+                length = file_digits(into, tenths / 10);
+                into[length++] = '.';
+                length += file_digits(into + length, tenths % 10);
+        }
+
+        into[length++] = units[unit];
+        into[length] = end;
+
+        return length;
+}
+
+static fn df_column(p8 address_to text, positive width)
+{
+        file_text_aligned(log, text, width);
+        log(" ", 1);
+}
+
+static fn df_row(string_address device, string_address where,
+                 file_mount_facts address_to facts)
+{
+        p64 size = (p64)(facts->fragment_size ? facts->fragment_size : facts->block_size);
+        p64 used = facts->blocks - facts->blocks_free;
+        p8 text[64];
+
+        file_text_padded(log, device, df_device_width);
+        log(" ", 1);
+
+        df_amount(text, facts->blocks, size);
+        df_column(text, df_blocks_width);
+
+        df_amount(text, used, size);
+        df_column(text, df_used_width);
+
+        df_amount(text, facts->blocks_available, size);
+        df_column(text, df_free_width);
+
+        p64 wanted = used + facts->blocks_available;
+        positive percent = wanted ? (positive)((used * 100 + wanted - 1) / wanted) : 0;
+
+        file_number_padded(log, percent, 3);
+        log("% ", 0);
+        log(where, 0);
+        log("\n", 1);
+}
+
+// Every line of /proc/mounts is device, mount point, type, options; the first
+// two are all df needs and both may carry \040 where a space was.
+static positive df_field(p8 address_to text, positive at, p8 address_to into,
+                         positive limit)
+{
+        positive filled = 0;
+
+        while (text[at] == ' ')
+                at++;
+
+        while (text[at] && text[at] != ' ' && text[at] != '\n')
+        {
+                if (text[at] == '\\' && text[at + 1] == '0' && text[at + 2] == '4' &&
+                    text[at + 3] == '0')
+                {
+                        if (filled + 1 < limit)
+                                into[filled++] = ' ';
+
+                        at += 4;
+                        continue;
+                }
+
+                if (filled + 1 < limit)
+                        into[filled++] = text[at];
+
+                at++;
+        }
+
+        into[filled] = end;
+
+        return at;
+}
+
+static b32 file_df()
+{
+        positive first = 0;
+        positive count = (positive)program_argument_count();
+        positive flags = file_take_options((string_address) "hkPT", address_of first);
+
+        df_human = (flags & FILE_FLAG('h')) != 0;
+
+        if (file_slurp((string_address) "/proc/mounts", df_text, DF_TEXT) <= 0 &&
+            file_slurp((string_address) "/proc/self/mounts", df_text, DF_TEXT) <= 0)
+        {
+                file_fail("df: cannot read /proc/mounts\n", 0);
+                return 1;
+        }
+
+        string_address blocks_heading = df_human ? (string_address) "Size"
+                                                 : (string_address) "1K-blocks";
+        string_address free_heading = df_human ? (string_address) "Avail"
+                                               : (string_address) "Available";
+
+        /*
+                Each column is the widest of three things: a floor the column
+                has whatever is in it, the heading, and the widest value. The
+                floors are what keep "df /tmp" and "df" lining their tables up
+                the same way, and they are the system's own: fourteen for the
+                filesystem, five for each amount, four for the percentage.
+        */
+        df_device_width = 14;
+        df_blocks_width = 5;
+        df_used_width = 5;
+        df_free_width = 5;
+
+        if (string_length(blocks_heading) > df_blocks_width)
+                df_blocks_width = string_length(blocks_heading);
+
+        if (string_length(free_heading) > df_free_width)
+                df_free_width = string_length(free_heading);
+
+        bool filtering = first < count;
+
+        for (positive pass = 0; pass < 2; pass++)
+        {
+                if (pass == 1)
+                {
+                        file_text_padded(log, (string_address) "Filesystem", df_device_width);
+                        log(" ", 1);
+                        df_column(blocks_heading, df_blocks_width);
+                        df_column((string_address) "Used", df_used_width);
+                        df_column(free_heading, df_free_width);
+                        log("Use% Mounted on\n", 0);
+                }
+
+                positive at = 0;
+
+                while (df_text[at])
+                {
+                        p8 device[FILE_PATH_MAX];
+                        p8 where[FILE_PATH_MAX];
+                        p8 text[64];
+
+                        at = df_field(df_text, at, device, FILE_PATH_MAX);
+                        at = df_field(df_text, at, where, FILE_PATH_MAX);
+
+                        while (df_text[at] && df_text[at] != '\n')
+                                at++;
+
+                        if (df_text[at])
+                                at++;
+
+                        if (!string_get(where))
+                                continue;
+
+                        file_mount_facts facts;
+
+                        memory_fill(address_of facts, 0, sizeof(facts));
+
+                        if (system_call_2(syscall(statfs), (positive)where,
+                                          (positive)address_of facts) < 0)
+                                continue;
+
+                        if (facts.blocks == 0)
+                                continue;
+
+                        if (filtering)
+                        {
+                                bool matched = false;
+
+                                for (positive i = first; i < count; i++)
+                                {
+                                        p8 wanted[FILE_PATH_MAX];
+
+                                        if (!file_real(program_argument((b32)i), wanted))
+                                                continue;
+
+                                        file_mount_facts theirs;
+
+                                        memory_fill(address_of theirs, 0, sizeof(theirs));
+
+                                        if (system_call_2(syscall(statfs), (positive)wanted,
+                                                          (positive)address_of theirs) < 0)
+                                                continue;
+
+                                        if (theirs.identity[0] == facts.identity[0] &&
+                                            theirs.identity[1] == facts.identity[1] &&
+                                            theirs.blocks == facts.blocks)
+                                                matched = true;
+                                }
+
+                                if (!matched)
+                                        continue;
+                        }
+
+                        if (pass == 1)
+                        {
+                                df_row(device, where, address_of facts);
+                                continue;
+                        }
+
+                        p64 size = (p64)(facts.fragment_size ? facts.fragment_size
+                                                             : facts.block_size);
+                        p64 used = facts.blocks - facts.blocks_free;
+
+                        if (string_length(device) > df_device_width)
+                                df_device_width = string_length(device);
+
+                        if (df_amount(text, facts.blocks, size) > df_blocks_width)
+                                df_blocks_width = string_length(text);
+
+                        if (df_amount(text, used, size) > df_used_width)
+                                df_used_width = string_length(text);
+
+                        if (df_amount(text, facts.blocks_available, size) > df_free_width)
+                                df_free_width = string_length(text);
+                }
+        }
+
+        log_flush();
+
+        return 0;
+}
+
+// chmod ------------------------------------------------------------
+// chmod [-R] MODE FILE..., with MODE octal or symbolic.
+static string_address chmod_specification;
+static b32 chmod_status;
+
+static bool chmod_one(bipolar directory, string_address name, string_address shown)
+{
+        file_facts facts;
+
+        // Following the link, because Linux has no mode on a symlink of its
+        // own to change and chmod has always meant the thing pointed at.
+        if (!file_look(directory, name, 0, address_of facts))
+        {
+                file_facts itself;
+
+                // A link with nothing at the end of it is not an error worth
+                // a word, but there is nothing to change either.
+                if (file_look(directory, name, AT_SYMLINK_NOFOLLOW, address_of itself))
+                        return true;
+
+                string_format(file_fail, "chmod: cannot access '%s': No such file or directory\n",
+                              shown);
+                chmod_status = 1;
+                return false;
+        }
+
+        positive wanted = 0;
+
+        if (!file_mode_of(chmod_specification, facts.mode,
+                          (facts.mode & MODE_FORMAT) == MODE_DIRECTORY, address_of wanted))
+        {
+                string_format(file_fail, "chmod: invalid mode: %s\n", chmod_specification);
+                chmod_status = 1;
+                return false;
+        }
+
+        bipolar done = system_call_4(syscall(fchmodat), directory, (positive)name, wanted, 0);
+
+        if (done < 0)
+        {
+                string_format(file_fail, "chmod: changing permissions of '%s': %s\n",
+                              shown, file_reason(done));
+                chmod_status = 1;
+                return false;
+        }
+
+        return true;
+}
+
+static fn chmod_walk(bipolar directory, string_address name, string_address shown,
+                     positive depth)
+{
+        chmod_one(directory, name, shown);
+
+        // is_directory here asks about the link itself, so a link to a
+        // directory is changed and not walked into.
+        if (depth == 0 || !file_is_directory(directory, name))
+                return;
+
+        file_walk walk;
+
+        if (!file_walk_open(address_of walk, directory, name))
+                return;
+
+        struct linux_dirent64 address_to entry;
+
+        while ((entry = file_walk_next(address_of walk)))
+        {
+                if (file_is_dot(entry->d_name))
+                        continue;
+
+                p8 below[FILE_PATH_MAX];
+
+                file_join(below, FILE_PATH_MAX, shown, entry->d_name);
+                chmod_walk(walk.handle, entry->d_name, below, depth - 1);
+        }
+
+        file_walk_close(address_of walk);
+}
+
+static b32 file_chmod()
+{
+        positive first = 0;
+        positive count = (positive)program_argument_count();
+        positive flags = file_take_options((string_address) "Rfvc", address_of first);
+
+        if (first + 1 >= count)
+        {
+                file_fail("chmod: missing operand\n", 0);
+                return 1;
+        }
+
+        chmod_specification = program_argument((b32)first++);
+
+        while (first < count)
+        {
+                string_address path = program_argument((b32)first++);
+
+                if (flags & FILE_FLAG('R'))
+                        chmod_walk(AT_FDCWD, path, path, FILE_MAX_DEPTH);
+                else
+                        chmod_one(AT_FDCWD, path, path);
+        }
+
+        log_flush();
+
+        return chmod_status;
+}
+
+// chown ------------------------------------------------------------
+// chown [-R] [-h] USER[:GROUP] FILE..., and the same program answers to a
+// USER of nothing at all so that ":group" changes only the group.
+static bipolar chown_user = -1;
+static bipolar chown_group = -1;
+static b32 chown_status;
+static positive chown_flags;
+
+static fn chown_one(bipolar directory, string_address name, string_address shown)
+{
+        bipolar done = system_call_5(syscall(fchownat), directory, (positive)name,
+                                     (positive)chown_user, (positive)chown_group,
+                                     (chown_flags & FILE_FLAG('h')) ? AT_SYMLINK_NOFOLLOW : 0);
+
+        if (done < 0)
+        {
+                string_format(file_fail, "chown: changing ownership of '%s': %s\n",
+                              shown, file_reason(done));
+                chown_status = 1;
+        }
+}
+
+static fn chown_walk(bipolar directory, string_address name, string_address shown,
+                     positive depth)
+{
+        chown_one(directory, name, shown);
+
+        if (depth == 0 || !file_is_directory(directory, name))
+                return;
+
+        file_walk walk;
+
+        if (!file_walk_open(address_of walk, directory, name))
+                return;
+
+        struct linux_dirent64 address_to entry;
+
+        while ((entry = file_walk_next(address_of walk)))
+        {
+                if (file_is_dot(entry->d_name))
+                        continue;
+
+                p8 below[FILE_PATH_MAX];
+
+                file_join(below, FILE_PATH_MAX, shown, entry->d_name);
+                chown_walk(walk.handle, entry->d_name, below, depth - 1);
+        }
+
+        file_walk_close(address_of walk);
+}
+
+static b32 file_chown()
+{
+        positive first = 0;
+        positive count = (positive)program_argument_count();
+
+        chown_flags = file_take_options((string_address) "Rhfvc", address_of first);
+
+        if (first + 1 >= count)
+        {
+                file_fail("chown: missing operand\n", 0);
+                return 1;
+        }
+
+        string_address who = program_argument((b32)first++);
+        p8 user[FILE_NAME_MAX];
+        positive length = 0;
+
+        while (string_get(who + length) && !string_is(who + length, ':') &&
+               !string_is(who + length, '.') && length + 1 < FILE_NAME_MAX)
+        {
+                user[length] = string_get(who + length);
+                length++;
+        }
+
+        user[length] = end;
+
+        string_address group = null;
+
+        if (string_is(who + length, ':') || string_is(who + length, '.'))
+                group = who + length + 1;
+
+        if (length > 0)
+        {
+                chown_user = file_all_digits(user) ? (bipolar)file_count(user)
+                                                   : file_user_id(user);
+
+                if (chown_user < 0)
+                {
+                        string_format(file_fail, "chown: invalid user: %s\n", who);
+                        return 1;
+                }
+        }
+
+        if (group && string_get(group))
+        {
+                chown_group = file_all_digits(group) ? (bipolar)file_count(group)
+                                                     : file_group_id(group);
+
+                if (chown_group < 0)
+                {
+                        string_format(file_fail, "chown: invalid group: %s\n", who);
+                        return 1;
+                }
+        }
+
+        while (first < count)
+        {
+                string_address path = program_argument((b32)first++);
+
+                if (chown_flags & FILE_FLAG('R'))
+                        chown_walk(AT_FDCWD, path, path, FILE_MAX_DEPTH);
+                else
+                        chown_one(AT_FDCWD, path, path);
+        }
+
+        log_flush();
+
+        return chown_status;
+}
+
+// ln ------------------------------------------------------------
+// ln [-s] [-f] TARGET [NAME], and ln [-s] [-f] TARGET... DIRECTORY.
+static bool ln_make(string_address target, string_address name, bool symbolic, bool force)
+{
+        if (force)
+                system_call_3(syscall(unlinkat), AT_FDCWD, (positive)name, 0);
+
+        bipolar done;
+
+        if (symbolic)
+                done = system_call_3(syscall(symlinkat), (positive)target, AT_FDCWD,
+                                     (positive)name);
+        else
+                done = system_call_5(syscall(linkat), AT_FDCWD, (positive)target,
+                                     AT_FDCWD, (positive)name, 0);
+
+        if (done < 0)
+        {
+                string_format(file_fail, "ln: failed to create link '%s': %s\n",
+                              name, file_reason(done));
+                return false;
+        }
+
+        return true;
+}
+
+static b32 file_ln()
+{
+        positive first = 0;
+        positive count = (positive)program_argument_count();
+        positive flags = file_take_options((string_address) "sfnvTP", address_of first);
+
+        bool symbolic = (flags & FILE_FLAG('s')) != 0;
+        bool force = (flags & FILE_FLAG('f')) != 0;
+
+        if (first >= count)
+        {
+                file_fail("ln: missing operand\n", 0);
+                return 1;
+        }
+
+        positive given = count - first;
+
+        if (given == 1)
+        {
+                // One operand links into the working directory under the
+                // target's own last component.
+                string_address target = program_argument((b32)first);
+                p8 name[FILE_PATH_MAX];
+
+                file_tail(target, name);
+
+                return ln_make(target, name, symbolic, force) ? 0 : 1;
+        }
+
+        string_address last = program_argument((b32)(count - 1));
+
+        if (given == 2 && !file_is_directory_through(last))
+        {
+                return ln_make(program_argument((b32)first), last, symbolic, force) ? 0 : 1;
+        }
+
+        if (!file_is_directory_through(last))
+        {
+                string_format(file_fail, "ln: target '%s' is not a directory\n", last);
+                return 1;
+        }
+
+        b32 status = 0;
+
+        while (first < count - 1)
+        {
+                string_address target = program_argument((b32)first++);
+                p8 tail[FILE_PATH_MAX];
+                p8 name[FILE_PATH_MAX];
+
+                file_tail(target, tail);
+                file_join(name, FILE_PATH_MAX, last, tail);
+
+                if (!ln_make(target, name, symbolic, force))
+                        status = 1;
+        }
+
+        log_flush();
+
+        return status;
+}
+
+// readlink ------------------------------------------------------------
+// readlink [-f] [-n] FILE..., where -f resolves the whole path rather than
+// reading one link.
+static b32 file_readlink()
+{
+        positive first = 0;
+        positive count = (positive)program_argument_count();
+        positive flags = file_take_options((string_address) "fneqsvm", address_of first);
+
+        if (first >= count)
+        {
+                file_fail("readlink: missing operand\n", 0);
+                return 1;
+        }
+
+        bool resolve = (flags & (FILE_FLAG('f') | FILE_FLAG('e') | FILE_FLAG('m'))) != 0;
+        bool no_newline = (flags & FILE_FLAG('n')) != 0;
+        bool quiet = (flags & (FILE_FLAG('q') | FILE_FLAG('s'))) != 0;
+        b32 status = 0;
+
+        while (first < count)
+        {
+                string_address path = program_argument((b32)first++);
+                p8 answer[FILE_PATH_MAX];
+
+                if (resolve)
+                {
+                        if (!file_real(path, answer))
+                        {
+                                status = 1;
+                                continue;
+                        }
+
+                        p8 above[FILE_PATH_MAX];
+
+                        file_head(answer, above);
+
+                        // -f wants the parent to be real, -e wants the whole
+                        // path to be, -m wants neither.
+                        if (!(flags & FILE_FLAG('m')) && !file_is_directory_through(above))
+                        {
+                                status = 1;
+                                continue;
+                        }
+
+                        if ((flags & FILE_FLAG('e')) && !file_exists(AT_FDCWD, answer))
+                        {
+                                status = 1;
+                                continue;
+                        }
+                }
+                else if (file_link_text(path, answer, FILE_PATH_MAX) < 0)
+                {
+                        if (!quiet)
+                                string_format(file_fail, "readlink: %s: Invalid argument\n", path);
+
+                        status = 1;
+                        continue;
+                }
+
+                log(answer, 0);
+
+                if (!no_newline)
+                        log("\n", 1);
+        }
+
+        log_flush();
+
+        return status;
+}
+
+// basename ------------------------------------------------------------
+// basename NAME [SUFFIX], and the -a / -s forms that take many names.
+static fn basename_one(string_address name, string_address suffix)
+{
+        p8 answer[FILE_PATH_MAX];
+
+        file_tail(name, answer);
+
+        if (suffix)
+        {
+                positive length = string_length(answer);
+                positive cut = string_length(suffix);
+
+                // A name that is nothing but its suffix keeps it: stripping
+                // would leave an empty line where a name was asked for.
+                if (cut > 0 && cut < length)
+                {
+                        positive i = 0;
+
+                        while (i < cut && answer[length - cut + i] == string_get(suffix + i))
+                                i++;
+
+                        if (i == cut)
+                                answer[length - cut] = end;
+                }
+        }
+
+        file_line(answer);
+}
+
+static b32 file_basename()
+{
+        positive count = (positive)program_argument_count();
+        positive index = 1;
+        bool many = false;
+        string_address suffix = null;
+
+        while (index < count)
+        {
+                string_address argument = program_argument((b32)index);
+
+                if (string_is(argument, '-') && string_is(argument + 1, '-') &&
+                    string_is(argument + 2, end))
+                {
+                        index++;
+                        break;
+                }
+
+                if (!string_is(argument, '-') || string_is(argument + 1, end))
+                        break;
+
+                if (string_is(argument + 1, 'a') && string_is(argument + 2, end))
+                {
+                        many = true;
+                        index++;
+                        continue;
+                }
+
+                if (string_is(argument + 1, 's') && string_is(argument + 2, end))
+                {
+                        if (index + 1 >= count)
+                        {
+                                file_fail("basename: -s needs a suffix\n", 0);
+                                return 1;
+                        }
+
+                        suffix = program_argument((b32)(index + 1));
+                        many = true;
+                        index += 2;
+                        continue;
+                }
+
+                if (string_is(argument + 1, 's'))
+                {
+                        suffix = argument + 2;
+                        many = true;
+                        index++;
+                        continue;
+                }
+
+                string_format(file_fail, "basename: unknown option: %s\n", argument);
+                return 1;
+        }
+
+        if (index >= count)
+        {
+                file_fail("basename: missing operand\n", 0);
+                return 1;
+        }
+
+        if (!many && index + 1 < count)
+                suffix = program_argument((b32)(index + 1));
+
+        if (many)
+        {
+                while (index < count)
+                        basename_one(program_argument((b32)index++), suffix);
+        }
+        else
+                basename_one(program_argument((b32)index), suffix);
+
+        log_flush();
+
+        return 0;
+}
+
+// dirname ------------------------------------------------------------
+// dirname NAME..., the directory part of every name given.
+static b32 file_dirname()
+{
+        positive first = 0;
+        positive count = (positive)program_argument_count();
+
+        file_take_options((string_address) "", address_of first);
+
+        if (first >= count)
+        {
+                file_fail("dirname: missing operand\n", 0);
+                return 1;
+        }
+
+        while (first < count)
+        {
+                p8 answer[FILE_PATH_MAX];
+
+                file_head(program_argument((b32)first++), answer);
+                file_line(answer);
+        }
+
+        log_flush();
+
+        return 0;
+}
+
+// realpath ------------------------------------------------------------
+// realpath [-m] [-q] PATH..., every link and every dot resolved away.
+static b32 file_realpath()
+{
+        positive first = 0;
+        positive count = (positive)program_argument_count();
+        positive flags = file_take_options((string_address) "meqsLP", address_of first);
+
+        if (first >= count)
+        {
+                file_fail("realpath: missing operand\n", 0);
+                return 1;
+        }
+
+        bool allow_missing = (flags & FILE_FLAG('m')) != 0;
+        bool quiet = (flags & FILE_FLAG('q')) != 0;
+        b32 status = 0;
+
+        while (first < count)
+        {
+                string_address path = program_argument((b32)first++);
+                p8 answer[FILE_PATH_MAX];
+
+                // Everything but the last component has to be there, which
+                // is what the system's own realpath asks for: naming a file
+                // that has yet to be created is the point of the tool.
+                p8 above[FILE_PATH_MAX];
+
+                if (!file_real(path, answer))
+                {
+                        if (!quiet)
+                                string_format(file_fail, "realpath: %s: Invalid argument\n", path);
+
+                        status = 1;
+                        continue;
+                }
+
+                file_head(answer, above);
+
+                if ((!allow_missing && !file_is_directory_through(above)) ||
+                    ((flags & FILE_FLAG('e')) && !file_exists(AT_FDCWD, answer)))
+                {
+                        if (!quiet)
+                                string_format(file_fail, "realpath: %s: No such file or directory\n",
+                                              path);
+
+                        status = 1;
+                        continue;
+                }
+
+                file_line(answer);
+        }
+
+        log_flush();
+
+        return status;
+}
+
+// mkdir ------------------------------------------------------------
+// mkdir [-p] [-m MODE] DIRECTORY...
+static b32 file_mkdir()
+{
+        positive count = (positive)program_argument_count();
+        positive index = 1;
+        bool parents = false;
+        positive mode = 0777;
+        bool given_mode = false;
+
+        while (index < count)
+        {
+                string_address argument = program_argument((b32)index);
+
+                if (string_is(argument, '-') && string_is(argument + 1, '-') &&
+                    string_is(argument + 2, end))
+                {
+                        index++;
+                        break;
+                }
+
+                if (!string_is(argument, '-') || string_is(argument + 1, end))
+                        break;
+
+                if (string_is(argument + 1, 'm') && string_is(argument + 2, end) &&
+                    index + 1 < count)
+                {
+                        if (!file_mode_of(program_argument((b32)(index + 1)), 0777, true,
+                                          address_of mode))
+                        {
+                                file_fail("mkdir: bad mode\n", 0);
+                                return 1;
+                        }
+
+                        given_mode = true;
+                        index += 2;
+                        continue;
+                }
+
+                if (string_is(argument + 1, 'p') && string_is(argument + 2, end))
+                {
+                        parents = true;
+                        index++;
+                        continue;
+                }
+
+                string_format(file_fail, "mkdir: unknown option: %s\n", argument);
+                return 1;
+        }
+
+        if (index >= count)
+        {
+                file_fail("mkdir: missing operand\n", 0);
+                return 1;
+        }
+
+        b32 status = 0;
+
+        while (index < count)
+        {
+                string_address path = program_argument((b32)index++);
+
+                if (parents)
+                {
+                        // The parents are made with the default, and only the
+                        // directory that was named gets the mode asked for.
+                        if (!file_make_parents(path, 0777))
+                        {
+                                file_complain((string_address) "mkdir",
+                                              (string_address) "Cannot create directory",
+                                              path);
+                                status = 1;
+                                continue;
+                        }
+
+                        if (given_mode)
+                                system_call_4(syscall(fchmodat), AT_FDCWD, (positive)path,
+                                              mode, 0);
+
+                        continue;
+                }
+
+                bipolar made = system_call_3(syscall(mkdirat), AT_FDCWD, (positive)path, mode);
+
+                if (made < 0)
+                {
+                        string_format(file_fail, "mkdir: cannot create directory '%s': %s\n",
+                                      path, file_reason(made));
+                        status = 1;
+                }
+        }
+
+        log_flush();
+
+        return status;
+}
+
+// rmdir ------------------------------------------------------------
+// rmdir [-p] DIRECTORY..., where -p goes on removing the parents while they
+// are empty too.
+static b32 file_rmdir()
+{
+        positive first = 0;
+        positive count = (positive)program_argument_count();
+        positive flags = file_take_options((string_address) "p", address_of first);
+
+        if (first >= count)
+        {
+                file_fail("rmdir: missing operand\n", 0);
+                return 1;
+        }
+
+        b32 status = 0;
+
+        while (first < count)
+        {
+                string_address path = program_argument((b32)first++);
+                bipolar gone = system_call_3(syscall(unlinkat), AT_FDCWD, (positive)path,
+                                             AT_REMOVEDIR);
+
+                if (gone < 0)
+                {
+                        string_format(file_fail, "rmdir: failed to remove '%s': %s\n",
+                                      path, file_reason(gone));
+                        status = 1;
+                        continue;
+                }
+
+                if (!(flags & FILE_FLAG('p')))
+                        continue;
+
+                p8 parent[FILE_PATH_MAX];
+
+                string_copy_max(parent, path, FILE_PATH_MAX - 1);
+                parent[FILE_PATH_MAX - 1] = end;
+
+                while (1)
+                {
+                        p8 above[FILE_PATH_MAX];
+
+                        file_head(parent, above);
+
+                        if (string_is(above, '.') && string_is(above + 1, end))
+                                break;
+
+                        if (string_is(above, '/') && string_is(above + 1, end))
+                                break;
+
+                        if (system_call_3(syscall(unlinkat), AT_FDCWD, (positive)above,
+                                          AT_REMOVEDIR) < 0)
+                                break;
+
+                        string_copy_max(parent, above, FILE_PATH_MAX - 1);
+                }
+        }
+
+        log_flush();
+
+        return status;
+}
+
+// cp ------------------------------------------------------------
+/*
+        cp [-r] [-p] SOURCE... DESTINATION
+
+        A destination that is a directory takes each source under its own last
+        component; two operands where the second is not a directory make the
+        copy itself.
+*/
+static bool cp_recursive;
+static bool cp_preserve;
+static b32 cp_status;
+
+static fn cp_keep(string_address destination, file_facts address_to facts)
+{
+        if (!cp_preserve)
+                return;
+
+        p64 times[4];
+
+        times[0] = (p64)facts->accessed.seconds;
+        times[1] = facts->accessed.nanoseconds;
+        times[2] = (p64)facts->modified.seconds;
+        times[3] = facts->modified.nanoseconds;
+
+        system_call_5(syscall(fchownat), AT_FDCWD, (positive)destination,
+                      facts->owner, facts->group, AT_SYMLINK_NOFOLLOW);
+
+        system_call_4(syscall(utimensat), AT_FDCWD, (positive)destination,
+                      (positive)times, AT_SYMLINK_NOFOLLOW);
+
+        system_call_4(syscall(fchmodat), AT_FDCWD, (positive)destination,
+                      facts->mode & 07777, 0);
+}
+
+static bool cp_one(string_address source, string_address destination, positive depth)
+{
+        file_facts facts;
+
+        if (!file_look_link(source, address_of facts))
+        {
+                string_format(file_fail, "cp: cannot stat '%s': No such file or directory\n",
+                              source);
+                cp_status = 1;
+                return false;
+        }
+
+        positive kind = facts.mode & MODE_FORMAT;
+
+        if (kind == MODE_LINK)
+        {
+                p8 target[FILE_PATH_MAX];
+
+                if (file_link_text(source, target, FILE_PATH_MAX) < 0)
+                {
+                        cp_status = 1;
+                        return false;
+                }
+
+                system_call_3(syscall(unlinkat), AT_FDCWD, (positive)destination, 0);
+
+                if (system_call_3(syscall(symlinkat), (positive)target, AT_FDCWD,
+                                  (positive)destination) < 0)
+                {
+                        string_format(file_fail, "cp: cannot create link '%s'\n", destination);
+                        cp_status = 1;
+                        return false;
+                }
+
+                cp_keep(destination, address_of facts);
+                return true;
+        }
+
+        if (kind != MODE_DIRECTORY)
+        {
+                if (!file_copy_contents(AT_FDCWD, source, AT_FDCWD, destination,
+                                        facts.mode & 07777))
+                {
+                        string_format(file_fail, "cp: cannot copy '%s'\n", source);
+                        cp_status = 1;
+                        return false;
+                }
+
+                // The open above only sets the mode on a file it created, so a
+                // destination that was already there keeps whatever it had
+                // unless the mode is written afterwards.
+                system_call_4(syscall(fchmodat), AT_FDCWD, (positive)destination,
+                              facts.mode & 07777, 0);
+
+                cp_keep(destination, address_of facts);
+                return true;
+        }
+
+        if (!cp_recursive)
+        {
+                string_format(file_fail, "cp: -r not specified; omitting directory '%s'\n",
+                              source);
+                cp_status = 1;
+                return false;
+        }
+
+        if (depth == 0)
+        {
+                string_format(file_fail, "cp: '%s' is nested too deep\n", source);
+                cp_status = 1;
+                return false;
+        }
+
+        bipolar made = system_call_3(syscall(mkdirat), AT_FDCWD, (positive)destination,
+                                     facts.mode & 07777);
+
+        if (made < 0 && made != -ERROR_EXISTS)
+        {
+                string_format(file_fail, "cp: cannot create directory '%s': %s\n",
+                              destination, file_reason(made));
+                cp_status = 1;
+                return false;
+        }
+
+        file_walk walk;
+
+        if (!file_walk_open(address_of walk, AT_FDCWD, source))
+        {
+                string_format(file_fail, "cp: cannot read directory '%s'\n", source);
+                cp_status = 1;
+                return false;
+        }
+
+        struct linux_dirent64 address_to entry;
+        bool complete = true;
+
+        while ((entry = file_walk_next(address_of walk)))
+        {
+                if (file_is_dot(entry->d_name))
+                        continue;
+
+                p8 from[FILE_PATH_MAX];
+                p8 to[FILE_PATH_MAX];
+
+                file_join(from, FILE_PATH_MAX, source, entry->d_name);
+                file_join(to, FILE_PATH_MAX, destination, entry->d_name);
+
+                if (!cp_one(from, to, depth - 1))
+                        complete = false;
+        }
+
+        file_walk_close(address_of walk);
+
+        cp_keep(destination, address_of facts);
+
+        return complete;
+}
+
+static b32 file_cp()
+{
+        positive first = 0;
+        positive count = (positive)program_argument_count();
+        positive flags = file_take_options((string_address) "rRpafdvit", address_of first);
+
+        cp_recursive = (flags & (FILE_FLAG('r') | FILE_FLAG('R') | FILE_FLAG('a'))) != 0;
+        cp_preserve = (flags & (FILE_FLAG('p') | FILE_FLAG('a'))) != 0;
+
+        if (first + 1 >= count)
+        {
+                file_fail("cp: missing operand\n", 0);
+                return 1;
+        }
+
+        string_address last = program_argument((b32)(count - 1));
+
+        if (count - first == 2 && !file_is_directory_through(last))
+        {
+                cp_one(program_argument((b32)first), last, FILE_MAX_DEPTH);
+                log_flush();
+                return cp_status;
+        }
+
+        if (!file_is_directory_through(last))
+        {
+                string_format(file_fail, "cp: target '%s' is not a directory\n", last);
+                return 1;
+        }
+
+        while (first < count - 1)
+        {
+                string_address source = program_argument((b32)first++);
+                p8 tail[FILE_PATH_MAX];
+                p8 destination[FILE_PATH_MAX];
+
+                file_tail(source, tail);
+                file_join(destination, FILE_PATH_MAX, last, tail);
+
+                cp_one(source, destination, FILE_MAX_DEPTH);
+        }
+
+        log_flush();
+
+        return cp_status;
+}
+
+// mv ------------------------------------------------------------
+/*
+        mv [-f] SOURCE... DESTINATION
+
+        renameat2 rather than renameat, because riscv64 never had renameat and
+        this tree builds for it; a flags word of zero is the same operation.
+*/
+static b32 mv_status;
+
+static bool mv_across(string_address source, string_address destination, positive depth);
+
+static bool mv_across_directory(string_address source, string_address destination,
+                                positive depth)
+{
+        file_walk walk;
+
+        if (!file_walk_open(address_of walk, AT_FDCWD, source))
+                return false;
+
+        struct linux_dirent64 address_to entry;
+        bool complete = true;
+
+        while ((entry = file_walk_next(address_of walk)))
+        {
+                if (file_is_dot(entry->d_name))
+                        continue;
+
+                p8 from[FILE_PATH_MAX];
+                p8 to[FILE_PATH_MAX];
+
+                file_join(from, FILE_PATH_MAX, source, entry->d_name);
+                file_join(to, FILE_PATH_MAX, destination, entry->d_name);
+
+                if (!mv_across(from, to, depth - 1))
+                        complete = false;
+        }
+
+        file_walk_close(address_of walk);
+
+        if (complete)
+                system_call_3(syscall(unlinkat), AT_FDCWD, (positive)source, AT_REMOVEDIR);
+
+        return complete;
+}
+
+// A rename that crosses a mount point is not a rename at all, so the bytes
+// have to be carried over and the original taken away afterwards.
+static bool mv_across(string_address source, string_address destination, positive depth)
+{
+        file_facts facts;
+
+        if (!file_look_link(source, address_of facts))
+                return false;
+
+        if (depth == 0)
+                return false;
+
+        positive kind = facts.mode & MODE_FORMAT;
+
+        if (kind == MODE_DIRECTORY)
+        {
+                bipolar made = system_call_3(syscall(mkdirat), AT_FDCWD,
+                                             (positive)destination, facts.mode & 07777);
+
+                if (made < 0 && made != -ERROR_EXISTS)
+                        return false;
+
+                return mv_across_directory(source, destination, depth);
+        }
+
+        if (kind == MODE_LINK)
+        {
+                p8 target[FILE_PATH_MAX];
+
+                if (file_link_text(source, target, FILE_PATH_MAX) < 0)
+                        return false;
+
+                system_call_3(syscall(unlinkat), AT_FDCWD, (positive)destination, 0);
+
+                if (system_call_3(syscall(symlinkat), (positive)target, AT_FDCWD,
+                                  (positive)destination) < 0)
+                        return false;
+        }
+        else if (!file_copy_contents(AT_FDCWD, source, AT_FDCWD, destination,
+                                     facts.mode & 07777))
+                return false;
+
+        p64 times[4];
+
+        times[0] = (p64)facts.accessed.seconds;
+        times[1] = facts.accessed.nanoseconds;
+        times[2] = (p64)facts.modified.seconds;
+        times[3] = facts.modified.nanoseconds;
+
+        system_call_4(syscall(utimensat), AT_FDCWD, (positive)destination,
+                      (positive)times, AT_SYMLINK_NOFOLLOW);
+
+        return system_call_3(syscall(unlinkat), AT_FDCWD, (positive)source, 0) == 0;
+}
+
+static fn mv_one(string_address source, string_address destination)
+{
+        bipolar done = system_call_5(syscall(renameat2), AT_FDCWD, (positive)source,
+                                     AT_FDCWD, (positive)destination, 0);
+
+        if (done == 0)
+                return;
+
+        if (done == -ERROR_CROSS_DEVICE && mv_across(source, destination, FILE_MAX_DEPTH))
+                return;
+
+        string_format(file_fail, "mv: cannot move '%s' to '%s': %s\n", source,
+                      destination, file_reason(done));
+        mv_status = 1;
+}
+
+static b32 file_mv()
+{
+        positive first = 0;
+        positive count = (positive)program_argument_count();
+
+        file_take_options((string_address) "fivnT", address_of first);
+
+        if (first + 1 >= count)
+        {
+                file_fail("mv: missing operand\n", 0);
+                return 1;
+        }
+
+        string_address last = program_argument((b32)(count - 1));
+
+        if (count - first == 2 && !file_is_directory_through(last))
+        {
+                mv_one(program_argument((b32)first), last);
+                log_flush();
+                return mv_status;
+        }
+
+        if (!file_is_directory_through(last))
+        {
+                string_format(file_fail, "mv: target '%s' is not a directory\n", last);
+                return 1;
+        }
+
+        while (first < count - 1)
+        {
+                string_address source = program_argument((b32)first++);
+                p8 tail[FILE_PATH_MAX];
+                p8 destination[FILE_PATH_MAX];
+
+                file_tail(source, tail);
+                file_join(destination, FILE_PATH_MAX, last, tail);
+
+                mv_one(source, destination);
+        }
+
+        log_flush();
+
+        return mv_status;
+}
+
+// rm ------------------------------------------------------------
+// rm [-r] [-f] FILE...
+static bool rm_force;
+static b32 rm_status;
+
+static bool rm_tree(bipolar directory, string_address name, string_address shown,
+                    positive depth);
+
+static bool rm_contents(bipolar directory, string_address shown, positive depth)
+{
+        bool complete = true;
+
+        /*
+                Removing an entry while a getdents block is being walked moves
+                the ones behind it, so the block is refilled from the start
+                after each pass and the directory is read again until a pass
+                finds nothing left to take.
+        */
+        while (1)
+        {
+                file_walk walk;
+
+                walk.handle = directory;
+                walk.have = 0;
+                walk.at = 0;
+
+                system_call_3(syscall(lseek), directory, 0, FILE_SEEK_SET);
+
+                struct linux_dirent64 address_to entry;
+                positive removed = 0;
+                positive seen = 0;
+
+                while ((entry = file_walk_next(address_of walk)))
+                {
+                        if (file_is_dot(entry->d_name))
+                                continue;
+
+                        seen++;
+
+                        p8 below[FILE_PATH_MAX];
+
+                        file_join(below, FILE_PATH_MAX, shown, entry->d_name);
+
+                        if (rm_tree(directory, entry->d_name, below, depth))
+                                removed++;
+                        else
+                                complete = false;
+                }
+
+                if (seen == 0 || removed == 0)
+                        break;
+        }
+
+        return complete;
+}
+
+static bool rm_tree(bipolar directory, string_address name, string_address shown,
+                    positive depth)
+{
+        if (system_call_3(syscall(unlinkat), directory, (positive)name, 0) == 0)
+                return true;
+
+        if (!file_is_directory(directory, name))
+        {
+                if (!rm_force)
+                {
+                        string_format(file_fail, "rm: cannot remove '%s': %s\n", shown,
+                                      file_reason(-ERROR_NO_ENTRY));
+                        rm_status = 1;
+                }
+
+                return false;
+        }
+
+        if (depth == 0)
+        {
+                string_format(file_fail, "rm: '%s' is nested too deep\n", shown);
+                rm_status = 1;
+                return false;
+        }
+
+        bipolar inside = system_call_3(syscall(openat), directory, (positive)name,
+                                       FILE_READ | O_DIRECTORY);
+
+        if (inside < 0)
+        {
+                if (!rm_force)
+                {
+                        string_format(file_fail, "rm: cannot read '%s': %s\n", shown,
+                                      file_reason(inside));
+                        rm_status = 1;
+                }
+
+                return false;
+        }
+
+        bool complete = rm_contents(inside, shown, depth - 1);
+
+        system_call_1(syscall(close), inside);
+
+        bipolar gone = system_call_3(syscall(unlinkat), directory, (positive)name,
+                                     AT_REMOVEDIR);
+
+        if (gone < 0)
+        {
+                if (!rm_force)
+                {
+                        string_format(file_fail, "rm: cannot remove '%s': %s\n", shown,
+                                      file_reason(gone));
+                        rm_status = 1;
+                }
+
+                return false;
+        }
+
+        return complete;
+}
+
+static b32 file_rm()
+{
+        positive first = 0;
+        positive count = (positive)program_argument_count();
+        positive flags = file_take_options((string_address) "rRfivd", address_of first);
+
+        rm_force = (flags & FILE_FLAG('f')) != 0;
+
+        bool recursive = (flags & (FILE_FLAG('r') | FILE_FLAG('R'))) != 0;
+
+        if (first >= count)
+        {
+                if (rm_force)
+                        return 0;
+
+                file_fail("rm: missing operand\n", 0);
+                return 1;
+        }
+
+        while (first < count)
+        {
+                string_address path = program_argument((b32)first++);
+
+                if (!file_exists(AT_FDCWD, path))
+                {
+                        if (!rm_force)
+                        {
+                                string_format(file_fail,
+                                              "rm: cannot remove '%s': No such file or directory\n",
+                                              path);
+                                rm_status = 1;
+                        }
+
+                        continue;
+                }
+
+                if (file_is_directory(AT_FDCWD, path) && !recursive)
+                {
+                        string_format(file_fail, "rm: cannot remove '%s': Is a directory\n",
+                                      path);
+                        rm_status = 1;
+                        continue;
+                }
+
+                rm_tree(AT_FDCWD, path, path, FILE_MAX_DEPTH);
+        }
+
+        log_flush();
+
+        return rm_status;
+}
+
+// touch ------------------------------------------------------------
+/*
+        touch [-a] [-m] [-c] [-r REFERENCE] [-d SECONDS] FILE...
+
+        -a and -m are what pick which of the two stamps moves; naming neither
+        moves both, and naming one leaves the other exactly where it was
+        rather than setting it to now, which is what UTIME_OMIT is for.
+
+        -d here takes seconds since the epoch rather than a written date. A
+        date parser would be most of a calendar library, and every test that
+        wants a repeatable stamp can say it as a number.
+*/
+static b32 file_touch()
+{
+        positive first = 0;
+        positive count = (positive)program_argument_count();
+        positive index = 1;
+        bool access = false;
+        bool modify = false;
+        bool no_create = false;
+        bool given = false;
+        b64 seconds = 0;
+        p32 nanoseconds = 0;
+
+        while (index < count)
+        {
+                string_address argument = program_argument((b32)index);
+
+                if (string_is(argument, '-') && string_is(argument + 1, '-') &&
+                    string_is(argument + 2, end))
+                {
+                        index++;
+                        break;
+                }
+
+                if (!string_is(argument, '-') || string_is(argument + 1, end))
+                        break;
+
+                if ((string_is(argument + 1, 'r') || string_is(argument + 1, 'd')) &&
+                    string_is(argument + 2, end) && index + 1 < count)
+                {
+                        string_address value = program_argument((b32)(index + 1));
+
+                        if (string_is(argument + 1, 'r'))
+                        {
+                                file_facts facts;
+
+                                if (!file_look_at(value, address_of facts))
+                                {
+                                        string_format(file_fail,
+                                                      "touch: failed to get attributes of '%s'\n",
+                                                      value);
+                                        return 1;
+                                }
+
+                                seconds = facts.modified.seconds;
+                                nanoseconds = facts.modified.nanoseconds;
+                        }
+                        else
+                        {
+                                // @N is how a date is spelled as a number of
+                                // seconds, and it is the only spelling read
+                                // here; a written date would be a calendar.
+                                string_address digits = string_is(value, '@') ? value + 1
+                                                                              : value;
+
+                                if (!file_all_digits(string_is(digits, '-') ? digits + 1
+                                                                            : digits))
+                                {
+                                        string_format(file_fail,
+                                                      "touch: invalid date format: %s\n",
+                                                      value);
+                                        return 1;
+                                }
+
+                                seconds = file_signed(digits);
+                                nanoseconds = 0;
+                        }
+
+                        given = true;
+                        index += 2;
+                        continue;
+                }
+
+                string_address letter = argument + 1;
+                bool known = true;
+
+                while (string_get(letter) && known)
+                {
+                        if (string_is(letter, 'a'))
+                                access = true;
+                        else if (string_is(letter, 'm'))
+                                modify = true;
+                        else if (string_is(letter, 'c'))
+                                no_create = true;
+                        else
+                                known = false;
+
+                        letter++;
+                }
+
+                if (!known)
+                {
+                        string_format(file_fail, "touch: unknown option: %s\n", argument);
+                        return 1;
+                }
+
+                index++;
+        }
+
+        first = index;
+
+        if (first >= count)
+        {
+                file_fail("touch: missing operand\n", 0);
+                return 1;
+        }
+
+        if (!access && !modify)
+        {
+                access = true;
+                modify = true;
+        }
+
+        p64 times[4];
+
+        times[0] = given ? (p64)seconds : 0;
+        times[1] = access ? (given ? (p64)nanoseconds : (p64)UTIME_NOW) : (p64)UTIME_OMIT;
+        times[2] = given ? (p64)seconds : 0;
+        times[3] = modify ? (given ? (p64)nanoseconds : (p64)UTIME_NOW) : (p64)UTIME_OMIT;
+
+        b32 status = 0;
+
+        while (first < count)
+        {
+                string_address path = program_argument((b32)first++);
+
+                if (!file_exists(AT_FDCWD, path))
+                {
+                        if (no_create)
+                                continue;
+
+                        bipolar made = system_call_4(syscall(openat), AT_FDCWD,
+                                                     (positive)path, FILE_WRITE & ~O_TRUNC,
+                                                     0666);
+
+                        if (made < 0)
+                        {
+                                string_format(file_fail, "touch: cannot touch '%s': %s\n",
+                                              path, file_reason(made));
+                                status = 1;
+                                continue;
+                        }
+
+                        system_call_1(syscall(close), made);
+                }
+
+                bipolar done = system_call_4(syscall(utimensat), AT_FDCWD, (positive)path,
+                                             (positive)times, 0);
+
+                if (done < 0)
+                {
+                        string_format(file_fail, "touch: setting times of '%s': %s\n",
+                                      path, file_reason(done));
+                        status = 1;
+                }
+        }
+
+        log_flush();
+
+        return status;
+}
+
+// sleep ------------------------------------------------------------
+/*
+        sleep NUMBER[SUFFIX]..., where the number may have a fraction and the
+        suffix is s, m, h or d. The fraction is read digit by digit into
+        nanoseconds rather than through a decimal, so there is no rounding
+        anywhere between the text and the timespec.
+*/
+static bool sleep_read(string_address text, p64 address_to seconds,
+                       p64 address_to nanoseconds)
+{
+        p64 whole = 0;
+        p64 fraction = 0;
+        p64 scale = 100000000;
+        bool any = false;
+
+        while (string_get(text) >= '0' && string_get(text) <= '9')
+        {
+                whole = whole * 10 + (p64)(string_get(text) - '0');
+                text++;
+                any = true;
+        }
+
+        if (string_is(text, '.'))
+        {
+                text++;
+
+                while (string_get(text) >= '0' && string_get(text) <= '9')
+                {
+                        if (scale > 0)
+                        {
+                                fraction += (p64)(string_get(text) - '0') * scale;
+                                scale /= 10;
+                        }
+
+                        text++;
+                        any = true;
+                }
+        }
+
+        if (!any)
+                return false;
+
+        p64 multiplier = 1;
+
+        if (string_is(text, 's'))
+                text++;
+        else if (string_is(text, 'm'))
+        {
+                multiplier = 60;
+                text++;
+        }
+        else if (string_is(text, 'h'))
+        {
+                multiplier = 3600;
+                text++;
+        }
+        else if (string_is(text, 'd'))
+        {
+                multiplier = 86400;
+                text++;
+        }
+
+        if (string_get(text))
+                return false;
+
+        p64 total = whole * multiplier * 1000000000 + fraction * multiplier;
+
+        address_to seconds = total / 1000000000;
+        address_to nanoseconds = total % 1000000000;
+
+        return true;
+}
+
+static b32 file_sleep()
+{
+        positive count = (positive)program_argument_count();
+
+        if (count < 2)
+        {
+                file_fail("sleep: missing operand\n", 0);
+                return 1;
+        }
+
+        for (positive i = 1; i < count; i++)
+        {
+                p64 wanted[2] = {0, 0};
+
+                if (!sleep_read(program_argument((b32)i), address_of wanted[0],
+                                address_of wanted[1]))
+                {
+                        string_format(file_fail, "sleep: invalid time interval: %s\n",
+                                      program_argument((b32)i));
+                        return 1;
+                }
+
+                // A signal that arrives partway through leaves the remainder
+                // in the second timespec, and the sleep goes on from there.
+                p64 left[2] = {wanted[0], wanted[1]};
+
+                while (system_call_2(syscall(nanosleep), (positive)left,
+                                     (positive)left) < 0)
+                {
+                        if (left[0] == 0 && left[1] == 0)
+                                break;
+                }
+        }
+
+        return 0;
+}
+
+// seq ------------------------------------------------------------
+/*
+        seq LAST, seq FIRST LAST, seq FIRST INCREMENT LAST.
+
+        Whole numbers only. The rest of this tree has no way to read a decimal
+        out of a string, and a seq that printed a rounded 0.1 would be worse
+        than one that says it cannot.
+*/
+static fn seq_write(writer write, bipolar value, positive width)
+{
+        p8 text[24];
+        positive length;
+
+        if (value < 0)
+        {
+                length = file_digits(text, (positive)(-value));
+
+                for (positive i = length + 1; i < width; i++)
+                        write("0", 1);
+
+                write("-", 1);
+                write(text, length);
+                return;
+        }
+
+        length = file_digits(text, (positive)value);
+
+        for (positive i = length; i < width; i++)
+                write("0", 1);
+
+        write(text, length);
+}
+
+static positive seq_width(bipolar value)
+{
+        p8 text[24];
+        positive length = file_digits(text, value < 0 ? (positive)(-value) : (positive)value);
+
+        return value < 0 ? length + 1 : length;
+}
+
+static b32 file_seq()
+{
+        positive count = (positive)program_argument_count();
+        positive index = 1;
+        bool pad = false;
+        string_address separator = (string_address) "\n";
+
+        while (index < count)
+        {
+                string_address argument = program_argument((b32)index);
+
+                if (string_is(argument, '-') && string_is(argument + 1, 'w') &&
+                    string_is(argument + 2, end))
+                {
+                        pad = true;
+                        index++;
+                        continue;
+                }
+
+                if (string_is(argument, '-') && string_is(argument + 1, 's') &&
+                    string_is(argument + 2, end) && index + 1 < count)
+                {
+                        separator = program_argument((b32)(index + 1));
+                        index += 2;
+                        continue;
+                }
+
+                break;
+        }
+
+        positive given = count - index;
+
+        if (given < 1 || given > 3)
+        {
+                file_fail("seq: needs one, two or three numbers\n", 0);
+                return 1;
+        }
+
+        bipolar first = 1;
+        bipolar step = 1;
+        bipolar last;
+
+        if (given == 1)
+                last = file_signed(program_argument((b32)index));
+        else if (given == 2)
+        {
+                first = file_signed(program_argument((b32)index));
+                last = file_signed(program_argument((b32)(index + 1)));
+        }
+        else
+        {
+                first = file_signed(program_argument((b32)index));
+                step = file_signed(program_argument((b32)(index + 1)));
+                last = file_signed(program_argument((b32)(index + 2)));
+        }
+
+        if (step == 0)
+        {
+                file_fail("seq: increment must not be zero\n", 0);
+                return 1;
+        }
+
+        positive width = 0;
+
+        if (pad)
+        {
+                width = seq_width(first);
+
+                if (seq_width(last) > width)
+                        width = seq_width(last);
+        }
+
+        bipolar value = first;
+
+        bool written = false;
+
+        while (step > 0 ? value <= last : value >= last)
+        {
+                if (written)
+                        log(separator, 0);
+
+                seq_write(log, value, width);
+                written = true;
+                value += step;
+        }
+
+        // The separator goes between the numbers; the line still ends the way
+        // every other line does.
+        if (written)
+                log("\n", 1);
+
+        log_flush();
+
+        return 0;
+}
+
+// yes ------------------------------------------------------------
+// yes [STRING]..., until something downstream stops reading.
+static b32 file_yes()
+{
+        p8 line[FILE_PATH_MAX];
+        positive count = (positive)program_argument_count();
+        positive length = 0;
+
+        if (count < 2)
+        {
+                line[length++] = 'y';
+        }
+        else
+        {
+                for (positive i = 1; i < count; i++)
+                {
+                        string_address word = program_argument((b32)i);
+
+                        if (i > 1 && length + 1 < FILE_PATH_MAX)
+                                line[length++] = ' ';
+
+                        for (positive j = 0; string_get(word + j) && length + 1 < FILE_PATH_MAX; j++)
+                                line[length++] = string_get(word + j);
+                }
+        }
+
+        line[length++] = '\n';
+
+        // One write of many copies rather than one write per line: the same
+        // bytes leave the program in a fraction of the system calls.
+        p8 block[FILE_BLOCK * 4];
+        positive filled = 0;
+
+        while (filled + length <= sizeof(block))
+        {
+                memory_copy(block + filled, line, length);
+                filled += length;
+        }
+
+        while (1)
+        {
+                if (system_call_3(syscall(write), stdout, (positive)block, filled) <= 0)
+                        return 1;
+        }
+
+        return 0;
+}
+
+// env ------------------------------------------------------------
+/*
+        env [-i] [-u NAME] [NAME=VALUE]... [COMMAND [ARGUMENT]...]
+
+        With no command it prints the environment it would have used, which is
+        also the only way anything here can look at its own environment.
+*/
+#define ENV_MAX 512
+#define ENV_ARGUMENTS_MAX 64
+
+static string_address env_list[ENV_MAX + 1];
+static positive env_have;
+
+static string_address env_key_end(string_address entry)
+{
+        return string_first_of(entry, '=');
+}
+
+static bool env_same_key(string_address entry, string_address name, positive length)
+{
+        string_address mark = env_key_end(entry);
+
+        if (!mark || (positive)(mark - entry) != length)
+                return false;
+
+        for (positive i = 0; i < length; i++)
+                if (string_get(entry + i) != string_get(name + i))
+                        return false;
+
+        return true;
+}
+
+static fn env_drop(string_address name)
+{
+        positive length = string_length(name);
+        positive keep = 0;
+
+        for (positive i = 0; i < env_have; i++)
+                if (!env_same_key(env_list[i], name, length))
+                        env_list[keep++] = env_list[i];
+
+        env_have = keep;
+}
+
+static fn env_put(string_address entry)
+{
+        string_address mark = env_key_end(entry);
+
+        if (mark)
+        {
+                positive length = (positive)(mark - entry);
+
+                for (positive i = 0; i < env_have; i++)
+                {
+                        if (env_same_key(env_list[i], entry, length))
+                        {
+                                env_list[i] = entry;
+                                return;
+                        }
+                }
+        }
+
+        if (env_have < ENV_MAX)
+                env_list[env_have++] = entry;
+}
+
+static b32 file_env()
+{
+        positive count = (positive)program_argument_count();
+        positive index = 1;
+        bool empty = false;
+
+        while (index < count)
+        {
+                string_address argument = program_argument((b32)index);
+
+                if (string_is(argument, '-') && string_is(argument + 1, '-') &&
+                    string_is(argument + 2, end))
+                {
+                        index++;
+                        break;
+                }
+
+                if (string_is(argument, '-') && string_is(argument + 1, 'i') &&
+                    string_is(argument + 2, end))
+                {
+                        empty = true;
+                        index++;
+                        continue;
+                }
+
+                if (string_is(argument, '-') && string_is(argument + 1, end))
+                {
+                        empty = true;
+                        index++;
+                        continue;
+                }
+
+                break;
+        }
+
+        if (!empty)
+        {
+                for (b32 i = 0; program_environment(i) && env_have < ENV_MAX; i++)
+                        env_list[env_have++] = program_environment(i);
+        }
+
+        while (index < count)
+        {
+                string_address argument = program_argument((b32)index);
+
+                if (string_is(argument, '-') && string_is(argument + 1, 'u') &&
+                    string_is(argument + 2, end) && index + 1 < count)
+                {
+                        env_drop(program_argument((b32)(index + 1)));
+                        index += 2;
+                        continue;
+                }
+
+                if (!env_key_end(argument))
+                        break;
+
+                env_put(argument);
+                index++;
+        }
+
+        env_list[env_have] = null;
+
+        if (index >= count)
+        {
+                for (positive i = 0; i < env_have; i++)
+                        file_line(env_list[i]);
+
+                log_flush();
+                return 0;
+        }
+
+        string_address arguments[ENV_ARGUMENTS_MAX + 1];
+        positive have = 0;
+
+        while (index < count && have < ENV_ARGUMENTS_MAX)
+                arguments[have++] = program_argument((b32)index++);
+
+        arguments[have] = null;
+
+        log_flush();
+
+        p8 candidate[FILE_PATH_MAX];
+        string_address name = arguments[0];
+
+        if (string_first_of(name, '/'))
+        {
+                system_call_3(syscall(execve), (positive)name, (positive)arguments,
+                              (positive)env_list);
+        }
+        else
+        {
+                // PATH from the environment being handed on, not from the one
+                // this program was started with: env -i changes both.
+                string_address path = null;
+
+                for (positive i = 0; i < env_have; i++)
+                {
+                        if (env_same_key(env_list[i], (string_address) "PATH", 4))
+                        {
+                                path = env_list[i] + 5;
+                                break;
+                        }
+                }
+
+                if (!path)
+                        path = (string_address) "/bin:/usr/bin:/";
+
+                while (string_get(path))
+                {
+                        positive length = 0;
+
+                        while (string_get(path + length) && !string_is(path + length, ':'))
+                                length++;
+
+                        positive filled = 0;
+
+                        for (positive i = 0; i < length && filled + 1 < FILE_PATH_MAX; i++)
+                                candidate[filled++] = string_get(path + i);
+
+                        if (filled == 0)
+                                candidate[filled++] = '.';
+
+                        if (candidate[filled - 1] != '/')
+                                candidate[filled++] = '/';
+
+                        for (positive i = 0; string_get(name + i) && filled + 1 < FILE_PATH_MAX; i++)
+                                candidate[filled++] = string_get(name + i);
+
+                        candidate[filled] = end;
+
+                        system_call_3(syscall(execve), (positive)candidate,
+                                      (positive)arguments, (positive)env_list);
+
+                        path += length;
+
+                        if (string_is(path, ':'))
+                                path++;
+                }
+        }
+
+        string_format(file_fail, "env: '%s': No such file or directory\n", name);
+
+        return 127;
+}
+
+// id ------------------------------------------------------------
+// id [-u|-g|-G] [-n] [-r], and the readable default when none of them is given.
+#define ID_GROUPS_MAX 64
+
+static fn id_named(positive value, bool group)
+{
+        p8 name[FILE_NAME_MAX];
+        bool known = group ? file_group_name(value, name, FILE_NAME_MAX)
+                           : file_user_name(value, name, FILE_NAME_MAX);
+
+        file_number(log, value);
+
+        if (known)
+        {
+                log("(", 1);
+                log(name, 0);
+                log(")", 1);
+        }
+}
+
+static b32 file_id()
+{
+        positive first = 0;
+        positive flags = file_take_options((string_address) "ugGnr", address_of first);
+
+        bool real = (flags & FILE_FLAG('r')) != 0;
+        bool names = (flags & FILE_FLAG('n')) != 0;
+
+        positive user = (positive)system_call(syscall(getuid));
+        positive effective_user = (positive)system_call(syscall(geteuid));
+        positive group = (positive)system_call(syscall(getgid));
+        positive effective_group = (positive)system_call(syscall(getegid));
+
+        if (!real)
+        {
+                user = effective_user;
+                group = effective_group;
+        }
+
+        p8 name[FILE_NAME_MAX];
+
+        if (flags & FILE_FLAG('u'))
+        {
+                if (names && file_user_name(user, name, FILE_NAME_MAX))
+                        file_line(name);
+                else
+                {
+                        file_number(log, user);
+                        log("\n", 1);
+                }
+
+                log_flush();
+                return 0;
+        }
+
+        if (flags & FILE_FLAG('g'))
+        {
+                if (names && file_group_name(group, name, FILE_NAME_MAX))
+                        file_line(name);
+                else
+                {
+                        file_number(log, group);
+                        log("\n", 1);
+                }
+
+                log_flush();
+                return 0;
+        }
+
+        p32 members[ID_GROUPS_MAX];
+        bipolar have = system_call_2(syscall(getgroups), ID_GROUPS_MAX - 1,
+                                     (positive)(members + 1));
+
+        if (have < 0)
+                have = 0;
+
+        // The kernel hands the supplementary groups back in its own order and
+        // does not promise the primary one is among them; the group actually
+        // in effect belongs at the front.
+        members[0] = (p32)group;
+
+        positive keep = 1;
+
+        for (positive i = 1; i <= (positive)have; i++)
+                if (members[i] != (p32)group)
+                        members[keep++] = members[i];
+
+        have = (bipolar)keep;
+
+        if (flags & FILE_FLAG('G'))
+        {
+                for (positive i = 0; i < (positive)have; i++)
+                {
+                        if (i)
+                                log(" ", 1);
+
+                        if (names && file_group_name(members[i], name, FILE_NAME_MAX))
+                                log(name, 0);
+                        else
+                                file_number(log, members[i]);
+                }
+
+                log("\n", 1);
+                log_flush();
+                return 0;
+        }
+
+        log("uid=", 0);
+        id_named(user, false);
+        log(" gid=", 0);
+        id_named(group, true);
+
+        if (have > 0)
+        {
+                log(" groups=", 0);
+
+                for (positive i = 0; i < (positive)have; i++)
+                {
+                        if (i)
+                                log(",", 1);
+
+                        id_named(members[i], true);
+                }
+        }
+
+        log("\n", 1);
+        log_flush();
+
+        return 0;
+}
+
+// hostname ------------------------------------------------------------
+// hostname, and hostname -s for the part before the first dot.
+static b32 file_hostname()
+{
+        file_machine facts;
+        positive first = 0;
+        positive flags = file_take_options((string_address) "sf", address_of first);
+
+        memory_fill(address_of facts, 0, sizeof(facts));
+
+        if (system_call_1(syscall(uname), (positive)address_of facts) < 0)
+        {
+                file_fail("hostname: cannot read system name\n", 0);
+                return 1;
+        }
+
+        if (flags & FILE_FLAG('s'))
+        {
+                string_address dot = string_first_of(facts.node, '.');
+
+                if (dot)
+                        address_to dot = end;
+        }
+
+        file_line(facts.node);
+        log_flush();
+
+        return 0;
+}
+
+// uname ------------------------------------------------------------
+/*
+        uname [-asnrvmpio]
+
+        -a is every field the kernel actually keeps. The system's own uname
+        adds a compiled in operating system name after them, which is not in
+        struct utsname and is not ours to claim, so -o names this system and
+        -a stops at the machine.
+*/
+static b32 file_uname()
+{
+        file_machine facts;
+        positive first = 0;
+        positive flags = file_take_options((string_address) "asnrvmpio", address_of first);
+
+        memory_fill(address_of facts, 0, sizeof(facts));
+
+        if (system_call_1(syscall(uname), (positive)address_of facts) < 0)
+        {
+                file_fail("uname: cannot read system name\n", 0);
+                return 1;
+        }
+
+        bool all = (flags & FILE_FLAG('a')) != 0;
+        bool any = flags != 0;
+        positive written = 0;
+
+        if (all || (flags & FILE_FLAG('s')) || !any)
+        {
+                log(facts.system, 0);
+                written++;
+        }
+
+        if (all || (flags & FILE_FLAG('n')))
+        {
+                if (written++)
+                        log(" ", 1);
+
+                log(facts.node, 0);
+        }
+
+        if (all || (flags & FILE_FLAG('r')))
+        {
+                if (written++)
+                        log(" ", 1);
+
+                log(facts.release, 0);
+        }
+
+        if (all || (flags & FILE_FLAG('v')))
+        {
+                if (written++)
+                        log(" ", 1);
+
+                log(facts.version, 0);
+        }
+
+        if (all || (flags & FILE_FLAG('m')))
+        {
+                if (written++)
+                        log(" ", 1);
+
+                log(facts.machine, 0);
+        }
+
+        if (flags & FILE_FLAG('p'))
+        {
+                if (written++)
+                        log(" ", 1);
+
+                log(facts.machine, 0);
+        }
+
+        if (flags & FILE_FLAG('i'))
+        {
+                if (written++)
+                        log(" ", 1);
+
+                log("unknown", 0);
+        }
+
+        if (flags & FILE_FLAG('o'))
+        {
+                if (written++)
+                        log(" ", 1);
+
+                log("Moonwater", 0);
+        }
+
+        log("\n", 1);
+        log_flush();
+
+        return 0;
+}
