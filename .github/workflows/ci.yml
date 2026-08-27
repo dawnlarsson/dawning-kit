@@ -78,7 +78,7 @@ jobs:
       - name: Install what the lanes need
         run: |
           sudo apt-get update
-          sudo apt-get install -y dash qemu-user \
+          sudo apt-get install -y dash nodejs qemu-user \
             gcc-aarch64-linux-gnu gcc-riscv64-linux-gnu
 
       - name: Run it

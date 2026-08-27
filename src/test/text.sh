@@ -676,6 +676,15 @@ PYTHON
 sed -n '/want/p' "$work/generated"
 
 line=$(sed -n 's/^  \([0-9]*\) of \([0-9]*\)$/\1 \2/p' "$work/generated")
+
+# An empty parse would leave both counts empty and compare equal, which is a
+# suite reporting that nothing failed because nothing ran.
+if [ -z "$line" ]; then
+        echo "  generated    printed no verdict"
+        sed 's/^/    /' "$work/generated" | tail -5
+        exit 1
+fi
+
 made=${line% *}
 made_total=${line#* }
 

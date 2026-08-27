@@ -15,10 +15,13 @@
         itself is in -- the name decides -- and src/test/probe.sh runs every
         mode and checks what came back.
 
-        Built as an ordinary freestanding binary it proves these things of the
-        ELF loader. Built with kit/spark and run inside the image it proves
-        them of the spark loader, which is the one that matters and the one
-        nothing else can reach.
+        Built as an ordinary freestanding binary it proves these things of
+        the ELF loader, which is what src/test/run does with it. The same
+        source built with kit/spark and placed in the image would prove them
+        of the spark loader and let the spawn mode reach /dev/spark, and
+        nothing builds it that way yet: the boot lane covers the spark loader
+        only by the kernel exec'ing the shell as /init and the shell
+        answering.
 */
 
 p8 in_data[] = "data:starts-here";
