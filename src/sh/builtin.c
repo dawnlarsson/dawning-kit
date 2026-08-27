@@ -3472,7 +3472,10 @@ fn shell_which(writer write, string_address input)
         if (shell_find_in_path(input, found, sizeof(found)))
                 return string_format(write, "%s\n", found);
 
-        string_format(shell_diagnostic, "which: %s: not found\n", input);
+        // On standard output, the same as type: both answer the same
+        // question and used to answer it down different descriptors.
+        string_format(write, "%s: not found\n", input);
+        shell_answer(127);
 }
 
 fn shell_help(writer write, string_address input)

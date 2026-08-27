@@ -720,8 +720,10 @@ static bipolar arith_combine(p8 op, bipolar left, bipolar right)
         case '+': return left + right;
         case '-': return left - right;
         case '*': return left * right;
-        case '/': return right ? left / right : left;
-        case '%': return right ? left % right : left;
+        // Zero on a divide by zero, which is what the plain / and % above
+        // answer with -- the two used to disagree.
+        case '/': return right ? left / right : 0;
+        case '%': return right ? left % right : 0;
         case '&': return left & right;
         case '|': return left | right;
         case '^': return left ^ right;
