@@ -556,6 +556,30 @@ answer 'through recursion' 'f() { local d=$1; [ "$1" -le 0 ] && { echo "at $d"; 
 answer 'a value with a space' 'f() { local v="a b"; echo "[$v]"; }; f'
 answer 'six hundred calls' 'f() { local v=$1; local w=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx$1; [ "$v$w" = "${1}xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx$1" ] || echo "broken $1"; }; i=0; while [ $i -lt 600 ]; do f $i; i=$((i + 1)); done; echo "done [${v-unset}]"'
 
+#       Traps for signals, which for a long time were recorded and never run.
+#
+#       The action goes through the parser, so it cannot be run from the
+#       handler -- the handler marks the signal and the action runs where the
+#       command it interrupted ends. Every case here is a way of asking
+#       whether that boundary is the one dash uses.
+
+group traps
+answer 'caught'          'trap "echo caught" INT; kill -INT $$; echo after'
+answer 'caught twice'    'trap "echo caught" USR1; kill -USR1 $$; kill -USR1 $$; echo after'
+answer 'two commands'    'trap "echo one; echo two" USR1; kill -USR1 $$; echo after'
+answer 'ignored'         'trap "" INT; kill -INT $$; echo alive'
+answer 'given back'      'trap "echo x" WINCH; trap - WINCH; kill -WINCH $$; echo alive'
+answer 'status survives' 'trap "true" USR1; false; kill -USR1 $$; echo $?'
+answer 'inside a function' 'f() { trap "echo in" USR2; kill -USR2 $$; echo done; }; f; echo after'
+answer 'exit from one'   'trap "exit 7" USR1; kill -USR1 $$; echo "not reached"'
+answer 'in a loop'       'trap "echo hit" USR1; i=0; while [ $i -lt 3 ]; do kill -USR1 $$; i=$((i + 1)); done; echo done'
+answer 'while waiting'   'me=$$; trap "echo got" TERM; ( sleep 1; kill -TERM $me ) & sleep 2; echo after'
+answer 'a subshell has none' 'trap "echo parent-hit" USR1; ( trap "echo sub" USR1; kill -USR1 $$; echo subdone ); echo parent'
+answer 'listed'          'trap "echo x" USR1; trap'
+answer 'listed after ignore' 'trap "" USR1; trap'
+answer 'exit trap as well' 'trap "echo bye" EXIT; trap "echo hit" USR1; kill -USR1 $$; echo after'
+answer 'one pid in a fork' 'a=$$; b=$( echo $$ ); c=$( ( echo $$ ) ); [ "$a" = "$b" ] && [ "$a" = "$c" ] && echo same || echo differs'
+
 #
 #       One binary, forty six names.
 #

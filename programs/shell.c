@@ -30,6 +30,7 @@ b32 main()
         interactive = shell_is_interactive = shell_interactive();
 
         shell_env_init();
+        expand_shell_pid = (positive)system_call_1(syscall(getpid), 0);
 
         spawn_device = system_call_4(syscall(openat), AT_FDCWD,
                                      (positive)SPARK_DEVICE, FILE_READ_WRITE, 0);

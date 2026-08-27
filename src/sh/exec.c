@@ -392,6 +392,7 @@ bool exec_function_here(string_address name)
 }
 
 static b32 exec_node(b32 index);
+static b32 exec_node_kind(b32 index);
 
 static b32 exec_define(b32 index)
 {
@@ -574,6 +575,49 @@ static b32 exec_dispatch()
         string_format(exec_error, "%s: not found\n", name);
 
         return shell_status;
+}
+
+/*
+        The traps that arrived, run.
+
+        Between commands and nowhere else. The action is a line, so it goes
+        through the parser, and the parser is only free once the command it
+        interrupted has finished -- which is also the moment POSIX names.
+
+        What the action leaves behind is put back: a trap does not change the
+        status the interrupted command answered with, and a return or a break
+        inside one belongs to the action and not to the loop it landed in.
+*/
+fn exec_traps()
+{
+        b32 kept_status = shell_status;
+        b32 kept_signal = exec_signal;
+        b32 kept_level = exec_signal_level;
+        bipolar number;
+
+        if (!trap_waiting() || !run_line)
+                return;
+
+        trap_entered(true);
+
+        while ((number = trap_taken()) >= 0)
+        {
+                string_address action = trap_action((positive)number);
+
+                if (!action || !string_get(action))
+                        continue;
+
+                exec_signal = EXEC_SIGNAL_NONE;
+                parse_nest_enter();
+                run_line(action);
+                parse_nest_leave();
+        }
+
+        trap_entered(false);
+
+        shell_status = kept_status;
+        exec_signal = kept_signal;
+        exec_signal_level = kept_level;
 }
 
 static b32 exec_simple(b32 index)
@@ -817,6 +861,7 @@ static b32 exec_subshell(b32 index)
 
                 shell_default(SIGNAL_INTERRUPT);
                 shell_default(SIGNAL_QUIT);
+                trap_default_all();
 
                 status = exec_node(parse_nodes[index].left);
                 log_flush();
@@ -866,6 +911,7 @@ static b32 exec_pipe(b32 first, b32 count)
                 {
                         shell_default(SIGNAL_INTERRUPT);
                         shell_default(SIGNAL_QUIT);
+                        trap_default_all();
 
                         if (upstream >= 0)
                         {
@@ -969,6 +1015,7 @@ static b32 exec_background(b32 index)
 
                 shell_default(SIGNAL_INTERRUPT);
                 shell_default(SIGNAL_QUIT);
+                trap_default_all();
 
                 status = exec_node(index);
                 log_flush();
@@ -997,7 +1044,22 @@ static b32 exec_list(b32 index)
         return status;
 }
 
+/*
+        Every node ends at a command boundary, which is where a trap that
+        arrived is allowed to run. A simple command is the usual one; a
+        subshell or a loop is one too, and checking only the simple ones left
+        a trap waiting behind a "( ... )" until whatever came after it.
+*/
 static b32 exec_node(b32 index)
+{
+        b32 status = exec_node_kind(index);
+
+        exec_traps();
+
+        return status;
+}
+
+static b32 exec_node_kind(b32 index)
 {
         parse_node address_to node;
         b32 mark;

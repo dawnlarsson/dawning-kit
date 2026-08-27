@@ -2628,6 +2628,65 @@ bipolar trap_number(string_address word)
         return good ? value : -1;
 }
 
+/*
+        Where a signal is written down, and where it is acted on.
+
+        A handler runs on top of whatever the shell was in the middle of, so
+        it does one thing: mark the signal. The action is run at the end of a
+        command, which is where POSIX says it runs and the only place the
+        parser is not already in use.
+
+        Volatile because the writer is the handler and the reader is the code
+        it interrupted, which is the one arrangement where a compiler keeping
+        the value in a register is wrong.
+*/
+#define TRAP_SIGNAL_MAX 64
+
+static volatile p8 trap_pending[TRAP_SIGNAL_MAX + 1];
+static volatile bool trap_caught;
+static bool trap_inside;
+
+fn trap_signal_caught(b32 number)
+{
+        if (number > 0 && number <= TRAP_SIGNAL_MAX)
+                trap_pending[number] = 1;
+
+        trap_caught = true;
+}
+
+bool trap_waiting()
+{
+        return trap_caught && !trap_inside;
+}
+
+/*
+        What is left of a trap in a child.
+
+        A fork inherits the handlers and has no shell behind it to run the
+        action, so every trapped signal goes back to what it was. An ignored
+        one stays ignored, which is what POSIX asks for and what keeps a
+        subshell from dying of a signal its parent chose to sit out.
+*/
+fn trap_default_all()
+{
+        positive at = 0;
+
+        while (at < trap_count)
+        {
+                positive number = trap_table[at].number;
+
+                if (number && string_get(trap_table[at].action))
+                        shell_default((b32)number);
+
+                at++;
+        }
+
+        for (positive i = 0; i <= TRAP_SIGNAL_MAX; i++)
+                trap_pending[i] = 0;
+
+        trap_caught = false;
+}
+
 fn trap_forget(positive number)
 {
         positive index = 0;
@@ -2716,6 +2775,23 @@ fn shell_trap(writer write, string_address input)
                         continue;
 
                 trap_forget((positive)number);
+
+                /*
+                        "trap - INT" gives the signal back to the kernel,
+                        "trap '' INT" makes the shell deaf to it, and anything
+                        else is a line to run when it arrives. Only the third
+                        needs a handler, and only signals: EXIT is something
+                        the shell does to itself.
+                */
+                if (number)
+                {
+                        if (!action)
+                                shell_default((b32)number);
+                        else if (!string_get(action))
+                                shell_ignore((b32)number);
+                        else
+                                shell_catch((b32)number);
+                }
 
                 if (!action || trap_count >= TRAP_MAX)
                         continue;
@@ -3181,6 +3257,7 @@ static bool shell_tool_run(string_address name)
                 */
                 shell_default(SIGNAL_INTERRUPT);
                 shell_default(SIGNAL_QUIT);
+                trap_default_all();
 
                 program_arguments_use(shell_argv, (b32)shell_argc);
                 exit(shell_tools[which].function() & 0xff);
@@ -3209,6 +3286,31 @@ static bool shell_tool_run(string_address name) { return false; }
 
 #endif
 
+
+// The next signal that arrived and has not been acted on, or nothing.
+bipolar trap_taken()
+{
+        if (!trap_caught)
+                return -1;
+
+        for (positive number = 1; number <= TRAP_SIGNAL_MAX; number++)
+        {
+                if (!trap_pending[number])
+                        continue;
+
+                trap_pending[number] = 0;
+                return (bipolar)number;
+        }
+
+        trap_caught = false;
+
+        return -1;
+}
+
+fn trap_entered(bool inside)
+{
+        trap_inside = inside;
+}
 
 /*
         The EXIT trap, run.

@@ -24,6 +24,9 @@
 #define SIGNAL_IGNORE 1
 #define SIGNAL_DEFAULT 0
 
+#define SIGNAL_RESTART 0x10000000
+#define SIGNAL_RESTORER 0x04000000
+
 fn shell_signal(b32 number, positive disposition)
 {
         positive action[4] = {disposition, 0, 0, 0};
@@ -33,6 +36,55 @@ fn shell_signal(b32 number, positive disposition)
 
 #define shell_ignore(n) shell_signal(n, SIGNAL_IGNORE)
 #define shell_default(n) shell_signal(n, SIGNAL_DEFAULT)
+
+// Set where the signal landed, read where a command ends. A handler that ran
+// the action itself would be running the parser on top of whatever the parser
+// was already in the middle of.
+fn trap_signal_caught(b32 number);
+
+#if defined(__x86_64__) || defined(_M_X64)
+
+/*
+        Where the handler goes when it is done.
+
+        x86_64 is the one machine with no return trampoline of its own: the
+        kernel jumps to sa_restorer, and what is there has to call
+        rt_sigreturn. arm64 and riscv64 have one and are given none, which is
+        the whole of the difference and the reason the flag below is set on
+        one architecture and not the other two.
+*/
+asm(".text\n"
+    ".globl shell_signal_return\n"
+    "shell_signal_return:\n"
+    "        movl $" MOONWATER_NUMBER(syscall(rt_sigreturn)) ", %eax\n"
+    "        syscall\n");
+
+fn shell_signal_return();
+
+#define SIGNAL_CATCH_FLAGS (SIGNAL_RESTART | SIGNAL_RESTORER)
+#define SIGNAL_CATCH_RESTORER ((positive)shell_signal_return)
+
+#else
+
+#define SIGNAL_CATCH_FLAGS SIGNAL_RESTART
+#define SIGNAL_CATCH_RESTORER 0
+
+#endif
+
+/*
+        A signal the script asked to hear about.
+
+        Restarting, so that a wait for a child is not cut short by a signal
+        the shell is only noting down: the action runs when the command it
+        interrupted has finished, which is where POSIX says it runs.
+*/
+fn shell_catch(b32 number)
+{
+        positive action[4] = {(positive)trap_signal_caught, SIGNAL_CATCH_FLAGS,
+                              SIGNAL_CATCH_RESTORER, 0};
+
+        system_call_4(syscall(rt_sigaction), number, (positive)address_of action, 0, 8);
+}
 
 // Whether anybody is watching. A script and a terminal want different
 // things of a shell that has just been told to do something impossible.
@@ -653,6 +705,10 @@ fn run_line(string_address line)
         exec_program(root);
         parse_reset();
         shell_expand_reset();
+
+        // A signal that arrived while the shell was reading rather than
+        // running has no command boundary of its own to wait for.
+        exec_traps();
 
         /*
                 A terminal wants each line the moment it happens. A script does

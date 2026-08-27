@@ -464,6 +464,9 @@ static string_address expand_ifs()
         every time; asking env_get for it each time turned a field into a linear
         walk of the environment per character.
 */
+// Read at startup, from where nothing has forked yet.
+positive expand_shell_pid;
+
 static b8 expand_ifs_set[256];
 static b8 expand_ifs_blank_set[256];
 
@@ -538,7 +541,19 @@ static bool expand_value_of(string_address name, p8 address_to into, positive li
 
                 if (first == '$')
                 {
-                        expand_number_out(system_call_1(syscall(getpid), 0), into);
+                        /*
+                                The shell's pid, and not this process's.
+
+                                A subshell is a fork, and asking the kernel
+                                here answered with the fork -- so "( kill $$ )"
+                                signalled the subshell instead of the shell,
+                                which is the opposite of what POSIX says $$
+                                is. Read once, before anything can fork.
+                        */
+                        if (!expand_shell_pid)
+                                expand_shell_pid = (positive)system_call_1(syscall(getpid), 0);
+
+                        expand_number_out((bipolar)expand_shell_pid, into);
                         return true;
                 }
 
