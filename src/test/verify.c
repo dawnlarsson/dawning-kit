@@ -370,6 +370,8 @@ bipolar reference_to_bipolar(string_address input)
         return negative ? -value : value;
 }
 
+fn check_find_overlaps();
+
 string_address reference_find(string_address string, string_address input)
 {
         string_address step = string;
@@ -398,6 +400,19 @@ string_address reference_find(string_address string, string_address input)
                 if string_is (step_input, end)
                         return find;
 
+                /*
+                        Back to one past where this candidate began, not to
+                        where it stopped.
+
+                        This used to carry on from the mismatch, and the
+                        assembly was written to match it -- "carry on from
+                        here, as the C did" is still in the commit that
+                        replaced it. Both were wrong the same way, so the
+                        differential test below could not see it: "aab" is
+                        not found in "aaab" if the candidate at zero eats two
+                        bytes and the scan resumes past the one at one.
+                */
+                step = find + 1;
                 step_input = input;
         }
 
@@ -596,6 +611,63 @@ fn check_bulk_strings()
                              (positive)reference_find(subject, (string_address)"qqq"));
                 }
         }
+
+        check_find_overlaps();
+}
+
+/*
+        A candidate that fails, with the real match inside the part it ate.
+
+        Everything above hunts for a needle that either is not there or
+        begins where the scan first looks. Neither asks the question this
+        gets wrong: after matching some of the needle and then failing, where
+        does the next attempt start? One byte past where the candidate began,
+        or where it gave up? The two differ only when a later start lies
+        inside the run that matched, so the strings here are built to put one
+        there.
+
+        Left as literals rather than generated. Each one is a shape that
+        broke something -- a repeated prefix, a needle that is its own tail,
+        a run one byte longer than the needle -- and a generator that made
+        them by accident would not say which was which.
+*/
+fn check_find_overlaps()
+{
+        static struct
+        {
+                string_address haystack;
+                string_address needle;
+        } cases[] = {
+            {(string_address) "aaab", (string_address) "aab"},
+            {(string_address) "aaaab", (string_address) "aab"},
+            {(string_address) "aaaaaaaaab", (string_address) "aab"},
+            {(string_address) "abababc", (string_address) "ababc"},
+            {(string_address) "aabaabaaab", (string_address) "aabaaab"},
+            {(string_address) "xxxxxy", (string_address) "xxy"},
+            {(string_address) "banana", (string_address) "nana"},
+            {(string_address) "aaa", (string_address) "aa"},
+            {(string_address) "mississippi", (string_address) "issip"},
+            {(string_address) "aabaacaad", (string_address) "aad"},
+            // and the same shapes at every offset into a word, because the
+            // scan aligns down and the first eight bytes are a special case
+            {(string_address) " aaab", (string_address) "aab"},
+            {(string_address) "  aaab", (string_address) "aab"},
+            {(string_address) "   aaab", (string_address) "aab"},
+            {(string_address) "    aaab", (string_address) "aab"},
+            {(string_address) "     aaab", (string_address) "aab"},
+            {(string_address) "      aaab", (string_address) "aab"},
+            {(string_address) "       aaab", (string_address) "aab"},
+        };
+
+        for (positive i = 0; i < sizeof(cases) / sizeof(cases[0]); i++)
+        {
+                string_address hay = cases[i].haystack;
+                string_address needle = cases[i].needle;
+
+                same("string_find", "a match inside a failed candidate",
+                     (positive)string_find(hay, needle),
+                     (positive)reference_find(hay, needle));
+        }
 }
 
 fn check_bulk_numbers()
@@ -637,6 +709,75 @@ fn check_bulk_numbers()
 
 /*
         file_load, which until now could not succeed.
+/*
+        Where this may write, which is not always /tmp.
+
+        The file cases used to name /tmp directly. On a machine where /tmp is
+        a small tmpfs, or one with a quota on it, or one where something else
+        has filled it, those writes fail and the cases report as ordinary
+        disagreements -- seven of them, with nothing anywhere saying the disk
+        was the reason. That is the worst shape a test failure can take: it
+        looks exactly like the thing it is supposed to be looking for.
+
+        TMPDIR if it is set, /tmp if it is not, composed once here so the
+        harness around this can point it somewhere with room.
+*/
+static p8 scratch_root[512];
+
+static string_address scratch_path(string_address name)
+{
+        static p8 built[768];
+        string_address root = null;
+
+        // program_environment hands entries out one at a time rather than as
+        // a list, so the prefix is matched here rather than through
+        // string_get_environment.
+        for (b32 i = 0; ; i++)
+        {
+                string_address entry = program_environment(i);
+
+                if (!entry)
+                        break;
+
+                positive k = 0;
+                string_address want = (string_address) "TMPDIR=";
+
+                while (want[k] && entry[k] == want[k])
+                        k++;
+
+                if (!want[k])
+                {
+                        root = entry + k;
+                        break;
+                }
+        }
+
+        if (!root || !root[0])
+                root = (string_address) "/tmp";
+
+        positive at = 0;
+
+        while (root[at] && at < sizeof(built) - 64)
+        {
+                built[at] = root[at];
+                at++;
+        }
+
+        while (at && built[at - 1] == '/')
+                at--;
+
+        built[at++] = '/';
+
+        for (positive i = 0; name[i] && at < sizeof(built) - 1; i++)
+                built[at++] = name[i];
+
+        built[at] = 0;
+        (void)scratch_root;
+        return (string_address)built;
+}
+
+/*
+        file_load, which until now could not succeed.
 
         Its mmap flags were open() bits, so the kernel refused every mapping
         and the success path had never once run. This writes a file, loads it,
@@ -652,11 +793,12 @@ fn check_file_load()
         for (positive i = 0; i < sizeof(body); i++)
                 body[i] = (b8)(next() & 0xff);
 
+
         system_call_3(syscall(unlinkat), AT_FDCWD,
-                      (positive) "/tmp/moonwater_verify_load", 0);
+                      (positive)scratch_path((string_address)"moonwater_verify_load"), 0);
 
         b32 made = system_call_4(syscall(openat), AT_FDCWD,
-                                 (positive) "/tmp/moonwater_verify_load",
+                                 (positive)scratch_path((string_address)"moonwater_verify_load"),
                                  FILE_CREATE | FILE_WRITE | FILE_TRUNCATE, 0644);
 
         checks++;
@@ -670,7 +812,7 @@ fn check_file_load()
         system_call_3(syscall(write), made, (positive)body, sizeof(body));
         system_call_1(syscall(close), made);
 
-        file_new(address_of subject, (string_address) "/tmp/moonwater_verify_load",
+        file_new(address_of subject, scratch_path((string_address)"moonwater_verify_load"),
                  FILE_READ);
 
         same("file_load", "opened", (positive)file_valid(address_of subject), 1);
@@ -693,7 +835,7 @@ fn check_file_load()
 
         file_close(address_of subject);
         system_call_3(syscall(unlinkat), AT_FDCWD,
-                      (positive) "/tmp/moonwater_verify_load", 0);
+                      (positive)scratch_path((string_address)"moonwater_verify_load"), 0);
 }
 
 /*
@@ -703,7 +845,7 @@ fn check_file_load()
         are the same routines checked here, in one harness, so the claim does
         not rest on seven separate reports.
 */
-#define SCRATCH "/tmp/moonwater_verify_scratch"
+#define SCRATCH scratch_path((string_address)"moonwater_verify_scratch")
 
 fn check_file_round_trip()
 {
@@ -1500,6 +1642,91 @@ static positive reference_table_find(string_address name, address_any table,
         return count;
 }
 
+/*
+        Names put where reading eight bytes of them would leave the page.
+
+        string_table_find reads a whole word of the wanted name and a whole
+        word of each entry's, which is only safe while those eight bytes are
+        in one page -- and both reads used to be unguarded. A static array is
+        never in the wrong place by accident, so the two are put there on
+        purpose: the last bytes of a page, worked out from the address the
+        linker gave the buffer rather than assumed.
+
+        The page after this one is mapped here, so what this catches is a
+        wrong answer rather than a fault. That is enough: the byte paths the
+        guard sends those cases down are only reached this way, and a wrong
+        answer out of them says the guard is being taken.
+*/
+static p8 page_room[3 * 4096];
+
+fn check_table_find_page_edge()
+{
+        static find_entry sitting[8];
+        static string_address held[] = {"cat", "cd", "basename", "dirname",
+                                        "e", "export", "z", null};
+        positive base = (positive)(address_any)page_room;
+        positive page = (4096 - (base & 4095)) & 4095;
+        positive count = 0;
+
+        if (page == 0)
+                page = 4096;
+
+        for (; held[count]; count++)
+                ;
+
+        //      Each entry's name at a shifting distance from the end of a
+        //      page, so that some of them cross it and some do not.
+        for (positive back = 1; back <= 9; back++)
+        {
+                p8 address_to at = page_room + page - back;
+
+                for (positive i = 0; i < count; i++)
+                {
+                        positive length = reference_length(held[i]);
+
+                        //      Only the name being looked for moves; the
+                        //      others stay where they are, so the table is
+                        //      the same table each time.
+                        sitting[i].name = held[i];
+                        sitting[i].marker = i;
+
+                        if (i != 2)
+                                continue;
+
+                        for (positive k = 0; k <= length; k++)
+                                at[k] = (p8)held[i][k];
+
+                        sitting[i].name = (string_address)at;
+                }
+
+                for (positive i = 0; i < count; i++)
+                {
+                        same("table_find", "an entry at the end of a page",
+                             string_table_find(held[i], sitting,
+                                               sizeof(find_entry), count),
+                             reference_table_find(held[i], sitting,
+                                                  sizeof(find_entry), count));
+
+                        //      And the wanted name itself at the end of a
+                        //      page, which sends the whole call down the
+                        //      other path.
+                        {
+                                positive length = reference_length(held[i]);
+                                p8 address_to want = page_room + 2 * 4096 + page - back;
+
+                                for (positive k = 0; k <= length; k++)
+                                        want[k] = (p8)held[i][k];
+
+                                same("table_find", "a name at the end of a page",
+                                     string_table_find((string_address)want, sitting,
+                                                       sizeof(find_entry), count),
+                                     reference_table_find((string_address)want, sitting,
+                                                          sizeof(find_entry), count));
+                        }
+                }
+        }
+}
+
 fn check_table_find()
 {
         static find_entry entries[16];
@@ -1927,28 +2154,2267 @@ fn check_hostile_neighbours()
         }
 }
 
+
+/*
+        memory_count, which has a wide body and a narrow one.
+
+        On x86_64 it compares thirty two bytes at once and drains a byte wide
+        accumulator every 255 rounds, so the sizes that matter are the ones
+        either side of 32 and either side of 8160. Alignment matters too: the
+        wide loop starts wherever the caller's pointer does.
+
+        The reference is the loop it replaced, which is the only thing worth
+        comparing against -- an independent second guess at the answer would
+        just be a second thing to be wrong.
+*/
+positive reference_count(address_any block, positive size, b8 value)
+{
+        p8 address_to at = block;
+        positive found = 0;
+
+        for (positive i = 0; i < size; i++)
+                if (at[i] == value)
+                        found++;
+
+        return found;
+}
+
+fn check_count()
+{
+        static p8 room[9000];
+
+        // every alignment the wide loop can begin on, and every length across
+        // the point where it starts and the point where it drains
+        for (positive off = 0; off < 40; off++)
+                for (positive size = 0; size < 200; size++)
+                {
+                        for (positive i = 0; i < off + size + 8; i++)
+                                room[i] = (p8)((i * 7 + off) % 5 ? 'a' : '\n');
+
+                        for (b8 value = 9; value < 12; value++)
+                                same("memory_count", "against the byte loop",
+                                     memory_count(room + off, size, value),
+                                     reference_count(room + off, size, value));
+                }
+
+        // past the drain: 255 rounds of 32 bytes is 8160, and a block of
+        // nothing but the wanted byte is where a wrapped accumulator shows
+        for (positive size = 8100; size < 8300; size += 7)
+        {
+                for (positive i = 0; i < size; i++)
+                        room[i] = '\n';
+
+                same("memory_count", "every byte matches", memory_count(room, size, '\n'), size);
+                same("memory_count", "no byte matches", memory_count(room, size, 'z'), 0);
+        }
+}
+
+
+/*
+        memory_first_of at the sizes that reach the wide path.
+
+        Everything else that hunts a byte in this file works on short strings,
+        and on x86_64 memory_first_of takes a thirty two byte at a time route
+        that none of them are long enough to enter. A one byte error in it
+        passed the whole suite -- 263472 checks -- which is what a test that
+        cannot reach the code it is aimed at is worth.
+
+        So: every alignment the wide loop can begin on, every length either
+        side of thirty two and of a few multiples of it, and the wanted byte
+        placed at each position in turn, including the last one before the
+        bound and the first one past it.
+*/
+address_any reference_memory_first_of(address_any block, b8 value, positive size)
+{
+        p8 address_to at = block;
+
+        for (positive i = 0; i < size; i++)
+                if (at[i] == value)
+                        return at + i;
+
+        return null;
+}
+
+fn check_first_of_wide()
+{
+        static p8 room[600];
+
+        for (positive off = 0; off < 34; off++)
+                for (positive size = 0; size < 140; size++)
+                {
+                        // nothing to find: the loop has to walk the whole bound
+                        for (positive i = 0; i < off + size + 40; i++)
+                                room[i] = 'a';
+
+                        same("memory_first_of", "absent over the wide path",
+                             (positive)memory_first_of(room + off, 'z', size),
+                             (positive)reference_memory_first_of(room + off, 'z', size));
+
+                        // and one to find, at every position it could sit
+                        for (positive where = 0; where < size; where++)
+                        {
+                                room[off + where] = 'z';
+
+                                same("memory_first_of", "found over the wide path",
+                                     (positive)memory_first_of(room + off, 'z', size),
+                                     (positive)reference_memory_first_of(room + off, 'z', size));
+
+                                room[off + where] = 'a';
+                        }
+
+                        // just past the bound, which must not be reported
+                        room[off + size] = 'z';
+
+                        same("memory_first_of", "one past the bound",
+                             (positive)memory_first_of(room + off, 'z', size),
+                             (positive)reference_memory_first_of(room + off, 'z', size));
+
+                        room[off + size] = 'a';
+                }
+}
+
+
+/*
+        The bulk routines, tier by tier and alignment by alignment.
+
+        Two things the sweeps above cannot reach.
+
+        The first is the tier. memory_fill, memory_copy_fast and the routines
+        that hand work to them have three bodies on x86_64 -- zmm, ymm, and
+        eight bytes in an integer register -- and cpu_detect picks one at
+        startup. On a machine with AVX-512 that is the only one that ever runs,
+        so a one byte error in the other two passes every check in this file.
+        cpu_has_avx2 and cpu_has_avx512 are ordinary writable bytes read on
+        every call, so the whole sweep runs three times with the byte forced
+        down a tier each round and put back afterwards. Nothing forces a tier
+        up: a processor cannot be told to have registers it does not have.
+
+        The second is alignment. Everything above works at a fixed offset into
+        a static buffer, so the align-up step in each of these -- which moves
+        the destination by one of eight values on riscv64, 32 on the ymm path
+        and 64 on the zmm and arm64 ones, and moves the source by the same --
+        has only ever been entered with one of them. Destination offset crossed
+        with source offset is what makes the other sixty three run.
+*/
+#define BULK_ROOM 1152
+
+static b8 bulk_got[BULK_ROOM];
+static b8 bulk_want[BULK_ROOM];
+static b8 bulk_from[BULK_ROOM];
+
+// Poisoned either side, so a routine that writes outside its size is caught
+// rather than tolerated. The whole buffer is compared, not only the part that
+// was meant to change.
+fn bulk_same(string_address what, positive tier, positive size, positive off)
+{
+        checks++;
+
+        for (positive i = 0; i < BULK_ROOM; i++)
+                if (bulk_got[i] != bulk_want[i])
+                {
+                        failures++;
+                        string_format(log, "  FAIL %s tier %p size %p off %p: byte %p is %p want %p\n",
+                                      what, tier, size, off, i,
+                                      (positive)bulk_got[i], (positive)bulk_want[i]);
+                        return;
+                }
+}
+
+// Every size a rung of any of the three ladders starts or ends at, and the
+// ones either side of it, up past the widest loop body (256 bytes on zmm,
+// which needs 512 before the loop is entered at all).
+static positive bulk_sizes[] = {
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
+        23, 24, 25, 31, 32, 33, 39, 40, 47, 48, 55, 56, 63, 64, 65,
+        71, 72, 95, 96, 127, 128, 129, 130, 159, 160, 191, 192,
+        255, 256, 257, 258, 287, 288, 319, 320, 383, 384,
+        511, 512, 513, 514, 543, 544, 575, 576, 639, 640, 700};
+
+#define BULK_SIZE_COUNT (sizeof(bulk_sizes) / sizeof(bulk_sizes[0]))
+
+static positive bulk_source_offsets[] = {0, 1, 2, 3, 5, 7, 8};
+
+#define BULK_SOURCE_COUNT (sizeof(bulk_source_offsets) / sizeof(bulk_source_offsets[0]))
+
+#if X64
+#define BULK_TIERS 3
+#else
+#define BULK_TIERS 1
+#endif
+
+fn bulk_tier(positive pass, p8 wide, p8 widest)
+{
+#if X64
+        cpu_has_avx2 = pass < 2 ? wide : 0;
+        cpu_has_avx512 = pass < 1 ? widest : 0;
+#else
+        (void)pass;
+        (void)wide;
+        (void)widest;
+#endif
+}
+
+fn check_bulk_alignments()
+{
+        p8 wide = 0;
+        p8 widest = 0;
+
+#if X64
+        wide = cpu_has_avx2;
+        widest = cpu_has_avx512;
+#endif
+
+        for (positive i = 0; i < BULK_ROOM; i++)
+                bulk_from[i] = (b8)(i * 13 + 5);
+
+        for (positive pass = 0; pass < BULK_TIERS; pass++)
+        {
+                bulk_tier(pass, wide, widest);
+
+                for (positive e = 0; e < BULK_SIZE_COUNT; e++)
+                {
+                        positive size = bulk_sizes[e];
+
+                        for (positive off = 0; off < 72; off++)
+                        {
+                                if (off + size + 200 > BULK_ROOM)
+                                        continue;
+
+                                reference_fill(bulk_got, 0xA5, BULK_ROOM);
+                                reference_fill(bulk_want, 0xA5, BULK_ROOM);
+                                memory_fill(bulk_got + off, (b8)(size + 3), size);
+                                reference_fill(bulk_want + off, (b8)(size + 3), size);
+                                bulk_same("memory_fill", pass, size, off);
+
+                                for (positive s = 0; s < BULK_SOURCE_COUNT; s++)
+                                {
+                                        positive from = bulk_source_offsets[s];
+
+                                        reference_fill(bulk_got, 0xA5, BULK_ROOM);
+                                        reference_fill(bulk_want, 0xA5, BULK_ROOM);
+                                        memory_copy_fast(bulk_got + off, bulk_from + from, size);
+                                        reference_copy(bulk_want + off, bulk_from + from, size);
+                                        bulk_same("memory_copy_fast", pass, size, off);
+                                }
+                        }
+                }
+        }
+
+        bulk_tier(0, wide, widest);
+}
+
+/*
+        memmove, in one buffer, at every distance that puts the overlap in a
+        different place relative to the loop body: inside the head, inside the
+        chunk kept in registers, and past the whole of it. A memmove that reads
+        the last chunk after it has written over it passes a disjoint copy and
+        fails exactly here.
+*/
+static b32 bulk_gaps[] = {-700, -513, -257, -129, -65, -64, -33, -32, -9, -8,
+                          -3, -1, 1, 3, 8, 9, 32, 33, 64, 65, 129, 257, 513, 700};
+
+#define BULK_GAP_COUNT (sizeof(bulk_gaps) / sizeof(bulk_gaps[0]))
+
+static positive bulk_move_sizes[] = {0, 1, 3, 7, 8, 9, 15, 16, 17, 31, 32, 33,
+                                     63, 64, 65, 71, 127, 128, 129, 255, 256,
+                                     257, 511, 512, 513, 575, 640, 700};
+
+#define BULK_MOVE_COUNT (sizeof(bulk_move_sizes) / sizeof(bulk_move_sizes[0]))
+
+fn check_bulk_moves()
+{
+        p8 wide = 0;
+        p8 widest = 0;
+
+#if X64
+        wide = cpu_has_avx2;
+        widest = cpu_has_avx512;
+#endif
+
+        for (positive i = 0; i < BULK_ROOM; i++)
+                bulk_from[i] = (b8)(i * 29 + 11);
+
+        for (positive pass = 0; pass < BULK_TIERS; pass++)
+        {
+                bulk_tier(pass, wide, widest);
+
+                for (positive e = 0; e < BULK_MOVE_COUNT; e++)
+                {
+                        positive size = bulk_move_sizes[e];
+
+                        for (positive off = 0; off < 72; off++)
+                                for (positive g = 0; g < BULK_GAP_COUNT; g++)
+                                {
+                                        b32 gap = bulk_gaps[g];
+                                        positive base = 200 + off;
+
+                                        if ((b32)base + gap < 0)
+                                                continue;
+
+                                        if (base + size + 8 > BULK_ROOM)
+                                                continue;
+
+                                        if ((positive)((b32)base + gap) + size + 8 > BULK_ROOM)
+                                                continue;
+
+                                        reference_copy(bulk_got, bulk_from, BULK_ROOM);
+                                        reference_copy(bulk_want, bulk_from, BULK_ROOM);
+
+                                        memory_copy(bulk_got + base + gap, bulk_got + base, size);
+                                        reference_copy(bulk_want + base + gap, bulk_want + base, size);
+
+                                        bulk_same("memory_copy", pass, size, off);
+                                }
+                }
+        }
+
+        bulk_tier(0, wide, widest);
+}
+
+/*
+        The four string routines against the C they replaced, at every
+        alignment and either side of every width they switch strategy at.
+
+        string_copy_max gets a bound that runs past the end of the source and
+        one that stops short of it, and the buffer is poisoned to the end
+        rather than to 64 bytes: a wide store that ignores the bound writes 32
+        or 64 bytes past it, which a check that stops at 64 cannot see.
+*/
+static p8 bulk_subject[BULK_ROOM];
+static p8 bulk_spare[BULK_ROOM];
+
+fn check_bulk_wide_strings()
+{
+        p8 wide = 0;
+        p8 widest = 0;
+
+#if X64
+        wide = cpu_has_avx2;
+        widest = cpu_has_avx512;
+#endif
+
+        for (positive pass = 0; pass < BULK_TIERS; pass++)
+        {
+                bulk_tier(pass, wide, widest);
+
+                for (positive e = 0; e < BULK_SIZE_COUNT; e++)
+                {
+                        positive size = bulk_sizes[e];
+
+                        for (positive off = 0; off < 72; off++)
+                        {
+                                if (off + size + 200 > BULK_ROOM)
+                                        continue;
+
+                                p8 address_to text = bulk_subject + off;
+
+                                for (positive i = 0; i < size; i++)
+                                        text[i] = (p8)(next() % 4 + 'a');
+
+                                text[size] = 0;
+
+                                // string_copy: length, content, and not a byte
+                                // written past the terminator it copied.
+                                for (positive d = 0; d < 3; d++)
+                                {
+                                        reference_fill(bulk_spare, 0xA5, BULK_ROOM);
+                                        string_copy(bulk_spare + d, (string_address)text);
+
+                                        checks++;
+
+                                        if (reference_length(bulk_spare + d) != size)
+                                                report("string_copy", "length",
+                                                       reference_length(bulk_spare + d), size);
+
+                                        checks++;
+
+                                        for (positive i = 0; i < size; i++)
+                                                if (bulk_spare[d + i] != text[i])
+                                                {
+                                                        report("string_copy", "content", i, size);
+                                                        break;
+                                                }
+
+                                        checks++;
+
+                                        for (positive i = d + size + 1; i < BULK_ROOM; i++)
+                                                if (bulk_spare[i] != 0xA5)
+                                                {
+                                                        report("string_copy", "wrote past the terminator",
+                                                               i, size);
+                                                        break;
+                                                }
+                                }
+
+                                // string_copy_max at every bound around the
+                                // length, not only the first 64.
+                                for (positive b = 0; b < 6; b++)
+                                {
+                                        positive limit = size + 2 > b ? size + 2 - b : 0;
+
+                                        if (limit + 8 > BULK_ROOM)
+                                                continue;
+
+                                        reference_fill(bulk_spare, 0xA5, BULK_ROOM);
+                                        string_copy_max(bulk_spare, (string_address)text, limit);
+
+                                        checks++;
+
+                                        positive want = size < limit ? size : limit;
+
+                                        for (positive i = 0; i < want; i++)
+                                                if (bulk_spare[i] != text[i])
+                                                {
+                                                        report("string_copy_max", "content", i, limit);
+                                                        break;
+                                                }
+
+                                        checks++;
+
+                                        // A terminator only where the source
+                                        // ended inside the bound, and nothing
+                                        // at all past the bound.
+                                        positive first = size < limit ? want + 1 : limit;
+
+                                        if (size < limit && bulk_spare[want] != 0)
+                                        {
+                                                checks++;
+                                                report("string_copy_max", "no terminator",
+                                                       (positive)bulk_spare[want], limit);
+                                        }
+
+                                        for (positive i = first; i < BULK_ROOM; i++)
+                                                if (bulk_spare[i] != 0xA5)
+                                                {
+                                                        report("string_copy_max", "wrote past the limit",
+                                                               i, limit);
+                                                        break;
+                                                }
+                                }
+
+                                // string_cut and string_replace_all change the
+                                // string, so each gets its own copy of it -- at
+                                // the same offset the source is at, because both
+                                // walk to a block boundary before they widen and
+                                // a string that always starts aligned never
+                                // enters that walk. A one byte error in it
+                                // passed the whole file until this offset was
+                                // anything but zero.
+                                for (positive c = 0; c < 2; c++)
+                                {
+                                        b8 symbol = c ? 'b' : 'q';
+                                        p8 address_to mine = bulk_spare + off;
+
+                                        reference_fill(bulk_spare, 0xA5, BULK_ROOM);
+
+                                        for (positive i = 0; i <= size; i++)
+                                                mine[i] = text[i];
+
+                                        // where the cut lands, read before the
+                                        // cut writes a terminator over it
+                                        string_address where = reference_first_of(
+                                            (string_address)mine, (p8)symbol);
+                                        positive at = where ? (positive)(where - (string_address)mine) : 0;
+                                        p8 following = where ? mine[at + 1] : 0;
+
+                                        string_address got = string_cut((string_address)mine, symbol);
+
+                                        same("string_cut", "answer", (positive)got,
+                                             where == null || following == 0
+                                                 ? 0
+                                                 : (positive)((string_address)mine + at + 1));
+
+                                        checks++;
+
+                                        if (where && mine[at] != 0)
+                                                report("string_cut", "did not terminate", size, 0);
+
+                                        checks++;
+
+                                        // and nothing outside the string moved
+                                        for (positive i = 0; i < BULK_ROOM; i++)
+                                        {
+                                                if (i >= off && i <= off + size)
+                                                        continue;
+
+                                                if (bulk_spare[i] != 0xA5)
+                                                {
+                                                        report("string_cut", "wrote outside the string",
+                                                               i, size);
+                                                        break;
+                                                }
+                                        }
+
+                                        reference_fill(bulk_spare, 0xA5, BULK_ROOM);
+
+                                        for (positive i = 0; i <= size; i++)
+                                                mine[i] = text[i];
+
+                                        string_replace_all((string_address)mine, symbol, 'z');
+
+                                        checks++;
+
+                                        for (positive i = 0; i < size; i++)
+                                                if (mine[i] != (text[i] == symbol ? 'z' : text[i]))
+                                                {
+                                                        report("string_replace_all", "byte", i, size);
+                                                        break;
+                                                }
+
+                                        checks++;
+
+                                        for (positive i = 0; i < BULK_ROOM; i++)
+                                        {
+                                                if (i >= off && i < off + size)
+                                                        continue;
+
+                                                if (bulk_spare[i] != (i == off + size ? 0 : 0xA5))
+                                                {
+                                                        report("string_replace_all", "wrote outside the string",
+                                                               i, size);
+                                                        break;
+                                                }
+                                        }
+                                }
+                        }
+                }
+        }
+
+        bulk_tier(0, wide, widest);
+}
+
+/*
+        memory_compare and memory_search, and the sizes that reach the paths.
+
+        Both have a body per width. memory_compare walks thirty two bytes at a
+        time where the processor has the registers for it, eight where it does
+        not and one below that; memory_search compares a whole block of
+        positions at once above a length and hunts a byte at a time below it.
+        A case that stays short never enters the wide half at all, and a one
+        byte error in the wide half of memory_first_of once passed the whole
+        suite -- 263472 checks -- for exactly that reason. So the lengths here
+        run either side of every width, and on x86_64 the whole set runs a
+        second time with cpu_has_avx2 forced off, because that is the only way
+        the narrow body is reached on a machine that has the wide one.
+
+        The references are the dumbest thing that answers the question: a byte
+        loop, and a triple loop that tries every start. Written that way on
+        purpose. string_find and the C beside it once had the same bug -- a
+        failed candidate resuming past the bytes it had matched, so that "aab"
+        was not found in "aaab" -- and the tests agreed with the bug because
+        the reference was clever in the same way.
+*/
+b32 reference_memory_compare(address_any first, address_any second, positive size)
+{
+        p8 address_to a = first;
+        p8 address_to b = second;
+
+        for (positive i = 0; i < size; i++)
+                if (a[i] != b[i])
+                        return (b32)a[i] - (b32)b[i];
+
+        return 0;
+}
+
+address_any reference_memory_search(address_any block, positive size,
+                                    address_any needle, positive needle_size)
+{
+        p8 address_to hay = block;
+        p8 address_to want = needle;
+
+        if (needle_size == 0)
+                return block;
+
+        if (needle_size > size)
+                return null;
+
+        for (positive at = 0; at + needle_size <= size; at++)
+        {
+                positive i = 0;
+
+                while (i < needle_size && hay[at + i] == want[i])
+                        i++;
+
+                if (i == needle_size)
+                        return hay + at;
+        }
+
+        return null;
+}
+
+static p8 compare_room[400];
+static p8 compare_twin[400];
+
+fn check_memory_compare()
+{
+        for (positive off = 0; off < 5; off++)
+                for (positive size = 0; size <= 140; size++)
+                {
+                        for (positive i = 0; i < 400; i++)
+                        {
+                                compare_room[i] = (p8)('a' + (i % 7));
+                                compare_twin[i] = compare_room[i];
+                        }
+
+                        same("memory_compare", "equal",
+                             (positive)memory_compare(compare_room + off,
+                                                      compare_twin + off, size),
+                             (positive)reference_memory_compare(compare_room + off,
+                                                                compare_twin + off,
+                                                                size));
+
+                        //      Every position for the short ones, and the
+                        //      edges of every block for the long ones: the
+                        //      first byte, the last, and either side of each
+                        //      thirty two and eight byte step.
+                        for (positive where = 0; where < size; where++)
+                        {
+                                if (size > 48 && where > 3 && where + 4 < size &&
+                                    (where % 8) > 1 && (where % 32) > 1)
+                                        continue;
+
+                                //      Two directions, because the sign of
+                                //      the answer is the order of the two
+                                //      strings and a compare that gets the
+                                //      difference right can still get that
+                                //      backwards.
+                                compare_twin[off + where] =
+                                    (p8)(compare_room[off + where] ^ 0x80);
+
+                                same("memory_compare", "differs high",
+                                     (positive)memory_compare(compare_room + off,
+                                                              compare_twin + off, size),
+                                     (positive)reference_memory_compare(
+                                         compare_room + off, compare_twin + off, size));
+
+                                compare_twin[off + where] =
+                                    (p8)(compare_room[off + where] + 1);
+
+                                same("memory_compare", "differs by one",
+                                     (positive)memory_compare(compare_room + off,
+                                                              compare_twin + off, size),
+                                     (positive)reference_memory_compare(
+                                         compare_room + off, compare_twin + off, size));
+
+                                //      And one past the size, which must not
+                                //      be looked at.
+                                compare_twin[off + where] = compare_room[off + where];
+                        }
+
+                        compare_twin[off + size] = 0xff;
+
+                        same("memory_compare", "one past the size",
+                             (positive)memory_compare(compare_room + off,
+                                                      compare_twin + off, size),
+                             (positive)reference_memory_compare(compare_room + off,
+                                                                compare_twin + off,
+                                                                size));
+
+                        compare_twin[off + size] = compare_room[off + size];
+                }
+}
+
+static p8 search_room[400];
+static p8 search_needle[200];
+
+//      Lengths either side of both block widths -- sixteen on arm64, thirty
+//      two on x86_64 -- and of the four byte probe inside the candidate step.
+static const positive search_lengths[] = {1,  2,  3,  4,  5,  6,  7,  8,  15, 16,
+                                          17, 31, 32, 33, 40, 63, 64, 65, 100};
+
+fn check_memory_search()
+{
+        static const string_address alphabets[] = {"ab", "abc", "aaab"};
+
+        //      The empty needle, which memmem answers with the front of the
+        //      haystack. string_find disagrees on purpose and has its own
+        //      cases elsewhere.
+        same("memory_search", "an empty needle",
+             (positive)memory_search(search_room, 10, search_room, 0),
+             (positive)reference_memory_search(search_room, 10, search_room, 0));
+
+        same("memory_search", "an empty needle in an empty haystack",
+             (positive)memory_search(search_room, 0, search_room, 0),
+             (positive)reference_memory_search(search_room, 0, search_room, 0));
+
+        for (positive a = 0; a < 3; a++)
+        {
+                string_address letters = alphabets[a];
+                positive count = reference_length(letters);
+
+                for (positive i = 0; i < 400; i++)
+                        search_room[i] = (p8)letters[i % count];
+
+                for (positive off = 0; off < 3; off++)
+                        for (positive n = 0; n < 19; n++)
+                        {
+                                positive needle_size = search_lengths[n];
+
+                                for (positive size = 0; size <= 200; size += 7)
+                                {
+                                        //      A needle that is not there at
+                                        //      all: the whole bound has to be
+                                        //      walked, including the piece
+                                        //      past the last whole block.
+                                        for (positive i = 0; i < needle_size; i++)
+                                                search_needle[i] = 'z';
+
+                                        same("memory_search", "absent",
+                                             (positive)memory_search(search_room + off, size,
+                                                                     search_needle, needle_size),
+                                             (positive)reference_memory_search(
+                                                 search_room + off, size, search_needle,
+                                                 needle_size));
+
+                                        //      A needle longer than what is
+                                        //      left, which must answer
+                                        //      nothing rather than read past
+                                        //      the end.
+                                        if (needle_size > size)
+                                                continue;
+
+                                        //      And one that is there, at
+                                        //      every position it could sit --
+                                        //      the very first, the very last,
+                                        //      and every one between.
+                                        for (positive at = 0; at + needle_size <= size; at++)
+                                        {
+                                                for (positive i = 0; i < needle_size; i++)
+                                                        search_needle[i] =
+                                                            search_room[off + at + i];
+
+                                                same("memory_search", "present",
+                                                     (positive)memory_search(
+                                                         search_room + off, size,
+                                                         search_needle, needle_size),
+                                                     (positive)reference_memory_search(
+                                                         search_room + off, size,
+                                                         search_needle, needle_size));
+                                        }
+                                }
+                        }
+        }
+
+        //      A needle whose two ends are the same byte, which is the pair
+        //      the wide path hunts when it has nothing rarer to pick, and a
+        //      needle that overlaps itself.
+        {
+                static const string_address pairs[][2] = {
+                    {"aaab", "aab"},
+                    {"aaaab", "aab"},
+                    {"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab"},
+                    {"xaxaxaxb", "axb"},
+                    {"abababababc", "ababc"},
+                    {"aaaaa", "aaa"},
+                    {"aa", "aaa"},
+                    {"", "a"},
+                    {"a", "a"},
+                    {"ababa", "aba"},
+                    {"the quick brown fox jumps over the lazy dog", "the lazy"},
+                    {"the quick brown fox jumps over the lazy dog", "tot"},
+                    {"zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzq", "zzq"},
+                };
+
+                for (positive i = 0; i < sizeof(pairs) / sizeof(pairs[0]); i++)
+                {
+                        string_address hay = pairs[i][0];
+                        string_address needle = pairs[i][1];
+                        positive hay_size = reference_length(hay);
+                        positive needle_size = reference_length(needle);
+
+                        same("memory_search", "a match inside a failed candidate",
+                             (positive)memory_search((address_any)hay, hay_size,
+                                                     (address_any)needle, needle_size),
+                             (positive)reference_memory_search((address_any)hay, hay_size,
+                                                               (address_any)needle,
+                                                               needle_size));
+                }
+        }
+
+        //      Every byte value as the needle's first and last, so that no
+        //      answer depends on the broadcast of a particular byte -- 0xff
+        //      and 0x00 among them, which are what a mask built the wrong way
+        //      round gets wrong.
+        for (positive value = 0; value < 256; value += 5)
+        {
+                for (positive i = 0; i < 300; i++)
+                        search_room[i] = (p8)value;
+
+                for (positive n = 0; n < 12; n++)
+                {
+                        positive needle_size = search_lengths[n];
+
+                        for (positive i = 0; i < needle_size; i++)
+                                search_needle[i] = (p8)value;
+
+                        search_room[200] = (p8)(value ^ 1);
+
+                        same("memory_search", "one byte over and over",
+                             (positive)memory_search(search_room, 260, search_needle,
+                                                     needle_size),
+                             (positive)reference_memory_search(search_room, 260,
+                                                               search_needle, needle_size));
+
+                        search_room[200] = (p8)value;
+                }
+        }
+}
+
+
+/*
+        string_find over a string longer than one chunk.
+
+        string_find asks memory_search about sixty four kilobytes at a time
+        and finds the terminator a page at a time, so every case in this file
+        that fits in a line reaches neither loop a second time. A needle lying
+        across a chunk seam, or a terminator on the last byte of a page, is
+        the only thing that says the overlap and the page walk are right.
+
+        Where those two places are is worked out from the address the linker
+        gave the array rather than assumed, and that is the whole reason this
+        was rewritten: with the positions written down as constants, both
+        mutations -- a page read one byte short, and a chunk advanced one byte
+        too far -- passed. The seam is wherever the page walk first reaches
+        sixty four kilobytes, which depends on how far into a page the array
+        begins, and hard coded 65536 is that place only by luck.
+
+        The answer is known rather than computed: the background is seven
+        letters repeating and every needle carries a 'z', which the background
+        does not, so the only place it can be found is where it was put. A
+        reference walk over two hundred thousand bytes would say the same
+        thing and take an emulator a long time to say it.
+*/
+static p8 long_room[200000];
+
+#define LONG_ROOM_SIZE (sizeof(long_room) - 1)
+
+fn long_room_fill()
+{
+        for (positive i = 0; i < sizeof(long_room); i++)
+                long_room[i] = (p8)('a' + (i % 7));
+
+        long_room[LONG_ROOM_SIZE] = 0;
+}
+
+fn check_find_long()
+{
+        static positive places[64];
+        static const positive sizes[] = {2, 3, 4, 5, 8, 33, 64};
+        static p8 needle[80];
+
+        positive base = (positive)(address_any)long_room;
+        positive page = (4096 - (base & 4095)) & 4095;
+        positive seam;
+        positive count = 0;
+
+        //      The first page boundary inside the array, and the seam where
+        //      string_find stops taking pages and searches what it has.
+        if (page == 0)
+                page = 4096;
+
+        seam = page;
+
+        while (seam < 65536)
+                seam += 4096;
+
+        places[count++] = 0;
+        places[count++] = 1;
+        places[count++] = 100;
+
+        for (positive i = 0; i < 5; i++)
+        {
+                places[count++] = page - 4 + i;
+                places[count++] = page + 4092 + i;
+                places[count++] = seam - 68 + i;
+                places[count++] = seam - 4 + i;
+                places[count++] = seam + 4092 + i;
+        }
+
+        places[count++] = 2 * seam - 3;
+        places[count++] = 2 * seam - 1;
+        places[count++] = 190000;
+        places[count++] = LONG_ROOM_SIZE - 70;
+
+        long_room_fill();
+
+        for (positive p = 0; p < count; p++)
+                for (positive n = 0; n < sizeof(sizes) / sizeof(sizes[0]); n++)
+                {
+                        positive at = places[p];
+                        positive size = sizes[n];
+
+                        if (at + size + 2 >= LONG_ROOM_SIZE)
+                                continue;
+
+                        //      A needle the background cannot hold: 'z' is
+                        //      not one of the seven letters.
+                        for (positive i = 0; i < size; i++)
+                                needle[i] = (p8)(i == 0 || i + 1 == size
+                                                     ? 'z'
+                                                     : 'a' + (i % 7));
+
+                        needle[size] = 0;
+
+                        for (positive i = 0; i < size; i++)
+                                long_room[at + i] = needle[i];
+
+                        same("string_find", "over a string of chunks",
+                             (positive)string_find((string_address)long_room,
+                                                   (string_address)needle),
+                             (positive)(long_room + at));
+
+                        //      And with the string ending just after it, so
+                        //      the last chunk is a short one.
+                        long_room[at + size + 1] = 0;
+
+                        same("string_find", "in the last short chunk",
+                             (positive)string_find((string_address)long_room,
+                                                   (string_address)needle),
+                             (positive)(long_room + at));
+
+                        long_room[at + size + 1] = (p8)('a' + ((at + size + 1) % 7));
+
+                        //      The terminator immediately before it, so the
+                        //      needle is past the end of the string and must
+                        //      not be found. Where at is one short of a page
+                        //      boundary this is the case that says the page
+                        //      walk read the whole page.
+                        long_room[at] = 0;
+
+                        same("string_find", "past the terminator",
+                             (positive)string_find((string_address)long_room,
+                                                   (string_address)needle),
+                             0);
+
+                        for (positive i = 0; i < size + 1; i++)
+                                long_room[at + i] = (p8)('a' + ((at + i) % 7));
+                }
+
+        //      A terminator on the last byte a page holds, with the needle
+        //      just past it. A page walk that reads one byte less than a page
+        //      steps over this terminator, carries on into the next page and
+        //      answers with a match that is not in the string.
+        for (positive p = 0; p < 3; p++)
+                for (positive step = 0; step < 3; step++)
+                {
+                        positive edge = page + p * 4096 - 1 + step;
+                        static const string_address needle_past = "zzz";
+
+                        long_room_fill();
+
+                        long_room[edge] = 0;
+                        long_room[edge + 1] = 'z';
+                        long_room[edge + 2] = 'z';
+                        long_room[edge + 3] = 'z';
+
+                        same("string_find", "a terminator at the edge of a page",
+                             (positive)string_find((string_address)long_room,
+                                                   needle_past),
+                             0);
+
+                        //      And the same needle inside the string, one
+                        //      byte the other side of the same boundary.
+                        long_room[edge - 3] = 'z';
+                        long_room[edge - 2] = 'z';
+                        long_room[edge - 1] = 'z';
+
+                        same("string_find", "a match at the edge of a page",
+                             (positive)string_find((string_address)long_room,
+                                                   needle_past),
+                             (positive)(long_room + edge - 3));
+                }
+
+        //      Nothing planted at all, so the whole two hundred thousand
+        //      bytes are walked and the answer is nothing.
+        {
+                static const string_address absent = "zzz";
+
+                long_room_fill();
+
+                same("string_find", "absent over a string of chunks",
+                     (positive)string_find((string_address)long_room, absent), 0);
+        }
+}
+
+
+/*
+        string_compare and string_compare_max over the lengths that reach the
+        wide path.
+
+        Both take a vector body once the two have agreed for long enough --
+        thirty two bytes on x86_64, thirty two on arm64 -- and every case
+        above them in this file is a word or a name, which never gets there.
+        So: strings hundreds of bytes long, the difference walked over every
+        position around each block edge, and the terminator moved through the
+        same places, because the mask those bodies build answers "differs or
+        ends" in one and either half of it can be wrong on its own.
+*/
+static p8 wide_left[700];
+static p8 wide_right[700];
+
+//      Under its own name rather than through a prototype, the way the
+//      bounded routines above are reached: string_compare_max is assembly and
+//      the library declares no C name for it.
+WEAK b32 wide_compare_max(string_address a, string_address b, positive count)
+    __asm__("string_compare_max");
+
+fn check_compare_wide()
+{
+        static const positive lengths[] = {0,  1,  7,  8,  15,  16,  17,  31,
+                                           32, 33, 40, 63, 64,  65,  96,  127,
+                                           128, 129, 160, 200, 300};
+        static const positive bounds[] = {0,  1,  8,  31, 32,  33,  63,  64,
+                                          65, 96, 128, 129, 200, 400};
+
+        for (positive off = 0; off < 5; off++)
+                for (positive l = 0; l < sizeof(lengths) / sizeof(lengths[0]); l++)
+                {
+                        positive length = lengths[l];
+                        string_address left = (string_address)(wide_left + off);
+                        string_address right = (string_address)(wide_right + off);
+
+                        for (positive i = 0; i < 700; i++)
+                        {
+                                wide_left[i] = (p8)('a' + (i % 13));
+                                wide_right[i] = wide_left[i];
+                        }
+
+                        wide_left[off + length] = 0;
+                        wide_right[off + length] = 0;
+
+                        //      Past the terminator the two disagree, which is
+                        //      what says a bounded compare stopped there.
+                        //      With the tails equal, a body that ignores the
+                        //      terminator altogether answers the same thing
+                        //      and nothing here notices -- that mutation
+                        //      survived until this loop was added.
+                        for (positive i = off + length + 1; i < 700; i++)
+                                wide_right[i] = (p8)(wide_left[i] ^ 0x55);
+
+                        same("string_compare", "long and equal",
+                             (positive)string_compare(left, right),
+                             (positive)reference_compare(left, right));
+
+                        for (positive b = 0; b < sizeof(bounds) / sizeof(bounds[0]); b++)
+                                same("string_compare_max", "long and equal",
+                                     (positive)wide_compare_max(left, right, bounds[b]),
+                                     (positive)reference_compare_max(left, right, bounds[b]));
+
+                        for (positive where = 0; where < length; where++)
+                        {
+                                //      Every position while they are short,
+                                //      and the edges of every block once they
+                                //      are not.
+                                if (length > 40 && where > 3 &&
+                                    (where % 16) > 1 && (where % 32) > 1 &&
+                                    (where % 8) > 1 && where + 3 < length)
+                                        continue;
+
+                                wide_right[off + where] =
+                                    (p8)(wide_left[off + where] + 1);
+
+                                same("string_compare", "a byte higher",
+                                     (positive)string_compare(left, right),
+                                     (positive)reference_compare(left, right));
+                                same("string_compare", "a byte lower",
+                                     (positive)string_compare(right, left),
+                                     (positive)reference_compare(right, left));
+
+                                for (positive b = 0; b < sizeof(bounds) / sizeof(bounds[0]); b++)
+                                {
+                                        same("string_compare_max", "a byte higher",
+                                             (positive)wide_compare_max(left, right, bounds[b]),
+                                             (positive)reference_compare_max(left, right, bounds[b]));
+                                        same("string_compare_max", "a byte lower",
+                                             (positive)wide_compare_max(right, left, bounds[b]),
+                                             (positive)reference_compare_max(right, left, bounds[b]));
+                                }
+
+                                //      And the same position as a terminator
+                                //      rather than a difference, which is the
+                                //      other half of the mask.
+                                wide_right[off + where] = 0;
+
+                                same("string_compare", "an early terminator",
+                                     (positive)string_compare(left, right),
+                                     (positive)reference_compare(left, right));
+                                same("string_compare", "an early terminator, the other way",
+                                     (positive)string_compare(right, left),
+                                     (positive)reference_compare(right, left));
+
+                                wide_right[off + where] = wide_left[off + where];
+                        }
+                }
+}
+
+
+/*
+        The byte hunts at the lengths a vector body reaches.
+
+        check_hostile_neighbours above stops at twenty four bytes and
+        check_first_of_wide covers memory_first_of alone, so every other hunt
+        in this file is checked only on strings shorter than one vector
+        register. A thirty two or sixty four byte body could be wrong in every
+        lane and the suite would still agree with itself -- which is how a one
+        byte error in memory_first_of once passed 263472 checks.
+
+        So: every alignment a sixty four byte loop can begin on, lengths
+        across 32, 64, 128, 256 and 320, and the hunted byte at every position
+        including the last one inside a bound and the first one past it.
+
+        The field is filled with one letter and the hunted byte planted into
+        it, so the answer is decided by the plant and not by the noise around
+        it: a wide body that finds the right byte in the wrong lane is off by
+        a known amount rather than off by luck.
+*/
+
+static p8 wide_field[1024];
+
+// Sixty four byte aligned, so an offset from here is the whole of the
+// distance into a vector however the linker placed the array.
+static string_address wide_aligned_at(p8 address_to array)
+{
+        positive at = (positive)(address_any)array;
+
+        return array + ((64 - (at & 63)) & 63);
+}
+
+static hunt_byte wide_or_end;
+static hunt_bounded wide_first_max;
+static hunt_byte wide_last_or_end;
+static hunt_memory wide_memory_first;
+static measure_bounded wide_length_max;
+
+fn wide_bind()
+{
+        wide_or_end =
+            verify_or_end_public ? verify_or_end_public : verify_or_end_libc;
+        wide_first_max = verify_first_max_public ? verify_first_max_public
+                                                 : verify_first_max_libc;
+        wide_last_or_end = verify_last_or_end_public ? verify_last_or_end_public
+                                                     : verify_last_or_end_libc;
+        wide_memory_first = verify_memory_first_public
+                                ? verify_memory_first_public
+                                : verify_memory_first_libc;
+        wide_length_max = verify_length_max_public ? verify_length_max_public
+                                                   : verify_length_max_libc;
+}
+
+// The five unbounded hunts and the three bounded ones, the bounded ones at
+// the counts a wide loop stops on: nothing at all, half way, exactly the
+// string, one past its terminator, and far enough past to need another turn.
+fn wide_case(string_address text, positive size, p8 byte)
+{
+        positive bounds[6];
+
+        same("string_length", "wide", string_length(text), reference_length(text));
+
+        same("string_first_of", "wide", (positive)string_first_of(text, byte),
+             (positive)reference_first_of(text, byte));
+
+        same("string_last_of", "wide", (positive)string_last_of(text, byte),
+             (positive)reference_string_last_of(text, byte));
+
+        if (wide_or_end)
+                same("string_first_of_or_end", "wide",
+                     (positive)wide_or_end(text, byte),
+                     (positive)reference_or_end(text, byte));
+
+        if (wide_last_or_end)
+                same("string_last_of_or_end", "wide",
+                     (positive)wide_last_or_end(text, byte),
+                     (positive)reference_last_or_end(text, byte));
+
+        bounds[0] = 0;
+        bounds[1] = 1;
+        bounds[2] = size / 2;
+        bounds[3] = size;
+        bounds[4] = size + 1;
+        bounds[5] = size + 40;
+
+        for (positive i = 0; i < 6; i++)
+        {
+                positive count = bounds[i];
+
+                if (wide_first_max)
+                        same("string_first_of_max", "wide",
+                             (positive)wide_first_max(text, count, byte),
+                             (positive)reference_first_max(text, count, byte));
+
+                if (wide_memory_first)
+                        same("memory_first_of", "wide",
+                             (positive)wide_memory_first(text, byte, count),
+                             (positive)reference_memory_first(text, byte, count));
+
+                if (wide_length_max)
+                        same("string_length_max", "wide",
+                             wide_length_max(text, count),
+                             reference_length_max(text, count));
+        }
+}
+
+// Lengths either side of every width a body here could step by, and enough
+// of the short end to catch a wide path entered when it should not be.
+static positive wide_sizes[] = {
+    0,   1,   2,   3,   4,   5,   6,   7,   8,   9,   10,  11,  12,  13,
+    14,  15,  16,  17,  18,  19,  20,  23,  24,  25,  30,  31,  32,  33,
+    34,  35,  39,  40,  47,  48,  55,  56,  62,  63,  64,  65,  66,  67,
+    70,  79,  80,  95,  96,  97,  111, 112, 120, 126, 127, 128, 129, 130,
+    131, 143, 144, 159, 160, 175, 176, 191, 192, 193, 200, 223, 224, 240,
+    252, 254, 255, 256, 257, 258, 260, 280, 288, 300, 310, 318, 319, 320};
+
+#define WIDE_SIZE_COUNT (sizeof(wide_sizes) / sizeof(wide_sizes[0]))
+
+// The alignments a position sweep runs at. Every one of them is a distance
+// into a sixty four byte block that a wide loop has to mask off; the full
+// nought to seventy one sweep below covers the rest with fewer plants.
+static positive wide_offsets[] = {0, 1, 7, 8, 15, 16, 17, 31, 32, 33, 63};
+
+#define WIDE_OFFSET_COUNT (sizeof(wide_offsets) / sizeof(wide_offsets[0]))
+
+fn hunts_wide_sweep()
+{
+        string_address base = wide_aligned_at(wide_field);
+
+        //
+        //      Every alignment a sixty four byte loop can begin on, against
+        //      every length in the ladder, with the byte in the places a
+        //      body gets wrong when its edges are off by one: nowhere at
+        //      all, at the very front, at the last byte of the string, and
+        //      one past the terminator where nothing unbounded may see it.
+        //
+        for (positive offset = 0; offset < 72; offset++)
+                for (positive s = 0; s < WIDE_SIZE_COUNT; s++)
+                {
+                        positive size = wide_sizes[s];
+                        string_address text = base + offset;
+
+                        if (offset + size + 48 >= sizeof(wide_field))
+                                continue;
+
+                        reference_fill(wide_field, 'a', sizeof(wide_field));
+                        text[size] = 0;
+
+                        // absent, and present in every byte
+                        wide_case(text, size, 'z');
+                        wide_case(text, size, 'a');
+
+                        // the terminator itself, which string_first_of and
+                        // string_last_of_or_end answer with and string_last_of
+                        // answers nothing for
+                        wide_case(text, size, 0);
+
+                        if (size)
+                        {
+                                text[size - 1] = 'z';
+                                wide_case(text, size, 'z');
+                                text[size - 1] = 'a';
+                        }
+
+                        // past the terminator: bounded hunts wide enough may
+                        // see it, unbounded ones never may
+                        text[size + 1] = 'z';
+                        wide_case(text, size, 'z');
+                        text[size + 1] = 'a';
+
+                        // a high byte, in case a lane is compared signed
+                        text[size / 2] = 0xff;
+                        wide_case(text, size, 0xff);
+                        text[size / 2] = 'a';
+                }
+
+        //
+        //      The byte at every position in turn, which is the case a body
+        //      that finds the right vector and the wrong lane fails and
+        //      nothing else does.
+        //
+        for (positive o = 0; o < WIDE_OFFSET_COUNT; o++)
+                for (positive s = 0; s < WIDE_SIZE_COUNT; s++)
+                {
+                        positive offset = wide_offsets[o];
+                        positive size = wide_sizes[s];
+                        string_address text = base + offset;
+
+                        if (offset + size + 48 >= sizeof(wide_field))
+                                continue;
+
+                        reference_fill(wide_field, 'a', sizeof(wide_field));
+                        text[size] = 0;
+
+                        for (positive where = 0; where <= size + 2; where++)
+                        {
+                                // that byte is the terminator; moving it
+                                // would be a different string
+                                if (where == size)
+                                        continue;
+
+                                text[where] = 'z';
+                                wide_case(text, size, 'z');
+                                text[where] = 'a';
+                        }
+                }
+}
+
+/*
+        The same sweep once for each body the routines have.
+
+        On x86_64 every hunt below carries three: sixty four bytes at a time
+        where the processor has AVX-512, thirty two where it has AVX2, and
+        eight where it has neither. cpu_detect answers once at startup, so on
+        this machine only the first of the three would ever run and the other
+        two would be tested by nothing at all -- which is the same hole a one
+        byte error in memory_first_of sat in while 263472 checks agreed.
+
+        The two bytes it wrote are bytes, so the sweep is run again with them
+        forced down. Off every architecture that has no such choice this is
+        three identical passes, which costs time and proves the same thing
+        three times rather than proving nothing once.
+*/
+fn check_hunts_wide()
+{
+        p8 avx2 = cpu_has_avx2;
+        p8 avx512 = cpu_has_avx512;
+
+        wide_bind();
+
+        hunts_wide_sweep();
+
+        cpu_has_avx512 = 0;
+        hunts_wide_sweep();
+
+        cpu_has_avx2 = 0;
+        hunts_wide_sweep();
+
+        cpu_has_avx2 = avx2;
+        cpu_has_avx512 = avx512;
+}
+
+/*
+        The six number routines, deeply.
+
+        check_bulk_numbers above is thirteen values and a round trip. That is
+        enough to catch a routine that does not work at all and nothing else:
+        every one of its samples is under 2^32, so a conversion that splits
+        the number into eight digit chunks would never have its second chunk
+        reached, and a parser that reads eight bytes at a time would never
+        read a second word. Every path here needs a case that lands on it.
+
+        So: every value from zero to a hundred thousand, then every power of
+        ten and either side of it, the top and bottom of both types, and for
+        the parsers the malformed inputs -- nothing, a sign on its own,
+        blanks, a digit string longer than the type holds.
+*/
+
+// The C that positive_to_string replaced: a digit at a time into a buffer
+// backwards, then one call to the writer with the whole run.
+fn reference_positive_to_string(writer write, positive number)
+{
+        b8 buffer[24];
+        positive at = sizeof(buffer);
+
+        if (!number)
+                buffer[--at] = '0';
+
+        while (number)
+        {
+                buffer[--at] = (b8)('0' + number % 10);
+                number /= 10;
+        }
+
+        write(buffer + at, sizeof(buffer) - at);
+}
+
+// And what bipolar_to_string did: the sign is its own call, the magnitude is
+// the routine above, and the most negative value negates to itself.
+fn reference_bipolar_to_string(writer write, bipolar number)
+{
+        if (number < 0)
+        {
+                write((address_any) "-", 1);
+                reference_positive_to_string(write, (positive)(-(positive)number));
+                return;
+        }
+
+        reference_positive_to_string(write, (positive)number);
+}
+
+/*
+        The trailing digits, which is what string_to_positive answers.
+
+        reference_to_positive at the top of this file reads forwards, and the
+        two agree only on a string that is all digits: "12a34" is twelve
+        forwards and thirty four backwards, and the assembly's comment says
+        the backwards answer is the one callers depend on. Checking malformed
+        input against the forward reference would report every case as a
+        disagreement for a reason that is not the one being looked for, so the
+        backwards rule is written out here as its own reference.
+*/
+positive reference_trailing_positive(string_address input)
+{
+        positive length = 0;
+
+        while (input[length])
+                length++;
+
+        positive value = 0;
+        positive place = 1;
+
+        while (length--)
+        {
+                p8 c = input[length];
+
+                if (c < '0' || c > '9')
+                        break;
+
+                value += place * (positive)(c - '0');
+                place *= 10;
+        }
+
+        return value;
+}
+
+// A leading minus and nothing else: a plus is not a sign here, which is what
+// the assembly does and what reference_to_bipolar above does not.
+bipolar reference_trailing_bipolar(string_address input)
+{
+        if (string_is(input, '-'))
+                return -(bipolar)reference_trailing_positive(input + 1);
+
+        return (bipolar)reference_trailing_positive(input);
+}
+
+static b8 spelled[64];
+static b8 spelled_twin[64];
+
+// One value through both, compared as bytes rather than as a number, so a
+// leading zero or a lost digit is a failure and not a coincidence.
+fn one_positive(positive n, string_address detail)
+{
+        catch_reset();
+        positive_to_string(catch_writer, n);
+
+        positive length = caught_length;
+
+        for (positive i = 0; i <= length; i++)
+                spelled[i] = caught[i];
+
+        catch_reset();
+        reference_positive_to_string(catch_writer, n);
+
+        same("positive_to_string", detail, length, caught_length);
+        same_bytes("positive_to_string", detail, spelled, caught, caught_length + 1);
+
+        // and back again, through the parser, which is the other half
+        same("string_to_positive", detail, string_to_positive(spelled), n);
+}
+
+fn one_bipolar(bipolar n, string_address detail)
+{
+        catch_reset();
+        bipolar_to_string(catch_writer, n);
+
+        positive length = caught_length;
+
+        for (positive i = 0; i <= length; i++)
+                spelled_twin[i] = caught[i];
+
+        catch_reset();
+        reference_bipolar_to_string(catch_writer, n);
+
+        same("bipolar_to_string", detail, length, caught_length);
+        same_bytes("bipolar_to_string", detail, spelled_twin, caught, caught_length + 1);
+
+        same("string_to_bipolar", detail, (positive)string_to_bipolar(spelled_twin),
+             (positive)n);
+}
+
+fn check_numbers_exhaustive()
+{
+        // Every value a five digit number can be, which covers every carry
+        // the pair table can make and every digit count up to five.
+        for (positive n = 0; n <= 100000; n++)
+        {
+                one_positive(n, (string_address) "0..100000");
+                one_bipolar((bipolar)n, (string_address) "0..100000");
+                one_bipolar(-(bipolar)n, (string_address) "-100000..0");
+        }
+}
+
+fn check_numbers_edges()
+{
+        // Every power of ten and either side of it: where a conversion picks
+        // its number of digits wrong it is here, and nowhere else.
+        positive power = 1;
+
+        for (positive e = 0; e < 20; e++)
+        {
+                one_positive(power - 1, (string_address) "under a power of ten");
+                one_positive(power, (string_address) "a power of ten");
+                one_positive(power + 1, (string_address) "over a power of ten");
+
+                if (power <= 9223372036854775807ull / 10)
+                {
+                        one_bipolar((bipolar)power - 1, (string_address) "under a power");
+                        one_bipolar((bipolar)power, (string_address) "a power");
+                        one_bipolar(-(bipolar)power, (string_address) "a negative power");
+                }
+
+                power *= 10;
+        }
+
+        // The ends of both types. The top of positive is twenty digits, which
+        // is the only length a three chunk conversion reaches its last chunk
+        // on, and the bottom of bipolar is the value that negates to itself.
+        one_positive(0, (string_address) "zero");
+        one_positive(18446744073709551615ull, (string_address) "positive max");
+        one_positive(18446744073709551614ull, (string_address) "positive max less one");
+        one_positive(10000000000000000000ull, (string_address) "twenty digits round");
+        one_positive(9999999999999999999ull, (string_address) "nineteen nines");
+        one_positive(4294967295u, (string_address) "thirty two bits");
+        one_positive(4294967296ull, (string_address) "one past thirty two bits");
+        one_positive(99999999u, (string_address) "eight nines");
+        one_positive(100000000u, (string_address) "nine digits");
+        one_positive(9999999999999999ull, (string_address) "sixteen nines");
+        one_positive(10000000000000000ull, (string_address) "seventeen digits");
+
+        one_bipolar(9223372036854775807ll, (string_address) "bipolar max");
+        one_bipolar(-9223372036854775807ll - 1, (string_address) "bipolar min");
+        one_bipolar(0, (string_address) "signed zero");
+        one_bipolar(-1, (string_address) "minus one");
+
+        // A spread nobody chose by hand, over every digit count there is.
+        for (positive i = 0; i < 4000; i++)
+        {
+                positive digits = 1 + i % 20;
+                positive top = 1;
+
+                for (positive e = 1; e < digits; e++)
+                        top *= 10;
+
+                positive n = top + next() % (top * 9 + 1);
+
+                one_positive(n, (string_address) "a spread of digit counts");
+                one_bipolar((bipolar)(n >> 1), (string_address) "a spread, positive");
+                one_bipolar(-(bipolar)(n >> 1), (string_address) "a spread, negative");
+        }
+}
+
+/*
+        What the parsers do with what nobody meant to hand them.
+
+        Both read backwards from the terminator, so the interesting inputs are
+        not the ones with a bad byte at the front -- they are the ones where
+        the run of digits ends part way, where there are no digits at all, and
+        where there are more digits than the type holds and the value has to
+        wrap the same way the reference does.
+*/
+static string_address malformed[] = {
+    "", "-", "+", "  ", "abc", "-abc", "+abc", ".", "-.", " - ",
+    "0", "-0", "+0", "00000", "-00000", "007", "-007",
+    "12a34", "-12a34", "1-2", "a1", "-a1", "1a", "-1a", " 12", "12 ",
+    "1 2", "\t9", "9\t", "0x1f", "1e9", "--5", "++5", "-+5", "+-5",
+    "18446744073709551615", "18446744073709551616", "18446744073709551617",
+    "-18446744073709551615", "99999999999999999999",
+    "999999999999999999999999999999", "9223372036854775807",
+    "-9223372036854775808", "9223372036854775808", "-9223372036854775809",
+    "4294967295", "4294967296", "-4294967296", "2147483647", "-2147483648",
+    "0000000000000000000000001", "-0000000000000000000000001",
+    "123456789012345678901234567890",
+    "1234567", "12345678", "123456789", "1234567890123456", "12345678901234567",
+    "-1234567", "-12345678", "-123456789", "-1234567890123456",
+    "z1234567890", "1234567890z", "12345678z90", "\x7f9", "9\x7f",
+    "/9", "9/", ":9", "9:", "9\xff", "\xff9",
+};
+
+fn check_parsers_malformed()
+{
+        for (positive i = 0; i < sizeof(malformed) / sizeof(malformed[0]); i++)
+        {
+                string_address input = malformed[i];
+
+                same("string_to_positive", input, string_to_positive(input),
+                     reference_trailing_positive(input));
+
+                same("string_to_bipolar", input, (positive)string_to_bipolar(input),
+                     (positive)reference_trailing_bipolar(input));
+        }
+
+        /*
+                The same strings again at every offset into a word.
+
+                A parser that reads eight bytes at a time reads the word the
+                string ends in, and which bytes of that word are the string
+                depends on where the string starts. Only one of the eight
+                alignments is the one a literal happens to land on, so the
+                other seven are where an off by one in the mask lives.
+        */
+        static b8 shifted[128];
+
+        for (positive i = 0; i < sizeof(malformed) / sizeof(malformed[0]); i++)
+                for (positive off = 0; off < 16; off++)
+                {
+                        positive at = 0;
+
+                        while (malformed[i][at])
+                        {
+                                shifted[off + at] = malformed[i][at];
+                                at++;
+                        }
+
+                        shifted[off + at] = 0;
+
+                        same("string_to_positive", "at an offset",
+                             string_to_positive(shifted + off),
+                             reference_trailing_positive(shifted + off));
+
+                        same("string_to_bipolar", "at an offset",
+                             (positive)string_to_bipolar(shifted + off),
+                             (positive)reference_trailing_bipolar(shifted + off));
+                }
+
+        // A run of digits longer than any word, at every length, so a parser
+        // that takes eight at a time is entered with each possible remainder.
+        static b8 run[64];
+
+        for (positive length = 1; length < 40; length++)
+        {
+                for (positive i = 0; i < length; i++)
+                        run[i] = (b8)('0' + (i * 7 + 3) % 10);
+
+                run[length] = 0;
+
+                same("string_to_positive", "a long run of digits",
+                     string_to_positive(run), reference_trailing_positive(run));
+
+                // and the same run with one byte in the middle spoiled, so the
+                // wide path has to stop part way through a word
+                for (positive where = 0; where < length; where++)
+                {
+                        b8 kept = run[where];
+
+                        run[where] = 'x';
+
+                        same("string_to_positive", "a run broken part way",
+                             string_to_positive(run),
+                             reference_trailing_positive(run));
+
+                        run[where] = kept;
+                }
+        }
+}
+
+/*
+        string_format past the six cases it had.
+
+        The variadic ABI is the part that cannot be reasoned about from the
+        outside: four integer registers on x86_64 and eight on the other two,
+        then the stack, and a decimal counts against a different set. A format
+        with five arguments in it reaches the stack path on x86_64 and nothing
+        else here does.
+*/
+static b8 format_text[512];
+
+fn expect(string_address detail, string_address want)
+{
+        same("string_format", detail, (positive)string_compare(caught, want), 0);
+}
+
+fn check_format_deep()
+{
+        catch_reset();
+        string_format(catch_writer, (string_address) "");
+        expect((string_address) "an empty format", (string_address) "");
+
+        catch_reset();
+        string_format(catch_writer, (string_address) "%%");
+        expect((string_address) "one literal percent", (string_address) "%");
+
+        catch_reset();
+        string_format(catch_writer, (string_address) "%%%%%%");
+        expect((string_address) "three of them", (string_address) "%%%");
+
+        catch_reset();
+        string_format(catch_writer, (string_address) "a%%b");
+        expect((string_address) "a percent between text", (string_address) "a%b");
+
+        // A percent that is the last byte writes nothing more, and an unknown
+        // specifier is dropped with its percent. Both are relied on.
+        catch_reset();
+        string_format(catch_writer, (string_address) "tail%");
+        expect((string_address) "a percent at the end", (string_address) "tail");
+
+        catch_reset();
+        string_format(catch_writer, (string_address) "a%zb");
+        expect((string_address) "an unknown specifier", (string_address) "ab");
+
+        catch_reset();
+        string_format(catch_writer, (string_address) "%");
+        expect((string_address) "a format that is one percent", (string_address) "");
+
+        // Every argument kind, and then more of them than there are registers.
+        catch_reset();
+        string_format(catch_writer, (string_address) "%p", (positive)0);
+        expect((string_address) "zero through the format", (string_address) "0");
+
+        catch_reset();
+        string_format(catch_writer, (string_address) "%p",
+                      (positive)18446744073709551615ull);
+        expect((string_address) "the top of positive",
+               (string_address) "18446744073709551615");
+
+        catch_reset();
+        string_format(catch_writer, (string_address) "%b", (bipolar)-2147483647 - 1);
+        expect((string_address) "the bottom of an int",
+               (string_address) "-2147483648");
+
+        catch_reset();
+        string_format(catch_writer, (string_address) "%p %p %p %p %p %p %p %p",
+                      (positive)1, (positive)2, (positive)3, (positive)4,
+                      (positive)5, (positive)6, (positive)7, (positive)8);
+        expect((string_address) "eight numbers, past every register",
+               (string_address) "1 2 3 4 5 6 7 8");
+
+        catch_reset();
+        string_format(catch_writer,
+                      (string_address) "%s %s %s %s %s %s %s %s",
+                      "a", "b", "c", "d", "e", "f", "g", "h");
+        expect((string_address) "eight strings, past every register",
+               (string_address) "a b c d e f g h");
+
+        catch_reset();
+        string_format(catch_writer, (string_address) "%s%p%b%s%p%b%s%p%b",
+                      "x", (positive)1, (bipolar)-1, "y", (positive)2, (bipolar)-2,
+                      "z", (positive)3, (bipolar)-3);
+        expect((string_address) "the kinds mixed, past every register",
+               (string_address) "x1-1y2-2z3-3");
+
+        // A format long enough that a scan taking eight bytes at a time runs
+        // its loop several times, at every length either side of a word.
+        for (positive length = 0; length < 40; length++)
+        {
+                for (positive i = 0; i < length; i++)
+                        format_text[i] = (b8)('a' + i % 26);
+
+                format_text[length] = 0;
+
+                catch_reset();
+                string_format(catch_writer, format_text);
+                same("string_format", "plain text of every length",
+                     (positive)string_compare(caught, format_text), 0);
+        }
+
+        /*
+                A percent at every position in a run of text.
+
+                A scan that takes a word at a time has to answer with the
+                first percent in the word and not the last, and has to answer
+                the terminator when both are in the same word. Only one
+                position in eight is the one a hand written case lands on.
+        */
+        // The filler is spelled out rather than counted off the alphabet
+        // because 's', 'p', 'b' and 'f' are specifiers: a percent landing in
+        // front of one of those asks for an argument nobody passed, and the
+        // routine reads whatever the register happened to hold. It did, and
+        // the crash was in the writer rather than anywhere near the cause.
+        static string_address filler = (string_address) "acdeghijklmnoqrtuvwxyz";
+
+        for (positive length = 1; length < 40; length++)
+                for (positive where = 0; where < length; where++)
+                {
+                        for (positive i = 0; i < length; i++)
+                                format_text[i] = (b8)filler[i % 22];
+
+                        format_text[where] = '%';
+                        format_text[length] = 0;
+
+                        // "%%" is a literal percent; anything else here is a
+                        // specifier or a drop, and the expected answer is
+                        // built the same way the routine has to build it.
+                        positive at = 0;
+                        static b8 expected[64];
+                        positive out = 0;
+                        b32 stop = 0;
+
+                        while (format_text[at] && !stop)
+                        {
+                                if (format_text[at] != '%')
+                                {
+                                        expected[out++] = format_text[at++];
+                                        continue;
+                                }
+
+                                if (!format_text[at + 1])
+                                {
+                                        stop = 1;
+                                        break;
+                                }
+
+                                if (format_text[at + 1] == '%')
+                                        expected[out++] = '%';
+
+                                at += 2;
+                        }
+
+                        expected[out] = 0;
+
+                        catch_reset();
+                        string_format(catch_writer, format_text);
+                        same("string_format", "a percent at every position",
+                             (positive)string_compare(caught, expected), 0);
+                }
+
+        /*
+                Text with the top bit set in it.
+
+                A scan that hunts a zero byte and a percent a word at a time
+                does its arithmetic on whole bytes, and 0x80 through 0xFF are
+                where an approximation of that test goes wrong: a byte over
+                0x80 answers the same as a zero byte to (w - 0x01..) & 0x80..
+                unless the & ~w is there. Nothing else in this file puts one
+                in a format string.
+        */
+        for (positive length = 1; length < 24; length++)
+                for (positive where = 0; where < length; where++)
+                {
+                        for (positive i = 0; i < length; i++)
+                                format_text[i] = (b8)filler[i % 22];
+
+                        format_text[where] = (b8)(0x80 + (where * 7) % 128);
+                        format_text[length] = 0;
+
+                        catch_reset();
+                        string_format(catch_writer, format_text);
+                        same("string_format", "a byte over 0x7f in the text",
+                             (positive)string_compare(caught, format_text), 0);
+
+                        // and the same with a literal percent right after
+                        // it, so the hunt has to answer the percent and not
+                        // the high byte. Two of them, and the answer is the
+                        // text with one percent where the pair was.
+                        if (where + 2 < length)
+                        {
+                                static b8 expected_high[64];
+                                positive out = 0;
+
+                                format_text[where + 1] = '%';
+                                format_text[where + 2] = '%';
+
+                                for (positive i = 0; i < length; i++)
+                                {
+                                        if (i == where + 2)
+                                                continue;
+
+                                        expected_high[out++] = format_text[i];
+                                }
+
+                                expected_high[out] = 0;
+
+                                catch_reset();
+                                string_format(catch_writer, format_text);
+                                same("string_format", "a high byte in front of a percent",
+                                     (positive)string_compare(caught, expected_high), 0);
+                        }
+                }
+
+        // The same text at every alignment, since a wide scan masks off what
+        // sits before the string and the mask depends on where it starts.
+        static b8 format_room[128];
+
+        // Thirty two and not sixteen: where the hunt takes thirty two bytes
+        // at a time it masks off what sits in front of the cursor by the low
+        // five bits of it, and half the residues never came up at sixteen.
+        for (positive off = 0; off < 32; off++)
+                for (positive length = 0; length < 24; length++)
+                {
+                        for (positive i = 0; i < length; i++)
+                                format_room[off + i] = (b8)('A' + i % 26);
+
+                        format_room[off + length] = 0;
+
+                        catch_reset();
+                        string_format(catch_writer, format_room + off);
+                        same("string_format", "text at every alignment",
+                             (positive)string_compare(caught, format_room + off), 0);
+                }
+}
+
+/*
+        decimal_to_string on values that round awkwardly.
+
+        The reference is the shape the assembly's own comment describes -- the
+        sign, the whole part, a point, then six digits of fraction with the
+        leading zeros written by hand -- because the C it replaced is gone and
+        an approximation of it would only test itself. It is written here as
+        one piece so that a change to the assembly has something to disagree
+        with.
+*/
+fn reference_decimal_to_string(writer write, decimal value)
+{
+        if (0 > value)
+        {
+                write((address_any) "-", 1);
+                value = -value;
+        }
+
+        bipolar whole = (bipolar)value;
+        decimal fraction = value - (decimal)whole;
+
+        if (whole < 0)
+        {
+                write((address_any) "-", 1);
+                reference_positive_to_string(write, (positive)(-whole));
+        }
+        else
+        {
+                reference_positive_to_string(write, (positive)whole);
+        }
+
+        write((address_any) ".", 1);
+
+        bipolar part = (bipolar)(fraction * 1000000.0);
+
+        // Six digits, so the zeros a conversion would drop are written here.
+        // The ladder stops at the first one that is not needed.
+        if (part <= 99999)
+        {
+                write((address_any) "0", 1);
+
+                if (part <= 9999)
+                {
+                        write((address_any) "0", 1);
+
+                        if (part <= 999)
+                        {
+                                write((address_any) "0", 1);
+
+                                if (part <= 99)
+                                {
+                                        write((address_any) "0", 1);
+
+                                        if (part <= 9)
+                                                write((address_any) "0", 1);
+                                }
+                        }
+                }
+        }
+
+        if (part < 0)
+        {
+                write((address_any) "-", 1);
+                part = -part;
+        }
+
+        reference_positive_to_string(write, (positive)part);
+}
+
+static b8 decimal_spelled[128];
+
+fn one_decimal(decimal v, string_address detail)
+{
+        catch_reset();
+        decimal_to_string(catch_writer, v);
+
+        positive length = caught_length;
+
+        for (positive i = 0; i <= length; i++)
+                decimal_spelled[i] = caught[i];
+
+        catch_reset();
+        reference_decimal_to_string(catch_writer, v);
+
+        same("decimal_to_string", detail, length, caught_length);
+        same_bytes("decimal_to_string", detail, decimal_spelled, caught,
+                   caught_length + 1);
+}
+
+/*
+        The decimal specifier, which nothing above reaches.
+
+        %f is the one argument kind that does not come out of the integer save
+        area: it has its own cursor over its own set of registers, and on
+        x86_64 a padded save area that the overflow is not padded to match.
+        Every other case in this file either calls decimal_to_string directly
+        or formats something that is not a decimal, so both of those arms had
+        never run -- which is the shape of failure this file already carries a
+        warning about further up.
+
+        The answer to compare against is decimal_to_string's own, since that is
+        what the specifier is defined to call.
+*/
+static b8 wanted_decimal[128];
+
+fn one_format_decimal(decimal v, string_address detail)
+{
+        catch_reset();
+        decimal_to_string(catch_writer, v);
+
+        positive length = caught_length;
+
+        for (positive i = 0; i <= length; i++)
+                wanted_decimal[i] = caught[i];
+
+        catch_reset();
+        string_format(catch_writer, (string_address) "%f", v);
+
+        same("string_format", detail, caught_length, length);
+        same_bytes("string_format", detail, caught, wanted_decimal, length + 1);
+}
+
+static b8 expected_long[256];
+
+/*
+        A run of plain text long enough to reach the wide hunt, with a decimal
+        argument still waiting.
+
+        The wide hunt writes the vector registers the decimal arrived in. They
+        were spilled in the prologue before any scan and the specifier reads
+        them back out of the frame, so this is safe by the way the routine is
+        built rather than by luck -- but every other case here has a run of one
+        byte or none in front of its %f, so the two had never been in the same
+        call.
+*/
+fn one_wide_decimal(string_address format, string_address text, decimal v)
+{
+        catch_reset();
+        decimal_to_string(catch_writer, v);
+
+        positive at = 0;
+
+        while (text[at])
+        {
+                expected_long[at] = text[at];
+                at++;
+        }
+
+        for (positive i = 0; i <= caught_length; i++)
+                expected_long[at + i] = caught[i];
+
+        catch_reset();
+        string_format(catch_writer, format, v);
+
+        same("string_format", "a wide run of text with a decimal waiting",
+             (positive)string_compare(caught, expected_long), 0);
+}
+
+fn check_format_decimals()
+{
+        one_wide_decimal(
+            (string_address) "a line of text long enough to go wide: %f",
+            (string_address) "a line of text long enough to go wide: ", 1.5);
+        one_wide_decimal(
+            (string_address) "and one that rounds awkwardly on the end of it: %f",
+            (string_address) "and one that rounds awkwardly on the end of it: ",
+            0.0000005);
+        one_wide_decimal(
+            (string_address) "0123456789012345678901234567890123456789%f",
+            (string_address) "0123456789012345678901234567890123456789", -2.25);
+
+        static const decimal cases[] = {
+            0.0, 1.5, -2.25, 0.0000005, -0.0000005, 123456.789, 1e6,
+            3.14159265358979, 0.9999995, -1.0,
+        };
+
+        for (positive i = 0; i < sizeof(cases) / sizeof(cases[0]); i++)
+                one_format_decimal(cases[i], (string_address) "one decimal");
+
+        // Mixed with the other kinds, so the two cursors have to advance
+        // past each other rather than in step.
+        catch_reset();
+        string_format(catch_writer, (string_address) "%s %f %p", "a", 1.5,
+                      (positive)7);
+        expect((string_address) "a decimal between the other kinds",
+               (string_address) "a 1.500000 7");
+
+        // and the other way round: the decimal first, so the run that goes
+        // wide is scanned with the vector cursor already moved on
+        catch_reset();
+        decimal_to_string(catch_writer, 1.5);
+
+        positive spelled_at = caught_length;
+
+        for (positive i = 0; i <= spelled_at; i++)
+                expected_long[i] = caught[i];
+
+        {
+                string_address rest =
+                    (string_address) " then a run of text long enough to go wide";
+                positive i = 0;
+
+                while (rest[i])
+                {
+                        expected_long[spelled_at + i] = rest[i];
+                        i++;
+                }
+
+                expected_long[spelled_at + i] = 0;
+        }
+
+        catch_reset();
+        string_format(catch_writer,
+                      (string_address) "%f then a run of text long enough to go wide",
+                      1.5);
+        same("string_format", "a wide run after a decimal",
+             (positive)string_compare(caught, expected_long), 0);
+
+        catch_reset();
+        string_format(catch_writer, (string_address) "%f%s%f", 1.5, "|", -2.25);
+        expect((string_address) "two decimals and a string",
+               (string_address) "1.500000|-2.250000");
+
+        /*
+                More decimals than there are registers to pass them in.
+
+                x86_64 has eight vector registers for this and arm64 has
+                eight; riscv passes them in the integer ones, of which six are
+                left after the writer and the format. So nine reaches the
+                stack on all three, and the ninth is the first one that does
+                on the two that have the most.
+        */
+        catch_reset();
+        string_format(catch_writer,
+                      (string_address) "%f %f %f %f %f %f %f %f %f",
+                      1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0);
+        expect((string_address) "nine decimals, past every register",
+               (string_address) "1.000000 2.000000 3.000000 4.000000 5.000000 "
+                                "6.000000 7.000000 8.000000 9.000000");
+
+        catch_reset();
+        string_format(catch_writer,
+                      (string_address) "%f%f%f%f%f%f%f%f%f%f%f%f",
+                      0.5, 1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5, 9.5,
+                      10.5, 11.5);
+        expect((string_address) "twelve decimals, well past them",
+               (string_address) "0.5000001.5000002.5000003.5000004.500000"
+                                "5.5000006.5000007.5000008.5000009.500000"
+                                "10.50000011.500000");
+
+        // and the kinds interleaved past both sets of registers at once
+        catch_reset();
+        string_format(catch_writer,
+                      (string_address) "%p%f%s%p%f%s%p%f%s%p%f%s",
+                      (positive)1, 1.5, "a", (positive)2, 2.5, "b",
+                      (positive)3, 3.5, "c", (positive)4, 4.5, "d");
+        expect((string_address) "every kind, past every register",
+               (string_address) "11.500000a22.500000b33.500000c44.500000d");
+}
+
+fn check_decimals_deep()
+{
+        static const decimal awkward[] = {
+            0.0, -0.0, 1.0, -1.0, 0.5, -0.5, 1.5, -2.25, 2.675,
+            0.1, 0.2, 0.3, 0.30000000000000004, 0.7, 0.9999995, -0.9999995,
+            0.0000005, -0.0000005, 0.0000001, 0.9999999, 1.0000001,
+            3.14159265358979, 2.71828182845905,
+            123456.789, -123456.789, 999999.9999995, 1000000.0, -1000000.0,
+            8388608.5, 16777216.25, 1e9, -1e9, 1e15, 4294967295.5,
+            0.000001, 0.000009, 0.00001, 0.0001, 0.001, 0.01, 0.1,
+            9007199254740992.0, 123.456789, 99.999999, 9.9999999,
+        };
+
+        for (positive i = 0; i < sizeof(awkward) / sizeof(awkward[0]); i++)
+                one_decimal(awkward[i], (string_address) "a value that rounds awkwardly");
+
+        // And a spread, so the fraction lands on every leading zero count
+        for (positive i = 0; i < 512; i++)
+        {
+                decimal whole = (decimal)(bipolar)(next() % 1000000);
+                decimal fraction = (decimal)(next() % 1000000) / 1000000.0;
+                decimal v = whole + fraction;
+
+                one_decimal(v, (string_address) "a spread of fractions");
+                one_decimal(-v, (string_address) "a negative spread");
+        }
+}
+
 b32 main()
 {
         check_fill();
+        check_count();
+        check_memory_compare();
+        check_memory_search();
+        check_find_long();
+#if X64
+        //      Once more down the narrow half. Every case above takes the
+        //      wide body on this machine and would take it whatever was
+        //      written under the test for the flag, so the flag is turned off
+        //      and the whole set runs again.
+        //
+        //      Put back from a copy rather than by asking the processor
+        //      again, so that nothing here has to know what the routine that
+        //      asks is called this week.
+        {
+                p8 had_avx2 = cpu_has_avx2;
+                p8 had_avx512 = cpu_has_avx512;
+
+                cpu_has_avx2 = 0;
+                cpu_has_avx512 = 0;
+                check_memory_compare();
+                check_memory_search();
+                cpu_has_avx2 = had_avx2;
+                cpu_has_avx512 = had_avx512;
+        }
+#endif
+        check_first_of_wide();
+        check_hunts_wide();
         check_copy();
         check_move();
         check_strings();
         check_string_edges();
         check_compare_edges();
+        check_compare_wide();
         check_environment();
         check_bulk_strings();
         check_bulk_numbers();
+        check_numbers_exhaustive();
+        check_numbers_edges();
+        check_parsers_malformed();
         check_file_load();
         check_file_round_trip();
         check_memory();
         check_directory();
         check_clock();
         check_format();
+        check_format_deep();
         check_decimals();
+        check_decimals_deep();
+        check_format_decimals();
+#if X64
+        //      And the format cases once more down the narrow half.
+        //
+        //      string_format hunts the end of a run of plain text
+        //      thirty two bytes at a time where cpu_detect found AVX2
+        //      and eight otherwise, and a machine has one of those, not
+        //      both. Without this pass half the routine is the half a
+        //      one byte error could live in forever.
+        //
+        //      Put back from a copy, as the pass at the top of this
+        //      function is.
+        {
+                p8 had_avx2 = cpu_has_avx2;
+                p8 had_avx512 = cpu_has_avx512;
+
+                if (!had_avx2)
+                        string_format(log, "  NOTE string_format: no AVX2 "
+                                           "here, so the wide hunt was not "
+                                           "the one tested\n");
+
+                cpu_has_avx2 = 0;
+                cpu_has_avx512 = 0;
+                check_format();
+                check_format_deep();
+                check_format_decimals();
+                cpu_has_avx2 = had_avx2;
+                cpu_has_avx512 = had_avx512;
+        }
+#endif
         check_span();
         check_lex_word();
         check_table_find();
+        check_table_find_page_edge();
         check_hostile_neighbours();
+        check_bulk_alignments();
+        check_bulk_moves();
+        check_bulk_wide_strings();
 
         if (absent_count)
                 string_format(log, "  %p routine(s) under neither name here\n",

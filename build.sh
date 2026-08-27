@@ -346,8 +346,12 @@ wgcVXSeiHcXa9SSFDvKn0L1q5nSLQGHp38qUi1ZPf/1uQSuB3ME=
                 #       architecture, and that is the whole shape of this:
                 #
                 #       x86_64's asm/string_64.h claims memcpy, memmove and
-                #       memset and leaves the other nine to the byte loops, so
-                #       x86 is catching up on all nine. arm64 and riscv did
+                #       memset and leaves the other ten to the byte loops, so
+                #       x86 is catching up on all ten. memcmp is the newest of
+                #       them and the reason it is here rather than in the two
+                #       lists below: arm64 and riscv64 ship their own memcmp
+                #       in assembly already, and claiming it there is a second
+                #       definition rather than a first. arm64 and riscv did
                 #       most of that work already and ship their own; what is
                 #       left is what nobody bothered with -- strchrnul and
                 #       strnchr on both, and memchr on riscv, which are still
@@ -365,6 +369,7 @@ STRNCMP:int strncmp(const char *, const char *, __kernel_size_t)
 STRNLEN:__kernel_size_t strnlen(const char *, __kernel_size_t)
 STRCHR:char *strchr(const char *, int)
 MEMCHR:void *memchr(const void *, int, __kernel_size_t)
+MEMCMP:int memcmp(const void *, const void *, __kernel_size_t)
 STRCMP:int strcmp(const char *, const char *)
 STRRCHR:char *strrchr(const char *, int)
 STRCHRNUL:char *strchrnul(const char *, int)

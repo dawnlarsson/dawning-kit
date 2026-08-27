@@ -799,6 +799,26 @@ static void __init check_ticks(void)
 // Likewise: an initcall does not need external linkage.
 static b32 __init start()
 {
+        /*
+                Before anything else: the routines with a wide body and a
+                narrow one choose between them on a byte this writes, and it
+                is zero until something asks.
+
+                Userspace asks in _start_c. Nothing asked here, so every
+                vector path in library.c was dead code inside the kernel --
+                the whole point of replacing the kernel's string routines is
+                that ours are faster, and they were not, because the only
+                bodies reachable were the narrow ones. Measured before this
+                call existed: memcmp 8.3x faster than lib/string.c's byte
+                loop, memory_count 12% slower than it.
+
+                This library does not defer to the kernel's opinion about
+                vector registers. It uses them because they are what makes it
+                worth replacing lib/string.c at all, and a kernel that wants
+                its own rules can keep its own routines.
+        */
+        moonwater_cpu_detect();
+
         log_k("Moonwater starting...\n");
 
         /*

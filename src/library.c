@@ -973,7 +973,6 @@ typedef union matrix4
 
 #endif // STANDARD_MODERN_C_NO_MATH
 
-
 /*
         The assembly, and the shape the machine it lands on wants it in.
 
@@ -1074,10 +1073,377 @@ typedef union matrix4
 #define ASM_CALL(reg) "jalr " reg "\n"
 #endif
 
+/*
+        How common each byte is, as its place in the order.
+
+        memory_search hunts two bytes of the needle at once and only the
+        positions where both are right are compared in full. Which two decides
+        everything: the first and the last of an English word are 't' and 'e',
+        one byte in eleven and one in ten, and a filter built out of them
+        leaves a survivor every three blocks -- each an unpredictable branch,
+        which is where the time goes. The needle's two rarest bytes leave
+        none.
+
+        Two hundred and fifty five is the byte seen most often and zero the
+        one seen least, which is an ordering and not a count on purpose:
+        nothing here asks how much more common one byte is than another, only
+        which of two to hunt, and an ordering says that without a scale to get
+        wrong.
+
+        Counted over sixty four megabytes of this machine's own /usr/include,
+        manual pages, licences and /etc, plus three binaries so that the table
+        is not purely text. Not over the corpus the benchmarks use, which
+        would be measuring the table against itself. Being wrong about a byte
+        costs speed and never costs an answer: every survivor is compared in
+        full whichever two were picked.
+*/
+KEEP const p8 byte_commonness[256] = {
+        239, 170, 160, 157, 158, 148, 143, 139, 156, 200, 246, 117, 134, 136, 123, 183,
+        159, 107,  87,  83,  98, 120,  91,  89, 126,  76,  37,  38,  73,  71, 105, 147,
+        255, 155, 176, 195, 131, 132, 187, 145, 219, 218, 234, 164, 211, 210, 216, 235,
+        201, 193, 196, 185, 177, 171, 175, 167, 178, 173, 221, 215, 206, 194, 204,  66,
+        174, 233, 202, 223, 217, 229, 199, 208, 212, 228, 166, 184, 222, 209, 213, 207,
+        214, 181, 226, 232, 231, 197, 189, 188, 190, 180, 163, 149, 169, 154,  49, 242,
+        153, 251, 225, 244, 243, 254, 236, 230, 237, 250, 168, 198, 245, 238, 252, 248,
+        240, 182, 247, 249, 253, 241, 224, 220, 203, 227, 186, 191, 138, 192,  84,  77,
+        140,  86,  70, 162, 150, 165, 106,  51, 108, 179,   4, 172,  79, 161,  67,  62,
+        124,   6,  10,  41,  42,  92,  13,  20,  63,  16,   1,   8,  24,  48,   0,  12,
+        94,  14,  17,  25,  36,  31,   9,   7,  75,  18,   2,   3,  21,  27,   5,  15,
+        97,  26,  19,  11,  32,  82,  99,  29, 122,  45,  95,  88,  50, 102, 100, 103,
+        151, 121, 104, 133,  93, 113, 110, 137, 118, 127,  58,  22,  59,  46,  64,  54,
+        125,  61,  90,  44,  39,  28,  40,  72, 109,  30,  43,  56,  34,  23,  35,  85,
+        129,  68,  60,  33,  57,  81,  55,  78, 152, 142,  69, 111, 101,  53,  47, 114,
+        146,  65,  80, 130,  74,  52, 112, 115, 141,  96, 135, 116, 128, 119, 144, 205,
+};
+
+#if ARM64
+/*
+        The wide byte hunts on arm64.
+
+        NEON is not optional here, so there is one wide body and no choice to
+        make: every arm64 that runs this has it. What there is instead is a
+        width, and it was measured rather than assumed. Four kilobytes
+        resident in L1, against a floor that reads the same memory with paired
+        q loads and computes nothing, in gigabytes a second:
+
+            floor                       146
+            sixteen bytes a turn          40
+            thirty two                    63
+            sixty four                    93
+            a hundred and twenty eight    97
+
+        A hundred and twenty eight is a point and a half more at four kilobytes
+        and half the speed at sixty four bytes, which is nearer the length the
+        strings in this library actually are. Sixty four it is, as two paired
+        loads rather than one four register ld1: the pair form measured a
+        little faster and is what the floor itself uses.
+
+        There is no movemask here the way there is on x86_64, so the two steps
+        are separate: one test says whether any of the sixty four bytes
+        answered, and only then is the vector that answered narrowed to four
+        bits a byte by shrn and turned into an index. Finding out where costs
+        once per call rather than once per turn.
+
+        A vector compare answers per lane, so the borrow that makes
+        (v - 0x0101..) & ~v & 0x8080.. lie above its lowest flag has nothing to
+        do here, and the bytes in front of the string come out of the finished
+        mask rather than being forced in the input -- which is what made a hunt
+        for 0xff false-match when the input was forced.
+*/
+
+//      One question, asked of the sixteen bytes in the register named.
+#define NEON_ZERO(n) "cmeq v" n ".16b, v" n ".16b, #0\n"
+#define NEON_BYTE(n) "cmeq v" n ".16b, v" n ".16b, v1.16b\n"
+#define NEON_EITHER(n)                                                        \
+    "cmeq v2.16b, v" n ".16b, v1.16b\n"                                       \
+    "cmeq v" n ".16b, v" n ".16b, #0\n"                                       \
+    "orr v" n ".16b, v" n ".16b, v2.16b\n"
+
+//      Sixteen bytes at [x5], as four mask bits a byte in x3.
+#define NEON_ONE(FLAG)                                                        \
+    "ld1 {v4.16b}, [x5]\n"                                                    \
+    FLAG("4")                                                                 \
+    "shrn v4.8b, v4.8h, #4\n   fmov x3, d4\n"
+
+//      Sixty four bytes at [x5]: one test for all of them, with the four flag
+//      vectors kept so the one that answered can be found again.
+#define NEON_FOUR(FLAG)                                                       \
+    "ldp q4, q5, [x5]\n   ldp q6, q7, [x5, #32]\n"                            \
+    FLAG("4") FLAG("5") FLAG("6") FLAG("7")                                   \
+    "orr v16.16b, v4.16b, v5.16b\n"                                           \
+    "orr v17.16b, v6.16b, v7.16b\n"                                           \
+    "orr v16.16b, v16.16b, v17.16b\n"                                         \
+    "umaxp v16.4s, v16.4s, v16.4s\n   fmov x3, d16\n"
+
+//      Which of the four answered, and x5 moved to the front of it.
+#define NEON_WHICH                                                            \
+    "shrn v4.8b, v4.8h, #4\n   fmov x3, d4\n   cbnz x3, 8f\n"                 \
+    "add x5, x5, #16\n   shrn v5.8b, v5.8h, #4\n   fmov x3, d5\n   cbnz x3, 8f\n" \
+    "add x5, x5, #16\n   shrn v6.8b, v6.8h, #4\n   fmov x3, d6\n   cbnz x3, 8f\n" \
+    "add x5, x5, #16\n   shrn v7.8b, v7.8h, #4\n   fmov x3, d7\n"
+
+//
+//      An unbounded scan, which has no count to stop it and so needs an
+//      argument that it cannot fault. Aligning down to sixteen keeps the
+//      first load inside the page the string starts in; the loop then walks
+//      sixteen at a time until the cursor is sixty four aligned, which is at
+//      most three turns and makes every wide load after it a sixty four byte
+//      block inside one page as well.
+//
+//      Leaves x5 at the byte that answered.
+//
+#define NEON_SCAN(FLAG)                                                       \
+    "and x4, x0, #15\n   bic x5, x0, #15  // align down: same page, cannot fault\n" \
+    "mov x7, #-1\n   lsl x4, x4, #2  // four mask bits a byte\n"              \
+    "lsl x7, x7, x4  // which bytes of this vector are ours\n"                \
+    NEON_ONE(FLAG)                                                            \
+    "ands x3, x3, x7\n   b.ne 8f\n"                                           \
+    "1:  add x5, x5, #16\n   tst x5, #63\n   b.eq 2f\n"                       \
+    NEON_ONE(FLAG)                                                            \
+    "cbnz x3, 8f\n   b 1b\n"                                                  \
+    "2:  " NEON_FOUR(FLAG)                                                    \
+    "cbnz x3, 3f\n   add x5, x5, #64\n   b 2b\n"                              \
+    "3:  " NEON_WHICH                                                         \
+    "8:  rbit x3, x3\n   clz x3, x3\n   add x5, x5, x3, lsr #2\n"
+
+//
+//      A bounded scan reads only whole vectors that fit inside what is left,
+//      so every byte it touches is one the caller handed over and there is no
+//      page argument to make at all. x5 is the cursor and x6 what is left of
+//      the count; under sixteen bytes it leaves both where they are and drops
+//      through to label 5, which is the word at a time body.
+//
+#define NEON_SCAN_MAX(FLAG)                                                   \
+    "cmp x6, #64\n   b.lo 4f\n"                                               \
+    "2:  " NEON_FOUR(FLAG)                                                    \
+    "cbnz x3, 3f\n"                                                           \
+    "add x5, x5, #64\n   sub x6, x6, #64\n   cmp x6, #64\n   b.hs 2b\n"       \
+    "4:  cmp x6, #16\n   b.lo 5f\n"                                           \
+    "1:  " NEON_ONE(FLAG)                                                     \
+    "cbnz x3, 8f\n"                                                           \
+    "add x5, x5, #16\n   sub x6, x6, #16\n   cmp x6, #16\n   b.hs 1b\n"       \
+    "b 5f\n"                                                                  \
+    "3:  " NEON_WHICH                                                         \
+    "8:  rbit x3, x3\n   clz x3, x3\n   add x5, x5, x3, lsr #2\n"
+#endif
+
+#if X64
+/*
+        The wide byte hunts, written once and emitted twice.
+
+        AVX2 and AVX-512 differ here in three things and not in the shape: the
+        width a step covers, how a byte gets broadcast into a vector, and how
+        a compare becomes one bit per byte in %rax. Everything after "the mask
+        is in %rax" is the same arithmetic over thirty two bits or sixty four,
+        so each hunt below is written once as a macro over those three. Eight
+        routines with two register files each is sixteen bodies to keep in
+        step by hand, and they would not stay in step.
+
+        A vector compare is exact in every lane, so the borrow that makes
+        (v - 0x0101..) & ~v & 0x8080.. lie above its lowest flag does not
+        reach here. The bytes in front of the string are dropped by ANDing the
+        finished mask, which is exact and needs none of the "never zero, never
+        it" dance the word at a time paths below carry.
+
+        vzeroupper on every way out. A return into code using legacy SSE with
+        the upper halves live pays a state transition on every instruction
+        after it, which is a cost these would be handing to whoever called
+        them.
+*/
+#define AVX2_WIDTH "32"
+#define AVX2_BROADCAST "vmovd %ecx, %xmm1\n   vpbroadcastb %xmm1, %ymm1\n"
+#define AVX2_ZEROED "vpxor %ymm2, %ymm2, %ymm2\n"
+#define AVX2_ZEROS "vpcmpeqb (%rdi), %ymm2, %ymm0\n   vpmovmskb %ymm0, %eax\n"
+#define AVX2_HUNT "vpcmpeqb (%rdi), %ymm1, %ymm0\n   vpmovmskb %ymm0, %eax\n"
+#define AVX2_EITHER                                                    \
+    "vmovdqu (%rdi), %ymm0\n"                                          \
+    "vpcmpeqb %ymm0, %ymm1, %ymm3\n"                                   \
+    "vpcmpeqb %ymm0, %ymm2, %ymm4\n"                                   \
+    "vpor %ymm4, %ymm3, %ymm3\n   vpmovmskb %ymm3, %eax\n"
+#define AVX2_BOTH                                                      \
+    "vmovdqu (%rdi), %ymm0\n"                                          \
+    "vpcmpeqb %ymm0, %ymm1, %ymm3\n   vpmovmskb %ymm3, %eax\n"         \
+    "vpcmpeqb %ymm0, %ymm2, %ymm4\n   vpmovmskb %ymm4, %r9d\n"
+#define AVX2_LEAVE "vzeroupper\n"
+
+#define AVX512_WIDTH "64"
+#define AVX512_BROADCAST "vpbroadcastb %ecx, %zmm1\n"
+#define AVX512_ZEROED "vpxorq %zmm2, %zmm2, %zmm2\n"
+#define AVX512_ZEROS "vpcmpeqb (%rdi), %zmm2, %k0\n   kmovq %k0, %rax\n"
+#define AVX512_HUNT "vpcmpeqb (%rdi), %zmm1, %k0\n   kmovq %k0, %rax\n"
+#define AVX512_EITHER                                                  \
+    "vmovdqu64 (%rdi), %zmm0\n"                                        \
+    "vpcmpeqb %zmm0, %zmm1, %k0\n"                                     \
+    "vpcmpeqb %zmm0, %zmm2, %k1\n"                                     \
+    "korq %k1, %k0, %k0\n   kmovq %k0, %rax\n"
+#define AVX512_BOTH                                                    \
+    "vmovdqu64 (%rdi), %zmm0\n"                                        \
+    "vpcmpeqb %zmm0, %zmm1, %k0\n   kmovq %k0, %rax\n"                 \
+    "vpcmpeqb %zmm0, %zmm2, %k1\n   kmovq %k1, %r9\n"
+#define AVX512_LEAVE "vzeroupper\n"
+
+//
+//      Which body to run. AVX-512 is asked about first because a processor
+//      that has it has AVX2 as well. Label 6 is the wide body for it and
+//      label 5 is the word at a time one, in every routine that has all
+//      three, so this reads the same everywhere it appears.
+//
+#define WIDE_PICK                                                      \
+    "cmpb $0, cpu_has_avx512(%rip)\n   jne 6f\n"                       \
+    "cmpb $0, cpu_has_avx2(%rip)\n   je 5f\n"
+
+//
+//      The bounded hunts ask it the other way up, and every branch out of
+//      them goes forward. Their widest body is not the whole routine: a count
+//      under sixty four bytes leaves it for the thirty two byte one, which
+//      leaves a count under thirty two for the word at a time one, so the
+//      three are a ladder rather than a choice. Written as a choice, with the
+//      AVX-512 body first and a jump back to AVX2 under it, memory_first_of
+//      measured 21.1 gigabytes a second at thirty two bytes against 35.0
+//      before any of this -- the backward branch out of a body that had just
+//      decided not to run is not one the predictor has any use for.
+//
+#define WIDE_PICK_MAX                                                  \
+    "cmpb $0, cpu_has_avx512(%rip)\n   je 7f\n"
+
+//
+//      An unbounded hunt for the terminator. The pointer is aligned down so
+//      no load can cross a page, and the bytes in front of the string come
+//      out of the mask rather than out of the input.
+//
+#define WIDE_LENGTH(W, ZEROED, ZEROS, LEAVE)                                  \
+    "mov %rdi, %r8  # keep the start\n"                                       \
+    ZEROED                                                                    \
+    "mov %edi, %ecx\n   and $" W "-1, %ecx\n   and $-" W ", %rdi\n"           \
+    "mov $-1, %rdx\n   shl %cl, %rdx  # which bytes of this vector are ours\n" \
+    ZEROS                                                                     \
+    "and %rdx, %rax\n   jnz 2f\n"                                             \
+    "1:  add $" W ", %rdi\n"                                                  \
+    ZEROS                                                                     \
+    "test %rax, %rax\n   jz 1b\n"                                             \
+    "2:  bsf %rax, %rax\n   add %rdi, %rax\n   sub %r8, %rax\n"               \
+    LEAVE ASM_RET
+
+//
+//      An unbounded hunt for the byte and for the terminator at once,
+//      whichever comes first. TAIL says what happens once the lowest flag has
+//      become an address, which is the only place the two callers differ.
+//
+#define WIDE_FIRST_OF(W, BROADCAST, ZEROED, EITHER, LEAVE, TAIL)              \
+    "movzbl %sil, %ecx\n"                                                     \
+    BROADCAST                                                                 \
+    ZEROED                                                                    \
+    "mov %edi, %ecx\n   and $" W "-1, %ecx\n   and $-" W ", %rdi\n"           \
+    "mov $-1, %rdx\n   shl %cl, %rdx  # which bytes of this vector are ours\n" \
+    EITHER                                                                    \
+    "and %rdx, %rax\n   jnz 2f\n"                                             \
+    "1:  add $" W ", %rdi\n"                                                  \
+    EITHER                                                                    \
+    "test %rax, %rax\n   jz 1b\n"                                             \
+    "2:  bsf %rax, %rax\n   add %rdi, %rax\n"                                 \
+    TAIL                                                                      \
+    LEAVE ASM_RET
+
+//      string_first_of answers nothing when what it reached was the terminator.
+#define WIDE_FIRST_TAIL                                                       \
+    "movzbl (%rax), %ecx\n   cmp %sil, %cl\n   je 3f\n   xor %eax, %eax\n"    \
+    "3:\n"
+
+//      string_first_of_or_end answers with it.
+#define WIDE_OR_END_TAIL ""
+
+//
+//      A bounded hunt reads only whole vectors that fit inside the count, so
+//      it needs no page argument at all and no mask over the first one: every
+//      byte it touches is a byte the caller handed over.
+//
+//      NEXT and SHORT are both where it goes when there is not a whole vector
+//      left, and the sixty four byte body hands down to the thirty two byte
+//      one rather than straight to the word at a time body. Skipping that
+//      step cost memory_first_of a measured 35.0 gigabytes a second at thirty
+//      two bytes and left it 13.2: every call between thirty two and sixty
+//      three bytes on a processor with AVX-512 was falling all the way to
+//      eight bytes at a time, which is slower than those calls used to get.
+//
+//      They are two labels and not one because of vzeroupper. NEXT is taken
+//      after the loop has run and the upper halves are live, so it pays for
+//      one; SHORT is taken before a vector register has been touched, and
+//      paying there is a cost on every short call for nothing.
+//
+#define WIDE_LENGTH_MAX(W, ZEROED, ZEROS, LEAVE, NEXT, SHORT)                        \
+    "cmp $" W ", %rdx\n   jb " SHORT "\n"                                     \
+    ZEROED                                                                    \
+    "1:  " ZEROS                                                              \
+    "test %rax, %rax\n   jnz 2f\n"                                            \
+    "add $" W ", %rdi\n   sub $" W ", %rdx\n   cmp $" W ", %rdx\n   jae 1b\n" \
+    LEAVE NEXT                                                                 \
+    "2:  bsf %rax, %rax\n   add %rdi, %rax\n   sub %r8, %rax\n"               \
+    LEAVE ASM_RET
+
+//      The byte hunted is in %r8b and the fence in %r9, both put there before
+//      the choice of body was made.
+#define WIDE_FIRST_MAX(W, BROADCAST, ZEROED, EITHER, LEAVE, NEXT, SHORT)             \
+    "cmp $" W ", %rdx\n   jb " SHORT "\n"                                     \
+    "movzbl %r8b, %ecx\n"                                                     \
+    BROADCAST                                                                 \
+    ZEROED                                                                    \
+    "1:  " EITHER                                                             \
+    "test %rax, %rax\n   jnz 2f\n"                                            \
+    "add $" W ", %rdi\n   sub $" W ", %rdx\n   cmp $" W ", %rdx\n   jae 1b\n" \
+    LEAVE NEXT                                                                 \
+    "2:  bsf %rax, %rax\n   add %rdi, %rax\n"                                 \
+    "movzbl (%rax), %ecx\n   cmp %r8b, %cl\n   je 3f\n"                       \
+    "xor %eax, %eax  # it was the terminator: not found\n"                    \
+    "3:  " LEAVE ASM_RET
+
+//      One hunt and no terminator, so there is nothing to compare afterwards:
+//      a flag inside a whole vector inside the count is the answer.
+#define WIDE_MEMORY(W, BROADCAST, HUNT, LEAVE, NEXT, SHORT)                          \
+    "cmp $" W ", %rdx\n   jb " SHORT "\n"                                     \
+    "movzbl %sil, %ecx\n"                                                     \
+    BROADCAST                                                                 \
+    "1:  " HUNT                                                               \
+    "test %rax, %rax\n   jnz 2f\n"                                            \
+    "add $" W ", %rdi\n   sub $" W ", %rdx\n   cmp $" W ", %rdx\n   jae 1b\n" \
+    LEAVE NEXT                                                                 \
+    "2:  bsf %rax, %rax\n   add %rdi, %rax\n" LEAVE ASM_RET
+
+//
+//      The last match rather than the first, which wants the highest flag in
+//      a vector and not the lowest, so bsr where the rest use bsf. A vector
+//      without a terminator may hold a later match than anything before it,
+//      so the best so far is carried in %r11; the vector that holds the
+//      terminator only counts the matches below it.
+//
+//      The five instruction carry free zero test the word at a time body
+//      needs has no counterpart here and no reason to exist: vpcmpeqb answers
+//      per lane, so there is no borrow to lie about anything above the lowest
+//      flag.
+//
+#define WIDE_LAST(W, BROADCAST, ZEROED, BOTH, LEAVE)                          \
+    "movzbl %sil, %ecx\n"                                                     \
+    BROADCAST                                                                 \
+    ZEROED                                                                    \
+    "xor %r11d, %r11d  # the best so far: none\n"                             \
+    "mov %edi, %ecx\n   and $" W "-1, %ecx\n   and $-" W ", %rdi\n"           \
+    "mov $-1, %rdx\n   shl %cl, %rdx  # which bytes of this vector are ours\n" \
+    BOTH                                                                      \
+    "and %rdx, %rax\n   and %rdx, %r9\n   jmp 3f\n"                           \
+    "1:  add $" W ", %rdi\n"                                                  \
+    BOTH                                                                      \
+    "3:  test %r9, %r9\n   jnz 4f  # the string ends in this one\n"           \
+    "test %rax, %rax\n   jz 1b\n"                                             \
+    "bsr %rax, %rcx\n   lea (%rdi,%rcx), %r11  # later than anything before\n" \
+    "jmp 1b\n"                                                                \
+    "4:  mov %r9, %rcx\n   neg %rcx\n   and %r9, %rcx\n   dec %rcx  # the bytes under the terminator\n" \
+    "and %rcx, %rax\n   jz 2f\n   bsr %rax, %rcx\n   lea (%rdi,%rcx), %r11\n" \
+    "2:  mov %r11, %rax\n" LEAVE ASM_RET
+#endif
+
 #if X64
 __asm__(
     //
-    //       string_length -- a word at a time.
+    //       string_length -- sixty four bytes at a time, or thirty two, or eight.
     //
     //       lib/string.c's string_length is a byte at a time, and on x86_64 nothing
     //       overrides it: arch/x86/include/asm/string_64.h claims memcpy, memmove
@@ -1085,7 +1451,10 @@ __asm__(
     //       __HAVE_ARCH_STRLEN and ship their own, so this is x86 catching up
     //       rather than x86 being special.
     //
-    //       Measured against the generic loop on a 9950X, 4096 calls each:
+    //       The word at a time body under the two vector ones is what this
+    //       routine was all the way down until they went in, and it is still
+    //       the whole of it on a processor without AVX2. Against the generic
+    //       byte loop on a 9950X, 4096 calls each:
     //
     //           4 bytes    23048 ticks byte     36120 word
     //           8 bytes    36292 ticks byte     23047 word
@@ -1093,18 +1462,37 @@ __asm__(
     //          32 bytes   194317 ticks byte     33067 word
     //          64 bytes   219300 ticks byte     46010 word
     //
-    //       The crossover is at eight. Below it the alignment setup costs more
-    //       than it saves, above it the win runs to nearly six times.
+    //       Its crossover against the byte loop is at eight. What the two
+    //       vector bodies are worth is measured in the body below, where they
+    //       are, and against a floor rather than against a byte loop.
     //
-    //       Reading a whole word that straddles the start of the string is safe:
-    //       aligning down stays inside the same page, so the load cannot fault on
-    //       memory the caller did not give us. The bytes before the string are
-    //       forced to 0xff afterwards so they cannot be mistaken for the
-    //       terminator.
+    //       Reading a whole word, or a whole vector, that straddles the start
+    //       of the string is safe: aligning down stays inside the same page, so
+    //       the load cannot fault on memory the caller did not give us. The word
+    //       body forces the bytes before the string to 0xff so they cannot be
+    //       mistaken for the terminator; the vector bodies take them out of the
+    //       finished mask instead, which is exact and does not false-match a
+    //       hunt for 0xff.
     //
     ".text\n"
     ASM_FUNC(string_length)
-    "mov %rdi, %r8  # keep the start\n"
+    //
+    //      Sixty four bytes at a time, or thirty two, or eight. Measured on a
+    //      9950X against a floor that reads the same memory and computes
+    //      nothing, four kilobytes resident in L1, in gigabytes a second:
+    //
+    //          floor, zmm loads         700
+    //          floor, ymm loads         351
+    //          word at a time            30
+    //
+    //      The word at a time body is what everything below it still runs on
+    //      a processor without AVX2, and it is reached and tested here: see
+    //      the note over check_hunts_wide in verify.c.
+    //
+    WIDE_PICK
+    WIDE_LENGTH(AVX2_WIDTH, AVX2_ZEROED, AVX2_ZEROS, AVX2_LEAVE)
+    "6:  " WIDE_LENGTH(AVX512_WIDTH, AVX512_ZEROED, AVX512_ZEROS, AVX512_LEAVE)
+    "5:  mov %rdi, %r8  # keep the start\n"
     "mov %edi, %ecx\n   and $7, %ecx  # how far into the word it begins\n"
     "and $-8, %rdi  # align down\n"
     "mov (%rdi), %rdx  # safe: same page as the start\n"
@@ -1176,6 +1564,15 @@ __asm__(
     "movzbl (%rdi), %eax\n   movzbl (%rsi), %ecx\n   sub %ecx, %eax\n   jnz 4f\n"
     "test %ecx, %ecx\n   jz 4f  # both ended here, and eax is zero\n"
     "movabs $0x0101010101010101, %r10\n   movabs $0x8080808080808080, %r11\n"
+    //
+    //      How many word steps before the wide path is worth entering. A
+    //      whole ymm register costs a vzeroupper on the way out, which is
+    //      more than the four cycles the whole call takes when the two names
+    //      differ where they begin -- so the wide loop is not for strings, it
+    //      is for strings that are still equal after thirty two bytes, and
+    //      the counter is what says so.
+    //
+    "mov $4, %edx\n"
     "1:  #\n"
     //      Would either read cross a page? 0xff8 is the last offset at
     //      which eight bytes still fit.
@@ -1189,7 +1586,49 @@ __asm__(
     //
     "mov %r8, %rax\n   sub %r10, %rax\n   mov %r8, %rcx\n   not %rcx\n"
     "and %rcx, %rax\n   and %r11, %rax\n   jnz 3f\n   add $8, %rdi\n"
-    "add $8, %rsi\n   jmp 1b\n"
+    "add $8, %rsi\n   dec %edx\n   jz 20f\n   jmp 1b\n"
+    //
+    //      Thirty two bytes a step, once four word steps have agreed.
+    //
+    //      One mask answers both questions at once. vpcmpeqb marks where the
+    //      two agree and a second marks where the first string ends;
+    //      and-not leaves the bytes that agree and are not the end, so all
+    //      ones means keep going and anything else means stop -- and the
+    //      lowest zero is the byte to answer with whichever of the two it
+    //      was. Where both ended together those bytes are equal and their
+    //      difference is zero, which is the answer that case wants anyway.
+    //
+    //      Measured over strings a megabyte long on a 9950X: 17.0 GB/s the
+    //      word way, 61.6 this way, against a floor of 71 for reading two
+    //      streams and comparing them and answering nothing.
+    //
+    "20: cmpb $0, cpu_has_avx2(%rip)\n   je 21f\n"
+    "vpxor %ymm4, %ymm4, %ymm4\n"
+    //
+    //      0xfe0 is the last offset in a page at which thirty two bytes
+    //      still fit, which is the same argument the word loop makes at
+    //      0xff8.
+    //
+    "22: mov %edi, %ecx\n   and $0xfff, %ecx\n   cmp $0xfe0, %ecx\n   ja 24f\n"
+    "mov %esi, %ecx\n   and $0xfff, %ecx\n   cmp $0xfe0, %ecx\n   ja 24f\n"
+    "vmovdqu (%rdi), %ymm0\n   vpcmpeqb (%rsi), %ymm0, %ymm1\n"
+    "vpcmpeqb %ymm4, %ymm0, %ymm2\n   vpandn %ymm1, %ymm2, %ymm3\n"
+    "vpmovmskb %ymm3, %ecx\n   cmp $-1, %ecx\n   jne 23f\n"
+    "add $32, %rdi\n   add $32, %rsi\n   jmp 22b\n"
+    "23: not %ecx\n   bsf %ecx, %ecx\n   vzeroupper\n"
+    "movzbl (%rdi,%rcx), %eax\n   movzbl (%rsi,%rcx), %ecx\n   sub %ecx, %eax\n"
+    ASM_RET
+    //
+    //      Near the end of a page, so back to the word loop for eight steps
+    //      -- by then the boundary is behind us and the wide loop can have
+    //      it again.
+    //
+    "24: vzeroupper\n   mov $8, %edx\n   jmp 1b\n"
+    //
+    //      No wide registers on this processor. The counter is set where it
+    //      will not come round again rather than tested every step.
+    //
+    "21: mov $0x7fffffff, %edx\n   jmp 1b\n"
     //
     //      One byte, then back to the word loop. Reached when a read would
     //      cross a page and when a word differs -- in the second case it
@@ -1203,19 +1642,22 @@ __asm__(
     ASM_RET
     ASM_END(string_compare)
     //
-    //       string_first_of and memory_first_of -- a word at a time.
+    //       string_first_of and memory_first_of -- sixty four bytes at a time,
+    //       or thirty two, or eight.
     //
     //       The last two byte loops in lib/string.c worth taking. Both hunt for a
     //       byte, so both broadcast it across a word and reuse the trick that finds
     //       a zero byte: after exclusive-or with the broadcast, the byte that
     //       matched is the byte that is now zero.
     //
-    //       An eight byte load aligned to eight never crosses a page, so reading
-    //       the word that contains the string's first byte cannot fault on memory
-    //       the caller does not own. The matches in the bytes before the string are
-    //       thrown away afterwards by masking the result rather than the input,
-    //       which keeps the byte being searched for out of it -- forcing those
-    //       bytes to 0xff would false-match a search for 0xff.
+    //       A load aligned to its own width never crosses a page, so reading the
+    //       word -- or the vector -- that contains the string's first byte cannot
+    //       fault on memory the caller does not own. The matches in the bytes
+    //       before the string are thrown away afterwards by masking the result
+    //       rather than the input, which keeps the byte being searched for out of
+    //       it: forcing those bytes to 0xff would false-match a search for 0xff.
+    //       memory_first_of has a count instead and needs none of that -- it reads
+    //       whole vectors inside the bound and nothing else.
     //
     ".text\n"
     //
@@ -1227,7 +1669,12 @@ __asm__(
     //       returns the terminator rather than nothing.
     //
     ASM_FUNC(string_first_of)
-    "movzbl %sil, %ecx\n   movabs $0x0101010101010101, %r10\n   mov %rcx, %rsi\n   imul %r10, %rsi  # c in every byte; %sil is still c\n"
+    WIDE_PICK
+    WIDE_FIRST_OF(AVX2_WIDTH, AVX2_BROADCAST, AVX2_ZEROED, AVX2_EITHER,
+                  AVX2_LEAVE, WIDE_FIRST_TAIL)
+    "6:  " WIDE_FIRST_OF(AVX512_WIDTH, AVX512_BROADCAST, AVX512_ZEROED,
+                         AVX512_EITHER, AVX512_LEAVE, WIDE_FIRST_TAIL)
+    "5:  movzbl %sil, %ecx\n   movabs $0x0101010101010101, %r10\n   mov %rcx, %rsi\n   imul %r10, %rsi  # c in every byte; %sil is still c\n"
     "movabs $0x8080808080808080, %r11\n   mov %edi, %ecx\n   and $7, %ecx\n   and $-8, %rdi\n"
     "mov (%rdi), %rdx\n   shl $3, %ecx\n   mov $-1, %r9\n   shl %cl, %r9  # which bytes of this word are ours\n"
     "movzbl %sil, %eax\n   inc %eax\n   movzbl %al, %eax\n   mov $1, %ecx\n"
@@ -1254,29 +1701,17 @@ __asm__(
     //
     ASM_FUNC(memory_first_of)
     //
-    //       The wide path, when the processor has it.
-    //
-    //       Thirty two bytes compared at once, and vpmovmskb turns the result
-    //       into one bit per byte so bsf says which. Only whole thirty two
-    //       byte pieces are read, so nothing is read past the bound and there
-    //       is no page argument to make: the narrow path below it aligns down
-    //       and overreads deliberately, which is safe and is a different
-    //       trade. Under thirty two bytes it falls into that one.
-    //
-    //       vzeroupper before leaving, on every path out. Without it a return
-    //       into code using legacy SSE pays a state transition penalty on
-    //       every instruction, which is a cost this routine would be handing
-    //       to whoever called it.
+    //      Only whole vectors inside the count are read, so nothing here goes
+    //      past the bound and there is no page argument to make: the word at
+    //      a time body below aligns down and overreads deliberately, which is
+    //      safe and is a different trade.
     //
     "xor %eax, %eax\n   test %rdx, %rdx\n   jz 9f\n"
-    "cmpb $0, cpu_has_avx2(%rip)\n   je 5f\n"
-    "cmp $32, %rdx\n   jb 5f\n"
-    "movzbl %sil, %ecx\n   vmovd %ecx, %xmm1\n   vpbroadcastb %xmm1, %ymm1\n"
-    "3:  vpcmpeqb (%rdi), %ymm1, %ymm0\n   vpmovmskb %ymm0, %ecx\n"
-    "test %ecx, %ecx\n   jnz 4f\n"
-    "add $32, %rdi\n   sub $32, %rdx\n   cmp $32, %rdx\n   jae 3b\n"
-    "vzeroupper\n   jmp 5f\n"
-    "4:  bsf %ecx, %ecx\n   lea (%rdi,%rcx), %rax\n   vzeroupper\n   RET\n"
+    WIDE_PICK_MAX
+    WIDE_MEMORY(AVX512_WIDTH, AVX512_BROADCAST, AVX512_HUNT, AVX512_LEAVE,
+                "jmp 7f\n", "7f")
+    "7:  cmpb $0, cpu_has_avx2(%rip)\n   je 5f\n"
+    WIDE_MEMORY(AVX2_WIDTH, AVX2_BROADCAST, AVX2_HUNT, AVX2_LEAVE, "jmp 5f\n", "5f")
     "5:  test %rdx, %rdx\n   jz 9f\n   movzbl %sil, %ecx\n"
     "movabs $0x0101010101010101, %r10\n   mov %rcx, %rsi\n   imul %r10, %rsi\n   movabs $0x8080808080808080, %r11\n"
     "lea (%rdi,%rdx), %r9  # one past the last byte we may report\n"
@@ -1355,18 +1790,51 @@ __asm__(
     "xor %eax, %eax\n   test %rsi, %rsi\n   jz 9f\n"
     "cmpb $0, cpu_has_avx2(%rip)\n   je 5f\n"
     "movzbl %dl, %ecx\n   vmovd %ecx, %xmm1\n   vpbroadcastb %xmm1, %ymm1\n"
-    "1:  cmp $32, %rsi\n   jb 4f\n"
-    "mov %rsi, %r8\n   shr $5, %r8\n   mov $255, %r9\n   cmp %r9, %r8\n"
-    "cmova %r9, %r8  # never more rounds than the accumulator holds\n"
-    "vpxor %ymm2, %ymm2, %ymm2\n   xor %r10, %r10\n"
-    "2:  vpcmpeqb (%rdi,%r10), %ymm1, %ymm0\n"
-    "vpsubb %ymm0, %ymm2, %ymm2  # 0xff is minus one, so this adds one\n"
-    "add $32, %r10\n   dec %r8\n   jnz 2b\n"
-    "vpxor %ymm0, %ymm0, %ymm0\n   vpsadbw %ymm0, %ymm2, %ymm2\n"
+    //
+    //       Four accumulators, not one. vpsubb into the same register every
+    //       turn is a chain each iteration waits on, so the loop ran at the
+    //       latency of one subtract rather than the throughput of four. The
+    //       arm64 body below has had four chains from the start and it is why
+    //       that one reached the floor and this one sat furthest from it of
+    //       any routine in the file.
+    //
+    //       Each accumulator is still a byte per lane and still wraps at 256,
+    //       so the round cap stays 255 -- 128 bytes a round now rather than
+    //       32. They are drained separately through vpsadbw and only then
+    //       added as quadwords: adding four byte accumulators together first
+    //       would overflow the very lanes the cap exists to protect.
+    //
+    "1:  cmp $128, %rsi\n   jb 3f\n"
+    "mov %rsi, %r8\n   shr $7, %r8\n   mov $255, %r9\n   cmp %r9, %r8\n"
+    "cmova %r9, %r8  # never more rounds than a lane holds\n"
+    "vpxor %ymm2, %ymm2, %ymm2\n   vpxor %ymm3, %ymm3, %ymm3\n"
+    "vpxor %ymm4, %ymm4, %ymm4\n   vpxor %ymm5, %ymm5, %ymm5\n"
+    "xor %r10, %r10\n"
+    "2:  vpcmpeqb (%rdi,%r10), %ymm1, %ymm0\n   vpsubb %ymm0, %ymm2, %ymm2\n"
+    "vpcmpeqb 32(%rdi,%r10), %ymm1, %ymm6\n   vpsubb %ymm6, %ymm3, %ymm3\n"
+    "vpcmpeqb 64(%rdi,%r10), %ymm1, %ymm7\n   vpsubb %ymm7, %ymm4, %ymm4\n"
+    "vpcmpeqb 96(%rdi,%r10), %ymm1, %ymm8\n   vpsubb %ymm8, %ymm5, %ymm5\n"
+    "add $128, %r10\n   dec %r8\n   jnz 2b\n"
+    "vpxor %ymm0, %ymm0, %ymm0\n"
+    "vpsadbw %ymm0, %ymm2, %ymm2\n   vpsadbw %ymm0, %ymm3, %ymm3\n"
+    "vpsadbw %ymm0, %ymm4, %ymm4\n   vpsadbw %ymm0, %ymm5, %ymm5\n"
+    "vpaddq %ymm3, %ymm2, %ymm2\n   vpaddq %ymm5, %ymm4, %ymm4\n"
+    "vpaddq %ymm4, %ymm2, %ymm2\n"
     "vextracti128 $1, %ymm2, %xmm3\n   vpaddq %xmm3, %xmm2, %xmm2\n"
     "vpextrq $0, %xmm2, %r11\n   add %r11, %rax\n"
     "vpextrq $1, %xmm2, %r11\n   add %r11, %rax\n"
     "add %r10, %rdi\n   sub %r10, %rsi\n   jmp 1b\n"
+    //       32 to 127 bytes: one chain is enough, there is no depth to hide
+    "3:  cmp $32, %rsi\n   jb 4f\n"
+    "vpxor %ymm2, %ymm2, %ymm2\n   xor %r10, %r10\n"
+    "8:  vpcmpeqb (%rdi,%r10), %ymm1, %ymm0\n"
+    "vpsubb %ymm0, %ymm2, %ymm2  # 0xff is minus one, so this adds one\n"
+    "add $32, %r10\n   mov %rsi, %r8\n   sub %r10, %r8\n   cmp $32, %r8\n   jae 8b\n"
+    "vpxor %ymm0, %ymm0, %ymm0\n   vpsadbw %ymm0, %ymm2, %ymm2\n"
+    "vextracti128 $1, %ymm2, %xmm3\n   vpaddq %xmm3, %xmm2, %xmm2\n"
+    "vpextrq $0, %xmm2, %r11\n   add %r11, %rax\n"
+    "vpextrq $1, %xmm2, %r11\n   add %r11, %rax\n"
+    "add %r10, %rdi\n   sub %r10, %rsi\n"
     "4:  vzeroupper\n"
     "5:  test %rsi, %rsi\n   jz 9f\n"
     "6:  cmpb %dl, (%rdi)\n   jne 7f\n   inc %rax\n"
@@ -1374,6 +1842,286 @@ __asm__(
     "9:  \n"
     ASM_RET
     ASM_END(memory_count)
+    ASM_FUNC(memory_compare)
+    //
+    //       Three widths, and which one runs is decided by the length rather
+    //       than by taste. Under eight bytes the setup for anything wider
+    //       costs more than the walk; from eight the word loop finds the
+    //       differing byte with one exclusive-or and a bsf; from thirty two
+    //       the wide path reads four blocks a round.
+    //
+    //       Both buffers are n bytes long by the caller's word, so every read
+    //       here is unaligned and bounded and there is no page argument to
+    //       make -- which is the difference between this and string_compare
+    //       above, and the reason this one is the easy one.
+    //
+    "xor %eax, %eax\n   test %rdx, %rdx\n   jz 9f\n"
+    "cmpb $0, cpu_has_avx2(%rip)\n   je 5f\n"
+    "cmp $32, %rdx\n   jb 5f\n"
+    //
+    //       Four blocks a round, and-ed into one mask. A round that differs
+    //       anywhere falls into the single block loop below rather than
+    //       working out which of the four it was: that costs a hundred and
+    //       twenty eight bytes read twice, once per call, and keeps the
+    //       common round to one branch.
+    //
+    "cmp $128, %rdx\n   jb 3f\n"
+    "1:  vmovdqu (%rdi), %ymm0\n   vpcmpeqb (%rsi), %ymm0, %ymm0\n"
+    "vmovdqu 32(%rdi), %ymm1\n   vpcmpeqb 32(%rsi), %ymm1, %ymm1\n"
+    "vmovdqu 64(%rdi), %ymm2\n   vpcmpeqb 64(%rsi), %ymm2, %ymm2\n"
+    "vmovdqu 96(%rdi), %ymm3\n   vpcmpeqb 96(%rsi), %ymm3, %ymm3\n"
+    "vpand %ymm1, %ymm0, %ymm0\n   vpand %ymm3, %ymm2, %ymm2\n"
+    "vpand %ymm2, %ymm0, %ymm0\n   vpmovmskb %ymm0, %ecx\n"
+    "cmp $-1, %ecx\n   jne 3f  # somewhere in these four\n"
+    "add $128, %rdi\n   add $128, %rsi\n   sub $128, %rdx\n"
+    "cmp $128, %rdx\n   jae 1b\n"
+    "3:  cmp $32, %rdx\n   jb 4f\n"
+    "vmovdqu (%rdi), %ymm0\n   vpcmpeqb (%rsi), %ymm0, %ymm0\n"
+    "vpmovmskb %ymm0, %ecx\n   cmp $-1, %ecx\n   jne 8f\n"
+    "add $32, %rdi\n   add $32, %rsi\n   sub $32, %rdx\n   jmp 3b\n"
+    //
+    //       The last thirty two bytes, read again rather than a byte loop for
+    //       the remainder. Reaching here means at least one whole block is
+    //       behind us, so stepping back to end thirty two bytes from the end
+    //       stays inside what the caller handed over, and the bytes it looks
+    //       at twice are bytes already known to be equal.
+    //
+    "4:  test %rdx, %rdx\n   jz 6f\n"
+    "lea -32(%rdi,%rdx), %rdi\n   lea -32(%rsi,%rdx), %rsi\n"
+    "vmovdqu (%rdi), %ymm0\n   vpcmpeqb (%rsi), %ymm0, %ymm0\n"
+    "vpmovmskb %ymm0, %ecx\n   cmp $-1, %ecx\n   je 6f\n"
+    //
+    //       A zero in the mask is a byte that differed, and the lowest is the
+    //       first. The answer is the difference of those two bytes read as
+    //       unsigned, which is what memcmp promises about its sign.
+    //
+    "8:  not %ecx\n   bsf %ecx, %ecx\n   vzeroupper\n"
+    "movzbl (%rdi,%rcx), %eax\n   movzbl (%rsi,%rcx), %ecx\n   sub %ecx, %eax\n"
+    ASM_RET
+    "6:  vzeroupper\n   xor %eax, %eax\n"
+    ASM_RET
+    //
+    //       Eight at a time, for a machine without the wide registers and for
+    //       the lengths under a block. Exclusive-or leaves zero bytes where
+    //       the two agree, so the lowest set bit of the difference is inside
+    //       the first byte that does not.
+    //
+    "5:  cmp $8, %rdx\n   jb 7f\n"
+    "mov (%rdi), %r8\n   mov (%rsi), %r9\n   cmp %r8, %r9\n   jne 51f\n"
+    "add $8, %rdi\n   add $8, %rsi\n   sub $8, %rdx\n   jmp 5b\n"
+    "51: xor %r9, %r8\n   bsf %r8, %rcx\n   shr $3, %rcx\n"
+    "movzbl (%rdi,%rcx), %eax\n   movzbl (%rsi,%rcx), %ecx\n   sub %ecx, %eax\n"
+    ASM_RET
+    "7:  test %rdx, %rdx\n   jz 9f\n"
+    "71: movzbl (%rdi), %eax\n   movzbl (%rsi), %ecx\n   sub %ecx, %eax\n   jnz 9f\n"
+    "inc %rdi\n   inc %rsi\n   dec %rdx\n   jnz 71b\n"
+    "9:  \n"
+    ASM_RET
+    ASM_END(memory_compare)
+    ASM_FUNC(memory_search)
+    //
+    //       The algorithm, which matters more here than the instructions.
+    //
+    //       Two bytes of the needle are hunted at once. A block of thirty two
+    //       positions is compared against one of them at its offset, the same
+    //       block against the other at its offset, and the two masks and-ed.
+    //       A position survives only if both bytes are where they would have
+    //       to be; only survivors are compared in full. One vpcmpeqb pair and
+    //       a vpand answer thirty two positions.
+    //
+    //       Which two bytes is the whole difference between fast and not.
+    //       The first and the last are what the shape is usually written
+    //       with, and on English they are a bad pair: hunting "the same thing
+    //       twice" by 't' and 'e' leaves a survivor every three blocks, each
+    //       one an unpredictable branch, and the loop spends its time being
+    //       wrong about where to go rather than reading. The needle's two
+    //       rarest bytes leave none. Over the ninety two megabyte corpus,
+    //       that needle:
+    //
+    //           first and last byte              9.0 GB/s
+    //           and four more bytes by hand     10.4 GB/s
+    //           the two rarest bytes            77.4 GB/s
+    //
+    //       Rarest by byte_commonness, a fixed table -- see the note where it
+    //       is defined. Being wrong about a byte costs the difference between
+    //       those numbers and never costs an answer, because every survivor
+    //       is compared in full either way.
+    //
+    //       The alternative was Boyer-Moore, which is what GNU grep uses,
+    //       and it was measured rather than argued about. Boyer-Moore reads
+    //       less than every byte -- it skips by a table lookup per window --
+    //       but it reads them one at a time, and the skip on real text
+    //       averages a few bytes. Thirty two positions rejected in four
+    //       instructions beats a table that skips four bytes. Over the same
+    //       ninety two megabyte file on a 9950X, both warm:
+    //
+    //           needle                    GNU grep -cF     this
+    //           zqxjv, absent                21.4 GB/s    77.2
+    //           "the same thing twice"        3.6         77.4
+    //           epsilon zeta, 145037 hits     1.6         23.4
+    //
+    //       Not the same question, and the difference is in grep's favour:
+    //       grep splits lines and counts them, which lets it skip from a
+    //       match to the next newline, and it reads the file rather than
+    //       being handed it. The last row is this routine called again after
+    //       every hit, setting itself up each time.
+    //
+    "test %rcx, %rcx\n   jz 90f  # an empty needle is at the front\n"
+    "cmp %rcx, %rsi\n   jb 95f  # longer than the haystack: nowhere\n"
+    "cmp $1, %rcx\n   jne 20f\n"
+    //
+    //       One byte is memchr, which is already here and already wide.
+    //
+    "movzbl (%rdx), %ecx\n   mov %rsi, %rdx\n   mov %rcx, %rsi\n"
+    "jmp memory_first_of\n"
+    "90: mov %rdi, %rax\n"
+    ASM_RET
+    "95: xor %eax, %eax\n"
+    ASM_RET
+    //
+    //       Six saved registers and fifty six bytes, which leaves the stack
+    //       sixteen byte aligned at the calls below. The seven slots hold
+    //       what lives in registers a call is allowed to write: leaving them
+    //       in r8, r9 and r11 across the call was written first, and every
+    //       block after the first failed candidate read whatever
+    //       memory_compare had left there.
+    //
+    "20: push %rbx\n   push %rbp\n   push %r12\n   push %r13\n   push %r14\n"
+    "push %r15\n   sub $56, %rsp\n"
+    "mov %rdi, %rbx  # the haystack\n   mov %rdx, %rbp  # the needle\n"
+    "mov %rcx, %r12  # its length\n"
+    "cmpb $0, cpu_has_avx2(%rip)\n   je 6f\n"
+    //
+    //       How far the block loop may go. The last position a match could
+    //       start at is hay_size - needle_size; a block there reads thirty
+    //       two bytes from it and thirty two from up to needle_size - 1
+    //       further along, so the last block may start thirty one positions
+    //       before it. Under thirty one there is no whole block and the
+    //       narrow path takes it -- and the subtraction is in that order
+    //       because hay_size - needle_size - 31 on a short haystack is not a
+    //       small number, it is a very large one.
+    //
+    "mov %rsi, %r8\n   sub %r12, %r8\n   cmp $31, %r8\n   jb 6f\n"
+    "sub $31, %r8\n   mov %r8, 8(%rsp)\n"
+    //
+    //       The two rarest bytes of the needle, as offsets into it. One pass,
+    //       keeping the best and the second best, which is why two offsets
+    //       always come out distinct even when the bytes at them are equal.
+    //
+    //       Under four bytes there is nothing to choose: the two ends are
+    //       almost the whole needle, and the byte in the middle of a three is
+    //       checked by hand below.
+    //
+    "cmp $4, %r12\n   jb 22f\n"
+    "lea byte_commonness(%rip), %rdx\n"
+    "mov $256, %esi\n   mov $256, %r13d\n   xor %ecx, %ecx\n"
+    "xor %edi, %edi\n   xor %r10d, %r10d\n"
+    "21: movzbl (%rbp,%rcx), %eax\n   movzbl (%rdx,%rax), %eax\n"
+    "cmp %rsi, %rax\n   jae 23f\n"
+    "mov %rsi, %r13\n   mov %rdi, %r10\n   mov %rax, %rsi\n   mov %rcx, %rdi\n"
+    "jmp 24f\n"
+    "23: cmp %r13, %rax\n   jae 24f\n   mov %rax, %r13\n   mov %rcx, %r10\n"
+    "24: inc %rcx\n   cmp %r12, %rcx\n   jb 21b\n"
+    "jmp 25f\n"
+    "22: xor %edi, %edi\n   lea -1(%r12), %r10\n"
+    "25: movzbl (%rbp,%rdi), %eax\n   vmovd %eax, %xmm1\n   vpbroadcastb %xmm1, %ymm1\n"
+    "movzbl (%rbp,%r10), %eax\n   vmovd %eax, %xmm2\n   vpbroadcastb %xmm2, %ymm2\n"
+    "lea (%rbx,%rdi), %rax\n   mov %rax, 16(%rsp)\n"
+    "lea (%rbx,%r10), %rax\n   mov %rax, 24(%rsp)\n"
+    "mov %rdi, 32(%rsp)\n   mov %r10, 40(%rsp)\n"
+    //
+    //      Which byte of a three byte needle neither probe covers. The three
+    //      offsets are 0, 1 and 2 and two of them are taken, so the third is
+    //      what is left of their sum. Nothing reads it at any other length.
+    //
+    "mov $3, %rax\n   sub %rdi, %rax\n   sub %r10, %rax\n   mov %rax, 48(%rsp)\n"
+    "mov 16(%rsp), %r10\n   mov 24(%rsp), %r11\n"
+    "xor %r9, %r9\n   xor %r14d, %r14d\n"
+    "1:  vpcmpeqb (%r10,%r9), %ymm1, %ymm0\n"
+    "vpcmpeqb (%r11,%r9), %ymm2, %ymm3\n"
+    "vpand %ymm3, %ymm0, %ymm0\n   vpmovmskb %ymm0, %r13d\n"
+    "test %r13d, %r13d\n   jnz 3f\n"
+    //
+    //       Past the end of the block loop, one block back from the last
+    //       position rather than a byte loop for what is left. It looks at
+    //       positions already looked at, which costs a block and cannot
+    //       change the answer: everything before them was rejected, so the
+    //       first match found in it is still the first match there is.
+    //
+    "4:  add $32, %r9\n   cmp %r8, %r9\n   jbe 1b\n"
+    "test %r14, %r14\n   jnz 80f\n"
+    "mov %r8, %r9\n   mov $1, %r14d\n   jmp 1b\n"
+    //
+    //       The survivors of one block, lowest position first. Four bytes by
+    //       hand before the call, because a call for a candidate that differs
+    //       in its second byte costs more than the block it came from.
+    //
+    "3:  mov %r9, (%rsp)\n"
+    "31: mov (%rsp), %r9\n   bsf %r13d, %eax\n   lea (%rbx,%r9), %r15\n"
+    "add %rax, %r15\n"
+    "cmp $4, %r12\n   jb 33f\n"
+    "mov (%rbp), %eax\n   cmp (%r15), %eax\n   jne 32f\n"
+    "cmp $5, %r12\n   jb 70f  # the four were all of it\n"
+    "lea 4(%r15), %rdi\n   lea 4(%rbp), %rsi\n   lea -4(%r12), %rdx\n"
+    "call memory_compare\n   test %eax, %eax\n   jz 70f\n"
+    "jmp 32f\n"
+    //
+    //      Two and three bytes: both probes are ends of the needle, so a
+    //      three has one byte left in the middle and a two has none.
+    //
+    "33: cmp $2, %r12\n   jbe 70f\n"
+    "mov 48(%rsp), %rax\n   movzbl (%rbp,%rax), %ecx\n   cmp %cl, (%r15,%rax)\n"
+    "je 70f\n"
+    "32: mov %r13d, %eax\n   dec %eax\n   and %eax, %r13d\n   jnz 31b\n"
+    //
+    //      Back to the block loop. What a call may have written comes off
+    //      the stack, and the two broadcasts are built again because
+    //      memory_compare ends its wide path with a vzeroupper and leaves
+    //      the upper halves zero.
+    //
+    "mov (%rsp), %r9\n   mov 8(%rsp), %r8\n"
+    "mov 16(%rsp), %r10\n   mov 24(%rsp), %r11\n"
+    "mov 32(%rsp), %rax\n   movzbl (%rbp,%rax), %eax\n"
+    "vmovd %eax, %xmm1\n   vpbroadcastb %xmm1, %ymm1\n"
+    "mov 40(%rsp), %rax\n   movzbl (%rbp,%rax), %eax\n"
+    "vmovd %eax, %xmm2\n   vpbroadcastb %xmm2, %ymm2\n"
+    "jmp 4b\n"
+    //
+    //      vzeroupper on the way out of the wide path and nowhere else: a
+    //      return into code using legacy SSE pays a state transition penalty
+    //      on every instruction without it, and a machine that took the
+    //      narrow path below has no such instruction to execute.
+    //
+    "70: vzeroupper\n   jmp 7f\n"
+    "80: vzeroupper\n   jmp 8f\n"
+    //
+    //       The narrow path: a machine without the wide registers, and every
+    //       haystack too short for one block. memchr finds where the first
+    //       byte is and memcmp says whether the rest followed, which is the
+    //       naive search with both of its loops already written wide.
+    //
+    //       The first byte rather than the rarest, because this path exists
+    //       for haystacks under sixty bytes, where choosing costs more than
+    //       it saves.
+    //
+    //       A failed candidate is left one byte, not needle_size: "aab" is in
+    //       "aaab", and a scan that resumes past what it matched cannot see
+    //       it.
+    //
+    "6:  lea (%rbx,%rsi), %r14\n   sub %r12, %r14  # the last position a match could start at\n"
+    "mov %rbx, %r15\n"
+    "61: mov %r14, %rdx\n   sub %r15, %rdx\n   inc %rdx  # positions still to try\n"
+    "mov %r15, %rdi\n   movzbl (%rbp), %esi\n   call memory_first_of\n"
+    "test %rax, %rax\n   jz 8f\n"
+    "mov %rax, %r15\n   mov %rax, %rdi\n   mov %rbp, %rsi\n   mov %r12, %rdx\n"
+    "call memory_compare\n   test %eax, %eax\n   jz 7f\n"
+    "inc %r15\n   cmp %r14, %r15\n   jbe 61b\n"
+    "8:  xor %eax, %eax\n   jmp 9f\n"
+    "7:  mov %r15, %rax\n"
+    "9:  add $56, %rsp\n   pop %r15\n   pop %r14\n   pop %r13\n   pop %r12\n"
+    "pop %rbp\n   pop %rbx\n"
+    ASM_RET
+    ASM_END(memory_search)
     //
     //       string_first_of_or_end, string_first_of_max and string_last_of_or_end -- the rest of the byte hunts.
     //
@@ -1392,7 +2140,12 @@ __asm__(
     //       same code without the last test.
     //
     ASM_FUNC(string_first_of_or_end)
-    "movzbl %sil, %ecx\n   movabs $0x0101010101010101, %r10\n   mov %rcx, %rsi\n   imul %r10, %rsi\n"
+    WIDE_PICK
+    WIDE_FIRST_OF(AVX2_WIDTH, AVX2_BROADCAST, AVX2_ZEROED, AVX2_EITHER,
+                  AVX2_LEAVE, WIDE_OR_END_TAIL)
+    "6:  " WIDE_FIRST_OF(AVX512_WIDTH, AVX512_BROADCAST, AVX512_ZEROED,
+                         AVX512_EITHER, AVX512_LEAVE, WIDE_OR_END_TAIL)
+    "5:  movzbl %sil, %ecx\n   movabs $0x0101010101010101, %r10\n   mov %rcx, %rsi\n   imul %r10, %rsi\n"
     "movabs $0x8080808080808080, %r11\n   mov %edi, %ecx\n   and $7, %ecx\n   and $-8, %rdi\n"
     "mov (%rdi), %rdx\n   shl $3, %ecx\n   mov $-1, %r9\n   shl %cl, %r9\n"
     "movzbl %sil, %eax\n   inc %eax\n   movzbl %al, %eax\n   mov $1, %ecx\n"
@@ -1415,10 +2168,27 @@ __asm__(
     //       is the kind of thing that is only wrong once.
     //
     ASM_FUNC(string_first_of_max)
-    "xor %eax, %eax\n   test %rsi, %rsi\n   jz 9f\n   movzbl %dl, %ecx\n"
-    "movabs $0x0101010101010101, %r10\n   lea (%rdi,%rsi), %r9  # one past the last byte we may report\n"
-    "mov %rcx, %rsi\n   imul %r10, %rsi\n   movabs $0x8080808080808080, %r11\n   mov %edi, %ecx\n"
-    "and $7, %ecx\n   and $-8, %rdi\n   mov (%rdi), %rdx\n   shl $3, %ecx\n"
+    //
+    //      The vestigial push that used to sit here is gone. It balanced a
+    //      stack slot nothing had read since the word arrived with its prefix
+    //      already harmless, and it would have had to be balanced on four more
+    //      ways out.
+    //
+    "xor %eax, %eax\n   test %rsi, %rsi\n   jz 9f\n"
+    "movzbl %dl, %r8d  # the byte hunted, out of the way of the broadcast\n"
+    "lea (%rdi,%rsi), %r9  # one past the last byte we may report\n"
+    "mov %rsi, %rdx  # what is left to look at\n"
+    WIDE_PICK_MAX
+    WIDE_FIRST_MAX(AVX512_WIDTH, AVX512_BROADCAST, AVX512_ZEROED,
+                   AVX512_EITHER, AVX512_LEAVE, "jmp 7f\n", "7f")
+    "7:  cmpb $0, cpu_has_avx2(%rip)\n   je 5f\n"
+    WIDE_FIRST_MAX(AVX2_WIDTH, AVX2_BROADCAST, AVX2_ZEROED, AVX2_EITHER,
+                   AVX2_LEAVE, "jmp 5f\n", "5f")
+    "5:  cmp %r9, %rdi\n   jae 8f  # the vectors took all of it\n"
+    "movzbl %r8b, %ecx\n   movabs $0x0101010101010101, %r10\n"
+    "mov %rcx, %rsi\n   imul %r10, %rsi  # c in every byte; %sil is still c\n"
+    "movabs $0x8080808080808080, %r11\n   mov %edi, %ecx\n   and $7, %ecx\n   and $-8, %rdi\n"
+    "mov (%rdi), %rdx\n   shl $3, %ecx\n"
     //
     //      Into %r8, not %rcx: the shift count is in %cl, which is part of
     //      %rcx, so building the mask there destroys the count before the
@@ -1427,11 +2197,8 @@ __asm__(
     //
     "mov $-1, %r8\n   shl %cl, %r8\n   movzbl %sil, %eax\n   inc %eax\n"
     "movzbl %al, %eax\n   mov $1, %ecx\n   test %eax, %eax\n   cmovz %ecx, %eax  # never zero, never it\n"
-    "imul %r10, %rax\n   mov %r8, %rcx\n   not %rcx\n   and %rcx, %rax  # only in front of the string\n"
+    "imul %r10, %rax\n   mov %r8, %rcx\n   not %rcx\n   and %rcx, %rax  # only in front of where we are\n"
     "and %r8, %rdx\n   or %rax, %rdx\n"
-    // The stack slot is kept so every exit still balances; nothing reads it
-    // now that the word arrives with its prefix already harmless.
-    "push %r8\n"
     "1:  mov %rdx, %rax\n   xor %rsi, %rax\n   mov %rax, %rcx\n   not %rcx\n"
     "sub %r10, %rax\n   and %rcx, %rax\n   and %r11, %rax\n   mov %rdx, %r8\n"
     "sub %r10, %r8\n   mov %rdx, %rcx\n   not %rcx\n   and %rcx, %r8\n"
@@ -1439,9 +2206,8 @@ __asm__(
     "cmp %r9, %rdi\n   jae 8f\n   mov (%rdi), %rdx\n   jmp 1b\n"
     "2:  bsf %rax, %rax\n   shr $3, %rax\n   add %rdi, %rax\n   cmp %r9, %rax\n"
     "jae 8f  # beyond the count\n"
-    "movzbl (%rax), %ecx\n   cmp %sil, %cl\n   je 3f\n"
+    "movzbl (%rax), %ecx\n   cmp %sil, %cl\n   je 9f\n"
     "8:  xor %eax, %eax\n"
-    "3:  add $8, %rsp\n"
     "9:  RET\n"
     ASM_END(string_first_of_max)
     //
@@ -1454,36 +2220,45 @@ __asm__(
     //       carried along; the word that holds the terminator only counts matches
     //       below it.
     //
-    //       Searching for the terminator itself is a byte walk. It is the one case
-    //       where the answer is the end of the string rather than a match inside
-    //       it, and it is rare enough not to be worth its own scan.
+    //       Searching for the terminator itself is string_first_of_or_end's
+    //       question and not this one's -- the answer is the end of the string
+    //       rather than a match inside it -- so it is handed there rather than
+    //       walked here a byte at a time.
     //
     ASM_FUNC(string_last_of_or_end)
     //
-    //       The zero test here is the five instruction one, not the three
-    //       instruction one the rest of this file uses, and the difference
-    //       only shows where the highest flag in a word is wanted.
-    //
-    //       (v - 0x0101..) & ~v & 0x8080.. lets a borrow out of a zero byte
-    //       set the flag on the byte above it. The flags are exact at the
-    //       lowest and can lie above it, which no other hunt here notices
-    //       because they all take the lowest. bsr takes the highest, and so
-    //       took the lie: a byte equal to the one hunted followed by the next
-    //       value up answered one byte late.
-    //
-    //       (v & 0x7f7f..) + 0x7f7f.. cannot carry between bytes -- neither
-    //       half reaches past 0xfe -- so or v, or 0x7f7f.. and invert leaves
-    //       bit seven of a byte set exactly when that byte was zero.
-    //
-    //       Measured on arm64, where the same mistake could be run: 774 wrong
-    //       in 300000 over a five letter alphabet, and none after.
+    //      Hunting the terminator itself is the one case where the answer is
+    //      the end of the string rather than a match inside it, and that is
+    //      exactly the question string_first_of_or_end is already answering
+    //      for a byte that never turns up. It used to be a byte walk here.
     //
     "movzbl %sil, %ecx\n   test %cl, %cl\n   jnz 4f\n"
-    // string_last_of_or_end(s, 0) is the terminator.
-    "1:  cmpb $0, (%rdi)\n   je 2f\n   inc %rdi\n   jmp 1b\n"
-    "2:  mov %rdi, %rax\n"
-    ASM_RET
-    "4:  push %rbx\n   xor %ebx, %ebx  # best so far: none\n"
+    "jmp string_first_of_or_end\n"
+    "4:  " WIDE_PICK
+    WIDE_LAST(AVX2_WIDTH, AVX2_BROADCAST, AVX2_ZEROED, AVX2_BOTH, AVX2_LEAVE)
+    "6:  " WIDE_LAST(AVX512_WIDTH, AVX512_BROADCAST, AVX512_ZEROED,
+                     AVX512_BOTH, AVX512_LEAVE)
+    //
+    //      The word at a time body, for a processor with neither. Its zero
+    //      test is the five instruction one and not the three instruction one
+    //      the rest of this file uses, and the difference only shows where the
+    //      highest flag in a word is wanted.
+    //
+    //      (v - 0x0101..) & ~v & 0x8080.. lets a borrow out of a zero byte
+    //      set the flag on the byte above it. The flags are exact at the
+    //      lowest and can lie above it, which no other hunt here notices
+    //      because they all take the lowest. bsr takes the highest, and so
+    //      took the lie: a byte equal to the one hunted followed by the next
+    //      value up answered one byte late.
+    //
+    //      (v & 0x7f7f..) + 0x7f7f.. cannot carry between bytes -- neither
+    //      half reaches past 0xfe -- so or v, or 0x7f7f.. and invert leaves
+    //      bit seven of a byte set exactly when that byte was zero.
+    //
+    //      Measured on arm64, where the same mistake could be run: 774 wrong
+    //      in 300000 over a five letter alphabet, and none after.
+    //
+    "5:  movzbl %sil, %ecx\n   push %rbx\n   xor %ebx, %ebx  # best so far: none\n"
     "movabs $0x0101010101010101, %r10\n   mov %rcx, %rsi\n   imul %r10, %rsi\n   movabs $0x7f7f7f7f7f7f7f7f, %r11\n"
     "mov %edi, %ecx\n   and $7, %ecx\n   and $-8, %rdi\n   mov (%rdi), %rdx\n"
     "shl $3, %ecx\n   mov $-1, %r9\n   shl %cl, %r9\n   movzbl %sil, %eax\n"
@@ -1491,23 +2266,22 @@ __asm__(
     "cmovz %ecx, %eax  # never zero, never it\n"
     "imul %r10, %rax\n   mov %r9, %rcx\n   not %rcx\n   and %rcx, %rax  # only in front of the string\n"
     "and %r9, %rdx\n   or %rax, %rdx\n"
-    "5:  mov %rdx, %rax\n   xor %rsi, %rax\n   mov %rax, %rcx\n   and %r11, %rcx\n"
+    "1:  mov %rdx, %rax\n   xor %rsi, %rax\n   mov %rax, %rcx\n   and %r11, %rcx\n"
     "add %r11, %rcx\n   or %rax, %rcx\n   or %r11, %rcx\n   not %rcx\n"
     "mov %rcx, %rax  # matches, and none a borrow invented\n"
     "mov %rdx, %r8\n   and %r11, %r8\n   add %r11, %r8\n   or %rdx, %r8\n"
     "or %r11, %r8\n   not %r8\n   and %r9, %r8  # terminator in this word\n"
-    "test %r8, %r8\n   jnz 7f\n   test %rax, %rax\n   jz 6f\n"
+    "test %r8, %r8\n   jnz 3f\n   test %rax, %rax\n   jz 2f\n"
     "bsr %rax, %rcx\n   shr $3, %rcx\n   lea (%rdi,%rcx), %rbx  # a later match than any before\n"
-    "6:  mov $-1, %r9\n   add $8, %rdi\n   mov (%rdi), %rdx\n   jmp 5b\n"
+    "2:  mov $-1, %r9\n   add $8, %rdi\n   mov (%rdi), %rdx\n   jmp 1b\n"
     //
-    //      The string ends in this word. Only matches below the
-    //      terminator count: isolate its lowest bit and keep what is
-    //      under it.
+    //      The string ends in this word. Only matches below the terminator
+    //      count: isolate its lowest bit and keep what is under it.
     //
-    "7:  mov %r8, %rcx\n   neg %rcx\n   and %r8, %rcx\n   dec %rcx\n"
-    "and %rcx, %rax\n   jz 8f\n   bsr %rax, %rcx\n   shr $3, %rcx\n"
+    "3:  mov %r8, %rcx\n   neg %rcx\n   and %r8, %rcx\n   dec %rcx\n"
+    "and %rcx, %rax\n   jz 7f\n   bsr %rax, %rcx\n   shr $3, %rcx\n"
     "lea (%rdi,%rcx), %rbx\n"
-    "8:  mov %rbx, %rax\n   pop %rbx\n"
+    "7:  mov %rbx, %rax\n   pop %rbx\n"
     ASM_RET
     ASM_END(string_last_of_or_end)
     //
@@ -1534,20 +2308,46 @@ __asm__(
     //       found once per call, so simple beats clever there.
     //
     ASM_FUNC(string_compare_max)
-    "xor %eax, %eax\n   test %rdx, %rdx\n   jz 9f\n   movabs $0x0101010101010101, %r10\n"
+    "xor %eax, %eax\n   test %rdx, %rdx\n   jz 9f\n"
+    //
+    //      Thirty two bytes a step while there are sixty four left to do.
+    //      The bound makes every read here legal without a page argument,
+    //      which is the whole difference between this and string_compare
+    //      above -- and the mask is the one that block explains: agree and
+    //      not the end, so all ones means keep going.
+    //
+    //      Sixty four rather than thirty two to enter, because a vzeroupper
+    //      on the way out costs more than the word loop does over a short
+    //      bound. Measured over a megabyte on a 9950X: 19.7 GB/s the word
+    //      way, 63.0 this way, against a two stream floor of 71.
+    //
+    "cmpb $0, cpu_has_avx2(%rip)\n   je 1f\n"
+    "cmp $64, %rdx\n   jb 1f\n"
+    "vpxor %ymm4, %ymm4, %ymm4\n"
+    "10: vmovdqu (%rdi), %ymm0\n   vpcmpeqb (%rsi), %ymm0, %ymm1\n"
+    "vpcmpeqb %ymm4, %ymm0, %ymm2\n   vpandn %ymm1, %ymm2, %ymm3\n"
+    "vpmovmskb %ymm3, %ecx\n   cmp $-1, %ecx\n   jne 11f\n"
+    "add $32, %rdi\n   add $32, %rsi\n   sub $32, %rdx\n"
+    "cmp $32, %rdx\n   jae 10b\n"
+    "vzeroupper\n   jmp 1f\n"
+    "11: not %ecx\n   bsf %ecx, %ecx\n   vzeroupper\n"
+    "movzbl (%rdi,%rcx), %eax\n   movzbl (%rsi,%rcx), %ecx\n   sub %ecx, %eax\n"
+    ASM_RET
+    "1:  movabs $0x0101010101010101, %r10\n"
     "movabs $0x8080808080808080, %r11\n"
-    "1:  cmp $8, %rdx\n   jb 2f\n   mov (%rdi), %r8\n   mov (%rsi), %r9\n"
+    "12: cmp $8, %rdx\n   jb 2f\n   mov (%rdi), %r8\n   mov (%rsi), %r9\n"
     "cmp %r8, %r9\n   jne 2f  # let the byte loop settle it\n"
     // Equal so far. If either holds a terminator the strings end here.
     "mov %r8, %rax\n   sub %r10, %rax\n   mov %r8, %rcx\n   not %rcx\n"
     "and %rcx, %rax\n   and %r11, %rax\n   jnz 8f\n   add $8, %rdi\n"
-    "add $8, %rsi\n   sub $8, %rdx\n   jmp 1b\n"
+    "add $8, %rsi\n   sub $8, %rdx\n   jmp 12b\n"
     "2:  test %rdx, %rdx\n   jz 8f\n"
     "3:  movzbl (%rdi), %eax\n   movzbl (%rsi), %ecx\n   sub %ecx, %eax\n   jnz 9f\n"
     "test %ecx, %ecx\n   jz 8f\n   inc %rdi\n   inc %rsi\n"
     "dec %rdx\n   jnz 3b\n"
     "8:  xor %eax, %eax\n"
-    "9:  RET\n"
+    "9:  \n"
+    ASM_RET
     ASM_END(string_compare_max)
     //
     //       size_t string_length_max(const char *s, size_t n)
@@ -1558,11 +2358,27 @@ __asm__(
     //       what string_length_max returns when there is none inside the bound.
     //
     ASM_FUNC(string_length_max)
-    "xor %eax, %eax\n   test %rsi, %rsi\n   jz 9f\n   mov %rdi, %r8  # start\n"
-    "lea (%rdi,%rsi), %r9  # one past the last byte we may report\n"
+    //
+    //      Under eight bytes nothing wide can help, and the two feature bytes
+    //      are not even read: a four byte call spends its whole life in the
+    //      word at a time body and the load of cpu_has_avx512 was measurable
+    //      there.
+    //
+    "xor %eax, %eax\n   test %rsi, %rsi\n   jz 9f\n"
+    "mov %rdi, %r8  # the start, whichever body runs\n"
+    "mov %rsi, %rdx  # and what is left to look at\n"
+    "cmp $8, %rsi\n   jb 5f\n"
+    WIDE_PICK_MAX
+    WIDE_LENGTH_MAX(AVX512_WIDTH, AVX512_ZEROED, AVX512_ZEROS, AVX512_LEAVE,
+                    "jmp 7f\n", "7f")
+    "7:  cmpb $0, cpu_has_avx2(%rip)\n   je 5f\n"
+    WIDE_LENGTH_MAX(AVX2_WIDTH, AVX2_ZEROED, AVX2_ZEROS, AVX2_LEAVE, "jmp 5f\n", "5f")
+    "5:  test %rdx, %rdx\n   jz 3f\n"
+    "lea (%rdi,%rdx), %r9  # one past the last byte we may report\n"
     "mov %edi, %ecx\n   and $7, %ecx\n   and $-8, %rdi\n   mov (%rdi), %rdx\n"
     "shl $3, %ecx\n   mov $1, %rax\n   shl %cl, %rax\n   dec %rax\n"
-    "or %rax, %rdx\n   movabs $0x0101010101010101, %r10\n   movabs $0x8080808080808080, %r11\n"
+    "or %rax, %rdx  # ones below where we are, so it cannot end there\n"
+    "movabs $0x0101010101010101, %r10\n   movabs $0x8080808080808080, %r11\n"
     "1:  mov %rdx, %rax\n   sub %r10, %rax\n   mov %rdx, %rcx\n   not %rcx\n"
     "and %rcx, %rax\n   and %r11, %rax\n   jnz 2f\n   add $8, %rdi\n"
     "cmp %r9, %rdi\n   jae 3f  # nothing within the bound\n"
@@ -1619,40 +2435,224 @@ __asm__(
     // alignment work to get there. Below the point where starting one pays,
     // eight bytes at a time out of a plain loop is cheaper.
     ASM_FUNC(memory_fill)
-    "mov %rdi, %r10\n   movzbl %sil, %eax\n   movabs $0x0101010101010101, %r9\n   imul %r9, %rax\n"
-    "cmp $256, %rdx\n   jae 5f\n   sub $8, %rdx\n   jb 2f\n"
-    "1:  mov %rax, (%rdi)\n   add $8, %rdi\n   sub $8, %rdx\n   jae 1b\n"
-    "2:  add $8, %rdx\n   jz 4f\n"
-    "3:  mov %al, (%rdi)\n   inc %rdi\n   dec %rdx\n   jnz 3b\n"
-    "4:  mov %r10, %rax\n"
-    ASM_RET
-    "5:  mov %rdx, %rcx\n   shr $3, %rcx\n   rep stosq\n   mov %edx, %ecx\n"
-    "and $7, %ecx\n   rep stosb\n   mov %r10, %rax\n"
+    "mov %rdi, %rax\n   movzbl %sil, %ecx\n"
+    "movabs $0x0101010101010101, %r8\n   imul %r8, %rcx  # the byte, eight times over\n"
+    "cmp $16, %rdx\n   jae 6f\n"
+    "cmp $8, %rdx\n   jae 7f\n"
+    "cmp $4, %rdx\n   jae 8f\n"
+    "test %rdx, %rdx\n   jz 9f\n"
+    // one to three: first, last, and the middle, which between them cover all three
+    "mov %cl, (%rdi)\n   mov %cl, -1(%rdi,%rdx)\n"
+    "shr $1, %rdx\n   mov %cl, (%rdi,%rdx)\n"
+    "9:  RET\n"
+    "8:  mov %ecx, (%rdi)\n   mov %ecx, -4(%rdi,%rdx)\n   RET\n"
+    "7:  mov %rcx, (%rdi)\n   mov %rcx, -8(%rdi,%rdx)\n   RET\n"
+    "6:  cmpb $0, cpu_has_avx2(%rip)\n   je 2f\n"
+    //
+    //       vpbroadcastb into xmm rather than ymm on purpose: a VEX encoded
+    //       128 bit write zeroes the upper half, which is the state a return
+    //       may leave, so the sixteen to thirty two byte case needs no
+    //       vzeroupper. Every path that widens past that does.
+    //
+    "vmovd %ecx, %xmm0\n   vpbroadcastb %xmm0, %xmm0\n"
+    "cmp $32, %rdx\n   ja 3f\n"
+    "vmovdqu %xmm0, (%rdi)\n   vmovdqu %xmm0, -16(%rdi,%rdx)\n   RET\n"
+    "3:  cmpb $0, cpu_has_avx512(%rip)\n   jne 5f\n"
+    "vinserti128 $1, %xmm0, %ymm0, %ymm0\n"
+    "cmp $64, %rdx\n   ja 4f\n"
+    "vmovdqu %ymm0, (%rdi)\n   vmovdqu %ymm0, -32(%rdi,%rdx)\n"
+    "vzeroupper\n   RET\n"
+    "4:  cmp $128, %rdx\n   ja 1f\n"
+    "vmovdqu %ymm0, (%rdi)\n   vmovdqu %ymm0, 32(%rdi)\n"
+    "vmovdqu %ymm0, -64(%rdi,%rdx)\n   vmovdqu %ymm0, -32(%rdi,%rdx)\n"
+    "vzeroupper\n   RET\n"
+    "1:  cmp $256, %rdx\n   ja 0f\n"
+    "vmovdqu %ymm0, (%rdi)\n   vmovdqu %ymm0, 32(%rdi)\n"
+    "vmovdqu %ymm0, 64(%rdi)\n   vmovdqu %ymm0, 96(%rdi)\n"
+    "vmovdqu %ymm0, -128(%rdi,%rdx)\n   vmovdqu %ymm0, -96(%rdi,%rdx)\n"
+    "vmovdqu %ymm0, -64(%rdi,%rdx)\n   vmovdqu %ymm0, -32(%rdi,%rdx)\n"
+    "vzeroupper\n   RET\n"
+    //
+    //       Above 256: an unaligned store at the front, the destination aligned
+    //       up past it, then 128 bytes an iteration. The store that ends it is
+    //       the last 128 bytes wherever they fall, which overlaps whatever the
+    //       loop already wrote.
+    //
+    "0:  lea (%rdi,%rdx), %r8\n   vmovdqu %ymm0, (%rdi)\n"
+    "add $32, %rdi\n   and $-32, %rdi\n   lea -128(%r8), %r10\n"
+    ".balign 16\n"
+    "1:  vmovdqa %ymm0, (%rdi)\n   vmovdqa %ymm0, 32(%rdi)\n"
+    "vmovdqa %ymm0, 64(%rdi)\n   vmovdqa %ymm0, 96(%rdi)\n"
+    "add $128, %rdi\n   cmp %r10, %rdi\n   jbe 1b\n"
+    "1:  vmovdqu %ymm0, -128(%r8)\n   vmovdqu %ymm0, -96(%r8)\n"
+    "vmovdqu %ymm0, -64(%r8)\n   vmovdqu %ymm0, -32(%r8)\n"
+    "vzeroupper\n   RET\n"
+    //
+    //       The same shape twice as wide. The rungs go one further because the
+    //       loop writes 256 bytes an iteration and a size that cannot fit one
+    //       whole iteration after the alignment step has to be finished by the
+    //       overlapping pair instead -- 257 bytes through a 256 byte loop wrote
+    //       one iteration past the end before the rung was added.
+    //
+    "5:  vpbroadcastb %ecx, %zmm0\n"
+    "cmp $64, %rdx\n   ja 4f\n"
+    "vmovdqu %ymm0, (%rdi)\n   vmovdqu %ymm0, -32(%rdi,%rdx)\n"
+    "vzeroupper\n   RET\n"
+    "4:  cmp $128, %rdx\n   ja 1f\n"
+    "vmovdqu64 %zmm0, (%rdi)\n   vmovdqu64 %zmm0, -64(%rdi,%rdx)\n"
+    "vzeroupper\n   RET\n"
+    "1:  cmp $256, %rdx\n   ja 0f\n"
+    "vmovdqu64 %zmm0, (%rdi)\n   vmovdqu64 %zmm0, 64(%rdi)\n"
+    "vmovdqu64 %zmm0, -128(%rdi,%rdx)\n   vmovdqu64 %zmm0, -64(%rdi,%rdx)\n"
+    "vzeroupper\n   RET\n"
+    "0:  cmp $512, %rdx\n   ja 0f\n"
+    "vmovdqu64 %zmm0, (%rdi)\n   vmovdqu64 %zmm0, 64(%rdi)\n"
+    "vmovdqu64 %zmm0, 128(%rdi)\n   vmovdqu64 %zmm0, 192(%rdi)\n"
+    "vmovdqu64 %zmm0, -256(%rdi,%rdx)\n   vmovdqu64 %zmm0, -192(%rdi,%rdx)\n"
+    "vmovdqu64 %zmm0, -128(%rdi,%rdx)\n   vmovdqu64 %zmm0, -64(%rdi,%rdx)\n"
+    "vzeroupper\n   RET\n"
+    "0:  lea (%rdi,%rdx), %r8\n   vmovdqu64 %zmm0, (%rdi)\n"
+    "add $64, %rdi\n   and $-64, %rdi\n   lea -256(%r8), %r10\n"
+    ".balign 16\n"
+    "1:  vmovdqa64 %zmm0, (%rdi)\n   vmovdqa64 %zmm0, 64(%rdi)\n"
+    "vmovdqa64 %zmm0, 128(%rdi)\n   vmovdqa64 %zmm0, 192(%rdi)\n"
+    "add $256, %rdi\n   cmp %r10, %rdi\n   jbe 1b\n"
+    "1:  vmovdqu64 %zmm0, -256(%r8)\n   vmovdqu64 %zmm0, -192(%r8)\n"
+    "vmovdqu64 %zmm0, -128(%r8)\n   vmovdqu64 %zmm0, -64(%r8)\n"
+    "vzeroupper\n   RET\n"
+    //
+    //       No vector registers past here. rep stosb stays because on a machine
+    //       old enough to be here it is still the widest store the part has, and
+    //       because a kernel build takes this path whatever the processor is.
+    //
+    "2:  cmp $256, %rdx\n   jae 0f\n"
+    "lea (%rdi,%rdx), %r9\n   mov %rcx, (%rdi)\n"
+    "add $8, %rdi\n   and $-8, %rdi\n   lea -8(%r9), %r10\n"
+    "1:  mov %rcx, (%rdi)\n   add $8, %rdi\n   cmp %r10, %rdi\n   jbe 1b\n"
+    "mov %rcx, -8(%r9)\n   RET\n"
+    "0:  mov %rax, %r11\n   mov %ecx, %eax  # rep stosb stores al\n"
+    "mov %rdx, %rcx\n   rep stosb\n   mov %r11, %rax\n"
     ASM_RET
     ASM_END(memory_fill)
 
     ASM_FUNC(memory_copy_fast)
-    "mov %rdi, %rax\n   cmp $16, %rdx\n   jae 6f\n"
-    // Under sixteen, two loads that overlap in the middle cover the whole of
-    // it with no loop and no tail: the bytes written twice are written the
-    // same both times.
-    "cmp $8, %rdx\n   jb 7f\n   mov (%rsi), %r9\n   mov -8(%rsi,%rdx), %r11\n"
-    "mov %r9, (%rdi)\n   mov %r11, -8(%rdi,%rdx)\n"
-    ASM_RET
-    "7:  cmp $4, %rdx\n   jb 8f\n   mov (%rsi), %r9d\n   mov -4(%rsi,%rdx), %r11d\n"
-    "mov %r9d, (%rdi)\n   mov %r11d, -4(%rdi,%rdx)\n"
-    ASM_RET
-    "8:  test %rdx, %rdx\n   jz 4f\n"
-    "3:  mov (%rsi), %r9b\n   mov %r9b, (%rdi)\n   inc %rsi\n   inc %rdi\n"
-    "dec %rdx\n   jnz 3b\n"
-    "4:\n"
-    ASM_RET
-    "6:  cmp $256, %rdx\n   jae 5f\n"
-    "1:  mov (%rsi), %r9\n   mov %r9, (%rdi)\n   add $8, %rsi\n   add $8, %rdi\n"
-    "sub $8, %rdx\n   cmp $8, %rdx\n   jae 1b\n   test %rdx, %rdx\n"
-    "jz 4b\n   mov -8(%rsi,%rdx), %r9\n   mov %r9, -8(%rdi,%rdx)\n"
-    ASM_RET
-    "5:  mov %rdx, %rcx\n   rep movsb\n"
+    "mov %rdi, %rax\n   cmp $32, %rdx\n   ja 6f\n"
+    "cmp $16, %rdx\n   jb 7f\n"
+    "vmovdqu (%rsi), %xmm0\n   vmovdqu -16(%rsi,%rdx), %xmm1\n"
+    "vmovdqu %xmm0, (%rdi)\n   vmovdqu %xmm1, -16(%rdi,%rdx)\n   RET\n"
+    "7:  cmp $8, %rdx\n   jb 8f\n"
+    "mov (%rsi), %r9\n   mov -8(%rsi,%rdx), %r10\n"
+    "mov %r9, (%rdi)\n   mov %r10, -8(%rdi,%rdx)\n   RET\n"
+    "8:  cmp $4, %rdx\n   jb 0f\n"
+    "mov (%rsi), %r9d\n   mov -4(%rsi,%rdx), %r10d\n"
+    "mov %r9d, (%rdi)\n   mov %r10d, -4(%rdi,%rdx)\n   RET\n"
+    "0:  test %rdx, %rdx\n   jz 9f\n"
+    // all three read before any is written: at one or two bytes of overlap the
+    // store to the first would otherwise be the load for the middle
+    "movzbl (%rsi), %r9d\n   movzbl -1(%rsi,%rdx), %r10d\n"
+    "mov %rdx, %rcx\n   shr $1, %rcx\n   movzbl (%rsi,%rcx), %r11d\n"
+    "mov %r9b, (%rdi)\n   mov %r10b, -1(%rdi,%rdx)\n   mov %r11b, (%rdi,%rcx)\n"
+    "9:  RET\n"
+    //
+    //       Sixteen to thirty two is the xmm pair above, which every x86_64 part
+    //       can encode; wider than that needs the byte cpu_detect wrote.
+    //
+    "6:  cmpb $0, cpu_has_avx2(%rip)\n   je 2f\n"
+    "cmpb $0, cpu_has_avx512(%rip)\n   jne 5f\n"
+    "cmp $64, %rdx\n   ja 4f\n"
+    "vmovdqu (%rsi), %ymm0\n   vmovdqu -32(%rsi,%rdx), %ymm1\n"
+    "vmovdqu %ymm0, (%rdi)\n   vmovdqu %ymm1, -32(%rdi,%rdx)\n"
+    "vzeroupper\n   RET\n"
+    "4:  cmp $128, %rdx\n   ja 1f\n"
+    "vmovdqu (%rsi), %ymm0\n   vmovdqu 32(%rsi), %ymm1\n"
+    "vmovdqu -64(%rsi,%rdx), %ymm2\n   vmovdqu -32(%rsi,%rdx), %ymm3\n"
+    "vmovdqu %ymm0, (%rdi)\n   vmovdqu %ymm1, 32(%rdi)\n"
+    "vmovdqu %ymm2, -64(%rdi,%rdx)\n   vmovdqu %ymm3, -32(%rdi,%rdx)\n"
+    "vzeroupper\n   RET\n"
+    "1:  cmp $256, %rdx\n   ja 0f\n"
+    "vmovdqu (%rsi), %ymm0\n   vmovdqu 32(%rsi), %ymm1\n"
+    "vmovdqu 64(%rsi), %ymm2\n   vmovdqu 96(%rsi), %ymm3\n"
+    "vmovdqu -128(%rsi,%rdx), %ymm4\n   vmovdqu -96(%rsi,%rdx), %ymm5\n"
+    "vmovdqu -64(%rsi,%rdx), %ymm6\n   vmovdqu -32(%rsi,%rdx), %ymm7\n"
+    "vmovdqu %ymm0, (%rdi)\n   vmovdqu %ymm1, 32(%rdi)\n"
+    "vmovdqu %ymm2, 64(%rdi)\n   vmovdqu %ymm3, 96(%rdi)\n"
+    "vmovdqu %ymm4, -128(%rdi,%rdx)\n   vmovdqu %ymm5, -96(%rdi,%rdx)\n"
+    "vmovdqu %ymm6, -64(%rdi,%rdx)\n   vmovdqu %ymm7, -32(%rdi,%rdx)\n"
+    "vzeroupper\n   RET\n"
+    //
+    //       The last 128 bytes are read into ymm4-7 before the head store, so
+    //       the loop may write over the source it has already passed.
+    //
+    "0:  lea (%rdi,%rdx), %r8\n   lea (%rsi,%rdx), %r11\n"
+    "vmovdqu -128(%r11), %ymm4\n   vmovdqu -96(%r11), %ymm5\n"
+    "vmovdqu -64(%r11), %ymm6\n   vmovdqu -32(%r11), %ymm7\n"
+    "vmovdqu (%rsi), %ymm8  # and the first 32, for the same reason\n"
+    "mov %rdi, %r9\n   add $32, %rdi\n   and $-32, %rdi\n"
+    "sub %r9, %rdi\n   add %rdi, %rsi\n   add %r9, %rdi  # the source moves with it\n"
+    "lea -128(%r8), %r10\n"
+    ".balign 16\n"
+    "1:  vmovdqu (%rsi), %ymm0\n   vmovdqu 32(%rsi), %ymm1\n"
+    "vmovdqu 64(%rsi), %ymm2\n   vmovdqu 96(%rsi), %ymm3\n"
+    "vmovdqa %ymm0, (%rdi)\n   vmovdqa %ymm1, 32(%rdi)\n"
+    "vmovdqa %ymm2, 64(%rdi)\n   vmovdqa %ymm3, 96(%rdi)\n"
+    "add $128, %rsi\n   add $128, %rdi\n   cmp %r10, %rdi\n   jbe 1b\n"
+    "vmovdqu %ymm4, -128(%r8)\n   vmovdqu %ymm5, -96(%r8)\n"
+    "vmovdqu %ymm6, -64(%r8)\n   vmovdqu %ymm7, -32(%r8)\n"
+    "vmovdqu %ymm8, (%rax)\n"
+    "vzeroupper\n   RET\n"
+    //       The zmm ladder, one rung longer for the reason memory_fill gives.
+    "5:  cmp $64, %rdx\n   ja 4f\n"
+    "vmovdqu (%rsi), %ymm0\n   vmovdqu -32(%rsi,%rdx), %ymm1\n"
+    "vmovdqu %ymm0, (%rdi)\n   vmovdqu %ymm1, -32(%rdi,%rdx)\n"
+    "vzeroupper\n   RET\n"
+    "4:  cmp $128, %rdx\n   ja 1f\n"
+    "vmovdqu64 (%rsi), %zmm0\n   vmovdqu64 -64(%rsi,%rdx), %zmm1\n"
+    "vmovdqu64 %zmm0, (%rdi)\n   vmovdqu64 %zmm1, -64(%rdi,%rdx)\n"
+    "vzeroupper\n   RET\n"
+    "1:  cmp $256, %rdx\n   ja 0f\n"
+    "vmovdqu64 (%rsi), %zmm0\n   vmovdqu64 64(%rsi), %zmm1\n"
+    "vmovdqu64 -128(%rsi,%rdx), %zmm2\n   vmovdqu64 -64(%rsi,%rdx), %zmm3\n"
+    "vmovdqu64 %zmm0, (%rdi)\n   vmovdqu64 %zmm1, 64(%rdi)\n"
+    "vmovdqu64 %zmm2, -128(%rdi,%rdx)\n   vmovdqu64 %zmm3, -64(%rdi,%rdx)\n"
+    "vzeroupper\n   RET\n"
+    "0:  cmp $512, %rdx\n   ja 0f\n"
+    "vmovdqu64 (%rsi), %zmm0\n   vmovdqu64 64(%rsi), %zmm1\n"
+    "vmovdqu64 128(%rsi), %zmm2\n   vmovdqu64 192(%rsi), %zmm3\n"
+    "vmovdqu64 -256(%rsi,%rdx), %zmm4\n   vmovdqu64 -192(%rsi,%rdx), %zmm5\n"
+    "vmovdqu64 -128(%rsi,%rdx), %zmm6\n   vmovdqu64 -64(%rsi,%rdx), %zmm7\n"
+    "vmovdqu64 %zmm0, (%rdi)\n   vmovdqu64 %zmm1, 64(%rdi)\n"
+    "vmovdqu64 %zmm2, 128(%rdi)\n   vmovdqu64 %zmm3, 192(%rdi)\n"
+    "vmovdqu64 %zmm4, -256(%rdi,%rdx)\n   vmovdqu64 %zmm5, -192(%rdi,%rdx)\n"
+    "vmovdqu64 %zmm6, -128(%rdi,%rdx)\n   vmovdqu64 %zmm7, -64(%rdi,%rdx)\n"
+    "vzeroupper\n   RET\n"
+    "0:  lea (%rdi,%rdx), %r8\n   lea (%rsi,%rdx), %r11\n"
+    "vmovdqu64 -256(%r11), %zmm4\n   vmovdqu64 -192(%r11), %zmm5\n"
+    "vmovdqu64 -128(%r11), %zmm6\n   vmovdqu64 -64(%r11), %zmm7\n"
+    "vmovdqu64 (%rsi), %zmm8\n"
+    "mov %rdi, %r9\n   add $64, %rdi\n   and $-64, %rdi\n"
+    "sub %r9, %rdi\n   add %rdi, %rsi\n   add %r9, %rdi\n"
+    "lea -256(%r8), %r10\n"
+    ".balign 16\n"
+    "1:  vmovdqu64 (%rsi), %zmm0\n   vmovdqu64 64(%rsi), %zmm1\n"
+    "vmovdqu64 128(%rsi), %zmm2\n   vmovdqu64 192(%rsi), %zmm3\n"
+    "vmovdqa64 %zmm0, (%rdi)\n   vmovdqa64 %zmm1, 64(%rdi)\n"
+    "vmovdqa64 %zmm2, 128(%rdi)\n   vmovdqa64 %zmm3, 192(%rdi)\n"
+    "add $256, %rsi\n   add $256, %rdi\n   cmp %r10, %rdi\n   jbe 1b\n"
+    "vmovdqu64 %zmm4, -256(%r8)\n   vmovdqu64 %zmm5, -192(%r8)\n"
+    "vmovdqu64 %zmm6, -128(%r8)\n   vmovdqu64 %zmm7, -64(%r8)\n"
+    "vmovdqu64 %zmm8, (%rax)\n"
+    "vzeroupper\n   RET\n"
+    //       Neither extension: eight bytes at a time, and rep movsb where it pays.
+    "2:  cmp $256, %rdx\n   jae 0f\n"
+    "lea (%rdi,%rdx), %r8\n   lea (%rsi,%rdx), %r11\n"
+    "mov -8(%r11), %r10\n   mov (%rsi), %rdx\n"
+    "mov %rdi, %r9\n   add $8, %rdi\n   and $-8, %rdi\n"
+    "sub %r9, %rdi\n   add %rdi, %rsi\n   add %r9, %rdi\n"
+    "lea -8(%r8), %rcx\n"
+    "1:  mov (%rsi), %r9\n   mov %r9, (%rdi)\n"
+    "add $8, %rsi\n   add $8, %rdi\n   cmp %rcx, %rdi\n   jbe 1b\n"
+    "mov %r10, -8(%r8)\n   mov %rdx, (%rax)\n   RET\n"
+    "0:  mov %rdx, %rcx\n   rep movsb\n"
     ASM_RET
     ASM_END(memory_copy_fast)
 
@@ -1662,12 +2662,52 @@ __asm__(
     ASM_FUNC(memory_copy)
     "mov %rdi, %rax\n   cmp %rsi, %rdi\n   jbe 1f\n   mov %rsi, %r8\n"
     "add %rdx, %r8\n   cmp %r8, %rdi\n   jb 2f\n"
-    "1:  mov %rdx, %rcx\n   rep movsb\n"
-    ASM_RET
-    "2:  test %rdx, %rdx\n   jz 4f\n   lea -1(%rdi,%rdx), %rdi\n   lea -1(%rsi,%rdx), %rsi\n"
-    "3:  mov (%rsi), %r9b\n   mov %r9b, (%rdi)\n   dec %rsi\n   dec %rdi\n"
-    "dec %rdx\n   jnz 3b\n"
-    "4:\n"
+    "1:  jmp memory_copy_fast\n"
+    "2:  cmpb $0, cpu_has_avx2(%rip)\n   je 5f\n   cmp $128, %rdx\n   jb 5f\n"
+    "vmovdqu (%rsi), %ymm4\n   vmovdqu 32(%rsi), %ymm5\n"
+    "vmovdqu 64(%rsi), %ymm6\n   vmovdqu 96(%rsi), %ymm7\n"
+    "lea (%rdi,%rdx), %r8\n   lea (%rsi,%rdx), %r11\n"
+    "vmovdqu -32(%r11), %ymm8  # and the last 32\n"
+    "mov %r8, %r9\n   and $-32, %r8\n   sub %r8, %r9\n   sub %r9, %r11\n"
+    "lea 128(%rdi), %r10\n"
+    ".balign 16\n"
+    "3:  cmp %r10, %r8\n   jbe 4f\n"
+    "sub $128, %r8\n   sub $128, %r11\n"
+    "vmovdqu (%r11), %ymm0\n   vmovdqu 32(%r11), %ymm1\n"
+    "vmovdqu 64(%r11), %ymm2\n   vmovdqu 96(%r11), %ymm3\n"
+    "vmovdqa %ymm0, (%r8)\n   vmovdqa %ymm1, 32(%r8)\n"
+    "vmovdqa %ymm2, 64(%r8)\n   vmovdqa %ymm3, 96(%r8)\n"
+    "jmp 3b\n"
+    "4:  vmovdqu %ymm8, -32(%rdi,%rdx)\n"
+    "vmovdqu %ymm4, (%rdi)\n   vmovdqu %ymm5, 32(%rdi)\n"
+    "vmovdqu %ymm6, 64(%rdi)\n   vmovdqu %ymm7, 96(%rdi)\n"
+    "vzeroupper\n   RET\n"
+    //
+    //       Under 128 bytes, or with no vector registers to use: eight at a time
+    //       downwards, with the first eight kept in a register so the store that
+    //       ends it does not need memory the loop has already written over.
+    //
+    "5:  cmp $8, %rdx\n   jb 6f\n"
+    "mov (%rsi), %r9\n   lea (%rdi,%rdx), %r8\n   lea (%rsi,%rdx), %r11\n"
+    "lea 8(%rdi), %rcx\n"
+    "7:  cmp %rcx, %r8\n   jbe 8f\n"
+    "sub $8, %r8\n   sub $8, %r11\n   mov (%r11), %r10\n   mov %r10, (%r8)\n"
+    "jmp 7b\n"
+    "8:  mov %r9, (%rdi)\n   RET\n"
+    //
+    //       Under eight there is no direction left to get wrong: both halves are
+    //       in registers before either of them is written.
+    //
+    "6:  cmp $4, %rdx\n   jb 9f\n"
+    "mov (%rsi), %r9d\n   mov -4(%rsi,%rdx), %r10d\n"
+    "mov %r9d, (%rdi)\n   mov %r10d, -4(%rdi,%rdx)\n   RET\n"
+    "9:  test %rdx, %rdx\n   jz 0f\n"
+    // all three read before any is written: at one or two bytes of overlap the
+    // store to the first would otherwise be the load for the middle
+    "movzbl (%rsi), %r9d\n   movzbl -1(%rsi,%rdx), %r10d\n"
+    "mov %rdx, %rcx\n   shr $1, %rcx\n   movzbl (%rsi,%rcx), %r11d\n"
+    "mov %r9b, (%rdi)\n   mov %r10b, -1(%rdi,%rdx)\n   mov %r11b, (%rdi,%rcx)\n"
+    "0:\n"
     ASM_RET
     ASM_END(memory_copy)
     //
@@ -1707,11 +2747,29 @@ __asm__(
     //       answer to a different question.
     //
     ASM_FUNC(string_copy)
-    "mov %rdi, %rax\n   sub %rdi, %rsi  # one pointer to step, not two\n"
-    ".balign 16\n"
-    "1:  movzbl (%rdi,%rsi), %ecx\n   mov %cl, (%rdi)\n   inc %rdi\n   test %cl, %cl  # the terminator is copied too\n"
-    "jnz 1b\n"
-    ASM_RET
+    "cmpb $0, cpu_has_avx2(%rip)\n   je 5f\n"
+    "vpxor %xmm1, %xmm1, %xmm1\n"
+    "mov %rsi, %r8\n   and $-32, %r8  # same page as the string: cannot fault\n"
+    "mov %esi, %ecx\n   and $31, %ecx\n"
+    "vpcmpeqb (%r8), %ymm1, %ymm0\n   vpmovmskb %ymm0, %eax\n"
+    "shr %cl, %eax  # the bytes in front of the string are not ours\n"
+    "test %eax, %eax\n   jnz 2f\n"
+    "1:  add $32, %r8\n   vpcmpeqb (%r8), %ymm1, %ymm0\n   vpmovmskb %ymm0, %eax\n"
+    "test %eax, %eax\n   jz 1b\n"
+    "bsf %eax, %eax\n   add %r8, %rax\n   sub %rsi, %rax\n   jmp 3f\n"
+    "2:  bsf %eax, %eax\n"
+    "3:  lea 1(%rax), %rdx  # the terminator is copied too\n"
+    "vzeroupper\n   jmp memory_copy_fast\n"
+    //       No AVX2: the same scan eight bytes at a time, as string_length does it.
+    "5:  mov %rsi, %r8\n   mov %esi, %ecx\n   and $7, %ecx\n   and $-8, %r8\n"
+    "mov (%r8), %rdx\n   shl $3, %ecx\n   mov $1, %rax\n   shl %cl, %rax\n   dec %rax\n"
+    "or %rax, %rdx  # so the bytes in front cannot look like a terminator\n"
+    "movabs $0x0101010101010101, %r10\n   movabs $0x8080808080808080, %r11\n"
+    "1:  mov %rdx, %rax\n   sub %r10, %rax\n   mov %rdx, %r9\n   not %r9\n"
+    "and %r9, %rax\n   and %r11, %rax\n   jnz 2f\n"
+    "add $8, %r8\n   mov (%r8), %rdx\n   jmp 1b\n"
+    "2:  bsf %rax, %rax\n   shr $3, %rax\n   add %r8, %rax\n   sub %rsi, %rax\n"
+    "lea 1(%rax), %rdx\n   jmp memory_copy_fast\n"
     ASM_END(string_copy)
     //
     //       Not strncpy: no padding, and no terminator at all when the source
@@ -1719,25 +2777,46 @@ __asm__(
     //       destination[length], one past what the caller allowed.
     //
     ASM_FUNC(string_copy_max)
-    "mov %rdi, %rax\n   test %rdx, %rdx\n   jz 3f\n   .balign 16\n"
-    "1:  movzbl (%rsi), %ecx\n   test %cl, %cl\n   jz 2f\n   mov %cl, (%rdi)\n"
-    "inc %rdi\n   inc %rsi\n   dec %rdx\n   jnz 1b\n"
-    "jmp 3f  # bound filled: no terminator\n"
-    "2:  movb $0, (%rdi)  # source ended inside the bound\n"
-    "3:\n"
-    ASM_RET
+    "mov %rdi, %rax\n   test %rdx, %rdx\n   jz 9f  # not even a terminator\n"
+    "cmpb $0, cpu_has_avx2(%rip)\n   je 5f\n"
+    "vpxor %xmm1, %xmm1, %xmm1\n   lea (%rsi,%rdx), %r9  # one past the last byte we may read\n"
+    "mov %rsi, %r8\n   and $-32, %r8\n   mov %esi, %ecx\n   and $31, %ecx\n"
+    "vpcmpeqb (%r8), %ymm1, %ymm0\n   vpmovmskb %ymm0, %eax\n"
+    "shr %cl, %eax\n   test %eax, %eax\n   jnz 2f\n"
+    "1:  add $32, %r8\n   cmp %r9, %r8\n   jae 4f  # the bound is behind us\n"
+    "vpcmpeqb (%r8), %ymm1, %ymm0\n   vpmovmskb %ymm0, %eax\n"
+    "test %eax, %eax\n   jz 1b\n"
+    "bsf %eax, %eax\n   add %r8, %rax\n   sub %rsi, %rax\n   jmp 3f\n"
+    "2:  bsf %eax, %eax\n"
+    "3:  vzeroupper\n   cmp %rdx, %rax\n   jae 8f  # the bound came first\n"
+    "lea 1(%rax), %rdx\n"
+    "8:  jmp memory_copy_fast\n"
+    "4:  vzeroupper\n   jmp memory_copy_fast\n"
+    "9:  RET\n"
+    "5:  lea (%rsi,%rdx), %r9\n"
+    "mov %rsi, %r8\n   mov %esi, %ecx\n   and $7, %ecx\n   and $-8, %r8\n"
+    "mov (%r8), %r10\n   shl $3, %ecx\n   mov $1, %rax\n   shl %cl, %rax\n   dec %rax\n"
+    "or %rax, %r10\n"
+    "movabs $0x0101010101010101, %rcx\n   movabs $0x8080808080808080, %r11\n"
+    "1:  mov %r10, %rax\n   sub %rcx, %rax\n   not %r10\n   and %r10, %rax\n"
+    "and %r11, %rax\n   jnz 2f\n"
+    "add $8, %r8\n   cmp %r9, %r8\n   jae 4f\n   mov (%r8), %r10\n   jmp 1b\n"
+    "2:  bsf %rax, %rax\n   shr $3, %rax\n   add %r8, %rax\n   sub %rsi, %rax\n"
+    "cmp %rdx, %rax\n   jae 4f\n   lea 1(%rax), %rdx\n"
+    "4:  jmp memory_copy_fast\n"
     ASM_END(string_copy_max)
     //
-    //       Not the string_last_of_or_end above it: this one answers null for the terminator
-    //       rather than the end of the string, which is why it cannot borrow it.
+    //       Not quite the string_last_of_or_end above it: this one answers null
+    //       for the terminator where that one answers the end of the string. For
+    //       every other byte the two are the same question -- the last match, or
+    //       nothing -- so the terminator is answered here and the rest is handed
+    //       over. It used to be a byte walk of its own, which is what "cannot
+    //       borrow it" cost.
     //
     ASM_FUNC(string_last_of)
-    "movzbl %sil, %ecx\n   xor %eax, %eax  # no match yet\n"
-    "movzbl (%rdi), %edx\n   test %dl, %dl\n   jz 2f\n   .balign 16\n"
-    "1:  cmp %ecx, %edx\n   cmove %rdi, %rax  # moved, not jumped around\n"
-    "inc %rdi\n   movzbl (%rdi), %edx\n   test %dl, %dl\n   jnz 1b\n"
-    "2:\n"
-    ASM_RET
+    "xor %eax, %eax\n   test %sil, %sil\n   jz 9f  # nothing, for the terminator\n"
+    "jmp string_last_of_or_end\n"
+    "9:  RET\n"
     ASM_END(string_last_of)
     //
     //       The byte tested is always the one that was there before the store,
@@ -1747,11 +2826,37 @@ __asm__(
     //       branch, which faults on a string the caller only meant to read.
     //
     ASM_FUNC(string_replace_all)
-    "movsbl %sil, %ecx\n   test %ecx, %ecx\n   jle 2f  # b8 at or below zero never matches\n"
-    "movzbl (%rdi), %eax\n   test %al, %al\n   jz 2f\n   .balign 16\n"
+    "movsbl %sil, %ecx\n   test %ecx, %ecx\n   jle 9f  # b8 at or below zero never matches\n"
+    "cmpb $0, cpu_has_avx2(%rip)\n   je 5f\n"
+    "vpxor %xmm1, %xmm1, %xmm1\n"
+    "1:  test $31, %dil\n   jz 2f\n"
+    "movzbl (%rdi), %eax\n   test %al, %al\n   jz 6f\n"
+    "cmp %ecx, %eax\n   jne 3f\n   mov %dl, (%rdi)\n"
+    "3:  inc %rdi\n   jmp 1b\n"
+    //
+    //       The first block is tested before the two broadcasts are built, so a
+    //       string that ends inside it never pays for them: at eight bytes that
+    //       was nine cycles, and the whole call is about twenty.
+    //
+    "2:  vmovdqa (%rdi), %ymm0\n"
+    "vpcmpeqb %ymm1, %ymm0, %ymm4\n   vpmovmskb %ymm4, %eax\n"
+    "test %eax, %eax\n   jnz 4f\n"
+    "vmovd %ecx, %xmm2\n   vpbroadcastb %xmm2, %ymm2\n"
+    "movzbl %dl, %eax\n   vmovd %eax, %xmm3\n   vpbroadcastb %xmm3, %ymm3\n"
+    "jmp 7f\n"
+    "8:  vmovdqa (%rdi), %ymm0\n"
+    "vpcmpeqb %ymm1, %ymm0, %ymm4\n   vpmovmskb %ymm4, %eax\n"
+    "test %eax, %eax\n   jnz 4f  # the terminator is in this block\n"
+    "7:  vpcmpeqb %ymm2, %ymm0, %ymm4\n   vpmovmskb %ymm4, %eax\n"
+    "test %eax, %eax\n   jz 0f  # nothing to replace: no store at all\n"
+    "vpblendvb %ymm4, %ymm3, %ymm0, %ymm0\n   vmovdqa %ymm0, (%rdi)\n"
+    "0:  add $32, %rdi\n   jmp 8b\n"
+    "4:  vzeroupper\n   jmp 5f\n"
+    "6:  vzeroupper\n   RET\n"
+    "5:  movzbl (%rdi), %eax\n   test %al, %al\n   jz 9f\n   .balign 16\n"
     "1:  cmp %ecx, %eax\n   je 4f\n"
     "3:  inc %rdi\n   movzbl (%rdi), %eax\n   test %al, %al\n   jnz 1b\n"
-    "2:\n"
+    "9:\n"
     ASM_RET
     "4:  mov %dl, (%rdi)\n   jmp 3b\n"
     ASM_END(string_replace_all)
@@ -1761,15 +2866,31 @@ __asm__(
     //       reads as no second half rather than an empty one.
     //
     ASM_FUNC(string_cut)
-    "movsbl %sil, %ecx\n   test %ecx, %ecx\n   jle 4f\n   movzbl (%rdi), %eax\n"
-    "test %al, %al\n   jz 4f\n   .balign 16\n"
-    "1:  cmp %ecx, %eax\n   je 2f\n   inc %rdi\n   movzbl (%rdi), %eax\n"
+    "movsbl %sil, %edx\n   test %edx, %edx\n   jle 8f  # b8 at or below zero never matches\n"
+    "cmpb $0, cpu_has_avx2(%rip)\n   je 5f\n"
+    "vmovd %edx, %xmm2\n   vpbroadcastb %xmm2, %ymm2\n   vpxor %xmm1, %xmm1, %xmm1\n"
+    "mov %rdi, %r8\n   and $-32, %r8\n   mov %edi, %ecx\n   and $31, %ecx\n"
+    "vmovdqa (%r8), %ymm0\n"
+    "vpcmpeqb %ymm1, %ymm0, %ymm3\n   vpcmpeqb %ymm2, %ymm0, %ymm4\n"
+    "vpor %ymm3, %ymm4, %ymm3\n   vpmovmskb %ymm3, %eax\n"
+    "shr %cl, %eax\n   test %eax, %eax\n   jnz 2f\n"
+    "1:  add $32, %r8\n   vmovdqa (%r8), %ymm0\n"
+    "vpcmpeqb %ymm1, %ymm0, %ymm3\n   vpcmpeqb %ymm2, %ymm0, %ymm4\n"
+    "vpor %ymm3, %ymm4, %ymm3\n   vpmovmskb %ymm3, %eax\n"
+    "test %eax, %eax\n   jz 1b\n"
+    "bsf %eax, %eax\n   add %r8, %rax\n   jmp 3f\n"
+    "2:  bsf %eax, %eax\n   add %rdi, %rax\n"
+    "3:  vzeroupper\n"
+    "4:  cmpb $0, (%rax)\n   je 8f  # the terminator came first: no cut\n"
+    "movb $0, (%rax)\n   inc %rax\n   cmpb $0, (%rax)\n   je 8f\n"
+    "RET\n"
+    "8:  xor %eax, %eax\n   RET\n"
+    //       No AVX2: the byte loop this replaced, rotated as described above.
+    "5:  movzbl (%rdi), %eax\n   test %al, %al\n   jz 8b\n   .balign 16\n"
+    "1:  cmp %edx, %eax\n   je 2f\n   inc %rdi\n   movzbl (%rdi), %eax\n"
     "test %al, %al\n   jnz 1b\n"
-    "4:  xor %eax, %eax\n"
-    ASM_RET
-    "2:  movb $0, (%rdi)\n   inc %rdi\n   cmpb $0, (%rdi)\n   je 4b\n"
-    "mov %rdi, %rax\n"
-    ASM_RET
+    "jmp 8b\n"
+    "2:  mov %rdi, %rax\n   jmp 4b\n"
     ASM_END(string_cut)
 
     //
@@ -1915,34 +3036,174 @@ ASM_FUNC(positive_to_string)
     //       up to the call and not after it, so it lives in r11, which the call
     //       is free to destroy.
     //
+    //       What was here was a loop taking two digits a pass: a reciprocal
+    //       multiply, a pair out of the table, and a test on the number the
+    //       pass had consumed. Twelve instructions for two digits, and the
+    //       test is on the input rather than on a count, so its trip is
+    //       whatever the caller passed and the exit mispredicts once a call.
+    //
+    //       This is the same arithmetic with the loop taken out. A number is
+    //       split by a hundred million into chunks of at most eight digits,
+    //       each chunk becomes eight characters with no branch in it, and the
+    //       leading chunk's zeros are skipped by starting the write further
+    //       in rather than by not writing them. So the writes are fixed and
+    //       what varies is one pointer.
+    //
+    //       On a 9950X, a call at a time over a spread of sixty four inputs,
+    //       twenty thousand passes, best of five. Instructions are counted by
+    //       perf against an empty loop and include the six the writer costs:
+    //
+    //                             instructions        cycles           ns
+    //           one digit          23.1 -> 22.1    8.4 -> 7.6    1.66 -> 1.45
+    //           nine digits        76.1 -> 69.1   15.2 -> 14.6   2.94 -> 2.85
+    //           twenty digits     142.1 -> 97.1   33.6 -> 22.9   6.30 -> 4.35
+    //           every count mixed  86.1 -> 67.7   18.2 -> 14.8   3.47 -> 2.89
+    //
+    //       Nine digits gains least and that is the shape of it: it is the
+    //       length that pays for two chunks and fills only one of them.
+    //
+    //       Three magic numbers do the dividing, all of them checked over
+    //       their whole domain rather than trusted:
+    //
+    //           n / 100000000  is  n * 0xABCC77118461CEFD >> 64 >> 26
+    //           x / 10000      is  x * 1759218605 >> 44      for x < 3.1e9
+    //           h / 100        is  h * 5243 >> 19            for h < 43690
+    //
+    //       The second is deliberately not the usual 0xD1B71759 >> 45, which
+    //       does not fit an imm32 and would want a register of its own.
+    //
+    //       Not SIMD, and that was measured rather than assumed. The published
+    //       SSE2 eight digit conversion -- the pmuludq split, the two
+    //       pmulhuw divides, mullo and a shifted subtract, packuswb and a
+    //       paddb -- was written out beside this one and both were run
+    //       sixteen million times on a 9950X:
+    //
+    //                          instructions   cycles
+    //           this               31.5        6.1
+    //           SSE2               31.5        8.3
+    //
+    //       The same instruction count and a third more cycles. That is the
+    //       whole answer: a vector's win is width, and one number at a time
+    //       has no width to give it. The scan in string_format is the place in
+    //       these routines where SIMD does pay, and it is used there.
+    //
+    //       The digit count is the log2 scaled by 1233/4096, which is off by
+    //       at most one, and one compare against the power of ten it landed
+    //       on settles that. sbb of minus one adds the borrow's complement,
+    //       so there is no branch anywhere in it.
+    //
     "mov %rdi, %r11\n   sub $40, %rsp  # 40, not 32: aligned at the call\n"
-    "lea 40(%rsp), %rcx  # one past the end of the buffer\n"
-    "lea digit_pairs(%rip), %r9\n   cmp $99, %rsi\n   jbe 3f\n"
+    "lea digit_pairs(%rip), %r9\n"
     //
-    //       n / 100 as gcc spells it: shift two off the bottom first, because
-    //       the reciprocal of a hundred does not fit in sixty four bits and the
-    //       reciprocal of twenty five does.
+    //       One pair covers everything under a hundred, and zero arrives here
+    //       too: the table would have written it as 00 and the pointer steps
+    //       past the first of them.
     //
-    "movabs $0x28F5C28F5C28F5C3, %r10\n"
-    "1:  mov %rsi, %rax\n   shr $2, %rax\n   mul %r10\n   shr $2, %rdx  # n / 100\n"
-    "imul $100, %rdx, %rax\n   mov %rsi, %r8\n   sub %rax, %r8  # n % 100, and rsi keeps n\n"
-    "movzwl (%r9,%r8,2), %eax  # both characters at once\n"
-    "sub $2, %rcx\n   mov %ax, (%rcx)\n"
-    //
-    //       The test is on the number this pass consumed, not on the quotient it
-    //       produced, so the branch does not wait on the multiply.
-    //
-    "cmp $9999, %rsi\n   mov %rdx, %rsi\n   ja 1b\n"
-    "3:  cmp $9, %rsi\n   jbe 4f\n   movzwl (%r9,%rsi,2), %eax\n   sub $2, %rcx\n"
-    "mov %ax, (%rcx)\n   jmp 5f\n"
-    //
-    //       One digit left over, and zero arrives here too: the pair table would
-    //       have written it as 00.
-    //
-    "4:  add $48, %esi\n   dec %rcx\n   mov %sil, (%rcx)\n"
-    "5:  mov %rcx, %rdi\n   lea 40(%rsp), %rsi\n   sub %rcx, %rsi  # how many digits\n"
+    "cmp $99, %rsi\n   ja 1f\n"
+    "movzwl (%r9,%rsi,2), %eax\n   mov %ax, 38(%rsp)\n"
+    "xor %edx, %edx\n   cmp $10, %rsi\n   adc $0, %edx  # one digit: skip the leading zero\n"
+    "lea 38(%rsp,%rdx), %rdi\n   mov $2, %esi\n   sub %rdx, %rsi\n"
     "call *%r11\n   add $40, %rsp\n"
     ASM_RET
+    //
+    //       Four characters, from a value under ten thousand.
+    //
+    "1:  cmp $9999, %rsi\n   ja 2f\n"
+    "mov %esi, %eax\n"
+    "imul $5243, %eax, %edx\n   shr $19, %edx\n   imul $100, %edx, %ecx\n   sub %ecx, %eax\n"
+    "movzwl (%r9,%rdx,2), %edx\n   movzwl (%r9,%rax,2), %eax\n"
+    "mov %dx, 36(%rsp)\n   mov %ax, 38(%rsp)\n   jmp 9f\n"
+    //
+    //       Eight characters, from a value under a hundred million. Four table
+    //       reads and four halfword stores, and the four divides that feed
+    //       them are two levels of a tree rather than four steps of a chain.
+    //
+    "2:  cmp $99999999, %rsi\n   ja 3f\n"
+    "mov %esi, %eax\n"
+    "imul $1759218605, %rax, %rcx\n   shr $44, %rcx\n   imul $10000, %ecx, %edx\n   sub %edx, %eax\n"
+    "imul $5243, %ecx, %edx\n   shr $19, %edx\n   imul $100, %edx, %edi\n   sub %edi, %ecx\n"
+    "movzwl (%r9,%rdx,2), %edx\n   movzwl (%r9,%rcx,2), %ecx\n"
+    "mov %dx, 32(%rsp)\n   mov %cx, 34(%rsp)\n"
+    "imul $5243, %eax, %edx\n   shr $19, %edx\n   imul $100, %edx, %edi\n   sub %edi, %eax\n"
+    "movzwl (%r9,%rdx,2), %edx\n   movzwl (%r9,%rax,2), %eax\n"
+    "mov %dx, 36(%rsp)\n   mov %ax, 38(%rsp)\n   jmp 9f\n"
+    //
+    //       Nine digits or more: the bottom eight, then whatever is left over
+    //       through the same two shapes again. The leading chunk is written
+    //       padded and the pointer is what drops its zeros.
+    //
+    "3:  movabs $0xABCC77118461CEFD, %r10\n"
+    "mov %rsi, %rax\n   mul %r10\n   shr $26, %rdx  # n / 100000000\n"
+    "imul $100000000, %rdx, %rax\n   mov %rdx, %r8\n"
+    "mov %esi, %ecx\n   sub %eax, %ecx  # n % 100000000\n"
+    "mov %ecx, %eax\n"
+    "imul $1759218605, %rax, %rcx\n   shr $44, %rcx\n   imul $10000, %ecx, %edx\n   sub %edx, %eax\n"
+    "imul $5243, %ecx, %edx\n   shr $19, %edx\n   imul $100, %edx, %edi\n   sub %edi, %ecx\n"
+    "movzwl (%r9,%rdx,2), %edx\n   movzwl (%r9,%rcx,2), %ecx\n"
+    "mov %dx, 32(%rsp)\n   mov %cx, 34(%rsp)\n"
+    "imul $5243, %eax, %edx\n   shr $19, %edx\n   imul $100, %edx, %edi\n   sub %edi, %eax\n"
+    "movzwl (%r9,%rdx,2), %edx\n   movzwl (%r9,%rax,2), %eax\n"
+    "mov %dx, 36(%rsp)\n   mov %ax, 38(%rsp)\n"
+    "cmp $9999, %r8\n   ja 4f\n"
+    "mov %r8d, %eax\n"
+    "imul $5243, %eax, %edx\n   shr $19, %edx\n   imul $100, %edx, %ecx\n   sub %ecx, %eax\n"
+    "movzwl (%r9,%rdx,2), %edx\n   movzwl (%r9,%rax,2), %eax\n"
+    "mov %dx, 28(%rsp)\n   mov %ax, 30(%rsp)\n   jmp 9f\n"
+    "4:  cmp $99999999, %r8\n   ja 5f\n"
+    "mov %r8d, %eax\n"
+    "imul $1759218605, %rax, %rcx\n   shr $44, %rcx\n   imul $10000, %ecx, %edx\n   sub %edx, %eax\n"
+    "imul $5243, %ecx, %edx\n   shr $19, %edx\n   imul $100, %edx, %edi\n   sub %edi, %ecx\n"
+    "movzwl (%r9,%rdx,2), %edx\n   movzwl (%r9,%rcx,2), %ecx\n"
+    "mov %dx, 24(%rsp)\n   mov %cx, 26(%rsp)\n"
+    "imul $5243, %eax, %edx\n   shr $19, %edx\n   imul $100, %edx, %edi\n   sub %edi, %eax\n"
+    "movzwl (%r9,%rdx,2), %edx\n   movzwl (%r9,%rax,2), %eax\n"
+    "mov %dx, 28(%rsp)\n   mov %ax, 30(%rsp)\n   jmp 9f\n"
+    //
+    //       Seventeen digits or more, which the top of the type is: the third
+    //       chunk is at most 1844, so four characters cover it.
+    //
+    "5:  mov %r8, %rax\n   mul %r10\n   shr $26, %rdx\n"
+    "imul $100000000, %rdx, %rax\n   sub %eax, %r8d\n   mov %rdx, %r10\n"
+    "mov %r8d, %eax\n"
+    "imul $1759218605, %rax, %rcx\n   shr $44, %rcx\n   imul $10000, %ecx, %edx\n   sub %edx, %eax\n"
+    "imul $5243, %ecx, %edx\n   shr $19, %edx\n   imul $100, %edx, %edi\n   sub %edi, %ecx\n"
+    "movzwl (%r9,%rdx,2), %edx\n   movzwl (%r9,%rcx,2), %ecx\n"
+    "mov %dx, 24(%rsp)\n   mov %cx, 26(%rsp)\n"
+    "imul $5243, %eax, %edx\n   shr $19, %edx\n   imul $100, %edx, %edi\n   sub %edi, %eax\n"
+    "movzwl (%r9,%rdx,2), %edx\n   movzwl (%r9,%rax,2), %eax\n"
+    "mov %dx, 28(%rsp)\n   mov %ax, 30(%rsp)\n"
+    "mov %r10d, %eax\n"
+    "imul $5243, %eax, %edx\n   shr $19, %edx\n   imul $100, %edx, %ecx\n   sub %ecx, %eax\n"
+    "movzwl (%r9,%rdx,2), %edx\n   movzwl (%r9,%rax,2), %eax\n"
+    "mov %dx, 20(%rsp)\n   mov %ax, 22(%rsp)\n"
+    //
+    //       How many of those characters are the number. Everything that gets
+    //       here is a hundred or more, so bsr's undefined answer at zero is
+    //       not reachable.
+    //
+    "9:  bsr %rsi, %rcx\n   lea 1(%rcx), %eax\n   imul $1233, %eax, %eax\n   shr $12, %eax\n"
+    "lea ten_powers(%rip), %r10\n   cmp (%r10,%rax,8), %rsi\n   sbb $-1, %eax  # one over, or not\n"
+    "lea 40(%rsp), %rdi\n   mov %eax, %esi\n   sub %rsi, %rdi\n"
+    "call *%r11\n   add $40, %rsp\n"
+    ASM_RET
+    //
+    //       Inside the delimiters on purpose: this file is spliced together by
+    //       routine name, and a table in front of ASM_FUNC belongs to whatever
+    //       was there before rather than to this.
+    //
+    ".section .rodata\n   .balign 8\n"
+    "ten_powers:\n"
+    "        .quad 1\n                    .quad 10\n"
+    "        .quad 100\n                  .quad 1000\n"
+    "        .quad 10000\n                .quad 100000\n"
+    "        .quad 1000000\n              .quad 10000000\n"
+    "        .quad 100000000\n            .quad 1000000000\n"
+    "        .quad 10000000000\n          .quad 100000000000\n"
+    "        .quad 1000000000000\n        .quad 10000000000000\n"
+    "        .quad 100000000000000\n      .quad 1000000000000000\n"
+    "        .quad 10000000000000000\n    .quad 100000000000000000\n"
+    "        .quad 1000000000000000000\n  .quad 10000000000000000000\n"
+    ".text\n"
     ASM_END(positive_to_string)
     //
     //
@@ -1997,7 +3258,22 @@ ASM_FUNC(positive_to_string)
     "2:  bsf %rax, %rax\n   shr $3, %rax\n   add %rdi, %rax  # the terminator\n"
     "xor %r9d, %r9d  # the number so far\n"
     "mov $1, %esi  # what the next digit is worth\n"
-    "dec %rax\n"
+    "lea digit_words(%rip), %r11\n"
+    //
+    //       The bounds test is against the start of the string and not against
+    //       a count, so the eight bytes read are eight bytes the caller gave
+    //       us and the read cannot walk into a page in front of them.
+    //
+    "5:  lea -8(%rax), %rcx\n   cmp %r8, %rcx\n   jb 7f  # fewer than eight bytes left\n"
+    "mov (%rcx), %rdx\n   mov %rdx, %rdi\n   and (%r11), %rdi\n"
+    "mov %rdx, %r10\n   add 8(%r11), %r10\n   and (%r11), %r10\n   shr $4, %r10\n"
+    "or %r10, %rdi\n   cmp 16(%r11), %rdi\n   jne 7f  # one of the eight is not a digit\n"
+    "sub 24(%r11), %rdx\n   imul $2561, %rdx, %rdx\n   shr $8, %rdx\n   and 32(%r11), %rdx\n"
+    "imul $6553601, %rdx, %rdx\n   shr $16, %rdx\n   and 40(%r11), %rdx\n"
+    "imul 48(%r11), %rdx\n   shr $32, %rdx  # the eight, as a number\n"
+    "imul %rsi, %rdx\n   add %rdx, %r9\n   imul $100000000, %rsi, %rsi\n"
+    "mov %rcx, %rax\n   jmp 5b\n"
+    "7:  dec %rax\n"
     //
     //       Unsigned compare: an empty string steps to one before the start,
     //       which is below it and not above.
@@ -2008,6 +3284,21 @@ ASM_FUNC(positive_to_string)
     "dec %rax\n   jmp 3b\n"
     "4:  mov %r9, %rax\n"
     ASM_RET
+    //
+    //       Inside the delimiters on purpose: this file is spliced together by
+    //       routine name, and a table in front of ASM_FUNC belongs to whatever
+    //       was there before rather than to this.
+    //
+    ".section .rodata\n   .balign 8\n"
+    "digit_words:\n"
+    "        .quad 0xF0F0F0F0F0F0F0F0  # the high nibbles, which a digit has as three\n"
+    "        .quad 0x0606060606060606  # what pushes anything over nine into the next nibble\n"
+    "        .quad 0x3333333333333333  # what eight digits answer\n"
+    "        .quad 0x3030303030303030  # ASCII zero, eight times\n"
+    "        .quad 0x00FF00FF00FF00FF\n"
+    "        .quad 0x0000FFFF0000FFFF\n"
+    "        .quad 0x0000271000000001  # ten thousand and one, in two halves\n"
+    ".text\n"
     ASM_END(string_to_positive)
     //
     //
@@ -2038,71 +3329,90 @@ ASM_FUNC(positive_to_string)
     //
     ASM_FUNC(string_find)
     //
-    //       A candidate that fails restarts one byte past where it began, not
-    //       where it stopped. Carrying on from the mismatch -- which is what
-    //       the C this replaces did, and what the comment here used to excuse
-    //       -- steps over every start inside the part that matched, so "aab"
-    //       is not found in "aaab": the candidate at zero eats two bytes
-    //       before failing and the scan resumes past the one at one.
+    //       The difference between the two is a length. memory_search is told
+    //       how many bytes it may read; string_find is given a terminator and
+    //       has to find out, and it cannot simply measure the whole string
+    //       first -- grep hands this a megabyte and wants the match at byte
+    //       nine hundred, and a strlen of the lot before looking would be the
+    //       slower half of the work.
     //
-    //       Nothing unusual is needed to reach it. Over strings drawn from a
-    //       four letter alphabet it missed 1000 of 200000 searches, and
-    //       string_find is what grep and sed use for fixed string search.
+    //       So the readable run is discovered a page at a time. A byte that
+    //       can be read means its whole page can be read, because that is the
+    //       granularity a mapping has; and a page with no terminator in it
+    //       means the string carries on into the next one, which therefore
+    //       can be read as well. memchr over one page at a time is that
+    //       argument written down, and it runs at the speed of the wide byte
+    //       hunt rather than of a word-at-a-time strlen: 143 GB/s against 32
+    //       on a 9950X, which is why the terminator is not looked for with
+    //       string_length_max.
     //
-    "movzbl (%rsi), %ecx\n   xor %eax, %eax\n   test %cl, %cl\n   jnz 2f  # an empty input matches nothing\n"
+    //       Four thousand and ninety six is assumed rather than asked for,
+    //       and it is the smallest page any of these machines has. Assuming
+    //       less than the truth is what makes it safe; a machine with sixteen
+    //       kilobyte pages only means more calls than were needed.
+    //
+    //       The chunk starts at two hundred and fifty six bytes and doubles
+    //       to sixty four kilobytes, and the growth is not tidiness. A chunk
+    //       is walked twice -- once for the terminator, once for the needle
+    //       -- so a match at byte ten of a long string costs two chunks of
+    //       work wherever it is found. Fixed at sixty four kilobytes that is
+    //       a hundred and twenty eight kilobytes to answer with byte ten,
+    //       and a caller stepping through a string a match at a time pays it
+    //       every step. Doubling makes the work proportional to the distance
+    //       to the answer and still reaches the size where a chunk is worth
+    //       its setup within nine rounds.
+    //
+    //       Sixty four kilobytes at the top because the pass costs a scan of
+    //       the needle to set up, and a chunk that size keeps both walks
+    //       inside the cache the first one just filled.
+    //
+    //       A chunk overlaps the one before it by needle_size - 1, so a
+    //       match lying across the seam is still found, and the chunk is
+    //       never so small that the overlap stops the cursor moving.
+    //
+    //       An empty input answers nothing, which looks wrong beside strstr
+    //       and is what this has always done. memmem answers the front of the
+    //       haystack and memory_search does too; the two disagree on purpose,
+    //       and the alias onto strstr is the reason.
+    //
+    "movzbl (%rsi), %eax\n   test %al, %al\n   jnz 2f\n"
+    "xor %eax, %eax\n"
     ASM_RET
-    "2:  push %rbx\n   push %r12\n   push %r14\n   mov %rcx, %r14  # the byte a match has to start with\n"
-    "movabs $0x0101010101010101, %r10\n   mov %rcx, %r8\n   imul %r10, %r8  # it, in all eight positions\n"
-    "movabs $0x8080808080808080, %r11\n"
     //
-    //      Four bytes by hand first, every time the scan restarts. Where
-    //      that byte is common -- a text over three symbols, a column of
-    //      digits -- the next candidate is two or three bytes away and the
-    //      word machinery never pays for itself. Where it is rare the four
-    //      run out and the words take over, which is the case that wins.
+    //      One byte is strchr, which is already here.
     //
-    //      Four rather than eight or sixteen because it was measured: on a
-    //      9950X, 4096 bytes of text over three symbols, 65536 calls, four
-    //      is 230M ticks against the C's 237M, eight is 264M and sixteen is
-    //      296M. The longer the hand window the more of a sparse text it
-    //      takes away from the words, which are what make this worth doing.
+    "2:  cmpb $0, 1(%rsi)\n   jne 3f\n"
+    "movzbl (%rsi), %esi\n   jmp string_first_of\n"
+    "3:  push %rbx\n   push %rbp\n   push %r12\n   push %r13\n   push %r14\n"
+    "push %r15\n   sub $8, %rsp\n"
+    "mov %rdi, %rbx  # where to look next\n   mov %rsi, %rbp  # the needle\n"
+    "mov %rsi, %rdi\n   call string_length\n   mov %rax, %r12\n"
+    "mov $256, %r13\n   lea 0(,%r12,4), %rax\n   cmp %rax, %r13\n   jae 4f\n"
+    "mov %rax, %r13  # never a chunk a needle would not fit four times in\n"
+    "4:  xor %r14, %r14\n   xor %r15d, %r15d\n"
+    "41: lea (%rbx,%r14), %rdi\n   mov %edi, %edx\n   and $4095, %edx\n"
+    "mov $4096, %ecx\n   sub %edx, %ecx\n   mov %rcx, %rdx  # to the end of this page\n"
+    "xor %esi, %esi\n   call memory_first_of\n"
+    "test %rax, %rax\n   jz 42f\n"
+    "sub %rbx, %rax\n   mov %rax, %r14\n   mov $1, %r15d  # the string ends in here\n"
+    "jmp 43f\n"
     //
-    "1:  movzbl (%rdi), %eax\n   test %al, %al\n   jz 8f\n   cmp %r14b, %al\n"
-    "je 3f\n   inc %rdi\n   movzbl (%rdi), %eax\n   test %al, %al\n"
-    "jz 8f\n   cmp %r14b, %al\n   je 3f\n   inc %rdi\n"
-    "movzbl (%rdi), %eax\n   test %al, %al\n   jz 8f\n   cmp %r14b, %al\n"
-    "je 3f\n   inc %rdi\n   movzbl (%rdi), %eax\n   test %al, %al\n"
-    "jz 8f\n   cmp %r14b, %al\n   je 3f\n   inc %rdi\n"
-    "mov %rdi, %rbx\n   mov %edi, %ecx\n   and $7, %ecx\n   and $-8, %rbx  # align down: same page, cannot fault\n"
-    "mov (%rbx), %rdx\n   shl $3, %ecx\n   mov $-1, %r9\n   shl %cl, %r9  # which bytes of this word count\n"
-    "movzbl %r8b, %eax\n   inc %eax\n   movzbl %al, %eax\n   mov $1, %ecx\n"
-    "test %eax, %eax\n   cmovz %ecx, %eax  # never zero, never it\n"
-    "imul %r10, %rax\n   mov %r9, %rcx\n   not %rcx\n   and %rcx, %rax  # only in front of the string\n"
-    "and %r9, %rdx\n   or %rax, %rdx\n"
-    "6:  mov %rdx, %rax\n   xor %r8, %rax  # the byte that matched is now zero\n"
-    "mov %rax, %rcx\n   not %rcx\n   sub %r10, %rax\n   and %rcx, %rax\n"
-    "and %r11, %rax\n   mov %rdx, %r12\n   sub %r10, %r12  # and the terminator, the same way\n"
-    "mov %rdx, %rcx\n   not %rcx\n   and %rcx, %r12\n   and %r11, %r12\n"
-    "or %r12, %rax\n   jnz 0f\n   add $8, %rbx\n   mov (%rbx), %rdx\n"
-    "jmp 6b\n"
-    "0:  bsf %rax, %rax\n   shr $3, %rax\n   lea (%rbx,%rax), %rdi  # the byte or the terminator\n"
-    "movzbl (%rdi), %eax\n   test %al, %al\n   jz 8f\n"
+    //      No terminator in that page, so the next one is the string's too.
+    //      Where it starts is worked out from the cursor again rather than
+    //      kept, because the call just used the register it was in.
     //
-    //      A borrow out of the bytes before the string can set a bit that
-    //      is neither. Carrying on from here is what the C would do with a
-    //      byte that does not match, so it costs a probe and nothing else.
-    //
-    "cmp %r14b, %al\n   jne 1b\n"
-    "3:  mov %rdi, %rdx  # where this candidate starts\n"
-    "mov %rsi, %r12\n"
-    "4:  movzbl (%r12), %eax\n   test %al, %al\n   jz 7f  # input ran out: this is the answer\n"
-    "cmp (%rdi), %al\n   jne 9f\n   inc %rdi\n   inc %r12\n"
-    "jmp 4b\n"
-    "9:  lea 1(%rdx), %rdi  # one past where this candidate began\n"
-    "jmp 1b\n"
-    "7:  mov %rdx, %rax\n   jmp 5f\n"
+    "42: lea (%rbx,%r14), %rax\n   and $-4096, %rax\n   add $4096, %rax\n"
+    "sub %rbx, %rax\n   mov %rax, %r14\n   cmp %r13, %r14\n   jb 41b\n"
+    "43: mov %rbx, %rdi\n   mov %r14, %rsi\n   mov %rbp, %rdx\n   mov %r12, %rcx\n"
+    "call memory_search\n   test %rax, %rax\n   jnz 9f\n"
+    "test %r15d, %r15d\n   jnz 8f  # the terminator was in it: nowhere else to look\n"
+    "mov %r14, %rax\n   sub %r12, %rax\n   inc %rax  # keep needle_size - 1 of overlap\n"
+    "add %rax, %rbx\n"
+    "add %r13, %r13\n   cmp $65536, %r13\n   jbe 45f\n   mov $65536, %r13\n"
+    "45: jmp 4b\n"
     "8:  xor %eax, %eax\n"
-    "5:  pop %r14\n   pop %r12\n   pop %rbx\n"
+    "9:  add $8, %rsp\n   pop %r15\n   pop %r14\n   pop %r13\n   pop %r12\n"
+    "pop %rbp\n   pop %rbx\n"
     ASM_RET
     ASM_END(string_find)
     //
@@ -2189,15 +3499,155 @@ ASM_FUNC(positive_to_string)
     "mov %rsi, %rdi  # where the current run of plain text began\n"
     "mov $-32, %r13  # four integer registers left to spend\n"
     "lea 208(%rsp), %r11\n   mov %r11, 168(%rsp)  # the caller's stack arguments\n"
-    "jmp .Lstring_format_test\n"
-    ".Lstring_format_step:\n   inc %rbp\n   movzbl (%rbp), %eax\n"
+    //
+    //       The hunt for the end of a run of plain text, which is where this
+    //       routine spent most of itself. A byte at a time was six
+    //       instructions each -- step, load, test for the terminator, test for
+    //       the percent, branch -- and thirty eight bytes of message cost two
+    //       hundred and twenty eight of them, against thirty for everything
+    //       else the call does.
+    //
+    //       On a 9950X, a call at a time, instructions by perf against an
+    //       empty loop and then cycles and nanoseconds:
+    //
+    //                                          instructions      cycles      ns
+    //           a line of text, no specifier   264 -> 103    47.5 -> 13.8  8.9 -> 2.6
+    //           "cp: Cannot copy '%s' ..."     252 -> 189    47.8 -> 31.6  8.8 -> 6.0
+    //           "%s has %p items worth %b"     377 -> 325    85.3 -> 62.5 15.4 -> 12.0
+    //           "one %% two %% three %% four"  279 -> 250    59.9 -> 45.2 11.1 -> 8.6
+    //           "%s"                            64 ->  63    17.1 -> 16.6  3.2 -> 3.2
+    //           "%p"                           146 -> 127    27.5 -> 24.2  5.1 -> 4.6
+    //           "%p %p %p %p"                  522 -> 451   102.8 -> 93.2 19.5 -> 17.8
+    //
+    //       The first two are the wide hunt below; the rest are runs too short
+    //       to reach it, and what moves them is positive_to_string.
+    //
+    //       The last three move because positive_to_string underneath them
+    //       changed, not because of anything here. Nothing got slower, which
+    //       took two goes: the first version had no walk in front of the wide
+    //       hunt and lost fourteen percent on "%p %p %p %p" and twenty three
+    //       on the run of literal percents, both of which are made of runs
+    //       too short to pay a setup.
+    //
+    //       So a word at a time, hunting either byte at once. A zero byte in w
+    //       is (w - 0x01..) & ~w & 0x80.., and a percent is a zero byte in
+    //       w ^ 0x25.., so the two hunts share the one mask at the end and the
+    //       complement of the word: ~(w ^ p) is ~w ^ p. Thirteen instructions
+    //       a word, two a byte.
+    //
+    //       The first byte is still tested on its own before any of that. A
+    //       format that begins with a specifier has an empty run in front of
+    //       it, and paying nine instructions of align-and-mask to discover
+    //       that would lose "%s" and "%p" the very cases they already lose.
+    //
+    //       Aligning down cannot cross into a page in front of the format
+    //       string, and the bytes before the run are forced to ones, which are
+    //       neither a terminator nor a percent.
+    //
     ".Lstring_format_test:\n   test %al, %al\n   jz .Lstring_format_tail\n   cmp $37, %al\n"
-    "jne .Lstring_format_step\n"
+    "je .Lstring_format_percent\n"
+    //
+    //       Eight bytes by hand before any of that, because the fixed cost of
+    //       the wide hunt is twenty six instructions and a byte at a time is
+    //       four, so a run shorter than that is cheaper walked. Real formats
+    //       are one long run of message and then short ones -- "%p\n" at the
+    //       end of a line is a run of one -- and paying the setup on those
+    //       lost more than the long run won.
+    //
+    //       Four instructions rather than six: a byte says whether it stops
+    //       the run by being an index into a table, so the terminator and the
+    //       percent are one compare instead of two.
+    //
+    "lea format_stops(%rip), %r9\n"
+    ".rept 8\n"
+    "inc %rbp\n   movzbl (%rbp), %eax\n   cmpb $0, (%r9,%rax)\n"
+    "jne .Lstring_format_stop\n"
+    ".endr\n"
+#ifndef KERNEL_MODE
+    //
+    //       Thirty two bytes at a time where the processor has it. Two
+    //       compares, an or and a movemask answer the whole width, which is
+    //       seven instructions for thirty two bytes against sixteen for
+    //       eight.
+    //
+    //       Measured on its own, outside this file, hunting the percent that
+    //       ends a thirty eight byte run, over eight alignments and sixteen
+    //       million calls on a 9950X:
+    //
+    //                          instructions   cycles
+    //           a byte at a time    235.5      32.9
+    //           a word at a time     95.0      17.3
+    //           sixteen at a time    45.5       5.6
+    //
+    //       The sixteen wide figure is SSE2, which every x86_64 has; this is
+    //       the same shape at thirty two, gated on what cpu_detect found
+    //       because that is where the file keeps that answer and because the
+    //       word path underneath has to stay reachable to stay tested.
+    //
+    //       Not in the kernel. This is the block that already refuses to spill
+    //       the vector registers there, for the reason the top of the file
+    //       gives: touching them without kernel_fpu_begin is somebody else's
+    //       state. So the kernel gets the word at a time path, which is the
+    //       same source the fallback here is, and verify.c runs the whole set
+    //       of format cases twice -- once as the processor is, once with the
+    //       flag cleared -- so neither of the two is the one nobody reaches.
+    //
+    //       The mask over the bytes in front of the cursor comes back here.
+    //       Eight bytes were shown not to stop the run and thirty two byte
+    //       alignment reaches thirty one back, so unlike the word path this
+    //       one can see something it must not answer.
+    //
+    "cmpb $0, cpu_has_avx2(%rip)\n   je .Lstring_format_word_setup\n"
+    "mov %rbp, %r8\n   mov %ebp, %ecx\n   and $-32, %r8\n   and $31, %ecx\n"
+    "vpxor %xmm1, %xmm1, %xmm1\n   vpbroadcastb format_words+16(%rip), %ymm2\n"
+    "vmovdqa (%r8), %ymm0\n"
+    "vpcmpeqb %ymm1, %ymm0, %ymm3\n   vpcmpeqb %ymm2, %ymm0, %ymm4\n"
+    "vpor %ymm4, %ymm3, %ymm3\n   vpmovmskb %ymm3, %eax\n"
+    "mov $-1, %edx\n   shl %cl, %edx\n   and %edx, %eax\n"
+    "jnz .Lstring_format_wide_found\n"
+    ".Lstring_format_wide:\n   add $32, %r8\n   vmovdqa (%r8), %ymm0\n"
+    "vpcmpeqb %ymm1, %ymm0, %ymm3\n   vpcmpeqb %ymm2, %ymm0, %ymm4\n"
+    "vpor %ymm4, %ymm3, %ymm3\n   vpmovmskb %ymm3, %eax\n"
+    "test %eax, %eax\n   jz .Lstring_format_wide\n"
+    ".Lstring_format_wide_found:\n   bsf %eax, %eax\n   add %rax, %r8\n"
+    "mov %r8, %rbp\n   vzeroupper  # no half used ymm left for the writer\n"
+    "movzbl (%rbp), %eax\n   jmp .Lstring_format_stop\n"
+    ".Lstring_format_word_setup:\n"
+#endif
+    //
+    //       No mask over the bytes in front of the run, and that is a proof
+    //       rather than an oversight. Nine bytes have just been shown not to
+    //       stop the run -- the one the test looked at and the eight the .rept
+    //       above stepped over -- and an aligned word reaches at most seven
+    //       bytes back, so every byte below the cursor in this word is one of
+    //       them. There is nothing there that could answer.
+    //
+    //       The eight is load-bearing, not a tuning knob. Shorten the .rept to
+    //       four and a percent behind the cursor is inside the word, the hunt
+    //       answers it, and the scan walks backwards.
+    //
+    //       It was masked at first. A mutation that read the mask one entry
+    //       along changed no answer anywhere in the suite, which is what sent
+    //       somebody to look; three instructions and a sixty four byte table
+    //       went with it.
+    //
+    "mov %rbp, %r8\n   and $-8, %r8  # align down: same page, cannot fault\n"
+    "mov (%r8), %rdx\n"
+    ".Lstring_format_word:\n   mov %rdx, %rax\n   not %rax\n"
+    "mov %rdx, %rcx\n   sub format_words(%rip), %rcx\n   and %rax, %rcx  # a zero byte\n"
+    "mov %rdx, %rsi\n   xor format_words+16(%rip), %rsi  # a percent is a zero byte here\n"
+    "sub format_words(%rip), %rsi\n   xor format_words+16(%rip), %rax\n   and %rax, %rsi\n"
+    "or %rsi, %rcx\n   and format_words+8(%rip), %rcx\n   jnz .Lstring_format_found\n"
+    "add $8, %r8\n   mov (%r8), %rdx\n   jmp .Lstring_format_word\n"
+    ".Lstring_format_found:\n   bsf %rcx, %rcx\n   shr $3, %rcx\n   add %rcx, %r8\n"
+    "mov %r8, %rbp\n   movzbl (%rbp), %eax\n"
+    ".Lstring_format_stop:\n   test %al, %al\n   jz .Lstring_format_tail\n"
     //
     //       The run of plain text before the percent, if there was one. The C
     //       counted the bytes it had stepped over; the two pointers say the
     //       same thing and cost a register less.
     //
+    ".Lstring_format_percent:\n"
     "cmp %rdi, %rbp\n   je .Lstring_format_spec\n   mov %rbp, %rsi\n   sub %rdi, %rsi\n"
     ASM_CALL("rbx")
     ".Lstring_format_spec:\n   movzbl 1(%rbp), %eax\n   inc %rbp\n   cmp $115, %al  # s\n"
@@ -2270,6 +3720,31 @@ ASM_FUNC(positive_to_string)
     ".Lstring_format_decimal_stack:\n   mov 168(%rsp), %rax\n   movsd (%rax), %xmm0\n   add $8, %rax\n"
     "mov %rax, 168(%rsp)\n   jmp .Lstring_format_decimal_go\n"
 #endif
+    //
+    //       Read straight off the instruction pointer rather than out of a
+    //       register: there are three of them and no register here survives a
+    //       call to the writer, so holding them would mean either three more
+    //       to push or three movabs at the top of every run.
+    //
+    //       Inside the delimiters on purpose: this file is spliced together by
+    //       routine name, and a table in front of ASM_FUNC belongs to whatever
+    //       was there before rather than to this.
+    //
+    ".section .rodata\n   .balign 8\n"
+    "format_words:\n"
+    "        .quad 0x0101010101010101\n"
+    "        .quad 0x8080808080808080\n"
+    "        .quad 0x2525252525252525  # the percent, in all eight positions\n"
+    //
+    //       Which bytes end a run of plain text. A byte per entry and not a
+    //       bit, for the reason string_span above gives: the shift and mask a
+    //       bit needs cost more than the two hundred and fifty four bytes.
+    //
+    "format_stops:\n"
+    "        .byte 1\n           .zero 36\n"
+    "        .byte 1  # the percent\n"
+    "        .zero 218\n"
+    ".text\n"
     ASM_END(string_format)
     //
     //       string_format is the name every caller uses and it cannot be a
@@ -2355,7 +3830,9 @@ ASM_FUNC(positive_to_string)
     // string starts in. What is past the terminator is masked off rather than
     // trusted.
     ASM_FUNC(string_table_find)
-    "push %rbx\n   push %rbp\n   push %r12\n   mov (%rdi), %r11\n"
+    "push %rbx\n   push %rbp\n   push %r12\n"
+    "mov %edi, %eax\n   and $0xfff, %eax\n   cmp $0xff8, %eax\n   ja 20f\n"
+    "mov (%rdi), %r11\n"
     //
     //       Whether the name runs past the first eight bytes, which the mask
     //       cannot say on its own: a name of exactly seven characters ends on
@@ -2376,7 +3853,9 @@ ASM_FUNC(positive_to_string)
     "3:  mov $-1, %rbp\n   mov $1, %r12d\n"
     "4:  xor %eax, %eax\n   mov %rsi, %r8\n"
     "5:  cmp %rcx, %rax\n   jae 9f\n   mov (%r8), %r9\n   test %r9, %r9\n"
-    "jz 9f\n   mov (%r9), %r10\n   xor %r11, %r10\n   test %rbp, %r10\n"
+    "jz 9f\n   mov %r9d, %ebx\n   and $0xfff, %ebx\n   cmp $0xff8, %ebx\n"
+    "ja 10f  # this entry ends too near a page to read eight of\n"
+    "mov (%r9), %r10\n   xor %r11, %r10\n   test %rbp, %r10\n"
     "jnz 8f\n"
     // The first eight agree as far as they matter. If the name ended inside
     // them that is the whole answer.
@@ -2386,6 +3865,19 @@ ASM_FUNC(positive_to_string)
     "test %r10d, %r10d\n   jz 7f\n   inc %rbx\n   inc %r9\n"
     "jmp 6b\n"
     "8:  add %rdx, %r8\n   inc %rax\n   jmp 5b\n"
+    // One entry, a byte at a time, because eight of it could not be read.
+    "10: mov %rdi, %rbx\n"
+    "11: movzbl (%rbx), %r10d\n   movzbl (%r9), %esi\n   cmp %r10d, %esi\n   jne 8b\n"
+    "test %r10d, %r10d\n   jz 7f\n   inc %rbx\n   inc %r9\n   jmp 11b\n"
+    // The wanted name itself is too near the end of a page, so nothing here
+    // may read a word at all. Rare enough to be its own plain loop rather
+    // than a branch in the one above.
+    "20: xor %eax, %eax\n   mov %rsi, %r8\n"
+    "21: cmp %rcx, %rax\n   jae 9f\n   mov (%r8), %r9\n   test %r9, %r9\n   jz 9f\n"
+    "mov %rdi, %rbx\n"
+    "22: movzbl (%rbx), %r10d\n   movzbl (%r9), %esi\n   cmp %r10d, %esi\n   jne 23f\n"
+    "test %r10d, %r10d\n   jz 7f\n   inc %rbx\n   inc %r9\n   jmp 22b\n"
+    "23: add %rdx, %r8\n   inc %rax\n   jmp 21b\n"
     "9:  mov %rcx, %rax\n"
     "7:  pop %r12\n   pop %rbp\n   pop %rbx\n"
     ASM_RET
@@ -2393,6 +3885,14 @@ ASM_FUNC(positive_to_string)
 );
 #ifdef KERNEL_MODE
 ASM_EXPORT(memchr);
+//
+//      memcmp goes out with the rest of them. build.sh claims it in x86's
+//      own string.h so lib/string.c leaves it to us, and a claimed symbol
+//      that is not exported is worse than one never claimed: the kernel
+//      links, and then every module wanting it fails at modpost with
+//      "undefined" -- efivarfs was the one that said so here.
+//
+ASM_EXPORT(memcmp);
 ASM_EXPORT(strchr);
 ASM_EXPORT(strchrnul);
 ASM_EXPORT(strcmp);
@@ -2442,39 +3942,21 @@ __asm__(
     //       widens with every byte because one of them costs an eighth of an
     //       instruction and the other costs two.
     //
-    //       Three things pay for the short strings, and all three are here
-    //       rather than in the loop, because the loop is not what a four byte
-    //       string spends its time in.
-    //
-    //       Both magic constants are AArch64 logical immediates -- an eight bit
-    //       element with one bit set, rotated -- so 0x0101010101010101 is one
-    //       ORR rather than the movz and three movk the older routines below
-    //       use, and 0x8080808080808080 does not need a register at all: it is
-    //       written into the AND that uses it.
+    //       That table is the word at a time body against the byte loop, and
+    //       neither is here any more: NEON is not optional on arm64, so this is
+    //       the vector scan and nothing else. The two savings that paid for the
+    //       short strings went with it -- the constants as logical immediates,
+    //       and the branch that let an already aligned pointer skip the mask --
+    //       because the scan builds no constants and takes its first sixteen
+    //       bytes aligned down whatever the pointer was. What that costs at four
+    //       bytes and what it is worth at four thousand is over NEON_SCAN.
     //
     //       The start is never copied anywhere. x0 is read twice at the top and
     //       not written until the answer goes into it, so the subtraction at
     //       the end still has it.
     //
-    //       And a pointer that is already aligned -- which is most of them,
-    //       since a compiler aligns its string literals -- jumps straight into
-    //       the loop. There is nothing before the string to mask off, so the
-    //       four instructions that would do it are one branch instead.
-    //
     ASM_FUNC(string_length)
-    "and x4, x0, #7  // how far into the word it begins\n"
-    "bic x5, x0, #7  // align down: same page, cannot fault\n"
-    "ldr x6, [x5]\n   mov x10, #0x0101010101010101\n"
-    "cbz x4, 1f  // aligned: nothing sits before it\n"
-    "lsl x4, x4, #3  // bytes -> bits\n"
-    "mov x9,  #-1\n"
-    "lsl x9, x9, x4\n   orn x6, x6, x9  // ones below the string, so they\n"
-    "  // cannot look like a terminator\n"
-    "1:  sub x9, x6, x10\n   bic x9, x9, x6\n   and x9, x9, #0x8080808080808080\n"
-    "cbnz x9, 2f\n   add x5, x5, #8\n"
-    "ldr x6, [x5]\n   b 1b\n"
-    "2:  rbit x9, x9\n   clz x9, x9  // first set high bit\n"
-    "add x5, x5, x9, lsr #3  // address of the terminator\n"
+    NEON_SCAN(NEON_ZERO)
     "sub x0, x5, x0  // minus where we started\n"
     ASM_RET
     ASM_END(string_length)
@@ -2525,6 +4007,13 @@ __asm__(
     "cbz w7, 4f  // both ended here, and w9 is zero\n"
     "mov x10, #0x0101010101010101\n"
     //
+    //      How many word steps before the wide path is worth entering: the
+    //      x86_64 block carries the reasoning, and it is the same one here.
+    //      A vector register is not free to set up and this call answers in
+    //      a handful of cycles when the two names differ where they begin.
+    //
+    "mov w11, #4\n"
+    //
     //      Would either read cross a page? 0xff8 is the last offset at
     //      which eight bytes still fit.
     //
@@ -2537,7 +4026,35 @@ __asm__(
     "sub x9, x6, x10\n   bic x9, x9, x6\n   and x9, x9, #0x8080808080808080\n"
     "cbnz x9, 3f\n   add x0, x0, #8\n"
     "add x1, x1, #8\n"
+    "subs w11, w11, #1\n   b.eq 20f\n"
     "b 1b\n"
+    //
+    //      Sixteen bytes a step, once four word steps have agreed.
+    //
+    //      One mask answers both questions: cmeq marks where the two agree,
+    //      a second marks where the first string ends, and bic leaves the
+    //      bytes that agree and are not the end. All ones means keep going;
+    //      anything else stops, and the lowest lane that is not ones is the
+    //      byte to answer with whichever of the two it was. Where both ended
+    //      together those bytes are equal and their difference is zero,
+    //      which is what that case wants anyway.
+    //
+    "20: and x9, x0, #0xfff\n   cmp x9, #0xff0  // sixteen bytes still fit\n"
+    "b.hi 24f\n   and x9, x1, #0xfff\n   cmp x9, #0xff0\n   b.hi 24f\n"
+    "ldr q0, [x0]\n   ldr q1, [x1]\n"
+    "cmeq v2.16b, v0.16b, v1.16b\n   cmeq v3.16b, v0.16b, #0\n"
+    "bic v2.16b, v2.16b, v3.16b\n"
+    "uminv b4, v2.16b\n   umov w9, v4.b[0]\n   cmp w9, #0xff\n   b.ne 23f\n"
+    "add x0, x0, #16\n   add x1, x1, #16\n   b 20b\n"
+    "23: mvn v2.16b, v2.16b\n   shrn v2.8b, v2.8h, #4\n   fmov x9, d2\n"
+    "rbit x9, x9\n   clz x9, x9\n   lsr x9, x9, #2\n"
+    "ldrb w6, [x0, x9]\n   ldrb w7, [x1, x9]\n   sub w9, w6, w7\n   b 4f\n"
+    //
+    //      Near the end of a page, so back to the word loop for eight steps
+    //      -- by then the boundary is behind us and the wide loop can have
+    //      it again.
+    //
+    "24: mov w11, #8\n   b 1b\n"
     "2:  ldrb w6, [x0]\n   ldrb w7, [x1]\n   subs w9, w6, w7\n   b.ne 4f\n"
     "cbz w7, 3f\n   add x0, x0, #1\n"
     "add x1, x1, #1\n"
@@ -2580,6 +4097,9 @@ __asm__(
     //       eight up. Four bytes is what the broadcast costs -- the byte being
     //       hunted has to be smeared across a word before the scan can look for
     //       it, and a four byte string does not walk far enough to get that back.
+    //       That is the word at a time body, which the vector scan replaced; the
+    //       broadcast is a dup into sixteen lanes now and costs the same shape of
+    //       nothing at four bytes.
     //
     //       There is no dispatch for it, and the reason is worth writing down
     //       rather than rediscovering: string_copy_max can switch on a length
@@ -2589,44 +4109,19 @@ __asm__(
     //       instruction loss at four bytes and ships without one for the same
     //       reason.
     //
-    //       The same three savings string_length takes -- the constants as immediates,
-    //       and the aligned pointer skipping the mask it does not need -- plus
-    //       one this one can have and string_length cannot: the answer and the
-    //       not-found are chosen with a csel rather than branched around, so
-    //       the tail is two instructions where it was four.
-    //
-    //       The 0x80.. mask is applied once to the two hunts together rather
-    //       than to each of them, which is a whole instruction out of every
-    //       turn of the loop and correct because or distributes over and.
+    //       The one saving that survived the widening is the tail: the answer
+    //       and the not-found are chosen with a csel rather than branched
+    //       around, which string_length has no use for.
     //
     //       The bytes before the string are thrown away by masking the result
     //       rather than the input, which keeps the byte being searched for out
-    //       of it: forcing them to 0xff the way string_length does would false-match a
-    //       search for 0xff.
+    //       of it: forcing them to 0xff the way a zero hunt may would
+    //       false-match a search for 0xff.
     //
     ASM_FUNC(string_first_of)
-    "and w1, w1, #0xff\n"
-    "mov x10, #0x0101010101010101\n"
-    "mul x3, x1, x10  // the byte, in all eight positions\n"
-    "and x4, x0, #7  // how far into the word it begins\n"
-    "bic x5, x0, #7  // align down: same page, cannot fault\n"
-    "ldr x6, [x5]\n   mov x7,  #-1                 // which bytes of this word count\n"
-    "cbz x4, 1f  // aligned: all of them\n"
-    "lsl x4, x4, #3  // bytes -> bits\n"
-    "lsl x7, x7, x4\n   cmp w1, #0xff\n"
-    "mov w14, #0xff\n"
-    "mov w15, #1\n"
-    "csel w14, w15, w14, eq  // neither zero nor it\n"
-    "mul x14, x14, x10\n   bic x14, x14, x7  // only in front of the string\n"
-    "and x6, x6, x7\n   orr x6, x6, x14\n"
-    "1:  eor x8, x6, x3  // the byte that matched is now zero\n"
-    "sub x9, x8, x10\n   bic x9, x9, x8\n   sub x12, x6, x10  // and the terminator, the same way\n"
-    "bic x12, x12, x6\n   orr x9, x9, x12\n   and x9, x9, #0x8080808080808080\n"
-    "cbnz x9, 2f\n   add x5, x5, #8\n"
-    "ldr x6, [x5]\n   b 1b\n"
-    "2:  rbit x9, x9\n   clz x9, x9  // first set high bit\n"
-    "add x9, x5, x9, lsr #3  // the byte or the terminator, whichever\n"
-    "ldrb w4, [x9]\n   cmp w4, w1\n   csel x0, x9, xzr, eq  // the terminator instead means not found\n"
+    "and w1, w1, #0xff\n   dup v1.16b, w1  // the byte, in all sixteen lanes\n"
+    NEON_SCAN(NEON_EITHER)
+    "ldrb w4, [x5]\n   cmp w4, w1\n   csel x0, x5, xzr, eq  // the terminator instead means not found\n"
     ASM_RET
     ASM_END(string_first_of)
     //
@@ -2649,37 +4144,20 @@ __asm__(
     ".text\n"
     //       string_first_of_or_end: the x86_64 block carries the reasoning.
     ASM_FUNC(string_first_of_or_end)
-    "and w1, w1, #0xff\n"
-    "mov x10, #0x0101\n"
-    "movk x10, #0x0101, lsl #16\n"
-    "movk x10, #0x0101, lsl #32\n"
-    "movk x10, #0x0101, lsl #48  // 0x0101010101010101\n"
-    "lsl x11, x10, #7  // 0x8080808080808080\n"
-    "mul x3, x1, x10  // the byte, in all eight positions\n"
-    "and x4, x0, #7  // how far into the word it begins\n"
-    "bic x5, x0, #7  // align down: same page, cannot fault\n"
-    "ldr x6, [x5]\n   lsl x4, x4, #3  // bytes -> bits\n"
-    "mov x7,  #-1\n"
-    "lsl x7, x7, x4  // which bytes of the first word count\n"
-    "cmp w1, #0xff\n"
-    "mov w14, #0xff\n"
-    "mov w15, #1\n"
-    "csel w14, w15, w14, eq  // neither zero nor it\n"
-    "mul x14, x14, x10\n   bic x14, x14, x7  // only in front of the string\n"
-    "and x6, x6, x7\n   orr x6, x6, x14\n"
-    "1:  eor x8, x6, x3  // the byte that matched is now zero\n"
-    "sub x9, x8, x10\n   bic x9, x9, x8\n   and x9, x9, x11\n   sub x12, x6, x10  // and the terminator, the same way\n"
-    "bic x12, x12, x6\n   and x12, x12, x11\n   orr x9, x9, x12\n   cbnz x9, 2f\n"
-    "add x5, x5, #8\n"
-    "ldr x6, [x5]\n   b 1b\n"
-    "2:  rbit x9, x9\n   clz x9, x9  // first set high bit\n"
-    "lsr x9, x9, #3  // its byte within the word\n"
-    "add x0, x5, x9\n   ret\n"
+    "and w1, w1, #0xff\n   dup v1.16b, w1\n"
+    NEON_SCAN(NEON_EITHER)
+    "mov x0, x5\n"
+    ASM_RET
     ASM_END(string_first_of_or_end)
     //       string_first_of_max: the x86_64 block carries the reasoning.
     ASM_FUNC(string_first_of_max)
-    "mov x9, #0\n"
-    "cbz x1, 9f\n   and w2, w2, #0xff\n"
+    "cbz x1, 7f\n   and w2, w2, #0xff\n   dup v1.16b, w2\n"
+    "mov x5, x0\n   mov x6, x1\n"
+    NEON_SCAN_MAX(NEON_EITHER)
+    "ldrb w4, [x5]\n   cmp w4, w2\n"
+    "csel x0, x5, xzr, eq  // the terminator instead means not found\n"
+    "ret\n"
+    "5:  mov x0, x5\n   mov x1, x6\n   cbz x1, 7f\n"
     "mov x10, #0x0101\n"
     "movk x10, #0x0101, lsl #16\n"
     "movk x10, #0x0101, lsl #32\n"
@@ -2694,17 +4172,18 @@ __asm__(
     "mov w14, #0xff\n"
     "mov w15, #1\n"
     "csel w14, w15, w14, eq  // neither zero nor it\n"
-    "mul x14, x14, x10\n   bic x14, x14, x7  // only in front of the string\n"
+    "mul x14, x14, x10\n   bic x14, x14, x7  // only in front of where we are\n"
     "and x6, x6, x7\n   orr x6, x6, x14\n"
     "1:  eor x8, x6, x3\n   sub x9, x8, x10\n   bic x9, x9, x8\n   and x9, x9, x11\n"
     "sub x12, x6, x10\n   bic x12, x12, x6\n   and x12, x12, x11\n   orr x9, x9, x12\n"
     "cbnz x9, 2f\n   add x5, x5, #8\n"
-    "cmp x5, x13\n   b.hs 8f\n   ldr x6, [x5]\n   b 1b\n"
+    "cmp x5, x13\n   b.hs 7f\n   ldr x6, [x5]\n   b 1b\n"
     "2:  rbit x9, x9\n   clz x9, x9\n   lsr x9, x9, #3\n"
-    "add x9, x5, x9\n   cmp x9, x13\n   b.hs 8f  // beyond the count\n"
-    "ldrb w4, [x9]\n   cmp w4, w2\n   b.eq 9f  // it was the byte, not the terminator\n"
-    "8:  mov x9, #0\n"
-    "9:  mov x0, x9\n   ret\n"
+    "add x9, x5, x9\n   cmp x9, x13\n   b.hs 7f  // beyond the count\n"
+    "ldrb w4, [x9]\n   cmp w4, w2\n   b.ne 7f  // it was the terminator, not the byte\n"
+    "mov x0, x9\n   ret\n"
+    "7:  mov x0, #0\n"
+    ASM_RET
     ASM_END(string_first_of_max)
     //
     //       string_last_of_or_end, string_compare_max, string_length_max and
@@ -2724,39 +4203,52 @@ __asm__(
     //       from the other end, so the bit index is 63 minus it.
     //
     //       Hunting the terminator itself is the one case where the answer is
-    //       the end of the string rather than a match inside it. It gets a byte
-    //       walk, as it does on x86_64, being far too rare to shape the scan.
+    //       the end of the string rather than a match inside it, so it is handed
+    //       to string_first_of_or_end, as it is on the other two.
     //
     ASM_FUNC(string_last_of_or_end)
-    "and w1, w1, #0xff\n"
-    "cbnz w1, 1f\n"
-    "0:  ldrb w2, [x0]\n   cbz w2, 8f\n   add x0, x0, #1\n"
-    "b 0b\n"
-    "8:  ret\n"
-    "1:  mov x10, #0x0101010101010101\n"
-    "mul x3, x1, x10\n   mov x14, #0\n"
-    "mov x15, #0x7f7f7f7f7f7f7f7f\n"
-    "and x4, x0, #7\n"
-    "bic x5, x0, #7  // align down: same page, cannot fault\n"
-    "ldr x6, [x5]\n   mov x7,  #-1\n"
-    "lsl x4, x4, #3\n"
-    "lsl x7, x7, x4\n   eor x8, x6, x3\n   orn x8, x8, x7  // the prefix matches nothing\n"
-    "orn x6, x6, x7  // and is no terminator\n"
-    "b 3f\n"
-    "2:  eor x8, x6, x3\n"
-    "3:  and x9, x8, x15\n   add x9, x9, x15\n   orr x9, x9, x8\n   orr x9, x9, x15\n"
-    "mvn x9, x9\n   and x12, x6, x15\n   add x12, x12, x15\n   orr x12, x12, x6\n"
-    "orr x12, x12, x15\n   mvn x12, x12\n   cbnz x12, 5f\n   cbz x9, 4f  // no terminator here, so any match beats the one before\n"
-    "clz x11, x9\n   mov x13, #63\n"
-    "sub x11, x13, x11\n   add x14, x5, x11, lsr #3\n"
-    "4:  add x5, x5, #8\n"
-    "ldr x6, [x5]\n   b 2b\n"
-    "5:  neg x13, x12\n   and x13, x13, x12  // the lowest terminator flag\n"
-    "sub x13, x13, #1\n"
-    "and x9, x9, x13  // only matches under it count\n"
-    "cbz x9, 9f\n   clz x11, x9\n   mov x13, #63\n"
-    "sub x11, x13, x11\n   add x14, x5, x11, lsr #3\n"
-    "9:  mov x0, x14\n"
+    //
+    //      Hunting the terminator itself is the one case where the answer is
+    //      the end of the string rather than a match inside it, and that is
+    //      exactly the question string_first_of_or_end already answers for a
+    //      byte that never turns up. It used to be a byte walk here.
+    //
+    "and w1, w1, #0xff\n   cbnz w1, 1f\n"
+    "b string_first_of_or_end\n"
+    //
+    //      Sixteen bytes a turn and not sixty four, which the hunts above
+    //      take. Those stop at the first flag and can ask "did any of these
+    //      sixty four answer" once; this one has to know where the highest
+    //      match in every block is before it may leave the block, and both
+    //      answers -- the byte and the terminator -- are wanted from the same
+    //      sixteen. Four blocks of that is more work than one test saves.
+    //
+    "1:  dup v1.16b, w1\n   mov x14, #0  // the best so far: none\n"
+    "and x4, x0, #15\n   bic x5, x0, #15  // align down: same page, cannot fault\n"
+    "mov x7, #-1\n   lsl x4, x4, #2  // four mask bits a byte\n"
+    "lsl x7, x7, x4  // which bytes of this vector are ours\n"
+    "2:  ld1 {v4.16b}, [x5]\n"
+    "cmeq v5.16b, v4.16b, #0\n   cmeq v4.16b, v4.16b, v1.16b\n"
+    "shrn v4.8b, v4.8h, #4\n   fmov x3, d4  // where the byte is\n"
+    "shrn v5.8b, v5.8h, #4\n   fmov x9, d5  // where the string ends\n"
+    "and x3, x3, x7\n   and x9, x9, x7\n   mov x7, #-1\n"
+    "cbnz x9, 4f  // the string ends in these sixteen\n"
+    "cbz x3, 3f\n"
+    "clz x10, x3\n"
+    "mov x11, #63\n"
+    "sub x10, x11, x10  // the highest flag, and clz counts from the other end\n"
+    "add x14, x5, x10, lsr #2  // a later match than any before\n"
+    "3:  add x5, x5, #16\n   b 2b\n"
+    //
+    //      Only matches below the terminator count: isolate its lowest flag
+    //      and keep what is under it.
+    //
+    "4:  neg x10, x9\n   and x10, x10, x9\n   sub x10, x10, #1\n"
+    "and x3, x3, x10\n   cbz x3, 5f\n"
+    "clz x10, x3\n"
+    "mov x11, #63\n"
+    "sub x10, x11, x10\n   add x14, x5, x10, lsr #2\n"
+    "5:  mov x0, x14\n"
     ASM_RET
     ASM_END(string_last_of_or_end)
     //
@@ -2767,7 +4259,24 @@ __asm__(
     //
     ASM_FUNC(string_compare_max)
     "mov w9, #0\n"
-    "cbz x2, 4f\n   mov x10, #0x0101010101010101\n"
+    "cbz x2, 4f\n"
+    //
+    //      Sixteen bytes a step while there are thirty two left to do. The
+    //      bound makes every read here legal without a page argument, which
+    //      is the whole difference between this and string_compare above;
+    //      the mask is the one that block explains.
+    //
+    "cmp x2, #32\n   b.lo 10f\n"
+    "5:  ldr q0, [x0]\n   ldr q1, [x1]\n"
+    "cmeq v2.16b, v0.16b, v1.16b\n   cmeq v3.16b, v0.16b, #0\n"
+    "bic v2.16b, v2.16b, v3.16b\n"
+    "uminv b4, v2.16b\n   umov w9, v4.b[0]\n   cmp w9, #0xff\n   b.ne 6f\n"
+    "add x0, x0, #16\n   add x1, x1, #16\n   sub x2, x2, #16\n"
+    "cmp x2, #16\n   b.hs 5b\n   b 10f\n"
+    "6:  mvn v2.16b, v2.16b\n   shrn v2.8b, v2.8h, #4\n   fmov x9, d2\n"
+    "rbit x9, x9\n   clz x9, x9\n   lsr x9, x9, #2\n"
+    "ldrb w6, [x0, x9]\n   ldrb w7, [x1, x9]\n   sub w9, w6, w7\n   b 4f\n"
+    "10: mov x10, #0x0101010101010101\n"
     "1:  cmp x2, #8\n"
     "b.lo 2f\n   ldr x6, [x0]\n   ldr x7, [x1]\n   cmp x6, x7\n"
     "b.ne 2f  // differ: let the byte step find where\n"
@@ -2792,23 +4301,29 @@ __asm__(
     //       back to n -- which is what the answer is when there is none inside.
     //
     ASM_FUNC(string_length_max)
-    "cbz x1, 9f\n   add x13, x0, x1  // one past the last byte we may report\n"
-    "and x4, x0, #7\n"
-    "bic x5, x0, #7\n"
+    "cbz x1, 7f\n"
+    "mov x11, x0  // the start, whichever body runs\n"
+    "mov x12, x1  // and the bound, to clamp against\n"
+    "mov x5, x0\n   mov x6, x1\n"
+    NEON_SCAN_MAX(NEON_ZERO)
+    "sub x0, x5, x11\n   ret\n"
+    "5:  cbz x6, 8f\n"
+    "add x13, x5, x6  // one past the last byte we may report\n"
+    "and x4, x5, #7\n   bic x5, x5, #7\n"
     "ldr x6, [x5]\n   mov x10, #0x0101010101010101\n"
     "cbz x4, 1f\n   lsl x4, x4, #3\n"
     "mov x9,  #-1\n"
-    "lsl x9, x9, x4\n   orn x6, x6, x9  // ones below the string, so it cannot end there\n"
+    "lsl x9, x9, x4\n   orn x6, x6, x9  // ones below where we are, so it cannot end there\n"
     "1:  sub x9, x6, x10\n   bic x9, x9, x6\n   and x9, x9, #0x8080808080808080\n"
     "cbnz x9, 2f\n   add x5, x5, #8\n"
     "cmp x5, x13\n   b.hs 8f  // nothing within the bound\n"
     "ldr x6, [x5]\n   b 1b\n"
     "2:  rbit x9, x9\n   clz x9, x9\n   add x5, x5, x9, lsr #3\n"
-    "sub x0, x5, x0  // how far in the terminator is\n"
-    "cmp x0, x1\n   csel x0, x1, x0, hi  // never more than n\n"
+    "sub x0, x5, x11  // how far in the terminator is\n"
+    "cmp x0, x12\n   csel x0, x12, x0, hi  // never more than n\n"
     "ret\n"
-    "8:  mov x0, x1\n   ret\n"
-    "9:  mov x0, #0\n"
+    "8:  mov x0, x12\n   ret\n"
+    "7:  mov x0, #0\n"
     ASM_RET
     ASM_END(string_length_max)
     //
@@ -2818,23 +4333,11 @@ __asm__(
     //       than stopping the scan short would.
     //
     ASM_FUNC(memory_first_of)
-    //
-    //       The wide path first. cmeq marks the matching bytes and shrn
-    //       narrows the sixteen lanes to four bits each, which fits one
-    //       doubleword: nonzero means the byte is in these sixteen, and the
-    //       count of trailing zeros divided by four says which. Only whole
-    //       sixteen byte pieces are read, so nothing goes past the bound.
-    //
-    "cbz x2, 8f\n   cmp x2, #16\n   b.lo 7f\n"
-    "dup v1.16b, w1\n"
-    "1:  ld1 {v0.16b}, [x0]\n   cmeq v0.16b, v0.16b, v1.16b\n"
-    "shrn v0.8b, v0.8h, #4\n   fmov x3, d0\n   cbnz x3, 2f\n"
-    "add x0, x0, #16\n   sub x2, x2, #16\n   cmp x2, #16\n   b.hs 1b\n"
-    "b 7f\n"
-    "2:  rbit x3, x3\n   clz x3, x3\n   lsr x3, x3, #2\n   add x0, x0, x3\n   ret\n"
-    "7:  \n"
-    "mov x9, #0\n"
-    "cbz x2, 9f\n   and w1, w1, #0xff\n"
+    "cbz x2, 7f\n   and w1, w1, #0xff\n   dup v1.16b, w1  // the byte, in all sixteen lanes\n"
+    "mov x5, x0\n   mov x6, x2\n"
+    NEON_SCAN_MAX(NEON_BYTE)
+    "mov x0, x5\n   ret\n"
+    "5:  mov x0, x5\n   mov x2, x6\n   cbz x2, 7f\n"
     "mov x10, #0x0101010101010101\n"
     "mul x3, x1, x10  // the byte, in all eight positions\n"
     "add x13, x0, x2  // one past the last byte we may report\n"
@@ -2843,16 +4346,16 @@ __asm__(
     "ldr x6, [x5]\n   lsl x4, x4, #3\n"
     "mov x7,  #-1\n"
     "lsl x7, x7, x4\n   eor x8, x6, x3  // the byte that matched is now zero\n"
-    "orn x8, x8, x7  // and the bytes before the string cannot be\n"
+    "orn x8, x8, x7  // and the bytes before it cannot be\n"
     "b 2f\n"
     "1:  eor x8, x6, x3\n"
     "2:  sub x9, x8, x10\n   bic x9, x9, x8\n   and x9, x9, #0x8080808080808080\n"
     "cbnz x9, 3f\n   add x5, x5, #8\n"
-    "cmp x5, x13\n   b.hs 8f\n   ldr x6, [x5]\n   b 1b\n"
+    "cmp x5, x13\n   b.hs 7f\n   ldr x6, [x5]\n   b 1b\n"
     "3:  rbit x9, x9\n   clz x9, x9\n   lsr x9, x9, #3\n"
-    "add x9, x5, x9\n   cmp x9, x13\n   b.lo 9f  // inside the bound: that is the answer\n"
-    "8:  mov x9, #0\n"
-    "9:  mov x0, x9\n"
+    "add x9, x5, x9\n   cmp x9, x13\n   b.hs 7f  // the word reached past the bound\n"
+    "mov x0, x9\n   ret\n"
+    "7:  mov x0, #0\n"
     ASM_RET
     ASM_END(memory_first_of)
     //
@@ -2897,6 +4400,152 @@ __asm__(
     "9:  mov x0, x3\n"
     ASM_RET
     ASM_END(memory_count)
+    ASM_FUNC(memory_compare)
+    "mov w9, #0\n   cbz x2, 9f\n"
+    "cmp x2, #32\n   b.lo 5f\n"
+    //
+    //      Thirty two bytes a round. cmeq leaves 0xff where the two agree, so
+    //      the minimum across all thirty two lanes is 0xff exactly when
+    //      nothing differed; uminv asks that in one instruction and needs no
+    //      mask. Where it differs, the word loop below is entered on the same
+    //      pointers and walks the few bytes to it, which happens once a call.
+    //
+    "1:  ldp q0, q1, [x0]\n   ldp q2, q3, [x1]\n"
+    "cmeq v0.16b, v0.16b, v2.16b\n   cmeq v1.16b, v1.16b, v3.16b\n"
+    "and v4.16b, v0.16b, v1.16b\n   uminv b4, v4.16b\n   umov w3, v4.b[0]\n"
+    "cmp w3, #0xff\n   b.ne 5f\n"
+    "add x0, x0, #32\n   add x1, x1, #32\n   sub x2, x2, #32\n"
+    "cmp x2, #32\n   b.hs 1b\n"
+    //
+    //      Eight at a time. Exclusive-or leaves zero bytes where the two
+    //      agree, so the lowest set bit of it is inside the first byte that
+    //      does not, and rbit and clz find it.
+    //
+    "5:  cmp x2, #8\n   b.lo 7f\n"
+    "ldr x3, [x0]\n   ldr x4, [x1]\n   cmp x3, x4\n   b.ne 51f\n"
+    "add x0, x0, #8\n   add x1, x1, #8\n   sub x2, x2, #8\n   b 5b\n"
+    "51: eor x3, x3, x4\n   rbit x5, x3\n   clz x5, x5\n   lsr x5, x5, #3\n"
+    "ldrb w6, [x0, x5]\n   ldrb w7, [x1, x5]\n   sub w9, w6, w7\n   b 9f\n"
+    "7:  cbz x2, 9f\n"
+    "71: ldrb w6, [x0]\n   ldrb w7, [x1]\n   subs w9, w6, w7\n   b.ne 9f\n"
+    "add x0, x0, #1\n   add x1, x1, #1\n   sub x2, x2, #1\n   cbnz x2, 71b\n"
+    "9:  mov w0, w9\n"
+    ASM_RET
+    ASM_END(memory_compare)
+    ASM_FUNC(memory_search)
+    "cbz x3, 90f  // an empty needle is at the front\n"
+    "cmp x1, x3\n   b.lo 95f  // longer than the haystack: nowhere\n"
+    "cmp x3, #1\n   b.ne 20f\n"
+    "ldrb w4, [x2]\n   mov x2, x1\n   mov x1, x4\n"
+    "b memory_first_of  // one byte is memchr\n"
+    "90:\n"
+    ASM_RET
+    "95: mov x0, #0\n"
+    ASM_RET
+    "20: stp x29, x30, [sp, #-96]!\n   mov x29, sp\n"
+    "stp x19, x20, [sp, #16]\n   stp x21, x22, [sp, #32]\n"
+    "stp x23, x24, [sp, #48]\n   stp x25, x26, [sp, #64]\n"
+    "stp x27, x28, [sp, #80]\n"
+    "mov x19, x0  // the haystack\n   mov x20, x2  // the needle\n"
+    "mov x21, x3  // its length\n"
+    //
+    //      Sixteen positions a block here rather than thirty two, which is
+    //      what a NEON register holds. The last block may start fifteen
+    //      positions before the last position a match could begin at, and the
+    //      subtraction is in that order because hay_size - needle_size - 15
+    //      on a short haystack is a very large number and not a small one.
+    //
+    "sub x25, x1, x21\n   cmp x25, #15\n   b.lo 6f\n"
+    "sub x25, x25, #15\n"
+    //
+    //      The two rarest bytes of the needle, as offsets into it. One pass
+    //      keeping the best and the second best, which is what makes the two
+    //      offsets distinct even when the bytes at them are equal.
+    //
+    "mov x26, #0\n   sub x27, x21, #1\n"
+    "cmp x21, #4\n   b.lo 25f\n"
+    "adrp x6, byte_commonness\n   add x6, x6, :lo12:byte_commonness\n"
+    "mov x7, #256\n   mov x8, #256\n   mov x9, #0\n"
+    "mov x26, #0\n   mov x27, #0\n"
+    "21: ldrb w10, [x20, x9]\n   ldrb w10, [x6, x10]\n"
+    "cmp x10, x7\n   b.hs 23f\n"
+    "mov x8, x7\n   mov x27, x26\n   mov x7, x10\n   mov x26, x9\n   b 24f\n"
+    "23: cmp x10, x8\n   b.hs 24f\n   mov x8, x10\n   mov x27, x9\n"
+    "24: add x9, x9, #1\n   cmp x9, x21\n   b.lo 21b\n"
+    "25: ldrb w10, [x20, x26]\n   dup v2.16b, w10\n"
+    "ldrb w10, [x20, x27]\n   dup v3.16b, w10\n"
+    "mov x24, #0\n   mov x23, #0\n"
+    "1:  add x6, x19, x24\n"
+    "ldr q0, [x6, x26]\n   cmeq v0.16b, v0.16b, v2.16b\n"
+    "ldr q1, [x6, x27]\n   cmeq v1.16b, v1.16b, v3.16b\n"
+    "and v0.16b, v0.16b, v1.16b\n   shrn v0.8b, v0.8h, #4\n   fmov x22, d0\n"
+    "cbnz x22, 3f\n"
+    //
+    //      Past the end, one block back from the last position rather than a
+    //      byte loop for what is left. It looks at positions already looked
+    //      at, which cannot change the answer: everything before them was
+    //      rejected, so the first match found in it is still the first there
+    //      is.
+    //
+    "4:  add x24, x24, #16\n   cmp x24, x25\n   b.ls 1b\n"
+    "cbnz x23, 8f\n   mov x24, x25\n   mov x23, #1\n   b 1b\n"
+    //
+    //      The survivors of one block, lowest position first. shrn left four
+    //      bits per lane, all four set or none, so the whole nibble is
+    //      cleared to move on rather than the one bit rbit found.
+    //
+    "3:  rbit x4, x22\n   clz x4, x4\n"
+    "mov x5, #15\n   lsl x5, x5, x4\n   bic x22, x22, x5\n"
+    "lsr x4, x4, #2\n   add x28, x19, x24\n   add x28, x28, x4\n"
+    "cmp x21, #4\n   b.lo 33f\n"
+    "ldr w5, [x28]\n   ldr w6, [x20]\n   cmp w5, w6\n   b.ne 32f\n"
+    "cmp x21, #5\n   b.lo 7f  // the four were all of it\n"
+    "add x0, x28, #4\n   add x1, x20, #4\n   sub x2, x21, #4\n"
+    "bl memory_compare\n   cbz w0, 7f\n   b 32f\n"
+    //
+    //      Two and three bytes: both probes are ends of the needle, so a
+    //      three has one byte left in the middle and a two has none. The
+    //      three offsets are 0, 1 and 2 and two of them are taken, so the
+    //      third is what is left of their sum.
+    //
+    "33: cmp x21, #2\n   b.ls 7f\n"
+    "mov x6, #3\n   sub x6, x6, x26\n   sub x6, x6, x27\n"
+    "ldrb w5, [x20, x6]\n   ldrb w7, [x28, x6]\n   cmp w5, w7\n   b.eq 7f\n"
+    "32: cbnz x22, 3b\n"
+    //
+    //      The two broadcasts again, because a call may write v2 and v3: only
+    //      the low halves of v8 to v15 are saved across one and these are
+    //      whole sixteen byte lanes.
+    //
+    "ldrb w10, [x20, x26]\n   dup v2.16b, w10\n"
+    "ldrb w10, [x20, x27]\n   dup v3.16b, w10\n"
+    "b 4b\n"
+    //
+    //       The narrow path: every haystack too short for one block. memchr
+    //       finds where the first byte is and memcmp says whether the rest
+    //       followed, which is the naive search with both of its loops
+    //       already written wide. The first byte rather than the rarest,
+    //       because this path exists for haystacks under thirty bytes, where
+    //       choosing costs more than it saves.
+    //
+    //       A failed candidate is left one byte, not needle_size: "aab" is in
+    //       "aaab", and a scan that resumes past what it matched cannot see
+    //       it.
+    //
+    "6:  add x27, x19, x1\n   sub x27, x27, x21  // the last position a match could start at\n"
+    "mov x26, x19\n"
+    "61: sub x2, x27, x26\n   add x2, x2, #1  // positions still to try\n"
+    "mov x0, x26\n   ldrb w1, [x20]\n   bl memory_first_of\n   cbz x0, 8f\n"
+    "mov x28, x0\n   mov x26, x0\n   mov x1, x20\n   mov x2, x21\n"
+    "bl memory_compare\n   cbz w0, 7f\n"
+    "add x26, x26, #1\n   cmp x26, x27\n   b.ls 61b\n"
+    "8:  mov x0, #0\n   b 9f\n"
+    "7:  mov x0, x28\n"
+    "9:  ldp x19, x20, [sp, #16]\n   ldp x21, x22, [sp, #32]\n"
+    "ldp x23, x24, [sp, #48]\n   ldp x25, x26, [sp, #64]\n"
+    "ldp x27, x28, [sp, #80]\n   ldp x29, x30, [sp], #96\n"
+    ASM_RET
+    ASM_END(memory_search)
     //
     //       moonwater_cpu_detect -- nothing to ask yet.
     //
@@ -2918,57 +4567,123 @@ __asm__(
     ASM_END(get_cpu_time)
     // memcpy and memset, which were the last byte loops in here.
     ASM_FUNC(memory_fill)
-    "mov x3, x0\n   and w1, w1, #0xff\n"
-    "orr w1, w1, w1, lsl #8\n"
-    "orr w1, w1, w1, lsl #16\n"
-    "orr x1, x1, x1, lsl #32\n"
-    "1:  cmp x2, #16\n"
-    "b.lo 2f\n   stp x1, x1, [x0], #16\n"
-    "sub x2, x2, #16\n"
-    "b 1b\n"
-    "2:  cmp x2, #8\n"
-    "b.lo 3f\n   str x1, [x0], #8\n"
-    "sub x2, x2, #8\n"
-    "3:  cbz x2, 4f\n   strb w1, [x0], #1\n"
-    "sub x2, x2, #1\n"
-    "b 3b\n"
-    "4:  mov x0, x3\n"
+    "mov x3, x0\n   and w1, w1, #0xff\n   dup v0.16b, w1\n   add x4, x0, x2\n"
+    "cmp x2, #16\n   b.hs 6f\n"
+    "orr w1, w1, w1, lsl #8\n   orr w1, w1, w1, lsl #16\n   orr x1, x1, x1, lsl #32\n"
+    "cmp x2, #8\n   b.hs 7f\n"
+    "cmp x2, #4\n   b.hs 8f\n"
+    "cbz x2, 9f\n"
+    // one to three: first, last, and the middle, which between them cover all three
+    "strb w1, [x0]\n   sturb w1, [x4, #-1]\n   lsr x5, x2, #1\n   strb w1, [x0, x5]\n"
+    "9:  mov x0, x3\n   ret\n"
+    "8:  str w1, [x0]\n   stur w1, [x4, #-4]\n   mov x0, x3\n   ret\n"
+    "7:  str x1, [x0]\n   stur x1, [x4, #-8]\n   mov x0, x3\n   ret\n"
+    "6:  cmp x2, #32\n   b.hi 3f\n"
+    "str q0, [x0]\n   stur q0, [x4, #-16]\n   mov x0, x3\n   ret\n"
+    "3:  cmp x2, #64\n   b.hi 4f\n"
+    "stp q0, q0, [x0]\n   stp q0, q0, [x4, #-32]\n   mov x0, x3\n   ret\n"
+    "4:  cmp x2, #128\n   b.hi 2f\n"
+    "stp q0, q0, [x0]\n   stp q0, q0, [x0, #32]\n"
+    "stp q0, q0, [x4, #-64]\n   stp q0, q0, [x4, #-32]\n   mov x0, x3\n   ret\n"
+    "2:  cmp x2, #256\n   b.hi 5f\n"
+    "stp q0, q0, [x0]\n   stp q0, q0, [x0, #32]\n"
+    "stp q0, q0, [x0, #64]\n   stp q0, q0, [x0, #96]\n"
+    "stp q0, q0, [x4, #-128]\n   stp q0, q0, [x4, #-96]\n"
+    "stp q0, q0, [x4, #-64]\n   stp q0, q0, [x4, #-32]\n   mov x0, x3\n   ret\n"
+    //
+    //       Above 128: the first 64 bytes unaligned, the destination aligned up
+    //       past them, then 64 an iteration, and the last 64 wherever they fall.
+    //
+    "5:  stp q0, q0, [x0]\n   stp q0, q0, [x0, #32]\n"
+    "add x5, x0, #64\n   bic x5, x5, #63\n   sub x6, x4, #64\n"
+    "1:  stp q0, q0, [x5]\n   stp q0, q0, [x5, #32]\n   add x5, x5, #64\n"
+    "cmp x5, x6\n   b.ls 1b\n"
+    "stp q0, q0, [x4, #-64]\n   stp q0, q0, [x4, #-32]\n   mov x0, x3\n"
     ASM_RET
     ASM_END(memory_fill)
 
     ASM_FUNC(memory_copy_fast)
-    "mov x3, x0\n"
-    "1:  cmp x2, #16\n"
-    "b.lo 2f\n   ldp x4, x5, [x1], #16\n"
-    "stp x4, x5, [x0], #16\n"
-    "sub x2, x2, #16\n"
-    "b 1b\n"
-    "2:  cmp x2, #8\n"
-    "b.lo 3f\n   ldr x4, [x1], #8\n"
-    "str x4, [x0], #8\n"
-    "sub x2, x2, #8\n"
-    "3:  cbz x2, 4f\n   ldrb w4, [x1], #1\n"
-    "strb w4, [x0], #1\n"
-    "sub x2, x2, #1\n"
-    "b 3b\n"
-    "4:  mov x0, x3\n"
+    "mov x3, x0\n   add x4, x0, x2\n   add x5, x1, x2\n"
+    "cmp x2, #32\n   b.hi 6f\n"
+    "cmp x2, #16\n   b.lo 7f\n"
+    "ldr q0, [x1]\n   ldur q1, [x5, #-16]\n"
+    "str q0, [x0]\n   stur q1, [x4, #-16]\n   mov x0, x3\n   ret\n"
+    "7:  cmp x2, #8\n   b.lo 8f\n"
+    "ldr x6, [x1]\n   ldur x7, [x5, #-8]\n"
+    "str x6, [x0]\n   stur x7, [x4, #-8]\n   mov x0, x3\n   ret\n"
+    "8:  cmp x2, #4\n   b.lo 0f\n"
+    "ldr w6, [x1]\n   ldur w7, [x5, #-4]\n"
+    "str w6, [x0]\n   stur w7, [x4, #-4]\n   mov x0, x3\n   ret\n"
+    "0:  cbz x2, 9f\n   lsr x8, x2, #1\n"
+    "ldrb w6, [x1]\n   ldurb w7, [x5, #-1]\n   ldrb w9, [x1, x8]\n"
+    "strb w6, [x0]\n   sturb w7, [x4, #-1]\n   strb w9, [x0, x8]\n"
+    "9:  mov x0, x3\n   ret\n"
+    "6:  cmp x2, #64\n   b.hi 4f\n"
+    "ldp q0, q1, [x1]\n   ldp q2, q3, [x5, #-32]\n"
+    "stp q0, q1, [x0]\n   stp q2, q3, [x4, #-32]\n   mov x0, x3\n   ret\n"
+    "4:  cmp x2, #128\n   b.hi 2f\n"
+    "ldp q0, q1, [x1]\n   ldp q2, q3, [x1, #32]\n"
+    "ldp q4, q5, [x5, #-64]\n   ldp q6, q7, [x5, #-32]\n"
+    "stp q0, q1, [x0]\n   stp q2, q3, [x0, #32]\n"
+    "stp q4, q5, [x4, #-64]\n   stp q6, q7, [x4, #-32]\n   mov x0, x3\n   ret\n"
+    "2:  cmp x2, #256\n   b.hi 5f\n"
+    "ldp q0, q1, [x1]\n   ldp q2, q3, [x1, #32]\n"
+    "ldp q4, q5, [x1, #64]\n   ldp q6, q7, [x1, #96]\n"
+    "ldp q16, q17, [x5, #-128]\n   ldp q18, q19, [x5, #-96]\n"
+    "ldp q20, q21, [x5, #-64]\n   ldp q22, q23, [x5, #-32]\n"
+    "stp q0, q1, [x0]\n   stp q2, q3, [x0, #32]\n"
+    "stp q4, q5, [x0, #64]\n   stp q6, q7, [x0, #96]\n"
+    "stp q16, q17, [x4, #-128]\n   stp q18, q19, [x4, #-96]\n"
+    "stp q20, q21, [x4, #-64]\n   stp q22, q23, [x4, #-32]\n   mov x0, x3\n   ret\n"
+    "5:  ldp q4, q5, [x1]\n   ldp q6, q7, [x1, #32]\n"
+    "ldp q16, q17, [x5, #-64]\n   ldp q18, q19, [x5, #-32]\n"
+    "add x6, x0, #64\n   bic x6, x6, #63\n   sub x7, x6, x0\n   add x8, x1, x7\n"
+    "sub x9, x4, #64\n"
+    "1:  ldp q0, q1, [x8]\n   ldp q2, q3, [x8, #32]\n"
+    "stp q0, q1, [x6]\n   stp q2, q3, [x6, #32]\n"
+    "add x6, x6, #64\n   add x8, x8, #64\n   cmp x6, x9\n   b.ls 1b\n"
+    "stp q16, q17, [x4, #-64]\n   stp q18, q19, [x4, #-32]\n"
+    "stp q4, q5, [x0]\n   stp q6, q7, [x0, #32]\n   mov x0, x3\n"
     ASM_RET
     ASM_END(memory_copy_fast)
 
     ASM_FUNC(memory_copy)
-    "mov x3, x0\n   cmp x0, x1\n   b.ls 5f\n   add x4, x1, x2\n"
-    "cmp x0, x4\n   b.hs 5f\n   add x0, x0, x2\n   add x1, x1, x2\n"
-    "6:  cbz x2, 7f\n   ldrb w4, [x1,  #-1]!\n"
-    "strb w4, [x0,  #-1]!\n"
-    "sub x2, x2, #1\n"
-    "b 6b\n"
-    "7:  mov x0, x3\n"
-    ASM_RET
-    "5:  cbz x2, 8f\n   ldrb w4, [x1], #1\n"
-    "strb w4, [x0], #1\n"
-    "sub x2, x2, #1\n"
-    "b 5b\n"
-    "8:  mov x0, x3\n"
+    "cmp x0, x1\n   b.ls 1f\n   add x4, x1, x2\n   cmp x0, x4\n   b.lo 2f\n"
+    "1:  b memory_copy_fast\n"
+    "2:  mov x3, x0\n   cmp x2, #128\n   b.lo 5f\n"
+    "ldp q4, q5, [x1]\n   ldp q6, q7, [x1, #32]\n"
+    "add x4, x0, x2\n   add x5, x1, x2\n"
+    "ldp q16, q17, [x5, #-64]\n   ldp q18, q19, [x5, #-32]\n"
+    "mov x6, x4\n   bic x6, x6, #63\n   sub x7, x4, x6\n   sub x8, x5, x7\n"
+    "add x9, x0, #64\n"
+    "1:  cmp x6, x9\n   b.ls 3f\n"
+    "sub x6, x6, #64\n   sub x8, x8, #64\n"
+    "ldp q0, q1, [x8]\n   ldp q2, q3, [x8, #32]\n"
+    "stp q0, q1, [x6]\n   stp q2, q3, [x6, #32]\n"
+    "b 1b\n"
+    "3:  stp q16, q17, [x4, #-64]\n   stp q18, q19, [x4, #-32]\n"
+    "stp q4, q5, [x0]\n   stp q6, q7, [x0, #32]\n   mov x0, x3\n   ret\n"
+    //
+    //       Under 128 bytes: eight at a time downwards, with the first eight
+    //       kept in a register so the store that ends it does not read memory
+    //       the loop has already written over.
+    //
+    "5:  cmp x2, #8\n   b.lo 6f\n"
+    "ldr x6, [x1]\n   add x4, x0, x2\n   add x5, x1, x2\n   add x7, x0, #8\n"
+    "1:  cmp x4, x7\n   b.ls 3f\n"
+    "ldr x8, [x5, #-8]!\n   str x8, [x4, #-8]!\n   b 1b\n"
+    "3:  str x6, [x0]\n   mov x0, x3\n   ret\n"
+    //
+    //       Under eight there is no direction left to get wrong: everything is
+    //       in registers before any of it is written.
+    //
+    "6:  add x4, x0, x2\n   add x5, x1, x2\n   cmp x2, #4\n   b.lo 7f\n"
+    "ldr w6, [x1]\n   ldur w7, [x5, #-4]\n"
+    "str w6, [x0]\n   stur w7, [x4, #-4]\n   mov x0, x3\n   ret\n"
+    "7:  cbz x2, 9f\n   lsr x8, x2, #1\n"
+    "ldrb w6, [x1]\n   ldurb w7, [x5, #-1]\n   ldrb w9, [x1, x8]\n"
+    "strb w6, [x0]\n   sturb w7, [x4, #-1]\n   strb w9, [x0, x8]\n"
+    "9:  mov x0, x3\n"
     ASM_RET
     ASM_END(memory_copy)
     //
@@ -2988,24 +4703,40 @@ __asm__(
     //       the first load rather than never taken inside it.
     //
     ASM_FUNC(string_copy)
-    "mov x2, x0\n"
-    "1:  ldrb w3, [x1], #1\n"
-    "strb w3, [x0], #1  // the terminator is copied too\n"
-    "cbnz w3, 1b\n   mov x0, x2\n"
-    ASM_RET
+    "and x4, x1, #15  // how far into the block it begins\n"
+    "bic x5, x1, #15  // align down: same page, cannot fault\n"
+    "ldr q0, [x5]\n   cmeq v2.16b, v0.16b, #0\n"
+    "shrn v2.8b, v2.8h, #4\n   fmov x9, d2\n"
+    "lsl x6, x4, #2\n   lsr x9, x9, x6  // the bytes in front are not ours\n"
+    "cbnz x9, 2f\n"
+    "1:  ldr q0, [x5, #16]!\n   cmeq v2.16b, v0.16b, #0\n"
+    "shrn v2.8b, v2.8h, #4\n   fmov x9, d2\n   cbz x9, 1b\n"
+    "rbit x9, x9\n   clz x9, x9\n   lsr x9, x9, #2\n"
+    "add x9, x5, x9\n   sub x2, x9, x1\n   b 3f\n"
+    "2:  rbit x9, x9\n   clz x9, x9\n   lsr x2, x9, #2\n"
+    "3:  add x2, x2, #1  // the terminator is copied too\n"
+    "b memory_copy_fast\n"
     ASM_END(string_copy)
     //
     //       Not strncpy: no padding, and no terminator at all when the source
     //       filled the whole bound.
     //
     ASM_FUNC(string_copy_max)
-    "mov x3, x0\n   cbz x2, 3f\n"
-    "1:  ldrb w4, [x1]\n   cbz w4, 2f\n   strb w4, [x0], #1\n"
-    "add x1, x1, #1\n"
-    "sub x2, x2, #1\n"
-    "cbnz x2, 1b\n   b 3f  // bound filled: no terminator\n"
-    "2:  strb wzr, [x0]  // source ended inside the bound\n"
-    "3:  mov x0, x3\n"
+    "mov x3, x0\n   cbz x2, 9f  // not even a terminator\n"
+    "add x7, x1, x2  // one past the last byte we may read\n"
+    "and x4, x1, #15\n   bic x5, x1, #15\n"
+    "ldr q0, [x5]\n   cmeq v2.16b, v0.16b, #0\n"
+    "shrn v2.8b, v2.8h, #4\n   fmov x9, d2\n"
+    "lsl x6, x4, #2\n   lsr x9, x9, x6\n   cbnz x9, 2f\n"
+    "1:  add x5, x5, #16\n   cmp x5, x7\n   b.hs 4f  // the bound is behind us\n"
+    "ldr q0, [x5]\n   cmeq v2.16b, v0.16b, #0\n"
+    "shrn v2.8b, v2.8h, #4\n   fmov x9, d2\n   cbz x9, 1b\n"
+    "rbit x9, x9\n   clz x9, x9\n   lsr x9, x9, #2\n"
+    "add x9, x5, x9\n   sub x8, x9, x1\n   b 3f\n"
+    "2:  rbit x9, x9\n   clz x9, x9\n   lsr x8, x9, #2\n"
+    "3:  cmp x8, x2\n   b.hs 4f  // the bound came first\n   add x2, x8, #1\n"
+    "4:  b memory_copy_fast\n"
+    "9:  mov x0, x3\n"
     ASM_RET
     ASM_END(string_copy_max)
     //
@@ -3013,12 +4744,9 @@ __asm__(
     //       what keeps this from being strrchr.
     //
     ASM_FUNC(string_last_of)
-    "uxtb w1, w1\n   mov x2, #0  // no match yet\n"
-    "ldrb w3, [x0]\n   cbz w3, 2f\n"
-    "1:  cmp w3, w1\n   csel x2, x0, x2, eq  // moved, not jumped around\n"
-    "add x0, x0, #1\n"
-    "ldrb w3, [x0]\n   cbnz w3, 1b\n"
-    "2:  mov x0, x2\n"
+    "ands w1, w1, #0xff\n   b.eq 9f  // nothing, for the terminator\n"
+    "b string_last_of_or_end\n"
+    "9:  mov x0, #0\n"
     ASM_RET
     ASM_END(string_last_of)
     //
@@ -3030,28 +4758,42 @@ __asm__(
     //
     ASM_FUNC(string_replace_all)
     "sxtb w1, w1\n   cmp w1, #0\n"
-    "b.le 2f  // b8 at or below zero never matches\n"
-    "ldrb w3, [x0]\n   cbz w3, 2f\n"
-    "1:  cmp w3, w1\n   b.eq 4f\n"
-    "3:  add x0, x0, #1\n"
-    "ldrb w3, [x0]\n   cbnz w3, 1b\n"
-    "2:\n"
+    "b.le 9f  // b8 at or below zero never matches\n"
+    "1:  ands x4, x0, #15\n   b.eq 2f\n"
+    "ldrb w3, [x0]\n   cbz w3, 9f\n   cmp w3, w1\n   b.ne 3f\n   strb w2, [x0]\n"
+    "3:  add x0, x0, #1\n   b 1b\n"
+    "2:  dup v1.16b, w1\n   dup v3.16b, w2\n"
+    "4:  ldr q0, [x0]\n   cmeq v2.16b, v0.16b, #0\n"
+    "shrn v4.8b, v2.8h, #4\n   fmov x9, d4\n"
+    "cbnz x9, 5f  // the terminator is in this block\n"
+    "cmeq v2.16b, v0.16b, v1.16b\n   shrn v4.8b, v2.8h, #4\n   fmov x9, d4\n"
+    "cbz x9, 6f  // nothing to replace: no store at all\n"
+    "bit v0.16b, v3.16b, v2.16b\n   str q0, [x0]\n"
+    "6:  add x0, x0, #16\n   b 4b\n"
+    "5:  ldrb w3, [x0]\n   cbz w3, 9f\n   cmp w3, w1\n   b.ne 7f\n   strb w2, [x0]\n"
+    "7:  add x0, x0, #1\n   b 5b\n"
+    "9:\n"
     ASM_RET
-    "4:  strb w2, [x0]\n   b 3b\n"
     ASM_END(string_replace_all)
     //
     //       Cut at the first occurrence and answer with what follows it -- but
     //       null when what follows is the terminator.
     //
     ASM_FUNC(string_cut)
-    "sxtb w1, w1\n   cmp w1, #0\n"
-    "b.le 4f\n   ldrb w3, [x0]\n   cbz w3, 4f\n"
-    "1:  cmp w3, w1\n   b.eq 2f\n   add x0, x0, #1\n"
-    "ldrb w3, [x0]\n   cbnz w3, 1b\n"
-    "4:  mov x0, #0\n"
-    ASM_RET
-    "2:  strb wzr, [x0]\n   add x0, x0, #1\n"
-    "ldrb w3, [x0]\n   cbz w3, 4b\n"
+    "sxtb w1, w1\n   cmp w1, #0\n   b.le 8f\n"
+    "dup v1.16b, w1\n"
+    "and x4, x0, #15\n   bic x5, x0, #15\n"
+    "ldr q0, [x5]\n   cmeq v2.16b, v0.16b, #0\n   cmeq v3.16b, v0.16b, v1.16b\n"
+    "orr v2.16b, v2.16b, v3.16b\n   shrn v2.8b, v2.8h, #4\n   fmov x9, d2\n"
+    "lsl x6, x4, #2\n   lsr x9, x9, x6\n   cbnz x9, 2f\n"
+    "1:  ldr q0, [x5, #16]!\n   cmeq v2.16b, v0.16b, #0\n   cmeq v3.16b, v0.16b, v1.16b\n"
+    "orr v2.16b, v2.16b, v3.16b\n   shrn v2.8b, v2.8h, #4\n   fmov x9, d2\n   cbz x9, 1b\n"
+    "rbit x9, x9\n   clz x9, x9\n   lsr x9, x9, #2\n   add x0, x5, x9\n   b 3f\n"
+    "2:  rbit x9, x9\n   clz x9, x9\n   lsr x9, x9, #2\n   add x0, x0, x9\n"
+    "3:  ldrb w3, [x0]\n   cbz w3, 8f  // the terminator came first: no cut\n"
+    "strb wzr, [x0]\n   add x0, x0, #1\n   ldrb w3, [x0]\n   cbz w3, 8f\n"
+    "ret\n"
+    "8:  mov x0, #0\n"
     ASM_RET
     ASM_END(string_cut)
 
@@ -3164,35 +4906,121 @@ __asm__(
     "        .ascii \"00010203040506070809101112131415161718192021222324252627282930313233343536373839404142434445464748495051525354555657585960616263646566676869707172737475767778798081828384858687888990919293949596979899\"\n"
     ".text\n"
 ASM_FUNC(positive_to_string)
+    "stp x29, x30, [sp,  #-48]!\n   mov x29, sp\n   mov x9, x0\n"
+    "adrp x8, digit_pairs\n   add x8, x8, :lo12:digit_pairs\n"
     //
-    //       x19 is not saved because it is not used: the writer is wanted only
-    //       up to the call, so x9 holds it and the call is welcome to it.
+    //       One pair covers everything under a hundred, and zero arrives here
+    //       too: the table would have written it as 00 and the pointer steps
+    //       past the first of them.
     //
-    "stp x29, x30, [sp,  #-48]!\n"
-    "mov x29, sp\n   mov x9, x0\n   add x3, sp, #48  // one past the end of the buffer\n"
-    "adrp x8, digit_pairs\n   add x8, x8, :lo12:digit_pairs\n   mov x7, #100\n"
-    "mov x10, #9999\n"
-    "cmp x1, #99\n"
-    "b.ls 3f\n   mov x4, #0xf5c3\n"
-    "movk x4, #0x5c28, lsl #16\n"
-    "movk x4, #0xc28f, lsl #32\n"
-    "movk x4, #0x28f5, lsl #48\n"
-    "1:  lsr x5, x1, #2\n"
-    "umulh x5, x5, x4\n   lsr x5, x5, #2  // n / 100\n"
-    "msub x6, x5, x7, x1  // n % 100\n"
-    "ldrh w6, [x8, x6, lsl #1]  // both characters at once\n"
-    "sub x3, x3, #2\n"
-    "strh w6, [x3]\n   cmp x1, x10\n   mov x1, x5\n   b.hi 1b\n"
-    "3:  cmp x1, #9\n"
-    "b.ls 4f\n   ldrh w6, [x8, x1, lsl #1]\n"
-    "sub x3, x3, #2\n"
-    "strh w6, [x3]\n   b 5f\n"
-    "4:  add w1, w1, #48\n"
-    "strb w1, [x3,  #-1]!\n"
-    "5:  mov x0, x3\n   add x1, sp, #48\n"
-    "sub x1, x1, x3  // how many digits\n"
+    "cmp x1, #99\n   b.hi 1f\n"
+    "ldrh w2, [x8, x1, lsl #1]\n   strh w2, [sp, #46]\n"
+    "cmp x1, #10\n   cset x3, lo\n"
+    "add x0, sp, #46\n   add x0, x0, x3\n   mov x1, #2\n   sub x1, x1, x3\n"
     "blr x9\n   ldp x29, x30, [sp], #48\n"
     ASM_RET
+    "1:  adrp x6, number_constants\n   add x6, x6, :lo12:number_constants\n"
+    "ldp x10, x11, [x6]  // 5243 and 100, one instruction for the pair\n"
+    "ldr x3, [x6, #48]\n   cmp x1, x3\n   b.hi 2f\n"
+    "mov w2, w1\n"
+    "umull x3, w2, w10\n   lsr x3, x3, #19\n   msub w4, w3, w11, w2\n"
+    "ldrh w3, [x8, x3, lsl #1]\n   ldrh w4, [x8, x4, lsl #1]\n"
+    "strh w3, [sp, #44]\n   strh w4, [sp, #46]\n"
+    "b 9f\n"
+    "2:  ldp x12, x13, [x6, #16]\n"
+    "ldr x3, [x6, #56]\n   cmp x1, x3\n   b.hi 3f\n"
+    "mov w2, w1\n"
+    "umull x3, w2, w12\n   lsr x3, x3, #44\n   msub w4, w3, w13, w2\n"
+    "umull x5, w3, w10\n   lsr x5, x5, #19\n   msub w3, w5, w11, w3\n"
+    "ldrh w5, [x8, x5, lsl #1]\n   ldrh w3, [x8, x3, lsl #1]\n"
+    "strh w5, [sp, #40]\n   strh w3, [sp, #42]\n"
+    "umull x5, w4, w10\n   lsr x5, x5, #19\n   msub w4, w5, w11, w4\n"
+    "ldrh w5, [x8, x5, lsl #1]\n   ldrh w4, [x8, x4, lsl #1]\n"
+    "strh w5, [sp, #44]\n   strh w4, [sp, #46]\n"
+    "b 9f\n"
+    "3:  ldp x14, x7, [x6, #32]  // the reciprocal, and a hundred million\n"
+    "umulh x15, x1, x14\n   lsr x15, x15, #26  // n / 100000000\n"
+    "msub w2, w15, w7, w1  // n % 100000000\n"
+    "umull x3, w2, w12\n   lsr x3, x3, #44\n   msub w4, w3, w13, w2\n"
+    "umull x5, w3, w10\n   lsr x5, x5, #19\n   msub w3, w5, w11, w3\n"
+    "ldrh w5, [x8, x5, lsl #1]\n   ldrh w3, [x8, x3, lsl #1]\n"
+    "strh w5, [sp, #40]\n   strh w3, [sp, #42]\n"
+    "umull x5, w4, w10\n   lsr x5, x5, #19\n   msub w4, w5, w11, w4\n"
+    "ldrh w5, [x8, x5, lsl #1]\n   ldrh w4, [x8, x4, lsl #1]\n"
+    "strh w5, [sp, #44]\n   strh w4, [sp, #46]\n"
+    "ldr x3, [x6, #48]\n   cmp x15, x3\n   b.hi 4f\n"
+    "mov w2, w15\n"
+    "umull x3, w2, w10\n   lsr x3, x3, #19\n   msub w4, w3, w11, w2\n"
+    "ldrh w3, [x8, x3, lsl #1]\n   ldrh w4, [x8, x4, lsl #1]\n"
+    "strh w3, [sp, #36]\n   strh w4, [sp, #38]\n"
+    "b 9f\n"
+    "4:  ldr x3, [x6, #56]\n   cmp x15, x3\n   b.hi 5f\n"
+    "mov w2, w15\n"
+    "umull x3, w2, w12\n   lsr x3, x3, #44\n   msub w4, w3, w13, w2\n"
+    "umull x5, w3, w10\n   lsr x5, x5, #19\n   msub w3, w5, w11, w3\n"
+    "ldrh w5, [x8, x5, lsl #1]\n   ldrh w3, [x8, x3, lsl #1]\n"
+    "strh w5, [sp, #32]\n   strh w3, [sp, #34]\n"
+    "umull x5, w4, w10\n   lsr x5, x5, #19\n   msub w4, w5, w11, w4\n"
+    "ldrh w5, [x8, x5, lsl #1]\n   ldrh w4, [x8, x4, lsl #1]\n"
+    "strh w5, [sp, #36]\n   strh w4, [sp, #38]\n"
+    "b 9f\n"
+    //
+    //       Seventeen digits or more, which the top of the type is: the third
+    //       chunk is at most 1844, so four characters cover it.
+    //
+    "5:  umulh x3, x15, x14\n   lsr x3, x3, #26\n   msub w2, w3, w7, w15\n"
+    "mov x15, x3\n"
+    "umull x3, w2, w12\n   lsr x3, x3, #44\n   msub w4, w3, w13, w2\n"
+    "umull x5, w3, w10\n   lsr x5, x5, #19\n   msub w3, w5, w11, w3\n"
+    "ldrh w5, [x8, x5, lsl #1]\n   ldrh w3, [x8, x3, lsl #1]\n"
+    "strh w5, [sp, #32]\n   strh w3, [sp, #34]\n"
+    "umull x5, w4, w10\n   lsr x5, x5, #19\n   msub w4, w5, w11, w4\n"
+    "ldrh w5, [x8, x5, lsl #1]\n   ldrh w4, [x8, x4, lsl #1]\n"
+    "strh w5, [sp, #36]\n   strh w4, [sp, #38]\n"
+    "mov w2, w15\n"
+    "umull x3, w2, w10\n   lsr x3, x3, #19\n   msub w4, w3, w11, w2\n"
+    "ldrh w3, [x8, x3, lsl #1]\n   ldrh w4, [x8, x4, lsl #1]\n"
+    "strh w3, [sp, #28]\n   strh w4, [sp, #30]\n"
+    //
+    //       How many of those characters are the number. Everything that gets
+    //       here is a hundred or more.
+    //
+    "9:  clz x3, x1\n   mov w4, #64\n   sub w3, w4, w3\n"
+    "mov w4, #1233\n   mul w3, w3, w4\n   lsr w3, w3, #12\n"
+    "add x4, x6, #64  // the powers of ten sit in the same pool\n"
+    "ldr x5, [x4, x3, lsl #3]\n   cmp x1, x5\n   cinc w3, w3, hs  // one over, or not\n"
+    "add x0, sp, #48\n   sub x0, x0, x3\n   mov x1, x3\n"
+    "blr x9\n   ldp x29, x30, [sp], #48\n"
+    ASM_RET
+    //
+    //       Inside the delimiters on purpose: this file is spliced together by
+    //       routine name, and a table in front of ASM_FUNC belongs to whatever
+    //       was there before rather than to this.
+    //
+    //
+    //       One anchor covers all of it. Building 0xABCC77118461CEFD out of
+    //       movz and three movk was four instructions where the pair load is
+    //       one, and 9999 and 99999999 have to be in a register anyway since
+    //       CMP takes twelve bits.
+    //
+    ".section .rodata\n   .balign 8\n"
+    "number_constants:\n"
+    "        .quad 5243\n                 .quad 100\n"
+    "        .quad 1759218605\n           .quad 10000\n"
+    "        .quad 0xABCC77118461CEFD\n   .quad 100000000\n"
+    "        .quad 9999\n                 .quad 99999999\n"
+    "ten_powers:\n"
+    "        .quad 1\n                    .quad 10\n"
+    "        .quad 100\n                  .quad 1000\n"
+    "        .quad 10000\n                .quad 100000\n"
+    "        .quad 1000000\n              .quad 10000000\n"
+    "        .quad 100000000\n            .quad 1000000000\n"
+    "        .quad 10000000000\n          .quad 100000000000\n"
+    "        .quad 1000000000000\n        .quad 10000000000000\n"
+    "        .quad 100000000000000\n      .quad 1000000000000000\n"
+    "        .quad 10000000000000000\n    .quad 100000000000000000\n"
+    "        .quad 1000000000000000000\n  .quad 10000000000000000000\n"
+    ".text\n"
     ASM_END(positive_to_string)
     //
     //
@@ -3228,10 +5056,33 @@ ASM_FUNC(positive_to_string)
     ASM_FUNC(string_to_positive)
     "mov x8, x0  // keep the start\n"
     "1:  ldrb w9, [x0], #1\n"
-    "cbnz w9, 1b\n   sub x0, x0, #2  // the last character\n"
+    "cbnz w9, 1b\n   sub x0, x0, #1  // the terminator\n"
     "mov x2, xzr  // the number so far\n"
     "mov x3, #1  // what the next digit is worth\n"
     "mov x4, #10\n"
+    "sub x11, x0, #8\n   cmp x11, x8\n   b.lo 7f  // fewer than eight bytes of string\n"
+    "orr x14, xzr, #0x0101010101010101\n   add x14, x14, x14, lsl #1\n"
+    "add x14, x14, x14  // 0x0606060606060606\n"
+    "mov w5, #2561\n"
+    "mov w6, #1\n   movk w6, #0x0064, lsl #16  // 6553601\n"
+    "mov x7, #1\n   movk x7, #0x2710, lsl #32  // ten thousand and one, in two halves\n"
+    "mov w10, #0xE100\n   movk w10, #0x05F5, lsl #16  // a hundred million\n"
+    "5:  ldr x12, [x11]\n"
+    "and x13, x12, #0xF0F0F0F0F0F0F0F0\n"
+    "add x9, x12, x14\n   and x9, x9, #0xF0F0F0F0F0F0F0F0\n   orr x13, x13, x9, lsr #4\n"
+    "eor x13, x13, #0x3333333333333333\n   cbnz x13, 7f  // one of the eight is not a digit\n"
+    //
+    //       An exclusive or and not a subtract: every byte has been shown to
+    //       be 0x3 in the top nibble and nine or less in the bottom, so the
+    //       two are the same answer and this one cannot borrow.
+    //
+    "eor x12, x12, #0x3030303030303030\n"
+    "mul x12, x12, x5\n   lsr x12, x12, #8\n   and x12, x12, #0x00FF00FF00FF00FF\n"
+    "mul x12, x12, x6\n   lsr x12, x12, #16\n   and x12, x12, #0x0000FFFF0000FFFF\n"
+    "mul x12, x12, x7\n   lsr x12, x12, #32  // the eight, as a number\n"
+    "madd x2, x12, x3, x2\n   mul x3, x3, x10\n"
+    "mov x0, x11\n   sub x11, x0, #8\n   cmp x11, x8\n   b.hs 5b\n"
+    "7:  sub x0, x0, #1\n"
     //
     //       Unsigned compare: an empty string steps to one before the start.
     //
@@ -3268,52 +5119,34 @@ ASM_FUNC(positive_to_string)
     //       and is what the C did.
     //
     ASM_FUNC(string_find)
-    "ldrb w3, [x1]\n   cbz w3, 9f  // an empty input matches nothing\n"
-    "mov x10, #0x0101\n"
-    "movk x10, #0x0101, lsl #16\n"
-    "movk x10, #0x0101, lsl #32\n"
-    "movk x10, #0x0101, lsl #48  // 0x0101010101010101\n"
-    "lsl x11, x10, #7  // 0x8080808080808080\n"
-    "mul x2, x3, x10  // it, in all eight positions\n"
-    "1:  ldrb w8, [x0]\n   cbz w8, 9f\n   cmp w8, w3\n   b.eq 3f\n"
-    "add x0, x0, #1\n"
-    "ldrb w8, [x0]\n   cbz w8, 9f\n   cmp w8, w3\n   b.eq 3f\n"
-    "add x0, x0, #1\n"
-    "ldrb w8, [x0]\n   cbz w8, 9f\n   cmp w8, w3\n   b.eq 3f\n"
-    "add x0, x0, #1\n"
-    "ldrb w8, [x0]\n   cbz w8, 9f\n   cmp w8, w3\n   b.eq 3f\n"
-    "add x0, x0, #1\n"
-    "and x13, x0, #7\n"
-    "bic x5, x0, #7  // align down: same page, cannot fault\n"
-    "ldr x6, [x5]\n   lsl x13, x13, #3\n"
-    "mov x7,  #-1\n"
-    "lsl x7, x7, x13  // which bytes of this word count\n"
-    "cmp w3, #0xff\n"
-    "mov w14, #0xff\n"
-    "mov w15, #1\n"
-    "csel w14, w15, w14, eq  // neither zero nor it\n"
-    "mul x14, x14, x10\n   bic x14, x14, x7  // only in front of the string\n"
-    "and x6, x6, x7\n   orr x6, x6, x14\n"
-    "5:  eor x8, x6, x2  // the byte that matched is now zero\n"
-    "sub x9, x8, x10\n   bic x9, x9, x8\n   and x9, x9, x11\n   sub x12, x6, x10  // and the terminator, the same way\n"
-    "bic x12, x12, x6\n   and x12, x12, x11\n   orr x9, x9, x12\n   cbnz x9, 6f\n"
-    "add x5, x5, #8\n"
-    "ldr x6, [x5]\n   b 5b\n"
-    "6:  rbit x9, x9\n   clz x9, x9  // first set high bit\n"
-    "lsr x9, x9, #3  // its byte within the word\n"
-    "add x0, x5, x9\n   ldrb w8, [x0]\n   cbz w8, 9f  // the string ended first\n"
-    "cmp w8, w3\n   b.ne 1b\n"
-    "3:  mov x14, x0  // where this candidate starts\n"
-    "mov x15, x1\n"
-    "4:  ldrb w8, [x15]\n   cbz w8, 7f  // input ran out: this is the answer\n"
-    "ldrb w9, [x0]\n   cmp w9, w8\n   b.ne 8f\n   add x0, x0, #1\n"
-    "add x15, x15, #1\n"
-    "b 4b\n"
-    "8:  add x0, x14, #1  // one past where this candidate began\n"
-    "b 1b\n"
-    "7:  mov x0, x14\n"
+    "ldrb w2, [x1]\n   cbnz w2, 2f\n   mov x0, #0\n"
     ASM_RET
-    "9:  mov x0, #0\n"
+    "2:  ldrb w2, [x1, #1]\n   cbnz w2, 3f\n"
+    "ldrb w1, [x1]\n   b string_first_of  // one byte is strchr\n"
+    "3:  stp x29, x30, [sp, #-64]!\n   mov x29, sp\n"
+    "stp x19, x20, [sp, #16]\n   stp x21, x22, [sp, #32]\n"
+    "stp x23, x24, [sp, #48]\n"
+    "mov x19, x0  // where to look next\n   mov x20, x1  // the needle\n"
+    "mov x0, x1\n   bl string_length\n   mov x21, x0\n"
+    "mov x22, #256\n   lsl x4, x21, #2\n   cmp x22, x4\n   b.hs 4f\n"
+    "mov x22, x4  // never a chunk a needle would not fit four times in\n"
+    "4:  mov x23, #0\n   mov x24, #0\n"
+    "41: add x0, x19, x23\n   and x4, x0, #4095\n   mov x5, #4096\n"
+    "sub x2, x5, x4  // to the end of this page\n"
+    "mov x1, #0\n   bl memory_first_of\n   cbz x0, 42f\n"
+    "sub x23, x0, x19\n   mov x24, #1  // the string ends in here\n   b 43f\n"
+    "42: add x4, x19, x23\n   and x4, x4, #-4096\n   add x4, x4, #4096\n"
+    "sub x23, x4, x19\n   cmp x23, x22\n   b.lo 41b\n"
+    "43: mov x0, x19\n   mov x1, x23\n   mov x2, x20\n   mov x3, x21\n"
+    "bl memory_search\n   cbnz x0, 9f\n"
+    "cbnz x24, 8f  // the terminator was in it: nowhere else to look\n"
+    "sub x4, x23, x21\n   add x4, x4, #1  // keep needle_size - 1 of overlap\n"
+    "add x19, x19, x4\n"
+    "lsl x22, x22, #1\n   mov x4, #65536\n   cmp x22, x4\n   csel x22, x4, x22, hi\n"
+    "b 4b\n"
+    "8:  mov x0, #0\n"
+    "9:  ldp x19, x20, [sp, #16]\n   ldp x21, x22, [sp, #32]\n"
+    "ldp x23, x24, [sp, #48]\n   ldp x29, x30, [sp], #64\n"
     ASM_RET
     ASM_END(string_find)
     //
@@ -3359,11 +5192,76 @@ ASM_FUNC(positive_to_string)
     "mov x0, x1  // where the current run of plain text began\n"
     "add x21, sp, 208\n   add x22, sp, 256  // one past the integer save area\n"
     "add x24, sp, 256  // the caller's stack arguments\n"
-    "b .Lstring_format_test\n"
-    ".Lstring_format_step:\n   ldrb w9, [x20, #1]\n"
-    "add x20, x20, #1\n"
+    //
+    //       The hunt for the end of a run of plain text, which is where this
+    //       routine spent most of itself. The x86_64 block carries the SWAR;
+    //       what is different here is that both constants it needs are logical
+    //       immediates, that BIC does and-not in one instruction, and that the
+    //       bytes in front of the run are masked with ORN rather than out of a
+    //       table.
+    //
+    //       Eight bytes are still walked before any of that. The wide hunt
+    //       costs about twenty instructions to enter and five a byte is what
+    //       the walk costs, so a run shorter than four is cheaper walked --
+    //       and a real format is one long run of message and then short ones,
+    //       "%p\n" at the end of a line being a run of one.
+    //
+    //       NEON would beat this and is not here. The same hunt written with
+    //       cmeq, orr and a shrn narrowing was measured against both of these
+    //       on an Apple arm64, over a thirty eight byte run:
+    //
+    //           a byte at a time   12.62 ns
+    //           a word at a time    3.04 ns
+    //           NEON                0.98 ns
+    //
+    //       Three times this, and it is left on the table for one reason. The
+    //       vector registers are not ours in the kernel -- that is why this
+    //       block already refuses to spill q0 through q7 there -- so NEON
+    //       would have to sit behind KERNEL_MODE, and then the word path
+    //       underneath it is compiled by nothing this tree builds and tested
+    //       by nothing this tree runs. x86_64 escapes that because cpu_detect
+    //       leaves a flag behind and verify.c can put it down; arm64's
+    //       cpu_detect has nothing to ask yet and nothing to leave. A flag
+    //       there saying the vector registers may be touched is the one change
+    //       that would make this worth taking.
+    //
+    //       Guest instructions a call under qemu:
+    //
+    //           a line of text, no specifier   225 -> 125
+    //           "cp: Cannot copy '%s' ..."     221 -> 210
+    //           "%s has %p items worth %b"     350 -> 334
+    //           "one %% two %% three %% four"  263 -> 262
+    //           "%p %p %p %p"                  488 -> 457
+    //
+    //       Only the first is a run long enough to be worth the setup, and the
+    //       rest are where they were. The last two also carry
+    //       positive_to_string's own change.
+    //
     ".Lstring_format_test:\n   cbz w9, .Lstring_format_tail\n   cmp w9, #37\n"
-    "b.ne .Lstring_format_step\n   cmp x20, x0\n   b.eq .Lstring_format_spec\n   sub x1, x20, x0\n"
+    "b.eq .Lstring_format_percent\n"
+    ".rept 8\n"
+    "ldrb w9, [x20, #1]\n   add x20, x20, #1\n   cbz w9, .Lstring_format_tail\n"
+    "cmp w9, #37\n   b.eq .Lstring_format_percent\n"
+    ".endr\n"
+    //
+    //       Nothing masks the bytes in front of the run: nine of them have
+    //       just been shown not to stop it and an aligned word reaches seven
+    //       back, so there is nothing below the cursor that could answer. The
+    //       x86_64 block says how that was found out, and why the eight in the
+    //       .rept above cannot be shortened.
+    //
+    "and x10, x20, #-8  // align down: same page, cannot fault\n"
+    "ldr x12, [x10]\n"
+    "orr x14, xzr, #0x0101010101010101\n   orr x15, xzr, #0x8080808080808080\n"
+    "mov w3, #0x25\n   mul x3, x14, x3  // the percent, in all eight positions\n"
+    ".Lstring_format_word:\n"
+    "sub x1, x12, x14\n   bic x1, x1, x12  // a zero byte\n"
+    "eor x13, x12, x3\n   sub x11, x13, x14\n   bic x11, x11, x13  // a percent is one here\n"
+    "orr x1, x1, x11\n   ands x1, x1, x15\n   b.ne .Lstring_format_found\n"
+    "ldr x12, [x10, #8]!\n   b .Lstring_format_word\n"
+    ".Lstring_format_found:\n   rbit x1, x1\n   clz x1, x1\n"
+    "add x20, x10, x1, lsr #3\n   ldrb w9, [x20]\n   cbz w9, .Lstring_format_tail\n"
+    ".Lstring_format_percent:\n   cmp x20, x0\n   b.eq .Lstring_format_spec\n   sub x1, x20, x0\n"
     ASM_CALL("x19")
     ".Lstring_format_spec:\n   ldrb w9, [x20, #1]\n"
     "add x20, x20, #1\n"
@@ -3852,14 +5750,20 @@ __asm__(
     //       out over the arm64 copy: the cheap test's flags are exact only at
     //       the lowest, and this is the one routine that takes the highest.
     //
-    //       Hunting the terminator itself is a byte walk, as it is on the other
-    //       two: the answer there is the end of the string rather than a match
-    //       inside it, and it is far too rare to shape the scan.
+    //       Hunting the terminator itself is handed to string_first_of_or_end,
+    //       as it is on the other two: the answer there is the end of the string
+    //       rather than a match inside it, which is the question that routine
+    //       already answers for a byte that never turns up.
     //
     ASM_FUNC(string_last_of_or_end)
+    //
+    //      Hunting the terminator itself is the one case where the answer is
+    //      the end of the string rather than a match inside it, and that is
+    //      exactly the question string_first_of_or_end already answers for a
+    //      byte that never turns up. It used to be a byte walk here.
+    //
     "andi a1, a1, 0xff\n   bnez a1, 1f\n"
-    "0:  lbu t0, 0(a0)\n   beqz t0, 9f\n   addi a0, a0, 1\n   j 0b\n"
-    "9:  ret\n"
+    "tail string_first_of_or_end\n"
     "1:  li t0, 0x0101010101010101\n   li t1, 0x7f7f7f7f7f7f7f7f\n"
     "mul a3, a1, t0  # the byte, in all eight positions\n"
     "li a4, 0  # best so far: none\n"
@@ -4001,6 +5905,103 @@ __asm__(
     "9:  mv a0, a3\n"
     ASM_RET
     ASM_END(memory_count)
+    ASM_FUNC(memory_compare)
+    "li a3, 0\n   beqz a2, 9f\n"
+    "li t0, 8\n"
+    "1:  bltu a2, t0, 7f\n"
+    "ld t1, 0(a0)\n   ld t2, 0(a1)\n   bne t1, t2, 51f\n"
+    "addi a0, a0, 8\n   addi a1, a1, 8\n   addi a2, a2, -8\n   j 1b\n"
+    //
+    //      Exclusive-or leaves zero bytes where the two agree, so the first
+    //      byte that differs is the one holding the lowest set bit of it.
+    //
+    //      Which byte that is, without a count-trailing-zeros instruction:
+    //      isolate the bit, take one off to fill everything under it, and
+    //      shift that down by seven so a byte is marked only when the whole
+    //      of it is below the bit. Multiplying by 0x0101..01 sums the marks
+    //      into the top byte, which is the index. The seven matters -- the
+    //      obvious version without it is right only when the bit is at the
+    //      bottom of its byte.
+    //
+    "51: xor t1, t1, t2\n   sub t2, zero, t1\n   and t1, t1, t2\n   addi t1, t1, -1\n"
+    "srli t1, t1, 7\n   li t3, 0x0101010101010101\n   and t1, t1, t3\n"
+    "mul t1, t1, t3\n   srli t1, t1, 56\n"
+    "add t2, a0, t1\n   lbu t4, 0(t2)\n   add t2, a1, t1\n   lbu t5, 0(t2)\n"
+    "sub a3, t4, t5\n   j 9f\n"
+    "7:  beqz a2, 9f\n"
+    "71: lbu t1, 0(a0)\n   lbu t2, 0(a1)\n   sub a3, t1, t2\n   bnez a3, 9f\n"
+    "addi a0, a0, 1\n   addi a1, a1, 1\n   addi a2, a2, -1\n   bnez a2, 71b\n"
+    "9:  mv a0, a3\n"
+    ASM_RET
+    ASM_END(memory_compare)
+    ASM_FUNC(memory_search)
+    //
+    //       One byte hunted rather than two, and no block at all: the
+    //       and-ing of two masks that the other two blocks are built on wants
+    //       a vector register, and there is not one to want here. What is
+    //       left is memchr for where a match could begin and memcmp for
+    //       whether it did, which is the naive search with both of its loops
+    //       already written eight bytes at a time.
+    //
+    //       The byte hunted for is the needle's rarest and not its first,
+    //       which is the one part of the wide algorithm that survives without
+    //       a vector register and is most of what it buys: a candidate costs
+    //       a call, and the point of choosing is to have fewer of them.
+    //       byte_commonness is the table and the note where it is defined
+    //       says how it was counted.
+    //
+    //       Choosing costs a pass over the needle, so it is only done when
+    //       there is a haystack worth the pass -- under sixty four bytes the
+    //       first byte is taken and nothing is read twice.
+    //
+    "beqz a3, 90f  # an empty needle is at the front\n"
+    "bltu a1, a3, 95f  # longer than the haystack: nowhere\n"
+    "li t0, 1\n   bne a3, t0, 20f\n"
+    "lbu t1, 0(a2)\n   mv a2, a1\n   mv a1, t1\n"
+    "j memory_first_of  # one byte is memchr\n"
+    "90:\n"
+    ASM_RET
+    "95: li a0, 0\n"
+    ASM_RET
+    "20: addi sp, sp, -64\n   sd ra, 56(sp)\n   sd s0, 48(sp)\n   sd s1, 40(sp)\n"
+    "sd s2, 32(sp)\n   sd s3, 24(sp)\n   sd s4, 16(sp)\n   sd s5, 8(sp)\n"
+    "mv s0, a0  # the haystack\n   mv s1, a2  # the needle\n   mv s2, a3  # its length\n"
+    "add s3, a0, a1\n   sub s3, s3, s2  # the last position a match could start at\n"
+    "mv s4, a0  # where the next hunt begins\n"
+    //
+    //      Which byte of the needle to hunt, as an offset into it.
+    //
+    "li s5, 0  # the offset\n"
+    "li t1, 64\n   bltu a1, t1, 26f\n"
+    "li t2, 4\n   bltu s2, t2, 26f\n"
+    "la t3, byte_commonness\n   li t4, 256\n   li t5, 0\n"
+    "21: add t6, s1, t5\n   lbu t6, 0(t6)\n   add t6, t3, t6\n   lbu t6, 0(t6)\n"
+    "bgeu t6, t4, 22f\n   mv t4, t6\n   mv s5, t5\n"
+    "22: addi t5, t5, 1\n   bltu t5, s2, 21b\n"
+    "26:\n"
+    //
+    //      The hunt runs from the offset, and a hit is a candidate that many
+    //      bytes earlier. The last position a match could start at bounds it,
+    //      so nothing past the end of the haystack is ever read.
+    //
+    "61: sub a2, s3, s4\n   addi a2, a2, 1  # positions still to try\n"
+    "add a0, s4, s5\n   add t1, s1, s5\n   lbu a1, 0(t1)\n"
+    "call memory_first_of\n   beqz a0, 8f\n"
+    "sub a0, a0, s5  # back to where the match would start\n"
+    "mv s4, a0\n   mv a1, s1\n   mv a2, s2\n"
+    "call memory_compare\n   beqz a0, 7f\n"
+    //
+    //      A failed candidate is left one byte, not needle_size: "aab" is in
+    //      "aaab", and a scan that resumes past what it matched cannot see
+    //      it.
+    //
+    "addi s4, s4, 1\n   bgeu s3, s4, 61b\n"
+    "8:  li a0, 0\n   j 9f\n"
+    "7:  mv a0, s4\n"
+    "9:  ld ra, 56(sp)\n   ld s0, 48(sp)\n   ld s1, 40(sp)\n   ld s2, 32(sp)\n"
+    "ld s3, 24(sp)\n   ld s4, 16(sp)\n   ld s5, 8(sp)\n   addi sp, sp, 64\n"
+    ASM_RET
+    ASM_END(memory_search)
     //
     //       moonwater_cpu_detect -- nothing to ask yet. The vector extension is optional
     //       on riscv and would need asking about; nothing here uses it.
@@ -4038,35 +6039,106 @@ __asm__(
     ASM_FUNC(memory_fill)
     "mv a3, a0\n   andi a1, a1, 0xff\n   slli t0, a1, 8\n   or a1, a1, t0\n"
     "slli t0, a1, 16\n   or a1, a1, t0\n   slli t0, a1, 32\n   or a1, a1, t0\n"
-    "li t1, 8\n"
-    "1:  blt a2, t1, 2f\n   sd a1, 0(a0)\n   addi a0, a0, 8\n   addi a2, a2, -8\n"
-    "j 1b\n"
-    "2:  beqz a2, 3f\n   sb a1, 0(a0)\n   addi a0, a0, 1\n   addi a2, a2, -1\n"
-    "j 2b\n"
-    "3:  mv a0, a3\n"
+    "add a4, a0, a2  # one past the end\n"
+    "li t1, 16\n   bgeu a2, t1, 6f\n"
+    "li t1, 8\n   bgeu a2, t1, 7f\n"
+    "li t1, 4\n   bgeu a2, t1, 8f\n"
+    "beqz a2, 9f\n"
+    // one to three: first, last, and the middle, which between them cover all three
+    "sb a1, 0(a0)\n   sb a1, -1(a4)\n   srli t0, a2, 1\n   add t0, a0, t0\n   sb a1, 0(t0)\n"
+    "9:  mv a0, a3\n   ret\n"
+    "8:  sw a1, 0(a0)\n   sw a1, -4(a4)\n   mv a0, a3\n   ret\n"
+    "7:  sd a1, 0(a0)\n   sd a1, -8(a4)\n   mv a0, a3\n   ret\n"
+    "6:  li t1, 32\n   bgeu a2, t1, 3f\n"
+    "sd a1, 0(a0)\n   sd a1, 8(a0)\n   sd a1, -16(a4)\n   sd a1, -8(a4)\n"
+    "mv a0, a3\n   ret\n"
+    "3:  li t1, 64\n   bgeu a2, t1, 5f\n"
+    "sd a1, 0(a0)\n   sd a1, 8(a0)\n   sd a1, 16(a0)\n   sd a1, 24(a0)\n"
+    "sd a1, -32(a4)\n   sd a1, -24(a4)\n   sd a1, -16(a4)\n   sd a1, -8(a4)\n"
+    "mv a0, a3\n   ret\n"
+    "5:  sd a1, 0(a0)  # the head, unaligned\n"
+    "addi t2, a0, 8\n   andi t2, t2, -8\n   addi t3, a4, -32\n"
+    "1:  sd a1, 0(t2)\n   sd a1, 8(t2)\n   sd a1, 16(t2)\n   sd a1, 24(t2)\n"
+    "addi t2, t2, 32\n   bgeu t3, t2, 1b\n"
+    "sd a1, -32(a4)\n   sd a1, -24(a4)\n   sd a1, -16(a4)\n   sd a1, -8(a4)\n"
+    "mv a0, a3\n"
     ASM_RET
     ASM_END(memory_fill)
 
     ASM_FUNC(memory_copy_fast)
-    "mv a3, a0\n   li t1, 8\n"
-    "1:  blt a2, t1, 2f\n   ld t0, 0(a1)\n   sd t0, 0(a0)\n   addi a1, a1, 8\n"
-    "addi a0, a0, 8\n   addi a2, a2, -8\n   j 1b\n"
-    "2:  beqz a2, 3f\n   lbu t0, 0(a1)\n   sb t0, 0(a0)\n   addi a1, a1, 1\n"
-    "addi a0, a0, 1\n   addi a2, a2, -1\n   j 2b\n"
-    "3:  mv a0, a3\n"
+    "mv a3, a0\n   add a4, a0, a2\n   add a5, a1, a2\n"
+    "li t1, 16\n   bgeu a2, t1, 6f\n"
+    "li t1, 8\n   bgeu a2, t1, 7f\n"
+    "li t1, 4\n   bgeu a2, t1, 8f\n"
+    "beqz a2, 9f\n   srli t2, a2, 1\n"
+    "lbu t0, 0(a1)\n   lbu t1, -1(a5)\n   add t3, a1, t2\n   lbu t3, 0(t3)\n"
+    "sb t0, 0(a0)\n   sb t1, -1(a4)\n   add t4, a0, t2\n   sb t3, 0(t4)\n"
+    "9:  mv a0, a3\n   ret\n"
+    "8:  lw t0, 0(a1)\n   lw t1, -4(a5)\n   sw t0, 0(a0)\n   sw t1, -4(a4)\n"
+    "mv a0, a3\n   ret\n"
+    "7:  ld t0, 0(a1)\n   ld t1, -8(a5)\n   sd t0, 0(a0)\n   sd t1, -8(a4)\n"
+    "mv a0, a3\n   ret\n"
+    "6:  li t1, 32\n   bgeu a2, t1, 3f\n"
+    "ld t0, 0(a1)\n   ld t2, 8(a1)\n   ld t3, -16(a5)\n   ld t4, -8(a5)\n"
+    "sd t0, 0(a0)\n   sd t2, 8(a0)\n   sd t3, -16(a4)\n   sd t4, -8(a4)\n"
+    "mv a0, a3\n   ret\n"
+    "3:  li t1, 64\n   bgeu a2, t1, 5f\n"
+    "ld t0, 0(a1)\n   ld t2, 8(a1)\n   ld t3, 16(a1)\n   ld t4, 24(a1)\n"
+    "ld t5, -32(a5)\n   ld t6, -24(a5)\n   ld a6, -16(a5)\n   ld a7, -8(a5)\n"
+    "sd t0, 0(a0)\n   sd t2, 8(a0)\n   sd t3, 16(a0)\n   sd t4, 24(a0)\n"
+    "sd t5, -32(a4)\n   sd t6, -24(a4)\n   sd a6, -16(a4)\n   sd a7, -8(a4)\n"
+    "mv a0, a3\n   ret\n"
+    "5:  ld a6, 0(a1)\n"
+    "ld t3, -32(a5)\n   ld t4, -24(a5)\n   ld t5, -16(a5)\n   ld t6, -8(a5)\n"
+    "addi t0, a0, 8\n   andi t0, t0, -8\n"
+    "sub t1, t0, a0\n   add a1, a1, t1  # the source moves with it\n   mv a0, t0\n"
+    "addi a2, a4, -32\n"
+    "1:  ld t0, 0(a1)\n   ld t1, 8(a1)\n   ld t2, 16(a1)\n   ld a7, 24(a1)\n"
+    "sd t0, 0(a0)\n   sd t1, 8(a0)\n   sd t2, 16(a0)\n   sd a7, 24(a0)\n"
+    "addi a1, a1, 32\n   addi a0, a0, 32\n   bgeu a2, a0, 1b\n"
+    "sd t3, -32(a4)\n   sd t4, -24(a4)\n   sd t5, -16(a4)\n   sd t6, -8(a4)\n"
+    "sd a6, 0(a3)\n   mv a0, a3\n"
     ASM_RET
     ASM_END(memory_copy_fast)
 
     ASM_FUNC(memory_copy)
-    "mv a3, a0\n   bleu a0, a1, 5f\n   add t0, a1, a2\n   bgeu a0, t0, 5f\n"
-    "add a0, a0, a2\n   add a1, a1, a2\n"
-    "6:  beqz a2, 7f\n   addi a1, a1, -1\n   addi a0, a0, -1\n   lbu t0, 0(a1)\n"
-    "sb t0, 0(a0)\n   addi a2, a2, -1\n   j 6b\n"
-    "7:  mv a0, a3\n"
-    ASM_RET
-    "5:  beqz a2, 8f\n   lbu t0, 0(a1)\n   sb t0, 0(a0)\n   addi a1, a1, 1\n"
-    "addi a0, a0, 1\n   addi a2, a2, -1\n   j 5b\n"
-    "8:  mv a0, a3\n"
+    "bleu a0, a1, 1f\n   add t0, a1, a2\n   bgeu a0, t0, 1f\n   j 2f\n"
+    "1:  tail memory_copy_fast\n"
+    "2:  mv a3, a0\n   add a4, a0, a2\n   add a5, a1, a2\n"
+    "li t1, 64\n   bltu a2, t1, 5f\n"
+    "ld t3, 0(a1)\n   ld t4, 8(a1)\n   ld t5, 16(a1)\n   ld t6, 24(a1)\n"
+    "ld a6, -8(a5)\n"
+    "andi t0, a4, -8\n   sub t1, a4, t0\n   sub a5, a5, t1\n"
+    "addi t2, a0, 32\n"
+    "3:  bgeu t2, t0, 4f\n"
+    "addi t0, t0, -32\n   addi a5, a5, -32\n"
+    "ld t1, 0(a5)\n   ld a7, 8(a5)\n   ld a1, 16(a5)\n   ld a2, 24(a5)\n"
+    "sd t1, 0(t0)\n   sd a7, 8(t0)\n   sd a1, 16(t0)\n   sd a2, 24(t0)\n"
+    "j 3b\n"
+    "4:  sd a6, -8(a4)\n"
+    "sd t3, 0(a3)\n   sd t4, 8(a3)\n   sd t5, 16(a3)\n   sd t6, 24(a3)\n"
+    "mv a0, a3\n   ret\n"
+    //
+    //       Under 64 bytes: eight at a time downwards, with the first eight kept
+    //       in a register so the store that ends it does not read memory the
+    //       loop has already written over.
+    //
+    "5:  li t1, 8\n   bltu a2, t1, 6f\n"
+    "ld a6, 0(a1)\n   addi t2, a0, 8\n"
+    "7:  bgeu t2, a4, 8f\n"
+    "addi a4, a4, -8\n   addi a5, a5, -8\n   ld t0, 0(a5)\n   sd t0, 0(a4)\n   j 7b\n"
+    "8:  sd a6, 0(a3)\n   mv a0, a3\n   ret\n"
+    //
+    //       Under eight there is no direction left to get wrong: everything is
+    //       in registers before any of it is written.
+    //
+    "6:  li t1, 4\n   bltu a2, t1, 9f\n"
+    "lw t0, 0(a1)\n   lw t1, -4(a5)\n   sw t0, 0(a0)\n   sw t1, -4(a4)\n"
+    "mv a0, a3\n   ret\n"
+    "9:  beqz a2, 0f\n   srli t2, a2, 1\n"
+    "lbu t0, 0(a1)\n   lbu t1, -1(a5)\n   add t3, a1, t2\n   lbu t3, 0(t3)\n"
+    "sb t0, 0(a0)\n   sb t1, -1(a4)\n   add t4, a0, t2\n   sb t3, 0(t4)\n"
+    "0:  mv a0, a3\n"
     ASM_RET
     ASM_END(memory_copy)
     //
@@ -4088,47 +6160,115 @@ __asm__(
     //       that case is decided before the first load.
     //
     ASM_FUNC(string_copy)
-    "mv a2, a0\n"
-    "1:  lbu t0, 0(a1)\n   sb t0, 0(a0)  # the terminator is copied too\n"
-    "addi a1, a1, 1\n   addi a0, a0, 1\n   bnez t0, 1b\n   mv a0, a2\n"
-    ASM_RET
+    "lui t0, 0x1010\n   addi t0, t0, 257\n   slli t1, t0, 32\n   add t0, t0, t1\n"
+    "slli t1, t0, 7  # 0x8080808080808080\n"
+    "andi a4, a1, 7  # how far into the word it begins\n"
+    "andi a5, a1, -8  # align down: same page, cannot fault\n"
+    "ld a6, 0(a5)\n   beqz a4, 1f\n"
+    "slli a4, a4, 3\n   li a7, 1\n   sll a7, a7, a4\n   addi a7, a7, -1\n"
+    "or a6, a6, a7  # so the bytes in front cannot look like a terminator\n"
+    "1:  sub t2, a6, t0\n   not t3, a6\n   and t2, t2, t3\n   and t2, t2, t1\n"
+    "bnez t2, 2f\n   addi a5, a5, 8\n   ld a6, 0(a5)\n   j 1b\n"
+    "2:  sub t3, zero, t2\n   and t2, t2, t3  # lowest set high bit\n"
+    "addi t2, t2, -1\n   and t2, t2, t0\n   mul t2, t2, t0\n   srli t2, t2, 56\n"
+    "addi t2, t2, -1  # its byte within the word\n"
+    "add a2, a5, t2\n   sub a2, a2, a1\n   addi a2, a2, 1  # the terminator is copied too\n"
+    "tail memory_copy_fast\n"
     ASM_END(string_copy)
     //       string_copy_max: the arm64 block carries the reasoning.
     ASM_FUNC(string_copy_max)
-    "mv a3, a0\n   beqz a2, 3f\n"
-    "1:  lbu t0, 0(a1)\n   beqz t0, 2f\n   sb t0, 0(a0)\n   addi a0, a0, 1\n"
-    "addi a1, a1, 1\n   addi a2, a2, -1\n   bnez a2, 1b\n   j 3f  # bound filled: no terminator\n"
-    "2:  sb zero, 0(a0)  # source ended inside the bound\n"
-    "3:  mv a0, a3\n"
+    "mv a3, a0\n   beqz a2, 9f  # not even a terminator\n"
+    "add a7, a1, a2  # one past the last byte we may read\n"
+    "lui t0, 0x1010\n   addi t0, t0, 257\n   slli t1, t0, 32\n   add t0, t0, t1\n"
+    "slli t1, t0, 7\n"
+    "andi a4, a1, 7\n   andi a5, a1, -8\n   ld a6, 0(a5)\n   beqz a4, 1f\n"
+    "slli a4, a4, 3\n   li t4, 1\n   sll t4, t4, a4\n   addi t4, t4, -1\n   or a6, a6, t4\n"
+    "1:  sub t2, a6, t0\n   not t3, a6\n   and t2, t2, t3\n   and t2, t2, t1\n"
+    "bnez t2, 2f\n   addi a5, a5, 8\n   bgeu a5, a7, 4f  # the bound is behind us\n"
+    "ld a6, 0(a5)\n   j 1b\n"
+    "2:  sub t3, zero, t2\n   and t2, t2, t3\n   addi t2, t2, -1\n   and t2, t2, t0\n"
+    "mul t2, t2, t0\n   srli t2, t2, 56\n   addi t2, t2, -1\n"
+    "add t2, a5, t2\n   sub t2, t2, a1  # the length\n"
+    "bgeu t2, a2, 4f  # the bound came first\n   addi a2, t2, 1\n"
+    "4:  tail memory_copy_fast\n"
+    "9:  mv a0, a3\n"
     ASM_RET
     ASM_END(string_copy_max)
-    //       string_last_of: the arm64 block carries the reasoning.
+    //       string_last_of: the arm64 block carries the reasoning. There is no
+    //       vector extension to reach for here, so what it hands over to is the
+    //       word at a time hunt rather than a wide one -- which is still the
+    //       whole of the change, since this was a byte walk.
     ASM_FUNC(string_last_of)
-    "andi a1, a1, 0xff\n   li a2, 0  # no match yet\n"
-    "1:  lbu t0, 0(a0)\n   addi a0, a0, 1\n   beqz t0, 3f\n   bne t0, a1, 1b  # the mismatch is the back edge\n"
-    "addi a2, a0, -1\n   j 1b\n"
-    "3:  mv a0, a2\n"
+    "andi a1, a1, 0xff\n   beqz a1, 9f  # nothing, for the terminator\n"
+    "tail string_last_of_or_end\n"
+    "9:  li a0, 0\n"
     ASM_RET
     ASM_END(string_last_of)
     //       string_replace_all: the arm64 block carries the reasoning.
     ASM_FUNC(string_replace_all)
     "slli a1, a1, 56\n   srai a1, a1, 56  # b8 is signed; widen it that way\n"
-    "blez a1, 2f  # at or below zero never matches\n"
-    "lbu t0, 0(a0)\n   beqz t0, 2f\n"
-    "1:  beq t0, a1, 4f\n"
-    "3:  addi a0, a0, 1\n   lbu t0, 0(a0)\n   bnez t0, 1b\n"
-    "2:\n"
+    "blez a1, 9f  # at or below zero never matches\n"
+    "lui t0, 0x1010\n   addi t0, t0, 257\n   slli t1, t0, 32\n   add t0, t0, t1\n"
+    "slli t1, t0, 7\n   mul a3, a1, t0  # the symbol, in all eight positions\n"
+    "andi a4, a2, 0xff\n   mul a4, a4, t0  # and the replacement\n   li a7, 255\n"
+    "not t6, t1  # 0x7f7f7f7f7f7f7f7f\n"
+    "1:  andi t2, a0, 7\n   beqz t2, 2f\n"
+    "lbu t2, 0(a0)\n   beqz t2, 9f\n   bne t2, a1, 3f\n   sb a2, 0(a0)\n"
+    "3:  addi a0, a0, 1\n   j 1b\n"
+    "2:  ld a6, 0(a0)\n"
+    "sub t3, a6, t0\n   not t4, a6\n   and t3, t3, t4\n   and t3, t3, t1\n"
+    "bnez t3, 5f  # the terminator is in this word\n"
+    //
+    //       Not the (v - 0x01..) & ~v & 0x80.. test used everywhere else in this
+    //       file. That one answers "is any byte zero" exactly and points at the
+    //       first one exactly, but a borrow out of a low byte can set the flag
+    //       for a byte above it that is not zero -- which is harmless when the
+    //       answer wanted is the lowest set bit and wrong when it is a mask of
+    //       all of them. This is the exact form: adding 0x7f to the low seven
+    //       bits carries into the high bit unless those seven bits are zero, so
+    //       or-ing the byte back in leaves the high bit clear only where the
+    //       whole byte was.
+    //
+    "xor t2, a6, a3  # zero where the symbol is\n"
+    "and t3, t2, t6\n   add t3, t3, t6\n   or t3, t3, t2\n   not t3, t3\n"
+    "and t3, t3, t1\n   beqz t3, 6f  # nothing to replace: no store at all\n"
+    //
+    //       The blend the other two do in a vector register, done in an integer
+    //       one. The mask has 0x80 in each byte that matched; a shift down by
+    //       seven makes that 0x01, and multiplying by 255 widens each to 0xff
+    //       without carrying into its neighbour.
+    //
+    "srli t3, t3, 7\n   mul t3, t3, a7\n"
+    "not t4, t3\n   and a6, a6, t4\n   and t5, a4, t3\n   or a6, a6, t5\n"
+    "sd a6, 0(a0)\n"
+    "6:  addi a0, a0, 8\n   j 2b\n"
+    "5:  lbu t2, 0(a0)\n   beqz t2, 9f\n   bne t2, a1, 8f\n   sb a2, 0(a0)\n"
+    "8:  addi a0, a0, 1\n   j 5b\n"
+    "9:\n"
     ASM_RET
-    "4:  sb a2, 0(a0)\n   j 3b\n"
     ASM_END(string_replace_all)
     //       string_cut: the arm64 block carries the reasoning.
     ASM_FUNC(string_cut)
-    "slli a1, a1, 56\n   srai a1, a1, 56\n   blez a1, 4f\n   lbu t0, 0(a0)\n"
-    "beqz t0, 4f\n"
-    "1:  beq t0, a1, 2f\n   addi a0, a0, 1\n   lbu t0, 0(a0)\n   bnez t0, 1b\n"
-    "4:  li a0, 0\n"
-    ASM_RET
-    "2:  sb zero, 0(a0)\n   addi a0, a0, 1\n   lbu t0, 0(a0)\n   beqz t0, 4b\n"
+    "slli a1, a1, 56\n   srai a1, a1, 56\n   blez a1, 8f\n"
+    "lui t0, 0x1010\n   addi t0, t0, 257\n   slli t1, t0, 32\n   add t0, t0, t1\n"
+    "slli t1, t0, 7\n   mul a3, a1, t0  # the symbol, in all eight positions\n"
+    "andi a4, a0, 7\n   andi a5, a0, -8\n   ld a6, 0(a5)\n   beqz a4, 1f\n"
+    "li a7, -1\n   slli a4, a4, 3\n   sll a7, a7, a4\n"
+    "addi a2, a1, 1  # neither zero nor it: the symbol is 1 to 127 here\n"
+    "mul a2, a2, t0\n   not t2, a7\n   and a2, a2, t2  # only in front of the string\n"
+    "and a6, a6, a7\n   or a6, a6, a2\n"
+    "1:  xor t2, a6, a3  # the byte that matched is now zero\n"
+    "sub t3, t2, t0\n   not t4, t2\n   and t3, t3, t4\n"
+    "sub t5, a6, t0  # and the terminator, the same way\n"
+    "not t6, a6\n   and t5, t5, t6\n   or t3, t3, t5\n   and t3, t3, t1\n"
+    "bnez t3, 2f\n   addi a5, a5, 8\n   ld a6, 0(a5)\n   j 1b\n"
+    "2:  sub t5, zero, t3\n   and t3, t3, t5\n   addi t3, t3, -1\n   and t3, t3, t0\n"
+    "mul t3, t3, t0\n   srli t3, t3, 56\n   addi t3, t3, -1\n"
+    "add a0, a5, t3\n"
+    "3:  lbu t4, 0(a0)\n   beqz t4, 8f  # the terminator came first: no cut\n"
+    "sb zero, 0(a0)\n   addi a0, a0, 1\n   lbu t4, 0(a0)\n   beqz t4, 8f\n"
+    "ret\n"
+    "8:  li a0, 0\n"
     ASM_RET
     ASM_END(string_cut)
 
@@ -4210,29 +6350,124 @@ __asm__(
     "        .ascii \"00010203040506070809101112131415161718192021222324252627282930313233343536373839404142434445464748495051525354555657585960616263646566676869707172737475767778798081828384858687888990919293949596979899\"\n"
     ".text\n"
 ASM_FUNC(positive_to_string)
+    "addi sp, sp, -48\n   sd ra, 40(sp)\n   mv t6, a0\n   lla t3, digit_pairs\n"
     //
-    //       s1 is not saved because it is not used: the writer is wanted only up
-    //       to the call, so t6 holds it. Only ra has to survive.
+    //       One pair covers everything under a hundred, and zero arrives here
+    //       too: the table would have written it as 00 and the pointer steps
+    //       past the first of them.
     //
-    //       The pair comes out as two byte loads and two byte stores rather than
-    //       a halfword of each: the halfword would be unaligned half the time,
-    //       and riscv is the one of the three where that is not always allowed.
-    //
-    "addi sp, sp, -48\n   sd ra, 40(sp)\n   mv t6, a0\n   addi t0, sp, 32  # one past the end of the buffer\n"
-    "la t3, digit_pairs\n   li t5, 99\n   bgeu t5, a1, 3f\n   li t1, 2951479051793528259\n"
-    "li t2, 100\n   li a6, 9999\n"
-    "1:  srli t4, a1, 2\n   mulhu t4, t4, t1\n   srli t4, t4, 2  # n / 100\n"
-    "mul a2, t4, t2\n   sub a2, a1, a2  # n % 100\n"
-    "slli a2, a2, 1\n   add a2, t3, a2\n   lbu a3, 0(a2)\n   lbu a4, 1(a2)\n"
-    "addi t0, t0, -2\n   sb a3, 0(t0)\n   sb a4, 1(t0)\n   sltu a5, a6, a1\n"
-    "mv a1, t4\n   bnez a5, 1b\n"
-    "3:  li t5, 9\n   bgeu t5, a1, 4f\n   slli a2, a1, 1\n   add a2, t3, a2\n"
-    "lbu a3, 0(a2)\n   lbu a4, 1(a2)\n   addi t0, t0, -2\n   sb a3, 0(t0)\n"
-    "sb a4, 1(t0)\n   j 5f\n"
-    "4:  addi a1, a1, 48\n   addi t0, t0, -1\n   sb a1, 0(t0)\n"
-    "5:  mv a0, t0\n   addi t5, sp, 32\n   sub a1, t5, t0  # how many digits\n"
+    "li a3, 99\n   bltu a3, a1, 1f\n"
+    "slli a2, a1, 1\n   add a2, t3, a2\n   lhu a2, 0(a2)\n   sh a2, 38(sp)\n"
+    "sltiu a4, a1, 10\n"
+    "addi a0, sp, 38\n   add a0, a0, a4\n   li a1, 2\n   sub a1, a1, a4\n"
     "jalr t6\n   ld ra, 40(sp)\n   addi sp, sp, 48\n"
     ASM_RET
+    "1:  li t1, 5243\n   li t4, 100\n   li t0, 0\n   mv a7, a1\n"
+    "li a3, 9999\n   bltu a3, a1, 2f\n"
+    "mv a2, a1\n"
+    "mul a3, a2, t1\n   srli a3, a3, 19\n   mul a4, a3, t4\n   sub a4, a2, a4\n"
+    "slli a2, a3, 1\n   add a2, t3, a2\n   lhu a2, 0(a2)\n   sh a2, 36(sp)\n"
+    "slli a2, a4, 1\n   add a2, t3, a2\n   lhu a2, 0(a2)\n   sh a2, 38(sp)\n"
+    "j 9f\n"
+    "2:  li t2, 1759218605\n   li t5, 10000\n"
+    "li a3, 99999999\n   bltu a3, a1, 3f\n"
+    "mv a2, a1\n"
+    "mul a3, a2, t2\n   srli a3, a3, 44  # the chunk / 10000\n"
+    "mul a4, a3, t5\n   sub a4, a2, a4  # the chunk % 10000\n"
+    "mul a5, a3, t1\n   srli a5, a5, 19\n   mul a2, a5, t4\n   sub a3, a3, a2\n"
+    "slli a2, a5, 1\n   add a2, t3, a2\n   lhu a2, 0(a2)\n   sh a2, 32(sp)\n"
+    "slli a2, a3, 1\n   add a2, t3, a2\n   lhu a2, 0(a2)\n   sh a2, 34(sp)\n"
+    "mul a5, a4, t1\n   srli a5, a5, 19\n   mul a2, a5, t4\n   sub a4, a4, a2\n"
+    "slli a2, a5, 1\n   add a2, t3, a2\n   lhu a2, 0(a2)\n   sh a2, 36(sp)\n"
+    "slli a2, a4, 1\n   add a2, t3, a2\n   lhu a2, 0(a2)\n   sh a2, 38(sp)\n"
+    "j 7f\n"
+    "3:  lla a5, ten_powers\n   ld a6, 160(a5)  # the reciprocal of a hundred million\n"
+    "mulhu a0, a1, a6\n   srli a0, a0, 26  # n / 100000000\n"
+    "ld a6, 64(a5)  # a hundred million\n"
+    "mul a2, a0, a6\n   sub a2, a1, a2  # n % 100000000\n"
+    "mul a3, a2, t2\n   srli a3, a3, 44  # the chunk / 10000\n"
+    "mul a4, a3, t5\n   sub a4, a2, a4  # the chunk % 10000\n"
+    "mul a5, a3, t1\n   srli a5, a5, 19\n   mul a2, a5, t4\n   sub a3, a3, a2\n"
+    "slli a2, a5, 1\n   add a2, t3, a2\n   lhu a2, 0(a2)\n   sh a2, 32(sp)\n"
+    "slli a2, a3, 1\n   add a2, t3, a2\n   lhu a2, 0(a2)\n   sh a2, 34(sp)\n"
+    "mul a5, a4, t1\n   srli a5, a5, 19\n   mul a2, a5, t4\n   sub a4, a4, a2\n"
+    "slli a2, a5, 1\n   add a2, t3, a2\n   lhu a2, 0(a2)\n   sh a2, 36(sp)\n"
+    "slli a2, a4, 1\n   add a2, t3, a2\n   lhu a2, 0(a2)\n   sh a2, 38(sp)\n"
+    "li a3, 9999\n   bltu a3, a0, 4f\n"
+    "mv a2, a0\n   mv a7, a0\n   li t0, 8\n"
+    "mul a3, a2, t1\n   srli a3, a3, 19\n   mul a4, a3, t4\n   sub a4, a2, a4\n"
+    "slli a2, a3, 1\n   add a2, t3, a2\n   lhu a2, 0(a2)\n   sh a2, 28(sp)\n"
+    "slli a2, a4, 1\n   add a2, t3, a2\n   lhu a2, 0(a2)\n   sh a2, 30(sp)\n"
+    "j 9f\n"
+    "4:  li a3, 99999999\n   bltu a3, a0, 5f\n"
+    "mv a2, a0\n   mv a7, a0\n   li t0, 8\n"
+    "mul a3, a2, t2\n   srli a3, a3, 44  # the chunk / 10000\n"
+    "mul a4, a3, t5\n   sub a4, a2, a4  # the chunk % 10000\n"
+    "mul a5, a3, t1\n   srli a5, a5, 19\n   mul a2, a5, t4\n   sub a3, a3, a2\n"
+    "slli a2, a5, 1\n   add a2, t3, a2\n   lhu a2, 0(a2)\n   sh a2, 24(sp)\n"
+    "slli a2, a3, 1\n   add a2, t3, a2\n   lhu a2, 0(a2)\n   sh a2, 26(sp)\n"
+    "mul a5, a4, t1\n   srli a5, a5, 19\n   mul a2, a5, t4\n   sub a4, a4, a2\n"
+    "slli a2, a5, 1\n   add a2, t3, a2\n   lhu a2, 0(a2)\n   sh a2, 28(sp)\n"
+    "slli a2, a4, 1\n   add a2, t3, a2\n   lhu a2, 0(a2)\n   sh a2, 30(sp)\n"
+    "j 7f\n"
+    //
+    //       Seventeen digits or more, which the top of the type is: the third
+    //       chunk is at most 1844, so four characters cover it.
+    //
+    "5:  lla a5, ten_powers\n   ld a6, 160(a5)  # the block above had the temporaries\n"
+    "mulhu a3, a0, a6\n   srli a3, a3, 26\n"
+    "ld a6, 64(a5)\n   mul a4, a3, a6\n   sub a2, a0, a4  # the middle eight\n"
+    "mv a0, a3\n"
+    "mul a3, a2, t2\n   srli a3, a3, 44  # the chunk / 10000\n"
+    "mul a4, a3, t5\n   sub a4, a2, a4  # the chunk % 10000\n"
+    "mul a5, a3, t1\n   srli a5, a5, 19\n   mul a2, a5, t4\n   sub a3, a3, a2\n"
+    "slli a2, a5, 1\n   add a2, t3, a2\n   lhu a2, 0(a2)\n   sh a2, 24(sp)\n"
+    "slli a2, a3, 1\n   add a2, t3, a2\n   lhu a2, 0(a2)\n   sh a2, 26(sp)\n"
+    "mul a5, a4, t1\n   srli a5, a5, 19\n   mul a2, a5, t4\n   sub a4, a4, a2\n"
+    "slli a2, a5, 1\n   add a2, t3, a2\n   lhu a2, 0(a2)\n   sh a2, 28(sp)\n"
+    "slli a2, a4, 1\n   add a2, t3, a2\n   lhu a2, 0(a2)\n   sh a2, 30(sp)\n"
+    "mv a2, a0\n   mv a7, a0\n   li t0, 16\n"
+    "mul a3, a2, t1\n   srli a3, a3, 19\n   mul a4, a3, t4\n   sub a4, a2, a4\n"
+    "slli a2, a3, 1\n   add a2, t3, a2\n   lhu a2, 0(a2)\n   sh a2, 20(sp)\n"
+    "slli a2, a4, 1\n   add a2, t3, a2\n   lhu a2, 0(a2)\n   sh a2, 22(sp)\n"
+    //
+    //       The digit count. a7 is the leading chunk and t0 how many digits
+    //       sit under it; the small tail is for a chunk of four digits or
+    //       fewer, where the bounds are twelve bit immediates, and the wide
+    //       one for a chunk of five to eight, where they are not.
+    //
+    "9:  li a3, 4\n"
+    "sltiu a4, a7, 10\n     sub a3, a3, a4\n"
+    "sltiu a4, a7, 100\n    sub a3, a3, a4\n"
+    "sltiu a4, a7, 1000\n   sub a3, a3, a4\n"
+    "add a3, a3, t0\n   j 8f\n"
+    "7:  li a3, 8\n   lla a5, ten_powers\n"
+    "ld a4, 40(a5)\n   sltu a4, a7, a4\n   sub a3, a3, a4\n"
+    "ld a4, 48(a5)\n   sltu a4, a7, a4\n   sub a3, a3, a4\n"
+    "ld a4, 56(a5)\n   sltu a4, a7, a4\n   sub a3, a3, a4\n"
+    "add a3, a3, t0\n"
+    "8:  addi a0, sp, 40\n   sub a0, a0, a3\n   mv a1, a3\n"
+    "jalr t6\n   ld ra, 40(sp)\n   addi sp, sp, 48\n"
+    ASM_RET
+    //
+    //       Inside the delimiters on purpose: this file is spliced together by
+    //       routine name, and a table in front of ASM_FUNC belongs to whatever
+    //       was there before rather than to this.
+    //
+    ".section .rodata\n   .balign 8\n"
+    "ten_powers:\n"
+    "        .quad 1\n                    .quad 10\n"
+    "        .quad 100\n                  .quad 1000\n"
+    "        .quad 10000\n                .quad 100000\n"
+    "        .quad 1000000\n              .quad 10000000\n"
+    "        .quad 100000000\n            .quad 1000000000\n"
+    "        .quad 10000000000\n          .quad 100000000000\n"
+    "        .quad 1000000000000\n        .quad 10000000000000\n"
+    "        .quad 100000000000000\n      .quad 1000000000000000\n"
+    "        .quad 10000000000000000\n    .quad 100000000000000000\n"
+    "        .quad 1000000000000000000\n  .quad 10000000000000000000\n"
+    "        .quad 0xABCC77118461CEFD  # what dividing by a hundred million is\n"
+    ".text\n"
     ASM_END(positive_to_string)
     //       bipolar_to_string: the arm64 block carries the reasoning.
     ASM_FUNC(bipolar_to_string)
@@ -4256,15 +6491,52 @@ ASM_FUNC(positive_to_string)
     //
     ASM_FUNC(string_to_positive)
     "mv t0, a0  # keep the start\n"
-    "1:  lbu t1, 0(a0)\n   addi a0, a0, 1\n   bnez t1, 1b\n   addi a0, a0, -2  # the last character\n"
+    "1:  lbu t1, 0(a0)\n   addi a0, a0, 1\n   bnez t1, 1b\n   addi a0, a0, -1  # the terminator\n"
     "li a1, 0  # the number so far\n"
     "li a2, 1  # what the next digit is worth\n"
     "li a3, 10\n   li a4, 9\n"
+    "addi t3, a0, -8\n   bltu t3, t0, 7f  # fewer than eight bytes of string\n"
+    "lla t6, digit_words\n   ld a5, 0(t6)\n   ld a6, 8(t6)\n   ld a7, 16(t6)\n"
+    "5:  ld t4, 0(t3)  # the eight bytes, wherever they fall\n"
+    "and t5, t4, a5\n   add t1, t4, a6\n   and t1, t1, a5\n   srli t1, t1, 4\n"
+    "or t5, t5, t1\n   bne t5, a7, 7f  # one of the eight is not a digit\n"
+    //
+    //       An exclusive or and not a subtract: every byte has been shown to
+    //       be 0x3 in the top nibble and nine or less in the bottom.
+    //
+    "ld t1, 24(t6)\n   xor t4, t4, t1\n"
+    "ld t1, 32(t6)\n   mul t4, t4, t1\n   srli t4, t4, 8\n"
+    "ld t1, 40(t6)\n   and t4, t4, t1\n"
+    "ld t1, 48(t6)\n   mul t4, t4, t1\n   srli t4, t4, 16\n"
+    "ld t1, 56(t6)\n   and t4, t4, t1\n"
+    "ld t1, 64(t6)\n   mul t4, t4, t1\n   srli t4, t4, 32  # the eight, as a number\n"
+    "mul t4, t4, a2\n   add a1, a1, t4\n"
+    "ld t1, 72(t6)\n   mul a2, a2, t1  # a hundred million further along\n"
+    "mv a0, t3\n   addi t3, a0, -8\n   bgeu t3, t0, 5b\n"
+    "7:  addi a0, a0, -1\n"
     "2:  bltu a0, t0, 3f\n   lbu t1, 0(a0)\n   addi t1, t1, -48\n   bltu a4, t1, 3f  # one compare, both ends\n"
     "mul t2, t1, a2\n   add a1, a1, t2\n   mul a2, a2, a3\n   addi a0, a0, -1\n"
     "j 2b\n"
     "3:  mv a0, a1\n"
     ASM_RET
+    //
+    //       Inside the delimiters on purpose: this file is spliced together by
+    //       routine name, and a table in front of ASM_FUNC belongs to whatever
+    //       was there before rather than to this.
+    //
+    ".section .rodata\n   .balign 8\n"
+    "digit_words:\n"
+    "        .quad 0xF0F0F0F0F0F0F0F0  # the high nibbles, which a digit has as three\n"
+    "        .quad 0x0606060606060606  # what pushes anything over nine into the next nibble\n"
+    "        .quad 0x3333333333333333  # what eight digits answer\n"
+    "        .quad 0x3030303030303030  # ASCII zero, eight times\n"
+    "        .quad 2561\n"
+    "        .quad 0x00FF00FF00FF00FF\n"
+    "        .quad 6553601\n"
+    "        .quad 0x0000FFFF0000FFFF\n"
+    "        .quad 0x0000271000000001  # ten thousand and one, in two halves\n"
+    "        .quad 100000000\n"
+    ".text\n"
     ASM_END(string_to_positive)
     //       string_to_bipolar: the x86_64 block carries the reasoning.
     ASM_FUNC(string_to_bipolar)
@@ -4275,42 +6547,34 @@ ASM_FUNC(positive_to_string)
     ASM_END(string_to_bipolar)
     //       string_find: the arm64 block carries the reasoning.
     ASM_FUNC(string_find)
-    "lbu a3, 0(a1)\n   beqz a3, 9f  # an empty input matches nothing\n"
-    "li t0, 0x0101010101010101\n   slli t1, t0, 7  # 0x8080808080808080\n"
-    "mul a2, a3, t0  # it, in all eight positions\n"
-    "1:  lbu t2, 0(a0)\n   beqz t2, 9f\n   beq t2, a3, 3f\n   addi a0, a0, 1\n"
-    "lbu t2, 0(a0)\n   beqz t2, 9f\n   beq t2, a3, 3f\n   addi a0, a0, 1\n"
-    "lbu t2, 0(a0)\n   beqz t2, 9f\n   beq t2, a3, 3f\n   addi a0, a0, 1\n"
-    "lbu t2, 0(a0)\n   beqz t2, 9f\n   beq t2, a3, 3f\n   addi a0, a0, 1\n"
-    "andi t3, a0, 7\n   andi a5, a0, -8  # align down: same page, cannot fault\n"
-    "ld a6, 0(a5)\n   slli t3, t3, 3\n   li a7, -1\n   sll a7, a7, t3  # which bytes of this word count\n"
-    "addi a4, a3, 1\n   andi a4, a4, 0xff\n   seqz t3, a4\n   add a4, a4, t3  # never zero, never it\n"
-    "mul a4, a4, t0\n   not t3, a7\n   and a4, a4, t3  # only in front of the string\n"
-    "and a6, a6, a7\n   or a6, a6, a4\n"
-    "5:  xor t2, a6, a2  # the byte that matched is now zero\n"
-    "sub t3, t2, t0\n   not t4, t2\n   and t3, t3, t4\n   and t3, t3, t1\n"
-    "sub t5, a6, t0  # and the terminator, the same way\n"
-    "not t6, a6\n   and t5, t5, t6\n   and t5, t5, t1\n   or t3, t3, t5\n"
-    "bnez t3, 6f\n   addi a5, a5, 8\n   ld a6, 0(a5)\n   j 5b\n"
-    //
-    //      The same count-the-bytes-below sequence the other hunts use,
-    //      since base rv64 has no ctz.
-    //
-    "6:  sub t5, zero, t3\n   and t3, t3, t5  # lowest set high bit\n"
-    "addi t3, t3, -1\n   and t3, t3, t0\n   mul t3, t3, t0\n   srli t3, t3, 56\n"
-    "addi t3, t3, -1  # its byte within the word\n"
-    "add a0, a5, t3\n   lbu t2, 0(a0)\n   beqz t2, 9f  # the string ended first\n"
-    "bne t2, a3, 1b\n"
-    "3:  mv a4, a0  # where this candidate starts\n"
-    "mv t6, a1\n"
-    "4:  lbu t2, 0(t6)\n   beqz t2, 7f  # input ran out: this is the answer\n"
-    "lbu t3, 0(a0)\n   bne t3, t2, 8f\n   addi a0, a0, 1\n   addi t6, t6, 1\n"
-    "j 4b\n"
-    "8:  addi a0, a4, 1  # one past where this candidate began\n"
-    "j 1b\n"
-    "7:  mv a0, a4\n"
+    "lbu t0, 0(a1)\n   bnez t0, 2f\n   li a0, 0\n"
     ASM_RET
-    "9:  li a0, 0\n"
+    "2:  lbu t0, 1(a1)\n   bnez t0, 3f\n"
+    "lbu a1, 0(a1)\n   j string_first_of  # one byte is strchr\n"
+    "3:  addi sp, sp, -64\n   sd ra, 56(sp)\n   sd s0, 48(sp)\n   sd s1, 40(sp)\n"
+    "sd s2, 32(sp)\n   sd s3, 24(sp)\n   sd s4, 16(sp)\n   sd s5, 8(sp)\n"
+    "mv s0, a0  # where to look next\n   mv s1, a1  # the needle\n"
+    "mv a0, a1\n   call string_length\n   mv s2, a0  # its length\n"
+    "li s3, 256\n   slli t0, s2, 2\n   bgeu s3, t0, 4f\n"
+    "mv s3, t0  # never a chunk a needle would not fit four times in\n"
+    "4:  li s4, 0  # the readable run so far\n   li s5, 0  # the terminator is in it\n"
+    "41: add a0, s0, s4\n   li t1, 4095\n   and t0, a0, t1\n"
+    "li t1, 4096\n   sub a2, t1, t0  # to the end of this page\n"
+    "li a1, 0\n   call memory_first_of\n   beqz a0, 42f\n"
+    "sub s4, a0, s0\n   li s5, 1\n   j 43f\n"
+    "42: add t0, s0, s4\n   li t1, 4096\n   add t0, t0, t1\n"
+    "li t1, -4096\n   and t0, t0, t1  # the start of the next page\n"
+    "sub s4, t0, s0\n   bltu s4, s3, 41b\n"
+    "43: mv a0, s0\n   mv a1, s4\n   mv a2, s1\n   mv a3, s2\n"
+    "call memory_search\n   bnez a0, 9f\n"
+    "bnez s5, 8f  # the terminator was in it: nowhere else to look\n"
+    "sub t0, s4, s2\n   addi t0, t0, 1  # keep needle_size - 1 of overlap\n"
+    "add s0, s0, t0\n"
+    "slli s3, s3, 1\n   li t0, 65536\n   bgeu t0, s3, 44f\n   mv s3, t0\n"
+    "44:  j 4b\n"
+    "8:  li a0, 0\n"
+    "9:  ld ra, 56(sp)\n   ld s0, 48(sp)\n   ld s1, 40(sp)\n   ld s2, 32(sp)\n"
+    "ld s3, 24(sp)\n   ld s4, 16(sp)\n   ld s5, 8(sp)\n   addi sp, sp, 64\n"
     ASM_RET
     ASM_END(string_find)
     //
@@ -4351,6 +6615,31 @@ ASM_FUNC(positive_to_string)
     "mv s1, a1  # where the scan is\n"
     "mv a0, a1  # where the current run of plain text began\n"
     "addi s2, sp, 32  # the next argument, wherever it lives\n"
+    //
+    //       The run of plain text is still walked a byte at a time here, and
+    //       that is the answer rather than an omission.
+    //
+    //       x86_64 and arm64 hunt the terminator and the percent a word at a
+    //       time; the same thing was written for this block and measured
+    //       under qemu, guest instructions a call, against the walk:
+    //
+    //           a line of text with no specifier      143   walk 188
+    //           "cp: Cannot copy '%s' into itself"    233   walk 192
+    //           "%s has %p items worth %b each"       375   walk 360
+    //
+    //       Both columns were taken before positive_to_string below changed,
+    //       so the third row reads 348 now on the walk. The comparison is
+    //       still the comparison -- the two sides had the same routine under
+    //       them -- but re-measuring one of them alone will not reproduce it.
+    //
+    //       A byte costs four instructions here -- load, step, and the two
+    //       branches -- where it costs six on x86_64 and five on arm64, and
+    //       base rv64 has neither and-not nor a count of trailing zeros, so a
+    //       word costs thirteen and about thirty to enter. That puts the point
+    //       where the wide hunt starts winning at a run of roughly twenty
+    //       bytes, and only the first of those three formats has one. Two of
+    //       the three got slower, so the walk is what is here.
+    //
     "li t2, 37\n   j .Lstring_format_test\n"
     ".Lstring_format_step:\n   lbu t0, 1(s1)\n   addi s1, s1, 1\n"
     ".Lstring_format_test:\n   beqz t0, .Lstring_format_tail\n   bne t0, t2, .Lstring_format_step\n   beq s1, a0, .Lstring_format_spec\n"
@@ -4821,6 +7110,38 @@ positive memory_count(address_any block, positive size, b8 value);
 address_any memory_first_of(address_any block, b8 value, positive size);
 
 /*
+        The bounded and the or-end forms, which had no prototype at all.
+
+        Each is assembly on all three machines and each is in the inventory,
+        and C could not call any of them: the alias block gives them libc
+        names, so anything reaching for strnlen or strchrnul got there, and
+        anything reaching for the library's own name got an implicit
+        declaration and a wrong return type on a 64 bit pointer. A routine
+        the file lists and the file's own language cannot name is not a
+        routine anybody can use.
+*/
+positive string_length_max(string_address source, positive bound);
+b32 string_compare_max(string_address source, string_address input, positive bound);
+string_address string_first_of_or_end(string_address source, p8 character);
+string_address string_first_of_max(string_address source, positive bound, p8 character);
+string_address string_last_of_or_end(string_address source, p8 character);
+
+//
+b32 memory_compare(address_any first, address_any second, positive size);
+
+//
+//      Where one run of bytes sits inside another.
+//
+//      memmem. A fixed string is what grep is asked for most of the time, and
+//      this is the loop that answers it; string_find is this with a
+//      terminator instead of a length. An empty needle is at the front of the
+//      haystack, which is what memmem answers and is not what string_find
+//      does -- see the note there.
+//
+address_any memory_search(address_any block, positive size,
+                          address_any needle, positive needle_size);
+
+/*
         The length of the run at the start of a string whose bytes are all in a
         set, where the set is 256 bits -- one for each byte value.
 
@@ -5019,6 +7340,7 @@ __asm__(
     ASM_ALIAS(strnchr,   string_first_of_max)
 #if !defined(KERNEL_MODE) || X64
     ASM_ALIAS(memchr,    memory_first_of)
+    ASM_ALIAS(memcmp,    memory_compare)
     ASM_ALIAS(strlen,    string_length)
     ASM_ALIAS(strnlen,   string_length_max)
     ASM_ALIAS(strcmp,    string_compare)
@@ -5040,6 +7362,7 @@ __asm__(
             the warning that went with it.
     */
     ASM_ALIAS(strstr,    string_find)
+    ASM_ALIAS(memmem,    memory_search)
 #endif
 );
 

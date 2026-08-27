@@ -20,13 +20,33 @@ lib=${1:-$root/src/library.next.c}
 work=$(mktemp -d "${TMPDIR:-/tmp}/native.XXXXXX") || exit 1
 trap 'rm -rf "$work"' EXIT INT TERM
 
+#       string_find reaches three other routines by name -- string_length,
+#       memory_search, and through that memory_compare -- so they come too or
+#       the case does not link. memory_search also reads byte_commonness,
+#       which extract.py lifts with it.
 python3 "$here/extract.py" "$lib" \
         string_first_of string_first_of_or_end string_first_of_max string_find \
         string_last_of_or_end string_compare_max string_length_max memory_first_of \
+        string_length memory_search memory_compare \
         > "$work/lifted.h" || exit 1
 
+#       A header of its own rather than more names in the one above: these
+#       bodies branch to memory_copy_fast by name, and a case that does not
+#       define the plain symbol would stop linking if it pulled them in.
+python3 "$here/extract.py" "$lib" \
+        memory_fill memory_copy_fast memory_copy \
+        string_copy string_copy_max string_cut string_replace_all \
+        > "$work/bulk.h" || exit 1
+
+#       And one for the wide hunts, holding those eight and nothing else, so
+#       it never pulls in string_find and the routines that follow from it.
+python3 "$here/extract.py" "$lib" \
+        string_length string_length_max string_first_of string_first_of_or_end \
+        string_first_of_max string_last_of string_last_of_or_end memory_first_of \
+        > "$work/wide.h" || exit 1
+
 status=0
-for case in byte_hunts bounded; do
+for case in byte_hunts bounded riscv_bits bulk wide; do
         cc -O2 -w -I"$work" "$here/$case.c" -o "$work/$case" || { status=1; continue; }
         "$work/$case" || status=1
 done
