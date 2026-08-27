@@ -513,6 +513,27 @@ answer 'no nul in a sub' 'x=$(echo hi); printf "%s" "$x" | tr -d "\0" | wc -c'
 answer 'no nul in a loop' 'for i in 1 2 3; do echo $i; done | tr -d "\0" | wc -c'
 answer 'no nul in type'  'type echo | tr -d "\0" | wc -c'
 
+#       kill, whose reference here is dash's own builtin. Ours is a utility
+#       rather than a builtin, so what is being compared is a fork of this
+#       shell against a builtin of that one, and they have to agree anyway.
+
+group signals
+answer 'signal by number' 'kill -l 9'
+answer 'signal fifteen'  'kill -l 15'
+answer 'signal from status' 'kill -l 143'
+answer 'the whole list'  'kill -l | wc -l'
+answer 'the list agrees' 'kill -l | tr "\n" " "'
+answer 'nothing to a self' 'kill -0 $$; echo $?'
+answer 'no such process' 'kill -0 999999 2>/dev/null; echo $?'
+answer 'named signal'    'kill -s TERM 999999 2>/dev/null; echo $?'
+answer 'short signal'    'kill -TERM 999999 2>/dev/null; echo $?'
+answer 'numbered signal' 'kill -9 999999 2>/dev/null; echo $?'
+answer 'no operands'     'kill 2>/dev/null; echo $?'
+answer 'signal too high' 'kill -l 65 2>/dev/null; echo $?'
+answer 'a name is not a status' 'kill -l TERM 2>/dev/null; echo $?'
+answer 'group not signal' 'kill -0 -999999 2>/dev/null; echo $?'
+answer 'unknown signal'  'kill -s NOPE 1 2>/dev/null; echo $?'
+
 #
 #       One binary, forty six names.
 #
@@ -559,6 +580,8 @@ emits 'called uname'     'Linux|'  "'$names/uname'"
 emits 'called expr'      '2|'      "'$names/expr' 1 + 1"
 emits 'called cmp'       '0|'      "'$names/cmp' -s /etc/hostname /etc/hostname; echo \$?"
 emits 'called mktemp'    '0|'      "d=\$('$names/mktemp' -d) && test -d \"\$d\" && rmdir \"\$d\"; echo \$?"
+emits 'called kill'      '0|'      "'$names/kill' -0 \$\$; echo \$?"
+emits 'kill ends it'     'gone|'   "sleep 30 & p=\$!; '$names/kill' \$p; wait \$p 2>/dev/null; echo gone"
 emits 'through a dot'    'cba|'    "printf 'abc\n' | '$names/./rev'"
 emits 'link elsewhere'   'cba|'    "mkdir -p /tmp/sn && ln -sf '$names/rev' /tmp/sn/rev && printf 'abc\n' | /tmp/sn/rev"
 emits 'another name'     'hi|'     "ln -sf '$names/rev' /tmp/notatool && printf 'echo hi\n' | /tmp/notatool"
@@ -613,6 +636,7 @@ differs 'unset dash f'   'a|0|' 0 'f() { echo a; }; unset -f f; f 2>/dev/null; e
 differs 'shift past end' '1|' 0 'set -- a; shift 2; echo $?'
 differs 'missing input'  '1|' 0 'cat < /nonexistent12345; echo $?'
 differs 'closed fd'      '0|' 0 'echo x >&- 2>/dev/null; echo $?'
+differs 'kill takes sig' '1|' 0 'kill -SIGTERM 999999 2>/dev/null; echo $?'
 
 #
 #       What the shell has no answer for at all.
@@ -627,7 +651,6 @@ group missing
 absent 'awk'      '127|' 'awk "{print}" < /dev/null; echo $?'
 absent 'date'     '127|' 'date; echo $?'
 absent 'xargs'    '127|' 'echo a | xargs echo; echo $?'
-absent 'kill'     '127|' 'kill -0 $$; echo $?'
 absent 'dd'       '127|' 'dd if=/dev/null; echo $?'
 absent 'local'    '127|' 'f() { local v=1; }; f; echo $?'
 absent 'command v awk' '127|' 'command -v awk > /dev/null; echo $?'

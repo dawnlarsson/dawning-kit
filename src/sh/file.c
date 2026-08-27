@@ -6113,3 +6113,222 @@ static b32 file_mktemp()
 
         return 1;
 }
+
+// kill ------------------------------------------------------------
+/*
+        A signal, sent.
+
+        The names are one table read two ways: printed for -l, and walked to
+        turn a name back into a number, so the two can never disagree about
+        what SIGRTMIN+3 is called.
+
+        Sixteen through thirty three have no name here for the same reason
+        they have none in dash: what they are called is not the same on every
+        machine, and a number is always right.
+*/
+#define KILL_NAMED 34
+#define KILL_LEAST_REAL 34
+#define KILL_MOST 64
+
+static string_address kill_names[KILL_NAMED] = {
+    "0", "HUP", "INT", "QUIT", "ILL", "TRAP", "ABRT", "BUS",
+    "FPE", "KILL", "USR1", "SEGV", "USR2", "PIPE", "ALRM", "TERM",
+    "16", "CHLD", "CONT", "STOP", "TSTP", "TTIN", "TTOU", "URG",
+    "XCPU", "XFSZ", "VTALRM", "PROF", "WINCH", "IO", "PWR", "SYS",
+    "32", "33",
+};
+
+static fn kill_name(positive number, p8 address_to into)
+{
+        positive at = 0;
+
+        if (number < KILL_NAMED)
+        {
+                string_copy(into, kill_names[number]);
+                return;
+        }
+
+        if (number > KILL_MOST)
+        {
+                file_digits(into, number);
+                return;
+        }
+
+        into[at++] = 'R';
+        into[at++] = 'T';
+        into[at++] = 'M';
+
+        if (number <= KILL_LEAST_REAL + 15)
+        {
+                into[at++] = 'I';
+                into[at++] = 'N';
+
+                if (number == KILL_LEAST_REAL)
+                {
+                        into[at] = end;
+                        return;
+                }
+
+                into[at++] = '+';
+                file_digits(into + at, number - KILL_LEAST_REAL);
+                return;
+        }
+
+        into[at++] = 'A';
+        into[at++] = 'X';
+
+        if (number == KILL_MOST)
+        {
+                into[at] = end;
+                return;
+        }
+
+        into[at++] = '-';
+        file_digits(into + at, KILL_MOST - number);
+}
+
+static bipolar kill_number(string_address word)
+{
+        p8 name[16];
+
+        if (file_all_digits(word))
+                return (bipolar)string_to_positive(word);
+
+        if (string_is(word, 'S') && string_is(word + 1, 'I') && string_is(word + 2, 'G'))
+                word += 3;
+
+        for (positive i = 1; i <= KILL_MOST; i++)
+        {
+                kill_name(i, name);
+
+                if (!string_compare(word, name))
+                        return (bipolar)i;
+        }
+
+        return -1;
+}
+
+static b32 kill_list(positive count, positive index)
+{
+        p8 name[16];
+
+        if (index >= count)
+        {
+                for (positive i = 0; i <= KILL_MOST; i++)
+                {
+                        kill_name(i, name);
+                        file_line(name);
+                }
+
+                log_flush();
+                return 0;
+        }
+
+        {
+                string_address word = program_argument((b32)index);
+                positive number;
+
+                if (!file_all_digits(word))
+                {
+                        string_format(file_fail, "kill: Illegal number: %s\n", word);
+                        return 2;
+                }
+
+                number = string_to_positive(word);
+
+                // A status carries the signal that ended a process in its low
+                // seven bits, which is what a caller of -l usually has.
+                if (number > 128)
+                        number -= 128;
+
+                if (!number || number > KILL_MOST)
+                {
+                        string_format(file_fail, "kill: Illegal number: %s\n", word);
+                        return 2;
+                }
+
+                kill_name(number, name);
+                file_line(name);
+        }
+
+        log_flush();
+        return 0;
+}
+
+static b32 file_kill()
+{
+        positive count = (positive)program_argument_count();
+        positive index = 1;
+        bipolar number = 15;
+        b32 answer = 0;
+
+        while (index < count)
+        {
+                string_address argument = program_argument((b32)index);
+
+                if (!string_is(argument, '-') || string_is(argument + 1, end))
+                        break;
+
+                if (string_is(argument + 1, '-') && string_is(argument + 2, end))
+                {
+                        index++;
+                        break;
+                }
+
+                if (string_is(argument + 1, 'l') && string_is(argument + 2, end))
+                        return kill_list(count, index + 1);
+
+                if (string_is(argument + 1, 's') && string_is(argument + 2, end))
+                {
+                        if (index + 1 >= count)
+                        {
+                                file_fail("kill: -s needs a signal\n", 0);
+                                return 2;
+                        }
+
+                        number = kill_number(program_argument((b32)(index + 1)));
+                        index += 2;
+                }
+                else
+                {
+                        number = kill_number(argument + 1);
+                        index++;
+                }
+
+                if (number < 0 || number > KILL_MOST)
+                {
+                        string_format(file_fail, "kill: invalid signal: %s\n", argument);
+                        return 2;
+                }
+
+                // One signal and no more, or a negative process group would be
+                // read as a second one.
+                break;
+        }
+
+        if (index >= count)
+        {
+                file_fail("kill: usage: kill [-s signal | -signal] pid ...\n", 0);
+                return 2;
+        }
+
+        while (index < count)
+        {
+                string_address word = program_argument((b32)index++);
+                bipolar who = file_signed(word);
+
+                if (!file_all_digits(string_is(word, '-') ? word + 1 : word))
+                {
+                        string_format(file_fail, "kill: Illegal number: %s\n", word);
+                        return 2;
+                }
+
+                if (system_call_2(syscall(kill), (positive)who, (positive)number) < 0)
+                {
+                        string_format(file_fail, "kill: (%s) - No such process\n", word);
+                        answer = 1;
+                }
+        }
+
+        return answer;
+}

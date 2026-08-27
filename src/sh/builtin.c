@@ -2858,6 +2858,7 @@ static shell_tool shell_tools[] = {
     {"find", file_find},
     {"hostname", file_hostname},
     {"id", file_id},
+    {"kill", file_kill},
     {"ln", file_ln},
     {"ls", file_ls},
     {"mkdir", file_mkdir},
