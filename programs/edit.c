@@ -1,5 +1,5 @@
 #include "../src/library.c"
-#include "../src/platform/shell.c"
+#include "../src/sh/builtin.c"
 
 positive2 res;
 positive2 last_res;
