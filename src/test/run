@@ -228,6 +228,11 @@ lane_native()
                 ;;
         esac
 
+        if [ ! -f src/test/native/run ]; then
+                note "src/test/native/run is not here, skipped"
+                return 0
+        fi
+
         library=src/library.c
 
         [ -f src/library.next.c ] && library=src/library.next.c
