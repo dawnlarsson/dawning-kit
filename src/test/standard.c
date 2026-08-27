@@ -541,6 +541,277 @@ test(writer_pattern) {
 }
 
 
+/*
+        A literal is as long as its letters.
+
+        str() once expanded to the string and sizeof(string), which counts the
+        terminator, so every literal written through it carried a stray NUL
+        after it. A terminal draws nothing for that and nothing here measured
+        the bytes, so it shipped for years.
+*/
+positive measured_length;
+string_address measured_data;
+
+fn measure(address_any data, positive length)
+{
+        measured_data = data;
+        measured_length = length;
+}
+
+test(str_length) {
+        measure(str(""));
+        fail_not_equals(measured_length, 0);
+
+        measure(str("a"));
+        fail_not_equals(measured_length, 1);
+
+        measure(str("seventy"));
+        fail_not_equals(measured_length, 7);
+
+        measure(str("eightyyy"));
+        fail_not_equals(measured_length, 8);
+
+        measure(str("Hello, World!"));
+        fail_not_equals(measured_length, 13);
+        fail_not_equals(measured_data[12], '!');
+
+        return true;
+}
+
+test(str_writes_no_terminator) {
+        memory_fill(test_write_buffer, 0xAA, 1000);
+        test_write_pos = 0;
+
+        test_writer(str("Hello"));
+
+        fail_not_equals(test_write_pos, 5);
+        fail_not_equals(test_write_buffer[4], 'o');
+        fail_not_equals(test_write_buffer[5], 0xAA);
+
+        return true;
+}
+
+/*
+        Strings that are not literals.
+
+        Every needle in this file used to be a string literal, and literals sit
+        end to end in .rodata: a routine that reads eight bytes at a time picks
+        up the next literal past the terminator and still compares equal. A
+        name of exactly seven characters was broken for a fortnight because of
+        it. These build their strings in a buffer whose bytes after the
+        terminator are 0xff, which is a byte no answer can contain.
+*/
+p8 padded_a[64];
+p8 padded_b[64];
+
+// Writes count letters and a terminator into buffer, with 0xff everywhere
+// else, at an offset so the start is not word aligned either.
+static string_address padded(p8 address_to buffer, positive offset, positive count)
+{
+        p8 address_to at = buffer + offset;
+
+        memory_fill(buffer, 0xff, 64);
+
+        for (positive i = 0; i < count; i++)
+                at[i] = 'a' + (p8)(i % 16);
+
+        at[count] = end;
+
+        return at;
+}
+
+test(string_length_padded) {
+        for (positive offset = 0; offset < 8; offset++)
+                for (positive count = 0; count < 40; count++)
+                        fail_not_equals(string_length(padded(padded_a, offset, count)),
+                                        count);
+
+        return true;
+}
+
+test(string_compare_padded) {
+        for (positive count = 0; count < 40; count++)
+        {
+                string_address left = padded(padded_a, 1, count);
+                string_address right = padded(padded_b, 3, count);
+
+                fail_not_equals(string_compare(left, right), 0);
+
+                if (!count)
+                        continue;
+
+                // One byte apart at the very end, which is where a routine
+                // that stops a word early stops noticing.
+                padded_b[3 + count - 1] = 'Z';
+                fail_equals(string_compare(left, right), 0);
+        }
+
+        return true;
+}
+
+test(string_first_of_padded) {
+        for (positive count = 1; count < 24; count++)
+        {
+                string_address source = padded(padded_a, 5, count);
+
+                fail_not_equals(string_first_of(source, source[count - 1]),
+                                source + ((count - 1) % 16 < count - 1
+                                              ? (count - 1) % 16
+                                              : count - 1));
+
+                fail_not_equals(string_first_of(source, 0xfe), (string_address)0);
+        }
+
+        return true;
+}
+
+/*
+        A table of names looked up by name.
+
+        Each entry is built in its own buffer rather than written as a
+        literal, and the name of length seven is a prefix of the one of length
+        eight, which is the pair a word at a time gets wrong.
+*/
+p8 table_storage[16][32];
+string_address table_names[17];
+
+test(string_table_find_lengths) {
+        p8 needle[32];
+
+        for (positive n = 0; n < 16; n++)
+        {
+                memory_fill(table_storage[n], 0xff, 32);
+
+                for (positive i = 0; i <= n; i++)
+                        table_storage[n][i] = 'a' + (p8)i;
+
+                table_storage[n][n + 1] = end;
+                table_names[n] = table_storage[n];
+        }
+
+        table_names[16] = (string_address)0;
+
+        for (positive n = 0; n < 16; n++)
+        {
+                memory_fill(needle, 0xff, 32);
+                memory_copy(needle, table_storage[n], n + 2);
+
+                fail_not_equals(string_table_find(needle, table_names,
+                                                  sizeof(string_address), 16),
+                                n);
+        }
+
+        // One letter longer than the longest, and one that is a prefix of
+        // nothing: both have to come back as not here.
+        memory_fill(needle, 0xff, 32);
+        for (positive i = 0; i < 20; i++)
+                needle[i] = 'a' + (p8)i;
+        needle[20] = end;
+        fail_not_equals(string_table_find(needle, table_names,
+                                          sizeof(string_address), 16), 16);
+
+        memory_fill(needle, 0xff, 32);
+        needle[0] = 'z';
+        needle[1] = end;
+        fail_not_equals(string_table_find(needle, table_names,
+                                          sizeof(string_address), 16), 16);
+
+        return true;
+}
+
+/*
+        A stack frame the compiler's own stores can reach.
+
+        The kernel enters _start without pushing a return address, so a plain
+        C entry point leaves the stack eight bytes out of phase and the
+        aligned SSE stores emitted for a fill like this one fault. This was a
+        heredoc in the CI workflow; it is a test.
+*/
+test(stack_is_aligned) {
+        p8 buffer[4096];
+
+        memory_fill(buffer, 0x5a, sizeof(buffer));
+
+        for (positive i = 0; i < sizeof(buffer); i++)
+                fail_not_equals(buffer[i], 0x5a);
+
+        return true;
+}
+
+#if LINUX
+
+/*
+        The fourth argument of a system call.
+
+        Linux takes it in r10 and the syscall instruction overwrites rcx, so a
+        register shuffle that put it in rcx handed the kernel whatever the
+        return address happened to be -- and openat created its files with a
+        random mode. Two checks, because the first needs no struct layout:
+        pread's fourth argument is an offset, and reading from three bytes in
+        either gives the fourth byte or it does not.
+*/
+test(syscall_argument_four) {
+        string_address path = "/tmp/dawning_argument_four";
+        p8 buffer[8];
+        bipolar file = system_call_4(syscall(openat), AT_FDCWD, (positive)path,
+                                     FILE_CREATE | FILE_WRITE | O_TRUNC, 0644);
+
+        fail(file >= 0);
+
+        system_call_3(syscall(write), file, (positive)"abcdefgh", 8);
+        system_call_1(syscall(close), file);
+
+        file = system_call_4(syscall(openat), AT_FDCWD, (positive)path, FILE_READ, 0);
+        fail(file >= 0);
+
+        memory_fill(buffer, 0, sizeof(buffer));
+        fail_not_equals(system_call_4(syscall(pread64), file, (positive)buffer, 4, 3), 4);
+        system_call_1(syscall(close), file);
+
+        fail_not_equals(buffer[0], 'd');
+        fail_not_equals(buffer[3], 'g');
+
+        return true;
+}
+
+/*
+        And the mode that argument carried.
+
+        newfstatat fills a struct whose layout is not the same on the three
+        machines -- st_mode is sixteen bytes in on the generic layout and
+        twenty four in on x86_64 -- so the offset is chosen here rather than
+        named, and the field is read out of a byte buffer.
+*/
+#if X64
+#define STAT_MODE_OFFSET 24
+#else
+#define STAT_MODE_OFFSET 16
+#endif
+
+test(created_file_mode) {
+        string_address path = "/tmp/dawning_created_mode";
+        p8 status[256];
+        p32 mode;
+        bipolar file = system_call_4(syscall(openat), AT_FDCWD, (positive)path,
+                                     FILE_CREATE | FILE_WRITE | O_TRUNC, 0644);
+
+        fail(file >= 0);
+        system_call_1(syscall(close), file);
+
+        memory_fill(status, 0, sizeof(status));
+        fail_not_equals(system_call_4(syscall(newfstatat), AT_FDCWD, (positive)path,
+                                      (positive)status, 0), 0);
+
+        memory_copy(address_of mode, status + STAT_MODE_OFFSET, sizeof(mode));
+
+        fail_not_equals(mode & 0777, 0644);
+
+        return true;
+}
+
+#endif
+
+
 test_case test_cases[] = {
 
         case_type_basics(p8),
@@ -593,7 +864,22 @@ test_case test_cases[] = {
         case(string_end),
 
         case(writer_pattern),
-        
+
+        case(str_length),
+        case(str_writes_no_terminator),
+
+        case(string_length_padded),
+        case(string_compare_padded),
+        case(string_first_of_padded),
+        case(string_table_find_lengths),
+
+        case(stack_is_aligned),
+
+#if LINUX
+        case(syscall_argument_four),
+        case(created_file_mode),
+#endif
+
         {null, null},
 };
 
