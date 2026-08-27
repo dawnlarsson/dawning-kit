@@ -8,7 +8,6 @@
 
 #define MAX_INPUT 4096
 p8 shell_buffer[MAX_INPUT];
-positive input_length;
 
 writer shell_output = log;
 positive shell_output_file;
@@ -521,11 +520,9 @@ bool shell_builtin(string_address arguments)
         return false;
 }
 
-fn process()
+fn process(string_address line)
 {
-        string_set_if(shell_buffer[input_length], '\n', end);
-
-        b32 count = shell_tokenize(shell_buffer);
+        b32 count = shell_tokenize(line);
 
         if (count < 0)
                 return string_format(shell_output, "Command line too long\n");
@@ -566,51 +563,118 @@ fn process()
         string_format(shell_output, "Command not found: '%s'\n", shell_argv[0]);
 }
 
+fn run_line(string_address line)
+{
+        process(line);
+        log_flush();
+
+        if (shell_output_file)
+                system_call_1(syscall(close), shell_output_file);
+
+        shell_output = log;
+        shell_output_file = 0;
+}
+
+
+// A prompt is for somebody watching. Asking the terminal about itself is the
+// only way to know whether anybody is: a script piped in gets none, which is
+// also what keeps its output free of them.
+#define TCGETS 0x5401u
+
+static b32 shell_interactive()
+{
+        p8 settings[64];
+
+        return system_call_3(syscall(ioctl), 0, TCGETS, (positive)settings) == 0;
+}
+
 b32 main()
 {
+        b32 interactive;
+
         shell_ignore(SIGNAL_INTERRUPT);
         shell_ignore(SIGNAL_QUIT);
+
+        interactive = shell_interactive();
 
         shell_env_init();
 
         spawn_device = system_call_4(syscall(openat), AT_FDCWD,
                                      (positive)SPARK_DEVICE, FILE_READ_WRITE, 0);
 
+        /*
+                Whatever arrived, split into lines, with the last one held back
+                if it has no newline yet.
+
+                A read is not a command. A terminal hands over one line because
+                the line discipline waits for Enter; a pipe or a file arrives
+                in four kilobyte lumps that end wherever they end. Treating a
+                lump as a line ran two commands as one at the start and split a
+                command in half at every boundary -- a forty thousand line
+                script came out with a hundred and forty three lines too many.
+        */
+        positive held = 0;
+
         while (1)
         {
-                memory_fill(shell_buffer, end, MAX_INPUT);
+                bipolar got;
+                positive total, at;
 
-                log_direct(str(TERM_MAIN_BUFFER TERM_RESET TERM_SHOW_CURSOR PROMPT));
+                if (interactive)
+                        log_direct(str(TERM_MAIN_BUFFER TERM_RESET TERM_SHOW_CURSOR PROMPT));
 
-                // One short of the buffer, so a line long enough to fill it
-                // still has the terminator every walk over it stops at.
-                bipolar got = system_call_3(syscall(read), 0, (positive)shell_buffer,
-                                            MAX_INPUT - 1);
+                got = system_call_3(syscall(read), 0,
+                                    (positive)(shell_buffer + held),
+                                    MAX_INPUT - 1 - held);
 
-                /*
-                        Nothing, or an error. input_length is unsigned and used
-                        to index the buffer, so letting a read of 0 become -1
-                        was a write a long way past the end of it.
-                */
                 if (got <= 0)
+                        break;
+
+                total = held + (positive)got;
+                at = 0;
+
+                while (at < total)
                 {
-                        if (got == 0)
+                        positive stop = at;
+
+                        while (stop < total && shell_buffer[stop] != '\n')
+                                stop++;
+
+                        // No newline yet: keep it for the next read rather than
+                        // running half a command.
+                        if (stop == total)
                                 break;
 
-                        continue;
+                        shell_buffer[stop] = end;
+
+                        if (stop > at)
+                                run_line(shell_buffer + at);
+
+                        at = stop + 1;
                 }
 
-                input_length = (positive)got - 1;
+                held = total - at;
 
-                if (input_length)
-                        process();
-
-                log_flush();
-
-                if (shell_output_file)
-                        system_call_1(syscall(close), shell_output_file);
-
-                shell_output = log;
-                shell_output_file = 0;
+                // A line longer than the buffer has nowhere left to grow, so
+                // it is run as it stands rather than silently dropped.
+                if (held >= MAX_INPUT - 1)
+                {
+                        shell_buffer[MAX_INPUT - 1] = end;
+                        run_line(shell_buffer + at);
+                        held = 0;
+                }
+                else if (held)
+                {
+                        memory_copy(shell_buffer, shell_buffer + at, held);
+                }
         }
+
+        // Whatever was still in hand when the input ended.
+        if (held)
+        {
+                shell_buffer[held] = end;
+                run_line(shell_buffer);
+        }
+
+        return 0;
 }
