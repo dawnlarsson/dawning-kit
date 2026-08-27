@@ -115,13 +115,18 @@ static _Bool canvas_holds(struct drm_device *dev)
         return held;
 }
 
-static int canvas_take_over(struct drm_device *dev)
+/*
+        Everything but the registering, which is deliberately not done here:
+        registering fires the hotplug that chooses a mode and commits it, and
+        that has to happen with no file open on the card. See canvas_claim.
+*/
+static struct canvas *canvas_take_over(struct drm_device *dev)
 {
         struct canvas *canvas;
         _Bool first;
 
         if (!drm_core_check_feature(dev, DRIVER_MODESET) || canvas_holds(dev))
-                return 0;
+                return NULL;
 
         // The face the whole machine draws with. The kernel already carries
         // it for its own console.
@@ -132,7 +137,7 @@ static int canvas_take_over(struct drm_device *dev)
                 if (!canvas_font)
                 {
                         log_canvas("no console font to draw with\n");
-                        return 0;
+                        return NULL;
                 }
 
                 canvas_cursor_bits();
@@ -140,14 +145,14 @@ static int canvas_take_over(struct drm_device *dev)
 
         canvas = kzalloc(sizeof(*canvas), GFP_KERNEL);
         if (!canvas)
-                return 0;
+                return NULL;
 
         canvas->set_result = 1;
 
         if (drm_client_init(dev, &canvas->client, "moonwater", &client_funcs))
         {
                 kfree(canvas);
-                return 0;
+                return NULL;
         }
 
         mutex_lock(&canvas_list_lock);
@@ -157,11 +162,7 @@ static int canvas_take_over(struct drm_device *dev)
                 canvas_thread_start();
         mutex_unlock(&canvas_list_lock);
 
-        drm_client_register(&canvas->client);
-        log_canvas("attached to %s, %s display\n", dev->driver->name,
-                   canvas_is_virtual(dev) ? "a guest's" : "a real");
-
-        return 1;
+        return canvas;
 }
 
 // Retried fast: the node appears the moment devtmpfs is mounted, and every
@@ -195,7 +196,7 @@ static int canvas_claim(const char *path, unsigned int minor)
 {
         struct file *filp;
         struct drm_file *file_priv;
-        int taken;
+        struct canvas *canvas;
 
         if (canvas_claimed & BIT_ULL(minor))
                 return -EBUSY;
@@ -212,14 +213,33 @@ static int canvas_claim(const char *path, unsigned int minor)
                 return -ENODEV;
         }
 
-        taken = canvas_take_over(file_priv->minor->dev);
+        canvas = canvas_take_over(file_priv->minor->dev);
 
-        if (taken)
+        if (canvas)
                 canvas_claimed |= BIT_ULL(minor);
 
+        /*
+                Closed before the client is registered, and drm_client_init has
+                taken its own reference to the device by now.
+
+                Registering fires the hotplug that picks a mode and commits it,
+                and a commit is refused out of hand while anything else is the
+                device's master -- which this file is until it is closed. With
+                it still open the first commit always answered EBUSY, so
+                "that mode would not set, take the offered one" could never
+                run: the one answer it was written to read was the one answer
+                it could never get.
+        */
         filp_close(filp, NULL);
 
-        return taken ? 0 : -EBUSY;
+        if (!canvas)
+                return -EBUSY;
+
+        drm_client_register(&canvas->client);
+        log_canvas("attached to %s, %s display\n", canvas->client.dev->driver->name,
+                   canvas_is_virtual(canvas->client.dev) ? "a guest's" : "a real");
+
+        return 0;
 }
 
 /*
