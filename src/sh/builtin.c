@@ -4,6 +4,24 @@ const positive page_size = 4096;
 
 bool shell_styles = true;
 
+/*
+        Where a complaint goes.
+
+        Not through the writer a builtin was handed: that one may have been
+        pointed at a file or down a pipe, and "ls /nowhere 2>/dev/null" is a
+        script saying it wants the complaint gone and the output kept. The two
+        have to be separable, so a diagnostic is written straight to the second
+        descriptor and never buffered behind the first.
+*/
+fn shell_diagnostic(address_any data, positive length)
+{
+        if (length == 0)
+                length = string_length(data);
+
+        log_flush();
+        system_call_3(syscall(write), stderr, (positive)data, length);
+}
+
 // The status the last thing to run answered with, which $? reads.
 b32 shell_status;
 
@@ -381,10 +399,10 @@ fn shell_export(writer write, string_address input)
 
         string_address eq = string_first_of(input, '=');
         if (!eq)
-                return write(str("export: invalid format (use NAME=value)\n"));
+                return shell_diagnostic(str("export: invalid format (use NAME=value)\n"));
 
         if (eq == input)
-                return write(str("export: missing variable name\n"));
+                return shell_diagnostic(str("export: missing variable name\n"));
 
         *eq = end;
         env_set(input, eq + 1);
@@ -404,28 +422,37 @@ fn shell_env(writer write, string_address input)
 fn shell_basename(writer write, string_address input)
 {
         if (input == null)
-                return write(str("basename: missing operand\n"));
+                return shell_diagnostic(str("basename: missing operand\n"));
 
         path_basename(write, input);
 
         write("\n", 1);
 }
 
+// No operand means standard input, which is what a pipe and a here-document
+// both arrive on, and what "cat" alone at a terminal is for.
 fn shell_cat(writer write, string_address input)
 {
-        if (input == null)
-                return write(str("cat: missing operand\n"));
-
-        bipolar file_descriptor = system_call_3(syscall(openat), AT_FDCWD, (positive)input, FILE_READ);
-
-        if (file_descriptor < 0)
-                return string_format(write, "cat: Cannot open file: %s\n", input);
-
+        bipolar file_descriptor = stdin;
         p8 buffer[page_size];
+
+        if (input)
+        {
+                file_descriptor = system_call_3(syscall(openat), AT_FDCWD,
+                                                (positive)input, FILE_READ);
+
+                if (file_descriptor < 0)
+                {
+                        shell_answer(1);
+                        return string_format(shell_diagnostic,
+                                             "cat: Cannot open file: %s\n", input);
+                }
+        }
 
         while (1)
         {
-                bipolar bytes_read = system_call_3(syscall(read), file_descriptor, (positive)buffer, page_size);
+                bipolar bytes_read = system_call_3(syscall(read), file_descriptor,
+                                                   (positive)buffer, page_size);
 
                 if (bytes_read <= 0)
                         break;
@@ -433,7 +460,10 @@ fn shell_cat(writer write, string_address input)
                 write(buffer, bytes_read);
         }
 
-        system_call_1(syscall(close), file_descriptor);
+        if (input)
+                system_call_1(syscall(close), file_descriptor);
+
+        shell_answer(0);
 }
 
 // TODOs:
@@ -450,7 +480,7 @@ fn shell_cd(writer write, string_address input)
                 return shell_answer(0);
 
         shell_answer(1);
-        string_format(write, "cd: No such directory: %s\n", input);
+        string_format(shell_diagnostic, "cd: No such directory: %s\n", input);
 }
 
 fn shell_clear(writer write, string_address input)
@@ -461,12 +491,12 @@ fn shell_clear(writer write, string_address input)
 fn shell_chmod(writer write, string_address input)
 {
         if (input == null)
-                return write(str("chmod: missing operand\n"));
+                return shell_diagnostic(str("chmod: missing operand\n"));
 
         if (!system_call_3(syscall(fchmodat), AT_FDCWD, (positive)input, 0777))
                 return;
 
-        string_format(write, "chmod: Cannot change permissions: %s\n", input);
+        string_format(shell_diagnostic, "chmod: Cannot change permissions: %s\n", input);
 }
 
 // Only ever live at the leaf of a copy, so one block at file scope keeps it
@@ -620,17 +650,17 @@ fn shell_cp(writer write, string_address input)
         positive flags = shell_flags(address_of input, "r");
 
         if (input == null)
-                return write(str("cp: missing operand\n"));
+                return shell_diagnostic(str("cp: missing operand\n"));
 
         string_address destination = string_cut(input, ' ');
 
         // string_format writes a %s through the writer without looking at it,
         // so a missing destination used to be a null dereference here.
         if (destination == null)
-                return write(str("cp: missing destination\n"));
+                return shell_diagnostic(str("cp: missing destination\n"));
 
         if (shell_is_directory(AT_FDCWD, input) && !(flags & SHELL_FLAG('r')))
-                return string_format(write, "cp: Omitting directory: %s\n", input);
+                return string_format(shell_diagnostic, "cp: Omitting directory: %s\n", input);
 
         // "cp -r a a/b" copies the copy, and on a rootfs made of RAM that ends
         // as an out of memory, not as a full disk.
@@ -641,12 +671,12 @@ fn shell_cp(writer write, string_address input)
                 shared++;
 
         if (shared == length && string_is(destination + length, '/'))
-                return string_format(write, "cp: Cannot copy '%s' into itself\n", input);
+                return string_format(shell_diagnostic, "cp: Cannot copy '%s' into itself\n", input);
 
         if (shell_copy_entry(AT_FDCWD, input, AT_FDCWD, destination, SHELL_MAX_DEPTH))
                 return;
 
-        string_format(write, "cp: Cannot copy: %s\n", input);
+        string_format(shell_diagnostic, "cp: Cannot copy: %s\n", input);
 }
 
 fn shell_echo(writer write, string_address input)
@@ -672,7 +702,7 @@ fn shell_exec(writer write, string_address input)
         if (!shell_find_in_path(shell_argv[1], found, sizeof(found)))
         {
                 shell_answer(127);
-                return string_format(write, "exec: %s: not found\n", shell_argv[1]);
+                return string_format(shell_diagnostic, "exec: %s: not found\n", shell_argv[1]);
         }
 
         log_flush();
@@ -683,7 +713,7 @@ fn shell_exec(writer write, string_address input)
                       (positive)(shell_argv + 1), (positive)shell_envp);
 
         shell_answer(126);
-        string_format(write, "exec: %s: cannot run\n", shell_argv[1]);
+        string_format(shell_diagnostic, "exec: %s: cannot run\n", shell_argv[1]);
 }
 fn shell_style(writer write, positive mode)
 {
@@ -822,9 +852,9 @@ fn shell_ls(writer write, string_address input)
                 }
 
                 if (file_descriptor == -ERROR_NO_ENTRY)
-                        return string_format(write, "ls: Cannot access '%s': No such file or directory\n", input);
+                        return string_format(shell_diagnostic, "ls: Cannot access '%s': No such file or directory\n", input);
 
-                return string_format(write, "ls: Cannot access '%s': %b\n", input, file_descriptor);
+                return string_format(shell_diagnostic, "ls: Cannot access '%s': %b\n", input, file_descriptor);
         }
 
         p8 out_buffer[page_size];
@@ -888,12 +918,12 @@ fn shell_head(writer write, string_address input)
                 lines = shell_number(shell_word(address_of input));
 
         if (input == null)
-                return write(str("head: missing operand\n"));
+                return shell_diagnostic(str("head: missing operand\n"));
 
         bipolar file_descriptor = system_call_3(syscall(openat), AT_FDCWD, (positive)input, FILE_READ);
 
         if (file_descriptor < 0)
-                return string_format(write, "head: Cannot open file: %s\n", input);
+                return string_format(shell_diagnostic, "head: Cannot open file: %s\n", input);
 
         p8 buffer[1024];
         positive seen = 0;
@@ -936,7 +966,7 @@ fn shell_tail(writer write, string_address input)
                 lines = shell_number(shell_word(address_of input));
 
         if (input == null)
-                return write(str("tail: missing operand\n"));
+                return shell_diagnostic(str("tail: missing operand\n"));
 
         if (lines == 0)
                 return;
@@ -944,7 +974,7 @@ fn shell_tail(writer write, string_address input)
         bipolar file_descriptor = system_call_3(syscall(openat), AT_FDCWD, (positive)input, FILE_READ);
 
         if (file_descriptor < 0)
-                return string_format(write, "tail: Cannot open file: %s\n", input);
+                return string_format(shell_diagnostic, "tail: Cannot open file: %s\n", input);
 
         p8 buffer[8192];
 
@@ -953,7 +983,7 @@ fn shell_tail(writer write, string_address input)
         if (size < 0)
         {
                 system_call_1(syscall(close), file_descriptor);
-                return string_format(write, "tail: Cannot seek: %s\n", input);
+                return string_format(shell_diagnostic, "tail: Cannot seek: %s\n", input);
         }
 
         positive window = (positive)size;
@@ -1022,12 +1052,12 @@ fn shell_wc(writer write, string_address input)
         positive flags = shell_flags(address_of input, "lwc");
 
         if (input == null)
-                return write(str("wc: missing operand\n"));
+                return shell_diagnostic(str("wc: missing operand\n"));
 
         bipolar file_descriptor = system_call_3(syscall(openat), AT_FDCWD, (positive)input, FILE_READ);
 
         if (file_descriptor < 0)
-                return string_format(write, "wc: Cannot open file: %s\n", input);
+                return string_format(shell_diagnostic, "wc: Cannot open file: %s\n", input);
 
         positive lines = 0;
         positive words = 0;
@@ -1093,14 +1123,14 @@ fn shell_mkdir(writer write, string_address input)
         positive flags = shell_flags(address_of input, "p");
 
         if (input == null)
-                return write(str("mkdir: missing operand\n"));
+                return shell_diagnostic(str("mkdir: missing operand\n"));
 
         if (!(flags & SHELL_FLAG('p')))
         {
                 if (!system_call_3(syscall(mkdirat), AT_FDCWD, (positive)input, 0777))
                         return;
 
-                return string_format(write, "mkdir: Cannot create directory: %s\n", input);
+                return string_format(shell_diagnostic, "mkdir: Cannot create directory: %s\n", input);
         }
 
         string_address step = input;
@@ -1135,18 +1165,18 @@ fn shell_mkdir(writer write, string_address input)
         }
 
         if (result)
-                string_format(write, "mkdir: Cannot create directory: %s\n", input);
+                string_format(shell_diagnostic, "mkdir: Cannot create directory: %s\n", input);
 }
 
 fn shell_mv(writer write, string_address input)
 {
         if (input == null)
-                return write(str("mv: missing operand\n"));
+                return shell_diagnostic(str("mv: missing operand\n"));
 
         string_address destination = string_cut(input, ' ');
 
         if (destination == null)
-                return write(str("mv: missing destination\n"));
+                return shell_diagnostic(str("mv: missing destination\n"));
 
         // renameat2 with no flags is renameat. riscv64 never got renameat --
         // the generic syscall ABI dropped it before riscv was added -- and
@@ -1155,23 +1185,23 @@ fn shell_mv(writer write, string_address input)
                            (positive)destination, 0))
                 return;
 
-        string_format(write, "mv: Cannot move file: %s\n", input);
+        string_format(shell_diagnostic, "mv: Cannot move file: %s\n", input);
 }
 
 fn shell_mount(writer write, string_address input)
 {
         if (input == null)
-                return write(str("mount: missing operand\n"));
+                return shell_diagnostic(str("mount: missing operand\n"));
 
         string_address destination = string_cut(input, ' ');
 
         if (destination == null)
-                return write(str("mount: missing destination\n"));
+                return shell_diagnostic(str("mount: missing destination\n"));
 
         if (!system_call_4(syscall(mount), (positive)input, (positive)destination, (positive)input, MS_BIND))
                 return;
 
-        string_format(write, "mount: Cannot mount filesystem: %s\n", input);
+        string_format(shell_diagnostic, "mount: Cannot mount filesystem: %s\n", input);
 }
 
 bool shell_remove_into(bipolar directory, positive depth);
@@ -1270,10 +1300,10 @@ fn shell_rm(writer write, string_address input)
         positive flags = shell_flags(address_of input, "rf");
 
         if (input == null)
-                return write(str("rm: missing operand\n"));
+                return shell_diagnostic(str("rm: missing operand\n"));
 
         if (string_is(input, '/') && string_is(input + 1, end))
-                return write(str("rm: refusing to remove /\n"));
+                return shell_diagnostic(str("rm: refusing to remove /\n"));
 
         if (!(flags & SHELL_FLAG('r')))
         {
@@ -1283,18 +1313,18 @@ fn shell_rm(writer write, string_address input)
                         return;
 
                 if (result == -ERROR_IS_DIRECTORY || result == -ERROR_NOT_PERMITTED)
-                        return string_format(write, "rm: Is a directory: %s\n", input);
+                        return string_format(shell_diagnostic, "rm: Is a directory: %s\n", input);
 
                 if (result == -ERROR_NO_ENTRY)
-                        return string_format(write, "rm: Cannot remove '%s': No such file or directory\n", input);
+                        return string_format(shell_diagnostic, "rm: Cannot remove '%s': No such file or directory\n", input);
 
-                return string_format(write, "rm: Cannot remove '%s': %b\n", input, result);
+                return string_format(shell_diagnostic, "rm: Cannot remove '%s': %b\n", input, result);
         }
 
         if (shell_remove_entry(AT_FDCWD, input, SHELL_MAX_DEPTH))
                 return;
 
-        string_format(write, "rm: Cannot remove: %s\n", input);
+        string_format(shell_diagnostic, "rm: Cannot remove: %s\n", input);
 }
 
 fn shell_pwd(writer write, string_address input)
@@ -1322,7 +1352,7 @@ fn shell_exit(writer write, string_address input)
 fn shell_touch(writer write, string_address input)
 {
         if (input == null)
-                return write(str("touch: missing operand\n"));
+                return shell_diagnostic(str("touch: missing operand\n"));
 
         // No truncation. FILE_WRITE already carries O_TRUNC, so this emptied
         // any file that was already there, which is the one thing touch must
@@ -1330,7 +1360,7 @@ fn shell_touch(writer write, string_address input)
         bipolar file_descriptor = system_call_4(syscall(openat), AT_FDCWD, (positive)input, FILE_CREATE | FILE_READ, 0666);
 
         if (file_descriptor < 0)
-                return string_format(write, "touch: Cannot create file: %s\n", input);
+                return string_format(shell_diagnostic, "touch: Cannot create file: %s\n", input);
 
         system_call_1(syscall(close), file_descriptor);
 }
@@ -1357,7 +1387,7 @@ fn shell_uname(writer write, string_address input)
         memory_fill(facts, 0, sizeof(facts));
 
         if (system_call_1(syscall(uname), (positive)facts))
-                return write(str("uname: not available\n"));
+                return shell_diagnostic(str("uname: not available\n"));
 
         bool all = (flags & SHELL_FLAG('a')) != 0;
         positive shown = 0;
@@ -1383,7 +1413,7 @@ fn shell_uname(writer write, string_address input)
 fn shell_sleep(writer write, string_address input)
 {
         if (input == null)
-                return write(str("sleep: missing operand\n"));
+                return shell_diagnostic(str("sleep: missing operand\n"));
 
         timespec duration = {0, 0};
 
@@ -3438,7 +3468,7 @@ b32 shell_find_in_path(string_address name, p8 address_to into, positive room)
 fn shell_which(writer write, string_address input)
 {
         if (input == null)
-                return write(str("which: missing operand\n"));
+                return shell_diagnostic(str("which: missing operand\n"));
 
         shell_command address_to command = shell_commands;
 
@@ -3455,7 +3485,7 @@ fn shell_which(writer write, string_address input)
         if (shell_find_in_path(input, found, sizeof(found)))
                 return string_format(write, "%s\n", found);
 
-        string_format(write, "which: %s: not found\n", input);
+        string_format(shell_diagnostic, "which: %s: not found\n", input);
 }
 
 fn shell_help(writer write, string_address input)
