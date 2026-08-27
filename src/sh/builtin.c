@@ -1053,13 +1053,20 @@ fn shell_wc(writer write, string_address input)
 {
         positive flags = shell_flags(address_of input, "lwc");
 
-        if (input == null)
-                return shell_diagnostic(str("wc: missing operand\n"));
+        bipolar file_descriptor = stdin;
 
-        bipolar file_descriptor = system_call_3(syscall(openat), AT_FDCWD, (positive)input, FILE_READ);
+        if (input)
+        {
+                file_descriptor = system_call_3(syscall(openat), AT_FDCWD,
+                                                (positive)input, FILE_READ);
 
-        if (file_descriptor < 0)
-                return string_format(shell_diagnostic, "wc: Cannot open file: %s\n", input);
+                if (file_descriptor < 0)
+                {
+                        shell_answer(1);
+                        return string_format(shell_diagnostic,
+                                             "wc: Cannot open file: %s\n", input);
+                }
+        }
 
         positive lines = 0;
         positive words = 0;
@@ -1104,20 +1111,30 @@ fn shell_wc(writer write, string_address input)
                 }
         }
 
-        system_call_1(syscall(close), file_descriptor);
+        if (input)
+                system_call_1(syscall(close), file_descriptor);
 
         bool all = !(flags & (SHELL_FLAG('l') | SHELL_FLAG('w') | SHELL_FLAG('c')));
 
+        // One count on its own is written as it is. Three are put in columns,
+        // which is the only reason there was ever a width.
+        positive width = all ? 7 : 0;
+
         if (all || (flags & SHELL_FLAG('l')))
-                shell_number_padded(write, lines, 7);
+                shell_number_padded(write, lines, width);
 
         if (all || (flags & SHELL_FLAG('w')))
-                shell_number_padded(write, words, 7);
+                shell_number_padded(write, words, width);
 
         if (all || (flags & SHELL_FLAG('c')))
-                shell_number_padded(write, bytes, 7);
+                shell_number_padded(write, bytes, width);
 
-        string_format(write, " %s\n", input);
+        if (input)
+                string_format(write, " %s", input);
+
+        write(str("\n"));
+
+        shell_answer(0);
 }
 
 fn shell_mkdir(writer write, string_address input)

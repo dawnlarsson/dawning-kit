@@ -673,12 +673,17 @@ typedef p8 address_to string_address;
 typedef p8 string[];
 typedef const p8 address_to const_string;
 
-// Helper function for writing static strings to a writer with data + length
-// example with:
-//      write(str("Hello, world!\n"));
-// example without:
-//      write("Hello, world!\n", 14); // error prone!
-#define str(string) (string), (sizeof(string))
+/*
+        A literal and its length, for a writer that wants both.
+
+                write(str("Hello, world!\n"));
+                write("Hello, world!\n", 14);   // the same, counted by hand
+
+        One short of sizeof: the terminator ends the string, it is not part of
+        it, and writing it put a stray zero byte after every literal message
+        the shell ever printed.
+*/
+#define str(string) (string), (sizeof(string) - 1)
 
 #define string_index(source, index) (address_to((source) + (index)))
 #define string_get(source) (address_to(source))
