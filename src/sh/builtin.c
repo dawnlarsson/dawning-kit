@@ -2861,6 +2861,7 @@ static shell_tool shell_tools[] = {
     {"ln", file_ln},
     {"ls", file_ls},
     {"mkdir", file_mkdir},
+    {"mktemp", file_mktemp},
     {"mv", file_mv},
     {"readlink", file_readlink},
     {"realpath", file_realpath},

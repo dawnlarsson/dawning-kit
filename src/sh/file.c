@@ -157,6 +157,14 @@ fn file_line(string_address text)
         log("\n", 1);
 }
 
+// What -z asks for, in the tools that have it: the same answer ended with a
+// NUL, so that a name with a newline in it survives being read back.
+fn file_written(string_address text, bool zero)
+{
+        log(text, 0);
+        log(zero ? "\0" : "\n", 1);
+}
+
 // Numbers ---------------------------------------------------
 
 positive file_digits(p8 address_to into, positive value)
@@ -726,8 +734,12 @@ bipolar file_link_text(string_address path, p8 address_to into, positive limit)
         symlink puts its own text back at the front of what is left to
         resolve. The hop count is what ends a loop of links pointing at each
         other, since walking one is not what makes the path longer.
+
+        Not following the links is what realpath -s asks for: the dots are
+        still worked out, so what comes back is an absolute path, but every
+        name in it is the name that was written and not what it points at.
 */
-bool file_real(string_address path, p8 address_to into)
+bool file_resolve(string_address path, p8 address_to into, bool follow)
 {
         p8 rest[FILE_PATH_MAX];
         p8 link[FILE_PATH_MAX];
@@ -807,6 +819,9 @@ bool file_real(string_address path, p8 address_to into)
 
                 into[length] = end;
 
+                if (!follow)
+                        continue;
+
                 bipolar seen = system_call_4(syscall(readlinkat), AT_FDCWD,
                                              (positive)into, (positive)link,
                                              FILE_PATH_MAX - 1);
@@ -863,6 +878,11 @@ bool file_real(string_address path, p8 address_to into)
         into[length] = end;
 
         return true;
+}
+
+bool file_real(string_address path, p8 address_to into)
+{
+        return file_resolve(path, into, true);
 }
 
 // Reading a small file whole --------------------------------
@@ -1504,6 +1524,189 @@ positive file_take_options(string_address allowed, positive address_to first)
 fn file_complain(string_address program, string_address message, string_address subject)
 {
         string_format(file_fail, "%s: %s: %s\n", program, subject, message);
+}
+
+/*
+        The long spellings.
+
+        Every tool here thinks in letters, and GNU's tools answer to a word as
+        well: --zero for -z, --canonicalize-missing for -m. One table per tool
+        turns the word back into its letter before anything else looks at it,
+        so what reads the flags below goes on reading letters.
+
+        A letter that appears only in a table is reachable only by its word,
+        which is how --relative-to gets a bit of the flag word to live in
+        without inventing a -R that GNU has not got.
+*/
+typedef struct
+{
+        string_address name;
+        p8 letter;
+} file_long;
+
+// file_letter_bit answers 62 for anything that is not a letter or a digit.
+#define FILE_LETTERS 63
+
+/*
+        The leading options, letters and words both, and a complaint when the
+        word is neither.
+
+        file_take_options above leaves a word it does not know as an operand,
+        which is what the tools written against it want. GNU's stop instead,
+        and the difference is not academic: realpath -E used to print the
+        resolved name of a file called -E and exit as though that had been the
+        question.
+
+        Letters named in `valued` take an argument -- the rest of the word, or
+        the word after it -- kept under the bit that letter sets, so a tool
+        asks for it by letter the way it asks for everything else.
+*/
+typedef struct
+{
+        string_address program;
+        string_address allowed;
+        string_address valued;
+        const file_long address_to longs;
+
+        // seq is the one tool here where -4 is a number and not a flag.
+        bool numbers;
+
+        positive flags;
+        positive first;
+        string_address value[FILE_LETTERS];
+} file_taking;
+
+static string_address file_option_value(file_taking address_to taking, p8 letter)
+{
+        return taking->value[file_letter_bit(letter)];
+}
+
+static bool file_option_needs(file_taking address_to taking, string_address word)
+{
+        file_complain(taking->program, "option needs an argument", word);
+
+        return false;
+}
+
+static p8 file_long_letter(file_taking address_to taking, string_address name,
+                           positive length)
+{
+        if (!taking->longs)
+                return 0;
+
+        for (positive i = 0; taking->longs[i].name; i++)
+        {
+                string_address spelling = taking->longs[i].name;
+                positive same = 0;
+
+                while (same < length && string_get(spelling + same) &&
+                       string_get(spelling + same) == string_get(name + same))
+                        same++;
+
+                // The whole word or nothing: GNU shortens a long option to
+                // any unambiguous prefix, which is a convenience for a person
+                // typing and a trap for a script that outlives the flag.
+                if (same == length && string_is(spelling + same, end))
+                        return taking->longs[i].letter;
+        }
+
+        return 0;
+}
+
+static bool file_take(file_taking address_to taking)
+{
+        positive count = (positive)program_argument_count();
+        positive index = 1;
+
+        taking->flags = 0;
+
+        for (positive i = 0; i < FILE_LETTERS; i++)
+                taking->value[i] = null;
+
+        while (index < count)
+        {
+                string_address word = program_argument((b32)index);
+
+                if (!string_is(word, '-') || string_is(word + 1, end))
+                        break;
+
+                if (string_is(word + 1, '-') && string_is(word + 2, end))
+                {
+                        index++;
+                        break;
+                }
+
+                if (taking->numbers && !string_is(word + 1, '-') &&
+                    ((string_get(word + 1) >= '0' && string_get(word + 1) <= '9') ||
+                     string_is(word + 1, '.')))
+                        break;
+
+                index++;
+
+                if (string_is(word + 1, '-'))
+                {
+                        string_address name = word + 2;
+                        string_address mark = string_first_of(name, '=');
+                        positive length = mark ? (positive)(mark - name)
+                                               : string_length(name);
+                        p8 letter = file_long_letter(taking, name, length);
+
+                        if (!letter)
+                        {
+                                file_complain(taking->program, "unrecognized option", word);
+                                return false;
+                        }
+
+                        positive bit = file_letter_bit(letter);
+
+                        taking->flags |= (positive)1 << bit;
+
+                        if (!string_first_of(taking->valued, letter))
+                                continue;
+
+                        if (mark)
+                                taking->value[bit] = mark + 1;
+                        else if (index < count)
+                                taking->value[bit] = program_argument((b32)index++);
+                        else
+                                return file_option_needs(taking, word);
+
+                        continue;
+                }
+
+                for (string_address letter = word + 1; string_get(letter); letter++)
+                {
+                        p8 named[3] = {'-', string_get(letter), end};
+                        positive bit = file_letter_bit(string_get(letter));
+
+                        if (!string_first_of(taking->allowed, string_get(letter)))
+                        {
+                                file_complain(taking->program, "invalid option", named);
+                                return false;
+                        }
+
+                        taking->flags |= (positive)1 << bit;
+
+                        if (!string_first_of(taking->valued, string_get(letter)))
+                                continue;
+
+                        // -s.txt and -s .txt are the same option given the
+                        // same way; either the rest of the word is the
+                        // argument or the next word is.
+                        if (string_get(letter + 1))
+                                taking->value[bit] = letter + 1;
+                        else if (index < count)
+                                taking->value[bit] = program_argument((b32)index++);
+                        else
+                                return file_option_needs(taking, named);
+
+                        break;
+                }
+        }
+
+        taking->first = index;
+
+        return true;
 }
 
 string_address file_reason(bipolar code)
@@ -3573,13 +3776,40 @@ static b32 file_ln()
 }
 
 // readlink ------------------------------------------------------------
-// readlink [-f] [-n] FILE..., where -f resolves the whole path rather than
-// reading one link.
+/*
+        readlink [-f|-e|-m] [-n] [-q] [-z] FILE...
+
+        With none of -f, -e and -m it reads the one link it is given and says
+        nothing about the rest of the path; those three resolve the whole name
+        and differ only in how much of it has to be there.
+*/
+static const file_long readlink_longs[] = {
+    {(string_address) "canonicalize", 'f'},
+    {(string_address) "canonicalize-existing", 'e'},
+    {(string_address) "canonicalize-missing", 'm'},
+    {(string_address) "no-newline", 'n'},
+    {(string_address) "quiet", 'q'},
+    {(string_address) "silent", 's'},
+    {(string_address) "verbose", 'v'},
+    {(string_address) "zero", 'z'},
+    {null, 0},
+};
+
 static b32 file_readlink()
 {
-        positive first = 0;
+        file_taking taking = {
+            .program = (string_address) "readlink",
+            .allowed = (string_address) "fneqsvmz",
+            .valued = (string_address) "",
+            .longs = readlink_longs,
+        };
+
+        if (!file_take(address_of taking))
+                return 1;
+
+        positive first = taking.first;
         positive count = (positive)program_argument_count();
-        positive flags = file_take_options((string_address) "fneqsvm", address_of first);
+        positive flags = taking.flags;
 
         if (first >= count)
         {
@@ -3590,6 +3820,7 @@ static b32 file_readlink()
         bool resolve = (flags & (FILE_FLAG('f') | FILE_FLAG('e') | FILE_FLAG('m'))) != 0;
         bool no_newline = (flags & FILE_FLAG('n')) != 0;
         bool quiet = (flags & (FILE_FLAG('q') | FILE_FLAG('s'))) != 0;
+        bool zero = (flags & FILE_FLAG('z')) != 0;
         b32 status = 0;
 
         while (first < count)
@@ -3632,10 +3863,12 @@ static b32 file_readlink()
                         continue;
                 }
 
-                log(answer, 0);
-
-                if (!no_newline)
-                        log("\n", 1);
+                // -n drops the delimiter rather than choosing one, so it wins
+                // over -z when both are given.
+                if (no_newline)
+                        log(answer, 0);
+                else
+                        file_written(answer, zero);
         }
 
         log_flush();
@@ -3644,8 +3877,15 @@ static b32 file_readlink()
 }
 
 // basename ------------------------------------------------------------
-// basename NAME [SUFFIX], and the -a / -s forms that take many names.
-static fn basename_one(string_address name, string_address suffix)
+// basename NAME [SUFFIX], and the -a / -s / -z forms that take many names.
+static const file_long basename_longs[] = {
+    {(string_address) "multiple", 'a'},
+    {(string_address) "suffix", 's'},
+    {(string_address) "zero", 'z'},
+    {null, 0},
+};
+
+static fn basename_one(string_address name, string_address suffix, bool zero)
 {
         p8 answer[FILE_PATH_MAX];
 
@@ -3670,62 +3910,29 @@ static fn basename_one(string_address name, string_address suffix)
                 }
         }
 
-        file_line(answer);
+        file_written(answer, zero);
 }
 
 static b32 file_basename()
 {
-        positive count = (positive)program_argument_count();
-        positive index = 1;
-        bool many = false;
-        string_address suffix = null;
+        file_taking taking = {
+            .program = (string_address) "basename",
+            .allowed = (string_address) "asz",
+            .valued = (string_address) "s",
+            .longs = basename_longs,
+        };
 
-        while (index < count)
-        {
-                string_address argument = program_argument((b32)index);
-
-                if (string_is(argument, '-') && string_is(argument + 1, '-') &&
-                    string_is(argument + 2, end))
-                {
-                        index++;
-                        break;
-                }
-
-                if (!string_is(argument, '-') || string_is(argument + 1, end))
-                        break;
-
-                if (string_is(argument + 1, 'a') && string_is(argument + 2, end))
-                {
-                        many = true;
-                        index++;
-                        continue;
-                }
-
-                if (string_is(argument + 1, 's') && string_is(argument + 2, end))
-                {
-                        if (index + 1 >= count)
-                        {
-                                file_fail("basename: -s needs a suffix\n", 0);
-                                return 1;
-                        }
-
-                        suffix = program_argument((b32)(index + 1));
-                        many = true;
-                        index += 2;
-                        continue;
-                }
-
-                if (string_is(argument + 1, 's'))
-                {
-                        suffix = argument + 2;
-                        many = true;
-                        index++;
-                        continue;
-                }
-
-                string_format(file_fail, "basename: unknown option: %s\n", argument);
+        if (!file_take(address_of taking))
                 return 1;
-        }
+
+        positive index = taking.first;
+        positive count = (positive)program_argument_count();
+        string_address suffix = file_option_value(address_of taking, 's');
+        bool zero = (taking.flags & FILE_FLAG('z')) != 0;
+
+        // -s says what to strip and thereby says there is more than one name;
+        // without it the second word is the suffix and there is exactly one.
+        bool many = (taking.flags & (FILE_FLAG('a') | FILE_FLAG('s'))) != 0;
 
         if (index >= count)
         {
@@ -3739,10 +3946,10 @@ static b32 file_basename()
         if (many)
         {
                 while (index < count)
-                        basename_one(program_argument((b32)index++), suffix);
+                        basename_one(program_argument((b32)index++), suffix, zero);
         }
         else
-                basename_one(program_argument((b32)index), suffix);
+                basename_one(program_argument((b32)index), suffix, zero);
 
         log_flush();
 
@@ -3750,13 +3957,26 @@ static b32 file_basename()
 }
 
 // dirname ------------------------------------------------------------
-// dirname NAME..., the directory part of every name given.
+// dirname [-z] NAME..., the directory part of every name given.
+static const file_long dirname_longs[] = {
+    {(string_address) "zero", 'z'},
+    {null, 0},
+};
+
 static b32 file_dirname()
 {
-        positive first = 0;
-        positive count = (positive)program_argument_count();
+        file_taking taking = {
+            .program = (string_address) "dirname",
+            .allowed = (string_address) "z",
+            .valued = (string_address) "",
+            .longs = dirname_longs,
+        };
 
-        file_take_options((string_address) "", address_of first);
+        if (!file_take(address_of taking))
+                return 1;
+
+        positive first = taking.first;
+        positive count = (positive)program_argument_count();
 
         if (first >= count)
         {
@@ -3769,7 +3989,7 @@ static b32 file_dirname()
                 p8 answer[FILE_PATH_MAX];
 
                 file_head(program_argument((b32)first++), answer);
-                file_line(answer);
+                file_written(answer, (taking.flags & FILE_FLAG('z')) != 0);
         }
 
         log_flush();
@@ -3778,12 +3998,127 @@ static b32 file_dirname()
 }
 
 // realpath ------------------------------------------------------------
-// realpath [-m] [-q] PATH..., every link and every dot resolved away.
+/*
+        realpath [-E|-e|-m] [-L|-P] [-s] [-q] [-z] [--relative-to=DIR]
+                 [--relative-base=DIR] PATH...
+
+        -E is the default and asks only that everything above the last name
+        is there, which is what makes the tool worth having: naming a file
+        that has yet to be created is the usual reason for asking. -e wants
+        the whole path to exist, -m wants none of it, and -s answers what the
+        name says rather than what is on the disk, which puts existence
+        beside the point.
+
+        -L and -P are taken and both resolve as -P does, which is GNU's own
+        default: the two only part company over a .. that follows a link.
+*/
+static const file_long realpath_longs[] = {
+    {(string_address) "canonicalize", 'E'},
+    {(string_address) "canonicalize-existing", 'e'},
+    {(string_address) "canonicalize-missing", 'm'},
+    {(string_address) "logical", 'L'},
+    {(string_address) "physical", 'P'},
+    {(string_address) "quiet", 'q'},
+    {(string_address) "relative-to", 'R'},
+    {(string_address) "relative-base", 'B'},
+    {(string_address) "strip", 's'},
+    {(string_address) "no-symlinks", 's'},
+    {(string_address) "zero", 'z'},
+    {null, 0},
+};
+
+// Whether one canonical path is the other or lies under it. Whole components
+// only: /usr/lib is not under /usr/li.
+static bool realpath_under(string_address directory, string_address path)
+{
+        positive length = string_length(directory);
+
+        if (length > 0 && string_is(directory + length - 1, '/'))
+                length--;
+
+        for (positive i = 0; i < length; i++)
+                if (string_get(path + i) != string_get(directory + i))
+                        return false;
+
+        return string_is(path + length, end) || string_is(path + length, '/');
+}
+
+/*
+        One canonical path said from where another stands: what they share
+        dropped, one .. for every step still to climb, and a lone dot when
+        the two name the same place.
+*/
+static fn realpath_relative(string_address from, string_address path, p8 address_to into)
+{
+        positive same = 0;
+        positive mark = 0;
+
+        while (string_get(from + same) && string_get(from + same) == string_get(path + same))
+        {
+                if (string_is(from + same, '/'))
+                        mark = same + 1;
+
+                same++;
+        }
+
+        // A whole component or none of it: /usr/lib and /usr/libexec share
+        // five letters and no directory below the first.
+        if (string_is(from + same, end) &&
+            (string_is(path + same, '/') || string_is(path + same, end)))
+                mark = same + (string_is(path + same, '/') ? 1 : 0);
+        else if (string_is(path + same, end) && string_is(from + same, '/'))
+                mark = same + 1;
+
+        positive length = 0;
+        string_address step = from + mark;
+
+        while (string_get(step))
+        {
+                while (string_is(step, '/'))
+                        step++;
+
+                if (string_is(step, end))
+                        break;
+
+                while (string_get(step) && !string_is(step, '/'))
+                        step++;
+
+                if (length)
+                        into[length++] = '/';
+
+                into[length++] = '.';
+                into[length++] = '.';
+        }
+
+        if (string_get(path + mark))
+        {
+                if (length)
+                        into[length++] = '/';
+
+                for (positive i = 0; string_get(path + mark + i) && length + 1 < FILE_PATH_MAX; i++)
+                        into[length++] = string_get(path + mark + i);
+        }
+
+        if (!length)
+                into[length++] = '.';
+
+        into[length] = end;
+}
+
 static b32 file_realpath()
 {
-        positive first = 0;
+        file_taking taking = {
+            .program = (string_address) "realpath",
+            .allowed = (string_address) "EeLmPqsz",
+            .valued = (string_address) "RB",
+            .longs = realpath_longs,
+        };
+
+        if (!file_take(address_of taking))
+                return 1;
+
+        positive first = taking.first;
         positive count = (positive)program_argument_count();
-        positive flags = file_take_options((string_address) "meqsLP", address_of first);
 
         if (first >= count)
         {
@@ -3791,21 +4126,34 @@ static b32 file_realpath()
                 return 1;
         }
 
-        bool allow_missing = (flags & FILE_FLAG('m')) != 0;
-        bool quiet = (flags & FILE_FLAG('q')) != 0;
+        bool allow_missing = (taking.flags & FILE_FLAG('m')) != 0;
+        bool written_name = (taking.flags & FILE_FLAG('s')) != 0;
+        bool quiet = (taking.flags & FILE_FLAG('q')) != 0;
+        bool zero = (taking.flags & FILE_FLAG('z')) != 0;
         b32 status = 0;
+
+        p8 base_real[FILE_PATH_MAX];
+        p8 against_real[FILE_PATH_MAX];
+        string_address base = file_option_value(address_of taking, 'B');
+        string_address against = file_option_value(address_of taking, 'R');
+
+        // Both directories are made canonical before anything is said
+        // relative to them, or /tmp/./x would not look like /tmp/x.
+        if (base && file_real(base, base_real))
+                base = base_real;
+
+        if (!against)
+                against = base;
+        else if (file_real(against, against_real))
+                against = against_real;
 
         while (first < count)
         {
                 string_address path = program_argument((b32)first++);
                 p8 answer[FILE_PATH_MAX];
-
-                // Everything but the last component has to be there, which
-                // is what the system's own realpath asks for: naming a file
-                // that has yet to be created is the point of the tool.
                 p8 above[FILE_PATH_MAX];
 
-                if (!file_real(path, answer))
+                if (!file_resolve(path, answer, !written_name))
                 {
                         if (!quiet)
                                 string_format(file_fail, "realpath: %s: Invalid argument\n", path);
@@ -3816,8 +4164,9 @@ static b32 file_realpath()
 
                 file_head(answer, above);
 
-                if ((!allow_missing && !file_is_directory_through(above)) ||
-                    ((flags & FILE_FLAG('e')) && !file_exists(AT_FDCWD, answer)))
+                if (!written_name &&
+                    ((!allow_missing && !file_is_directory_through(above)) ||
+                     ((taking.flags & FILE_FLAG('e')) && !file_exists(AT_FDCWD, answer))))
                 {
                         if (!quiet)
                                 string_format(file_fail, "realpath: %s: No such file or directory\n",
@@ -3827,7 +4176,17 @@ static b32 file_realpath()
                         continue;
                 }
 
-                file_line(answer);
+                // --relative-base names where the shorthand stops being worth
+                // it: a path outside that directory is said in full.
+                if (against && (!base || realpath_under(base, answer)))
+                {
+                        p8 relative[FILE_PATH_MAX];
+
+                        realpath_relative(against, answer, relative);
+                        file_written(relative, zero);
+                }
+                else
+                        file_written(answer, zero);
         }
 
         log_flush();
@@ -5459,4 +5818,298 @@ static b32 file_uname()
         log_flush();
 
         return 0;
+}
+
+// mktemp ----------------------------------------------------------
+/*
+        A name nothing else is using, and the file or directory that claims it.
+
+        The claim is the open: O_EXCL is what makes the name ours rather than
+        merely unlikely, and is the difference between this and printing a
+        name that looks random. -u asks for exactly that lesser thing.
+
+        The X's do not have to be at the end. The last run of them is what is
+        replaced, so run.XXXXXX.log keeps its suffix.
+*/
+#define MKTEMP_ATTEMPTS 200
+#define MKTEMP_LEAST 3
+
+#define FILE_EXCLUSIVE 0200
+
+static string_address mktemp_letters =
+    "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+
+static string_address file_environment(string_address name)
+{
+        positive length = string_length(name);
+
+        for (b32 i = 0; program_environment(i); i++)
+        {
+                string_address entry = program_environment(i);
+                positive at = 0;
+
+                while (at < length && string_get(entry + at) == string_get(name + at))
+                        at++;
+
+                if (at == length && string_get(entry + at) == '=')
+                        return entry + at + 1;
+        }
+
+        return null;
+}
+
+// The kernel's randomness, and the clock when there is none to be had.
+static fn mktemp_letters_into(p8 address_to at, positive count)
+{
+        p8 raw[64];
+        positive have = count > sizeof(raw) ? sizeof(raw) : count;
+
+        if (system_call_3(syscall(getrandom), (positive)raw, have, 0) != (bipolar)have)
+        {
+                p64 now[2] = {0, 0};
+
+                system_call_2(syscall(clock_gettime), 0, (positive)now);
+
+                positive mixed = (positive)now[1] ^ ((positive)now[0] << 20) ^
+                                 ((positive)system_call_1(syscall(getpid), 0) << 40);
+
+                for (positive i = 0; i < have; i++)
+                {
+                        mixed = mixed * 6364136223846793005u + 1442695040888963407u;
+                        raw[i] = (p8)(mixed >> 33);
+                }
+        }
+
+        for (positive i = 0; i < count; i++)
+                at[i] = mktemp_letters[raw[i % have] % 62];
+}
+
+static b32 file_mktemp()
+{
+        positive count = (positive)program_argument_count();
+        positive index = 1;
+        bool directory = false;
+        bool dry = false;
+        bool quiet = false;
+        bool rooted = false;
+        string_address base = null;
+        string_address template = null;
+        p8 path[FILE_PATH_MAX];
+        positive length = 0;
+        positive marks_at;
+        positive marks = 0;
+
+        while (index < count)
+        {
+                string_address argument = program_argument((b32)index);
+
+                if (!string_is(argument, '-') || string_is(argument + 1, end))
+                        break;
+
+                if (string_is(argument + 1, '-') && string_is(argument + 2, end))
+                {
+                        index++;
+                        break;
+                }
+
+                if (string_is(argument + 1, 'p') && string_is(argument + 2, end))
+                {
+                        if (index + 1 >= count)
+                        {
+                                file_fail("mktemp: -p needs a directory\n", 0);
+                                return 1;
+                        }
+
+                        base = program_argument((b32)(index + 1));
+                        rooted = true;
+                        index += 2;
+                        continue;
+                }
+
+                if (string_is(argument + 1, '-'))
+                {
+                        positive at = 0;
+                        string_address named = "--tmpdir=";
+
+                        while (string_get(named + at) &&
+                               string_get(argument + at) == string_get(named + at))
+                                at++;
+
+                        if (!string_get(named + at))
+                        {
+                                base = argument + at;
+                                rooted = true;
+                                index++;
+                                continue;
+                        }
+
+                        if (string_compare(argument, "--tmpdir") == 0)
+                        {
+                                rooted = true;
+                                index++;
+                                continue;
+                        }
+
+                        if (string_compare(argument, "--directory") == 0)
+                                directory = true;
+                        else if (string_compare(argument, "--dry-run") == 0)
+                                dry = true;
+                        else if (string_compare(argument, "--quiet") == 0)
+                                quiet = true;
+                        else
+                        {
+                                string_format(file_fail, "mktemp: unknown option: %s\n",
+                                              argument);
+                                return 1;
+                        }
+
+                        index++;
+                        continue;
+                }
+
+                for (positive letter = 1; string_get(argument + letter); letter++)
+                {
+                        p8 which = string_get(argument + letter);
+
+                        if (which == 'd')
+                                directory = true;
+                        else if (which == 'u')
+                                dry = true;
+                        else if (which == 'q')
+                                quiet = true;
+                        else if (which == 't')
+                                rooted = true;
+                        else
+                        {
+                                string_format(file_fail,
+                                              "mktemp: unknown option: %s\n", argument);
+                                return 1;
+                        }
+                }
+
+                index++;
+        }
+
+        if (index < count)
+                template = program_argument((b32)index++);
+
+        if (index < count)
+        {
+                file_fail("mktemp: too many templates\n", 0);
+                return 1;
+        }
+
+        if (!template)
+        {
+                template = "tmp.XXXXXXXXXX";
+                rooted = true;
+        }
+
+        if (rooted && !string_is(template, '/'))
+        {
+                if (!base)
+                        base = file_environment("TMPDIR");
+
+                if (!base || !string_get(base))
+                        base = "/tmp";
+
+                while (string_get(base + length) && length < FILE_PATH_MAX - 2)
+                {
+                        path[length] = string_get(base + length);
+                        length++;
+                }
+
+                while (length > 1 && path[length - 1] == '/')
+                        length--;
+
+                path[length++] = '/';
+        }
+
+        for (positive at = 0; string_get(template + at); at++)
+        {
+                if (length >= FILE_PATH_MAX - 1)
+                {
+                        file_fail("mktemp: template too long\n", 0);
+                        return 1;
+                }
+
+                path[length++] = string_get(template + at);
+        }
+
+        path[length] = end;
+
+        marks_at = length;
+
+        while (marks_at && path[marks_at - 1] != 'X')
+                marks_at--;
+
+        while (marks_at && path[marks_at - 1] == 'X')
+        {
+                marks_at--;
+                marks++;
+        }
+
+        if (marks < MKTEMP_LEAST)
+        {
+                string_format(file_fail, "mktemp: too few X's in template '%s'\n",
+                              template);
+                return 1;
+        }
+
+        for (positive attempt = 0; attempt < MKTEMP_ATTEMPTS; attempt++)
+        {
+                bipolar answer;
+
+                mktemp_letters_into(path + marks_at, marks);
+
+                if (dry)
+                        break;
+
+                if (directory)
+                        answer = system_call_3(syscall(mkdirat),
+                                               (positive)(bipolar)AT_FDCWD,
+                                               (positive)path, 0700);
+                else
+                {
+                        answer = system_call_4(syscall(openat),
+                                               (positive)(bipolar)AT_FDCWD,
+                                               (positive)path,
+                                               FILE_WRITE | FILE_EXCLUSIVE, 0600);
+
+                        if (answer >= 0)
+                                system_call_1(syscall(close), (positive)answer);
+                }
+
+                if (answer >= 0)
+                {
+                        file_line(path);
+                        log_flush();
+                        return 0;
+                }
+
+                if (answer != -ERROR_EXISTS)
+                {
+                        if (!quiet)
+                                string_format(file_fail,
+                                              "mktemp: failed to create %s via template '%s'\n",
+                                              directory ? "directory" : "file",
+                                              template);
+
+                        return 1;
+                }
+        }
+
+        if (dry)
+        {
+                file_line(path);
+                log_flush();
+                return 0;
+        }
+
+        if (!quiet)
+                string_format(file_fail,
+                              "mktemp: failed to create %s via template '%s'\n",
+                              directory ? "directory" : "file", template);
+
+        return 1;
 }

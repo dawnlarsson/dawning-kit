@@ -521,6 +521,126 @@ effect 'make a space'   mkdir '$TOOL "a made dir"'
 effect 'touch a space'  touch '$TOOL "a touched file"'
 effect 'link a space'   ln '$TOOL -s "tree/one" "a linked name"'
 
+#       mktemp, whose whole point is a name nobody can predict -- so what the
+#       two tools print cannot be compared with each other directly. What is
+#       compared is the contract both of them are held to: the name is the
+#       template with every X replaced by something, in the directory the
+#       options asked for, and what each tool left on disk is the same tree.
+
+# The printed name, with the template's X positions blanked out. A name of a
+# different length cannot be shaped and says so, which is the case where a
+# tool replaced too few characters or none at all.
+shaped() {
+        given=$1
+        pattern=$2
+        made=""
+        at=1
+
+        if [ "${#given}" != "${#pattern}" ]; then
+                printf 'wrong length'
+                return 0
+        fi
+
+        while [ "$at" -le "${#pattern}" ]; do
+                letter=$(printf '%s' "$pattern" | cut -c "$at")
+
+                if [ "$letter" = X ]; then
+                        made="$made#"
+                else
+                        made="$made$(printf '%s' "$given" | cut -c "$at")"
+                fi
+
+                at=$((at + 1))
+        done
+
+        printf '%s' "$made"
+}
+
+temporary() {
+        name=$1
+        pattern=$2
+        shift 2
+
+        rm -rf "$work/a" "$work/b"
+        mkdir -p "$work/a" "$work/b"
+
+        if want=$(cd "$work/a" && TMPDIR=$work/a mktemp "$@" 2>/dev/null); then
+                want_status=0
+        else
+                want_status=$?
+        fi
+
+        if got=$(cd "$work/b" && TMPDIR=$work/b "$binaries/mktemp" "$@" 2>/dev/null); then
+                got_status=0
+        else
+                got_status=$?
+        fi
+
+        if [ "$want_status" != "$got_status" ]; then
+                report bad "$name" "want status $want_status, got status $got_status"
+                return 0
+        fi
+
+        if [ "$want_status" != 0 ]; then
+                want=nothing-was-made
+                got=nothing-was-made
+        else
+                wanted=$(printf '%s' "$pattern" | tr X '#')
+                want_shape=$(shaped "${want##*/}" "$pattern")
+                got_shape=$(shaped "${got##*/}" "$pattern")
+                want_where=.
+                got_where=.
+
+                case $want in */*) want_where=$(printf '%s' "${want%/*}" | sed "s|$work/a|DIR|") ;; esac
+                case $got in */*) got_where=$(printf '%s' "${got%/*}" | sed "s|$work/b|DIR|") ;; esac
+
+                if [ "$want_shape" != "$wanted" ] || [ "$got_shape" != "$wanted" ]; then
+                        report bad "$name" "wanted $wanted, want [$want_shape] got [$got_shape]"
+                        return 0
+                fi
+
+                # Blanking the X positions cannot tell an answer from the
+                # question, so the question being given back is caught here.
+                if [ "${want##*/}" = "$pattern" ] || [ "${got##*/}" = "$pattern" ]; then
+                        report bad "$name" "the template came back unchanged"
+                        return 0
+                fi
+
+                if [ "$want_where" != "$got_where" ]; then
+                        report bad "$name" "want in $want_where, got in $got_where"
+                        return 0
+                fi
+        fi
+
+        # A run that made nothing has no name to mask out.
+        dump "$work/a" | sed "s|${want##*/}|NAME|g" > "$work/want"
+        dump "$work/b" | sed "s|${got##*/}|NAME|g" > "$work/got"
+
+        if cmp -s "$work/want" "$work/got"; then
+                report ok
+                return 0
+        fi
+
+        report bad "$name" "$(diff "$work/want" "$work/got" | head -4 | tr '\n' '|')"
+}
+
+group mktemp
+temporary 'default'            tmp.XXXXXXXXXX
+temporary 'default directory'  tmp.XXXXXXXXXX -d
+temporary 'default unmade'     tmp.XXXXXXXXXX -u
+temporary 'template'           run.XXXXXX     run.XXXXXX
+temporary 'template directory' run.XXXXXX     -d run.XXXXXX
+temporary 'template unmade'    run.XXXXXX     -u run.XXXXXX
+temporary 'long field'         run.XXXXXXXXXXXX run.XXXXXXXXXXXX
+temporary 'least field'        run.XXX        run.XXX
+temporary 'suffix kept'        run.XXXXXX.log run.XXXXXX.log
+temporary 'too few'            run.XX         run.XX
+temporary 'no field'           run            run
+temporary 'in tmpdir'          run.XXXXXX     -t run.XXXXXX
+temporary 'quiet failure'      run.XX         -q run.XX
+temporary 'unmade directory'   run.XXXXXX     -u -d run.XXXXXX
+temporary 'missing directory'  run.XXXXXX     sub/run.XXXXXX
+
 printf '  %-12s %s of %s\n' files "$pass" "$((pass + fail))"
 [ -z "${TEST_TALLY:-}" ] ||
         printf 'files %s %s\n' "$pass" "$((pass + fail))" >> "$TEST_TALLY"
