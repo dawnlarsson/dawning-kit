@@ -161,6 +161,48 @@ string_address env_get(const_string name)
         return null;
 }
 
+/*
+        The block put back end to end, dropping what nothing points at.
+
+        Entries are laid down one after another and a value that outgrows its
+        place is written after them all, so a name that keeps changing length
+        eats the block a copy at a time. Nothing ever gave any of it back,
+        which is the difference between a function using local four hundred
+        times and one that can use it for as long as the script runs.
+
+        Only what lives in the block is moved. The positional parameters are
+        hung on the list by pointer from storage of their own and are left
+        exactly where they are.
+*/
+static p8 env_spare[ENV_STORAGE_SIZE];
+static p8 env_staging[ENV_STORAGE_SIZE];
+
+static fn env_compact()
+{
+        positive used = 0;
+        positive index = 0;
+
+        while (shell_envp[index])
+        {
+                string_address entry = shell_envp[index];
+
+                if (entry >= (string_address)env_storage &&
+                    entry < (string_address)env_storage + ENV_STORAGE_SIZE)
+                {
+                        positive length = string_length(entry) + 1;
+
+                        memory_copy(env_spare + used, entry, length);
+                        shell_envp[index] = env_storage + used;
+                        used += length;
+                }
+
+                index++;
+        }
+
+        memory_copy(env_storage, env_spare, used);
+        env_used = used;
+}
+
 bool env_set(const_string name, const_string value)
 {
         if (!name || !value)
@@ -175,6 +217,19 @@ bool env_set(const_string name, const_string value)
 
         positive idx = 0;
         bool replacing = false;
+
+        // Either of them can be inside the block that is about to move, so
+        // both are stood aside first, somewhere the move will not reach.
+        if (env_used + needed > ENV_STORAGE_SIZE && needed <= ENV_STORAGE_SIZE)
+        {
+                memory_copy(env_staging, name, name_len + 1);
+                memory_copy(env_staging + name_len + 1, value, value_len + 1);
+
+                name = env_staging;
+                value = env_staging + name_len + 1;
+
+                env_compact();
+        }
 
         while (shell_envp[idx])
         {
@@ -1225,6 +1280,158 @@ fn shell_unset(writer write, string_address input)
 
                 env_unset(word);
                 index++;
+        }
+
+        shell_answer(0);
+}
+
+/*
+        local.
+
+        Not POSIX, and in every script anybody has written. What it is here is
+        a save: the value a name had on the way into a function is put back on
+        the way out, so what the function assigns cannot be seen outside it.
+
+        The scope is dynamic and not lexical -- a function called from inside
+        this one sees the local value -- because that is what dash does and
+        what the scripts written against it expect.
+
+        A name given without a value keeps the value it had. dash does that
+        too, and it is the difference between marking a name and clearing it.
+*/
+#define LOCAL_MAX 128
+#define LOCAL_STORAGE 8192
+#define LOCAL_NAME 64
+#define LOCAL_DEPTH 128
+#define LOCAL_ABSENT ((positive)-1)
+
+typedef struct
+{
+        p8 name[LOCAL_NAME];
+        positive value;
+} shell_local_entry;
+
+static shell_local_entry local_table[LOCAL_MAX];
+static positive local_count;
+static p8 local_storage[LOCAL_STORAGE];
+static positive local_used;
+static positive local_from[LOCAL_DEPTH];
+static positive local_held[LOCAL_DEPTH];
+static positive local_depth;
+
+fn shell_local_enter()
+{
+        if (local_depth < LOCAL_DEPTH)
+        {
+                local_from[local_depth] = local_count;
+                local_held[local_depth] = local_used;
+        }
+
+        local_depth++;
+}
+
+fn shell_local_leave()
+{
+        positive at;
+
+        if (!local_depth)
+                return;
+
+        local_depth--;
+
+        if (local_depth >= LOCAL_DEPTH)
+                return;
+
+        at = local_count;
+
+        // Backwards, so that a name saved twice ends on the value it had
+        // before the first of them.
+        while (at > local_from[local_depth])
+        {
+                at--;
+
+                if (local_table[at].value == LOCAL_ABSENT)
+                        env_unset(local_table[at].name);
+                else
+                        env_set(local_table[at].name, local_storage + local_table[at].value);
+        }
+
+        local_count = local_from[local_depth];
+        local_used = local_held[local_depth];
+}
+
+static bool local_remember(string_address name)
+{
+        positive begin = local_depth && local_depth <= LOCAL_DEPTH
+                             ? local_from[local_depth - 1]
+                             : 0;
+        string_address value;
+
+        // Twice in one function is once. Without this a local in a loop fills
+        // the table an iteration at a time.
+        for (positive at = begin; at < local_count; at++)
+                if (!string_compare(local_table[at].name, name))
+                        return true;
+
+        if (local_count >= LOCAL_MAX)
+                return false;
+
+        value = env_get(name);
+
+        if (!value)
+                local_table[local_count].value = LOCAL_ABSENT;
+        else
+        {
+                positive length = string_length(value);
+
+                if (local_used + length + 1 > LOCAL_STORAGE)
+                        return false;
+
+                memory_copy(local_storage + local_used, value, length + 1);
+                local_table[local_count].value = local_used;
+                local_used += length + 1;
+        }
+
+        string_copy(local_table[local_count].name, name);
+        local_count++;
+
+        return true;
+}
+
+fn shell_local(writer write, string_address input)
+{
+        positive index = 1;
+
+        if (!local_depth)
+        {
+                shell_diagnostic("local: not in a function\n", 0);
+                return shell_answer(2);
+        }
+
+        while (index < shell_argc)
+        {
+                string_address word = shell_argv[index++];
+                string_address mark = string_first_of(word, '=');
+                positive length = mark ? (positive)(mark - word) : string_length(word);
+                p8 name[LOCAL_NAME];
+
+                if (!length || length >= LOCAL_NAME)
+                {
+                        shell_diagnostic("local: bad name\n", 0);
+                        return shell_answer(2);
+                }
+
+                memory_copy(name, word, length);
+                name[length] = end;
+
+                if (!local_remember(name))
+                {
+                        shell_diagnostic("local: too many\n", 0);
+                        return shell_answer(2);
+                }
+
+                if (mark)
+                        env_set(name, mark + 1);
         }
 
         shell_answer(0);
@@ -3237,6 +3444,7 @@ shell_command shell_commands[] = {
     {"wait", shell_wait},
     {"which", shell_which},
     {"help", shell_help},
+    {"local", shell_local},
     {"export", shell_export},
     {null, null},
 };

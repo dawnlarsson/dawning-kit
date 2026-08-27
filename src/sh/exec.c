@@ -448,7 +448,9 @@ static b32 exec_call(b32 body)
         shell_parameters_set(shell_argv + 1, shell_argc > 0 ? shell_argc - 1 : 0);
 
         exec_function_depth++;
+        shell_local_enter();
         status = exec_node(body);
+        shell_local_leave();
         exec_function_depth--;
 
         // return leaves the function and nothing further out.

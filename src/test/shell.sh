@@ -534,6 +534,28 @@ answer 'a name is not a status' 'kill -l TERM 2>/dev/null; echo $?'
 answer 'group not signal' 'kill -0 -999999 2>/dev/null; echo $?'
 answer 'unknown signal'  'kill -s NOPE 1 2>/dev/null; echo $?'
 
+#       local, whose reference is dash again -- it is not POSIX, and dash is
+#       what every script that uses it was written against.
+#
+#       The last case is the one that matters. The variables live in one
+#       block that never gave anything back, so a save and a restore per call
+#       filled it and the wrong value came out silently. Six hundred calls is
+#       past where that happened.
+
+group local
+answer 'saved and put back' 'v=outer; f() { local v=inner; echo $v; }; f; echo $v'
+answer 'kept without value' 'v=outer; f() { local v; echo $v; }; f; echo $v'
+answer 'made and taken away' 'f() { local v=made; echo $v; }; f; echo "[${v-gone}]"'
+answer 'two on one line'  'f() { local v=1 w=2; echo $v$w; }; f; echo "[${v-gone}][${w-gone}]"'
+answer 'seen further in'  'v=outer; g() { echo $v; }; f() { local v=inner; g; }; f; echo $v'
+answer 'put back on return' 'v=outer; f() { local v=inner; return 3; }; f; echo "$? $v"'
+answer 'twice in one call' 'v=outer; f() { local v=1; local v=2; echo $v; }; f; echo $v'
+answer 'unset inside'     'v=outer; f() { local v=1; unset v; echo "[${v-gone}]"; }; f; echo $v'
+answer 'assigned after'   'v=outer; f() { local v; v=inner; echo $v; }; f; echo $v'
+answer 'through recursion' 'f() { local d=$1; [ "$1" -le 0 ] && { echo "at $d"; return; }; f $(($1 - 1)); echo "back $d"; }; f 3'
+answer 'a value with a space' 'f() { local v="a b"; echo "[$v]"; }; f'
+answer 'six hundred calls' 'f() { local v=$1; local w=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx$1; [ "$v$w" = "${1}xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx$1" ] || echo "broken $1"; }; i=0; while [ $i -lt 600 ]; do f $i; i=$((i + 1)); done; echo "done [${v-unset}]"'
+
 #
 #       One binary, forty six names.
 #
@@ -636,6 +658,7 @@ differs 'unset dash f'   'a|0|' 0 'f() { echo a; }; unset -f f; f 2>/dev/null; e
 differs 'shift past end' '1|' 0 'set -- a; shift 2; echo $?'
 differs 'missing input'  '1|' 0 'cat < /nonexistent12345; echo $?'
 differs 'closed fd'      '0|' 0 'echo x >&- 2>/dev/null; echo $?'
+differs 'local goes on'  '2|after|' 0 'local v=1 2>/dev/null; echo $?; echo after'
 differs 'kill takes sig' '1|' 0 'kill -SIGTERM 999999 2>/dev/null; echo $?'
 
 #
@@ -652,7 +675,6 @@ absent 'awk'      '127|' 'awk "{print}" < /dev/null; echo $?'
 absent 'date'     '127|' 'date; echo $?'
 absent 'xargs'    '127|' 'echo a | xargs echo; echo $?'
 absent 'dd'       '127|' 'dd if=/dev/null; echo $?'
-absent 'local'    '127|' 'f() { local v=1; }; f; echo $?'
 absent 'command v awk' '127|' 'command -v awk > /dev/null; echo $?'
 absent 'type awk' '127|' 'type awk > /dev/null 2>&1; echo $?'
 
