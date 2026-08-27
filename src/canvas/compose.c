@@ -631,13 +631,13 @@ static void output_repaint(struct output *output, const struct drm_rect *damage,
 {
         struct iosys_map map;
         struct drm_rect flush;
-        unsigned int pitch_pixels;
         u32 *pixels;
-        unsigned int i;
+        unsigned int i, j;
         u64 started;
 
         struct drm_rect merged[4];
         unsigned int kept = 0;
+        _Bool joined;
 
         if (!count || count > ARRAY_SIZE(merged) || !output_map(output, &map))
                 return;
@@ -647,34 +647,44 @@ static void output_repaint(struct output *output, const struct drm_rect *damage,
                 that moved four pixels leaves two cells that are nearly the
                 same cell, and every window and every glyph under them was
                 laid out once for each.
+
+                Until nothing more joins, rather than once through. Joining two
+                rectangles grows one of them, and what it grew into can reach a
+                third that neither of them touched -- which a single pass has
+                already walked past. A window dragged in one step arrives as
+                four: where its frame was and is, where the cursor was and is,
+                and those chain.
         */
         for (i = 0; i < count; i++)
+                merged[kept++] = damage[i];
+
+        for (joined = true; joined;)
         {
-                unsigned int j;
+                joined = false;
 
-                for (j = 0; j < kept; j++)
-                {
-                        if (!rects_overlap(merged[j].x1, merged[j].y1,
-                                           merged[j].x2 - merged[j].x1,
-                                           merged[j].y2 - merged[j].y1,
-                                           damage[i].x1, damage[i].y1,
-                                           damage[i].x2 - damage[i].x1,
-                                           damage[i].y2 - damage[i].y1))
-                                continue;
+                for (i = 0; i < kept && !joined; i++)
+                        for (j = i + 1; j < kept; j++)
+                        {
+                                if (!rects_overlap(merged[i].x1, merged[i].y1,
+                                                   merged[i].x2 - merged[i].x1,
+                                                   merged[i].y2 - merged[i].y1,
+                                                   merged[j].x1, merged[j].y1,
+                                                   merged[j].x2 - merged[j].x1,
+                                                   merged[j].y2 - merged[j].y1))
+                                        continue;
 
-                        merged[j].x1 = min(merged[j].x1, damage[i].x1);
-                        merged[j].y1 = min(merged[j].y1, damage[i].y1);
-                        merged[j].x2 = max(merged[j].x2, damage[i].x2);
-                        merged[j].y2 = max(merged[j].y2, damage[i].y2);
-                        break;
-                }
+                                merged[i].x1 = min(merged[i].x1, merged[j].x1);
+                                merged[i].y1 = min(merged[i].y1, merged[j].y1);
+                                merged[i].x2 = max(merged[i].x2, merged[j].x2);
+                                merged[i].y2 = max(merged[i].y2, merged[j].y2);
 
-                if (j == kept)
-                        merged[kept++] = damage[i];
+                                merged[j] = merged[--kept];
+                                joined = true;
+                                break;
+                        }
         }
 
         pixels = map.vaddr;
-        pitch_pixels = output->buffer->fb->pitches[0] / sizeof(u32);
         started = ktime_get_ns();
 
         for (i = 0; i < kept; i++)
