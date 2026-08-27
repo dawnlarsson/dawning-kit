@@ -378,6 +378,117 @@ string_address reference_find(string_address string, string_address input)
         return null;
 }
 
+/*
+        The edges the assembly reaches for and the block above does not.
+
+        check_strings works on one static array, so every string in it starts
+        at the same alignment and none of the three word-at-a-time routines
+        ever has to mask off the bytes before the string, land its terminator
+        on the first byte of a word, or match a character living in the same
+        word as the terminator. Those are exactly the places a word loop is
+        wrong, so they are walked here on purpose: every start offset zero
+        through seven, every length either side of the word boundary, and the
+        two pointers of a compare at different offsets from each other.
+*/
+static p8 room[256];
+static p8 twin[256];
+
+fn check_string_edges()
+{
+        for (positive offset = 0; offset < 8; offset++)
+                for (positive size = 0; size <= 40; size++)
+                {
+                        // 64 is a multiple of eight, so the offset is the whole
+                        // of the distance into the word.
+                        string_address text = room + 64 + offset;
+                        string_address other = twin + 64 + ((offset + 3) & 7);
+
+                        reference_fill(room, 0xA5, sizeof(room));
+                        reference_fill(twin, 0xA5, sizeof(twin));
+
+                        for (positive i = 0; i < size; i++)
+                                text[i] = (p8)(next() % 4 + 'a');
+
+                        text[size] = 0;
+
+                        // A length of zero puts the terminator at the offset,
+                        // and a size that makes offset + size a multiple of
+                        // eight puts it on the first byte of the next word --
+                        // the two cases the mask has to get right.
+                        same("string_length", "offset", string_length(text),
+                             reference_length(text));
+
+                        for (positive i = 0; i < size; i++)
+                                same("string_first_of", "offset present",
+                                     (positive)string_first_of(text, text[i]),
+                                     (positive)reference_first_of(text, text[i]));
+
+                        // Absent, and absent as 0xA5 in particular: the bytes
+                        // before the string and after the terminator are that
+                        // value, so a routine that masks its input rather than
+                        // its result answers with one of them.
+                        same("string_first_of", "offset absent",
+                             (positive)string_first_of(text, 'q'),
+                             (positive)reference_first_of(text, 'q'));
+
+                        same("string_first_of", "offset poison",
+                             (positive)string_first_of(text, 0xA5),
+                             (positive)reference_first_of(text, 0xA5));
+
+                        same("string_first_of", "offset terminator",
+                             (positive)string_first_of(text, 0),
+                             (positive)reference_first_of(text, 0));
+
+                        // The character in the same word as the terminator,
+                        // which is where a scan that stops at the terminator
+                        // first gets the order wrong.
+                        if (size)
+                        {
+                                p8 keep = text[size - 1];
+
+                                text[size - 1] = '#';
+                                same("string_first_of", "beside the terminator",
+                                     (positive)string_first_of(text, '#'),
+                                     (positive)reference_first_of(text, '#'));
+                                text[size - 1] = keep;
+                        }
+
+                        memory_copy_fast(other, text, size + 1);
+
+                        same("string_compare", "offset equal",
+                             (positive)string_compare(text, other),
+                             (positive)reference_compare(text, other));
+
+                        for (positive at = 0; at < size; at++)
+                        {
+                                p8 keep = other[at];
+
+                                other[at] = (p8)(keep ^ 1);
+                                same("string_compare", "offset greater",
+                                     (positive)(string_compare(text, other) > 0),
+                                     (positive)(reference_compare(text, other) > 0));
+                                same("string_compare", "offset less",
+                                     (positive)(string_compare(text, other) < 0),
+                                     (positive)(reference_compare(text, other) < 0));
+
+                                // The same place, but ending the second string
+                                // there rather than changing it: one string a
+                                // prefix of the other is the case a word
+                                // compare answers by looking for the
+                                // terminator inside an equal word.
+                                other[at] = 0;
+                                same("string_compare", "offset prefix",
+                                     (positive)(string_compare(text, other) > 0),
+                                     (positive)(reference_compare(text, other) > 0));
+                                same("string_compare", "offset prefix reversed",
+                                     (positive)(string_compare(other, text) < 0),
+                                     (positive)(reference_compare(other, text) < 0));
+
+                                other[at] = keep;
+                        }
+                }
+}
+
 fn check_bulk_strings()
 {
         static p8 subject[512];
@@ -767,6 +878,7 @@ b32 main()
         check_copy();
         check_move();
         check_strings();
+        check_string_edges();
         check_bulk_strings();
         check_bulk_numbers();
         check_file_load();

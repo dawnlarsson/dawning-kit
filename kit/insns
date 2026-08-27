@@ -1,0 +1,76 @@
+#!/bin/sh
+#
+#       Guest instructions per call, for the assembly in library.c against the
+#       C byte loop it replaced.
+#
+#       kit/bench times the same comparison, but a qemu tick is the emulator's
+#       work and not the machine's -- it counts translation, page walks and
+#       whatever else the host was doing. An instruction count is the part that
+#       carries over to a real board, so this is what the tables in library.c
+#       quote and kit/bench is what confirms the shape.
+#
+#       kit/bench_one.c is one function at one length, chosen at compile time.
+#       It is run twice, once with one call and once with a thousand and one,
+#       and the difference divided by a thousand is the cost of a call with
+#       every bit of startup cancelled out exactly.
+#
+#       Needs qemu built with plugin support and qemu-plugin.h installed, which
+#       is where kit/insn.c is compiled from.
+#
+set -e
+
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT INT TERM
+
+if ! command -v qemu-aarch64 >/dev/null 2>&1; then
+        echo "no qemu-aarch64, skipped"
+        exit 0
+fi
+
+if ! gcc -O2 -shared -fPIC $(pkg-config --cflags glib-2.0) \
+        -o "$work/insn.so" kit/insn.c 2>"$work/plugin.err"; then
+        echo "the plugin did not build:"
+        sed 's/^/    /' "$work/plugin.err" | head -10
+        exit 0
+fi
+
+one() { # compiler runner which length rounds
+        $1 -O2 -static -nostdlib -nostartfiles -fno-stack-protector -fno-builtin \
+           -T kit/spark.ld -Wl,-e,_start -Wl,--build-id=none \
+           -Wl,--no-warn-rwx-segments \
+           -DWHICH=$3 -DLENGTH=$4 -DROUNDS=$5 -o "$work/one" kit/bench_one.c
+        $2 -plugin "$work/insn.so" "$work/one" 2>&1 >/dev/null
+}
+
+count() { # compiler runner which length
+        near=$(one "$1" "$2" "$3" "$4" 1)
+        far=$(one "$1" "$2" "$3" "$4" 1001)
+        echo $(( (far - near) / 1000 ))
+}
+
+sweep() { # name compiler runner
+        if ! command -v "$2" >/dev/null 2>&1; then
+                echo "$1: no $2, skipped"
+                return 0
+        fi
+
+        if ! command -v "$3" >/dev/null 2>&1; then
+                echo "$1: no $3, skipped"
+                return 0
+        fi
+
+        echo "$1: bytes, then byte and word for length, compare and first_of"
+
+        for length in 4 8 16 32 64 256 4096; do
+                row="  $length"
+
+                for which in 0 1 2 3 4 5; do
+                        row="$row $(count "$2" "$3" "$which" "$length")"
+                done
+
+                echo "$row"
+        done
+}
+
+sweep arm64 aarch64-linux-gnu-gcc qemu-aarch64
+sweep riscv64 riscv64-linux-gnu-gcc qemu-riscv64

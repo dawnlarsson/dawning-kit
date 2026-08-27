@@ -2592,25 +2592,90 @@ __asm__(
     //
     "        .text\n"
     //
-    //       arm64 and riscv already define __HAVE_ARCH_STRLEN and ship
-    //       their own, so there is nothing here for them to catch up to.
+    //       arm64 and riscv already define __HAVE_ARCH_STRLEN and ship their
+    //       own, so the kernel's strlen on these two machines is theirs and a
+    //       second definition here is the same name twice and a link that
+    //       fails. That is what "nothing to catch up to" meant, and it was only
+    //       ever half the story: the kernel had a word-at-a-time strlen here
+    //       and every userspace spark program did not. string_length fell
+    //       through to the byte loop under the #else, because nothing on this
+    //       architecture had claimed the forwarder.
     //
+    //       So the routine is emitted under a name the kernel has no opinion
+    //       about -- moonwater_strlen, the way moonwater_fill sits beside the
+    //       kernel's own memset -- and string_length calls that. The kernel
+    //       keeps arch/arm64/lib/strlen.S, userspace stops counting bytes.
     //
-    //      Nothing, deliberately, and this is what "#> arch other" with an
-    //      empty block is for.
+    //       Guest instructions per call, counted with a qemu plugin rather
+    //       than timed, both halves kept out of line so each pays a call:
     //
-    //      This file is in src/, so src/Makefile builds it for whichever
-    //      architecture the kernel is being configured for. An #error here
-    //      -- which is what stood in this place -- does not mean "not
-    //      implemented", it means the arm64 and riscv builds stop on the
-    //      first of these files they reach.
+    //           4 bytes        20 byte        21 word
+    //           8 bytes        28 byte        28 word
+    //          16 bytes        44 byte        35 word
+    //          32 bytes        76 byte        49 word
+    //          64 bytes       140 byte        77 word
+    //         256 bytes       524 byte       245 word
+    //        4096 bytes      8204 byte      3605 word
     //
-    //      They do not need it. arm64 and riscv both ship their own, and
-    //      where they do not the generic C in lib/string.c is what runs,
-    //      exactly as it did before any of this. Emitting nothing leaves
-    //      them where they were; the header claim that hands the symbol
-    //      over is in build.sh and only ever touches x86's header.
+    //       Counted and not timed on purpose: qemu wall time is the
+    //       emulator's work and not the machine's, and the instruction count
+    //       is the part of it that carries over to a real board. kit/bench
+    //       times the same comparison and agrees on the shape.
     //
+    //       The word loop is level with the byte loop at four bytes and at eight,
+    //       and from sixteen up it is the only one of the two worth running: at
+    //       four thousand and ninety six it does under half the work, and the gap
+    //       widens with every byte because one of them costs an eighth of an
+    //       instruction and the other costs two.
+    //
+    //       Three things pay for the short strings, and all three are here
+    //       rather than in the loop, because the loop is not what a four byte
+    //       string spends its time in.
+    //
+    //       Both magic constants are AArch64 logical immediates -- an eight bit
+    //       element with one bit set, rotated -- so 0x0101010101010101 is one
+    //       ORR rather than the movz and three movk the older routines below
+    //       use, and 0x8080808080808080 does not need a register at all: it is
+    //       written into the AND that uses it.
+    //
+    //       The start is never copied anywhere. x0 is read twice at the top and
+    //       not written until the answer goes into it, so the subtraction at
+    //       the end still has it.
+    //
+    //       And a pointer that is already aligned -- which is most of them,
+    //       since a compiler aligns its string literals -- jumps straight into
+    //       the loop. There is nothing before the string to mask off, so the
+    //       four instructions that would do it are one branch instead.
+    //
+    ASM_FUNC(moonwater_strlen)
+    "        and     x4, x0, #7              // how far into the word it begins\n"
+    "        bic     x5, x0, #7              // align down: same page, cannot fault\n"
+    "        ldr     x6, [x5]\n"
+    "        mov     x10, #0x0101010101010101\n"
+    "        cbz     x4, 1f                  // aligned: nothing sits before it\n"
+    "        lsl     x4, x4, #3              // bytes -> bits\n"
+    "        mov     x9, #-1\n"
+    "        lsl     x9, x9, x4\n"
+    "        orn     x6, x6, x9              // ones below the string, so they\n"
+    "                                        // cannot look like a terminator\n"
+    //
+    //       (v - 0x01..) & ~v & 0x80.. is non-zero exactly when some byte
+    //       of v is zero: subtracting one borrows into the high bit of a
+    //       zero byte and of no other.
+    //
+    "1:      sub     x9, x6, x10\n"
+    "        bic     x9, x9, x6\n"
+    "        and     x9, x9, #0x8080808080808080\n"
+    "        cbnz    x9, 2f\n"
+    "        add     x5, x5, #8\n"
+    "        ldr     x6, [x5]\n"
+    "        b       1b\n"
+    "2:      rbit    x9, x9\n"
+    "        clz     x9, x9                  // first set high bit\n"
+    "        add     x5, x5, x9, lsr #3      // address of the terminator\n"
+    "        sub     x0, x5, x0              // minus where we started\n"
+    ASM_RET
+    ASM_END(moonwater_strlen)
     //
     //       strcmp -- a word at a time, with two pointers and no length.
     //
@@ -2636,21 +2701,80 @@ __asm__(
     //
     "        .text\n"
     //
-    //      Nothing, deliberately, and this is what "#> arch other" with an
-    //      empty block is for.
+    //       Named moonwater_strcmp for the same reason moonwater_strlen is:
+    //       arch/arm64/lib/strcmp.S already owns the plain name in the kernel.
     //
-    //      This file is in src/, so src/Makefile builds it for whichever
-    //      architecture the kernel is being configured for. An #error here
-    //      -- which is what stood in this place -- does not mean "not
-    //      implemented", it means the arm64 and riscv builds stop on the
-    //      first of these files they reach.
+    //       Guest instructions per call, counted with a qemu plugin rather
+    //       than timed, both halves kept out of line so each pays a call:
     //
-    //      They do not need it. arm64 and riscv both ship their own, and
-    //      where they do not the generic C in lib/string.c is what runs,
-    //      exactly as it did before any of this. Emitting nothing leaves
-    //      them where they were; the header claim that hands the symbol
-    //      over is in build.sh and only ever touches x86's header.
+    //           4 bytes        41 byte        26 word
+    //           8 bytes        69 byte        43 word
+    //          16 bytes       125 byte        60 word
+    //          32 bytes       237 byte        94 word
+    //          64 bytes       461 byte       162 word
+    //         256 bytes      1805 byte       570 word
+    //        4096 bytes     28685 byte      8730 word
     //
+    //       Counted and not timed on purpose: qemu wall time is the
+    //       emulator's work and not the machine's, and the instruction count
+    //       is the part of it that carries over to a real board. kit/bench
+    //       times the same comparison and agrees on the shape.
+    //
+    //       Ahead at every length, four bytes included. The byte loop it replaces
+    //       walks two pointers rather than one and tests both of them for a
+    //       terminator, so there is twice as much for a word to take away and the
+    //       setup is paid off before the first word is done.
+    //
+    //       This one wins at every length, four bytes included, because the
+    //       byte loop it replaces walks two pointers rather than one and tests
+    //       both for a terminator -- so there is twice as much for a word to
+    //       take away, and it covers the setup even when the string ends inside
+    //       the first word.
+    //
+    ASM_FUNC(moonwater_strcmp)
+    "        mov     x10, #0x0101010101010101\n"
+    //
+    //      Would either read cross a page? 0xff8 is the last offset at
+    //      which eight bytes still fit.
+    //
+    "1:      and     x9, x0, #0xfff\n"
+    "        cmp     x9, #0xff8\n"
+    "        b.hi    2f\n"
+    "        and     x9, x1, #0xfff\n"
+    "        cmp     x9, #0xff8\n"
+    "        b.hi    2f\n"
+    "        ldr     x6, [x0]\n"
+    "        ldr     x7, [x1]\n"
+    "        cmp     x6, x7\n"
+    "        b.ne    2f                      // differ: let the byte step find where\n"
+    //
+    //      Eight equal bytes. If a terminator is among them the strings
+    //      ended together and are equal.
+    //
+    "        sub     x9, x6, x10\n"
+    "        bic     x9, x9, x6\n"
+    "        and     x9, x9, #0x8080808080808080\n"
+    "        cbnz    x9, 3f\n"
+    "        add     x0, x0, #8\n"
+    "        add     x1, x1, #8\n"
+    "        b       1b\n"
+    //
+    //      One byte, then back to the word loop. Reached when a read would
+    //      cross a page and when a word differs -- in the second case it
+    //      walks the few bytes to the difference, which happens once.
+    //
+    "2:      ldrb    w6, [x0]\n"
+    "        ldrb    w7, [x1]\n"
+    "        subs    w9, w6, w7\n"
+    "        b.ne    4f\n"
+    "        cbz     w7, 3f\n"
+    "        add     x0, x0, #1\n"
+    "        add     x1, x1, #1\n"
+    "        b       1b\n"
+    "3:      mov     w9, #0\n"
+    "4:      mov     w0, w9\n"
+    ASM_RET
+    ASM_END(moonwater_strcmp)
     //
     //       strchr and memchr -- a word at a time.
     //
@@ -2676,21 +2800,86 @@ __asm__(
     //       returns the terminator rather than nothing.
     //
     //
-    //      Nothing, deliberately, and this is what "#> arch other" with an
-    //      empty block is for.
+    //       Named moonwater_strchr because arch/arm64/lib/strchr.S owns the
+    //       plain one, and string_first_of calls this instead of the byte loop
+    //       it used to fall through to.
     //
-    //      This file is in src/, so src/Makefile builds it for whichever
-    //      architecture the kernel is being configured for. An #error here
-    //      -- which is what stood in this place -- does not mean "not
-    //      implemented", it means the arm64 and riscv builds stop on the
-    //      first of these files they reach.
+    //       Guest instructions per call, counted with a qemu plugin rather
+    //       than timed, both halves kept out of line so each pays a call:
     //
-    //      They do not need it. arm64 and riscv both ship their own, and
-    //      where they do not the generic C in lib/string.c is what runs,
-    //      exactly as it did before any of this. Emitting nothing leaves
-    //      them where they were; the header claim that hands the symbol
-    //      over is in build.sh and only ever touches x86's header.
+    //           4 bytes        30 byte        32 word
+    //           8 bytes        46 byte        45 word
+    //          16 bytes        78 byte        58 word
+    //          32 bytes       142 byte        84 word
+    //          64 bytes       270 byte       136 word
+    //         256 bytes      1038 byte       448 word
+    //        4096 bytes     16398 byte      6688 word
     //
+    //       Counted and not timed on purpose: qemu wall time is the
+    //       emulator's work and not the machine's, and the instruction count
+    //       is the part of it that carries over to a real board. kit/bench
+    //       times the same comparison and agrees on the shape.
+    //
+    //       Two instructions behind at four bytes and ahead at everything from
+    //       eight up. Four bytes is what the broadcast costs -- the byte being
+    //       hunted has to be smeared across a word before the scan can look for
+    //       it, and a four byte string does not walk far enough to get that back.
+    //
+    //       There is no dispatch for it, and the reason is worth writing down
+    //       rather than rediscovering: string_copy_max can switch on a length
+    //       because it is handed one. strchr is handed a pointer and a byte, and
+    //       finding out how long the string is costs a whole strlen -- more than
+    //       the two instructions it would save. x86 above has the same two
+    //       instruction loss at four bytes and ships without one for the same
+    //       reason.
+    //
+    //       The same three savings strlen takes -- the constants as immediates,
+    //       and the aligned pointer skipping the mask it does not need -- plus
+    //       one this one can have and strlen cannot: the answer and the
+    //       not-found are chosen with a csel rather than branched around, so
+    //       the tail is two instructions where it was four.
+    //
+    //       The 0x80.. mask is applied once to the two hunts together rather
+    //       than to each of them, which is a whole instruction out of every
+    //       turn of the loop and correct because or distributes over and.
+    //
+    //       The bytes before the string are thrown away by masking the result
+    //       rather than the input, which keeps the byte being searched for out
+    //       of it: forcing them to 0xff the way strlen does would false-match a
+    //       search for 0xff.
+    //
+    ASM_FUNC(moonwater_strchr)
+    "        and     w1, w1, #0xff\n"
+    "        mov     x10, #0x0101010101010101\n"
+    "        mul     x3, x1, x10             // the byte, in all eight positions\n"
+    "        and     x4, x0, #7              // how far into the word it begins\n"
+    "        bic     x5, x0, #7              // align down: same page, cannot fault\n"
+    "        ldr     x6, [x5]\n"
+    "        mov     x7, #-1                 // which bytes of this word count\n"
+    "        cbz     x4, 1f                  // aligned: all of them\n"
+    "        lsl     x4, x4, #3              // bytes -> bits\n"
+    "        lsl     x7, x7, x4\n"
+    "1:      eor     x8, x6, x3              // the byte that matched is now zero\n"
+    "        sub     x9, x8, x10\n"
+    "        bic     x9, x9, x8\n"
+    "        sub     x12, x6, x10            // and the terminator, the same way\n"
+    "        bic     x12, x12, x6\n"
+    "        orr     x9, x9, x12\n"
+    "        and     x9, x9, #0x8080808080808080\n"
+    "        and     x9, x9, x7\n"
+    "        cbnz    x9, 2f\n"
+    "        mov     x7, #-1                 // every byte of every later word counts\n"
+    "        add     x5, x5, #8\n"
+    "        ldr     x6, [x5]\n"
+    "        b       1b\n"
+    "2:      rbit    x9, x9\n"
+    "        clz     x9, x9                  // first set high bit\n"
+    "        add     x9, x5, x9, lsr #3      // the byte or the terminator, whichever\n"
+    "        ldrb    w4, [x9]\n"
+    "        cmp     w4, w1\n"
+    "        csel    x0, x9, xzr, eq         // the terminator instead means not found\n"
+    ASM_RET
+    ASM_END(moonwater_strchr)
     //
     //       void *memchr(const void *s, int c, size_t n)
     //
@@ -3648,25 +3837,111 @@ __asm__(
     //
     "        .text\n"
     //
-    //       arm64 and riscv already define __HAVE_ARCH_STRLEN and ship
-    //       their own, so there is nothing here for them to catch up to.
+    //       arm64 and riscv already define __HAVE_ARCH_STRLEN and ship their
+    //       own, so the kernel's strlen on these two machines is theirs and a
+    //       second definition here is the same name twice and a link that
+    //       fails. That is what "nothing to catch up to" meant, and it was only
+    //       ever half the story: the kernel had a word-at-a-time strlen here
+    //       and every userspace spark program did not. string_length fell
+    //       through to the byte loop under the #else, because nothing on this
+    //       architecture had claimed the forwarder.
     //
+    //       So the routine is emitted under a name the kernel has no opinion
+    //       about -- moonwater_strlen, the way moonwater_fill sits beside the
+    //       kernel's own memset -- and string_length calls that. The kernel
+    //       keeps arch/riscv/lib/strlen.S, userspace stops counting bytes.
     //
-    //      Nothing, deliberately, and this is what "#> arch other" with an
-    //      empty block is for.
+    //       Guest instructions per call, counted with a qemu plugin rather
+    //       than timed, both halves kept out of line so each pays a call:
     //
-    //      This file is in src/, so src/Makefile builds it for whichever
-    //      architecture the kernel is being configured for. An #error here
-    //      -- which is what stood in this place -- does not mean "not
-    //      implemented", it means the arm64 and riscv builds stop on the
-    //      first of these files they reach.
+    //           4 bytes        25 byte        32 word
+    //           8 bytes        37 byte        40 word
+    //          16 bytes        61 byte        48 word
+    //          32 bytes       109 byte        64 word
+    //          64 bytes       205 byte        96 word
+    //         256 bytes       781 byte       288 word
+    //        4096 bytes     12301 byte      4128 word
     //
-    //      They do not need it. arm64 and riscv both ship their own, and
-    //      where they do not the generic C in lib/string.c is what runs,
-    //      exactly as it did before any of this. Emitting nothing leaves
-    //      them where they were; the header claim that hands the symbol
-    //      over is in build.sh and only ever touches x86's header.
+    //       Counted and not timed on purpose: qemu wall time is the
+    //       emulator's work and not the machine's, and the instruction count
+    //       is the part of it that carries over to a real board. kit/bench
+    //       times the same comparison and agrees on the shape.
     //
+    //       Behind at four bytes and at eight, level at twelve, and ahead from
+    //       sixteen up to three times at four thousand and ninety six.
+    //
+    //       riscv pays more at the short end than arm64 does, and it is the tail
+    //       rather than the head: base rv64 has no count-trailing-zeros, so seven
+    //       instructions turn the zero-byte mask into a byte index where arm64
+    //       spends two. That is a fixed cost per call, which is exactly the cost a
+    //       four byte string cannot amortise. It is not dispatchable -- strlen is
+    //       not told a length, and finding one out is the thing being measured --
+    //       so it stands, the way the four byte loss in the x86 block above does.
+    //
+    //       riscv has no movk, and li of the whole sixty four bit constant is
+    //       six instructions: lui, addiw, and then slli and addi twice more.
+    //       Building the low half and folding it onto itself is four, because
+    //       the constant is the same four bytes twice:
+    //
+    //           lui  t0, 0x1010
+    //           addi t0, t0, 257        0x01010101
+    //           slli t1, t0, 32
+    //           add  t0, t0, t1         0x0101010101010101
+    //
+    //       and the other constant is that one shifted left by seven, which is
+    //       one more. The start is not copied anywhere either -- a0 is read
+    //       twice at the top and not written until the answer goes into it --
+    //       and a pointer that is already aligned skips the five instructions
+    //       that mask off what sits before the string.
+    //
+    ASM_FUNC(moonwater_strlen)
+    "        lui     t0, 0x1010\n"
+    "        addi    t0, t0, 257             # 0x01010101\n"
+    "        slli    t1, t0, 32\n"
+    "        add     t0, t0, t1              # 0x0101010101010101\n"
+    "        slli    t1, t0, 7               # 0x8080808080808080\n"
+    "        andi    a4, a0, 7               # how far into the word it begins\n"
+    "        andi    a5, a0, -8              # align down: same page, cannot fault\n"
+    "        ld      a6, 0(a5)\n"
+    "        beqz    a4, 1f                  # aligned: nothing sits before it\n"
+    "        slli    a4, a4, 3               # bytes -> bits\n"
+    "        li      a7, 1\n"
+    "        sll     a7, a7, a4\n"
+    "        addi    a7, a7, -1              # ones below the string\n"
+    "        or      a6, a6, a7              # so they cannot look like a terminator\n"
+    //
+    //       (v - 0x01..) & ~v & 0x80.. is non-zero exactly when some byte
+    //       of v is zero: subtracting one borrows into the high bit of a
+    //       zero byte and of no other.
+    //
+    "1:      sub     t2, a6, t0\n"
+    "        not     t3, a6\n"
+    "        and     t2, t2, t3\n"
+    "        and     t2, t2, t1\n"
+    "        bnez    t2, 2f\n"
+    "        addi    a5, a5, 8\n"
+    "        ld      a6, 0(a5)\n"
+    "        j       1b\n"
+    //
+    //      Where x86 has bsf and arm64 has rbit+clz, base rv64 has
+    //      neither: ctz is Zbb, and QEMU's virt machine does not have it,
+    //      so requiring it would mean an illegal instruction on the machine
+    //      this is developed on. The byte index comes out of the multiply
+    //      the M extension already guarantees, exactly as strchrnul below
+    //      does it, and it is seven instructions on the way out rather than
+    //      anything in the loop.
+    //
+    "2:      sub     t3, zero, t2\n"
+    "        and     t2, t2, t3              # lowest set high bit\n"
+    "        addi    t2, t2, -1\n"
+    "        and     t2, t2, t0\n"
+    "        mul     t2, t2, t0\n"
+    "        srli    t2, t2, 56\n"
+    "        addi    t2, t2, -1              # its byte within the word\n"
+    "        add     t2, a5, t2              # address of the terminator\n"
+    "        sub     a0, t2, a0              # minus where we started\n"
+    ASM_RET
+    ASM_END(moonwater_strlen)
     //
     //       strcmp -- a word at a time, with two pointers and no length.
     //
@@ -3692,21 +3967,89 @@ __asm__(
     //
     "        .text\n"
     //
-    //      Nothing, deliberately, and this is what "#> arch other" with an
-    //      empty block is for.
+    //       Named moonwater_strcmp for the same reason moonwater_strlen is:
+    //       arch/riscv/lib already owns the plain name in the kernel.
     //
-    //      This file is in src/, so src/Makefile builds it for whichever
-    //      architecture the kernel is being configured for. An #error here
-    //      -- which is what stood in this place -- does not mean "not
-    //      implemented", it means the arm64 and riscv builds stop on the
-    //      first of these files they reach.
+    //       Guest instructions per call, counted with a qemu plugin rather
+    //       than timed, both halves kept out of line so each pays a call:
     //
-    //      They do not need it. arm64 and riscv both ship their own, and
-    //      where they do not the generic C in lib/string.c is what runs,
-    //      exactly as it did before any of this. Emitting nothing leaves
-    //      them where they were; the header claim that hands the symbol
-    //      over is in build.sh and only ever touches x86's header.
+    //           4 bytes        51 byte        33 word
+    //           8 bytes        87 byte        50 word
+    //          16 bytes       159 byte        67 word
+    //          32 bytes       303 byte       101 word
+    //          64 bytes       591 byte       169 word
+    //         256 bytes      2319 byte       577 word
+    //        4096 bytes     36879 byte      8737 word
     //
+    //       Counted and not timed on purpose: qemu wall time is the
+    //       emulator's work and not the machine's, and the instruction count
+    //       is the part of it that carries over to a real board. kit/bench
+    //       times the same comparison and agrees on the shape.
+    //
+    //       Ahead at every length, four bytes included, for the reason arm64's is:
+    //       two pointers walked a byte at a time is twice the work for one word
+    //       loop to take away, and it covers the setup inside the first word.
+    //
+    //       This one wins at every length, four bytes included, because the
+    //       byte loop it replaces walks two pointers rather than one and tests
+    //       both for a terminator -- so there is twice as much for a word to
+    //       take away, and it covers the setup even when the string ends inside
+    //       the first word.
+    //
+    //       andi takes a signed twelve bit immediate, so 0xfff is not one of
+    //       them; the page offset comes out of a shift pair instead, and the
+    //       0xff8 it is compared against lives in a register because bltu has
+    //       no immediate form at all.
+    //
+    ASM_FUNC(moonwater_strcmp)
+    "        lui     t0, 0x1010\n"
+    "        addi    t0, t0, 257             # 0x01010101\n"
+    "        slli    t1, t0, 32\n"
+    "        add     t0, t0, t1              # 0x0101010101010101\n"
+    "        slli    t1, t0, 7               # 0x8080808080808080\n"
+    "        li      t5, 4088                # 0xff8, the last offset that fits\n"
+    //
+    //      Would either read cross a page? 0xff8 is the last offset at
+    //      which eight bytes still fit.
+    //
+    "1:      slli    a4, a0, 52\n"
+    "        srli    a4, a4, 52              # offset within the page\n"
+    "        bltu    t5, a4, 2f\n"
+    "        slli    a4, a1, 52\n"
+    "        srli    a4, a4, 52\n"
+    "        bltu    t5, a4, 2f\n"
+    "        ld      a4, 0(a0)\n"
+    "        ld      a5, 0(a1)\n"
+    "        bne     a4, a5, 2f              # differ: let the byte step find where\n"
+    //
+    //      Eight equal bytes. If a terminator is among them the strings
+    //      ended together and are equal.
+    //
+    "        sub     a6, a4, t0\n"
+    "        not     a7, a4\n"
+    "        and     a6, a6, a7\n"
+    "        and     a6, a6, t1\n"
+    "        bnez    a6, 3f\n"
+    "        addi    a0, a0, 8\n"
+    "        addi    a1, a1, 8\n"
+    "        j       1b\n"
+    //
+    //      One byte, then back to the word loop. Reached when a read would
+    //      cross a page and when a word differs -- in the second case it
+    //      walks the few bytes to the difference, which happens once.
+    //
+    "2:      lbu     a4, 0(a0)\n"
+    "        lbu     a5, 0(a1)\n"
+    "        bne     a4, a5, 4f\n"
+    "        beqz    a5, 3f\n"
+    "        addi    a0, a0, 1\n"
+    "        addi    a1, a1, 1\n"
+    "        j       1b\n"
+    "3:      li      a0, 0\n"
+    ASM_RET
+    "4:      subw    a0, a4, a5\n"
+    ASM_RET
+    ASM_END(moonwater_strcmp)
     //
     //       strchr and memchr -- a word at a time.
     //
@@ -3732,21 +4075,96 @@ __asm__(
     //       returns the terminator rather than nothing.
     //
     //
-    //      Nothing, deliberately, and this is what "#> arch other" with an
-    //      empty block is for.
+    //       Named moonwater_strchr because the kernel owns the plain one, and
+    //       string_first_of calls this instead of the byte loop it used to fall
+    //       through to.
     //
-    //      This file is in src/, so src/Makefile builds it for whichever
-    //      architecture the kernel is being configured for. An #error here
-    //      -- which is what stood in this place -- does not mean "not
-    //      implemented", it means the arm64 and riscv builds stop on the
-    //      first of these files they reach.
+    //       Guest instructions per call, counted with a qemu plugin rather
+    //       than timed, both halves kept out of line so each pays a call:
     //
-    //      They do not need it. arm64 and riscv both ship their own, and
-    //      where they do not the generic C in lib/string.c is what runs,
-    //      exactly as it did before any of this. Emitting nothing leaves
-    //      them where they were; the header claim that hands the symbol
-    //      over is in build.sh and only ever touches x86's header.
+    //           4 bytes        32 byte        44 word
+    //           8 bytes        48 byte        59 word
+    //          16 bytes        80 byte        74 word
+    //          32 bytes       144 byte       104 word
+    //          64 bytes       272 byte       164 word
+    //         256 bytes      1040 byte       524 word
+    //        4096 bytes     16400 byte      7724 word
     //
+    //       Counted and not timed on purpose: qemu wall time is the
+    //       emulator's work and not the machine's, and the instruction count
+    //       is the part of it that carries over to a real board. kit/bench
+    //       times the same comparison and agrees on the shape.
+    //
+    //       Behind up to eight bytes, level at sixteen, ahead from thirty two up
+    //       to twice at four thousand and ninety six.
+    //
+    //       The worst of the three, and it is the two costs above added together:
+    //       the broadcast at the head that arm64's strchr also pays, and the seven
+    //       instruction byte index at the tail that riscv has no instruction for.
+    //       Neither can be dispatched around, because strchr is handed no length
+    //       and finding one out costs more than either.
+    //
+    //       The same constant folded onto itself rather than an li, and the
+    //       same skip past the mask when the pointer is already aligned, as
+    //       strlen above.
+    //
+    //       The 0x80.. mask is applied once to the two hunts together rather
+    //       than to each of them, which is a whole instruction out of every
+    //       turn of the loop and correct because or distributes over and.
+    //
+    //       The bytes before the string are thrown away by masking the result
+    //       rather than the input, which keeps the byte being searched for out
+    //       of it: forcing them to 0xff the way strlen does would false-match a
+    //       search for 0xff.
+    //
+    ASM_FUNC(moonwater_strchr)
+    "        andi    a1, a1, 0xff\n"
+    "        lui     t0, 0x1010\n"
+    "        addi    t0, t0, 257             # 0x01010101\n"
+    "        slli    t1, t0, 32\n"
+    "        add     t0, t0, t1              # 0x0101010101010101\n"
+    "        slli    t1, t0, 7               # 0x8080808080808080\n"
+    "        mul     a3, a1, t0              # the byte, in all eight positions\n"
+    "        andi    a4, a0, 7               # how far into the word it begins\n"
+    "        andi    a5, a0, -8              # align down: same page, cannot fault\n"
+    "        ld      a6, 0(a5)\n"
+    "        li      a7, -1                  # which bytes of this word count\n"
+    "        beqz    a4, 1f                  # aligned: all of them\n"
+    "        slli    a4, a4, 3               # bytes -> bits\n"
+    "        sll     a7, a7, a4\n"
+    "1:      xor     t2, a6, a3              # the byte that matched is now zero\n"
+    "        sub     t3, t2, t0\n"
+    "        not     t4, t2\n"
+    "        and     t3, t3, t4\n"
+    "        sub     t5, a6, t0              # and the terminator, the same way\n"
+    "        not     t6, a6\n"
+    "        and     t5, t5, t6\n"
+    "        or      t3, t3, t5\n"
+    "        and     t3, t3, t1              # either of the two, in one test\n"
+    "        and     t3, t3, a7\n"
+    "        bnez    t3, 2f\n"
+    "        li      a7, -1                  # every byte of every later word counts\n"
+    "        addi    a5, a5, 8\n"
+    "        ld      a6, 0(a5)\n"
+    "        j       1b\n"
+    //
+    //      The same count-the-bytes-below sequence strchrnul uses, because
+    //      base rv64 has no count-trailing-zeros to reach for.
+    //
+    "2:      sub     t5, zero, t3\n"
+    "        and     t3, t3, t5              # lowest set high bit\n"
+    "        addi    t3, t3, -1\n"
+    "        and     t3, t3, t0\n"
+    "        mul     t3, t3, t0\n"
+    "        srli    t3, t3, 56\n"
+    "        addi    t3, t3, -1              # its byte within the word\n"
+    "        add     a0, a5, t3              # the byte or the terminator, whichever\n"
+    "        lbu     t4, 0(a0)\n"
+    "        beq     t4, a1, 3f\n"
+    "        li      a0, 0                   # it was the terminator: not found\n"
+    "3:\n"
+    ASM_RET
+    ASM_END(moonwater_strchr)
     //
     //       void *memchr(const void *s, int c, size_t n)
     //
@@ -5184,11 +5602,17 @@ __asm__(
 #define MOONWATER_HAVE_STRRCHR 1
 #endif
 #if ARM64
+#define MOONWATER_HAVE_MOONWATER_STRCHR 1
+#define MOONWATER_HAVE_MOONWATER_STRCMP 1
+#define MOONWATER_HAVE_MOONWATER_STRLEN 1
 #define MOONWATER_HAVE_MOONWATER_TICKS 1
 #define MOONWATER_HAVE_STRCHRNUL 1
 #define MOONWATER_HAVE_STRNCHR 1
 #endif
 #if RISCV64
+#define MOONWATER_HAVE_MOONWATER_STRCHR 1
+#define MOONWATER_HAVE_MOONWATER_STRCMP 1
+#define MOONWATER_HAVE_MOONWATER_STRLEN 1
 #define MOONWATER_HAVE_MOONWATER_TICKS 1
 #define MOONWATER_HAVE_STRCHRNUL 1
 #define MOONWATER_HAVE_STRNCHR 1
@@ -5208,6 +5632,19 @@ fn moonwater_bipolar_to_string(writer write, bipolar number);
 positive moonwater_string_to_positive(string_address input);
 bipolar moonwater_string_to_bipolar(string_address input);
 string_address moonwater_find(string_address string, string_address input);
+/*
+        strlen, strcmp and strchr under names the kernel has no opinion about.
+
+        On arm64 and riscv the kernel defines the plain three itself, so these
+        carry the same code under the moonwater_ prefix and string_length,
+        string_compare and string_first_of call them there. On x86_64 the
+        assembly is the plain names and these are not defined; the table above
+        says which of the two an architecture got.
+*/
+positive moonwater_strlen(string_address source);
+b32 moonwater_strcmp(string_address source, string_address input);
+string_address moonwater_strchr(string_address source, p8 character);
+
 address_any moonwater_fill(address_any destination, b8 value, positive size);
 address_any moonwater_copy(address_any destination, address_any source, positive size);
 address_any moonwater_move(address_any destination, address_any source, positive size);
@@ -5254,7 +5691,14 @@ int strcmp(const char address_to source, const char address_to input);
 char address_to strchr(const char address_to source, int character);
 #endif
 
-#ifdef MOONWATER_HAVE_STRLEN
+#ifdef MOONWATER_HAVE_MOONWATER_STRLEN
+
+positive string_length(string_address source)
+{
+        return moonwater_strlen(source);
+}
+
+#elif defined(MOONWATER_HAVE_STRLEN)
 
 positive string_length(string_address source)
 {
@@ -5282,7 +5726,14 @@ positive string_length(string_address source)
 #endif
 
 
-#ifdef MOONWATER_HAVE_STRCMP
+#ifdef MOONWATER_HAVE_MOONWATER_STRCMP
+
+b32 string_compare(string_address source, string_address input)
+{
+        return moonwater_strcmp(source, input);
+}
+
+#elif defined(MOONWATER_HAVE_STRCMP)
 
 b32 string_compare(string_address source, string_address input)
 {
@@ -5340,9 +5791,11 @@ string_address string_copy_max(string_address destination, string_address source
 // traditional: strchr
 string_address string_first_of(string_address source, p8 character)
 {
-#ifdef MOONWATER_HAVE_STRCHR
+#ifdef MOONWATER_HAVE_MOONWATER_STRCHR
         // Same answer at the terminator: strchr(s, 0) returns it rather than
         // nothing, which is what the line under the #else does too.
+        return moonwater_strchr(source, character);
+#elif defined(MOONWATER_HAVE_STRCHR)
         return (string_address)strchr((const char address_to)source, character);
 #else
         while (string_get(source))

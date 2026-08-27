@@ -28,3 +28,7 @@ src/test/bin/
 *.so
 *.dylib
 *.dwo
+
+# patch leftovers, which have shipped by accident once
+*.orig
+*.rej

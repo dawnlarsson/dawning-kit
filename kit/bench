@@ -1,0 +1,44 @@
+#!/bin/sh
+#
+#       Runs kit/bench.c on every architecture.
+#
+#       The same freestanding link kit/verify uses, for the same reason: the
+#       thing being measured is library.c's own assembly, and a libc in the
+#       link would supply the very functions in question.
+#
+#       arm64 and riscv64 run under qemu. A qemu tick is the emulator's work
+#       and not the machine's, so what comes out is a ratio worth reading and
+#       an absolute number that is not.
+#
+set -e
+
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT INT TERM
+
+run() {
+        name=$1
+        compiler=$2
+        runner=$3
+
+        if ! command -v "$compiler" >/dev/null 2>&1; then
+                echo "$name: no $compiler, skipped"
+                return 0
+        fi
+
+        if [ -n "$runner" ] && ! command -v "$runner" >/dev/null 2>&1; then
+                echo "$name: no $runner, skipped"
+                return 0
+        fi
+
+        "$compiler" -O2 -static -nostdlib -nostartfiles -fno-stack-protector \
+                -fno-builtin -T kit/spark.ld -Wl,-e,_start -Wl,--build-id=none \
+                -Wl,--no-warn-rwx-segments \
+                -o "$work/$name" kit/bench.c
+
+        echo "$name:"
+        $runner "$work/$name"
+}
+
+run x86_64 gcc ""
+run arm64 aarch64-linux-gnu-gcc qemu-aarch64
+run riscv64 riscv64-linux-gnu-gcc qemu-riscv64
