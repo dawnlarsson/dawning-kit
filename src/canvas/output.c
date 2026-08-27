@@ -23,7 +23,34 @@ static u32 canvas_pick_format(struct drm_plane *plane)
 }
 
 
-static struct drm_display_mode *output_best_mode(struct drm_connector *connector)
+/*
+        Whether this display is a window on somebody else's screen.
+
+        The driver's own name, which is the only thing here that actually
+        knows. Working it out from what the display reports does not succeed:
+        a virtual one answers a physical size anyway, bochs says 320 by 200
+        millimetres whatever mode it is in, and QEMU synthesises an EDID too,
+        so neither the size nor the presence of one separates them.
+*/
+static _Bool canvas_is_virtual(struct drm_device *dev)
+{
+        static const char *const guests[] = {
+            "bochs-drm", "virtio_gpu", "qxl", "vmwgfx", "cirrus-qemu",
+            "hyperv_drm", "vkms", NULL};
+        unsigned int i;
+
+        if (!dev->driver || !dev->driver->name)
+                return false;
+
+        for (i = 0; guests[i]; i++)
+                if (!strcmp(dev->driver->name, guests[i]))
+                        return true;
+
+        return false;
+}
+
+static struct drm_display_mode *output_best_mode(struct drm_connector *connector,
+                                                 unsigned int want_width)
 {
         struct drm_display_mode *mode, *best = NULL;
         int best_area = 0, best_refresh = 0;
@@ -35,8 +62,30 @@ static struct drm_display_mode *output_best_mode(struct drm_connector *connector
                 if (mode->flags & (DRM_MODE_FLAG_INTERLACE | DRM_MODE_FLAG_DBLSCAN))
                         continue;
 
-                area = mode->hdisplay * mode->vdisplay;
                 refresh = drm_mode_vrefresh(mode);
+
+                /*
+                        Nearest to the width asked for rather than the largest
+                        under it: a mode list with a hole in it would otherwise
+                        drop a long way below half, and half is the point.
+                */
+                if (want_width)
+                {
+                        int off = mode->hdisplay > (int)want_width
+                                      ? mode->hdisplay - (int)want_width
+                                      : (int)want_width - mode->hdisplay;
+
+                        if (best && (off > best_area ||
+                                     (off == best_area && refresh <= best_refresh)))
+                                continue;
+
+                        best = mode;
+                        best_area = off;
+                        best_refresh = refresh;
+                        continue;
+                }
+
+                area = mode->hdisplay * mode->vdisplay;
 
                 if (area < best_area || (area == best_area && refresh <= best_refresh))
                         continue;
@@ -79,7 +128,24 @@ static int canvas_probe_modes(struct canvas *canvas, _Bool biggest)
                     !mode_set->connectors || !mode_set->connectors[0])
                         continue;
 
-                want = output_best_mode(mode_set->connectors[0]);
+                want = output_best_mode(mode_set->connectors[0], 0);
+
+                /*
+                        Half the width inside a guest, so the window this is
+                        drawn in leaves room for the machine around it. The
+                        largest mode is the right answer on a real panel and
+                        the wrong one when the panel belongs to a host that is
+                        still using it.
+                */
+                if (want && canvas_is_virtual(dev))
+                {
+                        struct drm_display_mode *smaller =
+                            output_best_mode(mode_set->connectors[0],
+                                             (unsigned int)want->hdisplay / 2);
+
+                        if (smaller)
+                                want = smaller;
+                }
 
                 if (!want || drm_mode_equal(want, mode_set->mode))
                         continue;
@@ -343,9 +409,21 @@ static int canvas_start(struct canvas *canvas)
 {
         int ret = canvas_build(canvas, IS_ENABLED(CONFIG_MOONWATER_CANVAS_LARGEST_MODE));
 
-        if (!ret && drm_client_modeset_commit(&canvas->client))
+        /*
+                A refused commit means the mode, not the moment.
+
+                This runs from the hotplug that drm_client_register fires, and
+                the file canvas_claim opened to find the card is still open at
+                that point -- so it is still the device's master, and a commit
+                answers EBUSY whatever mode it was handed. Falling back on that
+                threw away every mode this ever chose and quietly took the
+                probe's, which is the opposite of the point.
+        */
+        int set = ret ? 0 : drm_client_modeset_commit(&canvas->client);
+
+        if (!ret && set && set != -EBUSY)
         {
-                log_canvas("the largest mode would not set, taking the offered one\n");
+                log_canvas("that mode would not set (%d), taking the offered one\n", set);
                 canvas_release(canvas);
                 ret = canvas_build(canvas, false);
         }

@@ -40,16 +40,16 @@ menu "Moonwater"
     config MOONWATER_CANVAS_LARGEST_MODE
         bool "Drive every screen at the largest mode it lists"
         depends on MOONWATER_CANVAS
-        default n
+        default y
         help
           A monitor's preferred mode is a recommendation, not its
           maximum: an Odyssey G9 marks 3840x1080 preferred and will run
           5120x1440, so taking the preferred one leaves most of the panel
           dark.
 
-          Off by default because a virtual display's mode list is
-          whatever the emulator felt like offering, where the largest
-          entry means nothing and picking it composites a needlessly huge
-          framebuffer every frame. Turn it on for a machine whose
-          monitors you know.
+          A virtual display is halved regardless, whatever this says: its
+          screen belongs to a host that is still using it, and filling it
+          takes the machine the emulator is running on with it. Which
+          displays are virtual is decided by the driver's name, not by
+          anything the display claims about itself.
 endmenu # Moonwater
