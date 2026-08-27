@@ -180,7 +180,7 @@ verify_one()
         $runner "$work/verify.$name" > "$work/verify.$name.out" 2>&1
         status=$?
 
-        sed -n '/FAIL/p' "$work/verify.$name.out"
+        sed -n '/FAIL/p;/ABSENT/p;/under neither name here/p' "$work/verify.$name.out"
 
         line=$(sed -n 's/^\([0-9]*\) checks, \([0-9]*\) failures$/\1 \2/p' \
                 "$work/verify.$name.out")
@@ -211,10 +211,13 @@ lane_verify()
 #       The verify lane runs the foreign two under qemu, and a Mac has no
 #       qemu-user -- but a Mac is one of the three machines. AAPCS64 passes
 #       arguments in x0-x7 on Darwin exactly as it does on Linux and none of
-#       these routines makes a system call, so a body lifted out of library.c
-#       runs here unchanged. Each case carries its own copy of the assembly
-#       and a C reference beside it, which is what makes it the place a change
-#       to arm64's assembly is worked out before it goes into library.c.
+#       these routines makes a system call, so a body lifted out of the
+#       library runs here unchanged.
+#
+#       src/test/native/run does the lifting, out of whichever library carries
+#       the routines under the names it lifts by. That is library.next.c while
+#       the two files exist and library.c once they are one, and which one was
+#       used is printed rather than assumed.
 lane_native()
 {
         case $(uname -m) in
@@ -225,44 +228,38 @@ lane_native()
                 ;;
         esac
 
-        failed=0
+        library=src/library.c
 
-        for source in src/test/native/*.c; do
-                [ -f "$source" ] || continue
+        [ -f src/library.next.c ] && library=src/library.next.c
 
-                name=${source##*/}
-                name=${name%.c}
+        note "lifted out of $library"
 
-                if ! $compiler -O2 -w -o "$work/native.$name" "$source" \
-                        2> "$work/native.$name.err"; then
-                        note "$source did not build:"
-                        sed 's/^/    /' "$work/native.$name.err" | head -10
-                        failed=1
-                        continue
-                fi
+        if sh src/test/native/run "$library" > "$work/native.out" 2>&1; then
+                answered=0
+        else
+                answered=1
+        fi
 
-                if "$work/native.$name" > "$work/native.$name.out" 2>&1; then
-                        answered=0
-                else
-                        answered=1
-                        failed=1
-                fi
+        sed 's/^/  /' "$work/native.out"
 
-                sed 's/^/  /' "$work/native.$name.out"
+        counted=0
 
-                counted=$(sed -n 's/.*[^0-9]\([0-9][0-9]*\) checks.*/\1/p' \
-                        "$work/native.$name.out" | head -1)
+        sed -n 's/^\(.*\): \([0-9][0-9]*\) checks.*/\1|\2/p' "$work/native.out" |
+                while IFS='|' read -r label total; do
+                        slug=$(printf '%s' "$label" | tr ' ' '-')
 
-                [ -n "$counted" ] || counted=1
+                        if [ "$answered" = 0 ]; then
+                                tally "$slug" "$total" "$total"
+                        else
+                                tally "$slug" 0 "$total"
+                        fi
+                done
 
-                if [ "$answered" = 0 ]; then
-                        tally "native-$name" "$counted" "$counted"
-                else
-                        tally "native-$name" 0 "$counted"
-                fi
-        done
+        # A run that printed no verdict at all is a run that proved nothing,
+        # which has to weigh something or it reads as a pass.
+        grep -q ' checks' "$work/native.out" || counted=1
 
-        [ "$failed" = 0 ]
+        [ "$answered" = 0 ] && [ "$counted" = 0 ]
 }
 
 lane_probe()

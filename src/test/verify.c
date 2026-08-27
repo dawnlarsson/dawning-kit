@@ -52,6 +52,20 @@ fn same_bytes(string_address name, string_address detail, b8 address_to got,
                 }
 }
 
+static positive absent_count;
+
+// A routine the library does not carry under either of its names.
+//
+// Not a failure: the inventory says which machines are short of which, and
+// riscv64 is legitimately short of several. Saying so out loud is the point --
+// a case that compiles to nothing says nothing, and that is how ninety five
+// thousand checks once went missing while the lane still agreed with itself.
+fn absent(string_address name)
+{
+        absent_count++;
+        string_format(log, "  ABSENT %s: under neither name in this library\n", name);
+}
+
 // A repeatable spread of values; nothing here wants real randomness, only
 // inputs nobody chose by hand.
 static positive seed = 0x2545F4914F6CDD1Dull;
@@ -951,8 +965,26 @@ fn check_span()
         one for the machine. Both answer with what they read and what they
         wrote, and both have to agree about every byte in between.
 */
-positive moonwater_lex_word(string_address source, p8 address_to into,
-                            const b8 address_to class);
+/*
+        Two spellings, for the same reason as the block at the end of this
+        file: library.c calls this moonwater_lex_word and library.next.c calls
+        it string_lex_word, and the suite has to build against both for as
+        long as both exist.
+*/
+typedef positive (address_to lex_routine)(string_address, p8 address_to,
+                                          const b8 address_to);
+
+WEAK positive verify_lex_public(string_address source, p8 address_to into,
+                                const b8 address_to class)
+    __asm__("string_lex_word");
+WEAK positive verify_lex_old(string_address source, p8 address_to into,
+                             const b8 address_to class)
+    __asm__("moonwater_lex_word");
+
+static lex_routine lex_word_here()
+{
+        return verify_lex_public ? verify_lex_public : verify_lex_old;
+}
 
 static positive reference_lex_word(string_address source, p8 address_to into,
                                    const b8 address_to class)
@@ -1023,6 +1055,12 @@ static positive reference_lex_word(string_address source, p8 address_to into,
 
 fn check_lex_word()
 {
+        if (!lex_word_here())
+        {
+                absent("string_lex_word");
+                return;
+        }
+
         static b8 class[256];
         static p8 subject[512];
         static p8 got[600];
@@ -1106,7 +1144,7 @@ fn check_lex_word()
                 reference_fill(got, 0xA5, sizeof(got));
                 reference_fill(want, 0xA5, sizeof(want));
 
-                mine = moonwater_lex_word(subject, got, class);
+                mine = lex_word_here()(subject, got, class);
                 theirs = reference_lex_word(subject, want, class);
 
                 same("lex_word", "read", mine & 0xffffffff, theirs & 0xffffffff);
@@ -1134,7 +1172,7 @@ fn check_lex_word()
                 reference_fill(got, 0xA5, sizeof(got));
                 reference_fill(want, 0xA5, sizeof(want));
 
-                mine = moonwater_lex_word(subject, got, class);
+                mine = lex_word_here()(subject, got, class);
                 theirs = reference_lex_word(subject, want, class);
 
                 same("lex_word", "generated read", mine & 0xffffffff,
@@ -1566,29 +1604,73 @@ fn check_table_find()
         that reads a word past the end has to discard what it finds there too.
 */
 
-#if defined(MOONWATER_HAVE_STRCHRNUL)
-string_address strchrnul(string_address source, b32 character);
-#endif
+/*
+        The names, in both libraries.
 
-#if defined(MOONWATER_HAVE_STRNCHR)
-string_address strnchr(string_address source, positive count, b32 character);
-#endif
+        library.c writes an assembly override for a C function and says which
+        with a MOONWATER_HAVE_ macro. library.next.c has no C function to
+        override -- the assembly is the routine and the libc names are aliases
+        onto it -- so it defines no such macro at all, and a case guarded on
+        one compiles to nothing the moment next is in place. Ninety five
+        thousand checks went missing that way and the lane still said
+        everything agrees, which is the same shape as the bug this section
+        was written for.
 
-#if defined(MOONWATER_HAVE_MEMCHR)
-address_any memchr(address_any source, b32 character, positive count);
-#endif
+        So nothing here is guarded. Every routine is declared twice, once
+        under each spelling, weak and bound to its symbol by name: a weak name
+        the linker cannot find is null instead of an error, so one binary asks
+        the library what it has rather than asking the preprocessor what it
+        once had. Bound by name because a prototype would collide -- library.c
+        declares a strrchr of its own and next declares none.
 
-#if defined(MOONWATER_HAVE_STRNLEN)
-positive strnlen(string_address source, positive bound);
-#endif
+        A routine under neither name is named in the transcript and counted.
+        The inventory says which machines are short of which, so that is not a
+        failure; being short of one silently is.
+*/
 
-#if defined(MOONWATER_HAVE_STRRCHR)
-string_address strrchr(string_address source, b32 character);
-#endif
+typedef string_address (address_to hunt_byte)(string_address, b32);
+typedef string_address (address_to hunt_bounded)(string_address, positive, b32);
+typedef address_any (address_to hunt_memory)(address_any, b32, positive);
+typedef positive (address_to measure_bounded)(string_address, positive);
+typedef b32 (address_to compare_bounded)(string_address, string_address, positive);
+
+WEAK string_address verify_or_end_public(string_address source, b32 character)
+    __asm__("string_first_of_or_end");
+WEAK string_address verify_or_end_libc(string_address source, b32 character)
+    __asm__("strchrnul");
+
+WEAK string_address verify_first_max_public(string_address source, positive count,
+                                            b32 character)
+    __asm__("string_first_of_max");
+WEAK string_address verify_first_max_libc(string_address source, positive count,
+                                          b32 character)
+    __asm__("strnchr");
+
+WEAK string_address verify_last_or_end_public(string_address source, b32 character)
+    __asm__("string_last_of_or_end");
+WEAK string_address verify_last_or_end_libc(string_address source, b32 character)
+    __asm__("strrchr");
+
+WEAK address_any verify_memory_first_public(address_any source, b32 character,
+                                            positive count)
+    __asm__("memory_first_of");
+WEAK address_any verify_memory_first_libc(address_any source, b32 character,
+                                          positive count)
+    __asm__("memchr");
+
+WEAK positive verify_length_max_public(string_address source, positive bound)
+    __asm__("string_length_max");
+WEAK positive verify_length_max_libc(string_address source, positive bound)
+    __asm__("strnlen");
+
+WEAK b32 verify_compare_max_public(string_address a, string_address b, positive count)
+    __asm__("string_compare_max");
+WEAK b32 verify_compare_max_libc(string_address a, string_address b, positive count)
+    __asm__("strncmp");
 
 // Walks to the terminator and answers with it rather than with nothing, which
-// is the whole difference between this and strchr.
-string_address reference_chrnul(string_address source, p8 character)
+// is the whole difference between this and string_first_of.
+string_address reference_or_end(string_address source, p8 character)
 {
         while (string_get(source) && string_get(source) != character)
                 source++;
@@ -1598,7 +1680,8 @@ string_address reference_chrnul(string_address source, p8 character)
 
 // The character is looked at before the terminator is, so a hunt for zero
 // finds the terminator inside the bound. That is what the kernel's own does.
-string_address reference_nchr(string_address source, positive count, p8 character)
+string_address reference_first_max(string_address source, positive count,
+                                   p8 character)
 {
         for (positive i = 0; i < count; i++)
         {
@@ -1612,7 +1695,7 @@ string_address reference_nchr(string_address source, positive count, p8 characte
         return null;
 }
 
-address_any reference_memchr(address_any source, p8 character, positive count)
+address_any reference_memory_first(address_any source, p8 character, positive count)
 {
         p8 address_to at = source;
 
@@ -1623,7 +1706,7 @@ address_any reference_memchr(address_any source, p8 character, positive count)
         return null;
 }
 
-positive reference_strnlen(string_address source, positive bound)
+positive reference_length_max(string_address source, positive bound)
 {
         positive i = 0;
 
@@ -1633,7 +1716,21 @@ positive reference_strnlen(string_address source, positive bound)
         return i;
 }
 
-string_address reference_rchr(string_address source, p8 character)
+b32 reference_compare_max(string_address a, string_address b, positive count)
+{
+        for (positive i = 0; i < count; i++)
+        {
+                if (a[i] != b[i])
+                        return (b32)a[i] - (b32)b[i];
+
+                if (!a[i])
+                        return 0;
+        }
+
+        return 0;
+}
+
+string_address reference_last_or_end(string_address source, p8 character)
 {
         string_address last = null;
 
@@ -1648,14 +1745,15 @@ string_address reference_rchr(string_address source, p8 character)
 }
 
 static p8 field[512];
+static p8 field_twin[512];
 
 // Eight byte aligned, so an offset from here is the whole of the distance
 // into a word however the linker placed the array.
-static string_address aligned_field()
+static string_address aligned_at(p8 address_to array)
 {
-        positive at = (positive)(address_any)field;
+        positive at = (positive)(address_any)array;
 
-        return field + ((8 - (at & 7)) & 7);
+        return array + ((8 - (at & 7)) & 7);
 }
 
 fn check_hostile_neighbours()
@@ -1664,6 +1762,36 @@ fn check_hostile_neighbours()
         // string and behind its terminator.
         static p8 hunted[] = {0x00, 0x01, 0x02, 0x40, 0x7f, 0x80,
                               0xa5, 0xfe, 0xff, 'a'};
+
+        hunt_byte or_end =
+            verify_or_end_public ? verify_or_end_public : verify_or_end_libc;
+        hunt_bounded first_max =
+            verify_first_max_public ? verify_first_max_public : verify_first_max_libc;
+        hunt_byte last_or_end =
+            verify_last_or_end_public ? verify_last_or_end_public
+                                      : verify_last_or_end_libc;
+        hunt_memory memory_first =
+            verify_memory_first_public ? verify_memory_first_public
+                                       : verify_memory_first_libc;
+        measure_bounded length_max =
+            verify_length_max_public ? verify_length_max_public
+                                     : verify_length_max_libc;
+        compare_bounded compare_max =
+            verify_compare_max_public ? verify_compare_max_public
+                                      : verify_compare_max_libc;
+
+        if (!or_end)
+                absent("string_first_of_or_end");
+        if (!first_max)
+                absent("string_first_of_max");
+        if (!last_or_end)
+                absent("string_last_of_or_end");
+        if (!memory_first)
+                absent("memory_first_of");
+        if (!length_max)
+                absent("string_length_max");
+        if (!compare_max)
+                absent("string_compare_max");
 
         for (positive h = 0; h < sizeof(hunted); h++)
         {
@@ -1674,13 +1802,22 @@ fn check_hostile_neighbours()
                                 for (positive planted = 0; planted < 2; planted++)
                                 {
                                         string_address text;
+                                        string_address twin;
 
                                         if (planted && !size)
                                                 continue;
 
                                         reference_fill(field, byte, sizeof(field));
+                                        reference_fill(field_twin, byte,
+                                                       sizeof(field_twin));
 
-                                        text = aligned_field() + 64 + offset;
+                                        text = aligned_at(field) + 64 + offset;
+
+                                        // The other string of a compare starts
+                                        // at a different distance into its
+                                        // word, so the two are never in step.
+                                        twin = aligned_at(field_twin) + 64 +
+                                               ((offset + 3) & 7);
 
                                         // Beginning with the next value up
                                         // from the byte in front of it, which
@@ -1702,6 +1839,8 @@ fn check_hostile_neighbours()
                                         if (planted)
                                                 text[size - 1] = byte;
 
+                                        memory_copy_fast(twin, text, size + 1);
+
                                         same("string_length", "hostile neighbours",
                                              string_length(text),
                                              reference_length(text));
@@ -1715,37 +1854,80 @@ fn check_hostile_neighbours()
                                                      (positive)string_first_of(text, text[0]),
                                                      (positive)reference_first_of(text, text[0]));
 
-#if defined(MOONWATER_HAVE_STRCHRNUL)
-                                        same("strchrnul", "hostile neighbours",
-                                             (positive)strchrnul(text, byte),
-                                             (positive)reference_chrnul(text, byte));
-#endif
+                                        //      Every byte but the terminator.
+                                        //
+                                        //      string_last_of(s, 0) answers
+                                        //      null and the C it replaced
+                                        //      answers with the terminator,
+                                        //      and which of the two is meant
+                                        //      is not this suite's to decide:
+                                        //      library.next.c says in as many
+                                        //      words that null is the
+                                        //      intention and that
+                                        //      string_last_of_or_end is the
+                                        //      one that answers with the
+                                        //      terminator. That routine is
+                                        //      checked for it just below, so
+                                        //      the question is asked; it is
+                                        //      asked of the routine that has
+                                        //      an answer.
+                                        if (byte)
+                                                same("string_last_of", "hostile neighbours",
+                                                     (positive)string_last_of(text, byte),
+                                                     (positive)reference_string_last_of(text, byte));
 
-#if defined(MOONWATER_HAVE_STRRCHR)
-                                        same("strrchr", "hostile neighbours",
-                                             (positive)strrchr(text, byte),
-                                             (positive)reference_rchr(text, byte));
-#endif
+                                        if (or_end)
+                                                same("string_first_of_or_end", "hostile neighbours",
+                                                     (positive)or_end(text, byte),
+                                                     (positive)reference_or_end(text, byte));
+
+                                        if (last_or_end)
+                                                same("string_last_of_or_end", "hostile neighbours",
+                                                     (positive)last_or_end(text, byte),
+                                                     (positive)reference_last_or_end(text, byte));
 
                                         for (positive count = 0; count <= size + 8; count += 3)
                                         {
-#if defined(MOONWATER_HAVE_STRNCHR)
-                                                same("strnchr", "hostile neighbours",
-                                                     (positive)strnchr(text, count, byte),
-                                                     (positive)reference_nchr(text, count, byte));
-#endif
+                                                if (first_max)
+                                                        same("string_first_of_max", "hostile neighbours",
+                                                             (positive)first_max(text, count, byte),
+                                                             (positive)reference_first_max(text, count, byte));
 
-#if defined(MOONWATER_HAVE_MEMCHR)
-                                                same("memchr", "hostile neighbours",
-                                                     (positive)memchr(text, byte, count),
-                                                     (positive)reference_memchr(text, byte, count));
-#endif
+                                                if (memory_first)
+                                                        same("memory_first_of", "hostile neighbours",
+                                                             (positive)memory_first(text, byte, count),
+                                                             (positive)reference_memory_first(text, byte, count));
 
-#if defined(MOONWATER_HAVE_STRNLEN)
-                                                same("strnlen", "hostile neighbours",
-                                                     strnlen(text, count),
-                                                     reference_strnlen(text, count));
-#endif
+                                                if (length_max)
+                                                        same("string_length_max", "hostile neighbours",
+                                                             length_max(text, count),
+                                                             reference_length_max(text, count));
+
+                                                if (compare_max)
+                                                {
+                                                        // Equal, then differing at
+                                                        // the last byte inside the
+                                                        // bound, which is where a
+                                                        // word compare that stops
+                                                        // early stops noticing.
+                                                        same("string_compare_max", "hostile equal",
+                                                             (positive)(compare_max(text, twin, count) == 0),
+                                                             (positive)(reference_compare_max(text, twin, count) == 0));
+
+                                                        if (size)
+                                                        {
+                                                                p8 keep = twin[size - 1];
+
+                                                                twin[size - 1] = (p8)(keep ^ 1);
+                                                                same("string_compare_max", "hostile greater",
+                                                                     (positive)(compare_max(text, twin, count) > 0),
+                                                                     (positive)(reference_compare_max(text, twin, count) > 0));
+                                                                same("string_compare_max", "hostile less",
+                                                                     (positive)(compare_max(twin, text, count) < 0),
+                                                                     (positive)(reference_compare_max(twin, text, count) < 0));
+                                                                twin[size - 1] = keep;
+                                                        }
+                                                }
                                         }
                                 }
         }
@@ -1773,6 +1955,10 @@ b32 main()
         check_lex_word();
         check_table_find();
         check_hostile_neighbours();
+
+        if (absent_count)
+                string_format(log, "  %p routine(s) under neither name here\n",
+                              absent_count);
 
         string_format(log, "%p checks, %p failures\n", checks, failures);
         log_flush();
