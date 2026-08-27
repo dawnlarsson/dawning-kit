@@ -321,9 +321,21 @@ fn catch_reset()
         caught[0] = 0;
 }
 
+/*
+        The last of a byte, and nothing for the terminator.
+
+        This used to answer the terminator's own address when asked for byte
+        zero, which is what strrchr does and what this is not. The library
+        says so where it defines the two: string_last_of answers nothing,
+        string_last_of_or_end answers the terminator, and the libc strrchr is
+        an alias onto the second because that is the one POSIX describes.
+*/
 string_address reference_string_last_of(string_address source, p8 character)
 {
         string_address found = null;
+
+        if (!character)
+                return null;
 
         while (string_get(source))
         {
@@ -333,7 +345,7 @@ string_address reference_string_last_of(string_address source, p8 character)
                 source++;
         }
 
-        return character ? found : source;
+        return found;
 }
 
 positive reference_to_positive(string_address input)
@@ -1854,27 +1866,9 @@ fn check_hostile_neighbours()
                                                      (positive)string_first_of(text, text[0]),
                                                      (positive)reference_first_of(text, text[0]));
 
-                                        //      Every byte but the terminator.
-                                        //
-                                        //      string_last_of(s, 0) answers
-                                        //      null and the C it replaced
-                                        //      answers with the terminator,
-                                        //      and which of the two is meant
-                                        //      is not this suite's to decide:
-                                        //      library.next.c says in as many
-                                        //      words that null is the
-                                        //      intention and that
-                                        //      string_last_of_or_end is the
-                                        //      one that answers with the
-                                        //      terminator. That routine is
-                                        //      checked for it just below, so
-                                        //      the question is asked; it is
-                                        //      asked of the routine that has
-                                        //      an answer.
-                                        if (byte)
-                                                same("string_last_of", "hostile neighbours",
-                                                     (positive)string_last_of(text, byte),
-                                                     (positive)reference_string_last_of(text, byte));
+                                        same("string_last_of", "hostile neighbours",
+                                             (positive)string_last_of(text, byte),
+                                             (positive)reference_string_last_of(text, byte));
 
                                         if (or_end)
                                                 same("string_first_of_or_end", "hostile neighbours",
