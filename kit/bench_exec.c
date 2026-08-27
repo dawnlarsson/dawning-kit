@@ -4,6 +4,13 @@
 // Times fork + exec + wait for a target, repeatedly. The fork and wait cost is
 // identical for both formats, so the difference between two runs is the cost
 // of the loader.
+//
+// A measurement and not a test, which is why it is here and not in src/test.
+// It needs /dev/spark and the two images beside it, so it runs inside the
+// booted image:
+//
+//     sh kit/spark kit/bench_tiny fs/tiny.spark
+//     sh kit/spark kit/bench_exec fs/bench
 
 #define CLOCK_MONOTONIC 1
 

@@ -149,7 +149,7 @@ differs()
         got_ours=$(shown "$work/got")
 
         if [ "$got_ours" != "$recorded" ] || [ "$got_status" != "$recorded_status" ]; then
-                lost "$name" "recorded $recorded[$recorded_status]   now $got_ours[$got_status]"
+                lost "$name" "recorded ${recorded}[$recorded_status]   now ${got_ours}[$got_status]"
                 return 0
         fi
 
@@ -523,7 +523,7 @@ emits()
                 return 0
         fi
 
-        lost "$name" "expected $want, got $got_ours[$emitted_status]"
+        lost "$name" "expected $want, got ${got_ours}[$emitted_status]"
 }
 
 emits 'called grep'      'alpha|'  "printf 'alpha\nbeta\n' | '$names/grep' alpha"

@@ -2,7 +2,7 @@
 #
 #       The file utilities against the system's own, diffed.
 #
-#           sh kit/files.sh [directory holding our binaries]
+#           sh src/test/files.sh [directory holding our binaries]
 #
 #       Three kinds of case, because three kinds of thing are being checked
 #       and pretending they are one kind is how a comparison gets rigged:

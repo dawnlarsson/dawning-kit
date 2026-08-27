@@ -13,7 +13,7 @@
         and not the machine's. What it measures honestly is how much less work
         there is to do; what it cannot tell you is what a real board would say.
 
-        Built and run by kit/bench, which is the same freestanding link kit/verify
+        Built and run by kit/bench, which is the same freestanding link src/test/run
         uses.
 */
 

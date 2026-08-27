@@ -2,7 +2,7 @@
 #
 #       Runs kit/bench.c on every architecture.
 #
-#       The same freestanding link kit/verify uses, for the same reason: the
+#       The same freestanding link src/test/run uses, for the same reason: the
 #       thing being measured is library.c's own assembly, and a libc in the
 #       link would supply the very functions in question.
 #
