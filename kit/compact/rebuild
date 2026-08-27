@@ -1,0 +1,87 @@
+#!/bin/sh
+#
+#       src/library.c -> src/library.next.c, from scratch, every time.
+#
+#           sh kit/compact/rebuild            rebuild and check
+#           sh kit/compact/rebuild --quiet    only say what went wrong
+#
+#       Nothing here is a merge. Every change this makes is a pass in
+#       kit/compact/, so keeping up with a library.c that other people are
+#       editing means running this again rather than reconciling two files by
+#       hand. A pass whose anchor has gone says so and the rest still run.
+#
+#       The passes, in the order they have to happen:
+#
+#           fixes         two corrections, anchored on the file's own wording
+#           parity        the routines an architecture was missing. Before the
+#                         reformatting, so what it adds is laid out like the
+#                         rest and running this twice changes nothing.
+#           dedup         a routine's contract written once, not once per
+#                         arch. Before chain, so chain sees the comments that
+#                         survive and lays out around those.
+#           chain         instructions several to a source line
+#           restructure   the moonwater_ prefix off, the C that only forwarded
+#                         gone, libc names as aliases
+#           inventory     the map at the top, read off the result
+#
+#       Then it reads the rest of the tree for callers of any name that
+#       moved, because that breaks at the link and nowhere earlier.
+#
+#       Then it proves the reformatting changed no instruction, and runs the
+#       arm64 cases on this machine if it is an arm64 machine.
+#
+set -u
+
+# shellcheck disable=SC1007
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+root=$(CDPATH= cd -- "$here/../.." && pwd)
+
+src="$root/src/library.c"
+out="$root/src/library.next.c"
+
+[ -f "$src" ] || { echo "rebuild: no $src" >&2; exit 1; }
+
+cp "$src" "$out" || exit 1
+
+for pass in fixes parity dedup chain restructure inventory; do
+        python3 "$here/$pass.py" "$out" || {
+                echo "rebuild: $pass failed" >&2
+                exit 1
+        }
+done
+
+echo "rebuild: $(wc -l < "$src") lines in, $(wc -l < "$out") out"
+
+# The rename is invisible to every other file's compiler: a caller that still
+# says moonwater_ticks() declares it, compiles, and fails at the link. Read
+# the tree for names that moved rather than find out there.
+python3 "$here/callers.py" "$root" || {
+        echo "rebuild: fix those callers, then run this again" >&2
+        exit 1
+}
+
+# Only two of the six passes claim to change nothing: chain and dedup. The
+# others add a routine, delete a function that only forwarded, or correct an
+# instruction on purpose, and all of those move code by design.
+#
+# So the check is the same pipeline run twice, once with those two passes and
+# once without. Everything else is identical between the two, which leaves the
+# reformatting as the only difference, and it has to come to nothing.
+work=$(mktemp -d "${TMPDIR:-/tmp}/rebuild.XXXXXX") || exit 1
+trap 'rm -rf "$work"' EXIT INT TERM
+
+cp "$src" "$work/plain.c"
+for pass in fixes parity restructure; do
+        python3 "$here/$pass.py" "$work/plain.c" >/dev/null 2>&1
+done
+
+sh "$here/prove" "$work/plain.c" "$out" || {
+        echo "rebuild: chain or dedup moved an instruction" >&2
+        exit 1
+}
+
+if [ "$(uname -m)" = "arm64" ] || [ "$(uname -m)" = "aarch64" ]; then
+        sh "$root/src/test/native/run" "$out" || exit 1
+else
+        echo "rebuild: not an arm64 machine, so nothing was executed"
+fi

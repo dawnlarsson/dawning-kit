@@ -1,0 +1,93 @@
+#!/bin/sh
+#
+#       Do two versions of library.c assemble to the same instructions?
+#
+#           sh kit/compact/prove <before.c> <after.c>
+#
+#       Compiles each for x86_64, arm64 and riscv64 and diffs the disassembly.
+#       Empty diff on all three is the only pass.
+#
+set -u
+
+before=${1:-src/library.c}
+after=${2:-src/library.next.c}
+
+CLANG=${CLANG:-/opt/homebrew/opt/llvm/bin/clang}
+OBJDUMP=${OBJDUMP:-/opt/homebrew/opt/llvm/bin/llvm-objdump}
+
+command -v "$CLANG" >/dev/null 2>&1 || {
+        echo "prove: no clang at $CLANG -- set CLANG to one with all three targets" >&2
+        exit 1
+}
+
+# shellcheck disable=SC1007
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+root=$(CDPATH= cd -- "$here/../.." && pwd)
+
+work=$(mktemp -d "${TMPDIR:-/tmp}/prove.XXXXXX") || exit 1
+trap 'rm -rf "$work"' EXIT INT TERM
+
+echo '#include "library.c"' > "$work/tu.c"
+
+snap() {
+        src=$1 tag=$2
+        mkdir -p "$work/$tag"
+        cp "$src" "$work/$tag/library.c"
+        ln -sfn "$root/src/platform" "$work/$tag/platform"
+
+        for t in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu \
+                 riscv64-unknown-linux-gnu; do
+                "$CLANG" --target="$t" -c "$work/tu.c" -o "$work/$tag-$t.o" \
+                        -I"$work/$tag" -nostdlib -ffreestanding -fno-builtin \
+                        -O2 -fno-stack-protector -fno-PIE 2>"$work/$tag-$t.err" || {
+                        echo "prove: $src does not compile for $t" >&2
+                        sed -n '1,20p' "$work/$tag-$t.err" >&2
+                        exit 1
+                }
+                # Symbol names are stripped out of the disassembly. A rename
+                # is not a code change, and objdump prints the name on every
+                # label and every branch target, so leaving them in makes a
+                # rename look like a rewrite. What the bytes are is settled by
+                # the section compare below, which never sees a name at all.
+                "$OBJDUMP" -d --no-show-raw-insn "$work/$tag-$t.o" |
+                        sed -e '1,2d' -e 's/^[0-9a-f]*//' \
+                            -e 's/<[^<>+]*\(+0x[0-9a-f]*\)\{0,1\}>/<>/g' \
+                        > "$work/$tag-$t.dis"
+
+                # The disassembly covers what executes. The section bytes also
+                # cover what does not -- moonwater_digit_pairs is a .ascii
+                # table, and objdump -d never looks at it.
+                "${OBJDUMP%objdump}objcopy" -O binary --only-section=.text \
+                        "$work/$tag-$t.o" "$work/$tag-$t.text" 2>/dev/null || :
+                "${OBJDUMP%objdump}objcopy" -O binary --only-section=.rodata \
+                        "$work/$tag-$t.o" "$work/$tag-$t.rodata" 2>/dev/null || :
+        done
+}
+
+snap "$before" before
+snap "$after" after
+
+status=0
+for t in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu \
+         riscv64-unknown-linux-gnu; do
+        same=true
+        why=""
+        diff -q "$work/before-$t.dis" "$work/after-$t.dis" >/dev/null ||
+                { same=false; why="instructions"; }
+        for sec in text rodata; do
+                [ -f "$work/before-$t.$sec" ] || continue
+                cmp -s "$work/before-$t.$sec" "$work/after-$t.$sec" ||
+                        { same=false; why="$why .$sec bytes"; }
+        done
+
+        if [ "$same" = true ]; then
+                printf 'identical  %s\n' "$t"
+        else
+                printf '           differs in:%s\n' "$why"
+                printf 'DIFFERS    %s\n' "$t"
+                diff "$work/before-$t.dis" "$work/after-$t.dis" | sed -n '1,20p'
+                status=1
+        fi
+done
+
+exit $status

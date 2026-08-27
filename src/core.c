@@ -59,8 +59,8 @@ static int spawn_program(const char *path);
 // cannot be included into this translation unit the way display.c is
 // -- so the compiler is told its shape here, in the file that calls it.
 //
-// ticks.asm
-u64 moonwater_ticks(void);
+// the free running counter, in library.c
+u64 get_cpu_time(void);
 
 
 
@@ -781,11 +781,11 @@ static fn init_mount()
 */
 static void __init check_ticks(void)
 {
-        u64 first = moonwater_ticks();
+        u64 first = get_cpu_time();
         u64 second;
 
         barrier();
-        second = moonwater_ticks();
+        second = get_cpu_time();
 
         if (second > first)
                 log_k("ticks: counting, %llu between two reads\n",

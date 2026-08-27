@@ -1,0 +1,37 @@
+        src/library.c -> src/library.next.c, by re-running rather than merging.
+
+            sh kit/compact/rebuild
+
+        Everything this does is a pass in here, so a library.c that other
+        people have been editing is kept up with by running it again. There
+        is nothing to reconcile by hand, and a pass whose anchor has gone
+        says so and leaves the rest to run.
+
+            fixes.py        two corrections, anchored on the file's own
+                            wording. See src/test/native/FINDING.
+            chain.py        instructions several to a source line
+            dedup.py        a routine's contract written once, not once per
+                            architecture
+            restructure.py  the moonwater_ prefix off, the C that only
+                            forwarded gone, libc names as aliases
+            parity.py       the routines an architecture was missing
+            inventory.py    the map at the top, read off the result
+
+            prove           assembles two versions for x86_64, arm64 and
+                            riscv64 and compares the instructions and the
+                            section bytes
+            strip.py        reports which comments only restate the code.
+                            It answered "32 lines of 8808" for this file,
+                            which is why there is no stripping pass.
+
+        Only chain and dedup claim to change nothing, and rebuild proves it
+        by running the whole pipeline twice, with and without them, and
+        comparing. The other four move code on purpose.
+
+        prove needs a clang with all three targets. Apple's has two of them;
+        homebrew llvm has all three, and is where prove looks by default.
+
+        On an arm64 machine rebuild finishes by running src/test/native/run,
+        which puts two and a third million calls through the arm64 routines
+        against a C reference. x86_64 and riscv64 are assembled and compared
+        here and executed nowhere: that still wants qemu.
