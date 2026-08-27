@@ -2294,262 +2294,6 @@ ASM_FUNC(moonwater_positive_to_string)
     "        pop     %rbx\n"
     ASM_RET
     ASM_END(moonwater_find)
-    //
-    //       string_format -- the loop that reads a format string and hands
-    //       pieces of it to a writer, with the variadic ABI done by hand.
-    //
-    //       The compiler cannot help here: a variadic function is the one place
-    //       where the argument registers have to be spilled somewhere the code
-    //       can index them. This does what gcc's va_start does and no more --
-    //       the four remaining integer registers into a save area, the eight
-    //       vector ones only when al says any were used -- and then keeps three
-    //       cursors: one through the integer save area, one through the vector
-    //       save area, one through whatever did not fit and arrived on the
-    //       stack. The last is shared, because the caller filled it in argument
-    //       order regardless of which kind ran out first.
-    //
-    //       Only three things have to survive a call, so only three registers
-    //       are pushed. The start of the current run of plain text is not one
-    //       of them: it is the first argument of the write that ends the run,
-    //       so it lives in rdi, and every path that returns from a call sets it
-    //       again from the scan. The vector cursor and the stack cursor sit in
-    //       the frame rather than in registers because a format with a decimal
-    //       or with more than four arguments in it is the rare one, and paying
-    //       two pushes and two pops on every call to make that case a cycle
-    //       faster is the wrong trade.
-    //
-    //       The two save area cursors count up to zero from minus their size
-    //       rather than up to a limit, which is what the arm64 ABI hands its
-    //       compilers and is worth copying here: the test is a sign bit instead
-    //       of a compare against a bound that would have to be kept somewhere.
-    //       Every stack path is out of line so the common one falls through.
-    //
-    //       Measured against the C it replaced, on a Zen 5, twenty million
-    //       calls of each format, cycles per call. A count for this routine
-    //       moves by half again depending on where the linker happens to put
-    //       it, so each of these is the smallest of a sweep over seven
-    //       placements and three runs of each, for both sides:
-    //
-    //           a line of text, no specifier          61   C 68
-    //           "cp: Cannot copy '%s' into itself"    46   C 54
-    //           "%s has %p items worth %b each"       73   C 75
-    //           "one %% two %% three %% four"         57   C 59
-    //           "%s"                                  16   C 14
-    //           "%p"                                  22   C 21
-    //           "%p %p %p %p"                         70   C 65
-    //           eight of them                        134   C 129
-    //
-    //       It executes fewer instructions than the C in every one of those --
-    //       63 against 77 for "%s", 256 against 287 for four positives -- and
-    //       still loses the ones that are nothing but specifiers, which is the
-    //       dispatch and the two calls a specifier costs and not the variadic
-    //       work. The formats this tree actually passes carry text, and those
-    //       are the ones that come out ahead.
-    //
-    //       A percent that is the last byte of the string returns without the
-    //       trailing write, which is what the C did by returning out of the
-    //       switch, and a specifier nobody knows is dropped along with its
-    //       percent. Both are relied on by callers in the tree.
-    //
-    ASM_FUNC(moonwater_format)
-    "        push    %rbx\n"
-    "        push    %rbp\n"
-    "        push    %r13\n"
-#ifndef KERNEL_MODE
-    "        movzbl  %al, %r11d               # al is how many vector registers the caller used\n"
-#endif
-    //
-    //       The first byte of the format string is loaded here, twelve
-    //       instructions before anything looks at it, because a load is five
-    //       cycles and the rest of this is a store or a move. The C reads it in
-    //       its own prologue for the same reason. Everything below that steps
-    //       the scan reads the byte it wants off the pointer it already has
-    //       rather than off the increment, so no load in the routine waits on
-    //       an add.
-    //
-    "        movzbl  (%rsi), %eax\n"
-    "        sub     $176, %rsp               # three pushes and 176: aligned at every call\n"
-    "        mov     %rdx, 128(%rsp)\n"
-    "        mov     %rcx, 136(%rsp)\n"
-    "        mov     %r8, 144(%rsp)\n"
-    "        mov     %r9, 152(%rsp)\n"
-#ifndef KERNEL_MODE
-    "        test    %r11b, %r11b\n"
-    "        je      .Lmoonwater_format_saved\n"
-    "        movaps  %xmm0, 0(%rsp)\n"
-    "        movaps  %xmm1, 16(%rsp)\n"
-    "        movaps  %xmm2, 32(%rsp)\n"
-    "        movaps  %xmm3, 48(%rsp)\n"
-    "        movaps  %xmm4, 64(%rsp)\n"
-    "        movaps  %xmm5, 80(%rsp)\n"
-    "        movaps  %xmm6, 96(%rsp)\n"
-    "        movaps  %xmm7, 112(%rsp)\n"
-    ".Lmoonwater_format_saved:\n"
-    "        movq    $-128, 160(%rsp)         # eight vector registers left to spend\n"
-#endif
-    "        mov     %rdi, %rbx               # the writer\n"
-    "        mov     %rsi, %rbp               # where the scan is\n"
-    "        mov     %rsi, %rdi               # where the current run of plain text began\n"
-    "        mov     $-32, %r13               # four integer registers left to spend\n"
-    "        lea     208(%rsp), %r11\n"
-    "        mov     %r11, 168(%rsp)          # the caller's stack arguments\n"
-    "        jmp     .Lmoonwater_format_test\n"
-    ".Lmoonwater_format_step:\n"
-    "        inc     %rbp\n"
-    "        movzbl  (%rbp), %eax\n"
-    ".Lmoonwater_format_test:\n"
-    "        test    %al, %al\n"
-    "        jz      .Lmoonwater_format_tail\n"
-    "        cmp     $37, %al\n"
-    "        jne     .Lmoonwater_format_step\n"
-    //
-    //       The run of plain text before the percent, if there was one. The C
-    //       counted the bytes it had stepped over; the two pointers say the
-    //       same thing and cost a register less.
-    //
-    "        cmp     %rdi, %rbp\n"
-    "        je      .Lmoonwater_format_spec\n"
-    "        mov     %rbp, %rsi\n"
-    "        sub     %rdi, %rsi\n"
-    ASM_CALL("rbx")
-    ".Lmoonwater_format_spec:\n"
-    "        movzbl  1(%rbp), %eax\n"
-    "        inc     %rbp\n"
-    "        cmp     $115, %al                # s\n"
-    "        je      .Lmoonwater_format_string\n"
-    "        cmp     $112, %al                # p\n"
-    "        je      .Lmoonwater_format_positive\n"
-    "        cmp     $98, %al                 # b\n"
-    "        je      .Lmoonwater_format_bipolar\n"
-#ifndef KERNEL_MODE
-    "        cmp     $102, %al                # f\n"
-    "        je      .Lmoonwater_format_decimal\n"
-#endif
-    "        cmp     $37, %al\n"
-    "        je      .Lmoonwater_format_literal\n"
-    "        test    %al, %al\n"
-    "        jz      .Lmoonwater_format_done  # a percent at the end writes nothing more\n"
-    ".Lmoonwater_format_next:\n"
-    "        movzbl  1(%rbp), %eax\n"
-    "        inc     %rbp\n"
-    "        mov     %rbp, %rdi\n"
-    "        jmp     .Lmoonwater_format_test\n"
-    //
-    //       The second percent of a pair is the byte to write, so the literal
-    //       needs no constant of its own anywhere.
-    //
-    ".Lmoonwater_format_literal:\n"
-    "        mov     %rbp, %rdi\n"
-    "        mov     $1, %esi\n"
-    ASM_CALL("rbx")
-    "        jmp     .Lmoonwater_format_next\n"
-    ".Lmoonwater_format_string:\n"
-    "        test    %r13, %r13\n"
-    "        jns     .Lmoonwater_format_string_stack\n"
-    "        mov     160(%rsp,%r13), %rdi\n"
-    "        add     $8, %r13\n"
-    ".Lmoonwater_format_string_go:\n"
-    "        xor     %esi, %esi               # zero length: the writer runs to the terminator\n"
-    ASM_CALL("rbx")
-    "        jmp     .Lmoonwater_format_next\n"
-    ".Lmoonwater_format_positive:\n"
-    "        test    %r13, %r13\n"
-    "        jns     .Lmoonwater_format_positive_stack\n"
-    "        mov     160(%rsp,%r13), %rsi\n"
-    "        add     $8, %r13\n"
-    ".Lmoonwater_format_positive_go:\n"
-    "        mov     %rbx, %rdi\n"
-    "        call    moonwater_positive_to_string\n"
-    "        jmp     .Lmoonwater_format_next\n"
-    //
-    //       An int, not a bipolar: the C read one and widened it, and a caller
-    //       that passed a negative number in a full register is relying on the
-    //       sign extension rather than on the top half it handed over.
-    //
-    ".Lmoonwater_format_bipolar:\n"
-    "        test    %r13, %r13\n"
-    "        jns     .Lmoonwater_format_bipolar_stack\n"
-    "        movslq  160(%rsp,%r13), %rsi\n"
-    "        add     $8, %r13\n"
-    ".Lmoonwater_format_bipolar_go:\n"
-    "        mov     %rbx, %rdi\n"
-    "        call    moonwater_bipolar_to_string\n"
-    "        jmp     .Lmoonwater_format_next\n"
-#ifndef KERNEL_MODE
-    //
-    //       A decimal that ran out of vector registers arrives in eight bytes
-    //       of the stack area, not sixteen: the save area is padded and the
-    //       overflow is not.
-    //
-    ".Lmoonwater_format_decimal:\n"
-    "        mov     160(%rsp), %rax\n"
-    "        test    %rax, %rax\n"
-    "        jns     .Lmoonwater_format_decimal_stack\n"
-    "        movsd   128(%rsp,%rax), %xmm0\n"
-    "        add     $16, %rax\n"
-    "        mov     %rax, 160(%rsp)\n"
-    ".Lmoonwater_format_decimal_go:\n"
-    "        mov     %rbx, %rdi\n"
-    "        call    decimal_to_string\n"
-    "        jmp     .Lmoonwater_format_next\n"
-#endif
-    //
-    //       The last run of plain text, written even when it is empty, because
-    //       the C called the writer there unconditionally and a writer is
-    //       allowed to count its calls.
-    //
-    ".Lmoonwater_format_tail:\n"
-    "        mov     %rbp, %rsi\n"
-    "        sub     %rdi, %rsi\n"
-    ASM_CALL("rbx")
-    ".Lmoonwater_format_done:\n"
-    "        add     $176, %rsp\n"
-    "        pop     %r13\n"
-    "        pop     %rbp\n"
-    "        pop     %rbx\n"
-    ASM_RET
-    //
-    //       The arguments that did not fit in a register. Out of line because
-    //       most calls never reach them, and one shared cursor because the
-    //       caller filled that area in argument order whichever kind ran out
-    //       of registers first.
-    //
-    ".Lmoonwater_format_string_stack:\n"
-    "        mov     168(%rsp), %rax\n"
-    "        mov     (%rax), %rdi\n"
-    "        add     $8, %rax\n"
-    "        mov     %rax, 168(%rsp)\n"
-    "        jmp     .Lmoonwater_format_string_go\n"
-    ".Lmoonwater_format_positive_stack:\n"
-    "        mov     168(%rsp), %rax\n"
-    "        mov     (%rax), %rsi\n"
-    "        add     $8, %rax\n"
-    "        mov     %rax, 168(%rsp)\n"
-    "        jmp     .Lmoonwater_format_positive_go\n"
-    ".Lmoonwater_format_bipolar_stack:\n"
-    "        mov     168(%rsp), %rax\n"
-    "        movslq  (%rax), %rsi\n"
-    "        add     $8, %rax\n"
-    "        mov     %rax, 168(%rsp)\n"
-    "        jmp     .Lmoonwater_format_bipolar_go\n"
-#ifndef KERNEL_MODE
-    ".Lmoonwater_format_decimal_stack:\n"
-    "        mov     168(%rsp), %rax\n"
-    "        movsd   (%rax), %xmm0\n"
-    "        add     $8, %rax\n"
-    "        mov     %rax, 168(%rsp)\n"
-    "        jmp     .Lmoonwater_format_decimal_go\n"
-#endif
-    ASM_END(moonwater_format)
-    //
-    //       string_format is the name every caller uses and it cannot be a
-    //       forwarder: C has no way to pass a variadic list on. The assembly is
-    //       the definition and the C name is an alias onto it, the way strlen
-    //       and strcmp above are their own names.
-    //
-    "        .globl  string_format\n"
-    "        .type   string_format, " ASM_TYPE "\n"
-    "        .set    string_format, moonwater_format\n"
 );
 #ifdef KERNEL_MODE
 ASM_EXPORT(memchr);
@@ -3426,193 +3170,6 @@ ASM_FUNC(moonwater_positive_to_string)
     "9:      mov     x0, #0\n"
     ASM_RET
     ASM_END(moonwater_find)
-    //
-    //       string_format -- the loop that reads a format string and hands
-    //       pieces of it to a writer, with the variadic ABI done by hand.
-    //
-    //       The integer save area sits at the top of the frame so it runs into
-    //       the caller's stack arguments, which is where the compiler puts it
-    //       too. The vector one cannot: it is sixteen bytes a register and the
-    //       overflow is eight, so a decimal that missed a register is read
-    //       narrow from the shared stack cursor rather than wide from the save
-    //       area. That cursor is shared because the caller filled the area in
-    //       argument order regardless of which kind ran out of registers first.
-    //
-    //       Six things outlive a call and none of them is the start of the
-    //       current run of plain text: that is the first argument of the write
-    //       which ends the run, so it stays in x0 and every path that comes
-    //       back from a call sets it again from the scan. The vector cursor is
-    //       an offset back from the top of the integer save area rather than a
-    //       pointer with a limit of its own, which is the shape the ABI hands
-    //       the compiler and saves a register here.
-    //
-    //       The first byte of the format string is loaded in the prologue,
-    //       before the argument registers are spilled, because a load is
-    //       several cycles and a spill is not. Every later step reads the byte
-    //       it wants off the pointer it already has rather than off the
-    //       increment, so no load waits on an add.
-    //
-    //       A percent that is the last byte of the string returns without the
-    //       trailing write, and a specifier nobody knows is dropped along with
-    //       its percent. Both are what the C did.
-    //
-    ASM_FUNC(moonwater_format)
-    "        stp     x29, x30, [sp, -256]!\n"
-    "        ldrb    w9, [x1]                 // the first byte, before it is wanted\n"
-    "        mov     x29, sp\n"
-    "        stp     x19, x20, [sp, 16]\n"
-    "        stp     x21, x22, [sp, 32]\n"
-    "        stp     x23, x24, [sp, 48]\n"
-    "        stp     x2, x3, [sp, 208]\n"
-    "        stp     x4, x5, [sp, 224]\n"
-    "        stp     x6, x7, [sp, 240]        // this pair ends at the caller's arguments\n"
-#ifndef KERNEL_MODE
-    "        stp     q0, q1, [sp, 80]\n"
-    "        stp     q2, q3, [sp, 112]\n"
-    "        stp     q4, q5, [sp, 144]\n"
-    "        stp     q6, q7, [sp, 176]\n"
-    "        mov     x23, #-176               // eight vector registers, back from x22\n"
-#endif
-    "        mov     x19, x0                  // the writer\n"
-    "        mov     x20, x1                  // where the scan is\n"
-    "        mov     x0, x1                   // where the current run of plain text began\n"
-    "        add     x21, sp, 208\n"
-    "        add     x22, sp, 256             // one past the integer save area\n"
-    "        add     x24, sp, 256             // the caller's stack arguments\n"
-    "        b       .Lmoonwater_format_test\n"
-    ".Lmoonwater_format_step:\n"
-    "        ldrb    w9, [x20, #1]\n"
-    "        add     x20, x20, #1\n"
-    ".Lmoonwater_format_test:\n"
-    "        cbz     w9, .Lmoonwater_format_tail\n"
-    "        cmp     w9, #37\n"
-    "        b.ne    .Lmoonwater_format_step\n"
-    //
-    //       The run of plain text before the percent, if there was one. The C
-    //       counted the bytes it had stepped over; the two pointers say the
-    //       same thing and cost a register less.
-    //
-    "        cmp     x20, x0\n"
-    "        b.eq    .Lmoonwater_format_spec\n"
-    "        sub     x1, x20, x0\n"
-    ASM_CALL("x19")
-    ".Lmoonwater_format_spec:\n"
-    "        ldrb    w9, [x20, #1]\n"
-    "        add     x20, x20, #1\n"
-    "        cmp     w9, #115                 // s\n"
-    "        b.eq    .Lmoonwater_format_string\n"
-    "        cmp     w9, #112                 // p\n"
-    "        b.eq    .Lmoonwater_format_positive\n"
-    "        cmp     w9, #98                  // b\n"
-    "        b.eq    .Lmoonwater_format_bipolar\n"
-#ifndef KERNEL_MODE
-    "        cmp     w9, #102                 // f\n"
-    "        b.eq    .Lmoonwater_format_decimal\n"
-#endif
-    "        cmp     w9, #37\n"
-    "        b.eq    .Lmoonwater_format_literal\n"
-    "        cbz     w9, .Lmoonwater_format_done\n"
-    ".Lmoonwater_format_next:\n"
-    "        ldrb    w9, [x20, #1]\n"
-    "        add     x20, x20, #1\n"
-    "        mov     x0, x20\n"
-    "        b       .Lmoonwater_format_test\n"
-    //
-    //       The second percent of a pair is the byte to write, so the literal
-    //       needs no constant of its own anywhere.
-    //
-    ".Lmoonwater_format_literal:\n"
-    "        mov     x0, x20\n"
-    "        mov     x1, #1\n"
-    ASM_CALL("x19")
-    "        b       .Lmoonwater_format_next\n"
-    ".Lmoonwater_format_string:\n"
-    "        cmp     x21, x22\n"
-    "        b.hs    .Lmoonwater_format_string_stack\n"
-    "        ldr     x0, [x21], #8\n"
-    ".Lmoonwater_format_string_go:\n"
-    "        mov     x1, #0                   // zero length: the writer runs to the terminator\n"
-    ASM_CALL("x19")
-    "        b       .Lmoonwater_format_next\n"
-    ".Lmoonwater_format_positive:\n"
-    "        cmp     x21, x22\n"
-    "        b.hs    .Lmoonwater_format_positive_stack\n"
-    "        ldr     x1, [x21], #8\n"
-    ".Lmoonwater_format_positive_go:\n"
-    "        mov     x0, x19\n"
-    "        bl      moonwater_positive_to_string\n"
-    "        b       .Lmoonwater_format_next\n"
-    //
-    //       An int, not a bipolar: the C read one and widened it, and a caller
-    //       that passed a negative number in a full register is relying on the
-    //       sign extension rather than on the top half it handed over.
-    //
-    ".Lmoonwater_format_bipolar:\n"
-    "        cmp     x21, x22\n"
-    "        b.hs    .Lmoonwater_format_bipolar_stack\n"
-    "        ldrsw   x1, [x21], #8\n"
-    ".Lmoonwater_format_bipolar_go:\n"
-    "        mov     x0, x19\n"
-    "        bl      moonwater_bipolar_to_string\n"
-    "        b       .Lmoonwater_format_next\n"
-#ifndef KERNEL_MODE
-    //
-    //       A decimal that ran out of vector registers arrives in eight bytes
-    //       of the stack area, not sixteen: the save area is padded and the
-    //       overflow is not.
-    //
-    ".Lmoonwater_format_decimal:\n"
-    "        cmn     x23, #48\n"
-    "        b.ge    .Lmoonwater_format_decimal_stack\n"
-    "        ldr     d0, [x22, x23]\n"
-    "        add     x23, x23, #16\n"
-    ".Lmoonwater_format_decimal_go:\n"
-    "        mov     x0, x19\n"
-    "        bl      decimal_to_string\n"
-    "        b       .Lmoonwater_format_next\n"
-#endif
-    //
-    //       The last run of plain text, written even when it is empty, because
-    //       the C called the writer there unconditionally and a writer is
-    //       allowed to count its calls.
-    //
-    ".Lmoonwater_format_tail:\n"
-    "        sub     x1, x20, x0\n"
-    ASM_CALL("x19")
-    ".Lmoonwater_format_done:\n"
-    "        ldp     x19, x20, [sp, 16]\n"
-    "        ldp     x21, x22, [sp, 32]\n"
-    "        ldp     x23, x24, [sp, 48]\n"
-    "        ldp     x29, x30, [sp], 256\n"
-    ASM_RET
-    //
-    //       The arguments that did not fit in a register. Out of line because
-    //       most calls never reach them.
-    //
-    ".Lmoonwater_format_string_stack:\n"
-    "        ldr     x0, [x24], #8\n"
-    "        b       .Lmoonwater_format_string_go\n"
-    ".Lmoonwater_format_positive_stack:\n"
-    "        ldr     x1, [x24], #8\n"
-    "        b       .Lmoonwater_format_positive_go\n"
-    ".Lmoonwater_format_bipolar_stack:\n"
-    "        ldrsw   x1, [x24], #8\n"
-    "        b       .Lmoonwater_format_bipolar_go\n"
-#ifndef KERNEL_MODE
-    ".Lmoonwater_format_decimal_stack:\n"
-    "        ldr     d0, [x24], #8\n"
-    "        b       .Lmoonwater_format_decimal_go\n"
-#endif
-    ASM_END(moonwater_format)
-    //
-    //       string_format is the name every caller uses and it cannot be a
-    //       forwarder: C has no way to pass a variadic list on. The assembly is
-    //       the definition and the C name is an alias onto it, the way strlen
-    //       and strcmp above are their own names.
-    //
-    "        .globl  string_format\n"
-    "        .type   string_format, " ASM_TYPE "\n"
-    "        .set    string_format, moonwater_format\n"
 );
 #ifdef KERNEL_MODE
 ASM_EXPORT(strchrnul);
@@ -4540,155 +4097,6 @@ ASM_FUNC(moonwater_positive_to_string)
     "9:      li      a0, 0\n"
     ASM_RET
     ASM_END(moonwater_find)
-    //
-    //       string_format -- the loop that reads a format string and hands
-    //       pieces of it to a writer, with the variadic ABI done by hand.
-    //
-    //       This is the cheap one of the three. A variadic decimal travels in
-    //       an integer register here, so there is no second save area and no
-    //       second cursor: the six argument registers are spilled at the top of
-    //       the frame, where they run straight into the caller's stack
-    //       arguments, and one pointer walks the lot. The decimal is loaded out
-    //       of it into fa0 at the call, which is the only floating point
-    //       instruction in the routine and the reason it is guarded.
-    //
-    //       Four things outlive a call and none of them is the start of the
-    //       current run of plain text: that is the first argument of the write
-    //       which ends the run, so it stays in a0 and every path that comes
-    //       back from a call sets it again from the scan.
-    //
-    //       The first byte of the format string is loaded in the prologue,
-    //       before the argument registers are spilled, because a load is
-    //       several cycles and a spill is not. Every later step reads the byte
-    //       it wants off the pointer it already has rather than off the
-    //       increment, so no load waits on an add. The percent itself is kept
-    //       in a register across the scan and put back after a call, which is
-    //       one instruction a byte cheaper than materialising it every time.
-    //
-    //       A percent that is the last byte of the string returns without the
-    //       trailing write, and a specifier nobody knows is dropped along with
-    //       its percent. Both are what the C did.
-    //
-    ASM_FUNC(moonwater_format)
-    "        addi    sp, sp, -80\n"
-    "        lbu     t0, 0(a1)                # the first byte, before it is wanted\n"
-    "        sd      ra, 0(sp)\n"
-    "        sd      s0, 8(sp)\n"
-    "        sd      s1, 16(sp)\n"
-    "        sd      s2, 24(sp)\n"
-    "        sd      a2, 32(sp)\n"
-    "        sd      a3, 40(sp)\n"
-    "        sd      a4, 48(sp)\n"
-    "        sd      a5, 56(sp)\n"
-    "        sd      a6, 64(sp)\n"
-    "        sd      a7, 72(sp)               # the last of these ends at the caller's arguments\n"
-    "        mv      s0, a0                   # the writer\n"
-    "        mv      s1, a1                   # where the scan is\n"
-    "        mv      a0, a1                   # where the current run of plain text began\n"
-    "        addi    s2, sp, 32               # the next argument, wherever it lives\n"
-    "        li      t2, 37\n"
-    "        j       .Lmoonwater_format_test\n"
-    ".Lmoonwater_format_step:\n"
-    "        lbu     t0, 1(s1)\n"
-    "        addi    s1, s1, 1\n"
-    ".Lmoonwater_format_test:\n"
-    "        beqz    t0, .Lmoonwater_format_tail\n"
-    "        bne     t0, t2, .Lmoonwater_format_step\n"
-    //
-    //       The run of plain text before the percent, if there was one. The C
-    //       counted the bytes it had stepped over; the two pointers say the
-    //       same thing and cost a register less.
-    //
-    "        beq     s1, a0, .Lmoonwater_format_spec\n"
-    "        sub     a1, s1, a0\n"
-    ASM_CALL("s0")
-    ".Lmoonwater_format_spec:\n"
-    "        lbu     t0, 1(s1)\n"
-    "        addi    s1, s1, 1\n"
-    "        li      t1, 115                  # s\n"
-    "        beq     t0, t1, .Lmoonwater_format_string\n"
-    "        li      t1, 112                  # p\n"
-    "        beq     t0, t1, .Lmoonwater_format_positive\n"
-    "        li      t1, 98                   # b\n"
-    "        beq     t0, t1, .Lmoonwater_format_bipolar\n"
-#ifndef KERNEL_MODE
-    "        li      t1, 102                  # f\n"
-    "        beq     t0, t1, .Lmoonwater_format_decimal\n"
-#endif
-    "        li      t1, 37\n"
-    "        beq     t0, t1, .Lmoonwater_format_literal\n"
-    "        beqz    t0, .Lmoonwater_format_done\n"
-    ".Lmoonwater_format_next:\n"
-    "        li      t2, 37                   # the call had it\n"
-    "        lbu     t0, 1(s1)\n"
-    "        addi    s1, s1, 1\n"
-    "        mv      a0, s1\n"
-    "        j       .Lmoonwater_format_test\n"
-    //
-    //       The second percent of a pair is the byte to write, so the literal
-    //       needs no constant of its own anywhere.
-    //
-    ".Lmoonwater_format_literal:\n"
-    "        mv      a0, s1\n"
-    "        li      a1, 1\n"
-    ASM_CALL("s0")
-    "        j       .Lmoonwater_format_next\n"
-    ".Lmoonwater_format_string:\n"
-    "        ld      a0, 0(s2)\n"
-    "        addi    s2, s2, 8\n"
-    "        li      a1, 0                    # zero length: the writer runs to the terminator\n"
-    ASM_CALL("s0")
-    "        j       .Lmoonwater_format_next\n"
-    ".Lmoonwater_format_positive:\n"
-    "        ld      a1, 0(s2)\n"
-    "        addi    s2, s2, 8\n"
-    "        mv      a0, s0\n"
-    "        call    moonwater_positive_to_string\n"
-    "        j       .Lmoonwater_format_next\n"
-    //
-    //       An int, not a bipolar: the C read one and widened it, and a caller
-    //       that passed a negative number in a full register is relying on the
-    //       sign extension rather than on the top half it handed over.
-    //
-    ".Lmoonwater_format_bipolar:\n"
-    "        lw      a1, 0(s2)\n"
-    "        addi    s2, s2, 8\n"
-    "        mv      a0, s0\n"
-    "        call    moonwater_bipolar_to_string\n"
-    "        j       .Lmoonwater_format_next\n"
-#ifndef KERNEL_MODE
-    ".Lmoonwater_format_decimal:\n"
-    "        fld     fa0, 0(s2)\n"
-    "        addi    s2, s2, 8\n"
-    "        mv      a0, s0\n"
-    "        call    decimal_to_string\n"
-    "        j       .Lmoonwater_format_next\n"
-#endif
-    //
-    //       The last run of plain text, written even when it is empty, because
-    //       the C called the writer there unconditionally and a writer is
-    //       allowed to count its calls.
-    //
-    ".Lmoonwater_format_tail:\n"
-    "        sub     a1, s1, a0\n"
-    ASM_CALL("s0")
-    ".Lmoonwater_format_done:\n"
-    "        ld      ra, 0(sp)\n"
-    "        ld      s0, 8(sp)\n"
-    "        ld      s1, 16(sp)\n"
-    "        ld      s2, 24(sp)\n"
-    "        addi    sp, sp, 80\n"
-    ASM_RET
-    ASM_END(moonwater_format)
-    //
-    //       string_format is the name every caller uses and it cannot be a
-    //       forwarder: C has no way to pass a variadic list on. The assembly is
-    //       the definition and the C name is an alias onto it, the way strlen
-    //       and strcmp above are their own names.
-    //
-    "        .globl  string_format\n"
-    "        .type   string_format, " ASM_TYPE "\n"
-    "        .set    string_format, moonwater_format\n"
 );
 #ifdef KERNEL_MODE
 ASM_EXPORT(strchrnul);
@@ -5483,20 +4891,106 @@ fn decimal_to_string(writer write, decimal value)
 }
 #endif // KERNEL_MODE
 
-//      string_format is assembly. C has no way to pass a variadic list on, so
-//      there is no forwarder to write: the loop in the block above is the
-//      definition, and this prototype is what makes every call site promote
-//      its arguments the way that loop expects to find them.
-//
-//      The extension hooks that used to sit in the switch went with the C.
-//      Nothing in this tree ever defined one, and an unknown percent is
-//      dropped exactly as it was before, so this refuses to build rather than
-//      quietly losing them if somebody brings them back.
-#if defined(string_format_extension_0) || defined(string_format_extension_1) || \
-    defined(string_format_extension_2) || defined(string_format_extension_3)
-#error "string_format is assembly now and carries no extension hooks"
+fn string_format(writer write, string_address format, ...)
+{
+        var_args args;
+        var_list(args, format);
+
+        string_address segment_start = format;
+        positive index = 0;
+
+        while (string_get(format))
+        {
+                if string_not (format, '%')
+                {
+                        format++;
+                        index++;
+                        continue;
+                }
+
+                if (index > 0)
+                        write(segment_start, format - segment_start);
+
+                format++;
+                index = 0;
+
+                switch (string_get(format))
+                {
+                case 'b':
+                {
+                        // todo: fix, long int breaks here...
+                        int raw_value = var_list_get(args, int);
+                        bipolar value = (bipolar)raw_value;
+                        bipolar_to_string(write, value);
+                        break;
+                }
+                case 'p':
+                {
+                        positive value = var_list_get(args, positive);
+                        positive_to_string(write, value);
+                        break;
+                }
+#ifndef KERNEL_MODE // Temporary
+                case 'f':
+                {
+                        decimal value = var_list_get(args, decimal);
+                        decimal_to_string(write, value);
+                        break;
+                }
 #endif
-fn string_format(writer write, string_address format, ...);
+                case 's':
+                {
+                        string_address value = var_list_get(args, string_address);
+                        write(value, 0);
+                        break;
+                }
+                case '%':
+                        write("%", 1);
+                        break;
+
+// Optional user extensions 0 - 9
+// if up to 9 is needed open a pr!
+#ifdef string_format_extension_0
+                case '0':
+                {
+                        string_format_extension_0(write, args);
+                        break;
+                }
+#endif
+#ifdef string_format_extension_1
+                case '1':
+                {
+                        string_format_extension_1(write, args);
+                        break;
+                }
+#endif
+#ifdef string_format_extension_2
+                case '2':
+                {
+                        string_format_extension_2(write, args);
+                        break;
+                }
+#endif
+#ifdef string_format_extension_3
+                case '3':
+                {
+                        string_format_extension_3(write, args);
+                        break;
+                }
+#endif
+
+                case end:
+                        return;
+                }
+
+                format++;
+                segment_start = format;
+        }
+
+        write(segment_start, format - segment_start);
+
+        var_list_end(args);
+}
 
 // ### Takes a path and writes out the last directory name
 fn path_basename(writer write, string_address input)
