@@ -2445,8 +2445,10 @@ __asm__(
     "mov %cl, (%rdi)\n   mov %cl, -1(%rdi,%rdx)\n"
     "shr $1, %rdx\n   mov %cl, (%rdi,%rdx)\n"
     "9:  RET\n"
-    "8:  mov %ecx, (%rdi)\n   mov %ecx, -4(%rdi,%rdx)\n   RET\n"
-    "7:  mov %rcx, (%rdi)\n   mov %rcx, -8(%rdi,%rdx)\n   RET\n"
+    "8:  mov %ecx, (%rdi)\n   mov %ecx, -4(%rdi,%rdx)\n"
+    ASM_RET
+    "7:  mov %rcx, (%rdi)\n   mov %rcx, -8(%rdi,%rdx)\n"
+    ASM_RET
     "6:  cmpb $0, cpu_has_avx2(%rip)\n   je 2f\n"
     //
     //       vpbroadcastb into xmm rather than ymm on purpose: a VEX encoded
@@ -2456,22 +2458,26 @@ __asm__(
     //
     "vmovd %ecx, %xmm0\n   vpbroadcastb %xmm0, %xmm0\n"
     "cmp $32, %rdx\n   ja 3f\n"
-    "vmovdqu %xmm0, (%rdi)\n   vmovdqu %xmm0, -16(%rdi,%rdx)\n   RET\n"
+    "vmovdqu %xmm0, (%rdi)\n   vmovdqu %xmm0, -16(%rdi,%rdx)\n"
+    ASM_RET
     "3:  cmpb $0, cpu_has_avx512(%rip)\n   jne 5f\n"
     "vinserti128 $1, %xmm0, %ymm0, %ymm0\n"
     "cmp $64, %rdx\n   ja 4f\n"
     "vmovdqu %ymm0, (%rdi)\n   vmovdqu %ymm0, -32(%rdi,%rdx)\n"
-    "vzeroupper\n   RET\n"
+    "vzeroupper\n"
+    ASM_RET
     "4:  cmp $128, %rdx\n   ja 1f\n"
     "vmovdqu %ymm0, (%rdi)\n   vmovdqu %ymm0, 32(%rdi)\n"
     "vmovdqu %ymm0, -64(%rdi,%rdx)\n   vmovdqu %ymm0, -32(%rdi,%rdx)\n"
-    "vzeroupper\n   RET\n"
+    "vzeroupper\n"
+    ASM_RET
     "1:  cmp $256, %rdx\n   ja 0f\n"
     "vmovdqu %ymm0, (%rdi)\n   vmovdqu %ymm0, 32(%rdi)\n"
     "vmovdqu %ymm0, 64(%rdi)\n   vmovdqu %ymm0, 96(%rdi)\n"
     "vmovdqu %ymm0, -128(%rdi,%rdx)\n   vmovdqu %ymm0, -96(%rdi,%rdx)\n"
     "vmovdqu %ymm0, -64(%rdi,%rdx)\n   vmovdqu %ymm0, -32(%rdi,%rdx)\n"
-    "vzeroupper\n   RET\n"
+    "vzeroupper\n"
+    ASM_RET
     //
     //       Above 256: an unaligned store at the front, the destination aligned
     //       up past it, then 128 bytes an iteration. The store that ends it is
@@ -2486,7 +2492,8 @@ __asm__(
     "add $128, %rdi\n   cmp %r10, %rdi\n   jbe 1b\n"
     "1:  vmovdqu %ymm0, -128(%r8)\n   vmovdqu %ymm0, -96(%r8)\n"
     "vmovdqu %ymm0, -64(%r8)\n   vmovdqu %ymm0, -32(%r8)\n"
-    "vzeroupper\n   RET\n"
+    "vzeroupper\n"
+    ASM_RET
     //
     //       The same shape twice as wide. The rungs go one further because the
     //       loop writes 256 bytes an iteration and a size that cannot fit one
@@ -2497,20 +2504,24 @@ __asm__(
     "5:  vpbroadcastb %ecx, %zmm0\n"
     "cmp $64, %rdx\n   ja 4f\n"
     "vmovdqu %ymm0, (%rdi)\n   vmovdqu %ymm0, -32(%rdi,%rdx)\n"
-    "vzeroupper\n   RET\n"
+    "vzeroupper\n"
+    ASM_RET
     "4:  cmp $128, %rdx\n   ja 1f\n"
     "vmovdqu64 %zmm0, (%rdi)\n   vmovdqu64 %zmm0, -64(%rdi,%rdx)\n"
-    "vzeroupper\n   RET\n"
+    "vzeroupper\n"
+    ASM_RET
     "1:  cmp $256, %rdx\n   ja 0f\n"
     "vmovdqu64 %zmm0, (%rdi)\n   vmovdqu64 %zmm0, 64(%rdi)\n"
     "vmovdqu64 %zmm0, -128(%rdi,%rdx)\n   vmovdqu64 %zmm0, -64(%rdi,%rdx)\n"
-    "vzeroupper\n   RET\n"
+    "vzeroupper\n"
+    ASM_RET
     "0:  cmp $512, %rdx\n   ja 0f\n"
     "vmovdqu64 %zmm0, (%rdi)\n   vmovdqu64 %zmm0, 64(%rdi)\n"
     "vmovdqu64 %zmm0, 128(%rdi)\n   vmovdqu64 %zmm0, 192(%rdi)\n"
     "vmovdqu64 %zmm0, -256(%rdi,%rdx)\n   vmovdqu64 %zmm0, -192(%rdi,%rdx)\n"
     "vmovdqu64 %zmm0, -128(%rdi,%rdx)\n   vmovdqu64 %zmm0, -64(%rdi,%rdx)\n"
-    "vzeroupper\n   RET\n"
+    "vzeroupper\n"
+    ASM_RET
     "0:  lea (%rdi,%rdx), %r8\n   vmovdqu64 %zmm0, (%rdi)\n"
     "add $64, %rdi\n   and $-64, %rdi\n   lea -256(%r8), %r10\n"
     ".balign 16\n"
@@ -2519,7 +2530,8 @@ __asm__(
     "add $256, %rdi\n   cmp %r10, %rdi\n   jbe 1b\n"
     "1:  vmovdqu64 %zmm0, -256(%r8)\n   vmovdqu64 %zmm0, -192(%r8)\n"
     "vmovdqu64 %zmm0, -128(%r8)\n   vmovdqu64 %zmm0, -64(%r8)\n"
-    "vzeroupper\n   RET\n"
+    "vzeroupper\n"
+    ASM_RET
     //
     //       No vector registers past here. rep stosb stays because on a machine
     //       old enough to be here it is still the widest store the part has, and
@@ -2529,7 +2541,8 @@ __asm__(
     "lea (%rdi,%rdx), %r9\n   mov %rcx, (%rdi)\n"
     "add $8, %rdi\n   and $-8, %rdi\n   lea -8(%r9), %r10\n"
     "1:  mov %rcx, (%rdi)\n   add $8, %rdi\n   cmp %r10, %rdi\n   jbe 1b\n"
-    "mov %rcx, -8(%r9)\n   RET\n"
+    "mov %rcx, -8(%r9)\n"
+    ASM_RET
     "0:  mov %rax, %r11\n   mov %ecx, %eax  # rep stosb stores al\n"
     "mov %rdx, %rcx\n   rep stosb\n   mov %r11, %rax\n"
     ASM_RET
@@ -2538,14 +2551,30 @@ __asm__(
     ASM_FUNC(memory_copy_fast)
     "mov %rdi, %rax\n   cmp $32, %rdx\n   ja 6f\n"
     "cmp $16, %rdx\n   jb 7f\n"
-    "vmovdqu (%rsi), %xmm0\n   vmovdqu -16(%rsi,%rdx), %xmm1\n"
-    "vmovdqu %xmm0, (%rdi)\n   vmovdqu %xmm1, -16(%rdi,%rdx)\n   RET\n"
+    //
+    //       movdqu, not vmovdqu. Naming an xmm register does not make an
+    //       instruction SSE: the v spelling is VEX encoded whatever width it
+    //       operates on, so this was AVX on a path with no feature test in
+    //       front of it. Every copy of sixteen to thirty two bytes ran it, and
+    //       on anything without AVX -- Nehalem, Core 2, an older Atom, a
+    //       virtual machine told to be one of those -- it is an invalid
+    //       opcode in the first thing init does, and the kernel panics on
+    //       being unable to start init at all.
+    //
+    //       SSE2 is baseline on x86_64, so this spelling needs no guard and
+    //       this path stays where it belongs: reachable by everything.
+    //
+    "movdqu (%rsi), %xmm0\n   movdqu -16(%rsi,%rdx), %xmm1\n"
+    "movdqu %xmm0, (%rdi)\n   movdqu %xmm1, -16(%rdi,%rdx)\n"
+    ASM_RET
     "7:  cmp $8, %rdx\n   jb 8f\n"
     "mov (%rsi), %r9\n   mov -8(%rsi,%rdx), %r10\n"
-    "mov %r9, (%rdi)\n   mov %r10, -8(%rdi,%rdx)\n   RET\n"
+    "mov %r9, (%rdi)\n   mov %r10, -8(%rdi,%rdx)\n"
+    ASM_RET
     "8:  cmp $4, %rdx\n   jb 0f\n"
     "mov (%rsi), %r9d\n   mov -4(%rsi,%rdx), %r10d\n"
-    "mov %r9d, (%rdi)\n   mov %r10d, -4(%rdi,%rdx)\n   RET\n"
+    "mov %r9d, (%rdi)\n   mov %r10d, -4(%rdi,%rdx)\n"
+    ASM_RET
     "0:  test %rdx, %rdx\n   jz 9f\n"
     // all three read before any is written: at one or two bytes of overlap the
     // store to the first would otherwise be the load for the middle
@@ -2562,13 +2591,15 @@ __asm__(
     "cmp $64, %rdx\n   ja 4f\n"
     "vmovdqu (%rsi), %ymm0\n   vmovdqu -32(%rsi,%rdx), %ymm1\n"
     "vmovdqu %ymm0, (%rdi)\n   vmovdqu %ymm1, -32(%rdi,%rdx)\n"
-    "vzeroupper\n   RET\n"
+    "vzeroupper\n"
+    ASM_RET
     "4:  cmp $128, %rdx\n   ja 1f\n"
     "vmovdqu (%rsi), %ymm0\n   vmovdqu 32(%rsi), %ymm1\n"
     "vmovdqu -64(%rsi,%rdx), %ymm2\n   vmovdqu -32(%rsi,%rdx), %ymm3\n"
     "vmovdqu %ymm0, (%rdi)\n   vmovdqu %ymm1, 32(%rdi)\n"
     "vmovdqu %ymm2, -64(%rdi,%rdx)\n   vmovdqu %ymm3, -32(%rdi,%rdx)\n"
-    "vzeroupper\n   RET\n"
+    "vzeroupper\n"
+    ASM_RET
     "1:  cmp $256, %rdx\n   ja 0f\n"
     "vmovdqu (%rsi), %ymm0\n   vmovdqu 32(%rsi), %ymm1\n"
     "vmovdqu 64(%rsi), %ymm2\n   vmovdqu 96(%rsi), %ymm3\n"
@@ -2578,7 +2609,8 @@ __asm__(
     "vmovdqu %ymm2, 64(%rdi)\n   vmovdqu %ymm3, 96(%rdi)\n"
     "vmovdqu %ymm4, -128(%rdi,%rdx)\n   vmovdqu %ymm5, -96(%rdi,%rdx)\n"
     "vmovdqu %ymm6, -64(%rdi,%rdx)\n   vmovdqu %ymm7, -32(%rdi,%rdx)\n"
-    "vzeroupper\n   RET\n"
+    "vzeroupper\n"
+    ASM_RET
     //
     //       The last 128 bytes are read into ymm4-7 before the head store, so
     //       the loop may write over the source it has already passed.
@@ -2599,22 +2631,26 @@ __asm__(
     "vmovdqu %ymm4, -128(%r8)\n   vmovdqu %ymm5, -96(%r8)\n"
     "vmovdqu %ymm6, -64(%r8)\n   vmovdqu %ymm7, -32(%r8)\n"
     "vmovdqu %ymm8, (%rax)\n"
-    "vzeroupper\n   RET\n"
+    "vzeroupper\n"
+    ASM_RET
     //       The zmm ladder, one rung longer for the reason memory_fill gives.
     "5:  cmp $64, %rdx\n   ja 4f\n"
     "vmovdqu (%rsi), %ymm0\n   vmovdqu -32(%rsi,%rdx), %ymm1\n"
     "vmovdqu %ymm0, (%rdi)\n   vmovdqu %ymm1, -32(%rdi,%rdx)\n"
-    "vzeroupper\n   RET\n"
+    "vzeroupper\n"
+    ASM_RET
     "4:  cmp $128, %rdx\n   ja 1f\n"
     "vmovdqu64 (%rsi), %zmm0\n   vmovdqu64 -64(%rsi,%rdx), %zmm1\n"
     "vmovdqu64 %zmm0, (%rdi)\n   vmovdqu64 %zmm1, -64(%rdi,%rdx)\n"
-    "vzeroupper\n   RET\n"
+    "vzeroupper\n"
+    ASM_RET
     "1:  cmp $256, %rdx\n   ja 0f\n"
     "vmovdqu64 (%rsi), %zmm0\n   vmovdqu64 64(%rsi), %zmm1\n"
     "vmovdqu64 -128(%rsi,%rdx), %zmm2\n   vmovdqu64 -64(%rsi,%rdx), %zmm3\n"
     "vmovdqu64 %zmm0, (%rdi)\n   vmovdqu64 %zmm1, 64(%rdi)\n"
     "vmovdqu64 %zmm2, -128(%rdi,%rdx)\n   vmovdqu64 %zmm3, -64(%rdi,%rdx)\n"
-    "vzeroupper\n   RET\n"
+    "vzeroupper\n"
+    ASM_RET
     "0:  cmp $512, %rdx\n   ja 0f\n"
     "vmovdqu64 (%rsi), %zmm0\n   vmovdqu64 64(%rsi), %zmm1\n"
     "vmovdqu64 128(%rsi), %zmm2\n   vmovdqu64 192(%rsi), %zmm3\n"
@@ -2624,7 +2660,8 @@ __asm__(
     "vmovdqu64 %zmm2, 128(%rdi)\n   vmovdqu64 %zmm3, 192(%rdi)\n"
     "vmovdqu64 %zmm4, -256(%rdi,%rdx)\n   vmovdqu64 %zmm5, -192(%rdi,%rdx)\n"
     "vmovdqu64 %zmm6, -128(%rdi,%rdx)\n   vmovdqu64 %zmm7, -64(%rdi,%rdx)\n"
-    "vzeroupper\n   RET\n"
+    "vzeroupper\n"
+    ASM_RET
     "0:  lea (%rdi,%rdx), %r8\n   lea (%rsi,%rdx), %r11\n"
     "vmovdqu64 -256(%r11), %zmm4\n   vmovdqu64 -192(%r11), %zmm5\n"
     "vmovdqu64 -128(%r11), %zmm6\n   vmovdqu64 -64(%r11), %zmm7\n"
@@ -2641,7 +2678,8 @@ __asm__(
     "vmovdqu64 %zmm4, -256(%r8)\n   vmovdqu64 %zmm5, -192(%r8)\n"
     "vmovdqu64 %zmm6, -128(%r8)\n   vmovdqu64 %zmm7, -64(%r8)\n"
     "vmovdqu64 %zmm8, (%rax)\n"
-    "vzeroupper\n   RET\n"
+    "vzeroupper\n"
+    ASM_RET
     //       Neither extension: eight bytes at a time, and rep movsb where it pays.
     "2:  cmp $256, %rdx\n   jae 0f\n"
     "lea (%rdi,%rdx), %r8\n   lea (%rsi,%rdx), %r11\n"
@@ -2651,7 +2689,8 @@ __asm__(
     "lea -8(%r8), %rcx\n"
     "1:  mov (%rsi), %r9\n   mov %r9, (%rdi)\n"
     "add $8, %rsi\n   add $8, %rdi\n   cmp %rcx, %rdi\n   jbe 1b\n"
-    "mov %r10, -8(%r8)\n   mov %rdx, (%rax)\n   RET\n"
+    "mov %r10, -8(%r8)\n   mov %rdx, (%rax)\n"
+    ASM_RET
     "0:  mov %rdx, %rcx\n   rep movsb\n"
     ASM_RET
     ASM_END(memory_copy_fast)
@@ -2681,7 +2720,8 @@ __asm__(
     "4:  vmovdqu %ymm8, -32(%rdi,%rdx)\n"
     "vmovdqu %ymm4, (%rdi)\n   vmovdqu %ymm5, 32(%rdi)\n"
     "vmovdqu %ymm6, 64(%rdi)\n   vmovdqu %ymm7, 96(%rdi)\n"
-    "vzeroupper\n   RET\n"
+    "vzeroupper\n"
+    ASM_RET
     //
     //       Under 128 bytes, or with no vector registers to use: eight at a time
     //       downwards, with the first eight kept in a register so the store that
@@ -2693,14 +2733,16 @@ __asm__(
     "7:  cmp %rcx, %r8\n   jbe 8f\n"
     "sub $8, %r8\n   sub $8, %r11\n   mov (%r11), %r10\n   mov %r10, (%r8)\n"
     "jmp 7b\n"
-    "8:  mov %r9, (%rdi)\n   RET\n"
+    "8:  mov %r9, (%rdi)\n"
+    ASM_RET
     //
     //       Under eight there is no direction left to get wrong: both halves are
     //       in registers before either of them is written.
     //
     "6:  cmp $4, %rdx\n   jb 9f\n"
     "mov (%rsi), %r9d\n   mov -4(%rsi,%rdx), %r10d\n"
-    "mov %r9d, (%rdi)\n   mov %r10d, -4(%rdi,%rdx)\n   RET\n"
+    "mov %r9d, (%rdi)\n   mov %r10d, -4(%rdi,%rdx)\n"
+    ASM_RET
     "9:  test %rdx, %rdx\n   jz 0f\n"
     // all three read before any is written: at one or two bytes of overlap the
     // store to the first would otherwise be the load for the middle
@@ -2852,7 +2894,8 @@ __asm__(
     "vpblendvb %ymm4, %ymm3, %ymm0, %ymm0\n   vmovdqa %ymm0, (%rdi)\n"
     "0:  add $32, %rdi\n   jmp 8b\n"
     "4:  vzeroupper\n   jmp 5f\n"
-    "6:  vzeroupper\n   RET\n"
+    "6:  vzeroupper\n"
+    ASM_RET
     "5:  movzbl (%rdi), %eax\n   test %al, %al\n   jz 9f\n   .balign 16\n"
     "1:  cmp %ecx, %eax\n   je 4f\n"
     "3:  inc %rdi\n   movzbl (%rdi), %eax\n   test %al, %al\n   jnz 1b\n"
@@ -2884,7 +2927,8 @@ __asm__(
     "4:  cmpb $0, (%rax)\n   je 8f  # the terminator came first: no cut\n"
     "movb $0, (%rax)\n   inc %rax\n   cmpb $0, (%rax)\n   je 8f\n"
     "RET\n"
-    "8:  xor %eax, %eax\n   RET\n"
+    "8:  xor %eax, %eax\n"
+    ASM_RET
     //       No AVX2: the byte loop this replaced, rotated as described above.
     "5:  movzbl (%rdi), %eax\n   test %al, %al\n   jz 8b\n   .balign 16\n"
     "1:  cmp %edx, %eax\n   je 2f\n   inc %rdi\n   movzbl (%rdi), %eax\n"
