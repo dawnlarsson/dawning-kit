@@ -46,6 +46,14 @@ compiler=${CC:-gcc}
 # Under dash -- /bin/sh on Debian and Ubuntu -- every append after the first
 # silently failed, so the compiler ran without -O2 or any hardening flag.
 # A single quoted assignment is POSIX and cannot partially apply.
+# -flto and the assembly in src/library.c do not get on: a routine written
+# inside an asm string calls string_length, positive_to_string,
+# decimal_to_string, file_new and working_directory by name, and the link time
+# optimiser cannot see a call written inside a string, so on gcc 16 it drops
+# all five and the link ends in undefined references. Marking each definition
+# KEEP in library.c is what fixes it. Until then anything including library.c
+# is built the way src/test/run builds it, without -flto.
+#
 # Close to profile/any's program_flags, which is the same list for the image's
 # programs, and deliberately not identical. That one carries -ffunction-sections
 # and -fdata-sections; this one does not need them, because kit/spark strips
