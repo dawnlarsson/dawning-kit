@@ -202,6 +202,77 @@ static b32 lex_add(b32 kind, b32 op, string_address text, positive length)
 }
 
 /*
+        Past a nesting that a word carries whole.
+
+        $( ), ${ } and a backtick pair hold whatever is between them, blanks and
+        operators included, because what is in there is a command or a name and
+        not this line's business. Quotes inside are stepped over rather than
+        looked into, so a parenthesis in a string does not close anything.
+
+        Returns where the nesting ends, one past its closing byte, or where it
+        started when there is no closing byte at all -- an unfinished one is the
+        parser's to complain about, the same as an unfinished quote.
+*/
+static string_address lex_nesting(string_address at)
+{
+        p8 open = string_get(at);
+        p8 close = open == '(' ? ')' : open == '{' ? '}' : open;
+        positive depth = 0;
+        string_address step = at;
+
+        while (string_get(step))
+        {
+                p8 c = string_get(step);
+
+                if (c == '\\' && string_get(step + 1))
+                {
+                        step += 2;
+                        continue;
+                }
+
+                if (c == '\'' || c == '"')
+                {
+                        p8 quote = c;
+
+                        step++;
+
+                        while (string_get(step) && string_get(step) != quote)
+                        {
+                                if (quote == '"' && string_get(step) == '\\' &&
+                                    string_get(step + 1))
+                                        step++;
+
+                                step++;
+                        }
+
+                        if (string_get(step))
+                                step++;
+
+                        continue;
+                }
+
+                // A backtick pair has the same byte at both ends, so it
+                // opens on the first one and closes on the next.
+                if (open == close)
+                {
+                        if (c == open)
+                                depth = depth ? 0 : 1;
+                }
+                else if (c == open)
+                        depth++;
+                else if (c == close)
+                        depth--;
+
+                step++;
+
+                if (!depth)
+                        return step;
+        }
+
+        return at;
+}
+
+/*
         One word, quotes and all.
 
         A run of ordinary bytes is taken whole by string_span; anything else is
@@ -264,7 +335,34 @@ static b32 lex_word(string_address address_to at)
                 }
 
                 if (c == '\\' && string_get(step))
+                {
                         lex_text[lex_used++] = string_get(step++);
+                        continue;
+                }
+
+                // $( ), ${ } and ` ` are one piece of the word however much
+                // blank or operator is inside them.
+                {
+                        string_address stop = null;
+
+                        if (c == '`')
+                                stop = lex_nesting(step - 1);
+                        else if (c == '$' && (string_get(step) == '(' ||
+                                              string_get(step) == '{'))
+                                stop = lex_nesting(step);
+
+                        if (stop && stop > step)
+                        {
+                                positive run = (positive)(stop - step);
+
+                                if (lex_used + run + 1 >= LEX_TEXT)
+                                        return false;
+
+                                memory_copy(lex_text + lex_used, step, run);
+                                lex_used += run;
+                                step = stop;
+                        }
+                }
         }
 
         lex_text[lex_used++] = end;
