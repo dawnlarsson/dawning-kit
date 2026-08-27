@@ -37,6 +37,15 @@
 #define log_canvas(fmt, ...) pr_info("[moonwater canvas] " fmt, ##__VA_ARGS__)
 
 /*
+        For the ones that mean there is no picture.
+
+        A machine with no serial port reads these off its own monitor or not at
+        all, and that only works while something else still owns the screen --
+        which is why every one of them is next to a decision to let go of it.
+*/
+#define log_canvas_error(fmt, ...) pr_err("[moonwater canvas] " fmt, ##__VA_ARGS__)
+
+/*
         Colours are an index, not a value.
 
         Every one has to be converted for the format of the screen it lands

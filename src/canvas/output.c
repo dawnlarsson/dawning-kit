@@ -250,7 +250,7 @@ static struct output *output_add(struct canvas *canvas, struct drm_mode_set *mod
 
         if (format == DRM_FORMAT_INVALID)
         {
-                log_canvas("no 32 bit format on this plane, skipping output\n");
+                log_canvas_error("no 32 bit format on this plane, skipping output\n");
                 return NULL;
         }
 
@@ -261,7 +261,7 @@ static struct output *output_add(struct canvas *canvas, struct drm_mode_set *mod
         output->buffer = drm_client_buffer_create_dumb(&canvas->client, width, height, format);
         if (IS_ERR(output->buffer))
         {
-                log_canvas("could not create a %ux%u scanout buffer\n", width, height);
+                log_canvas_error("could not create a %ux%u scanout buffer\n", width, height);
                 kfree(output);
                 return NULL;
         }
@@ -274,7 +274,14 @@ static struct output *output_add(struct canvas *canvas, struct drm_mode_set *mod
         output->opaque = format == DRM_FORMAT_ARGB8888 ? 0xff000000 : 0;
         canvas_palette(output->palette, format);
         mode_set->fb = output->buffer->fb;
-        output_describe(output);
+
+        if (!output_describe(output))
+        {
+                drm_client_buffer_delete(output->buffer);
+                mode_set->fb = NULL;
+                kfree(output);
+                return NULL;
+        }
 
         if (plane_claim(&canvas->client, output))
                 output->cursor_plane = NULL;
@@ -545,10 +552,42 @@ static int canvas_start(struct canvas *canvas)
                 log_canvas("that mode would not set (%d), taking the offered one\n", set);
                 canvas_release(canvas);
                 ret = canvas_build(canvas, false);
+
+                if (!ret)
+                {
+                        desktop_attach_buffers();
+                        set = drm_client_modeset_commit(&canvas->client);
+                }
+        }
+
+        /*
+                Standing aside.
+
+                Nothing below will put a picture on this screen, and holding it
+                anyway is a black display and no way to find out why: the
+                kernel log reaches a machine with no serial port through fbcon,
+                and fbcon only has something to bind to while the fbdev client
+                still owns the display. So the outputs go back and started
+                stays false, which leaves whatever was on the screen on it and
+                the reason above readable there.
+
+                Boot the image without drm_client_lib.active= and this is the
+                difference between a log on the monitor and a guess.
+        */
+        if (!ret && set && set != -EBUSY)
+        {
+                log_canvas_error("no mode would set (%d), leaving the display alone\n",
+                                 set);
+                canvas_release(canvas);
+                return set;
         }
 
         if (ret)
+        {
+                log_canvas_error("no screen to draw on (%d), leaving the display alone\n",
+                                 ret);
                 return ret;
+        }
 
         // The cursor is drawn from a bitmap like everything else, so it is the
         // same sixteen pixels and the same too small without this.

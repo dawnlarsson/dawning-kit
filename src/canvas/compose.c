@@ -576,22 +576,31 @@ static _Bool output_map(struct output *output, struct iosys_map *map)
         if (!output->unmappable)
         {
                 output->unmappable = true;
-                log_canvas("the scanout buffer will not map (%d), "
-                           "so nothing can be drawn on it\n", ret);
+                log_canvas_error("the scanout buffer will not map (%d), "
+                                 "so nothing can be drawn on it\n", ret);
         }
 
         return false;
 }
 
-// What the driver actually gave us to scan out, which is the difference
-// between a screen that shows nothing and a screen that shows rubbish.
-static void output_describe(struct output *output)
+/*
+        What the driver actually gave us to scan out, and whether it can be
+        written to at all.
+
+        The mapping is made once here rather than first discovered halfway
+        through a compose. Everything Canvas draws goes through it, so a driver
+        that will not give us one is a screen that stays exactly as it was
+        while mode setting and the cursor plane both go on working -- black
+        from the first moment, with a cursor moving over it. Answering no here
+        is what lets that screen be handed back instead of held.
+*/
+static _Bool output_describe(struct output *output)
 {
         struct drm_framebuffer *fb = output->buffer->fb;
         struct iosys_map map;
 
         if (!output_map(output, &map))
-                return;
+                return false;
 
         log_canvas("scanout %p4cc, %u bytes a row, modifier %llx, %s memory\n",
                    &fb->format->format, fb->pitches[0],
@@ -599,6 +608,7 @@ static void output_describe(struct output *output)
                    map.is_iomem ? "device" : "system");
 
         drm_client_buffer_vunmap_local(output->buffer);
+        return true;
 }
 
 static _Bool output_touched(struct output *output, const struct drm_rect *damage,
