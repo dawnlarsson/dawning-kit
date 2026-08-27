@@ -330,13 +330,26 @@ else
 fi
 
 broken=""
+notrun=""
 
+#
+#       A lane that did not run is not a lane that passed.
+#
+#       boot is the only one that runs on a processor without AVX, and it
+#       skipped for a day -- no image built -- while an AVX instruction went
+#       onto a path with no feature test in front of it. Every run in that day
+#       ended with "everything agrees", because a skip exited zero and nothing
+#       counted it. It exits 2 now and this says so at the end, where the
+#       verdict is, rather than in one line thirty lines up that scrolls past.
+#
 for lane in $requested; do
         printf '\n%s -- %s\n' "$lane" "$(describe "$lane")"
 
-        if "lane_$lane"; then
-                continue
-        fi
+        "lane_$lane"
+        outcome=$?
+
+        [ "$outcome" = 0 ] && continue
+        [ "$outcome" = 2 ] && { notrun="$notrun $lane"; continue; }
 
         broken="$broken $lane"
 done
@@ -358,6 +371,14 @@ printf '  %-14s %s of %s\n' "" "$total_pass" "$total_all"
 if [ -n "$broken" ]; then
         echo
         echo "failed:$broken"
+        [ -n "$notrun" ] && echo "did not run:$notrun"
+        exit 1
+fi
+
+if [ -n "$notrun" ]; then
+        echo
+        echo "did not run:$notrun"
+        echo "so this is not everything agreeing, it is everything that ran"
         exit 1
 fi
 

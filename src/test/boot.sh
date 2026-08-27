@@ -28,8 +28,20 @@ if ! command -v qemu-system-x86_64 > /dev/null 2>&1; then
 fi
 
 if [ ! -f "$image" ]; then
-        echo "  boot         no image at $image, skipped (sh build.sh)"
-        exit 0
+        #
+        #       Loud, and not zero.
+        #
+        #       This lane is the only one that runs on a processor without
+        #       AVX, so it is the only one that can see an instruction the
+        #       target cannot execute. It said "skipped" on every run for a
+        #       day while exactly that bug went in, and the suite still
+        #       printed that everything agreed, because a skip exited zero.
+        #
+        echo "  boot         NOT RUN -- no image at $image"
+        echo "               this is the only lane that runs without AVX, so"
+        echo "               nothing else here can see an instruction the"
+        echo "               target cannot execute. Build one: sh build.sh"
+        exit 2
 fi
 
 work=$(mktemp -d)
@@ -79,6 +91,23 @@ never()
 
         pass=$((pass + 1))
 }
+
+#
+#       The two that say the machine rejected what we shipped it.
+#
+#       qemu runs this as -cpu Nehalem, which has SSE4.2 and no AVX, and that
+#       is the point: an AVX instruction on a path with no feature test in
+#       front of it is an invalid opcode here and a working program on the
+#       machine this was built on. It happened -- vmovdqu on the small path of
+#       memory_copy_fast, which is VEX encoded however narrow its operands --
+#       and init died of it before anything else in this file could run.
+#
+#       Without these two the failure reads as six assertions about arithmetic
+#       and uname going missing, which is a long way from the cause.
+#
+never 'no invalid opcode'  'invalid opcode'
+never 'init survived'      'Attempted to kill init'
+never 'no kernel panic'    'Kernel panic'
 
 says 'init started'        'Run /init as init process'
 says 'arithmetic'          'answer42'
