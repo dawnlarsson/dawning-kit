@@ -559,90 +559,156 @@ bool shell_builtin(string_address arguments)
         return false;
 }
 
-fn run_simple(string_address line);
+/*
+        One lexed word, expanded.
+
+        This is the second half of what the old tokeniser did: quote removal
+        and parameter expansion. The first half -- deciding where words begin
+        and end -- the lexer has already done, in assembly, and doing it again
+        over the same bytes was a whole extra pass over every command line.
+*/
+static string_address shell_expand_word(string_address word)
+{
+        string_address step = word;
+        string_address result = token_storage + token_used;
+
+        while (string_get(step))
+        {
+                if (string_is(step, '\\'))
+                {
+                        step++;
+
+                        if (string_get(step))
+                                token_push(string_get(step++));
+
+                        continue;
+                }
+
+                if (string_is(step, '\''))
+                {
+                        step = shell_single_quoted(step);
+                        continue;
+                }
+
+                if (string_is(step, '"'))
+                {
+                        step = shell_double_quoted(step);
+                        continue;
+                }
+
+                if (string_is(step, '$'))
+                {
+                        step = shell_expand(step);
+                        continue;
+                }
+
+                token_push(string_get(step++));
+        }
+
+        token_push(end);
+
+        return result;
+}
+
+fn run_argv();
 
 /*
         A line is a list of commands, not one command.
 
         The lexer knows where every operator is and, more to the point, which
-        ones are inside quotes and therefore are not operators at all -- which
-        is why this is done over tokens rather than by looking for a semicolon
-        in the text. && and || carry the status of what ran before them; a bare
-        ; does not care.
+        ones are inside quotes and therefore are not operators at all. Its
+        words go straight into argv from here: nothing re-reads the line.
 */
 fn process(string_address line)
 {
-        static p8 piece[MAX_INPUT];
         b32 count = lex_line(line);
         b32 index = 0;
-        positive from = 0;
-        b32 pending = 0;
         b32 skip = false;
 
         if (count < 0)
                 return string_format(shell_output, "Command line too long\n");
 
+        token_used = 0;
+        token_overflow = false;
+        shell_argc = 0;
+
         while (index <= count)
         {
                 lex_token address_to token = lex_tokens + index;
-                b32 boundary = token->kind == LEX_END ||
-                               (token->kind == LEX_OPERATOR &&
-                                (token->op == OP_SEMI || token->op == OP_AND_IF ||
-                                 token->op == OP_OR_IF));
 
-                if (!boundary)
+                if (token->kind == LEX_WORD)
                 {
+                        if (shell_argc < MAX_TOKENS)
+                                shell_argv[shell_argc++] = shell_expand_word(token->text);
+
                         index++;
                         continue;
                 }
 
+                // A redirection takes the word after it, expanded the same way
+                // as any other.
+                if (token->kind == LEX_OPERATOR &&
+                    (token->op == OP_GREAT || token->op == OP_DGREAT) &&
+                    lex_tokens[index + 1].kind == LEX_WORD)
                 {
-                        positive length = token->at > from ? token->at - from : 0;
+                        string_address target = shell_expand_word(lex_tokens[index + 1].text);
 
-                        if (length >= sizeof(piece))
-                                length = sizeof(piece) - 1;
+                        shell_output_file = system_call_4(
+                            syscall(openat), AT_FDCWD, (positive)target,
+                            token->op == OP_DGREAT
+                                ? FILE_WRITE | FILE_CREATE | FILE_APPEND
+                                : FILE_WRITE | FILE_CREATE | FILE_TRUNCATE,
+                            0666);
 
-                        memory_copy(piece, line + from, length);
-                        piece[length] = end;
+                        if (shell_output_file < 0)
+                        {
+                                shell_output_file = 0;
+                                string_format(shell_output,
+                                              "Cannot open file for redirection: %s\n",
+                                              target);
+                                return;
+                        }
+
+                        shell_output = redirect_writer;
+                        index += 2;
+                        continue;
                 }
 
-                if (!skip)
-                        run_simple(piece);
+                if (token->kind == LEX_END ||
+                    (token->kind == LEX_OPERATOR &&
+                     (token->op == OP_SEMI || token->op == OP_AND_IF ||
+                      token->op == OP_OR_IF)))
+                {
+                        if (shell_argc)
+                        {
+                                shell_argv[shell_argc] = null;
 
-                // What follows a && runs only if that succeeded, and what
-                // follows a || only if it did not.
-                if (token->kind == LEX_OPERATOR && token->op == OP_AND_IF)
-                        skip = shell_status != 0;
-                else if (token->kind == LEX_OPERATOR && token->op == OP_OR_IF)
-                        skip = shell_status == 0;
-                else
-                        skip = false;
+                                if (!skip)
+                                        run_argv();
+                        }
 
-                pending = token->op;
-                from = token->at + (token->kind == LEX_END ? 0 : token->length);
+                        // What follows && runs only if that succeeded, and
+                        // what follows || only if it did not.
+                        if (token->kind == LEX_OPERATOR && token->op == OP_AND_IF)
+                                skip = shell_status != 0;
+                        else if (token->kind == LEX_OPERATOR && token->op == OP_OR_IF)
+                                skip = shell_status == 0;
+                        else
+                                skip = false;
+
+                        shell_argc = 0;
+                        index++;
+                        continue;
+                }
+
                 index++;
         }
-
-        (void)pending;
 }
 
-fn run_simple(string_address line)
+// argv is already built and any redirection already open: process did both
+// straight off the token stream.
+fn run_argv()
 {
-        b32 count = shell_tokenize(line);
-
-        if (count < 0)
-                return string_format(shell_output, "Command line too long\n");
-
-        shell_argc = count;
-
-        if (!shell_argc)
-                return;
-
-        if (!shell_redirect())
-                return;
-
-        if (!shell_argc)
-                return;
 
         /*
                 A word of the form name=value, on its own, sets a variable.
