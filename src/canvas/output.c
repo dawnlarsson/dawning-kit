@@ -282,6 +282,40 @@ static struct output *output_add(struct canvas *canvas, struct drm_mode_set *mod
         return output;
 }
 
+/*
+        A modeset nothing will be drawn on, left the way a probe leaves one.
+
+        A screen that could not be given a buffer -- no 32 bit format on its
+        plane, no memory for one -- still carries the mode the probe chose and
+        no framebuffer to go with it, and that combination is not one screen
+        missing: the commit carrying it is refused whole, so one connector
+        nobody can draw on takes every other screen on the card down with it.
+
+        Clearing it is what says "this crtc is off", and then the screens that
+        did build commit without it.
+*/
+static void output_disable_modeset(struct drm_device *dev,
+                                   struct drm_mode_set *mode_set)
+{
+        unsigned int i;
+
+        if (mode_set->mode)
+        {
+                drm_mode_destroy(dev, mode_set->mode);
+                mode_set->mode = NULL;
+        }
+
+        mode_set->fb = NULL;
+
+        for (i = 0; mode_set->connectors && i < (unsigned int)mode_set->num_connectors; i++)
+        {
+                drm_connector_put(mode_set->connectors[i]);
+                mode_set->connectors[i] = NULL;
+        }
+
+        mode_set->num_connectors = 0;
+}
+
 static void output_drop(struct output *output)
 {
         plane_drop(output);
@@ -458,7 +492,10 @@ static int canvas_build(struct canvas *canvas, _Bool biggest)
 
                 output = output_add(canvas, mode_set);
                 if (!output)
+                {
+                        output_disable_modeset(client->dev, mode_set);
                         continue;
+                }
 
                 list_add_tail(&output->link, &desktop.outputs);
                 count++;
