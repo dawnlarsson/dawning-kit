@@ -6224,3 +6224,604 @@ static b32 text_sort()
 
         return text_done(text_status);
 }
+
+// expr ------------------------------------------------------------
+/*
+        One expression spread across the words, and its value on standard
+        output.
+
+        There is no lexer: the shell already separated the words, so a token
+        is a word and an operator is a word that is nothing but the operator.
+        What is left is the six levels of precedence below, weakest first,
+        and a value that is either a number or a string and knows which.
+
+        Status is not the usual one. Zero means the value is neither empty nor
+        zero, one means it is, and two means the expression was not one.
+*/
+#define EXPR_ARENA 8192
+
+typedef struct
+{
+        string_address text;
+        bipolar number;
+} expr_value;
+
+static string_address expr_empty = (string_address) "";
+
+static p8 expr_arena[EXPR_ARENA];
+static positive expr_arena_used;
+static b32 expr_at;
+static b32 expr_count;
+static b32 expr_fault;
+
+// Inside a branch whose value is already decided. The words still have to be
+// walked, so a malformed one is still refused, but dividing by zero in a half
+// of an expression nobody will read is not an error.
+static b32 expr_dead;
+
+static fn expr_stop(string_address reason)
+{
+        if (!expr_fault)
+                text_error(null, reason);
+
+        expr_fault = 1;
+}
+
+static string_address expr_keep(string_address from, positive length)
+{
+        p8 address_to made;
+
+        if (expr_arena_used + length + 1 > EXPR_ARENA)
+        {
+                expr_stop("expression too long");
+                return expr_empty;
+        }
+
+        made = expr_arena + expr_arena_used;
+
+        memory_copy(made, from, length);
+        made[length] = end;
+        expr_arena_used += length + 1;
+
+        return made;
+}
+
+static positive expr_digits(p8 address_to into, positive value)
+{
+        p8 digits[24];
+        positive have = 0;
+        positive at = 0;
+
+        if (!value)
+                digits[have++] = '0';
+
+        while (value)
+        {
+                digits[have++] = (p8)('0' + value % 10);
+                value /= 10;
+        }
+
+        while (have)
+                into[at++] = digits[--have];
+
+        into[at] = end;
+
+        return at;
+}
+
+static string_address expr_shown(expr_value address_to value)
+{
+        p8 text[32];
+        positive length;
+
+        if (value->text)
+                return value->text;
+
+        if (value->number < 0)
+        {
+                text[0] = '-';
+                length = 1 + expr_digits(text + 1, (positive)(-value->number));
+        }
+        else
+                length = expr_digits(text, (positive)value->number);
+
+        value->text = expr_keep(text, length);
+
+        return value->text;
+}
+
+// A string is a number only when the whole of it is one; " 1" and "1x" are
+// strings, which is why the walk has to reach the terminator.
+static bool expr_integer(expr_value address_to value, bipolar address_to out)
+{
+        string_address at;
+        bipolar made = 0;
+        bool negative = false;
+        bool any = false;
+
+        if (!value->text)
+        {
+                address_to out = value->number;
+                return true;
+        }
+
+        at = value->text;
+
+        if (string_get(at) == '-' || string_get(at) == '+')
+        {
+                negative = string_get(at) == '-';
+                at++;
+        }
+
+        while (string_get(at) >= '0' && string_get(at) <= '9')
+        {
+                made = made * 10 + (string_get(at) - '0');
+                at++;
+                any = true;
+        }
+
+        if (!any || string_get(at))
+                return false;
+
+        address_to out = negative ? -made : made;
+
+        return true;
+}
+
+static bool expr_true(expr_value address_to value)
+{
+        bipolar number;
+
+        if (!value->text)
+                return value->number != 0;
+
+        if (!string_get(value->text))
+                return false;
+
+        if (expr_integer(value, address_of number))
+                return number != 0;
+
+        return true;
+}
+
+static expr_value expr_zero()
+{
+        expr_value made = {null, 0};
+
+        return made;
+}
+
+static string_address expr_word()
+{
+        return expr_at < expr_count ? text_argument(expr_at) : null;
+}
+
+static bool expr_is(string_address text)
+{
+        string_address word = expr_word();
+
+        return word && !string_compare(word, text);
+}
+
+/*
+        The match operator, and match, which is the same thing spelled out.
+
+        Anchored at the start, which the engine here has no flag for -- so the
+        match is searched for and then refused unless it began at nothing. A
+        pattern with a group answers with what the group took, and one without
+        answers with how many characters it took.
+*/
+static expr_value expr_matched(expr_value address_to subject,
+                               expr_value address_to pattern)
+{
+        expr_value made = expr_zero();
+        string_address text = expr_shown(subject);
+        string_address rule = expr_shown(pattern);
+        positive length = string_length(text);
+
+        if (!regex_compile(rule, false, false, false))
+        {
+                if (!expr_dead)
+                        expr_stop("invalid expression");
+
+                return made;
+        }
+
+        if (!regex_search_longest(text, length, 0) || regex_slots[0])
+        {
+                if (regex_group_count)
+                        made.text = expr_empty;
+
+                return made;
+        }
+
+        if (regex_group_count)
+        {
+                positive from = regex_slots[2];
+                positive to = regex_slots[3];
+
+                made.text = from == TEXT_UNSET || to == TEXT_UNSET
+                                ? expr_empty
+                                : expr_keep(text + from, to - from);
+
+                return made;
+        }
+
+        made.number = (bipolar)regex_slots[1];
+
+        return made;
+}
+
+static expr_value expr_any();
+
+static expr_value expr_primary()
+{
+        expr_value made = expr_zero();
+        string_address word = expr_word();
+
+        if (!word)
+        {
+                expr_stop("syntax error");
+                return made;
+        }
+
+        if (!string_compare(word, "("))
+        {
+                expr_at++;
+                made = expr_any();
+
+                if (expr_fault)
+                        return made;
+
+                if (!expr_is(")"))
+                {
+                        expr_stop("syntax error");
+                        return made;
+                }
+
+                expr_at++;
+
+                return made;
+        }
+
+        if (!string_compare(word, "length"))
+        {
+                expr_value of;
+
+                expr_at++;
+                of = expr_primary();
+                made.number = (bipolar)string_length(expr_shown(address_of of));
+
+                return made;
+        }
+
+        if (!string_compare(word, "match"))
+        {
+                expr_value subject;
+                expr_value pattern;
+
+                expr_at++;
+                subject = expr_primary();
+                pattern = expr_primary();
+
+                if (expr_fault)
+                        return made;
+
+                return expr_matched(address_of subject, address_of pattern);
+        }
+
+        if (!string_compare(word, "index"))
+        {
+                expr_value of;
+                expr_value set;
+                string_address text;
+                string_address wanted;
+
+                expr_at++;
+                of = expr_primary();
+                set = expr_primary();
+
+                if (expr_fault)
+                        return made;
+
+                text = expr_shown(address_of of);
+                wanted = expr_shown(address_of set);
+
+                for (positive i = 0; string_get(text + i); i++)
+                        for (positive j = 0; string_get(wanted + j); j++)
+                                if (string_get(text + i) == string_get(wanted + j))
+                                {
+                                        made.number = (bipolar)(i + 1);
+                                        return made;
+                                }
+
+                return made;
+        }
+
+        if (!string_compare(word, "substr"))
+        {
+                expr_value of;
+                expr_value from;
+                expr_value span;
+                string_address text;
+                positive whole;
+                bipolar start;
+                bipolar length;
+
+                expr_at++;
+                of = expr_primary();
+                from = expr_primary();
+                span = expr_primary();
+
+                if (expr_fault)
+                        return made;
+
+                text = expr_shown(address_of of);
+                whole = string_length(text);
+                made.text = expr_empty;
+
+                if (!expr_integer(address_of from, address_of start) ||
+                    !expr_integer(address_of span, address_of length) ||
+                    start < 1 || length < 1 || (positive)start > whole)
+                        return made;
+
+                if ((positive)start - 1 + (positive)length > whole)
+                        length = (bipolar)(whole - ((positive)start - 1));
+
+                made.text = expr_keep(text + start - 1, (positive)length);
+
+                return made;
+        }
+
+        expr_at++;
+        made.text = word;
+
+        return made;
+}
+
+static expr_value expr_match_level()
+{
+        expr_value left = expr_primary();
+
+        while (!expr_fault && expr_is(":"))
+        {
+                expr_value right;
+
+                expr_at++;
+                right = expr_primary();
+
+                if (expr_fault)
+                        break;
+
+                left = expr_matched(address_of left, address_of right);
+        }
+
+        return left;
+}
+
+static bool expr_pair(expr_value address_to left, expr_value address_to right,
+                      bipolar address_to a, bipolar address_to b)
+{
+        if (expr_integer(left, a) && expr_integer(right, b))
+                return true;
+
+        if (expr_dead)
+        {
+                address_to a = 0;
+                address_to b = 0;
+
+                return true;
+        }
+
+        expr_stop("non-integer argument");
+
+        return false;
+}
+
+static expr_value expr_product_level()
+{
+        expr_value left = expr_match_level();
+
+        while (!expr_fault && (expr_is("*") || expr_is("/") || expr_is("%")))
+        {
+                p8 operator = string_get(expr_word());
+                expr_value right;
+                bipolar a;
+                bipolar b;
+
+                expr_at++;
+                right = expr_match_level();
+
+                if (expr_fault ||
+                    !expr_pair(address_of left, address_of right,
+                               address_of a, address_of b))
+                        break;
+
+                if (operator != '*' && !b)
+                {
+                        if (!expr_dead)
+                        {
+                                expr_stop("division by zero");
+                                break;
+                        }
+
+                        b = 1;
+                }
+
+                left.text = null;
+                left.number = operator == '*' ? a * b
+                              : operator == '/' ? a / b
+                                                : a % b;
+        }
+
+        return left;
+}
+
+static expr_value expr_sum_level()
+{
+        expr_value left = expr_product_level();
+
+        while (!expr_fault && (expr_is("+") || expr_is("-")))
+        {
+                bool adding = expr_is("+");
+                expr_value right;
+                bipolar a;
+                bipolar b;
+
+                expr_at++;
+                right = expr_product_level();
+
+                if (expr_fault ||
+                    !expr_pair(address_of left, address_of right,
+                               address_of a, address_of b))
+                        break;
+
+                left.text = null;
+                left.number = adding ? a + b : a - b;
+        }
+
+        return left;
+}
+
+static bipolar expr_relation(string_address operator, bipolar order)
+{
+        if (!string_compare(operator, "="))
+                return order == 0;
+
+        if (!string_compare(operator, "!="))
+                return order != 0;
+
+        if (!string_compare(operator, "<"))
+                return order < 0;
+
+        if (!string_compare(operator, "<="))
+                return order <= 0;
+
+        if (!string_compare(operator, ">"))
+                return order > 0;
+
+        return order >= 0;
+}
+
+static expr_value expr_compare_level()
+{
+        expr_value left = expr_sum_level();
+
+        while (!expr_fault && (expr_is("=") || expr_is("!=") || expr_is("<") ||
+                               expr_is("<=") || expr_is(">") || expr_is(">=")))
+        {
+                string_address operator = expr_word();
+                expr_value right;
+                bipolar a;
+                bipolar b;
+                bipolar order;
+
+                expr_at++;
+                right = expr_sum_level();
+
+                if (expr_fault)
+                        break;
+
+                // Two numbers are compared as numbers and anything else as
+                // bytes, so 3 is below 10 but "3" is above "10".
+                if (expr_integer(address_of left, address_of a) &&
+                    expr_integer(address_of right, address_of b))
+                        order = a < b ? -1 : a > b;
+                else
+                {
+                        bipolar difference =
+                            string_compare(expr_shown(address_of left),
+                                           expr_shown(address_of right));
+
+                        order = difference < 0 ? -1 : difference > 0;
+                }
+
+                left.text = null;
+                left.number = expr_relation(operator, order);
+        }
+
+        return left;
+}
+
+static expr_value expr_both_level()
+{
+        expr_value left = expr_compare_level();
+
+        while (!expr_fault && expr_is("&"))
+        {
+                bool decided = !expr_true(address_of left);
+                expr_value right;
+
+                expr_at++;
+                expr_dead += decided;
+                right = expr_compare_level();
+                expr_dead -= decided;
+
+                if (expr_fault)
+                        break;
+
+                if (decided || !expr_true(address_of right))
+                        left = expr_zero();
+        }
+
+        return left;
+}
+
+static expr_value expr_any()
+{
+        expr_value left = expr_both_level();
+
+        while (!expr_fault && expr_is("|"))
+        {
+                bool decided = expr_true(address_of left);
+                expr_value right;
+
+                expr_at++;
+                expr_dead += decided;
+                right = expr_both_level();
+                expr_dead -= decided;
+
+                if (expr_fault)
+                        break;
+
+                if (!decided)
+                        left = expr_true(address_of right) ? right : expr_zero();
+        }
+
+        return left;
+}
+
+static b32 text_expr()
+{
+        expr_value result;
+
+        text_begin("expr");
+
+        expr_at = 1;
+        expr_count = text_argument_count;
+        expr_arena_used = 0;
+        expr_fault = 0;
+        expr_dead = 0;
+
+        if (expr_at < expr_count && !string_compare(text_argument(expr_at), "--"))
+                expr_at++;
+
+        if (expr_at >= expr_count)
+        {
+                text_error(null, "missing operand");
+                return text_done(2);
+        }
+
+        result = expr_any();
+
+        if (!expr_fault && expr_at < expr_count)
+                expr_stop("syntax error");
+
+        if (expr_fault)
+                return text_done(2);
+
+        text_put_string(expr_shown(address_of result));
+        text_put_character('\n');
+
+        return text_done(expr_true(address_of result) ? 0 : 1);
+}

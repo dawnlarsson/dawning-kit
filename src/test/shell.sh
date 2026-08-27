@@ -556,11 +556,13 @@ emits 'called rev'       'cba|'    "printf 'abc\n' | '$names/rev'"
 emits 'called basename'  'c|'      "'$names/basename' /a/b/c"
 emits 'called seq'       '1|2|3|'  "'$names/seq' 3"
 emits 'called uname'     'Linux|'  "'$names/uname'"
+emits 'called expr'      '2|'      "'$names/expr' 1 + 1"
 emits 'through a dot'    'cba|'    "printf 'abc\n' | '$names/./rev'"
 emits 'link elsewhere'   'cba|'    "mkdir -p /tmp/sn && ln -sf '$names/rev' /tmp/sn/rev && printf 'abc\n' | /tmp/sn/rev"
 emits 'another name'     'hi|'     "ln -sf '$names/rev' /tmp/notatool && printf 'echo hi\n' | /tmp/notatool"
 emits 'the shell itself' 'hi|'     "printf 'echo hi\n' | '$subject'"
 emits 'bare with no path' 'alpha|' "printf 'PATH=\necho alpha | grep alpha\n' | '$subject'"
+emits 'expr with no path' '2|'    "printf 'PATH=\nexpr 1 + 1\n' | '$subject'"
 emits 'type says utility' '0|'     "printf 'type grep > /dev/null; echo \$?\n' | '$subject'"
 emits 'command v finds'  '0|'      "printf 'PATH=\ncommand -v grep > /dev/null; echo \$?\n' | '$subject'"
 emits 'which finds'      '0|'      "printf 'PATH=\nwhich grep > /dev/null; echo \$?\n' | '$subject'"
@@ -622,7 +624,6 @@ section absent
 group missing
 absent 'awk'      '127|' 'awk "{print}" < /dev/null; echo $?'
 absent 'date'     '127|' 'date; echo $?'
-absent 'expr'     '127|' 'expr 1 + 1; echo $?'
 absent 'xargs'    '127|' 'echo a | xargs echo; echo $?'
 absent 'kill'     '127|' 'kill -0 $$; echo $?'
 absent 'dd'       '127|' 'dd if=/dev/null; echo $?'

@@ -536,6 +536,68 @@ compare 'cat missing'    cat -   "$work/nosuch"
 compare 'cat empty'      cat -   "$work/empty"
 compare 'cat bad option' cat -   -Z "$work/a"
 
+#       expr, whose answer is on standard output and whose verdict is the exit
+#       status, so both halves of compare matter here.
+
+case_start expr
+compare 'add'            expr -  1 + 1
+compare 'subtract'       expr -  5 - 9
+compare 'multiply'       expr -  3 '*' 4
+compare 'divide'         expr -  7 / 2
+compare 'divide negative' expr - -3 / 2
+compare 'remainder'      expr -  7 % 3
+compare 'precedence'     expr -  2 + 3 '*' 4
+compare 'left to right'  expr -  10 - 3 - 2
+compare 'parentheses'    expr -  '(' 1 + 2 ')' '*' 3
+compare 'zero is false'  expr -  0
+compare 'padded zero'    expr -  00
+compare 'empty is false' expr -  ''
+compare 'string is true' expr -  abc
+compare 'not a number'   expr -  0.0
+compare 'equal'          expr -  1 = 1
+compare 'unequal'        expr -  1 = 2
+compare 'strings equal'  expr -  abc = abc
+compare 'string order'   expr -  abc '<' abd
+compare 'number order'   expr -  3 '<' 10
+compare 'number not text' expr - 10 '>' 9
+compare 'differs'        expr -  1 != 2
+compare 'compare chain'  expr -  1 = 1 = 1
+compare 'or takes first' expr -  abc '|' 0
+compare 'or takes second' expr - '' '|' abc
+compare 'or has neither' expr -  0 '|' 0
+compare 'and takes first' expr - abc '&' def
+compare 'and wants both' expr -  abc '&' ''
+compare 'and wants first' expr - '' '&' abc
+compare 'or is lazy'     expr -  1 '|' 1 / 0
+compare 'and is lazy'    expr -  0 '&' 1 / 0
+compare 'match counts'   expr -  abc : 'a.c'
+compare 'match anchored' expr -  abc : 'b'
+compare 'match start'    expr -  abc : '^a'
+compare 'match star'     expr -  aab : 'a*'
+compare 'match nothing'  expr -  bbb : 'a*'
+compare 'match end'      expr -  abc : 'abc$'
+compare 'match group'    expr -  abcdef : 'abc\(d\)e'
+compare 'group missing'  expr -  abc : '\(b\)'
+compare 'match keyword'  expr -  match abc 'a\(b\)'
+compare 'match keyword none' expr - match abc x
+compare 'length'         expr -  length abcde
+compare 'length empty'   expr -  length ''
+compare 'substr'         expr -  substr abcde 2 3
+compare 'substr from nought' expr - substr abcde 0 2
+compare 'substr past end' expr - substr abcde 2 100
+compare 'substr beyond'  expr -  substr abcde 9 2
+compare 'index'          expr -  index abcde cd
+compare 'index missing'  expr -  index abcde xyz
+compare 'divide by zero' expr -  5 / 0
+compare 'modulo by zero' expr -  5 % 0
+compare 'not an integer' expr -  foo + 1
+compare 'blank is not'   expr -  ' 1' + 1
+compare 'missing operand' expr - 1 +
+compare 'unclosed'       expr -  '(' 1
+compare 'trailing word'  expr -  1 1
+compare 'no arguments'   expr -
+compare 'end of options' expr -  -- 1
+
 printf '  %-12s %s of %s\n' listed "$pass" "$((pass + fail))"
 [ -z "${TEST_TALLY:-}" ] ||
         printf 'text-listed %s %s\n' "$pass" "$((pass + fail))" >> "$TEST_TALLY"
