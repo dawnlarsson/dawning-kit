@@ -8,7 +8,7 @@
 */
 
 // init -----------------------------------------------------------
-#define label TERM_BOLD "[Init]" TERM_RESET " "
+#define init_label TERM_BOLD "[Init]" TERM_RESET " "
 #define init_program "/shell"
 
 // A shell that dies immediately would otherwise be restarted as fast as the
@@ -28,7 +28,6 @@
 // as the negated error itself.
 #define ERROR_INTERRUPTED (-4)
 #define ERROR_NO_CHILDREN (-10)
-#define ERROR_EXISTS (-17)
 
 // PID 1 has two jobs: start the first program, and reap every orphan the
 // system ever produces. It must not exec into the shell -- doing that makes
@@ -111,10 +110,10 @@ fn report_exit(positive status)
         positive signal = status & 0x7f;
 
         if (signal)
-                string_format(log, label "%s killed by signal %p, restarting\n",
+                string_format(log, init_label "%s killed by signal %p, restarting\n",
                               init_program, signal);
         else
-                string_format(log, label "%s exited (%p), restarting\n",
+                string_format(log, init_label "%s exited (%p), restarting\n",
                               init_program, status >> 8 & 0xff);
 
         log_flush();
@@ -134,9 +133,9 @@ fn mount_devpts()
         bipolar made = system_call_3(syscall(mkdirat), AT_FDCWD,
                                      (positive)"/dev/pts", 0755);
 
-        if (made < 0 && made != ERROR_EXISTS)
+        if (made < 0 && made != -ERROR_EXISTS)
         {
-                string_format(log, label "/dev/pts could not be created: %b\n", made);
+                string_format(log, init_label "/dev/pts could not be created: %b\n", made);
                 log_flush();
         }
 
@@ -149,7 +148,7 @@ fn mount_devpts()
         // later, and for a reason that looks nothing like this one.
         if (mounted < 0)
         {
-                string_format(log, label "devpts mount failed: %b, terminals will not work\n",
+                string_format(log, init_label "devpts mount failed: %b, terminals will not work\n",
                               mounted);
                 log_flush();
         }
@@ -175,7 +174,7 @@ static b32 system_init()
         // the reason on screen instead.
         while (shell < 0)
         {
-                string_format(log, label "could not start %s: %b\n",
+                string_format(log, init_label "could not start %s: %b\n",
                               init_program, shell);
                 log_flush();
                 pause_for(RESTART_BACKOFF_MAX_NS);
@@ -204,7 +203,7 @@ static b32 system_init()
                         if (reaped != wait_error)
                         {
                                 wait_error = reaped;
-                                string_format(log, label "wait failed: %b\n", reaped);
+                                string_format(log, init_label "wait failed: %b\n", reaped);
                                 log_flush();
                         }
 
@@ -224,7 +223,7 @@ static b32 system_init()
                 // the shell is gone whether or not anyone reported it.
                 if (reaped == ERROR_NO_CHILDREN)
                 {
-                        string_format(log, label "nothing left to wait for, restarting %s\n",
+                        string_format(log, init_label "nothing left to wait for, restarting %s\n",
                                       init_program);
                         log_flush();
                 }
@@ -243,7 +242,7 @@ static b32 system_init()
                         if (backoff > RESTART_BACKOFF_MAX_NS)
                                 backoff = RESTART_BACKOFF_MAX_NS;
 
-                        string_format(log, label "%p restarts in a row, waiting %p ms\n",
+                        string_format(log, init_label "%p restarts in a row, waiting %p ms\n",
                                       quick_exits, backoff / 1000000);
                         log_flush();
 
@@ -258,7 +257,7 @@ static b32 system_init()
                 // the shell as having died when it never started.
                 while (shell < 0)
                 {
-                        string_format(log, label "could not start %s: %b\n",
+                        string_format(log, init_label "could not start %s: %b\n",
                                       init_program, shell);
                         log_flush();
                         pause_for(RESTART_BACKOFF_MAX_NS);
@@ -290,7 +289,7 @@ static b32 system_init()
         a guest on it.
 */
 
-#define label TERM_BOLD "[World]" TERM_RESET " "
+#define world_label TERM_BOLD "[World]" TERM_RESET " "
 
 // The four that make a root someone else's. Not the network: a world that
 // cannot reach the outside is a different feature, and one nobody has asked
@@ -311,7 +310,6 @@ static b32 system_init()
 
 #define WORLD_SHELL "/bin/sh"
 
-#define ERROR_EXISTS (-17)
 
 struct mount_point
 {
@@ -343,13 +341,13 @@ static struct mount_point world_mounts[] = {
 
 fn world_say(string_address text)
 {
-        string_format(log, label "%s\n", text);
+        string_format(log, world_label "%s\n", text);
         log_flush();
 }
 
 fn world_fail(string_address text, bipolar code)
 {
-        string_format(log, label "%s: %b\n", text, code);
+        string_format(log, world_label "%s: %b\n", text, code);
         log_flush();
 }
 
@@ -357,7 +355,7 @@ static bipolar world_mkdir(string_address path)
 {
         bipolar made = system_call_3(syscall(mkdirat), AT_FDCWD, (positive)path, 0755);
 
-        return made == ERROR_EXISTS ? 0 : made;
+        return made == -ERROR_EXISTS ? 0 : made;
 }
 
 /*

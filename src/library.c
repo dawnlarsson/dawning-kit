@@ -37,7 +37,7 @@
         A .set is a second label on the same address, so there is no wrapper
         and no jump, and which names get one depends on who is linking.
 
-        48 routines, 43 of them on all three.
+        48 routines, 47 of them on all three.
 
           routine                        x86_64  arm64   riscv64
           ------------------------------ ------- ------- -------
@@ -61,13 +61,13 @@
           memory_copy                    yes     yes     yes
           memory_copy_fast               yes     yes     yes
           memory_fill                    yes     yes     yes
-          memory_first_of                yes     yes     --
+          memory_first_of                yes     yes     yes
           memory_free                    yes     yes     yes
           path_basename                  yes     yes     yes
           positive_to_string             yes     yes     yes
           shell_set_cursor               yes     yes     yes
           string_compare                 yes     yes     yes
-          string_compare_max             yes     yes     --
+          string_compare_max             yes     yes     yes
           string_copy                    yes     yes     yes
           string_copy_max                yes     yes     yes
           string_cut                     yes     yes     yes
@@ -78,9 +78,9 @@
           string_format                  yes     yes     yes
           string_get_environment         yes     yes     yes
           string_last_of                 yes     yes     yes
-          string_last_of_or_end          yes     yes     --
+          string_last_of_or_end          yes     yes     yes
           string_length                  yes     yes     yes
-          string_length_max              yes     yes     --
+          string_length_max              yes     yes     yes
           string_lex_word                yes     yes     yes
           string_replace_all             yes     yes     yes
           string_span                    yes     yes     yes
@@ -91,10 +91,6 @@
           working_directory_set          yes     yes     yes
 
         Not yet on every machine:
-          memory_first_of -- missing on riscv64
-          string_compare_max -- missing on riscv64
-          string_last_of_or_end -- missing on riscv64
-          string_length_max -- missing on riscv64
           string_table_find -- missing on arm64, riscv64
 */
 
@@ -1015,6 +1011,7 @@ typedef union matrix4
 
 // Indirect branch tracking needs a landing pad at every symbol something can
 // call through a pointer. Without one the call faults on a machine that has it.
+#undef ASM_ENDBR
 #if defined(KERNEL_MODE) && X64 && defined(CONFIG_X86_KERNEL_IBT)
 #define ASM_ENDBR "endbr64\n"
 #else
@@ -1032,6 +1029,7 @@ typedef union matrix4
         after it instead. Neither is on in the build this was written against,
         which is the reason to decide it here rather than notice later.
 */
+#undef ASM_RET
 #if defined(KERNEL_MODE) && X64
 #if defined(CONFIG_MITIGATION_RETHUNK) || defined(CONFIG_RETHUNK)
 #define ASM_RET "jmp __x86_return_thunk\n"
@@ -1255,7 +1253,31 @@ __asm__(
     //       address, which is cheaper than stopping the scan short.
     //
     ASM_FUNC(memory_first_of)
-    "xor %eax, %eax\n   test %rdx, %rdx\n   jz 9f\n   movzbl %sil, %ecx\n"
+    //
+    //       The wide path, when the processor has it.
+    //
+    //       Thirty two bytes compared at once, and vpmovmskb turns the result
+    //       into one bit per byte so bsf says which. Only whole thirty two
+    //       byte pieces are read, so nothing is read past the bound and there
+    //       is no page argument to make: the narrow path below it aligns down
+    //       and overreads deliberately, which is safe and is a different
+    //       trade. Under thirty two bytes it falls into that one.
+    //
+    //       vzeroupper before leaving, on every path out. Without it a return
+    //       into code using legacy SSE pays a state transition penalty on
+    //       every instruction, which is a cost this routine would be handing
+    //       to whoever called it.
+    //
+    "xor %eax, %eax\n   test %rdx, %rdx\n   jz 9f\n"
+    "cmpb $0, cpu_has_avx2(%rip)\n   je 5f\n"
+    "cmp $32, %rdx\n   jb 5f\n"
+    "movzbl %sil, %ecx\n   vmovd %ecx, %xmm1\n   vpbroadcastb %xmm1, %ymm1\n"
+    "3:  vpcmpeqb (%rdi), %ymm1, %ymm0\n   vpmovmskb %ymm0, %ecx\n"
+    "test %ecx, %ecx\n   jnz 4f\n"
+    "add $32, %rdi\n   sub $32, %rdx\n   cmp $32, %rdx\n   jae 3b\n"
+    "vzeroupper\n   jmp 5f\n"
+    "4:  bsf %ecx, %ecx\n   lea (%rdi,%rcx), %rax\n   vzeroupper\n   RET\n"
+    "5:  test %rdx, %rdx\n   jz 9f\n   movzbl %sil, %ecx\n"
     "movabs $0x0101010101010101, %r10\n   mov %rcx, %rsi\n   imul %r10, %rsi\n   movabs $0x8080808080808080, %r11\n"
     "lea (%rdi,%rdx), %r9  # one past the last byte we may report\n"
     "mov %edi, %ecx\n   and $7, %ecx\n   and $-8, %rdi\n   mov (%rdi), %rdx\n"
@@ -1273,6 +1295,85 @@ __asm__(
     "8:  xor %eax, %eax\n"
     "9:  RET\n"
     ASM_END(memory_first_of)
+    //
+    //       moonwater_cpu_detect -- what this processor has, asked once.
+    //
+    //       Three questions, and all three have to answer yes before a ymm
+    //       register may be touched. The processor having AVX2 is the last of
+    //       them, not the first: OSXSAVE says the operating system was asked
+    //       to manage the extended state at all, and XCR0 says it actually
+    //       agreed to save the low and the high halves of ymm across a context
+    //       switch. A processor that has the instructions under a kernel that
+    //       does not save the registers is the worst of the three cases,
+    //       because it works until something else runs.
+    //
+    //       rbx is callee saved and cpuid writes it, so it is kept.
+    //
+    ASM_FUNC(moonwater_cpu_detect)
+    "push %rbx\n   mov $1, %eax\n   xor %ecx, %ecx\n   cpuid\n"
+    "bt $27, %ecx\n   jnc 9f  # OSXSAVE: nobody is managing the state\n"
+    "xor %ecx, %ecx\n   xgetbv\n   and $6, %eax\n   cmp $6, %eax\n"
+    "jne 9f  # the kernel does not save both halves of ymm\n"
+    "mov $7, %eax\n   xor %ecx, %ecx\n   cpuid\n"
+    "bt $5, %ebx\n   jnc 9f  # no AVX2\n"
+    "movb $1, cpu_has_avx2(%rip)\n"
+    //
+    //       And again for the wider registers, which need more of both: the
+    //       processor has to have F, BW and VL rather than only the first,
+    //       because a routine that works a byte at a time in a zmm register
+    //       uses all three, and the operating system has to be saving opmask,
+    //       the upper half of zmm0-15 and zmm16-31 as well -- bits five, six
+    //       and seven of XCR0 on top of the two AVX2 needed.
+    //
+    "bt $16, %ebx\n   jnc 9f  # AVX512F\n"
+    "bt $30, %ebx\n   jnc 9f  # AVX512BW\n"
+    "bt $31, %ebx\n   jnc 9f  # AVX512VL\n"
+    "xor %ecx, %ecx\n   xgetbv\n   and $0xe6, %eax\n   cmp $0xe6, %eax\n"
+    "jne 9f  # the kernel does not save the wide state\n"
+    "movb $1, cpu_has_avx512(%rip)\n"
+    "9:  pop %rbx\n"
+    ASM_RET
+    ASM_END(moonwater_cpu_detect)
+    //
+    //       memory_count -- how many times a byte appears.
+    //
+    //       Two bodies. The wide one compares thirty two bytes at a time and
+    //       subtracts the result into a byte accumulator: vpcmpeqb leaves 0xff
+    //       where the bytes matched, which as a signed byte is minus one, so
+    //       subtracting it adds one. That accumulator is a byte per lane and
+    //       would wrap at 256, so the outer loop drains it every 255 rounds
+    //       through vpsadbw, which sums each eight byte group into a quadword.
+    //
+    //       Measured on a 9950X over ninety two megabytes: the byte loop the
+    //       compiler writes at -O2 runs at 15.8 GB/s, the eight-byte-at-a-time
+    //       version below it at 20.7, and this at 71.3 -- which is what the
+    //       same loop reads at when it counts nothing at all. There is no
+    //       faster version of this routine on this machine; there is only a
+    //       faster machine.
+    //
+    ASM_FUNC(memory_count)
+    "xor %eax, %eax\n   test %rsi, %rsi\n   jz 9f\n"
+    "cmpb $0, cpu_has_avx2(%rip)\n   je 5f\n"
+    "movzbl %dl, %ecx\n   vmovd %ecx, %xmm1\n   vpbroadcastb %xmm1, %ymm1\n"
+    "1:  cmp $32, %rsi\n   jb 4f\n"
+    "mov %rsi, %r8\n   shr $5, %r8\n   mov $255, %r9\n   cmp %r9, %r8\n"
+    "cmova %r9, %r8  # never more rounds than the accumulator holds\n"
+    "vpxor %ymm2, %ymm2, %ymm2\n   xor %r10, %r10\n"
+    "2:  vpcmpeqb (%rdi,%r10), %ymm1, %ymm0\n"
+    "vpsubb %ymm0, %ymm2, %ymm2  # 0xff is minus one, so this adds one\n"
+    "add $32, %r10\n   dec %r8\n   jnz 2b\n"
+    "vpxor %ymm0, %ymm0, %ymm0\n   vpsadbw %ymm0, %ymm2, %ymm2\n"
+    "vextracti128 $1, %ymm2, %xmm3\n   vpaddq %xmm3, %xmm2, %xmm2\n"
+    "vpextrq $0, %xmm2, %r11\n   add %r11, %rax\n"
+    "vpextrq $1, %xmm2, %r11\n   add %r11, %rax\n"
+    "add %r10, %rdi\n   sub %r10, %rsi\n   jmp 1b\n"
+    "4:  vzeroupper\n"
+    "5:  test %rsi, %rsi\n   jz 9f\n"
+    "6:  cmpb %dl, (%rdi)\n   jne 7f\n   inc %rax\n"
+    "7:  inc %rdi\n   dec %rsi\n   jnz 6b\n"
+    "9:  \n"
+    ASM_RET
+    ASM_END(memory_count)
     //
     //       string_first_of_or_end, string_first_of_max and string_last_of_or_end -- the rest of the byte hunts.
     //
@@ -2717,6 +2818,21 @@ __asm__(
     //       than stopping the scan short would.
     //
     ASM_FUNC(memory_first_of)
+    //
+    //       The wide path first. cmeq marks the matching bytes and shrn
+    //       narrows the sixteen lanes to four bits each, which fits one
+    //       doubleword: nonzero means the byte is in these sixteen, and the
+    //       count of trailing zeros divided by four says which. Only whole
+    //       sixteen byte pieces are read, so nothing goes past the bound.
+    //
+    "cbz x2, 8f\n   cmp x2, #16\n   b.lo 7f\n"
+    "dup v1.16b, w1\n"
+    "1:  ld1 {v0.16b}, [x0]\n   cmeq v0.16b, v0.16b, v1.16b\n"
+    "shrn v0.8b, v0.8h, #4\n   fmov x3, d0\n   cbnz x3, 2f\n"
+    "add x0, x0, #16\n   sub x2, x2, #16\n   cmp x2, #16\n   b.hs 1b\n"
+    "b 7f\n"
+    "2:  rbit x3, x3\n   clz x3, x3\n   lsr x3, x3, #2\n   add x0, x0, x3\n   ret\n"
+    "7:  \n"
     "mov x9, #0\n"
     "cbz x2, 9f\n   and w1, w1, #0xff\n"
     "mov x10, #0x0101010101010101\n"
@@ -2739,6 +2855,60 @@ __asm__(
     "9:  mov x0, x9\n"
     ASM_RET
     ASM_END(memory_first_of)
+    //
+    //       memory_count -- how many times a byte appears.
+    //
+    //       memory_count -- how many times a byte appears.
+    //
+    //       NEON is not optional on arm64, so there is no second body and
+    //       nothing to detect: every machine that runs this has it.
+    //
+    //       Sixty four bytes a turn through four registers, because cmeq and
+    //       sub both have a three cycle latency here and four independent
+    //       chains keep the pipeline full where one would stall on itself.
+    //       cmeq leaves 0xff where the bytes matched, which as a signed byte
+    //       is minus one, so subtracting it into the accumulator adds one --
+    //       the same identity the x86_64 body uses.
+    //
+    //       That accumulator is a byte per lane and wraps at 256, so the outer
+    //       loop drains it before it can: uaddlv adds the sixteen lanes into
+    //       one halfword, which is why the round count is capped at 255.
+    //
+    ASM_FUNC(memory_count)
+    "mov x3, #0\n   cbz x1, 9f\n"
+    "dup v1.16b, w2\n"
+    "1:  cmp x1, #64\n   b.lo 5f\n"
+    "mov x4, x1\n   lsr x4, x4, #6\n   mov x5, #63\n   cmp x4, x5\n   csel x4, x5, x4, hi\n"
+    "movi v2.16b, #0\n   movi v3.16b, #0\n   movi v4.16b, #0\n   movi v5.16b, #0\n"
+    "mov x6, x4\n"
+    "2:  ld1 {v16.16b, v17.16b, v18.16b, v19.16b}, [x0], #64\n"
+    "cmeq v16.16b, v16.16b, v1.16b\n   cmeq v17.16b, v17.16b, v1.16b\n"
+    "cmeq v18.16b, v18.16b, v1.16b\n   cmeq v19.16b, v19.16b, v1.16b\n"
+    "sub v2.16b, v2.16b, v16.16b\n   sub v3.16b, v3.16b, v17.16b\n"
+    "sub v4.16b, v4.16b, v18.16b\n   sub v5.16b, v5.16b, v19.16b\n"
+    "subs x6, x6, #1\n   b.ne 2b\n"
+    "uaddlv h2, v2.16b\n   uaddlv h3, v3.16b\n   uaddlv h4, v4.16b\n   uaddlv h5, v5.16b\n"
+    "umov w7, v2.h[0]\n   add x3, x3, x7\n   umov w7, v3.h[0]\n   add x3, x3, x7\n"
+    "umov w7, v4.h[0]\n   add x3, x3, x7\n   umov w7, v5.h[0]\n   add x3, x3, x7\n"
+    "lsl x7, x4, #6\n   sub x1, x1, x7\n   b 1b\n"
+    "5:  cbz x1, 9f\n"
+    "6:  ldrb w4, [x0], #1\n   cmp w4, w2\n   cinc x3, x3, eq\n"
+    "subs x1, x1, #1\n   b.ne 6b\n"
+    "9:  mov x0, x3\n"
+    ASM_RET
+    ASM_END(memory_count)
+    //
+    //       moonwater_cpu_detect -- nothing to ask yet.
+    //
+    //       NEON is not optional on arm64: every one of them has it, so there
+    //       is no feature to test and no second body to choose between. This
+    //       exists because startup calls it on every machine, and a routine
+    //       that is present on two architectures of three is the unevenness
+    //       the inventory at the top of this file exists to stop.
+    //
+    ASM_FUNC(moonwater_cpu_detect)
+    ASM_RET
+    ASM_END(moonwater_cpu_detect)
     ASM_FUNC(get_cpu_time)
     //
     //       The virtual counter: fixed rate, readable at EL0 and EL1, and
@@ -3652,68 +3822,192 @@ __asm__(
     "8:  li a0, 0\n   ret\n"
     ASM_END(string_first_of_max)
     //
-    //       char *strrchr(const char *s, int c)
+    //       string_last_of_or_end, string_compare_max, string_length_max and
+    //       memory_first_of. The x86_64 block above carries the reasoning for
+    //       all four; what follows is only where riscv64 does it differently.
     //
-    //       The last match rather than the first, which the forward scan does not
-    //       answer directly: within a word the highest set bit is wanted, not the
-    //       lowest, so bsr where the others use bsf. A word without a terminator
-    //       may hold a later match than anything before it, so the best so far is
-    //       carried along; the word that holds the terminator only counts matches
-    //       below it.
+    //       These four used to be absent here, under a comment saying riscv
+    //       ships its own in the kernel and freestanding code can fall back to
+    //       the generic C. Once the libc names became aliases onto ours, that
+    //       stopped being true in a way the linker noticed: strnlen pointed at
+    //       a string_length_max this block did not have, and any freestanding
+    //       riscv64 link failed on four undefined symbols.
     //
-    //       Searching for the terminator itself is a byte walk. It is the one case
-    //       where the answer is the end of the string rather than a match inside
-    //       it, and it is rare enough not to be worth its own scan.
-    //
-    // As above: nothing here on purpose.
-    //
-    //       string_compare_max and string_length_max -- a word at a time.
-    //
-    //       Both are byte loops in lib/string.c and neither is overridden on
-    //       x86_64. Two functions in one file, which the dialect allows now: a
-    //       #> shared closes the run of blocks before it and the next #> arch
-    //       opens a new one.
-    //
-    //       An eight byte load aligned to eight never crosses a page, so reading
-    //       the word that contains a pointer can never fault on memory the caller
-    //       did not give us. That is what makes the unbounded scan safe; where a
-    //       length is given the reads are bounded anyway.
+    //       Base RV64I has no count-leading-zeros and no count-trailing-zeros,
+    //       so where the other two blocks reach for clz or bsf these use what
+    //       string_length already does here: isolate the wanted bit, subtract
+    //       one to get the bits under it, and multiply by 0x0101..01 so the top
+    //       byte becomes the count of them.
     //
     ".text\n"
     //
-    //       int string_compare_max(const char *a, const char *b, size_t n)
+    //       The last match, not the first, which the forward scan does not
+    //       answer directly: within a word the highest flag is wanted. There is
+    //       no instruction for that here either, so the flags are smeared down
+    //       -- or with every right shift until every bit under the highest is
+    //       set -- and then (x >> 1) + 1 leaves the highest one alone.
     //
-    //       Eight bytes from each, unaligned, which is legal here because n bounds
-    //       the read. Equal and no terminator in them means advance; anything else
-    //       hands those eight to the byte loop, which already knows how to stop on
-    //       a difference or a terminator and gets the sign right. The difference is
-    //       found once per call, so simple beats clever there.
+    //       The zero test below is the five instruction one and not the three
+    //       instruction one the rest of this block uses. The reason is written
+    //       out over the arm64 copy: the cheap test's flags are exact only at
+    //       the lowest, and this is the one routine that takes the highest.
     //
+    //       Hunting the terminator itself is a byte walk, as it is on the other
+    //       two: the answer there is the end of the string rather than a match
+    //       inside it, and it is far too rare to shape the scan.
     //
-    //      Nothing, deliberately, and this is what "#> arch other" with an
-    //      empty block is for.
+    ASM_FUNC(string_last_of_or_end)
+    "andi a1, a1, 0xff\n   bnez a1, 1f\n"
+    "0:  lbu t0, 0(a0)\n   beqz t0, 9f\n   addi a0, a0, 1\n   j 0b\n"
+    "9:  ret\n"
+    "1:  li t0, 0x0101010101010101\n   li t1, 0x7f7f7f7f7f7f7f7f\n"
+    "mul a3, a1, t0  # the byte, in all eight positions\n"
+    "li a4, 0  # best so far: none\n"
+    "andi t2, a0, 7\n   andi a5, a0, -8  # align down: same page, cannot fault\n"
+    "ld a6, 0(a5)\n   slli t2, t2, 3\n   li a7, -1\n   sll a7, a7, t2\n"
+    "not a7, a7  # ones where the prefix is\n"
+    "xor t3, a6, a3\n   or t3, t3, a7  # the prefix matches nothing\n"
+    "or a6, a6, a7  # and is no terminator\n"
+    "j 3f\n"
+    "2:  xor t3, a6, a3\n"
+    "3:  and t4, t3, t1\n   add t4, t4, t1\n   or t4, t4, t3\n   or t4, t4, t1\n"
+    "not t4, t4  # matches, exactly, with nothing borrowed\n"
+    "and t5, a6, t1\n   add t5, t5, t1\n   or t5, t5, a6\n   or t5, t5, t1\n"
+    "not t5, t5  # and the terminator, the same way\n"
+    "beqz t5, 4f\n"
+    "sub t6, zero, t5\n   and t5, t5, t6  # the lowest terminator flag\n"
+    "addi t5, t5, -1\n   and t4, t4, t5  # only matches under it count\n"
+    "li t2, 1  # and this is the last word\n"
+    "j 5f\n"
+    "4:  li t2, 0\n"
+    "5:  beqz t4, 7f\n"
+    "srli t6, t4, 1\n   or t4, t4, t6\n   srli t6, t4, 2\n   or t4, t4, t6\n"
+    "srli t6, t4, 4\n   or t4, t4, t6\n   srli t6, t4, 8\n   or t4, t4, t6\n"
+    "srli t6, t4, 16\n   or t4, t4, t6\n   srli t6, t4, 32\n   or t4, t4, t6\n"
+    "srli t6, t4, 1\n   addi t6, t6, 1  # the highest flag, alone\n"
+    "addi t6, t6, -1\n   and t6, t6, t0\n   mul t6, t6, t0\n   srli t6, t6, 56\n"
+    "addi t6, t6, -1  # its byte within the word\n"
+    "add a4, a5, t6  # a later match than any before\n"
+    "7:  bnez t2, 8f\n"
+    "addi a5, a5, 8\n   ld a6, 0(a5)\n   j 2b\n"
+    "8:  mv a0, a4\n"
+    ASM_RET
+    ASM_END(string_last_of_or_end)
     //
-    //      This file is in src/, so src/Makefile builds it for whichever
-    //      architecture the kernel is being configured for. An #error here
-    //      -- which is what stood in this place -- does not mean "not
-    //      implemented", it means the arm64 and riscv builds stop on the
-    //      first of these files they reach.
+    //       Eight bytes from each while the count allows it, which needs no
+    //       page argument: n bounds the read, so an unaligned load is legal.
+    //       Anything but "equal and no terminator" drops to the byte loop,
+    //       which already stops in the right place and gets the sign right.
     //
-    //      They do not need it. arm64 and riscv both ship their own, and
-    //      where they do not the generic C in lib/string.c is what runs,
-    //      exactly as it did before any of this. Emitting nothing leaves
-    //      them where they were; the header claim that hands the symbol
-    //      over is in build.sh and only ever touches x86's header.
+    ASM_FUNC(string_compare_max)
+    "li a3, 0\n   beqz a2, 4f\n   li t0, 0x0101010101010101\n   slli t1, t0, 7\n"
+    "1:  li t2, 8\n   bltu a2, t2, 2f\n"
+    "ld t3, 0(a0)\n   ld t4, 0(a1)\n"
+    "bne t3, t4, 2f  # differ: let the byte step find where\n"
+    "sub t5, t3, t0\n   not t6, t3\n   and t5, t5, t6\n   and t5, t5, t1\n"
+    "bnez t5, 3f  # a terminator in them: equal, and the strings end\n"
+    "addi a0, a0, 8\n   addi a1, a1, 8\n   addi a2, a2, -8\n   j 1b\n"
+    "2:  beqz a2, 3f\n   lbu t3, 0(a0)\n   lbu t4, 0(a1)\n   sub a3, t3, t4\n"
+    "bnez a3, 4f\n   beqz t4, 3f\n"
+    "addi a0, a0, 1\n   addi a1, a1, 1\n   addi a2, a2, -1\n   j 2b\n"
+    "3:  li a3, 0\n"
+    "4:  sext.w a0, a3  # an int return is sign extended in a0\n"
+    ASM_RET
+    ASM_END(string_compare_max)
     //
+    //       string_length with a fence: the same align-down scan, stopped when
+    //       the walk reaches the bound, and a terminator found past it clamped
+    //       back to n -- which is what the answer is when there is none inside.
     //
-    //       size_t string_length_max(const char *s, size_t n)
+    ASM_FUNC(string_length_max)
+    "beqz a1, 9f\n   li t0, 0x0101010101010101\n   slli t1, t0, 7\n"
+    "add a4, a0, a1  # one past the last byte we may report\n"
+    "andi a3, a0, 7\n   andi a5, a0, -8  # align down: same page, cannot fault\n"
+    "ld a6, 0(a5)\n   beqz a3, 1f\n"
+    "slli a3, a3, 3\n   li a7, 1\n   sll a7, a7, a3\n   addi a7, a7, -1\n"
+    "or a6, a6, a7  # ones below the string, so it cannot end there\n"
+    "1:  sub t2, a6, t0\n   not t3, a6\n   and t2, t2, t3\n   and t2, t2, t1\n"
+    "bnez t2, 2f\n   addi a5, a5, 8\n"
+    "bgeu a5, a4, 8f  # nothing within the bound\n"
+    "ld a6, 0(a5)\n   j 1b\n"
+    "2:  sub t3, zero, t2\n   and t2, t2, t3  # lowest set high bit\n"
+    "addi t2, t2, -1\n   and t2, t2, t0\n   mul t2, t2, t0\n   srli t2, t2, 56\n"
+    "addi t2, t2, -1  # its byte within the word\n"
+    "add t2, a5, t2  # address of the terminator\n"
+    "sub a0, t2, a0  # how far in that is\n"
+    "bgeu a0, a1, 8f  # never more than n\n"
+    "ret\n"
+    "8:  mv a0, a1\n   ret\n"
+    "9:  li a0, 0\n"
+    ASM_RET
+    ASM_END(string_length_max)
     //
-    //       string_length with a fence. The scan is the same -- align down, force the
-    //       bytes before the string non-zero, then look for a zero byte eight at a
-    //       time -- and a terminator found beyond n is clamped back to n, which is
-    //       what string_length_max returns when there is none inside the bound.
+    //       The byte hunt with a fence instead of a terminator, so there is one
+    //       hunt here and not two. A match in the word that reaches past the
+    //       bound is thrown away by comparing its address, which costs less
+    //       than stopping the scan short would.
     //
-    // As above: nothing here on purpose.
+    ASM_FUNC(memory_first_of)
+    "beqz a2, 8f\n   andi a1, a1, 0xff\n"
+    "li t0, 0x0101010101010101\n   slli t1, t0, 7\n"
+    "mul a3, a1, t0  # the byte, in all eight positions\n"
+    "add a4, a0, a2  # one past the last byte we may report\n"
+    "andi t2, a0, 7\n   andi a5, a0, -8  # align down: same page, cannot fault\n"
+    "ld a6, 0(a5)\n   slli t2, t2, 3\n   li a7, -1\n   sll a7, a7, t2\n"
+    "not a7, a7  # ones where the prefix is\n"
+    "xor t3, a6, a3\n   or t3, t3, a7  # the prefix differs from the byte everywhere\n"
+    "j 2f\n"
+    "1:  xor t3, a6, a3\n"
+    "2:  sub t4, t3, t0\n   not t5, t3\n   and t4, t4, t5\n   and t4, t4, t1\n"
+    "bnez t4, 3f\n   addi a5, a5, 8\n"
+    "bgeu a5, a4, 8f\n   ld a6, 0(a5)\n   j 1b\n"
+    "3:  sub t5, zero, t4\n   and t4, t4, t5  # lowest set high bit\n"
+    "addi t4, t4, -1\n   and t4, t4, t0\n   mul t4, t4, t0\n   srli t4, t4, 56\n"
+    "addi t4, t4, -1  # its byte within the word\n"
+    "add t4, a5, t4\n"
+    "bgeu t4, a4, 8f  # the word reached past the bound\n"
+    "mv a0, t4\n   ret\n"
+    "8:  li a0, 0\n"
+    ASM_RET
+    ASM_END(memory_first_of)
+    //
+    //       memory_count -- how many times a byte appears.
+    //
+    //       Eight at a time out of an integer register, because the vector
+    //       extension is optional on riscv and this has to run on the ones
+    //       without it. The byte is smeared across a word and exclusive-ored
+    //       in, so a match becomes a zero byte; the carry free zero test then
+    //       leaves bit seven set on exactly those.
+    //
+    //       Counting them without a popcount instruction, which base RV64I
+    //       does not have: shift the flags down to bit zero of each byte and
+    //       multiply by 0x0101..01, which sums all eight into the top byte.
+    //       The same multiply the byte-index arithmetic elsewhere in this
+    //       block uses, asked a different question.
+    //
+    ASM_FUNC(memory_count)
+    "li a3, 0\n   beqz a1, 9f\n   andi a2, a2, 0xff\n"
+    "li t0, 0x0101010101010101\n   li t1, 0x7f7f7f7f7f7f7f7f\n"
+    "mul t2, a2, t0  # the byte, eight times over\n"
+    "1:  li t3, 8\n   bltu a1, t3, 5f\n"
+    "ld t4, 0(a0)\n   xor t4, t4, t2  # a match is now a zero byte\n"
+    "and t5, t4, t1\n   add t5, t5, t1\n   or t5, t5, t4\n   or t5, t5, t1\n"
+    "not t5, t5  # bit seven set for each byte that was zero\n"
+    "srli t5, t5, 7\n   mul t5, t5, t0\n   srli t5, t5, 56  # how many of them\n"
+    "add a3, a3, t5\n   addi a0, a0, 8\n   addi a1, a1, -8\n   j 1b\n"
+    "5:  beqz a1, 9f\n"
+    "6:  lbu t4, 0(a0)\n   bne t4, a2, 7f\n   addi a3, a3, 1\n"
+    "7:  addi a0, a0, 1\n   addi a1, a1, -1\n   bnez a1, 6b\n"
+    "9:  mv a0, a3\n"
+    ASM_RET
+    ASM_END(memory_count)
+    //
+    //       moonwater_cpu_detect -- nothing to ask yet. The vector extension is optional
+    //       on riscv and would need asking about; nothing here uses it.
+    //
+    ASM_FUNC(moonwater_cpu_detect)
+    ASM_RET
+    ASM_END(moonwater_cpu_detect)
     //
     //       get_cpu_time -- the machine's own free running counter.
     //
@@ -4492,6 +4786,41 @@ address_any memory_copy_fast(address_any destination, address_any source, positi
 address_any memory_copy(address_any destination, address_any source, positive size);
 
 /*
+        What this processor turned out to have.
+
+        Written once at startup by moonwater_cpu_detect and read by the routines that
+        have two bodies. A byte rather than a bit field: the routines test it
+        with one compare against memory and the branch predicts perfectly
+        after the first call, so there is nothing to win by packing it.
+*/
+/*
+        Defined here rather than beside the rest of the library's storage,
+        because that lives inside the block a kernel build skips and the
+        assembly that writes these does not. The kernel linked without them.
+
+        KEEP because assembly is the only thing that touches them and -flto
+        cannot see into an asm string.
+*/
+KEEP p8 cpu_has_avx2 = 0;
+KEEP p8 cpu_has_avx512 = 0;
+fn moonwater_cpu_detect(void);
+
+//
+//      How many times a byte appears in a block.
+//
+//      wc counts lines this way, and so do nl, head, tail and split. It is
+//      the one loop in the text tools that is purely a scan -- nothing is
+//      written, nothing is remembered between bytes -- which is why it can
+//      run at the speed the memory arrives and the others cannot.
+//
+positive memory_count(address_any block, positive size, b8 value);
+
+// ### First occurrence of a byte in a block
+// returns: its address, or null when the block does not hold one
+// traditional: memchr
+address_any memory_first_of(address_any block, b8 value, positive size);
+
+/*
         The length of the run at the start of a string whose bytes are all in a
         set, where the set is 256 bits -- one for each byte value.
 
@@ -5129,7 +5458,7 @@ typedef b64 ptrdiff_t;
 #define SIGCHLD 17
 
 #define O_NOCTTY 0400
-#define O_NONBLOCK 0
+#define O_NONBLOCK 04000
 #define O_DIRECTORY 0200000
 #define AT_FDCWD -100
 #define O_TRUNC 01000
@@ -6167,7 +6496,16 @@ bool raw_windows_paths = false;
 //
 #define MOONWATER_WORKING_DIRECTORY_SIZE 1024
 
-p8 working_directory[MOONWATER_WORKING_DIRECTORY_SIZE] = {0};
+//
+//      KEEP, because on anything but Windows the only thing that names this
+//      is the assembly below, and -flto cannot see into an asm string. The C
+//      that used to reference it was a wrapper forwarding to that assembly;
+//      once the assembly took the name the wrapper went, and with it the last
+//      reference the optimiser could follow. It dropped the buffer and left
+//      the assembly pointing at nothing, which is a link error and not a
+//      quiet one -- but only when something links, which no lane did.
+//
+KEEP p8 working_directory[MOONWATER_WORKING_DIRECTORY_SIZE] = {0};
 
 #ifndef WINDOWS
 

@@ -20,7 +20,6 @@
 #define ROWS_WANTED 24
 #define SHELL "/shell"
 
-#define O_NONBLOCK 04000
 #define EINTR 4
 #define EAGAIN 11
 #define TIOCSPTLCK 0x40045431u

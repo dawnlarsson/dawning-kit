@@ -69,6 +69,11 @@ fn _start_c(p8 address_to stack_base)
 {
         program_stack_base = stack_base;
 
+        // Before anything runs: the routines with a wide body and a narrow one
+        // choose between them on a byte this writes, and reading it unset
+        // would take the narrow path for the life of the program.
+        moonwater_cpu_detect();
+
         b32 result = main();
 
         exit(result);

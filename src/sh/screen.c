@@ -343,8 +343,8 @@ static b32 screen_window()
 // The size is the compositor's, not this program's: dragging an edge changes
 // how many cells there are, and the layout is done again at whatever it
 // becomes. window_grid is what says the cells are in that shape now.
-#define COLUMNS_WANTED 60
-#define ROWS_WANTED 18
+#define TEXT_COLUMNS_WANTED 60
+#define TEXT_ROWS_WANTED 18
 #define TYPED_MAX 46
 
 static struct window *window;
@@ -414,7 +414,7 @@ static void lay_out(void)
 
 static b32 screen_text()
 {
-        window = window_open_text(COLUMNS_WANTED, ROWS_WANTED);
+        window = window_open_text(TEXT_COLUMNS_WANTED, TEXT_ROWS_WANTED);
 
         if (!window)
         {

@@ -124,12 +124,20 @@ fn shell_env_init()
         shell_envp[idx] = null;
 }
 
+/*
+        The library's string routines take a mutable pointer and do not write
+        through it. Rather than loosen every one of those declarations, the
+        promise these two make to their callers is kept here and the cast is
+        made where it is safe to see that nothing is written.
+*/
+#define env_reading(text) ((string_address)(text))
+
 string_address env_get(const_string name)
 {
         if (name == null)
                 return null;
 
-        positive name_len = string_length(name);
+        positive name_len = string_length(env_reading(name));
         positive idx = 0;
 
         while (shell_envp[idx])
@@ -211,8 +219,8 @@ bool env_set(const_string name, const_string value)
         if (env_readonly(name))
                 return false;
 
-        positive name_len = string_length(name);
-        positive value_len = string_length(value);
+        positive name_len = string_length(env_reading(name));
+        positive value_len = string_length(env_reading(value));
         positive needed = name_len + 1 + value_len + 1;
 
         positive idx = 0;
@@ -222,8 +230,8 @@ bool env_set(const_string name, const_string value)
         // both are stood aside first, somewhere the move will not reach.
         if (env_used + needed > ENV_STORAGE_SIZE && needed <= ENV_STORAGE_SIZE)
         {
-                memory_copy(env_staging, name, name_len + 1);
-                memory_copy(env_staging + name_len + 1, value, value_len + 1);
+                memory_copy(env_staging, env_reading(name), name_len + 1);
+                memory_copy(env_staging + name_len + 1, env_reading(value), value_len + 1);
 
                 name = env_staging;
                 value = env_staging + name_len + 1;
@@ -250,7 +258,7 @@ bool env_set(const_string name, const_string value)
                         // the name of whatever comes next.
                         if (i == name_len && value_len <= string_length(eq + 1))
                         {
-                                string_copy(eq + 1, value);
+                                string_copy(eq + 1, env_reading(value));
                                 return true;
                         }
 
@@ -268,9 +276,9 @@ bool env_set(const_string name, const_string value)
                 return false;
 
         string_address dest = env_storage + env_used;
-        string_copy(dest, name);
+        string_copy(dest, env_reading(name));
         string_copy(dest + name_len, "=");
-        string_copy(dest + name_len + 1, value);
+        string_copy(dest + name_len + 1, env_reading(value));
 
         shell_envp[idx] = dest;
 
@@ -286,7 +294,6 @@ bool env_set(const_string name, const_string value)
 
 #define ERROR_NOT_PERMITTED 1
 #define ERROR_NO_ENTRY 2
-#define ERROR_EXISTS 17
 #define ERROR_NOT_DIRECTORY 20
 #define ERROR_IS_DIRECTORY 21
 
@@ -1001,7 +1008,7 @@ bool word_is(string_address word, string_address text)
 
 fn env_unset(string_address name)
 {
-        positive length = string_length(name);
+        positive length = string_length(env_reading(name));
         positive index = 0;
 
         while (shell_envp[index])
@@ -1382,7 +1389,7 @@ static bool local_remember(string_address name)
                 local_table[local_count].value = LOCAL_ABSENT;
         else
         {
-                positive length = string_length(value);
+                positive length = string_length(env_reading(value));
 
                 if (local_used + length + 1 > LOCAL_STORAGE)
                         return false;
@@ -2132,7 +2139,7 @@ fn printf_one(writer write, string_address format)
                 if (conversion == 's' || conversion == 'b')
                 {
                         string_address value = printf_next();
-                        positive length = string_length(value);
+                        positive length = string_length(env_reading(value));
 
                         if (precision >= 0 && (positive)precision < length)
                                 length = (positive)precision;
@@ -2852,7 +2859,7 @@ string_address alias_lookup(string_address name)
 
 bool alias_record(string_address name, positive name_length, string_address value)
 {
-        positive value_length = string_length(value);
+        positive value_length = string_length(env_reading(value));
         positive index = 0;
 
         if (alias_used + name_length + 1 + value_length + 1 > ALIAS_STORAGE)
@@ -3590,7 +3597,7 @@ b32 shell_find_in_path(string_address name, p8 address_to into, positive room)
         search[sizeof(search) - 1] = end;
 
         segment = search;
-        name_length = string_length(name);
+        name_length = string_length(env_reading(name));
 
         while (segment)
         {
