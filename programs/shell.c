@@ -8,6 +8,7 @@
 
 #define MAX_INPUT 4096
 p8 shell_buffer[MAX_INPUT];
+static b32 shell_is_interactive;
 
 writer shell_output = log;
 positive shell_output_file;
@@ -566,7 +567,16 @@ fn process(string_address line)
 fn run_line(string_address line)
 {
         process(line);
-        log_flush();
+
+        /*
+                A terminal wants each line the moment it happens. A script does
+                not, and flushing per line is one write system call per line of
+                it -- which is where the time in a forty thousand line script
+                went. The buffer drains when it fills, before anything is
+                spawned, and when the input ends.
+        */
+        if (shell_is_interactive || shell_output_file)
+                log_flush();
 
         if (shell_output_file)
                 system_call_1(syscall(close), shell_output_file);
@@ -595,7 +605,7 @@ b32 main()
         shell_ignore(SIGNAL_INTERRUPT);
         shell_ignore(SIGNAL_QUIT);
 
-        interactive = shell_interactive();
+        interactive = shell_is_interactive = shell_interactive();
 
         shell_env_init();
 
@@ -676,5 +686,6 @@ b32 main()
                 run_line(shell_buffer);
         }
 
+        log_flush();
         return 0;
 }
