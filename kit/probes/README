@@ -1,0 +1,12 @@
+Programs that exist in order to be programs.
+
+Each of these proves something about being a separate process -- that the
+spark loader maps its regions right, that /dev/spark really spawns, that a
+stack of arguments arrives, that a spawner waited for an exit status, what an
+exec costs. None of them can be a shell builtin: a builtin is not exec'd, so
+it would be testing nothing.
+
+Everything a person would actually run is in the shell. These are built when
+something is being measured and are not part of the image.
+
+        sh kit/spark kit/probes/tiny /tmp/tiny

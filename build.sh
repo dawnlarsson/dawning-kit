@@ -474,12 +474,23 @@ STRNCHR:char *strnchr(const char *, __kernel_size_t, int)"
                 eval "$(key "pre")"
 
         label USER SPACE BUILD
+                #
+                #       What was here last time, gone.
+                #
+                #       Nothing ever removed a build product from fs/, so
+                #       anything that stopped being built stayed in the image
+                #       forever: an 857 kilobyte binary from a fortnight ago
+                #       was still shipping, along with every program that had
+                #       since become a name for the shell. Only the top level
+                #       and only files and links -- the directories below hold
+                #       the device nodes and are made once.
+                #
+                find fs -maxdepth 1 \( -type f -o -type l \) -delete ||
+                        die "clearing the last image"
+
                 # Every program in the image is spark, including the one the kernel
                 # execs as /init, so no ELF is ever loaded on the boot path.
-                for program in init shell duck edit sparktest pointer window text term args world; do
-                        sh kit/spark "programs/$program" "fs/$program" ||
-                                die "building $program"
-                done
+                sh kit/spark programs/shell fs/shell || die "building the shell"
 
                 #
                 #       The utilities are the shell, under other names.
@@ -493,7 +504,8 @@ STRNCHR:char *strnchr(const char *, __kernel_size_t, int)"
                 for utility in cat grep sed cut tr sort uniq head tail wc tee \
                         rev nl fold ls find stat du df chmod chown ln readlink \
                         basename dirname realpath mkdir rmdir cp mv rm touch \
-                        sleep seq yes env id hostname uname; do
+                        sleep seq yes env id hostname uname \
+                        init edit term window text pointer world; do
                         ln -sf shell "fs/$utility" || die "linking $utility"
                 done
 

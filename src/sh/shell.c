@@ -7,10 +7,45 @@
         not a program, which is what an in-kernel console would need.
 */
 
+/*
+        Control-C cancels the command, not the shell.
+
+        The line discipline sends SIGINT to everything in the terminal's
+        foreground group, which is this and whatever it is running. Ignoring it
+        here leaves the shell standing; every command it runs is given its own
+        default disposition back first, whether it is spawned or is a builtin
+        in a fork of this process.
+
+        SIG_IGN needs no restorer, which is the whole reason this is three
+        words and not a per-architecture trampoline.
+*/
+#define SIGNAL_INTERRUPT 2
+#define SIGNAL_QUIT 3
+#define SIGNAL_IGNORE 1
+#define SIGNAL_DEFAULT 0
+
+fn shell_signal(b32 number, positive disposition)
+{
+        positive action[4] = {disposition, 0, 0, 0};
+
+        system_call_4(syscall(rt_sigaction), number, (positive)address_of action, 0, 8);
+}
+
+#define shell_ignore(n) shell_signal(n, SIGNAL_IGNORE)
+#define shell_default(n) shell_signal(n, SIGNAL_DEFAULT)
+
+// Whether output that can carry colour does. An interface that draws its own
+// screen turns it off while it holds the terminal.
+bool shell_styles = true;
+
 #include "lex.c"
 #include "text.c"
 #include "file.c"
 #include "expand.c"
+#include "../canvas/window.c"
+#include "term.c"
+#include "screen.c"
+#include "system.c"
 #include "builtin.c"
 
 #define PROMPT TERM_RESET TERM_BOLD " $ " TERM_RESET
@@ -33,31 +68,6 @@ fn redirect_writer(address_any data, positive length)
         system_call_3(syscall(write), shell_output_file, (positive)data, length);
 }
 
-/*
-        Control-C cancels the command, not the shell.
-
-        The line discipline sends SIGINT to everything in the terminal's
-        foreground group, which is this and whatever it is running. Ignoring it
-        here leaves the shell standing; the kernel gives every program it
-        spawns its own default disposition back, so the command still dies.
-
-        SIG_IGN needs no restorer, which is the whole reason this is three
-        words and not a per-architecture trampoline.
-*/
-#define SIGNAL_INTERRUPT 2
-#define SIGNAL_QUIT 3
-#define SIGNAL_IGNORE 1
-#define SIGNAL_DEFAULT 0
-
-fn shell_signal(b32 number, positive disposition)
-{
-        positive action[4] = {disposition, 0, 0, 0};
-
-        system_call_4(syscall(rt_sigaction), number, (positive)address_of action, 0, 8);
-}
-
-#define shell_ignore(n) shell_signal(n, SIGNAL_IGNORE)
-#define shell_default(n) shell_signal(n, SIGNAL_DEFAULT)
 
 /*
         A line becomes argv here and nowhere else, so the builtin path and the

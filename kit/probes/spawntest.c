@@ -1,5 +1,5 @@
-#include "../src/library.c"
-#include "../src/spark.c"
+#include "../../src/library.c"
+#include "../../src/spark.c"
 
 // Proves /dev/spark actually spawns: the child has to produce output and its
 // exit status has to come back through wait4 like any other child.

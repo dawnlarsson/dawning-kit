@@ -1,4 +1,4 @@
-#include "../src/library.c"
+#include "../../src/library.c"
 
 // Reads its own environment back out of /proc, which is the only way to see
 // what the spawner actually handed over. Entries are NUL separated.

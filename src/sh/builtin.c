@@ -2,7 +2,6 @@
 
 const positive page_size = 4096;
 
-bool shell_styles = true;
 
 /*
         Where a complaint goes.
@@ -2856,6 +2855,14 @@ static shell_tool shell_tools[] = {
     {"touch", file_touch},
     {"uname", file_uname},
     {"yes", file_yes},
+
+    {"edit", system_edit},
+    {"init", system_init},
+    {"pointer", screen_pointer},
+    {"term", screen_term},
+    {"text", screen_text},
+    {"window", screen_window},
+    {"world", system_world},
     {null, null},
 };
 
@@ -2936,6 +2943,19 @@ static bool shell_tool_run(string_address name)
 
         if (child == 0)
         {
+                /*
+                        Its own signals back.
+
+                        The shell ignores interrupt and quit so control-C
+                        cancels the command rather than the shell, and a fork
+                        inherits that -- which the spawn path undoes before it
+                        execs and this one has to undo for itself, because a
+                        builtin never execs. Without it a grep over a large
+                        tree could not be stopped.
+                */
+                shell_default(SIGNAL_INTERRUPT);
+                shell_default(SIGNAL_QUIT);
+
                 program_arguments_use(shell_argv, (b32)shell_argc);
                 exit(shell_tools[which].function() & 0xff);
         }

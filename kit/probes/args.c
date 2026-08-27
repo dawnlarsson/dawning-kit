@@ -1,5 +1,5 @@
-#include "../src/library.c"
-#include "../src/spark.c"
+#include "../../src/library.c"
+#include "../../src/spark.c"
 
 // Prints what it was given, which until now nothing could.
 b32 main()
