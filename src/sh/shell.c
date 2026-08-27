@@ -10,8 +10,8 @@
 #include "lex.c"
 #include "text.c"
 #include "file.c"
-#include "builtin.c"
 #include "expand.c"
+#include "builtin.c"
 
 #define PROMPT TERM_RESET TERM_BOLD " $ " TERM_RESET
 

@@ -476,13 +476,25 @@ STRNCHR:char *strnchr(const char *, __kernel_size_t, int)"
         label USER SPACE BUILD
                 # Every program in the image is spark, including the one the kernel
                 # execs as /init, so no ELF is ever loaded on the boot path.
-                for program in init shell duck edit sparktest pointer window text term args world \
-                        grep sed cut tr sort uniq head tail wc tee rev nl fold \
-                        ls find stat du df chmod chown ln readlink basename dirname \
-                        realpath mkdir rmdir cp mv rm touch sleep seq yes env id \
-                        hostname uname; do
+                for program in init shell duck edit sparktest pointer window text term args world; do
                         sh kit/spark "programs/$program" "fs/$program" ||
                                 die "building $program"
+                done
+
+                #
+                #       The utilities are the shell, under other names.
+                #
+                #       Every one of them is a function inside it, reached by
+                #       the name the binary was called as, so a link is the
+                #       whole of what /bin/grep is. One copy on disk, one to
+                #       page in, and nothing that can be a version behind the
+                #       shell that also holds it.
+                #
+                for utility in cat grep sed cut tr sort uniq head tail wc tee \
+                        rev nl fold ls find stat du df chmod chown ln readlink \
+                        basename dirname realpath mkdir rmdir cp mv rm touch \
+                        sleep seq yes env id hostname uname; do
+                        ln -sf shell "fs/$utility" || die "linking $utility"
                 done
 
         label KERNEL BUILD

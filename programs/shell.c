@@ -6,6 +6,24 @@ b32 main()
 {
         b32 interactive;
 
+        /*
+                One binary, forty names.
+
+                The utilities are in here, so a link called grep pointing at
+                this is grep -- there is nothing else to install and nothing
+                that can be a version behind. Asked by its own name, or by any
+                name that is not a tool's, it is a shell.
+        */
+        {
+                b32 answered = shell_tool_as_called();
+
+                if (answered >= 0)
+                {
+                        log_flush();
+                        return answered;
+                }
+        }
+
         shell_ignore(SIGNAL_INTERRUPT);
         shell_ignore(SIGNAL_QUIT);
 

@@ -1,4 +1,5 @@
 #include "../src/library.c"
+#include "../src/sh/file.c"
 #include "../src/sh/builtin.c"
 
 positive2 res;
@@ -31,7 +32,16 @@ fn interface()
 
         log_flush();
 
-        shell_ls(log, ".");
+        // The real ls, the same body the shell and /bin/ls run. It reads
+        // its words the way a program does, so it is handed some.
+        {
+                static string_address listing[] = {(string_address) "ls",
+                                                   (string_address) ".", null};
+
+                program_arguments_use(listing, 2);
+                file_ls();
+                program_arguments_own();
+        }
 }
 
 fn frame()
