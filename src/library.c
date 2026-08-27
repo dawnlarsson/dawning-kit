@@ -7074,7 +7074,9 @@ char address_to strrchr(char address_to source, int character)
 #define FILE_EXECUTE 010
 #define FILE_APPEND (01 | 0100 | 02000)
 #define FILE_CREATE 0100
-#define FILE_TRUNCATE 0200
+// O_TRUNC. FILE_WRITE already carries it; 0200 was O_EXCL, which
+// refused to open any file that already existed.
+#define FILE_TRUNCATE 01000
 
 /*
         mmap's own numbers, which these were not.
@@ -7251,6 +7253,7 @@ __asm__(
     "        mov     %rdi, %r8               # the struct, kept across the trap\n"
     "        mov     %rsi, 8(%r8)            # path\n"
     "        mov     %rdx, 16(%r8)           # flags\n"
+    "        mov     $438, %r10d             # 0666, what a create is given\n"
     "        mov     $-100, %rdi             # AT_FDCWD\n"
     "        mov     $257, %eax              # openat\n"
     "        syscall\n"
@@ -7269,6 +7272,7 @@ __asm__(
     "        mov     %rdi, %r8\n"
     "        mov     %rsi, 8(%r8)\n"
     "        mov     %rdx, 16(%r8)\n"
+    "        mov     $438, %r10d             # 0666, what a create is given\n"
     "        mov     $-100, %rdi\n"
     "        mov     $257, %eax\n"
     "        syscall\n"
@@ -7411,9 +7415,10 @@ __asm__(
     ASM_END(moonwater_file_valid)
 
     ASM_FUNC(moonwater_file_new_lazy)
-    "        mov     x9, x0                  // x3 is openat's mode, leave it\n"
+    "        mov     x9, x0\n"
     "        str     x1, [x9, #8]\n"
     "        str     x2, [x9, #16]\n"
+    "        mov     x3, #438                // 0666, what a create is given\n"
     "        mov     x0, #-100               // AT_FDCWD\n"
     "        mov     x8, #56                 // openat\n"
     "        svc     #0\n"
@@ -7425,6 +7430,7 @@ __asm__(
     "        mov     x9, x0\n"
     "        str     x1, [x9, #8]\n"
     "        str     x2, [x9, #16]\n"
+    "        mov     x3, #438                // 0666, what a create is given\n"
     "        mov     x0, #-100\n"
     "        mov     x8, #56\n"
     "        svc     #0\n"
@@ -7546,9 +7552,10 @@ __asm__(
     ASM_END(moonwater_file_valid)
 
     ASM_FUNC(moonwater_file_new_lazy)
-    "        mv      t1, a0                  # a3 is openat's mode, leave it\n"
+    "        mv      t1, a0\n"
     "        sd      a1, 8(t1)\n"
     "        sd      a2, 16(t1)\n"
+    "        li      a3, 438                 # 0666, what a create is given\n"
     "        li      a0, -100                # AT_FDCWD\n"
     "        li      a7, 56                  # openat\n"
     "        ecall\n"
@@ -7560,6 +7567,7 @@ __asm__(
     "        mv      t1, a0\n"
     "        sd      a1, 8(t1)\n"
     "        sd      a2, 16(t1)\n"
+    "        li      a3, 438                 # 0666, what a create is given\n"
     "        li      a0, -100\n"
     "        li      a7, 56\n"
     "        ecall\n"
