@@ -45,6 +45,15 @@ printf 'no newline at the end' > "$work/h"
 printf '1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n' > "$work/i"
 printf 'foo123bar\nbaz456qux\nnothing here\nFOO789BAR\n' > "$work/j"
 printf 'x\n\ny\n\n\nz\n' > "$work/k"
+printf 'a\n\\:\\:\\:\nhdr\n\\:\\:\nbody1\nbody2\n\\:\nfoot\n' > "$work/sections"
+printf 'x\n\n\n\ny\n' > "$work/blanks"
+printf 'a\tb\nlonger line here\n\rwide\n' > "$work/wide"
+printf '  ab  cd ef\nxy\tzw\nplain\n' > "$work/spaced"
+
+#       -z reads and writes lines that end in a NUL rather than a newline,
+#       which is the one fixture here that cannot be read by eye.
+printf 'xa\000yb\000zc\000' > "$work/zeros"
+printf 'a:b\000c:d\000a:b\000' > "$work/zpairs"
 
 case_start()
 {
@@ -82,6 +91,37 @@ compare()
                 "$group" "$name" \
                 "$(head -c 34 "$work/want" | tr '\n\t' '|>')[$want_status]" \
                 "$(head -c 34 "$work/got" | tr '\n\t' '|>')[$got_status]"
+}
+
+#       A tool that rewrites its input cannot be handed the same file twice:
+#       the second run would read what the first one wrote. Each side gets its
+#       own copy and the copies are compared afterwards, because what -i puts
+#       on standard output is nothing.
+compare_edit()
+{
+        name=$1
+        tool=$2
+        feed=$3
+        shift 3
+
+        cp "$work/$feed" "$work/edit_want"
+        cp "$work/$feed" "$work/edit_got"
+
+        "$tool" "$@" "$work/edit_want" > /dev/null 2>&1
+        want_status=$?
+        "$bin/$tool" "$@" "$work/edit_got" > /dev/null 2>&1
+        got_status=$?
+
+        if cmp -s "$work/edit_want" "$work/edit_got" && [ "$want_status" = "$got_status" ]; then
+                pass=$((pass + 1))
+                return 0
+        fi
+
+        fail=$((fail + 1))
+        printf '  %-8s %-30s want %-24s got %s\n' \
+                "$group" "$name" \
+                "$(head -c 34 "$work/edit_want" | tr '\n\t' '|>')[$want_status]" \
+                "$(head -c 34 "$work/edit_got" | tr '\n\t' '|>')[$got_status]"
 }
 
 case_start grep
@@ -126,6 +166,52 @@ compare 'empty pattern'  grep a  ''
 compare 'dot star'       grep a  '.*'
 compare 'no trailing nl' grep h  newline
 compare 'expression flag' grep a -e alpha
+compare 'only matching'  grep a  -o 'a[a-z]*'
+compare 'only numbered'  grep a  -on 'a[a-z]*'
+compare 'only offsets'   grep a  -ob 'a[a-z]*'
+compare 'byte offset'    grep a  -b a
+compare 'max count'      grep a  -m 2 a
+compare 'max count none' grep a  -m 0 a
+compare 'after context'  grep a  -A1 alpha
+compare 'before context' grep a  -B1 zeta
+compare 'context both'   grep k  -C1 y
+compare 'context groups' grep i  -C1 '^[13]$'
+compare 'context count'  grep a  -c -A1 alpha
+compare 'files without'  grep a  -L nowhere
+compare 'files without hit' grep a -L alpha
+compare 'named stdin'    grep a  -H a
+compare 'named count'    grep a  -cH a
+compare 'named label'    grep a  --label=X -H a
+compare 'null names'     grep -  -Z -l a "$work/a" "$work/b"
+compare 'initial tab'    grep a  -T -n a
+compare 'initial tab off' grep a -T a
+compare 'empty pattern file' grep a -f /dev/null
+compare 'empty file invert' grep a -v -f /dev/null
+compare 'unknown letter' grep a  -N a
+compare 'long ignore case' grep f --ignore-case hello
+compare 'long invert'    grep a  --invert-match alpha
+compare 'long numbered'  grep a  --line-number a
+compare 'long count'     grep a  --count a
+compare 'long only'      grep a  --only-matching 'a[a-z]*'
+compare 'long max count' grep a  --max-count 2 a
+compare 'long context'   grep a  --context 1 alpha
+compare 'long word'      grep a  --word-regexp beta
+compare 'long fixed'     grep a  --fixed-strings 'alpha beta'
+compare 'long extended'  grep -  --extended-regexp 'delta|zeta' "$work/a"
+compare 'long quiet'     grep a  --quiet alpha
+compare 'long joined'    grep a  --regexp=alpha
+compare 'long unknown'   grep a  --nosuchflag a
+compare 'long after --'  grep a  -- --nosuchflag
+compare 'null data'      grep zeros -z a
+compare 'null data long' grep zeros --null-data a
+compare 'null data count' grep zeros -z -c a
+compare 'null data list' grep zeros -z -l a
+compare 'null data numbered' grep zeros -z -nb a
+compare 'null data only'  grep zeros -z -o a
+compare 'null data invert' grep zeros -z -v a
+compare 'null data names' grep zeros -z -Z -H a
+compare 'null data context' grep zeros -z -C1 b
+compare 'null data patterns' grep zeros -z -e a -e b
 
 case_start sed
 compare 'substitute'     sed a  's/alpha/ALPHA/'
@@ -164,6 +250,42 @@ compare 'no trailing nl' sed h  's/newline/NEWLINE/'
 compare 'delete blank'   sed k  '/^$/d'
 compare 'sub blank'      sed k  's/^$/EMPTY/'
 compare 'multiple files' sed -  's/a/A/' "$work/a" "$work/b"
+compare 'long quiet'     sed a  --quiet '2p'
+compare 'long silent'    sed a  --silent '2p'
+compare 'long expression' sed a --expression='s/a/A/'
+compare 'long file'      sed a  --file /dev/null
+compare 'empty script file' sed a -f /dev/null
+compare 'extended alt'   sed a  -E 's/alpha|zeta/X/'
+compare 'extended plus'  sed a  -E 's/(al)+pha/X/'
+compare 'extended group' sed a  -E 's/(a)(l)/\2\1/'
+compare 'extended opt'   sed a  -E 's/alphas?/X/'
+compare 'extended count' sed a  -E 's/a{2}/X/'
+compare 'extended r flag' sed a -r 's/alpha|zeta/X/'
+compare 'long extended'  sed a  --regexp-extended 's/alpha|zeta/X/'
+compare 'basic still basic' sed a 's/\(al\)pha/X/'
+compare 'separate last'  sed -  -s -n '$p' "$work/a" "$work/b"
+compare 'joined last'    sed -  -n '$p' "$work/a" "$work/b"
+compare 'separate number' sed - -s -n '=' "$work/a" "$work/b"
+compare 'long separate'  sed -  --separate -n '$p' "$work/a" "$work/b"
+compare 'unbuffered'     sed a  -u 's/a/A/'
+compare 'long unbuffered' sed a --unbuffered 's/a/A/'
+compare 'line length'    sed a  -l 2 's/a/A/'
+compare 'long line length' sed a --line-length 2 's/a/A/'
+compare 'posix'          sed a  --posix 's/a/A/'
+compare 'sandbox'        sed a  --sandbox 's/a/A/'
+compare 'in place no files' sed a -i 's/a/A/'
+compare 'unknown letter' sed a  -Q 's/a/A/'
+compare 'long unknown'   sed a  --nosuchflag 's/a/A/'
+compare 'missing file'   sed -  's/a/A/' "$work/nosuch"
+compare_edit 'in place'  sed a  -i 's/a/A/'
+compare_edit 'in place backup' sed a -i.bak 's/a/A/'
+compare_edit 'in place long' sed a --in-place 's/a/A/'
+compare_edit 'in place long backup' sed a --in-place=.bak 's/a/A/'
+compare_edit 'in place quiet' sed a -n -i '2p'
+compare 'null data'      sed zeros -z 's/a/A/'
+compare 'null data long' sed zeros --null-data 's/a/A/'
+compare 'null data number' sed zeros -z -n '='
+compare 'null data last' sed zeros -z '$d'
 
 case_start cut
 compare 'field one'      cut b  -d: -f1
@@ -179,6 +301,33 @@ compare 'character open' cut a  -c6-
 compare 'bytes'          cut a  -b1-3
 compare 'field high'     cut b  -d: -f9
 compare 'no newline'     cut h  -c1-4
+compare 'complement fields' cut b --complement -d: -f2
+compare 'complement chars' cut a --complement -c1-3
+compare 'complement list' cut a  --complement -c1,3
+compare 'output delimiter' cut b -d: -f1,3 --output-delimiter=X
+compare 'output chars'   cut a  -c1,3 --output-delimiter=X
+compare 'output ranges'  cut a  -c1-2,4 --output-delimiter=X
+compare 'output joined'  cut a  -c1,2 --output-delimiter=X
+compare 'output short'   cut a  -OX -c1,3
+compare 'whitespace one' cut spaced -w -f1
+compare 'whitespace two' cut spaced -w -f2
+compare 'whitespace rest' cut spaced -w -f2-
+compare 'whitespace list' cut spaced -w -f1,2
+compare 'long delimiter' cut b  --delimiter=: --fields=1
+compare 'long characters' cut a --characters=1-3
+compare 'long bytes'     cut a  --bytes=2-
+compare 'long suppress'  cut b  --only-delimited -d: -f2
+compare 'two lists'      cut a  -b 2 -c1-3
+compare 'delimiter no fields' cut a -d, -c1
+compare 'suppress no fields' cut a -s -c1
+compare 'whitespace no fields' cut a -w -c1
+compare 'whitespace and delimiter' cut spaced -w -d: -f1
+compare 'no partial'     cut a   --no-partial -c1-3
+compare 'unknown letter' cut a  -Z -c1
+compare 'long unknown'   cut a  --nosuchflag -c1
+compare 'null data'      cut zpairs -z -d: -f2
+compare 'null data chars' cut zpairs -z -c1
+compare 'null data long' cut zpairs --zero-terminated -d: -f1
 
 case_start tr
 compare 'translate'      tr a  a-z A-Z
@@ -193,6 +342,16 @@ compare 'class digit'    tr j  -d '[:digit:]'
 compare 'escape'         tr a  ' ' '\n'
 compare 'range map'      tr a  'a-e' '1-5'
 compare 'delete squeeze' tr a  -ds aeiou ' '
+compare 'truncate'       tr a  -t abc xy
+compare 'truncate range' tr a  -t a-z A-M
+compare 'long complement' tr a --complement a-y X
+compare 'long delete'    tr a  --delete ab
+compare 'long squeeze'   tr a  --squeeze-repeats an
+compare 'long truncate'  tr a  --truncate-set1 abc xy
+compare 'extra operand'  tr a  -d a A
+compare 'missing second' tr a  a
+compare 'three operands' tr a  -s a b c
+compare 'long unknown'   tr a  --nosuchflag a b
 
 case_start sort
 compare 'plain'          sort a
@@ -224,6 +383,32 @@ compare 'skip fields'    uniq d  -f1
 compare 'skip chars'     uniq e  -s1
 compare 'width'          uniq e  -w2
 compare 'count repeated' uniq e  -cd
+compare 'all repeated'   uniq e  -D
+compare 'all repeated none' uniq e --all-repeated=none
+compare 'all repeated prepend' uniq e --all-repeated=prepend
+compare 'all repeated separate' uniq e --all-repeated=separate
+compare 'group'          uniq e  --group
+compare 'group separate' uniq e  --group=separate
+compare 'group prepend'  uniq e  --group=prepend
+compare 'group append'   uniq e  --group=append
+compare 'group both'     uniq e  --group=both
+compare 'long count'     uniq e  --count
+compare 'long repeated'  uniq e  --repeated
+compare 'long unique'    uniq e  --unique
+compare 'long ignore case' uniq f --ignore-case
+compare 'long skip fields' uniq d --skip-fields 1
+compare 'long skip chars' uniq e --skip-chars 1
+compare 'long check chars' uniq e --check-chars 2
+compare 'all repeated counted' uniq e -c -D
+compare 'group with count' uniq e --group -c
+compare 'bad repeat word' uniq e --all-repeated=nosuch
+compare 'long unknown'   uniq e  --nosuchflag
+compare 'null data'      uniq zpairs -z
+compare 'null data count' uniq zpairs -z -c
+compare 'null data long' uniq zpairs --zero-terminated
+compare 'no newline'     uniq h
+compare 'no newline count' uniq h -c
+compare 'null no newline' uniq -  -z "$work/h"
 
 case_start head
 compare 'default'        head i
@@ -235,6 +420,14 @@ compare 'bytes'          head a  -c 10
 compare 'more than have' head a  -n 100
 compare 'two files'      head -  -n 2 "$work/a" "$work/b"
 compare 'no newline'     head h  -n 1
+compare 'long lines'     head i  --lines 3
+compare 'long bytes'     head a  --bytes 10
+compare 'long quiet'     head -  --quiet "$work/a" "$work/b"
+compare 'long silent'    head -  --silent "$work/a" "$work/b"
+compare 'long verbose'   head a  --verbose
+compare 'long unknown'   head a  --nosuchflag
+compare 'null data'      head zeros -z -n 2
+compare 'null data long' head zeros --zero-terminated -n 2
 
 case_start tail
 compare 'default'        tail i
@@ -246,6 +439,20 @@ compare 'bytes'          tail a  -c 10
 compare 'more than have' tail a  -n 100
 compare 'two files'      tail -  -n 2 "$work/a" "$work/b"
 compare 'no newline'     tail h  -n 1
+compare 'long lines'     tail i  --lines 3
+compare 'long bytes'     tail a  --bytes 10
+compare 'long quiet'     tail -  --quiet "$work/a" "$work/b"
+compare 'long verbose'   tail a  --verbose
+compare 'retry'          tail a  --retry
+compare 'pid ignored'    tail a  --pid 2
+compare 'sleep ignored'  tail a  --sleep-interval 2
+compare 'unchanged stats' tail a --max-unchanged-stats 2
+compare 'sleep short'    tail a  -s 2
+compare 'debug'          tail a  --debug
+compare 'long unknown'   tail a  --nosuchflag
+compare 'null data'      tail zeros -z -n 2
+compare 'null data long' tail zeros --zero-terminated -n 2
+compare 'null data file' tail -  -z -n 2 "$work/zeros"
 
 case_start wc
 compare 'default'        wc a
@@ -259,11 +466,25 @@ compare 'lines named'    wc -  -l "$work/a"
 compare 'lines two'      wc -  -l "$work/a" "$work/b"
 compare 'no newline'     wc h
 compare 'empty'          wc k  -l
+compare 'longest'        wc a  -L
+compare 'longest tabs'   wc wide -L
+compare 'longest bytes'  wc wide -Lc
+compare 'longest all'    wc wide -lwcmL
+compare 'longest two'    wc -    -L "$work/a" "$work/wide"
+compare 'long lines'     wc a    --lines
+compare 'long words'     wc a    --words
+compare 'long bytes'     wc a    --bytes
+compare 'long chars'     wc a    --chars
+compare 'long longest'   wc wide --max-line-length
+compare 'long unknown'   wc a    --nosuchflag
+compare 'debug'          wc a    --debug
 
 case_start rev
 compare 'plain'          rev a
 compare 'blank lines'    rev k
 compare 'no newline'     rev h
+compare 'null data'      rev zeros -0
+compare 'null data long' rev zeros --zero
 
 case_start nl
 compare 'default'        nl a
@@ -273,6 +494,30 @@ compare 'separator'      nl a  -s:
 compare 'start'          nl a  -v5
 compare 'step'           nl a  -i2
 compare 'blank heavy'    nl k
+compare 'no numbering'   nl a   -bn
+compare 'pattern'        nl a   -b p^alpha
+compare 'pattern miss'   nl a   -b pnowhere
+compare 'sections'       nl sections
+compare 'sections all'   nl sections -ha -fa
+compare 'sections keep'  nl sections -p -ha -fa
+compare 'join blanks'    nl blanks -ba -l3
+compare 'join blanks two' nl blanks -ba -l2
+compare 'delimiter'      nl sections -d '\:'
+compare 'format left'    nl a   -nln
+compare 'format zeros'   nl a   -nrz
+compare 'format right'   nl a   -nrn
+compare 'long body'      nl a   --body-numbering=a
+compare 'long width'     nl a   --number-width 3
+compare 'long separator' nl a   --number-separator=:
+compare 'long start'     nl a   --starting-line-number 5
+compare 'long increment' nl a   --line-increment 2
+compare 'long format'    nl a   --number-format=ln
+compare 'long header'    nl sections --header-numbering=a --footer-numbering=a
+compare 'long renumber'  nl sections --no-renumber -ha -fa
+compare 'long join'      nl blanks --join-blank-lines 3 -ba
+compare 'long delimiter' nl sections --section-delimiter '\:'
+compare 'unknown letter' nl a   -Z
+compare 'long unknown'   nl a   --nosuchflag
 
 case_start fold
 compare 'default'        fold a
@@ -282,6 +527,12 @@ compare 'spaces'         fold a  -w 8 -s
 compare 'narrow'         fold a  -w 3
 compare 'bytes'          fold g  -w 4 -b
 compare 'no newline'     fold h  -w 5
+compare 'long width'     fold a  --width 8
+compare 'long bytes'     fold g  --bytes --width 4
+compare 'long spaces'    fold a  --spaces --width 8
+compare 'long unknown'   fold a  --nosuchflag
+compare 'characters'     fold a  -c -w 8
+compare 'long characters' fold a --characters --width 8
 
 case_start tee
 compare 'passthrough'    tee a  "$work/tee1"
@@ -300,6 +551,11 @@ printf 'field1 field2 field3\nz1 a2 m3\nz1 b2 a3\n' > "$work/r"
 printf 'one\ntwo\nthree\n' > "$work/s"
 printf 'x\ty\tz\n' > "$work/t"
 printf 'The quick brown fox jumps over the lazy dog again and again today\n' > "$work/u"
+printf '3\n1K\n2M\n500\n-1G\n2\n900K\n' > "$work/v"
+printf 'a\nc\ne\n' > "$work/w"
+printf '1.10\n1.9\n1.2.3\nfoo-1.0.tar.gz\nfoo-1.0~rc1\nfoo-2.tar.gz\n.hidden\n' > "$work/y"
+printf 'Mar\nJAN\nfeb\nnotamonth\nDec 3\n' > "$work/z"
+printf 'b\nd\nf\n' > "$work/x"
 
 case_start grep2
 compare 'nested star'    grep m  '\(ab\)*'
@@ -396,6 +652,57 @@ compare 'reverse unique' sort q  -ru
 compare 'tab separator'  sort t  -t'	' -k2
 compare 'key past end'   sort r  -k9
 compare 'whole then key' sort r  -k2 -k1
+compare 'check sorted'   sort s  -c
+compare 'check unsorted' sort a  -c
+compare 'check quiet'    sort a  -C
+compare 'check quiet ok' sort s  -C
+compare 'check unique'   sort e  -cu
+compare 'check named'    sort -  -c "$work/a"
+compare 'merge one'      sort w  -m
+compare 'merge two'      sort -  -m "$work/w" "$work/x"
+compare 'merge unsorted' sort -  -m "$work/a" "$work/x"
+compare 'merge unique'   sort -  -mu "$work/w" "$work/w"
+compare 'output file'    sort a  -o /dev/stdout
+compare 'ignore unprintable' sort n -i
+compare 'dictionary'     sort n  -d
+compare 'human'          sort v  -h
+compare 'human reverse'  sort v  -hr
+compare 'human key'      sort d  -k2h
+compare 'buffer size'    sort a  -S 2
+compare 'temp directory' sort a  -T /tmp
+compare 'long numeric'   sort c  --numeric-sort
+compare 'long reverse'   sort a  --reverse
+compare 'long unique'    sort e  --unique
+compare 'long fold'      sort f  --ignore-case
+compare 'long blanks'    sort n  --ignore-leading-blanks
+compare 'long unprint'   sort n  --ignore-nonprinting
+compare 'long dict'      sort n  --dictionary-order
+compare 'long stable'    sort d  --stable -k1,1
+compare 'long check'     sort a  --check
+compare 'long merge'     sort w  --merge
+compare 'long key'       sort d  --key 2
+compare 'long separator' sort b  --field-separator=: --key 2
+compare 'long human'     sort v  --human-numeric-sort
+compare 'long buffer'    sort a  --buffer-size 2
+compare 'long batch'     sort a  --batch-size 2
+compare 'sort word'      sort c  --sort=numeric
+compare 'long unknown'   sort a  --nosuchflag
+compare 'unknown letter' sort a  -Q
+compare 'version'        sort y  -V
+compare 'version rev'    sort y  -Vr
+compare 'version unique' sort y  -Vu
+compare 'long version'   sort y  --version-sort
+compare 'month'          sort z  -M
+compare 'long month'     sort z  --month-sort
+compare 'sort word month' sort z --sort=month
+compare 'sort word version' sort y --sort=version
+compare 'key version'    sort d  -k1,1V
+compare 'key month'      sort z  -k1,1M
+compare 'check quiet arg' sort a --check=quiet
+compare 'check first arg' sort a --check=diagnose-first
+compare 'null data'      sort zeros -z
+compare 'null data unique' sort zeros -z -u
+compare 'null data long' sort zeros --zero-terminated
 
 case_start uniq2
 compare 'all same'       uniq q  -c
@@ -535,6 +842,71 @@ compare 'cat two'        cat -   "$work/a" "$work/b"
 compare 'cat missing'    cat -   "$work/nosuch"
 compare 'cat empty'      cat -   "$work/empty"
 compare 'cat bad option' cat -   -Z "$work/a"
+compare 'cat long number' cat a  --number
+compare 'cat long nonblank' cat s --number-nonblank
+compare 'cat long ends'  cat a   --show-ends
+compare 'cat long tabs'  cat d   --show-tabs
+compare 'cat long squeeze' cat s --squeeze-blank
+compare 'cat long all'   cat d   --show-all
+compare 'cat long nonprinting' cat d --show-nonprinting
+compare 'cat long unknown' cat a --nosuchflag
+
+#       xargs, which is standard input turned into arguments and a command
+#       run with them -- so both halves of compare matter: what the command
+#       printed, and the number xargs came back with when it went wrong.
+
+printf 'a b c\n' > "$work/x1"
+printf 'a\nb\nc\n' > "$work/x2"
+printf 'a\0b\0' > "$work/x3"
+printf "'a b' c\n" > "$work/x4"
+printf 'a\\ b c\n' > "$work/x5"
+printf '' > "$work/x6"
+printf '   \n\n  \n' > "$work/x7"
+printf '1 2 3 4 5 6 7 8 9 10 11 12\n' > "$work/x8"
+printf 'a\nEND\nb\n' > "$work/x9"
+printf '"a b" c\n' > "$work/x10"
+printf 'a b' > "$work/x11"
+printf '  a b  \n' > "$work/x12"
+printf 'a\tb\n\tc\t\n' > "$work/x13"
+
+case_start xargs
+compare 'words'          xargs x1  echo
+compare 'lines'          xargs x2  echo
+compare 'tabs'           xargs x13 -n1 echo
+compare 'no command'     xargs x1
+compare 'one at a time'  xargs x1  -n1 echo
+compare 'two at a time'  xargs x8  -n2 echo
+compare 'five at a time' xargs x8  -n5 echo
+compare 'joined number'  xargs x8  -n3 echo
+compare 'with a prefix'  xargs x8  -n2 echo pre
+compare 'zero ended'     xargs x3  -0 echo
+compare 'zero one each'  xargs x3  -0 -n1 echo
+compare 'single quotes'  xargs x4  -n1 echo
+compare 'double quotes'  xargs x10 -n1 echo
+compare 'a backslash'    xargs x5  -n1 echo
+compare 'nothing at all' xargs x6  echo
+compare 'blanks only'    xargs x7  echo
+compare 'nothing refused' xargs x6 -r echo
+compare 'blanks refused' xargs x7  -r echo
+compare 'nothing to replace' xargs x6 -I{} echo x
+compare 'nothing but a status' xargs x6 false
+compare 'only the end word' xargs x9 -E a echo
+compare 'no last newline' xargs x11 echo
+compare 'replacing'      xargs x2  -I{} echo x{}y
+compare 'replacing short' xargs x2 -i echo x{}y
+compare 'replacing twice' xargs x2 -I{} echo {}-{}
+compare 'replacing blanks' xargs x12 -I{} echo "[{}]"
+compare 'replacing unused' xargs x2 -I{} echo plain
+compare 'logical end'    xargs x9  -E END echo
+compare 'end ignored'    xargs x9  -0 -E END echo
+compare 'end of options' xargs x1  -- echo
+compare 'an absolute path' xargs x1 /bin/echo
+compare 'the command failed' xargs x1 false
+compare 'each one failed' xargs x1 -n1 false
+compare 'no such command' xargs x1 nosuchcommand12345
+compare 'traced'         xargs x1  -t echo
+compare 'an option it has not' xargs x1 -Q echo
+
 
 #       xargs, which is standard input turned into arguments and a command
 #       run with them -- so both halves of compare matter: what the command

@@ -1571,6 +1571,11 @@ typedef struct
         // seq is the one tool here where -4 is a number and not a flag.
         bool numbers;
 
+        // env is the one tool here where an option given twice means it
+        // twice, and one value per letter is not enough to say so: it is
+        // told about each option as the option is read.
+        bool(address_to seen)(p8 letter, string_address value);
+
         positive flags;
         positive first;
         string_address value[FILE_LETTERS];
@@ -1661,15 +1666,18 @@ static bool file_take(file_taking address_to taking)
 
                         taking->flags |= (positive)1 << bit;
 
-                        if (!string_first_of(taking->valued, letter))
-                                continue;
+                        if (string_first_of(taking->valued, letter))
+                        {
+                                if (mark)
+                                        taking->value[bit] = mark + 1;
+                                else if (index < count)
+                                        taking->value[bit] = program_argument((b32)index++);
+                                else
+                                        return file_option_needs(taking, word);
+                        }
 
-                        if (mark)
-                                taking->value[bit] = mark + 1;
-                        else if (index < count)
-                                taking->value[bit] = program_argument((b32)index++);
-                        else
-                                return file_option_needs(taking, word);
+                        if (taking->seen && !taking->seen(letter, taking->value[bit]))
+                                return false;
 
                         continue;
                 }
@@ -1688,7 +1696,12 @@ static bool file_take(file_taking address_to taking)
                         taking->flags |= (positive)1 << bit;
 
                         if (!string_first_of(taking->valued, string_get(letter)))
+                        {
+                                if (taking->seen && !taking->seen(string_get(letter), null))
+                                        return false;
+
                                 continue;
+                        }
 
                         // -s.txt and -s .txt are the same option given the
                         // same way; either the rest of the word is the
@@ -1699,6 +1712,9 @@ static bool file_take(file_taking address_to taking)
                                 taking->value[bit] = program_argument((b32)index++);
                         else
                                 return file_option_needs(taking, named);
+
+                        if (taking->seen && !taking->seen(string_get(letter), taking->value[bit]))
+                                return false;
 
                         break;
                 }
@@ -5209,35 +5225,42 @@ static positive seq_width(bipolar value)
         return value < 0 ? length + 1 : length;
 }
 
+static const file_long seq_longs[] = {
+    {(string_address) "equal-width", 'w'},
+    {(string_address) "format", 'f'},
+    {(string_address) "separator", 's'},
+    {null, 0},
+};
+
 static b32 file_seq()
 {
-        positive count = (positive)program_argument_count();
-        positive index = 1;
-        bool pad = false;
-        string_address separator = (string_address) "\n";
+        file_taking taking = {
+            .program = (string_address) "seq",
+            .allowed = (string_address) "fsw",
+            .valued = (string_address) "fs",
+            .longs = seq_longs,
+            .numbers = true,
+        };
 
-        while (index < count)
+        if (!file_take(address_of taking))
+                return 1;
+
+        // -f is printf's format for a double. Everything here counts in whole
+        // numbers, and saying so is better than printing the right numbers in
+        // the wrong shape.
+        if (file_option_value(address_of taking, 'f'))
         {
-                string_address argument = program_argument((b32)index);
-
-                if (string_is(argument, '-') && string_is(argument + 1, 'w') &&
-                    string_is(argument + 2, end))
-                {
-                        pad = true;
-                        index++;
-                        continue;
-                }
-
-                if (string_is(argument, '-') && string_is(argument + 1, 's') &&
-                    string_is(argument + 2, end) && index + 1 < count)
-                {
-                        separator = program_argument((b32)(index + 1));
-                        index += 2;
-                        continue;
-                }
-
-                break;
+                file_fail("seq: -f: this seq counts in whole numbers and has no format\n", 0);
+                return 1;
         }
+
+        positive count = (positive)program_argument_count();
+        positive index = taking.first;
+        bool pad = (taking.flags & FILE_FLAG('w')) != 0;
+        string_address separator = file_option_value(address_of taking, 's');
+
+        if (!separator)
+                separator = (string_address) "\n";
 
         positive given = count - index;
 
@@ -5310,20 +5333,34 @@ static b32 file_seq()
 static b32 file_yes()
 {
         p8 line[FILE_PATH_MAX];
-        positive count = (positive)program_argument_count();
         positive length = 0;
 
-        if (count < 2)
+        // No flags at all, which still has to be said: yes -x is a mistake
+        // and printing -x for ever is not what was meant by it.
+        file_taking taking = {
+            .program = (string_address) "yes",
+            .allowed = (string_address) "",
+            .valued = (string_address) "",
+            .longs = null,
+        };
+
+        if (!file_take(address_of taking))
+                return 1;
+
+        positive count = (positive)program_argument_count();
+        positive first = taking.first;
+
+        if (first >= count)
         {
                 line[length++] = 'y';
         }
         else
         {
-                for (positive i = 1; i < count; i++)
+                for (positive i = first; i < count; i++)
                 {
                         string_address word = program_argument((b32)i);
 
-                        if (i > 1 && length + 1 < FILE_PATH_MAX)
+                        if (i > first && length + 1 < FILE_PATH_MAX)
                                 line[length++] = ' ';
 
                         for (positive j = 0; string_get(word + j) && length + 1 < FILE_PATH_MAX; j++)
@@ -5355,13 +5392,38 @@ static b32 file_yes()
 
 // env ------------------------------------------------------------
 /*
-        env [-i] [-u NAME] [NAME=VALUE]... [COMMAND [ARGUMENT]...]
+        env [-i] [-u NAME]... [-C DIR] [-a ARG] [-S STRING] [-0]
+            [NAME=VALUE]... [COMMAND [ARGUMENT]...]
 
         With no command it prints the environment it would have used, which is
         also the only way anything here can look at its own environment.
+
+        The signal options are taken, say on the error stream that they
+        change nothing, and change nothing. Refusing them outright would fail
+        a shebang line whose command runs perfectly well without the mask it
+        asked for; accepting them in silence would be a lie about what the
+        command inherits. -v and --list-signal-handling are ignored in
+        silence, since all they ever wrote was the error stream itself.
 */
 #define ENV_MAX 512
 #define ENV_ARGUMENTS_MAX 64
+#define ENV_DROPS_MAX 32
+#define ENV_SPLIT 1024
+
+static const file_long env_longs[] = {
+    {(string_address) "argv0", 'a'},
+    {(string_address) "ignore-environment", 'i'},
+    {(string_address) "null", '0'},
+    {(string_address) "unset", 'u'},
+    {(string_address) "chdir", 'C'},
+    {(string_address) "split-string", 'S'},
+    {(string_address) "block-signal", 'b'},
+    {(string_address) "default-signal", 'd'},
+    {(string_address) "ignore-signal", 'g'},
+    {(string_address) "list-signal-handling", 'l'},
+    {(string_address) "debug", 'v'},
+    {null, 0},
+};
 
 static string_address env_list[ENV_MAX + 1];
 static positive env_have;
@@ -5419,39 +5481,108 @@ static fn env_put(string_address entry)
                 env_list[env_have++] = entry;
 }
 
+static string_address env_dropped[ENV_DROPS_MAX];
+static positive env_drops;
+
+// -u is the one option here that means it every time it is given, and the
+// scanner keeps one value a letter, so each one is written down as it is read
+// and they are all applied once the environment to drop them from exists.
+static bool env_seen(p8 letter, string_address value)
+{
+        if (letter != 'u')
+                return true;
+
+        if (env_drops >= ENV_DROPS_MAX)
+        {
+                file_fail("env: too many variables to unset\n", 0);
+                return false;
+        }
+
+        env_dropped[env_drops++] = value;
+
+        return true;
+}
+
+/*
+        -S, which exists because a shebang line is one argument however many
+        words are written on it: the string is cut at its spaces and the
+        pieces stand where it stood.
+
+        GNU's -S also reads quotes, backslashes and $VAR out of that string. A
+        shebang line has none of them, and cutting a quoted string at the
+        wrong space is worse than saying so, so one carrying any of them is
+        refused instead.
+*/
+static p8 env_split_store[ENV_SPLIT];
+
+static bool env_split(string_address text, string_address address_to words,
+                      positive address_to have)
+{
+        positive filled = 0;
+        positive given = address_to have;
+        positive i = 0;
+
+        for (positive j = 0; string_get(text + j); j++)
+        {
+                p8 letter = string_get(text + j);
+
+                if (letter == '"' || letter == '\'' || letter == '\\' || letter == '$')
+                {
+                        file_fail("env: -S here cuts at spaces and reads nothing else\n", 0);
+                        return false;
+                }
+        }
+
+        while (string_get(text + i) && given < ENV_ARGUMENTS_MAX)
+        {
+                while (string_is(text + i, ' ') || string_is(text + i, '\t'))
+                        i++;
+
+                if (string_is(text + i, end))
+                        break;
+
+                words[given++] = env_split_store + filled;
+
+                while (string_get(text + i) && !string_is(text + i, ' ') &&
+                       !string_is(text + i, '\t') && filled + 1 < ENV_SPLIT)
+                        env_split_store[filled++] = string_get(text + i++);
+
+                env_split_store[filled++] = end;
+        }
+
+        address_to have = given;
+
+        return true;
+}
+
 static b32 file_env()
 {
+        file_taking taking = {
+            .program = (string_address) "env",
+            .allowed = (string_address) "ai0uCSv",
+            .valued = (string_address) "auCS",
+            .longs = env_longs,
+            .seen = env_seen,
+        };
+
+        // 125 is env's own failure, told apart from 126 for a command that
+        // cannot be run and 127 for one that is not there.
+        if (!file_take(address_of taking))
+                return 125;
+
+        if (taking.flags & (FILE_FLAG('b') | FILE_FLAG('d') | FILE_FLAG('g')))
+                file_fail("env: the signal options are taken here and change nothing\n", 0);
+
+        positive index = taking.first;
         positive count = (positive)program_argument_count();
-        positive index = 1;
-        bool empty = false;
+        bool empty = (taking.flags & FILE_FLAG('i')) != 0;
 
-        while (index < count)
+        // A mere -, from before env had options to spell it with, means -i.
+        if (index < count && string_is(program_argument((b32)index), '-') &&
+            string_is(program_argument((b32)index) + 1, end))
         {
-                string_address argument = program_argument((b32)index);
-
-                if (string_is(argument, '-') && string_is(argument + 1, '-') &&
-                    string_is(argument + 2, end))
-                {
-                        index++;
-                        break;
-                }
-
-                if (string_is(argument, '-') && string_is(argument + 1, 'i') &&
-                    string_is(argument + 2, end))
-                {
-                        empty = true;
-                        index++;
-                        continue;
-                }
-
-                if (string_is(argument, '-') && string_is(argument + 1, end))
-                {
-                        empty = true;
-                        index++;
-                        continue;
-                }
-
-                break;
+                empty = true;
+                index++;
         }
 
         if (!empty)
@@ -5460,48 +5591,86 @@ static b32 file_env()
                         env_list[env_have++] = program_environment(i);
         }
 
-        while (index < count)
-        {
-                string_address argument = program_argument((b32)index);
+        for (positive i = 0; i < env_drops; i++)
+                env_drop(env_dropped[i]);
 
-                if (string_is(argument, '-') && string_is(argument + 1, 'u') &&
-                    string_is(argument + 2, end) && index + 1 < count)
-                {
-                        env_drop(program_argument((b32)(index + 1)));
-                        index += 2;
-                        continue;
-                }
+        /*
+                What -S carries stands where -S stood, ahead of the words that
+                followed it, and the whole lot is read as though it had been
+                written out: assignments first and then the command.
+        */
+        string_address words[ENV_ARGUMENTS_MAX + 1];
+        positive have = 0;
+        string_address split = file_option_value(address_of taking, 'S');
 
-                if (!env_key_end(argument))
-                        break;
+        if (split && !env_split(split, words, address_of have))
+                return 125;
 
-                env_put(argument);
-                index++;
-        }
+        while (index < count && have < ENV_ARGUMENTS_MAX)
+                words[have++] = program_argument((b32)index++);
+
+        words[have] = null;
+
+        positive at = 0;
+
+        while (at < have && env_key_end(words[at]))
+                env_put(words[at++]);
 
         env_list[env_have] = null;
 
-        if (index >= count)
+        string_address where = file_option_value(address_of taking, 'C');
+
+        if (at >= have)
         {
+                // -C and -a are instructions for running something, and
+                // printing the environment is not running something; there is
+                // nothing to do with either of them but say so.
+                if (where)
+                {
+                        file_fail("env: must specify command with --chdir (-C)\n", 0);
+                        return 125;
+                }
+
+                if (file_option_value(address_of taking, 'a'))
+                {
+                        file_fail("env: must specify command with --argv0 (-a)\n", 0);
+                        return 125;
+                }
+
+                bool zero = (taking.flags & FILE_FLAG('0')) != 0;
+
                 for (positive i = 0; i < env_have; i++)
-                        file_line(env_list[i]);
+                        file_written(env_list[i], zero);
 
                 log_flush();
                 return 0;
         }
 
+        if (where && system_call_1(syscall(chdir), (positive)where) < 0)
+        {
+                string_format(file_fail, "env: cannot change directory to %s\n", where);
+                return 125;
+        }
+
         string_address arguments[ENV_ARGUMENTS_MAX + 1];
-        positive have = 0;
+        positive given = 0;
+        string_address name = words[at];
 
-        while (index < count && have < ENV_ARGUMENTS_MAX)
-                arguments[have++] = program_argument((b32)index++);
+        while (at < have)
+                arguments[given++] = words[at++];
 
-        arguments[have] = null;
+        arguments[given] = null;
+
+        // -a renames the command without changing which file is run, which is
+        // the whole of what argv[0] is for.
+        string_address zeroth = file_option_value(address_of taking, 'a');
+
+        if (zeroth)
+                arguments[0] = zeroth;
 
         log_flush();
 
         p8 candidate[FILE_PATH_MAX];
-        string_address name = arguments[0];
 
         if (string_first_of(name, '/'))
         {
@@ -5565,8 +5734,30 @@ static b32 file_env()
 }
 
 // id ------------------------------------------------------------
-// id [-u|-g|-G] [-n] [-r], and the readable default when none of them is given.
+/*
+        id [-u|-g|-G] [-n] [-r] [-z] [USER]...
+
+        -n and -r say how to print an id rather than which one to print, so
+        neither means anything without -u, -g or -G and GNU refuses them
+        there rather than guessing; -z is refused in the readable default for
+        the same reason, since that line is for a person to read.
+
+        With a USER the answer comes out of /etc/passwd and /etc/group: the
+        kernel can only be asked about this process, and this process is not
+        the user being asked about.
+*/
 #define ID_GROUPS_MAX 64
+
+static const file_long id_longs[] = {
+    {(string_address) "context", 'Z'},
+    {(string_address) "group", 'g'},
+    {(string_address) "groups", 'G'},
+    {(string_address) "name", 'n'},
+    {(string_address) "real", 'r'},
+    {(string_address) "user", 'u'},
+    {(string_address) "zero", 'z'},
+    {null, 0},
+};
 
 static fn id_named(positive value, bool group)
 {
@@ -5584,13 +5775,227 @@ static fn id_named(positive value, bool group)
         }
 }
 
+static fn id_alone(positive value, bool group, bool names, bool zero)
+{
+        p8 text[FILE_NAME_MAX];
+
+        if (!names || !(group ? file_group_name(value, text, FILE_NAME_MAX)
+                              : file_user_name(value, text, FILE_NAME_MAX)))
+                file_digits(text, value);
+
+        file_written(text, zero);
+}
+
+/*
+        The primary group first and then every group whose member list names
+        the user. The kernel hands the supplementary groups back in its own
+        order and does not promise the primary one is among them, so the group
+        actually in effect belongs at the front either way.
+*/
+static positive id_groups_named(string_address name, positive primary,
+                                p32 address_to into, positive limit)
+{
+        p8 address_to text = file_group_text();
+        positive wanted = string_length(name);
+        positive have = 0;
+        positive at = 0;
+
+        if (limit)
+                into[have++] = (p32)primary;
+
+        while (text[at] && have < limit)
+        {
+                positive stop = at;
+
+                while (text[stop] && text[stop] != '\n')
+                        stop++;
+
+                // name:password:gid:member,member
+                positive colon[3] = {stop, stop, stop};
+                positive seen = 0;
+
+                for (positive i = at; i < stop && seen < 3; i++)
+                        if (text[i] == ':')
+                                colon[seen++] = i;
+
+                positive value = 0;
+                bool numeric = seen == 3 && colon[2] > colon[1] + 1;
+
+                for (positive i = colon[1] + 1; numeric && i < colon[2]; i++)
+                {
+                        if (text[i] < '0' || text[i] > '9')
+                                numeric = false;
+                        else
+                                value = value * 10 + (positive)(text[i] - '0');
+                }
+
+                positive i = colon[2] + 1;
+
+                while (numeric && value != primary && i < stop)
+                {
+                        positive from = i;
+
+                        while (i < stop && text[i] != ',')
+                                i++;
+
+                        positive same = 0;
+
+                        while (same < wanted && from + same < i &&
+                               text[from + same] == string_get(name + same))
+                                same++;
+
+                        if (same == wanted && i - from == wanted)
+                        {
+                                into[have++] = (p32)value;
+                                break;
+                        }
+
+                        if (i < stop)
+                                i++;
+                }
+
+                at = stop;
+
+                if (text[at])
+                        at++;
+        }
+
+        return have;
+}
+
+static fn id_written(positive user, positive group, p32 address_to members,
+                     positive have, positive flags, bool names, bool zero)
+{
+        if (flags & FILE_FLAG('u'))
+        {
+                id_alone(user, false, names, zero);
+                return;
+        }
+
+        if (flags & FILE_FLAG('g'))
+        {
+                id_alone(group, true, names, zero);
+                return;
+        }
+
+        if (flags & FILE_FLAG('G'))
+        {
+                for (positive i = 0; i < have; i++)
+                {
+                        p8 text[FILE_NAME_MAX];
+
+                        if (!names || !file_group_name(members[i], text, FILE_NAME_MAX))
+                                file_digits(text, members[i]);
+
+                        if (zero)
+                                file_written(text, true);
+                        else
+                        {
+                                if (i)
+                                        log(" ", 1);
+
+                                log(text, 0);
+                        }
+                }
+
+                if (!zero)
+                        log("\n", 1);
+
+                return;
+        }
+
+        log("uid=", 0);
+        id_named(user, false);
+        log(" gid=", 0);
+        id_named(group, true);
+
+        if (have > 0)
+        {
+                log(" groups=", 0);
+
+                for (positive i = 0; i < have; i++)
+                {
+                        if (i)
+                                log(",", 1);
+
+                        id_named(members[i], true);
+                }
+        }
+
+        log("\n", 1);
+}
+
 static b32 file_id()
 {
-        positive first = 0;
-        positive flags = file_take_options((string_address) "ugGnr", address_of first);
+        file_taking taking = {
+            .program = (string_address) "id",
+            .allowed = (string_address) "aguGnrzZ",
+            .valued = (string_address) "",
+            .longs = id_longs,
+        };
 
-        bool real = (flags & FILE_FLAG('r')) != 0;
+        if (!file_take(address_of taking))
+                return 1;
+
+        positive flags = taking.flags;
         bool names = (flags & FILE_FLAG('n')) != 0;
+        bool real = (flags & FILE_FLAG('r')) != 0;
+        bool zero = (flags & FILE_FLAG('z')) != 0;
+        bool one = (flags & (FILE_FLAG('u') | FILE_FLAG('g') | FILE_FLAG('G'))) != 0;
+
+        // -Z asks for a security context. Nothing here keeps one, and an
+        // empty answer would read as a process that has no context rather
+        // than as a tool with nothing to say about it.
+        if (flags & FILE_FLAG('Z'))
+        {
+                file_fail("id: --context (-Z) works only on an SELinux-enabled kernel\n", 0);
+                return 1;
+        }
+
+        if ((names || real) && !one)
+        {
+                file_fail("id: printing only names or real IDs requires -u, -g, or -G\n", 0);
+                return 1;
+        }
+
+        if (zero && !one)
+        {
+                file_fail("id: option --zero not permitted in default format\n", 0);
+                return 1;
+        }
+
+        positive first = taking.first;
+        positive count = (positive)program_argument_count();
+        p32 members[ID_GROUPS_MAX];
+
+        if (first < count)
+        {
+                b32 status = 0;
+
+                while (first < count)
+                {
+                        string_address who = program_argument((b32)first++);
+                        bipolar user = file_user_id(who);
+                        bipolar group = file_account_id(file_password_text(), who, 3);
+
+                        if (user < 0 || group < 0)
+                        {
+                                string_format(file_fail, "id: '%s': no such user\n", who);
+                                status = 1;
+                                continue;
+                        }
+
+                        positive have = id_groups_named(who, (positive)group, members,
+                                                        ID_GROUPS_MAX);
+
+                        id_written((positive)user, (positive)group, members, have, flags,
+                                   names, zero);
+                }
+
+                log_flush();
+
+                return status;
+        }
 
         positive user = (positive)system_call(syscall(getuid));
         positive effective_user = (positive)system_call(syscall(geteuid));
@@ -5603,37 +6008,6 @@ static b32 file_id()
                 group = effective_group;
         }
 
-        p8 name[FILE_NAME_MAX];
-
-        if (flags & FILE_FLAG('u'))
-        {
-                if (names && file_user_name(user, name, FILE_NAME_MAX))
-                        file_line(name);
-                else
-                {
-                        file_number(log, user);
-                        log("\n", 1);
-                }
-
-                log_flush();
-                return 0;
-        }
-
-        if (flags & FILE_FLAG('g'))
-        {
-                if (names && file_group_name(group, name, FILE_NAME_MAX))
-                        file_line(name);
-                else
-                {
-                        file_number(log, group);
-                        log("\n", 1);
-                }
-
-                log_flush();
-                return 0;
-        }
-
-        p32 members[ID_GROUPS_MAX];
         bipolar have = system_call_2(syscall(getgroups), ID_GROUPS_MAX - 1,
                                      (positive)(members + 1));
 
@@ -5651,45 +6025,8 @@ static b32 file_id()
                 if (members[i] != (p32)group)
                         members[keep++] = members[i];
 
-        have = (bipolar)keep;
+        id_written(user, group, members, keep, flags, names, zero);
 
-        if (flags & FILE_FLAG('G'))
-        {
-                for (positive i = 0; i < (positive)have; i++)
-                {
-                        if (i)
-                                log(" ", 1);
-
-                        if (names && file_group_name(members[i], name, FILE_NAME_MAX))
-                                log(name, 0);
-                        else
-                                file_number(log, members[i]);
-                }
-
-                log("\n", 1);
-                log_flush();
-                return 0;
-        }
-
-        log("uid=", 0);
-        id_named(user, false);
-        log(" gid=", 0);
-        id_named(group, true);
-
-        if (have > 0)
-        {
-                log(" groups=", 0);
-
-                for (positive i = 0; i < (positive)have; i++)
-                {
-                        if (i)
-                                log(",", 1);
-
-                        id_named(members[i], true);
-                }
-        }
-
-        log("\n", 1);
         log_flush();
 
         return 0;
@@ -5733,12 +6070,38 @@ static b32 file_hostname()
         adds a compiled in operating system name after them, which is not in
         struct utsname and is not ours to claim, so -o names this system and
         -a stops at the machine.
+
+        By the same rule -p answers unknown, as GNU's does on Linux: the
+        processor type is not a field the kernel keeps either, and the machine
+        name is a different question wearing its coat.
 */
+static const file_long uname_longs[] = {
+    {(string_address) "all", 'a'},
+    {(string_address) "kernel-name", 's'},
+    {(string_address) "nodename", 'n'},
+    {(string_address) "kernel-release", 'r'},
+    {(string_address) "kernel-version", 'v'},
+    {(string_address) "machine", 'm'},
+    {(string_address) "processor", 'p'},
+    {(string_address) "hardware-platform", 'i'},
+    {(string_address) "operating-system", 'o'},
+    {null, 0},
+};
+
 static b32 file_uname()
 {
         file_machine facts;
-        positive first = 0;
-        positive flags = file_take_options((string_address) "asnrvmpio", address_of first);
+        file_taking taking = {
+            .program = (string_address) "uname",
+            .allowed = (string_address) "asnrvmpio",
+            .valued = (string_address) "",
+            .longs = uname_longs,
+        };
+
+        if (!file_take(address_of taking))
+                return 1;
+
+        positive flags = taking.flags;
 
         memory_fill(address_of facts, 0, sizeof(facts));
 
@@ -5790,15 +6153,18 @@ static b32 file_uname()
                 log(facts.machine, 0);
         }
 
-        if (flags & FILE_FLAG('p'))
+        // Asked for on their own they answer unknown; asked for as part of
+        // -a they are left out, which is what -a means by "except omit -p and
+        // -i if unknown" and is why -a is not simply all the others.
+        if ((flags & FILE_FLAG('p')) && !all)
         {
                 if (written++)
                         log(" ", 1);
 
-                log(facts.machine, 0);
+                log("unknown", 0);
         }
 
-        if (flags & FILE_FLAG('i'))
+        if ((flags & FILE_FLAG('i')) && !all)
         {
                 if (written++)
                         log(" ", 1);

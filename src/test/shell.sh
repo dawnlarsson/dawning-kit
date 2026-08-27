@@ -197,6 +197,11 @@ check 'quoted dollar'   "echo '\$x'"
 check 'escaped quote'   'echo "a\"b"'
 check 'empty'           'echo ""'
 check 'adjacent'        'echo a"b"c'
+# A substitution inside double quotes carries quotes of its own, and reading
+# one of them as the close ended the word at the first blank inside it.
+check 'sub in quotes'   'echo "$(echo "a b")"'
+check 'sub then more'   'echo "pre $(echo "x  y") post"'
+check 'backtick quotes' 'echo "`echo "a b"`"'
 
 group parameters
 check 'plain'           'x=1; echo $x'
@@ -227,6 +232,39 @@ check 'arith compare'   'echo $((3 > 2))'
 check 'field split'     'x="a b c"; set -- $x; echo $#'
 check 'glob'            'cd /; echo /de*'
 check 'tilde'           'HOME=/tmp; echo ~'
+
+group lines
+check 'continuation'    'echo a\
+b'
+check 'quote across'    'echo "one
+two"'
+check 'single across'   "echo 'one
+two'"
+check 'sub across'      'v=$(echo a
+echo b)
+echo "$v"'
+check 'backtick across' 'echo `
+echo tick
+`'
+check 'arith across'    'echo $((
+1 + 2
+))'
+check 'heredoc in sub'  'v=$(cat <<EOF
+body
+EOF
+); echo "$v"'
+check 'construct in sub' 'v=$(
+if true
+then
+echo yes
+fi
+)
+echo $v'
+check 'quote in a body' 'f() {
+  echo "$1"
+}
+f "two
+lines"'
 
 group control
 check 'if true'         'if true; then echo yes; fi'
@@ -269,6 +307,8 @@ $notexpanded
 EOF'
 
 group builtins
+check 'xargs joins'     'printf "a\nb\nc\n" | xargs echo'
+check 'xargs one at a time' 'printf "1 2 3\n" | xargs -n 1 echo'
 check 'cd pwd'          'cd /; pwd'
 check 'test string'     '[ a = a ] && echo yes'
 check 'test number'     '[ 2 -gt 1 ] && echo yes'
@@ -300,6 +340,12 @@ check 'shift equals'    'x=1; : $((x<<=4)); echo $x'
 check 'or equals'       'x=12; : $((x|=3)); echo $x'
 check 'assign value'    'echo $((y=7)); echo $y'
 check 'mixed'           'echo $((2+3*4)) $((0||1&&1))'
+check 'ternary'         'echo $((1 ? 2 : 3)) $((0 ? 2 : 3))'
+check 'ternary chained' 'echo $((0 ? 1 : 0 ? 2 : 3)) $((1 ? 2 : 3 ? 4 : 5))'
+check 'ternary applied' 'x=5; echo $(( x > 3 ? x * 2 : 0 ))'
+check 'hexadecimal'     'echo $((0x10)) $((0X1f))'
+check 'octal'           'echo $((010)) $((0644))'
+check 'base in a value' 'x=010; echo $((x)) $((x+1))'
 
 group sourcing
 check 'dot runs'        'echo echo sourced > /tmp/pd1; . /tmp/pd1'
@@ -390,6 +436,17 @@ answer 'suffix no match' 'x=abc; echo ${x%z}'
 answer 'prefix all'      'x=abc; echo "[${x#abc}]"'
 answer 'indirect eval'   'x=y; y=z; eval echo \$$x'
 answer 'positional ten'  'set -- 1 2 3 4 5 6 7 8 9 10; echo ${10}'
+
+# ${x?} exists to stop the script, so saying so and carrying on is the one
+# thing it must not do. dash leaves 2 behind and runs the exit trap on the way.
+answer 'unset is fatal'  'echo ${nosuch?}'
+answer 'fatal with word' 'echo a; : ${nosuch?gone}; echo b'
+answer 'fatal on empty'  'x=; echo ${x:?}'
+answer 'set is not'      'x=1; echo ${x?}'
+answer 'empty without colon' 'x=; echo "[${x?}]"'
+answer 'fatal runs trap' 'trap "echo bye" EXIT; echo a; echo ${nosuch?}'
+answer 'fatal in a sub'  'trap "echo bye" EXIT; echo "[$(echo ${u?})]"; echo after'
+answer 'fatal sub alone' 'echo $(echo ${u?})x; echo after'
 
 group splitting
 answer 'ifs colon'       'IFS=:; x=a:b:c; set -- $x; echo $#'
@@ -483,12 +540,16 @@ answer 'one of a class'  'cd /; echo /[e]tc'
 answer 'no match kept'   'cd /tmp; echo nosuchthing*'
 answer 'glob in value'   'cd /; x="/et*"; echo $x'
 answer 'glob quoted'     'cd /; echo "/et*"'
+answer 'globbing off'    'cd /; set -f; echo /et* ; set +f'
+answer 'globbing back on' 'cd /; set -f; set +f; echo /et*'
 
 group substitution
 answer 'trailing gone'   'x=$(printf "a\n\n\n"); echo "[$x]"'
 answer 'keeps the middle' 'x=$(printf "a\nb\n"); echo "$x"'
 answer 'inside a string' 'echo "pre $(echo mid) post"'
 answer 'quotes inside'   'echo "$(echo "inner")"'
+answer 'quoted sub spaces' 'x="$(echo "one two")"; echo "$x" | wc -w'
+answer 'quoted sub tick' 'echo "$(printf %s "a \" b")"'
 answer 'status after'    'echo $(false); echo $?'
 answer 'backtick nested' 'echo `echo \`echo deep\``'
 answer 'two of them'     'x=$(echo a)$(echo b); echo $x'
@@ -659,16 +720,12 @@ differs 'sub status lost' '0|' 0 'x=$(exit 3); echo $?'
 differs 'negative exit'  '' 255 'exit -1'
 
 group arithmetic
-differs 'no ternary'     '1|' 0 'echo $((1 ? 2 : 3))'
-differs 'no hex'         '0|' 0 'echo $((0x10))'
-differs 'no octal'       '10|' 0 'echo $((010))'
 differs 'empty is zero'  '0|' 0 'echo $(( ))'
 differs 'comma is not'   '1|' 0 'echo $((1,2))'
 differs 'has increment'  '1 2|' 0 'x=1; echo $((x++)) $x'
+differs 'a bad number'   '8|' 0 'echo $((08))'
 
 group language
-differs 'no continuation' 'a\|' 127 'echo a\
-b'
 differs 'echo keeps them' 'a\b|' 0 'echo "a\b"'
 differs 'at is one word' '[a b c]|' 0 'set -- "a b" c; for i in "$@"; do echo "[$i]"; done'
 differs 'no dash heredoc' '' 0 'cat <<-EOF
@@ -688,6 +745,58 @@ differs 'local goes on'  '2|after|' 0 'local v=1 2>/dev/null; echo $?; echo afte
 differs 'kill takes sig' '1|' 0 'kill -SIGTERM 999999 2>/dev/null; echo $?'
 differs 'expr is sixty four' '-9223372036854775808|' 0 'expr 9223372036854775807 + 1'
 
+# The for loop expands its list without splitting it and without asking the
+# filesystem, which is exec.c handing the words to shell_expand_word instead
+# of shell_expand_fields. Everywhere else in the language both happen.
+differs 'for keeps a word' '[a b]|' 0 'x="a b"; for i in $x; do echo "[$i]"; done'
+differs 'for keeps a glob' '/et*|' 0 'cd /; for i in /et*; do echo "$i"; done'
+
+# A here-document body goes through shell.c's older expander, which knows
+# $name and ${name} and nothing else -- so the forms that make a here-document
+# worth writing come out as themselves.
+differs 'heredoc plain only' ':-fallback}|' 0 'cat <<EOF
+${nosuch:-fallback}
+EOF'
+differs 'heredoc no sub'  '$(echo sub)|' 0 'cat <<EOF
+$(echo sub)
+EOF'
+
+# A body line with nothing on it is dropped before the shell ever sees it:
+# the reader in programs/shell.c skips empty lines, which is right for a
+# command and wrong for the inside of a here-document.
+differs 'heredoc blank'  'a|b|' 0 'cat <<EOF
+a
+
+b
+EOF'
+
+# A case pattern is expanded by shell_expand_word, which hands back bytes and
+# not the marks that say which of them were quoted -- so the star that came
+# out of "$p" is a star to the matcher as much as to the eye.
+differs 'quoted pattern' 'yes|' 0 "p='a*'; case aXX in \"\$p\") echo yes;; *) echo no;; esac"
+
+# MAX_TOKENS in shell.c is what a command line holds, so a glob that matches
+# more than that many names is cut off rather than refused.
+differs 'sixty four words' '63|' 0 'cd /usr/bin; echo * | wc -w'
+
+# The shell builds its own environment rather than inheriting one, because in
+# the image it is what starts first and there is nobody above it to inherit
+# from. Everything but PATH and SHELL therefore begins unset.
+differs 'no environment' 'unset|' 0 '[ -n "$HOME" ] && echo set || echo unset'
+
+# A line that ends in the middle of a quote now waits for the rest of it, and
+# at the end of the input there is no rest: dash calls that a syntax error and
+# this says nothing.
+differs 'quote never closed' '' 0 'echo "open'
+differs 'a bare semicolon' '' 0 ';'
+differs 'backslash at the end' '' 0 'echo one\'
+
+# An unfinished line inside eval or inside a sourced file is dropped when the
+# line that ran them ends, rather than being carried into the next one. dash
+# calls the same thing a syntax error and stops.
+differs 'eval unfinished' 'second|' 0 "eval 'echo \"unclosed'
+echo second"
+
 #
 #       What the shell has no answer for at all.
 #
@@ -704,6 +813,8 @@ absent 'diff'     '127|' 'diff /etc/hostname /etc/hostname; echo $?'
 absent 'ps'       '127|' 'ps; echo $?'
 absent 'tar'      '127|' 'tar --help; echo $?'
 absent 'gzip'     '127|' 'gzip --help; echo $?'
+absent 'hash'     '127|' 'hash; echo $?'
+absent 'ulimit'   '127|' 'ulimit -n; echo $?'
 absent 'command v awk' '127|' 'command -v awk > /dev/null; echo $?'
 absent 'type awk' '127|' 'type awk > /dev/null 2>&1; echo $?'
 

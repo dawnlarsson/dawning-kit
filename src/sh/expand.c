@@ -26,10 +26,18 @@ string_address env_get(const_string name);
 bool env_set(const_string name, const_string value);
 fn run_line(string_address line);
 fn parse_reset_all();
+fn shell_trap_exit();
 
 extern writer shell_output;
 extern positive shell_output_file;
 extern b32 shell_status;
+extern b32 shell_is_interactive;
+
+// The set flags, one bit per letter. Only -f is anybody's business here:
+// it says a pattern is a word and not a question about the filesystem.
+extern positive shell_options;
+
+#define SHELL_NO_GLOB ((positive)1 << ('f' - 'a'))
 
 /*
         What the last command substitution answered.
@@ -158,9 +166,65 @@ static positive expand_number_out(bipolar value, p8 address_to into)
         return used;
 }
 
+/*
+        A number in the three bases C gives it and the shell inherits: 0x is
+        sixteen, a leading zero is eight, anything else is ten. Ten was the
+        only one read, so $((0x10)) came out as nothing and a mode written
+        0644 as six hundred and forty four.
+
+        The cursor is handed back one past the last digit, because arithmetic
+        reads a literal out of the middle of an expression and a variable is
+        read whole -- and both have to agree about what 010 is worth.
+*/
+static bipolar expand_base_number(string_address address_to at)
+{
+        string_address step = address_to at;
+        bipolar value = 0;
+
+        if (string_is(step, '0') &&
+            (string_is(step + 1, 'x') || string_is(step + 1, 'X')))
+        {
+                step += 2;
+
+                while (1)
+                {
+                        p8 digit = string_get(step);
+
+                        if (digit >= '0' && digit <= '9')
+                                digit -= '0';
+                        else if (digit >= 'a' && digit <= 'f')
+                                digit -= 'a' - 10;
+                        else if (digit >= 'A' && digit <= 'F')
+                                digit -= 'A' - 10;
+                        else
+                                break;
+
+                        value = value * 16 + digit;
+                        step++;
+                }
+        }
+        else if (string_is(step, '0') && string_get(step + 1) >= '0' &&
+                 string_get(step + 1) <= '7')
+        {
+                step++;
+
+                while (string_get(step) >= '0' && string_get(step) <= '7')
+                        value = value * 8 + (string_get(step++) - '0');
+        }
+        else
+        {
+                while (string_get(step) >= '0' && string_get(step) <= '9')
+                        value = value * 10 + (string_get(step++) - '0');
+        }
+
+        address_to at = step;
+
+        return value;
+}
+
 static bipolar expand_number_in(string_address text)
 {
-        bipolar value = 0;
+        bipolar value;
         bool negative = false;
 
         while (string_is(text, ' ') || string_is(text, '\t'))
@@ -172,8 +236,7 @@ static bipolar expand_number_in(string_address text)
                 text++;
         }
 
-        while (string_get(text) >= '0' && string_get(text) <= '9')
-                value = value * 10 + (string_get(text++) - '0');
+        value = expand_base_number(address_of text);
 
         return negative ? -value : value;
 }
@@ -698,7 +761,7 @@ static fn arith_space()
                 arith_at++;
 }
 
-static bipolar arith_or();
+static bipolar arith_choose();
 
 // Writing a name back, which every assigning form ends with.
 static bipolar arith_store(string_address name, bipolar value)
@@ -759,7 +822,7 @@ static bipolar arith_primary()
         if (string_is(arith_at, '('))
         {
                 arith_at++;
-                value = arith_or();
+                value = arith_choose();
                 arith_space();
 
                 if (string_is(arith_at, ')'))
@@ -793,12 +856,7 @@ static bipolar arith_primary()
         }
 
         if (string_get(arith_at) >= '0' && string_get(arith_at) <= '9')
-        {
-                while (string_get(arith_at) >= '0' && string_get(arith_at) <= '9')
-                        value = value * 10 + (string_get(arith_at++) - '0');
-
-                return value;
-        }
+                return expand_base_number(address_of arith_at);
 
         /*
                 A name with no dollar in front of it, which is the one place in
@@ -820,7 +878,7 @@ static bipolar arith_primary()
                 {
                         arith_at++;
 
-                        return arith_store(name, arith_or());
+                        return arith_store(name, arith_choose());
                 }
 
                 /*
@@ -880,7 +938,8 @@ static bipolar arith_primary()
 
                                 was = expand_number_in(held);
 
-                                return arith_store(name, arith_combine(op, was, arith_or()));
+                                return arith_store(name,
+                                                   arith_combine(op, was, arith_choose()));
                         }
                 }
 
@@ -1156,11 +1215,43 @@ static bipolar arith_or()
         }
 }
 
+/*
+        The ternary, looser than the two logical levels and tighter than an
+        assignment. There was no level here at all, so $((1 ? 2 : 3)) stopped
+        after the condition and answered with it.
+
+        Both arms are read whichever one is wanted, for the same reason && and
+        || read both sides: the cursor has to come out of the far end of the
+        expression, and skipping an arm leaves it in the middle of one.
+*/
+static bipolar arith_choose()
+{
+        bipolar value = arith_or();
+        bipolar taken;
+        bipolar left;
+
+        arith_space();
+
+        if (!string_is(arith_at, '?'))
+                return value;
+
+        arith_at++;
+        taken = arith_choose();
+        arith_space();
+
+        if (string_is(arith_at, ':'))
+                arith_at++;
+
+        left = arith_choose();
+
+        return value ? taken : left;
+}
+
 static bipolar arith_evaluate(string_address text)
 {
         arith_at = text;
 
-        return arith_or();
+        return arith_choose();
 }
 
 /*
@@ -1270,6 +1361,15 @@ static string_address expand_brace_end(string_address at)
 }
 
 /*
+        Whether this process is a substitution's child.
+
+        Its exit ends a word, not the shell, so what the shell does on the way
+        out is not its to do: running the exit trap in here wrote the trap's
+        output down the substitution pipe and folded it into the word.
+*/
+static bool expand_in_substitution;
+
+/*
         A command substitution.
 
         The text runs in a child whose standard output is a pipe, and what it
@@ -1301,12 +1401,46 @@ static fn expand_run(string_address command, bool quoted)
 
                 shell_output = log;
                 shell_output_file = 0;
+                expand_in_substitution = true;
 
                 // The parser still holds the line this substitution is a word
                 // of. In here that is somebody else's half-read sentence, and
                 // feeding it another one makes a syntax error out of both.
                 parse_reset_all();
-                run_line(command);
+
+                /*
+                        A substitution is not one line. run_line is, and it was
+                        handed the whole body -- so everything after the first
+                        newline was dropped, and a here-document or a loop
+                        written inside $( ) produced nothing at all.
+
+                        The body is this child's own copy, so the newlines are
+                        turned into terminators in place rather than into a
+                        second buffer.
+                */
+                {
+                        string_address at = command;
+
+                        while (string_get(at))
+                        {
+                                string_address stop = at;
+
+                                while (string_get(stop) && string_not(stop, '\n'))
+                                        stop++;
+
+                                if (string_get(stop))
+                                {
+                                        address_to stop = end;
+                                        stop++;
+                                }
+
+                                if (string_get(at))
+                                        run_line(at);
+
+                                at = stop;
+                        }
+                }
+
                 log_flush();
 
                 system_call_1(syscall(exit_group), (positive)shell_status);
@@ -1691,7 +1825,28 @@ static string_address expand_braced(string_address step, bool quoted)
                                 expand_capture(word, quoted, said, sizeof(said), false);
                                 string_format(expand_complain, "%s: %s\n", name,
                                               said[0] ? said : (string_address) "parameter not set");
-                                shell_status = 1;
+
+                                /*
+                                        This form exists to stop the script,
+                                        and saying so and carrying on is the
+                                        one thing it must not do: a name that
+                                        was checked because it had to be set
+                                        went on to be used unset. dash leaves
+                                        2 behind and runs the exit trap on the
+                                        way out. A terminal is the exception,
+                                        because there is somebody there to
+                                        type the line again.
+                                */
+                                shell_status = 2;
+
+                                if (!shell_is_interactive)
+                                {
+                                        if (!expand_in_substitution)
+                                                shell_trap_exit();
+
+                                        log_flush();
+                                        system_call_1(syscall(exit_group), 2);
+                                }
 
                                 return close + 1;
                         }
@@ -2174,7 +2329,9 @@ static positive expand_emit(positive at, positive stop, string_address address_t
 
         pattern[used] = end;
 
-        if (magic)
+        // set -f was kept and never asked about, so a script that turned
+        // globbing off to hold a pattern still had it read the directory.
+        if (magic && !(shell_options & SHELL_NO_GLOB))
         {
                 p8 built[GLOB_PATH];
 

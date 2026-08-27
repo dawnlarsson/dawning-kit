@@ -273,6 +273,134 @@ static string_address lex_nesting(string_address at)
 }
 
 /*
+        Where the nesting that starts here begins, or nothing when none does.
+
+        $( ), ${ } and a backtick pair are the three, and what matters at every
+        call site is the same: the byte lex_nesting has to be pointed at, which
+        is the bracket and not the dollar in front of it.
+*/
+static string_address lex_nested_at(string_address at)
+{
+        if (string_get(at) == '`')
+                return at;
+
+        if (string_get(at) == '$' &&
+            (string_get(at + 1) == '(' || string_get(at + 1) == '{'))
+                return at + 1;
+
+        return null;
+}
+
+/*
+        Whether the line is all of the line.
+
+        A shell reads a line at a time and the language does not: a quote, a
+        substitution and a trailing backslash all say "the rest of this is
+        further down". Nothing here looked, so the three of them arrived as a
+        word with a stray quote in it, a $ with no command behind it, and a
+        backslash somebody meant to be invisible.
+
+        LEX_CONTINUES asks for the next line joined on with nothing between,
+        which is what a backslash before a newline means. LEX_OPEN asks for it
+        joined on with the newline kept, because a newline inside a quote or a
+        substitution is a byte of the thing, not the end of it.
+*/
+#define LEX_COMPLETE 0
+#define LEX_CONTINUES 1
+#define LEX_OPEN 2
+
+b32 lex_unfinished(string_address line)
+{
+        string_address step = line;
+        // A # is a comment only where a word could have started, which is the
+        // same rule lex_line uses -- echo a#b is one word and not half of one.
+        bool fresh = true;
+
+        lex_prepare();
+
+        while (string_get(step))
+        {
+                p8 c = string_get(step);
+
+                if (c == '#' && fresh)
+                        return LEX_COMPLETE;
+
+                if (lex_blank[c] || lex_operator[c])
+                {
+                        fresh = true;
+                        step++;
+                        continue;
+                }
+
+                fresh = false;
+
+                if (c == '\\')
+                {
+                        if (!string_get(step + 1))
+                                return LEX_CONTINUES;
+
+                        step += 2;
+                        continue;
+                }
+
+                if (c == '\'' || c == '"')
+                {
+                        step++;
+
+                        while (string_get(step) && string_get(step) != c)
+                        {
+                                // A backslash at the end inside double quotes
+                                // is still a continuation: the quote is open
+                                // and the line is short, and joining first is
+                                // what makes the quote close on the next pass.
+                                if (c == '"' && string_get(step) == '\\')
+                                {
+                                        if (!string_get(step + 1))
+                                                return LEX_CONTINUES;
+
+                                        step++;
+                                }
+                                else if (c == '"' && lex_nested_at(step))
+                                {
+                                        string_address inner = lex_nested_at(step);
+                                        string_address stop = lex_nesting(inner);
+
+                                        if (stop == inner)
+                                                return LEX_OPEN;
+
+                                        step = stop;
+                                        continue;
+                                }
+
+                                step++;
+                        }
+
+                        if (!string_get(step))
+                                return LEX_OPEN;
+
+                        step++;
+                        continue;
+                }
+
+                if (lex_nested_at(step))
+                {
+                        string_address inner = lex_nested_at(step);
+                        string_address stop = lex_nesting(inner);
+
+                        if (stop == inner)
+                                return LEX_OPEN;
+
+                        step = stop;
+                        continue;
+                }
+
+                step++;
+        }
+
+        return LEX_COMPLETE;
+}
+
+/*
         One word, quotes and all.
 
         A run of ordinary bytes is taken whole by string_span; anything else is
@@ -320,6 +448,35 @@ static b32 lex_word(string_address address_to at)
                         {
                                 if (lex_used + 2 >= LEX_TEXT)
                                         return false;
+
+                                /*
+                                        A substitution inside double quotes
+                                        carries quotes of its own, and the one
+                                        that closes this word is not one of
+                                        them. Reading them as the close ended
+                                        the word at the first blank inside the
+                                        substitution: echo "$(echo "a b")"
+                                        came out as two words and a stray
+                                        parenthesis.
+                                */
+                                if (c == '"' && lex_nested_at(step))
+                                {
+                                        string_address inner = lex_nested_at(step);
+                                        string_address stop = lex_nesting(inner);
+
+                                        if (stop > inner)
+                                        {
+                                                positive run = (positive)(stop - step);
+
+                                                if (lex_used + run + 1 >= LEX_TEXT)
+                                                        return false;
+
+                                                memory_copy(lex_text + lex_used, step, run);
+                                                lex_used += run;
+                                                step = stop;
+                                                continue;
+                                        }
+                                }
 
                                 if (c == '"' && string_get(step) == '\\' &&
                                     string_get(step + 1))

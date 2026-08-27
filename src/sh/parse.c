@@ -162,8 +162,24 @@ static positive here_used;
 static p8 here_names[HERE_MAX * 64];
 static positive here_names_used;
 
+/*
+        A line the language is not finished with.
+
+        A quote, a substitution and a trailing backslash all run past the end of
+        the line they start on, and the reader hands over one line at a time.
+        The unfinished text waits here until the rest of it arrives, so the
+        lexer is only ever shown whole words -- before this, an open quote came
+        out as a word with a quote still in it and the next line ran as a
+        command of its own.
+*/
+#define PARSE_PENDING 8192
+
+static p8 parse_pending[PARSE_PENDING];
+static positive parse_pending_used;
+
 fn parse_reset()
 {
+        parse_pending_used = 0;
         parse_token_count = parse_token_base;
         parse_token_text_used = parse_token_text_base;
         here_wanted = 0;
@@ -390,6 +406,31 @@ fn parse_here_close()
         }
 }
 
+static bool parse_hold(string_address line, b32 unfinished)
+{
+        positive length = string_length(line);
+
+        if (line != parse_pending)
+        {
+                if (length + 2 > PARSE_PENDING)
+                        return false;
+
+                memory_copy(parse_pending, line, length + 1);
+        }
+
+        // A backslash before a newline was only ever the mark saying "not
+        // yet"; a newline inside a quote or a substitution is a byte of it.
+        if (unfinished == LEX_CONTINUES)
+                length--;
+        else
+                parse_pending[length++] = '\n';
+
+        parse_pending[length] = end;
+        parse_pending_used = length;
+
+        return true;
+}
+
 /*
         A line of source, appended to whatever is already waiting.
 
@@ -400,9 +441,36 @@ fn parse_here_close()
 */
 bool parse_feed(string_address line)
 {
-        b32 count = lex_line(line);
+        b32 count;
         positive previous_stop = 0;
         b32 index;
+        b32 unfinished;
+
+        // Joining first is what lets the unfinished thing be recognised at
+        // all: the quote that closes is on this line and the one that opened
+        // it is on the last.
+        if (parse_pending_used)
+        {
+                positive length = string_length(line);
+
+                if (parse_pending_used + length + 2 > PARSE_PENDING)
+                {
+                        parse_pending_used = 0;
+                        return false;
+                }
+
+                memory_copy(parse_pending + parse_pending_used, line, length + 1);
+                parse_pending_used += length;
+                line = parse_pending;
+        }
+
+        unfinished = lex_unfinished(line);
+
+        if (unfinished)
+                return parse_hold(line, unfinished);
+
+        parse_pending_used = 0;
+        count = lex_line(line);
 
         if (count < 0)
                 return false;
@@ -1172,6 +1240,14 @@ static b32 parse_list()
 b32 parse_program()
 {
         b32 root;
+
+        // Half a word is not a program, and the reader is the one who has to
+        // be told: there is another line to ask for.
+        if (parse_pending_used)
+        {
+                parse_state = PARSE_INCOMPLETE;
+                return 0;
+        }
 
         if (!parse_node_top)
         {

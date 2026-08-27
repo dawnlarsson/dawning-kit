@@ -221,6 +221,12 @@ same 'suffix absent'    basename file.txt .c
 same 'suffix is all'    basename .txt .txt
 same 'multiple'         basename -a /a/b /c/d
 same 'suffix flag'      basename -s .txt one.txt two.txt
+same 'multiple long'    basename --multiple /a/b /c/d
+same 'suffix long'      basename --suffix=.txt one.txt two.txt
+same 'suffix joined'    basename -s.txt one.txt
+same 'zero'             basename -z /usr/bin/ls
+same 'zero and many'    basename --zero -a /a/b /c/d
+same 'not an option'    basename -x /a/b
 
 group dirname
 same 'path'             dirname /usr/bin/ls
@@ -229,6 +235,9 @@ same 'no slash'         dirname usr
 same 'root'             dirname /
 same 'one level'        dirname /a
 same 'many'             dirname /a/b /c ./d
+same 'zero'             dirname -z /a/b /c
+same 'zero long'        dirname --zero /a/b
+same 'not an option'    dirname -x /a/b
 
 group seq
 same 'last'             seq 5
@@ -240,6 +249,10 @@ same 'empty'            seq 9 2
 same 'padded'           seq -w 8 11
 same 'separator'        seq -s , 1 5
 same 'one'              seq 1 1
+same 'padded long'      seq --equal-width 8 11
+same 'separator long'   seq --separator=, 1 5
+same 'separator joined' seq -s, 1 5
+same 'not an option'    seq -x 3
 
 group readlink
 same 'link'             readlink "$fixture/sub/back"
@@ -248,6 +261,10 @@ same 'resolve'          readlink -f "$fixture/sub/back"
 same 'resolve plain'    readlink -f "$fixture/alpha"
 same 'resolve missing'  readlink -f "$fixture/nothing"
 same 'exists missing'   readlink -e "$fixture/nothing"
+same 'resolve long'     readlink --canonicalize "$fixture/sub/back"
+same 'no newline'       readlink -n "$fixture/sub/back"
+same 'zero'             readlink -z "$fixture/sub/back"
+same 'zero long'        readlink --zero "$fixture/sub/back"
 
 group realpath
 same 'plain'            realpath "$fixture/alpha"
@@ -257,6 +274,19 @@ same 'directory'        realpath "$fixture/sub/inner"
 same 'root'             realpath /
 same 'missing'          realpath "$fixture/nothing"
 same 'missing allowed'  realpath -m "$fixture/nothing/at/all"
+same 'missing long'     realpath --canonicalize-missing "$fixture/nothing/at/all"
+same 'exists'           realpath -e "$fixture/nothing"
+same 'no symlinks'      realpath -s "$fixture/sub/back"
+same 'no symlinks dots' realpath --no-symlinks "$fixture/sub/../alpha"
+same 'no symlinks gone' realpath -s "$fixture/nothing/at/all"
+same 'zero'             realpath -z "$fixture/alpha"
+same 'relative to'      realpath --relative-to="$fixture/sub" "$fixture/alpha"
+same 'relative to down' realpath --relative-to="$fixture" "$fixture/sub/inner"
+same 'relative to same' realpath --relative-to="$fixture" "$fixture"
+same 'relative base'    realpath --relative-base="$fixture" "$fixture/sub/inner"
+same 'relative base out' realpath --relative-base=/usr "$fixture/alpha"
+same 'not an option'    realpath -x "$fixture/alpha"
+same 'not a word'       realpath --canonical "$fixture/alpha"
 
 group id
 same 'default'          id
@@ -265,6 +295,21 @@ same 'group'            id -g
 same 'user name'        id -un
 same 'group name'       id -gn
 same 'groups'           id -G
+same 'user long'        id --user
+same 'group long'       id --group
+same 'groups long'      id --groups
+same 'name long'        id --user --name
+same 'zero user'        id -uz
+same 'zero groups'      id -Gz
+same 'name alone'       id -n
+same 'real alone'       id -r
+same 'zero alone'       id -z
+same 'context'          id -Z
+same 'a named user'     id root
+same 'a named user id'  id -u root
+same 'a named name'     id -un root
+same 'a named groups'   id -G root
+same 'no such user'     id nosuchuseranywhere
 
 group uname
 same 'system'           uname
@@ -272,6 +317,12 @@ same 'node'             uname -n
 same 'release'          uname -r
 same 'machine'          uname -m
 near 'all'              'cat' uname -snrvm
+same 'node long'        uname --nodename
+same 'release long'     uname --kernel-release
+same 'machine long'     uname --machine
+same 'processor'        uname -p
+same 'hardware'         uname -i
+same 'not an option'    uname -x
 
 group find
 near 'plain'            'LC_ALL=C sort' find "$fixture"
@@ -392,6 +443,21 @@ same 'set and run'      env NEW=here /bin/sh -c 'echo $NEW'
 same 'empty and run'    env -i /bin/sh -c 'echo [$PATH]'
 same 'unset and run'    env -u HOME /bin/sh -c 'echo [$HOME]'
 same 'plain command'    env /bin/echo through
+same 'unset long'       env --unset=HOME -i A=1 B=2
+same 'unset twice'      env -u A -u C -i A=1 B=2 C=3
+same 'ignore long'      env --ignore-environment A=1 B=2
+same 'null'             env -i -0 A=1 B=2
+same 'null long'        env -i --null A=1 B=2
+same 'a lone dash'      env - A=1
+same 'change directory' env -C /usr /bin/pwd
+same 'directory long'   env --chdir=/usr /bin/pwd
+same 'no directory'     env -C /nowhere /bin/pwd
+same 'zeroth argument'  env -a zero /bin/sh -c 'echo $0'
+same 'zeroth long'      env --argv0=zero /bin/sh -c 'echo $0'
+same 'split string'     env -S'/bin/echo one two'
+same 'split long'       env --split-string='/bin/echo three four'
+same 'nothing to run'   env -C /usr
+same 'not an option'    env -x /bin/true
 
 group chown
 effect 'user and group' chown '$TOOL '"$(id -un):$(id -gn)"' tree/one'
