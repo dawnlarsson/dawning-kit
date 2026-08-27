@@ -2904,6 +2904,20 @@ b32 shell_tool_as_called()
         return shell_tools[which].function() & 0xff;
 }
 
+// Whether a name is one of the utilities, without running it.
+bool shell_tool_here(string_address name)
+{
+        return string_table_find(name, shell_tools, sizeof(shell_tool),
+                                 SHELL_TOOLS) != SHELL_TOOLS;
+}
+
+fn shell_tool_list(writer write)
+{
+        for (positive i = 0; i < SHELL_TOOLS; i++)
+                string_format(write, TERM_BOLD " -  %s" TERM_RESET "\n",
+                              shell_tools[i].name);
+}
+
 static bool shell_tool_run(string_address name)
 {
         positive which = string_table_find(name, shell_tools, sizeof(shell_tool),
@@ -2943,6 +2957,8 @@ static bool shell_tool_run(string_address name)
 // Without the two layers beside this file there are no utilities to reach --
 // programs/edit.c takes this one on its own for a handful of its commands.
 b32 shell_tool_as_called() { return -1; }
+bool shell_tool_here(string_address name) { return false; }
+fn shell_tool_list(writer write) {}
 static bool shell_tool_run(string_address name) { return false; }
 
 #endif
@@ -3072,6 +3088,11 @@ fn shell_which(writer write, string_address input)
                 command++;
         }
 
+        // Before the path, because that is the order the shell runs them in:
+        // a grep on the path is not the grep that would run.
+        if (shell_tool_here(input))
+                return string_format(write, "%s: shell builtin\n", input);
+
         p8 found[768];
 
         if (shell_find_in_path(input, found, sizeof(found)))
@@ -3091,6 +3112,8 @@ fn shell_help(writer write, string_address input)
                 string_format(write, TERM_BOLD " -  %s" TERM_RESET "\n", command->name);
                 command++;
         }
+
+        shell_tool_list(write);
 
         write("\n", 1);
 }
