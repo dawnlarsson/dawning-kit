@@ -3157,6 +3157,7 @@ static shell_tool shell_tools[] = {
     {"stat", file_stat},
     {"touch", file_touch},
     {"uname", file_uname},
+    {"xargs", file_xargs},
     {"yes", file_yes},
 
     {"edit", system_edit},

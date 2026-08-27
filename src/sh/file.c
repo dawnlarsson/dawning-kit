@@ -6773,3 +6773,646 @@ static b32 file_date()
 
         return 0;
 }
+
+// xargs -----------------------------------------------------------
+/*
+        Standard input turned into arguments, and a command run with them.
+
+        The splitting is the part with the rules: blanks and newlines end an
+        item, a backslash takes away whatever follows it, and a quote runs to
+        its own kind again with nothing special inside. -0 has none of that
+        and reads to the next zero byte, which is what find -print0 is for.
+
+        Running is a fork and an execve with the path walked here, because a
+        utility is not the shell and cannot ask it where a name lives.
+*/
+#define XARGS_BYTES 131072
+#define XARGS_WORDS 2048
+#define XARGS_ITEM 8192
+#define XARGS_TEMPLATE 8192
+#define XARGS_BLOCK 65536
+#define XARGS_ENV 512
+
+// Declared here rather than reached for: builtin.c is included after this
+// file, and a utility that runs a command needs what the shell knows about
+// where commands are and what environment they get.
+string_address env_get(const_string name);
+extern string_address shell_envp[];
+
+static p8 xargs_bytes[XARGS_BYTES];
+static positive xargs_used;
+static string_address xargs_words[XARGS_WORDS + 1];
+static positive xargs_word_count;
+static positive xargs_prefix_bytes;
+static positive xargs_prefix_words;
+static p8 xargs_template_bytes[XARGS_TEMPLATE];
+static string_address xargs_template[XARGS_WORDS + 1];
+static positive xargs_template_used;
+static p8 xargs_item[XARGS_ITEM];
+static positive xargs_item_length;
+static p8 xargs_buffer[XARGS_BLOCK];
+static string_address xargs_env[XARGS_ENV + 1];
+
+static bool xargs_null;
+static bool xargs_trace;
+static bool xargs_needs_input;
+static positive xargs_most;
+static string_address xargs_replace;
+static string_address xargs_ending;
+static positive xargs_lines;
+static b32 xargs_answer;
+static bool xargs_done;
+static bool xargs_ended;
+static bool xargs_ran;
+static positive xargs_line_count;
+
+static string_address address_to xargs_environment()
+{
+        positive count = 0;
+
+        if (shell_envp[0])
+                return shell_envp;
+
+        while (count < XARGS_ENV && program_environment((b32)count))
+        {
+                xargs_env[count] = program_environment((b32)count);
+                count++;
+        }
+
+        xargs_env[count] = null;
+
+        return xargs_env;
+}
+
+static bool xargs_add(string_address text, positive length)
+{
+        if (xargs_word_count >= XARGS_WORDS || xargs_used + length + 1 > XARGS_BYTES)
+                return false;
+
+        memory_copy(xargs_bytes + xargs_used, text, length);
+        xargs_bytes[xargs_used + length] = end;
+        xargs_words[xargs_word_count++] = xargs_bytes + xargs_used;
+        xargs_used += length + 1;
+
+        return true;
+}
+
+/*
+        The command, found and started.
+
+        Every candidate is tried by execing it: asking first whether a file is
+        there and executable and then running it is two answers where one will
+        do, and the one that matters is the kernel's. What is remembered is
+        whether anything said permission denied, because that is a different
+        number to come back with than nothing being there at all.
+*/
+static fn xargs_exec()
+{
+        string_address address_to environment = xargs_environment();
+        string_address name = xargs_words[0];
+        string_address path = env_get("PATH");
+        p8 candidate[FILE_PATH_MAX];
+        bool denied = false;
+
+        if (string_first_of(name, '/'))
+        {
+                bipolar answer = system_call_3(syscall(execve), (positive)name,
+                                               (positive)xargs_words,
+                                               (positive)environment);
+
+                exit(answer == -ERROR_ACCESS ? 126 : 127);
+        }
+
+        if (!path)
+                path = file_environment("PATH");
+
+        if (!path || !string_get(path))
+                path = "/bin:/usr/bin:/";
+
+        while (string_get(path))
+        {
+                positive length = 0;
+
+                while (string_get(path) && string_get(path) != ':')
+                {
+                        if (length < FILE_PATH_MAX - 2)
+                                candidate[length++] = string_get(path);
+
+                        path++;
+                }
+
+                if (string_get(path))
+                        path++;
+
+                // An empty element is this directory, which is what a leading
+                // or a doubled colon in PATH means.
+                if (!length)
+                        candidate[length++] = '.';
+
+                if (candidate[length - 1] != '/')
+                        candidate[length++] = '/';
+
+                for (positive i = 0; string_get(name + i) && length < FILE_PATH_MAX - 1; i++)
+                        candidate[length++] = string_get(name + i);
+
+                candidate[length] = end;
+
+                if (system_call_3(syscall(execve), (positive)candidate,
+                                  (positive)xargs_words,
+                                  (positive)environment) == -ERROR_ACCESS)
+                        denied = true;
+        }
+
+        exit(denied ? 126 : 127);
+}
+
+static fn xargs_run()
+{
+        bipolar child;
+        positive status = 0;
+        b32 code;
+
+        xargs_words[xargs_word_count] = null;
+        xargs_ran = true;
+
+        if (xargs_trace)
+        {
+                for (positive i = 0; i < xargs_word_count; i++)
+                {
+                        if (i)
+                                file_fail(" ", 1);
+
+                        file_fail(xargs_words[i], 0);
+                }
+
+                file_fail("\n", 1);
+        }
+
+        log_flush();
+        child = system_call_2(syscall(clone), SIGCHLD, 0);
+
+        if (child == 0)
+                xargs_exec();
+
+        if (child < 0)
+        {
+                file_fail("xargs: cannot fork\n", 0);
+                xargs_answer = 125;
+                xargs_done = true;
+                return;
+        }
+
+        system_call_4(syscall(wait4), child, (positive)address_of status, 0, 0);
+
+        if (status & 0x7f)
+        {
+                string_format(file_fail, "xargs: %s: terminated by a signal\n",
+                              xargs_words[0]);
+                xargs_answer = 125;
+                xargs_done = true;
+                return;
+        }
+
+        code = (b32)((status >> 8) & 0xff);
+
+        if (!code)
+                return;
+
+        if (code == 127 || code == 126)
+        {
+                string_format(file_fail, "xargs: failed to run command '%s'\n",
+                              xargs_words[0]);
+                xargs_answer = (b32)code;
+                xargs_done = true;
+                return;
+        }
+
+        if (code == 255)
+        {
+                string_format(file_fail, "xargs: %s: exited with status 255; aborting\n",
+                              xargs_words[0]);
+                xargs_answer = 124;
+                xargs_done = true;
+                return;
+        }
+
+        xargs_answer = 123;
+}
+
+static fn xargs_reset()
+{
+        xargs_used = xargs_prefix_bytes;
+        xargs_word_count = xargs_prefix_words;
+        xargs_line_count = 0;
+}
+
+/*
+        The command as it was written down, kept where the built one cannot
+        reach it. -I rebuilds the whole command for every item, and reading
+        the words out of the block it is writing into gives the second item
+        the first one's answer.
+*/
+static bool xargs_keep_template()
+{
+        xargs_template_used = 0;
+
+        for (positive at = 0; at < xargs_word_count; at++)
+        {
+                positive length = string_length(xargs_words[at]);
+
+                if (xargs_template_used + length + 1 > XARGS_TEMPLATE)
+                        return false;
+
+                memory_copy(xargs_template_bytes + xargs_template_used,
+                            xargs_words[at], length + 1);
+                xargs_template[at] = xargs_template_bytes + xargs_template_used;
+                xargs_template_used += length + 1;
+        }
+
+        return true;
+}
+
+// The command with the mark in each of its words replaced, which is what -I
+// is and the only mode where one item makes one whole command line.
+static bool xargs_replaced(string_address item)
+{
+        positive mark = string_length(xargs_replace);
+        positive item_length = string_length(item);
+
+        xargs_used = 0;
+        xargs_word_count = 0;
+
+        for (positive at = 0; at < xargs_prefix_words; at++)
+        {
+                string_address word = xargs_template[at];
+                p8 made[XARGS_ITEM];
+                positive length = 0;
+                positive i = 0;
+
+                while (string_get(word + i))
+                {
+                        positive same = 0;
+
+                        while (same < mark &&
+                               string_get(word + i + same) == string_get(xargs_replace + same))
+                                same++;
+
+                        if (same == mark && mark)
+                        {
+                                if (length + item_length >= XARGS_ITEM)
+                                        return false;
+
+                                memory_copy(made + length, item, item_length);
+                                length += item_length;
+                                i += mark;
+                                continue;
+                        }
+
+                        if (length + 1 >= XARGS_ITEM)
+                                return false;
+
+                        made[length++] = string_get(word + i);
+                        i++;
+                }
+
+                made[length] = end;
+
+                if (!xargs_add(made, length))
+                        return false;
+        }
+
+        return true;
+}
+
+static fn xargs_item_done()
+{
+        // The logical end of the input stops the reading; what was gathered
+        // before it is still a command to run.
+        if (xargs_ending && !xargs_null &&
+            !string_compare(xargs_item, xargs_ending))
+        {
+                xargs_ended = true;
+                return;
+        }
+
+        if (xargs_replace)
+        {
+                if (!xargs_replaced(xargs_item))
+                {
+                        file_fail("xargs: argument list too long\n", 0);
+                        xargs_answer = 1;
+                        xargs_done = true;
+                        return;
+                }
+
+                xargs_run();
+                return;
+        }
+
+        if (!xargs_add(xargs_item, xargs_item_length))
+        {
+                xargs_run();
+                xargs_reset();
+                xargs_add(xargs_item, xargs_item_length);
+        }
+
+        if (xargs_most && xargs_word_count - xargs_prefix_words >= xargs_most)
+        {
+                xargs_run();
+                xargs_reset();
+        }
+}
+
+static b32 file_xargs()
+{
+        positive count = (positive)program_argument_count();
+        positive index = 1;
+        p8 quote = 0;
+        bool escaped = false;
+        bool started = false;
+        bool blank_last = false;
+
+        xargs_used = 0;
+        xargs_word_count = 0;
+        xargs_item_length = 0;
+        xargs_answer = 0;
+        xargs_done = false;
+        xargs_ended = false;
+        xargs_ran = false;
+        xargs_most = 0;
+        xargs_lines = 0;
+        xargs_null = false;
+        xargs_trace = false;
+        xargs_needs_input = false;
+        xargs_replace = null;
+        xargs_ending = null;
+
+        while (index < count)
+        {
+                string_address argument = program_argument((b32)index);
+
+                if (!string_is(argument, '-') || string_is(argument + 1, end))
+                        break;
+
+                if (string_is(argument + 1, '-') && string_is(argument + 2, end))
+                {
+                        index++;
+                        break;
+                }
+
+                if (string_is(argument + 1, '0') && string_is(argument + 2, end))
+                {
+                        xargs_null = true;
+                        index++;
+                        continue;
+                }
+
+                if (string_is(argument + 1, 't') && string_is(argument + 2, end))
+                {
+                        xargs_trace = true;
+                        index++;
+                        continue;
+                }
+
+                if (string_is(argument + 1, 'r') && string_is(argument + 2, end))
+                {
+                        xargs_needs_input = true;
+                        index++;
+                        continue;
+                }
+
+                if (string_is(argument + 1, 'n'))
+                {
+                        string_address value = argument + 2;
+
+                        if (!string_get(value))
+                        {
+                                if (index + 1 >= count)
+                                {
+                                        file_fail("xargs: -n needs a number\n", 0);
+                                        return 1;
+                                }
+
+                                value = program_argument((b32)(index + 1));
+                                index++;
+                        }
+
+                        xargs_most = file_count(value);
+                        index++;
+                        continue;
+                }
+
+                if (string_is(argument + 1, 'E'))
+                {
+                        string_address value = argument + 2;
+
+                        if (!string_get(value))
+                        {
+                                if (index + 1 >= count)
+                                {
+                                        file_fail("xargs: -E needs a word\n", 0);
+                                        return 1;
+                                }
+
+                                value = program_argument((b32)(index + 1));
+                                index++;
+                        }
+
+                        xargs_ending = value;
+                        index++;
+                        continue;
+                }
+
+                if (string_is(argument + 1, 'I'))
+                {
+                        string_address value = argument + 2;
+
+                        if (!string_get(value))
+                        {
+                                if (index + 1 >= count)
+                                {
+                                        file_fail("xargs: -I needs a word\n", 0);
+                                        return 1;
+                                }
+
+                                value = program_argument((b32)(index + 1));
+                                index++;
+                        }
+
+                        xargs_replace = value;
+                        index++;
+                        continue;
+                }
+
+                if (string_is(argument + 1, 'i') && string_is(argument + 2, end))
+                {
+                        xargs_replace = "{}";
+                        index++;
+                        continue;
+                }
+
+                string_format(file_fail, "xargs: unknown option: %s\n", argument);
+                return 1;
+        }
+
+        if (index >= count)
+                xargs_add("echo", 4);
+
+        while (index < count)
+        {
+                string_address word = program_argument((b32)index++);
+
+                xargs_add(word, string_length(word));
+        }
+
+        xargs_prefix_bytes = xargs_used;
+        xargs_prefix_words = xargs_word_count;
+
+        if (!xargs_keep_template())
+        {
+                file_fail("xargs: command too long\n", 0);
+                return 1;
+        }
+
+        for (;;)
+        {
+                bipolar got = system_call_3(syscall(read), 0, (positive)xargs_buffer,
+                                            XARGS_BLOCK);
+
+                if (got <= 0)
+                        break;
+
+                for (positive at = 0;
+                     at < (positive)got && !xargs_done && !xargs_ended; at++)
+                {
+                        p8 letter = xargs_buffer[at];
+
+                        if (xargs_null)
+                        {
+                                if (letter)
+                                {
+                                        if (xargs_item_length < XARGS_ITEM - 1)
+                                                xargs_item[xargs_item_length++] = letter;
+
+                                        started = true;
+                                        continue;
+                                }
+
+                                xargs_item[xargs_item_length] = end;
+                                xargs_item_done();
+                                xargs_item_length = 0;
+                                started = false;
+                                continue;
+                        }
+
+                        if (escaped)
+                        {
+                                if (xargs_item_length < XARGS_ITEM - 1)
+                                        xargs_item[xargs_item_length++] = letter;
+
+                                escaped = false;
+                                started = true;
+                                continue;
+                        }
+
+                        if (quote)
+                        {
+                                if (letter == quote)
+                                {
+                                        quote = 0;
+                                        continue;
+                                }
+
+                                if (xargs_item_length < XARGS_ITEM - 1)
+                                        xargs_item[xargs_item_length++] = letter;
+
+                                started = true;
+                                continue;
+                        }
+
+                        if (letter == '\\')
+                        {
+                                escaped = true;
+                                started = true;
+                                continue;
+                        }
+
+                        if (letter == '\'' || letter == '"')
+                        {
+                                quote = letter;
+                                started = true;
+                                continue;
+                        }
+
+                        // -I reads a line at a time, and the blanks around it
+                        // are not part of what the mark stands for.
+                        if (letter == ' ' || letter == '\t')
+                        {
+                                if (xargs_replace)
+                                {
+                                        if (started && xargs_item_length < XARGS_ITEM - 1)
+                                                xargs_item[xargs_item_length++] = letter;
+
+                                        continue;
+                                }
+
+                                if (!started)
+                                        continue;
+
+                                xargs_item[xargs_item_length] = end;
+                                xargs_item_done();
+                                xargs_item_length = 0;
+                                started = false;
+                                continue;
+                        }
+
+                        if (letter == '\n')
+                        {
+                                if (!started)
+                                        continue;
+
+                                xargs_item[xargs_item_length] = end;
+                                xargs_item_done();
+                                xargs_item_length = 0;
+                                started = false;
+                                continue;
+                        }
+
+                        if (xargs_item_length < XARGS_ITEM - 1)
+                                xargs_item[xargs_item_length++] = letter;
+
+                        started = true;
+                }
+
+                if (xargs_done || xargs_ended)
+                        break;
+        }
+
+        if (quote)
+        {
+                file_fail("xargs: unmatched quote\n", 0);
+                return 1;
+        }
+
+        if (started && !xargs_done && !xargs_ended)
+        {
+                xargs_item[xargs_item_length] = end;
+                xargs_item_done();
+                xargs_item_length = 0;
+        }
+
+        if (xargs_replace || xargs_done)
+                return xargs_answer;
+
+        if (xargs_word_count > xargs_prefix_words)
+                xargs_run();
+        else if (!xargs_ran && !xargs_needs_input)
+        {
+                // An input with nothing in it still runs the command once,
+                // with no arguments, unless -r says not to. -I is the one
+                // mode where no item means nothing to stand in for.
+                xargs_run();
+        }
+
+        return xargs_answer;
+}
