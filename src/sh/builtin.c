@@ -3072,7 +3072,25 @@ fn shell_dot(writer write, string_address input)
         {
                 string_format(shell_diagnostic, "%s: %s: cannot open\n",
                               shell_argv[0], shell_argv[1]);
-                return shell_answer(1);
+                shell_answer(1);
+
+                /*
+                        A special builtin that fails ends the script.
+
+                        POSIX says so of the whole set -- ., eval, exec, exit,
+                        export, readonly, set, shift, times, trap, unset -- and
+                        it matters most here: a script that sources a file it
+                        cannot find should stop, not carry on without whatever
+                        was in it. Only when nobody is watching; at a terminal
+                        the shell stays, or a typo would close the session.
+                */
+                if (!shell_is_interactive)
+                {
+                        log_flush();
+                        exit(1);
+                }
+
+                return;
         }
 
         while (filled < SOURCE_MAX - 1)
@@ -3331,7 +3349,9 @@ fn shell_type(writer write, string_address input)
                         continue;
                 }
 
-                string_format(shell_diagnostic, "%s: not found\n", name);
+                // On standard output, as POSIX says of type and as the
+                // reference shell does: it is an answer, not a complaint.
+                string_format(write, "%s: not found\n", name);
                 bad = 127;
         }
 

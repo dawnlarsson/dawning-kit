@@ -34,6 +34,10 @@ fn shell_signal(b32 number, positive disposition)
 #define shell_ignore(n) shell_signal(n, SIGNAL_IGNORE)
 #define shell_default(n) shell_signal(n, SIGNAL_DEFAULT)
 
+// Whether anybody is watching. A script and a terminal want different
+// things of a shell that has just been told to do something impossible.
+b32 shell_is_interactive;
+
 // Whether output that can carry colour does. An interface that draws its own
 // screen turns it off while it holds the terminal.
 bool shell_styles = true;
@@ -52,7 +56,6 @@ bool shell_styles = true;
 
 #define MAX_INPUT 4096
 p8 shell_buffer[MAX_INPUT];
-static b32 shell_is_interactive;
 
 writer shell_output = log;
 positive shell_output_file;

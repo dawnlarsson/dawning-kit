@@ -152,6 +152,45 @@ check 'exit status'     'sh -c "exit 4" 2>/dev/null; echo $?'
 check 'true false'      'true; echo $?; false; echo $?'
 check 'printf'          'printf "%s-%s\n" a b'
 
+group arithmetic
+check 'shift left'      'echo $((1<<4))'
+check 'shift right'     'echo $((64>>3))'
+check 'bit and'         'echo $((12&10))'
+check 'bit or'          'echo $((12|3))'
+check 'bit xor'         'echo $((12^10))'
+check 'bit precedence'  'echo $((1|2&3)) $((2^3|4)) $((5&3|8))'
+check 'bit not'         'echo $((7&~2))'
+check 'shift chain'     'echo $((1<<3>>1))'
+check 'plus equals'     'x=1; : $((x+=2)); echo $x'
+check 'minus equals'    'x=9; : $((x-=4)); echo $x'
+check 'times equals'    'x=3; : $((x*=4)); echo $x'
+check 'divide equals'   'x=9; : $((x/=2)); echo $x'
+check 'modulo equals'   'x=9; : $((x%=4)); echo $x'
+check 'shift equals'    'x=1; : $((x<<=4)); echo $x'
+check 'or equals'       'x=12; : $((x|=3)); echo $x'
+check 'assign value'    'echo $((y=7)); echo $y'
+check 'mixed'           'echo $((2+3*4)) $((0||1&&1))'
+
+group sourcing
+check 'dot runs'        'echo echo sourced > /tmp/pd1; . /tmp/pd1'
+check 'dot sets'        'echo x=42 > /tmp/pd2; . /tmp/pd2; echo $x'
+check 'dot status'      'echo false > /tmp/pd3; . /tmp/pd3; echo $?'
+check 'dot missing'     '. /tmp/nosuchfile 2>/dev/null; echo $?'
+
+group naming
+check 'type builtin'    'type echo'
+check 'type function'   'f() { :; }; type f'
+check 'type missing'    'type nosuchthing 2>/dev/null; echo $?'
+check 'command dash v'  'command -v echo'
+check 'command runs'    'command echo hi'
+check 'command v miss'  'command -v nosuchthing 2>/dev/null; echo $?'
+
+group traps
+check 'exit trap'       'trap "echo bye" EXIT; echo hi'
+check 'exit trap code'  'trap "echo bye" EXIT; exit 3'
+check 'exit trap gone'  'trap "echo bye" EXIT; trap - EXIT; echo hi'
+check 'wait for all'    'true & wait; echo done'
+
 total=$((pass + fail))
 echo
 printf '  %s of %s\n' "$pass" "$total"

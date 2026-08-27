@@ -685,6 +685,54 @@ static fn arith_space()
 
 static bipolar arith_or();
 
+// Writing a name back, which every assigning form ends with.
+static bipolar arith_store(string_address name, bipolar value)
+{
+        p8 written[32];
+
+        expand_number_out(value, written);
+        env_set(name, written);
+
+        return value;
+}
+
+// x++ and x--, answering with what the name held before.
+static bipolar arith_step(string_address name, bipolar by)
+{
+        p8 held[EXPAND_VALUE];
+        bipolar was;
+
+        if (!expand_value_of(name, held, sizeof(held)))
+                held[0] = end;
+
+        was = expand_number_in(held);
+        arith_store(name, was + by);
+
+        return was;
+}
+
+// What the operator in front of the = does. Division by zero answers with the
+// left hand side rather than trapping, which is what the plain / does here.
+static bipolar arith_combine(p8 op, bipolar left, bipolar right)
+{
+        switch (op)
+        {
+        case '+': return left + right;
+        case '-': return left - right;
+        case '*': return left * right;
+        case '/': return right ? left / right : left;
+        case '%': return right ? left % right : left;
+        case '&': return left & right;
+        case '|': return left | right;
+        case '^': return left ^ right;
+        case 'l': return left << right;
+        case 'r': return left >> right;
+        }
+
+        return right;
+}
+
+
 static bipolar arith_primary()
 {
         bipolar value = 0;
@@ -753,14 +801,70 @@ static bipolar arith_primary()
 
                 if (string_is(arith_at, '=') && string_get(arith_at + 1) != '=')
                 {
-                        p8 written[32];
-
                         arith_at++;
-                        value = arith_or();
-                        expand_number_out(value, written);
-                        env_set(name, written);
 
-                        return value;
+                        return arith_store(name, arith_or());
+                }
+
+                /*
+                        The compound forms, which read the name as well as
+                        write it: += and its nine relatives, and ++ and --.
+
+                        Longest first, or <<= is < followed by <= and x >>= 1
+                        halves nothing. The ones ending in = are all "read,
+                        combine, write" and share the tail below; ++ and --
+                        answer with the value from before they changed it,
+                        which is what a post-increment means.
+                */
+                {
+                        p8 op = 0;
+                        b32 skip = 0;
+
+                        if (string_is(arith_at, '+') && string_is(arith_at + 1, '+'))
+                        {
+                                arith_at += 2;
+                                return arith_step(name, 1);
+                        }
+
+                        if (string_is(arith_at, '-') && string_is(arith_at + 1, '-'))
+                        {
+                                arith_at += 2;
+                                return arith_step(name, -1);
+                        }
+
+                        if (string_is(arith_at, '<') && string_is(arith_at + 1, '<') &&
+                            string_is(arith_at + 2, '='))
+                        {
+                                op = 'l';
+                                skip = 3;
+                        }
+                        else if (string_is(arith_at, '>') && string_is(arith_at + 1, '>') &&
+                                 string_is(arith_at + 2, '='))
+                        {
+                                op = 'r';
+                                skip = 3;
+                        }
+                        else if (string_is(arith_at + 1, '=') &&
+                                 string_first_of((string_address) "+-*/%&|^",
+                                                 string_get(arith_at)))
+                        {
+                                op = string_get(arith_at);
+                                skip = 2;
+                        }
+
+                        if (op)
+                        {
+                                bipolar was;
+
+                                arith_at += skip;
+
+                                if (!expand_value_of(name, held, sizeof(held)))
+                                        held[0] = end;
+
+                                was = expand_number_in(held);
+
+                                return arith_store(name, arith_combine(op, was, arith_or()));
+                        }
                 }
 
                 if (!expand_value_of(name, held, sizeof(held)))
@@ -834,9 +938,45 @@ static bipolar arith_add()
         }
 }
 
-static bipolar arith_compare()
+/*
+        The shifts, between the sums and the comparisons.
+
+        There was no level here at all, so 1 << 4 was read as 1 < (< 4) and
+        answered with something that was not sixteen. The comparisons below
+        were already written to step around << and >>, which is what made the
+        gap invisible: they declined to match and nothing else did.
+*/
+static bipolar arith_shift()
 {
         bipolar value = arith_add();
+
+        while (1)
+        {
+                arith_space();
+
+                if (string_is(arith_at, '<') && string_is(arith_at + 1, '<') &&
+                    !string_is(arith_at + 2, '='))
+                {
+                        arith_at += 2;
+                        value = value << arith_add();
+                        continue;
+                }
+
+                if (string_is(arith_at, '>') && string_is(arith_at + 1, '>') &&
+                    !string_is(arith_at + 2, '='))
+                {
+                        arith_at += 2;
+                        value = value >> arith_add();
+                        continue;
+                }
+
+                return value;
+        }
+}
+
+static bipolar arith_compare()
+{
+        bipolar value = arith_shift();
 
         while (1)
         {
@@ -845,28 +985,28 @@ static bipolar arith_compare()
                 if (string_is(arith_at, '<') && string_get(arith_at + 1) == '=')
                 {
                         arith_at += 2;
-                        value = value <= arith_add();
+                        value = value <= arith_shift();
                         continue;
                 }
 
                 if (string_is(arith_at, '>') && string_get(arith_at + 1) == '=')
                 {
                         arith_at += 2;
-                        value = value >= arith_add();
+                        value = value >= arith_shift();
                         continue;
                 }
 
                 if (string_is(arith_at, '<') && string_get(arith_at + 1) != '<')
                 {
                         arith_at++;
-                        value = value < arith_add();
+                        value = value < arith_shift();
                         continue;
                 }
 
                 if (string_is(arith_at, '>') && string_get(arith_at + 1) != '>')
                 {
                         arith_at++;
-                        value = value > arith_add();
+                        value = value > arith_shift();
                         continue;
                 }
 
@@ -900,9 +1040,68 @@ static bipolar arith_equal()
         }
 }
 
-static bipolar arith_and()
+/*
+        The bitwise three, in the order POSIX puts them: & binds tighter than
+        ^, which binds tighter than |, and all three are looser than == and
+        tighter than &&. None of them existed, so a & b was read as a and then
+        stopped, quietly, at the ampersand.
+
+        Each declines the doubled form, because && and || are the levels above
+        and reading one here would take half of it.
+*/
+static bipolar arith_bit_and()
 {
         bipolar value = arith_equal();
+
+        while (1)
+        {
+                arith_space();
+
+                if (!string_is(arith_at, '&') || string_is(arith_at + 1, '&') ||
+                    string_is(arith_at + 1, '='))
+                        return value;
+
+                arith_at++;
+                value = value & arith_equal();
+        }
+}
+
+static bipolar arith_bit_xor()
+{
+        bipolar value = arith_bit_and();
+
+        while (1)
+        {
+                arith_space();
+
+                if (!string_is(arith_at, '^') || string_is(arith_at + 1, '='))
+                        return value;
+
+                arith_at++;
+                value = value ^ arith_bit_and();
+        }
+}
+
+static bipolar arith_bit_or()
+{
+        bipolar value = arith_bit_xor();
+
+        while (1)
+        {
+                arith_space();
+
+                if (!string_is(arith_at, '|') || string_is(arith_at + 1, '|') ||
+                    string_is(arith_at + 1, '='))
+                        return value;
+
+                arith_at++;
+                value = value | arith_bit_xor();
+        }
+}
+
+static bipolar arith_and()
+{
+        bipolar value = arith_bit_or();
 
         while (1)
         {
@@ -916,7 +1115,7 @@ static bipolar arith_and()
                 // Both sides are read whatever the left one said: skipping the
                 // right side would leave the cursor in the middle of it.
                 arith_at += 2;
-                right = arith_equal();
+                right = arith_bit_or();
                 value = (value && right);
         }
 }
