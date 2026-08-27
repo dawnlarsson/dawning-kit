@@ -6332,3 +6332,444 @@ static b32 file_kill()
 
         return answer;
 }
+
+// date ------------------------------------------------------------
+/*
+        A moment, printed how the format asks for it.
+
+        Everything here is UTC, for the reason file_civil gives: the machine's
+        own zone is a binary file this tree has no reader for. TZ=UTC0 is what
+        the system's own date has to be told to agree.
+
+        The conversion is already written -- file_split_moment -- so what is
+        left is the walk over the format, and the four tables a name comes out
+        of.
+*/
+static string_address date_day_short[7] = {"Sun", "Mon", "Tue", "Wed",
+                                           "Thu", "Fri", "Sat"};
+static string_address date_day_long[7] = {"Sunday", "Monday", "Tuesday",
+                                          "Wednesday", "Thursday", "Friday",
+                                          "Saturday"};
+static string_address date_month_short[12] = {"Jan", "Feb", "Mar", "Apr",
+                                              "May", "Jun", "Jul", "Aug",
+                                              "Sep", "Oct", "Nov", "Dec"};
+static string_address date_month_long[12] = {
+    "January", "February", "March",     "April",   "May",      "June",
+    "July",    "August",   "September", "October", "November", "December"};
+
+typedef struct
+{
+        b64 when;
+        b64 year;
+        positive month;
+        positive day;
+        positive hour;
+        positive minute;
+        positive second;
+        positive weekday;
+        positive yearday;
+} date_moment;
+
+static fn date_take(b64 when, date_moment address_to out)
+{
+        b64 days = when / 86400;
+        positive before[12] = {0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334};
+        bool leap;
+
+        if (when % 86400 < 0)
+                days--;
+
+        out->when = when;
+
+        file_split_moment(when, address_of out->year, address_of out->month,
+                          address_of out->day, address_of out->hour,
+                          address_of out->minute, address_of out->second);
+
+        // The first of January 1970 was a Thursday, which is what the four is.
+        out->weekday = (positive)(((days % 7) + 11) % 7);
+
+        leap = (out->year % 4 == 0 && out->year % 100 != 0) || out->year % 400 == 0;
+        out->yearday = before[out->month - 1] + out->day +
+                       (leap && out->month > 2 ? 1 : 0);
+}
+
+static fn date_pad(writer write, positive value, positive width, p8 pad)
+{
+        p8 text[24];
+        positive length = file_digits(text, value);
+
+        if (pad)
+                for (positive i = length; i < width; i++)
+                        write(address_of pad, 1);
+
+        write(text, length);
+}
+
+// A one means the format asked for no padding at all, which is not the same
+// as not asking, and a zero cannot say both.
+static fn date_field(writer write, positive value, positive width, p8 pad, p8 fallback)
+{
+        date_pad(write, value, width, pad == 1 ? 0 : pad ? pad : fallback);
+}
+
+static fn date_signed(writer write, b64 value)
+{
+        if (value < 0)
+        {
+                write("-", 1);
+                value = -value;
+        }
+
+        file_number(write, (positive)value);
+}
+
+static fn date_shape(writer write, date_moment address_to at, string_address format);
+
+/*
+        The week of the year, three ways.
+
+        %U and %W count from the first Sunday and the first Monday. ISO 8601
+        counts from the week holding the first Thursday, which is why it is
+        found by walking to this week's Thursday and asking what year and what
+        day of the year that landed on -- the last days of December belong to
+        the next year's week one, and the first of January often to the last.
+*/
+static positive date_week(date_moment address_to at, p8 which)
+{
+        positive from_monday = (at->weekday + 6) % 7;
+
+        if (which == 'U')
+                return (at->yearday + 6 - at->weekday) / 7;
+
+        return (at->yearday + 6 - from_monday) / 7;
+}
+
+static fn date_thursday(date_moment address_to at, date_moment address_to out)
+{
+        positive iso = at->weekday ? at->weekday : 7;
+
+        date_take(at->when + (b64)(4 - (bipolar)iso) * 86400, out);
+}
+
+static fn date_letter(writer write, date_moment address_to at, p8 letter, p8 pad)
+{
+        positive twelve;
+
+        switch (letter)
+        {
+        case 'Y':
+                return date_field(write, (positive)at->year, 4, pad, '0');
+        case 'y':
+                return date_field(write, (positive)(at->year % 100), 2, pad, '0');
+        case 'C':
+                return date_field(write, (positive)(at->year / 100), 2, pad, '0');
+        case 'm':
+                return date_field(write, at->month, 2, pad, '0');
+        case 'd':
+                return date_field(write, at->day, 2, pad, '0');
+        case 'e':
+                return date_field(write, at->day, 2, pad, ' ');
+        case 'H':
+                return date_field(write, at->hour, 2, pad, '0');
+        case 'k':
+                return date_field(write, at->hour, 2, pad, ' ');
+        case 'I':
+        case 'l':
+                twelve = at->hour % 12;
+                twelve = twelve ? twelve : 12;
+                return date_field(write, twelve, 2, pad,
+                                  letter == 'l' ? ' ' : '0');
+        case 'M':
+                return date_field(write, at->minute, 2, pad, '0');
+        case 'S':
+                return date_field(write, at->second, 2, pad, '0');
+        case 'j':
+                return date_field(write, at->yearday, 3, pad, '0');
+        case 'a':
+                return write(date_day_short[at->weekday], 0);
+        case 'A':
+                return write(date_day_long[at->weekday], 0);
+        case 'b':
+        case 'h':
+                return write(date_month_short[at->month - 1], 0);
+        case 'B':
+                return write(date_month_long[at->month - 1], 0);
+        case 'p':
+                return write(at->hour < 12 ? "AM" : "PM", 2);
+        case 'P':
+                return write(at->hour < 12 ? "am" : "pm", 2);
+        case 'u':
+                return file_number(write, at->weekday ? at->weekday : 7);
+        case 'w':
+                return file_number(write, at->weekday);
+        case 'Z':
+                return write("UTC", 3);
+        case 'z':
+                return write("+0000", 5);
+        case 's':
+                return date_signed(write, at->when);
+        case 'n':
+                return write("\n", 1);
+        case 't':
+                return write("\t", 1);
+        case '%':
+                return write("%", 1);
+        case 'q':
+                return file_number(write, (at->month + 2) / 3);
+        case 'N':
+                return write("000000000", 9);
+        case 'U':
+        case 'W':
+                return date_field(write, date_week(at, letter), 2, pad, '0');
+        case 'V':
+        case 'G':
+        case 'g':
+        {
+                date_moment middle;
+
+                date_thursday(at, address_of middle);
+
+                if (letter == 'V')
+                        return date_field(write, (middle.yearday - 1) / 7 + 1, 2, pad, '0');
+
+                if (letter == 'g')
+                        return date_field(write, (positive)(middle.year % 100), 2, pad, '0');
+
+                return date_field(write, (positive)middle.year, 4, pad, '0');
+        }
+        case 'c':
+                return date_shape(write, at, "%a %b %e %H:%M:%S %Y");
+        case 'x':
+                return date_shape(write, at, "%m/%d/%y");
+        case 'X':
+                return date_shape(write, at, "%H:%M:%S");
+        case 'F':
+                return date_shape(write, at, "%Y-%m-%d");
+        case 'T':
+                return date_shape(write, at, "%H:%M:%S");
+        case 'R':
+                return date_shape(write, at, "%H:%M");
+        case 'D':
+                return date_shape(write, at, "%m/%d/%y");
+        case 'r':
+                return date_shape(write, at, "%I:%M:%S %p");
+        }
+
+        // What the tool this is measured against does with a letter it has no
+        // meaning for: hand it back.
+        write("%", 1);
+        write(address_of letter, 1);
+}
+
+static fn date_shape(writer write, date_moment address_to at, string_address format)
+{
+        while (string_get(format))
+        {
+                p8 letter = string_get(format++);
+                p8 pad = 0;
+
+                if (letter != '%')
+                {
+                        write(address_of letter, 1);
+                        continue;
+                }
+
+                letter = string_get(format);
+
+                while (letter == '-' || letter == '_' || letter == '0')
+                {
+                        pad = letter == '-' ? 1 : letter == '_' ? ' ' : '0';
+                        format++;
+                        letter = string_get(format);
+                }
+
+                if (!letter)
+                {
+                        write("%", 1);
+                        return;
+                }
+
+                format++;
+                date_letter(write, at, letter, pad);
+        }
+}
+
+// Only an epoch. A date written out in words is a parser, and one that
+// half worked would be worse than one that says it cannot.
+static bool date_read(string_address text, b64 address_to out)
+{
+        bool negative = false;
+
+        if (!string_is(text, '@'))
+                return false;
+
+        text++;
+
+        if (string_is(text, '-'))
+        {
+                negative = true;
+                text++;
+        }
+
+        if (!file_all_digits(text))
+                return false;
+
+        address_to out = (b64)file_count(text);
+
+        if (negative)
+                address_to out = -address_to out;
+
+        return true;
+}
+
+static b32 file_date()
+{
+        positive count = (positive)program_argument_count();
+        positive index = 1;
+        string_address format = null;
+        string_address given = null;
+        string_address of_file = null;
+        bool rfc = false;
+        b64 when;
+        date_moment at;
+
+        while (index < count)
+        {
+                string_address argument = program_argument((b32)index);
+                positive named = 0;
+                string_address wanted = "--date=";
+
+                if (!string_is(argument, '-') || string_is(argument + 1, end))
+                        break;
+
+                if (string_is(argument + 1, '-') && string_is(argument + 2, end))
+                {
+                        index++;
+                        break;
+                }
+
+                while (string_get(wanted + named) &&
+                       string_get(argument + named) == string_get(wanted + named))
+                        named++;
+
+                if (!string_get(wanted + named))
+                {
+                        given = argument + named;
+                        index++;
+                        continue;
+                }
+
+                if (string_is(argument + 1, 'd') && string_is(argument + 2, end))
+                {
+                        if (index + 1 >= count)
+                        {
+                                file_fail("date: -d needs a date\n", 0);
+                                return 1;
+                        }
+
+                        given = program_argument((b32)(index + 1));
+                        index += 2;
+                        continue;
+                }
+
+                if (string_is(argument + 1, 'r') && string_is(argument + 2, end))
+                {
+                        if (index + 1 >= count)
+                        {
+                                file_fail("date: -r needs a file\n", 0);
+                                return 1;
+                        }
+
+                        of_file = program_argument((b32)(index + 1));
+                        index += 2;
+                        continue;
+                }
+
+                if (string_is(argument + 1, 'u') && string_is(argument + 2, end))
+                {
+                        index++;
+                        continue;
+                }
+
+                if (string_is(argument + 1, 'R') && string_is(argument + 2, end))
+                {
+                        rfc = true;
+                        index++;
+                        continue;
+                }
+
+                if (!string_compare(argument, "--utc") ||
+                    !string_compare(argument, "--universal"))
+                {
+                        index++;
+                        continue;
+                }
+
+                if (!string_compare(argument, "--rfc-2822") ||
+                    !string_compare(argument, "--rfc-email"))
+                {
+                        rfc = true;
+                        index++;
+                        continue;
+                }
+
+                string_format(file_fail, "date: unknown option: %s\n", argument);
+                return 1;
+        }
+
+        if (index < count)
+        {
+                string_address argument = program_argument((b32)index++);
+
+                if (!string_is(argument, '+'))
+                {
+                        string_format(file_fail, "date: cannot set the date: %s\n",
+                                      argument);
+                        return 1;
+                }
+
+                format = argument + 1;
+        }
+
+        if (index < count)
+        {
+                file_fail("date: too many operands\n", 0);
+                return 1;
+        }
+
+        if (of_file)
+        {
+                file_facts facts;
+
+                if (!file_look_at(of_file, address_of facts))
+                {
+                        string_format(file_fail,
+                                      "date: cannot access '%s': No such file or directory\n",
+                                      of_file);
+                        return 1;
+                }
+
+                when = (b64)facts.modified.seconds;
+        }
+        else if (given)
+        {
+                if (!date_read(given, address_of when))
+                {
+                        string_format(file_fail, "date: invalid date '%s'\n", given);
+                        return 1;
+                }
+        }
+        else
+                when = file_now();
+
+        date_take(when, address_of at);
+
+        if (!format)
+                format = rfc ? "%a, %d %b %Y %H:%M:%S %z" : "%a %b %e %H:%M:%S %Z %Y";
+
+        date_shape(log, address_of at, format);
+        log("\n", 1);
+        log_flush();
+
+        return 0;
+}

@@ -3134,6 +3134,7 @@ static shell_tool shell_tools[] = {
     {"chmod", file_chmod},
     {"chown", file_chown},
     {"cp", file_cp},
+    {"date", file_date},
     {"df", file_df},
     {"dirname", file_dirname},
     {"du", file_du},

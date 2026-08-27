@@ -641,6 +641,108 @@ temporary 'quiet failure'      run.XX         -q run.XX
 temporary 'unmade directory'   run.XXXXXX     -u -d run.XXXXXX
 temporary 'missing directory'  run.XXXXXX     sub/run.XXXXXX
 
+#       date, which is the epoch turned into a date and then into whatever
+#       the format asked for. TZ is UTC0 at the top of this file for the same
+#       reason it is set for ls and stat: ours has no timezone database and
+#       the system's has to be told not to use one either.
+#
+#       The listed cases are the shapes; the swept ones are where the bugs in
+#       a calendar live. Each sweep runs a hundred and fifty five epochs from
+#       1900 to 2098 through one format, both ways, and compares the lot --
+#       which is how a leap year or a month boundary gets found by something
+#       other than luck.
+
+# The status too, which the comparison above does not look at and which is
+# the whole of what a date it cannot read has to say.
+answered() {
+        name=$1
+        shift
+
+        if date "$@" > "$work/want" 2>/dev/null; then
+                want_status=0
+        else
+                want_status=$?
+        fi
+
+        if "$binaries/date" "$@" > "$work/got" 2>/dev/null; then
+                got_status=0
+        else
+                got_status=$?
+        fi
+
+        if cmp -s "$work/want" "$work/got" && [ "$want_status" = "$got_status" ]; then
+                report ok
+                return 0
+        fi
+
+        report bad "$name" "want [$(head -c 40 "$work/want")][$want_status] got [$(head -c 40 "$work/got")][$got_status]"
+}
+
+epochs="0 1 -1 86399 86400 951782400 951868800 68169600 1709164800 1709251200
+2147483647 -2208988800 4102444800 1000000000 1234567890 1709251199 946684800"
+
+at=0
+while [ "$at" -lt 138 ]; do
+        epochs="$epochs $((-2208988800 + at * 45000000))"
+        at=$((at + 1))
+done
+
+swept() {
+        name=$1
+        shape=$2
+
+        for moment in $epochs; do date -d "@$moment" "$shape"; done > "$work/want" 2>&1
+        for moment in $epochs; do "$binaries/date" -d "@$moment" "$shape"; done > "$work/got" 2>&1
+
+        if cmp -s "$work/want" "$work/got"; then
+                report ok
+                return 0
+        fi
+
+        report bad "$name" "$(diff "$work/want" "$work/got" | head -2 | tr '\n' '|')"
+}
+
+group date
+same 'epoch'             date -d @1000000000
+same 'epoch utc'         date -u -d @1000000000
+same 'long form'         date --date=@1000000000
+same 'iso'               date -d @1000000000 +%F
+same 'time'              date -d @1000000000 +%T
+same 'both'              date -d @1000000000 '+%Y-%m-%d %H:%M:%S'
+same 'names'             date -d @1000000000 '+%a %A %b %B'
+same 'counts'            date -d @1000000000 '+%j %u %w %y %C %e'
+same 'twelve hour'       date -d @1000000000 '+%I %p %l %P %r'
+same 'seconds out'       date -d @1000000000 +%s
+same 'zone'              date -d @1000000000 '+%Z %z'
+same 'literals'          date -d @1000000000 '+a%%b%nc%td'
+same 'no padding'        date -d @1000000000 '+%-d/%-m/%-H'
+same 'space padding'     date -d @1000000000 '+%_d|%_m|%_H'
+same 'zero padding'      date -d @1000000000 '+%0e|%0k|%0l'
+same 'weeks'             date -d @1000000000 '+%U %W %V %G %g'
+same 'quarter'           date -d @1000000000 '+%q %N'
+same 'grouped'           date -d @1000000000 '+%c|%x|%X|%D|%R'
+same 'rfc'               date -R -d @1000000000
+same 'before the epoch'  date -d @-1
+same 'the epoch itself'  date -d @0
+same 'a leap day'        date -d @951782400 +%F
+same 'the day after'     date -d @951868800 +%F
+same 'from a file'       date -r "$fixture/alpha" +%F
+same 'empty format'      date -d @1000000000 +
+same 'unknown letter'    date -d @1000000000 +%q%%
+answered 'a date it cannot read' -d nonsense
+answered 'a file that is not there' -r "$fixture/nothing"
+answered 'setting the time' 1000000000
+answered 'an option it has not' -x
+
+swept 'swept iso'        '+%Y-%m-%d'
+swept 'swept time'       '+%H:%M:%S'
+swept 'swept names'      '+%a %A %b %B'
+swept 'swept counts'     '+%j %u %w %y %C'
+swept 'swept weeks'      '+%U %W %V %G %g'
+swept 'swept padding'    '+%e|%-d|%_m|%0k|%l'
+swept 'swept seconds'    '+%s %q'
+swept 'swept default'    '+%a %b %e %H:%M:%S %Z %Y'
+
 printf '  %-12s %s of %s\n' files "$pass" "$((pass + fail))"
 [ -z "${TEST_TALLY:-}" ] ||
         printf 'files %s %s\n' "$pass" "$((pass + fail))" >> "$TEST_TALLY"

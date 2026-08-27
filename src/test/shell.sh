@@ -627,6 +627,7 @@ emits 'called expr'      '2|'      "'$names/expr' 1 + 1"
 emits 'called cmp'       '0|'      "'$names/cmp' -s /etc/hostname /etc/hostname; echo \$?"
 emits 'called mktemp'    '0|'      "d=\$('$names/mktemp' -d) && test -d \"\$d\" && rmdir \"\$d\"; echo \$?"
 emits 'called kill'      '0|'      "'$names/kill' -0 \$\$; echo \$?"
+emits 'called date'      '2001-09-09|' "TZ=UTC0 '$names/date' -d @1000000000 +%F"
 emits 'kill ends it'     'gone|'   "sleep 30 & p=\$!; '$names/kill' \$p; wait \$p 2>/dev/null; echo gone"
 emits 'through a dot'    'cba|'    "printf 'abc\n' | '$names/./rev'"
 emits 'link elsewhere'   'cba|'    "mkdir -p /tmp/sn && ln -sf '$names/rev' /tmp/sn/rev && printf 'abc\n' | /tmp/sn/rev"
@@ -696,7 +697,6 @@ section absent
 
 group missing
 absent 'awk'      '127|' 'awk "{print}" < /dev/null; echo $?'
-absent 'date'     '127|' 'date; echo $?'
 absent 'xargs'    '127|' 'echo a | xargs echo; echo $?'
 absent 'dd'       '127|' 'dd if=/dev/null; echo $?'
 absent 'command v awk' '127|' 'command -v awk > /dev/null; echo $?'
