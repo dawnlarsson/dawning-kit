@@ -43,6 +43,10 @@ positive shell_argc;
 // eval runs a line, and what runs lines sits above this file. Weak, because
 // programs/edit.c includes this file with no shell around it.
 fn run_line(string_address line) __attribute__((weak));
+bool exec_function_here(string_address name) __attribute__((weak));
+bool shell_builtin(string_address arguments);
+string_address shell_arguments();
+fn shell_execute_command();
 fn parse_nest_enter() __attribute__((weak));
 fn parse_nest_leave() __attribute__((weak));
 
@@ -849,6 +853,8 @@ fn shell_pwd(writer write, string_address input)
         string_format(write, "%s\n", out_buffer);
 }
 
+fn shell_trap_exit();
+
 fn shell_exit(writer write, string_address input)
 {
         bipolar exit_code = shell_status;
@@ -856,6 +862,9 @@ fn shell_exit(writer write, string_address input)
 
         if (shell_argc > 1)
                 exit_code = shell_signed(shell_argv[1], address_of good) & 0xff;
+
+        shell_status = (b32)exit_code;
+        shell_trap_exit();
 
         log_flush();
 
@@ -2983,8 +2992,178 @@ static bool shell_tool_run(string_address name) { return false; }
 
 #endif
 
+
+/*
+        The EXIT trap, run.
+
+        Traps were recorded and nothing ever ran one, so "trap cleanup EXIT"
+        was a promise the shell did not keep -- a script that removed its
+        temporary files on the way out left them all behind. This is the one
+        that can be run without a signal handler, because leaving is something
+        the shell does to itself and it knows where.
+
+        The action runs with the status the shell is leaving with, and cannot
+        change it: POSIX says the exit status is the one that was already
+        decided unless the trap itself calls exit.
+*/
+fn shell_trap_exit()
+{
+        string_address action = trap_action(0);
+        b32 leaving = shell_status;
+
+        if (!action || !run_line || !string_get(action))
+                return;
+
+        // Taken away first, so a trap that leaves again does not run twice.
+        trap_forget(0);
+
+        parse_nest_enter();
+        run_line(action);
+        parse_nest_leave();
+
+        shell_status = leaving;
+}
+
+/*
+        . and source: a file's lines, run by this shell and not another.
+
+        The difference from running the file is the whole point -- what it sets
+        has to still be set afterwards, which is how a profile works and why a
+        subshell will not do. So it is eval with a file for its argument: the
+        lexer's tokens are put aside, the parser is told to claim above what is
+        already in use, and the lines go through run_line one at a time.
+
+        A line is only run once it is whole. A while loop spread over six lines
+        is one command, and the parser says so by staying incomplete, which is
+        the same thing the reader in programs/shell.c listens to.
+*/
+#define SOURCE_MAX 65536
+
+static p8 source_text[SOURCE_MAX];
+static positive source_depth;
+
+fn shell_dot(writer write, string_address input)
+{
+        p8 found[768];
+        string_address path;
+        bipolar handle;
+        positive filled = 0;
+        positive at = 0;
+
+        if (shell_argc < 2 || !run_line)
+                return shell_answer(shell_argc < 2 ? 2 : 0);
+
+        if (source_depth >= EVAL_DEPTH)
+        {
+                string_format(shell_diagnostic, "%s: too deep\n", shell_argv[0]);
+                return shell_answer(1);
+        }
+
+        path = shell_argv[1];
+
+        // A name with no slash is looked for on the path, which is what POSIX
+        // says and what makes ". functions" find /etc/functions.
+        if (!string_first_of(path, '/') && shell_find_in_path(path, found, sizeof(found)))
+                path = found;
+
+        handle = system_call_3(syscall(openat), AT_FDCWD, (positive)path, FILE_READ);
+
+        if (handle < 0)
+        {
+                string_format(shell_diagnostic, "%s: %s: cannot open\n",
+                              shell_argv[0], shell_argv[1]);
+                return shell_answer(1);
+        }
+
+        while (filled < SOURCE_MAX - 1)
+        {
+                bipolar got = system_call_3(syscall(read), (positive)handle,
+                                            (positive)(source_text + filled),
+                                            SOURCE_MAX - 1 - filled);
+
+                if (got <= 0)
+                        break;
+
+                filled += (positive)got;
+        }
+
+        system_call_1(syscall(close), (positive)handle);
+        source_text[filled] = end;
+
+        {
+                lex_token kept_tokens[LEX_TOKENS];
+                p8 kept_text[LEX_TEXT];
+                positive kept_used = lex_used;
+                b32 kept_count = lex_count;
+
+                memory_copy(kept_tokens, lex_tokens, sizeof(kept_tokens));
+                memory_copy(kept_text, lex_text, sizeof(kept_text));
+
+                parse_nest_enter();
+                source_depth++;
+
+                while (at < filled)
+                {
+                        positive stop = at;
+
+                        while (stop < filled && source_text[stop] != '\n')
+                                stop++;
+
+                        source_text[stop] = end;
+                        run_line(source_text + at);
+                        at = stop + 1;
+                }
+
+                source_depth--;
+                parse_nest_leave();
+
+                memory_copy(lex_tokens, kept_tokens, sizeof(kept_tokens));
+                memory_copy(lex_text, kept_text, sizeof(kept_text));
+
+                lex_used = kept_used;
+                lex_count = kept_count;
+        }
+
+        // The status of the last line it ran, which is already there.
+        shell_answer(shell_status);
+}
+
+
+
+
+
+/*
+        wait: until the children are gone, or until one of them is.
+
+        No job control here, so there are no job numbers to name -- a bare wait
+        collects everything and a wait with a number collects that process.
+*/
+fn shell_wait(writer write, string_address input)
+{
+        positive status = 0;
+
+        if (shell_argc > 1)
+        {
+                bipolar want = (bipolar)shell_number(shell_argv[1]);
+                bipolar got = system_call_4(syscall(wait4), want,
+                                            (positive)address_of status, 0, 0);
+
+                if (got < 0)
+                        return shell_answer(127);
+
+                return shell_answer((b32)((status >> 8) & 0xff));
+        }
+
+        while (system_call_4(syscall(wait4), -1, (positive)address_of status, 0, 0) >= 0)
+                ;
+
+        shell_answer(0);
+}
+
 fn shell_help(writer write, string_address input);
 fn shell_which(writer write, string_address input);
+fn shell_type(writer write, string_address input);
+fn shell_command_builtin(writer write, string_address input);
 
 typedef fn(address_to shell_command_function)(writer write, string_address input);
 
@@ -2996,10 +3175,12 @@ typedef struct
 
 shell_command shell_commands[] = {
     {":", shell_true},
+    {".", shell_dot},
     {"[", shell_test},
     {"alias", shell_alias},
     {"cd", shell_cd},
     {"clear", shell_clear},
+    {"command", shell_command_builtin},
     {"echo", shell_echo},
     {"eval", shell_eval},
     {"exec", shell_exec},
@@ -3016,13 +3197,16 @@ shell_command shell_commands[] = {
     {"return", shell_return},
     {"set", shell_set},
     {"shift", shell_shift},
+    {"source", shell_dot},
     {"test", shell_test},
     {"times", shell_times},
     {"trap", shell_trap},
+    {"type", shell_type},
     {"true", shell_true},
     {"umask", shell_umask},
     {"unalias", shell_unalias},
     {"unset", shell_unset},
+    {"wait", shell_wait},
     {"which", shell_which},
     {"help", shell_help},
     {"export", shell_export},
@@ -3091,6 +3275,156 @@ b32 shell_find_in_path(string_address name, p8 address_to into, positive room)
         }
 
         return false;
+}
+
+/*
+        type: what a name would run.
+
+        In the order the shell would actually try them, which is the only
+        useful answer -- a grep on the path is not the grep that runs.
+*/
+fn shell_type(writer write, string_address input)
+{
+        b32 index = 1;
+        b32 bad = 0;
+
+        if (shell_argc < 2)
+                return shell_answer(0);
+
+        while (index < shell_argc)
+        {
+                string_address name = shell_argv[index++];
+                shell_command address_to command = shell_commands;
+                p8 found[768];
+                bool said = false;
+
+                while (command->name)
+                {
+                        if (!string_compare(command->name, name))
+                        {
+                                string_format(write, "%s is a shell builtin\n", name);
+                                said = true;
+                                break;
+                        }
+
+                        command++;
+                }
+
+                if (said)
+                        continue;
+
+                if (shell_tool_here(name))
+                {
+                        string_format(write, "%s is a shell builtin\n", name);
+                        continue;
+                }
+
+                if (exec_function_here && exec_function_here(name))
+                {
+                        string_format(write, "%s is a shell function\n", name);
+                        continue;
+                }
+
+                if (shell_find_in_path(name, found, sizeof(found)))
+                {
+                        string_format(write, "%s is %s\n", name, found);
+                        continue;
+                }
+
+                string_format(shell_diagnostic, "%s: not found\n", name);
+                bad = 127;
+        }
+
+        shell_answer(bad);
+}
+
+/*
+        command: run a name as the shell would, and never as a function.
+
+        command -v prints what would run rather than running it, which is what
+        a script uses to ask whether something is there at all.
+*/
+fn shell_command_builtin(writer write, string_address input)
+{
+        b32 index = 1;
+        bool only_say = false;
+
+        while (index < shell_argc && string_is(shell_argv[index], '-') &&
+               string_get(shell_argv[index] + 1))
+        {
+                string_address letter = shell_argv[index] + 1;
+
+                if (string_is(letter, '-') && !string_get(letter + 1))
+                {
+                        index++;
+                        break;
+                }
+
+                while (string_get(letter))
+                {
+                        // -p is the standard path, which is the only path here.
+                        if (string_get(letter) == 'v' || string_get(letter) == 'V')
+                                only_say = true;
+                        else if (string_get(letter) != 'p')
+                                break;
+
+                        letter++;
+                }
+
+                index++;
+        }
+
+        if (index >= shell_argc)
+                return shell_answer(0);
+
+        if (only_say)
+        {
+                string_address name = shell_argv[index];
+                shell_command address_to command = shell_commands;
+                p8 found[768];
+
+                while (command->name)
+                {
+                        if (!string_compare(command->name, name))
+                        {
+                                string_format(write, "%s\n", name);
+                                return shell_answer(0);
+                        }
+
+                        command++;
+                }
+
+                if (shell_tool_here(name))
+                {
+                        string_format(write, "%s\n", name);
+                        return shell_answer(0);
+                }
+
+                if (shell_find_in_path(name, found, sizeof(found)))
+                {
+                        string_format(write, "%s\n", found);
+                        return shell_answer(0);
+                }
+
+                return shell_answer(127);
+        }
+
+        // Running it is the executor's business, and it is told to skip the
+        // function table by the words it is handed.
+        {
+                b32 at = index;
+
+                for (b32 to = 0; at < shell_argc; at++, to++)
+                        shell_argv[to] = shell_argv[at];
+
+                shell_argc -= index;
+                shell_argv[shell_argc] = null;
+        }
+
+        if (shell_builtin(shell_arguments()))
+                return;
+
+        shell_execute_command();
 }
 
 fn shell_which(writer write, string_address input)

@@ -370,6 +370,9 @@ typedef struct
 static exec_function exec_functions[FUNCTION_MAX];
 static b32 exec_function_count;
 
+// Whether a name is a function, which type asks and nothing else does.
+bool exec_function_here(string_address name);
+
 static b32 exec_function_find(string_address name)
 {
         b32 index;
@@ -381,6 +384,11 @@ static b32 exec_function_find(string_address name)
         }
 
         return 0;
+}
+
+bool exec_function_here(string_address name)
+{
+        return exec_function_find(name) != 0;
 }
 
 static b32 exec_node(b32 index);
@@ -531,7 +539,16 @@ static b32 exec_dispatch()
         if (body)
                 return exec_call(body);
 
-        if (string_is(name, '.') || string_is(name, '/'))
+        /*
+                A path, and only a path.
+
+                This used to take any name beginning with a dot, which made
+                "." itself a path -- so sourcing a file tried to execute it
+                and came back with permission denied. What is meant here is
+                ./name and ../name, which have a slash in them like every
+                other path does.
+        */
+        if (string_is(name, '/') || string_first_of(name, '/'))
         {
                 shell_execute_command();
                 return shell_status;

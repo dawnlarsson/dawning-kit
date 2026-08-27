@@ -108,6 +108,9 @@ b32 main()
                 run_line(shell_buffer);
         }
 
+        // Input ran out, which is a way of leaving like any other.
+        shell_trap_exit();
+
         log_flush();
-        return 0;
+        return shell_status;
 }
