@@ -113,6 +113,10 @@ struct output
         u32 palette[INK_COUNT];
         u32 opaque;
 
+        // Said once. Everything drawn goes through the mapping, so a failure
+        // to make one is a screen with nothing on it, not a dropped frame.
+        _Bool unmappable;
+
         // Null means the cursor is drawn into this output's framebuffer.
         struct drm_plane *cursor_plane;
         struct drm_client_buffer *cursor_buffer;
@@ -127,6 +131,11 @@ struct canvas
         struct list_head link;
         struct drm_client_dev client;
         _Bool started;
+
+        // What the last commit answered, so the same answer is not said
+        // twice. One, because no commit ever answers that: nothing has been
+        // put on this card's screens yet.
+        int set_result;
 };
 
 static struct desktop

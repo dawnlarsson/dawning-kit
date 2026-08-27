@@ -263,6 +263,7 @@ static struct output *output_add(struct canvas *canvas, struct drm_mode_set *mod
         output->opaque = format == DRM_FORMAT_ARGB8888 ? 0xff000000 : 0;
         canvas_palette(output->palette, format);
         mode_set->fb = output->buffer->fb;
+        output_describe(output);
 
         if (plane_claim(&canvas->client, output))
                 output->cursor_plane = NULL;
@@ -282,21 +283,75 @@ static void output_drop(struct output *output)
 }
 
 /*
+        Puts every output's buffer back on the modeset that scans it out.
+
+        A probe releases every modeset, and releasing one takes its framebuffer
+        away -- and canvas_modes_changed probes to answer a question, so the
+        answer alone is enough to lose it. A modeset carrying a mode and no
+        framebuffer is refused, the whole commit with it, and what stays on the
+        screen is whatever was there before this ever ran: on a machine that
+        inherits the firmware's picture that is a cursor moving over it and
+        nothing else.
+
+        So it is set before every commit rather than once when the output was
+        made. Whoever cleared it, and for whatever reason, it is right again by
+        the time it matters.
+*/
+static void desktop_attach_buffers(void)
+{
+        struct output *output;
+
+        list_for_each_entry(output, &desktop.outputs, link)
+        {
+                struct drm_client_dev *client = &output->canvas->client;
+
+                if (!output->buffer)
+                        continue;
+
+                mutex_lock(&client->modeset_mutex);
+                output->mode_set->fb = output->buffer->fb;
+                mutex_unlock(&client->modeset_mutex);
+        }
+}
+
+/*
         A card's outputs are added together, so they are consecutive here and
         remembering the last one is enough to commit each card once.
+
+        The answer used to be thrown away. A commit is the only thing that puts
+        a mode on a screen, and one that refuses says so in the one place that
+        could have noticed.
 */
 static void desktop_commit(void)
 {
         struct canvas *committed = NULL;
         struct output *output;
 
+        desktop_attach_buffers();
+
         list_for_each_entry(output, &desktop.outputs, link)
         {
+                int set;
+
                 if (output->canvas == committed)
                         continue;
 
                 committed = output->canvas;
-                drm_client_modeset_commit(&committed->client);
+                set = drm_client_modeset_commit(&committed->client);
+
+                // EBUSY is not now: something else is the device's master and
+                // the next commit is the one that lands.
+                if (set == -EBUSY || set == committed->set_result)
+                        continue;
+
+                committed->set_result = set;
+
+                if (set)
+                        log_canvas("%ux%u would not go on the screen (%d)\n",
+                                   output->width, output->height, set);
+                else
+                        log_canvas("%ux%u is on the screen\n",
+                                   output->width, output->height);
         }
 
         list_for_each_entry(output, &desktop.outputs, link)
@@ -419,7 +474,12 @@ static int canvas_start(struct canvas *canvas)
                 threw away every mode this ever chose and quietly took the
                 probe's, which is the opposite of the point.
         */
-        int set = ret ? 0 : drm_client_modeset_commit(&canvas->client);
+        int set;
+
+        if (!ret)
+                desktop_attach_buffers();
+
+        set = ret ? 0 : drm_client_modeset_commit(&canvas->client);
 
         if (!ret && set && set != -EBUSY)
         {

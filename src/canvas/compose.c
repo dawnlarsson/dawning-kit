@@ -556,6 +556,51 @@ static void output_draw_cursor(struct output *output, u32 *pixels)
                            desktop.cursor_shape, desktop.cursor_scale);
 }
 
+/*
+        The scanout buffer, mapped.
+
+        Everything Canvas draws goes through this pointer, so failing to get
+        one is not a dropped frame, it is a screen that stays as it was. It
+        used to be a bare return.
+*/
+static _Bool output_map(struct output *output, struct iosys_map *map)
+{
+        int ret = drm_client_buffer_vmap_local(output->buffer, map);
+
+        if (!ret)
+        {
+                output->unmappable = false;
+                return true;
+        }
+
+        if (!output->unmappable)
+        {
+                output->unmappable = true;
+                log_canvas("the scanout buffer will not map (%d), "
+                           "so nothing can be drawn on it\n", ret);
+        }
+
+        return false;
+}
+
+// What the driver actually gave us to scan out, which is the difference
+// between a screen that shows nothing and a screen that shows rubbish.
+static void output_describe(struct output *output)
+{
+        struct drm_framebuffer *fb = output->buffer->fb;
+        struct iosys_map map;
+
+        if (!output_map(output, &map))
+                return;
+
+        log_canvas("scanout %p4cc, %u bytes a row, modifier %llx, %s memory\n",
+                   &fb->format->format, fb->pitches[0],
+                   (unsigned long long)fb->modifier,
+                   map.is_iomem ? "device" : "system");
+
+        drm_client_buffer_vunmap_local(output->buffer);
+}
+
 static _Bool output_touched(struct output *output, const struct drm_rect *damage,
                             unsigned int count)
 {
@@ -594,8 +639,7 @@ static void output_repaint(struct output *output, const struct drm_rect *damage,
         struct drm_rect merged[4];
         unsigned int kept = 0;
 
-        if (!count || count > ARRAY_SIZE(merged) ||
-            drm_client_buffer_vmap_local(output->buffer, &map))
+        if (!count || count > ARRAY_SIZE(merged) || !output_map(output, &map))
                 return;
 
         /*
@@ -672,7 +716,7 @@ static void compose_output(struct output *output)
         struct iosys_map map;
         u32 *pixels;
 
-        if (drm_client_buffer_vmap_local(output->buffer, &map))
+        if (!output_map(output, &map))
                 return;
 
         pixels = map.vaddr;

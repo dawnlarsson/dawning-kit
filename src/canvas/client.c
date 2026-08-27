@@ -142,6 +142,8 @@ static int canvas_take_over(struct drm_device *dev)
         if (!canvas)
                 return 0;
 
+        canvas->set_result = 1;
+
         if (drm_client_init(dev, &canvas->client, "moonwater", &client_funcs))
         {
                 kfree(canvas);
@@ -156,7 +158,8 @@ static int canvas_take_over(struct drm_device *dev)
         mutex_unlock(&canvas_list_lock);
 
         drm_client_register(&canvas->client);
-        log_canvas("attached to %s\n", dev->driver->name);
+        log_canvas("attached to %s, %s display\n", dev->driver->name,
+                   canvas_is_virtual(dev) ? "a guest's" : "a real");
 
         return 1;
 }
