@@ -284,10 +284,10 @@ static void drag_release(void)
         takes focus for it either, so reading one window while typing into
         another works the way it looks like it should.
 
-        Only the compositor's own window answers today. A program's window has
-        its cells written by the program, so the turn has to reach the program
-        for anything to move, and that is a change to what a window is rather
-        than to what the pointer does.
+        Every window of cells answers, its own or a program's, because the
+        lines a program wrote are in a ring the compositor allocated and the
+        view onto that ring is the compositor's. The turn never reaches the
+        program: there is nothing for it to do about one.
 */
 static void wheel_deliver(void)
 {
@@ -304,10 +304,10 @@ static void wheel_deliver(void)
         if (!pane)
                 return;
 
-        // The same way the console's own writes ask for a frame. Damaging
-        // and repainting from here draws before the cells are looked at
-        // again, and the view lands a frame later or not at all.
-        if (console_scroll(pane, lines))
+        // The same way a console write asks for a frame. Damaging and
+        // repainting from here draws before the cells are looked at again,
+        // and the view lands a frame later or not at all.
+        if (pane_scroll(pane, lines))
         {
                 atomic_set(&desktop.frame_pending, 1);
                 canvas_thread_wake();

@@ -29,7 +29,6 @@ static b32 screen_term()
         // one and two untitled terminals are a guessing game.
         string_copy((string_address)window->title, (string_address) "shell");
 
-        cells = window_cells(window);
         COLUMNS = window->columns;
         ROWS = window->rows;
         erase(0, 0, ROWS - 1, COLUMNS - 1);
@@ -356,42 +355,63 @@ static unsigned int columns, rows;
 static char typed[TYPED_MAX];
 static unsigned int at;
 
+// The rows are the last lines of the ring, the same as any window of cells.
+static struct window_cell *text_row(unsigned int row)
+{
+        return window_line(window, window->head - rows + row);
+}
+
+static void text_write(unsigned int row, unsigned int column,
+                       unsigned int character, unsigned char ink,
+                       unsigned char paper)
+{
+        struct window_cell *cell = text_row(row) + column;
+        unsigned int *length = window_length(window, window->head - rows + row);
+
+        // Every cell up to this one has to exist, because nothing past the
+        // length of a line is drawn.
+        while (*length < column)
+        {
+                struct window_cell *blank = text_row(row) + *length;
+
+                blank->character = ' ';
+                blank->ink = 7;
+                blank->paper = 0;
+                *length += 1;
+        }
+
+        cell->character = character;
+        cell->ink = ink;
+        cell->paper = paper;
+
+        if (*length < column + 1)
+                *length = column + 1;
+}
+
 static void say(unsigned int row, unsigned int column, const char *text,
                 unsigned char ink, unsigned char paper)
 {
-        struct window_cell *cells;
         unsigned int i;
 
         if (row >= rows)
                 return;
 
-        cells = window_cells(window) + row * columns;
-
         for (i = 0; text[i] && column + i < columns; i++)
-        {
-                cells[column + i].character = (unsigned char)text[i];
-                cells[column + i].ink = ink;
-                cells[column + i].paper = paper;
-        }
+                text_write(row, column + i, (unsigned char)text[i], ink, paper);
 
         window_damage(window, row, 1);
 }
 
 static void lay_out(void)
 {
-        struct window_cell *cells = window_cells(window);
-        unsigned int row, column;
+        unsigned int row;
 
         columns = window->columns;
         rows = window->rows;
 
+        // Emptying a line is its length, not its cells.
         for (row = 0; row < rows; row++)
-                for (column = 0; column < columns; column++)
-                {
-                        cells[row * columns + column].character = ' ';
-                        cells[row * columns + column].ink = 7;
-                        cells[row * columns + column].paper = 0;
-                }
+                *window_length(window, window->head - rows + row) = 0;
 
         for (unsigned int i = 0; i < 8; i++)
                 say(1, 2 + i * 6, "colour", (unsigned char)(8 + i), 0);
@@ -402,14 +422,7 @@ static void lay_out(void)
 
         for (unsigned int i = 0; i < at; i++)
                 if (rows > 6 && 13 + i < columns)
-                {
-                        struct window_cell *cell =
-                            window_cells(window) + 6 * columns + 13 + i;
-
-                        cell->character = (unsigned char)typed[i];
-                        cell->ink = 15;
-                        cell->paper = 4;
-                }
+                        text_write(6, 13 + i, (unsigned char)typed[i], 15, 4);
 
         window_grid(window, columns, rows);
         window_damage(window, 0, rows);
@@ -448,12 +461,7 @@ static b32 screen_text()
 
                         if (at < TYPED_MAX && rows > 6 && 13 + at < columns)
                         {
-                                struct window_cell *cell =
-                                    window_cells(window) + 6 * columns + 13 + at;
-
-                                cell->character = key.character;
-                                cell->ink = 15;
-                                cell->paper = 4;
+                                text_write(6, 13 + at, key.character, 15, 4);
                                 typed[at++] = (char)key.character;
                                 window_damage(window, 6, 1);
                                 changed = 1;

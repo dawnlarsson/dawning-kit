@@ -9,7 +9,24 @@
         below composes from it. pane_refresh takes a copy and checks it; the
         buffer's extent is the compositor's and is never read back from the
         page at all.
+
+        A window of cells is a ring of lines. The compositor allocates it and
+        both sides address it the same way, so the scrollback, the wheel and
+        the bar down the side are here once rather than once per window that
+        wanted them.
 */
+
+/*
+        How many lines a window of cells keeps.
+
+        Enough to hold a boot, and never fewer than a couple of screens of
+        whatever the display can show, because the arithmetic below counts
+        backwards from the newest line and must not run past the oldest.
+*/
+#define PANE_HISTORY 512
+
+// The view follows the end rather than sitting on a line.
+#define PANE_LIVE ((unsigned int)-1)
 
 static struct output *output_by_index(unsigned int index)
 {
@@ -140,17 +157,216 @@ static void desktop_grid(unsigned int *columns, unsigned int *rows)
         *rows = (unsigned int)(max(height, 0) / canvas_cell_h);
 }
 
+/*
+        How long a ring is, and how far apart its lines are.
+
+        A line is as wide as the desktop could ever make this window, so the
+        stride never changes and a resize moves nothing. The history is at
+        least two screens of the tallest window there could be, because
+        everything below counts backwards from the newest line.
+*/
+static void pane_ring(unsigned int max_columns, unsigned int max_rows,
+                      unsigned int *stride, unsigned int *history,
+                      unsigned long *bytes)
+{
+        *stride = max_columns;
+        *history = max_t(unsigned int, PANE_HISTORY, max_rows * 2 + 1);
+        *bytes = (unsigned long)*history *
+                 ((unsigned long)*stride * sizeof(struct window_cell) +
+                  sizeof(unsigned int));
+}
+
+// One line of the ring, and how much of it was written. Any index: it is
+// taken modulo the history, which is what makes head a count and not a cursor.
+static struct window_cell *pane_line(struct pane *pane, unsigned int index)
+{
+        return pane->cells + (index % pane->history) * pane->stride;
+}
+
+static unsigned int pane_length(struct pane *pane, unsigned int index)
+{
+        return min(pane->lengths[index % pane->history], pane->stride);
+}
+
+static void pane_set_length(struct pane *pane, unsigned int index,
+                            unsigned int length)
+{
+        pane->lengths[index % pane->history] = min(length, pane->stride);
+}
+
+/*
+        How many rows are actually drawn.
+
+        The room the window has now and the shape whoever owns the cells last
+        laid them out in are the same at rest and not during a resize.
+*/
+static unsigned int pane_rows(struct pane *pane)
+{
+        return max(min(pane->grid_rows, pane->rows), 1u);
+}
+
+/*
+        The oldest line still held.
+
+        Counting back from head rather than from a line number that was kept,
+        so a ring that has wrapped stops at the oldest line it still has
+        instead of scrolling into ones it gave away. Never fewer than the rows
+        on the screen, so a window taller than what has been written to it
+        still has the newest line at the bottom of it.
+*/
+static unsigned int pane_oldest(struct pane *pane)
+{
+        unsigned int filled = clamp(pane->head - pane->history, pane_rows(pane),
+                                    pane->history);
+
+        return pane->head - filled;
+}
+
+/*
+        How many rows a line takes at the width it is being drawn at.
+
+        This is the whole of the wrapping. A line is stored as long as it was
+        written and folded when it is drawn, so a window made wider re-wraps
+        everything in it -- including what has already scrolled past -- without
+        anything being moved or rewritten.
+*/
+static unsigned int pane_line_rows(struct pane *pane, unsigned int index)
+{
+        unsigned int width = max(pane->grid_columns, 1u);
+        unsigned int length = pane_length(pane, index);
+
+        return length ? (length + width - 1) / width : 1;
+}
+
+/*
+        The line the top row of the window is on, and how many rows of that
+        line are above the window.
+
+        Following the end means counting rows backwards from the newest line
+        until the window is full, which can stop in the middle of a line that
+        is too long to fit -- so the top row of the screen is a fold of one,
+        the way the bottom of a terminal has always been.
+*/
+static unsigned int pane_view_at(struct pane *pane, unsigned int view,
+                                 unsigned int *skip)
+{
+        unsigned int oldest = pane_oldest(pane);
+        unsigned int rows = pane_rows(pane);
+        unsigned int at = pane->head - 1;
+        unsigned int count = 0;
+
+        *skip = 0;
+
+        if (view != PANE_LIVE)
+                return clamp(view, oldest, pane->head - 1);
+
+        while (count < rows && at > oldest)
+        {
+                count += pane_line_rows(pane, at);
+
+                if (count >= rows)
+                        break;
+
+                at--;
+        }
+
+        if (count < rows)
+                count += pane_line_rows(pane, at);
+
+        *skip = count > rows ? count - rows : 0;
+
+        return at;
+}
+
+static unsigned int pane_view(struct pane *pane, unsigned int *skip)
+{
+        return pane_view_at(pane, pane->view, skip);
+}
+
+/*
+        Where the view sits in what there is, for something to draw a bar with.
+
+        In rows rather than pixels, and rows rather than lines: what the bar is
+        made of is the drawing code's business, and a bar measured in lines is
+        one that jumps whenever a line folds. False when there is nothing to
+        scroll, which is also when a bar would say nothing worth the pixels.
+*/
+static _Bool pane_extent(struct pane *pane, unsigned int *first,
+                         unsigned int *shown, unsigned int *total)
+{
+        unsigned int skip, top, at;
+
+        if (!pane->cells)
+                return false;
+
+        top = pane_view(pane, &skip);
+
+        *shown = pane_rows(pane);
+        *total = 0;
+        *first = 0;
+
+        for (at = pane_oldest(pane); at != pane->head; at++)
+        {
+                if (at == top)
+                        *first = *total + skip;
+
+                *total += pane_line_rows(pane, at);
+        }
+
+        return *total > *shown;
+}
+
+/*
+        The wheel, in lines. Positive is away from the hand, which is back
+        through what has already been said.
+
+        Back at the end is following again rather than sitting on the last
+        line: what arrives next should appear.
+*/
+static _Bool pane_scroll(struct pane *pane, int lines)
+{
+        unsigned int was = pane->view;
+        unsigned int oldest = pane_oldest(pane);
+        unsigned int skip, live, at;
+
+        if (!pane->cells)
+                return false;
+
+        at = pane_view(pane, &skip);
+        live = pane_view_at(pane, PANE_LIVE, &skip);
+
+        if (lines > 0)
+                at = at - oldest >= (unsigned int)lines ? at - lines : oldest;
+        else if (live - at <= (unsigned int)-lines)
+                at = live;
+        else
+                at += (unsigned int)-lines;
+
+        pane->view = at >= live ? PANE_LIVE : at;
+
+        if (pane->view == was)
+                return false;
+
+        pane->view_moved = true;
+
+        return true;
+}
+
 static struct pane *pane_create(unsigned int width, unsigned int height,
                                 unsigned int columns, unsigned int rows)
 {
         unsigned int max_columns, max_rows;
-        unsigned long cell_bytes;
+        unsigned int stride, history;
+        unsigned long ring_bytes;
         struct pane *pane;
         unsigned long bytes;
 
         desktop_grid(&max_columns, &max_rows);
-        cell_bytes = (unsigned long)max_columns * max_rows *
-                     sizeof(struct window_cell);
+
+        if (columns && (!max_columns || !max_rows))
+                return NULL;
+
+        pane_ring(max_columns, max_rows, &stride, &history, &ring_bytes);
 
         /*
                 A window of cells is allocated for as many as the desktop
@@ -179,7 +395,7 @@ static struct pane *pane_create(unsigned int width, unsigned int height,
                 return NULL;
 
         bytes = PAGE_ALIGN(WINDOW_PIXELS +
-                           (columns ? cell_bytes : (unsigned long)width * height * 4));
+                           (columns ? ring_bytes : (unsigned long)width * height * 4));
 
         if (canvas_pane_bytes + bytes > canvas_pane_budget())
         {
@@ -201,7 +417,16 @@ static struct pane *pane_create(unsigned int width, unsigned int height,
 
         if (columns)
         {
+                unsigned long lines = WINDOW_PIXELS + (unsigned long)history *
+                                                          stride *
+                                                          sizeof(struct window_cell);
+
                 pane->cells = pane->mapping + WINDOW_PIXELS;
+                pane->lengths = pane->mapping + lines;
+                pane->stride = stride;
+                pane->history = history;
+                pane->head = history + rows;
+                pane->view = PANE_LIVE;
                 pane->columns = columns;
                 pane->rows = rows;
                 pane->max_columns = max_columns;
@@ -216,6 +441,10 @@ static struct pane *pane_create(unsigned int width, unsigned int height,
                 pane->grid_rows = rows;
                 pane->shared->grid_columns = columns;
                 pane->shared->grid_rows = rows;
+                pane->shared->stride = stride;
+                pane->shared->history = history;
+                pane->shared->head = pane->head;
+                pane->shared->lines = (unsigned int)lines;
         }
         else
         {
@@ -262,15 +491,18 @@ static __maybe_unused struct pane *pane_create_owned(unsigned int columns,
                                                      unsigned int rows)
 {
         unsigned int max_columns, max_rows;
+        unsigned int stride, history;
+        unsigned long ring_bytes;
         unsigned long bytes;
         struct pane *pane;
 
         desktop_grid(&max_columns, &max_rows);
-        bytes = PAGE_ALIGN((unsigned long)max_columns * max_rows *
-                           sizeof(struct window_cell));
 
         if (!columns || !rows || !max_columns || !max_rows)
                 return NULL;
+
+        pane_ring(max_columns, max_rows, &stride, &history, &ring_bytes);
+        bytes = PAGE_ALIGN(ring_bytes);
 
         if (canvas_pane_bytes + bytes > canvas_pane_budget())
                 return NULL;
@@ -290,8 +522,14 @@ static __maybe_unused struct pane *pane_create_owned(unsigned int columns,
         canvas_pane_bytes += bytes;
         pane->bytes = bytes;
         pane->cells = pane->mapping;
+        pane->lengths = pane->mapping + (unsigned long)history * stride *
+                                            sizeof(struct window_cell);
+        pane->stride = stride;
+        pane->history = history;
+        pane->view = PANE_LIVE;
         pane->columns = min(columns, max_columns);
         pane->rows = min(rows, max_rows);
+        pane->head = history + pane->rows;
         pane->grid_columns = pane->columns;
         pane->grid_rows = pane->rows;
         pane->max_columns = max_columns;
@@ -338,12 +576,19 @@ static void pane_regrid(struct pane *pane)
         /*
                 A resize reaches here from drag.c without going through
                 pane_refresh, so a pane the compositor owns has no page to be
-                told. Its grid is left alone for the same reason a program's
-                is: the cells are still in the shape they were laid out in
-                until whoever owns them says otherwise.
+                told and nobody to tell. Its cells are the compositor's, and
+                the shape they are drawn in is this one -- which is what makes
+                a window it owns grow into the room it was given instead of
+                leaving the desktop showing through the part nothing wrote.
         */
         if (!pane->shared)
+        {
+                pane->grid_columns = pane->columns;
+                pane->grid_rows = pane->rows;
+                pane->damage_row = 0;
+                pane->damage_rows = pane->rows;
                 return;
+        }
 
         WRITE_ONCE(pane->shared->columns, pane->columns);
         WRITE_ONCE(pane->shared->rows, pane->rows);
@@ -388,19 +633,28 @@ static void pane_refresh(struct pane *pane)
                 // What the program says it changed, clamped to what it has.
                 unsigned int row = READ_ONCE(shared->damage_row);
                 unsigned int count = READ_ONCE(shared->damage_rows);
+                unsigned int head = READ_ONCE(shared->head);
 
                 /*
                         The shape the program says its cells are in, which is
                         not the shape they were asked to be in until it has
                         caught up. Composing from the requested one mid-resize
-                        reads every row at the wrong stride.
+                        wraps every line at a width nothing was written at.
                 */
                 pane->grid_columns = min(READ_ONCE(shared->grid_columns),
                                          pane->max_columns);
                 pane->grid_rows = min(READ_ONCE(shared->grid_rows), pane->max_rows);
 
+                // A program's number, so it can be anything at all. Before the
+                // ring began there is nothing to count backwards through.
+                pane->head = max(head, pane->history);
+
                 pane->damage_row = min(row, pane->grid_rows);
                 pane->damage_rows = min(count, pane->grid_rows - pane->damage_row);
+
+                // Scrolled back, what the program drew is not what is shown.
+                if (pane->view != PANE_LIVE)
+                        pane->damage_rows = 0;
 
                 WRITE_ONCE(shared->damage_row, 0);
                 WRITE_ONCE(shared->damage_rows, 0);
@@ -526,6 +780,15 @@ static void desktop_refresh_panes(void)
                 */
                 if (!pane->shared)
                 {
+                        if (pane->view_moved)
+                        {
+                                pane->view_moved = false;
+                                pane->damage_rows = 0;
+                                pane_frame(pane, &fx, &fy, &fw, &fh);
+                                desktop_damage(fx, fy, fw, fh);
+                                continue;
+                        }
+
                         if (pane->cells && pane->damage_rows)
                         {
                                 unsigned int row = min(pane->damage_row, pane->grid_rows);
@@ -549,10 +812,24 @@ static void desktop_refresh_panes(void)
                 pane_frame(pane, &fx, &fy, &fw, &fh);
                 pane_refresh(pane);
 
-                if (pane->sequence == was_sequence && pane->x == was_x &&
-                    pane->y == was_y && pane->width == was_w &&
+                // The wheel moved the view, which changes every row of it.
+                if (pane->view_moved)
+                {
+                        pane->view_moved = false;
+                        desktop_damage(fx, fy, fw, fh);
+                        continue;
+                }
+
+                /*
+                        Nothing that reaches the screen changed. A view that
+                        has been scrolled away from counts as nothing however
+                        much the program drew, because what it drew is not
+                        what is being shown.
+                */
+                if (pane->x == was_x && pane->y == was_y && pane->width == was_w &&
                     pane->height == was_h && (unsigned int)pane->z == was_z &&
-                    pane->style == was_style)
+                    pane->style == was_style &&
+                    (pane->sequence == was_sequence || pane->view != PANE_LIVE))
                         continue;
 
                 // Anything but text changing in place is easier to repaint
@@ -742,6 +1019,9 @@ static _Bool desktop_sequence_changed(void)
 
         list_for_each_entry(pane, &desktop.windows, link)
         {
+                if (pane->view_moved)
+                        return true;
+
                 if (!pane->shared)
                 {
                         if (pane->damage_rows)

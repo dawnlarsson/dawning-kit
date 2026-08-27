@@ -156,7 +156,28 @@ struct window
         // window_open's own bookkeeping. The compositor never reads it.
         unsigned int handle;
 
-        unsigned int reserved[4];
+        /*
+                A window of cells is a ring of lines rather than a grid.
+
+                stride is how far apart two lines are, which is as wide as the
+                desktop could ever make this window and so never changes;
+                history is how many lines the ring holds; head is one past the
+                newest. The visible rows are the last of them, so scrolling is
+                a store to head rather than a copy of every row, and what goes
+                past the top is still there to scroll back to.
+
+                lines is where the length of each one lives, as a byte offset
+                into the mapping. A line is as long as it was written, not as
+                wide as the window: the wrapping happens when it is drawn, so
+                a window made wider re-wraps what it already had.
+
+                The program writes head and the lengths; the rest is the
+                compositor's.
+        */
+        unsigned int stride;
+        unsigned int history;
+        unsigned int head;
+        unsigned int lines;
 
         // The compositor writes head, the program writes tail.
         unsigned int key_head;
@@ -244,10 +265,12 @@ struct window_request
         A program that draws with words writes eight bytes a character and the
         compositor draws the glyph, rather than the program writing the five
         hundred and twelve bytes of an eight by sixteen cell itself with a font
-        of its own. It is also what makes scrolling a memmove of cells instead
-        of a copy of a framebuffer.
+        of its own.
 
         The colours are indices into the sixteen a terminal has always had.
+
+        It is also what makes scrolling a store to one number: the cells are a
+        ring of lines, and moving on is naming the next one.
 */
 struct window_cell
 {
@@ -263,6 +286,40 @@ struct window_cell
 static inline struct window_cell *window_cells(struct window *window)
 {
         return (struct window_cell *)((char *)window + WINDOW_PIXELS);
+}
+
+// One line of the ring. Any index at all: it is taken modulo the history, so
+// counting forever is what a caller is meant to do with head.
+static inline struct window_cell *window_line(struct window *window,
+                                              unsigned int index)
+{
+        return window_cells(window) + (index % window->history) * window->stride;
+}
+
+// How much of each line has been written. Nothing past this is drawn, so a
+// line that shrinks does not leave the rest of what was there on the screen.
+static inline unsigned int *window_lengths(struct window *window)
+{
+        return (unsigned int *)((char *)window + window->lines);
+}
+
+static inline unsigned int *window_length(struct window *window,
+                                          unsigned int index)
+{
+        return window_lengths(window) + index % window->history;
+}
+
+/*
+        A line has been finished and the next one begins.
+
+        The one being moved to is cleared before head names it, so the
+        compositor never draws the line the ring is about to hand back.
+*/
+static inline void window_scroll(struct window *window)
+{
+        *window_length(window, window->head) = 0;
+
+        __atomic_store_n(&window->head, window->head + 1, __ATOMIC_RELEASE);
 }
 
 // Says the cells are now laid out this way. Until a program calls this the

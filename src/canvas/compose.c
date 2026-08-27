@@ -193,78 +193,133 @@ static void cell_draw(const struct target *t, const struct shape *shape,
 }
 
 /*
-        A window made of text.
+        One row of a window made of text.
 
         A cell with a letter in it is drawn whole, one pixel one store. Runs of
         blank cells sharing a background go out as one rectangle, since a
         terminal is mostly empty and a rectangle is what the fill is fastest
-        at. Only the cells the damage reaches.
+        at.
+*/
+static void compose_row(const struct target *t, const struct shape *shape,
+                        int x, int y, const struct window_cell *cells,
+                        int used, int first, int last)
+{
+        int column = first;
+
+        while (column < used)
+        {
+                unsigned int character = cells[column].character;
+                u32 paper = canvas_terminal[cells[column].paper & 15] | t->opaque;
+                int run;
+
+                if (character > ' ' && character <= 126)
+                {
+                        cell_draw(t, shape, x + column * canvas_cell_w, y,
+                                  &cells[column],
+                                  canvas_terminal[cells[column].ink & 15] | t->opaque,
+                                  paper);
+                        column++;
+                        continue;
+                }
+
+                for (run = column; run < used; run++)
+                {
+                        unsigned int c = cells[run].character;
+
+                        if (c > ' ' && c <= 126)
+                                break;
+
+                        if ((canvas_terminal[cells[run].paper & 15] | t->opaque) != paper)
+                                break;
+                }
+
+                shape_fill(t, shape, x + column * canvas_cell_w, y,
+                           (run - column) * canvas_cell_w, canvas_cell_h, paper);
+
+                column = run;
+        }
+
+        /*
+                Past the end of a line there is no cell to take a colour from,
+                and what is still in the ring out there is older text: a line
+                is as long as it was written, not as wide as the window it is
+                being shown in.
+        */
+        if (column < last)
+                shape_fill(t, shape, x + column * canvas_cell_w, y,
+                           (last - column) * canvas_cell_w, canvas_cell_h,
+                           canvas_terminal[0] | t->opaque);
+}
+
+/*
+        A window made of text.
+
+        The rows are a window onto a ring of lines rather than the whole of a
+        grid, so what is drawn is wherever the view is sitting -- the end of
+        the ring while nothing has touched the wheel, and a line written long
+        ago once something has.
+
+        A line is folded into as many rows as it needs at the width the window
+        is now, which is what makes a window widened re-wrap everything already
+        in it. Only the rows the damage reaches are drawn; the walk down to
+        them is a few additions a line and costs nothing beside a fill.
 */
 static void compose_cells(struct pane *pane, const struct target *t,
                           const struct shape *shape, int x, int y)
 {
         /*
-                Both the grid the program laid out and the room the window has
-                now. They are the same at rest and not during a resize: a
-                window that has shrunk still has the larger grid until the
-                program catches up, and drawing all of it puts the inside of
-                the window on the desktop beside it.
+                Both the width whoever owns the cells laid its lines out at and
+                the room the window has now. They are the same at rest and not
+                during a resize: a window that has shrunk still has the wider
+                lines until whoever writes them catches up, and drawing all of
+                one puts the inside of the window on the desktop beside it.
         */
-        int columns = (int)min(pane->grid_columns, pane->columns);
-        int grid_rows = (int)min(pane->grid_rows, pane->rows);
+        unsigned int width = max(pane->grid_columns, 1u);
+        int columns = (int)min(width, pane->columns);
+        int rows = (int)pane_rows(pane);
 
         int first_row = max((t->clip.y1 - y) / canvas_cell_h, 0);
-        int last_row = min((t->clip.y2 - y + canvas_cell_h - 1) / canvas_cell_h,
-                           grid_rows);
+        int last_row = min((t->clip.y2 - y + canvas_cell_h - 1) / canvas_cell_h, rows);
 
         // Columns as well as rows. Clipping only the rows meant a cursor
         // moving over a terminal repainted two whole lines of it, eighty
         // cells wide, to put sixteen pixels somewhere.
         int first = max((t->clip.x1 - x) / canvas_cell_w, 0);
         int last = min((t->clip.x2 - x + canvas_cell_w - 1) / canvas_cell_w, columns);
-        int row, column;
 
-        for (row = first_row; row < last_row; row++)
+        unsigned int skip;
+        unsigned int line = pane_view(pane, &skip);
+        int row = 0;
+
+        while (row < rows && line != pane->head)
         {
-                const struct window_cell *cells = pane->cells + row * pane->grid_columns;
-                int cy = y + row * canvas_cell_h;
+                unsigned int length = pane_length(pane, line);
+                unsigned int folds = pane_line_rows(pane, line);
+                unsigned int fold;
 
-                for (column = first; column < last;)
+                for (fold = skip; fold < folds && row < rows; fold++, row++)
                 {
-                        unsigned int character = cells[column].character;
-                        u32 paper = canvas_terminal[cells[column].paper & 15] | t->opaque;
-                        int run;
+                        unsigned int from = fold * width;
+                        int used = (int)min(length > from ? length - from : 0, width);
 
-                        if (character > ' ' && character <= 126)
-                        {
-                                cell_draw(t, shape, x + column * canvas_cell_w, cy,
-                                          &cells[column],
-                                          canvas_terminal[cells[column].ink & 15] |
-                                              t->opaque,
-                                          paper);
-                                column++;
+                        if (row < first_row || row >= last_row)
                                 continue;
-                        }
 
-                        for (run = column; run < last; run++)
-                        {
-                                unsigned int c = cells[run].character;
-
-                                if (c > ' ' && c <= 126)
-                                        break;
-
-                                if ((canvas_terminal[cells[run].paper & 15] |
-                                     t->opaque) != paper)
-                                        break;
-                        }
-
-                        shape_fill(t, shape, x + column * canvas_cell_w, cy,
-                                   (run - column) * canvas_cell_w, canvas_cell_h,
-                                   paper);
-
-                        column = run;
+                        compose_row(t, shape, x, y + row * canvas_cell_h,
+                                    pane_line(pane, line) + from,
+                                    min(used, last), first, last);
                 }
+
+                skip = 0;
+                line++;
         }
+
+        // Below the newest line, for a window with more room in it than there
+        // is anything to put there.
+        for (; row < rows; row++)
+                if (row >= first_row && row < last_row)
+                        compose_row(t, shape, x, y + row * canvas_cell_h, NULL,
+                                    0, first, last);
 }
 
 /*
@@ -285,7 +340,8 @@ static void compose_cells(struct pane *pane, const struct target *t,
         Drawn over the last few pixels of the contents rather than beside them,
         because a window is as wide as its grid and taking a column away for a
         bar would cost a column of text on every window that never scrolls.
-        Nothing is drawn at all when everything fits.
+        Nothing is drawn at all when everything fits, so a window that has
+        never had anything go past the top of it has no bar to explain.
 */
 #define BAR_WIDTH 6
 
@@ -297,7 +353,7 @@ static void compose_bar(struct pane *pane, const struct target *t,
         int height = (int)pane->rows * canvas_cell_h;
         int at, span;
 
-        if (!console_extent(pane, &first, &shown, &total) || !total)
+        if (!pane_extent(pane, &first, &shown, &total) || !total)
                 return;
 
         span = max((int)((unsigned long)height * shown / total), canvas_cell_h);

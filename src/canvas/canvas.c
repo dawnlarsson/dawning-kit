@@ -101,6 +101,21 @@ struct pane
         unsigned int max_columns, max_rows;
         unsigned int damage_row, damage_rows;
 
+        /*
+                The cells are a ring of lines, the same shape a program has
+                mapped: stride apart, history of them, head one past the
+                newest, and how long each one was written.
+
+                view is the line at the top of what is shown, or PANE_LIVE to
+                follow the end. An absolute line rather than a distance back,
+                so a line arriving does not slide what is being read out from
+                under it.
+        */
+        unsigned int *lengths;
+        unsigned int stride, history, head;
+        unsigned int view;
+        _Bool view_moved;
+
         unsigned int pitch;
         unsigned int max_width, max_height;
         unsigned long bytes;

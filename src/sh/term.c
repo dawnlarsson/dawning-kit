@@ -1,19 +1,15 @@
 /*
         The terminal.
 
-        Cells, the escape parser and what a keystroke becomes -- none of it
-        touching a system call, so the same emulator can be driven by a program
-        with a pty or by the compositor with neither.
-*/
-
-
-/*
-        A terminal.
-
         The pty and the escape sequences are here; the glyphs are not. The
         program writes characters and colour indices into cells and Canvas
-        draws them, so there is no font in this file and no framebuffer --
-        a keystroke is eight bytes, and scrolling is a memmove.
+        draws them, so there is no font in this file and no framebuffer.
+
+        The cells are the ring every window of cells has. The rows are the last
+        of it, so scrolling is a store to one number rather than a copy of the
+        screen, what goes off the top is still there for the wheel to come back
+        to, and the compositor draws the bar down the side -- none of which is
+        anything this file does, and all of which it now has.
 */
 
 #define COLUMNS_WANTED 80
@@ -33,7 +29,6 @@ typedef struct
 } winsize;
 
 static struct window *window;
-static struct window_cell *cells;
 
 // However many the compositor says there are, which changes when the window
 // is resized.
@@ -55,9 +50,28 @@ static fn touch(unsigned int at)
                 touched_bottom = at + 1;
 }
 
+/*
+        A row, in the ring.
+
+        The screen is the last ROWS lines of it and ROWS is this program's own
+        number, not one read back out of the shared page: the two differ for as
+        long as a resize takes to be answered, and a row addressed at the
+        compositor's count while the cells are still laid out at this one is a
+        line taken from somewhere else entirely.
+*/
+static struct window_cell address_to row_cells(unsigned int r)
+{
+        return window_line(window, window->head - ROWS + r);
+}
+
+static unsigned int address_to row_length(unsigned int r)
+{
+        return window_length(window, window->head - ROWS + r);
+}
+
 static fn cell_clear(unsigned int r, unsigned int c)
 {
-        struct window_cell address_to cell = cells + r * COLUMNS + c;
+        struct window_cell address_to cell = row_cells(r) + c;
 
         cell->character = ' ';
         cell->ink = 7;
@@ -65,25 +79,46 @@ static fn cell_clear(unsigned int r, unsigned int c)
         touch(r);
 }
 
+/*
+        Nothing moves.
+
+        The screen ends at the newest line, so the next one is the whole of
+        it, and the line that was at the top is still in the ring for the wheel
+        to come back to. This used to be a copy of every cell on the screen
+        with the top row thrown away.
+*/
 static fn scroll()
 {
-        unsigned int r, c;
-
-        for (r = 1; r < ROWS; r++)
-                for (c = 0; c < COLUMNS; c++)
-                        cells[(r - 1) * COLUMNS + c] = cells[r * COLUMNS + c];
-
-        for (c = 0; c < COLUMNS; c++)
-                cell_clear(ROWS - 1, c);
+        window_scroll(window);
 
         touched_top = 0;
         touched_bottom = ROWS;
         row = ROWS - 1;
 }
 
+/*
+        Every cell up to a column, made to exist.
+
+        Nothing past the length of a line is drawn and the cells out there are
+        whatever the ring last held, so anything that arrives at a column
+        without having written its way there -- a tab, a cursor moved along and
+        printed at -- has to clear what it stepped over first.
+*/
+static fn reach(unsigned int r, unsigned int to)
+{
+        unsigned int address_to length = row_length(r);
+
+        while (address_to length < to)
+        {
+                cell_clear(r, address_to length);
+                address_to length = address_to length + 1;
+        }
+}
+
 static fn put(unsigned int character)
 {
         struct window_cell address_to cell;
+        unsigned int address_to length;
 
         if (column >= COLUMNS)
         {
@@ -94,13 +129,20 @@ static fn put(unsigned int character)
         while (row >= ROWS)
                 scroll();
 
-        cell = cells + row * COLUMNS + column;
+        reach(row, column);
+
+        cell = row_cells(row) + column;
         cell->character = character;
         cell->ink = ink;
         cell->paper = paper;
 
         touch(row);
         column++;
+
+        length = row_length(row);
+
+        if (address_to length < column)
+                address_to length = column;
 }
 
 // One escape sequence at a time, so the parser is a state and a few numbers.
@@ -117,9 +159,17 @@ static fn erase(unsigned int from_row, unsigned int from_column,
         {
                 unsigned int first = r == from_row ? from_column : 0;
                 unsigned int last = r == to_row ? to_column : COLUMNS - 1;
+                unsigned int address_to length = row_length(r);
 
                 for (c = first; c <= last && c < COLUMNS; c++)
                         cell_clear(r, c);
+
+                // An erase that reaches the end of a line is the line getting
+                // shorter, which is cheaper than the cells it would have
+                // written and is what stops the width of a window deciding how
+                // much of it is blanked.
+                if (last + 1 >= address_to length && first < address_to length)
+                        address_to length = first;
         }
 }
 
@@ -293,7 +343,7 @@ static fn cursor_hide()
         if (!shown)
                 return;
 
-        struct window_cell address_to cell = cells + shown_row * COLUMNS + shown_column;
+        struct window_cell address_to cell = row_cells(shown_row) + shown_column;
         unsigned char was = cell->ink;
 
         cell->ink = cell->paper;
@@ -309,8 +359,14 @@ static fn cursor_show()
         // unclamped it landed on the first cell of the row below, and on the
         // last row that is one cell past the grid.
         unsigned int at = column < COLUMNS ? column : COLUMNS - 1;
-        struct window_cell address_to cell = cells + row * COLUMNS + at;
-        unsigned char was = cell->ink;
+        struct window_cell address_to cell;
+        unsigned char was;
+
+        // A block sits on a cell, so there has to be one to sit on.
+        reach(row, at + 1);
+
+        cell = row_cells(row) + at;
+        was = cell->ink;
 
         cell->ink = cell->paper;
         cell->paper = was;
@@ -374,65 +430,53 @@ fn claim_standard_descriptors()
 /*
         The window was resized.
 
-        The cells are one array with a row stride, so changing how many
-        columns there are moves every row: growing means walking backwards so
-        a row is never written over one not yet read, shrinking means walking
-        forwards. What was on the screen stays on it -- lines do not reflow,
-        they are kept and clipped, which is what a terminal without a
-        scrollback can honestly do.
+        Nothing is copied and nothing moves. The rows are the last lines of the
+        ring whatever there are of them, so a window made taller takes in the
+        lines that had scrolled off the top rather than blank ones, and the
+        cursor is still on the line it was on -- that many rows further down.
+
+        What was on the screen stays on it. Lines are not folded at the new
+        width here: the compositor wraps a line longer than the window it is
+        drawn in, and doing that to a live row would move the cursor of the
+        program on the other end of the pty, which is not this program's to
+        move. So the rows are clipped, and it is the scrollback above them
+        that re-wraps.
 */
 fn regrid(b32 master)
 {
-        unsigned int was_columns;
-        unsigned int was_rows;
+        unsigned int was_rows = ROWS;
+        unsigned int columns = window->columns;
+        unsigned int rows = window->rows;
+        winsize size;
 
         // Undone in the geometry it was made in. cursor_show inverts a cell in
         // place, so clearing "shown" and moving on left that cell inverted for
-        // good, and the copy below carried it into the new layout.
+        // good.
         cursor_hide();
-
-        was_columns = COLUMNS;
-        was_rows = ROWS;
-        unsigned int columns = window->columns;
-        unsigned int rows = window->rows;
-        unsigned int keep = was_columns < columns ? was_columns : columns;
-        unsigned int carry = was_rows < rows ? was_rows : rows;
-        winsize size;
-
-        if (columns > was_columns)
-        {
-                for (unsigned int r = carry; r-- > 0;)
-                {
-                        for (unsigned int c = keep; c-- > 0;)
-                                cells[r * columns + c] = cells[r * was_columns + c];
-
-                        for (unsigned int c = keep; c < columns; c++)
-                        {
-                                cells[r * columns + c].character = ' ';
-                                cells[r * columns + c].ink = 7;
-                                cells[r * columns + c].paper = 0;
-                        }
-                }
-        }
-        else if (columns < was_columns)
-        {
-                for (unsigned int r = 0; r < carry; r++)
-                        for (unsigned int c = 0; c < keep; c++)
-                                cells[r * columns + c] = cells[r * was_columns + c];
-        }
 
         COLUMNS = columns;
         ROWS = rows;
 
-        for (unsigned int r = carry; r < rows; r++)
-                for (unsigned int c = 0; c < columns; c++)
-                        cell_clear(r, c);
+        if (ROWS >= was_rows)
+                row += ROWS - was_rows;
+        else if (row >= was_rows - ROWS)
+                row -= was_rows - ROWS;
+        else
+                row = 0;
 
         if (row >= ROWS)
                 row = ROWS - 1;
 
         if (column >= COLUMNS)
                 column = COLUMNS - 1;
+
+        for (unsigned int r = 0; r < ROWS; r++)
+        {
+                unsigned int address_to length = row_length(r);
+
+                if (address_to length > COLUMNS)
+                        address_to length = COLUMNS;
+        }
 
         shown = false;
         touched_top = 0;
