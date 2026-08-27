@@ -34,7 +34,11 @@ names=${2:-}
 reference=${3:-/bin/dash}
 
 [ -x "$subject" ] || { echo "no shell at $subject" >&2; exit 1; }
-[ -x "$reference" ] || { echo "no reference at $reference" >&2; exit 1; }
+
+# Agreeing with dash is the whole of what passing means here, so without one
+# there is nothing to compare against and saying so is better than inventing
+# an answer.
+[ -x "$reference" ] || { echo "  shell        no $reference, skipped"; exit 0; }
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT INT TERM
