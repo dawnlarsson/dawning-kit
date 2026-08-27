@@ -10,10 +10,19 @@
 # screen the ordinary way and prints the boot log. It is the image to write
 # when the normal one shows nothing:
 #
-#       sh launch --usb console
+#       sh build.sh --usb arch/x64 debug_none limbo desktop console
+#
+# The whole target list, not the profile alone: naming any profile replaces
+# the tail of the default set rather than adding to it, and a build without
+# arch/x64 stops at the assembly step.
 #
 # Nothing else changes, so anything that goes wrong before graphics comes up
 # goes wrong identically and is visible this time.
+#
+# The other way round -- keeping the compositor and putting fbdev back under
+# it with drm_client_lib.active=fbdev -- would say why Canvas failed rather
+# than only that it did. It hangs the boot with nothing on either console,
+# and why is not known; the two clients appear to fight over the display.
 #
 CONFIG_MOONWATER_CANVAS=n
 

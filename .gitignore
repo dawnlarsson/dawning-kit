@@ -32,3 +32,9 @@ src/test/bin/
 # patch leftovers, which have shipped by accident once
 *.orig
 *.rej
+
+# kit/compact regenerates this from src/library.c and the two are a fixed
+# point -- byte for byte identical once the pipeline has been run. Keeping a
+# copy in the repository would only be a second place to edit.
+/src/library.next.c
+__pycache__/
