@@ -37,19 +37,6 @@ static p8 exec_arena[EXEC_ARENA];
 static positive exec_arena_used;
 static p8 exec_nothing[1];
 
-/*
-        The positional parameters.
-
-        They are mirrored into the environment because the expander looks $1 up
-        with env_get like any other name, and the expander is not this lane's
-        to change. The array is the real store; the mirror is a copy that ought
-        to go away once expansion reads the array directly.
-*/
-string_address shell_positional[POSITIONAL_MAX];
-b32 shell_positional_count;
-static p8 exec_positional_text[POSITIONAL_TEXT];
-static positive exec_positional_used;
-
 // A diagnostic is not output. dash writes these to standard error and a script
 // that redirects one and not the other can tell, so this does not go through
 // the buffered writer that everything else uses.
@@ -75,72 +62,6 @@ static string_address exec_arena_copy(string_address text)
         exec_arena_used += length;
 
         return into;
-}
-
-#define POSITIONAL_SLOT 160
-
-static p8 exec_positional_slot[9][POSITIONAL_SLOT];
-static bool exec_positional_linked;
-
-/*
-        Nine environment entries of our own, put in the list once.
-
-        env_set appends a fresh copy whenever the new value is longer than the
-        one it replaces, because the entries sit end to end in one block and a
-        longer value written in place would run over the next name. Setting $1
-        through env_set therefore ate that block a few bytes per call, and a
-        function called four hundred times with a growing argument silently
-        stopped being given one at all. These entries are ours, so the value is
-        written in place and nothing grows.
-*/
-static fn exec_positional_link()
-{
-        b32 index;
-        b32 at = 0;
-
-        if (exec_positional_linked)
-                return;
-
-        exec_positional_linked = true;
-
-        while (shell_envp[at])
-                at++;
-
-        for (index = 0; index < 9; index++)
-        {
-                if (at + 1 >= ENV_MAX_ENTRIES)
-                        break;
-
-                exec_positional_slot[index][0] = (p8)('1' + index);
-                exec_positional_slot[index][1] = '=';
-                exec_positional_slot[index][2] = end;
-                shell_envp[at++] = exec_positional_slot[index];
-        }
-
-        shell_envp[at] = null;
-}
-
-static fn exec_positional_apply()
-{
-        b32 index;
-
-        exec_positional_link();
-
-        for (index = 0; index < 9; index++)
-        {
-                string_address want = index < shell_positional_count
-                                          ? shell_positional[index]
-                                          : exec_nothing;
-                positive at = 0;
-
-                while (string_get(want + at) && at < POSITIONAL_SLOT - 3)
-                {
-                        exec_positional_slot[index][at + 2] = string_get(want + at);
-                        at++;
-                }
-
-                exec_positional_slot[index][at + 2] = end;
-        }
 }
 
 /*
@@ -506,11 +427,9 @@ static b32 exec_define(b32 index)
 
 static b32 exec_call(b32 body)
 {
-        string_address saved[POSITIONAL_MAX];
-        b32 saved_count = shell_positional_count;
-        positive saved_used = exec_positional_used;
+        positive saved_count = shell_parameter_count;
+        positive saved;
         b32 status;
-        b32 index;
 
         if (exec_function_depth >= FUNCTION_DEPTH_MAX)
         {
@@ -519,24 +438,8 @@ static b32 exec_call(b32 body)
                 return 1;
         }
 
-        memory_copy(saved, shell_positional, sizeof(saved));
-        shell_positional_count = 0;
-
-        for (index = 1; index < (b32)shell_argc && shell_positional_count < POSITIONAL_MAX; index++)
-        {
-                positive length = string_length(shell_argv[index]) + 1;
-
-                if (exec_positional_used + length > POSITIONAL_TEXT)
-                        break;
-
-                memory_copy(exec_positional_text + exec_positional_used,
-                            shell_argv[index], length);
-                shell_positional[shell_positional_count++] =
-                    exec_positional_text + exec_positional_used;
-                exec_positional_used += length;
-        }
-
-        exec_positional_apply();
+        saved = shell_parameters_save();
+        shell_parameters_set(shell_argv + 1, shell_argc > 0 ? shell_argc - 1 : 0);
 
         exec_function_depth++;
         status = exec_node(body);
@@ -546,10 +449,7 @@ static b32 exec_call(b32 body)
         if (exec_signal == EXEC_SIGNAL_RETURN)
                 exec_signal = EXEC_SIGNAL_NONE;
 
-        memory_copy(shell_positional, saved, sizeof(saved));
-        shell_positional_count = saved_count;
-        exec_positional_used = saved_used;
-        exec_positional_apply();
+        shell_parameters_restore(saved, saved_count);
 
         return status;
 }
@@ -784,8 +684,8 @@ static b32 exec_for(b32 index)
         }
         else
         {
-                for (at = 0; at < shell_positional_count && count < (b32)(sizeof(items) / sizeof(items[0])); at++)
-                        items[count++] = exec_arena_copy(shell_positional[at]);
+                for (at = 0; at < (b32)shell_parameter_count && count < (b32)(sizeof(items) / sizeof(items[0])); at++)
+                        items[count++] = exec_arena_copy(shell_parameter[at]);
         }
 
         for (at = 0; at < count; at++)

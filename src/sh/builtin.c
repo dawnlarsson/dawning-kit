@@ -1614,61 +1614,19 @@ bipolar shell_signed(string_address input, bool address_to good)
 }
 
 /*
-        The positional parameters.
+        The positional parameters live in expand.c, which is what reads them.
 
-        They are mirrored into the environment because that is the only place
-        the expander looks a name up, and $1 is a name to it. Their storage is
-        rebuilt from the front on every set, so a script that sets them inside
-        a loop does not eat the environment block one copy at a time.
+        They used to be mirrored into the environment, because that was the
+        only place the expander looked a name up and $1 is a name to it. The
+        mirror also went to every child through execve, which no shell does,
+        and cost an environment entry per parameter per call.
 */
-#define POSITIONAL_MAX 32
-#define POSITIONAL_STORAGE 2048
+#define POSITIONAL_MAX 64
 
-static p8 positional_storage[POSITIONAL_STORAGE];
-static p8 positional_scratch[POSITIONAL_STORAGE];
-static string_address positional_value[POSITIONAL_MAX];
-static positive positional_count;
-
-fn positional_publish(string_address address_to values, positive count)
-{
-        positive previous = positional_count;
-        positive used = 0;
-        positive index = 0;
-
-        if (count > POSITIONAL_MAX)
-                count = POSITIONAL_MAX;
-
-        while (index < count)
-        {
-                string_address entry = positional_storage + used;
-                positive length = string_length(values[index]);
-                positive name = shell_digits(entry, index + 1);
-
-                if (used + name + 1 + length + 1 > POSITIONAL_STORAGE)
-                        break;
-
-                entry[name] = '=';
-                memory_copy(entry + name + 1, values[index], length);
-                entry[name + 1 + length] = end;
-
-                positional_value[index] = entry + name + 1;
-                used += name + 1 + length + 1;
-
-                env_place(entry);
-                index++;
-        }
-
-        positional_count = index;
-
-        while (previous > positional_count)
-        {
-                p8 name[24];
-
-                shell_digits(name, previous);
-                env_unset(name);
-                previous--;
-        }
-}
+extern string_address shell_parameter[];
+extern positive shell_parameter_count;
+bool shell_parameters_set(string_address address_to words, positive count);
+fn shell_parameters_shift(positive count);
 
 fn shell_set(writer write, string_address input)
 {
@@ -1733,7 +1691,7 @@ fn shell_set(writer write, string_address input)
                 while (index < shell_argc && count < POSITIONAL_MAX)
                         values[count++] = shell_argv[index++];
 
-                positional_publish(values, count);
+                shell_parameters_set(values, count);
         }
 
         shell_answer(0);
@@ -1742,32 +1700,14 @@ fn shell_set(writer write, string_address input)
 fn shell_shift(writer write, string_address input)
 {
         positive amount = 1;
-        string_address values[POSITIONAL_MAX];
-        positive used = 0;
-        positive count = 0;
-        positive index;
 
         if (shell_argc > 1)
                 amount = shell_number(shell_argv[1]);
 
-        if (amount > positional_count)
+        if (amount > shell_parameter_count)
                 return shell_answer(1);
 
-        // Through a second buffer: publishing rewrites the storage these words
-        // are still sitting in.
-        for (index = amount; index < positional_count; index++)
-        {
-                positive length = string_length(positional_value[index]);
-
-                if (used + length + 1 > POSITIONAL_STORAGE)
-                        break;
-
-                memory_copy(positional_scratch + used, positional_value[index], length + 1);
-                values[count++] = positional_scratch + used;
-                used += length + 1;
-        }
-
-        positional_publish(values, count);
+        shell_parameters_shift(amount);
 
         shell_answer(0);
 }
@@ -2740,9 +2680,9 @@ fn shell_getopts(writer write, string_address input)
         }
         else
         {
-                while (count < positional_count)
+                while (count < shell_parameter_count)
                 {
-                        list[count] = positional_value[count];
+                        list[count] = shell_parameter[count];
                         count++;
                 }
         }

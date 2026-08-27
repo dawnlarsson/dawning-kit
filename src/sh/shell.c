@@ -9,6 +9,7 @@
 
 #include "lex.c"
 #include "builtin.c"
+#include "expand.c"
 
 #define PROMPT TERM_RESET TERM_BOLD " $ " TERM_RESET
 
@@ -553,57 +554,6 @@ bool shell_builtin(string_address arguments)
         }
 
         return false;
-}
-
-/*
-        One lexed word, expanded.
-
-        This is the second half of what the old tokeniser did: quote removal
-        and parameter expansion. The first half -- deciding where words begin
-        and end -- the lexer has already done, in assembly, and doing it again
-        over the same bytes was a whole extra pass over every command line.
-*/
-static string_address shell_expand_word(string_address word)
-{
-        string_address step = word;
-        string_address result = token_storage + token_used;
-
-        while (string_get(step))
-        {
-                if (string_is(step, '\\'))
-                {
-                        step++;
-
-                        if (string_get(step))
-                                token_push(string_get(step++));
-
-                        continue;
-                }
-
-                if (string_is(step, '\''))
-                {
-                        step = shell_single_quoted(step);
-                        continue;
-                }
-
-                if (string_is(step, '"'))
-                {
-                        step = shell_double_quoted(step);
-                        continue;
-                }
-
-                if (string_is(step, '$'))
-                {
-                        step = shell_expand(step);
-                        continue;
-                }
-
-                token_push(string_get(step++));
-        }
-
-        token_push(end);
-
-        return result;
 }
 
 #include "parse.c"
