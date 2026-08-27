@@ -133,11 +133,8 @@ typedef struct
 // Output ----------------------------------------------------
 
 /*
-        str() carries the terminator with it -- sizeof("hi\n") is 3 plus the
-        NUL -- so writing a literal that way puts a zero byte into the stream.
-        A prompt survives that; a diff against the system's own tool does not,
-        so everything here writes with a length of zero and lets the writer
-        measure.
+        Everything here writes with a length of zero and lets the writer
+        measure, which is what a literal of unknown length needs anyway.
 */
 fn file_say(string_address text)
 {

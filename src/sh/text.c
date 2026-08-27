@@ -212,9 +212,7 @@ static address_any text_arena_take(positive bytes)
         here as ---------x on a file tee had just made. Every open below goes
         through this instead, with the mode spelled out.
 */
-// FILE_TRUNCATE is 0200, which is O_EXCL and not O_TRUNC -- asking for it
-// turns every open of a file that already exists into a failure. FILE_WRITE
-// already carries O_TRUNC, so these two are what a writer wants.
+// FILE_WRITE already carries O_TRUNC, so a writer wants nothing added to it.
 #define TEXT_WRITE (FILE_WRITE)
 #define TEXT_APPEND (FILE_APPEND)
 

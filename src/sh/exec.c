@@ -25,8 +25,6 @@ static b32 exec_loop_depth;
 static b32 exec_function_depth;
 
 #define EXEC_ARENA 8192
-#define POSITIONAL_MAX 32
-#define POSITIONAL_TEXT 4096
 #define PIPELINE_MAX 16
 #define FUNCTION_MAX 64
 #define FUNCTION_NAME 64
