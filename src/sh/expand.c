@@ -25,7 +25,7 @@
 string_address env_get(const_string name);
 bool env_set(const_string name, const_string value);
 fn run_line(string_address line);
-fn parse_reset();
+fn parse_reset_all();
 
 extern writer shell_output;
 extern positive shell_output_file;
@@ -1089,7 +1089,7 @@ static fn expand_run(string_address command, bool quoted)
                 // The parser still holds the line this substitution is a word
                 // of. In here that is somebody else's half-read sentence, and
                 // feeding it another one makes a syntax error out of both.
-                parse_reset();
+                parse_reset_all();
                 run_line(command);
                 log_flush();
 

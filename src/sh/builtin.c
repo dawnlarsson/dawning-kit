@@ -43,7 +43,9 @@ positive shell_argc;
 
 // eval runs a line, and what runs lines sits above this file. Weak, because
 // programs/edit.c includes this file with no shell around it.
-fn process(string_address line) __attribute__((weak));
+fn run_line(string_address line) __attribute__((weak));
+fn parse_nest_enter() __attribute__((weak));
+fn parse_nest_leave() __attribute__((weak));
 
 b32 shell_find_in_path(string_address name, p8 address_to into, positive room);
 bipolar shell_signed(string_address input, bool address_to good);
@@ -3265,7 +3267,7 @@ fn shell_eval(writer write, string_address input)
         positive used = 0;
         positive index = 1;
 
-        if (shell_argc < 2 || !process || eval_depth >= EVAL_DEPTH)
+        if (shell_argc < 2 || !run_line || eval_depth >= EVAL_DEPTH)
                 return shell_answer(0);
 
         while (index < shell_argc)
@@ -3285,14 +3287,17 @@ fn shell_eval(writer write, string_address input)
 
         eval_storage[used] = end;
 
-/*
-        The nested line is lexed over the tokens of the line that is running,
-        and the loop stepping through those is standing in the middle of them.
-        So they are put back afterwards, text and all: a word's text goes back
-        to the address it was at, which makes the pointers in the tokens good
-        again. Only where there is a lexer to put back -- programs/edit.c takes
-        this file without one.
-*/
+        /*
+                The nested line is lexed and parsed over the same arrays as the
+                line that is running, and the walk through those is standing in
+                the middle of them. The lexer's tokens are put back afterwards,
+                text and all -- a word's text goes back to the address it was
+                at, which makes the pointers good again -- and the parser is
+                told to claim from above what is in use rather than over it.
+
+                Only where there is a lexer to put back: programs/edit.c takes
+                this file with no shell around it.
+        */
 #ifdef LEX_TOKENS
         {
                 lex_token kept_tokens[LEX_TOKENS];
@@ -3303,9 +3308,13 @@ fn shell_eval(writer write, string_address input)
                 memory_copy(kept_tokens, lex_tokens, sizeof(kept_tokens));
                 memory_copy(kept_text, lex_text, sizeof(kept_text));
 
+                parse_nest_enter();
+
                 eval_depth++;
-                process(eval_storage);
+                run_line(eval_storage);
                 eval_depth--;
+
+                parse_nest_leave();
 
                 memory_copy(lex_tokens, kept_tokens, sizeof(kept_tokens));
                 memory_copy(lex_text, kept_text, sizeof(kept_text));
@@ -3313,10 +3322,6 @@ fn shell_eval(writer write, string_address input)
                 lex_used = kept_used;
                 lex_count = kept_count;
         }
-#else
-        eval_depth++;
-        process(eval_storage);
-        eval_depth--;
 #endif
 
         // After the nested line, not before it: the commands inside set the

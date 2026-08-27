@@ -125,6 +125,20 @@ static b32 parse_position;
 static b32 parse_state;
 
 /*
+        Where this parse starts, which is not always the beginning.
+
+        eval runs a line from inside a line that is already running, and the
+        tree being walked is in these same arrays. So a nested parse claims
+        from where the outer one stopped and gives that back when it is done,
+        rather than from zero over the top of what is still in use.
+*/
+static b32 parse_node_base = 1;
+static b32 parse_word_base;
+static b32 parse_redirect_base;
+static positive parse_token_base;
+static positive parse_token_text_base;
+
+/*
         Here-documents, which arrive after the line that asked for them.
 
         The delimiters are collected while the lines are still being read,
@@ -150,13 +164,100 @@ static positive here_names_used;
 
 fn parse_reset()
 {
-        parse_token_count = 0;
-        parse_token_text_used = 0;
+        parse_token_count = parse_token_base;
+        parse_token_text_used = parse_token_text_base;
         here_wanted = 0;
         here_filled = 0;
         here_taken = 0;
         here_used = 0;
         here_names_used = 0;
+}
+
+/*
+        A line inside a line.
+
+        What eval runs is parsed into the space above whatever is running, and
+        the marks come back afterwards. A frame is the marks themselves, so
+        nesting costs a few words and not a copy of the arrays. The stack is
+        here rather than at the caller because its shape is nobody else's.
+*/
+#define PARSE_NEST 8
+
+typedef struct
+{
+        b32 node, word, redirect, position, state;
+        positive token, token_text;
+        b32 wanted, filled, taken;
+        positive used, names_used;
+} parse_frame;
+
+static parse_frame parse_frames[PARSE_NEST];
+static b32 parse_nest_depth;
+
+fn parse_nest_enter()
+{
+        parse_frame address_to frame;
+
+        if (parse_nest_depth >= PARSE_NEST)
+                return;
+
+        frame = parse_frames + parse_nest_depth++;
+
+        frame->node = parse_node_base;
+        frame->word = parse_word_base;
+        frame->redirect = parse_redirect_base;
+        frame->token = parse_token_base;
+        frame->token_text = parse_token_text_base;
+        frame->position = parse_position;
+        frame->state = parse_state;
+        frame->wanted = here_wanted;
+        frame->filled = here_filled;
+        frame->taken = here_taken;
+        frame->used = here_used;
+        frame->names_used = here_names_used;
+
+        parse_node_base = parse_node_used;
+        parse_word_base = parse_word_used;
+        parse_redirect_base = parse_redirect_used;
+        parse_token_base = parse_token_count;
+        parse_token_text_base = parse_token_text_used;
+}
+
+fn parse_nest_leave()
+{
+        parse_frame address_to frame;
+
+        if (!parse_nest_depth)
+                return;
+
+        frame = parse_frames + --parse_nest_depth;
+
+        parse_node_base = frame->node;
+        parse_word_base = frame->word;
+        parse_redirect_base = frame->redirect;
+        parse_token_base = frame->token;
+        parse_token_text_base = frame->token_text;
+        parse_token_count = frame->token;
+        parse_token_text_used = frame->token_text;
+        parse_position = frame->position;
+        parse_state = frame->state;
+        here_wanted = frame->wanted;
+        here_filled = frame->filled;
+        here_taken = frame->taken;
+        here_used = frame->used;
+        here_names_used = frame->names_used;
+}
+
+// A forked substitution has the outer line's marks and no use for them: what
+// it runs is the only thing it will ever run.
+fn parse_reset_all()
+{
+        parse_node_base = 1;
+        parse_word_base = 0;
+        parse_redirect_base = 0;
+        parse_token_base = 0;
+        parse_token_text_base = 0;
+        parse_reset();
 }
 
 static parse_token address_to parse_look(b32 ahead)
@@ -1079,11 +1180,11 @@ b32 parse_program()
                 parse_redirect_top = PARSE_REDIRECTS;
         }
 
-        parse_position = 0;
+        parse_position = (b32)parse_token_base;
         parse_state = PARSE_OK;
-        parse_node_used = 1;
-        parse_word_used = 0;
-        parse_redirect_used = 0;
+        parse_node_used = parse_node_base;
+        parse_word_used = parse_word_base;
+        parse_redirect_used = parse_redirect_base;
         here_taken = 0;
 
         root = parse_list();
