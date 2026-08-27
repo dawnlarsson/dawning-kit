@@ -235,6 +235,41 @@ static _Bool console_scroll(struct pane *pane, int lines)
         return console_view != was;
 }
 
+/*
+        Where the view sits in what there is, for something to draw a bar with.
+
+        In lines rather than pixels: what the bar is made of is the compositor's
+        business, and this file has no idea how tall a row is.
+
+        False when there is nothing to scroll, which is also when a bar would
+        say nothing worth the pixels.
+*/
+static _Bool console_extent(struct pane *pane, unsigned int *first,
+                            unsigned int *shown, unsigned int *total)
+{
+        unsigned long flags;
+        unsigned int rows = pane->grid_rows;
+        unsigned int at;
+
+        if (pane != READ_ONCE(console_pane) || !console_ring)
+                return false;
+
+        spin_lock_irqsave(&console_cells, flags);
+
+        *total = console_filled;
+        *shown = rows;
+        at = console_view == CONSOLE_LIVE ? console_head : console_view;
+
+        // How far the bottom of the view is from the oldest line held.
+        *first = console_filled > rows
+                     ? console_filled - rows - (console_head - at)
+                     : 0;
+
+        spin_unlock_irqrestore(&console_cells, flags);
+
+        return *total > *shown;
+}
+
 static struct console canvas_console = {
         .name = "canvas",
         .write = console_put_line,

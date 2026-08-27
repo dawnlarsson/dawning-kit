@@ -279,6 +279,39 @@ static void compose_cells(struct pane *pane, const struct target *t,
         is why there is no separate border function: the band clamp already
         measures from the row's inset, so a side follows the curve for free.
 */
+/*
+        The bar down the right of a window that has more than it is showing.
+
+        Drawn over the last few pixels of the contents rather than beside them,
+        because a window is as wide as its grid and taking a column away for a
+        bar would cost a column of text on every window that never scrolls.
+        Nothing is drawn at all when everything fits.
+*/
+#define BAR_WIDTH 6
+
+static void compose_bar(struct pane *pane, const struct target *t,
+                        const struct shape *shape, int x, int y)
+{
+        unsigned int first, shown, total;
+        int width = BAR_WIDTH * (int)desktop.scale;
+        int height = (int)pane->rows * canvas_cell_h;
+        int at, span;
+
+        if (!console_extent(pane, &first, &shown, &total) || !total)
+                return;
+
+        span = max((int)((unsigned long)height * shown / total), canvas_cell_h);
+        at = (int)((unsigned long)height * first / total);
+
+        if (at + span > height)
+                at = height - span;
+
+        shape_fill(t, shape, x + (int)pane->width - width, y, width, height,
+                   t->ink[INK_FRAME]);
+        shape_fill(t, shape, x + (int)pane->width - width, y + at, width, span,
+                   t->ink[INK_TITLE_LIT]);
+}
+
 static void compose_pane(struct pane *pane, const struct target *t)
 {
         _Bool framed = pane->style & WINDOW_FRAME;
@@ -341,6 +374,7 @@ static void compose_pane(struct pane *pane, const struct target *t)
                 int gh = (int)min(pane->grid_rows, pane->rows) * canvas_cell_h;
 
                 compose_cells(pane, t, &shape, x, y + title);
+                compose_bar(pane, t, &shape, x, y + title);
 
                 // What the window has grown into but the program has not laid
                 // out yet, which would otherwise show the desktop through it.
