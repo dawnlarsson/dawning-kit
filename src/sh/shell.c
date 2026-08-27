@@ -610,168 +610,71 @@ static string_address shell_expand_word(string_address word)
         return result;
 }
 
-fn run_argv();
+#include "parse.c"
+#include "exec.c"
 
 /*
-        A line is a list of commands, not one command.
+        Whether the shell is in the middle of something.
 
-        The lexer knows where every operator is and, more to the point, which
-        ones are inside quotes and therefore are not operators at all. Its
-        words go straight into argv from here: nothing re-reads the line.
+        The reader hands over one line at a time and a while loop is not one
+        line. When the parser runs out of tokens inside a construct it says so
+        rather than failing, the tokens are kept, and the next line is added to
+        them -- which is also how a here-document body is collected, except
+        that a body is not source and is taken verbatim until its delimiter.
 */
-fn process(string_address line)
+static bool shell_more;
+
+b32 shell_incomplete()
 {
-        b32 count = lex_line(line);
-        b32 index = 0;
-        b32 skip = false;
-
-        if (count < 0)
-                return string_format(shell_output, "Command line too long\n");
-
-        token_used = 0;
-        token_overflow = false;
-        shell_argc = 0;
-
-        while (index <= count)
-        {
-                lex_token address_to token = lex_tokens + index;
-
-                if (token->kind == LEX_WORD)
-                {
-                        if (shell_argc < MAX_TOKENS)
-                                shell_argv[shell_argc++] = shell_expand_word(token->text);
-
-                        index++;
-                        continue;
-                }
-
-                // A redirection takes the word after it, expanded the same way
-                // as any other.
-                if (token->kind == LEX_OPERATOR &&
-                    (token->op == OP_GREAT || token->op == OP_DGREAT) &&
-                    lex_tokens[index + 1].kind == LEX_WORD)
-                {
-                        string_address target = shell_expand_word(lex_tokens[index + 1].text);
-
-                        shell_output_file = system_call_4(
-                            syscall(openat), AT_FDCWD, (positive)target,
-                            token->op == OP_DGREAT
-                                ? FILE_WRITE | FILE_CREATE | FILE_APPEND
-                                : FILE_WRITE | FILE_CREATE | FILE_TRUNCATE,
-                            0666);
-
-                        if (shell_output_file < 0)
-                        {
-                                shell_output_file = 0;
-                                string_format(shell_output,
-                                              "Cannot open file for redirection: %s\n",
-                                              target);
-                                return;
-                        }
-
-                        shell_output = redirect_writer;
-                        index += 2;
-                        continue;
-                }
-
-                if (token->kind == LEX_END ||
-                    (token->kind == LEX_OPERATOR &&
-                     (token->op == OP_SEMI || token->op == OP_AND_IF ||
-                      token->op == OP_OR_IF)))
-                {
-                        if (shell_argc)
-                        {
-                                shell_argv[shell_argc] = null;
-
-                                if (!skip)
-                                        run_argv();
-                        }
-
-                        // What follows && runs only if that succeeded, and
-                        // what follows || only if it did not.
-                        if (token->kind == LEX_OPERATOR && token->op == OP_AND_IF)
-                                skip = shell_status != 0;
-                        else if (token->kind == LEX_OPERATOR && token->op == OP_OR_IF)
-                                skip = shell_status == 0;
-                        else
-                                skip = false;
-
-                        shell_argc = 0;
-                        index++;
-                        continue;
-                }
-
-                index++;
-        }
-}
-
-// argv is already built and any redirection already open: process did both
-// straight off the token stream.
-fn run_argv()
-{
-
-        /*
-                A word of the form name=value, on its own, sets a variable.
-
-                POSIX calls this an assignment and it is a command in its own
-                right -- which is why "x=1" used to be reported as a command
-                that could not be found, and why nearly every script died on
-                its first line.
-        */
-        {
-                string_address at = shell_argv[0];
-                positive name_length = 0;
-
-                while (shell_name_character(string_get(at + name_length)))
-                        name_length++;
-
-                if (name_length && string_get(at + name_length) == '=')
-                {
-                        p8 name[128];
-
-                        if (name_length < sizeof(name))
-                        {
-                                memory_copy(name, at, name_length);
-                                name[name_length] = end;
-                                env_set(name, at + name_length + 1);
-                                shell_status = 0;
-                                return;
-                        }
-                }
-        }
-
-        if (string_is(shell_argv[0], '.') || string_is(shell_argv[0], '/'))
-                return shell_execute_command();
-
-        if (shell_builtin(shell_arguments()))
-        {
-                shell_status = 0;
-                return;
-        }
-
-        /*
-                A bare name, looked for on the path. A builtin wins over one --
-                that is the order every shell uses, and it is checked above --
-                but anything else typed without a slash used to be refused
-                however plainly it was sitting in a directory on the path.
-        */
-        {
-                static p8 found[768];
-
-                if (shell_find_in_path(shell_argv[0], found, sizeof(found)))
-                {
-                        shell_argv[0] = found;
-                        return shell_execute_command();
-                }
-        }
-
-        shell_status = 127;
-        string_format(shell_output, "Command not found: '%s'\n", shell_argv[0]);
+        return shell_more;
 }
 
 fn run_line(string_address line)
 {
-        process(line);
+        string_address waiting = parse_here_open();
+        b32 root;
+
+        if (waiting)
+        {
+                if (!string_compare(line, waiting))
+                        parse_here_close();
+                else
+                        parse_here_line(line);
+        }
+        else if (!parse_feed(line))
+        {
+                string_format(exec_error, "Command line too long\n");
+                parse_reset();
+                shell_more = false;
+                return;
+        }
+
+        if (parse_here_open())
+        {
+                shell_more = true;
+                return;
+        }
+
+        root = parse_program();
+
+        if (parse_state == PARSE_INCOMPLETE)
+        {
+                shell_more = true;
+                return;
+        }
+
+        shell_more = false;
+
+        if (parse_state)
+        {
+                string_format(exec_error, "Syntax error\n");
+                shell_status = 2;
+                parse_reset();
+                return;
+        }
+
+        exec_program(root);
+        parse_reset();
 
         /*
                 A terminal wants each line the moment it happens. A script does
@@ -780,16 +683,9 @@ fn run_line(string_address line)
                 went. The buffer drains when it fills, before anything is
                 spawned, and when the input ends.
         */
-        if (shell_is_interactive || shell_output_file)
+        if (shell_is_interactive)
                 log_flush();
-
-        if (shell_output_file)
-                system_call_1(syscall(close), shell_output_file);
-
-        shell_output = log;
-        shell_output_file = 0;
 }
-
 
 // A prompt is for somebody watching. Asking the terminal about itself is the
 // only way to know whether anybody is: a script piped in gets none, which is
