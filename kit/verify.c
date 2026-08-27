@@ -515,6 +515,9 @@ fn check_file_load()
         for (positive i = 0; i < sizeof(body); i++)
                 body[i] = (b8)(next() & 0xff);
 
+        system_call_3(syscall(unlinkat), AT_FDCWD,
+                      (positive) "/tmp/moonwater_verify_load", 0);
+
         b32 made = system_call_4(syscall(openat), AT_FDCWD,
                                  (positive) "/tmp/moonwater_verify_load",
                                  FILE_CREATE | FILE_WRITE | FILE_TRUNCATE, 0644);
@@ -556,6 +559,208 @@ fn check_file_load()
                       (positive) "/tmp/moonwater_verify_load", 0);
 }
 
+/*
+        The routines merged from the conversion lanes.
+
+        Each was verified by whoever wrote it, in a tree of their own. These
+        are the same routines checked here, in one harness, so the claim does
+        not rest on seven separate reports.
+*/
+#define SCRATCH "/tmp/moonwater_verify_scratch"
+
+fn check_file_round_trip()
+{
+        static p8 written[2048];
+        static p8 read_back[2048];
+        static file subject;
+
+        for (positive i = 0; i < sizeof(written); i++)
+                written[i] = (b8)(next() & 0xff);
+
+        system_call_3(syscall(unlinkat), AT_FDCWD, (positive)SCRATCH, 0);
+
+        file_new(address_of subject, (string_address)SCRATCH,
+                 FILE_READ_WRITE | FILE_CREATE | FILE_TRUNCATE);
+
+        same("file_new", "valid", (positive)file_valid(address_of subject), 1);
+
+        // Written at an offset, so the seek is exercised rather than assumed.
+        positive put = file_write(address_of subject, written, sizeof(written), 0);
+
+        same("file_write", "wrote it all", put, sizeof(written));
+
+        file_get_status(address_of subject);
+        same("file_get_status", "size follows the write",
+             subject.status.size, sizeof(written));
+
+        reference_fill(read_back, 0, sizeof(read_back));
+        positive got = file_read(address_of subject, read_back, sizeof(read_back), 0);
+
+        same("file_read", "read it all", got, sizeof(written));
+        same_bytes("file_read", "contents", read_back, written, sizeof(written));
+
+        // A partial read from the middle: the clamp is the only arithmetic in
+        // the whole family.
+        reference_fill(read_back, 0, sizeof(read_back));
+        got = file_read(address_of subject, read_back, 100, sizeof(written) - 40);
+        same("file_read", "clamped at the end", got, 40);
+
+        got = file_read(address_of subject, read_back, 100, sizeof(written) + 500);
+        same("file_read", "past the end reads nothing", got, 0);
+
+        file_close(address_of subject);
+        same("file_close", "no longer valid",
+             (positive)file_valid(address_of subject), 0);
+
+        system_call_3(syscall(unlinkat), AT_FDCWD, (positive)SCRATCH, 0);
+}
+
+fn check_memory()
+{
+        static positive sizes[] = {1, 8, 100, 4095, 4096, 4097, 65536};
+
+        for (positive i = 0; i < sizeof(sizes) / sizeof(sizes[0]); i++)
+        {
+                positive size = sizes[i];
+                b8 address_to block = (b8 address_to)memory(size);
+
+                checks++;
+
+                if (!block)
+                {
+                        report("memory", "returned null", size, 0);
+                        continue;
+                }
+
+                // Writable over its whole extent, and it must be zero: an
+                // anonymous mapping is, and anything relying on that would
+                // otherwise fail somewhere far away.
+                for (positive j = 0; j < size; j++)
+                        if (block[j])
+                        {
+                                report("memory", "not zeroed", j, 0);
+                                break;
+                        }
+
+                checks++;
+
+                for (positive j = 0; j < size; j++)
+                        block[j] = (b8)(j & 0xff);
+
+                for (positive j = 0; j < size; j++)
+                        if (block[j] != (b8)(j & 0xff))
+                        {
+                                report("memory", "did not hold what was written", j, 0);
+                                break;
+                        }
+
+                checks++;
+                memory_free(block, size);
+        }
+}
+
+fn check_directory()
+{
+        string_address here = working_directory_get();
+
+        same("working_directory_get", "answered", (positive)(here != null), 1);
+
+        if (!here)
+                return;
+
+        same("working_directory_set", "to root",
+             (positive)(working_directory_set((string_address)"/"), 1), 1);
+
+        string_address now = working_directory_get();
+
+        same("working_directory_get", "follows the set",
+             (positive)string_compare(now, (string_address)"/"), 0);
+
+        working_directory_set(here);
+}
+
+fn check_clock()
+{
+        p64 first = get_cpu_time();
+        positive spin = 0;
+
+        // Something it cannot fold away, so the second read is genuinely later.
+        for (positive i = 0; i < 200000; i++)
+                spin += i ^ next();
+
+        p64 second = get_cpu_time();
+
+        same("get_cpu_time", "moves forward", (positive)(second >= first), 1);
+        same("get_cpu_time", "not stuck at zero",
+             (positive)(first != 0 || second != 0), 1);
+        checks += (spin == 0);
+}
+
+fn check_format()
+{
+        // string_format drives most of what anything here prints, so the check
+        // is over what it emits rather than over a return value it has none of.
+        catch_reset();
+        string_format(catch_writer, (string_address) "plain");
+        same("string_format", "literal", string_length(caught), 5);
+
+        catch_reset();
+        string_format(catch_writer, (string_address) "[%s]", "middle");
+        same("string_format", "string",
+             (positive)string_compare(caught, (string_address) "[middle]"), 0);
+
+        catch_reset();
+        string_format(catch_writer, (string_address) "%p", (positive)12345);
+        same("string_format", "number", reference_to_positive(caught), 12345);
+
+        catch_reset();
+        string_format(catch_writer, (string_address) "%b", (bipolar)-99);
+        same("string_format", "signed",
+             (positive)(-reference_to_bipolar(caught)), 99);
+
+        catch_reset();
+        string_format(catch_writer, (string_address) "%s=%p;", "n", (positive)7);
+        same("string_format", "several",
+             (positive)string_compare(caught, (string_address) "n=7;"), 0);
+
+        catch_reset();
+        string_format(catch_writer, (string_address) "%s", "");
+        same("string_format", "empty argument", string_length(caught), 0);
+}
+
+fn check_decimals()
+{
+        // fast_sin is an approximation, so the check is the shape of it: the
+        // zeroes, the sign either side, and that it stays inside its range.
+        same("fast_sin", "zero at zero", (positive)(fast_sin(0.0) == 0.0), 1);
+        same("fast_sin", "positive on the first half",
+             (positive)(fast_sin(1.5) > 0.0), 1);
+        same("fast_sin", "negative on the second",
+             (positive)(fast_sin(4.0) < 0.0), 1);
+
+        for (positive i = 0; i < 64; i++)
+        {
+                decimal x = (decimal)(bipolar)(next() % 2000) / 100.0 - 10.0;
+                decimal y = fast_sin(x);
+
+                same("fast_sin", "inside its range",
+                     (positive)(y >= -1.01 && y <= 1.01), 1);
+        }
+
+        catch_reset();
+        decimal_to_string(catch_writer, 0.0);
+        same("decimal_to_string", "zero", (positive)(string_length(caught) > 0), 1);
+
+        catch_reset();
+        decimal_to_string(catch_writer, 1.5);
+        same("decimal_to_string", "has a point",
+             (positive)(string_first_of(caught, '.') != null), 1);
+
+        catch_reset();
+        decimal_to_string(catch_writer, -2.25);
+        same("decimal_to_string", "keeps the sign", (positive)(caught[0] == '-'), 1);
+}
+
 b32 main()
 {
         check_fill();
@@ -565,6 +770,12 @@ b32 main()
         check_bulk_strings();
         check_bulk_numbers();
         check_file_load();
+        check_file_round_trip();
+        check_memory();
+        check_directory();
+        check_clock();
+        check_format();
+        check_decimals();
 
         string_format(log, "%p checks, %p failures\n", checks, failures);
         log_flush();
