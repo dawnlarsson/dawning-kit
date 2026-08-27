@@ -2085,41 +2085,211 @@ static fn text_banner(b32 which, bool first)
 /*
         cat.
 
-        No line splitting and no interpretation: what came in goes out, block
-        for block. Every other tool here reads lines because it has to look at
-        them; this one only has to move them, so it moves as much as the
-        reader will hand over at a time.
+        Byte for byte when it is only moving a file, which is what it is asked
+        to do nearly every time: no line splitting, no scanning, one buffer out
+        for one buffer in. The flags all need to look at the bytes, so asking
+        for any of them turns on the slower walk and none of them costs
+        anything when they are not asked for.
 */
+#define CAT_NUMBER 1     // -n, every line
+#define CAT_NUMBER_FULL 2 // -b, only the ones with something on them
+#define CAT_ENDS 4       // -E
+#define CAT_TABS 8       // -T
+#define CAT_SHOW 16      // -v
+#define CAT_SQUEEZE 32   // -s
+
+static positive cat_flags;
+static positive cat_line_number;
+static bool cat_blank_before;
+static bool cat_at_line_start;
+
+// A byte as -v spells it: control characters as ^X, the high half as M- and
+// then the same rule again. Tab and newline are only touched by -T and by
+// nothing, which is why they are not here.
+static fn cat_visible(p8 value)
+{
+        if (value >= 128)
+        {
+                text_put_string((string_address) "M-");
+                value -= 128;
+        }
+
+        if (value == 127)
+        {
+                text_put_string((string_address) "^?");
+                return;
+        }
+
+        if (value < 32)
+        {
+                text_put_character('^');
+                text_put_character((p8)(value + 64));
+                return;
+        }
+
+        text_put_character(value);
+}
+
+static fn cat_number()
+{
+        p8 digits[24];
+        positive at = sizeof(digits);
+        positive value = cat_line_number;
+
+        if (!value)
+                digits[--at] = '0';
+
+        while (value)
+        {
+                digits[--at] = (p8)('0' + value % 10);
+                value /= 10;
+            }
+
+        // Six wide and right aligned, then a tab, which is what GNU does and
+        // what anything reading the output will expect.
+        for (positive pad = sizeof(digits) - at; pad < 6; pad++)
+                text_put_character(' ');
+
+        text_put(digits + at, sizeof(digits) - at);
+        text_put_character('\t');
+
+        cat_line_number++;
+}
+
+static fn cat_plain()
+{
+        while (text_fill())
+        {
+                text_put(text_input.buffer + text_input.position,
+                         text_input.filled - text_input.position);
+                text_input.position = text_input.filled;
+        }
+}
+
+static fn cat_walked()
+{
+        while (text_fill())
+        {
+                while (text_input.position < text_input.filled)
+                {
+                        p8 value = text_input.buffer[text_input.position++];
+
+                        if (cat_at_line_start)
+                        {
+                                bool blank = value == '\n';
+
+                                // -s: any run of blank lines becomes one.
+                                if ((cat_flags & CAT_SQUEEZE) && blank &&
+                                    cat_blank_before)
+                                        continue;
+
+                                cat_blank_before = blank;
+
+                                if ((cat_flags & CAT_NUMBER_FULL) ? !blank
+                                                                  : (cat_flags &
+                                                                     CAT_NUMBER))
+                                        cat_number();
+
+                                cat_at_line_start = false;
+                        }
+
+                        if (value == '\n')
+                        {
+                                if (cat_flags & CAT_ENDS)
+                                        text_put_character('$');
+
+                                text_put_character('\n');
+                                cat_at_line_start = true;
+                                continue;
+                        }
+
+                        if (value == '\t')
+                        {
+                                if (cat_flags & CAT_TABS)
+                                        text_put_string((string_address) "^I");
+                                else
+                                        text_put_character('\t');
+
+                                continue;
+                        }
+
+                        if (cat_flags & CAT_SHOW)
+                        {
+                                cat_visible(value);
+                                continue;
+                        }
+
+                        text_put_character(value);
+                }
+        }
+}
+
 static b32 text_cat()
 {
+        b32 first = 1;
         b32 inputs = 0;
 
         text_begin("cat");
 
-        for (b32 i = 1; i < text_argument_count; i++)
+        cat_flags = 0;
+        cat_line_number = 1;
+        cat_blank_before = false;
+        cat_at_line_start = true;
+
+        while (first < text_argument_count)
         {
-                string_address argument = text_argument(i);
+                string_address argument = text_argument(first);
+                string_address letter;
 
-                // Only "-" is a name here. cat takes flags nothing in a script
-                // relies on, and reading one as a file is worse than ignoring
-                // it would be.
-                if (argument[0] == '-' && argument[1])
-                        continue;
+                if (argument[0] != '-' || !argument[1])
+                        break;
 
-                inputs++;
+                if (argument[1] == '-' && !argument[2])
+                {
+                        first++;
+                        break;
+                }
+
+                for (letter = argument + 1; string_get(letter); letter++)
+                        switch (string_get(letter))
+                        {
+                        case 'n': cat_flags |= CAT_NUMBER; break;
+                        case 'b': cat_flags |= CAT_NUMBER_FULL; break;
+                        case 'E': cat_flags |= CAT_ENDS; break;
+                        case 'T': cat_flags |= CAT_TABS; break;
+                        case 'v': cat_flags |= CAT_SHOW; break;
+                        case 's': cat_flags |= CAT_SQUEEZE; break;
+                        case 'e': cat_flags |= CAT_SHOW | CAT_ENDS; break;
+                        case 't': cat_flags |= CAT_SHOW | CAT_TABS; break;
+                        case 'A':
+                                cat_flags |= CAT_SHOW | CAT_ENDS | CAT_TABS;
+                                break;
+                        // Unbuffered, which this always is.
+                        case 'u': break;
+                        default:
+                        {
+                                p8 named[3] = {'-', string_get(letter), 0};
+
+                                text_error(named, "invalid option");
+                                text_status = 1;
+                                return 1;
+                        }
+                        }
+
+                first++;
         }
+
+        // -b wins over -n, as it does everywhere else.
+        if (cat_flags & CAT_NUMBER_FULL)
+                cat_flags &= ~(positive)CAT_NUMBER;
+
+        for (b32 i = first; i < text_argument_count; i++)
+                inputs++;
 
         if (!inputs)
         {
                 if (text_open(null))
-                {
-                        while (text_fill())
-                        {
-                                text_put(text_input.buffer + text_input.position,
-                                         text_input.filled - text_input.position);
-                                text_input.position = text_input.filled;
-                        }
-                }
+                        cat_flags ? cat_walked() : cat_plain();
 
                 text_close();
                 text_flush();
@@ -2127,23 +2297,12 @@ static b32 text_cat()
                 return text_status;
         }
 
-        for (b32 i = 1; i < text_argument_count; i++)
+        for (b32 i = first; i < text_argument_count; i++)
         {
-                string_address argument = text_argument(i);
-
-                if (argument[0] == '-' && argument[1])
+                if (!text_open(text_argument(i)))
                         continue;
 
-                if (!text_open(argument))
-                        continue;
-
-                while (text_fill())
-                {
-                        text_put(text_input.buffer + text_input.position,
-                                 text_input.filled - text_input.position);
-                        text_input.position = text_input.filled;
-                }
-
+                cat_flags ? cat_walked() : cat_plain();
                 text_close();
         }
 

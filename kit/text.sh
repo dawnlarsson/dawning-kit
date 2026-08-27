@@ -513,4 +513,19 @@ compare 'fold two'       fold -  -w 6 "$work/a" "$work/s"
 compare 'tail empty mix' tail -  -n 2 "$work/empty" "$work/s"
 compare 'sort empty mix' sort -  "$work/empty" "$work/s"
 
+# cat, which for most of its life is a copy and for the rest of it is a walk.
+compare 'cat'            cat a
+compare 'cat number'     cat a   -n
+compare 'cat number full' cat s  -b
+compare 'cat ends'       cat a   -E
+compare 'cat tabs'       cat d   -T
+compare 'cat all'        cat d   -A
+compare 'cat squeeze'    cat s   -s
+compare 'cat number squeeze' cat s -ns
+compare 'cat show ends'  cat a   -e
+compare 'cat two'        cat -   "$work/a" "$work/b"
+compare 'cat missing'    cat -   "$work/nosuch"
+compare 'cat empty'      cat -   "$work/empty"
+compare 'cat bad option' cat -   -Z "$work/a"
+
 printf '\n  %s of %s\n' "$pass" "$((pass + fail))"
