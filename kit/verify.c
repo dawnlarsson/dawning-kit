@@ -498,6 +498,64 @@ fn check_bulk_numbers()
         }
 }
 
+/*
+        file_load, which until now could not succeed.
+
+        Its mmap flags were open() bits, so the kernel refused every mapping
+        and the success path had never once run. This writes a file, loads it,
+        and reads the bytes back through the mapping -- so the fix is held
+        rather than merely applied.
+*/
+fn check_file_load()
+{
+        static p8 body[3000];
+        static file subject;
+        b8 address_to loaded;
+
+        for (positive i = 0; i < sizeof(body); i++)
+                body[i] = (b8)(next() & 0xff);
+
+        b32 made = system_call_4(syscall(openat), AT_FDCWD,
+                                 (positive) "/tmp/moonwater_verify_load",
+                                 FILE_CREATE | FILE_WRITE | FILE_TRUNCATE, 0644);
+
+        checks++;
+
+        if (made < 0)
+        {
+                report("file_load", "could not make a file", (positive)made, 0);
+                return;
+        }
+
+        system_call_3(syscall(write), made, (positive)body, sizeof(body));
+        system_call_1(syscall(close), made);
+
+        file_new(address_of subject, (string_address) "/tmp/moonwater_verify_load",
+                 FILE_READ);
+
+        same("file_load", "opened", (positive)file_valid(address_of subject), 1);
+        same("file_load", "size", subject.status.size, sizeof(body));
+
+        loaded = (b8 address_to)file_load(address_of subject);
+
+        checks++;
+
+        if (!loaded)
+        {
+                report("file_load", "returned null", 0, 1);
+                file_close(address_of subject);
+                return;
+        }
+
+        same_bytes("file_load", "contents", loaded, body, sizeof(body));
+        same("file_load", "already loaded returns the same",
+             (positive)file_load(address_of subject), (positive)loaded);
+
+        file_close(address_of subject);
+        system_call_3(syscall(unlinkat), AT_FDCWD,
+                      (positive) "/tmp/moonwater_verify_load", 0);
+}
+
 b32 main()
 {
         check_fill();
@@ -506,6 +564,7 @@ b32 main()
         check_strings();
         check_bulk_strings();
         check_bulk_numbers();
+        check_file_load();
 
         string_format(log, "%p checks, %p failures\n", checks, failures);
         log_flush();

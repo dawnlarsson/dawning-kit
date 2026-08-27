@@ -5943,12 +5943,27 @@ char address_to strrchr(char address_to source, int character)
 #define FILE_CREATE 0100
 #define FILE_TRUNCATE 0200
 
-#define FILE_PROTECT_READ 0400
-#define FILE_PROTECT_WRITE 0200
+/*
+        mmap's own numbers, which these were not.
 
-#define FILE_MAP_PRIVATE 01000
-#define FILE_MAP_SHARED 02000
-#define FILE_MAP_ANONYMOUS 04000
+        They had been given the octal values that sit beside them in the open
+        flags above -- 0400 and 01000 and so on -- so every mapping was asked
+        for with a protection of 384 and flags of 2560, and the kernel refused
+        every one: EBADF on x86_64, EINVAL on arm64 and riscv64. file_load
+        could not succeed on any machine and its whole success path was
+        unreachable.
+
+        The same on all three: asm-generic/mman-common.h, and no architecture
+        here overrides it.
+*/
+#define FILE_PROTECT_NONE 0
+#define FILE_PROTECT_READ 1
+#define FILE_PROTECT_WRITE 2
+#define FILE_PROTECT_EXECUTE 4
+
+#define FILE_MAP_SHARED 1
+#define FILE_MAP_PRIVATE 2
+#define FILE_MAP_ANONYMOUS 0x20
 
 #define FILE_SEEK_SET 0
 #define FILE_SEEK_CUR 1
@@ -6156,8 +6171,8 @@ __asm__(
     "        and     $-4096, %r12            # whole pages, the same wrap the C had\n"
     "        xor     %edi, %edi\n"
     "        mov     %r12, %rsi\n"
-    "        mov     $384, %edx              # FILE_PROTECT_READ | FILE_PROTECT_WRITE\n"
-    "        mov     $2560, %r10d            # FILE_MAP_PRIVATE | FILE_MAP_ANONYMOUS\n"
+    "        mov     $3, %edx                # FILE_PROTECT_READ | FILE_PROTECT_WRITE\n"
+    "        mov     $34, %r10d              # FILE_MAP_PRIVATE | FILE_MAP_ANONYMOUS\n"
     "        mov     $-1, %r8\n"
     "        xor     %r9d, %r9d\n"
     "        mov     $9, %eax                # mmap\n"
@@ -6304,8 +6319,8 @@ __asm__(
     "        and     x20, x20, #0xfffffffffffff000\n"
     "        mov     x0, #0\n"
     "        mov     x1, x20\n"
-    "        mov     x2, #384                // FILE_PROTECT_READ | FILE_PROTECT_WRITE\n"
-    "        mov     x3, #2560               // FILE_MAP_PRIVATE | FILE_MAP_ANONYMOUS\n"
+    "        mov     x2, #3                  // FILE_PROTECT_READ | FILE_PROTECT_WRITE\n"
+    "        mov     x3, #34                 // FILE_MAP_PRIVATE | FILE_MAP_ANONYMOUS\n"
     "        mov     x4, #-1\n"
     "        mov     x5, #0\n"
     "        mov     x8, #222                // mmap\n"
@@ -6443,8 +6458,8 @@ __asm__(
     "        and     s1, s1, t1              # whole pages\n"
     "        li      a0, 0\n"
     "        mv      a1, s1\n"
-    "        li      a2, 384                 # FILE_PROTECT_READ | FILE_PROTECT_WRITE\n"
-    "        li      a3, 2560                # FILE_MAP_PRIVATE | FILE_MAP_ANONYMOUS\n"
+    "        li      a2, 3                   # FILE_PROTECT_READ | FILE_PROTECT_WRITE\n"
+    "        li      a3, 34                  # FILE_MAP_PRIVATE | FILE_MAP_ANONYMOUS\n"
     "        li      a4, -1\n"
     "        li      a5, 0\n"
     "        li      a7, 222                 # mmap\n"
