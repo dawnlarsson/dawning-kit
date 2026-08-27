@@ -29,47 +29,66 @@ static p8 out[1 << 22];
 static positive sizes[] = {64, 4096, 65536, 1048576};
 
 /*
-        The floor: every byte read, at the widest load the machine has, and
-        nothing computed with any of it.
+        The floor, in assembly, for the same reason the routines are.
 
-        Stepping a cache line at a time was the first attempt and it is the
-        wrong ceiling: it moves the same traffic but issues a sixty fourth of
-        the loads, so in cache it beats anything that has to look at every
-        byte, and every routine measured against it read as slack that was not
-        there. A routine that examines each byte cannot be compared against a
-        loop that skips sixty three of them.
+        Two earlier versions of this were wrong in opposite directions and both
+        looked plausible. Stepping a cache line at a time moves the same
+        traffic but issues a sixty fourth of the loads, so in cache it beats
+        anything that must look at every byte and every routine read as slack
+        that was not there. Writing it in C with an asm body and a memory
+        clobber made the compiler reload each turn, so the floor measured
+        itself and every routine came out above it.
+
+        A ceiling has to be built the way the thing under it is built. This
+        reads every byte at the widest load the machine has, accumulates into
+        registers nothing ever looks at, and is written out by hand so no
+        compiler decides how to schedule it.
 */
-NOT_INLINED positive floor_one(p8 address_to p, positive n)
-{
-        positive s = 0;
-        positive i = 0;
-
+__asm__(
+    ".text\n"
+    ASM_FUNC(floor_read)
 #if X64
-        if (cpu_has_avx2)
-        {
-                for (; i + 128 <= n; i += 128)
-                        ir("vpaddb (%0), %%ymm0, %%ymm0\n"
-                           "vpaddb 32(%0), %%ymm0, %%ymm0\n"
-                           "vpaddb 64(%0), %%ymm0, %%ymm0\n"
-                           "vpaddb 96(%0), %%ymm0, %%ymm0\n"
-                           :: "r"(p + i) : "ymm0");
-        }
+    "xor %eax, %eax\n   test %rsi, %rsi\n   jz 9f\n"
+    "cmpb $0, cpu_has_avx2(%rip)\n   je 5f\n"
+    "vpxor %ymm0, %ymm0, %ymm0\n   vpxor %ymm1, %ymm1, %ymm1\n"
+    "vpxor %ymm2, %ymm2, %ymm2\n   vpxor %ymm3, %ymm3, %ymm3\n"
+    "1:  cmp $128, %rsi\n   jb 4f\n"
+    "vpaddb (%rdi), %ymm0, %ymm0\n   vpaddb 32(%rdi), %ymm1, %ymm1\n"
+    "vpaddb 64(%rdi), %ymm2, %ymm2\n   vpaddb 96(%rdi), %ymm3, %ymm3\n"
+    "add $128, %rdi\n   sub $128, %rsi\n   jmp 1b\n"
+    "4:  vzeroupper\n"
+    "5:  test %rsi, %rsi\n   jz 9f\n"
+    "6:  add (%rdi), %rax\n   add $8, %rdi\n   sub $8, %rsi\n   cmp $8, %rsi\n   jae 6b\n"
+    "9:  \n"
 #elif ARM64
-        for (; i + 64 <= n; i += 64)
-                ir("ldp q0, q1, [%0]\n   ldp q2, q3, [%0, #32]\n"
-                   :: "r"(p + i) : "v0", "v1", "v2", "v3");
+    "mov x2, #0\n   cbz x1, 9f\n"
+    "1:  cmp x1, #64\n   b.lo 5f\n"
+    "ldp q0, q1, [x0]\n   ldp q2, q3, [x0, #32]\n"
+    "add x0, x0, #64\n   sub x1, x1, #64\n   b 1b\n"
+    "5:  cbz x1, 9f\n"
+    "6:  ldr x3, [x0]\n   add x2, x2, x3\n   add x0, x0, #8\n"
+    "subs x1, x1, #8\n   b.hi 6b\n"
+    "9:  mov x0, x2\n"
+#else
+    "li a2, 0\n   beqz a1, 9f\n"
+    "1:  li a3, 8\n   bltu a1, a3, 9f\n"
+    "ld a4, 0(a0)\n   add a2, a2, a4\n   addi a0, a0, 8\n   addi a1, a1, -8\n   j 1b\n"
+    "9:  mv a0, a2\n"
 #endif
-        // a clobber of "memory" on the loads above would make the compiler
-        // reload everything each turn and the floor would measure that
-        // instead of the machine
-        for (; i + 8 <= n; i += 8) s += address_to(p64 address_to)(p + i);
-        for (; i < n; i++) s += p[i];
-        return s;
+    ASM_RET
+    ASM_END(floor_read)
+);
+
+positive floor_read(address_any block, positive size);
+
+static positive floor_one(p8 address_to p, positive n)
+{
+        return floor_read(p, n);
 }
 
-NOT_INLINED positive floor_two(p8 address_to a, p8 address_to b, positive n)
+static positive floor_two(p8 address_to a, p8 address_to b, positive n)
 {
-        return floor_one(a, n) + floor_one(b, n);
+        return floor_read(a, n) + floor_read(b, n);
 }
 
 static volatile positive sink;
