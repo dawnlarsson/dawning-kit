@@ -640,10 +640,7 @@ static b32 exec_dispatch()
         }
 
         if (shell_builtin(shell_arguments()))
-        {
-                shell_status = 0;
-                return 0;
-        }
+                return shell_status;
 
         {
                 static p8 found[768];

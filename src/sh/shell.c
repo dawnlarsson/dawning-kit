@@ -16,10 +16,6 @@
 p8 shell_buffer[MAX_INPUT];
 static b32 shell_is_interactive;
 
-// What the last command answered, which is what $? reads and what && and ||
-// decide on.
-b32 shell_status;
-
 writer shell_output = log;
 positive shell_output_file;
 

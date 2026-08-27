@@ -4,6 +4,68 @@ const positive page_size = 4096;
 
 bool shell_styles = true;
 
+// The status the last thing to run answered with, which $? reads.
+b32 shell_status;
+
+fn shell_answer(b32 value)
+{
+        shell_status = value;
+}
+
+/*
+        The words as the shell tokenised them.
+
+        A builtin used to be handed the rest of the line joined back into one
+        string, which loses exactly the quoting that printf and test live on.
+        These are the arrays shell.c fills. The type is left incomplete so that
+        this file makes no claim about how many words fit in them.
+*/
+string_address shell_argv[];
+positive shell_argc;
+
+// eval runs a line, and what runs lines sits above this file. Weak, because
+// programs/edit.c includes this file with no shell around it.
+fn process(string_address line) __attribute__((weak));
+
+b32 shell_find_in_path(string_address name, p8 address_to into, positive room);
+bipolar shell_signed(string_address input, bool address_to good);
+
+/*
+        The set flags, remembered but not obeyed.
+
+        Stopping on an error, tracing a command before it runs, refusing a name
+        that was never set: all of that happens where commands are run. This is
+        only where the letters are kept so that code there can ask.
+*/
+positive shell_options;
+
+/*
+        Names an assignment may no longer touch. Held apart from the values so
+        that readonly can be spoken about a name that has none yet.
+*/
+#define READONLY_MAX 16
+#define READONLY_STORAGE 512
+
+static p8 readonly_storage[READONLY_STORAGE];
+static positive readonly_used;
+static string_address readonly_name[READONLY_MAX];
+static positive readonly_count;
+
+bool env_readonly(const_string name)
+{
+        positive index = 0;
+
+        while (index < readonly_count)
+        {
+                if (!string_compare(readonly_name[index], (string_address)name))
+                        return true;
+
+                index++;
+        }
+
+        return false;
+}
+
 #define ENV_MAX_ENTRIES 64
 #define ENV_STORAGE_SIZE 8192
 
@@ -75,6 +137,9 @@ string_address env_get(const_string name)
 bool env_set(const_string name, const_string value)
 {
         if (!name || !value)
+                return false;
+
+        if (env_readonly(name))
                 return false;
 
         positive name_len = string_length(name);
@@ -372,16 +437,19 @@ fn shell_cat(writer write, string_address input)
 }
 
 // TODOs:
-// - empty buffer should go to home directory & handle ~
-// - "cd -" aka cd $OLDPWD
+// - "cd -" aka cd $OLDPWD, and handle ~
 fn shell_cd(writer write, string_address input)
 {
+        if (input == null)
+                input = env_get("HOME");
+
         if (input == null)
                 input = "/";
 
         if (!system_call_1(syscall(chdir), (positive)input))
-                return;
+                return shell_answer(0);
 
+        shell_answer(1);
         string_format(write, "cd: No such directory: %s\n", input);
 }
 
@@ -594,34 +662,29 @@ fn shell_echo(writer write, string_address input)
 
 fn shell_exec(writer write, string_address input)
 {
-        if (input == null)
-                return write(str("exec: missing operand\n"));
+        p8 found[768];
 
-        // The old argv was a single word with no terminator, and execve was
-        // called without an environment at all, so the new program read
-        // whatever followed the array on the stack as its argv and envp.
-        string_address argv[16];
-        positive count = 0;
-        string_address step = input;
+        // With nothing to run, exec is only there for the redirections that
+        // were already applied to get here.
+        if (shell_argc < 2)
+                return shell_answer(0);
 
-        while (step && count < 15)
+        if (!shell_find_in_path(shell_argv[1], found, sizeof(found)))
         {
-                string_address next = string_cut(step, ' ');
-
-                argv[count++] = step;
-                step = next;
+                shell_answer(127);
+                return string_format(write, "exec: %s: not found\n", shell_argv[1]);
         }
-
-        argv[count] = null;
 
         log_flush();
 
-        bipolar result = system_call_3(syscall(execve), (positive)input,
-                                       (positive)argv, (positive)shell_envp);
+        // From argv[1] on, so the new program is named by what it was asked
+        // for and not by the word "exec".
+        system_call_3(syscall(execve), (positive)found,
+                      (positive)(shell_argv + 1), (positive)shell_envp);
 
-        string_format(write, "exec: Cannot run '%s': %b\n", input, result);
+        shell_answer(126);
+        string_format(write, "exec: %s: cannot run\n", shell_argv[1]);
 }
-
 fn shell_style(writer write, positive mode)
 {
         if (!shell_styles)
@@ -1245,10 +1308,11 @@ fn shell_pwd(writer write, string_address input)
 
 fn shell_exit(writer write, string_address input)
 {
-        bipolar exit_code = 0;
+        bipolar exit_code = shell_status;
+        bool good;
 
-        if (input != null)
-                exit_code = string_to_bipolar(input);
+        if (shell_argc > 1)
+                exit_code = shell_signed(shell_argv[1], address_of good) & 0xff;
 
         log_flush();
 
@@ -1377,6 +1441,1935 @@ fn shell_poweroff(writer write, string_address input)
         shell_stop(write, REBOOT_POWER_OFF);
 }
 
+
+/*
+        The POSIX builtins.
+
+        These read shell_argv rather than the joined line the older commands in
+        this file are handed: printf, test and set all turn on knowing where
+        one word ended and the next began, which joining throws away.
+*/
+
+#define ACCESS_READ 4
+#define ACCESS_WRITE 2
+
+// The shell's own ioctl, spelled here because shell.c names it after this file
+// has already been read.
+#define BUILTIN_TCGETS 0x5401u
+
+bool word_is(string_address word, string_address text)
+{
+        return word && !string_compare(word, text);
+}
+
+fn env_unset(string_address name)
+{
+        positive length = string_length(name);
+        positive index = 0;
+
+        while (shell_envp[index])
+        {
+                string_address entry = shell_envp[index];
+                string_address mark = string_first_of(entry, '=');
+
+                if (mark && (positive)(mark - entry) == length)
+                {
+                        positive at = 0;
+
+                        while (at < length && string_get(entry + at) == string_get(name + at))
+                                at++;
+
+                        if (at == length)
+                        {
+                                while (shell_envp[index + 1])
+                                {
+                                        shell_envp[index] = shell_envp[index + 1];
+                                        index++;
+                                }
+
+                                shell_envp[index] = null;
+                                return;
+                        }
+                }
+
+                index++;
+        }
+}
+
+/*
+        Hangs an already built "name=value" on the environment list.
+
+        env_set copies into its own block, which is the wrong shape for the
+        positional parameters: those are rewritten wholesale every time and
+        would eat the block one copy at a time. These keep their own storage
+        and only the pointer is handed over.
+*/
+bool env_place(string_address entry)
+{
+        string_address mark = string_first_of(entry, '=');
+        positive length;
+        positive index = 0;
+
+        if (!mark)
+                return false;
+
+        length = mark - entry;
+
+        while (shell_envp[index])
+        {
+                string_address other = shell_envp[index];
+                string_address at_other = string_first_of(other, '=');
+
+                if (at_other && (positive)(at_other - other) == length)
+                {
+                        positive at = 0;
+
+                        while (at < length && string_get(other + at) == string_get(entry + at))
+                                at++;
+
+                        if (at == length)
+                        {
+                                shell_envp[index] = entry;
+                                return true;
+                        }
+                }
+
+                index++;
+        }
+
+        if (index >= ENV_MAX_ENTRIES)
+                return false;
+
+        shell_envp[index] = entry;
+        shell_envp[index + 1] = null;
+
+        return true;
+}
+
+positive shell_digits(p8 address_to into, positive value)
+{
+        p8 digits[24];
+        positive length = 0;
+        positive at = 0;
+
+        if (value == 0)
+                digits[length++] = '0';
+
+        while (value && length < sizeof(digits))
+        {
+                digits[length++] = '0' + (value % 10);
+                value /= 10;
+        }
+
+        while (length)
+                into[at++] = digits[--length];
+
+        into[at] = end;
+
+        return at;
+}
+
+fn env_set_number(string_address name, positive value)
+{
+        p8 text[24];
+
+        shell_digits(text, value);
+        env_set(name, text);
+}
+
+// Forwards, and signed. string_to_bipolar reads from the end of the string,
+// which answers 5 for "0.5" and 0 for anything with a space after it.
+bipolar shell_signed(string_address input, bool address_to good)
+{
+        bipolar value = 0;
+        bool negative = false;
+        bool any = false;
+
+        address_to good = false;
+
+        if (!input)
+                return 0;
+
+        while (string_is(input, ' ') || string_is(input, '\t'))
+                input++;
+
+        if (string_is(input, '-') || string_is(input, '+'))
+        {
+                negative = string_is(input, '-');
+                input++;
+        }
+
+        while (string_get(input) >= '0' && string_get(input) <= '9')
+        {
+                value = value * 10 + (string_get(input++) - '0');
+                any = true;
+        }
+
+        if (!any || string_get(input))
+                return 0;
+
+        address_to good = true;
+
+        return negative ? -value : value;
+}
+
+/*
+        The positional parameters.
+
+        They are mirrored into the environment because that is the only place
+        the expander looks a name up, and $1 is a name to it. Their storage is
+        rebuilt from the front on every set, so a script that sets them inside
+        a loop does not eat the environment block one copy at a time.
+*/
+#define POSITIONAL_MAX 32
+#define POSITIONAL_STORAGE 2048
+
+static p8 positional_storage[POSITIONAL_STORAGE];
+static p8 positional_scratch[POSITIONAL_STORAGE];
+static string_address positional_value[POSITIONAL_MAX];
+static positive positional_count;
+
+fn positional_publish(string_address address_to values, positive count)
+{
+        positive previous = positional_count;
+        positive used = 0;
+        positive index = 0;
+
+        if (count > POSITIONAL_MAX)
+                count = POSITIONAL_MAX;
+
+        while (index < count)
+        {
+                string_address entry = positional_storage + used;
+                positive length = string_length(values[index]);
+                positive name = shell_digits(entry, index + 1);
+
+                if (used + name + 1 + length + 1 > POSITIONAL_STORAGE)
+                        break;
+
+                entry[name] = '=';
+                memory_copy(entry + name + 1, values[index], length);
+                entry[name + 1 + length] = end;
+
+                positional_value[index] = entry + name + 1;
+                used += name + 1 + length + 1;
+
+                env_place(entry);
+                index++;
+        }
+
+        positional_count = index;
+
+        while (previous > positional_count)
+        {
+                p8 name[24];
+
+                shell_digits(name, previous);
+                env_unset(name);
+                previous--;
+        }
+}
+
+fn shell_set(writer write, string_address input)
+{
+        positive index = 1;
+        bool operands = false;
+
+        if (shell_argc < 2)
+        {
+                positive at = 0;
+
+                while (shell_envp[at])
+                        string_format(write, "%s\n", shell_envp[at++]);
+
+                return shell_answer(0);
+        }
+
+        while (index < shell_argc)
+        {
+                string_address word = shell_argv[index];
+
+                if (word_is(word, "--"))
+                {
+                        operands = true;
+                        index++;
+                        break;
+                }
+
+                if ((string_is(word, '-') || string_is(word, '+')) &&
+                    string_not(word + 1, end))
+                {
+                        bool on = string_is(word, '-');
+                        string_address letter = word + 1;
+
+                        while (string_get(letter))
+                        {
+                                p8 value = string_get(letter);
+
+                                if (value >= 'a' && value <= 'z')
+                                {
+                                        if (on)
+                                                shell_options |= SHELL_FLAG(value);
+                                        else
+                                                shell_options &= ~SHELL_FLAG(value);
+                                }
+
+                                letter++;
+                        }
+
+                        index++;
+                        continue;
+                }
+
+                operands = true;
+                break;
+        }
+
+        if (operands)
+        {
+                string_address values[POSITIONAL_MAX];
+                positive count = 0;
+
+                while (index < shell_argc && count < POSITIONAL_MAX)
+                        values[count++] = shell_argv[index++];
+
+                positional_publish(values, count);
+        }
+
+        shell_answer(0);
+}
+
+fn shell_shift(writer write, string_address input)
+{
+        positive amount = 1;
+        string_address values[POSITIONAL_MAX];
+        positive used = 0;
+        positive count = 0;
+        positive index;
+
+        if (shell_argc > 1)
+                amount = shell_number(shell_argv[1]);
+
+        if (amount > positional_count)
+                return shell_answer(1);
+
+        // Through a second buffer: publishing rewrites the storage these words
+        // are still sitting in.
+        for (index = amount; index < positional_count; index++)
+        {
+                positive length = string_length(positional_value[index]);
+
+                if (used + length + 1 > POSITIONAL_STORAGE)
+                        break;
+
+                memory_copy(positional_scratch + used, positional_value[index], length + 1);
+                values[count++] = positional_scratch + used;
+                used += length + 1;
+        }
+
+        positional_publish(values, count);
+
+        shell_answer(0);
+}
+
+fn shell_unset(writer write, string_address input)
+{
+        positive index = 1;
+
+        while (index < shell_argc)
+        {
+                string_address word = shell_argv[index];
+
+                if (string_is(word, '-') && string_not(word + 1, end))
+                {
+                        index++;
+                        continue;
+                }
+
+                if (env_readonly(word))
+                        return shell_answer(1);
+
+                env_unset(word);
+                index++;
+        }
+
+        shell_answer(0);
+}
+
+fn shell_readonly(writer write, string_address input)
+{
+        positive index = 1;
+
+        if (shell_argc < 2)
+        {
+                positive at = 0;
+
+                while (at < readonly_count)
+                {
+                        string_address value = env_get(readonly_name[at]);
+
+                        if (value)
+                                string_format(write, "readonly %s=%s\n", readonly_name[at], value);
+                        else
+                                string_format(write, "readonly %s\n", readonly_name[at]);
+
+                        at++;
+                }
+
+                return shell_answer(0);
+        }
+
+        while (index < shell_argc)
+        {
+                string_address word = shell_argv[index];
+                string_address mark = string_first_of(word, '=');
+                positive length = mark ? (positive)(mark - word) : string_length(word);
+
+                if (mark)
+                {
+                        p8 name[128];
+
+                        if (length < sizeof(name))
+                        {
+                                memory_copy(name, word, length);
+                                name[length] = end;
+                                env_set(name, mark + 1);
+                        }
+                }
+
+                if (readonly_count < READONLY_MAX &&
+                    readonly_used + length + 1 <= READONLY_STORAGE)
+                {
+                        string_address kept = readonly_storage + readonly_used;
+
+                        memory_copy(kept, word, length);
+                        kept[length] = end;
+                        readonly_used += length + 1;
+
+                        if (!env_readonly(kept))
+                                readonly_name[readonly_count++] = kept;
+                }
+
+                index++;
+        }
+
+        shell_answer(0);
+}
+
+/*
+        test, and the same thing spelled with brackets.
+
+        The words are read straight out of argv: an expression is words, and
+        rebuilding it from a joined line would have to guess where the quoting
+        used to be. POSIX resolves the short forms by counting words first, so
+        a binary operator in the middle wins over a unary one at the front and
+        "-f = x" compares two strings.
+*/
+
+#define TEST_SAME 1
+#define TEST_DIFFERENT 2
+#define TEST_EQUAL 3
+#define TEST_UNEQUAL 4
+#define TEST_LESS 5
+#define TEST_LESS_EQUAL 6
+#define TEST_GREATER 7
+#define TEST_GREATER_EQUAL 8
+#define TEST_NEWER 9
+#define TEST_OLDER 10
+#define TEST_SAME_FILE 11
+
+static positive test_at;
+static positive test_stop;
+static bool test_bad;
+
+bool test_facts(string_address path, file_facts address_to out, bool follow)
+{
+        return system_call_5(syscall(statx), AT_FDCWD, (positive)path,
+                             follow ? 0 : AT_SYMLINK_NOFOLLOW,
+                             STATX_BASIC, (positive)out) == 0;
+}
+
+bool test_unary(p8 op, string_address value)
+{
+        file_facts facts;
+
+        if (op == 'n')
+                return value && string_not(value, end);
+
+        if (op == 'z')
+                return !value || string_is(value, end);
+
+        if (op == 't')
+        {
+                p8 settings[64];
+                bipolar descriptor = value ? (bipolar)shell_number(value) : 1;
+
+                return system_call_3(syscall(ioctl), descriptor, BUILTIN_TCGETS,
+                                     (positive)settings) == 0;
+        }
+
+        if (op == 'r' || op == 'w' || op == 'x')
+        {
+                positive mode = op == 'r' ? ACCESS_READ
+                                          : (op == 'w' ? ACCESS_WRITE : ACCESS_EXECUTE);
+
+                return system_call_4(syscall(faccessat), AT_FDCWD, (positive)value,
+                                     mode, 0) == 0;
+        }
+
+        // The only two that are asked about the link itself; everything else
+        // follows it, which is what POSIX says and what statx does with no
+        // flags at all.
+        if (op == 'h' || op == 'L')
+        {
+                if (!test_facts(value, address_of facts, false))
+                        return false;
+
+                return (facts.mode & MODE_FORMAT) == MODE_LINK;
+        }
+
+        if (!test_facts(value, address_of facts, true))
+                return false;
+
+        if (op == 'e')
+                return true;
+
+        if (op == 'f')
+                return (facts.mode & MODE_FORMAT) == MODE_FILE;
+
+        if (op == 'd')
+                return (facts.mode & MODE_FORMAT) == MODE_DIRECTORY;
+
+        if (op == 'b')
+                return (facts.mode & MODE_FORMAT) == MODE_BLOCK;
+
+        if (op == 'c')
+                return (facts.mode & MODE_FORMAT) == MODE_CHARACTER;
+
+        if (op == 'p')
+                return (facts.mode & MODE_FORMAT) == MODE_PIPE;
+
+        if (op == 'S')
+                return (facts.mode & MODE_FORMAT) == MODE_SOCKET;
+
+        if (op == 's')
+                return facts.size > 0;
+
+        if (op == 'g')
+                return (facts.mode & 02000) != 0;
+
+        if (op == 'u')
+                return (facts.mode & 04000) != 0;
+
+        if (op == 'k')
+                return (facts.mode & 01000) != 0;
+
+        return false;
+}
+
+// stx_mtime sits at offset 112 of the kernel's statx, which is 56 bytes past
+// where file_facts stops spelling the fields out.
+b64 test_modified(file_facts address_to facts)
+{
+        b64 seconds;
+
+        memory_copy(address_of seconds, facts->remainder + 56, sizeof(seconds));
+
+        return seconds;
+}
+
+bool test_is_unary(string_address word)
+{
+        p8 letter;
+
+        if (!word || string_not(word, '-') || !string_get(word + 1) || string_get(word + 2))
+                return false;
+
+        letter = string_get(word + 1);
+
+        return letter == 'b' || letter == 'c' || letter == 'd' || letter == 'e' ||
+               letter == 'f' || letter == 'g' || letter == 'h' || letter == 'k' ||
+               letter == 'n' || letter == 'p' || letter == 'r' || letter == 's' ||
+               letter == 't' || letter == 'u' || letter == 'w' || letter == 'x' ||
+               letter == 'z' || letter == 'L' || letter == 'S';
+}
+
+positive test_is_binary(string_address word)
+{
+        if (!word)
+                return 0;
+
+        if (word_is(word, "="))
+                return TEST_SAME;
+
+        if (word_is(word, "!="))
+                return TEST_DIFFERENT;
+
+        if (word_is(word, "-eq"))
+                return TEST_EQUAL;
+
+        if (word_is(word, "-ne"))
+                return TEST_UNEQUAL;
+
+        if (word_is(word, "-lt"))
+                return TEST_LESS;
+
+        if (word_is(word, "-le"))
+                return TEST_LESS_EQUAL;
+
+        if (word_is(word, "-gt"))
+                return TEST_GREATER;
+
+        if (word_is(word, "-ge"))
+                return TEST_GREATER_EQUAL;
+
+        if (word_is(word, "-nt"))
+                return TEST_NEWER;
+
+        if (word_is(word, "-ot"))
+                return TEST_OLDER;
+
+        if (word_is(word, "-ef"))
+                return TEST_SAME_FILE;
+
+        return 0;
+}
+
+bool test_compare(positive kind, string_address left, string_address right)
+{
+        bipolar first;
+        bipolar second;
+        bool first_good;
+        bool second_good;
+
+        if (kind == TEST_SAME)
+                return !string_compare(left, right);
+
+        if (kind == TEST_DIFFERENT)
+                return string_compare(left, right) != 0;
+
+        if (kind == TEST_NEWER || kind == TEST_OLDER || kind == TEST_SAME_FILE)
+        {
+                file_facts one;
+                file_facts two;
+
+                if (!test_facts(left, address_of one, true) ||
+                    !test_facts(right, address_of two, true))
+                        return false;
+
+                if (kind == TEST_SAME_FILE)
+                        return one.inode == two.inode;
+
+                if (kind == TEST_NEWER)
+                        return test_modified(address_of one) > test_modified(address_of two);
+
+                return test_modified(address_of one) < test_modified(address_of two);
+        }
+
+        first = shell_signed(left, address_of first_good);
+        second = shell_signed(right, address_of second_good);
+
+        if (!first_good || !second_good)
+        {
+                test_bad = true;
+                return false;
+        }
+
+        if (kind == TEST_EQUAL)
+                return first == second;
+
+        if (kind == TEST_UNEQUAL)
+                return first != second;
+
+        if (kind == TEST_LESS)
+                return first < second;
+
+        if (kind == TEST_LESS_EQUAL)
+                return first <= second;
+
+        if (kind == TEST_GREATER)
+                return first > second;
+
+        return first >= second;
+}
+
+bool test_expression();
+
+bool test_primary()
+{
+        string_address word;
+
+        if (test_at >= test_stop)
+        {
+                test_bad = true;
+                return false;
+        }
+
+        word = shell_argv[test_at];
+
+        if (word_is(word, "(") && test_at + 2 <= test_stop)
+        {
+                bool value;
+
+                test_at++;
+                value = test_expression();
+
+                if (test_at < test_stop && word_is(shell_argv[test_at], ")"))
+                        test_at++;
+                else
+                        test_bad = true;
+
+                return value;
+        }
+
+        // Three words are a binary test before they are anything else.
+        if (test_at + 2 < test_stop)
+        {
+                positive kind = test_is_binary(shell_argv[test_at + 1]);
+
+                if (kind)
+                {
+                        bool value = test_compare(kind, shell_argv[test_at],
+                                                  shell_argv[test_at + 2]);
+
+                        test_at += 3;
+                        return value;
+                }
+        }
+
+        if (test_at + 1 < test_stop && test_is_unary(word))
+        {
+                bool value = test_unary(string_get(word + 1), shell_argv[test_at + 1]);
+
+                test_at += 2;
+                return value;
+        }
+
+        test_at++;
+
+        return word && string_not(word, end);
+}
+
+bool test_negation()
+{
+        if (test_at + 1 < test_stop && word_is(shell_argv[test_at], "!"))
+        {
+                test_at++;
+                return !test_negation();
+        }
+
+        return test_primary();
+}
+
+bool test_conjunction()
+{
+        bool value = test_negation();
+
+        // The right side is read whatever the left said: skipping it would
+        // leave the parser standing in the middle of the expression.
+        while (test_at < test_stop && word_is(shell_argv[test_at], "-a"))
+        {
+                bool other;
+
+                test_at++;
+                other = test_negation();
+                value = value && other;
+        }
+
+        return value;
+}
+
+bool test_expression()
+{
+        bool value = test_conjunction();
+
+        while (test_at < test_stop && word_is(shell_argv[test_at], "-o"))
+        {
+                bool other;
+
+                test_at++;
+                other = test_conjunction();
+                value = value || other;
+        }
+
+        return value;
+}
+
+fn shell_test(writer write, string_address input)
+{
+        bool value;
+
+        test_at = 1;
+        test_stop = shell_argc;
+        test_bad = false;
+
+        if (word_is(shell_argv[0], "["))
+        {
+                if (shell_argc < 2 || !word_is(shell_argv[shell_argc - 1], "]"))
+                        return shell_answer(2);
+
+                test_stop = shell_argc - 1;
+        }
+
+        if (test_at >= test_stop)
+                return shell_answer(1);
+
+        value = test_expression();
+
+        if (test_bad || test_at != test_stop)
+                return shell_answer(2);
+
+        shell_answer(value ? 0 : 1);
+}
+
+fn shell_true(writer write, string_address input)
+{
+        shell_answer(0);
+}
+
+fn shell_false(writer write, string_address input)
+{
+        shell_answer(1);
+}
+
+/*
+        printf.
+
+        Not string_format: this one has to reuse its format until the arguments
+        run out, take width and precision from the format, and read backslash
+        escapes that the shell's own quoting left alone.
+*/
+
+static positive printf_argument;
+static bool printf_took;
+static p8 printf_nothing[1];
+
+string_address printf_next()
+{
+        if (printf_argument < shell_argc)
+        {
+                printf_took = true;
+                return shell_argv[printf_argument++];
+        }
+
+        return printf_nothing;
+}
+
+positive printf_render(p8 address_to into, positive value, positive base, bool upper)
+{
+        p8 digits[64];
+        positive length = 0;
+        positive at = 0;
+
+        if (value == 0)
+                digits[length++] = '0';
+
+        while (value && length < sizeof(digits))
+        {
+                p8 digit = value % base;
+
+                digits[length++] = digit < 10 ? '0' + digit
+                                              : (upper ? 'A' : 'a') + (digit - 10);
+                value /= base;
+        }
+
+        while (length)
+                into[at++] = digits[--length];
+
+        return at;
+}
+
+fn printf_fill(writer write, positive count, p8 filler)
+{
+        while (count--)
+                write(address_of filler, 1);
+}
+
+/*
+        One backslash escape, already past the backslash. Answers where to
+        carry on reading; an octal run is up to three digits, and \0 in front
+        of it is what POSIX writes even though every shell also takes it bare.
+*/
+string_address printf_escape(writer write, string_address step)
+{
+        p8 value;
+
+        if (string_is(step, '0') || (string_get(step) >= '1' && string_get(step) <= '7'))
+        {
+                positive number = 0;
+                positive taken = 0;
+
+                if (string_is(step, '0'))
+                        step++;
+
+                while (taken < 3 && string_get(step) >= '0' && string_get(step) <= '7')
+                {
+                        number = number * 8 + (string_get(step++) - '0');
+                        taken++;
+                }
+
+                value = (p8)number;
+                write(address_of value, 1);
+
+                return step;
+        }
+
+        value = string_get(step);
+
+        if (value == 'n')
+                value = '\n';
+        else if (value == 't')
+                value = '\t';
+        else if (value == 'r')
+                value = '\r';
+        else if (value == 'a')
+                value = 7;
+        else if (value == 'b')
+                value = 8;
+        else if (value == 'e')
+                value = 27;
+        else if (value == 'f')
+                value = 12;
+        else if (value == 'v')
+                value = 11;
+        else if (value == '\\')
+                value = '\\';
+        else
+        {
+                p8 slash = '\\';
+
+                write(address_of slash, 1);
+        }
+
+        if (string_get(step))
+        {
+                write(address_of value, 1);
+                step++;
+        }
+
+        return step;
+}
+
+fn printf_escaped(writer write, string_address text)
+{
+        while (string_get(text))
+        {
+                if (string_is(text, '\\'))
+                {
+                        text = printf_escape(write, text + 1);
+                        continue;
+                }
+
+                write(text, 1);
+                text++;
+        }
+}
+
+fn printf_number(writer write, positive magnitude, p8 sign, positive base, bool upper,
+                 positive width, bipolar precision, bool left, bool zero)
+{
+        p8 body[80];
+        positive length = printf_render(body, magnitude, base, upper);
+        positive zeros = 0;
+        positive head = sign ? 1 : 0;
+
+        if (precision >= 0 && (positive)precision > length)
+                zeros = (positive)precision - length;
+
+        if (zero && !left && precision < 0 && width > head + length + zeros)
+                zeros = width - head - length;
+
+        if (!left)
+                printf_fill(write, width > head + zeros + length ? width - head - zeros - length : 0, ' ');
+
+        if (sign)
+                write(address_of sign, 1);
+
+        printf_fill(write, zeros, '0');
+        write(body, length);
+
+        if (left)
+                printf_fill(write, width > head + zeros + length ? width - head - zeros - length : 0, ' ');
+}
+
+fn printf_one(writer write, string_address format)
+{
+        string_address step = format;
+
+        while (string_get(step))
+        {
+                bool left = false;
+                bool zero = false;
+                bool plus = false;
+                bool space = false;
+                positive width = 0;
+                bipolar precision = -1;
+                p8 conversion;
+
+                if (string_is(step, '\\'))
+                {
+                        step = printf_escape(write, step + 1);
+                        continue;
+                }
+
+                if (string_not(step, '%'))
+                {
+                        write(step, 1);
+                        step++;
+                        continue;
+                }
+
+                step++;
+
+                while (string_is(step, '-') || string_is(step, '0') ||
+                       string_is(step, '+') || string_is(step, ' ') ||
+                       string_is(step, '#'))
+                {
+                        if (string_is(step, '-'))
+                                left = true;
+                        else if (string_is(step, '0'))
+                                zero = true;
+                        else if (string_is(step, '+'))
+                                plus = true;
+                        else if (string_is(step, ' '))
+                                space = true;
+
+                        step++;
+                }
+
+                if (string_is(step, '*'))
+                {
+                        bool good;
+
+                        width = (positive)shell_signed(printf_next(), address_of good);
+                        step++;
+                }
+                else
+                {
+                        while (string_get(step) >= '0' && string_get(step) <= '9')
+                                width = width * 10 + (string_get(step++) - '0');
+                }
+
+                if (string_is(step, '.'))
+                {
+                        step++;
+                        precision = 0;
+
+                        if (string_is(step, '*'))
+                        {
+                                bool good;
+
+                                precision = shell_signed(printf_next(), address_of good);
+                                step++;
+                        }
+                        else
+                        {
+                                while (string_get(step) >= '0' && string_get(step) <= '9')
+                                        precision = precision * 10 + (string_get(step++) - '0');
+                        }
+                }
+
+                // The length modifiers say nothing here: every number this
+                // reads is already as wide as the machine.
+                while (string_is(step, 'l') || string_is(step, 'h') ||
+                       string_is(step, 'z') || string_is(step, 'j'))
+                        step++;
+
+                conversion = string_get(step);
+
+                if (!conversion)
+                        break;
+
+                step++;
+
+                if (conversion == '%')
+                {
+                        write("%", 1);
+                        continue;
+                }
+
+                if (conversion == 's' || conversion == 'b')
+                {
+                        string_address value = printf_next();
+                        positive length = string_length(value);
+
+                        if (precision >= 0 && (positive)precision < length)
+                                length = (positive)precision;
+
+                        if (conversion == 'b')
+                        {
+                                // The escapes are in the argument, so a width
+                                // around them would have to be measured after
+                                // they were read; nothing asks for that.
+                                printf_escaped(write, value);
+                                continue;
+                        }
+
+                        if (!left)
+                                printf_fill(write, width > length ? width - length : 0, ' ');
+
+                        write(value, length);
+
+                        if (left)
+                                printf_fill(write, width > length ? width - length : 0, ' ');
+
+                        continue;
+                }
+
+                if (conversion == 'c')
+                {
+                        string_address value = printf_next();
+                        positive length = string_get(value) ? 1 : 0;
+
+                        if (!left)
+                                printf_fill(write, width > length ? width - length : 0, ' ');
+
+                        if (length)
+                                write(value, 1);
+
+                        if (left)
+                                printf_fill(write, width > length ? width - length : 0, ' ');
+
+                        continue;
+                }
+
+                if (conversion == 'd' || conversion == 'i')
+                {
+                        bool good;
+                        bipolar value = shell_signed(printf_next(), address_of good);
+                        p8 sign = 0;
+
+                        if (value < 0)
+                                sign = '-';
+                        else if (plus)
+                                sign = '+';
+                        else if (space)
+                                sign = ' ';
+
+                        printf_number(write, value < 0 ? (positive)(-value) : (positive)value,
+                                      sign, 10, false, width, precision, left, zero);
+                        continue;
+                }
+
+                if (conversion == 'u' || conversion == 'o' ||
+                    conversion == 'x' || conversion == 'X')
+                {
+                        bool good;
+                        bipolar value = shell_signed(printf_next(), address_of good);
+                        positive base = conversion == 'o' ? 8 : (conversion == 'u' ? 10 : 16);
+
+                        printf_number(write, (positive)value, 0, base, conversion == 'X',
+                                      width, precision, left, zero);
+                        continue;
+                }
+
+                // An unknown conversion is written out as it stood, which is
+                // more use than swallowing it.
+                write("%", 1);
+                write(address_of conversion, 1);
+        }
+}
+
+fn shell_printf(writer write, string_address input)
+{
+        string_address format;
+
+        if (shell_argc < 2)
+                return shell_answer(2);
+
+        format = shell_argv[1];
+        printf_argument = 2;
+
+        while (1)
+        {
+                printf_took = false;
+                printf_one(write, format);
+
+                // A format with no conversion in it would otherwise run for as
+                // long as there were arguments left.
+                if (printf_argument >= shell_argc || !printf_took)
+                        break;
+        }
+
+        shell_answer(0);
+}
+
+/*
+        read.
+
+        A byte at a time, because the line arrives on the same descriptor the
+        shell is reading its script from and anything larger swallows what
+        comes after.
+*/
+fn shell_read(writer write, string_address input)
+{
+        p8 line[2048];
+        positive length = 0;
+        bool raw = false;
+        bool got_any = false;
+        positive index = 1;
+        positive at = 0;
+        positive names;
+
+        while (index < shell_argc && string_is(shell_argv[index], '-') &&
+               string_not(shell_argv[index] + 1, end))
+        {
+                string_address letter = shell_argv[index] + 1;
+
+                while (string_get(letter))
+                {
+                        if (string_get(letter) == 'r')
+                                raw = true;
+
+                        letter++;
+                }
+
+                index++;
+        }
+
+        names = index;
+
+        while (length < sizeof(line) - 1)
+        {
+                p8 value;
+
+                if (system_call_3(syscall(read), 0, (positive)address_of value, 1) != 1)
+                        break;
+
+                got_any = true;
+
+                if (value == '\n')
+                        break;
+
+                if (!raw && value == '\\')
+                {
+                        p8 next;
+
+                        if (system_call_3(syscall(read), 0, (positive)address_of next, 1) != 1)
+                                break;
+
+                        // A backslash before the newline joins the two lines.
+                        if (next == '\n')
+                                continue;
+
+                        line[length++] = next;
+                        continue;
+                }
+
+                line[length++] = value;
+        }
+
+        line[length] = end;
+
+        if (names >= shell_argc)
+        {
+                env_set("REPLY", line);
+                return shell_answer(got_any ? 0 : 1);
+        }
+
+        while (names < shell_argc)
+        {
+                positive begin;
+
+                while (at < length && (line[at] == ' ' || line[at] == '\t'))
+                        at++;
+
+                begin = at;
+
+                // The last name takes everything that is left, splitting and
+                // all, which is what makes "read line" read a line.
+                if (names + 1 == shell_argc)
+                {
+                        positive stop = length;
+
+                        while (stop > begin && (line[stop - 1] == ' ' || line[stop - 1] == '\t'))
+                                stop--;
+
+                        line[stop] = end;
+                        env_set(shell_argv[names], line + begin);
+                        at = length;
+                        names++;
+                        continue;
+                }
+
+                while (at < length && line[at] != ' ' && line[at] != '\t')
+                        at++;
+
+                if (at < length)
+                        line[at++] = end;
+
+                env_set(shell_argv[names], line + begin);
+                names++;
+        }
+
+        shell_answer(got_any ? 0 : 1);
+}
+
+/*
+        getopts.
+
+        One option per call, its place kept in OPTIND and, within a bundled
+        word, in an offset of its own that OPTIND has no room for.
+*/
+static positive getopts_offset;
+
+fn shell_getopts(writer write, string_address input)
+{
+        string_address options;
+        string_address name;
+        string_address list[POSITIONAL_MAX];
+        positive count = 0;
+        positive optind;
+        string_address word;
+        string_address found;
+        p8 letter;
+        p8 value[2];
+
+        if (shell_argc < 3)
+                return shell_answer(2);
+
+        options = shell_argv[1];
+        name = shell_argv[2];
+
+        if (shell_argc > 3)
+        {
+                positive index = 3;
+
+                while (index < shell_argc && count < POSITIONAL_MAX)
+                        list[count++] = shell_argv[index++];
+        }
+        else
+        {
+                while (count < positional_count)
+                {
+                        list[count] = positional_value[count];
+                        count++;
+                }
+        }
+
+        optind = shell_number(env_get("OPTIND"));
+
+        if (optind < 1)
+                optind = 1;
+
+        if (optind - 1 >= count)
+                return shell_answer(1);
+
+        word = list[optind - 1];
+
+        if (string_not(word, '-') || string_is(word + 1, end))
+                return shell_answer(1);
+
+        if (word_is(word, "--"))
+        {
+                env_set_number("OPTIND", optind + 1);
+                return shell_answer(1);
+        }
+
+        if (getopts_offset < 1)
+                getopts_offset = 1;
+
+        letter = string_get(word + getopts_offset);
+        value[0] = letter;
+        value[1] = end;
+
+        found = letter == ':' ? null : string_first_of(options, letter);
+
+        if (!found)
+        {
+                env_set(name, "?");
+                env_unset("OPTARG");
+
+                getopts_offset++;
+
+                if (!string_get(word + getopts_offset))
+                {
+                        getopts_offset = 0;
+                        env_set_number("OPTIND", optind + 1);
+                }
+
+                return shell_answer(0);
+        }
+
+        getopts_offset++;
+
+        if (string_is(found + 1, ':'))
+        {
+                if (string_get(word + getopts_offset))
+                {
+                        env_set("OPTARG", word + getopts_offset);
+                }
+                else if (optind < count)
+                {
+                        env_set("OPTARG", list[optind]);
+                        optind++;
+                }
+                else
+                {
+                        env_set(name, ":");
+                        env_set("OPTARG", value);
+                        getopts_offset = 0;
+                        env_set_number("OPTIND", optind + 1);
+                        return shell_answer(0);
+                }
+
+                env_set(name, value);
+                getopts_offset = 0;
+                env_set_number("OPTIND", optind + 1);
+
+                return shell_answer(0);
+        }
+
+        env_set(name, value);
+
+        if (!string_get(word + getopts_offset))
+        {
+                getopts_offset = 0;
+                env_set_number("OPTIND", optind + 1);
+        }
+
+        shell_answer(0);
+}
+
+fn shell_umask(writer write, string_address input)
+{
+        positive mask;
+        positive shift = 9;
+
+        if (shell_argc > 1)
+        {
+                string_address step = shell_argv[1];
+                positive value = 0;
+
+                while (string_get(step) >= '0' && string_get(step) <= '7')
+                        value = value * 8 + (string_get(step++) - '0');
+
+                system_call_1(syscall(umask), value);
+
+                return shell_answer(0);
+        }
+
+        // The only way to read it is to set it, so it is put straight back.
+        mask = system_call_1(syscall(umask), 0);
+        system_call_1(syscall(umask), mask);
+
+        while (shift)
+        {
+                p8 digit;
+
+                shift -= 3;
+                digit = '0' + ((mask >> shift) & 7);
+
+                if (shift == 6)
+                        write("0", 1);
+
+                write(address_of digit, 1);
+        }
+
+        write("\n", 1);
+
+        shell_answer(0);
+}
+
+/*
+        times.
+
+        The kernel counts in clock ticks and there are a hundred of them to the
+        second on every Linux that matters; the field is what a program is told
+        through AT_CLKTCK and nothing here can be told anything.
+*/
+#define CLOCK_TICKS 100
+
+typedef struct
+{
+        bipolar user;
+        bipolar system;
+        bipolar children_user;
+        bipolar children_system;
+} shell_clocks;
+
+fn shell_time_written(writer write, bipolar ticks)
+{
+        positive seconds;
+        positive thousandths;
+        positive digit;
+
+        if (ticks < 0)
+                ticks = 0;
+
+        seconds = (positive)ticks / CLOCK_TICKS;
+        thousandths = ((positive)ticks % CLOCK_TICKS) * (1000 / CLOCK_TICKS);
+
+        shell_number_padded(write, seconds / 60, 0);
+        write("m", 1);
+        shell_number_padded(write, seconds % 60, 0);
+        write(".", 1);
+
+        digit = '0' + thousandths / 100;
+        write(address_of digit, 1);
+        digit = '0' + (thousandths / 10) % 10;
+        write(address_of digit, 1);
+        digit = '0' + thousandths % 10;
+        write(address_of digit, 1);
+
+        write("s", 1);
+}
+
+fn shell_times(writer write, string_address input)
+{
+        shell_clocks clocks;
+
+        memory_fill(address_of clocks, 0, sizeof(clocks));
+        system_call_1(syscall(times), (positive)address_of clocks);
+
+        shell_time_written(write, clocks.user);
+        write(" ", 1);
+        shell_time_written(write, clocks.system);
+        write("\n", 1);
+
+        shell_time_written(write, clocks.children_user);
+        write(" ", 1);
+        shell_time_written(write, clocks.children_system);
+        write("\n", 1);
+
+        shell_answer(0);
+}
+
+/*
+        trap.
+
+        The handler is recorded and nothing runs it yet: what runs a command is
+        above this file, and a script that sets a trap must still get through
+        the line rather than falling over on an unknown command.
+*/
+#define TRAP_MAX 24
+#define TRAP_STORAGE 1024
+
+typedef struct
+{
+        positive number;
+        string_address action;
+} shell_trap_entry;
+
+static shell_trap_entry trap_table[TRAP_MAX];
+static positive trap_count;
+static p8 trap_storage[TRAP_STORAGE];
+static positive trap_used;
+
+static string_address trap_names[] = {
+    "EXIT", "HUP", "INT", "QUIT", "ILL", "TRAP", "ABRT", "BUS",
+    "FPE", "KILL", "USR1", "SEGV", "USR2", "PIPE", "ALRM", "TERM",
+    null,
+};
+
+bipolar trap_number(string_address word)
+{
+        positive index = 0;
+        bool good;
+        bipolar value;
+
+        if (!word)
+                return -1;
+
+        if (string_is(word, 'S') && string_is(word + 1, 'I') && string_is(word + 2, 'G'))
+                word += 3;
+
+        while (trap_names[index])
+        {
+                if (word_is(word, trap_names[index]))
+                        return (bipolar)index;
+
+                index++;
+        }
+
+        value = shell_signed(word, address_of good);
+
+        return good ? value : -1;
+}
+
+fn trap_forget(positive number)
+{
+        positive index = 0;
+
+        while (index < trap_count)
+        {
+                if (trap_table[index].number == number)
+                {
+                        while (index + 1 < trap_count)
+                        {
+                                trap_table[index] = trap_table[index + 1];
+                                index++;
+                        }
+
+                        trap_count--;
+                        return;
+                }
+
+                index++;
+        }
+}
+
+string_address trap_action(positive number)
+{
+        positive index = 0;
+
+        while (index < trap_count)
+        {
+                if (trap_table[index].number == number)
+                        return trap_table[index].action;
+
+                index++;
+        }
+
+        return null;
+}
+
+fn shell_trap(writer write, string_address input)
+{
+        positive index = 1;
+        string_address action;
+
+        if (shell_argc < 2)
+        {
+                positive at = 0;
+
+                while (at < trap_count)
+                {
+                        positive number = trap_table[at].number;
+
+                        string_format(write, "trap -- '%s' ", trap_table[at].action);
+
+                        if (number < 16)
+                                string_format(write, "%s", trap_names[number]);
+                        else
+                                shell_number_padded(write, number, 0);
+
+                        write("\n", 1);
+                        at++;
+                }
+
+                return shell_answer(0);
+        }
+
+        if (word_is(shell_argv[index], "--"))
+                index++;
+
+        if (index >= shell_argc)
+                return shell_answer(0);
+
+        action = shell_argv[index++];
+
+        // "trap - INT" and "trap '' INT" both take the handler away; the
+        // difference between them is what the signal is set to, which is not
+        // this file's to set yet.
+        if (word_is(action, "-"))
+                action = null;
+
+        while (index < shell_argc)
+        {
+                bipolar number = trap_number(shell_argv[index]);
+
+                index++;
+
+                if (number < 0)
+                        continue;
+
+                trap_forget((positive)number);
+
+                if (!action || trap_count >= TRAP_MAX)
+                        continue;
+
+                {
+                        positive length = string_length(action);
+
+                        if (trap_used + length + 1 > TRAP_STORAGE)
+                                continue;
+
+                        trap_table[trap_count].number = (positive)number;
+                        trap_table[trap_count].action = trap_storage + trap_used;
+
+                        memory_copy(trap_storage + trap_used, action, length + 1);
+                        trap_used += length + 1;
+                        trap_count++;
+                }
+        }
+
+        shell_answer(0);
+}
+
+/*
+        alias.
+
+        Recorded, listed and taken away here. Putting one in front of a command
+        happens where a line is read, which is not this file, so what this holds
+        is the table that side will ask.
+*/
+#define ALIAS_MAX 32
+#define ALIAS_STORAGE 2048
+
+typedef struct
+{
+        string_address name;
+        string_address value;
+} shell_alias_entry;
+
+static shell_alias_entry alias_table[ALIAS_MAX];
+static positive alias_count;
+static p8 alias_storage[ALIAS_STORAGE];
+static positive alias_used;
+
+string_address alias_lookup(string_address name)
+{
+        positive index = 0;
+
+        while (index < alias_count)
+        {
+                if (word_is(alias_table[index].name, name))
+                        return alias_table[index].value;
+
+                index++;
+        }
+
+        return null;
+}
+
+bool alias_record(string_address name, positive name_length, string_address value)
+{
+        positive value_length = string_length(value);
+        positive index = 0;
+
+        if (alias_used + name_length + 1 + value_length + 1 > ALIAS_STORAGE)
+                return false;
+
+        {
+                string_address kept_name = alias_storage + alias_used;
+
+                memory_copy(kept_name, name, name_length);
+                kept_name[name_length] = end;
+                alias_used += name_length + 1;
+
+                {
+                        string_address kept_value = alias_storage + alias_used;
+
+                        memory_copy(kept_value, value, value_length + 1);
+                        alias_used += value_length + 1;
+
+                        while (index < alias_count)
+                        {
+                                if (word_is(alias_table[index].name, kept_name))
+                                {
+                                        alias_table[index].value = kept_value;
+                                        return true;
+                                }
+
+                                index++;
+                        }
+
+                        if (alias_count >= ALIAS_MAX)
+                                return false;
+
+                        alias_table[alias_count].name = kept_name;
+                        alias_table[alias_count].value = kept_value;
+                        alias_count++;
+                }
+        }
+
+        return true;
+}
+
+// dash quotes the whole of name=value, not just the value, and a script that
+// reads its own aliases back is reading that.
+fn alias_written(writer write, positive index)
+{
+        string_format(write, "'%s=%s'\n", alias_table[index].name, alias_table[index].value);
+}
+
+fn shell_alias(writer write, string_address input)
+{
+        positive index = 1;
+        b32 answer = 0;
+
+        if (shell_argc < 2)
+        {
+                positive at = 0;
+
+                while (at < alias_count)
+                        alias_written(write, at++);
+
+                return shell_answer(0);
+        }
+
+        while (index < shell_argc)
+        {
+                string_address word = shell_argv[index];
+                string_address mark = string_first_of(word, '=');
+
+                if (mark && mark != word)
+                {
+                        alias_record(word, mark - word, mark + 1);
+                        index++;
+                        continue;
+                }
+
+                {
+                        positive at = 0;
+                        bool shown = false;
+
+                        while (at < alias_count)
+                        {
+                                if (word_is(alias_table[at].name, word))
+                                {
+                                        alias_written(write, at);
+                                        shown = true;
+                                        break;
+                                }
+
+                                at++;
+                        }
+
+                        if (!shown)
+                                answer = 1;
+                }
+
+                index++;
+        }
+
+        shell_answer(answer);
+}
+
+fn shell_unalias(writer write, string_address input)
+{
+        positive index = 1;
+
+        while (index < shell_argc)
+        {
+                string_address word = shell_argv[index];
+                positive at = 0;
+
+                if (word_is(word, "-a"))
+                {
+                        alias_count = 0;
+                        alias_used = 0;
+                        index++;
+                        continue;
+                }
+
+                while (at < alias_count)
+                {
+                        if (word_is(alias_table[at].name, word))
+                        {
+                                while (at + 1 < alias_count)
+                                {
+                                        alias_table[at] = alias_table[at + 1];
+                                        at++;
+                                }
+
+                                alias_count--;
+                                break;
+                        }
+
+                        at++;
+                }
+
+                index++;
+        }
+
+        shell_answer(0);
+}
+
+/*
+        eval.
+
+        The words are joined back into a line and the line is run. This has to
+        reach the code that runs lines, which sits above this file and is only
+        there when a shell was built around it.
+*/
+#define EVAL_STORAGE 4096
+#define EVAL_DEPTH 4
+
+static p8 eval_storage[EVAL_STORAGE];
+static positive eval_depth;
+
+fn shell_eval(writer write, string_address input)
+{
+        positive used = 0;
+        positive index = 1;
+
+        if (shell_argc < 2 || !process || eval_depth >= EVAL_DEPTH)
+                return shell_answer(0);
+
+        while (index < shell_argc)
+        {
+                positive length = string_length(shell_argv[index]);
+
+                if (used + length + 2 > EVAL_STORAGE)
+                        break;
+
+                if (used)
+                        eval_storage[used++] = ' ';
+
+                memory_copy(eval_storage + used, shell_argv[index], length);
+                used += length;
+                index++;
+        }
+
+        eval_storage[used] = end;
+
+/*
+        The nested line is lexed over the tokens of the line that is running,
+        and the loop stepping through those is standing in the middle of them.
+        So they are put back afterwards, text and all: a word's text goes back
+        to the address it was at, which makes the pointers in the tokens good
+        again. Only where there is a lexer to put back -- programs/edit.c takes
+        this file without one.
+*/
+#ifdef LEX_TOKENS
+        {
+                lex_token kept_tokens[LEX_TOKENS];
+                p8 kept_text[LEX_TEXT];
+                positive kept_used = lex_used;
+                b32 kept_count = lex_count;
+
+                memory_copy(kept_tokens, lex_tokens, sizeof(kept_tokens));
+                memory_copy(kept_text, lex_text, sizeof(kept_text));
+
+                eval_depth++;
+                process(eval_storage);
+                eval_depth--;
+
+                memory_copy(lex_tokens, kept_tokens, sizeof(kept_tokens));
+                memory_copy(lex_text, kept_text, sizeof(kept_text));
+
+                lex_used = kept_used;
+                lex_count = kept_count;
+        }
+#else
+        eval_depth++;
+        process(eval_storage);
+        eval_depth--;
+#endif
+
+        // After the nested line, not before it: the commands inside set the
+        // status themselves, and claiming it early would eat their answer.
+        shell_answer(shell_status);
+}
+
+/*
+        return.
+
+        Without a function to leave, all this can honestly do is say what the
+        status is; leaving one is the business of whatever called it.
+*/
+fn shell_return(writer write, string_address input)
+{
+        bool good;
+
+        if (shell_argc > 1)
+                return shell_answer((b32)shell_signed(shell_argv[1], address_of good) & 0xff);
+
+        shell_answer(shell_status);
+}
+
 fn shell_help(writer write, string_address input);
 fn shell_which(writer write, string_address input);
 
@@ -1389,6 +3382,9 @@ typedef struct
 } shell_command;
 
 shell_command shell_commands[] = {
+    {":", shell_true},
+    {"[", shell_test},
+    {"alias", shell_alias},
     {"basename", shell_basename},
     {"cat", shell_cat},
     {"cd", shell_cd},
@@ -1396,21 +3392,37 @@ shell_command shell_commands[] = {
     {"cp", shell_cp},
     {"chmod", shell_chmod},
     {"echo", shell_echo},
+    {"eval", shell_eval},
     {"exec", shell_exec},
     {"exit", shell_exit},
+    {"false", shell_false},
+    {"getopts", shell_getopts},
     {"head", shell_head},
     {"ls", shell_ls},
     {"mkdir", shell_mkdir},
     {"mv", shell_mv},
     {"mount", shell_mount},
     {"poweroff", shell_poweroff},
+    {"printf", shell_printf},
     {"pwd", shell_pwd},
+    {"read", shell_read},
+    {"readonly", shell_readonly},
     {"reboot", shell_reboot},
+    {"return", shell_return},
     {"rm", shell_rm},
+    {"set", shell_set},
+    {"shift", shell_shift},
     {"sleep", shell_sleep},
     {"tail", shell_tail},
+    {"test", shell_test},
+    {"times", shell_times},
     {"touch", shell_touch},
+    {"trap", shell_trap},
+    {"true", shell_true},
+    {"umask", shell_umask},
+    {"unalias", shell_unalias},
     {"uname", shell_uname},
+    {"unset", shell_unset},
     {"wc", shell_wc},
     {"which", shell_which},
     {"help", shell_help},
