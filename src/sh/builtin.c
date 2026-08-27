@@ -24,6 +24,10 @@ fn shell_diagnostic(address_any data, positive length)
 // The status the last thing to run answered with, which $? reads.
 b32 shell_status;
 
+// What it held when the builtin now running was reached. Only exit wants it:
+// leaving with no number given means leaving with the last status.
+b32 shell_status_entering;
+
 fn shell_answer(b32 value)
 {
         shell_status = value;
@@ -435,7 +439,9 @@ fn shell_cd(writer write, string_address input)
         if (!system_call_1(syscall(chdir), (positive)input))
                 return shell_answer(0);
 
-        shell_answer(1);
+        // Two, not one: a special builtin that fails answers with two, and
+        // the reference shell does.
+        shell_answer(2);
         string_format(shell_diagnostic, "cd: No such directory: %s\n", input);
 }
 
@@ -857,7 +863,7 @@ fn shell_trap_exit();
 
 fn shell_exit(writer write, string_address input)
 {
-        bipolar exit_code = shell_status;
+        bipolar exit_code = shell_status_entering;
         bool good;
 
         if (shell_argc > 1)

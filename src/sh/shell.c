@@ -567,6 +567,19 @@ bool shell_builtin(string_address arguments)
                         continue;
                 }
 
+                /*
+                        A builtin that finishes without an opinion succeeded.
+
+                        The status used to be left exactly as the previous
+                        command set it, so "false; echo hi" reported failure
+                        and a script whose last act was a successful echo
+                        exited non-zero. Answering here rather than in each
+                        builtin means the ones that cannot fail do not have to
+                        remember to say they did not.
+                */
+                shell_status_entering = shell_status;
+                shell_status = 0;
+
                 command->function(shell_output, arguments);
                 return true;
         }
