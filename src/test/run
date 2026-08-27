@@ -35,13 +35,14 @@ TEST_TALLY="$work/tally"
 export TEST_TALLY
 : > "$TEST_TALLY"
 
-lanes="standard verify probe shell text files kit boot"
+lanes="standard verify native probe shell text files kit boot"
 
 describe()
 {
         case $1 in
         standard) echo "the standard library, and that it still builds with no platform under it" ;;
         verify)   echo "the assembly in library.c against the C it replaced, on three machines" ;;
+        native)   echo "arm64 assembly on an arm64 machine, with no emulator in the way" ;;
         probe)    echo "what only a separate process can prove: arguments, status, regions" ;;
         shell)    echo "the shell language against dash, the names it answers to, and the gaps" ;;
         text)     echo "the text utilities against the system's, listed and generated" ;;
@@ -201,6 +202,65 @@ lane_verify()
         verify_one x86_64 "$compiler" "" || failed=1
         verify_one arm64 aarch64-linux-gnu-gcc qemu-aarch64 || failed=1
         verify_one riscv64 riscv64-linux-gnu-gcc qemu-riscv64 || failed=1
+
+        [ "$failed" = 0 ]
+}
+
+#       arm64 assembly on an arm64 machine.
+#
+#       The verify lane runs the foreign two under qemu, and a Mac has no
+#       qemu-user -- but a Mac is one of the three machines. AAPCS64 passes
+#       arguments in x0-x7 on Darwin exactly as it does on Linux and none of
+#       these routines makes a system call, so a body lifted out of library.c
+#       runs here unchanged. Each case carries its own copy of the assembly
+#       and a C reference beside it, which is what makes it the place a change
+#       to arm64's assembly is worked out before it goes into library.c.
+lane_native()
+{
+        case $(uname -m) in
+        arm64 | aarch64) ;;
+        *)
+                note "not an arm64 machine, skipped"
+                return 0
+                ;;
+        esac
+
+        failed=0
+
+        for source in src/test/native/*.c; do
+                [ -f "$source" ] || continue
+
+                name=${source##*/}
+                name=${name%.c}
+
+                if ! $compiler -O2 -w -o "$work/native.$name" "$source" \
+                        2> "$work/native.$name.err"; then
+                        note "$source did not build:"
+                        sed 's/^/    /' "$work/native.$name.err" | head -10
+                        failed=1
+                        continue
+                fi
+
+                if "$work/native.$name" > "$work/native.$name.out" 2>&1; then
+                        answered=0
+                else
+                        answered=1
+                        failed=1
+                fi
+
+                sed 's/^/  /' "$work/native.$name.out"
+
+                counted=$(sed -n 's/.*[^0-9]\([0-9][0-9]*\) checks.*/\1/p' \
+                        "$work/native.$name.out" | head -1)
+
+                [ -n "$counted" ] || counted=1
+
+                if [ "$answered" = 0 ]; then
+                        tally "native-$name" "$counted" "$counted"
+                else
+                        tally "native-$name" 0 "$counted"
+                fi
+        done
 
         [ "$failed" = 0 ]
 }

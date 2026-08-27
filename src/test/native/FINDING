@@ -1,0 +1,85 @@
+        Two bugs in the assembly, both found by running it.
+
+        Both were found on arm64, which is the architecture this machine can
+        execute. Both are present in the x86_64 and riscv64 blocks as the same
+        instruction sequence, and neither has been executed there: there is no
+        user mode qemu here. What follows says which claims are measured and
+        which are read off the page.
+
+        ----------------------------------------------------------------
+        1. string_find walked past matches.               ALL THREE ARCHES
+
+        moonwater_find is two loops: an outer one hunting the input's first
+        byte, an inner one walking the two strings while they agree. When the
+        inner one failed it jumped back into the outer one leaving the scan
+        pointer where the mismatch happened, with a comment saying "carry on
+        from here, as the C did".
+
+        A candidate that fails has to restart one byte past where it began.
+        Carrying on from the mismatch steps over every start inside the part
+        that did match, so "aab" is not found in "aaab": the candidate at zero
+        eats two bytes before failing, and the scan resumes past the one at
+        one that would have matched.
+
+        This needs no unusual input. Over strings drawn from a four letter
+        alphabet it missed 1066 of 200000 searches, about one in two hundred,
+        and repetitive text makes it worse. string_find is what grep and sed
+        use for fixed string search.
+
+        Fixed on all three by restarting at the candidate's own start plus
+        one. Measured after: 201778 searches, no misses.  [arm64 executed]
+
+        ----------------------------------------------------------------
+        2. The byte hunts lost a match to a borrow.               ARM64
+
+        strchr, strchrnul and strnchr all align the pointer down so the first
+        eight byte load cannot cross a page, then throw away the bytes before
+        the string by ANDing the finished flag word with a mask.
+
+        The SWAR zero test is (v - 0x0101..) & ~v & 0x8080... A zero byte in
+        it borrows into the byte above, which can come out flagged holding no
+        zero at all. The identity is exact for "is there a zero" and for
+        "where is the lowest one", and not for anything above the lowest.
+        Masking the flags afterwards removes the true flag in the prefix and
+        keeps the false one it caused in the first byte of the string.
+
+        So a byte just before the string equal to the one being hunted, and a
+        string beginning with the next value up, and the routine answers about
+        a byte that is not there:
+
+            prefix 0x02, string begins 0x03, hunting 0x02
+                strchr      returns null    -- the match further on is missed
+                strchrnul   returns s       -- the string reads as empty
+                strnchr     returns null
+
+        The same shape with 0x00 before the string and 0x01 at its start
+        drives the terminator hunt instead, so strchrnul reports every string
+        empty and callers walking with it stop on the first line.
+
+        It cannot happen on an eight byte aligned string, which is why random
+        data does not find it: 400000 random trials found none. Over the 7
+        misalignments x 255 byte values that can reach it, strchrnul was wrong
+        2667 times of 3570, strnchr 2667 of 3570, strchr 889 of 1785.
+
+        The comment above arm64's strchr explains why the mask was chosen --
+        forcing the prefix to 0xff the way strlen does would false-match a
+        hunt for 0xff -- so this was a known trade made in the wrong
+        direction. It is only true of the word: after the exclusive-or, 0xff
+        means "differs from the byte in every bit", which holds whatever the
+        byte is, 0xff included. So each hunt now forces its own input rather
+        than sharing a mask over the flags, before the loop rather than in it,
+        and the loop came out two instructions shorter than it was.
+
+        Measured after: 910710 checks over both shapes and a random sweep of
+        every alignment and length, no failures.        [arm64 executed]
+
+        ----------------------------------------------------------------
+        Still to check, and not claimed either way
+
+        x86_64's memchr masks its flags the same way (and %r8, %rax) and is
+        the same shape as the three above. x86_64's strlen and strnlen and
+        riscv64's strlen force the input instead and are safe by inspection.
+        riscv64's strchr and strchrnul have not been read closely.
+
+        None of that can be settled here. It wants verify.c under the repo's
+        own qemu, or MOONWATER_BUILD_HOST.

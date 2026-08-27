@@ -1,0 +1,16 @@
+        Running arm64 assembly on the machine this was written on.
+
+        There is no qemu-user here, so verify.c's differential cases cannot be
+        run for a foreign architecture from a Mac. arm64 is not foreign: this
+        is an arm64 machine, and AAPCS64 passes arguments in x0-x7 and returns
+        in x0 on Darwin exactly as it does on Linux. None of the string or
+        memory routines make a system call, so a body copied out of library.c
+        between its label and its ret runs here unchanged.
+
+        Darwin needs a leading underscore on the symbol and has no .type or
+        .size, so only the three prologue lines differ from ASM_FUNC.
+
+            clang -O2 -w src/test/native/<case>.c -o /tmp/case && /tmp/case
+
+        This is one architecture of three. x86_64 and riscv64 still have to go
+        through verify.c under the repo's own qemu.

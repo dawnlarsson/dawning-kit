@@ -1543,6 +1543,214 @@ fn check_table_find()
         }
 }
 
+/*
+        What is on either side of the string.
+
+        Every needle above sits at the start of a fresh buffer, so nothing
+        hostile has ever been in the bytes immediately in front of one. The
+        word at a time hunts align their pointer down so the first load cannot
+        cross a page, which means they do read those bytes, and then have to
+        throw away what they found there. Whether that throwing away is exact
+        is the whole question, and it can only be asked by putting something
+        in them.
+
+        The values are chosen and not random. A SWAR zero test borrows out of
+        a zero byte into the byte above it, so a byte in the prefix equal to
+        the one being hunted can raise a flag on the first byte of the string
+        -- but only when that first byte is the next value up, which is one
+        pair in two hundred and fifty six. Four hundred thousand random trials
+        found none of it.
+
+        The field is filled with the hunted byte end to end, so the bytes
+        after the terminator are as hostile as the ones before it: a routine
+        that reads a word past the end has to discard what it finds there too.
+*/
+
+#if defined(MOONWATER_HAVE_STRCHRNUL)
+string_address strchrnul(string_address source, b32 character);
+#endif
+
+#if defined(MOONWATER_HAVE_STRNCHR)
+string_address strnchr(string_address source, positive count, b32 character);
+#endif
+
+#if defined(MOONWATER_HAVE_MEMCHR)
+address_any memchr(address_any source, b32 character, positive count);
+#endif
+
+#if defined(MOONWATER_HAVE_STRNLEN)
+positive strnlen(string_address source, positive bound);
+#endif
+
+#if defined(MOONWATER_HAVE_STRRCHR)
+string_address strrchr(string_address source, b32 character);
+#endif
+
+// Walks to the terminator and answers with it rather than with nothing, which
+// is the whole difference between this and strchr.
+string_address reference_chrnul(string_address source, p8 character)
+{
+        while (string_get(source) && string_get(source) != character)
+                source++;
+
+        return source;
+}
+
+// The character is looked at before the terminator is, so a hunt for zero
+// finds the terminator inside the bound. That is what the kernel's own does.
+string_address reference_nchr(string_address source, positive count, p8 character)
+{
+        for (positive i = 0; i < count; i++)
+        {
+                if (source[i] == character)
+                        return source + i;
+
+                if (!source[i])
+                        break;
+        }
+
+        return null;
+}
+
+address_any reference_memchr(address_any source, p8 character, positive count)
+{
+        p8 address_to at = source;
+
+        for (positive i = 0; i < count; i++)
+                if (at[i] == character)
+                        return at + i;
+
+        return null;
+}
+
+positive reference_strnlen(string_address source, positive bound)
+{
+        positive i = 0;
+
+        while (i < bound && source[i])
+                i++;
+
+        return i;
+}
+
+string_address reference_rchr(string_address source, p8 character)
+{
+        string_address last = null;
+
+        for (;; source++)
+        {
+                if (string_get(source) == character)
+                        last = source;
+
+                if (!string_get(source))
+                        return last;
+        }
+}
+
+static p8 field[512];
+
+// Eight byte aligned, so an offset from here is the whole of the distance
+// into a word however the linker placed the array.
+static string_address aligned_field()
+{
+        positive at = (positive)(address_any)field;
+
+        return field + ((8 - (at & 7)) & 7);
+}
+
+fn check_hostile_neighbours()
+{
+        // The byte hunted for, and so also the byte written in front of the
+        // string and behind its terminator.
+        static p8 hunted[] = {0x00, 0x01, 0x02, 0x40, 0x7f, 0x80,
+                              0xa5, 0xfe, 0xff, 'a'};
+
+        for (positive h = 0; h < sizeof(hunted); h++)
+        {
+                p8 byte = hunted[h];
+
+                for (positive offset = 0; offset < 8; offset++)
+                        for (positive size = 0; size <= 24; size++)
+                                for (positive planted = 0; planted < 2; planted++)
+                                {
+                                        string_address text;
+
+                                        if (planted && !size)
+                                                continue;
+
+                                        reference_fill(field, byte, sizeof(field));
+
+                                        text = aligned_field() + 64 + offset;
+
+                                        // Beginning with the next value up
+                                        // from the byte in front of it, which
+                                        // is the pair the borrow lies about.
+                                        for (positive i = 0; i < size; i++)
+                                        {
+                                                p8 value = (p8)(byte + 1 + (i % 3));
+
+                                                text[i] = value ? value : 1;
+                                        }
+
+                                        text[size] = 0;
+
+                                        // Once with the hunted byte nowhere in
+                                        // the string, so the answer has to be
+                                        // nothing, and once with it at the far
+                                        // end, so the answer has to be found
+                                        // past the word the lie is in.
+                                        if (planted)
+                                                text[size - 1] = byte;
+
+                                        same("string_length", "hostile neighbours",
+                                             string_length(text),
+                                             reference_length(text));
+
+                                        same("string_first_of", "hostile neighbours",
+                                             (positive)string_first_of(text, byte),
+                                             (positive)reference_first_of(text, byte));
+
+                                        if (size)
+                                                same("string_first_of", "hostile and present",
+                                                     (positive)string_first_of(text, text[0]),
+                                                     (positive)reference_first_of(text, text[0]));
+
+#if defined(MOONWATER_HAVE_STRCHRNUL)
+                                        same("strchrnul", "hostile neighbours",
+                                             (positive)strchrnul(text, byte),
+                                             (positive)reference_chrnul(text, byte));
+#endif
+
+#if defined(MOONWATER_HAVE_STRRCHR)
+                                        same("strrchr", "hostile neighbours",
+                                             (positive)strrchr(text, byte),
+                                             (positive)reference_rchr(text, byte));
+#endif
+
+                                        for (positive count = 0; count <= size + 8; count += 3)
+                                        {
+#if defined(MOONWATER_HAVE_STRNCHR)
+                                                same("strnchr", "hostile neighbours",
+                                                     (positive)strnchr(text, count, byte),
+                                                     (positive)reference_nchr(text, count, byte));
+#endif
+
+#if defined(MOONWATER_HAVE_MEMCHR)
+                                                same("memchr", "hostile neighbours",
+                                                     (positive)memchr(text, byte, count),
+                                                     (positive)reference_memchr(text, byte, count));
+#endif
+
+#if defined(MOONWATER_HAVE_STRNLEN)
+                                                same("strnlen", "hostile neighbours",
+                                                     strnlen(text, count),
+                                                     reference_strnlen(text, count));
+#endif
+                                        }
+                                }
+        }
+}
+
 b32 main()
 {
         check_fill();
@@ -1564,6 +1772,7 @@ b32 main()
         check_span();
         check_lex_word();
         check_table_find();
+        check_hostile_neighbours();
 
         string_format(log, "%p checks, %p failures\n", checks, failures);
         log_flush();
