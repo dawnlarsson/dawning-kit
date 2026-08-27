@@ -5409,35 +5409,6 @@ fn string_get_environment(const b8 address_to name)
 
 // performs several cuts depending on number of arguments, each argument
 // will be written to at the start of the cut string
-/* TBD
-string_address string_split(string_address string, b8 cut_symbol, ...)
-{
-        var_args args;
-        var_list(args, string);
-
-        string_address step = string;
-
-        while (1)
-        {
-                step = string_cut(step, cut_symbol);
-
-                if (step == null)
-                        break;
-
-                string_address split_step = var_list_get(args, string_address);
-
-                if (split_step == null)
-                        break;
-
-                address_to split_step = (string_address)split_step;
-        }
-
-        var_list_end(args);
-
-        return step;
-}
-*/
-
 // ### Takes a positive number and writes out the string representation
 fn positive_to_string(writer write, positive number)
 {
