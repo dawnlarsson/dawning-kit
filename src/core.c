@@ -13,6 +13,7 @@
 #include <linux/slab.h>
 #include <linux/sched/task.h>
 #include <linux/initrd.h>
+#include <linux/console.h>
 
 // The graphics headers must precede library.c: it defines "end" as a macro
 // and asm/io.h, reached through drm_client.h, uses that word as a variable.
@@ -833,6 +834,10 @@ static b32 __init start()
 
 static void __exit exit_module(void)
 {
+        // Before anything else: printk must stop being pointed at cells that
+        // are about to be freed.
+        console_stop();
+
         misc_deregister(&device);
         unregister_binfmt(&format);
         log_k("Spark format unregistered\n");

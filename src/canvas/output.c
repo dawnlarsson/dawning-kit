@@ -605,6 +605,10 @@ static int canvas_start(struct canvas *canvas)
                 atomic_set(&desktop.pending_y, desktop.cursor_y);
         }
 
+        // Before the redraw, so the first frame already carries it, and before
+        // the terminal below, which is userspace and may never arrive.
+        console_start();
+
         desktop_redraw();
 
         {

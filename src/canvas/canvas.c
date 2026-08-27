@@ -400,6 +400,7 @@ static _Bool output_holds(struct output *output, int x, int y)
 #include "paint.c"
 #include "text.c"
 #include "pane.c"
+#include "console.c"
 #include "compose.c"
 #include "plane.c"
 #include "drag.c"
