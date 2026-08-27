@@ -1418,6 +1418,84 @@ fn check_environment()
         }
 }
 
+/*
+        The table lookup, against the loop it replaces.
+
+        The entries are laid out as the shell lays its commands out: a name
+        first, then something else, walked by a stride. The awkward cases are
+        the ones a first-byte test could get wrong -- names that share a first
+        byte, a name that is a prefix of another, and the empty name.
+*/
+typedef struct
+{
+        string_address name;
+        positive marker;
+} find_entry;
+
+static positive reference_table_find(string_address name, address_any table,
+                                     positive stride, positive count)
+{
+        for (positive i = 0; i < count; i++)
+        {
+                string_address entry =
+                    address_to(string_address address_to)((p8 address_to)table + i * stride);
+
+                if (!entry)
+                        return count;
+
+                if (!string_compare(entry, name))
+                        return i;
+        }
+
+        return count;
+}
+
+fn check_table_find()
+{
+        static find_entry entries[16];
+        static string_address names[] = {
+            "cat", "cd", "cp", "chmod", "clear", "basename", "b", "",
+            "echo", "exit", "export", "e", "zzz", "cata", "ca", null};
+        positive count = 0;
+
+        for (; names[count]; count++)
+        {
+                entries[count].name = names[count];
+                entries[count].marker = count;
+        }
+
+        // Every name in the table, which must be found at its own index.
+        for (positive i = 0; i < count; i++)
+                same("table_find", "present",
+                     string_table_find(names[i], entries, sizeof(find_entry), count),
+                     reference_table_find(names[i], entries, sizeof(find_entry), count));
+
+        // And names that are not, including ones sharing a first byte with
+        // entries that are, and prefixes and extensions of them.
+        {
+                static string_address absent[] = {
+                    "catx", "c", "cha", "ba", "basenam", "basenames", "exporte",
+                    "ec", "zz", "zzzz", "q", "", null};
+
+                for (positive i = 0; absent[i]; i++)
+                        same("table_find", "absent",
+                             string_table_find(absent[i], entries,
+                                               sizeof(find_entry), count),
+                             reference_table_find(absent[i], entries,
+                                                  sizeof(find_entry), count));
+        }
+
+        // A table that ends early on a null name rather than on the count.
+        entries[5].name = null;
+        same("table_find", "null entry stops the walk",
+             string_table_find((string_address)"export", entries,
+                               sizeof(find_entry), count),
+             reference_table_find((string_address)"export", entries,
+                                  sizeof(find_entry), count));
+
+        entries[5].name = names[5];
+}
+
 b32 main()
 {
         check_fill();
@@ -1438,6 +1516,7 @@ b32 main()
         check_decimals();
         check_span();
         check_lex_word();
+        check_table_find();
 
         string_format(log, "%p checks, %p failures\n", checks, failures);
         log_flush();

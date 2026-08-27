@@ -2745,6 +2745,77 @@ ASM_FUNC(moonwater_positive_to_string)
     "        pop     %rbx\n"
     ASM_RET
     ASM_END(moonwater_lex_word)
+    // Finding a name in a table of entries whose first field is that name.
+    //
+    // Eight bytes at a time, because a command name is short: nearly every
+    // entry is decided by one load and one compare with no loop at all. A
+    // first-byte test was tried first and measured level with the C, which
+    // already stops at the first differing byte -- the cost was never the
+    // comparison, it was doing twenty-seven of them.
+    //
+    // Reading eight bytes of a shorter name is safe for the same reason the
+    // word-at-a-time strlen above is: the load stays inside the page the
+    // string starts in. What is past the terminator is masked off rather than
+    // trusted.
+    ASM_FUNC(moonwater_table_find)
+    "        push    %rbx\n"
+    "        push    %rbp\n"
+    "        mov     (%rdi), %r11\n"
+    // Where the wanted name ends, as a mask of the bytes that matter.
+    "        movabs  $0x0101010101010101, %rbx\n"
+    "        mov     %r11, %rbp\n"
+    "        sub     %rbx, %rbp\n"
+    "        mov     %r11, %rbx\n"
+    "        not     %rbx\n"
+    "        and     %rbx, %rbp\n"
+    "        movabs  $0x8080808080808080, %rbx\n"
+    "        and     %rbx, %rbp\n"
+    "        jz      3f\n"
+    "        mov     %rbp, %rbx\n"
+    "        neg     %rbx\n"
+    "        and     %rbp, %rbx\n"
+    "        mov     %rbx, %rbp\n"
+    "        dec     %rbp\n"
+    "        or      %rbx, %rbp\n"
+    "        jmp     4f\n"
+    // No terminator in the first eight, so all eight matter and the rest is
+    // compared a byte at a time.
+    "3:      mov     $-1, %rbp\n"
+    "4:      xor     %eax, %eax\n"
+    "        mov     %rsi, %r8\n"
+    "5:      cmp     %rcx, %rax\n"
+    "        jae     9f\n"
+    "        mov     (%r8), %r9\n"
+    "        test    %r9, %r9\n"
+    "        jz      9f\n"
+    "        mov     (%r9), %r10\n"
+    "        xor     %r11, %r10\n"
+    "        test    %rbp, %r10\n"
+    "        jnz     8f\n"
+    // The first eight agree as far as they matter. If the name ended inside
+    // them that is the whole answer.
+    "        cmp     $-1, %rbp\n"
+    "        jne     7f\n"
+    "        mov     %rdi, %rbx\n"
+    "        add     $8, %rbx\n"
+    "        add     $8, %r9\n"
+    "6:      movzbl  (%rbx), %r10d\n"
+    "        movzbl  (%r9), %esi\n"
+    "        cmp     %r10d, %esi\n"
+    "        jne     8f\n"
+    "        test    %r10d, %r10d\n"
+    "        jz      7f\n"
+    "        inc     %rbx\n"
+    "        inc     %r9\n"
+    "        jmp     6b\n"
+    "8:      add     %rdx, %r8\n"
+    "        inc     %rax\n"
+    "        jmp     5b\n"
+    "9:      mov     %rcx, %rax\n"
+    "7:      pop     %rbp\n"
+    "        pop     %rbx\n"
+    ASM_RET
+    ASM_END(moonwater_table_find)
 );
 #ifdef KERNEL_MODE
 ASM_EXPORT(memchr);
@@ -6064,6 +6135,7 @@ __asm__(
 #define MOONWATER_HAVE_STRNCMP 1
 #define MOONWATER_HAVE_STRNLEN 1
 #define MOONWATER_HAVE_STRRCHR 1
+#define MOONWATER_HAVE_TABLE_FIND 1
 #endif
 #if ARM64
 #define MOONWATER_HAVE_MOONWATER_STRCHR 1
@@ -6112,6 +6184,10 @@ b32 moonwater_strcmp(string_address source, string_address input);
 string_address moonwater_strchr(string_address source, p8 character);
 
 positive moonwater_span(string_address source, const b8 address_to set);
+#ifdef MOONWATER_HAVE_TABLE_FIND
+positive moonwater_table_find(string_address name, address_any table,
+                              positive stride, positive count);
+#endif
 positive moonwater_lex_word(string_address source, p8 address_to into,
                             const b8 address_to class);
 address_any moonwater_fill(address_any destination, b8 value, positive size);
@@ -6145,6 +6221,48 @@ fn string_set_add(b8 address_to set, string_address members)
 positive string_span(string_address source, const b8 address_to set)
 {
         return moonwater_span(source, set);
+}
+
+/*
+        Which entry of a table carries this name, or the count when none does.
+
+        A table of structures whose first field is a name, walked by stride.
+        Anything that dispatches on a name -- a shell's commands, a set of
+        options -- otherwise compares every entry in full, and nearly all of
+        them differ in the first byte.
+*/
+positive string_table_find(string_address name, address_any table,
+                           positive stride, positive count)
+{
+#ifdef MOONWATER_HAVE_TABLE_FIND
+        return moonwater_table_find(name, table, stride, count);
+#else
+        for (positive i = 0; i < count; i++)
+        {
+                string_address entry =
+                    address_to(string_address address_to)((p8 address_to)table +
+                                                          i * stride);
+
+                string_address a = entry;
+                string_address b = name;
+
+                if (!entry)
+                        return count;
+
+                // Compared here rather than through string_compare, which is
+                // declared further down this file than this is.
+                while (string_get(a) && string_get(a) == string_get(b))
+                {
+                        a++;
+                        b++;
+                }
+
+                if (string_get(a) == string_get(b))
+                        return i;
+        }
+
+        return count;
+#endif
 }
 
 // ### Fill a memory block with the same value
