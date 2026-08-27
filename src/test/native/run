@@ -1,0 +1,34 @@
+#!/bin/sh
+#
+#       The arm64 cases, run on this machine.
+#
+#           sh src/test/native/run [library.c]
+#
+#       Lifts each routine's arm64 body out of the library and links it into
+#       the case beside it, so what runs is what is in the file. See README
+#       for why arm64 and only arm64 can be run from here.
+#
+set -u
+
+# shellcheck disable=SC1007
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+root=$(CDPATH= cd -- "$here/../../.." && pwd)
+lib=${1:-$root/src/library.next.c}
+
+[ -f "$lib" ] || { echo "run: no such library: $lib" >&2; exit 1; }
+
+work=$(mktemp -d "${TMPDIR:-/tmp}/native.XXXXXX") || exit 1
+trap 'rm -rf "$work"' EXIT INT TERM
+
+python3 "$here/extract.py" "$lib" \
+        string_first_of string_first_of_or_end string_first_of_max string_find \
+        string_last_of_or_end string_compare_max string_length_max memory_first_of \
+        > "$work/lifted.h" || exit 1
+
+status=0
+for case in byte_hunts bounded; do
+        cc -O2 -w -I"$work" "$here/$case.c" -o "$work/$case" || { status=1; continue; }
+        "$work/$case" || status=1
+done
+
+exit $status
