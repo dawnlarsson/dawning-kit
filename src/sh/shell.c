@@ -7,6 +7,7 @@
         not a program, which is what an in-kernel console would need.
 */
 
+#include "lex.c"
 #include "builtin.c"
 
 #define PROMPT TERM_RESET TERM_BOLD " $ " TERM_RESET
@@ -14,6 +15,10 @@
 #define MAX_INPUT 4096
 p8 shell_buffer[MAX_INPUT];
 static b32 shell_is_interactive;
+
+// What the last command answered, which is what $? reads and what && and ||
+// decide on.
+b32 shell_status;
 
 writer shell_output = log;
 positive shell_output_file;
@@ -129,8 +134,35 @@ string_address shell_expand(string_address step)
         if (braced && string_is(step, '}'))
                 step++;
 
+        /*
+                The special parameters, which are not names and so never
+                matched the loop above. $? is the one everything reaches for.
+        */
         if (!length)
         {
+                p8 special = string_get(step);
+
+                if (special == '?')
+                {
+                        p8 digits[16];
+                        positive at = 0;
+                        b32 value = shell_status;
+
+                        if (!value)
+                                digits[at++] = '0';
+
+                        while (value > 0)
+                        {
+                                digits[at++] = (p8)('0' + value % 10);
+                                value /= 10;
+                        }
+
+                        while (at)
+                                token_push(digits[--at]);
+
+                        return step + 1;
+                }
+
                 token_push('$');
                 return step;
         }
@@ -494,6 +526,7 @@ fn shell_execute_command()
         {
                 positive status = 0;
                 system_call_4(syscall(wait4), child, (positive)address_of status, 0, 0);
+                shell_status = (b32)(status >> 8 & 0xff);
 
                 // Spawning hands back a pid before the image is loaded, so a
                 // path that cannot be run shows up as the child exiting 127
@@ -526,7 +559,74 @@ bool shell_builtin(string_address arguments)
         return false;
 }
 
+fn run_simple(string_address line);
+
+/*
+        A line is a list of commands, not one command.
+
+        The lexer knows where every operator is and, more to the point, which
+        ones are inside quotes and therefore are not operators at all -- which
+        is why this is done over tokens rather than by looking for a semicolon
+        in the text. && and || carry the status of what ran before them; a bare
+        ; does not care.
+*/
 fn process(string_address line)
+{
+        static p8 piece[MAX_INPUT];
+        b32 count = lex_line(line);
+        b32 index = 0;
+        positive from = 0;
+        b32 pending = 0;
+        b32 skip = false;
+
+        if (count < 0)
+                return string_format(shell_output, "Command line too long\n");
+
+        while (index <= count)
+        {
+                lex_token address_to token = lex_tokens + index;
+                b32 boundary = token->kind == LEX_END ||
+                               (token->kind == LEX_OPERATOR &&
+                                (token->op == OP_SEMI || token->op == OP_AND_IF ||
+                                 token->op == OP_OR_IF));
+
+                if (!boundary)
+                {
+                        index++;
+                        continue;
+                }
+
+                {
+                        positive length = token->at > from ? token->at - from : 0;
+
+                        if (length >= sizeof(piece))
+                                length = sizeof(piece) - 1;
+
+                        memory_copy(piece, line + from, length);
+                        piece[length] = end;
+                }
+
+                if (!skip)
+                        run_simple(piece);
+
+                // What follows a && runs only if that succeeded, and what
+                // follows a || only if it did not.
+                if (token->kind == LEX_OPERATOR && token->op == OP_AND_IF)
+                        skip = shell_status != 0;
+                else if (token->kind == LEX_OPERATOR && token->op == OP_OR_IF)
+                        skip = shell_status == 0;
+                else
+                        skip = false;
+
+                pending = token->op;
+                from = token->at + (token->kind == LEX_END ? 0 : token->length);
+                index++;
+        }
+
+        (void)pending;
+}
+
+fn run_simple(string_address line)
 {
         b32 count = shell_tokenize(line);
 
@@ -544,11 +644,44 @@ fn process(string_address line)
         if (!shell_argc)
                 return;
 
+        /*
+                A word of the form name=value, on its own, sets a variable.
+
+                POSIX calls this an assignment and it is a command in its own
+                right -- which is why "x=1" used to be reported as a command
+                that could not be found, and why nearly every script died on
+                its first line.
+        */
+        {
+                string_address at = shell_argv[0];
+                positive name_length = 0;
+
+                while (shell_name_character(string_get(at + name_length)))
+                        name_length++;
+
+                if (name_length && string_get(at + name_length) == '=')
+                {
+                        p8 name[128];
+
+                        if (name_length < sizeof(name))
+                        {
+                                memory_copy(name, at, name_length);
+                                name[name_length] = end;
+                                env_set(name, at + name_length + 1);
+                                shell_status = 0;
+                                return;
+                        }
+                }
+        }
+
         if (string_is(shell_argv[0], '.') || string_is(shell_argv[0], '/'))
                 return shell_execute_command();
 
         if (shell_builtin(shell_arguments()))
+        {
+                shell_status = 0;
                 return;
+        }
 
         /*
                 A bare name, looked for on the path. A builtin wins over one --
@@ -566,6 +699,7 @@ fn process(string_address line)
                 }
         }
 
+        shell_status = 127;
         string_format(shell_output, "Command not found: '%s'\n", shell_argv[0]);
 }
 

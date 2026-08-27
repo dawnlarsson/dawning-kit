@@ -41,8 +41,11 @@ check() {
         shift
         printf '%s\n' "$*" > "$work/case.sh"
 
-        "$reference" < "$work/case.sh" > "$work/want" 2>/dev/null || true
-        "$subject"   < "$work/case.sh" > "$work/got"  2>/dev/null || true
+        # Bounded, because a shell under test is exactly the kind of thing
+        # that loops forever, and a suite that hangs tells you nothing about
+        # which case did it.
+        timeout 5 "$reference" < "$work/case.sh" > "$work/want" 2>/dev/null || true
+        timeout 5 "$subject"   < "$work/case.sh" > "$work/got"  2>/dev/null || true
 
         if cmp -s "$work/want" "$work/got"; then
                 pass=$((pass + 1))
