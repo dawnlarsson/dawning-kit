@@ -39,7 +39,7 @@ static void pane_place(struct pane *pane)
                 WRITE_ONCE(pane->shared->display_height, output->height);
         }
 
-        title = pane->style & WINDOW_FRAME ? WINDOW_TITLE : 0;
+        title = pane->style & WINDOW_FRAME ? canvas_title : 0;
 
         if (pane->style & WINDOW_FULLSCREEN)
         {
@@ -71,7 +71,7 @@ static void pane_size(struct pane *pane)
         if (!output || !(pane->style & WINDOW_FULLSCREEN))
                 return;
 
-        title = pane->style & WINDOW_FRAME ? WINDOW_TITLE : 0;
+        title = pane->style & WINDOW_FRAME ? canvas_title : 0;
 
         pane->width = (int)min(output->width, pane->max_width);
         pane->height = (int)min(output->height - (unsigned int)title, pane->max_height);
@@ -125,8 +125,8 @@ static void pane_free(struct pane *pane)
 static struct pane *pane_create(unsigned int width, unsigned int height,
                                 unsigned int columns, unsigned int rows)
 {
-        unsigned int max_columns = (unsigned int)desktop.width / WINDOW_CELL_W;
-        unsigned int max_rows = (unsigned int)desktop.height / WINDOW_CELL_H;
+        unsigned int max_columns = (unsigned int)(desktop.width / canvas_cell_w);
+        unsigned int max_rows = (unsigned int)(desktop.height / canvas_cell_h);
         unsigned long cell_bytes = (unsigned long)max_columns * max_rows *
                                    sizeof(struct window_cell);
         struct pane *pane;
@@ -143,8 +143,8 @@ static struct pane *pane_create(unsigned int width, unsigned int height,
         {
                 columns = min(columns, max_columns);
                 rows = min(rows, max_rows);
-                width = columns * WINDOW_CELL_W;
-                height = rows * WINDOW_CELL_H;
+                width = columns * (unsigned int)canvas_cell_w;
+                height = rows * (unsigned int)canvas_cell_h;
         }
 
         // A window is allowed to be as large as the desktop and no larger.
@@ -188,8 +188,8 @@ static struct pane *pane_create(unsigned int width, unsigned int height,
                 pane->max_rows = max_rows;
                 pane->shared->max_columns = max_columns;
                 pane->shared->max_rows = max_rows;
-                pane->max_width = max_columns * WINDOW_CELL_W;
-                pane->max_height = max_rows * WINDOW_CELL_H;
+                pane->max_width = max_columns * (unsigned int)canvas_cell_w;
+                pane->max_height = max_rows * (unsigned int)canvas_cell_h;
                 pane->shared->columns = columns;
                 pane->shared->rows = rows;
                 pane->grid_columns = columns;
@@ -241,8 +241,8 @@ static struct pane *pane_create(unsigned int width, unsigned int height,
 static __maybe_unused struct pane *pane_create_owned(unsigned int columns,
                                                      unsigned int rows)
 {
-        unsigned int max_columns = (unsigned int)desktop.width / WINDOW_CELL_W;
-        unsigned int max_rows = (unsigned int)desktop.height / WINDOW_CELL_H;
+        unsigned int max_columns = (unsigned int)(desktop.width / canvas_cell_w);
+        unsigned int max_rows = (unsigned int)(desktop.height / canvas_cell_h);
         unsigned long bytes = PAGE_ALIGN((unsigned long)max_columns * max_rows *
                                          sizeof(struct window_cell));
         struct pane *pane;
@@ -274,10 +274,10 @@ static __maybe_unused struct pane *pane_create_owned(unsigned int columns,
         pane->grid_rows = pane->rows;
         pane->max_columns = max_columns;
         pane->max_rows = max_rows;
-        pane->max_width = max_columns * WINDOW_CELL_W;
-        pane->max_height = max_rows * WINDOW_CELL_H;
-        pane->width = (int)pane->columns * WINDOW_CELL_W;
-        pane->height = (int)pane->rows * WINDOW_CELL_H;
+        pane->max_width = max_columns * (unsigned int)canvas_cell_w;
+        pane->max_height = max_rows * (unsigned int)canvas_cell_h;
+        pane->width = (int)pane->columns * canvas_cell_w;
+        pane->height = (int)pane->rows * canvas_cell_h;
         pane->pitch = (unsigned int)pane->width;
         pane->x = 80;
         pane->y = 80;
@@ -301,8 +301,8 @@ static void pane_regrid(struct pane *pane)
         if (!pane->cells)
                 return;
 
-        pane->columns = min((unsigned int)pane->width / WINDOW_CELL_W, pane->max_columns);
-        pane->rows = min((unsigned int)pane->height / WINDOW_CELL_H, pane->max_rows);
+        pane->columns = min((unsigned int)(pane->width / canvas_cell_w), pane->max_columns);
+        pane->rows = min((unsigned int)(pane->height / canvas_cell_h), pane->max_rows);
 
         if (!pane->columns)
                 pane->columns = 1;
@@ -310,8 +310,8 @@ static void pane_regrid(struct pane *pane)
         if (!pane->rows)
                 pane->rows = 1;
 
-        pane->width = (int)pane->columns * WINDOW_CELL_W;
-        pane->height = (int)pane->rows * WINDOW_CELL_H;
+        pane->width = (int)pane->columns * canvas_cell_w;
+        pane->height = (int)pane->rows * canvas_cell_h;
 
         /*
                 A resize reaches here from drag.c without going through
@@ -546,9 +546,9 @@ static void desktop_refresh_panes(void)
                 }
 
                 desktop_damage(pane->x,
-                               pane->y + (pane->style & WINDOW_FRAME ? WINDOW_TITLE : 0) +
-                                   (int)pane->damage_row * WINDOW_CELL_H,
-                               pane->width, (int)pane->damage_rows * WINDOW_CELL_H);
+                               pane->y + (pane->style & WINDOW_FRAME ? canvas_title : 0) +
+                                   (int)pane->damage_row * canvas_cell_h,
+                               pane->width, (int)pane->damage_rows * canvas_cell_h);
         }
 
         list_sort(NULL, &desktop.windows, pane_by_z);
@@ -741,13 +741,13 @@ static _Bool desktop_sequence_changed(void)
 */
 static void cursor_settle(void)
 {
-        if (desktop.cursor_scale <= 1)
+        if (desktop.cursor_scale <= desktop.scale)
                 return;
 
         if (ktime_get_ns() < desktop.magnified_until)
                 return;
 
-        desktop.cursor_scale = 1;
+        desktop.cursor_scale = desktop.scale;
         cursor_move(desktop.cursor_x, desktop.cursor_y);
 }
 
@@ -763,7 +763,7 @@ static void desktop_frame_pass(void)
                 desktop_repaint();
                 desktop.idle_frames = 0;
         }
-        else if (desktop.cursor_scale > 1)
+        else if (desktop.cursor_scale > desktop.scale)
         {
                 desktop.idle_frames = 0;
         }

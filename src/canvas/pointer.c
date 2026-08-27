@@ -189,7 +189,7 @@ static void pointer_apply(void)
 
                         if (atomic_xchg(&desktop.magnify, 0))
                         {
-                                desktop.cursor_scale = CURSOR_MAGNIFIED;
+                                desktop.cursor_scale = CURSOR_MAGNIFIED * desktop.scale;
                                 desktop.magnified_until = ktime_get_ns() + MAGNIFIED_NS;
                                 desktop_watch();
                         }

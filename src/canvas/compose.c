@@ -175,7 +175,7 @@ static void cell_draw(const struct target *t, const struct shape *shape,
                       int x, int y, const struct window_cell *cell,
                       u32 ink, u32 paper)
 {
-        if (glyph_is_cell() &&
+        if (glyph_is_cell() && desktop.scale == 1 &&
             x >= max(t->clip.x1, 0) && x + WINDOW_CELL_W <= min(t->clip.x2, t->width) &&
             y >= max(t->clip.y1, 0) && y + WINDOW_CELL_H <= min(t->clip.y2, t->height) &&
             !round_inset(y - shape->y, shape->h, shape->radius) &&
@@ -188,8 +188,8 @@ static void cell_draw(const struct target *t, const struct shape *shape,
                 return;
         }
 
-        shape_fill(t, shape, x, y, WINDOW_CELL_W, WINDOW_CELL_H, paper);
-        glyph_draw(t, x, y, 1, (unsigned char)cell->character, ink);
+        shape_fill(t, shape, x, y, canvas_cell_w, canvas_cell_h, paper);
+        glyph_draw(t, x, y, (int)desktop.scale, (unsigned char)cell->character, ink);
 }
 
 /*
@@ -213,21 +213,21 @@ static void compose_cells(struct pane *pane, const struct target *t,
         int columns = (int)min(pane->grid_columns, pane->columns);
         int grid_rows = (int)min(pane->grid_rows, pane->rows);
 
-        int first_row = max((t->clip.y1 - y) / WINDOW_CELL_H, 0);
-        int last_row = min((t->clip.y2 - y + WINDOW_CELL_H - 1) / WINDOW_CELL_H,
+        int first_row = max((t->clip.y1 - y) / canvas_cell_h, 0);
+        int last_row = min((t->clip.y2 - y + canvas_cell_h - 1) / canvas_cell_h,
                            grid_rows);
 
         // Columns as well as rows. Clipping only the rows meant a cursor
         // moving over a terminal repainted two whole lines of it, eighty
         // cells wide, to put sixteen pixels somewhere.
-        int first = max((t->clip.x1 - x) / WINDOW_CELL_W, 0);
-        int last = min((t->clip.x2 - x + WINDOW_CELL_W - 1) / WINDOW_CELL_W, columns);
+        int first = max((t->clip.x1 - x) / canvas_cell_w, 0);
+        int last = min((t->clip.x2 - x + canvas_cell_w - 1) / canvas_cell_w, columns);
         int row, column;
 
         for (row = first_row; row < last_row; row++)
         {
                 const struct window_cell *cells = pane->cells + row * pane->grid_columns;
-                int cy = y + row * WINDOW_CELL_H;
+                int cy = y + row * canvas_cell_h;
 
                 for (column = first; column < last;)
                 {
@@ -237,7 +237,7 @@ static void compose_cells(struct pane *pane, const struct target *t,
 
                         if (character > ' ' && character <= 126)
                         {
-                                cell_draw(t, shape, x + column * WINDOW_CELL_W, cy,
+                                cell_draw(t, shape, x + column * canvas_cell_w, cy,
                                           &cells[column],
                                           canvas_terminal[cells[column].ink & 15] |
                                               t->opaque,
@@ -258,8 +258,8 @@ static void compose_cells(struct pane *pane, const struct target *t,
                                         break;
                         }
 
-                        shape_fill(t, shape, x + column * WINDOW_CELL_W, cy,
-                                   (run - column) * WINDOW_CELL_W, WINDOW_CELL_H,
+                        shape_fill(t, shape, x + column * canvas_cell_w, cy,
+                                   (run - column) * canvas_cell_w, canvas_cell_h,
                                    paper);
 
                         column = run;
@@ -282,7 +282,7 @@ static void compose_cells(struct pane *pane, const struct target *t,
 static void compose_pane(struct pane *pane, const struct target *t)
 {
         _Bool framed = pane->style & WINDOW_FRAME;
-        int title = framed ? WINDOW_TITLE : 0;
+        int title = framed ? canvas_title : 0;
         int x = pane->x - t->x;
         int y = pane->y - t->y;
         int bottom = y + title + pane->height;
@@ -328,15 +328,17 @@ static void compose_pane(struct pane *pane, const struct target *t)
                                                               : INK_TITLE]);
 
                 if (pane->title_length)
-                        text_draw(t, x + 8, y, pane->width - 16, title,
+                        text_draw(t, x + canvas_cell_w, y,
+                                  pane->width - canvas_cell_w * 2, title,
                                   pane->title, pane->title_length,
-                                  TEXT_CENTRE | TEXT_MIDDLE, 1, t->ink[INK_TEXT]);
+                                  TEXT_CENTRE | TEXT_MIDDLE, (int)desktop.scale,
+                                  t->ink[INK_TEXT]);
         }
 
         if (pane->cells)
         {
-                int gw = (int)min(pane->grid_columns, pane->columns) * WINDOW_CELL_W;
-                int gh = (int)min(pane->grid_rows, pane->rows) * WINDOW_CELL_H;
+                int gw = (int)min(pane->grid_columns, pane->columns) * canvas_cell_w;
+                int gh = (int)min(pane->grid_rows, pane->rows) * canvas_cell_h;
 
                 compose_cells(pane, t, &shape, x, y + title);
 

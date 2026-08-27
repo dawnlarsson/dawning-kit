@@ -213,6 +213,17 @@ static struct desktop
         _Bool started;
         _Bool terminal;
 
+        /*
+                How many device pixels one drawn pixel is.
+
+                A cell is eight by sixteen and a titlebar is twenty, and those
+                are the right numbers on a ninety dot inch screen and a
+                quarter of the right numbers on a Retina one. Everything the
+                compositor draws is multiplied by this, so the same window is
+                the same size in millimetres on both.
+        */
+        unsigned int scale;
+
         // The bounding box of every output. Read by the input handler in
         // atomic context, where it cannot walk the list.
         int width, height;
@@ -331,11 +342,17 @@ static _Bool rects_overlap(int ax, int ay, int aw, int ah,
         return ax < bx + bw && bx < ax + aw && ay < by + bh && by < ay + ah;
 }
 
+// Everything the compositor draws for itself, in device pixels.
+#define canvas_title (WINDOW_TITLE * (int)desktop.scale)
+#define canvas_border (2 * (int)desktop.scale)
+#define canvas_cell_w (WINDOW_CELL_W * (int)desktop.scale)
+#define canvas_cell_h (WINDOW_CELL_H * (int)desktop.scale)
+
 // The border and titlebar a framed window wears, and nothing when it does not.
 static void pane_frame(struct pane *pane, int *x, int *y, int *w, int *h)
 {
-        int title = pane->style & WINDOW_FRAME ? WINDOW_TITLE : 0;
-        int border = pane->style & WINDOW_FRAME ? 2 : 0;
+        int title = pane->style & WINDOW_FRAME ? canvas_title : 0;
+        int border = pane->style & WINDOW_FRAME ? canvas_border : 0;
 
         *x = pane->x - border;
         *y = pane->y - border;
@@ -346,7 +363,7 @@ static void pane_frame(struct pane *pane, int *x, int *y, int *w, int *h)
 static _Bool pane_titlebar_holds(struct pane *pane, int x, int y)
 {
         return x >= pane->x && x < pane->x + pane->width &&
-               y >= pane->y && y < pane->y + WINDOW_TITLE;
+               y >= pane->y && y < pane->y + canvas_title;
 }
 
 // Which edges of a window's frame a point is close enough to take hold of.

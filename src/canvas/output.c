@@ -22,18 +22,7 @@ static u32 canvas_pick_format(struct drm_plane *plane)
         return DRM_FORMAT_INVALID;
 }
 
-/*
-        The best mode a screen offers: the most pixels, and of the modes that
-        size comes in, the fastest.
 
-        Not what the probe leaves behind. That picks the connector's preferred
-        mode, which is the native one only once the monitor's EDID has been
-        read -- and the first hotplug on i915 can arrive before that, leaving a
-        fallback mode the panel then stretches to fill itself.
-
-        Interlaced and doublescan modes are skipped: they report a size they do
-        not really draw.
-*/
 static struct drm_display_mode *output_best_mode(struct drm_connector *connector)
 {
         struct drm_display_mode *mode, *best = NULL;
@@ -306,6 +295,12 @@ static int canvas_build(struct canvas *canvas, _Bool biggest)
         if (canvas_probe_modes(canvas, biggest))
                 return -ENODEV;
 
+#ifdef CONFIG_MOONWATER_CANVAS_SCALE
+        desktop.scale = CONFIG_MOONWATER_CANVAS_SCALE;
+#endif
+        if (desktop.scale < 1)
+                desktop.scale = 1;
+
         mutex_lock(&client->modeset_mutex);
         drm_client_for_each_modeset(mode_set, client)
         {
@@ -314,8 +309,9 @@ static int canvas_build(struct canvas *canvas, _Bool biggest)
                 if (!mode_set->mode)
                         continue;
 
-                log_canvas("screen %ux%u at %u Hz\n", mode_set->mode->hdisplay,
-                           mode_set->mode->vdisplay, drm_mode_vrefresh(mode_set->mode));
+                log_canvas("screen %ux%u at %u Hz, drawn %ux\n",
+                           mode_set->mode->hdisplay, mode_set->mode->vdisplay,
+                           drm_mode_vrefresh(mode_set->mode), desktop.scale);
 
                 output = output_add(canvas, mode_set);
                 if (!output)
@@ -345,7 +341,7 @@ static int canvas_build(struct canvas *canvas, _Bool biggest)
 */
 static int canvas_start(struct canvas *canvas)
 {
-        int ret = canvas_build(canvas, true);
+        int ret = canvas_build(canvas, IS_ENABLED(CONFIG_MOONWATER_CANVAS_LARGEST_MODE));
 
         if (!ret && drm_client_modeset_commit(&canvas->client))
         {
@@ -357,8 +353,10 @@ static int canvas_start(struct canvas *canvas)
         if (ret)
                 return ret;
 
-        desktop.cursor_scale = 1;
-        desktop.drawn_scale = 1;
+        // The cursor is drawn from a bitmap like everything else, so it is the
+        // same sixteen pixels and the same too small without this.
+        desktop.cursor_scale = desktop.scale;
+        desktop.drawn_scale = desktop.scale;
 
         if (!desktop.started)
         {
