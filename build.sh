@@ -57,7 +57,24 @@ say() { printf '%s%s%s\n' "$CYAN$BOLD" "$*" "$RESET"; }
 #       mixed in any order: sh build.sh --run desktop.
 #
 host=${MOONWATER_BUILD_HOST:-}
-remote=${MOONWATER_BUILD_DIR:-/tmp/moonwater-build}
+#
+#       One build directory per source tree, not one per machine.
+#
+#       This used to be /tmp/moonwater-build for everybody. Two people, or two
+#       sessions, or a person and an agent building at the same time wrote
+#       their objects and their image into the same place and neither was told.
+#       An incremental build then reuses whatever is there: the userspace half
+#       from one tree and the kernel module from another, linked into one image
+#       that matches no checkout anybody has. Every measurement taken off such
+#       an image is about a tree that does not exist.
+#
+#       The suffix is a checksum of this tree's own path, so the same checkout
+#       always gets the same directory and two checkouts never share one.
+#       MOONWATER_BUILD_DIR still overrides it.
+#
+here_path=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+tree_mark=$(printf '%s' "$here_path" | cksum | cut -d' ' -f1)
+remote=${MOONWATER_BUILD_DIR:-/tmp/moonwater-$(basename "$here_path")-$tree_mark}
 extra=""
 do_run=0
 do_build=1
@@ -431,8 +448,29 @@ STRNCHR:char *strnchr(const char *, __kernel_size_t, int)"
                 line_add_padded "linux/Kconfig" "source \"kernel/moonwater/Kconfig\""
                 line_add_padded "linux/kernel/Makefile" "obj-y += moonwater/"
 
-                if [ ! -e linux/kernel/moonwater ]; then
-                        sudo ln -s "$(pwd)/src" linux/kernel/moonwater || die "linking kernel module source"
+                #
+                #       The module source is this tree's src/, and the check
+                #       used to be "does the link exist" -- which follows it.
+                #       A build directory copied from somewhere else, or shared
+                #       with another session, carries a link pointing at that
+                #       tree's src, and -e says yes because that directory is
+                #       real. The kernel module then keeps building from source
+                #       nobody here has edited while userspace builds from this
+                #       one, and the two halves of the image disagree without
+                #       a word said about it.
+                #
+                #       So: where does it actually point, and is that here.
+                #
+                want_src="$(pwd)/src"
+                have_src=$(readlink linux/kernel/moonwater 2>/dev/null || true)
+
+                if [ "$have_src" != "$want_src" ]; then
+                        if [ -n "$have_src" ]; then
+                                echo "  the kernel module link pointed at $have_src"
+                                echo "  it should be $want_src -- repointing it"
+                        fi
+                        sudo rm -rf linux/kernel/moonwater
+                        sudo ln -s "$want_src" linux/kernel/moonwater || die "linking kernel module source"
                 fi
 
                 if is_newer artifacts/.config linux/.config; then
