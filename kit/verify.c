@@ -872,6 +872,78 @@ fn check_decimals()
         same("decimal_to_string", "keeps the sign", (positive)(caught[0] == '-'), 1);
 }
 
+/*
+        The set scan, against the loop it replaces.
+
+        Every set is exercised, not just a convenient one: the empty set stops
+        immediately, the full set runs to the end, and the interesting ones are
+        the metacharacter sets a shell lexer actually uses.
+*/
+positive reference_span(string_address source, const b8 address_to set)
+{
+        positive n = 0;
+
+        while (1)
+        {
+                p8 c = source[n];
+
+                if (!set[c])
+                        return n;
+
+                n++;
+        }
+}
+
+fn check_span()
+{
+        static p8 subject[600];
+        static b8 set[STRING_SET_BYTES];
+        static string_address sets[] = {
+            "",                          // nothing is a member
+            " \t",                       // blanks, as a lexer skips them
+            "|&;<>()$`\\\\\"' \t\n",        // shell metacharacters
+            "abcdefghijklmnopqrstuvwxyz",
+            "0123456789",
+        };
+
+        for (positive which = 0; which < sizeof(sets) / sizeof(sets[0]); which++)
+        {
+                reference_fill(set, 0, sizeof(set));
+                string_set_add(set, sets[which]);
+
+                for (positive e = 0; e < EDGE_COUNT; e++)
+                {
+                        positive size = edges[e];
+
+                        if (size >= sizeof(subject) - 1)
+                                continue;
+
+                        for (positive i = 0; i < size; i++)
+                                subject[i] = (p8)(next() % 94 + 33);
+
+                        subject[size] = 0;
+
+                        same("string_span", "against the loop",
+                             string_span(subject, set), reference_span(subject, set));
+
+                        // And a string entirely of members, so the run reaches
+                        // the terminator rather than stopping early by luck.
+                        if (string_get(sets[which]))
+                        {
+                                positive length = string_length(sets[which]);
+
+                                for (positive i = 0; i < size; i++)
+                                        subject[i] = sets[which][i % length];
+
+                                subject[size] = 0;
+
+                                same("string_span", "all members",
+                                     string_span(subject, set), size);
+                        }
+                }
+        }
+}
+
 b32 main()
 {
         check_fill();
@@ -888,6 +960,7 @@ b32 main()
         check_clock();
         check_format();
         check_decimals();
+        check_span();
 
         string_format(log, "%p checks, %p failures\n", checks, failures);
         log_flush();

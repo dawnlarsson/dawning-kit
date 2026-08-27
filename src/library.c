@@ -2550,6 +2550,39 @@ ASM_FUNC(moonwater_positive_to_string)
     "        .globl  string_format\n"
     "        .type   string_format, " ASM_TYPE "\n"
     "        .set    string_format, moonwater_format\n"
+    // A run of bytes that are all in a set, the operation a lexer is mostly
+    // made of: skipping blanks, taking a word up to a metacharacter, running
+    // to the end of a line, scanning inside a quote.
+    //
+    // A byte per member rather than a bit. The bit form was tried first and
+    // measured 1.5 times slower than the C it was meant to replace: bt against
+    // memory with a variable offset is a slow instruction, and the shift and
+    // mask needed to avoid it cost more than the table saves. Two hundred and
+    // twenty four extra bytes buys one load and one compare per input byte.
+    ASM_FUNC(moonwater_span)
+    "        xor     %eax, %eax\n"
+    "1:      movzbl  (%rdi,%rax), %ecx\n"
+    "        cmpb    $0, (%rsi,%rcx)\n"
+    "        je      9f\n"
+    "        movzbl  1(%rdi,%rax), %ecx\n"
+    "        cmpb    $0, (%rsi,%rcx)\n"
+    "        je      8f\n"
+    "        movzbl  2(%rdi,%rax), %ecx\n"
+    "        cmpb    $0, (%rsi,%rcx)\n"
+    "        je      7f\n"
+    "        movzbl  3(%rdi,%rax), %ecx\n"
+    "        cmpb    $0, (%rsi,%rcx)\n"
+    "        je      6f\n"
+    "        add     $4, %rax\n"
+    "        jmp     1b\n"
+    "6:      add     $3, %rax\n"
+    ASM_RET
+    "7:      add     $2, %rax\n"
+    ASM_RET
+    "8:      inc     %rax\n"
+    "9:      \n"
+    ASM_RET
+    ASM_END(moonwater_span)
 );
 #ifdef KERNEL_MODE
 ASM_EXPORT(memchr);
@@ -3802,6 +3835,22 @@ ASM_FUNC(moonwater_positive_to_string)
     "        .globl  string_format\n"
     "        .type   string_format, " ASM_TYPE "\n"
     "        .set    string_format, moonwater_format\n"
+    // A run of bytes that are all in a set: a byte per member, so the byte
+    // read is the index and there is nothing to shift.
+    ASM_FUNC(moonwater_span)
+    "        mov     x2, xzr\n"
+    "1:      ldrb    w3, [x0, x2]\n"
+    "        ldrb    w4, [x1, x3]\n"
+    "        cbz     w4, 3f\n"
+    "        add     x2, x2, #1\n"
+    "        ldrb    w3, [x0, x2]\n"
+    "        ldrb    w4, [x1, x3]\n"
+    "        cbz     w4, 3f\n"
+    "        add     x2, x2, #1\n"
+    "        b       1b\n"
+    "3:      mov     x0, x2\n"
+    ASM_RET
+    ASM_END(moonwater_span)
 );
 #ifdef KERNEL_MODE
 ASM_EXPORT(strchrnul);
@@ -5107,6 +5156,25 @@ ASM_FUNC(moonwater_positive_to_string)
     "        .globl  string_format\n"
     "        .type   string_format, " ASM_TYPE "\n"
     "        .set    string_format, moonwater_format\n"
+    // A run of bytes that are all in a set: a byte per member, as on arm64.
+    ASM_FUNC(moonwater_span)
+    "        mv      a2, zero\n"
+    "1:      add     t0, a0, a2\n"
+    "        lbu     t1, 0(t0)\n"
+    "        add     t2, a1, t1\n"
+    "        lbu     t3, 0(t2)\n"
+    "        beqz    t3, 3f\n"
+    "        addi    a2, a2, 1\n"
+    "        add     t0, a0, a2\n"
+    "        lbu     t1, 0(t0)\n"
+    "        add     t2, a1, t1\n"
+    "        lbu     t3, 0(t2)\n"
+    "        beqz    t3, 3f\n"
+    "        addi    a2, a2, 1\n"
+    "        j       1b\n"
+    "3:      mv      a0, a2\n"
+    ASM_RET
+    ASM_END(moonwater_span)
 );
 #ifdef KERNEL_MODE
 ASM_EXPORT(strchrnul);
@@ -5645,9 +5713,39 @@ positive moonwater_strlen(string_address source);
 b32 moonwater_strcmp(string_address source, string_address input);
 string_address moonwater_strchr(string_address source, p8 character);
 
+positive moonwater_span(string_address source, const b8 address_to set);
 address_any moonwater_fill(address_any destination, b8 value, positive size);
 address_any moonwater_copy(address_any destination, address_any source, positive size);
 address_any moonwater_move(address_any destination, address_any source, positive size);
+
+/*
+        The length of the run at the start of a string whose bytes are all in a
+        set, where the set is 256 bits -- one for each byte value.
+
+        This is what a lexer does almost all of: skip the blanks, take the word
+        up to a metacharacter, run to the end of the line, scan to the closing
+        quote. Written once here rather than once per scanner, so anything that
+        reads text gets it.
+
+        string_set_add builds the set. A byte not in it stops the run, and that
+        includes the terminator unless somebody deliberately puts it in.
+*/
+#define STRING_SET_BYTES 256
+
+fn string_set_add(b8 address_to set, string_address members)
+{
+        while (string_get(members))
+        {
+                p8 c = string_get(members++);
+
+                set[c] = 1;
+        }
+}
+
+positive string_span(string_address source, const b8 address_to set)
+{
+        return moonwater_span(source, set);
+}
 
 // ### Fill a memory block with the same value
 // fills a memory block with the same value
