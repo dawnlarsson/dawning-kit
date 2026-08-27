@@ -119,6 +119,67 @@ static struct linux_binfmt format = {
     .load_binary = execute_spark,
 };
 
+/*
+        The vector a program finds its arguments through.
+
+        setup_arg_pages copies the strings onto the new stack and leaves
+        bprm->p pointing at the first of them, but that is all it does. What
+        was missing is the thing create_elf_tables builds for an ELF: below the
+        strings, a count, then a pointer to each argument, a null, then a
+        pointer to each environment entry, and another null. Without it the
+        stack pointer a program starts on points at raw text, so reading the
+        count read the first eight bytes of its own path -- which is why every
+        main() here took no arguments and the shell had nowhere to send what it
+        had parsed.
+
+        No auxiliary vector. A spark image is mapped at a fixed base by the
+        loader above and has no interpreter to inform, which is the whole of
+        what auxv is for here.
+*/
+static int spark_stack(struct linux_binprm *bprm, unsigned long *out)
+{
+        unsigned long walk = bprm->p;
+        unsigned long __user *slot;
+        unsigned long bottom;
+        int count = bprm->argc + bprm->envc;
+        int i;
+
+        // A count, every pointer, and the two nulls that end each list.
+        bottom = (walk - (unsigned long)(count + 3) * sizeof(unsigned long)) & ~15UL;
+        slot = (unsigned long __user *)bottom;
+
+        if (put_user((unsigned long)bprm->argc, slot++))
+                return -EFAULT;
+
+        for (i = 0; i < count; i++)
+        {
+                long length;
+
+                if (i == bprm->argc && put_user(0UL, slot++))
+                        return -EFAULT;
+
+                if (put_user(walk, slot++))
+                        return -EFAULT;
+
+                length = strnlen_user((void __user *)walk, MAX_ARG_STRLEN);
+
+                if (length <= 0)
+                        return -EFAULT;
+
+                walk += (unsigned long)length;
+        }
+
+        // The null after argv when there was no environment to start one.
+        if (!bprm->envc && put_user(0UL, slot++))
+                return -EFAULT;
+
+        if (put_user(0UL, slot))
+                return -EFAULT;
+
+        *out = bottom;
+        return 0;
+}
+
 static int execute_spark(struct linux_binprm *bprm)
 {
         u64 loader_started = ktime_get_ns();
@@ -299,7 +360,14 @@ static int execute_spark(struct linux_binprm *bprm)
 
         set_binfmt(&format);
 
-        stack_addr = current->mm->start_stack;
+        ret = spark_stack(bprm, &stack_addr);
+
+        if (ret)
+        {
+                log_k("could not lay out the arguments: %d\n", ret);
+                force_fatal_sig(SIGKILL);
+                return ret;
+        }
 
 #ifdef CONFIG_X86_64
         regs->ip = header->entry;

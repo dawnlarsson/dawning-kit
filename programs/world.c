@@ -44,33 +44,6 @@
 
 #define ERROR_EXISTS (-17)
 
-/*
-        A program's own arguments.
-
-        The kernel leaves argc, then argv, then envp on the stack, and
-        _start_c in src/platform/linux.c keeps the pointer to it. Nothing has
-        read it until now -- every program here takes no arguments, which is
-        why the shell has had nowhere to send any. This belongs in library.c
-        once it is more than one program that wants it.
-*/
-static b32 world_argument_count()
-{
-        if (!program_stack_base)
-                return 0;
-
-        return (b32)((positive address_to)program_stack_base)[0];
-}
-
-static string_address world_argument(b32 index)
-{
-        positive address_to stack = (positive address_to)program_stack_base;
-
-        if (!program_stack_base || index >= world_argument_count())
-                return null;
-
-        return (string_address)stack[1 + index];
-}
-
 struct mount_point
 {
         string_address source;
@@ -200,8 +173,8 @@ fn world_name(string_address root, p8 address_to into, positive room)
 
 b32 main()
 {
-        string_address root = world_argument(1);
-        string_address program = world_argument(2);
+        string_address root = program_argument(1);
+        string_address program = program_argument(2);
         bipolar failed, child;
         positive status = 0, ended = 0;
 

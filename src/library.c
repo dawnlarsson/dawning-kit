@@ -6204,6 +6204,48 @@ static bipolar system_call_6(positive syscall, positive argument_1, positive arg
 
 p8 address_to program_stack_base = 0;
 
+/*
+        A program's own arguments.
+
+        The kernel leaves argc on the stack, then argv, then a null, then the
+        environment, and _start_c keeps the pointer to it. Nothing read it
+        until now, which is why every main() here takes none and why the shell
+        had nowhere to send what it had parsed: it tokenised a line, handed the
+        words to the spawn, and the program they reached could not see them.
+
+        Counted rather than handed over as a vector, because main() takes no
+        arguments and changing that would touch every program at once.
+*/
+b32 program_argument_count()
+{
+        if (!program_stack_base)
+                return 0;
+
+        return (b32)(address_to(positive address_to) program_stack_base);
+}
+
+string_address program_argument(b32 index)
+{
+        positive address_to stack = (positive address_to)program_stack_base;
+
+        if (!program_stack_base || index < 0 || index >= program_argument_count())
+                return null;
+
+        return (string_address)stack[1 + index];
+}
+
+// Past argv and the null that ends it.
+string_address program_environment(b32 index)
+{
+        positive address_to stack = (positive address_to)program_stack_base;
+        b32 count = program_argument_count();
+
+        if (!program_stack_base || index < 0)
+                return null;
+
+        return (string_address)stack[2 + count + index];
+}
+
 typedef struct timespec
 {
         p64 tv_sec;
