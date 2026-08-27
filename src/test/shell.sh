@@ -599,7 +599,7 @@ differs 'at is one word' '[a b c]|' 0 'set -- "a b" c; for i in "$@"; do echo "[
 differs 'no dash heredoc' '' 0 'cat <<-EOF
 	indented
 	EOF'
-differs 'no exec fd'     '' 0 'exec 4>/tmp/sd1; echo hi >&4; exec 4>&-; cat /tmp/sd1'
+differs 'no exec fd'     '' 0 "exec 4>$work/sd1; echo hi >&4; exec 4>&-; cat $work/sd1"
 differs 'no set e'       'not reached|' 0 'set -e; false; echo not reached'
 differs 'no set u'       '|after|' 0 'set -u; echo $nosuch; echo after'
 differs 'no cd dash'     '/|' 0 'cd /tmp; cd /; cd - > /dev/null; pwd'
