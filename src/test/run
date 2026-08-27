@@ -1,0 +1,303 @@
+#!/bin/sh
+#
+#       Every test in the tree, in one order.
+#
+#           sh src/test/run                 every lane this machine can run
+#           sh src/test/run shell text      only the lanes named
+#           sh src/test/run --list          what the lanes are
+#
+#       The suites used to be eight places with four ways of starting them,
+#       and the ones that needed a binary built first were started by hand or
+#       not at all. Everything a lane needs -- the freestanding link, the
+#       shell, the forty six names pointing at it -- is built here, once, and
+#       handed over.
+#
+#       A lane is a function named lane_<name>. It prints its own counts
+#       through tally and returns non-zero when something failed, and this
+#       walks the list and adds up. Nothing is skipped silently: a lane that
+#       cannot run here says so and says why.
+#
+set -u
+
+# shellcheck disable=SC1007
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+# shellcheck disable=SC1007
+root=$(CDPATH= cd -- "$here/.." && cd .. && pwd)
+
+cd "$root" || exit 1
+
+compiler=${CC:-gcc}
+
+work=$(mktemp -d "${TMPDIR:-/tmp}/dawning-test.XXXXXX") || exit 1
+trap 'rm -rf "$work"' EXIT INT TERM
+
+TEST_TALLY="$work/tally"
+export TEST_TALLY
+: > "$TEST_TALLY"
+
+lanes="standard verify probe shell text files kit boot"
+
+describe()
+{
+        case $1 in
+        standard) echo "the standard library, and that it still builds with no platform under it" ;;
+        verify)   echo "the assembly in library.c against the C it replaced, on three machines" ;;
+        probe)    echo "what only a separate process can prove: arguments, status, regions" ;;
+        shell)    echo "the shell language against dash, the names it answers to, and the gaps" ;;
+        text)     echo "the text utilities against the system's, listed and generated" ;;
+        files)    echo "the file utilities against coreutils, by output and by effect" ;;
+        kit)      echo "the byte and document kits the build scripts are made of" ;;
+        boot)     echo "the image boots, init starts, and the shell answers" ;;
+        esac
+}
+
+tally()
+{
+        printf '%s %s %s\n' "$1" "$2" "$3" >> "$TEST_TALLY"
+}
+
+note()
+{
+        printf '  %s\n' "$*"
+}
+
+#       The link a spark program gets, which is what library.c ships inside.
+#       Without the script the placement is the toolchain's default, and
+#       riscv64 does not survive that. -flto is not here on purpose: the
+#       assembly in library.c calls C functions by name and the link time
+#       optimiser cannot see a call written inside a string, so it drops the
+#       callee and the link fails.
+freestanding()
+{
+        source_file=$1
+        output=$2
+
+        if $compiler -O2 -static -nostdlib -nostartfiles -fno-stack-protector \
+                -fno-builtin -w -T kit/spark.ld -Wl,-e,_start \
+                -Wl,--build-id=none -Wl,--no-warn-rwx-segments \
+                -o "$output" "$source_file" 2> "$output.err"
+        then
+                return 0
+        fi
+
+        note "$source_file did not build:"
+        sed 's/^/    /' "$output.err" | head -20
+        return 1
+}
+
+#       One binary, and every name it answers to pointing at it. The suites
+#       below run $farm/grep and $farm/ls, which is how the image is laid out
+#       and so the only shape worth testing.
+utilities="cat grep sed cut tr sort uniq head tail wc tee rev nl fold ls find
+stat du df chmod chown ln readlink basename dirname realpath mkdir rmdir cp mv
+rm touch sleep seq yes env id hostname uname"
+
+shell_binary=""
+farm=""
+
+need_shell()
+{
+        [ -z "$shell_binary" ] || return 0
+
+        freestanding programs/shell.c "$work/shell" || return 1
+
+        mkdir -p "$work/bin" || return 1
+
+        for name in $utilities; do
+                ln -sf "$work/shell" "$work/bin/$name" || return 1
+        done
+
+        shell_binary="$work/shell"
+        farm="$work/bin"
+}
+
+#
+#       The lanes.
+#
+
+lane_standard()
+{
+        freestanding src/test/standard.c "$work/standard" || return 1
+
+        "$work/standard" > "$work/standard.out" 2>&1
+        sed -n '/FAILED/p' "$work/standard.out"
+
+        line=$(sed -n 's/^\([0-9]*\) passed, \([0-9]*\) failed$/\1 \2/p' \
+                "$work/standard.out")
+
+        [ -n "$line" ] || { note "the standard suite printed no verdict"; return 1; }
+
+        passed=${line% *}
+        failed=${line#* }
+
+        tally standard "$passed" "$((passed + failed))"
+
+        #       The library is meant to be usable with nothing under it. The
+        #       platform layer is what talks to a kernel; this is the half
+        #       that does not, compiled on its own.
+        if $compiler -c -O2 -DSTANDARD_NO_PLATFORM -ffreestanding -fno-builtin \
+                -w -o "$work/no_platform.o" src/library.c 2> "$work/no_platform.err"
+        then
+                tally no-platform 1 1
+        else
+                tally no-platform 0 1
+                note "library.c does not compile without a platform:"
+                sed 's/^/    /' "$work/no_platform.err" | head -10
+                failed=$((failed + 1))
+        fi
+
+        [ "$failed" = 0 ]
+}
+
+#       library.c writes its routines three times and only one of them can be
+#       run on the machine it was written on. qemu runs the other two, so a
+#       routine that is only right here fails here rather than on a board.
+verify_one()
+{
+        name=$1
+        cross=$2
+        runner=$3
+
+        if ! command -v "$cross" > /dev/null 2>&1; then
+                note "$name: no $cross, skipped"
+                return 0
+        fi
+
+        if [ -n "$runner" ] && ! command -v "$runner" > /dev/null 2>&1; then
+                note "$name: no $runner, skipped"
+                return 0
+        fi
+
+        saved=$compiler
+        compiler=$cross
+        freestanding src/test/verify.c "$work/verify.$name" || {
+                compiler=$saved
+                return 1
+        }
+        compiler=$saved
+
+        $runner "$work/verify.$name" > "$work/verify.$name.out" 2>&1
+        status=$?
+
+        sed -n '/FAIL/p' "$work/verify.$name.out"
+
+        line=$(sed -n 's/^\([0-9]*\) checks, \([0-9]*\) failures$/\1 \2/p' \
+                "$work/verify.$name.out")
+
+        [ -n "$line" ] || { note "$name printed no verdict"; return 1; }
+
+        checks=${line% *}
+        bad=${line#* }
+
+        tally "verify-$name" "$((checks - bad))" "$checks"
+
+        [ "$status" = 0 ] && [ "$bad" = 0 ]
+}
+
+lane_verify()
+{
+        failed=0
+
+        verify_one x86_64 "$compiler" "" || failed=1
+        verify_one arm64 aarch64-linux-gnu-gcc qemu-aarch64 || failed=1
+        verify_one riscv64 riscv64-linux-gnu-gcc qemu-riscv64 || failed=1
+
+        [ "$failed" = 0 ]
+}
+
+lane_probe()
+{
+        freestanding src/test/probe.c "$work/probe" || return 1
+
+        PROBE="$work/probe" sh src/test/probe.sh
+}
+
+lane_shell()
+{
+        need_shell || return 1
+
+        sh src/test/shell.sh "$shell_binary" "$farm"
+}
+
+lane_text()
+{
+        need_shell || return 1
+
+        sh src/test/text.sh "$farm"
+}
+
+lane_files()
+{
+        need_shell || return 1
+
+        sh src/test/files.sh "$farm"
+}
+
+lane_kit()
+{
+        sh src/test/kit.sh
+}
+
+lane_boot()
+{
+        sh src/test/boot.sh "${MOONWATER_IMAGE:-dist/bootx64.efi}"
+}
+
+#
+#       Walking the list.
+#
+
+if [ "$#" -gt 0 ] && [ "$1" = "--list" ]; then
+        for lane in $lanes; do
+                printf '  %-10s %s\n' "$lane" "$(describe "$lane")"
+        done
+        exit 0
+fi
+
+if [ "$#" -gt 0 ]; then
+        requested=$*
+
+        for lane in $requested; do
+                case " $lanes " in
+                *" $lane "*) ;;
+                *) echo "run: no lane called $lane" >&2; exit 2 ;;
+                esac
+        done
+else
+        requested=$lanes
+fi
+
+broken=""
+
+for lane in $requested; do
+        printf '\n%s -- %s\n' "$lane" "$(describe "$lane")"
+
+        if "lane_$lane"; then
+                continue
+        fi
+
+        broken="$broken $lane"
+done
+
+echo
+echo "  ----"
+
+total_pass=0
+total_all=0
+
+while read -r name passed count; do
+        printf '  %-14s %s of %s\n' "$name" "$passed" "$count"
+        total_pass=$((total_pass + passed))
+        total_all=$((total_all + count))
+done < "$TEST_TALLY"
+
+printf '  %-14s %s of %s\n' "" "$total_pass" "$total_all"
+
+if [ -n "$broken" ]; then
+        echo
+        echo "failed:$broken"
+        exit 1
+fi
+
+echo
+echo "everything agrees"
