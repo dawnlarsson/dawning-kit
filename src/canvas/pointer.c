@@ -308,6 +308,18 @@ static void pointer_event_locked(struct input_handle *handle, unsigned int type,
                 {
                         desktop.raw_y += value;
                 }
+                else if (code == REL_WHEEL)
+                {
+                        // Committed here rather than at the report, because a
+                        // wheel is not movement: nothing else in the report
+                        // changes what it means, and holding it back only
+                        // delays the line by a frame.
+                        // atomic_fetch_add and not atomic_add: library.c
+                        // above defines an atomic_add of its own, taking the
+                        // address first, and it shadows the kernel's here.
+                        atomic_fetch_add(value, &desktop.wheel);
+                        canvas_thread_wake();
+                }
 
                 return;
         }
@@ -503,6 +515,7 @@ static int canvas_loop(void *unused)
                 if (!atomic_read(&desktop.motion_pending) &&
                     !atomic_read(&desktop.button_changed) &&
                     !atomic_read(&desktop.frame_pending) &&
+                    !atomic_read(&desktop.wheel) &&
                     atomic_read(&desktop.key_head) == atomic_read(&desktop.key_tail))
                         schedule();
 
@@ -514,6 +527,15 @@ static int canvas_loop(void *unused)
                 {
                         mutex_lock(&desktop.lock);
                         keys_deliver();
+                        mutex_unlock(&desktop.lock);
+                }
+
+                // On this thread because it walks the window list and writes
+                // cells, neither of which an input callback may do.
+                if (atomic_read(&desktop.wheel))
+                {
+                        mutex_lock(&desktop.lock);
+                        wheel_deliver();
                         mutex_unlock(&desktop.lock);
                 }
 

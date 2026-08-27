@@ -226,6 +226,10 @@ static struct desktop
 
         struct hrtimer frame;
         atomic_t frame_pending;
+
+        // Wheel lines the pointer has turned and nothing has acted on yet.
+        // Positive is back through what has already gone past.
+        atomic_t wheel;
         unsigned int idle_frames;
         _Bool awake;
         _Bool started;

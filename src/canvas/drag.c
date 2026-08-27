@@ -275,3 +275,42 @@ static void drag_release(void)
         desktop.dragging = NULL;
         desktop.resizing = NULL;
 }
+
+/*
+        The wheel goes to whatever is under the pointer.
+
+        Under, not focused: a wheel is aimed with the hand rather than chosen,
+        and every desktop since the wheel existed has read it that way. Nothing
+        takes focus for it either, so reading one window while typing into
+        another works the way it looks like it should.
+
+        Only the compositor's own window answers today. A program's window has
+        its cells written by the program, so the turn has to reach the program
+        for anything to move, and that is a change to what a window is rather
+        than to what the pointer does.
+*/
+static void wheel_deliver(void)
+{
+        int lines = atomic_xchg(&desktop.wheel, 0);
+        unsigned int edges;
+        struct pane *pane;
+
+        if (!lines)
+                return;
+
+        pane = pane_under(desktop.cursor_x, desktop.cursor_y, &edges);
+        
+
+        if (!pane)
+                return;
+
+        // The same way the console's own writes ask for a frame. Damaging
+        // and repainting from here draws before the cells are looked at
+        // again, and the view lands a frame later or not at all.
+        if (console_scroll(pane, lines))
+        {
+                atomic_set(&desktop.frame_pending, 1);
+                canvas_thread_wake();
+        }
+
+}
