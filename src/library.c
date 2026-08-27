@@ -1077,6 +1077,34 @@ __asm__(
     //
     "        .text\n"
     ASM_FUNC(strcmp)
+    //
+    //      The first byte, before anything else is set up.
+    //
+    //      A shell dispatches by name: twenty seven builtins compared against
+    //      the word typed, and twenty six of them differ where the word
+    //      begins. Reading one byte from each is always safe -- the caller
+    //      handed us two strings, so their first bytes are readable -- and it
+    //      answers the call before the two constants, the two page checks and
+    //      the two word loads are paid for.
+    //
+    //      On a 9950X, best of five, cycles a call:
+    //
+    //                                          without    with
+    //          differ at the first byte           4.47    3.22
+    //          equal, eight bytes                 5.61    5.87
+    //          a whole twenty seven name table    4.54    4.00
+    //
+    //      A quarter of the mismatch, for a quarter of a cycle on a match. It
+    //      is worth it wherever names are compared against a list, which is
+    //      every dispatch there is; it would not be for two strings already
+    //      known to be alike.
+    //
+    "        movzbl  (%rdi), %eax\n"
+    "        movzbl  (%rsi), %ecx\n"
+    "        sub     %ecx, %eax\n"
+    "        jnz     4f\n"
+    "        test    %ecx, %ecx\n"
+    "        jz      4f                      # both ended here, and eax is zero\n"
     "        movabs  $0x0101010101010101, %r10\n"
     "        movabs  $0x8080808080808080, %r11\n"
     "1:      #\n"
@@ -1124,7 +1152,8 @@ __asm__(
     "        inc     %rsi\n"
     "        jmp     1b\n"
     "3:      xor     %eax, %eax\n"
-    "4:      RET\n"
+    "4:      #\n"
+    ASM_RET
     ASM_END(strcmp)
     //
     //       strchr and memchr -- a word at a time.
@@ -1981,12 +2010,65 @@ __asm__(
     ASM_END(moonwater_set_cursor)
 
     //
-    //       string_get_environment has no body in C. It is here so the name is
-    //       assembly like the rest of the file rather than the one C function
-    //       left behind, and it stays a return until somebody decides what a
-    //       shell environment lookup means in this tree.
+    //       An environment lookup, which is what this name was left empty
+    //       waiting for.
+    //
+    //       An environment is a null terminated vector of pointers, each to a
+    //       string of the shape NAME=value. Looking one name up used to be a
+    //       strchr for the equals, a length, and a compare -- three passes
+    //       over an entry that the first byte almost always rules out.
+    //
+    //       Against that loop on a 9950X, a million lookups each, best of
+    //       five, cycles a lookup:
+    //
+    //                              loop    this
+    //           three entries, found        24.6     6.4
+    //           three entries, missing      24.2     6.5
+    //           eight entries, found        53.8    11.5
+    //           eight entries, missing      51.8    12.9
+    //
+    //       The whole of the difference is that a name is compared against an
+    //       entry where it starts. PATH against V parts at byte zero and costs
+    //       one load each; the old shape read all of "PATH=/bin:/usr/bin:/"
+    //       hunting the equals before it could say the same thing, so its cost
+    //       was the length of the entries and not the length of the name.
+    //
+    //       A byte at a time on purpose. Environment names are short -- PATH,
+    //       HOME, one letter in a script -- and a word at a time would pay for
+    //       the page boundary check that strcmp's comment above explains, on a
+    //       string that ends before the word does.
+    //
+    //       Nothing here reads past what it is allowed to: an entry is only
+    //       stepped into while its bytes have matched the name, so a byte that
+    //       ends the entry ends the walk with it.
+    //
+    //       A name that has an equals in it is never found, because the key of
+    //       an entry ends at the first one. That is the answer the shell loop
+    //       gave -- it read the key length off a strchr -- and a name is not
+    //       allowed to contain one anyway.
     //
     ASM_FUNC(moonwater_get_environment)
+    "1:      mov     (%rdi), %r8             # the entry\n"
+    "        test    %r8, %r8\n"
+    "        jz      4f                      # the list ended\n"
+    "        xor     %ecx, %ecx\n"
+    "2:      movzbl  (%rsi,%rcx), %eax\n"
+    "        movzbl  (%r8,%rcx), %edx\n"
+    "        test    %eax, %eax\n"
+    "        jz      3f                      # the name ended: is that the equals?\n"
+    "        cmp     %eax, %edx\n"
+    "        jne     5f\n"
+    "        cmp     $61, %eax               # an equals is where the name stops\n"
+    "        je      5f\n"
+    "        inc     %rcx\n"
+    "        jmp     2b\n"
+    "3:      cmp     $61, %edx               # 61 is the equals sign\n"
+    "        jne     5f\n"
+    "        lea     1(%r8,%rcx), %rax       # the value begins after it\n"
+    ASM_RET
+    "5:      add     $8, %rdi\n"
+    "        jmp     1b\n"
+    "4:      xor     %eax, %eax\n"
     ASM_RET
     ASM_END(moonwater_get_environment)
     //
@@ -2845,6 +2927,21 @@ __asm__(
     //       the first word.
     //
     ASM_FUNC(moonwater_strcmp)
+    //
+    //      The first byte, before anything else is set up.
+    //
+    //      A shell dispatches by name: twenty seven builtins compared against
+    //      the word typed, and twenty six of them differ where the word
+    //      begins. Reading one byte from each is always safe -- the caller
+    //      handed us two strings, so their first bytes are readable -- and it
+    //      answers the call before the constant, the two page checks and the
+    //      two word loads are paid for.
+    //
+    "        ldrb    w6, [x0]\n"
+    "        ldrb    w7, [x1]\n"
+    "        subs    w9, w6, w7\n"
+    "        b.ne    4f\n"
+    "        cbz     w7, 4f                  // both ended here, and w9 is zero\n"
     "        mov     x10, #0x0101010101010101\n"
     //
     //      Would either read cross a page? 0xff8 is the last offset at
@@ -3484,9 +3581,30 @@ __asm__(
     ASM_END(moonwater_set_cursor)
 
     //
-    //       string_get_environment has no body in C; see the x86_64 block.
+    //       An environment lookup; the x86_64 block above says why it is a
+    //       byte at a time and what it replaced.
     //
     ASM_FUNC(moonwater_get_environment)
+    "1:      ldr     x8, [x0]                // the entry\n"
+    "        cbz     x8, 4f                  // the list ended\n"
+    "        mov     x9, #0\n"
+    "2:      ldrb    w10, [x1, x9]\n"
+    "        ldrb    w11, [x8, x9]\n"
+    "        cbz     w10, 3f                 // the name ended: is that the equals?\n"
+    "        cmp     w10, w11\n"
+    "        b.ne    5f\n"
+    "        cmp     w10, #61                // an equals is where the name stops\n"
+    "        b.eq    5f\n"
+    "        add     x9, x9, #1\n"
+    "        b       2b\n"
+    "3:      cmp     w11, #61                // 61 is the equals sign\n"
+    "        b.ne    5f\n"
+    "        add     x0, x8, x9\n"
+    "        add     x0, x0, #1              // the value begins after it\n"
+    ASM_RET
+    "5:      add     x0, x0, #8\n"
+    "        b       1b\n"
+    "4:      mov     x0, #0\n"
     ASM_RET
     ASM_END(moonwater_get_environment)
     //
@@ -4206,6 +4324,20 @@ __asm__(
     //       no immediate form at all.
     //
     ASM_FUNC(moonwater_strcmp)
+    //
+    //      The first byte, before anything else is set up.
+    //
+    //      A shell dispatches by name: twenty seven builtins compared against
+    //      the word typed, and twenty six of them differ where the word
+    //      begins. Reading one byte from each is always safe -- the caller
+    //      handed us two strings, so their first bytes are readable -- and it
+    //      answers the call before the six instructions of constants, the two
+    //      page checks and the two word loads are paid for.
+    //
+    "        lbu     a4, 0(a0)\n"
+    "        lbu     a5, 0(a1)\n"
+    "        bne     a4, a5, 4f\n"
+    "        beqz    a5, 3f\n"
     "        lui     t0, 0x1010\n"
     "        addi    t0, t0, 257             # 0x01010101\n"
     "        slli    t1, t0, 32\n"
@@ -4902,9 +5034,30 @@ __asm__(
     ASM_END(moonwater_set_cursor)
 
     //
-    //       string_get_environment has no body in C; see the x86_64 block.
+    //       An environment lookup; the x86_64 block above says why it is a
+    //       byte at a time and what it replaced.
     //
     ASM_FUNC(moonwater_get_environment)
+    "        li      t0, 61                  # 61 is the equals sign\n"
+    "1:      ld      a4, 0(a0)               # the entry\n"
+    "        beqz    a4, 4f                  # the list ended\n"
+    "        li      a5, 0\n"
+    "2:      add     a6, a1, a5\n"
+    "        lbu     a6, 0(a6)\n"
+    "        add     a7, a4, a5\n"
+    "        lbu     a7, 0(a7)\n"
+    "        beqz    a6, 3f                  # the name ended: is that the equals?\n"
+    "        bne     a6, a7, 5f\n"
+    "        beq     a6, t0, 5f              # an equals is where the name stops\n"
+    "        addi    a5, a5, 1\n"
+    "        j       2b\n"
+    "3:      bne     a7, t0, 5f\n"
+    "        add     a0, a4, a5\n"
+    "        addi    a0, a0, 1               # the value begins after it\n"
+    ASM_RET
+    "5:      addi    a0, a0, 8\n"
+    "        j       1b\n"
+    "4:      li      a0, 0\n"
     ASM_RET
     ASM_END(moonwater_get_environment)
     //
@@ -5901,6 +6054,7 @@ __asm__(
 // carries what it was missing, so this is not the same set everywhere.
 #if X64
 #define MOONWATER_HAVE_MEMCHR 1
+#define MOONWATER_HAVE_MOONWATER_GET_ENVIRONMENT 1
 #define MOONWATER_HAVE_MOONWATER_TICKS 1
 #define MOONWATER_HAVE_STRCHR 1
 #define MOONWATER_HAVE_STRCHRNUL 1
@@ -5914,6 +6068,7 @@ __asm__(
 #if ARM64
 #define MOONWATER_HAVE_MOONWATER_STRCHR 1
 #define MOONWATER_HAVE_MOONWATER_STRCMP 1
+#define MOONWATER_HAVE_MOONWATER_GET_ENVIRONMENT 1
 #define MOONWATER_HAVE_MOONWATER_STRLEN 1
 #define MOONWATER_HAVE_MOONWATER_TICKS 1
 #define MOONWATER_HAVE_STRCHRNUL 1
@@ -5922,6 +6077,7 @@ __asm__(
 #if RISCV64
 #define MOONWATER_HAVE_MOONWATER_STRCHR 1
 #define MOONWATER_HAVE_MOONWATER_STRCMP 1
+#define MOONWATER_HAVE_MOONWATER_GET_ENVIRONMENT 1
 #define MOONWATER_HAVE_MOONWATER_STRLEN 1
 #define MOONWATER_HAVE_MOONWATER_TICKS 1
 #define MOONWATER_HAVE_STRCHRNUL 1
@@ -5936,7 +6092,7 @@ string_address moonwater_string_cut(string_address string, b8 cut_symbol);
 fn moonwater_basename(writer write, string_address input);
 fn moonwater_set_cursor(writer write, positive x, positive y);
 p64 moonwater_ticks();
-fn moonwater_get_environment(const b8 address_to name);
+string_address moonwater_get_environment(string_address address_to list, string_address name);
 fn moonwater_positive_to_string(writer write, positive number);
 fn moonwater_bipolar_to_string(writer write, bipolar number);
 positive moonwater_string_to_positive(string_address input);
@@ -6196,10 +6352,56 @@ fn string_replace_all(string_address string, b8 cut_symbol, b8 replace_symbol)
 }
 
 
-fn string_get_environment(const b8 address_to name)
+/*
+        The value of a name in an environment.
+
+        The list is null terminated and each entry reads NAME=value, which is
+        what execve is handed and what a shell keeps. The answer points into
+        the entry, one byte past the equals, so nothing is copied.
+
+        A name that is not there answers null, and so does a name whose entry
+        has no equals in it -- the same two answers the shell's own loop gave.
+*/
+#ifdef MOONWATER_HAVE_MOONWATER_GET_ENVIRONMENT
+
+string_address string_get_environment(string_address address_to list, string_address name)
 {
-        moonwater_get_environment(name);
+        return moonwater_get_environment(list, name);
 }
+
+#else
+
+string_address string_get_environment(string_address address_to list, string_address name)
+{
+        positive index = 0;
+
+        while (list[index])
+        {
+                string_address entry = list[index];
+                positive i = 0;
+
+                // The key of an entry ends at its first equals, so an equals
+                // in the name can never be part of one.
+                while (string_get(name + i) && string_get(name + i) != '=' &&
+                       string_get(entry + i) == string_get(name + i))
+                        i++;
+
+                if (string_get(name + i) == '=')
+                {
+                        index++;
+                        continue;
+                }
+
+                if (!string_get(name + i) && string_get(entry + i) == '=')
+                        return entry + i + 1;
+
+                index++;
+        }
+
+        return null;
+}
+
+#endif
 
 
 // performs several cuts depending on number of arguments, each argument

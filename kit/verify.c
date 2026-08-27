@@ -1144,6 +1144,280 @@ fn check_lex_word()
         }
 }
 
+/*
+        strcmp where it decides, which is the first byte.
+
+        The word loop now has a single byte ahead of it, so the answer for two
+        strings that differ where they begin comes out of a different path than
+        the answer for two that differ later. check_strings above compares only
+        the sign; this compares the value, at every offset either path can end
+        at, and over bytes above 127 -- where a signed byte load would give the
+        wrong sign and the sign check would not see it.
+*/
+fn check_compare_edges()
+{
+        static p8 left[64];
+        static p8 right[64];
+
+        same("string_compare", "both empty",
+             (positive)string_compare((string_address)"", (string_address)""),
+             (positive)reference_compare((string_address)"", (string_address)""));
+
+        same("string_compare", "empty against one",
+             (positive)string_compare((string_address)"", (string_address)"a"),
+             (positive)reference_compare((string_address)"", (string_address)"a"));
+
+        same("string_compare", "one against empty",
+             (positive)string_compare((string_address)"a", (string_address)""),
+             (positive)reference_compare((string_address)"a", (string_address)""));
+
+        // Every offset the byte path and the word path can part company at,
+        // one past the eight byte step included.
+        for (positive at = 0; at < 20; at++)
+        {
+                for (positive i = 0; i < 24; i++)
+                {
+                        left[i] = (p8)('a' + i % 26);
+                        right[i] = left[i];
+                }
+
+                left[24] = 0;
+                right[24] = 0;
+
+                right[at] = (p8)(left[at] + 1);
+
+                same("string_compare", "value at offset",
+                     (positive)string_compare(left, right),
+                     (positive)reference_compare(left, right));
+
+                same("string_compare", "value at offset reversed",
+                     (positive)string_compare(right, left),
+                     (positive)reference_compare(right, left));
+
+                // The same offset, but one string ends there instead.
+                right[at] = left[at];
+                right[at] = 0;
+
+                same("string_compare", "ends at offset",
+                     (positive)string_compare(left, right),
+                     (positive)reference_compare(left, right));
+
+                same("string_compare", "ends at offset reversed",
+                     (positive)string_compare(right, left),
+                     (positive)reference_compare(right, left));
+        }
+
+        // Bytes above 127 against bytes below, which is where a signed load
+        // would answer with the wrong sign.
+        for (positive a = 0; a < 256; a += 17)
+        {
+                for (positive b = 0; b < 256; b += 13)
+                {
+                        left[0] = (p8)a;
+                        left[1] = 0;
+                        right[0] = (p8)b;
+                        right[1] = 0;
+
+                        same("string_compare", "high byte",
+                             (positive)string_compare(left, right),
+                             (positive)reference_compare(left, right));
+
+                        // And the same pair one byte in, so the word path
+                        // reaches them too.
+                        left[0] = 'z';
+                        left[1] = (p8)a;
+                        left[2] = 0;
+                        right[0] = 'z';
+                        right[1] = (p8)b;
+                        right[2] = 0;
+
+                        same("string_compare", "high byte past the first",
+                             (positive)string_compare(left, right),
+                             (positive)reference_compare(left, right));
+                }
+        }
+}
+
+/*
+        The environment lookup against the loop it replaced.
+
+        The reference is env_get's body out of src/sh/builtin.c, copied as it
+        stood: a strchr for the equals, a length compare, then the bytes. That
+        is the answer string_get_environment has to agree with, entry for entry
+        and edge for edge -- an entry with no equals in it, an entry that is
+        only an equals, a name that is a prefix of another name, and a name
+        that is one byte longer than the entry it nearly matches.
+*/
+string_address reference_get_environment(string_address address_to list,
+                                         string_address name)
+{
+        if (name == null)
+                return null;
+
+        positive name_len = reference_length(name);
+        positive idx = 0;
+
+        while (list[idx])
+        {
+                string_address entry = list[idx];
+                string_address eq = reference_first_of(entry, '=');
+
+                if (eq)
+                {
+                        positive key_len = eq - entry;
+
+                        if (key_len == name_len)
+                        {
+                                positive i = 0;
+                                for (i = 0; i < name_len; i++)
+                                {
+                                        if (string_get(entry + i) != string_get(name + i))
+                                                break;
+                                }
+
+                                if (i == name_len)
+                                        return eq + 1;
+                        }
+                }
+
+                idx++;
+        }
+
+        return null;
+}
+
+fn check_environment()
+{
+        static p8 block[64][48];
+        static string_address list[65];
+
+        static const string_address shapes[] = {
+            "PATH=/bin:/usr/bin:/",
+            "SHELL=/bin/sh",
+            "V=x",
+            "VV=xx",
+            "=leading",
+            "NOEQUALS",
+            "EMPTY=",
+            "P=1",
+            "PA=2",
+            "PAT=3",
+            "PATHX=4",
+            "a=b",
+            "LONGERNAMETHANANYWORD=value",
+            "x",
+            "",
+            null,
+        };
+
+        static const string_address names[] = {
+            "PATH",
+            "SHELL",
+            "V",
+            "VV",
+            "",
+            "NOEQUALS",
+            "EMPTY",
+            "P",
+            "PA",
+            "PAT",
+            "PATHX",
+            "PATHXY",
+            "a",
+            "LONGERNAMETHANANYWORD",
+            "LONGERNAMETHANANYWOR",
+            "x",
+            "MISSING",
+            "PATH ",
+            null,
+        };
+
+        positive count = 0;
+
+        while (shapes[count])
+        {
+                string_copy(block[count], shapes[count]);
+                list[count] = block[count];
+                count++;
+        }
+
+        list[count] = null;
+
+        // Every name against the whole list, then against every prefix of the
+        // list, so the answer is checked where the entry is first, last and
+        // absent.
+        for (positive cut = 0; cut <= count; cut++)
+        {
+                string_address held = list[cut];
+
+                list[cut] = null;
+
+                for (positive n = 0; names[n]; n++)
+                {
+                        same("get_environment", "value",
+                             (positive)string_get_environment(list, (string_address)names[n]),
+                             (positive)reference_get_environment(list, (string_address)names[n]));
+                }
+
+                list[cut] = held;
+        }
+
+        // An empty list answers nothing, whatever it is asked.
+        {
+                static string_address nothing[1];
+
+                nothing[0] = null;
+
+                same("get_environment", "empty list",
+                     (positive)string_get_environment(nothing, (string_address)"PATH"),
+                     (positive)reference_get_environment(nothing, (string_address)"PATH"));
+        }
+
+        // Generated entries and names over a small alphabet, so the prefix and
+        // equals cases turn up in combinations nobody chose.
+        for (positive round = 0; round < 300; round++)
+        {
+                static p8 alphabet[5];
+
+                alphabet[0] = 'a';
+                alphabet[1] = 'b';
+                alphabet[2] = '=';
+                alphabet[3] = 'a';
+                alphabet[4] = 'c';
+
+                positive entries = next() % 8 + 1;
+
+                for (positive e = 0; e < entries; e++)
+                {
+                        positive length = next() % 7;
+
+                        for (positive i = 0; i < length; i++)
+                                block[e][i] = alphabet[next() % 5];
+
+                        block[e][length] = 0;
+                        list[e] = block[e];
+                }
+
+                list[entries] = null;
+
+                for (positive t = 0; t < 6; t++)
+                {
+                        static p8 wanted[8];
+
+                        positive length = next() % 4;
+
+                        for (positive i = 0; i < length; i++)
+                                wanted[i] = alphabet[next() % 5];
+
+                        wanted[length] = 0;
+
+                        same("get_environment", "generated",
+                             (positive)string_get_environment(list, wanted),
+                             (positive)reference_get_environment(list, wanted));
+                }
+        }
+}
+
 b32 main()
 {
         check_fill();
@@ -1151,6 +1425,8 @@ b32 main()
         check_move();
         check_strings();
         check_string_edges();
+        check_compare_edges();
+        check_environment();
         check_bulk_strings();
         check_bulk_numbers();
         check_file_load();
