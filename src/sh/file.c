@@ -309,19 +309,6 @@ fn file_human(writer write, positive value)
         write(units + unit, 1);
 }
 
-positive file_count(string_address text)
-{
-        positive value = 0;
-
-        while (string_get(text) >= '0' && string_get(text) <= '9')
-        {
-                value = value * 10 + (positive)(string_get(text) - '0');
-                text++;
-        }
-
-        return value;
-}
-
 bipolar file_signed(string_address text)
 {
         bipolar sign = 1;
@@ -334,23 +321,16 @@ bipolar file_signed(string_address text)
         else if (string_is(text, '+'))
                 text++;
 
-        return sign * (bipolar)file_count(text);
+        return sign * (bipolar)string_digits(text, null);
 }
 
 bool file_all_digits(string_address text)
 {
-        if (string_is(text, end))
-                return false;
+        positive have;
 
-        while (string_get(text))
-        {
-                if (string_get(text) < '0' || string_get(text) > '9')
-                        return false;
+        string_digits(text, address_of have);
 
-                text++;
-        }
-
-        return true;
+        return have && string_is(text + have, end);
 }
 
 // Modes -----------------------------------------------------
@@ -984,21 +964,12 @@ bool file_account_name(p8 address_to text, positive wanted, positive field,
                 if (column != field)
                         continue;
 
-                positive value = 0;
-                bool numeric = value_stop > value_start;
+                positive taken;
+                positive value = string_digits_max(text + value_start,
+                                                   value_stop - value_start,
+                                                   address_of taken);
 
-                for (positive i = value_start; i < value_stop; i++)
-                {
-                        if (text[i] < '0' || text[i] > '9')
-                        {
-                                numeric = false;
-                                break;
-                        }
-
-                        value = value * 10 + (positive)(text[i] - '0');
-                }
-
-                if (!numeric || value != wanted)
+                if (taken != value_stop - value_start || !taken || value != wanted)
                         continue;
 
                 positive found = name_stop - name_start;
@@ -1062,15 +1033,13 @@ bipolar file_account_id(p8 address_to text, string_address name, positive field)
                 if (column != field)
                         return -1;
 
-                positive value = 0;
+                positive taken;
+                positive value = string_digits_max(text + value_start,
+                                                   value_stop - value_start,
+                                                   address_of taken);
 
-                for (positive j = value_start; j < value_stop; j++)
-                {
-                        if (text[j] < '0' || text[j] > '9')
-                                return -1;
-
-                        value = value * 10 + (positive)(text[j] - '0');
-                }
+                if (taken != value_stop - value_start)
+                        return -1;
 
                 return (bipolar)value;
         }
@@ -1405,20 +1374,12 @@ static const file_unit address_to file_unit_of(string_address text, positive len
 static positive file_read_number(string_address text, positive at, b64 address_to out,
                                  positive address_to digits)
 {
-        b64 value = 0;
-        positive have = 0;
+        positive have;
 
-        while (file_digit(string_get(text + at)))
-        {
-                value = value * 10 + (string_get(text + at) - '0');
-                at++;
-                have++;
-        }
-
-        address_to out = value;
+        address_to out = (b64)string_digits(text + at, address_of have);
         address_to digits = have;
 
-        return at;
+        return at + have;
 }
 
 bool file_moment_read(string_address text, b64 now, b64 address_to out)
@@ -3316,9 +3277,9 @@ static b32 find_parse_primary()
                         return -1;
 
                 if (string_is(word + 2, 'a'))
-                        find_maximum = file_count(value);
+                        find_maximum = string_digits(value, null);
                 else
-                        find_minimum = file_count(value);
+                        find_minimum = string_digits(value, null);
 
                 return find_make('v');
         }
@@ -3533,7 +3494,7 @@ static b32 find_parse_primary()
                 string_address step = find_marked(value, address_of how);
 
                 find_nodes[node].comparison = how;
-                find_nodes[node].number = (b64)file_count(step);
+                find_nodes[node].number = (b64)string_digits(step, null);
 
                 while (string_get(step) >= '0' && string_get(step) <= '9')
                         step++;
@@ -3560,7 +3521,7 @@ static b32 find_parse_primary()
                 string_address step = find_marked(value, address_of how);
 
                 find_nodes[node].comparison = how;
-                find_nodes[node].number = (b64)file_count(step);
+                find_nodes[node].number = (b64)string_digits(step, null);
 
                 return node;
         }
@@ -3586,7 +3547,7 @@ static b32 find_parse_primary()
                 string_address step = find_marked(value, address_of how);
 
                 find_nodes[node].comparison = how;
-                find_nodes[node].number = (b64)file_count(step);
+                find_nodes[node].number = (b64)string_digits(step, null);
                 find_nodes[node].unit = string_get(word + 1);
                 find_nodes[node].extra = string_is(word + 2, 't') ? 86400 : 60;
 
@@ -3605,7 +3566,7 @@ static b32 find_parse_primary()
 
                 bool group = string_is(word + 1, 'g');
                 bipolar who = file_all_digits(value)
-                                  ? (bipolar)file_count(value)
+                                  ? (bipolar)string_digits(value, null)
                                   : (group ? file_group_id(value) : file_user_id(value));
 
                 if (who < 0)
@@ -4744,7 +4705,7 @@ static b32 file_du()
                 du_maximum = 0;
 
         if (flags & FILE_FLAG('d'))
-                du_maximum = file_count(file_option_value(address_of taking, 'd'));
+                du_maximum = string_digits(file_option_value(address_of taking, 'd'), null);
 
         if (first >= count)
         {
@@ -5579,7 +5540,7 @@ static b32 file_chown()
 
         if (length > 0)
         {
-                chown_user = file_all_digits(user) ? (bipolar)file_count(user)
+                chown_user = file_all_digits(user) ? (bipolar)string_digits(user, null)
                                                    : file_user_id(user);
 
                 if (chown_user < 0)
@@ -5591,7 +5552,7 @@ static b32 file_chown()
 
         if (group && string_get(group))
         {
-                chown_group = file_all_digits(group) ? (bipolar)file_count(group)
+                chown_group = file_all_digits(group) ? (bipolar)string_digits(group, null)
                                                      : file_group_id(group);
 
                 if (chown_group < 0)
@@ -8394,16 +8355,14 @@ static positive id_groups_named(string_address name, positive primary,
                         if (text[i] == ':')
                                 colon[seen++] = i;
 
-                positive value = 0;
-                bool numeric = seen == 3 && colon[2] > colon[1] + 1;
-
-                for (positive i = colon[1] + 1; numeric && i < colon[2]; i++)
-                {
-                        if (text[i] < '0' || text[i] > '9')
-                                numeric = false;
-                        else
-                                value = value * 10 + (positive)(text[i] - '0');
-                }
+                positive taken = 0;
+                positive value = seen == 3
+                                     ? string_digits_max(text + colon[1] + 1,
+                                                         colon[2] - colon[1] - 1,
+                                                         address_of taken)
+                                     : 0;
+                bool numeric = seen == 3 && colon[2] > colon[1] + 1 &&
+                               taken == colon[2] - colon[1] - 1;
 
                 positive i = colon[2] + 1;
 
@@ -10055,7 +10014,7 @@ static b32 file_xargs()
                                 index++;
                         }
 
-                        xargs_most = file_count(value);
+                        xargs_most = string_digits(value, null);
                         index++;
                         continue;
                 }
