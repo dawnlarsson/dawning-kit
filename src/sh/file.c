@@ -1663,93 +1663,6 @@ bool file_moment_read(string_address text, b64 now, b64 address_to out)
         return true;
 }
 
-/*
-        The shell's glob, for find -name and nothing else. Written as a walk
-        with one remembered star rather than as recursion, so a pattern of
-        many stars against a long name cannot go exponential.
-*/
-bool file_match(string_address pattern, string_address text)
-{
-        positive p = 0;
-        positive t = 0;
-        bipolar star = -1;
-        positive resume = 0;
-
-        while (text[t])
-        {
-                if (pattern[p] == '?' || (pattern[p] && pattern[p] == text[t]))
-                {
-                        p++;
-                        t++;
-                        continue;
-                }
-
-                if (pattern[p] == '[')
-                {
-                        positive scan = p + 1;
-                        bool negated = false;
-                        bool hit = false;
-
-                        if (pattern[scan] == '!' || pattern[scan] == '^')
-                        {
-                                negated = true;
-                                scan++;
-                        }
-
-                        bool first = true;
-
-                        while (pattern[scan] && (pattern[scan] != ']' || first))
-                        {
-                                first = false;
-
-                                if (pattern[scan + 1] == '-' && pattern[scan + 2] &&
-                                    pattern[scan + 2] != ']')
-                                {
-                                        if (text[t] >= pattern[scan] && text[t] <= pattern[scan + 2])
-                                                hit = true;
-
-                                        scan += 3;
-                                        continue;
-                                }
-
-                                if (pattern[scan] == text[t])
-                                        hit = true;
-
-                                scan++;
-                        }
-
-                        if (pattern[scan] == ']' && hit != negated)
-                        {
-                                p = scan + 1;
-                                t++;
-                                continue;
-                        }
-                }
-
-                if (pattern[p] == '*')
-                {
-                        star = (bipolar)p;
-                        p++;
-                        resume = t;
-                        continue;
-                }
-
-                if (star >= 0)
-                {
-                        p = (positive)star + 1;
-                        resume++;
-                        t = resume;
-                        continue;
-                }
-
-                return false;
-        }
-
-        while (pattern[p] == '*')
-                p++;
-
-        return pattern[p] == end;
-}
 
 // Walking directories ---------------------------------------
 
@@ -3819,16 +3732,16 @@ static bool find_true(b32 which)
                 return false;
 
         case 'n':
-                return file_match(node->text, find_name);
+                return shell_match(node->text, find_name);
 
         case 'p':
-                return file_match(node->text, find_path);
+                return shell_match(node->text, find_path);
 
         case 'N':
         case 'P':
                 find_lowered(node->kind == 'N' ? find_name : find_path, name);
                 find_lowered(node->text, pattern);
-                return file_match(pattern, name);
+                return shell_match(pattern, name);
 
         case 'L':
                 if ((find_facts->mode & MODE_FORMAT) != MODE_LINK)
@@ -3837,7 +3750,7 @@ static bool find_true(b32 which)
                 if (file_link_text(find_path, name, FILE_PATH_MAX) < 0)
                         return false;
 
-                return file_match(node->text, name);
+                return shell_match(node->text, name);
 
         case 't':
                 return find_type_holds((p8)node->number, find_facts->mode);
@@ -4530,7 +4443,7 @@ static bool du_excluded(string_address path)
         file_tail(path, name);
 
         for (positive i = 0; i < du_exclude_have; i++)
-                if (file_match(du_excludes[i], path) || file_match(du_excludes[i], name))
+                if (shell_match(du_excludes[i], path) || shell_match(du_excludes[i], name))
                         return true;
 
         return false;

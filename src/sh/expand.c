@@ -371,90 +371,89 @@ static bool expand_in_set(string_address at, string_address stop, p8 value)
 */
 bool shell_match(string_address pattern, string_address text)
 {
-        while (string_get(pattern))
+        string_address star = null;
+        string_address back = null;
+        p8 behind = 0;
+
+        while (string_get(text))
         {
-                p8 value = string_get(pattern);
+                p8 want = string_get(pattern);
+                string_address stop = null;
 
-                if (value == '*')
+                if (want == '*')
                 {
-                        p8 want;
-
-                        pattern++;
-
-                        // A star at the end takes whatever is left of it.
-                        if (!string_get(pattern))
-                                return true;
+                        star = ++pattern;
+                        back = text;
 
                         /*
                                 A plain byte behind the star is the only place
-                                the rest can begin, so the walk goes there
-                                rather than trying every position on the way.
+                                what follows can begin, so a backtrack goes
+                                there rather than trying every position on the
+                                way.
                         */
-                        want = string_get(pattern);
+                        behind = string_get(pattern);
 
-                        if (want == '*' || want == '?' || want == '[' ||
-                            want == '\\')
-                                want = 0;
+                        if (behind == '*' || behind == '?' || behind == '[' ||
+                            behind == '\\')
+                                behind = 0;
 
-                        while (1)
-                        {
-                                if (want)
-                                {
-                                        text = string_first_of_or_end(text, want);
-
-                                        if (!string_get(text))
-                                                return false;
-                                }
-
-                                if (shell_match(pattern, text))
-                                        return true;
-
-                                if (!string_get(text))
-                                        return false;
-
-                                text++;
-                        }
+                        continue;
                 }
 
-                if (value == '[')
+                if (want == '[')
+                        stop = expand_set_end(pattern);
+
+                if (stop)
                 {
-                        string_address stop = expand_set_end(pattern);
-
-                        if (stop)
+                        if (expand_in_set(pattern, stop, string_get(text)))
                         {
-                                if (!string_get(text))
-                                        return false;
-
-                                if (!expand_in_set(pattern, stop, string_get(text)))
-                                        return false;
-
                                 pattern = stop + 1;
                                 text++;
                                 continue;
                         }
                 }
-
-                if (!string_get(text))
-                        return false;
-
-                if (value == '?')
+                else
                 {
-                        pattern++;
-                        text++;
-                        continue;
+                        // A [ with no ] after it is a plain [.
+                        if (want == '\\' && string_get(pattern + 1))
+                                want = string_get(++pattern);
+
+                        if (want && (want == '?' || want == string_get(text)))
+                        {
+                                pattern++;
+                                text++;
+                                continue;
+                        }
                 }
 
-                if (value == '\\' && string_get(pattern + 1))
-                        value = string_get(++pattern);
-
-                if (value != string_get(text))
+                /*
+                        Nothing matched here, so the last star takes one byte
+                        more. Walking rather than calling: a pattern of many
+                        stars against a long name tries every arrangement of
+                        them when each star recurses, and only the arrangement
+                        it is standing in when the star is a mark.
+                */
+                if (!star)
                         return false;
 
-                pattern++;
-                text++;
+                pattern = star;
+                text = ++back;
+
+                if (behind)
+                {
+                        text = string_first_of_or_end(text, behind);
+
+                        if (!string_get(text))
+                                return false;
+
+                        back = text;
+                }
         }
 
-        return string_get(text) == end;
+        while (string_is(pattern, '*'))
+                pattern++;
+
+        return string_get(pattern) == end;
 }
 
 #define EXPAND_PARAMETERS 64

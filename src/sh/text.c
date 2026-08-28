@@ -5573,115 +5573,12 @@ static fn grep_head(string_address name, p8 separator, positive number, positive
         A file's own name and never the path it was found down: GNU matches
         d/sub/s.txt against s.txt and against nothing with a slash in it, so
         there is no path walking here and * does not have to stop anywhere.
+
+        The matcher is the shell's own, which is where every glob in this tree
+        goes now. It is declared rather than defined because expand.c is read
+        after this file.
 */
-static positive text_glob_set(string_address pattern, positive at, p8 character,
-                              bool address_to hit)
-{
-        bool negate = false;
-        bool found = false;
-        positive p = at + 1;
-        bool first = true;
-
-        if (pattern[p] == '!' || pattern[p] == '^')
-        {
-                negate = true;
-                p++;
-        }
-
-        while (pattern[p] && (pattern[p] != ']' || first))
-        {
-                p8 low = pattern[p++];
-
-                first = false;
-
-                if (pattern[p] == '-' && pattern[p + 1] && pattern[p + 1] != ']')
-                {
-                        p8 high = pattern[p + 1];
-
-                        p += 2;
-
-                        if (character >= low && character <= high)
-                                found = true;
-
-                        continue;
-                }
-
-                if (character == low)
-                        found = true;
-        }
-
-        // No closing bracket, so the '[' was never a set at all.
-        if (!pattern[p])
-                return 0;
-
-        address_to hit = found != negate;
-        return p + 1;
-}
-
-static bool text_glob(string_address pattern, string_address name)
-{
-        positive p = 0;
-        positive n = 0;
-        positive star = TEXT_UNSET;
-        positive back = 0;
-
-        while (name[n])
-        {
-                p8 want = pattern[p];
-
-                if (want == '*')
-                {
-                        star = ++p;
-                        back = n;
-                        continue;
-                }
-
-                if (want == '[')
-                {
-                        bool hit = false;
-                        positive after = text_glob_set(pattern, p, name[n],
-                                                       address_of hit);
-
-                        if (after)
-                        {
-                                if (hit)
-                                {
-                                        p = after;
-                                        n++;
-                                        continue;
-                                }
-
-                                if (star == TEXT_UNSET)
-                                        return false;
-
-                                p = star;
-                                n = ++back;
-                                continue;
-                        }
-                }
-
-                if (want == '\\' && pattern[p + 1])
-                        want = pattern[++p];
-
-                if ((want == '?' || want == name[n]) && want)
-                {
-                        p++;
-                        n++;
-                        continue;
-                }
-
-                if (star == TEXT_UNSET)
-                        return false;
-
-                p = star;
-                n = ++back;
-        }
-
-        while (pattern[p] == '*')
-                p++;
-
-        return !pattern[p];
-}
+bool shell_match(string_address pattern, string_address text);
 
 /*
         -r turns a directory operand into the files under it, in the order the
@@ -5744,7 +5641,7 @@ static bool grep_globs_have(string_address address_to list, b32 count,
                             string_address name)
 {
         for (b32 i = 0; i < count; i++)
-                if (text_glob(list[i], name))
+                if (shell_match(list[i], name))
                         return true;
 
         return false;
