@@ -51,14 +51,10 @@ extern positive shell_options;
 */
 b32 shell_substitution_status;
 
-#define EXPAND_WORK 8192
-#define EXPAND_ARENA 32768
 #define EXPAND_NAME 128
 #define EXPAND_VALUE 1024
 #define EXPAND_DEPTH 16
 
-#define GLOB_RESULTS 256
-#define GLOB_BYTES 8192
 #define GLOB_PATH 1024
 #define GLOB_DEPTH 24
 
@@ -75,27 +71,51 @@ b32 shell_substitution_status;
 #define MARK_QUOTED 2
 #define MARK_BREAK 3
 
-static p8 expand_text[EXPAND_WORK];
-static p8 expand_mark[EXPAND_WORK];
+//      One word being built, and what each of its bytes is allowed to become.
+//      "$@" against a directory's worth of parameters is a single word, so
+//      this grows with it. Everything here is reached by index, never by an
+//      address kept across a push, so the two blocks may move.
+static p8 address_to expand_text;
+static positive expand_text_room;
+static p8 address_to expand_mark;
+static positive expand_mark_room;
 static positive expand_length;
 static bool expand_overflow;
 static bool expand_quoted_seen;
 static bool expand_failed;
 static positive expand_depth;
 
-static p8 expand_arena[EXPAND_ARENA];
-static positive expand_arena_used;
+/*
+        Where a finished word lives.
+
+        argv points in here and argv is handed to execve, so these bytes may
+        not move once given out: the store chains another block on instead of
+        reallocating. It used to be a fixed arena that started over from the
+        beginning when it filled, which did not truncate a long line so much as
+        quietly write its later words on top of its earlier ones.
+*/
+static shell_store expand_store;
 
 // The line is over and every word it made is dead with it.
 fn shell_expand_reset()
 {
-        expand_arena_used = 0;
+        shell_store_reset(address_of expand_store);
+}
+
+//      Room for want bytes in both halves at once, since a byte and its mark
+//      are always written together.
+static bool expand_room(positive want)
+{
+        return shell_room((address_any address_to)address_of expand_text,
+                          address_of expand_text_room, want, 1) &&
+               shell_room((address_any address_to)address_of expand_mark,
+                          address_of expand_mark_room, want, 1);
 }
 
 // One short of the end, because trimming writes a terminator at the length.
 static fn expand_push(p8 value, p8 mark)
 {
-        if (expand_length + 1 >= EXPAND_WORK)
+        if (!expand_room(expand_length + 2))
         {
                 expand_overflow = true;
                 return;
@@ -108,12 +128,10 @@ static fn expand_push(p8 value, p8 mark)
 // A run that all comes out the same way, which is a copy and a fill.
 static fn expand_push_run(string_address text, positive length, p8 mark)
 {
-        positive room = EXPAND_WORK - 1 - expand_length;
-
-        if (length > room)
+        if (!expand_room(expand_length + length + 2))
         {
                 expand_overflow = true;
-                length = room;
+                return;
         }
 
         memory_copy_fast(expand_text + expand_length, text, length);
@@ -438,16 +456,19 @@ bool shell_match(string_address pattern, string_address text)
         return string_get(pattern) == end;
 }
 
-#define EXPAND_PARAMETERS 64
-#define EXPAND_PARAMETER_BYTES 4096
-
-string_address shell_parameter[EXPAND_PARAMETERS + 1];
+//      set -- takes as many words as it is given, which after a glob may be
+//      every name in a directory, so neither the table nor the bytes behind it
+//      is allowed a fixed size.
+string_address address_to shell_parameter;
+static positive shell_parameter_room;
 positive shell_parameter_count;
 string_address shell_script_name = (string_address) "sh";
 string_address shell_option_flags = (string_address) "s";
 
-static p8 shell_parameter_bytes[EXPAND_PARAMETER_BYTES];
-static p8 shell_parameter_staging[EXPAND_PARAMETER_BYTES];
+static p8 address_to shell_parameter_bytes;
+static positive shell_parameter_bytes_room;
+static p8 address_to shell_parameter_staging;
+static positive shell_parameter_staging_room;
 
 /*
         Where set -- and shift keep their words.
@@ -460,16 +481,23 @@ bool shell_parameters_set(string_address address_to words, positive count)
         positive used = 0;
         positive index = 0;
         positive at;
+        positive need = 0;
 
-        if (count > EXPAND_PARAMETERS)
-                count = EXPAND_PARAMETERS;
+        for (at = 0; at < count; at++)
+                need += string_length(words[at]) + 1;
+
+        if (!shell_room((address_any address_to)address_of shell_parameter_staging,
+                        address_of shell_parameter_staging_room, need + 1, 1) ||
+            !shell_room((address_any address_to)address_of shell_parameter_bytes,
+                        address_of shell_parameter_bytes_room, need + 1, 1) ||
+            !shell_room((address_any address_to)address_of shell_parameter,
+                        address_of shell_parameter_room, count + 2,
+                        sizeof(string_address)))
+                return false;
 
         while (index < count)
         {
                 positive length = string_length(words[index]) + 1;
-
-                if (used + length > EXPAND_PARAMETER_BYTES)
-                        break;
 
                 memory_copy(shell_parameter_staging + used, words[index], length);
                 used += length;
@@ -500,10 +528,13 @@ bool shell_parameters_set(string_address address_to words, positive count)
         rather than one spare copy. The pointers are not worth saving: they all
         point into the one block that the next set is about to write over.
 */
-#define EXPAND_PARAMETER_STACK 16384
 #define EXPAND_NO_ROOM ((positive)-1)
 
-static p8 shell_parameter_stack[EXPAND_PARAMETER_STACK];
+//      A function is given its own parameters and hands these back when it
+//      returns, and functions nest, so what is put aside is a stack of bytes
+//      that grows with the depth rather than a fixed one.
+static p8 address_to shell_parameter_stack;
+static positive shell_parameter_stack_room;
 static positive shell_parameter_stack_used;
 
 positive shell_parameters_save()
@@ -515,7 +546,8 @@ positive shell_parameters_save()
         for (at = 0; at < shell_parameter_count; at++)
                 used += string_length(shell_parameter[at]) + 1;
 
-        if (mark + used > EXPAND_PARAMETER_STACK)
+        if (!shell_room((address_any address_to)address_of shell_parameter_stack,
+                        address_of shell_parameter_stack_room, mark + used + 1, 1))
                 return EXPAND_NO_ROOM;
 
         for (at = 0; at < shell_parameter_count; at++)
@@ -530,25 +562,29 @@ positive shell_parameters_save()
         return mark;
 }
 
+static string_address address_to shell_restore_words;
+static positive shell_restore_room;
+
 fn shell_parameters_restore(positive mark, positive count)
 {
-        string_address words[EXPAND_PARAMETERS];
         positive at = mark;
         positive index;
 
         if (mark == EXPAND_NO_ROOM)
                 return;
 
-        if (count > EXPAND_PARAMETERS)
-                count = EXPAND_PARAMETERS;
+        if (!shell_room((address_any address_to)address_of shell_restore_words,
+                        address_of shell_restore_room, count + 1,
+                        sizeof(string_address)))
+                return;
 
         for (index = 0; index < count; index++)
         {
-                words[index] = shell_parameter_stack + at;
+                shell_restore_words[index] = shell_parameter_stack + at;
                 at += string_length(shell_parameter_stack + at) + 1;
         }
 
-        shell_parameters_set(words, count);
+        shell_parameters_set(shell_restore_words, count);
         shell_parameter_stack_used = mark;
 }
 
@@ -1569,7 +1605,7 @@ static string_address expand_command(string_address step, bool quoted)
 {
         string_address inner = step + 2;
         string_address stop = expand_paren_end(inner);
-        p8 text[EXPAND_WORK / 2];
+        p8 address_to text;
         positive length;
 
         // No closing paren inside this word: the lexer stopped short of it, and
@@ -1582,8 +1618,15 @@ static string_address expand_command(string_address step, bool quoted)
 
         length = (positive)(stop - inner);
 
-        if (length >= sizeof(text))
-                length = sizeof(text) - 1;
+        //      Out of the line's own store, so a substitution inside a
+        //      substitution gets its own room rather than sharing one buffer.
+        text = shell_store_take(address_of expand_store, length + 1);
+
+        if (!text)
+        {
+                expand_overflow = true;
+                return stop + 1;
+        }
 
         memory_copy_end(text, inner, length);
 
@@ -1594,8 +1637,9 @@ static string_address expand_command(string_address step, bool quoted)
 
 static string_address expand_backtick(string_address step, bool quoted)
 {
-        p8 text[EXPAND_WORK / 2];
+        p8 address_to text;
         positive length = 0;
+        positive room;
         string_address look = step + 1;
 
         while (string_get(look) && string_not(look, '`'))
@@ -1612,6 +1656,17 @@ static string_address expand_backtick(string_address step, bool quoted)
                 return step + 1;
         }
 
+        //      The scan above already found the closing backtick, so the
+        //      most this can need is the distance to it.
+        room = (positive)(look - step) + 1;
+        text = shell_store_take(address_of expand_store, room);
+
+        if (!text)
+        {
+                expand_overflow = true;
+                return look + 1;
+        }
+
         step++;
 
         while (string_get(step) && string_not(step, '`'))
@@ -1623,7 +1678,7 @@ static string_address expand_backtick(string_address step, bool quoted)
                      string_get(step + 1) == '$'))
                         step++;
 
-                if (length + 1 < sizeof(text))
+                if (length + 1 < room)
                         text[length++] = string_get(step);
 
                 step++;
@@ -2297,9 +2352,12 @@ static fn expand_word(string_address word)
                 expand_quoted_seen = false;
 }
 
-static string_address glob_result[GLOB_RESULTS];
-static p8 glob_bytes[GLOB_BYTES];
-static positive glob_used;
+//      A directory may hold any number of names, so the answer to a pattern
+//      is not allowed a ceiling either. The table of matches may move; the
+//      names themselves may not, since the table points at them.
+static string_address address_to glob_result;
+static positive glob_room;
+static shell_store glob_store;
 static positive glob_count;
 
 static bool glob_magic(string_address pattern)
@@ -2325,13 +2383,20 @@ static bool glob_magic(string_address pattern)
 static bool glob_add(string_address path)
 {
         positive length = string_length(path) + 1;
+        p8 address_to bytes;
 
-        if (glob_count >= GLOB_RESULTS || glob_used + length > GLOB_BYTES)
+        if (!shell_room((address_any address_to)address_of glob_result,
+                        address_of glob_room, glob_count + 1,
+                        sizeof(string_address)))
                 return false;
 
-        memory_copy(glob_bytes + glob_used, path, length);
-        glob_result[glob_count++] = glob_bytes + glob_used;
-        glob_used += length;
+        bytes = shell_store_take(address_of glob_store, length);
+
+        if (!bytes)
+                return false;
+
+        memory_copy(bytes, path, length);
+        glob_result[glob_count++] = bytes;
 
         return true;
 }
@@ -2487,19 +2552,12 @@ static fn glob_sort()
 static string_address expand_keep_string(string_address text)
 {
         positive room = string_length(text) + 1;
-        string_address result;
+        string_address result = shell_store_take(address_of expand_store, room);
 
-        if (room > EXPAND_ARENA)
+        if (!result)
                 return (string_address) "";
 
-        // Nothing here outlives the line it came from, so a full arena starts
-        // over rather than refusing the word.
-        if (expand_arena_used + room > EXPAND_ARENA)
-                expand_arena_used = 0;
-
-        result = expand_arena + expand_arena_used;
         memory_copy(result, text, room);
-        expand_arena_used += room;
 
         return result;
 }
@@ -2507,17 +2565,12 @@ static string_address expand_keep_string(string_address text)
 static string_address expand_keep(positive at, positive stop)
 {
         positive room = stop - at + 1;
-        string_address result;
+        string_address result = shell_store_take(address_of expand_store, room);
 
-        if (room > EXPAND_ARENA)
+        if (!result)
                 return (string_address) "";
 
-        if (expand_arena_used + room > EXPAND_ARENA)
-                expand_arena_used = 0;
-
-        result = expand_arena + expand_arena_used;
         memory_copy_end(result, expand_text + at, stop - at);
-        expand_arena_used += room;
 
         return result;
 }
@@ -2528,16 +2581,12 @@ static string_address expand_keep(positive at, positive stop)
 
         This is the last place the marks exist: what leaves here is bytes.
 */
-static positive expand_emit(positive at, positive stop, string_address address_to out,
-                            positive limit, positive count)
+static bool expand_emit(positive at, positive stop, shell_words address_to out)
 {
         p8 pattern[GLOB_PATH];
         positive used = 0;
         positive index;
         bool magic = false;
-
-        if (count >= limit)
-                return count;
 
         /*
                 A bracket only makes a word a pattern if it closes.
@@ -2599,23 +2648,23 @@ static positive expand_emit(positive at, positive stop, string_address address_t
                 p8 built[GLOB_PATH];
 
                 glob_count = 0;
-                glob_used = 0;
+                shell_store_reset(address_of glob_store);
                 glob_walk(built, 0, pattern, 0);
 
                 if (glob_count)
                 {
                         glob_sort();
 
-                        for (index = 0; index < glob_count && count < limit; index++)
-                                out[count++] = expand_keep_string(glob_result[index]);
+                        for (index = 0; index < glob_count; index++)
+                                if (!shell_words_add(out, expand_keep_string(
+                                                             glob_result[index])))
+                                        return false;
 
-                        return count;
+                        return true;
                 }
         }
 
-        out[count] = expand_keep(at, stop);
-
-        return count + 1;
+        return shell_words_add(out, expand_keep(at, stop));
 }
 
 /*
@@ -2626,9 +2675,8 @@ static positive expand_emit(positive at, positive stop, string_address address_t
         separator; anything else in IFS is a separator on its own, with the
         whitespace around it swallowed.
 */
-static positive expand_split(string_address address_to out, positive limit)
+static positive expand_split(shell_words address_to out)
 {
-        positive count = 0;
         positive at = 0;
         positive start;
 
@@ -2637,7 +2685,12 @@ static positive expand_split(string_address address_to out, positive limit)
         // A word that expanded to nothing at all is no field, unless some part
         // of it was quoted: "" is an empty argument and $nosuch is no argument.
         if (!expand_length)
-                return expand_quoted_seen ? expand_emit(0, 0, out, limit, 0) : 0;
+        {
+                if (expand_quoted_seen)
+                        expand_emit(0, 0, out);
+
+                return out->count;
+        }
 
         while (at < expand_length && expand_mark[at] == MARK_FIELD &&
                expand_ifs_blank(expand_text[at]))
@@ -2646,7 +2699,7 @@ static positive expand_split(string_address address_to out, positive limit)
         // Nothing but separators: a word of blanks out of a variable is no
         // word at all.
         if (at >= expand_length)
-                return 0;
+                return out->count;
 
         start = at;
 
@@ -2654,7 +2707,7 @@ static positive expand_split(string_address address_to out, positive limit)
         {
                 if (expand_mark[at] == MARK_BREAK)
                 {
-                        count = expand_emit(start, at, out, limit, count);
+                        expand_emit(start, at, out);
                         at++;
                         start = at;
                         continue;
@@ -2662,7 +2715,7 @@ static positive expand_split(string_address address_to out, positive limit)
 
                 if (expand_mark[at] == MARK_FIELD && expand_in_ifs(expand_text[at]))
                 {
-                        count = expand_emit(start, at, out, limit, count);
+                        expand_emit(start, at, out);
 
                         while (at < expand_length && expand_mark[at] == MARK_FIELD &&
                                expand_ifs_blank(expand_text[at]))
@@ -2682,7 +2735,7 @@ static positive expand_split(string_address address_to out, positive limit)
 
                         // Separators at the end make no empty field after them.
                         if (at >= expand_length)
-                                return count;
+                                return out->count;
 
                         continue;
                 }
@@ -2690,7 +2743,9 @@ static positive expand_split(string_address address_to out, positive limit)
                 at++;
         }
 
-        return expand_emit(start, expand_length, out, limit, count);
+        expand_emit(start, expand_length, out);
+
+        return out->count;
 }
 
 /*
@@ -2702,7 +2757,7 @@ static positive expand_split(string_address address_to out, positive limit)
         -- which is the difference between "rm $file" deleting one thing and
         deleting the working directory.
 */
-positive shell_expand_fields(string_address word, string_address address_to out, positive limit)
+positive shell_expand_fields(string_address word, shell_words address_to out)
 {
         expand_word(word);
 
@@ -2712,7 +2767,7 @@ positive shell_expand_fields(string_address word, string_address address_to out,
         if (expand_overflow)
                 string_format(expand_complain, "Expansion too long: %s\n", word);
 
-        return expand_split(out, limit);
+        return expand_split(out);
 }
 
 /*

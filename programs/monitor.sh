@@ -1,0 +1,286 @@
+#
+#       A live system monitor, written in the shell it is demonstrating.
+#
+#       This exists to put the shell under sustained, awkward load: functions
+#       with locals, arithmetic, nested command substitution, pipelines into
+#       awk, and a redraw every interval that has to be fast enough not to
+#       flicker. A shell that is subtly wrong about any of those is obvious
+#       here within a second, in a way a test that runs once is not.
+#
+#       Everything comes out of /proc, so it needs no privileges and nothing
+#       outside the base system: grep, awk, sort, head, cut, sleep, printf.
+#
+#       Rates are real rates. Two samples are kept a frame apart in a scratch
+#       directory and the deltas are taken between them, which is why the
+#       first frame shows a settling reading and the rest do not.
+#
+#       Usage:  monitor.sh [interval] [frames]
+#               interval  seconds between redraws, default 1
+#               frames    stop after this many, default 0 meaning never
+#
+
+interval=${1:-1}
+frames=${2:-0}
+
+scratch=${TMPDIR:-/tmp}/monitor.$$
+mkdir -p "$scratch" 2>/dev/null
+
+now_cpu=$scratch/cpu.now
+old_cpu=$scratch/cpu.old
+now_net=$scratch/net.now
+old_net=$scratch/net.old
+now_pid=$scratch/pid.now
+old_pid=$scratch/pid.old
+
+#       Put the terminal back the way it was found, whichever way we leave.
+finish() {
+        printf '\033[?25h\033[0m\n'
+        rm -rf "$scratch" 2>/dev/null
+        exit 0
+}
+trap finish INT TERM HUP
+
+#       A bar, coloured by how alarming the number is. Built a character at a
+#       time because this shell has no ${var:offset:length} to slice a
+#       prebuilt string with.
+bar() {
+        local value=$1
+        local width=$2
+        local filled
+        local colour
+        local i
+        local drawn
+
+        filled=$(( value * width / 100 ))
+        [ "$filled" -lt 0 ] && filled=0
+        [ "$filled" -gt "$width" ] && filled=$width
+
+        if [ "$value" -ge 85 ]; then colour=31
+        elif [ "$value" -ge 60 ]; then colour=33
+        else colour=32
+        fi
+
+        i=0
+        drawn=
+        while [ "$i" -lt "$filled" ]; do drawn="$drawn|"; i=$(( i + 1 )); done
+        while [ "$i" -lt "$width" ]; do drawn="$drawn "; i=$(( i + 1 )); done
+
+        printf '\033[%sm%s\033[0m' "$colour" "$drawn"
+}
+
+#       Clear to end of line so a shorter line never leaves the tail of a
+#       longer one behind. Cheaper and steadier than clearing the screen.
+line() {
+        printf '%s\033[K\n' "$1"
+}
+
+sample() {
+        grep '^cpu' /proc/stat > "$now_cpu" 2>/dev/null
+        grep ':' /proc/net/dev > "$now_net" 2>/dev/null
+
+        #       awk opens each stat file itself rather than being handed
+        #       them as arguments. /proc/[0-9]*/stat would work now, but this
+        #       is one execve either way and does not build an argument list
+        #       of several hundred paths to throw away a moment later.
+        #
+        #       Writing this is what found the ceiling that used to be here:
+        #       the glob stopped at sixty four names without saying so, and
+        #       the process list looked entirely plausible while being wrong.
+        #
+        #       utime and stime are fields 14 and 15 and rss is 24, but field
+        #       2 is the command wrapped in parentheses and a command may
+        #       contain spaces, so the line is split at the last ") " and the
+        #       remaining fields counted from there: what would have been 14,
+        #       15 and 24 are 12, 13 and 22 of the tail.
+        ls /proc 2>/dev/null | awk '
+                /^[0-9]+$/ {
+                        file = "/proc/" $1 "/stat"
+                        if ((getline line < file) > 0) {
+                                close(file)
+                                cut  = index(line, ") ")
+                                head = substr(line, 1, cut)
+                                tail = substr(line, cut + 2)
+                                open = index(head, "(")
+                                name = substr(head, open + 1, cut - open - 1)
+                                split(tail, field, " ")
+                                print $1, field[12] + field[13], field[22], name
+                        }
+                }' > "$now_pid" 2>/dev/null
+}
+
+header() {
+        local up
+        local load
+        local host
+        local clock
+
+        up=$(awk '{ s = int($1)
+                    d = int(s / 86400); s = s % 86400
+                    h = int(s / 3600);  s = s % 3600
+                    m = int(s / 60)
+                    if (d > 0) printf "%dd %dh %dm", d, h, m
+                    else if (h > 0) printf "%dh %dm", h, m
+                    else printf "%dm", m }' /proc/uptime 2>/dev/null)
+        load=$(cut -d' ' -f1-3 /proc/loadavg 2>/dev/null)
+        host=$(uname -n 2>/dev/null)
+        clock=$(date +%H:%M:%S 2>/dev/null)
+
+        line "$(printf '\033[1m %-14s\033[0m up %-12s load %-18s %s' \
+                "$host" "$up" "$load" "$clock")"
+        line ""
+}
+
+cpus() {
+        local shown
+        shown=0
+
+        #       First file seen is the previous sample, second is this one.
+        #       Idle is the idle field plus iowait; everything else counts as
+        #       work. A counter that went backwards means the sample was
+        #       taken across a reset, so it is clamped rather than believed.
+        awk 'FNR == NR {
+                for (i = 2; i <= NF; i++) previous[$1, i] = $i
+                seen[$1] = 1
+                next
+             }
+             /^cpu/ {
+                if (!($1 in seen)) next
+                total = 0; idle = 0
+                for (i = 2; i <= NF; i++) {
+                        delta = $i - previous[$1, i]
+                        if (delta < 0) delta = 0
+                        total += delta
+                        if (i == 5 || i == 6) idle += delta
+                }
+                percent = (total > 0) ? int((total - idle) * 100 / total + 0.5) : 0
+                print $1, percent
+             }' "$old_cpu" "$now_cpu" 2>/dev/null | while read name percent; do
+                [ -n "$percent" ] || continue
+                if [ "$name" = cpu ]; then
+                        line "$(printf ' %-6s [%s] %3s%%' \
+                                "all" "$(bar "$percent" 34)" "$percent")"
+                else
+                        shown=$(( shown + 1 ))
+                        [ "$shown" -gt 12 ] && continue
+                        line "$(printf ' %-6s [%s] %3s%%' \
+                                "$name" "$(bar "$percent" 34)" "$percent")"
+                fi
+        done
+}
+
+memory() {
+        local report
+        report=$(awk '/^MemTotal:/     { total = $2 }
+                      /^MemAvailable:/ { free  = $2 }
+                      /^SwapTotal:/    { swapt = $2 }
+                      /^SwapFree:/     { swapf = $2 }
+                      END {
+                        used = total - free
+                        pct  = (total > 0) ? int(used * 100 / total + 0.5) : 0
+                        sp   = (swapt > 0) ? int((swapt - swapf) * 100 / swapt + 0.5) : 0
+                        printf "%d %.1f %.1f %d %.1f", pct, used / 1048576,
+                               total / 1048576, sp, (swapt - swapf) / 1048576
+                      }' /proc/meminfo 2>/dev/null)
+
+        set -- $report
+        [ -n "$1" ] || return 0
+        line "$(printf ' %-6s [%s] %3s%%  %sG / %sG' \
+                "mem" "$(bar "$1" 34)" "$1" "$2" "$3")"
+        [ "${4:-0}" -gt 0 ] && line "$(printf ' %-6s [%s] %3s%%  %sG' \
+                "swap" "$(bar "$4" 34)" "$4" "$5")"
+}
+
+network() {
+        awk -v interval="$interval" 'FNR == NR {
+                split($0, part, ":")
+                name = part[1]
+                gsub(/ /, "", name)
+                rest = part[2]
+                split(rest, field, " ")
+                previous[name "rx"] = field[1]
+                previous[name "tx"] = field[9]
+                next
+             }
+             {
+                split($0, part, ":")
+                name = part[1]
+                gsub(/ /, "", name)
+                if (name == "lo" || name == "") next
+                rest = part[2]
+                split(rest, field, " ")
+                rx = field[1] - previous[name "rx"]
+                tx = field[9] - previous[name "tx"]
+                if (rx < 0) rx = 0
+                if (tx < 0) tx = 0
+                if (rx == 0 && tx == 0 && field[1] == 0) next
+                printf "%s %d %d\n", name, rx / interval, tx / interval
+             }' "$old_net" "$now_net" 2>/dev/null |
+        while read name rx tx; do
+                [ -n "$name" ] || continue
+                line "$(printf ' %-10s down %-12s up %-12s' "$name" \
+                        "$(human "$rx")/s" "$(human "$tx")/s")"
+        done
+}
+
+human() {
+        awk -v n="$1" 'BEGIN {
+                if (n >= 1048576)   { printf "%.1f MB", n / 1048576 }
+                else if (n >= 1024) { printf "%.1f kB", n / 1024 }
+                else                { printf "%d B", n }
+        }'
+}
+
+processes() {
+        line ""
+        line "$(printf '\033[1m %-7s %6s %9s  %s\033[0m' "pid" "cpu%" "memory" "command")"
+
+        #       Ticks used since the previous frame, over the ticks that
+        #       elapsed. A process that was not there last frame simply has no
+        #       previous entry and reads as zero rather than as its whole life.
+        awk -v interval="$interval" -v hz=100 '
+             FNR == NR { previous[$1] = $2; next }
+             {
+                used = $2 - previous[$1]
+                if (used < 0 || !($1 in previous)) used = 0
+                percent = used * 100 / (hz * interval)
+                printf "%s %.1f %s %s\n", $1, percent, $3, $4
+             }' "$old_pid" "$now_pid" 2>/dev/null |
+        sort -k2 -rn | head -9 | while read pid percent pages name; do
+                [ -n "$pid" ] || continue
+                line "$(printf ' %-7s %6s %9s  %s' "$pid" "$percent" \
+                        "$(human "$(( pages * 4096 ))")" "$name")"
+        done
+}
+
+draw() {
+        printf '\033[H'
+        header
+        cpus
+        memory
+        network
+        processes
+        printf '\033[J'
+}
+
+#       Hide the cursor and take the first pair of samples, so the first
+#       drawn frame already has a delta to work from.
+printf '\033[?25l\033[2J'
+sample
+cp "$now_cpu" "$old_cpu" 2>/dev/null
+cp "$now_net" "$old_net" 2>/dev/null
+cp "$now_pid" "$old_pid" 2>/dev/null
+
+count=0
+while :; do
+        sleep "$interval"
+        sample
+        draw
+        cp "$now_cpu" "$old_cpu" 2>/dev/null
+        cp "$now_net" "$old_net" 2>/dev/null
+        cp "$now_pid" "$old_pid" 2>/dev/null
+
+        count=$(( count + 1 ))
+        [ "$frames" -gt 0 ] && [ "$count" -ge "$frames" ] && break
+done
+
+finish

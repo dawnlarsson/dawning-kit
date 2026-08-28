@@ -26,7 +26,7 @@ fn shell_answer(b32 value)
         These are the arrays shell.c fills. The type is left incomplete so that
         this file makes no claim about how many words fit in them.
 */
-string_address shell_argv[];
+string_address address_to shell_argv;
 positive shell_argc;
 
 // eval runs a line, and what runs lines sits below this file.
@@ -974,9 +974,11 @@ bipolar shell_signed(string_address input, bool address_to good)
         mirror also went to every child through execve, which no shell does,
         and cost an environment entry per parameter per call.
 */
-#define POSITIONAL_MAX 64
+//      What getopts is walking over, however many that is.
+static string_address address_to shell_getopts_list;
+static positive shell_getopts_room;
 
-extern string_address shell_parameter[];
+extern string_address address_to shell_parameter;
 extern positive shell_parameter_count;
 bool shell_parameters_set(string_address address_to words, positive count);
 fn shell_parameters_shift(positive count);
@@ -1191,16 +1193,11 @@ fn shell_set(writer write, string_address input)
                 break;
         }
 
+        //      argv is already a contiguous table of the right shape and
+        //      shell_parameters_set copies what it is given, so the operands
+        //      go straight in rather than through a middleman with a size.
         if (operands)
-        {
-                string_address values[POSITIONAL_MAX];
-                positive count = 0;
-
-                while (index < shell_argc && count < POSITIONAL_MAX)
-                        values[count++] = shell_argv[index++];
-
-                shell_parameters_set(values, count);
-        }
+                shell_parameters_set(shell_argv + index, shell_argc - index);
 
         shell_answer(0);
 }
@@ -2716,7 +2713,6 @@ fn shell_getopts(writer write, string_address input)
 {
         string_address options;
         string_address name;
-        string_address list[POSITIONAL_MAX];
         positive count = 0;
         positive optind;
         positive next;
@@ -2738,14 +2734,24 @@ fn shell_getopts(writer write, string_address input)
         {
                 positive index = 3;
 
-                while (index < shell_argc && count < POSITIONAL_MAX)
-                        list[count++] = shell_argv[index++];
+                if (!shell_room((address_any address_to)address_of shell_getopts_list,
+                                address_of shell_getopts_room,
+                                shell_argc - 3 + 1, sizeof(string_address)))
+                        return shell_answer(2);
+
+                while (index < shell_argc)
+                        shell_getopts_list[count++] = shell_argv[index++];
         }
         else
         {
+                if (!shell_room((address_any address_to)address_of shell_getopts_list,
+                                address_of shell_getopts_room,
+                                shell_parameter_count + 1, sizeof(string_address)))
+                        return shell_answer(2);
+
                 while (count < shell_parameter_count)
                 {
-                        list[count] = shell_parameter[count];
+                        shell_getopts_list[count] = shell_parameter[count];
                         count++;
                 }
         }
@@ -2760,15 +2766,15 @@ fn shell_getopts(writer write, string_address input)
         // Where the last call stopped inside a word it had not finished. Only
         // believable while OPTIND still names the word after that one.
         if (optind > 1 && optind - 2 < count && getopts_offset >= 0 &&
-            (positive)getopts_offset <= string_length(list[optind - 2]))
+            (positive)getopts_offset <= string_length(shell_getopts_list[optind - 2]))
         {
-                word = list[optind - 2];
+                word = shell_getopts_list[optind - 2];
                 step = word + getopts_offset;
         }
 
         if (!step || !string_get(step))
         {
-                word = next < count ? list[next] : null;
+                word = next < count ? shell_getopts_list[next] : null;
                 step = word;
 
                 if (!step || string_not(step, '-') || !string_get(step + 1))
@@ -2823,7 +2829,7 @@ fn shell_getopts(writer write, string_address input)
                 }
 
                 if (!string_get(step))
-                        step = list[next++];
+                        step = shell_getopts_list[next++];
 
                 env_set("OPTARG", step);
 

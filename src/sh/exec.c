@@ -105,7 +105,7 @@ static fn exec_errexit(b32 status)
         exit(status);
 }
 
-#define EXEC_ARENA 8192
+
 #define PIPELINE_MAX 64
 #define FUNCTION_MAX 64
 #define FUNCTION_NAME 64
@@ -115,8 +115,10 @@ static fn exec_errexit(b32 status)
 // being told the recursion is too deep.
 #define FUNCTION_DEPTH_MAX 128
 
-static p8 exec_arena[EXEC_ARENA];
-static positive exec_arena_used;
+//      What a command keeps while it is being built. argv and the saved
+//      assignments point in here, so like the expansion store these bytes may
+//      never move once handed out.
+static shell_store exec_store;
 static p8 exec_nothing[1];
 
 // A diagnostic bypasses the buffered output writer and goes to stderr.
@@ -125,14 +127,12 @@ static p8 exec_nothing[1];
 static string_address exec_arena_copy(string_address text)
 {
         positive length = string_length(text) + 1;
-        string_address into;
+        string_address into = shell_store_take(address_of exec_store, length);
 
-        if (exec_arena_used + length > EXEC_ARENA)
+        if (!into)
                 return exec_nothing;
 
-        into = exec_arena + exec_arena_used;
         memory_copy(into, text, length);
-        exec_arena_used += length;
 
         return into;
 }
@@ -373,7 +373,6 @@ static bool exec_here_expand_isolated(string_address body, positive length,
                                       positive address_to out_length)
 {
         positive start = token_used;
-        positive room = TOKEN_STORAGE - start;
         positive filled = 0;
         positive raw_status = 0;
         b32 ends[2];
@@ -418,11 +417,21 @@ static bool exec_here_expand_isolated(string_address body, positive length,
                 return false;
         }
 
-        while (filled < room)
+        //      A here-document is as long as it is. Take another page of
+        //      room whenever the last one filled, rather than deciding in
+        //      advance how much of it is allowed to arrive.
+        for (;;)
         {
-                bipolar got = system_read_retry(ends[0],
-                                                token_storage + start + filled,
-                                                room - filled);
+                bipolar got;
+
+                if (!token_room(start + filled + 4096))
+                {
+                        token_overflow = true;
+                        break;
+                }
+
+                got = system_read_retry(ends[0], token_storage + start + filled,
+                                        token_storage_room - start - filled - 1);
 
                 if (got <= 0)
                         break;
@@ -884,12 +893,12 @@ static bool exec_keep_value(exec_kept_value address_to kept, string_address word
         positive length = (positive)(string_first_of_or_end(word, '=') - word);
         string_address value;
 
-        if (exec_arena_used + length + 1 > EXEC_ARENA)
+        kept->name = shell_store_take(address_of exec_store, length + 1);
+
+        if (!kept->name)
                 return false;
 
-        kept->name = exec_arena + exec_arena_used;
         string_copy_max_end(kept->name, word, length);
-        exec_arena_used += length + 1;
 
         value = env_get(kept->name);
         kept->value = null;
@@ -1063,13 +1072,20 @@ static b32 exec_simple(b32 index)
 {
         parse_node address_to node = parse_nodes + index;
         exec_kept_value kept[ASSIGN_MAX];
-        positive arena_mark = exec_arena_used;
+        shell_mark arena_mark = shell_store_mark(address_of exec_store);
         b32 kept_count = 0;
         b32 mark = exec_save_count;
         b32 count = 0;
         b32 first = 0;
         b32 status;
         b32 at;
+        shell_words arguments;
+
+        //      argv grows with the line. A command's words are whatever the
+        //      expansions made of them, and a directory may hold any number of
+        //      names, so there is nothing sensible to clamp this to.
+        shell_words_bind(address_of arguments, address_of shell_argv,
+                         address_of shell_argv_room);
 
         token_used = 0;
         token_overflow = false;
@@ -1078,7 +1094,7 @@ static b32 exec_simple(b32 index)
         // this while the words and redirect targets below are expanded.
         shell_substitution_status = 0;
 
-        for (at = 0; at < node->word_count && count < MAX_TOKENS; at++)
+        for (at = 0; at < node->word_count; at++)
         {
                 string_address word = parse_words[node->word + at];
 
@@ -1090,7 +1106,11 @@ static b32 exec_simple(b32 index)
                 */
                 if (count == first && exec_is_assignment(word))
                 {
-                        shell_argv[count++] = shell_expand_word(word);
+                        if (!shell_words_add(address_of arguments,
+                                             shell_expand_word(word)))
+                                break;
+
+                        count = (b32)arguments.count;
 
                         if (exec_line_aborted())
                                 break;
@@ -1099,8 +1119,7 @@ static b32 exec_simple(b32 index)
                         continue;
                 }
 
-                count += (b32)shell_expand_fields(word, shell_argv + count,
-                                                  MAX_TOKENS - count);
+                count = (b32)shell_expand_fields(word, address_of arguments);
 
                 if (exec_line_aborted())
                         break;
@@ -1108,7 +1127,17 @@ static b32 exec_simple(b32 index)
 
         if (exec_line_aborted())
         {
-                exec_arena_used = arena_mark;
+                shell_store_rewind(address_of exec_store, arena_mark);
+                shell_status = 2;
+                return 2;
+        }
+
+        //      An empty command line never entered the loop, so the table
+        //      may not exist yet to hold even the null that ends it.
+        if (!shell_room((address_any address_to)address_of shell_argv,
+                        address_of shell_argv_room, (positive)count + 2,
+                        sizeof(string_address)))
+        {
                 shell_status = 2;
                 return 2;
         }
@@ -1140,7 +1169,7 @@ static b32 exec_simple(b32 index)
 
                         // Nowhere to remember it is a reason to leave it set,
                         // not a reason to put half of them back.
-                        exec_arena_used = arena_mark;
+                        shell_store_rewind(address_of exec_store, arena_mark);
                         kept_count = 0;
                         break;
                 }
@@ -1155,7 +1184,7 @@ static b32 exec_simple(b32 index)
         {
                 exec_redirect_restore(mark);
                 exec_put_back(kept, kept_count);
-                exec_arena_used = arena_mark;
+                shell_store_rewind(address_of exec_store, arena_mark);
                 shell_status = exec_line_aborted() ? 2
                                                    : exec_redirect_status
                                                          ? exec_redirect_status
@@ -1186,7 +1215,7 @@ static b32 exec_simple(b32 index)
                 exec_redirect_restore(mark);
 
         exec_put_back(kept, kept_count);
-        exec_arena_used = arena_mark;
+        shell_store_rewind(address_of exec_store, arena_mark);
 
         return status;
 }
@@ -1256,12 +1285,19 @@ static b32 exec_loop(b32 index, bool until)
         return status;
 }
 
+//      What a for loop walks over, and the fields one of its words became.
+//      Both live here rather than on the stack so they can grow and be reused
+//      by the next loop instead of being sized for a guess.
+static string_address address_to exec_items;
+static positive exec_items_room;
+static string_address address_to exec_fields;
+static positive exec_fields_room;
+
 static b32 exec_for(b32 index)
 {
         parse_node address_to node = parse_nodes + index;
         string_address name = parse_words[node->word];
-        string_address items[POSITIONAL_MAX * 2];
-        positive mark = exec_arena_used;
+        shell_mark mark = shell_store_mark(address_of exec_store);
         b32 count = 0;
         b32 status = 0;
         b32 at;
@@ -1284,10 +1320,14 @@ static b32 exec_for(b32 index)
 
                 for (at = 1; at < node->word_count && room; at++)
                 {
-                        string_address fields[POSITIONAL_MAX];
-                        positive made = shell_expand_fields(
-                            parse_words[node->word + at], fields, POSITIONAL_MAX);
+                        shell_words list;
+                        positive made;
                         positive field;
+
+                        shell_words_bind(address_of list, address_of exec_fields,
+                                         address_of exec_fields_room);
+                        made = shell_expand_fields(parse_words[node->word + at],
+                                                   address_of list);
 
                         if (exec_line_aborted())
                         {
@@ -1299,13 +1339,17 @@ static b32 exec_for(b32 index)
                         {
                                 string_address kept;
 
-                                if (count >= (b32)(sizeof(items) / sizeof(items[0])))
+                                if (!shell_room((address_any address_to)
+                                                    address_of exec_items,
+                                                address_of exec_items_room,
+                                                (positive)count + 1,
+                                                sizeof(string_address)))
                                 {
                                         room = false;
                                         break;
                                 }
 
-                                kept = exec_arena_copy(fields[field]);
+                                kept = exec_arena_copy(exec_fields[field]);
 
                                 // An arena with nothing left in it gives back
                                 // the empty string, and a loop that quietly
@@ -1317,26 +1361,33 @@ static b32 exec_for(b32 index)
                                         break;
                                 }
 
-                                items[count++] = kept;
+                                exec_items[count++] = kept;
                         }
                 }
         }
         else
         {
-                for (at = 0; at < (b32)shell_parameter_count && count < (b32)(sizeof(items) / sizeof(items[0])); at++)
-                        items[count++] = exec_arena_copy(shell_parameter[at]);
+                for (at = 0; at < (b32)shell_parameter_count; at++)
+                {
+                        if (!shell_room((address_any address_to)address_of exec_items,
+                                        address_of exec_items_room,
+                                        (positive)at + 1, sizeof(string_address)))
+                                break;
+
+                        exec_items[count++] = exec_arena_copy(shell_parameter[at]);
+                }
         }
 
         if (exec_line_aborted())
         {
-                exec_arena_used = mark;
+                shell_store_rewind(address_of exec_store, mark);
                 shell_status = 2;
                 return 2;
         }
 
         for (at = 0; at < count; at++)
         {
-                env_set(name, items[at]);
+                env_set(name, exec_items[at]);
 
                 exec_loop_depth++;
                 status = exec_node(node->right);
@@ -1346,7 +1397,7 @@ static b32 exec_for(b32 index)
                         break;
         }
 
-        exec_arena_used = mark;
+        shell_store_rewind(address_of exec_store, mark);
 
         return status;
 }
@@ -1354,7 +1405,7 @@ static b32 exec_for(b32 index)
 static b32 exec_case(b32 index)
 {
         parse_node address_to node = parse_nodes + index;
-        positive mark = exec_arena_used;
+        shell_mark mark = shell_store_mark(address_of exec_store);
         string_address subject;
         b32 item;
         b32 status = 0;
@@ -1364,7 +1415,7 @@ static b32 exec_case(b32 index)
 
         if (exec_line_aborted())
         {
-                exec_arena_used = mark;
+                shell_store_rewind(address_of exec_store, mark);
                 shell_status = 2;
                 return 2;
         }
@@ -1385,7 +1436,7 @@ static b32 exec_case(b32 index)
 
                         if (exec_line_aborted())
                         {
-                                exec_arena_used = mark;
+                                shell_store_rewind(address_of exec_store, mark);
                                 shell_status = 2;
                                 return 2;
                         }
@@ -1394,13 +1445,13 @@ static b32 exec_case(b32 index)
                                 continue;
 
                         status = exec_node(parse_nodes[item].right);
-                        exec_arena_used = mark;
+                        shell_store_rewind(address_of exec_store, mark);
 
                         return status;
                 }
         }
 
-        exec_arena_used = mark;
+        shell_store_rewind(address_of exec_store, mark);
 
         return status;
 }
@@ -1790,7 +1841,7 @@ static b32 exec_depth;
 */
 fn exec_program(b32 root)
 {
-        positive kept_arena = exec_arena_used;
+        shell_mark kept_arena = shell_store_mark(address_of exec_store);
         b32 kept_saves = exec_save_count;
 
         exec_signal = EXEC_SIGNAL_NONE;
@@ -1811,6 +1862,6 @@ fn exec_program(b32 root)
         exec_node(root);
         exec_depth--;
 
-        exec_arena_used = kept_arena;
+        shell_store_rewind(address_of exec_store, kept_arena);
         exec_save_count = kept_saves;
 }

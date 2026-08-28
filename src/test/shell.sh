@@ -1354,9 +1354,11 @@ differs 'expr is sixty four' '-9223372036854775808|' 0 'expr 9223372036854775807
 # The expanded form of a here-document body is built in the storage a command
 # line shares, which holds eight kilobytes. A body that outgrows it is refused
 # rather than handed over with its end missing, which is what used to happen.
-differs 'expanded body ceiling' 'done|' 0 '{ echo "cat <<END"; i=0; while [ $i -lt 400 ]; do echo "line $i padding padding padding"; i=$((i+1)); done; echo END; } > /tmp/gh5.$$
+# A here-document is as long as it is. This used to stop at the eight kilobyte
+# mark and hand the truncated body on without saying so.
+answer 'no here-document ceiling' '{ echo "cat <<END"; i=0; while [ $i -lt 400 ]; do echo "line $i padding padding padding"; i=$((i+1)); done; echo END; } > /tmp/gh5.$$
 . /tmp/gh5.$$
-echo done'
+rm -f /tmp/gh5.$$'
 
 # A body line with nothing on it is dropped before the shell ever sees it:
 # the reader in programs/shell.c skips empty lines, which is right for a
@@ -1390,7 +1392,13 @@ differs 'recursion has a floor' '' 1 'f() { [ $1 -le 0 ] && { echo bottom; retur
 
 # MAX_TOKENS in shell.c is what a command line holds, so a glob that matches
 # more than that many names is cut off rather than refused.
-differs 'sixty four words' '63|' 0 'cd /usr/bin; echo * | wc -w'
+# A glob is as long as the directory is. This used to stop at sixty three
+# words, silently, which is the worst way for it to be wrong: the script goes
+# on believing it saw everything. Two hundred is enough to have caught it and
+# small enough not to slow the lane down.
+answer 'no word ceiling' 'cd "$(mktemp -d)"; i=0; while [ $i -lt 200 ]; do : > f$i; i=$((i+1)); done; echo * | wc -w'
+answer 'no field ceiling' 'cd "$(mktemp -d)"; i=0; while [ $i -lt 200 ]; do : > f$i; i=$((i+1)); done; set -- *; echo $#'
+answer 'no parameter ceiling' 'cd "$(mktemp -d)"; i=0; while [ $i -lt 200 ]; do : > f$i; i=$((i+1)); done; set -- *; n=0; for f in "$@"; do n=$((n+1)); done; echo $n'
 
 # The shell builds its own environment rather than inheriting one, because in
 # the image it is what starts first and there is nobody above it to inherit

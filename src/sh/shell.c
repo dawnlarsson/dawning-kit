@@ -129,6 +129,233 @@ b32 shell_is_interactive;
 // screen turns it off while it holds the terminal.
 bool shell_styles = true;
 
+
+/*
+        Nothing the shell builds has a ceiling.
+
+        This is init. It runs on a machine that may have a hundred thousand
+        files in a directory, and a glob that quietly stops at the sixty
+        fourth of them is worse than one that fails outright, because the
+        script carries on believing it saw everything. Every list a script can
+        make longer therefore grows, and the only thing that ends it is the
+        kernel refusing more memory.
+
+        Two shapes are needed, and the difference between them is whether
+        anything is holding a pointer into the thing while it grows.
+
+        A table of pointers may move. Nothing keeps an address inside one --
+        it is always reached by index -- so it grows by taking a larger
+        mapping, copying, and giving the old one back.
+
+        The bytes those pointers point AT may never move, because argv entries
+        are addresses into them and are handed to execve. So a byte store is a
+        chain of blocks instead: when a block is full the next one is spliced
+        on and everything already given out stays exactly where it was. A line
+        ends by rewinding to the first block rather than freeing, so the steady
+        state of a shell in a loop is no allocation at all.
+*/
+
+typedef struct shell_block
+{
+        struct shell_block address_to next;
+        positive size;
+        positive used;
+} shell_block;
+
+typedef struct
+{
+        shell_block address_to head;
+        shell_block address_to here;
+} shell_store;
+
+#define SHELL_BLOCK 65536
+
+static bool shell_memory_failed;
+
+static address_any shell_map(positive size)
+{
+        address_any got = memory(size);
+
+        //      memory answers with the kernel's own negative errno, which as
+        //      an address is the top page of the space and never a mapping.
+        if (!got || (positive)got >= (positive)-4095)
+        {
+                shell_memory_failed = true;
+                return null;
+        }
+
+        return got;
+}
+
+//      Room for want entries of unit bytes each, moving the table if it must.
+static bool shell_room(address_any address_to held, positive address_to have,
+                       positive want, positive unit)
+{
+        positive size = *have;
+        address_any fresh;
+
+        if (size >= want)
+                return true;
+
+        if (!size)
+                size = 64;
+
+        while (size < want)
+                size += size;
+
+        fresh = shell_map(size * unit);
+
+        if (!fresh)
+                return false;
+
+        if (*held)
+        {
+                memory_copy(fresh, *held, *have * unit);
+                memory_free(*held, *have * unit);
+        }
+
+        *held = fresh;
+        *have = size;
+
+        return true;
+}
+
+//      Bytes that will not move for as long as the line lasts.
+static p8 address_to shell_store_take(shell_store address_to store, positive room)
+{
+        shell_block address_to block;
+        positive size;
+        p8 address_to bytes;
+
+        if (!room)
+                room = 1;
+
+        if (store->here && store->here->used + room <= store->here->size)
+        {
+                bytes = (p8 address_to)(store->here + 1) + store->here->used;
+                store->here->used += room;
+                return bytes;
+        }
+
+        //      A block left over from an earlier line, still big enough.
+        if (store->here && store->here->next && room <= store->here->next->size)
+        {
+                store->here = store->here->next;
+                store->here->used = room;
+                return (p8 address_to)(store->here + 1);
+        }
+
+        size = SHELL_BLOCK;
+
+        while (size < room)
+                size += size;
+
+        block = (shell_block address_to)shell_map(size + sizeof(shell_block));
+
+        if (!block)
+                return null;
+
+        block->size = size;
+        block->used = room;
+        block->next = null;
+
+        if (store->here)
+        {
+                block->next = store->here->next;
+                store->here->next = block;
+        }
+        else
+        {
+                store->head = block;
+        }
+
+        store->here = block;
+
+        return (p8 address_to)(block + 1);
+}
+
+//      The line is over. Rewind rather than free: the next line will want the
+//      same blocks, and a shell in a loop should stop allocating entirely.
+static fn shell_store_reset(shell_store address_to store)
+{
+        store->here = store->head;
+
+        if (store->here)
+                store->here->used = 0;
+}
+
+/*
+        A point in the store, and the way back to it.
+
+        Some of this is built speculatively -- a command's assignments are kept
+        while its words are expanded and thrown away if the line turns out not
+        to run -- so the store has to be able to give back everything taken
+        since a moment, without giving back what was there before it.
+*/
+typedef struct
+{
+        shell_block address_to block;
+        positive used;
+} shell_mark;
+
+static shell_mark shell_store_mark(shell_store address_to store)
+{
+        shell_mark mark;
+
+        mark.block = store->here;
+        mark.used = store->here ? store->here->used : 0;
+
+        return mark;
+}
+
+static fn shell_store_rewind(shell_store address_to store, shell_mark mark)
+{
+        if (!mark.block)
+        {
+                shell_store_reset(store);
+                return;
+        }
+
+        store->here = mark.block;
+        store->here->used = mark.used;
+}
+
+/*
+        A list of words that grows as words are put in it.
+
+        This is what argv is made of and what a field split fills, so it is the
+        one place a glob's answer stops being bounded by anything.
+*/
+typedef struct
+{
+        string_address address_to address_to word;
+        positive address_to room;
+        positive count;
+} shell_words;
+
+//      Bound to wherever the table actually lives, so the same appending code
+//      serves argv, a for loop's list and set's arguments alike.
+static bool shell_words_add(shell_words address_to list, string_address word)
+{
+        if (!shell_room((address_any address_to)list->word, list->room,
+                        list->count + 2, sizeof(string_address)))
+                return false;
+
+        (address_to list->word)[list->count++] = word;
+        (address_to list->word)[list->count] = null;
+
+        return true;
+}
+
+static fn shell_words_bind(shell_words address_to list,
+                           string_address address_to address_to table,
+                           positive address_to room)
+{
+        list->word = table;
+        list->room = room;
+        list->count = 0;
+}
+
 #include "lex.c"
 #include "file.c"
 #include "text.c"
@@ -167,25 +394,37 @@ fn redirect_writer(address_any data, positive length)
         was read at, so the words get storage of their own instead of being cut
         out of shell_buffer in place.
 */
-#define MAX_TOKENS 64
-#define TOKEN_STORAGE 8192
-
-p8 token_storage[TOKEN_STORAGE];
+//      The bytes the words of a line are cut into. It grows with the line,
+//      and because a word's address is taken only after the word is finished
+//      it is safe for the block to move while one is being built.
+p8 address_to token_storage;
+positive token_storage_room;
 positive token_used;
 bool token_overflow;
 
-string_address shell_argv[MAX_TOKENS + 1];
+static bool token_room(positive want)
+{
+        return shell_room((address_any address_to)address_of token_storage,
+                          address_of token_storage_room, want, 1);
+}
+
+//      argv and its parallel operator marks grow with the line. Nothing holds
+//      an address inside either table, so both may move as they grow.
+string_address address_to shell_argv;
+positive shell_argv_room;
 positive shell_argc;
 
 // Which words arrived as a bare > or >>. A quoted ">" is a file name and must
 // not be mistaken for the operator, and by then the two look identical.
-bool shell_operator[MAX_TOKENS + 1];
+bool address_to shell_operator;
+positive shell_operator_room;
 
-p8 argument_line[TOKEN_STORAGE];
+p8 address_to argument_line;
+positive argument_line_room;
 
 fn token_push(p8 value)
 {
-        if (token_used + 1 >= TOKEN_STORAGE)
+        if (!token_room(token_used + 2))
         {
                 token_overflow = true;
                 return;
@@ -196,16 +435,16 @@ fn token_push(p8 value)
 
 static fn token_push_bytes(address_any data, positive length)
 {
-        positive room = TOKEN_STORAGE - 1 - token_used;
-        positive take = length < room ? length : room;
-
-        if (take)
-                memory_copy_fast(token_storage + token_used, data, take);
-
-        token_used += take;
-
-        if (take < length)
+        if (!token_room(token_used + length + 2))
+        {
                 token_overflow = true;
+                return;
+        }
+
+        if (length)
+                memory_copy_fast(token_storage + token_used, data, length);
+
+        token_used += length;
 }
 
 fn token_push_string(string_address text)
@@ -333,10 +572,16 @@ b32 shell_tokenize(string_address line)
                 if (string_is(step, end))
                         break;
 
-                if (count >= MAX_TOKENS)
+                //      Room for this word and the null that ends the list.
+                if (!shell_room((address_any address_to)address_of shell_argv,
+                                address_of shell_argv_room,
+                                (positive)count + 2, sizeof(string_address)) ||
+                    !shell_room((address_any address_to)address_of shell_operator,
+                                address_of shell_operator_room,
+                                (positive)count + 2, sizeof(bool)))
                         return -1;
 
-                string_address token = token_storage + token_used;
+                positive token_at = token_used;
                 bool is_operator = false;
 
                 if (string_is(step, '>'))
@@ -390,9 +635,17 @@ b32 shell_tokenize(string_address line)
                         return -1;
 
                 shell_operator[count] = is_operator;
-                shell_argv[count] = token;
+                shell_argv[count] = token_storage + token_at;
                 count++;
         }
+
+        if (!shell_room((address_any address_to)address_of shell_argv,
+                        address_of shell_argv_room, (positive)count + 2,
+                        sizeof(string_address)) ||
+            !shell_room((address_any address_to)address_of shell_operator,
+                        address_of shell_operator_room, (positive)count + 2,
+                        sizeof(bool)))
+                return -1;
 
         shell_argv[count] = null;
         shell_operator[count] = false;
@@ -414,7 +667,9 @@ string_address shell_arguments()
         {
                 positive length = string_length(shell_argv[index]);
 
-                if (used + length + 2 > TOKEN_STORAGE)
+                if (!shell_room((address_any address_to)address_of argument_line,
+                                address_of argument_line_room,
+                                used + length + 2, 1))
                         break;
 
                 if (used)
@@ -424,6 +679,10 @@ string_address shell_arguments()
                 used += length;
                 index++;
         }
+
+        if (!shell_room((address_any address_to)address_of argument_line,
+                        address_of argument_line_room, used + 1, 1))
+                return null;
 
         argument_line[used] = end;
 
