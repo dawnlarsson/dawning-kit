@@ -2672,7 +2672,10 @@ static fn ls_print(string_address directory)
                                 log(" -> ", 0);
                                 log(where, 0);
 
-                                if (marking && file_look_at(full, address_of through))
+                                // -F classifies where the link points; -p
+                                // has only a slash to give and gives it to
+                                // the name that stands there.
+                                if (ls_classify && file_look_at(full, address_of through))
                                 {
                                         p8 there = ls_mark(through.mode);
 
@@ -5675,6 +5678,7 @@ static bool ln_force;
 static bool ln_ask;
 static bool ln_loud;
 static bool ln_relative;
+static bool ln_through;
 
 // realpath's, and named here because ln is written before it.
 static fn realpath_relative(string_address from, string_address path, p8 address_to into);
@@ -5724,7 +5728,8 @@ static bool ln_make(string_address target, string_address name)
                                      (positive)name);
         else
                 done = system_call_5(syscall(linkat), AT_FDCWD, (positive)target,
-                                     AT_FDCWD, (positive)name, 0);
+                                     AT_FDCWD, (positive)name,
+                                     ln_through ? AT_SYMLINK_FOLLOW : 0);
 
         if (done < 0)
         {
@@ -5776,6 +5781,10 @@ static b32 file_ln()
         ln_ask = (flags & FILE_FLAG('i')) != 0;
         ln_loud = (flags & FILE_FLAG('v')) != 0;
         ln_relative = (flags & FILE_FLAG('r')) != 0;
+
+        // -L makes a hard link to what a symbolic target points at rather
+        // than to the link, which is the one thing -L and -P are about.
+        ln_through = (flags & FILE_FLAG('L')) != 0;
 
         if (ln_force)
                 ln_ask = false;
@@ -5892,7 +5901,9 @@ static b32 file_readlink()
 
         bool resolve = (flags & (FILE_FLAG('f') | FILE_FLAG('e') | FILE_FLAG('m'))) != 0;
         bool no_newline = (flags & FILE_FLAG('n')) != 0;
-        bool quiet = (flags & (FILE_FLAG('q') | FILE_FLAG('s'))) != 0;
+        // Silent unless asked: readlink says nothing about a name it could
+        // not read, and -q and -s are there only to say so twice.
+        bool loud = (flags & FILE_FLAG('v')) != 0;
         bool zero = (flags & FILE_FLAG('z')) != 0;
         b32 status = 0;
 
@@ -5905,6 +5916,11 @@ static b32 file_readlink()
                 {
                         if (!file_real(path, answer))
                         {
+                                if (loud)
+                                        string_format(file_fail,
+                                                      "readlink: %s: No such file or directory\n",
+                                                      path);
+
                                 status = 1;
                                 continue;
                         }
@@ -5917,23 +5933,42 @@ static b32 file_readlink()
                         // path to be, -m wants neither.
                         if (!(flags & FILE_FLAG('m')) && !file_is_directory_through(above))
                         {
+                                if (loud)
+                                        string_format(file_fail,
+                                                      "readlink: %s: No such file or directory\n",
+                                                      path);
+
                                 status = 1;
                                 continue;
                         }
 
                         if ((flags & FILE_FLAG('e')) && !file_exists(AT_FDCWD, answer))
                         {
+                                if (loud)
+                                        string_format(file_fail,
+                                                      "readlink: %s: No such file or directory\n",
+                                                      path);
+
                                 status = 1;
                                 continue;
                         }
                 }
-                else if (file_link_text(path, answer, FILE_PATH_MAX) < 0)
+                else
                 {
-                        if (!quiet)
-                                string_format(file_fail, "readlink: %s: Invalid argument\n", path);
+                        bipolar length = file_link_text(path, answer, FILE_PATH_MAX);
 
-                        status = 1;
-                        continue;
+                        if (length < 0)
+                        {
+                                // A name that is not there and a name that is
+                                // not a link are two different answers, and
+                                // the kernel has already told them apart.
+                                if (loud)
+                                        string_format(file_fail, "readlink: %s: %s\n", path,
+                                                      file_reason(length));
+
+                                status = 1;
+                                continue;
+                        }
                 }
 
                 // -n drops the delimiter rather than choosing one, so it wins
@@ -6116,6 +6151,34 @@ static bool realpath_under(string_address directory, string_address path)
         return string_is(path + length, end) || string_is(path + length, '/');
 }
 
+// Whether every component of a path but the last is a directory. -L drops
+// the .. before any of them is followed, and a .. after something that is not
+// a directory is still a path that does not exist.
+static bool realpath_walkable(string_address path)
+{
+        p8 prefix[FILE_PATH_MAX];
+        positive length = 0;
+
+        while (string_get(path + length))
+        {
+                if (!string_is(path + length, '/') || length == 0)
+                {
+                        length++;
+                        continue;
+                }
+
+                string_copy_max(prefix, path, length);
+                prefix[length] = end;
+
+                if (!file_is_directory_through(prefix))
+                        return false;
+
+                length++;
+        }
+
+        return true;
+}
+
 /*
         One canonical path said from where another stands: what they share
         dropped, one .. for every step still to climb, and a lone dot when
@@ -6201,6 +6264,7 @@ static b32 file_realpath()
 
         bool allow_missing = (taking.flags & FILE_FLAG('m')) != 0;
         bool written_name = (taking.flags & FILE_FLAG('s')) != 0;
+        bool logical = (taking.flags & FILE_FLAG('L')) != 0;
         bool quiet = (taking.flags & FILE_FLAG('q')) != 0;
         bool zero = (taking.flags & FILE_FLAG('z')) != 0;
         b32 status = 0;
@@ -6226,7 +6290,29 @@ static b32 file_realpath()
                 p8 answer[FILE_PATH_MAX];
                 p8 above[FILE_PATH_MAX];
 
-                if (!file_resolve(path, answer, !written_name))
+                /*
+                        -L takes the .. out of the name before any link in it
+                        is followed, so link/.. is where the name was written
+                        and not where the link went. That is two passes: the
+                        lexical one, and then the real one over what it left.
+                */
+                if (logical && !written_name)
+                {
+                        p8 lexical[FILE_PATH_MAX];
+
+                        if (!realpath_walkable(path) ||
+                            !file_resolve(path, lexical, false) ||
+                            !file_resolve(lexical, answer, true))
+                        {
+                                if (!quiet)
+                                        string_format(file_fail,
+                                                      "realpath: %s: Invalid argument\n", path);
+
+                                status = 1;
+                                continue;
+                        }
+                }
+                else if (!file_resolve(path, answer, !written_name))
                 {
                         if (!quiet)
                                 string_format(file_fail, "realpath: %s: Invalid argument\n", path);

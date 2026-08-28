@@ -87,6 +87,33 @@ near() {
         report bad "$name" "want [$(head -c 60 "$work/want" | tr '\n' '|')] got [$(head -c 60 "$work/got" | tr '\n' '|')]"
 }
 
+# Both channels and the exit status, for the cases where what a tool says
+# about something it could not do is the whole of the answer.
+spoken() {
+        name=$1
+        tool=$2
+        shift 2
+
+        if "$tool" "$@" > "$work/want" 2>&1; then
+                want_status=0
+        else
+                want_status=$?
+        fi
+
+        if "$binaries/$tool" "$@" > "$work/got" 2>&1; then
+                got_status=0
+        else
+                got_status=$?
+        fi
+
+        if cmp -s "$work/want" "$work/got" && [ "$want_status" = "$got_status" ]; then
+                report ok
+                return 0
+        fi
+
+        report bad "$name" "want [$(head -c 50 "$work/want" | tr '\n' '|')][$want_status] got [$(head -c 50 "$work/got" | tr '\n' '|')][$got_status]"
+}
+
 # When a file was last written, or the word now.
 #
 # The two trees are built one after the other and the two tools run one after
@@ -205,6 +232,8 @@ printf 'bbbbbbbbbbbbbbbb\n' > "$fixture/beta.txt"
 printf 'c\n' > "$fixture/sub/gamma.txt"
 printf 'd\n' > "$fixture/sub/inner/delta"
 ln -s ../alpha "$fixture/sub/back"
+ln -s sub "$fixture/todir"
+ln -s ../empty "$fixture/sub/away"
 chmod 0751 "$fixture/sub"
 touch -d @1500000000 "$fixture/alpha"
 touch -d @1400000000 "$fixture/beta.txt"
@@ -268,6 +297,13 @@ same 'resolve long'     readlink --canonicalize "$fixture/sub/back"
 same 'no newline'       readlink -n "$fixture/sub/back"
 same 'zero'             readlink -z "$fixture/sub/back"
 same 'zero long'        readlink --zero "$fixture/sub/back"
+spoken 'quiet by default' readlink "$fixture/alpha"
+spoken 'loud'           readlink -v "$fixture/alpha"
+spoken 'loud long'      readlink --verbose "$fixture/alpha"
+spoken 'quiet'          readlink -q "$fixture/alpha"
+spoken 'loud and gone'  readlink -v "$fixture/nothing"
+spoken 'loud resolving' readlink -vf "$fixture/nothing/at/all"
+spoken 'loud existing'  readlink -ve "$fixture/nothing"
 
 group realpath
 same 'plain'            realpath "$fixture/alpha"
@@ -289,6 +325,16 @@ same 'relative to same' realpath --relative-to="$fixture" "$fixture"
 same 'relative base'    realpath --relative-base="$fixture" "$fixture/sub/inner"
 same 'relative base out' realpath --relative-base=/usr "$fixture/alpha"
 same 'not an option'    realpath -x "$fixture/alpha"
+same 'logical'          realpath -L "$fixture/sub/away/.."
+same 'physical of that' realpath -P "$fixture/sub/away/.."
+same 'logical of a link' realpath -L "$fixture/todir/.."
+same 'physical of it'   realpath -P "$fixture/todir/.."
+same 'logical of a file' realpath -L "$fixture/sub/back/.."
+same 'logical dots'     realpath -L "$fixture/sub/../alpha"
+same 'logical long'     realpath --logical "$fixture/sub/inner/.."
+same 'physical'         realpath -P "$fixture/sub/back"
+same 'physical long'    realpath --physical "$fixture/sub/back"
+same 'exists not'       realpath -E "$fixture/nothing"
 same 'not a word'       realpath --canonical "$fixture/alpha"
 
 group id
@@ -686,6 +732,8 @@ effect 'interactive no' ln '$TOOL -si tree/two link < /dev/null'
 effect 'interactive yes' ln 'printf "y\n" | $TOOL -si tree/two link'
 effect 'hard many'      ln '$TOOL tree/one tree/two tree/deep/'
 effect 'verbose'        ln '$TOOL -sv tree/one pointer > said'
+effect 'through the link' ln '$TOOL -L link followed'
+effect 'the link itself' ln '$TOOL -P link kept'
 effect 'not an option'  ln '$TOOL -W tree/one pointer'
 
 group touch
