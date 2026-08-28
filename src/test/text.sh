@@ -1013,6 +1013,34 @@ awk 'BEGIN { for (i = 0; i < 20000; i++) printf "%s line %d\n", (i % 3 == 0 ? "F
 printf '%s' "$(cat "$work/sparse")" > "$work/nonl"
 printf 'needle\nzzz\n' > "$work/plist"
 
+#       Two options that answer the same question, in both orders.
+#
+#       GNU takes the last one: head -n 2 -c 5 is five bytes and head -c 5 -n 2
+#       is two lines, from the same pair of flags. A parser that keeps one
+#       value per letter has no way to say which arrived last, so this is where
+#       that shows if it is going to.
+
+case_start ordering
+compare 'head lines then bytes' head i  -n 2 -c 5
+compare 'head bytes then lines' head i  -c 5 -n 2
+compare 'head bytes then bytes' head i  -c 9 -c 3
+compare 'head lines then lines' head i  -n 9 -n 3
+compare 'tail lines then bytes' tail i  -n 2 -c 3
+compare 'tail bytes then lines' tail i  -c 3 -n 2
+compare 'tail bytes then bytes' tail i  -c 9 -c 3
+compare 'sort numeric then human' sort c -n -h
+compare 'sort human then numeric' sort c -h -n
+compare 'sort numeric then version' sort c -n -V
+compare 'sort version then numeric' sort c -V -n
+compare 'grep after then context' grep i -A1 -C2 5
+compare 'grep context then after' grep i -C2 -A1 5
+compare 'cut chars then fields' cut b  -c1 -f1
+compare 'cut fields then chars' cut b  -f1 -c1
+compare 'cut fields twice'      cut b  -d: -f1 -f3
+compare 'uniq skip twice'       uniq d -f1 -f2
+compare 'fold width twice'      fold long -w 20 -w 60
+compare 'nl width twice'        nl i   -w 3 -w 6
+
 case_start grepblock
 compare 'count'          grep sparse  -c needle
 compare 'count miss'     grep sparse  -c zzzz

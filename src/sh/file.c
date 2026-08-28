@@ -1849,6 +1849,17 @@ typedef struct
         // told about each option as the option is read.
         bool(address_to seen)(p8 letter, string_address value);
 
+        /*
+                The last letter that carried a value.
+
+                One value per letter cannot say which of two options that
+                answer the same question was written last, and GNU answers
+                with the last: head -n 2 -c 5 is five bytes and head -c 5 -n 2
+                is two lines. A tool with such a pair reads this instead of
+                asking which flag is present.
+        */
+        p8 last;
+
         positive flags;
         positive first;
         string_address value[FILE_LETTERS];
@@ -1939,6 +1950,7 @@ static bool file_take(file_taking address_to taking)
 
                         taking->flags |= (positive)1 << bit;
                         taking->value[bit] = word + 1;
+                        taking->last = taking->digits;
                         continue;
                 }
 
@@ -1961,9 +1973,14 @@ static bool file_take(file_taking address_to taking)
                         taking->flags |= (positive)1 << bit;
 
                         if (file_option_among(taking->optional, letter))
+                        {
                                 taking->value[bit] = mark ? mark + 1 : null;
+                                taking->last = letter;
+                        }
                         else if (string_first_of(taking->valued, letter))
                         {
+                                taking->last = letter;
+
                                 if (mark)
                                         taking->value[bit] = mark + 1;
                                 else if (index < count)
@@ -2004,6 +2021,8 @@ static bool file_take(file_taking address_to taking)
                         // -s.txt and -s .txt are the same option given the
                         // same way; either the rest of the word is the
                         // argument or the next word is.
+                        taking->last = string_get(letter);
+
                         if (string_get(letter + 1))
                                 taking->value[bit] = letter + 1;
                         else if (spare)

@@ -3082,7 +3082,7 @@ static b32 text_head()
                 return text_done(1);
 
         positive count = 10;
-        bool by_bytes = (taking.flags & FILE_FLAG('c')) != 0;
+        bool by_bytes = taking.last == 'c';
         bool from_end = false;
         bool quiet = (taking.flags & FILE_FLAG('q')) != 0;
         bool loud = (taking.flags & FILE_FLAG('v')) != 0;
@@ -3210,7 +3210,7 @@ static b32 text_tail()
                 return text_done(1);
 
         positive count = 10;
-        bool by_bytes = (taking.flags & FILE_FLAG('c')) != 0;
+        bool by_bytes = taking.last == 'c';
         bool from_start = false;
         bool quiet = (taking.flags & FILE_FLAG('q')) != 0;
         bool loud = (taking.flags & FILE_FLAG('v')) != 0;
@@ -8671,12 +8671,26 @@ static b32 text_sort()
         if (flags & FILE_FLAG('i'))
                 sort_how |= SORT_PRINTABLE;
 
+        /*
+                Two ways of ordering the same lines is a question with no
+                answer, and GNU refuses it rather than picking one. This used
+                to take whichever was written last, which is a different sort
+                from the one the caller asked for and no way of finding out.
+        */
         for (positive k = 0; k < 4; k++)
         {
                 p8 letter = k == 0 ? 'n' : k == 1 ? 'h' : k == 2 ? 'M' : 'V';
 
-                if (flags & FILE_FLAG(letter))
-                        sort_kind = letter;
+                if (!(flags & FILE_FLAG(letter)))
+                        continue;
+
+                if (sort_kind)
+                {
+                        text_error(null, "options are incompatible");
+                        return text_done(2);
+                }
+
+                sort_kind = letter;
         }
 
         if (said)
