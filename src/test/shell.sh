@@ -563,6 +563,40 @@ answer 'recursion'       'f() { [ $1 -gt 0 ] && { echo $1; f $(($1-1)); }; }; f 
 answer 'function args'   'f() { set -- x; echo $1; }; set -- y; f; echo $1'
 answer 'function in one' 'f() { g() { echo inner; }; g; }; f'
 
+# set -e, and the four places POSIX says it does not reach: the condition of
+# an if or a loop, everything but the last of an && or || list, and a pipeline
+# whose status is inverted. Every case here is one of those or its opposite,
+# because a shell that exits too eagerly is as wrong as one that never does.
+answer 'errexit stops'   'set -e; false; echo not reached'
+answer 'errexit status'  'set -e; sh -c "exit 7"; echo not reached'
+answer 'errexit if body' 'set -e; if true; then false; fi; echo not reached'
+answer 'errexit if cond' 'set -e; if false; then echo a; fi; echo ok'
+answer 'errexit elif cond' 'set -e; if false; then :; elif false; then :; fi; echo ok'
+answer 'errexit while body' 'set -e; while true; do false; done; echo not reached'
+answer 'errexit while cond' 'set -e; while false; do :; done; echo ok'
+answer 'errexit until cond' 'set -e; until true; do :; done; echo ok'
+answer 'errexit for body' 'set -e; for i in 1 2; do false; done; echo not reached'
+answer 'errexit case body' 'set -e; case x in x) false;; esac; echo not reached'
+answer 'errexit group'   'set -e; { false; }; echo not reached'
+answer 'errexit and last' 'set -e; true && false; echo not reached'
+answer 'errexit and middle' 'set -e; true && false && echo x; echo ok'
+answer 'errexit or last'  'set -e; false || true; echo ok'
+answer 'errexit inverted' 'set -e; ! true; echo ok'
+answer 'errexit pipe last' 'set -e; true | false; echo not reached'
+answer 'errexit pipe first' 'set -e; false | true; echo ok'
+answer 'errexit subshell' 'set -e; (false); echo not reached'
+answer 'errexit sub tested' 'set -e; if (false); then echo a; else echo b; fi; echo ok'
+answer 'errexit function' 'set -e; f() { false; echo x; }; f; echo not reached'
+answer 'errexit func tested' 'set -e; f() { false; }; if f; then echo a; else echo b; fi; echo ok'
+answer 'errexit func or'  'set -e; f() { return 1; }; f || echo ok'
+answer 'errexit eval'    'set -e; eval false; echo not reached'
+answer 'errexit eval tested' 'set -e; if eval false; then echo a; else echo b; fi; echo ok'
+answer 'errexit dot'     'set -e; echo false > /tmp/se1.$$; . /tmp/se1.$$; echo not reached'
+answer 'errexit turned off' 'set -e; set +e; false; echo ok'
+answer 'errexit runs the trap' 'set -e; trap "echo bye" EXIT; false; echo not reached'
+answer 'errexit sub trap once' 'set -e; trap "echo bye" EXIT; (false); echo not reached'
+answer 'errexit break'   'set -e; while true; do break; done; echo ok'
+
 # An assignment written in front of a command belongs to that command.
 #
 # It has to be visible to what runs -- a spawned program reads it out of the
@@ -806,7 +840,6 @@ differs 'a bad number'   '8|' 0 'echo $((08))'
 
 group language
 differs 'echo keeps them' 'a\b|' 0 'echo "a\b"'
-differs 'no set e'       'not reached|' 0 'set -e; false; echo not reached'
 differs 'no set u'       '|after|' 0 'set -u; echo $nosuch; echo after'
 differs 'no cd dash'     '/|' 0 'cd /tmp; cd /; cd - > /dev/null; pwd'
 differs 'read ignores ifs' 'a:b-|' 0 'IFS=: ; echo a:b | { read x y; echo "$x-$y"; }'

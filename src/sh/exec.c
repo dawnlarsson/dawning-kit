@@ -24,6 +24,40 @@ static b32 exec_signal_level;
 static b32 exec_loop_depth;
 static b32 exec_function_depth;
 
+/*
+        set -e, and the places it does not reach.
+
+        A command that fails ends the shell, unless somebody was going to look
+        at the failure anyway: the condition of an if or a loop, everything but
+        the last of an && or || list, and a pipeline whose status is inverted.
+        POSIX names those three and nothing else, so the flag travels down the
+        tree rather than being asked about at each node.
+
+        exec_forked is what a child of a subshell or a pipeline sets. Leaving
+        that way is not the shell leaving, and the exit trap belongs to the
+        shell.
+*/
+#define SHELL_ERREXIT ((positive)1 << ('e' - 'a'))
+
+static bool exec_tested;
+static bool exec_forked;
+
+fn shell_trap_exit();
+
+static fn exec_errexit(b32 status)
+{
+        if (!status || exec_tested || !(shell_options & SHELL_ERREXIT))
+                return;
+
+        shell_status = status;
+
+        if (!exec_forked)
+                shell_trap_exit();
+
+        log_flush();
+        exit(status);
+}
+
 #define EXEC_ARENA 8192
 #define PIPELINE_MAX 16
 #define FUNCTION_MAX 64
@@ -690,6 +724,7 @@ fn exec_traps()
         b32 kept_status = shell_status;
         b32 kept_signal = exec_signal;
         b32 kept_level = exec_signal_level;
+        bool kept_tested = exec_tested;
         bipolar number;
 
         if (!trap_waiting() || !run_line)
@@ -705,6 +740,7 @@ fn exec_traps()
                         continue;
 
                 exec_signal = EXEC_SIGNAL_NONE;
+                exec_tested = false;
                 parse_nest_enter();
                 run_line(action);
                 parse_nest_leave();
@@ -715,6 +751,7 @@ fn exec_traps()
         shell_status = kept_status;
         exec_signal = kept_signal;
         exec_signal_level = kept_level;
+        exec_tested = kept_tested;
 }
 
 static b32 exec_simple(b32 index)
@@ -859,7 +896,12 @@ static b32 exec_loop(b32 index, bool until)
 
         while (1)
         {
-                b32 test = exec_node(node->left);
+                bool tested = exec_tested;
+                b32 test;
+
+                exec_tested = true;
+                test = exec_node(node->left);
+                exec_tested = tested;
 
                 if (exec_signal)
                         break;
@@ -1001,7 +1043,12 @@ static b32 exec_case(b32 index)
 static b32 exec_if(b32 index)
 {
         parse_node address_to node = parse_nodes + index;
-        b32 test = exec_node(node->left);
+        bool tested = exec_tested;
+        b32 test;
+
+        exec_tested = true;
+        test = exec_node(node->left);
+        exec_tested = tested;
 
         if (exec_signal)
                 return test;
@@ -1041,6 +1088,7 @@ static b32 exec_subshell(b32 index)
                 shell_default(SIGNAL_INTERRUPT);
                 shell_default(SIGNAL_QUIT);
                 trap_default_all();
+                exec_forked = true;
 
                 status = exec_node(parse_nodes[index].left);
                 log_flush();
@@ -1091,6 +1139,7 @@ static b32 exec_pipe(b32 first, b32 count)
                         shell_default(SIGNAL_INTERRUPT);
                         shell_default(SIGNAL_QUIT);
                         trap_default_all();
+                        exec_forked = true;
 
                         if (upstream >= 0)
                         {
@@ -1142,6 +1191,7 @@ static b32 exec_pipe(b32 first, b32 count)
 static b32 exec_pipeline(b32 index)
 {
         parse_node address_to node = parse_nodes + index;
+        bool tested = exec_tested;
         b32 count = 0;
         b32 child;
         b32 status;
@@ -1149,12 +1199,22 @@ static b32 exec_pipeline(b32 index)
         for (child = node->left; child; child = parse_nodes[child].next)
                 count++;
 
+        if (node->flags)
+                exec_tested = true;
+
         status = count > 1 ? exec_pipe(node->left, count) : exec_node(node->left);
 
+        exec_tested = tested;
+
         if (node->flags)
-                status = status ? 0 : 1;
+        {
+                shell_status = status ? 0 : 1;
+
+                return shell_status;
+        }
 
         shell_status = status;
+        exec_errexit(status);
 
         return status;
 }
@@ -1162,6 +1222,7 @@ static b32 exec_pipeline(b32 index)
 static b32 exec_and_or(b32 index)
 {
         b32 child = parse_nodes[index].left;
+        bool tested = exec_tested;
         b32 status = 0;
 
         while (child)
@@ -1170,13 +1231,18 @@ static b32 exec_and_or(b32 index)
 
                 if (!(op == OP_AND_IF && status != 0) &&
                     !(op == OP_OR_IF && status == 0))
+                {
+                        exec_tested = parse_nodes[child].next ? true : tested;
                         status = exec_node(child);
+                }
 
                 if (exec_signal)
                         break;
 
                 child = parse_nodes[child].next;
         }
+
+        exec_tested = tested;
 
         return status;
 }
@@ -1195,6 +1261,7 @@ static b32 exec_background(b32 index)
                 shell_default(SIGNAL_INTERRUPT);
                 shell_default(SIGNAL_QUIT);
                 trap_default_all();
+                exec_forked = true;
 
                 status = exec_node(index);
                 log_flush();
@@ -1250,7 +1317,12 @@ static b32 exec_node_kind(b32 index)
         node = parse_nodes + index;
 
         if (node->kind == NODE_SIMPLE)
-                return exec_simple(index);
+        {
+                status = exec_simple(index);
+                exec_errexit(status);
+
+                return status;
+        }
 
         if (node->kind == NODE_LIST)
                 return exec_list(index);
@@ -1293,6 +1365,9 @@ static b32 exec_node_kind(b32 index)
 
         exec_redirect_restore(mark);
         shell_status = status;
+
+        if (node->kind == NODE_SUBSHELL)
+                exec_errexit(status);
 
         return status;
 }
