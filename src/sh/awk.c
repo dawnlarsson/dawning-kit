@@ -1072,146 +1072,162 @@ static positive awk_write_general(decimal value, b32 precision, p8 address_to ou
         return cut;
 }
 
-/*
-        Ten to a power, kept to twice a double's precision.
-
-        A mantissa multiplied by a power of ten in plain double arithmetic is
-        a few units in the last place off by the time the power reaches a
-        hundred, and 1e300 then reads as a different double than the one the
-        reference read -- visible, because an integral value is printed in
-        full. Two doubles carrying one number is enough precision that the
-        rounding back down to one lands where it should.
-*/
-typedef struct
+static b32 awk_big_length(awk_big address_to big)
 {
-        decimal high;
-        decimal low;
-} awk_wide;
+        if (!big->count)
+                return 0;
 
-static awk_wide awk_wide_of(decimal value)
-{
-        awk_wide made;
+        p32 top = big->limb[big->count - 1];
+        b32 bits = (big->count - 1) * 32;
 
-        made.high = value;
-        made.low = 0;
-        return made;
-}
-
-// The exact sum of two doubles, given the first is the larger.
-static awk_wide awk_wide_join(decimal a, decimal b)
-{
-        awk_wide made;
-
-        made.high = a + b;
-        made.low = b - (made.high - a);
-        return made;
-}
-
-static awk_wide awk_wide_product(decimal a, decimal b)
-{
-        decimal cut = 134217729.0;
-        decimal ca = cut * a;
-        decimal ah = ca - (ca - a);
-        decimal al = a - ah;
-        decimal cb = cut * b;
-        decimal bh = cb - (cb - b);
-        decimal bl = b - bh;
-        awk_wide made;
-
-        made.high = a * b;
-        made.low = ((ah * bh - made.high) + ah * bl + al * bh) + al * bl;
-        return made;
-}
-
-static awk_wide awk_wide_add(awk_wide a, awk_wide b)
-{
-        decimal sum = a.high + b.high;
-        decimal part = sum - a.high;
-        decimal error = (a.high - (sum - part)) + (b.high - part);
-
-        return awk_wide_join(sum, error + a.low + b.low);
-}
-
-static awk_wide awk_wide_multiply(awk_wide a, awk_wide b)
-{
-        awk_wide made = awk_wide_product(a.high, b.high);
-
-        made.low += a.high * b.low + a.low * b.high;
-        return awk_wide_join(made.high, made.low);
-}
-
-static awk_wide awk_wide_negate(awk_wide a)
-{
-        a.high = -a.high;
-        a.low = -a.low;
-        return a;
-}
-
-static awk_wide awk_wide_divide(awk_wide a, awk_wide b)
-{
-        decimal first = a.high / b.high;
-        awk_wide rest = awk_wide_add(a, awk_wide_negate(awk_wide_multiply(b,
-                                                                          awk_wide_of(first))));
-        decimal second = rest.high / b.high;
-
-        rest = awk_wide_add(rest, awk_wide_negate(awk_wide_multiply(b, awk_wide_of(second))));
-
-        decimal third = rest.high / b.high;
-
-        return awk_wide_add(awk_wide_join(first, second), awk_wide_of(third));
-}
-
-static awk_wide awk_wide_ten(b32 power)
-{
-        awk_wide answer = awk_wide_of(1);
-        awk_wide factor = awk_wide_of(10);
-
-        while (power)
+        while (top)
         {
-                if (power & 1)
-                        answer = awk_wide_multiply(answer, factor);
-
-                power >>= 1;
-
-                if (power)
-                        factor = awk_wide_multiply(factor, factor);
+                bits++;
+                top >>= 1;
         }
 
-        return answer;
+        return bits;
 }
 
+static p32 awk_big_word(awk_big address_to big, b32 which)
+{
+        return which >= 0 && which < big->count ? big->limb[which] : 0;
+}
+
+static bool awk_big_bit(awk_big address_to big, b32 at)
+{
+        return at >= 0 && ((awk_big_word(big, at / 32) >> (at % 32)) & 1) != 0;
+}
+
+static bool awk_big_under(awk_big address_to big, b32 at)
+{
+        b32 word = at / 32;
+
+        for (b32 i = 0; i < word && i < big->count; i++)
+                if (big->limb[i])
+                        return true;
+
+        return (awk_big_word(big, word) & ((((p32)1 << (at % 32)) - 1))) != 0;
+}
+
+static positive awk_big_window(awk_big address_to big, b32 from)
+{
+        b32 word = from / 32;
+        b32 bit = from % 32;
+        positive raw = ((positive)awk_big_word(big, word + 1) << 32) |
+                       awk_big_word(big, word);
+        positive value = raw >> bit;
+
+        if (bit)
+                value |= (positive)awk_big_word(big, word + 2) << (64 - bit);
+
+        return value;
+}
+
+/*
+        A wide integer rounded into a double, to nearest and to even.
+
+        This is the half of the conversion that decides the last bit, and it
+        is done on the integer rather than in floating point because the
+        answer has to be the same on three machines: a compiler that fuses a
+        multiply and an add is free to give a different one to the same
+        arithmetic, and one of the three does.
+*/
+static decimal awk_big_decimal(awk_big address_to big, b32 power, bool rest)
+{
+        b32 length = awk_big_length(big);
+
+        if (!length)
+                return 0;
+
+        if (length <= 53)
+        {
+                positive whole = awk_big_window(big, 0);
+
+                return awk_scale2((decimal)whole, power);
+        }
+
+        b32 drop = length - 53;
+        positive mantissa = awk_big_window(big, drop);
+        bool half = awk_big_bit(big, drop - 1);
+
+        if (drop > 1 && awk_big_under(big, drop - 1))
+                rest = true;
+
+        if (half && (rest || (mantissa & 1)))
+                mantissa++;
+
+        return awk_scale2((decimal)mantissa, power + drop);
+}
+
+static p32 awk_five_power[13] = {1,        5,        25,       125,      625,
+                                 3125,     15625,    78125,    390625,   1953125,
+                                 9765625,  48828125, 244140625};
+
+/*
+        A mantissa and a power of ten, made into the double they spell.
+
+        Multiplying up is exact. Dividing down is exact as well, because
+        dividing an integer by five and then by five again is dividing it by
+        twenty five -- so the whole division is one truncation, and whether
+        anything was truncated is remembered and decides the rounding.
+*/
 static decimal awk_scale_ten(positive mantissa, b32 power)
 {
-        awk_wide value = awk_wide_add(awk_wide_product((decimal)(mantissa >> 32), 4294967296.0),
-                                      awk_wide_of((decimal)(mantissa & 0xffffffffu)));
+        awk_big big;
 
-        if (!power)
-                return value.high + value.low;
+        if (!mantissa)
+                return 0;
+
+        if (!power && mantissa < ((positive)1 << 53))
+                return (decimal)mantissa;
 
         if (power > 340)
-                return mantissa ? awk_infinity : 0;
+                return awk_infinity;
 
         if (power < -400)
                 return 0;
 
-        if (power > 0)
+        awk_big_set(address_of big, mantissa);
+
+        if (power >= 0)
         {
-                value = awk_wide_multiply(value, awk_wide_ten(power));
-                return value.high + value.low;
+                while (power >= 9)
+                {
+                        awk_big_multiply(address_of big, 1000000000u);
+                        power -= 9;
+                }
+
+                if (power)
+                {
+                        p32 ten = 1;
+
+                        while (power--)
+                                ten *= 10;
+
+                        awk_big_multiply(address_of big, ten);
+                }
+
+                return awk_big_decimal(address_of big, 0, false);
         }
 
         b32 want = -power;
+        b32 lift = want * 233 / 100 + 70;
+        bool rest = false;
 
-        // Ten to the four hundredth is not a double, so a division that far
-        // down is done in two halves.
-        if (want > 300)
+        awk_big_shift(address_of big, lift);
+
+        for (b32 left = want; left > 0;)
         {
-                value = awk_wide_divide(value, awk_wide_ten(150));
-                want -= 150;
+                b32 step = left > 12 ? 12 : left;
+
+                if (awk_big_divide(address_of big, awk_five_power[step]))
+                        rest = true;
+
+                left -= step;
         }
 
-        value = awk_wide_divide(value, awk_wide_ten(want));
-        return value.high + value.low;
+        return awk_big_decimal(address_of big, -lift - want, rest);
 }
 
 /*
