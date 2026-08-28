@@ -1,0 +1,45 @@
+#
+# Hardware from the 2010s onward, and nothing before it
+#
+# The kernel carries a great deal for machines nobody here is going to boot,
+# and most of it is behind a config option that defaults to on because a
+# distribution kernel has to run everywhere. This turns that off. It is not a
+# size exercise: some of it is paid on hot paths, every time, on hardware that
+# has not needed it in fifteen years.
+#
+# The clearest of them is the LDT. With CONFIG_MODIFY_LDT_SYSCALL on,
+# load_mm_ldt runs on every context switch, and for a process with no LDT --
+# which is every process that is not Wine or dosemu -- it reaches:
+#
+#       xor  %eax, %eax
+#       lldt %eax
+#
+# LLDT is microcoded and serialising. That is real money, per switch, for
+# sixteen bit segments.
+#
+# The rest is either a second syscall entry path nothing will enter, tables no
+# firmware written this century emits, or an ABI replaced before most of this
+# hardware was made.
+#
+# Compose it last so it wins over anything that turned these on:
+#
+#       sh build.sh arch/x64 debug_none limbo desktop modern
+#
+
+# The LDT, and the lldt on every context switch that comes with it.
+CONFIG_MODIFY_LDT_SYSCALL=n
+
+# 32 bit userspace: a whole second syscall entry, a compat syscall table, and
+# an in_compat_syscall() branch in a great many syscall implementations.
+CONFIG_IA32_EMULATION=n
+
+# The vsyscall page, which the vDSO replaced in 2008. Even XONLY keeps the
+# mapping and the fault path that emulates it.
+CONFIG_X86_VSYSCALL_EMULATION=n
+
+# ioperm and iopl: handing userspace direct port access, and a bitmap to
+# switch with it.
+CONFIG_X86_IOPL_IOPERM=n
+
+# MP tables, which is how a machine described its processors before ACPI.
+CONFIG_X86_MPPARSE=n

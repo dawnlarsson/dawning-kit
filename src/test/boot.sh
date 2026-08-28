@@ -23,8 +23,8 @@ set -u
 image=${1:-dist/bootx64.efi}
 
 if ! command -v qemu-system-x86_64 > /dev/null 2>&1; then
-        echo "  boot         no qemu-system-x86_64, skipped"
-        exit 0
+        echo "  boot         NOT RUN -- no qemu-system-x86_64"
+        exit 2
 fi
 
 #
@@ -143,6 +143,43 @@ says 'powered down'        'reboot: Power down'
 never 'no panic'           'Kernel panic'
 never 'no oops'            'Oops:'
 never 'nothing refused'    'Permission denied'
+
+#
+#       And the other end of the same argument.
+#
+#       Everything above runs on a Nehalem, which is the floor: it catches an
+#       instruction the target cannot execute. It cannot catch the opposite,
+#       an instruction the target executes perfectly well and something
+#       underneath it cannot -- and that is a real failure mode, not a
+#       hypothetical one.
+#
+#       A displaced memcpy with an AVX-512 body booted here and died on a host
+#       that has AVX-512, in the fbdev path, on
+#       vmovdqu64 -256(%r11), %zmm4. Plain memcpy gets called on ioremap'd
+#       memory; a device mapping is trapped and emulated; KVM's emulator has
+#       no EVEX. Nehalem never reaches that instruction because it never takes
+#       that path, so this file said seventeen of seventeen while the kernel
+#       did not boot on the machine it was built on.
+#
+#       So: once more on the widest processor there is, with KVM, which is
+#       what puts a real emulator behind the device mapping. Skipped rather
+#       than failed where there is no KVM -- a Mac has none -- because the
+#       floor pass above is the one that must always run.
+#
+if [ -r /dev/kvm ]; then
+        timeout 180 qemu-system-x86_64 -m 2G -smp 2 -cpu host -enable-kvm \
+                -kernel "$image" -no-reboot -display none -serial stdio \
+                -append "console=ttyS0 drm_client_lib.active=" \
+                < "$work/commands" > "$work/transcript" 2>&1 || true
+
+        says 'init started on this host'   'Run /init as init process'
+        says 'powered down on this host'   'reboot: Power down'
+        never 'nothing went unemulated'    'emulation failure'
+        never 'no invalid opcode here'     'invalid opcode'
+        never 'no panic here'              'Kernel panic'
+else
+        printf '  %-24s no /dev/kvm, the widest pass did not run\n' 'this host'
+fi
 
 printf '  %-12s %s of %s\n' boot "$pass" "$((pass + fail))"
 [ -z "${TEST_TALLY:-}" ] ||
