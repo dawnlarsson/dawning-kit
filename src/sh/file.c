@@ -1815,11 +1815,19 @@ typedef struct
         string_address allowed;
         string_address valued;
 
-        // Letters that take an argument only when it is written onto the
-        // option itself: date -Ihours, mktemp --tmpdir=/x. A bare one means
-        // whatever the tool calls the default and never eats the word after
-        // it, which is the only way --tmpdir and --tmpdir=/x can both be
-        // spelled by one option.
+        /*
+                Letters that take an argument only when it is written onto the
+                option itself: date -Ihours, mktemp --tmpdir=/x. A bare one
+                means whatever the tool calls the default and never eats the
+                word after it, which is the only way --tmpdir and --tmpdir=/x
+                can both be spelled by one option.
+
+                A letter named here and in `allowed` too takes the rest of its
+                cluster as the value, which is right for -Ihours and -i.bak
+                and wrong for every name GNU spells as a plain flag: give
+                those a letter of their own and leave it out of `allowed`, or
+                --all-repeated turns uniq -Di into a complaint about i.
+        */
         string_address optional;
         const file_long address_to longs;
 
