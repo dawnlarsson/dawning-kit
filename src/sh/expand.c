@@ -102,10 +102,55 @@ static fn expand_push(p8 value, p8 mark)
         expand_text[expand_length++] = value;
 }
 
+// A run that all comes out the same way, which is a copy and a fill.
+static fn expand_push_run(string_address text, positive length, p8 mark)
+{
+        positive room = EXPAND_WORK - 1 - expand_length;
+
+        if (length > room)
+        {
+                expand_overflow = true;
+                length = room;
+        }
+
+        memory_copy_fast(expand_text + expand_length, text, length);
+        memory_fill(expand_mark + expand_length, mark, length);
+        expand_length += length;
+}
+
 static fn expand_push_string(string_address text, p8 mark)
 {
-        while (text && string_get(text))
-                expand_push(string_get(text++), mark);
+        if (text)
+                expand_push_run(text, string_length(text), mark);
+}
+
+/*
+        What a byte can be without anything having to look at it.
+
+        plain    outside quotes: not an escape, a quote, a dollar or a backtick
+        inside   within a double quote, where the single quote is a byte again
+*/
+static b8 expand_plain_set[STRING_SET_BYTES];
+static b8 expand_inside_set[STRING_SET_BYTES];
+static b32 expand_sets_ready;
+
+static fn expand_sets_prepare()
+{
+        if (expand_sets_ready)
+                return;
+
+        for (positive c = 1; c < STRING_SET_BYTES; c++)
+                expand_plain_set[c] = expand_inside_set[c] = 1;
+
+        {
+                static const string_address inside = "\\\"$`";
+
+                for (positive i = 0; inside[i]; i++)
+                        expand_plain_set[inside[i]] = expand_inside_set[inside[i]] = 0;
+        }
+
+        expand_plain_set['\''] = 0;
+        expand_sets_ready = true;
 }
 
 static fn expand_complain(address_any data, positive length)
@@ -126,11 +171,9 @@ static bool expand_name_character(p8 value)
 
 static fn expand_copy_bounded(p8 address_to into, string_address from, positive limit)
 {
-        positive used = 0;
+        positive used = from ? string_length_max(from, limit - 1) : 0;
 
-        while (from && string_get(from) && used + 1 < limit)
-                into[used++] = string_get(from++);
-
+        memory_copy_fast(into, from, used);
         into[used] = end;
 }
 
@@ -720,12 +763,14 @@ static bool expand_value_of(string_address name, p8 address_to into, positive li
                         for (at = 0; at < shell_parameter_count; at++)
                         {
                                 string_address from = shell_parameter[at];
+                                positive run;
 
                                 if (at && between && used + 1 < limit)
                                         into[used++] = between;
 
-                                while (string_get(from) && used + 1 < limit)
-                                        into[used++] = string_get(from++);
+                                run = string_length_max(from, limit - 1 - used);
+                                memory_copy_fast(into + used, from, run);
+                                used += run;
                         }
 
                         into[used] = end;
@@ -1411,10 +1456,11 @@ static bipolar arith_evaluate(string_address text)
 }
 
 /*
-        The ) that closes a $( ... ), with quotes and nesting counted; nothing
-        when the word runs out first, in which case the $ was only a $.
+        The bracket that closes a $( ... ) or a ${ ... }, with quotes and
+        nesting counted; nothing when the word runs out first, in which case
+        the $ was only a $.
 */
-static string_address expand_paren_end(string_address at)
+static string_address expand_bracket_end(string_address at, p8 open, p8 close)
 {
         positive depth = 1;
 
@@ -1430,17 +1476,15 @@ static string_address expand_paren_end(string_address at)
 
                 if (value == '\'' || value == '"')
                 {
-                        p8 quote = value;
-
                         at++;
 
-                        while (string_get(at) && string_not(at, quote))
-                        {
-                                if (quote == '"' && string_is(at, '\\') && string_get(at + 1))
-                                        at++;
-
-                                at++;
-                        }
+                        if (value == '\'')
+                                at = string_first_of_or_end(at, '\'');
+                        else
+                                while (string_get(at) && string_not(at, '"'))
+                                        at += string_is(at, '\\') && string_get(at + 1)
+                                                  ? 2
+                                                  : 1;
 
                         if (string_get(at))
                                 at++;
@@ -1448,16 +1492,11 @@ static string_address expand_paren_end(string_address at)
                         continue;
                 }
 
-                if (value == '(')
+                if (value == open)
                         depth++;
 
-                if (value == ')')
-                {
-                        depth--;
-
-                        if (!depth)
-                                return at;
-                }
+                if (value == close && !--depth)
+                        return at;
 
                 at++;
         }
@@ -1465,55 +1504,14 @@ static string_address expand_paren_end(string_address at)
         return null;
 }
 
+static string_address expand_paren_end(string_address at)
+{
+        return expand_bracket_end(at, '(', ')');
+}
+
 static string_address expand_brace_end(string_address at)
 {
-        positive depth = 1;
-
-        while (string_get(at))
-        {
-                p8 value = string_get(at);
-
-                if (value == '\\' && string_get(at + 1))
-                {
-                        at += 2;
-                        continue;
-                }
-
-                if (value == '\'' || value == '"')
-                {
-                        p8 quote = value;
-
-                        at++;
-
-                        while (string_get(at) && string_not(at, quote))
-                        {
-                                if (quote == '"' && string_is(at, '\\') && string_get(at + 1))
-                                        at++;
-
-                                at++;
-                        }
-
-                        if (string_get(at))
-                                at++;
-
-                        continue;
-                }
-
-                if (value == '{')
-                        depth++;
-
-                if (value == '}')
-                {
-                        depth--;
-
-                        if (!depth)
-                                return at;
-                }
-
-                at++;
-        }
-
-        return null;
+        return expand_bracket_end(at, '{', '}');
 }
 
 /*
@@ -1611,13 +1609,11 @@ static fn expand_run(string_address command, bool quoted)
                         p8 block[512];
                         bipolar got = system_call_3(syscall(read), (positive)channel[0],
                                                     (positive)block, sizeof(block));
-                        bipolar at;
 
                         if (got <= 0)
                                 break;
 
-                        for (at = 0; at < got; at++)
-                                expand_push(block[at], mark);
+                        expand_push_run(block, (positive)got, mark);
                 }
         }
 
@@ -2121,7 +2117,17 @@ static string_address expand_double(string_address step)
 
         while (string_get(step) && string_not(step, '"'))
         {
-                p8 seen = string_get(step);
+                positive run = string_span(step, expand_inside_set);
+                p8 seen;
+
+                if (run)
+                {
+                        expand_push_run(step, run, MARK_QUOTED);
+                        step += run;
+                        continue;
+                }
+
+                seen = string_get(step);
 
                 if (seen == '\\')
                 {
@@ -2178,7 +2184,18 @@ static fn expand_into(string_address text, bool quoted, p8 plain)
 
         while (string_get(step))
         {
-                p8 seen = string_get(step);
+                positive run = string_span(step, quoted ? expand_inside_set
+                                                        : expand_plain_set);
+                p8 seen;
+
+                if (run)
+                {
+                        expand_push_run(step, run, quoted ? MARK_QUOTED : plain);
+                        step += run;
+                        continue;
+                }
+
+                seen = string_get(step);
 
                 if (seen == '\\' && string_get(step + 1))
                 {
@@ -2189,11 +2206,14 @@ static fn expand_into(string_address text, bool quoted, p8 plain)
 
                 if (seen == '\'' && !quoted)
                 {
+                        string_address stop;
+
                         expand_quoted_seen = true;
                         step++;
+                        stop = string_first_of_or_end(step, '\'');
 
-                        while (string_get(step) && string_not(step, '\''))
-                                expand_push(string_get(step++), MARK_QUOTED);
+                        expand_push_run(step, (positive)(stop - step), MARK_QUOTED);
+                        step = stop;
 
                         if (string_get(step))
                                 step++;
@@ -2251,6 +2271,8 @@ static string_address expand_tilde(string_address step)
 static fn expand_word(string_address word)
 {
         string_address step = word;
+
+        expand_sets_prepare();
 
         expand_length = 0;
         expand_overflow = false;
