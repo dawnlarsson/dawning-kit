@@ -565,27 +565,6 @@ fn shell_path_tidy(p8 address_to path)
         path[write_at] = end;
 }
 
-fn shell_path_join(p8 address_to into, positive room, string_address base,
-                   string_address name)
-{
-        positive at = base ? string_length_max(base, room - 1) : 0;
-
-        memory_copy_fast(into, base, at);
-
-        if (at && into[at - 1] != '/' && at + 1 < room)
-                into[at++] = '/';
-
-        if (name)
-        {
-                positive run = string_length_max(name, room - 1 - at);
-
-                memory_copy_fast(into + at, name, run);
-                at += run;
-        }
-
-        into[at] = end;
-}
-
 // PWD is only worth believing while it still names the directory the shell is
 // actually in; a chdir anywhere else leaves it a lie.
 bool shell_directory_holds()
@@ -675,10 +654,10 @@ bool shell_cd_walk(bool physical, bool address_to say)
                         {
                                 string_address next = string_cut(segment, ':');
 
-                                shell_path_join(candidate, sizeof(candidate),
-                                                string_get(segment) ? segment
-                                                                    : shell_directory,
-                                                shell_cd_target);
+                                file_join(candidate, sizeof(candidate),
+                                          string_get(segment) ? segment
+                                                              : shell_directory,
+                                          shell_cd_target);
 
                                 if (shell_cd_try(candidate, physical))
                                 {
@@ -691,8 +670,8 @@ bool shell_cd_walk(bool physical, bool address_to say)
                 }
         }
 
-        shell_path_join(candidate, sizeof(candidate), shell_directory,
-                        shell_cd_target);
+        file_join(candidate, sizeof(candidate), shell_directory,
+                  shell_cd_target);
 
         return shell_cd_try(candidate, physical);
 }
@@ -1102,6 +1081,9 @@ static shell_option shell_option_names[] = {
     {null, 0},
 };
 
+#define SHELL_OPTION_NAMES \
+        (sizeof(shell_option_names) / sizeof(shell_option_names[0]))
+
 static positive shell_options_named;
 
 bool shell_option_on(positive index)
@@ -1176,20 +1158,16 @@ fn shell_options_listed(writer write, bool as_commands)
 
 bool shell_option_named(string_address word, bool on)
 {
-        positive index = 0;
+        positive index = string_table_find(word, shell_option_names,
+                                           sizeof(shell_option_names[0]),
+                                           SHELL_OPTION_NAMES);
 
-        while (shell_option_names[index].name)
-        {
-                if (!string_compare(shell_option_names[index].name, word))
-                {
-                        shell_option_told(index, on);
-                        return true;
-                }
+        if (index >= SHELL_OPTION_NAMES)
+                return false;
 
-                index++;
-        }
+        shell_option_told(index, on);
 
-        return false;
+        return true;
 }
 
 fn shell_set(writer write, string_address input)
@@ -3277,6 +3255,8 @@ static string_address trap_names[] = {
     null,
 };
 
+#define TRAP_NAMES (sizeof(trap_names) / sizeof(trap_names[0]))
+
 bipolar trap_number(string_address word)
 {
         positive index = 0;
@@ -3289,13 +3269,11 @@ bipolar trap_number(string_address word)
         if (string_is(word, 'S') && string_is(word + 1, 'I') && string_is(word + 2, 'G'))
                 word += 3;
 
-        while (trap_names[index])
-        {
-                if (word_is(word, trap_names[index]))
-                        return (bipolar)index;
+        index = string_table_find(word, trap_names, sizeof(trap_names[0]),
+                                  TRAP_NAMES);
 
-                index++;
-        }
+        if (index < TRAP_NAMES)
+                return (bipolar)index;
 
         value = shell_signed(word, address_of good);
 
@@ -3522,23 +3500,16 @@ static positive alias_used;
 
 string_address alias_lookup(string_address name)
 {
-        positive index = 0;
+        positive at = string_table_find(name, alias_table, sizeof(alias_table[0]),
+                                        alias_count);
 
-        while (index < alias_count)
-        {
-                if (word_is(alias_table[index].name, name))
-                        return alias_table[index].value;
-
-                index++;
-        }
-
-        return null;
+        return at < alias_count ? alias_table[at].value : null;
 }
 
 bool alias_record(string_address name, positive name_length, string_address value)
 {
         positive value_length = string_length(env_reading(value));
-        positive index = 0;
+        positive index;
 
         if (alias_used + name_length + 1 + value_length + 1 > ALIAS_STORAGE)
                 return false;
@@ -3556,15 +3527,14 @@ bool alias_record(string_address name, positive name_length, string_address valu
                         memory_copy(kept_value, value, value_length + 1);
                         alias_used += value_length + 1;
 
-                        while (index < alias_count)
-                        {
-                                if (word_is(alias_table[index].name, kept_name))
-                                {
-                                        alias_table[index].value = kept_value;
-                                        return true;
-                                }
+                        index = string_table_find(kept_name, alias_table,
+                                                  sizeof(alias_table[0]),
+                                                  alias_count);
 
-                                index++;
+                        if (index < alias_count)
+                        {
+                                alias_table[index].value = kept_value;
+                                return true;
                         }
 
                         if (alias_count >= ALIAS_MAX)
@@ -3642,11 +3612,12 @@ fn shell_alias(writer write, string_address input)
 fn shell_unalias(writer write, string_address input)
 {
         positive index = 1;
+        b32 status = 0;
 
         while (index < shell_argc)
         {
                 string_address word = shell_argv[index];
-                positive at = 0;
+                positive at;
 
                 if (word_is(word, "-a"))
                 {
@@ -3656,27 +3627,27 @@ fn shell_unalias(writer write, string_address input)
                         continue;
                 }
 
-                while (at < alias_count)
+                at = string_table_find(word, alias_table, sizeof(alias_table[0]),
+                                       alias_count);
+
+                // A name that was never an alias is something the script asked
+                // for and did not get, which POSIX has this say so.
+                if (at >= alias_count)
+                        status = 1;
+
+                while (at + 1 < alias_count)
                 {
-                        if (word_is(alias_table[at].name, word))
-                        {
-                                while (at + 1 < alias_count)
-                                {
-                                        alias_table[at] = alias_table[at + 1];
-                                        at++;
-                                }
-
-                                alias_count--;
-                                break;
-                        }
-
+                        alias_table[at] = alias_table[at + 1];
                         at++;
                 }
+
+                if (at < alias_count)
+                        alias_count--;
 
                 index++;
         }
 
-        shell_answer(0);
+        shell_answer(status);
 }
 
 /*
@@ -4258,17 +4229,10 @@ fn hash_forget()
 
 string_address hash_find(string_address name)
 {
-        positive at = 0;
+        positive at = string_table_find(name, hash_name, sizeof(hash_name[0]),
+                                        hash_count);
 
-        while (at < hash_count)
-        {
-                if (!string_compare(hash_name[at], name))
-                        return hash_path[at];
-
-                at++;
-        }
-
-        return null;
+        return at < hash_count ? hash_path[at] : null;
 }
 
 fn hash_remember(string_address name, string_address path)
