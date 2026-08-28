@@ -5716,19 +5716,68 @@ static string_address grep_path_join(string_address directory, string_address na
         return (string_address)room;
 }
 
-#define GREP_DIRENT_BYTES 2048
-
-static bool grep_walk(string_address path)
+// What getdents says an entry is, where it says anything: a filesystem that
+// does not know answers DIRENT_UNKNOWN and the answer is taken from a stat.
+enum
 {
-        bipolar handle = text_open_handle(
-            path && path[0] ? path : (string_address) ".", FILE_READ, 0);
+        DIRENT_UNKNOWN = 0,
+        DIRENT_OTHER = 1,
+        DIRENT_DIRECTORY = 4,
+        DIRENT_FILE = 8,
+        DIRENT_LINK = 10
+};
+
+#define GREP_DIRENT_BYTES 2048
+// A symlink that points at a directory above it is a walk with no end, and -R
+// follows symlinks. The device and node of everything currently being walked
+// through stops that where it starts, and the depth stops what the pair
+// cannot -- a mount arranged to be its own child.
+#define GREP_DEPTH_MAX 64
+#define TEXT_STAT_DEVICE 0
+#define TEXT_STAT_NODE 8
+
+static positive grep_seen_device[GREP_DEPTH_MAX + 1];
+static positive grep_seen_node[GREP_DEPTH_MAX + 1];
+
+static bool grep_walk(string_address path, b32 depth)
+{
+        bipolar handle;
         p8 entries[GREP_DIRENT_BYTES];
         bool fine = true;
+
+        // Too deep is nothing more down here rather than a failure: GNU says
+        // it found a loop and carries on with what is beside it.
+        if (depth > GREP_DEPTH_MAX)
+                return true;
+
+        handle = text_open_handle(path && path[0] ? path : (string_address) ".",
+                                  FILE_READ, 0);
 
         if (handle < 0)
                 return false;
 
-        for (;;)
+        p8 raw[256];
+
+        memory_fill(raw, 0, sizeof(raw));
+
+        if (system_call_2(syscall(fstat), (positive)handle, (positive)raw) >= 0)
+        {
+                positive device = address_to(positive address_to)(raw + TEXT_STAT_DEVICE);
+                positive node = address_to(positive address_to)(raw + TEXT_STAT_NODE);
+
+                for (b32 up = 0; up < depth; up++)
+                        if (grep_seen_device[up] == device &&
+                            grep_seen_node[up] == node)
+                        {
+                                system_call_1(syscall(close), (positive)handle);
+                                return true;
+                        }
+
+                grep_seen_device[depth] = device;
+                grep_seen_node[depth] = node;
+        }
+
+        while (fine)
         {
                 bipolar got = system_call_3(syscall(getdents64), (positive)handle,
                                             (positive)entries, sizeof(entries));
@@ -5736,7 +5785,7 @@ static bool grep_walk(string_address path)
                 if (got <= 0)
                         break;
 
-                for (p8 address_to step = entries; step < entries + got;)
+                for (p8 address_to step = entries; step < entries + got && fine;)
                 {
                         struct linux_dirent64 address_to entry =
                             (struct linux_dirent64 address_to)step;
@@ -5749,41 +5798,45 @@ static bool grep_walk(string_address path)
                             (!name[1] || (name[1] == '.' && !name[2])))
                                 continue;
 
-                        if (kind == 10 && !grep_dereference)
+                        if (kind == DIRENT_LINK && !grep_dereference)
                                 continue;
 
                         string_address full = grep_path_join(path, name);
 
                         if (!full)
-                                return false;
+                        {
+                                fine = false;
+                                break;
+                        }
 
-                        if (kind == 0 || kind == 10)
+                        if (kind == DIRENT_UNKNOWN || kind == DIRENT_LINK)
                         {
                                 p32 mode = text_path_mode(full);
 
                                 if (!mode)
                                         continue;
 
-                                kind = (mode & 0170000) == 0040000 ? 4
-                                     : (mode & 0170000) == 0100000 ? 8
-                                                                   : 1;
+                                kind = (mode & 0170000) == 0040000 ? DIRENT_DIRECTORY
+                                     : (mode & 0170000) == 0100000 ? DIRENT_FILE
+                                                                   : DIRENT_OTHER;
                         }
 
-                        if (kind == 4)
+                        if (kind == DIRENT_DIRECTORY)
                         {
-                                if (grep_wanted_directory(full) && !grep_walk(full))
+                                if (grep_wanted_directory(full) &&
+                                    !grep_walk(full, depth + 1))
                                         fine = false;
 
                                 continue;
                         }
 
-                        // Anything that is not a plain file is a device, and
-                        // a walk does not read devices.
-                        if (kind != 8)
+                        // Anything that is not a plain file is a device, and a
+                        // walk does not read devices.
+                        if (kind != DIRENT_FILE)
                                 continue;
 
                         if (grep_wanted_file(full) && !grep_path_add(full))
-                                return false;
+                                fine = false;
                 }
         }
 
@@ -6226,7 +6279,7 @@ static b32 text_grep()
         if (grep_recursive && !text_files_count)
         {
                 grep_expanded = true;
-                grep_walk((string_address) "");
+                grep_walk((string_address) "", 0);
         }
 
         for (b32 i = 0; i < text_files_count; i++)
@@ -6250,7 +6303,7 @@ static b32 text_grep()
                                 continue;
 
                         grep_expanded = true;
-                        grep_walk(name);
+                        grep_walk(name, 0);
                         continue;
                 }
 
