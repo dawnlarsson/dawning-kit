@@ -3659,29 +3659,35 @@ typedef struct
         bipolar children_system;
 } shell_clocks;
 
+// Six places after the point, which is what a %f with nothing said about it
+// writes and so what the reference shell prints. Only the first two of them
+// can ever be anything but zero at a hundred ticks to the second.
+#define CLOCK_PLACES 1000000
+
 fn shell_time_written(writer write, bipolar ticks)
 {
         positive seconds;
-        positive thousandths;
-        positive digit;
+        positive fraction;
+        positive scale = CLOCK_PLACES / 10;
 
         if (ticks < 0)
                 ticks = 0;
 
         seconds = (positive)ticks / CLOCK_TICKS;
-        thousandths = ((positive)ticks % CLOCK_TICKS) * (1000 / CLOCK_TICKS);
+        fraction = ((positive)ticks % CLOCK_TICKS) * (CLOCK_PLACES / CLOCK_TICKS);
 
         shell_number_padded(write, seconds / 60, 0);
         write("m", 1);
         shell_number_padded(write, seconds % 60, 0);
         write(".", 1);
 
-        digit = '0' + thousandths / 100;
-        write(address_of digit, 1);
-        digit = '0' + (thousandths / 10) % 10;
-        write(address_of digit, 1);
-        digit = '0' + thousandths % 10;
-        write(address_of digit, 1);
+        while (scale)
+        {
+                p8 digit = '0' + (fraction / scale) % 10;
+
+                write(address_of digit, 1);
+                scale /= 10;
+        }
 
         write("s", 1);
 }

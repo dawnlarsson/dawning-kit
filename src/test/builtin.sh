@@ -268,12 +268,16 @@ answer 'no newline'      'printf "abc" | { read x; echo "$?/[$x]"; }'
 answer 'nothing at all'  ': | { read x; echo "$?/[$x]"; }'
 answer 'a whole line'    'printf "abc\n" | { read x; echo "$?/[$x]"; }'
 
-#       -n, -d and -p are not options dash has, so what they are measured
-#       against is what they are for.
+#       -n, -d, -p and -t are not options dash has, so what they are measured
+#       against is what they are for. The wait is per byte rather than per
+#       line: a writer that stops halfway through one leaves a short field
+#       behind, which is the same thing every shell with a -t does.
 group ours
 written 'a count'        '[abc]|' 0 'printf "abcdef\n" | { read -n 3 x; echo "[$x]"; }'
 written 'a delimiter'    '[a]|' 0 'printf "a:b\n" | { read -d : x; echo "[$x]"; }'
 written 'a prompt'       '[v]|' 0 'printf "v\n" | { read -p "say: " x; echo "[$x]"; }'
+written 'a wait that ends' '1|' 0 '{ sleep 2; echo x; } | { read -t 1 y; echo $?; }'
+written 'a wait in time'  '0|[x]|' 0 'echo x | { read -t 5 y; echo $?; echo "[$y]"; }'
 
 section getopts
 
@@ -354,6 +358,14 @@ answer 'listed as set'   'set +o'
 answer 'a long name'     'set -o nounset; set +o | grep nounset'
 answer 'turned off'      'set -o nounset; set +o nounset; set +o | grep nounset'
 answer 'letter and name' 'set -e; set +o | grep errexit'
+
+section times
+
+#       Both shells run in no time at all, so what is compared is the shape:
+#       minutes, a point and six places, which is what a %f with nothing said
+#       about it writes.
+group format
+answer 'four of them'    'times | sed "s/[0-9]/N/g"'
 
 section umask
 
