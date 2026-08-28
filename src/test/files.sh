@@ -573,6 +573,28 @@ effect 'epoch on new'   touch '$TOOL -d @1000000000 born'
 effect 'modify epoch'   touch '$TOOL -m -d @1234567890 tree/one'
 effect 'bad date'       touch '$TOOL -d nonsense tree/one'
 effect 'many'           touch '$TOOL -d @900000000 tree/one tree/two plain'
+effect 'written day'    touch '$TOOL -d 2001-09-09 tree/one'
+effect 'written moment' touch '$TOOL -d "2001-09-09 01:46:40" tree/one'
+effect 'written back'   touch '$TOOL -d "2001-09-09 1 day ago" tree/one'
+effect 'written month'  touch '$TOOL -d "2001-09-09 +1 month" tree/one'
+effect 'old stamp'      touch '$TOOL -t 200109090146 tree/one'
+effect 'old stamp century' touch '$TOOL -t 20010909014640 tree/one'
+effect 'old stamp seconds' touch '$TOOL -t 200109090146.40 tree/one'
+effect 'old stamp short' touch '$TOOL -t 09090146 tree/one'
+effect 'old stamp two digit' touch '$TOOL -t 0109090146 tree/one'
+effect 'old stamp last century' touch '$TOOL -t 6909090146 tree/one'
+effect 'old stamp this one' touch '$TOOL -t 6809090146 tree/one'
+effect 'old stamp bad'   touch '$TOOL -t 99 tree/one'
+effect 'old stamp month' touch '$TOOL -t 202113011234 tree/one'
+effect 'date long'      touch '$TOOL --date=2001-09-09 tree/one'
+effect 'reference long' touch '$TOOL --reference=tree/one tree/two'
+effect 'no create long' touch '$TOOL --no-create absent'
+effect 'time access'    touch '$TOOL --time=access -d @5 tree/one'
+effect 'time modify'    touch '$TOOL --time=modify -d @5 tree/one'
+effect 'time of nothing' touch '$TOOL --time=furlongs -d @5 tree/one'
+effect 'not the link'   touch '$TOOL -h -d @5 link'
+effect 'through a link' touch '$TOOL -d @5 link'
+effect 'not an option'  touch '$TOOL -W tree/one'
 
 group cp
 effect 'file'           cp '$TOOL tree/one copy'
@@ -870,6 +892,60 @@ swept() {
         report bad "$name" "$(diff "$work/want" "$work/got" | head -2 | tr '\n' '|')"
 }
 
+# A date said from now moves while it is being asked for: the two tools run
+# one after the other and the answer is a second apart whenever the pair
+# straddles a tick. What does not move is the distance from the moment each
+# one was asked, so that is what is compared, and a second of slack is left
+# for the tick that falls between reading the clock and reading the date.
+adrift() {
+        name=$1
+        expression=$2
+
+        base=$(date +%s)
+        want=$(( $(date -d "$expression" +%s) - base ))
+        base=$(date +%s)
+        got=$(( $("$binaries/date" -d "$expression" +%s) - base ))
+        apart=$((want - got))
+
+        if [ "$apart" -le 1 ] && [ "$apart" -ge -1 ]; then
+                report ok
+                return 0
+        fi
+
+        report bad "$name" "want ${want}s from now, got ${got}s"
+}
+
+# A written date swept across two centuries. The last day of February said
+# as the first of March less one is the leap year rule and the calendar
+# arithmetic in the same expression, and it has to hold every year.
+sweep_written() {
+        name=$1
+        shape=$2
+
+        for year in $(seq 1900 2100); do
+                date -d "$(eval echo "$shape")" +%F || true
+        done > "$work/want" 2>&1
+
+        for year in $(seq 1900 2100); do
+                "$binaries/date" -d "$(eval echo "$shape")" +%F || true
+        done > "$work/got" 2>&1
+
+        if cmp -s "$work/want" "$work/got"; then
+                report ok
+                return 0
+        fi
+
+        report bad "$name" "$(diff "$work/want" "$work/got" | head -2 | tr '\n' '|')"
+}
+
+# Every written date read by both, printed to the second.
+reads() {
+        name=$1
+        expression=$2
+
+        same "$name" date -d "$expression" '+%Y-%m-%d %H:%M:%S'
+}
+
 group date
 same 'epoch'             date -d @1000000000
 same 'epoch utc'         date -u -d @1000000000
@@ -897,7 +973,92 @@ same 'the day after'     date -d @951868800 +%F
 same 'from a file'       date -r "$fixture/alpha" +%F
 same 'empty format'      date -d @1000000000 +
 same 'unknown letter'    date -d @1000000000 +%q%%
+
+#       Written dates. Every one of these is anchored on a day rather than on
+#       now, so the answer is the same whenever the suite is run.
+reads 'a day'            '2001-09-09'
+reads 'a day and a time' '2001-09-09 01:46:40'
+reads 'with a T'         '2001-09-09T01:46:40'
+reads 'to the minute'    '2001-09-09 01:46'
+reads 'one digit fields' '2001-9-9'
+reads 'a two digit year' '01-09-09'
+reads 'the other century' '69-09-09'
+reads 'the year before'  '68-09-09'
+reads 'a leap day'       '2000-02-29'
+reads 'the last second'  '1999-12-31 23:59:59'
+reads 'before the epoch' '1900-01-01'
+reads 'far ahead'        '2100-06-15 12:00:00'
+reads 'a time alone'     '2001-09-09 12:00'
+reads 'saying utc'       '2001-09-09 UTC'
+reads 'a time and utc'   '2001-09-09 12:00 UTC'
+reads 'a day on'         '2001-09-09 +1 day'
+reads 'a day back'       '2001-09-09 -1 day'
+reads 'a day ago'        '2001-09-09 1 day ago'
+reads 'yesterday from'   '2001-09-09 yesterday'
+reads 'tomorrow from'    '2001-09-09 tomorrow'
+reads 'a month on'       '2001-09-09 +1 month'
+reads 'a year back'      '2001-09-09 -1 year'
+reads 'over a year end'  '2001-09-09 +4 months'
+reads 'the month rolls'  '2024-01-31 +1 month'
+reads 'the month rolls back' '2024-03-31 -1 month'
+reads 'a leap year on'   '2024-02-29 +1 year'
+reads 'next week'        '2001-09-09 next week'
+reads 'last month'       '2001-09-09 last month'
+reads 'a bare unit'      '2001-09-09 day'
+reads 'a fortnight'      '2001-09-09 fortnight'
+reads 'two of them'      '2001-09-09 +2 fortnights'
+reads 'hours'            '2001-09-09 3 hours'
+reads 'minutes back'     '2001-09-09 -90 minutes'
+reads 'seconds'          '2001-09-09 5 seconds'
+reads 'a second back'    '2001-09-09 -1 sec'
+reads 'a minute'         '2001-09-09 1 min'
+reads 'three at once'    '2001-09-09 1 hour 1 min 1 sec'
+reads 'two and ago'      '2001-09-09 2 days 3 hours ago'
+reads 'ago the other way' '2001-09-09 3 hours 2 days ago'
+reads 'three and ago'    '2001-09-09 1 hour 1 min 1 sec ago'
+reads 'after a time'     '2001-09-09 01:46:40 1 day ago'
+reads 'weeks'            '2001-09-09 2 weeks'
+reads 'a fraction'       '@1000000000.5'
+reads 'before the epoch by hand' '@-100'
+reads 'in capitals'      '2001-09-09 YESTERDAY'
+
+sweep_written 'every february'  '$year-03-01 -1 day'
+sweep_written 'every new year'  '$year-12-31 +1 day'
+sweep_written 'a year on'       '$year-02-29 +1 year'
+sweep_written 'a month on'      '$year-01-31 +1 month'
+sweep_written 'twelve months'   '$year-06-15 +12 months'
+
+# Now-relative, compared as a distance rather than as a moment.
+adrift 'now'             'now'
+adrift 'today'           'today'
+adrift 'yesterday'       'yesterday'
+adrift 'tomorrow'        'tomorrow'
+adrift 'a week on'       '+1 week'
+adrift 'an hour back'    '-1 hour'
+adrift 'two days ago'    '2 days ago'
+adrift 'next month'      'next month'
+adrift 'last year'       'last year'
+
+# What it will not read is refused, and refused the same way.
 answered 'a date it cannot read' -d nonsense
+answered 'an epoch with more' -d '@1000000000 +1 day'
+answered 'a month past twelve' -d '2001-13-09'
+answered 'a day past thirty one' -d '2001-09-32'
+answered 'a day the month has not' -d '2001-09-31'
+answered 'february in a plain year' -d '1900-02-29'
+reads 'february in a leap one' '2000-02-29'
+answered 'an hour past twenty three' -d '2001-09-09 24:00'
+answered 'a date said twice' -d '2001-09-09 2002-01-01'
+answered 'a time said twice' -d '2001-09-09 01:00 02:00'
+answered 'an empty date'    -d ''
+same 'iso day'           date -d @1000000000 -I
+same 'iso hours'         date -d @1000000000 -Ihours
+same 'iso minutes'       date -d @1000000000 -Iminutes
+same 'iso seconds'       date -d @1000000000 -Iseconds
+same 'iso long'          date -d @1000000000 --iso-8601=seconds
+same 'iso long alone'    date -d @1000000000 --iso-8601
+answered 'iso of nothing' -d @1000000000 -Ifurlongs
+same 'reference long'    date --reference="$fixture/alpha" +%F
 answered 'a file that is not there' -r "$fixture/nothing"
 answered 'setting the time' 1000000000
 answered 'an option it has not' -x

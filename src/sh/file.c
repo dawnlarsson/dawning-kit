@@ -1305,6 +1305,434 @@ fn file_stamp_short(writer write, b64 seconds, b64 now)
 // Patterns --------------------------------------------------
 
 /*
+        A written date read into a number of seconds since the epoch.
+
+        What is understood is written out here and nothing else is guessed at,
+        because a date read as something near what it says is worse than one
+        that would not read at all:
+
+          @SECONDS                  on its own, and a - in front of the number
+          YYYY-MM-DD                midnight on that day, month and day
+                                    either width, a two digit year 69 to 99
+                                    in the nineteen hundreds and 00 to 68 in
+                                    the two thousands
+          HH:MM[:SS]                that time, on whatever day is in hand
+          a T or a space between the two
+          now  today  yesterday  tomorrow
+          nothing at all           midnight on the day in hand
+          [+-]N UNIT               and next UNIT, last UNIT, a bare UNIT
+          ...UNIT... ago           turns every displacement in the string round
+          UTC  GMT  Z              passed over: everything here is UTC already
+
+        UNIT is sec, min, hour, day, week, fortnight, month or year, with or
+        without an s. A month and a year move the calendar rather than the
+        clock, so the 31st of January and a month is the 2nd of March, which
+        is what the system's own date answers.
+
+        A signed displacement after a clock time is refused. The system's date
+        reads the + in "12:00 +1 day" as a timezone of one hour and not as a
+        day, and a tool that quietly read it the other way would be an hour
+        and a day out with nothing to say so.
+*/
+typedef struct
+{
+        string_address name;
+        b64 seconds;
+        b64 months;
+} file_unit;
+
+static const file_unit file_units[] = {
+    {(string_address) "sec", 1, 0},
+    {(string_address) "secs", 1, 0},
+    {(string_address) "second", 1, 0},
+    {(string_address) "seconds", 1, 0},
+    {(string_address) "min", 60, 0},
+    {(string_address) "mins", 60, 0},
+    {(string_address) "minute", 60, 0},
+    {(string_address) "minutes", 60, 0},
+    {(string_address) "hour", 3600, 0},
+    {(string_address) "hours", 3600, 0},
+    {(string_address) "day", 86400, 0},
+    {(string_address) "days", 86400, 0},
+    {(string_address) "week", 604800, 0},
+    {(string_address) "weeks", 604800, 0},
+    {(string_address) "fortnight", 1209600, 0},
+    {(string_address) "fortnights", 1209600, 0},
+    {(string_address) "month", 0, 1},
+    {(string_address) "months", 0, 1},
+    {(string_address) "year", 0, 12},
+    {(string_address) "years", 0, 12},
+    {null, 0, 0},
+};
+
+static bool file_blank(p8 letter)
+{
+        return letter == ' ' || letter == '\t';
+}
+
+static bool file_digit(p8 letter)
+{
+        return letter >= '0' && letter <= '9';
+}
+
+static p8 file_lower(p8 letter)
+{
+        return letter >= 'A' && letter <= 'Z' ? (p8)(letter + 32) : letter;
+}
+
+static bool file_letter(p8 letter)
+{
+        return file_lower(letter) >= 'a' && file_lower(letter) <= 'z';
+}
+
+// The inverse of file_civil: a day number from a calendar date, and the same
+// arithmetic run backwards. A day past the end of its month runs on into the
+// next one, which is what a month added to the 31st has to do.
+b64 file_days(b64 year, b64 month, b64 day)
+{
+        year -= month <= 2;
+
+        b64 era = (year >= 0 ? year : year - 399) / 400;
+        b64 of_era = year - era * 400;
+        b64 of_year = (153 * (month + (month > 2 ? -3 : 9)) + 2) / 5 + day - 1;
+        b64 day_of_era = of_year + 365 * of_era + of_era / 4 - of_era / 100;
+
+        return era * 146097 + day_of_era - 719468;
+}
+
+// A day written down has to be a day the month has; a day arrived at by
+// adding months to another one does not, and rolls into the month after.
+static positive file_month_days(b64 year, b64 month)
+{
+        static const p8 lengths[12] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+
+        if (month == 2 && ((year % 4 == 0 && year % 100 != 0) || year % 400 == 0))
+                return 29;
+
+        return lengths[month - 1];
+}
+
+static bool file_same_word(string_address text, positive length, string_address word)
+{
+        positive i = 0;
+
+        while (i < length && string_get(word + i) &&
+               file_lower(string_get(text + i)) == string_get(word + i))
+                i++;
+
+        return i == length && !string_get(word + i);
+}
+
+static const file_unit address_to file_unit_of(string_address text, positive length)
+{
+        for (positive i = 0; file_units[i].name; i++)
+                if (file_same_word(text, length, file_units[i].name))
+                        return address_of file_units[i];
+
+        return null;
+}
+
+static positive file_read_number(string_address text, positive at, b64 address_to out,
+                                 positive address_to digits)
+{
+        b64 value = 0;
+        positive have = 0;
+
+        while (file_digit(string_get(text + at)))
+        {
+                value = value * 10 + (string_get(text + at) - '0');
+                at++;
+                have++;
+        }
+
+        address_to out = value;
+        address_to digits = have;
+
+        return at;
+}
+
+bool file_moment_read(string_address text, b64 now, b64 address_to out)
+{
+        positive at = 0;
+
+        while (file_blank(string_get(text + at)))
+                at++;
+
+        if (string_is(text + at, '@'))
+        {
+                bool below = string_is(text + at + 1, '-');
+                positive digits;
+                b64 value;
+
+                at = file_read_number(text, at + 1 + (below ? 1 : 0), address_of value,
+                                      address_of digits);
+
+                if (!digits)
+                        return false;
+
+                // A fraction of a second is read and dropped, which is what
+                // the system's date does with one.
+                if (string_is(text + at, '.'))
+                {
+                        positive spare;
+                        b64 ignored;
+
+                        at = file_read_number(text, at + 1, address_of ignored,
+                                              address_of spare);
+                }
+
+                while (file_blank(string_get(text + at)))
+                        at++;
+
+                if (string_get(text + at))
+                        return false;
+
+                address_to out = below ? -value : value;
+
+                return true;
+        }
+
+        b64 year;
+        positive month, day, hour, minute, second;
+
+        file_split_moment(now, address_of year, address_of month, address_of day,
+                          address_of hour, address_of minute, address_of second);
+
+        bool dated = false;
+        bool timed = false;
+        bool anything = false;
+        b64 shift = 0;
+        b64 months = 0;
+
+        // ago turns round the displacement it follows and not the ones before
+        // it: "3 hours 2 days ago" is three hours on and two days back, which
+        // is what the system's date makes of it.
+        b64 recent = 0;
+        b64 recent_months = 0;
+
+        while (string_get(text + at))
+        {
+                while (file_blank(string_get(text + at)))
+                        at++;
+
+                if (!string_get(text + at))
+                        break;
+
+                anything = true;
+
+                b64 sign = 1;
+                bool marked = false;
+
+                if (string_is(text + at, '+') || string_is(text + at, '-'))
+                {
+                        marked = true;
+                        sign = string_is(text + at, '-') ? -1 : 1;
+                        at++;
+
+                        while (file_blank(string_get(text + at)))
+                                at++;
+                }
+
+                if (file_digit(string_get(text + at)))
+                {
+                        positive digits;
+                        b64 value;
+
+                        at = file_read_number(text, at, address_of value, address_of digits);
+
+                        if (!marked && string_is(text + at, '-'))
+                        {
+                                positive wide;
+                                b64 rest;
+
+                                if (dated)
+                                        return false;
+
+                                at = file_read_number(text, at + 1, address_of rest,
+                                                      address_of wide);
+
+                                if (!wide || !string_is(text + at, '-'))
+                                        return false;
+
+                                b64 which;
+
+                                at = file_read_number(text, at + 1, address_of which,
+                                                      address_of wide);
+
+                                if (!wide || rest < 1 || rest > 12 || which < 1)
+                                        return false;
+
+                                year = digits <= 2 ? (value <= 68 ? 2000 + value : 1900 + value)
+                                                   : value;
+
+                                if (which > file_month_days(year, rest))
+                                        return false;
+
+                                month = (positive)rest;
+                                day = (positive)which;
+                                hour = 0;
+                                minute = 0;
+                                second = 0;
+                                dated = true;
+
+                                if (string_is(text + at, 'T') || string_is(text + at, 't'))
+                                        at++;
+
+                                continue;
+                        }
+
+                        if (!marked && string_is(text + at, ':'))
+                        {
+                                positive wide;
+                                b64 rest;
+                                b64 last = 0;
+
+                                if (timed)
+                                        return false;
+
+                                at = file_read_number(text, at + 1, address_of rest,
+                                                      address_of wide);
+
+                                if (!wide)
+                                        return false;
+
+                                if (string_is(text + at, ':'))
+                                {
+                                        at = file_read_number(text, at + 1, address_of last,
+                                                              address_of wide);
+
+                                        if (!wide)
+                                                return false;
+                                }
+
+                                if (value > 23 || rest > 59 || last > 60)
+                                        return false;
+
+                                hour = (positive)value;
+                                minute = (positive)rest;
+                                second = (positive)last;
+                                timed = true;
+
+                                continue;
+                        }
+
+                        while (file_blank(string_get(text + at)))
+                                at++;
+
+                        positive length = 0;
+
+                        while (file_letter(string_get(text + at + length)))
+                                length++;
+
+                        const file_unit address_to unit = file_unit_of(text + at, length);
+
+                        if (!unit || (marked && timed))
+                                return false;
+
+                        at += length;
+                        recent = sign * value * unit->seconds;
+                        recent_months = sign * value * unit->months;
+                        shift += recent;
+                        months += recent_months;
+                        anything = true;
+
+                        continue;
+                }
+
+                if (marked || !file_letter(string_get(text + at)))
+                        return false;
+
+                positive length = 0;
+
+                while (file_letter(string_get(text + at + length)))
+                        length++;
+
+                string_address word = text + at;
+
+                at += length;
+
+                if (file_same_word(word, length, (string_address) "ago"))
+                {
+                        shift -= 2 * recent;
+                        months -= 2 * recent_months;
+                        recent = -recent;
+                        recent_months = -recent_months;
+                        continue;
+                }
+
+                if (file_same_word(word, length, (string_address) "now") ||
+                    file_same_word(word, length, (string_address) "today") ||
+                    file_same_word(word, length, (string_address) "utc") ||
+                    file_same_word(word, length, (string_address) "gmt") ||
+                    file_same_word(word, length, (string_address) "z"))
+                        continue;
+
+                if (file_same_word(word, length, (string_address) "yesterday") ||
+                    file_same_word(word, length, (string_address) "tomorrow"))
+                {
+                        recent = file_lower(string_get(word)) == 'y' ? -86400 : 86400;
+                        recent_months = 0;
+                        shift += recent;
+
+                        continue;
+                }
+
+                bool ahead = file_same_word(word, length, (string_address) "next");
+
+                if (ahead || file_same_word(word, length, (string_address) "last"))
+                {
+                        while (file_blank(string_get(text + at)))
+                                at++;
+
+                        positive wide = 0;
+
+                        while (file_letter(string_get(text + at + wide)))
+                                wide++;
+
+                        const file_unit address_to unit = file_unit_of(text + at, wide);
+
+                        if (!unit)
+                                return false;
+
+                        at += wide;
+                        recent = (ahead ? 1 : -1) * unit->seconds;
+                        recent_months = (ahead ? 1 : -1) * unit->months;
+                        shift += recent;
+                        months += recent_months;
+
+                        continue;
+                }
+
+                const file_unit address_to unit = file_unit_of(word, length);
+
+                if (!unit)
+                        return false;
+
+                recent = unit->seconds;
+                recent_months = unit->months;
+                shift += recent;
+                months += recent_months;
+        }
+
+        // An empty date is the day and not the moment, which is what the
+        // system's date answers to one.
+        if (!anything && !dated && !timed)
+        {
+                hour = 0;
+                minute = 0;
+                second = 0;
+        }
+
+        b64 reach = year * 12 + (b64)month - 1 + months;
+        b64 landed = reach >= 0 ? reach / 12 : -((-reach + 11) / 12);
+
+        address_to out = file_days(landed, reach - landed * 12 + 1, day) * 86400 +
+                         (b64)hour * 3600 + (b64)minute * 60 + (b64)second + shift;
+
+        return true;
+}
+
+/*
         The shell's glob, for find -name and nothing else. Written as a walk
         with one remembered star rather than as recursion, so a pattern of
         many stars against a long name cannot go exponential.
@@ -5618,119 +6046,189 @@ static b32 file_rm()
 
 // touch ------------------------------------------------------------
 /*
-        touch [-a] [-m] [-c] [-r REFERENCE] [-d SECONDS] FILE...
+        touch [-a] [-m] [-c] [-h] [-r REFERENCE] [-d DATE] [-t STAMP] FILE...
 
         -a and -m are what pick which of the two stamps moves; naming neither
         moves both, and naming one leaves the other exactly where it was
         rather than setting it to now, which is what UTIME_OMIT is for.
 
-        -d here takes seconds since the epoch rather than a written date. A
-        date parser would be most of a calendar library, and every test that
-        wants a repeatable stamp can say it as a number.
+        -d takes everything file_moment_read takes. -t takes the older
+        spelling, [[CC]YY]MMDDhhmm[.ss], where a two digit year of 69 or more
+        is in the nineteen hundreds and one below it is in the two thousands
+        -- POSIX's rule, and the reason 68 and 69 are a century apart.
 */
+static bool touch_stamp(string_address text, b64 now, b64 address_to out)
+{
+        positive digits = 0;
+        b64 fraction = 0;
+        bool has_fraction = false;
+
+        while (file_digit(string_get(text + digits)))
+                digits++;
+
+        if (string_is(text + digits, '.'))
+        {
+                positive wide;
+
+                if (file_read_number(text, digits + 1, address_of fraction,
+                                     address_of wide) != digits + 3 || wide != 2)
+                        return false;
+
+                has_fraction = true;
+        }
+        else if (string_get(text + digits))
+                return false;
+
+        if (digits != 8 && digits != 10 && digits != 12)
+                return false;
+
+        b64 field[6];
+        positive at = 0;
+
+        for (positive i = 0; i < 6; i++)
+        {
+                if (i == 0 && digits < 12)
+                {
+                        field[0] = -1;
+                        continue;
+                }
+
+                if (i == 1 && digits < 10)
+                {
+                        field[1] = -1;
+                        continue;
+                }
+
+                field[i] = (string_get(text + at) - '0') * 10 +
+                           (string_get(text + at + 1) - '0');
+                at += 2;
+        }
+
+        b64 year;
+        positive month, day, hour, minute, second;
+
+        file_split_moment(now, address_of year, address_of month, address_of day,
+                          address_of hour, address_of minute, address_of second);
+
+        if (field[1] < 0)
+                ;
+        else if (field[0] < 0)
+                year = field[1] >= 69 ? 1900 + field[1] : 2000 + field[1];
+        else
+                year = field[0] * 100 + field[1];
+
+        if (field[2] < 1 || field[2] > 12 || field[3] < 1 || field[3] > 31 ||
+            field[4] > 23 || field[5] > 59)
+                return false;
+
+        address_to out = file_days(year, field[2], field[3]) * 86400 +
+                         field[4] * 3600 + field[5] * 60 +
+                         (has_fraction ? fraction : 0);
+
+        return true;
+}
+
+static const file_long touch_longs[] = {
+    {(string_address) "date", 'd'},
+    {(string_address) "no-create", 'c'},
+    {(string_address) "no-dereference", 'h'},
+    {(string_address) "reference", 'r'},
+    {(string_address) "time", 'T'},
+    {null, 0},
+};
+
 static b32 file_touch()
 {
-        positive first = 0;
         positive count = (positive)program_argument_count();
-        positive index = 1;
-        bool access = false;
-        bool modify = false;
-        bool no_create = false;
+        file_taking taking = {
+            .program = (string_address) "touch",
+            .allowed = (string_address) "acdfhmrt",
+            .valued = (string_address) "drtT",
+            .longs = touch_longs,
+        };
+
+        if (!file_take(address_of taking))
+                return 1;
+
+        positive flags = taking.flags;
+        positive first = taking.first;
+
+        bool access = (flags & FILE_FLAG('a')) != 0;
+        bool modify = (flags & FILE_FLAG('m')) != 0;
+        bool no_create = (flags & FILE_FLAG('c')) != 0;
+        bool through = (flags & FILE_FLAG('h')) == 0;
         bool given = false;
         b64 seconds = 0;
         p32 nanoseconds = 0;
 
-        while (index < count)
+        string_address which = file_option_value(address_of taking, 'T');
+
+        if (which)
         {
-                string_address argument = program_argument((b32)index);
-
-                if (string_is(argument, '-') && string_is(argument + 1, '-') &&
-                    string_is(argument + 2, end))
+                if (!string_compare(which, "access") || !string_compare(which, "atime") ||
+                    !string_compare(which, "use"))
+                        access = true;
+                else if (!string_compare(which, "modify") ||
+                         !string_compare(which, "mtime"))
+                        modify = true;
+                else
                 {
-                        index++;
-                        break;
+                        string_format(file_fail,
+                                      "touch: invalid argument '%s' for '--time'\n", which);
+                        return 1;
                 }
+        }
 
-                if (!string_is(argument, '-') || string_is(argument + 1, end))
-                        break;
+        string_address from = file_option_value(address_of taking, 'r');
 
-                if ((string_is(argument + 1, 'r') || string_is(argument + 1, 'd')) &&
-                    string_is(argument + 2, end) && index + 1 < count)
+        if (from)
+        {
+                file_facts facts;
+
+                if (!file_look_at(from, address_of facts))
                 {
-                        string_address value = program_argument((b32)(index + 1));
-
-                        if (string_is(argument + 1, 'r'))
-                        {
-                                file_facts facts;
-
-                                if (!file_look_at(value, address_of facts))
-                                {
-                                        string_format(file_fail,
-                                                      "touch: failed to get attributes of '%s'\n",
-                                                      value);
-                                        return 1;
-                                }
-
-                                seconds = facts.modified.seconds;
-                                nanoseconds = facts.modified.nanoseconds;
-                        }
-                        else
-                        {
-                                // @N is how a date is spelled as a number of
-                                // seconds, and it is the only spelling read
-                                // here; a written date would be a calendar.
-                                string_address digits = string_is(value, '@') ? value + 1
-                                                                              : value;
-
-                                if (!file_all_digits(string_is(digits, '-') ? digits + 1
-                                                                            : digits))
-                                {
-                                        string_format(file_fail,
-                                                      "touch: invalid date format: %s\n",
-                                                      value);
-                                        return 1;
-                                }
-
-                                seconds = file_signed(digits);
-                                nanoseconds = 0;
-                        }
-
-                        given = true;
-                        index += 2;
-                        continue;
-                }
-
-                string_address letter = argument + 1;
-                bool known = true;
-
-                while (string_get(letter) && known)
-                {
-                        if (string_is(letter, 'a'))
-                                access = true;
-                        else if (string_is(letter, 'm'))
-                                modify = true;
-                        else if (string_is(letter, 'c'))
-                                no_create = true;
-                        else
-                                known = false;
-
-                        letter++;
-                }
-
-                if (!known)
-                {
-                        string_format(file_fail, "touch: unknown option: %s\n", argument);
+                        string_format(file_fail,
+                                      "touch: failed to get attributes of '%s'\n", from);
                         return 1;
                 }
 
-                index++;
+                seconds = facts.modified.seconds;
+                nanoseconds = facts.modified.nanoseconds;
+                given = true;
         }
 
-        first = index;
+        string_address written = file_option_value(address_of taking, 'd');
+
+        if (written)
+        {
+                if (!file_moment_read(written, given ? seconds : file_now(),
+                                      address_of seconds))
+                {
+                        string_format(file_fail, "touch: invalid date format '%s'\n", written);
+                        return 1;
+                }
+
+                nanoseconds = 0;
+                given = true;
+        }
+
+        string_address older = file_option_value(address_of taking, 't');
+
+        if (older)
+        {
+                if (!touch_stamp(older, file_now(), address_of seconds))
+                {
+                        string_format(file_fail, "touch: invalid date format '%s'\n", older);
+                        return 1;
+                }
+
+                nanoseconds = 0;
+                given = true;
+        }
 
         if (first >= count)
         {
-                file_fail("touch: missing operand\n", 0);
+                file_fail("touch: missing file operand\n", 0);
                 return 1;
         }
 
@@ -5774,7 +6272,8 @@ static b32 file_touch()
                 }
 
                 bipolar done = system_call_4(syscall(utimensat), AT_FDCWD, (positive)path,
-                                             (positive)times, 0);
+                                             (positive)times,
+                                             through ? 0 : AT_SYMLINK_NOFOLLOW);
 
                 if (done < 0)
                 {
@@ -7675,34 +8174,6 @@ static fn date_shape(writer write, date_moment address_to at, string_address for
         }
 }
 
-// Only an epoch. A date written out in words is a parser, and one that
-// half worked would be worse than one that says it cannot.
-static bool date_read(string_address text, b64 address_to out)
-{
-        bool negative = false;
-
-        if (!string_is(text, '@'))
-                return false;
-
-        text++;
-
-        if (string_is(text, '-'))
-        {
-                negative = true;
-                text++;
-        }
-
-        if (!file_all_digits(text))
-                return false;
-
-        address_to out = (b64)file_count(text);
-
-        if (negative)
-                address_to out = -address_to out;
-
-        return true;
-}
-
 static b32 file_date()
 {
         positive count = (positive)program_argument_count();
@@ -7710,6 +8181,7 @@ static b32 file_date()
         string_address format = null;
         string_address given = null;
         string_address of_file = null;
+        string_address iso = null;
         bool rfc = false;
         b64 when;
         date_moment at;
@@ -7779,11 +8251,59 @@ static b32 file_date()
                         continue;
                 }
 
+                string_address precision = null;
+
+                if (string_is(argument + 1, 'I'))
+                        precision = argument + 2;
+                else if (!string_compare_max(argument, "--iso-8601", 10) &&
+                         (string_is(argument + 10, end) || string_is(argument + 10, '=')))
+                        precision = string_is(argument + 10, '=') ? argument + 11
+                                                                  : argument + 10;
+
+                if (precision)
+                {
+                        if (string_is(precision, end) ||
+                            !string_compare(precision, "date"))
+                                iso = (string_address) "%Y-%m-%d";
+                        else if (!string_compare(precision, "hours"))
+                                iso = (string_address) "%Y-%m-%dT%H+00:00";
+                        else if (!string_compare(precision, "minutes"))
+                                iso = (string_address) "%Y-%m-%dT%H:%M+00:00";
+                        else if (!string_compare(precision, "seconds"))
+                                iso = (string_address) "%Y-%m-%dT%H:%M:%S+00:00";
+                        else
+                        {
+                                string_format(file_fail,
+                                              "date: invalid argument '%s' for '--iso-8601'\n",
+                                              precision);
+                                return 1;
+                        }
+
+                        index++;
+                        continue;
+                }
+
                 if (!string_compare(argument, "--utc") ||
                     !string_compare(argument, "--universal"))
                 {
                         index++;
                         continue;
+                }
+
+                {
+                        string_address wanted_file = "--reference=";
+                        positive same = 0;
+
+                        while (string_get(wanted_file + same) &&
+                               string_get(argument + same) == string_get(wanted_file + same))
+                                same++;
+
+                        if (!string_get(wanted_file + same))
+                        {
+                                of_file = argument + same;
+                                index++;
+                                continue;
+                        }
                 }
 
                 if (!string_compare(argument, "--rfc-2822") ||
@@ -7834,7 +8354,7 @@ static b32 file_date()
         }
         else if (given)
         {
-                if (!date_read(given, address_of when))
+                if (!file_moment_read(given, file_now(), address_of when))
                 {
                         string_format(file_fail, "date: invalid date '%s'\n", given);
                         return 1;
@@ -7846,7 +8366,9 @@ static b32 file_date()
         date_take(when, address_of at);
 
         if (!format)
-                format = rfc ? "%a, %d %b %Y %H:%M:%S %z" : "%a %b %e %H:%M:%S %Z %Y";
+                format = iso   ? iso
+                         : rfc ? (string_address) "%a, %d %b %Y %H:%M:%S %z"
+                               : (string_address) "%a %b %e %H:%M:%S %Z %Y";
 
         date_shape(log, address_of at, format);
         log("\n", 1);
