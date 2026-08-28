@@ -868,6 +868,27 @@ static fn utf8_flush()
 
 static fn consume(unsigned int c)
 {
+        /*
+                Two bytes that end whatever is being read.
+
+                CAN and SUB abandon a sequence wherever in one they arrive,
+                ECMA-48 8.3.5 and the control strings included. Leaving them
+                to the parameter bytes took the final of the abandoned
+                sequence out of the text after it -- ESC [ 3 ; 3 CAN X ran the
+                X as an erase rather than printing it -- and leaving them to
+                the string reader left an OSC that was cut short with nothing
+                at all that could end it, and every byte after it went
+                nowhere.
+        */
+        if (c == 24 || c == 26)
+        {
+                in_escape = false;
+                in_csi = false;
+                in_string = false;
+                utf8_left = 0;
+                return;
+        }
+
         // Anything the far end says lands where the cursor is, so a line
         // being typed is no longer where it was drawn and the next keystroke
         // draws it again from wherever the output left off.
@@ -883,44 +904,39 @@ static fn consume(unsigned int c)
         */
         if (in_string)
         {
-                if (string_escape)
+                if (!string_escape)
                 {
-                        string_escape = false;
-
-                        if (c == '\\')
+                        if (c == 27)
+                                string_escape = true;
+                        else if (c == 7)
                         {
                                 in_string = false;
                                 in_escape = false;
-                                return;
                         }
+
+                        return;
                 }
 
-                if (c == 27)
-                        string_escape = true;
-                else if (c == 7)
+                /*
+                        An escape inside a string ends it either way.
+
+                        With a backslash after it that is ST, the ending the
+                        string was written to have. With anything else it is
+                        the next sequence beginning, and taking it as one is
+                        what stops a title nobody terminated from swallowing
+                        every sequence sent after it.
+                */
+                string_escape = false;
+                in_string = false;
+
+                if (c == '\\')
                 {
-                        in_string = false;
                         in_escape = false;
+                        return;
                 }
 
-                return;
-        }
-
-        /*
-                Two bytes that end whatever is being read.
-
-                CAN and SUB abandon a sequence and an ESC begins a new one,
-                wherever in the old one they arrive. Reading them as ordinary
-                parameter bytes meant the final of the sequence that was
-                abandoned was taken from the text after it: ESC [ 3 ; 3 CAN X
-                ran the X as an erase rather than printing it.
-        */
-        if (c == 24 || c == 26)
-        {
-                in_escape = false;
-                in_csi = false;
-                utf8_left = 0;
-                return;
+                in_escape = true;
+                escape_intermediate = false;
         }
 
         if (c == 27)
@@ -1705,6 +1721,11 @@ fn regrid(b32 master)
 
         if (column >= COLUMNS)
                 column = COLUMNS - 1;
+
+        // The anchor of the line being typed is a column too, and a narrower
+        // window has fewer of them to be at.
+        if (line_anchor_column >= COLUMNS)
+                line_anchor_column = COLUMNS - 1;
 
         // A region is measured in rows that may no longer be there.
         region_top = 0;

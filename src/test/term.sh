@@ -34,6 +34,7 @@
 #           sent          what would have gone up the pty, and forgets it
 #           mode          the modes that are set
 #           resize CxR    the window is now this, through the resize path
+#           pty           what the seam in screen.c makes of a real one
 #
 set -u
 
@@ -91,6 +92,7 @@ cat > "$work/harness.c" <<'HARNESS'
 #include "src/spark.c"
 #include "src/canvas/window.c"
 #include "src/sh/term.c"
+#include "src/sh/screen.c"
 
 #define GRID_STRIDE 256
 #define GRID_HISTORY 64
@@ -106,7 +108,7 @@ static fn say_byte(unsigned int c)
                 out[out_length++] = (p8)c;
 }
 
-static fn say(const char *text)
+static fn tell(const char *text)
 {
         while (*text)
                 say_byte((p8)*text++);
@@ -282,7 +284,7 @@ static fn say_row(unsigned int r)
                 }
         }
 
-        say("]\n");
+        tell("]\n");
 }
 
 b32 main()
@@ -367,7 +369,7 @@ b32 main()
                                                      ? cells[c].character
                                                      : '?');
 
-                                say("]\n");
+                                tell("]\n");
                         }
 
                         i++;
@@ -404,30 +406,105 @@ b32 main()
                                 unsigned int c = to_shell[at];
 
                                 if (c == 27)
-                                        say("\\e");
+                                        tell("\\e");
                                 else if (c >= ' ' && c < 127)
                                         say_byte(c);
                                 else
                                 {
-                                        say("\\x");
+                                        tell("\\x");
                                         say_hex(c, 2);
                                 }
                         }
 
-                        say("]\n");
+                        tell("]\n");
                         to_shell_length = 0;
+                }
+                /*
+                        The seam the shipped program actually turns the editor
+                        on at, run against a real pty.
+
+                        Every other case says edit on and asks what the editor
+                        does. This one asks what says so: a slave in the state
+                        the kernel gives it should read as canonical, and the
+                        echo should come off it, and the struct that is asked
+                        those questions has to be the one the kernel fills in
+                        rather than the larger one a C library hands out.
+                */
+                else if (string_compare(verb, (string_address) "pty") == 0)
+                {
+                        terminal_modes modes;
+                        unsigned int slot = 0;
+                        int unlock = 0;
+                        p8 name[16] = "/dev/pts/";
+                        positive at = 9;
+                        b32 master, slave;
+
+                        master = system_call_4(syscall(openat), AT_FDCWD,
+                                               (positive) "/dev/ptmx",
+                                               FILE_READ_WRITE | O_NONBLOCK, 0);
+
+                        if (master < 0)
+                        {
+                                tell("no pty\n");
+                                continue;
+                        }
+
+                        system_call_3(syscall(ioctl), master, TIOCSPTLCK,
+                                      (positive)address_of unlock);
+                        system_call_3(syscall(ioctl), master, TIOCGPTN,
+                                      (positive)address_of slot);
+
+                        if (slot >= 10)
+                                name[at++] = (p8)('0' + slot / 10 % 10);
+
+                        name[at++] = (p8)('0' + slot % 10);
+                        name[at] = 0;
+
+                        slave = system_call_4(syscall(openat), AT_FDCWD,
+                                              (positive)name, FILE_READ_WRITE, 0);
+
+                        if (slave < 0)
+                        {
+                                tell("no slave\n");
+                                continue;
+                        }
+
+                        term_follow_modes(master);
+                        system_call_3(syscall(ioctl), master, TCGETS,
+                                      (positive)address_of modes);
+
+                        tell("editing=");
+                        say_number(line_editing != 0);
+                        tell(" canonical=");
+                        say_number((modes.behaviour & TERMINAL_CANONICAL) != 0);
+                        tell(" echo=");
+                        say_number((modes.behaviour & TERMINAL_ECHO) != 0);
+                        say_byte('\n');
+
+                        // And the far end going raw takes the editor with it.
+                        modes.behaviour &= ~TERMINAL_CANONICAL;
+                        system_call_3(syscall(ioctl), slave, TCSETS,
+                                      (positive)address_of modes);
+                        term_follow_modes(master);
+
+                        tell("raw editing=");
+                        say_number(line_editing != 0);
+                        say_byte('\n');
+
+                        system_call_1(syscall(close), slave);
+                        system_call_1(syscall(close), master);
                 }
                 else if (string_compare(verb, (string_address) "mode") == 0)
                 {
-                        say("wrap=");
+                        tell("wrap=");
                         say_number(autowrap != 0);
-                        say(" insert=");
+                        tell(" insert=");
                         say_number(insert_mode != 0);
-                        say(" alternate=");
+                        tell(" alternate=");
                         say_number(alternate != 0);
-                        say(" cursor=");
+                        tell(" cursor=");
                         say_number(cursor_visible != 0);
-                        say(" region=");
+                        tell(" region=");
                         say_number(region_top);
                         say_byte(',');
                         say_number(region_bottom);
@@ -447,8 +524,8 @@ b32 main()
                 }
                 else
                 {
-                        say("no verb called ");
-                        say((const char *)verb);
+                        tell("no verb called ");
+                        tell((const char *)verb);
                         say_byte('\n');
                 }
         }
@@ -751,6 +828,16 @@ same 'nothing at all' '[XY]'                     20 3 in '\e\x7fXY' row 0
 #       CAN and SUB abandon whatever was being parsed, which is what they are
 #       for.
 same 'cancelled'      '[X]'                      20 3 in '\e[3;3\x18X' row 0
+#       A string sequence that is cut short has to be endable too. Leaving
+#       only BEL and ST to end one meant an OSC with neither wedged the
+#       parser, and every byte after it went nowhere for good.
+same 'cancelled string' '[X]'                    20 3 in '\e]0;ab\x18X' row 0
+#       An escape inside a string ends it either way: with a backslash after
+#       it that is ST, and with anything else it is the next sequence
+#       beginning. Taking it as one is what stops a title nobody terminated
+#       from swallowing every sequence sent after it.
+same 'a string nobody ended' '[X]'               20 3 in '\e]0;ab\e[41mX' row 0
+same 'and what follows it works' '7,1'           20 3 in '\e]0;ab\e[41mX' attr 0,0
 
 group index
 #       IND, RI and NEL, which are a line feed, a reverse one, and a line
@@ -910,6 +997,24 @@ group off
 same 'passes through' '[a\e[D]'                  20 3 edit off keys 'a<left>' sent
 same 'and back on'    '[a]|[]'                   20 3 edit off keys 'a' sent edit on keys 'b' sent
 same 'the line goes with it' '[ab ]|[x]'         20 3 edit on keys 'abc\x7f' row 0 edit off keys 'x' sent
+
+#
+#       What says the editor is running at all.
+#
+#       Every case above turns it on itself. These ask the seam that does it
+#       in the shipped program: a pty, in the state the kernel gives one, read
+#       through the struct the kernel fills in.
+#
+
+section discipline
+
+group pty
+if [ -c /dev/ptmx ]; then
+        same 'canonical is a line editor' \
+                'editing=1 canonical=1 echo=0|raw editing=0' 20 3 pty
+else
+        echo "  discipline   no /dev/ptmx here, skipped"
+fi
 
 #
 #       The window changing shape.
