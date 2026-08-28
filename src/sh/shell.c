@@ -97,6 +97,8 @@ bool shell_styles = true;
 #include "lex.c"
 #include "text.c"
 #include "file.c"
+#include "awk.c"
+#include "tools.c"
 #include "expand.c"
 #include "../canvas/window.c"
 #include "term.c"

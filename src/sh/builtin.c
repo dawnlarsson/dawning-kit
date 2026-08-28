@@ -3120,7 +3120,11 @@ typedef struct
 } shell_tool;
 
 static shell_tool shell_tools[] = {
+    {"awk", text_awk},
     {"cat", text_cat},
+    {"dd", tools_dd},
+    {"diff", tools_diff},
+    {"ps", tools_ps},
     {"cmp", text_cmp},
     {"cut", text_cut},
     {"expr", text_expr},

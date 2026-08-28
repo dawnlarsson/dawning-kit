@@ -381,6 +381,22 @@ wgcVXSeiHcXa9SSFDvKn0L1q5nSLQGHp38qUi1ZPf/1uQSuB3ME=
                 case "$(key_one arch)" in
                 x86_64 | amd64 | x64)
                         header=linux/arch/x86/include/asm/string_64.h
+                        #
+                        #       The three the architecture wrote for itself.
+                        #       Measured against them on a 9950X, ours over
+                        #       theirs: memcpy 2.7x at 16 bytes, 5.7x at 256,
+                        #       1.5x at 4096, and 0.87x at a megabyte, which is
+                        #       the one size rep movsb still wins because it
+                        #       turns to non temporal stores there. memset the
+                        #       same shape and 3.2x at sixteen megabytes.
+                        #
+                        #       Kernel copies are small -- headers, structures,
+                        #       names, table entries -- and the sizes where we
+                        #       win by multiples are the sizes it does most.
+                        #
+                        displaces="linux/arch/x86/lib/Makefile:memcpy_\$(BITS).o
+linux/arch/x86/lib/Makefile:memmove_64.o
+linux/arch/x86/lib/Makefile:memset_64.o"
                         claims="STRLEN:__kernel_size_t strlen(const char *)
 STRNCMP:int strncmp(const char *, const char *, __kernel_size_t)
 STRNLEN:__kernel_size_t strnlen(const char *, __kernel_size_t)
@@ -442,6 +458,40 @@ STRNCHR:char *strnchr(const char *, __kernel_size_t, int)"
                                 [ -n "$name" ] || continue
                                 line_add "$header" "#define __HAVE_ARCH_$name"
                                 line_add "$header" "extern $signature;"
+                        done
+                fi
+
+                #
+                #       Taking a routine the architecture wrote itself.
+                #
+                #       A claim above tells lib/string.c not to define a symbol,
+                #       which is enough where the generic C is the only other
+                #       definition. It is not enough for memcpy, memset and
+                #       memmove on x86_64: the architecture has its own
+                #       assembly for those, arch/x86/lib/memcpy_64.S and its
+                #       neighbours, and __HAVE_ARCH_MEMCPY is already defined
+                #       in its own string_64.h. Claiming what is already
+                #       claimed changes nothing and the link then has two.
+                #
+                #       So the object has to stop being built. Commenting the
+                #       line out of the architecture's lib/Makefile is the
+                #       whole of it, and it is reversible by --clean because
+                #       the kernel tree is unpacked fresh.
+                #
+                #       Each entry is a makefile, then the object to displace.
+                #
+                if [ -n "${displaces:-}" ]; then
+                        echo "$displaces" | while IFS=: read -r makefile object; do
+                                [ -n "$makefile" ] || continue
+                                [ -f "$makefile" ] || continue
+
+                                if grep -q "^# moonwater took $object" "$makefile"; then
+                                        continue
+                                fi
+
+                                sudo sed -i "s|^\\(.*[^#].*$object.*\\)$|# moonwater took $object\\n#\\1|" \
+                                        "$makefile" || die "displacing $object"
+                                echo "  took $object from $(basename "$(dirname "$makefile")")"
                         done
                 fi
 
@@ -544,7 +594,7 @@ STRNCHR:char *strnchr(const char *, __kernel_size_t, int)"
                 #       page in, and nothing that can be a version behind the
                 #       shell that also holds it.
                 #
-                for utility in cat grep sed cut tr sort uniq head tail wc tee \
+                for utility in cat awk dd diff ps grep sed cut tr sort uniq head tail wc tee \
                         expr cmp mktemp kill date xargs \
                         rev nl fold ls find stat du df chmod chown ln readlink \
                         basename dirname realpath mkdir rmdir cp mv rm touch \

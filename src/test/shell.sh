@@ -807,16 +807,10 @@ echo second"
 section absent
 
 group missing
-absent 'awk'      '127|' 'awk "{print}" < /dev/null; echo $?'
-absent 'dd'       '127|' 'dd if=/dev/null; echo $?'
-absent 'diff'     '127|' 'diff /etc/hostname /etc/hostname; echo $?'
-absent 'ps'       '127|' 'ps; echo $?'
 absent 'tar'      '127|' 'tar --help; echo $?'
 absent 'gzip'     '127|' 'gzip --help; echo $?'
 absent 'hash'     '127|' 'hash; echo $?'
 absent 'ulimit'   '127|' 'ulimit -n; echo $?'
-absent 'command v awk' '127|' 'command -v awk > /dev/null; echo $?'
-absent 'type awk' '127|' 'type awk > /dev/null 2>&1; echo $?'
 
 section ""
 

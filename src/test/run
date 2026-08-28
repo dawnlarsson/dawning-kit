@@ -35,7 +35,7 @@ TEST_TALLY="$work/tally"
 export TEST_TALLY
 : > "$TEST_TALLY"
 
-lanes="standard verify native probe shell text files kit boot"
+lanes="standard verify native probe shell expand builtin awk text tools files term kit boot"
 
 describe()
 {
@@ -293,6 +293,41 @@ lane_files()
         need_shell || return 1
 
         sh src/test/files.sh "$farm"
+}
+
+lane_expand()
+{
+        need_shell || return 1
+
+        sh src/test/expand.sh "$farm"
+}
+
+lane_builtin()
+{
+        need_shell || return 1
+
+        sh src/test/builtin.sh "$farm"
+}
+
+lane_awk()
+{
+        need_shell || return 1
+
+        sh src/test/awk.sh "$farm"
+}
+
+lane_tools()
+{
+        need_shell || return 1
+
+        sh src/test/tools.sh "$farm"
+}
+
+lane_term()
+{
+        need_shell || return 1
+
+        sh src/test/term.sh "$farm"
 }
 
 lane_kit()
