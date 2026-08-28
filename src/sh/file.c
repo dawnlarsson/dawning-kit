@@ -1743,56 +1743,6 @@ positive file_letter_bit(p8 letter)
 
 #define FILE_FLAG(letter) ((positive)1 << file_letter_bit(letter))
 
-/*
-        The leading option words, and only the letters the caller names. A
-        word with anything unrecognised in it is left alone as an operand
-        rather than swallowed, so a mistyped flag is complained about by the
-        program instead of vanishing.
-*/
-positive file_take_options(string_address allowed, positive address_to first)
-{
-        positive flags = 0;
-        positive index = 1;
-        positive count = (positive)program_argument_count();
-
-        while (index < count)
-        {
-                string_address argument = program_argument((b32)index);
-
-                if (string_is(argument, '-') && string_is(argument + 1, '-') &&
-                    string_is(argument + 2, end))
-                {
-                        index++;
-                        break;
-                }
-
-                if (!string_is(argument, '-') || string_is(argument + 1, end))
-                        break;
-
-                string_address letter = argument + 1;
-                positive taken = 0;
-
-                while (string_get(letter))
-                {
-                        if (!string_first_of(allowed, string_get(letter)))
-                                break;
-
-                        taken |= (positive)1 << file_letter_bit(string_get(letter));
-                        letter++;
-                }
-
-                if (string_get(letter))
-                        break;
-
-                flags |= taken;
-                index++;
-        }
-
-        address_to first = index;
-
-        return flags;
-}
-
 fn file_complain(string_address program, string_address message, string_address subject)
 {
         string_format(file_fail, "%s: %s: %s\n", program, subject, message);
@@ -1850,11 +1800,10 @@ typedef struct
         The leading options, letters and words both, and a complaint when the
         word is neither.
 
-        file_take_options above leaves a word it does not know as an operand,
-        which is what the tools written against it want. GNU's stop instead,
-        and the difference is not academic: realpath -E used to print the
-        resolved name of a file called -E and exit as though that had been the
-        question.
+        A word that is not a known option stops the tool rather than being
+        left as an operand, which is what GNU's do and the difference is not
+        academic: realpath -E used to print the resolved name of a file
+        called -E and exit as though that had been the question.
 
         Letters named in `valued` take an argument -- the rest of the word, or
         the word after it -- kept under the bit that letter sets, so a tool
@@ -2660,9 +2609,18 @@ static fn ls_directory(string_address path, bool heading, positive depth)
 
 static b32 file_ls()
 {
-        positive first = 0;
         positive count = (positive)program_argument_count();
-        positive flags = file_take_options((string_address) "laARtShr1dinFp", address_of first);
+        file_taking taking = {
+            .program = (string_address) "ls",
+            .allowed = (string_address) "laARtShr1dinFp",
+            .valued = (string_address) "",
+        };
+
+        if (!file_take(address_of taking))
+                return 2;
+
+        positive flags = taking.flags;
+        positive first = taking.first;
 
         ls_now = file_now();
 
@@ -6240,9 +6198,18 @@ static b32 file_mkdir()
 // are empty too.
 static b32 file_rmdir()
 {
-        positive first = 0;
         positive count = (positive)program_argument_count();
-        positive flags = file_take_options((string_address) "p", address_of first);
+        file_taking taking = {
+            .program = (string_address) "rmdir",
+            .allowed = (string_address) "p",
+            .valued = (string_address) "",
+        };
+
+        if (!file_take(address_of taking))
+                return 1;
+
+        positive flags = taking.flags;
+        positive first = taking.first;
 
         if (first >= count)
         {
@@ -8449,11 +8416,17 @@ static b32 file_id()
 static b32 file_hostname()
 {
         file_machine facts;
-        positive first = 0;
 
         // -f is not here. The kernel's node name is the whole of what this
         // knows, and the full name -f asks for is a question for a resolver.
-        positive flags = file_take_options((string_address) "s", address_of first);
+        file_taking taking = {
+            .program = (string_address) "hostname",
+            .allowed = (string_address) "s",
+            .valued = (string_address) "",
+        };
+
+        if (!file_take(address_of taking))
+                return 1;
 
         memory_fill(address_of facts, 0, sizeof(facts));
 
@@ -8463,7 +8436,7 @@ static b32 file_hostname()
                 return 1;
         }
 
-        if (flags & FILE_FLAG('s'))
+        if (taking.flags & FILE_FLAG('s'))
         {
                 string_address dot = string_first_of(facts.node, '.');
 
