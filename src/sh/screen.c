@@ -12,6 +12,64 @@
         a machine with no compositor does.
 */
 
+/*
+        What the far end's line discipline is set to.
+
+        The terminal edits the line being typed rather than sending it a
+        character at a time, and that is only right while the program on the
+        other end is asking for whole lines. ICANON is the question and this
+        is how it is asked; ECHO has to go off with it, or every character
+        appears twice -- once where the editor drew it and once where the
+        kernel echoed it back.
+*/
+#define TCGETS 0x5401u
+#define TCSETS 0x5402u
+#define TERMINAL_CANONICAL 0x0002u
+#define TERMINAL_ECHO 0x0008u
+#define TERMINAL_CONTROLS 19
+
+// The struct the kernel fills in, which is not the larger one a C library
+// hands its callers. A pty master answers these for the slave, so this is
+// asking the program on the other end what it has asked the line discipline
+// for.
+typedef struct
+{
+        unsigned int arriving, leaving, hardware, behaviour;
+        p8 discipline;
+        p8 controls[TERMINAL_CONTROLS];
+} terminal_modes;
+
+// What the emulator has to say, on its way. A keystroke at a time, so a line
+// long enough to fill the buffer cannot be cut in half by the next one.
+static fn term_send(b32 master)
+{
+        if (!to_shell_length)
+                return;
+
+        system_call_3(syscall(write), master, (positive)to_shell, to_shell_length);
+        to_shell_length = 0;
+}
+
+static fn term_follow_modes(b32 master)
+{
+        terminal_modes modes;
+
+        if (system_call_3(syscall(ioctl), master, TCGETS,
+                          (positive)address_of modes) != 0)
+                return;
+
+        term_line_editing((modes.behaviour & TERMINAL_CANONICAL) != 0);
+
+        // Left off when the far end goes raw. What it turns off for itself is
+        // its own to turn back on, and doing that from here would be echoing
+        // into a program that had just asked for silence.
+        if (!line_editing || !(modes.behaviour & TERMINAL_ECHO))
+                return;
+
+        modes.behaviour &= ~TERMINAL_ECHO;
+        system_call_3(syscall(ioctl), master, TCSETS, (positive)address_of modes);
+}
+
 // term ---------------------------------------------------------
 static b32 screen_term()
 {
@@ -29,9 +87,15 @@ static b32 screen_term()
         // one and two untitled terminals are a guessing game.
         string_copy((string_address)window->title, (string_address) "shell");
 
-        COLUMNS = window->columns;
-        ROWS = window->rows;
-        erase(0, 0, ROWS - 1, COLUMNS - 1);
+        // A window narrower or shorter than one cell is not a grid, and every
+        // wrap and scroll divides by these.
+        COLUMNS = window->columns ? window->columns : 1;
+        ROWS = window->rows ? window->rows : 1;
+
+        if (COLUMNS > window->stride)
+                COLUMNS = window->stride;
+
+        full_reset();
 
         /*
                 Waiting for the other end to exist.
@@ -115,6 +179,7 @@ static b32 screen_term()
         window_commit(window);
 
         p8 from_shell[1024];
+        struct window_key typed[WINDOW_KEYS];
         timespec nap = {0, 4000000};
 
         cursor_show();
@@ -125,7 +190,7 @@ static b32 screen_term()
         {
                 b32 changed = false;
                 b32 gone = false;
-                struct window_key key;
+                unsigned int keys = 0;
 
                 touched_top = ROWS;
                 touched_bottom = 0;
@@ -136,28 +201,30 @@ static b32 screen_term()
                         changed = true;
                 }
 
-                // Keys go out; they change nothing here until they come back.
-                while (window_key(window, &key))
-                {
-                        if (!(key.flags & WINDOW_KEY_DOWN))
-                                continue;
+                term_follow_modes(master);
 
-                        if (key.character)
+                /*
+                        Taken out of the ring first, drawn second.
+
+                        The cursor is a cell with its colours the wrong way
+                        round, so it has to come off before anything writes
+                        where it is -- and taking it off marks a row changed
+                        whether or not one was. Reading the keys before
+                        deciding is how the loop can tell the difference
+                        between a keystroke and four milliseconds passing.
+                */
+                while (keys < WINDOW_KEYS && window_key(window, address_of typed[keys]))
+                        keys++;
+
+                if (keys)
+                        cursor_hide();
+
+                for (unsigned int i = 0; i < keys; i++)
+                        if (typed[i].flags & WINDOW_KEY_DOWN)
                         {
-                                p8 byte = (p8)key.character;
-
-                                system_call_3(syscall(write), master,
-                                              (positive)address_of byte, 1);
-                                continue;
+                                term_key(typed[i].character, typed[i].code);
+                                term_send(master);
                         }
-
-                        string_address sequence = key_sequence(key.code);
-
-                        if (sequence)
-                                system_call_3(syscall(write), master,
-                                              (positive)sequence,
-                                              string_length(sequence));
-                }
 
                 for (;;)
                 {
@@ -191,6 +258,15 @@ static b32 screen_term()
 
                         break;
                 }
+
+                // A report the far end asked for, which is bytes going the
+                // way keys go.
+                term_send(master);
+
+                // The line editor draws where the shell would have echoed, so
+                // what it touched is what says the screen changed.
+                if (touched_bottom > touched_top)
+                        changed = true;
 
                 /*
                         Only when something actually arrived.
