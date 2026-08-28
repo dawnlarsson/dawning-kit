@@ -287,6 +287,10 @@ check 'not'             'if ! false; then echo yes; fi'
 check 'sequence'        'echo a; echo b'
 check 'pipe'            'echo hello | cat'
 check 'pipe chain'      'echo a | cat | cat'
+# A pipeline cut short is not a shorter pipeline: the stage that becomes the
+# last one writes where the next was going to read, so twenty stages used to
+# answer with the sixteenth stage's work.
+check 'twenty stages'   'echo a | sed s/a/b/ | sed s/b/c/ | sed s/c/d/ | sed s/d/e/ | sed s/e/f/ | sed s/f/g/ | sed s/g/h/ | sed s/h/i/ | sed s/i/j/ | sed s/j/k/ | sed s/k/l/ | sed s/l/m/ | sed s/m/n/ | sed s/n/o/ | sed s/o/p/ | sed s/p/q/ | sed s/q/r/ | sed s/r/s/ | cat'
 
 group functions
 check 'define call'     'f() { echo body; }; f'
@@ -492,6 +496,26 @@ one
 A
 two
 B'
+answer 'nine heredocs'   'cat <<A; cat <<B; cat <<C; cat <<D; cat <<E; cat <<F; cat <<G; cat <<H; cat <<I
+1
+A
+2
+B
+3
+C
+4
+D
+5
+E
+6
+F
+7
+G
+8
+H
+9
+I'
+answer 'many redirections' 'true 3>/dev/null 4>/dev/null 5>/dev/null 6>/dev/null 7>/dev/null 8>/dev/null 9>/dev/null 3>/dev/null 4>/dev/null 5>/dev/null 6>/dev/null 7>/dev/null 8>/dev/null 9>/dev/null 3>/dev/null 4>/dev/null 5>/dev/null 6>/dev/null 7>/dev/null 8>/dev/null 9>/dev/null 3>/dev/null 4>/dev/null 5>/dev/null 6>/dev/null; echo $?'
 
 # <<- takes every leading tab off every line of the body and off the line that
 # ends it. The lexer knows << and not <<-, so the dash arrives as the front of
@@ -591,6 +615,8 @@ answer 'for unset makes none' 'for i in $nosuch; do echo no; done; echo done'
 answer 'break two'       'for i in 1 2; do for j in a b; do break 2; done; echo $i; done; echo done'
 answer 'continue two'    'for i in 1 2; do for j in a b; do continue 2; done; echo $i; done; echo done'
 answer 'recursion'       'f() { [ $1 -gt 0 ] && { echo $1; f $(($1-1)); }; }; f 3'
+answer 'recursion deep'  'f() { [ $1 -le 0 ] && { echo bottom; return; }; f $(($1-1)); }; f 100'
+answer 'recursion locals' 'f() { local v=$1; [ $1 -le 0 ] && { echo bottom; return; }; f $(($1-1)); [ "$v" = "$1" ] || echo lost; }; f 120'
 answer 'function args'   'f() { set -- x; echo $1; }; set -- y; f; echo $1'
 answer 'function in one' 'f() { g() { echo inner; }; g; }; f'
 
@@ -933,6 +959,11 @@ EOF'
 # out of "$p" is a star to the matcher as much as to the eye.
 differs 'quoted pattern' 'yes|' 0 "p='a*'; case aXX in \"\$p\") echo yes;; *) echo no;; esac"
 differs 'escaped pattern' 'yes|' 0 'case aXb in a\*b) echo yes;; *) echo no;; esac'
+
+# The ceilings that are left, each of them refused out loud rather than
+# quietly answered wrong. A function goes as deep as the table its locals sit
+# in, which is a hundred and twenty eight calls.
+differs 'recursion has a floor' '' 1 'f() { [ $1 -le 0 ] && { echo bottom; return; }; f $(($1-1)); }; f 300'
 
 # MAX_TOKENS in shell.c is what a command line holds, so a glob that matches
 # more than that many names is cut off rather than refused.

@@ -147,7 +147,7 @@ static positive parse_token_text_base;
         the order the operators appeared, and the parser hands them out in the
         same order.
 */
-#define HERE_MAX 8
+#define HERE_MAX 32
 // Big enough for a configuration file or a script written inside another one,
 // which is what a here-document is for. Eight kilobytes held two hundred and
 // fifty lines and dropped everything after them without saying so.

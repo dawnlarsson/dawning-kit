@@ -64,11 +64,14 @@ static fn exec_errexit(b32 status)
 }
 
 #define EXEC_ARENA 8192
-#define PIPELINE_MAX 16
+#define PIPELINE_MAX 64
 #define FUNCTION_MAX 64
 #define FUNCTION_NAME 64
-#define REDIRECT_SAVE_MAX 24
-#define FUNCTION_DEPTH_MAX 64
+#define REDIRECT_SAVE_MAX 64
+// As deep as the table a local goes in. A call further down than that gets no
+// slot for its locals and silently keeps the caller's, which is worse than
+// being told the recursion is too deep.
+#define FUNCTION_DEPTH_MAX 128
 
 static p8 exec_arena[EXEC_ARENA];
 static positive exec_arena_used;
@@ -124,7 +127,10 @@ static b32 exec_save_count;
 static bool exec_save_fd(b32 fd)
 {
         if (exec_save_count >= REDIRECT_SAVE_MAX)
+        {
+                string_format(exec_error, "Too many redirections\n");
                 return false;
+        }
 
         exec_saves[exec_save_count].fd = fd;
         exec_saves[exec_save_count].saved =
@@ -1094,9 +1100,6 @@ static b32 exec_pipe(b32 first, b32 count)
         b32 status = 0;
         b32 at;
 
-        if (count > PIPELINE_MAX)
-                count = PIPELINE_MAX;
-
         while (child && started < count)
         {
                 b32 ends[2];
@@ -1176,6 +1179,17 @@ static b32 exec_pipeline(b32 index)
 
         for (child = node->left; child; child = parse_nodes[child].next)
                 count++;
+
+        // Cutting the pipeline short is not running a shorter pipeline: the
+        // stage that became the last one writes where the next one should
+        // have read, and the answer is wrong rather than missing.
+        if (count > PIPELINE_MAX)
+        {
+                string_format(exec_error, "Pipeline too long\n");
+                shell_status = 2;
+
+                return 2;
+        }
 
         if (node->flags)
                 exec_tested = true;
