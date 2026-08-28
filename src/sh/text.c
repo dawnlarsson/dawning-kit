@@ -374,6 +374,29 @@ static bool text_blank(p8 character)
         return character == ' ' || character == '\t';
 }
 
+/*
+        text_blank's complement, for string_span_max.
+
+        Not the library's own string_set_not_blanks, which leaves the
+        terminator out so that a run has somewhere to stop when the caller
+        gives no bound. Every line here is a length rather than a string and
+        may hold a NUL that is neither a blank nor an end, so the bound is the
+        only thing allowed to stop it.
+*/
+static b8 text_set_inside[STRING_SET_BYTES];
+
+static const b8 address_to text_inside()
+{
+        if (!text_set_inside[0])
+        {
+                memory_fill(text_set_inside, 1, sizeof(text_set_inside));
+                text_set_inside[' '] = 0;
+                text_set_inside['\t'] = 0;
+        }
+
+        return text_set_inside;
+}
+
 static bool text_space(p8 character)
 {
         return character == ' ' || character == '\t' || character == '\n' ||
@@ -4512,12 +4535,13 @@ static b32 text_cut()
                         {
                                 bool split = false;
 
-                                if (whitespace)
-                                        for (positive c = 0; c < text_line_length && !split; c++)
-                                                split = text_blank(text_line[c]);
-                                else
-                                        split = memory_first_of(text_line, delimiter,
-                                                                text_line_length) != null;
+                                for (positive c = 0; c < text_line_length; c++)
+                                        if (whitespace ? text_blank(text_line[c])
+                                                       : text_line[c] == delimiter)
+                                        {
+                                                split = true;
+                                                break;
+                                        }
 
                                 // A line with no delimiter is one whole field,
                                 // and is printed unchanged unless -s says not
@@ -5221,11 +5245,11 @@ static b32 text_uniq()
                         // order POSIX puts them in.
                         for (positive f = 0; f < skip_fields; f++)
                         {
-                                while (skip < text_line_length && text_blank(text_line[skip]))
-                                        skip++;
-
-                                while (skip < text_line_length && !text_blank(text_line[skip]))
-                                        skip++;
+                                skip += string_span_max(text_line + skip,
+                                                        text_line_length - skip,
+                                                        string_set_blanks);
+                                skip += string_span_max(text_line + skip,
+                                                        text_line_length - skip, text_inside());
                         }
 
                         skip += skip_characters;
@@ -5237,11 +5261,12 @@ static b32 text_uniq()
 
                         for (positive f = 0; f < skip_fields; f++)
                         {
-                                while (held_skip < held_length && text_blank(held[held_skip]))
-                                        held_skip++;
-
-                                while (held_skip < held_length && !text_blank(held[held_skip]))
-                                        held_skip++;
+                                held_skip += string_span_max(held + held_skip,
+                                                             held_length - held_skip,
+                                                             string_set_blanks);
+                                held_skip += string_span_max(held + held_skip,
+                                                             held_length - held_skip,
+                                                             text_inside());
                         }
 
                         held_skip += skip_characters;
@@ -8571,11 +8596,8 @@ static positive sort_field_start(p8 address_to at, positive length, positive fie
 
         for (positive i = 1; i < field && scan < length; i++)
         {
-                while (scan < length && text_blank(at[scan]))
-                        scan++;
-
-                while (scan < length && !text_blank(at[scan]))
-                        scan++;
+                scan += string_span_max(at + scan, length - scan, string_set_blanks);
+                scan += string_span_max(at + scan, length - scan, text_inside());
         }
 
         return scan;
@@ -8601,11 +8623,8 @@ static positive sort_field_stop(p8 address_to at, positive length, positive fiel
 
         for (positive i = 0; i < field && scan < length; i++)
         {
-                while (scan < length && text_blank(at[scan]))
-                        scan++;
-
-                while (scan < length && !text_blank(at[scan]))
-                        scan++;
+                scan += string_span_max(at + scan, length - scan, string_set_blanks);
+                scan += string_span_max(at + scan, length - scan, text_inside());
         }
 
         return scan;
@@ -8622,8 +8641,7 @@ static fn sort_key_span(sort_key address_to key, p8 address_to at, positive leng
                 begin = sort_field_start(at, length, key->first_field);
 
                 if (key->skip_blanks_first)
-                        while (begin < length && text_blank(at[begin]))
-                                begin++;
+                        begin += string_span_max(at + begin, length - begin, string_set_blanks);
 
                 if (key->first_char > 1)
                 {
@@ -8644,8 +8662,8 @@ static fn sort_key_span(sort_key address_to key, p8 address_to at, positive leng
                         finish = sort_field_start(at, length, key->second_field);
 
                         if (key->skip_blanks_second)
-                                while (finish < length && text_blank(at[finish]))
-                                        finish++;
+                                finish += string_span_max(at + finish, length - finish,
+                                                          string_set_blanks);
 
                         finish += key->second_char;
 
