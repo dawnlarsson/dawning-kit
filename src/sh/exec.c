@@ -415,6 +415,7 @@ static b32 exec_define(b32 index)
 {
         string_address name = parse_words[parse_nodes[index].word];
         parse_marks before;
+        parse_marks after;
         bool released = false;
         b32 body;
         b32 slot;
@@ -450,9 +451,12 @@ static b32 exec_define(b32 index)
                 released = parse_release(address_of exec_functions[slot].from,
                                          address_of exec_functions[slot].to);
 
+        // Into locals, because a keep that fails must leave the slot saying
+        // exactly what it said before: half the new marks beside half the old
+        // ones describes a block that was never taken, and giving that back
+        // hands away whatever was kept in between.
         parse_mark(address_of before);
-        body = parse_keep(parse_nodes[index].right,
-                          address_of exec_functions[slot].to);
+        body = parse_keep(parse_nodes[index].right, address_of after);
 
         if (!body)
         {
@@ -467,6 +471,7 @@ static b32 exec_define(b32 index)
         }
 
         exec_functions[slot].from = before;
+        exec_functions[slot].to = after;
         string_copy_max(exec_functions[slot].name, name, FUNCTION_NAME - 1);
         exec_functions[slot].body = body;
         shell_status = 0;

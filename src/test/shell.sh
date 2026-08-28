@@ -710,6 +710,13 @@ answer 'eval many times'  'i=0; while [ $i -lt 200 ]; do eval "x=$i"; i=$((i+1))
 answer 'redefined in a loop' 'i=0; while [ $i -lt 200 ]; do eval "f() { echo body $i; }"; i=$((i+1)); done; f'
 answer 'eval under a redirect' 'f() { eval "echo a"; echo b; } > /tmp/gn1.$$; f; echo visible; cat /tmp/gn1.$$'
 answer 'dot in a loop'   'echo "echo sourced" > /tmp/gn2.$$; for i in a b c; do . /tmp/gn2.$$ > /dev/null; printf "[%s]" "$i"; done; echo'
+# A definition written over another gives its space back when it is the last
+# one taken, which is the shape a loop makes. Two names taking turns is the
+# shape it does not: those run the arena out, and what has to hold then is
+# that every definition either stands or is refused -- never a body that was
+# copied halfway and recorded as good.
+answer 'alternating definitions' 'i=0; while [ $i -lt 300 ]; do eval "f() { echo f; }"; eval "g() { for w in one two; do echo g$w; done; }"; i=$((i+1)); done; f; g'
+answer 'a body with a loop' 'i=0; while [ $i -lt 300 ]; do eval "h() { for w in a b c; do echo h$w; done; }"; i=$((i+1)); done; h'
 answer 'eval sees the case' 'for i in a b; do case $i in a) eval echo one > /dev/null;; b) eval echo two > /dev/null;; esac; printf "[%s]" "$i"; done; echo'
 
 group builtins

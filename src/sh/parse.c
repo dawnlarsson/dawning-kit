@@ -1567,6 +1567,16 @@ static b32 parse_keep_redirects(b32 first, b32 count)
         return base;
 }
 
+/*
+        Whether the copy ran out anywhere in it.
+
+        Nought is a child that is not there as much as a child that would not
+        fit, and the recursion below hands its parent one for the other. A
+        body whose loop failed to copy came back as a body that does nothing,
+        and the definition was recorded as good.
+*/
+static bool parse_keep_short;
+
 static b32 parse_keep_tree(b32 index)
 {
         b32 copy;
@@ -1575,7 +1585,10 @@ static b32 parse_keep_tree(b32 index)
                 return 0;
 
         if (parse_node_top - 1 <= parse_node_used)
+        {
+                parse_keep_short = true;
                 return 0;
+        }
 
         copy = --parse_node_top;
         parse_nodes[copy] = parse_nodes[index];
@@ -1586,7 +1599,10 @@ static b32 parse_keep_tree(b32 index)
                                             parse_nodes[index].word_count);
 
                 if (base < 0)
+                {
+                        parse_keep_short = true;
                         return 0;
+                }
 
                 parse_nodes[copy].word = base;
         }
@@ -1597,7 +1613,10 @@ static b32 parse_keep_tree(b32 index)
                                                 parse_nodes[index].redirect_count);
 
                 if (base < 0)
+                {
+                        parse_keep_short = true;
                         return 0;
+                }
 
                 parse_nodes[copy].redirect = base;
         }
@@ -1625,7 +1644,11 @@ b32 parse_keep(b32 index, parse_marks address_to marks)
         b32 copy;
 
         parse_mark(address_of before);
+        parse_keep_short = false;
         copy = parse_keep_tree(index);
+
+        if (parse_keep_short)
+                copy = 0;
 
         if (!copy)
                 parse_give_back(address_of before);
