@@ -43,3 +43,34 @@ CONFIG_X86_IOPL_IOPERM=n
 
 # MP tables, which is how a machine described its processors before ACPI.
 CONFIG_X86_MPPARSE=n
+
+#
+# The second kind, found by ranking rather than by reading
+#
+# Booting with initcall_debug and sorting gives 639 ms across 1114 initcalls,
+# and the top of the list is mostly things this image will never use. These
+# are the ones removable without argument: a timer the TSC replaced, the
+# enumeration bus ACPI replaced, a block device nothing here loops, and the
+# half of the network stack nothing here speaks.
+#
+#       5682 us   init_acpi_pm_clocksource
+#       6000 us   loop_init
+#       2071 us   pnpacpi_init
+#       1859 us   inet6_init
+#
+# i8042 (4932 us) and usb_init (2000 us) are deliberately left in. They are
+# just as legacy, and a real machine still boots with a keyboard on one and a
+# disk on the other.
+
+# The ACPI power management timer. The TSC is the clocksource on anything
+# this targets; the PM timer is what was used before it was trustworthy.
+CONFIG_X86_PM_TIMER=n
+
+# Plug and Play, which is how a card announced itself before PCI did.
+CONFIG_PNP=n
+
+# Loopback block devices.
+CONFIG_BLK_DEV_LOOP=n
+
+# IPv6.
+CONFIG_IPV6=n
