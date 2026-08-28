@@ -349,6 +349,75 @@ near 'perm'             'LC_ALL=C sort' find "$fixture" -perm 751
 near 'size plus'        'LC_ALL=C sort' find "$fixture" -type f -size +10c
 near 'depth and name'   'LC_ALL=C sort' find "$fixture" -maxdepth 1 -type f
 near 'two roots'        'LC_ALL=C sort' find "$fixture/sub" "$fixture/empty"
+# The expression is a language: what follows is precedence, grouping and
+# negation, none of which a list of tests that all had to hold could say.
+near 'or'               'LC_ALL=C sort' find "$fixture" -name '*.txt' -o -name alpha
+near 'or long'          'LC_ALL=C sort' find "$fixture" -name '*.txt' -or -name alpha
+near 'and'              'LC_ALL=C sort' find "$fixture" -type f -a -name '*.txt'
+near 'and long'         'LC_ALL=C sort' find "$fixture" -type f -and -name '*.txt'
+near 'not'              'LC_ALL=C sort' find "$fixture" ! -type d
+near 'not long'         'LC_ALL=C sort' find "$fixture" -not -type d
+near 'not and'          'LC_ALL=C sort' find "$fixture" ! -type d -name '*a*'
+near 'and binds first'  'LC_ALL=C sort' find "$fixture" -name alpha -o -type f -name '*.txt'
+near 'grouped'          'LC_ALL=C sort' find "$fixture" '(' -name alpha -o -name '*.txt' ')' -type f
+near 'grouped negated'  'LC_ALL=C sort' find "$fixture" ! '(' -type d -o -type l ')'
+near 'nested groups'    'LC_ALL=C sort' find "$fixture" '(' '(' -name alpha ')' ')'
+near 'true'             'LC_ALL=C sort' find "$fixture" -true
+near 'false'            'LC_ALL=C sort' find "$fixture" -false
+near 'true or'          'LC_ALL=C sort' find "$fixture" -false -o -name alpha
+near 'prune'            'LC_ALL=C sort' find "$fixture" -name sub -prune -o -print
+near 'prune printed'    'LC_ALL=C sort' find "$fixture" -name sub -prune
+near 'prune a path'     'LC_ALL=C sort' find "$fixture" -path '*/inner' -prune -o -print
+near 'depth first'      'cat' find "$fixture/sub" -depth
+near 'depth and prune'  'LC_ALL=C sort' find "$fixture" -depth -name '*.txt'
+near 'print explicit'   'LC_ALL=C sort' find "$fixture" -name alpha -print
+near 'print zero'       "tr '\\0' '\\n' | LC_ALL=C sort" find "$fixture" -name '*.txt' -print0
+near 'print and or'     'LC_ALL=C sort' find "$fixture" -name alpha -print -o -name '*.txt' -print
+near 'links'            'LC_ALL=C sort' find "$fixture" -type f -links 1
+near 'links plus'       'LC_ALL=C sort' find "$fixture" -links +1
+near 'user'             'LC_ALL=C sort' find "$fixture" -user "$(id -un)"
+near 'user numeric'     'LC_ALL=C sort' find "$fixture" -uid "$(id -u)"
+near 'group'            'LC_ALL=C sort' find "$fixture" -group "$(id -gn)"
+near 'group numeric'    'LC_ALL=C sort' find "$fixture" -gid "$(id -g)"
+near 'no user'          'LC_ALL=C sort' find "$fixture" -nouser
+near 'newer'            'LC_ALL=C sort' find "$fixture" -newer "$fixture/beta.txt"
+near 'newer than a date' 'LC_ALL=C sort' find "$fixture" -newermt 2010-01-01
+near 'older than a date' 'LC_ALL=C sort' find "$fixture" ! -newermt 2010-01-01
+near 'modified days'    'LC_ALL=C sort' find "$fixture" -mtime +1
+near 'modified minutes' 'LC_ALL=C sort' find "$fixture" -mmin +1
+near 'changed days'     'LC_ALL=C sort' find "$fixture" -ctime -1
+near 'perm any'         'LC_ALL=C sort' find "$fixture" -perm /111
+near 'perm all'         'LC_ALL=C sort' find "$fixture" -perm -100
+near 'perm symbolic'    'LC_ALL=C sort' find "$fixture" -perm -u+x
+near 'case insensitive name' 'LC_ALL=C sort' find "$fixture" -iname 'ALPHA'
+near 'case insensitive path' 'LC_ALL=C sort' find "$fixture" -ipath '*SUB*'
+near 'link target'      'LC_ALL=C sort' find "$fixture" -lname '*alpha'
+near 'inode'            'LC_ALL=C sort' find "$fixture" -inum +0
+near 'one file system'  'LC_ALL=C sort' find "$fixture" -xdev
+near 'following links'  'LC_ALL=C sort' find -L "$fixture" -type f
+near 'not following'    'LC_ALL=C sort' find -P "$fixture" -type l
+near 'follow named'     'LC_ALL=C sort' find -H "$fixture/sub/back" -type f
+near 'follow the word'  'LC_ALL=C sort' find "$fixture" -follow -type f
+near 'exec once each'   'LC_ALL=C sort' find "$fixture" -name '*.txt' -exec echo saw {} ';'
+near 'exec twice over'  'LC_ALL=C sort' find "$fixture" -name '*.txt' -exec echo one {} ';' -exec echo two {} ';'
+near 'exec inside a word' 'LC_ALL=C sort' find "$fixture" -name alpha -exec echo 'x{}y' ';'
+near 'exec status'      'LC_ALL=C sort' find "$fixture" -type f -exec test -s {} ';' -print
+near 'exec together'    "tr ' ' '\\n' | LC_ALL=C sort" find "$fixture" -name '*.txt' -exec echo {} +
+near 'exec together all' "tr ' ' '\\n' | LC_ALL=C sort" find "$fixture" -type f -exec echo {} +
+near 'quit'             'cat' find "$fixture" -name alpha -print -quit
+near 'no such predicate' 'cat' find "$fixture" -nonsense
+near 'unclosed group'   'cat' find "$fixture" '(' -name alpha
+near 'exec unterminated' 'cat' find "$fixture" -exec echo {}
+near 'path after expression' 'cat' find "$fixture" -name alpha "$fixture/sub"
+
+# -delete changes the tree, so it is judged by what it left behind.
+effect 'delete a name'  find '$TOOL tree -name three -delete'
+effect 'delete by type' find '$TOOL tree -type f -delete'
+effect 'delete a tree'  find '$TOOL tree -delete'
+effect 'delete nothing' find '$TOOL tree -name nowhere -delete'
+effect 'delete deep'    find '$TOOL tree/deep -depth -delete'
+effect 'exec removes'   find '$TOOL tree -name two -exec rm {} ";"'
+effect 'exec removes many' find '$TOOL tree -type f -exec rm {} +'
 
 group stat
 same 'name'             stat -c '%n' "$fixture/alpha"

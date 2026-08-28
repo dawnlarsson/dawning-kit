@@ -2889,33 +2889,200 @@ static b32 file_ls()
         return ls_status;
 }
 
+// Running a command ------------------------------------------------
+/*
+        find -exec runs something that is neither a builtin nor a name the
+        shell can be asked about, so the PATH walk it takes is here.
+
+        Declared rather than reached for: builtin.c is included after this
+        file, and what a command gets for an environment is what the shell
+        knows.
+*/
+string_address env_get(const_string name);
+extern string_address shell_envp[];
+
+#define FILE_ENVIRONMENT 512
+
+static string_address file_environment_held[FILE_ENVIRONMENT];
+static string_address file_environment(string_address name);
+
+static string_address address_to file_environment_all()
+{
+        positive count = 0;
+
+        if (shell_envp[0])
+                return shell_envp;
+
+        while (count < FILE_ENVIRONMENT - 1 && program_environment((b32)count))
+        {
+                file_environment_held[count] = program_environment((b32)count);
+                count++;
+        }
+
+        file_environment_held[count] = null;
+
+        return file_environment_held;
+}
+
+// Replaces this process, and only ever called in a child of it.
+static fn file_exec_path(string_address address_to words)
+{
+        string_address address_to environment = file_environment_all();
+        string_address name = words[0];
+        string_address path = env_get("PATH");
+        p8 candidate[FILE_PATH_MAX];
+        bool denied = false;
+
+        if (string_first_of(name, '/'))
+        {
+                bipolar answer = system_call_3(syscall(execve), (positive)name,
+                                               (positive)words, (positive)environment);
+
+                exit(answer == -ERROR_ACCESS ? 126 : 127);
+        }
+
+        if (!path)
+                path = file_environment("PATH");
+
+        if (!path || !string_get(path))
+                path = "/bin:/usr/bin:/";
+
+        while (string_get(path))
+        {
+                positive length = 0;
+
+                while (string_get(path) && string_get(path) != ':')
+                {
+                        if (length < FILE_PATH_MAX - 2)
+                                candidate[length++] = string_get(path);
+
+                        path++;
+                }
+
+                if (string_get(path))
+                        path++;
+
+                // An empty element is this directory, which is what a leading
+                // or a doubled colon in PATH means.
+                if (!length)
+                        candidate[length++] = '.';
+
+                if (candidate[length - 1] != '/')
+                        candidate[length++] = '/';
+
+                for (positive i = 0; string_get(name + i) && length < FILE_PATH_MAX - 1; i++)
+                        candidate[length++] = string_get(name + i);
+
+                candidate[length] = end;
+
+                if (system_call_3(syscall(execve), (positive)candidate, (positive)words,
+                                  (positive)environment) == -ERROR_ACCESS)
+                        denied = true;
+        }
+
+        exit(denied ? 126 : 127);
+}
+
+// Forks, runs, waits, and answers with what came back.
+static b32 file_run(string_address address_to words)
+{
+        positive status = 0;
+
+        log_flush();
+
+        bipolar child = system_call_2(syscall(clone), SIGCHLD, 0);
+
+        if (child == 0)
+                file_exec_path(words);
+
+        if (child < 0)
+                return 127;
+
+        system_call_4(syscall(wait4), child, (positive)address_of status, 0, 0);
+
+        if (status & 0x7f)
+                return 125;
+
+        return (b32)((status >> 8) & 0xff);
+}
+
 // find ------------------------------------------------------------
 /*
-        find [PATH...] [-maxdepth N] [-mindepth N] [-name PATTERN]
-             [-type C] [-size N] [-empty] [-print]
+        find [-H|-L|-P] [PATH...] [EXPRESSION]
 
-        Every test given has to hold, which is the and that find's expression
-        language spells by juxtaposition. There is no -exec: running a command
-        is the shell's job, and everything here can be piped into one.
+        The expression is a language and is read as one: ! binds tighter than
+        -a, -a tighter than -o, parentheses group, and the whole of it is
+        built into a tree once and walked once per name. A flat list of tests
+        that all had to hold cannot say -name '*.c' -o -name '*.h', and that
+        is half of what find is asked for.
+
+        An action anywhere in the expression takes the place of the -print
+        that is otherwise put on the end. That is the rule that makes
+        "-name x -delete" delete rather than print, and it is the one find
+        rule everybody has been bitten by.
+
+        -ok and -printf are not here: -ok asks a question of a terminal, and
+        -printf is a second format language. Both would be their own work.
 */
-#define FIND_TESTS_MAX 32
+#define FIND_NODES 128
+#define FIND_BATCHES 2
+#define FIND_BATCH_WORDS 256
+#define FIND_BATCH_BYTES 32768
 
 typedef struct
 {
         p8 kind;
-        string_address text;
-        b64 number;
         p8 unit;
         p8 comparison;
-} find_test;
+        b32 left;
+        b32 right;
+        string_address text;
+        b64 number;
+        b64 extra;
+} find_node;
 
-static find_test find_tests[FIND_TESTS_MAX];
-static positive find_have;
+typedef struct
+{
+        b32 node;
+        positive words;
+        positive used;
+        string_address word[FIND_BATCH_WORDS + 1];
+        p8 text[FIND_BATCH_BYTES];
+} find_batch;
+
+static find_node find_nodes[FIND_NODES];
+static positive find_used;
+static b32 find_root = -1;
+static bool find_bad;
+static bool find_has_action;
+
+static find_batch find_batches[FIND_BATCHES];
+static positive find_batch_have;
+
+static p8 find_exec_text[FIND_BATCH_BYTES];
+static string_address find_exec_words[FIND_BATCH_WORDS + 1];
+
+static positive find_at;
+static positive find_count;
+
 static positive find_maximum = FILE_MAX_DEPTH;
 static positive find_minimum;
+static bool find_deepest;
+static bool find_one_system;
+static bool find_follow;
+static bool find_follow_named;
+static bool find_quit;
+static bool find_pruned;
 static b32 find_status;
+static b64 find_moment;
+static p64 find_device;
 
-static bool find_size_holds(find_test address_to test, file_facts address_to facts)
+static string_address find_path;
+static string_address find_name;
+static file_facts address_to find_facts;
+static positive find_depth;
+
+static bool find_size_holds(find_node address_to test, file_facts address_to facts)
 {
         p64 divisor = 512;
 
@@ -2996,220 +3163,993 @@ static bool find_empty(string_address path, file_facts address_to facts)
         return empty;
 }
 
-static bool find_holds(string_address path, string_address name, file_facts address_to facts,
-                       positive depth)
+// Building the tree -------------------------------------------------
+
+static b32 find_make(p8 kind)
 {
-        if (depth < find_minimum)
-                return false;
-
-        for (positive i = 0; i < find_have; i++)
+        if (find_used >= FIND_NODES)
         {
-                find_test address_to test = address_of find_tests[i];
-
-                if (test->kind == 'n' && !file_match(test->text, name))
-                        return false;
-
-                if (test->kind == 'p' && !file_match(test->text, path))
-                        return false;
-
-                if (test->kind == 't' && !find_type_holds((p8)test->number, facts->mode))
-                        return false;
-
-                if (test->kind == 's' && !find_size_holds(test, facts))
-                        return false;
-
-                if (test->kind == 'e' && !find_empty(path, facts))
-                        return false;
-
-                if (test->kind == 'm' && (facts->mode & 07777) != (positive)test->number)
-                        return false;
+                file_fail("find: expression is too long\n", 0);
+                find_bad = true;
+                return -1;
         }
 
-        return true;
+        find_node address_to node = address_of find_nodes[find_used];
+
+        memory_fill(node, 0, sizeof(find_node));
+        node->kind = kind;
+        node->left = -1;
+        node->right = -1;
+
+        return (b32)find_used++;
 }
 
-static fn find_walk(string_address path, string_address name, positive depth)
+static string_address find_word()
+{
+        return find_at < find_count ? program_argument((b32)find_at) : null;
+}
+
+static bool find_is(string_address word, string_address name)
+{
+        return word && string_compare(word, name) == 0;
+}
+
+static string_address find_value(string_address word)
+{
+        if (find_at >= find_count)
+        {
+                string_format(file_fail, "find: missing argument to %s\n", word);
+                find_bad = true;
+                return null;
+        }
+
+        return program_argument((b32)find_at++);
+}
+
+static string_address find_marked(string_address text, p8 address_to comparison)
+{
+        address_to comparison = ' ';
+
+        if (string_is(text, '+') || string_is(text, '-'))
+        {
+                address_to comparison = string_get(text);
+                text++;
+        }
+
+        return text;
+}
+
+static bool find_holds_count(p8 comparison, b64 value, b64 wanted)
+{
+        if (comparison == '+')
+                return value > wanted;
+
+        if (comparison == '-')
+                return value < wanted;
+
+        return value == wanted;
+}
+
+static fn find_lowered(string_address text, p8 address_to into)
+{
+        positive i = 0;
+
+        while (string_get(text + i) && i < FILE_PATH_MAX - 1)
+        {
+                into[i] = file_lower(string_get(text + i));
+                i++;
+        }
+
+        into[i] = end;
+}
+
+static b32 find_parse_or();
+
+// A time in whole units, the way find counts one: the fraction is dropped, so
+// a file touched thirty hours ago is one day old and not two.
+static b64 find_age(p8 which, b64 scale)
+{
+        file_moment address_to stamp = which == 'a'   ? address_of find_facts->accessed
+                                       : which == 'c' ? address_of find_facts->changed
+                                                      : address_of find_facts->modified;
+
+        return (find_moment - stamp->seconds) / scale;
+}
+
+static b32 find_parse_primary()
+{
+        string_address word = find_word();
+
+        if (!word)
+                return -1;
+
+        if (find_is(word, (string_address) "("))
+        {
+                find_at++;
+
+                b32 inside = find_parse_or();
+
+                if (find_bad)
+                        return -1;
+
+                if (!find_is(find_word(), (string_address) ")"))
+                {
+                        file_fail("find: expected ')'\n", 0);
+                        find_bad = true;
+                        return -1;
+                }
+
+                find_at++;
+
+                return inside;
+        }
+
+        if (find_is(word, (string_address) "!") || find_is(word, (string_address) "-not"))
+        {
+                find_at++;
+
+                b32 node = find_make('!');
+                b32 under = find_parse_primary();
+
+                if (find_bad || node < 0 || under < 0)
+                {
+                        find_bad = true;
+                        return -1;
+                }
+
+                find_nodes[node].left = under;
+
+                return node;
+        }
+
+        find_at++;
+
+        // The options that say how the walk goes rather than what holds. Each
+        // is true wherever it stands, which is how find has always let them
+        // be written in the middle of an expression.
+        if (find_is(word, (string_address) "-maxdepth") ||
+            find_is(word, (string_address) "-mindepth"))
+        {
+                string_address value = find_value(word);
+
+                if (!value)
+                        return -1;
+
+                if (string_is(word + 2, 'a'))
+                        find_maximum = file_count(value);
+                else
+                        find_minimum = file_count(value);
+
+                return find_make('v');
+        }
+
+        if (find_is(word, (string_address) "-depth"))
+        {
+                find_deepest = true;
+                return find_make('v');
+        }
+
+        if (find_is(word, (string_address) "-xdev") ||
+            find_is(word, (string_address) "-mount"))
+        {
+                find_one_system = true;
+                return find_make('v');
+        }
+
+        if (find_is(word, (string_address) "-follow"))
+        {
+                find_follow = true;
+                return find_make('v');
+        }
+
+        if (find_is(word, (string_address) "-true"))
+                return find_make('v');
+
+        if (find_is(word, (string_address) "-false"))
+                return find_make('f');
+
+        if (find_is(word, (string_address) "-print"))
+        {
+                find_has_action = true;
+                return find_make('d');
+        }
+
+        if (find_is(word, (string_address) "-print0"))
+        {
+                find_has_action = true;
+                return find_make('0');
+        }
+
+        if (find_is(word, (string_address) "-delete"))
+        {
+                find_has_action = true;
+                find_deepest = true;
+                return find_make('D');
+        }
+
+        if (find_is(word, (string_address) "-prune"))
+                return find_make('r');
+
+        if (find_is(word, (string_address) "-quit"))
+                return find_make('q');
+
+        if (find_is(word, (string_address) "-empty"))
+                return find_make('y');
+
+        if (find_is(word, (string_address) "-nouser"))
+                return find_make('U');
+
+        if (find_is(word, (string_address) "-nogroup"))
+                return find_make('G');
+
+        if (find_is(word, (string_address) "-exec"))
+        {
+                b32 node = find_make('x');
+
+                if (node < 0)
+                        return -1;
+
+                find_nodes[node].number = (b64)find_at;
+
+                while (find_at < find_count &&
+                       !find_is(find_word(), (string_address) ";") &&
+                       !find_is(find_word(), (string_address) "+"))
+                        find_at++;
+
+                if (find_at >= find_count)
+                {
+                        file_fail("find: -exec has no ending ; or +\n", 0);
+                        find_bad = true;
+                        return -1;
+                }
+
+                bool many = find_is(find_word(), (string_address) "+");
+
+                find_nodes[node].extra = (b64)find_at;
+                find_nodes[node].comparison = many ? '+' : ';';
+                find_at++;
+
+                if (many)
+                {
+                        // The + form appends the names where the {} stands,
+                        // so the {} has to be the last word of the template
+                        // and nowhere else.
+                        if (find_nodes[node].extra == find_nodes[node].number ||
+                            !find_is(program_argument((b32)(find_nodes[node].extra - 1)),
+                                     (string_address) "{}"))
+                        {
+                                file_fail("find: -exec ... + needs {} just before the +\n", 0);
+                                find_bad = true;
+                                return -1;
+                        }
+
+                        find_nodes[node].extra--;
+
+                        if (find_batch_have >= FIND_BATCHES)
+                        {
+                                file_fail("find: too many -exec ... + in one expression\n", 0);
+                                find_bad = true;
+                                return -1;
+                        }
+
+                        find_batches[find_batch_have].node = node;
+                        find_nodes[node].unit = (p8)find_batch_have++;
+                }
+
+                find_has_action = true;
+
+                return node;
+        }
+
+        if (find_is(word, (string_address) "-name") ||
+            find_is(word, (string_address) "-iname") ||
+            find_is(word, (string_address) "-path") ||
+            find_is(word, (string_address) "-wholename") ||
+            find_is(word, (string_address) "-ipath") ||
+            find_is(word, (string_address) "-lname"))
+        {
+                string_address value = find_value(word);
+
+                if (!value)
+                        return -1;
+
+                p8 kind = find_is(word, (string_address) "-name")    ? 'n'
+                          : find_is(word, (string_address) "-iname") ? 'N'
+                          : find_is(word, (string_address) "-ipath") ? 'P'
+                          : find_is(word, (string_address) "-lname") ? 'L'
+                                                                     : 'p';
+
+                b32 node = find_make(kind);
+
+                if (node >= 0)
+                        find_nodes[node].text = value;
+
+                return node;
+        }
+
+        if (find_is(word, (string_address) "-type"))
+        {
+                string_address value = find_value(word);
+
+                if (!value)
+                        return -1;
+
+                b32 node = find_make('t');
+
+                if (node >= 0)
+                        find_nodes[node].number = string_get(value);
+
+                return node;
+        }
+
+        if (find_is(word, (string_address) "-perm"))
+        {
+                string_address value = find_value(word);
+
+                if (!value)
+                        return -1;
+
+                p8 how = ' ';
+
+                if (string_is(value, '-') || string_is(value, '/'))
+                {
+                        how = string_get(value);
+                        value++;
+                }
+
+                positive mode = 0;
+
+                if (!file_mode_of(value, 0, false, address_of mode))
+                {
+                        string_format(file_fail, "find: invalid mode %s\n", value);
+                        find_bad = true;
+                        return -1;
+                }
+
+                b32 node = find_make('m');
+
+                if (node >= 0)
+                {
+                        find_nodes[node].number = (b64)mode;
+                        find_nodes[node].comparison = how;
+                }
+
+                return node;
+        }
+
+        if (find_is(word, (string_address) "-size"))
+        {
+                string_address value = find_value(word);
+
+                if (!value)
+                        return -1;
+
+                b32 node = find_make('z');
+
+                if (node < 0)
+                        return -1;
+
+                p8 how;
+                string_address step = find_marked(value, address_of how);
+
+                find_nodes[node].comparison = how;
+                find_nodes[node].number = (b64)file_count(step);
+
+                while (string_get(step) >= '0' && string_get(step) <= '9')
+                        step++;
+
+                find_nodes[node].unit = string_get(step) ? string_get(step) : 'b';
+
+                return node;
+        }
+
+        if (find_is(word, (string_address) "-links") ||
+            find_is(word, (string_address) "-inum"))
+        {
+                string_address value = find_value(word);
+
+                if (!value)
+                        return -1;
+
+                b32 node = find_make(find_is(word, (string_address) "-links") ? 'k' : 'i');
+
+                if (node < 0)
+                        return -1;
+
+                p8 how;
+                string_address step = find_marked(value, address_of how);
+
+                find_nodes[node].comparison = how;
+                find_nodes[node].number = (b64)file_count(step);
+
+                return node;
+        }
+
+        if (find_is(word, (string_address) "-mtime") ||
+            find_is(word, (string_address) "-atime") ||
+            find_is(word, (string_address) "-ctime") ||
+            find_is(word, (string_address) "-mmin") ||
+            find_is(word, (string_address) "-amin") ||
+            find_is(word, (string_address) "-cmin"))
+        {
+                string_address value = find_value(word);
+
+                if (!value)
+                        return -1;
+
+                b32 node = find_make('T');
+
+                if (node < 0)
+                        return -1;
+
+                p8 how;
+                string_address step = find_marked(value, address_of how);
+
+                find_nodes[node].comparison = how;
+                find_nodes[node].number = (b64)file_count(step);
+                find_nodes[node].unit = string_get(word + 1);
+                find_nodes[node].extra = string_is(word + 2, 't') ? 86400 : 60;
+
+                return node;
+        }
+
+        if (find_is(word, (string_address) "-user") ||
+            find_is(word, (string_address) "-uid") ||
+            find_is(word, (string_address) "-group") ||
+            find_is(word, (string_address) "-gid"))
+        {
+                string_address value = find_value(word);
+
+                if (!value)
+                        return -1;
+
+                bool group = string_is(word + 1, 'g');
+                bipolar who = file_all_digits(value)
+                                  ? (bipolar)file_count(value)
+                                  : (group ? file_group_id(value) : file_user_id(value));
+
+                if (who < 0)
+                {
+                        string_format(file_fail, "find: '%s' is not the name of a known %s\n",
+                                      value,
+                                      group ? (string_address) "group"
+                                            : (string_address) "user");
+                        find_bad = true;
+                        return -1;
+                }
+
+                b32 node = find_make(group ? 'g' : 'u');
+
+                if (node >= 0)
+                        find_nodes[node].number = (b64)who;
+
+                return node;
+        }
+
+        if (find_is(word, (string_address) "-newer") ||
+            find_is(word, (string_address) "-newermt"))
+        {
+                string_address value = find_value(word);
+
+                if (!value)
+                        return -1;
+
+                b64 when;
+
+                if (find_is(word, (string_address) "-newermt"))
+                {
+                        if (!file_moment_read(value, find_moment, address_of when))
+                        {
+                                string_format(file_fail, "find: invalid date '%s'\n", value);
+                                find_bad = true;
+                                return -1;
+                        }
+                }
+                else
+                {
+                        file_facts facts;
+
+                        if (!file_look_at(value, address_of facts))
+                        {
+                                string_format(file_fail,
+                                              "find: '%s': No such file or directory\n", value);
+                                find_bad = true;
+                                return -1;
+                        }
+
+                        when = facts.modified.seconds;
+                }
+
+                b32 node = find_make('w');
+
+                if (node >= 0)
+                        find_nodes[node].number = when;
+
+                return node;
+        }
+
+        string_format(file_fail, "find: unknown predicate: %s\n", word);
+        find_bad = true;
+
+        return -1;
+}
+
+static b32 find_parse_and()
+{
+        b32 left = find_parse_primary();
+
+        if (find_bad)
+                return -1;
+
+        while (1)
+        {
+                string_address word = find_word();
+
+                if (find_is(word, (string_address) "-a") ||
+                    find_is(word, (string_address) "-and"))
+                {
+                        find_at++;
+                        word = find_word();
+                }
+                else if (!word || find_is(word, (string_address) ")") ||
+                         find_is(word, (string_address) "-o") ||
+                         find_is(word, (string_address) "-or"))
+                        break;
+
+                b32 right = find_parse_primary();
+
+                if (find_bad)
+                        return -1;
+
+                b32 node = find_make('&');
+
+                if (node < 0)
+                        return -1;
+
+                find_nodes[node].left = left;
+                find_nodes[node].right = right;
+                left = node;
+        }
+
+        return left;
+}
+
+static b32 find_parse_or()
+{
+        b32 left = find_parse_and();
+
+        if (find_bad)
+                return -1;
+
+        while (find_is(find_word(), (string_address) "-o") ||
+               find_is(find_word(), (string_address) "-or"))
+        {
+                find_at++;
+
+                b32 right = find_parse_and();
+
+                if (find_bad)
+                        return -1;
+
+                b32 node = find_make('|');
+
+                if (node < 0)
+                        return -1;
+
+                find_nodes[node].left = left;
+                find_nodes[node].right = right;
+                left = node;
+        }
+
+        return left;
+}
+
+// Running it --------------------------------------------------------
+
+static fn find_batch_run(positive slot)
+{
+        find_batch address_to batch = address_of find_batches[slot];
+
+        if (!batch->words)
+                return;
+
+        find_node address_to node = address_of find_nodes[batch->node];
+        positive have = 0;
+
+        for (b32 i = (b32)node->number; i < (b32)node->extra; i++)
+                find_exec_words[have++] = program_argument(i);
+
+        for (positive i = 0; i < batch->words && have < FIND_BATCH_WORDS; i++)
+                find_exec_words[have++] = batch->word[i];
+
+        find_exec_words[have] = null;
+
+        if (file_run(find_exec_words) != 0)
+                find_status = 1;
+
+        batch->words = 0;
+        batch->used = 0;
+}
+
+static fn find_batch_add(find_node address_to node, string_address path)
+{
+        find_batch address_to batch = address_of find_batches[node->unit];
+        positive length = string_length(path);
+        positive room = (b32)node->extra - (b32)node->number;
+
+        if (batch->words + room + 2 > FIND_BATCH_WORDS ||
+            batch->used + length + 1 > FIND_BATCH_BYTES)
+                find_batch_run(node->unit);
+
+        memory_copy(batch->text + batch->used, path, length);
+        batch->text[batch->used + length] = end;
+        batch->word[batch->words++] = batch->text + batch->used;
+        batch->used += length + 1;
+}
+
+static bool find_exec_once(find_node address_to node)
+{
+        positive used = 0;
+        positive have = 0;
+
+        for (b32 i = (b32)node->number; i < (b32)node->extra; i++)
+        {
+                string_address word = program_argument(i);
+                positive at = used;
+
+                for (positive k = 0; string_get(word + k);)
+                {
+                        if (string_is(word + k, '{') && string_is(word + k + 1, '}'))
+                        {
+                                for (positive j = 0; string_get(find_path + j); j++)
+                                        if (used < FIND_BATCH_BYTES - 1)
+                                                find_exec_text[used++] = string_get(find_path + j);
+
+                                k += 2;
+                                continue;
+                        }
+
+                        if (used < FIND_BATCH_BYTES - 1)
+                                find_exec_text[used++] = string_get(word + k);
+
+                        k++;
+                }
+
+                find_exec_text[used++] = end;
+
+                if (have < FIND_BATCH_WORDS)
+                        find_exec_words[have++] = find_exec_text + at;
+        }
+
+        find_exec_words[have] = null;
+
+        return file_run(find_exec_words) == 0;
+}
+
+static bool find_true(b32 which)
+{
+        if (which < 0)
+                return true;
+
+        find_node address_to node = address_of find_nodes[which];
+        p8 name[FILE_PATH_MAX];
+        p8 pattern[FILE_PATH_MAX];
+
+        switch (node->kind)
+        {
+        case '&':
+                return find_true(node->left) && find_true(node->right);
+
+        case '|':
+                return find_true(node->left) || find_true(node->right);
+
+        case '!':
+                return !find_true(node->left);
+
+        case 'v':
+                return true;
+
+        case 'f':
+                return false;
+
+        case 'n':
+                return file_match(node->text, find_name);
+
+        case 'p':
+                return file_match(node->text, find_path);
+
+        case 'N':
+        case 'P':
+                find_lowered(node->kind == 'N' ? find_name : find_path, name);
+                find_lowered(node->text, pattern);
+                return file_match(pattern, name);
+
+        case 'L':
+                if ((find_facts->mode & MODE_FORMAT) != MODE_LINK)
+                        return false;
+
+                if (file_link_text(find_path, name, FILE_PATH_MAX) < 0)
+                        return false;
+
+                return file_match(node->text, name);
+
+        case 't':
+                return find_type_holds((p8)node->number, find_facts->mode);
+
+        case 'z':
+                return find_size_holds(node, find_facts);
+
+        case 'y':
+                return find_empty(find_path, find_facts);
+
+        case 'm':
+                if (node->comparison == '-')
+                        return ((positive)find_facts->mode & (positive)node->number) ==
+                               (positive)node->number;
+
+                if (node->comparison == '/')
+                        return ((positive)find_facts->mode & (positive)node->number) != 0;
+
+                return (find_facts->mode & 07777) == (positive)node->number;
+
+        case 'u':
+                return find_facts->owner == (positive)node->number;
+
+        case 'g':
+                return find_facts->group == (positive)node->number;
+
+        case 'U':
+                return !file_user_name(find_facts->owner, name, FILE_NAME_MAX);
+
+        case 'G':
+                return !file_group_name(find_facts->group, name, FILE_NAME_MAX);
+
+        case 'k':
+                return find_holds_count(node->comparison, find_facts->hard_links,
+                                        node->number);
+
+        case 'i':
+                return find_holds_count(node->comparison, (b64)find_facts->inode,
+                                        node->number);
+
+        case 'T':
+                return find_holds_count(node->comparison,
+                                        find_age(node->unit, node->extra), node->number);
+
+        case 'w':
+                if (find_facts->modified.seconds != node->number)
+                        return find_facts->modified.seconds > node->number;
+
+                return find_facts->modified.nanoseconds > 0;
+
+        case 'd':
+                file_line(find_path);
+                return true;
+
+        case '0':
+                log(find_path, 0);
+                log("\0", 1);
+                return true;
+
+        case 'r':
+                find_pruned = true;
+                return true;
+
+        case 'q':
+                find_quit = true;
+                return true;
+
+        case 'D':
+        {
+                bipolar gone = system_call_3(
+                    syscall(unlinkat), AT_FDCWD, (positive)find_path,
+                    (find_facts->mode & MODE_FORMAT) == MODE_DIRECTORY ? AT_REMOVEDIR : 0);
+
+                if (gone < 0)
+                {
+                        string_format(file_fail, "find: cannot delete '%s': %s\n", find_path,
+                                      file_reason(gone));
+                        find_status = 1;
+                        return false;
+                }
+
+                return true;
+        }
+
+        case 'x':
+                if (node->comparison == '+')
+                {
+                        find_batch_add(node, find_path);
+                        return true;
+                }
+
+                return find_exec_once(node);
+        }
+
+        return false;
+}
+
+static fn find_walk(string_address path, string_address name, positive depth, bool named)
 {
         file_facts facts;
+        bool follow = find_follow || (find_follow_named && named);
 
-        if (!file_look_link(path, address_of facts))
+        if (find_quit)
+                return;
+
+        if (!(follow ? file_look_at(path, address_of facts)
+                     : file_look_link(path, address_of facts)))
         {
                 string_format(file_fail, "find: '%s': No such file or directory\n", path);
                 find_status = 1;
                 return;
         }
 
-        if (find_holds(path, name, address_of facts, depth))
-                file_line(path);
+        if (named)
+                find_device = ((p64)facts.device_major << 32) | facts.device_minor;
 
-        if ((facts.mode & MODE_FORMAT) != MODE_DIRECTORY || depth >= find_maximum)
-                return;
+        bool directory = (facts.mode & MODE_FORMAT) == MODE_DIRECTORY;
+        bool wanted = depth >= find_minimum && depth <= find_maximum;
 
-        file_walk walk;
+        find_path = path;
+        find_name = name;
+        find_facts = address_of facts;
+        find_depth = depth;
+        find_pruned = false;
 
-        if (!file_walk_open(address_of walk, AT_FDCWD, path))
+        if (!find_deepest && wanted)
+                find_true(find_root);
+
+        bool descend = directory && depth < find_maximum && !find_pruned && !find_quit;
+
+        if (descend && find_one_system &&
+            (((p64)facts.device_major << 32) | facts.device_minor) != find_device)
+                descend = false;
+
+        if (descend)
         {
-                string_format(file_fail, "find: '%s': Permission denied\n", path);
-                find_status = 1;
-                return;
+                file_walk walk;
+
+                if (!file_walk_open(address_of walk, AT_FDCWD, path))
+                {
+                        string_format(file_fail, "find: '%s': Permission denied\n", path);
+                        find_status = 1;
+                }
+                else
+                {
+                        struct linux_dirent64 address_to entry;
+
+                        while (!find_quit && (entry = file_walk_next(address_of walk)))
+                        {
+                                if (file_is_dot(entry->d_name))
+                                        continue;
+
+                                p8 below[FILE_PATH_MAX];
+                                p8 held[FILE_NAME_MAX];
+
+                                string_copy_max(held, entry->d_name, FILE_NAME_MAX - 1);
+                                held[FILE_NAME_MAX - 1] = end;
+
+                                file_join(below, FILE_PATH_MAX, path, held);
+
+                                find_walk(below, held, depth + 1, false);
+                        }
+
+                        file_walk_close(address_of walk);
+                }
         }
 
-        struct linux_dirent64 address_to entry;
-
-        while ((entry = file_walk_next(address_of walk)))
+        if (find_deepest && wanted && !find_quit)
         {
-                if (file_is_dot(entry->d_name))
-                        continue;
+                // The walk above wrote over all of these on its way down.
+                find_path = path;
+                find_name = name;
+                find_facts = address_of facts;
+                find_depth = depth;
 
-                p8 below[FILE_PATH_MAX];
-                p8 held[FILE_NAME_MAX];
-
-                string_copy_max(held, entry->d_name, FILE_NAME_MAX - 1);
-                held[FILE_NAME_MAX - 1] = end;
-
-                file_join(below, FILE_PATH_MAX, path, held);
-
-                find_walk(below, held, depth + 1);
+                find_true(find_root);
         }
-
-        file_walk_close(address_of walk);
 }
 
 static b32 file_find()
 {
         positive count = (positive)program_argument_count();
         positive index = 1;
-        positive roots_first = 1;
-        positive roots_last = 1;
 
-        while (index < count && !string_is(program_argument((b32)index), '-'))
-                index++;
-
-        roots_last = index;
+        find_moment = file_now();
 
         while (index < count)
         {
                 string_address word = program_argument((b32)index);
-                string_address value = index + 1 < count ? program_argument((b32)(index + 1)) : null;
 
-                if (string_compare(word, (string_address) "-print") == 0 ||
-                    string_compare(word, (string_address) "-print0") == 0)
+                if (find_is(word, (string_address) "-H"))
                 {
-                        index++;
-                        continue;
+                        find_follow_named = true;
+                        find_follow = false;
                 }
-
-                if (string_compare(word, (string_address) "-empty") == 0)
+                else if (find_is(word, (string_address) "-L"))
+                        find_follow = true;
+                else if (find_is(word, (string_address) "-P"))
                 {
-                        if (find_have < FIND_TESTS_MAX)
-                                find_tests[find_have++].kind = 'e';
-
-                        index++;
-                        continue;
-                }
-
-                if (!value)
-                {
-                        string_format(file_fail, "find: %s needs a value\n", word);
-                        return 1;
-                }
-
-                if (string_compare(word, (string_address) "-maxdepth") == 0)
-                {
-                        find_maximum = file_count(value);
-                        index += 2;
-                        continue;
-                }
-
-                if (string_compare(word, (string_address) "-mindepth") == 0)
-                {
-                        find_minimum = file_count(value);
-                        index += 2;
-                        continue;
-                }
-
-                if (find_have >= FIND_TESTS_MAX)
-                {
-                        file_fail("find: too many tests\n", 0);
-                        return 1;
-                }
-
-                find_test address_to test = address_of find_tests[find_have];
-
-                if (string_compare(word, (string_address) "-name") == 0)
-                {
-                        test->kind = 'n';
-                        test->text = value;
-                }
-                else if (string_compare(word, (string_address) "-path") == 0 ||
-                         string_compare(word, (string_address) "-wholename") == 0)
-                {
-                        test->kind = 'p';
-                        test->text = value;
-                }
-                else if (string_compare(word, (string_address) "-type") == 0)
-                {
-                        test->kind = 't';
-                        test->number = string_get(value);
-                }
-                else if (string_compare(word, (string_address) "-perm") == 0)
-                {
-                        positive mode = 0;
-
-                        if (!file_mode_of(value, 0, false, address_of mode))
-                        {
-                                string_format(file_fail, "find: invalid mode %s\n", value);
-                                return 1;
-                        }
-
-                        test->kind = 'm';
-                        test->number = (b64)mode;
-                }
-                else if (string_compare(word, (string_address) "-size") == 0)
-                {
-                        string_address step = value;
-
-                        test->kind = 's';
-                        test->comparison = ' ';
-
-                        if (string_is(step, '+') || string_is(step, '-'))
-                        {
-                                test->comparison = string_get(step);
-                                step++;
-                        }
-
-                        test->number = (b64)file_count(step);
-
-                        while (string_get(step) >= '0' && string_get(step) <= '9')
-                                step++;
-
-                        test->unit = string_get(step) ? string_get(step) : 'b';
+                        find_follow = false;
+                        find_follow_named = false;
                 }
                 else
-                {
-                        string_format(file_fail, "find: unknown test: %s\n", word);
-                        return 1;
-                }
+                        break;
 
-                find_have++;
-                index += 2;
+                index++;
+        }
+
+        positive roots_first = index;
+
+        while (index < count)
+        {
+                string_address word = program_argument((b32)index);
+
+                if (string_is(word, '-') && string_get(word + 1))
+                        break;
+
+                if (find_is(word, (string_address) "(") ||
+                    find_is(word, (string_address) ")") ||
+                    find_is(word, (string_address) "!"))
+                        break;
+
+                index++;
+        }
+
+        positive roots_last = index;
+
+        find_at = index;
+        find_count = count;
+        find_root = find_parse_or();
+
+        if (find_bad)
+                return 1;
+
+        if (find_at < count)
+        {
+                string_format(file_fail, "find: paths must precede expression: %s\n",
+                              program_argument((b32)find_at));
+                return 1;
+        }
+
+        // The -print that is only there when nothing else acts.
+        if (!find_has_action)
+        {
+                b32 said = find_make('d');
+
+                if (said < 0)
+                        return 1;
+
+                if (find_root < 0)
+                        find_root = said;
+                else
+                {
+                        b32 both = find_make('&');
+
+                        if (both < 0)
+                                return 1;
+
+                        find_nodes[both].left = find_root;
+                        find_nodes[both].right = said;
+                        find_root = both;
+                }
         }
 
         if (roots_last == roots_first)
-        {
-                find_walk((string_address) ".", (string_address) ".", 0);
-                log_flush();
-                return find_status;
-        }
+                find_walk((string_address) ".", (string_address) ".", 0, true);
+        else
+                for (positive i = roots_first; i < roots_last && !find_quit; i++)
+                {
+                        string_address root = program_argument((b32)i);
+                        p8 name[FILE_PATH_MAX];
 
-        for (positive i = roots_first; i < roots_last; i++)
-        {
-                string_address root = program_argument((b32)i);
-                p8 name[FILE_PATH_MAX];
+                        file_tail(root, name);
+                        find_walk(root, name, 0, true);
+                }
 
-                file_tail(root, name);
-                find_walk(root, name, 0);
-        }
+        for (positive i = 0; i < find_batch_have; i++)
+                find_batch_run(i);
 
         log_flush();
 
@@ -8386,21 +9326,13 @@ static b32 file_date()
         its own kind again with nothing special inside. -0 has none of that
         and reads to the next zero byte, which is what find -print0 is for.
 
-        Running is a fork and an execve with the path walked here, because a
-        utility is not the shell and cannot ask it where a name lives.
+        Running is file_run's fork and execve, which find -exec uses too.
 */
 #define XARGS_BYTES 131072
 #define XARGS_WORDS 2048
 #define XARGS_ITEM 8192
 #define XARGS_TEMPLATE 8192
 #define XARGS_BLOCK 65536
-#define XARGS_ENV 512
-
-// Declared here rather than reached for: builtin.c is included after this
-// file, and a utility that runs a command needs what the shell knows about
-// where commands are and what environment they get.
-string_address env_get(const_string name);
-extern string_address shell_envp[];
 
 static p8 xargs_bytes[XARGS_BYTES];
 static positive xargs_used;
@@ -8414,7 +9346,6 @@ static positive xargs_template_used;
 static p8 xargs_item[XARGS_ITEM];
 static positive xargs_item_length;
 static p8 xargs_buffer[XARGS_BLOCK];
-static string_address xargs_env[XARGS_ENV + 1];
 
 static bool xargs_null;
 static bool xargs_trace;
@@ -8428,24 +9359,6 @@ static bool xargs_done;
 static bool xargs_ended;
 static bool xargs_ran;
 static positive xargs_line_count;
-
-static string_address address_to xargs_environment()
-{
-        positive count = 0;
-
-        if (shell_envp[0])
-                return shell_envp;
-
-        while (count < XARGS_ENV && program_environment((b32)count))
-        {
-                xargs_env[count] = program_environment((b32)count);
-                count++;
-        }
-
-        xargs_env[count] = null;
-
-        return xargs_env;
-}
 
 static bool xargs_add(string_address text, positive length)
 {
@@ -8471,62 +9384,7 @@ static bool xargs_add(string_address text, positive length)
 */
 static fn xargs_exec()
 {
-        string_address address_to environment = xargs_environment();
-        string_address name = xargs_words[0];
-        string_address path = env_get("PATH");
-        p8 candidate[FILE_PATH_MAX];
-        bool denied = false;
-
-        if (string_first_of(name, '/'))
-        {
-                bipolar answer = system_call_3(syscall(execve), (positive)name,
-                                               (positive)xargs_words,
-                                               (positive)environment);
-
-                exit(answer == -ERROR_ACCESS ? 126 : 127);
-        }
-
-        if (!path)
-                path = file_environment("PATH");
-
-        if (!path || !string_get(path))
-                path = "/bin:/usr/bin:/";
-
-        while (string_get(path))
-        {
-                positive length = 0;
-
-                while (string_get(path) && string_get(path) != ':')
-                {
-                        if (length < FILE_PATH_MAX - 2)
-                                candidate[length++] = string_get(path);
-
-                        path++;
-                }
-
-                if (string_get(path))
-                        path++;
-
-                // An empty element is this directory, which is what a leading
-                // or a doubled colon in PATH means.
-                if (!length)
-                        candidate[length++] = '.';
-
-                if (candidate[length - 1] != '/')
-                        candidate[length++] = '/';
-
-                for (positive i = 0; string_get(name + i) && length < FILE_PATH_MAX - 1; i++)
-                        candidate[length++] = string_get(name + i);
-
-                candidate[length] = end;
-
-                if (system_call_3(syscall(execve), (positive)candidate,
-                                  (positive)xargs_words,
-                                  (positive)environment) == -ERROR_ACCESS)
-                        denied = true;
-        }
-
-        exit(denied ? 126 : 127);
+        file_exec_path(xargs_words);
 }
 
 static fn xargs_run()
