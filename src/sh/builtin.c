@@ -54,8 +54,17 @@ fn shell_execute_command();
 fn parse_nest_enter() __attribute__((weak));
 fn parse_nest_leave() __attribute__((weak));
 
+#define SHELL_DIRECTORY_MAX 4096
+
+extern p8 shell_directory[SHELL_DIRECTORY_MAX];
+
 b32 shell_find_in_path(string_address name, p8 address_to into, positive room);
 bipolar shell_signed(string_address input, bool address_to good);
+bool test_facts(string_address path, file_facts address_to out, bool follow);
+bool word_is(string_address word, string_address text);
+p64 test_device(file_facts address_to facts);
+fn hash_forget();
+fn shell_here(p8 address_to into, positive room);
 
 /*
         The set flags, remembered but not obeyed.
@@ -107,7 +116,8 @@ fn shell_env_init()
         env_used = 0;
 
         // Programs live at the root of the image, so it is on the path.
-        string_address defaults[] = {"PATH=/bin:/usr/bin:/", "SHELL=/bin/sh", null};
+        string_address defaults[] = {"PATH=/bin:/usr/bin:/", "SHELL=/bin/sh",
+                                     "OPTIND=1", null};
 
         positive idx = 0;
         positive i = 0;
@@ -122,6 +132,12 @@ fn shell_env_init()
         }
 
         shell_envp[idx] = null;
+
+        // Where the shell is, before anything asks. cd keeps it from here on;
+        // without a first answer, PWD is empty until the first cd and a script
+        // that names a file relative to it names nothing.
+        shell_here(shell_directory, sizeof(shell_directory));
+        env_set("PWD", shell_directory);
 }
 
 /*
@@ -218,6 +234,10 @@ bool env_set(const_string name, const_string value)
 
         if (env_readonly(name))
                 return false;
+
+        // Every path remembered was an answer about the old PATH.
+        if (!string_compare(env_reading(name), "PATH"))
+                hash_forget();
 
         positive name_len = string_length(env_reading(name));
         positive value_len = string_length(env_reading(value));
@@ -460,51 +480,365 @@ fn shell_number_padded(writer write, positive value, positive width)
                 write(digits + --length, 1);
 }
 
-fn shell_export(writer write, string_address input)
+/*
+        A value written so it can be read back.
+
+        Single quoted, and a single quote inside it closed, escaped and opened
+        again: 'it'\''s'. Anything printed by export -p or readonly -p is meant
+        to be a line the shell could be fed.
+*/
+fn shell_quoted(writer write, string_address value)
 {
-        if (input == null)
+        write("'", 1);
+
+        while (value && string_get(value))
         {
-                positive idx = 0;
-                while (shell_envp[idx])
-                {
-                        string_format(write, "export %s\n", shell_envp[idx]);
-                        idx++;
-                }
-                return;
+                if (string_is(value, '\''))
+                        write("'\\''", 4);
+                else
+                        write(value, 1);
+
+                value++;
         }
 
-        string_address eq = string_first_of(input, '=');
-        if (!eq)
-                return shell_diagnostic(str("export: invalid format (use NAME=value)\n"));
-
-        if (eq == input)
-                return shell_diagnostic(str("export: missing variable name\n"));
-
-        *eq = end;
-        env_set(input, eq + 1);
-        *eq = '=';
+        write("'", 1);
 }
 
+fn shell_named_written(writer write, string_address word, string_address entry)
+{
+        string_address mark = string_first_of(entry, '=');
 
+        string_format(write, "%s ", word);
 
+        if (!mark)
+                return string_format(write, "%s\n", entry);
 
-// TODOs:
-// - "cd -" aka cd $OLDPWD, and handle ~
+        write(entry, (positive)(mark - entry));
+        write("=", 1);
+        shell_quoted(write, mark + 1);
+        write("\n", 1);
+}
+
+fn shell_export(writer write, string_address input)
+{
+        positive index = 1;
+        bool listed = shell_argc < 2;
+
+        while (index < shell_argc && word_is(shell_argv[index], "-p"))
+        {
+                listed = true;
+                index++;
+        }
+
+        if (listed && index >= shell_argc)
+        {
+                positive at = 0;
+
+                while (shell_envp[at])
+                        shell_named_written(write, "export", shell_envp[at++]);
+
+                return shell_answer(0);
+        }
+
+        while (index < shell_argc)
+        {
+                string_address word = shell_argv[index++];
+                string_address mark = string_first_of(word, '=');
+
+                // A name on its own is already exported here: every variable
+                // this shell has is in the block the environment is made of.
+                if (!mark || mark == word)
+                        continue;
+
+                address_to mark = end;
+                env_set(word, mark + 1);
+                address_to mark = '=';
+        }
+
+        shell_answer(0);
+}
+
+/*
+        The directory the shell says it is in, which is not always the one the
+        kernel would name.
+
+        A symlink walked into keeps its own name here: "cd link" then "cd .."
+        goes back to where the link was, not to the parent of what it pointed
+        at. That is the -L rule, it is the default, and it needs the path
+        remembered rather than asked for -- getcwd has already forgotten it.
+*/
+p8 shell_directory[SHELL_DIRECTORY_MAX];
+static p8 shell_directory_was[SHELL_DIRECTORY_MAX];
+
+fn shell_here(p8 address_to into, positive room)
+{
+        into[0] = end;
+        system_call_2(syscall(getcwd), (positive)into, room);
+}
+
+/*
+        The dots taken out, without asking the kernel about any of it.
+
+        Lexical on purpose: ".." after a symlink has to come off the name the
+        shell is holding, and a walk through the filesystem would answer about
+        the target instead.
+*/
+fn shell_path_tidy(p8 address_to path)
+{
+        positive read = 0;
+        positive write_at = 0;
+        bool rooted = path[0] == '/';
+
+        if (rooted)
+                path[write_at++] = '/';
+
+        while (path[read])
+        {
+                positive begin;
+                positive length;
+
+                while (path[read] == '/')
+                        read++;
+
+                begin = read;
+
+                while (path[read] && path[read] != '/')
+                        read++;
+
+                length = read - begin;
+
+                if (!length)
+                        continue;
+
+                if (length == 1 && path[begin] == '.')
+                        continue;
+
+                if (length == 2 && path[begin] == '.' && path[begin + 1] == '.')
+                {
+                        positive back = write_at;
+
+                        while (back > (rooted ? 1 : 0) && path[back - 1] != '/')
+                                back--;
+
+                        // A leading ".." in a relative name has nothing above
+                        // it to take away, so it stays.
+                        if (back > (rooted ? 1 : 0) || rooted)
+                        {
+                                write_at = back;
+
+                                if (write_at > 1 && path[write_at - 1] == '/')
+                                        write_at--;
+
+                                continue;
+                        }
+                }
+
+                if (write_at && path[write_at - 1] != '/')
+                        path[write_at++] = '/';
+
+                memory_copy(path + write_at, path + begin, length);
+                write_at += length;
+        }
+
+        if (!write_at)
+                path[write_at++] = rooted ? '/' : '.';
+
+        path[write_at] = end;
+}
+
+fn shell_path_join(p8 address_to into, positive room, string_address base,
+                   string_address name)
+{
+        positive at = 0;
+
+        while (base && string_get(base) && at + 1 < room)
+                into[at++] = string_get(base++);
+
+        if (at && into[at - 1] != '/' && at + 1 < room)
+                into[at++] = '/';
+
+        while (name && string_get(name) && at + 1 < room)
+                into[at++] = string_get(name++);
+
+        into[at] = end;
+}
+
+// PWD is only worth believing while it still names the directory the shell is
+// actually in; a chdir anywhere else leaves it a lie.
+bool shell_directory_holds()
+{
+        file_facts named;
+        file_facts here;
+
+        if (shell_directory[0] != '/')
+                return false;
+
+        if (!test_facts(shell_directory, address_of named, true) ||
+            !test_facts(".", address_of here, true))
+                return false;
+
+        return named.inode == here.inode &&
+               test_device(address_of named) == test_device(address_of here);
+}
+
+fn shell_directory_moved(string_address logical)
+{
+        string_copy_max(shell_directory_was, shell_directory,
+                        sizeof(shell_directory_was) - 1);
+        shell_directory_was[sizeof(shell_directory_was) - 1] = end;
+
+        string_copy_max(shell_directory, logical, sizeof(shell_directory) - 1);
+        shell_directory[sizeof(shell_directory) - 1] = end;
+
+        env_set("OLDPWD", shell_directory_was);
+        env_set("PWD", shell_directory);
+}
+
+static p8 shell_cd_target[4096];
+
+bool shell_cd_try(string_address candidate, bool physical)
+{
+        p8 wanted[4096];
+
+        string_copy_max(wanted, candidate, sizeof(wanted) - 1);
+        wanted[sizeof(wanted) - 1] = end;
+
+        if (!physical)
+                shell_path_tidy(wanted);
+
+        if (system_call_1(syscall(chdir), (positive)wanted))
+                return false;
+
+        if (physical)
+                shell_here(wanted, sizeof(wanted));
+
+        shell_directory_moved(wanted);
+
+        return true;
+}
+
+/*
+        Where the name asked for actually is.
+
+        An absolute name is itself; a name beginning with a dot is under the
+        directory the shell is in and nothing else; anything else is looked for
+        along CDPATH first, and a hit there is said out loud because the script
+        did not name the place it landed.
+*/
+bool shell_cd_walk(bool physical, bool address_to say)
+{
+        p8 candidate[4096];
+
+        if (shell_cd_target[0] == '/')
+                return shell_cd_try(shell_cd_target, physical);
+
+        if (!(shell_cd_target[0] == '.' &&
+              (shell_cd_target[1] == end || shell_cd_target[1] == '/' ||
+               (shell_cd_target[1] == '.' &&
+                (shell_cd_target[2] == end || shell_cd_target[2] == '/')))))
+        {
+                p8 search[1024];
+                string_address value = env_get("CDPATH");
+
+                if (value && string_get(value))
+                {
+                        string_address segment;
+
+                        string_copy_max(search, value, sizeof(search) - 1);
+                        search[sizeof(search) - 1] = end;
+                        segment = search;
+
+                        while (segment)
+                        {
+                                string_address next = string_cut(segment, ':');
+
+                                shell_path_join(candidate, sizeof(candidate),
+                                                string_get(segment) ? segment
+                                                                    : shell_directory,
+                                                shell_cd_target);
+
+                                if (shell_cd_try(candidate, physical))
+                                {
+                                        address_to say = true;
+                                        return true;
+                                }
+
+                                segment = next;
+                        }
+                }
+        }
+
+        shell_path_join(candidate, sizeof(candidate), shell_directory,
+                        shell_cd_target);
+
+        return shell_cd_try(candidate, physical);
+}
+
 fn shell_cd(writer write, string_address input)
 {
-        if (input == null)
-                input = env_get("HOME");
+        positive index = 1;
+        bool physical = false;
+        string_address name = null;
+        bool say = false;
 
-        if (input == null)
-                input = "/";
+        if (!shell_directory_holds())
+        {
+                shell_here(shell_directory, sizeof(shell_directory));
+                env_set("PWD", shell_directory);
+        }
 
-        if (!system_call_1(syscall(chdir), (positive)input))
-                return shell_answer(0);
+        while (index < shell_argc && string_is(shell_argv[index], '-') &&
+               string_get(shell_argv[index] + 1) &&
+               !string_get(shell_argv[index] + 2))
+        {
+                p8 letter = string_get(shell_argv[index] + 1);
 
-        // Two, not one: a special builtin that fails answers with two, and
-        // the reference shell does.
-        shell_answer(2);
-        string_format(shell_diagnostic, "cd: No such directory: %s\n", input);
+                if (letter != 'L' && letter != 'P')
+                        break;
+
+                physical = letter == 'P';
+                index++;
+        }
+
+        if (index < shell_argc)
+                name = shell_argv[index];
+
+        if (name && word_is(name, "--") && index + 1 < shell_argc)
+                name = shell_argv[++index];
+
+        if (!name)
+        {
+                name = env_get("HOME");
+
+                if (!name)
+                        return shell_answer(0);
+        }
+        else if (word_is(name, "-"))
+        {
+                name = env_get("OLDPWD");
+                say = true;
+
+                if (!name)
+                        name = shell_directory;
+        }
+
+        // On a copy: both HOME and OLDPWD point into env_storage, which the
+        // first env_set below is free to move out from under them.
+        string_copy_max(shell_cd_target, name, sizeof(shell_cd_target) - 1);
+        shell_cd_target[sizeof(shell_cd_target) - 1] = end;
+
+        if (!shell_cd_walk(physical, address_of say))
+        {
+                shell_answer(2);
+
+                return string_format(shell_diagnostic, "cd: can't cd to %s\n",
+                                     shell_cd_target);
+        }
+
+        if (say)
+                string_format(write, "%s\n", shell_directory);
+
+        shell_answer(0);
 }
 
 fn shell_clear(writer write, string_address input)
@@ -915,8 +1249,12 @@ bool shell_remove_into(bipolar directory, positive depth)
 fn shell_pwd(writer write, string_address input)
 {
         p8 out_buffer[4096];
+        bool physical = shell_argc > 1 && word_is(shell_argv[1], "-P");
 
-        system_call_2(syscall(getcwd), (positive)out_buffer, 4096);
+        if (!physical && shell_directory_holds())
+                return string_format(write, "%s\n", shell_directory);
+
+        shell_here(out_buffer, sizeof(out_buffer));
 
         string_format(write, "%s\n", out_buffer);
 }
@@ -1184,6 +1522,119 @@ static bool shell_parameters_set(string_address address_to words, positive count
 static fn shell_parameters_shift(positive count) {}
 #endif
 
+/*
+        The long names for the same letters.
+
+        A script writes "set -o nounset" where a terminal writes "set -u", and
+        four of the names have no letter at all. The ones that do are kept in
+        the same bits the letters use, so the two spellings cannot disagree.
+*/
+typedef struct
+{
+        string_address name;
+        p8 letter;
+} shell_option;
+
+static shell_option shell_option_names[] = {
+    {"errexit", 'e'},   {"noglob", 'f'},     {"ignoreeof", 0},
+    {"interactive", 0}, {"monitor", 'm'},    {"noexec", 'n'},
+    {"stdin", 0},       {"xtrace", 'x'},     {"verbose", 'v'},
+    {"vi", 0},          {"emacs", 0},        {"noclobber", 0},
+    {"allexport", 'a'}, {"notify", 'b'},     {"nounset", 'u'},
+    {"nolog", 0},       {"pipefail", 0},     {"debug", 0},
+    {null, 0},
+};
+
+static positive shell_options_named;
+
+bool shell_option_on(positive index)
+{
+        // Two of them are not settings at all but answers about how the shell
+        // was started, and it is started one way.
+        if (!string_compare(shell_option_names[index].name, "stdin"))
+                return true;
+
+        if (!string_compare(shell_option_names[index].name, "interactive"))
+                return shell_is_interactive != 0;
+
+        if (shell_option_names[index].letter)
+                return (shell_options & SHELL_FLAG(shell_option_names[index].letter)) != 0;
+
+        return (shell_options_named & ((positive)1 << index)) != 0;
+}
+
+fn shell_option_told(positive index, bool on)
+{
+        if (shell_option_names[index].letter)
+        {
+                if (on)
+                        shell_options |= SHELL_FLAG(shell_option_names[index].letter);
+                else
+                        shell_options &= ~SHELL_FLAG(shell_option_names[index].letter);
+
+                return;
+        }
+
+        if (on)
+                shell_options_named |= (positive)1 << index;
+        else
+                shell_options_named &= ~((positive)1 << index);
+}
+
+fn shell_options_listed(writer write, bool as_commands)
+{
+        positive index = 0;
+
+        if (!as_commands)
+                string_format(write, "Current option settings\n");
+
+        while (shell_option_names[index].name)
+        {
+                bool on = shell_option_on(index);
+
+                if (as_commands)
+                {
+                        write(on ? "set -o " : "set +o ", 7);
+                        string_format(write, "%s\n", shell_option_names[index].name);
+                }
+                else
+                {
+                        positive length = string_length(shell_option_names[index].name);
+
+                        write(shell_option_names[index].name, length);
+
+                        while (length < 15)
+                        {
+                                write(" ", 1);
+                                length++;
+                        }
+
+                        write(" ", 1);
+                        string_format(write, "%s\n", on ? "on" : "off");
+                }
+
+                index++;
+        }
+}
+
+bool shell_option_named(string_address word, bool on)
+{
+        positive index = 0;
+
+        while (shell_option_names[index].name)
+        {
+                if (!string_compare(shell_option_names[index].name, word))
+                {
+                        shell_option_told(index, on);
+                        return true;
+                }
+
+                index++;
+        }
+
+        return false;
+}
+
 fn shell_set(writer write, string_address input)
 {
         positive index = 1;
@@ -1219,6 +1670,36 @@ fn shell_set(writer write, string_address input)
                         while (string_get(letter))
                         {
                                 p8 value = string_get(letter);
+
+                                if (value == 'o')
+                                {
+                                        // The name is the next word, and with
+                                        // no next word what is asked for is
+                                        // the list of them.
+                                        if (index + 1 >= shell_argc)
+                                        {
+                                                shell_options_listed(write, !on);
+                                                letter++;
+                                                continue;
+                                        }
+
+                                        if (!shell_option_named(shell_argv[++index], on))
+                                        {
+                                                shell_answer(2);
+
+                                                shell_diagnostic(
+                                                    on ? "set: Illegal option -o "
+                                                       : "set: Illegal option +o ",
+                                                    23);
+
+                                                return string_format(
+                                                    shell_diagnostic, "%s\n",
+                                                    shell_argv[index]);
+                                        }
+
+                                        letter++;
+                                        continue;
+                                }
 
                                 if (value >= 'a' && value <= 'z')
                                 {
@@ -1447,8 +1928,15 @@ fn shell_local(writer write, string_address input)
 fn shell_readonly(writer write, string_address input)
 {
         positive index = 1;
+        bool listed = shell_argc < 2;
 
-        if (shell_argc < 2)
+        while (index < shell_argc && word_is(shell_argv[index], "-p"))
+        {
+                listed = true;
+                index++;
+        }
+
+        if (listed && index >= shell_argc)
         {
                 positive at = 0;
 
@@ -1456,11 +1944,15 @@ fn shell_readonly(writer write, string_address input)
                 {
                         string_address value = env_get(readonly_name[at]);
 
-                        if (value)
-                                string_format(write, "readonly %s=%s\n", readonly_name[at], value);
-                        else
-                                string_format(write, "readonly %s\n", readonly_name[at]);
+                        string_format(write, "readonly %s", readonly_name[at]);
 
+                        if (value)
+                        {
+                                write("=", 1);
+                                shell_quoted(write, value);
+                        }
+
+                        write("\n", 1);
                         at++;
                 }
 
@@ -1525,6 +2017,8 @@ fn shell_readonly(writer write, string_address input)
 #define TEST_NEWER 9
 #define TEST_OLDER 10
 #define TEST_SAME_FILE 11
+#define TEST_BEFORE 12
+#define TEST_AFTER 13
 
 static positive test_at;
 static positive test_stop;
@@ -1612,11 +2106,49 @@ bool test_unary(p8 op, string_address value)
         if (op == 'k')
                 return (facts.mode & 01000) != 0;
 
+        if (op == 'O')
+                return facts.owner == (p32)system_call_1(syscall(geteuid), 0);
+
+        if (op == 'G')
+                return facts.group == (p32)system_call_1(syscall(getegid), 0);
+
         return false;
 }
 
-// stx_mtime sits at offset 112 of the kernel's statx, which is 56 bytes past
-// where file_facts stops spelling the fields out.
+/*
+        The three fields test wants from statx that the short form here has no
+        name for.
+
+        file.c spells all 256 bytes out, and when it is here those names are
+        used. Where it is not -- programs/edit.c takes this file alone -- the
+        struct above stops after the block count and the rest is reached by
+        offset: stx_mtime at 112, its nanoseconds at 120, and the device that
+        owns the file at 136, all of them 56 bytes further in than where the
+        short form gives up.
+
+        The offsets used to be the only path, and with file.c present they were
+        reading 96 bytes past the field they named: -nt and -ot compared two
+        pieces of the mount id.
+*/
+#ifdef FILE_MAX_DEPTH
+
+b64 test_modified(file_facts address_to facts)
+{
+        return facts->modified.seconds;
+}
+
+p32 test_modified_fraction(file_facts address_to facts)
+{
+        return facts->modified.nanoseconds;
+}
+
+p64 test_device(file_facts address_to facts)
+{
+        return ((p64)facts->device_major << 32) | facts->device_minor;
+}
+
+#else
+
 b64 test_modified(file_facts address_to facts)
 {
         b64 seconds;
@@ -1625,6 +2157,28 @@ b64 test_modified(file_facts address_to facts)
 
         return seconds;
 }
+
+p32 test_modified_fraction(file_facts address_to facts)
+{
+        p32 nanoseconds;
+
+        memory_copy(address_of nanoseconds, facts->remainder + 64, sizeof(nanoseconds));
+
+        return nanoseconds;
+}
+
+p64 test_device(file_facts address_to facts)
+{
+        p32 major;
+        p32 minor;
+
+        memory_copy(address_of major, facts->remainder + 80, sizeof(major));
+        memory_copy(address_of minor, facts->remainder + 84, sizeof(minor));
+
+        return ((p64)major << 32) | minor;
+}
+
+#endif
 
 bool test_is_unary(string_address word)
 {
@@ -1639,7 +2193,8 @@ bool test_is_unary(string_address word)
                letter == 'f' || letter == 'g' || letter == 'h' || letter == 'k' ||
                letter == 'n' || letter == 'p' || letter == 'r' || letter == 's' ||
                letter == 't' || letter == 'u' || letter == 'w' || letter == 'x' ||
-               letter == 'z' || letter == 'L' || letter == 'S';
+               letter == 'z' || letter == 'G' || letter == 'L' || letter == 'O' ||
+               letter == 'S';
 }
 
 positive test_is_binary(string_address word)
@@ -1680,6 +2235,12 @@ positive test_is_binary(string_address word)
         if (word_is(word, "-ef"))
                 return TEST_SAME_FILE;
 
+        if (word_is(word, "<"))
+                return TEST_BEFORE;
+
+        if (word_is(word, ">"))
+                return TEST_AFTER;
+
         return 0;
 }
 
@@ -1700,19 +2261,53 @@ bool test_compare(positive kind, string_address left, string_address right)
         {
                 file_facts one;
                 file_facts two;
+                bool here = test_facts(left, address_of one, true);
+                bool there = test_facts(right, address_of two, true);
 
-                if (!test_facts(left, address_of one, true) ||
-                    !test_facts(right, address_of two, true))
+                /*
+                        A file that is not there is older than one that is.
+                        POSIX says so of both -nt and -ot, and it is the answer
+                        a script wants: "test built -nt source" has to be false
+                        the first time round, when nothing has been built yet.
+                */
+                if (kind == TEST_NEWER && here && !there)
+                        return true;
+
+                if (kind == TEST_OLDER && !here && there)
+                        return true;
+
+                if (!here || !there)
                         return false;
 
                 if (kind == TEST_SAME_FILE)
-                        return one.inode == two.inode;
+                        return one.inode == two.inode &&
+                               test_device(address_of one) == test_device(address_of two);
+
+                // Two files written in the same second are not the same age,
+                // and a script that touches one after the other says so.
+                if (test_modified(address_of one) != test_modified(address_of two))
+                {
+                        if (kind == TEST_NEWER)
+                                return test_modified(address_of one) >
+                                       test_modified(address_of two);
+
+                        return test_modified(address_of one) <
+                               test_modified(address_of two);
+                }
 
                 if (kind == TEST_NEWER)
-                        return test_modified(address_of one) > test_modified(address_of two);
+                        return test_modified_fraction(address_of one) >
+                               test_modified_fraction(address_of two);
 
-                return test_modified(address_of one) < test_modified(address_of two);
+                return test_modified_fraction(address_of one) <
+                       test_modified_fraction(address_of two);
         }
+
+        if (kind == TEST_BEFORE)
+                return string_compare(left, right) < 0;
+
+        if (kind == TEST_AFTER)
+                return string_compare(left, right) > 0;
 
         first = shell_signed(left, address_of first_good);
         second = shell_signed(right, address_of second_good);
@@ -1843,9 +2438,86 @@ bool test_expression()
         return value;
 }
 
+/*
+        The short forms, counted before they are parsed.
+
+        POSIX settles one, two, three and four words by how many there are and
+        not by what they look like, and the two orders disagree: "! = x" is
+        three words with a binary operator in the middle, so it compares "!"
+        against "x" rather than negating anything. A parser that reads left to
+        right takes the "!" first and is wrong here, which is the shape most
+        implementations of test get wrong.
+
+        Answers false and clears handled when the count says nothing, which is
+        where the general parser takes over.
+*/
+bool test_short(positive from, positive to, bool address_to handled)
+{
+        positive count = to - from;
+        bool inner;
+
+        address_to handled = true;
+
+        if (count == 1)
+                return string_get(shell_argv[from]) != end;
+
+        if (count == 2)
+        {
+                if (word_is(shell_argv[from], "!"))
+                        return string_get(shell_argv[from + 1]) == end;
+
+                if (test_is_unary(shell_argv[from]))
+                        return test_unary(string_get(shell_argv[from] + 1),
+                                          shell_argv[from + 1]);
+
+                address_to handled = false;
+                return false;
+        }
+
+        if (count == 3)
+        {
+                positive kind = test_is_binary(shell_argv[from + 1]);
+
+                if (kind)
+                        return test_compare(kind, shell_argv[from], shell_argv[from + 2]);
+
+                if (word_is(shell_argv[from], "!"))
+                {
+                        bool value = !test_short(from + 1, to, address_of inner);
+
+                        address_to handled = inner;
+                        return inner ? value : false;
+                }
+
+                if (word_is(shell_argv[from], "(") && word_is(shell_argv[to - 1], ")"))
+                        return test_short(from + 1, to - 1, handled);
+
+                address_to handled = false;
+                return false;
+        }
+
+        if (count == 4)
+        {
+                if (word_is(shell_argv[from], "!"))
+                {
+                        bool value = !test_short(from + 1, to, address_of inner);
+
+                        address_to handled = inner;
+                        return inner ? value : false;
+                }
+
+                if (word_is(shell_argv[from], "(") && word_is(shell_argv[to - 1], ")"))
+                        return test_short(from + 1, to - 1, handled);
+        }
+
+        address_to handled = false;
+        return false;
+}
+
 fn shell_test(writer write, string_address input)
 {
         bool value;
+        bool handled;
 
         test_at = 1;
         test_stop = shell_argc;
@@ -1861,6 +2533,14 @@ fn shell_test(writer write, string_address input)
 
         if (test_at >= test_stop)
                 return shell_answer(1);
+
+        if (test_stop - test_at <= 4)
+        {
+                value = test_short(test_at, test_stop, address_of handled);
+
+                if (handled)
+                        return shell_answer(test_bad ? 2 : (value ? 0 : 1));
+        }
 
         value = test_expression();
 
@@ -1891,6 +2571,23 @@ fn shell_false(writer write, string_address input)
 static positive printf_argument;
 static bool printf_took;
 static p8 printf_nothing[1];
+
+// \c says stop, and it means the whole of printf and not just the argument it
+// was found in: everything still to be written, format and all, is dropped.
+static bool printf_cut;
+static bool printf_in_b;
+static b32 printf_status;
+
+static p8 printf_hold[2048];
+static positive printf_held;
+
+static fn printf_holder(address_any data, positive length)
+{
+        string_address from = data;
+
+        while (length-- && printf_held < sizeof(printf_hold))
+                printf_hold[printf_held++] = string_get(from++);
+}
 
 string_address printf_next()
 {
@@ -1964,6 +2661,14 @@ string_address printf_escape(writer write, string_address step)
 
         value = string_get(step);
 
+        // Only in a %b argument. In the format itself the reference shell
+        // leaves the two bytes where they stood.
+        if (value == 'c' && printf_in_b)
+        {
+                printf_cut = true;
+                return step;
+        }
+
         if (value == 'n')
                 value = '\n';
         else if (value == 't')
@@ -2000,7 +2705,7 @@ string_address printf_escape(writer write, string_address step)
 
 fn printf_escaped(writer write, string_address text)
 {
-        while (string_get(text))
+        while (string_get(text) && !printf_cut)
         {
                 if (string_is(text, '\\'))
                 {
@@ -2040,11 +2745,19 @@ fn printf_number(writer write, positive magnitude, p8 sign, positive base, bool 
                 printf_fill(write, width > head + zeros + length ? width - head - zeros - length : 0, ' ');
 }
 
+// An argument that is not a number is still printed, as zero, and the status
+// says so afterwards; that is what the reference shell does.
+fn printf_not_a_number(string_address word)
+{
+        string_format(shell_diagnostic, "printf: %s: expected numeric value\n", word);
+        printf_status = 1;
+}
+
 fn printf_one(writer write, string_address format)
 {
         string_address step = format;
 
-        while (string_get(step))
+        while (string_get(step) && !printf_cut)
         {
                 bool left = false;
                 bool zero = false;
@@ -2088,8 +2801,16 @@ fn printf_one(writer write, string_address format)
                 if (string_is(step, '*'))
                 {
                         bool good;
+                        bipolar asked = shell_signed(printf_next(), address_of good);
 
-                        width = (positive)shell_signed(printf_next(), address_of good);
+                        // A negative width is the minus flag written out long.
+                        if (asked < 0)
+                        {
+                                left = true;
+                                asked = -asked;
+                        }
+
+                        width = (positive)asked;
                         step++;
                 }
                 else
@@ -2108,6 +2829,10 @@ fn printf_one(writer write, string_address format)
                                 bool good;
 
                                 precision = shell_signed(printf_next(), address_of good);
+
+                                if (precision < 0)
+                                        precision = -1;
+
                                 step++;
                         }
                         else
@@ -2139,19 +2864,37 @@ fn printf_one(writer write, string_address format)
                 if (conversion == 's' || conversion == 'b')
                 {
                         string_address value = printf_next();
-                        positive length = string_length(env_reading(value));
+                        positive length;
 
-                        if (precision >= 0 && (positive)precision < length)
-                                length = (positive)precision;
+                        // The escapes are in the argument, so a width around
+                        // them can only be measured once they have been read.
+                        // Streamed unless something has to be measured: what
+                        // comes out is as long as the argument, and only a
+                        // width or a precision needs it in hand first.
+                        if (conversion == 'b' && !width && precision < 0)
+                        {
+                                printf_in_b = true;
+                                printf_escaped(write, value);
+                                printf_in_b = false;
+                                continue;
+                        }
 
                         if (conversion == 'b')
                         {
-                                // The escapes are in the argument, so a width
-                                // around them would have to be measured after
-                                // they were read; nothing asks for that.
-                                printf_escaped(write, value);
-                                continue;
+                                printf_held = 0;
+                                printf_in_b = true;
+                                printf_escaped(printf_holder, value);
+                                printf_in_b = false;
+                                value = printf_hold;
+                                length = printf_held;
                         }
+                        else
+                        {
+                                length = string_length(env_reading(value));
+                        }
+
+                        if (precision >= 0 && (positive)precision < length)
+                                length = (positive)precision;
 
                         if (!left)
                                 printf_fill(write, width > length ? width - length : 0, ' ');
@@ -2184,8 +2927,12 @@ fn printf_one(writer write, string_address format)
                 if (conversion == 'd' || conversion == 'i')
                 {
                         bool good;
-                        bipolar value = shell_signed(printf_next(), address_of good);
+                        string_address word = printf_next();
+                        bipolar value = shell_signed(word, address_of good);
                         p8 sign = 0;
+
+                        if (!good)
+                                printf_not_a_number(word);
 
                         if (value < 0)
                                 sign = '-';
@@ -2203,18 +2950,27 @@ fn printf_one(writer write, string_address format)
                     conversion == 'x' || conversion == 'X')
                 {
                         bool good;
-                        bipolar value = shell_signed(printf_next(), address_of good);
+                        string_address word = printf_next();
+                        bipolar value = shell_signed(word, address_of good);
                         positive base = conversion == 'o' ? 8 : (conversion == 'u' ? 10 : 16);
+
+                        if (!good)
+                                printf_not_a_number(word);
 
                         printf_number(write, (positive)value, 0, base, conversion == 'X',
                                       width, precision, left, zero);
                         continue;
                 }
 
-                // An unknown conversion is written out as it stood, which is
-                // more use than swallowing it.
-                write("%", 1);
-                write(address_of conversion, 1);
+                {
+                        p8 said[3] = {'%', conversion, end};
+
+                        string_format(shell_diagnostic,
+                                      "printf: %s: invalid directive\n", said);
+                }
+
+                printf_status = 2;
+                printf_cut = true;
         }
 }
 
@@ -2227,6 +2983,8 @@ fn shell_printf(writer write, string_address input)
 
         format = shell_argv[1];
         printf_argument = 2;
+        printf_cut = false;
+        printf_status = 0;
 
         while (1)
         {
@@ -2235,11 +2993,11 @@ fn shell_printf(writer write, string_address input)
 
                 // A format with no conversion in it would otherwise run for as
                 // long as there were arguments left.
-                if (printf_argument >= shell_argc || !printf_took)
+                if (printf_cut || printf_argument >= shell_argc || !printf_took)
                         break;
         }
 
-        shell_answer(0);
+        shell_answer(printf_status);
 }
 
 /*
@@ -2249,27 +3007,140 @@ fn shell_printf(writer write, string_address input)
         shell is reading its script from and anything larger swallows what
         comes after.
 */
+
+#define READ_LINE 4096
+
+static p8 read_line[READ_LINE];
+static p8 read_literal[READ_LINE];
+static positive read_length;
+
+// Whether a byte splits a field. The two questions are different: every byte
+// in IFS ends a field, but only the blanks among them are allowed to run
+// together and to be thrown away at the ends.
+bool read_separates(string_address ifs, positive at)
+{
+        if (read_literal[at])
+                return false;
+
+        return string_first_of(ifs, read_line[at]) != null;
+}
+
+bool read_blank(string_address ifs, positive at)
+{
+        if (read_literal[at])
+                return false;
+
+        if (read_line[at] != ' ' && read_line[at] != '\t' && read_line[at] != '\n')
+                return false;
+
+        return string_first_of(ifs, read_line[at]) != null;
+}
+
+// A tenth of a second at a time is close enough for a timeout measured in
+// whole seconds, and it keeps the wait in one place.
+bool read_waited(bipolar tenths)
+{
+        struct
+        {
+                b32 descriptor;
+                b16 asked;
+                b16 got;
+        } watch;
+
+        struct
+        {
+                b64 seconds;
+                b64 nanoseconds;
+        } span;
+
+        watch.descriptor = 0;
+        watch.asked = 1;
+        watch.got = 0;
+
+        span.seconds = tenths / 10;
+        span.nanoseconds = (tenths % 10) * 100000000;
+
+        return system_call_5(syscall(ppoll), (positive)address_of watch, 1,
+                             (positive)address_of span, 0, 8) > 0;
+}
+
 fn shell_read(writer write, string_address input)
 {
-        p8 line[2048];
-        positive length = 0;
         bool raw = false;
-        bool got_any = false;
         positive index = 1;
         positive at = 0;
         positive names;
+        bool ended = false;
+        bool limited = false;
+        positive limit = 0;
+        bipolar tenths = -1;
+        p8 stop_at = '\n';
+        string_address ifs;
+        p8 ifs_held[128];
+        p8 ifs_default[] = " \t\n";
+
+        read_length = 0;
 
         while (index < shell_argc && string_is(shell_argv[index], '-') &&
                string_not(shell_argv[index] + 1, end))
         {
                 string_address letter = shell_argv[index] + 1;
 
+                if (word_is(shell_argv[index], "--"))
+                {
+                        index++;
+                        break;
+                }
+
                 while (string_get(letter))
                 {
-                        if (string_get(letter) == 'r')
-                                raw = true;
+                        p8 which = string_get(letter);
+                        string_address value = null;
 
-                        letter++;
+                        if (which == 'r')
+                        {
+                                raw = true;
+                                letter++;
+                                continue;
+                        }
+
+                        if (which != 'p' && which != 'n' && which != 'd' && which != 't')
+                        {
+                                letter++;
+                                continue;
+                        }
+
+                        // The rest of the word if there is any, and the next
+                        // word if there is not.
+                        if (string_get(letter + 1))
+                        {
+                                value = letter + 1;
+                                letter += string_length(letter + 1) + 1;
+                        }
+                        else if (index + 1 < shell_argc)
+                        {
+                                value = shell_argv[++index];
+                                letter++;
+                        }
+                        else
+                        {
+                                letter++;
+                        }
+
+                        if (!value)
+                                continue;
+
+                        if (which == 'p')
+                                shell_diagnostic(value, 0);
+                        else if (which == 'n')
+                        {
+                                limited = true;
+                                limit = shell_number(value);
+                        }
+                        else if (which == 'd')
+                                stop_at = string_get(value);
+                        else
+                                tenths = (bipolar)shell_number(value) * 10;
                 }
 
                 index++;
@@ -2277,16 +3148,23 @@ fn shell_read(writer write, string_address input)
 
         names = index;
 
-        while (length < sizeof(line) - 1)
+        while (read_length < READ_LINE - 1 && !(limited && read_length >= limit))
         {
                 p8 value;
 
-                if (system_call_3(syscall(read), 0, (positive)address_of value, 1) != 1)
+                if (tenths >= 0 && !read_waited(tenths))
+                {
+                        ended = true;
                         break;
+                }
 
-                got_any = true;
+                if (system_call_3(syscall(read), 0, (positive)address_of value, 1) != 1)
+                {
+                        ended = true;
+                        break;
+                }
 
-                if (value == '\n')
+                if (value == stop_at)
                         break;
 
                 if (!raw && value == '\\')
@@ -2294,63 +3172,112 @@ fn shell_read(writer write, string_address input)
                         p8 next;
 
                         if (system_call_3(syscall(read), 0, (positive)address_of next, 1) != 1)
+                        {
+                                ended = true;
                                 break;
+                        }
 
-                        // A backslash before the newline joins the two lines.
-                        if (next == '\n')
+                        // A backslash before the delimiter joins the two lines.
+                        if (next == stop_at)
                                 continue;
 
-                        line[length++] = next;
+                        read_literal[read_length] = 1;
+                        read_line[read_length++] = next;
                         continue;
                 }
 
-                line[length++] = value;
+                read_literal[read_length] = 0;
+                read_line[read_length++] = value;
         }
 
-        line[length] = end;
+        read_line[read_length] = end;
+        read_literal[read_length] = 0;
 
         if (names >= shell_argc)
         {
-                env_set("REPLY", line);
-                return shell_answer(got_any ? 0 : 1);
+                env_set("REPLY", read_line);
+                return shell_answer(ended ? 1 : 0);
+        }
+
+        {
+                string_address value = env_get("IFS");
+
+                // On a copy: IFS points into env_storage, and the first name
+                // assigned below is free to compact the block out from under
+                // it.
+                if (value)
+                {
+                        string_copy_max(ifs_held, value, sizeof(ifs_held) - 1);
+                        ifs_held[sizeof(ifs_held) - 1] = end;
+                        ifs = ifs_held;
+                }
+                else
+                {
+                        ifs = ifs_default;
+                }
         }
 
         while (names < shell_argc)
         {
                 positive begin;
 
-                while (at < length && (line[at] == ' ' || line[at] == '\t'))
+                while (at < read_length && read_blank(ifs, at))
                         at++;
 
                 begin = at;
 
-                // The last name takes everything that is left, splitting and
-                // all, which is what makes "read line" read a line.
+                /*
+                        The last name takes everything that is left, delimiters
+                        and all, which is what makes "read line" read a line.
+                        Only the blanks at the end come off: a delimiter that
+                        is not one is part of what was said.
+                */
                 if (names + 1 == shell_argc)
                 {
-                        positive stop = length;
+                        positive stop = read_length;
 
-                        while (stop > begin && (line[stop - 1] == ' ' || line[stop - 1] == '\t'))
+                        while (stop > begin && read_blank(ifs, stop - 1))
                                 stop--;
 
-                        line[stop] = end;
-                        env_set(shell_argv[names], line + begin);
-                        at = length;
+                        read_line[stop] = end;
+                        env_set(shell_argv[names], read_line + begin);
+                        at = read_length;
                         names++;
                         continue;
                 }
 
-                while (at < length && line[at] != ' ' && line[at] != '\t')
+                while (at < read_length && !read_separates(ifs, at))
                         at++;
 
-                if (at < length)
-                        line[at++] = end;
+                if (at < read_length)
+                {
+                        positive after = at;
 
-                env_set(shell_argv[names], line + begin);
+                        while (after < read_length && read_blank(ifs, after))
+                                after++;
+
+                        // One that is not a blank ends the field on its own,
+                        // and the blanks either side of it belong to it.
+                        if (after < read_length && read_separates(ifs, after))
+                        {
+                                after++;
+
+                                while (after < read_length && read_blank(ifs, after))
+                                        after++;
+                        }
+
+                        // Only now: the byte at the cut is what said where the
+                        // field ended, and reading it back as a terminator
+                        // made every separator look like a blank.
+                        read_line[at] = end;
+                        at = after;
+                }
+
+                env_set(shell_argv[names], read_line + begin);
                 names++;
         }
 
-        shell_answer(got_any ? 0 : 1);
+        shell_answer(ended ? 1 : 0);
 }
 
 /*
@@ -2358,8 +3285,39 @@ fn shell_read(writer write, string_address input)
 
         One option per call, its place kept in OPTIND and, within a bundled
         word, in an offset of its own that OPTIND has no room for.
+
+        OPTIND names the word the next call will start at, and a bundle is
+        counted as read the moment its first letter is taken -- so "-ab" leaves
+        OPTIND at two after the a as well as after the b, and the offset is all
+        that says the word is not finished. Setting OPTIND back to one starts
+        the whole thing again, which POSIX asks for and this reference shell
+        does not do.
 */
-static positive getopts_offset;
+static bipolar getopts_offset = -1;
+
+// Nothing left to read: the name is told so, and where the walk stopped is
+// left where it is for a caller that puts OPTIND back.
+fn shell_getopts_done(string_address name, positive next)
+{
+        getopts_offset = -1;
+        env_set_number("OPTIND", next + 1);
+        env_set(name, "?");
+
+        shell_answer(1);
+}
+
+// Where the next call starts, and how far into the word it just read. A step
+// that has nothing after it says the word is finished with.
+fn shell_getopts_answer(string_address name, string_address said,
+                        string_address word, string_address step, positive next)
+{
+        getopts_offset = step && string_get(step) ? (bipolar)(step - word) : -1;
+
+        env_set_number("OPTIND", next + 1);
+        env_set(name, said);
+
+        shell_answer(0);
+}
 
 fn shell_getopts(writer write, string_address input)
 {
@@ -2368,16 +3326,20 @@ fn shell_getopts(writer write, string_address input)
         string_address list[POSITIONAL_MAX];
         positive count = 0;
         positive optind;
-        string_address word;
+        positive next;
+        string_address word = null;
+        string_address step = null;
         string_address found;
         p8 letter;
         p8 value[2];
+        bool silent;
 
         if (shell_argc < 3)
                 return shell_answer(2);
 
         options = shell_argv[1];
         name = shell_argv[2];
+        silent = string_is(options, ':');
 
         if (shell_argc > 3)
         {
@@ -2400,106 +3362,179 @@ fn shell_getopts(writer write, string_address input)
         if (optind < 1)
                 optind = 1;
 
-        if (optind - 1 >= count)
-                return shell_answer(1);
+        next = optind - 1;
 
-        word = list[optind - 1];
-
-        if (string_not(word, '-') || string_is(word + 1, end))
-                return shell_answer(1);
-
-        if (word_is(word, "--"))
+        // Where the last call stopped inside a word it had not finished. Only
+        // believable while OPTIND still names the word after that one.
+        if (optind > 1 && optind - 2 < count && getopts_offset >= 0 &&
+            (positive)getopts_offset <= string_length(list[optind - 2]))
         {
-                env_set_number("OPTIND", optind + 1);
-                return shell_answer(1);
+                word = list[optind - 2];
+                step = word + getopts_offset;
         }
 
-        if (getopts_offset < 1)
-                getopts_offset = 1;
+        if (!step || !string_get(step))
+        {
+                word = next < count ? list[next] : null;
+                step = word;
 
-        letter = string_get(word + getopts_offset);
+                if (!step || string_not(step, '-') || !string_get(step + 1))
+                        return shell_getopts_done(name, next);
+
+                step++;
+                next++;
+
+                if (string_is(step, '-') && !string_get(step + 1))
+                        return shell_getopts_done(name, next);
+        }
+
+        letter = string_get(step++);
         value[0] = letter;
         value[1] = end;
 
+        // A colon in the word is never an option, whatever the option string
+        // says: it is the character that marks one as taking an argument.
         found = letter == ':' ? null : string_first_of(options, letter);
 
         if (!found)
         {
-                env_set(name, "?");
-                env_unset("OPTARG");
-
-                getopts_offset++;
-
-                if (!string_get(word + getopts_offset))
+                if (silent)
+                        env_set("OPTARG", value);
+                else
                 {
-                        getopts_offset = 0;
-                        env_set_number("OPTIND", optind + 1);
+                        env_unset("OPTARG");
+                        string_format(shell_diagnostic,
+                                      "getopts: illegal option -- %s\n", value);
                 }
 
-                return shell_answer(0);
+                return shell_getopts_answer(name, "?", word, step, next);
         }
-
-        getopts_offset++;
 
         if (string_is(found + 1, ':'))
         {
-                if (string_get(word + getopts_offset))
+                if (!string_get(step) && next >= count)
                 {
-                        env_set("OPTARG", word + getopts_offset);
-                }
-                else if (optind < count)
-                {
-                        env_set("OPTARG", list[optind]);
-                        optind++;
-                }
-                else
-                {
-                        env_set(name, ":");
-                        env_set("OPTARG", value);
-                        getopts_offset = 0;
-                        env_set_number("OPTIND", optind + 1);
-                        return shell_answer(0);
+                        if (silent)
+                        {
+                                env_set("OPTARG", value);
+
+                                return shell_getopts_answer(name, ":", word, null, next);
+                        }
+
+                        env_unset("OPTARG");
+                        string_format(shell_diagnostic,
+                                      "getopts: option requires an argument -- %s\n",
+                                      value);
+
+                        return shell_getopts_answer(name, "?", word, null, next);
                 }
 
-                env_set(name, value);
-                getopts_offset = 0;
-                env_set_number("OPTIND", optind + 1);
+                if (!string_get(step))
+                        step = list[next++];
 
-                return shell_answer(0);
+                env_set("OPTARG", step);
+
+                return shell_getopts_answer(name, value, word, null, next);
         }
 
-        env_set(name, value);
+        env_set("OPTARG", "");
 
-        if (!string_get(word + getopts_offset))
-        {
-                getopts_offset = 0;
-                env_set_number("OPTIND", optind + 1);
-        }
-
-        shell_answer(0);
+        return shell_getopts_answer(name, value, word, step, next);
 }
 
-fn shell_umask(writer write, string_address input)
+/*
+        umask, in both spellings.
+
+        The symbolic form talks about what a file is allowed, and the mask is
+        the other way round -- "u=rwx" says the owner keeps everything, which
+        is nothing masked off. So the letters are read into permissions and the
+        answer is inverted on the way out.
+*/
+positive umask_letters(string_address address_to step)
 {
-        positive mask;
-        positive shift = 9;
+        positive bits = 0;
 
-        if (shell_argc > 1)
+        while (string_get(address_to step))
         {
-                string_address step = shell_argv[1];
-                positive value = 0;
+                p8 letter = string_get(address_to step);
 
-                while (string_get(step) >= '0' && string_get(step) <= '7')
-                        value = value * 8 + (string_get(step++) - '0');
+                if (letter == 'r')
+                        bits |= 4;
+                else if (letter == 'w')
+                        bits |= 2;
+                else if (letter == 'x')
+                        bits |= 1;
+                else
+                        break;
 
-                system_call_1(syscall(umask), value);
-
-                return shell_answer(0);
+                address_to step = address_to step + 1;
         }
 
-        // The only way to read it is to set it, so it is put straight back.
-        mask = system_call_1(syscall(umask), 0);
-        system_call_1(syscall(umask), mask);
+        return bits;
+}
+
+bool umask_symbolic(string_address step, positive address_to mask)
+{
+        positive allowed = 07777 & ~(address_to mask);
+
+        while (string_get(step))
+        {
+                positive who = 0;
+                positive bits;
+                p8 action;
+
+                while (string_is(step, 'u') || string_is(step, 'g') ||
+                       string_is(step, 'o') || string_is(step, 'a'))
+                {
+                        p8 letter = string_get(step++);
+
+                        if (letter == 'u' || letter == 'a')
+                                who |= 0700;
+
+                        if (letter == 'g' || letter == 'a')
+                                who |= 0070;
+
+                        if (letter == 'o' || letter == 'a')
+                                who |= 0007;
+                }
+
+                if (!who)
+                        who = 0777;
+
+                action = string_get(step);
+
+                if (action != '=' && action != '+' && action != '-')
+                        return false;
+
+                step++;
+                bits = umask_letters(address_of step);
+                bits = ((bits << 6) | (bits << 3) | bits) & who;
+
+                if (action == '=')
+                        allowed = (allowed & ~who) | bits;
+                else if (action == '+')
+                        allowed |= bits;
+                else
+                        allowed &= ~bits;
+
+                if (string_is(step, ','))
+                {
+                        step++;
+                        continue;
+                }
+
+                if (string_get(step))
+                        return false;
+        }
+
+        address_to mask = 0777 & ~allowed;
+
+        return true;
+}
+
+fn umask_written(writer write, positive mask)
+{
+        positive shift = 9;
 
         while (shift)
         {
@@ -2515,6 +3550,94 @@ fn shell_umask(writer write, string_address input)
         }
 
         write("\n", 1);
+}
+
+fn umask_spoken(writer write, positive mask)
+{
+        positive allowed = 0777 & ~mask;
+        positive shift = 9;
+        string_address names = "ugo";
+
+        while (shift)
+        {
+                positive three;
+
+                shift -= 3;
+                three = (allowed >> shift) & 7;
+
+                write(names++, 1);
+                write("=", 1);
+
+                if (three & 4)
+                        write("r", 1);
+
+                if (three & 2)
+                        write("w", 1);
+
+                if (three & 1)
+                        write("x", 1);
+
+                write(shift ? "," : "\n", 1);
+        }
+}
+
+fn shell_umask(writer write, string_address input)
+{
+        positive index = 1;
+        bool spoken = false;
+        positive mask;
+
+        while (index < shell_argc && word_is(shell_argv[index], "-S"))
+        {
+                spoken = true;
+                index++;
+        }
+
+        // The only way to read it is to set it, so it is put straight back.
+        mask = system_call_1(syscall(umask), 0);
+        system_call_1(syscall(umask), mask);
+
+        if (index >= shell_argc)
+        {
+                if (spoken)
+                        umask_spoken(write, mask);
+                else
+                        umask_written(write, mask);
+
+                return shell_answer(0);
+        }
+
+        {
+                string_address word = shell_argv[index];
+
+                if (string_get(word) >= '0' && string_get(word) <= '7')
+                {
+                        positive value = 0;
+
+                        while (string_get(word) >= '0' && string_get(word) <= '7')
+                                value = value * 8 + (string_get(word++) - '0');
+
+                        if (string_get(word))
+                        {
+                                shell_answer(2);
+
+                                return string_format(shell_diagnostic,
+                                                     "umask: Illegal mode: %s\n",
+                                                     shell_argv[index]);
+                        }
+
+                        mask = value;
+                }
+                else if (!umask_symbolic(word, address_of mask))
+                {
+                        shell_answer(2);
+
+                        return string_format(shell_diagnostic,
+                                             "umask: Illegal mode: %s\n", word);
+                }
+        }
+
+        system_call_1(syscall(umask), mask);
 
         shell_answer(0);
 }
@@ -3514,6 +4637,8 @@ fn shell_help(writer write, string_address input);
 fn shell_which(writer write, string_address input);
 fn shell_type(writer write, string_address input);
 fn shell_command_builtin(writer write, string_address input);
+fn shell_hash(writer write, string_address input);
+fn shell_ulimit(writer write, string_address input);
 
 typedef fn(address_to shell_command_function)(writer write, string_address input);
 
@@ -3537,6 +4662,7 @@ shell_command shell_commands[] = {
     {"exit", shell_exit},
     {"false", shell_false},
     {"getopts", shell_getopts},
+    {"hash", shell_hash},
     {"mount", shell_mount},
     {"poweroff", shell_poweroff},
     {"printf", shell_printf},
@@ -3553,6 +4679,7 @@ shell_command shell_commands[] = {
     {"trap", shell_trap},
     {"type", shell_type},
     {"true", shell_true},
+    {"ulimit", shell_ulimit},
     {"umask", shell_umask},
     {"unalias", shell_unalias},
     {"unset", shell_unset},
@@ -3563,6 +4690,109 @@ shell_command shell_commands[] = {
     {"export", shell_export},
     {null, null},
 };
+
+/*
+        Where a name was found last time.
+
+        A path walk is one faccessat per directory on PATH, and a loop calling
+        the same program a thousand times pays for all of them a thousand
+        times. What is remembered here is the answer, not a hint: it is used as
+        it stands, which is what makes hash -r something a script needs when it
+        puts a new program somewhere earlier on the path.
+
+        Assigning PATH throws the whole table away, because every answer in it
+        was about the old one.
+*/
+#define HASH_MAX 64
+#define HASH_STORAGE 4096
+
+static string_address hash_name[HASH_MAX];
+static string_address hash_path[HASH_MAX];
+static p8 hash_storage[HASH_STORAGE];
+static positive hash_used;
+static positive hash_count;
+
+fn hash_forget()
+{
+        hash_count = 0;
+        hash_used = 0;
+}
+
+string_address hash_find(string_address name)
+{
+        positive at = 0;
+
+        while (at < hash_count)
+        {
+                if (!string_compare(hash_name[at], name))
+                        return hash_path[at];
+
+                at++;
+        }
+
+        return null;
+}
+
+fn hash_remember(string_address name, string_address path)
+{
+        positive name_length = string_length(name);
+        positive path_length = string_length(path);
+
+        if (hash_find(name))
+                return;
+
+        if (hash_count >= HASH_MAX ||
+            hash_used + name_length + path_length + 2 > HASH_STORAGE)
+                return;
+
+        hash_name[hash_count] = hash_storage + hash_used;
+        memory_copy(hash_storage + hash_used, name, name_length + 1);
+        hash_used += name_length + 1;
+
+        hash_path[hash_count] = hash_storage + hash_used;
+        memory_copy(hash_storage + hash_used, path, path_length + 1);
+        hash_used += path_length + 1;
+
+        hash_count++;
+}
+
+fn shell_hash(writer write, string_address input)
+{
+        positive index = 1;
+        b32 bad = 0;
+
+        while (index < shell_argc && word_is(shell_argv[index], "-r"))
+        {
+                hash_forget();
+                index++;
+        }
+
+        if (index >= shell_argc)
+        {
+                positive at = 0;
+
+                while (at < hash_count)
+                        string_format(write, "%s\n", hash_path[at++]);
+
+                return shell_answer(0);
+        }
+
+        while (index < shell_argc)
+        {
+                p8 found[768];
+
+                if (!shell_find_in_path(shell_argv[index], found, sizeof(found)))
+                {
+                        bad = 1;
+                        string_format(shell_diagnostic, "hash: %s: not found\n",
+                                      shell_argv[index]);
+                }
+
+                index++;
+        }
+
+        shell_answer(bad);
+}
 
 /*
         Where a bare command name is actually found.
@@ -3594,6 +4824,17 @@ b32 shell_find_in_path(string_address name, p8 address_to into, positive room)
                 return true;
         }
 
+        {
+                string_address known = hash_find(name);
+
+                if (known)
+                {
+                        string_copy_max(into, known, room - 1);
+                        into[room - 1] = end;
+                        return true;
+                }
+        }
+
         if (value == null)
                 value = "/bin:/usr/bin:/";
 
@@ -3619,7 +4860,10 @@ b32 shell_find_in_path(string_address name, p8 address_to into, positive room)
 
                         if (!system_call_4(syscall(faccessat), AT_FDCWD,
                                            (positive)into, ACCESS_EXECUTE, 0))
+                        {
+                                hash_remember(name, into);
                                 return true;
+                        }
                 }
 
                 segment = next;
@@ -3701,6 +4945,7 @@ fn shell_command_builtin(writer write, string_address input)
 {
         b32 index = 1;
         bool only_say = false;
+        bool at_length = false;
 
         while (index < shell_argc && string_is(shell_argv[index], '-') &&
                string_get(shell_argv[index] + 1))
@@ -3716,8 +4961,13 @@ fn shell_command_builtin(writer write, string_address input)
                 while (string_get(letter))
                 {
                         // -p is the standard path, which is the only path here.
-                        if (string_get(letter) == 'v' || string_get(letter) == 'V')
+                        if (string_get(letter) == 'v')
                                 only_say = true;
+                        else if (string_get(letter) == 'V')
+                        {
+                                only_say = true;
+                                at_length = true;
+                        }
                         else if (string_get(letter) != 'p')
                                 break;
 
@@ -3740,7 +4990,10 @@ fn shell_command_builtin(writer write, string_address input)
                 {
                         if (!string_compare(command->name, name))
                         {
-                                string_format(write, "%s\n", name);
+                                string_format(write, at_length
+                                                             ? "%s is a shell builtin\n"
+                                                             : "%s\n",
+                                              name);
                                 return shell_answer(0);
                         }
 
@@ -3749,15 +5002,32 @@ fn shell_command_builtin(writer write, string_address input)
 
                 if (shell_tool_here(name))
                 {
-                        string_format(write, "%s\n", name);
+                        string_format(write, at_length ? "%s is a shell builtin\n"
+                                                       : "%s\n",
+                                      name);
+                        return shell_answer(0);
+                }
+
+                if (exec_function_here && exec_function_here(name))
+                {
+                        string_format(write, at_length ? "%s is a shell function\n"
+                                                       : "%s\n",
+                                      name);
                         return shell_answer(0);
                 }
 
                 if (shell_find_in_path(name, found, sizeof(found)))
                 {
-                        string_format(write, "%s\n", found);
+                        if (at_length)
+                                string_format(write, "%s is %s\n", name, found);
+                        else
+                                string_format(write, "%s\n", found);
+
                         return shell_answer(0);
                 }
+
+                if (at_length)
+                        string_format(write, "%s: not found\n", name);
 
                 return shell_answer(127);
         }
@@ -3809,6 +5079,222 @@ fn shell_which(writer write, string_address input)
         // question and used to answer it down different descriptors.
         string_format(write, "%s: not found\n", input);
         shell_answer(127);
+}
+
+/*
+        ulimit.
+
+        prlimit64 rather than getrlimit, because getrlimit is not on the
+        riscv64 table at all and prlimit64 is on all three. The kernel counts
+        in bytes and in seconds; the shell has been quoting file sizes in five
+        hundred and twelve byte blocks and memory in kilobytes since long
+        before either of us, so each limit carries the number it is divided by.
+*/
+#define LIMIT_INFINITE ((p64)0 - 1)
+
+typedef struct
+{
+        string_address name;
+        p8 letter;
+        p8 resource;
+        positive step;
+} shell_limit;
+
+static shell_limit shell_limits[] = {
+    {"time(seconds)", 't', 0, 1},
+    {"file(blocks)", 'f', 1, 512},
+    {"data(kbytes)", 'd', 2, 1024},
+    {"stack(kbytes)", 's', 3, 1024},
+    {"coredump(blocks)", 'c', 4, 512},
+    {"memory(kbytes)", 'm', 5, 1024},
+    {"locked memory(kbytes)", 'l', 8, 1024},
+    {"process", 'p', 6, 1},
+    {"nofiles", 'n', 7, 1},
+    {"vmemory(kbytes)", 'v', 9, 1024},
+    {"locks", 'w', 10, 1},
+    {"rtprio", 'r', 14, 1},
+    {null, 0, 0, 0},
+};
+
+typedef struct
+{
+        p64 soft;
+        p64 hard;
+} shell_limit_pair;
+
+bool shell_limit_read(positive resource, shell_limit_pair address_to out)
+{
+        return system_call_4(syscall(prlimit64), 0, resource, 0,
+                             (positive)out) == 0;
+}
+
+bool shell_limit_write(positive resource, shell_limit_pair address_to in)
+{
+        return system_call_4(syscall(prlimit64), 0, resource, (positive)in, 0) == 0;
+}
+
+fn shell_limit_said(writer write, shell_limit address_to limit, bool hard)
+{
+        shell_limit_pair pair;
+        p64 value;
+
+        if (!shell_limit_read(limit->resource, address_of pair))
+                return string_format(write, "unlimited\n");
+
+        value = hard ? pair.hard : pair.soft;
+
+        if (value == LIMIT_INFINITE)
+                return string_format(write, "unlimited\n");
+
+        shell_number_padded(write, (positive)(value / limit->step), 0);
+        write("\n", 1);
+}
+
+fn shell_limit_listed(writer write)
+{
+        shell_limit address_to limit = shell_limits;
+
+        while (limit->name)
+        {
+                positive length = string_length(limit->name);
+
+                write(limit->name, length);
+
+                while (length < 20)
+                {
+                        write(" ", 1);
+                        length++;
+                }
+
+                write(" ", 1);
+                shell_limit_said(write, limit, false);
+                limit++;
+        }
+}
+
+fn shell_ulimit(writer write, string_address input)
+{
+        positive index = 1;
+        bool hard = false;
+        bool soft = false;
+        bool listed = false;
+        shell_limit address_to chosen = null;
+        shell_limit address_to limit;
+
+        while (index < shell_argc && string_is(shell_argv[index], '-') &&
+               string_get(shell_argv[index] + 1))
+        {
+                string_address letter = shell_argv[index] + 1;
+
+                while (string_get(letter))
+                {
+                        p8 which = string_get(letter++);
+
+                        if (which == 'H')
+                        {
+                                hard = true;
+                                continue;
+                        }
+
+                        if (which == 'S')
+                        {
+                                soft = true;
+                                continue;
+                        }
+
+                        if (which == 'a')
+                        {
+                                listed = true;
+                                continue;
+                        }
+
+                        limit = shell_limits;
+
+                        while (limit->name && limit->letter != which)
+                                limit++;
+
+                        if (!limit->name)
+                        {
+                                shell_answer(2);
+
+                                {
+                                        p8 said[2] = {which, end};
+
+                                        return string_format(
+                                            shell_diagnostic,
+                                            "ulimit: Illegal option -%s\n", said);
+                                }
+                        }
+
+                        chosen = limit;
+                }
+
+                index++;
+        }
+
+        if (listed)
+        {
+                shell_limit_listed(write);
+
+                return shell_answer(0);
+        }
+
+        // No resource named is the file size, which is what every shell means
+        // by a bare ulimit.
+        if (!chosen)
+                chosen = shell_limits + 1;
+
+        if (index >= shell_argc)
+        {
+                shell_limit_said(write, chosen, hard);
+
+                return shell_answer(0);
+        }
+
+        {
+                shell_limit_pair pair;
+                p64 value;
+
+                if (!shell_limit_read(chosen->resource, address_of pair))
+                        return shell_answer(1);
+
+                if (word_is(shell_argv[index], "unlimited"))
+                        value = LIMIT_INFINITE;
+                else
+                {
+                        bool good;
+                        bipolar asked = shell_signed(shell_argv[index], address_of good);
+
+                        if (!good)
+                        {
+                                shell_answer(2);
+
+                                return string_format(shell_diagnostic,
+                                                     "ulimit: bad number %s\n",
+                                                     shell_argv[index]);
+                        }
+
+                        value = (p64)asked * chosen->step;
+                }
+
+                // Neither said means both, which is the only way a script can
+                // lower a ceiling it will never be allowed to raise again.
+                if (hard || !soft)
+                        pair.hard = value;
+
+                if (soft || !hard)
+                        pair.soft = value;
+
+                if (!shell_limit_write(chosen->resource, address_of pair))
+                {
+                        shell_answer(2);
+
+                        return string_format(shell_diagnostic,
+                                             "ulimit: error setting limit\n");
+                }
+        }
+
+        shell_answer(0);
 }
 
 fn shell_help(writer write, string_address input)
