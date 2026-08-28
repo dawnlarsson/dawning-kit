@@ -5476,348 +5476,298 @@ static bool grep_walk(string_address path, b32 depth)
 /*
         The long spellings grep answers to.
 
-        --label and the three that have no letter of their own borrow a byte
-        no keyboard sends, so they reach the switch below without also making
-        grep -\001 mean something.
+        --label and the ten beside it have no letter of their own, so each
+        borrows a letter grep has not got: `allowed` leaves every one of them
+        out, and grep -J is still the mistake it always was.
 
         Not here, and deliberately: -P and --perl-regexp, which is a second
         regular expression language; and --color=always, whose escape codes
         would have to be woven through every line this prints for an answer
         no script reads. The when words that mean no colour are taken.
 */
-enum
-{
-        GREP_LONG_LABEL = 1,
-        GREP_LONG_BUFFERED = 2,
-        GREP_LONG_UNFOLD = 3,
-        GREP_LONG_BINARY_FILES = 4,
-        GREP_LONG_SEPARATOR = 5,
-        GREP_LONG_NO_SEPARATOR = 6,
-        GREP_LONG_INCLUDE = 7,
-        GREP_LONG_EXCLUDE = 8,
-        GREP_LONG_EXCLUDE_DIR = 9,
-        GREP_LONG_COLOUR = 10,
-        GREP_LONG_COLOUR_WHEN = 11
+static const file_long grep_longs[] = {
+    {(string_address) "extended-regexp", 'E'},
+    {(string_address) "fixed-strings", 'F'},
+    {(string_address) "basic-regexp", 'G'},
+    {(string_address) "regexp", 'e'},
+    {(string_address) "file", 'f'},
+    {(string_address) "ignore-case", 'i'},
+    {(string_address) "no-ignore-case", 'M'},
+    {(string_address) "word-regexp", 'w'},
+    {(string_address) "line-regexp", 'x'},
+    {(string_address) "no-messages", 's'},
+    {(string_address) "invert-match", 'v'},
+    {(string_address) "max-count", 'm'},
+    {(string_address) "byte-offset", 'b'},
+    {(string_address) "line-number", 'n'},
+    {(string_address) "line-buffered", 'K'},
+    {(string_address) "with-filename", 'H'},
+    {(string_address) "no-filename", 'h'},
+    {(string_address) "label", 'J'},
+    {(string_address) "only-matching", 'o'},
+    {(string_address) "quiet", 'q'},
+    {(string_address) "silent", 'q'},
+    {(string_address) "binary-files", 'N'},
+    {(string_address) "text", 'a'},
+    {(string_address) "binary", 'U'},
+    {(string_address) "files-without-match", 'L'},
+    {(string_address) "files-with-matches", 'l'},
+    {(string_address) "count", 'c'},
+    {(string_address) "initial-tab", 'T'},
+    {(string_address) "null", 'Z'},
+    {(string_address) "null-data", 'z'},
+    {(string_address) "directories", 'd'},
+    {(string_address) "devices", 'D'},
+    {(string_address) "group-separator", 'O'},
+    {(string_address) "no-group-separator", 'P'},
+    {(string_address) "before-context", 'B'},
+    {(string_address) "after-context", 'A'},
+    {(string_address) "context", 'C'},
+    {(string_address) "recursive", 'r'},
+    {(string_address) "dereference-recursive", 'R'},
+    {(string_address) "include", 'Q'},
+    {(string_address) "exclude", 'S'},
+    {(string_address) "exclude-dir", 'V'},
+    {(string_address) "color", 'W'},
+    {(string_address) "colour", 'W'},
+    {null, 0},
 };
 
-static text_long grep_long_options[] = {
-    {"extended-regexp", 'E', TEXT_LONG_ALONE},
-    {"fixed-strings", 'F', TEXT_LONG_ALONE},
-    {"basic-regexp", 'G', TEXT_LONG_ALONE},
-    {"regexp", 'e', TEXT_LONG_NEEDS},
-    {"file", 'f', TEXT_LONG_NEEDS},
-    {"ignore-case", 'i', TEXT_LONG_ALONE},
-    {"no-ignore-case", GREP_LONG_UNFOLD, TEXT_LONG_ALONE},
-    {"word-regexp", 'w', TEXT_LONG_ALONE},
-    {"line-regexp", 'x', TEXT_LONG_ALONE},
-    {"no-messages", 's', TEXT_LONG_ALONE},
-    {"invert-match", 'v', TEXT_LONG_ALONE},
-    {"max-count", 'm', TEXT_LONG_NEEDS},
-    {"byte-offset", 'b', TEXT_LONG_ALONE},
-    {"line-number", 'n', TEXT_LONG_ALONE},
-    {"line-buffered", GREP_LONG_BUFFERED, TEXT_LONG_ALONE},
-    {"with-filename", 'H', TEXT_LONG_ALONE},
-    {"no-filename", 'h', TEXT_LONG_ALONE},
-    {"label", GREP_LONG_LABEL, TEXT_LONG_NEEDS},
-    {"only-matching", 'o', TEXT_LONG_ALONE},
-    {"quiet", 'q', TEXT_LONG_ALONE},
-    {"silent", 'q', TEXT_LONG_ALONE},
-    {"binary-files", GREP_LONG_BINARY_FILES, TEXT_LONG_NEEDS},
-    {"text", 'a', TEXT_LONG_ALONE},
-    {"binary", 'U', TEXT_LONG_ALONE},
-    {"files-without-match", 'L', TEXT_LONG_ALONE},
-    {"files-with-matches", 'l', TEXT_LONG_ALONE},
-    {"count", 'c', TEXT_LONG_ALONE},
-    {"initial-tab", 'T', TEXT_LONG_ALONE},
-    {"null", 'Z', TEXT_LONG_ALONE},
-    {"null-data", 'z', TEXT_LONG_ALONE},
-    {"directories", 'd', TEXT_LONG_NEEDS},
-    {"devices", 'D', TEXT_LONG_NEEDS},
-    {"group-separator", GREP_LONG_SEPARATOR, TEXT_LONG_NEEDS},
-    {"no-group-separator", GREP_LONG_NO_SEPARATOR, TEXT_LONG_ALONE},
-    {"before-context", 'B', TEXT_LONG_NEEDS},
-    {"after-context", 'A', TEXT_LONG_NEEDS},
-    {"context", 'C', TEXT_LONG_NEEDS},
-    {"recursive", 'r', TEXT_LONG_ALONE},
-    {"dereference-recursive", 'R', TEXT_LONG_ALONE},
-    {"include", GREP_LONG_INCLUDE, TEXT_LONG_NEEDS},
-    {"exclude", GREP_LONG_EXCLUDE, TEXT_LONG_NEEDS},
-    {"exclude-dir", GREP_LONG_EXCLUDE_DIR, TEXT_LONG_NEEDS},
-    {"color", GREP_LONG_COLOUR, TEXT_LONG_MAYBE, GREP_LONG_COLOUR_WHEN},
-    {"colour", GREP_LONG_COLOUR, TEXT_LONG_MAYBE, GREP_LONG_COLOUR_WHEN},
-    {null, 0, 0}};
+/*
+        What has to be done in the order it was written.
+
+        -e and -f come as often as there are patterns, and the three glob
+        options as often as there are globs, so one value per letter is not
+        enough to hold them. -E and -F are here for the same reason from the
+        other side: a pattern is compiled as the language said when the
+        pattern arrived, so grep -e a -E and grep -E -e a are not the same.
+*/
+static bool grep_fixed;
+static bool grep_extended;
+static bool grep_icase;
+static bool grep_never;
+static bool grep_said_pattern;
+static b32 grep_pattern_from;
+
+static fn grep_operand(b32 index)
+{
+        if (!grep_said_pattern && grep_pattern_from < 0)
+        {
+                grep_pattern_from = index;
+                grep_said_pattern = true;
+                return;
+        }
+
+        text_file_add(index);
+}
+
+static bool grep_option_seen(p8 letter, string_address value)
+{
+        if (letter == 'E')
+                grep_extended = true;
+        else if (letter == 'G')
+                grep_extended = false;
+        else if (letter == 'F')
+                grep_fixed = true;
+        else if (letter == 'i' || letter == 'y')
+                grep_icase = true;
+        else if (letter == 'M')
+                grep_icase = false;
+        else if (letter == 'e')
+        {
+                grep_pattern_add(value, string_length(value), grep_fixed,
+                                 grep_extended);
+                grep_said_pattern = true;
+        }
+        else if (letter == 'Q')
+        {
+                if (grep_include_count < GREP_GLOBS_MAX)
+                        grep_include[grep_include_count++] = value;
+        }
+        else if (letter == 'S')
+        {
+                if (grep_exclude_count < GREP_GLOBS_MAX)
+                        grep_exclude[grep_exclude_count++] = value;
+        }
+        else if (letter == 'V')
+        {
+                if (grep_exclude_dir_count < GREP_GLOBS_MAX)
+                        grep_exclude_dir[grep_exclude_dir_count++] =
+                            grep_glob_keep(value);
+        }
+        else if (letter == 'f')
+        {
+                if (!text_open(value))
+                        return false;
+
+                // An empty pattern file matches nothing at all, which is not
+                // the same as an empty pattern.
+                while (text_line_next())
+                        grep_pattern_add(text_line, text_line_length, grep_fixed,
+                                         grep_extended);
+
+                text_close();
+
+                if (!grep_pattern_any)
+                        grep_never = true;
+
+                grep_said_pattern = true;
+        }
+
+        return true;
+}
+
+// A word one of the three options takes and only one of the words will do.
+static bool grep_word_is(string_address value, string_address first,
+                         string_address second, string_address third)
+{
+        return string_equals(value, first) || string_equals(value, second) ||
+               (third && string_equals(value, third));
+}
 
 static b32 text_grep()
 {
-        bool extended = false;
-        bool fixed = false;
-        bool icase = false;
-        bool invert = false;
-        bool counting = false;
-        bool listing = false;
-        bool listing_without = false;
-        bool quiet = false;
-        bool no_names = false;
-        bool with_names = false;
-        bool quietly = false;
-        bool whole_line = false;
-        bool whole_word = false;
-        bool only = false;
-        bool have_pattern = false;
-        bool never = false;
-        positive limit = TEXT_UNSET;
-        positive before = 0;
-        positive after = 0;
-        string_address label = null;
-        string_address separator = "--";
-        bool null_data = false;
-        b32 pattern_from = -1;
+        file_taking taking = {
+            .program = (string_address) "grep",
+            // -y is -i said the old way. Everything here is bytes already:
+            // -a says read a binary file as text, -I and -U say what to do
+            // about the ones that are not, and neither describes anything
+            // this does.
+            .allowed = (string_address) "ABCDEFGHILRTUZabcdefhilmnoqrsvwxyz",
+            .valued = (string_address) "ABCDJNOQSVdefm",
+            .optional = (string_address) "W",
+            .longs = grep_longs,
+            .operand = grep_operand,
+            .seen = grep_option_seen,
+        };
 
         text_begin("grep");
 
-        if (!text_expand_long(grep_long_options))
+        grep_fixed = false;
+        grep_extended = false;
+        grep_icase = false;
+        grep_never = false;
+        grep_said_pattern = false;
+        grep_pattern_from = -1;
+
+        if (!file_take(address_of taking))
                 return text_done(2);
 
-        for (b32 i = 1; i < text_argument_count; i++)
+        positive flags = taking.flags;
+        bool extended = grep_extended;
+        bool fixed = grep_fixed;
+        bool never = grep_never;
+        bool have_pattern = grep_said_pattern;
+        bool icase = grep_icase;
+        bool invert = (flags & FILE_FLAG('v')) != 0;
+        bool counting = (flags & FILE_FLAG('c')) != 0;
+        bool listing = (flags & FILE_FLAG('l')) != 0;
+        bool listing_without = (flags & FILE_FLAG('L')) != 0;
+        bool quiet = (flags & FILE_FLAG('q')) != 0;
+        bool no_names = (flags & FILE_FLAG('h')) != 0;
+        bool with_names = (flags & FILE_FLAG('H')) != 0;
+        bool quietly = (flags & FILE_FLAG('s')) != 0;
+        bool whole_line = (flags & FILE_FLAG('x')) != 0;
+        bool whole_word = (flags & FILE_FLAG('w')) != 0;
+        bool only = (flags & FILE_FLAG('o')) != 0;
+        bool null_data = (flags & FILE_FLAG('z')) != 0;
+        positive limit = TEXT_UNSET;
+        positive before = 0;
+        positive after = 0;
+        string_address label = file_option_value(address_of taking, 'J');
+        string_address separator = file_option_value(address_of taking, 'O');
+        b32 pattern_from = grep_pattern_from;
+        string_address said;
+
+        if (!separator)
+                separator = (flags & FILE_FLAG('P')) ? null : (string_address) "--";
+
+        grep_numbered = (flags & FILE_FLAG('n')) != 0;
+        grep_offsets = (flags & FILE_FLAG('b')) != 0;
+        grep_tabbed = (flags & FILE_FLAG('T')) != 0;
+        grep_null_name = (flags & FILE_FLAG('Z')) != 0;
+        grep_recursive = (flags & (FILE_FLAG('r') | FILE_FLAG('R'))) != 0;
+        grep_dereference = (flags & FILE_FLAG('R')) != 0;
+
+        /*
+                -d, -D and --binary-files all name a kind of file to do
+                something other than read. Nothing here is ever handed a
+                directory or a device by the shell that is not, and every file
+                is bytes, so the answer is the same whichever word came -- but
+                the word still has to be one of the words, because a script
+                that misspells it is told so by GNU.
+
+                The three exit statuses below are not a pattern. They are what
+                grep 3.11 did.
+        */
+        said = file_option_value(address_of taking, 'd');
+
+        if (said)
         {
-                string_address argument = text_argument(i);
-
-                if (argument[0] != '-' || !argument[1])
+                if (string_equals(said, "recurse"))
+                        grep_recursive = true;
+                else if (string_equals(said, "skip"))
+                        grep_skip_directories = true;
+                else if (!string_equals(said, "read"))
                 {
-                        if (!have_pattern && pattern_from < 0)
-                        {
-                                pattern_from = i;
-                                have_pattern = true;
-                                continue;
-                        }
+                        text_error(said, "invalid argument for --directories");
+                        return text_done(1);
+                }
+        }
 
-                        text_file_add(i);
+        said = file_option_value(address_of taking, 'D');
+
+        if (said && !grep_word_is(said, "read", "skip", null))
+        {
+                text_error(null, "unknown devices method");
+                return text_done(2);
+        }
+
+        said = file_option_value(address_of taking, 'N');
+
+        if (said && !grep_word_is(said, "binary", "text", "without-match"))
+        {
+                text_error(null, "unknown binary-files type");
+                return text_done(2);
+        }
+
+        // Colour is a terminal's business, and the one word here that asks
+        // for it is refused rather than answered wrongly.
+        said = file_option_value(address_of taking, 'W');
+
+        if (said && !grep_word_is(said, "never", "no", "none") &&
+            !grep_word_is(said, "auto", "tty", "if-tty"))
+        {
+                text_error(said, "invalid argument for --color");
+                return text_done(2);
+        }
+
+        for (positive k = 0; k < 4; k++)
+        {
+                // -C is both sides at once, and an -A or a -B beside it is
+                // the side that was named twice.
+                p8 letter = k == 0 ? 'm' : k == 1 ? 'C' : k == 2 ? 'A' : 'B';
+                positive number = 0;
+
+                said = file_option_value(address_of taking, letter);
+
+                if (!said)
                         continue;
-                }
 
-                if (argument[1] == '-' && !argument[2])
+                if (!text_number_of(said, address_of number))
                 {
-                        for (b32 j = i + 1; j < text_argument_count; j++)
-                        {
-                                if (!have_pattern && pattern_from < 0)
-                                {
-                                        pattern_from = j;
-                                        have_pattern = true;
-                                        continue;
-                                }
-
-                                text_file_add(j);
-                        }
-
-                        break;
+                        text_error(null, "invalid context length argument");
+                        return text_done(2);
                 }
 
-                for (positive c = 1; argument[c]; c++)
-                {
-                        p8 flag = argument[c];
-
-                        if (flag == 'e' || flag == 'f' || flag == 'm' ||
-                            flag == 'A' || flag == 'B' || flag == 'C' ||
-                            flag == 'd' || flag == 'D' ||
-                            flag == GREP_LONG_LABEL || flag == GREP_LONG_BINARY_FILES ||
-                            flag == GREP_LONG_SEPARATOR || flag == GREP_LONG_INCLUDE ||
-                            flag == GREP_LONG_EXCLUDE || flag == GREP_LONG_EXCLUDE_DIR ||
-                            flag == GREP_LONG_COLOUR_WHEN)
-                        {
-                                string_address value = argument[c + 1] ? argument + c + 1
-                                                                       : text_argument(++i);
-                                positive number = 0;
-
-                                if (!value)
-                                {
-                                        text_error(null, "option requires an argument");
-                                        return text_done(2);
-                                }
-
-                                if (flag == 'e')
-                                {
-                                        grep_pattern_add(value, string_length(value),
-                                                         fixed, extended);
-                                        have_pattern = true;
-                                }
-                                else if (flag == 'f')
-                                {
-                                        if (!text_open(value))
-                                                return text_done(2);
-
-                                        // An empty pattern file matches
-                                        // nothing at all, which is not the
-                                        // same as an empty pattern.
-                                        while (text_line_next())
-                                                grep_pattern_add(text_line, text_line_length,
-                                                                 fixed, extended);
-
-                                        text_close();
-
-                                        if (!grep_pattern_any)
-                                                never = true;
-
-                                        have_pattern = true;
-                                }
-                                else if (flag == GREP_LONG_LABEL)
-                                {
-                                        label = value;
-                                }
-                                else if (flag == GREP_LONG_SEPARATOR)
-                                {
-                                        separator = value;
-                                }
-                                /*
-                                        -d, -D and --binary-files all name a
-                                        kind of file to do something other
-                                        than read. Nothing here is ever handed
-                                        a directory or a device by the shell
-                                        that is not, and every file is bytes,
-                                        so the answer is the same whichever
-                                        word came -- but the word still has to
-                                        be one of the words, because a script
-                                        that misspells it is told so by GNU.
-
-                                        The three exit statuses below are not a
-                                        pattern. They are what grep 3.11 did.
-                                */
-                                else if (flag == GREP_LONG_INCLUDE)
-                                {
-                                        if (grep_include_count < GREP_GLOBS_MAX)
-                                                grep_include[grep_include_count++] = value;
-                                }
-                                else if (flag == GREP_LONG_EXCLUDE)
-                                {
-                                        if (grep_exclude_count < GREP_GLOBS_MAX)
-                                                grep_exclude[grep_exclude_count++] = value;
-                                }
-                                else if (flag == GREP_LONG_EXCLUDE_DIR)
-                                {
-                                        if (grep_exclude_dir_count < GREP_GLOBS_MAX)
-                                                grep_exclude_dir[grep_exclude_dir_count++] =
-                                                    grep_glob_keep(value);
-                                }
-                                // Colour is a terminal's business, and the
-                                // one word here that asks for it is refused
-                                // rather than answered wrongly.
-                                else if (flag == GREP_LONG_COLOUR_WHEN)
-                                {
-                                        if (!string_equals(value, "never") &&
-                                            !string_equals(value, "no") &&
-                                            !string_equals(value, "none") &&
-                                            !string_equals(value, "auto") &&
-                                            !string_equals(value, "tty") &&
-                                            !string_equals(value, "if-tty"))
-                                        {
-                                                text_error(value, "invalid argument for --color");
-                                                return text_done(2);
-                                        }
-                                }
-                                else if (flag == 'd')
-                                {
-                                        if (string_equals(value, "recurse"))
-                                                grep_recursive = true;
-                                        else if (string_equals(value, "skip"))
-                                                grep_skip_directories = true;
-                                        else if (!string_equals(value, "read"))
-                                        {
-                                                text_error(value, "invalid argument for --directories");
-                                                return text_done(1);
-                                        }
-                                }
-                                else if (flag == 'D')
-                                {
-                                        if (!string_equals(value, "read") &&
-                                            !string_equals(value, "skip"))
-                                        {
-                                                text_error(null, "unknown devices method");
-                                                return text_done(2);
-                                        }
-                                }
-                                else if (flag == GREP_LONG_BINARY_FILES)
-                                {
-                                        if (!string_equals(value, "binary") &&
-                                            !string_equals(value, "text") &&
-                                            !string_equals(value, "without-match"))
-                                        {
-                                                text_error(null, "unknown binary-files type");
-                                                return text_done(2);
-                                        }
-                                }
-                                else if (flag == 'm' || flag == 'A' || flag == 'B' ||
-                                         flag == 'C')
-                                {
-                                        if (!text_number_of(value, address_of number))
-                                        {
-                                                text_error(null, "invalid context length argument");
-                                                return text_done(2);
-                                        }
-
-                                        if (flag == 'm')
-                                                limit = number;
-                                        else if (flag == 'A')
-                                                after = number;
-                                        else if (flag == 'B')
-                                                before = number;
-                                        else
-                                        {
-                                                after = number;
-                                                before = number;
-                                        }
-                                }
-
-                                break;
-                        }
-
-                        switch (flag)
-                        {
-                        case 'E': extended = true; break;
-                        case 'F': fixed = true; break;
-                        case 'G': extended = false; break;
-                        case 'i':
-                        case 'y': icase = true; break;
-                        case GREP_LONG_UNFOLD: icase = false; break;
-                        case 'v': invert = true; break;
-                        case 'n': grep_numbered = true; break;
-                        case 'b': grep_offsets = true; break;
-                        case 'c': counting = true; break;
-                        case 'l': listing = true; break;
-                        case 'L': listing_without = true; break;
-                        case 'o': only = true; break;
-                        case 'q': quiet = true; break;
-                        case 'h': no_names = true; break;
-                        case 'H': with_names = true; break;
-                        case 's': quietly = true; break;
-                        case 'x': whole_line = true; break;
-                        case 'w': whole_word = true; break;
-                        case 'T': grep_tabbed = true; break;
-                        case 'r': grep_recursive = true; break;
-                        case 'R':
-                                grep_recursive = true;
-                                grep_dereference = true;
-                                break;
-                        case GREP_LONG_COLOUR: break;
-                        // -Z ends the file name, -z ends the line, and a
-                        // caller may well want both.
-                        case 'Z': grep_null_name = true; break;
-                        case 'z': null_data = true; break;
-                        // Everything here is bytes already: -a says read a
-                        // binary file as text and -U says do not undo line
-                        // endings, and neither describes anything this does.
-                        case 'a':
-                        case 'I':
-                        case 'U':
-                        case GREP_LONG_BUFFERED: break;
-                        case GREP_LONG_NO_SEPARATOR: separator = null; break;
-                        default:
-                        {
-                                p8 named[3] = {'-', flag, 0};
-
-                                text_error(named, "invalid option");
-                                return text_done(2);
-                        }
-                        }
-                }
+                if (letter == 'm')
+                        limit = number;
+                else if (letter == 'A')
+                        after = number;
+                else if (letter == 'B')
+                        before = number;
+                else
+                        after = before = number;
         }
 
         if (pattern_from >= 0 && !grep_pattern_any && !never)
@@ -7326,26 +7276,73 @@ static bool sed_substitute(sed_command address_to command)
         promise -- claiming it and then replacing the link would be worse than
         not claiming it.
 */
-enum
-{
-        SED_LONG_QUIET = 1,
-        SED_LONG_INPLACE = 2
+// P is a letter sed has not got, and is where the two words that take away
+// what is not here to take go.
+static const file_long sed_longs[] = {
+    {(string_address) "quiet", 'n'},
+    {(string_address) "silent", 'n'},
+    {(string_address) "expression", 'e'},
+    {(string_address) "file", 'f'},
+    {(string_address) "in-place", 'i'},
+    {(string_address) "line-length", 'l'},
+    {(string_address) "regexp-extended", 'E'},
+    {(string_address) "separate", 's'},
+    {(string_address) "unbuffered", 'u'},
+    {(string_address) "null-data", 'z'},
+    {(string_address) "posix", 'P'},
+    {(string_address) "sandbox", 'P'},
+    {null, 0},
 };
 
-static text_long sed_long_options[] = {
-    {"quiet", 'n', TEXT_LONG_ALONE},
-    {"silent", 'n', TEXT_LONG_ALONE},
-    {"expression", 'e', TEXT_LONG_NEEDS},
-    {"file", 'f', TEXT_LONG_NEEDS},
-    {"in-place", 'i', TEXT_LONG_MAYBE, SED_LONG_INPLACE},
-    {"line-length", 'l', TEXT_LONG_NEEDS},
-    {"regexp-extended", 'E', TEXT_LONG_ALONE},
-    {"separate", 's', TEXT_LONG_ALONE},
-    {"unbuffered", 'u', TEXT_LONG_ALONE},
-    {"null-data", 'z', TEXT_LONG_ALONE},
-    {"posix", SED_LONG_QUIET, TEXT_LONG_ALONE},
-    {"sandbox", SED_LONG_QUIET, TEXT_LONG_ALONE},
-    {null, 0, 0}};
+// The first word that is not an option is the script, and every word after it
+// is a file. -e and -f come as often as there are pieces of script, which is
+// what the callback below is for.
+static bool sed_have_script;
+static b32 sed_option_status;
+
+static fn sed_operand(b32 index)
+{
+        if (sed_have_script)
+        {
+                text_file_add(index);
+                return;
+        }
+
+        sed_script_add(text_argument(index));
+        sed_have_script = true;
+}
+
+static bool sed_option_seen(p8 letter, string_address value)
+{
+        if (letter == 'e')
+        {
+                sed_script_add(value);
+                sed_have_script = true;
+                return true;
+        }
+
+        if (letter != 'f')
+                return true;
+
+        // Four, not one: sed keeps its usage errors and its I/O failures
+        // apart, and a script file that is not there is the second kind.
+        if (!text_open(value))
+        {
+                sed_option_status = 4;
+                return false;
+        }
+
+        while (text_line_next())
+        {
+                text_line[text_line_length] = '\0';
+                sed_script_add(text_line);
+        }
+
+        text_close();
+        sed_have_script = true;
+
+        return true;
+}
 
 /*
         Where -i writes before it is allowed to be the file.
@@ -7394,150 +7391,44 @@ static bool sed_temporary(string_address name, p8 address_to into, positive slot
 
 static b32 text_sed()
 {
-        bool have_script = false;
         b32 leaving = -1;
+        file_taking taking = {
+            .program = (string_address) "sed",
+            // -u asks for output a line at a time, which costs something only
+            // when somebody is reading it live. -l is how wide the l command
+            // wraps, and there is no l command here to wrap.
+            .allowed = (string_address) "Eefilnrsuz",
+            .valued = (string_address) "efl",
+            // -i takes its suffix joined on -- sed -in is in place with a
+            // backup called n, not -i -n.
+            .optional = (string_address) "i",
+            .longs = sed_longs,
+            .operand = sed_operand,
+            .seen = sed_option_seen,
+        };
 
         text_begin("sed");
 
-        if (!text_expand_long(sed_long_options))
-                return text_done(1);
+        sed_have_script = false;
+        sed_option_status = 1;
 
-        for (b32 i = 1; i < text_argument_count; i++)
+        if (!file_take(address_of taking))
+                return text_done(sed_option_status);
+
+        positive flags = taking.flags;
+        bool have_script = sed_have_script;
+
+        sed_quiet = (flags & FILE_FLAG('n')) != 0;
+        sed_extended = (flags & (FILE_FLAG('r') | FILE_FLAG('E'))) != 0;
+        sed_separate = (flags & FILE_FLAG('s')) != 0;
+        sed_null_data = (flags & FILE_FLAG('z')) != 0;
+
+        if (flags & FILE_FLAG('i'))
         {
-                string_address argument = text_argument(i);
+                string_address suffix = file_option_value(address_of taking, 'i');
 
-                if (argument[0] != '-' || !argument[1])
-                {
-                        if (!have_script)
-                        {
-                                sed_script_add(argument);
-                                have_script = true;
-                                continue;
-                        }
-
-                        text_file_add(i);
-                        continue;
-                }
-
-                if (argument[1] == '-' && !argument[2])
-                {
-                        for (b32 j = i + 1; j < text_argument_count; j++)
-                        {
-                                if (!have_script)
-                                {
-                                        sed_script_add(text_argument(j));
-                                        have_script = true;
-                                        continue;
-                                }
-
-                                text_file_add(j);
-                        }
-
-                        break;
-                }
-
-                for (positive c = 1; argument[c]; c++)
-                {
-                        p8 flag = argument[c];
-
-                        if (flag == 'n')
-                        {
-                                sed_quiet = true;
-                                continue;
-                        }
-
-                        if (flag == 'r' || flag == 'E')
-                        {
-                                sed_extended = true;
-                                continue;
-                        }
-
-                        if (flag == 's')
-                        {
-                                sed_separate = true;
-                                continue;
-                        }
-
-                        if (flag == 'z')
-                        {
-                                sed_null_data = true;
-                                continue;
-                        }
-
-                        // -u asks for output a line at a time, which costs
-                        // something only when somebody is reading it live;
-                        // --posix and --sandbox both take away what is not
-                        // here to take.
-                        if (flag == 'u' || flag == SED_LONG_QUIET)
-                                continue;
-
-                        // -i takes its suffix joined on -- sed -in is in place
-                        // with a backup called n, not -i -n -- so it reads the
-                        // rest of the argument rather than the next one.
-                        if (flag == 'i')
-                        {
-                                sed_in_place = argument[c + 1] ? argument + c + 1
-                                                               : (string_address) "";
-                                sed_separate = true;
-                                break;
-                        }
-
-                        if (flag == 'e' || flag == 'f' || flag == 'l' ||
-                            flag == SED_LONG_INPLACE)
-                        {
-                                string_address value = argument[c + 1] ? argument + c + 1
-                                                                       : text_argument(++i);
-
-                                if (!value)
-                                {
-                                        text_error(null, "option requires an argument");
-                                        return text_done(1);
-                                }
-
-                                if (flag == 'e')
-                                {
-                                        sed_script_add(value);
-                                        have_script = true;
-                                }
-                                else if (flag == SED_LONG_INPLACE)
-                                {
-                                        sed_in_place = value;
-                                        sed_separate = true;
-                                }
-                                // -l is how wide the l command wraps, and
-                                // there is no l command here to wrap.
-                                else if (flag == 'l')
-                                {
-                                }
-                                else
-                                {
-                                        // Four, not one: sed keeps its usage
-                                        // errors and its I/O failures apart,
-                                        // and a script file that is not there
-                                        // is the second kind.
-                                        if (!text_open(value))
-                                                return text_done(4);
-
-                                        while (text_line_next())
-                                        {
-                                                text_line[text_line_length] = '\0';
-                                                sed_script_add(text_line);
-                                        }
-
-                                        text_close();
-                                        have_script = true;
-                                }
-
-                                break;
-                        }
-
-                        {
-                                p8 named[3] = {'-', flag, 0};
-
-                                text_error(named, "invalid option");
-                                return text_done(1);
-                        }
-                }
+                sed_in_place = suffix ? suffix : (string_address) "";
+                sed_separate = true;
         }
 
         if (!have_script)

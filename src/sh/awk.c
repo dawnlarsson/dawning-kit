@@ -7131,97 +7131,90 @@ static fn awk_usage()
         awk_leave(1);
 }
 
+/*
+        -f and -v come as often as there are program files and assignments, so
+        the options are done as they arrive rather than counted and looked at
+        afterwards. The program being built and the two lists it fills are
+        reached from there rather than passed to it.
+*/
+static awk_builder address_to awk_reading;
+static awk_text address_to awk_field_split;
+static awk_text address_to awk_pending[64];
+static b32 awk_pending_count;
+static bool awk_have_program;
+
+static bool awk_option_seen(p8 letter, string_address value)
+{
+        if (letter == 'F')
+        {
+                awk_text_drop(awk_field_split);
+                awk_field_split = awk_unescape(value, string_length(value));
+
+                return true;
+        }
+
+        if (letter == 'v')
+        {
+                if (awk_pending_count < 64)
+                        awk_pending[awk_pending_count++] =
+                            awk_text_new(value, string_length(value));
+
+                return true;
+        }
+
+        bipolar handle = value[0] == '-' && !value[1]
+                             ? 0
+                             : text_open_handle(value, FILE_READ, 0);
+
+        if (handle < 0)
+                awk_fatal(value, "cannot open the program file");
+
+        for (;;)
+        {
+                p8 room[65536];
+                bipolar got = system_call_3(syscall(read), (positive)handle,
+                                            (positive)room, sizeof(room));
+
+                if (got <= 0)
+                        break;
+
+                awk_builder_put(awk_reading, room, (positive)got);
+        }
+
+        if (handle > 0)
+                system_call_1(syscall(close), (positive)handle);
+
+        awk_builder_char(awk_reading, '\n');
+        awk_have_program = true;
+
+        return true;
+}
+
 static b32 text_awk()
 {
         awk_builder program;
-        bool have_program = false;
-        b32 at = 1;
-        awk_text address_to separator = null;
-        awk_text address_to pending[64];
-        b32 pending_count = 0;
+        file_taking taking = {
+            .program = (string_address) "awk",
+            .allowed = (string_address) "Ffv",
+            .valued = (string_address) "Ffv",
+            .seen = awk_option_seen,
+        };
 
         text_begin("awk");
         awk_builder_start(address_of program);
         awk_start();
 
-        while (at < text_argument_count)
-        {
-                string_address argument = text_argument(at);
-                positive length = string_length(argument);
+        awk_reading = address_of program;
+        awk_field_split = null;
+        awk_pending_count = 0;
+        awk_have_program = false;
 
-                if (argument[0] != '-' || length == 1)
-                        break;
+        if (!file_take(address_of taking))
+                awk_usage();
 
-                if (argument[1] == '-' && length == 2)
-                {
-                        at++;
-                        break;
-                }
+        b32 at = (b32)taking.first;
 
-                p8 letter = argument[1];
-                string_address value = null;
-
-                if (letter != 'f' && letter != 'v' && letter != 'F')
-                {
-                        text_error(argument, "unknown option");
-                        awk_usage();
-                }
-
-                if (length > 2)
-                        value = argument + 2;
-                else if (at + 1 < text_argument_count)
-                        value = text_argument(++at);
-                else
-                {
-                        text_error(argument, "wants an argument");
-                        awk_usage();
-                }
-
-                at++;
-
-                if (letter == 'F')
-                {
-                        awk_text_drop(separator);
-                        separator = awk_unescape(value, string_length(value));
-                        continue;
-                }
-
-                if (letter == 'v')
-                {
-                        if (pending_count < 64)
-                                pending[pending_count++] = awk_text_new(value,
-                                                                        string_length(value));
-
-                        continue;
-                }
-
-                bipolar handle = value[0] == '-' && !value[1]
-                                     ? 0
-                                     : text_open_handle(value, FILE_READ, 0);
-
-                if (handle < 0)
-                        awk_fatal(value, "cannot open the program file");
-
-                for (;;)
-                {
-                        p8 room[65536];
-                        bipolar got = system_call_3(syscall(read), (positive)handle,
-                                                    (positive)room, sizeof(room));
-
-                        if (got <= 0)
-                                break;
-
-                        awk_builder_put(address_of program, room, (positive)got);
-                }
-
-                if (handle > 0)
-                        system_call_1(syscall(close), (positive)handle);
-
-                awk_builder_char(address_of program, '\n');
-                have_program = true;
-        }
-
-        if (!have_program)
+        if (!awk_have_program)
         {
                 if (at >= text_argument_count)
                         awk_usage();
@@ -7257,16 +7250,17 @@ static b32 text_awk()
         awk_parse_program();
         awk_regex_mark();
 
-        if (separator)
+        if (awk_field_split)
         {
-                awk_set_text(address_of awk_globals[awk_where_fs].value, separator);
-                separator = null;
+                awk_set_text(address_of awk_globals[awk_where_fs].value,
+                             awk_field_split);
+                awk_field_split = null;
         }
 
-        for (b32 i = 0; i < pending_count; i++)
+        for (b32 i = 0; i < awk_pending_count; i++)
         {
-                awk_assignment(pending[i]->text, pending[i]->length);
-                awk_text_drop(pending[i]);
+                awk_assignment(awk_pending[i]->text, awk_pending[i]->length);
+                awk_text_drop(awk_pending[i]);
         }
 
         b32 answer = awk_run_rules();
