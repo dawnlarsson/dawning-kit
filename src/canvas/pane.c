@@ -531,6 +531,7 @@ static void pane_regrid(struct pane *pane)
                 pane->grid_rows = pane->rows;
                 pane->damage_row = 0;
                 pane->damage_rows = pane->rows;
+                console_regrid(pane);
                 return;
         }
 

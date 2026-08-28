@@ -368,6 +368,10 @@ struct target
 
 static void target_row(const struct target *t, int y, int x1, int x2, u32 colour);
 
+// The console window is made and drawn like any other, so pane.c has to be
+// able to say a shape changed before console.c is read.
+static void console_regrid(struct pane *pane);
+
 static struct canvas *canvas_from_client(struct drm_client_dev *client)
 {
         return container_of(client, struct canvas, client);

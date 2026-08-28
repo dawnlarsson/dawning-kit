@@ -42,8 +42,25 @@ static void console_put_line(struct console *console, const char *text,
 
         spin_lock_irqsave(&console_cells, flags);
 
+        /*
+                A newline here is a line feed and nothing else.
+
+                The emulator is what sits behind a pty, and the line discipline
+                in front of one turns \n into \r\n before it ever arrives.
+                printk has no line discipline: it says \n and means the start
+                of the next line. Fed raw, the cursor drops a row and stays in
+                the column it was in, so every message begins where the one
+                before it ended and the log walks off to the right until it
+                wraps. The return is put in here, which is where the pty that
+                is missing would have put it.
+        */
         for (i = 0; i < count; i++)
+        {
+                if (text[i] == '\n')
+                        consume('\r');
+
                 consume((unsigned char)text[i]);
+        }
 
         // The emulator counts the ring on in the page; the compositor reads
         // its own copy, and this is where the two meet.
@@ -112,15 +129,23 @@ static void console_start(void)
                 return;
         }
 
-        // The emulator writes through the page every window of cells has, so
-        // it is pointed at this one's and started the way the terminal starts.
-        //
-        // Wrapped at the ring's width and not the window's, because a line is
-        // kept as long as it was written and folded where it is drawn. That is
-        // what lets this window be resized without the log being rewritten,
-        // and it is what the byte handler this replaced did.
+        /*
+                The emulator writes through the page every window of cells has,
+                so it is pointed at this one's and started the way the terminal
+                starts.
+
+                Wrapped at the width the window is drawn at, and at nothing
+                else. The byte handler this replaced kept a line as long as it
+                was written and let the compositor fold it, which is right for
+                something that only ever appends -- it has no cursor and does
+                not care which row anything lands on. An emulator does: it owns
+                a grid, and every erase, every scroll and every cursor move is
+                said in rows of it. Wrap at one width and fold at another and
+                the two disagree about where row four is, by one row for every
+                line long enough to fold.
+        */
         window = pane->mapping;
-        COLUMNS = pane->stride;
+        COLUMNS = min(pane->columns, pane->stride);
         ROWS = pane->rows;
         full_reset();
 
@@ -133,6 +158,33 @@ static void console_start(void)
 
         register_console(&canvas_console);
         console_registered = true;
+}
+
+/*
+        The window changed shape.
+
+        An owned pane has no program to be told, so pane_regrid sets the grid
+        and returns; the emulator behind this one still believes the width it
+        was started at. It is told here, through the same page a program would
+        have been told through.
+*/
+static void console_regrid(struct pane *pane)
+{
+        unsigned long flags;
+
+        if (pane != READ_ONCE(console_pane) || !pane->cells)
+                return;
+
+        spin_lock_irqsave(&console_cells, flags);
+
+        window->columns = pane->columns;
+        window->rows = pane->rows;
+
+        regrid(-1);
+
+        pane->head = window->head;
+
+        spin_unlock_irqrestore(&console_cells, flags);
 }
 
 static void console_stop(void)
