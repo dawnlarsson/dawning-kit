@@ -311,6 +311,43 @@ static _Bool pane_extent(struct pane *pane, unsigned int *first,
 }
 
 /*
+        Put the view where a count of rows says, rather than a number of lines.
+
+        The bar is measured in drawn rows, because that is what it is a picture
+        of: a line too long for the window is several of them. So the walk is
+        the same one pane_extent does, stopping at the line the row asked for.
+*/
+static _Bool pane_view_set(struct pane *pane, unsigned int above)
+{
+        unsigned int was = pane->view;
+        unsigned int at, run = 0, live, skip;
+
+        if (!pane->cells)
+                return false;
+
+        live = pane_view_at(pane, PANE_LIVE, &skip);
+
+        for (at = pane_oldest(pane); at != pane->head; at++)
+        {
+                unsigned int past = run + pane_line_rows(pane, at);
+
+                if (above < past)
+                        break;
+
+                run = past;
+        }
+
+        pane->view = at >= live ? PANE_LIVE : at;
+
+        if (pane->view == was)
+                return false;
+
+        pane->view_moved = true;
+
+        return true;
+}
+
+/*
         The wheel, in lines. Positive is away from the hand, which is back
         through what has already been said.
 

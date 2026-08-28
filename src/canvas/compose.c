@@ -343,28 +343,51 @@ static void compose_cells(struct pane *pane, const struct target *t,
         Nothing is drawn at all when everything fits, so a window that has
         never had anything go past the top of it has no bar to explain.
 */
-#define BAR_WIDTH 6
+// Wide enough to take hold of. Six was wide enough to see and not to grab:
+// the resize grip reaches six pixels in from the frame, so a six wide bar was
+// entirely inside it and the hand got a resize every time.
+#define BAR_WIDTH 10
+
+/*
+        The bar, and the thumb in it, in the desktop's own coordinates.
+
+        Drawn here and taken hold of in drag.c, worked out in one place so the
+        thumb a hand grabs is the thumb that was drawn. Answers false for a
+        window with nothing to scroll, which is also the answer to whether
+        there is anything there to press.
+*/
+static _Bool pane_bar(struct pane *pane, int *bx, int *by, int *bw, int *bh,
+                      int *at, int *span)
+{
+        unsigned int first, shown, total;
+
+        if (!pane_extent(pane, &first, &shown, &total) || !total)
+                return false;
+
+        *bw = BAR_WIDTH * (int)desktop.scale;
+        *bh = (int)pane->rows * canvas_cell_h;
+        *bx = pane->x + (int)pane->width - *bw;
+        *by = pane->y + (pane->style & WINDOW_FRAME ? canvas_title : 0);
+
+        *span = max((int)((unsigned long)*bh * shown / total), canvas_cell_h);
+        *at = (int)((unsigned long)*bh * first / total);
+
+        if (*at + *span > *bh)
+                *at = *bh - *span;
+
+        return true;
+}
 
 static void compose_bar(struct pane *pane, const struct target *t,
                         const struct shape *shape, int x, int y)
 {
-        unsigned int first, shown, total;
-        int width = BAR_WIDTH * (int)desktop.scale;
-        int height = (int)pane->rows * canvas_cell_h;
-        int at, span;
+        int bx, by, bw, bh, at, span;
 
-        if (!pane_extent(pane, &first, &shown, &total) || !total)
+        if (!pane_bar(pane, &bx, &by, &bw, &bh, &at, &span))
                 return;
 
-        span = max((int)((unsigned long)height * shown / total), canvas_cell_h);
-        at = (int)((unsigned long)height * first / total);
-
-        if (at + span > height)
-                at = height - span;
-
-        shape_fill(t, shape, x + (int)pane->width - width, y, width, height,
-                   t->ink[INK_FRAME]);
-        shape_fill(t, shape, x + (int)pane->width - width, y + at, width, span,
+        shape_fill(t, shape, bx - t->x, by - t->y, bw, bh, t->ink[INK_FRAME]);
+        shape_fill(t, shape, bx - t->x, by - t->y + at, bw, span,
                    t->ink[INK_TITLE_LIT]);
 }
 

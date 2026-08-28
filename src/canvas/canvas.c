@@ -120,6 +120,12 @@ struct pane
         unsigned int max_width, max_height;
         unsigned long bytes;
         void *mapping;
+
+        // Where it was before it filled the screen, and whether it is filling
+        // it. A window remembers one rectangle, which is what a second double
+        // click puts it back to.
+        int saved_x, saved_y, saved_w, saved_h;
+        _Bool maximized;
 };
 
 struct output
@@ -193,6 +199,27 @@ static struct desktop
         unsigned int resize_edges;
         int resize_x, resize_y, resize_w, resize_h;
         int press_x, press_y;
+
+        // The scrollbar being held, and where in its thumb it was taken, so
+        // the thumb stays under the finger instead of jumping to it.
+        struct pane *barring;
+        int bar_grab;
+
+        // The last press, for telling a second click of a pair from a first.
+        struct pane *press_pane;
+        u64 press_ns;
+
+        /*
+                How fast the wheel is being turned.
+
+                A notch on its own moves a few lines; notches arriving one
+                after another mean a hand that wants to be somewhere else, and
+                each one moves further than the last until it stops. Kept here
+                rather than worked out per turn, because the speed is the thing
+                between two turns and not inside either.
+        */
+        unsigned int wheel_speed;
+        u64 wheel_ns;
 
         unsigned int cursor_shape;
         unsigned int drawn_shape;

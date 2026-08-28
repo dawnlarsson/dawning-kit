@@ -194,15 +194,18 @@ static void pointer_apply(void)
                                 desktop_watch();
                         }
 
-                        if (desktop.dragging || desktop.resizing)
+                        if (desktop.dragging || desktop.resizing ||
+                            desktop.barring)
                         {
                                 desktop.cursor_x = x;
                                 desktop.cursor_y = y;
 
                                 if (desktop.dragging)
                                         drag_move(x, y);
-                                else
+                                else if (desktop.resizing)
                                         resize_move(x, y);
+                                else
+                                        bar_move(y);
                         }
                         else
                         {

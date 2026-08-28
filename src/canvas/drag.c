@@ -216,6 +216,81 @@ static void resize_move(int x, int y)
         pane_reshape(pane, nx, ny, nw, nh);
 }
 
+static _Bool pane_bar_holds(struct pane *pane, int x, int y)
+{
+        int bx, by, bw, bh, at, span;
+
+        if (!pane->cells || !pane_bar(pane, &bx, &by, &bw, &bh, &at, &span))
+                return false;
+
+        return x >= bx && x < bx + bw && y >= by && y < by + bh;
+}
+
+/*
+        The bar under the hand, in rows.
+
+        The thumb is a picture of how much of the whole is showing, so where it
+        sits is where the view is: the top of the thumb over the height of the
+        bar is the same fraction as the rows above the view over all of them.
+        Grabbed anywhere inside the thumb it stays under the finger, and
+        pressed outside it the thumb comes to the finger's middle.
+*/
+static void bar_move(int y)
+{
+        struct pane *pane = desktop.barring;
+        int bx, by, bw, bh, at, span, top;
+        unsigned int first, shown, total, above;
+
+        if (!pane || !pane_bar(pane, &bx, &by, &bw, &bh, &at, &span))
+                return;
+
+        if (!pane_extent(pane, &first, &shown, &total))
+                return;
+
+        top = clamp(y - desktop.bar_grab - by, 0, max(bh - span, 0));
+        above = (unsigned int)((unsigned long)top * total / (unsigned long)max(bh, 1));
+
+        if (!pane_view_set(pane, above))
+                return;
+
+        atomic_set(&desktop.frame_pending, 1);
+        canvas_thread_wake();
+}
+
+/*
+        Filling the screen, and going back.
+
+        The rectangle it had is kept on the window itself, so a second pair of
+        clicks puts it back where it was rather than somewhere a rule decided.
+*/
+static void pane_maximize(struct pane *pane)
+{
+        int title = pane->style & WINDOW_FRAME ? canvas_title : 0;
+        int border = pane->style & WINDOW_FRAME ? canvas_border : 0;
+
+        if (pane->maximized)
+        {
+                pane->maximized = false;
+                pane_reshape(pane, pane->saved_x, pane->saved_y,
+                             pane->saved_w, pane->saved_h);
+                return;
+        }
+
+        pane->saved_x = pane->x;
+        pane->saved_y = pane->y;
+        pane->saved_w = pane->width;
+        pane->saved_h = pane->height;
+        pane->maximized = true;
+
+        pane_reshape(pane, border, border, desktop.width - border * 2,
+                     desktop.height - title - border * 3);
+}
+
+// Two clicks are a pair when the second lands on the same window soon enough
+// after the first. A quarter of a second is what a hand does without meaning
+// to say two separate things.
+#define PRESS_AGAIN_NS 400000000ull
+
 static void drag_press(int x, int y)
 {
         unsigned int edges;
@@ -239,7 +314,49 @@ static void drag_press(int x, int y)
         desktop.press_x = x;
         desktop.press_y = y;
 
-        if (edges)
+        {
+                u64 now = ktime_get_ns();
+                _Bool again = pane == desktop.press_pane &&
+                              now - desktop.press_ns <= PRESS_AGAIN_NS;
+
+                desktop.press_pane = pane;
+                desktop.press_ns = now;
+
+                if (again && (pane->style & WINDOW_FRAME) &&
+                    pane_titlebar_holds(pane, x, y))
+                {
+                        // Cleared, so a third click is a first one again
+                        // rather than the window flickering under a hand that
+                        // is still clicking.
+                        desktop.press_pane = NULL;
+                        pane_maximize(pane);
+                        return;
+                }
+        }
+
+        /*
+                An edge first, and the bar after it.
+
+                The grip reaches six pixels in from the frame and the bar is
+                ten wide, so the two overlap by four and one of them has to
+                give. The edge wins: a window that cannot be resized from its
+                own corner is worse than a bar that has to be grabbed a few
+                pixels further in, and there is bar left over on the inside to
+                grab. That is why the bar is ten and not six.
+        */
+        if (!edges && pane_bar_holds(pane, x, y))
+        {
+                int bx, by, bw, bh, at, span;
+
+                pane_bar(pane, &bx, &by, &bw, &bh, &at, &span);
+
+                desktop.bar_grab = y >= by + at && y < by + at + span
+                                       ? y - (by + at)
+                                       : span / 2;
+                desktop.barring = pane;
+                bar_move(y);
+        }
+        else if (edges)
         {
                 desktop.resizing = pane;
                 desktop.resize_edges = edges;
@@ -274,6 +391,7 @@ static void drag_release(void)
 {
         desktop.dragging = NULL;
         desktop.resizing = NULL;
+        desktop.barring = NULL;
 }
 
 /*
@@ -289,6 +407,39 @@ static void drag_release(void)
         view onto that ring is the compositor's. The turn never reaches the
         program: there is nothing for it to do about one.
 */
+/*
+        How far one notch goes.
+
+        A notch was a line, which is a hand turning a wheel forty times to
+        cross a screen. Three is what everything else moves for one, and a
+        wheel that keeps turning means somewhere further off than the next few
+        lines -- so a notch that arrives while the last one is still recent
+        counts for more, up to six times the three, and a pause puts it back
+        to walking pace.
+*/
+#define WHEEL_LINES 3
+#define WHEEL_FASTEST 6
+#define WHEEL_QUICK_NS 150000000ull
+
+static int wheel_step(int notches)
+{
+        u64 now = ktime_get_ns();
+
+        if (now - desktop.wheel_ns <= WHEEL_QUICK_NS)
+        {
+                if (desktop.wheel_speed < WHEEL_FASTEST)
+                        desktop.wheel_speed++;
+        }
+        else
+        {
+                desktop.wheel_speed = 1;
+        }
+
+        desktop.wheel_ns = now;
+
+        return notches * WHEEL_LINES * (int)desktop.wheel_speed;
+}
+
 static void wheel_deliver(void)
 {
         int lines = atomic_xchg(&desktop.wheel, 0);
@@ -297,6 +448,8 @@ static void wheel_deliver(void)
 
         if (!lines)
                 return;
+
+        lines = wheel_step(lines);
 
         pane = pane_under(desktop.cursor_x, desktop.cursor_y, &edges);
         
