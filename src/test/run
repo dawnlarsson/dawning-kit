@@ -153,6 +153,24 @@ lane_standard()
                 failed=$((failed + 1))
         fi
 
+        #       The kernel spells these in its own assembly files, and inside
+        #       a string literal here they look like that and are not: the
+        #       preprocessor does not expand a macro in a string, so the word
+        #       reaches the assembler as a mnemonic and the macro's mitigation
+        #       is skipped. Nine routines were written that way and returned
+        #       without the thunk; nothing today does, and this is what says so
+        #       the next time somebody copies a line out of the kernel tree.
+        if bare=$(grep -n -E '"[^"]*\b(RET|ENDBR64|ENDBR32|CALL)\b' \
+                src/library.c)
+        then
+                tally bare-mnemonic 0 1
+                note "a mnemonic inside a string where the macro was meant:"
+                printf '%s\n' "$bare" | sed 's/^/    /' | head -10
+                failed=$((failed + 1))
+        else
+                tally bare-mnemonic 1 1
+        fi
+
         [ "$failed" = 0 ]
 }
 
