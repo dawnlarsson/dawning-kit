@@ -74,3 +74,35 @@ CONFIG_BLK_DEV_LOOP=n
 
 # IPv6.
 CONFIG_IPV6=n
+
+#
+# The second turn of the same loop
+#
+# Re-ranking after the first round moves these to the top. acpi_init stays at
+# 55000 us and is not going anywhere -- the gap in the log is acpi_scan_init
+# walking the namespace, and much of it is not code at all: ACPI registers are
+# port I/O, every port access is an exit, and this is measured in a virtual
+# machine. The same caveat applies to pci_apply_final_quirks and
+# pcibios_assign_resources, which is why neither is touched here.
+#
+#       2323 us   load_system_certificate_list
+#       2270 us   acpi_button_init
+#       1394 us   igb_init_module
+#       1255 us   brd_init
+#       1155 us   igc_init_module
+
+# The signing keyring, for modules this image does not load.
+CONFIG_SYSTEM_TRUSTED_KEYRING=n
+
+# The ACPI power button. Nothing here is switched off by pressing one; the
+# shell says poweroff and the kernel takes S5 from there.
+CONFIG_ACPI_BUTTON=n
+
+# RAM block devices.
+CONFIG_BLK_DEV_RAM=n
+
+# Intel gigabit parts that exist on real boards and not in this machine. e1000
+# stays: it is what qemu presents by default, and taking it would mean the
+# image had no network at all rather than one card fewer.
+CONFIG_IGB=n
+CONFIG_IGC=n
