@@ -997,6 +997,58 @@ compare 'head'           head big   -n 5
 compare 'tail'           tail big   -n 5
 compare 'sed'            sed big    -n '19999p'
 
+
+#       The literal path, and the block skip in front of it.
+#
+#       A pattern that is nothing but characters is answered out of
+#       memory_search rather than the machine, and whole read blocks that
+#       cannot hold it are stepped over without ever being cut into lines.
+#       What that must not do is lose the second pattern of a -e list, fold
+#       case it was not asked to fold, or walk past a needle lying across the
+#       end of a block. All three are invisible on a file smaller than one
+#       read, which is what every other grep case here is.
+
+awk 'BEGIN { for (i = 0; i < 20000; i++) printf "%s %d\n", (i % 500 == 0 ? "needle" : "filler"), i }' > "$work/sparse"
+awk 'BEGIN { for (i = 0; i < 20000; i++) printf "%s line %d\n", (i % 3 == 0 ? "FOX" : (i % 3 == 1 ? "Fox" : "fox")), i }' > "$work/mixed"
+printf '%s' "$(cat "$work/sparse")" > "$work/nonl"
+printf 'needle\nzzz\n' > "$work/plist"
+
+case_start grepblock
+compare 'count'          grep sparse  -c needle
+compare 'count miss'     grep sparse  -c zzzz
+compare 'numbered'       grep sparse  -n needle
+compare 'byte offset'    grep sparse  -b needle
+compare 'two patterns'   grep sparse  -c -e needle -e filler
+compare 'second is rare' grep sparse  -c -e zzzz -e needle
+compare 'pattern file'   grep sparse  -c -f "$work/plist"
+compare 'word'           grep sparse  -c -w needle
+compare 'whole line'     grep sparse  -c -x 'needle 0'
+compare 'fixed'          grep sparse  -c -F needle
+compare 'inverted'       grep sparse  -c -v needle
+compare 'context'        grep sparse  -A2 -B1 needle
+compare 'files listed'   grep -       -l needle "$work/sparse" "$work/mixed"
+compare 'mixed folded'   grep mixed   -c -i FOX
+compare 'mixed exact'    grep mixed   -c FOX
+compare 'mixed word'     grep mixed   -c -iw fox
+compare 'no last newline' grep nonl   -c needle
+compare 'no last newline n' grep nonl -n needle
+compare 'sed on blocks'  sed sparse   -n '/needle/p'
+compare 'nl on blocks'   nl sparse    -b 'p^needle'
+
+#       The needle moved a byte at a time across the end of the first read.
+across=65530
+while [ $across -le 65541 ]; do
+        awk -v want=$across 'BEGIN {
+                n = 0
+                while (n + 9 <= want) { printf "abcdefgh\n"; n += 9 }
+                while (n < want) { printf "z"; n++ }
+                printf "needle\n"
+        }' > "$work/across"
+
+        compare "across $across" grep across -n needle
+        across=$((across + 1))
+done
+
 case_start edges
 compare 'cut mixed sep'  cut w   '-d ' -f2
 compare 'cut tab sep'    cut w   -f2
