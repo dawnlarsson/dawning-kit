@@ -429,6 +429,23 @@ compare 'long unknown'   head a  --nosuchflag
 compare 'null data'      head zeros -z -n 2
 compare 'null data long' head zeros --zero-terminated -n 2
 
+#       A count with a minus in front of it is what to leave off the end,
+#       which is found by seeking when the input is a file and by holding
+#       every line when it is a pipe.
+compare 'all but last'   head i  -n -1
+compare 'all but three'  head i  -n -3
+compare 'all but none'   head i  -n -0
+compare 'all but too many' head i -n -99
+compare 'bytes but last' head a  -c -3
+compare 'bytes but none' head a  -c -0
+compare 'bytes but all'  head a  -c -999
+compare 'short unended'  head h  -n -1
+compare 'short unended byte' head h -c -1
+compare 'short zero ends' head zeros -z -n -1
+compare 'short long form' head i  --lines=-2
+compare 'short two files' head -  -n -1 "$work/a" "$work/e"
+compare 'short by name'   head -  -c -4 "$work/a"
+
 case_start tail
 compare 'default'        tail i
 compare 'count'          tail i  -n 3
@@ -557,6 +574,53 @@ printf '1.10\n1.9\n1.2.3\nfoo-1.0.tar.gz\nfoo-1.0~rc1\nfoo-2.tar.gz\n.hidden\n' 
 printf 'Mar\nJAN\nfeb\nnotamonth\nDec 3\n' > "$work/z"
 printf 'b\nd\nf\n' > "$work/x"
 
+#       A directory to walk. Both tools read it with the same getdents on the
+#       same filesystem, so the order they print is the same order; nothing
+#       here sorts and neither does GNU.
+
+mkdir -p "$work/tree/inner" "$work/tree/other" "$work/bare"
+printf 'alpha here\nbeta here\n' > "$work/tree/one.txt"
+printf 'alpha again\n' > "$work/tree/two.log"
+printf 'gamma only\n' > "$work/tree/three.txt"
+printf 'alpha inner\n' > "$work/tree/inner/deep.txt"
+printf 'alpha other\n' > "$work/tree/other/far.log"
+ln -s one.txt "$work/tree/link.txt"
+
+case_start grepr
+compare 'recursive'      grep -  -r alpha "$work/tree"
+compare 'recursive long' grep -  --recursive alpha "$work/tree"
+compare 'recursive links' grep - -R alpha "$work/tree"
+compare 'recursive names' grep - -rl alpha "$work/tree"
+compare 'recursive without' grep - -rL alpha "$work/tree"
+compare 'recursive count' grep - -rc alpha "$work/tree"
+compare 'recursive numbered' grep - -rn alpha "$work/tree"
+compare 'recursive no names' grep - -rh alpha "$work/tree"
+compare 'recursive one file' grep - -r alpha "$work/tree/one.txt"
+compare 'recursive empty'  grep - -r alpha "$work/bare"
+compare 'recursive missing' grep - -r alpha "$work/nosuchdir"
+compare 'recursive quiet miss' grep - -rs alpha "$work/nosuchdir"
+compare 'recursive two'    grep - -rl alpha "$work/tree" "$work/bare"
+compare 'directories recurse' grep - -d recurse alpha "$work/tree"
+compare 'directories skip' grep -  -d skip alpha "$work/tree"
+compare 'plain directory' grep -   alpha "$work/tree"
+compare 'include suffix'  grep -  -rl --include='*.txt' alpha "$work/tree"
+compare 'include two'     grep -  -rl --include='*.txt' --include='*.log' alpha "$work/tree"
+compare 'include one letter' grep - -rl --include='?.txt' alpha "$work/tree"
+compare 'include set'     grep -  -rl --include='[ot]*' alpha "$work/tree"
+compare 'include nothing' grep -  -rl --include='*.zzz' alpha "$work/tree"
+compare 'exclude suffix'  grep -  -rl --exclude='*.log' alpha "$work/tree"
+compare 'exclude all'     grep -  -r --exclude='*' alpha "$work/tree"
+compare 'exclude names'   grep -  -rl --exclude-dir=inner alpha "$work/tree"
+compare 'exclude names slash' grep - -rl --exclude-dir=inner/ alpha "$work/tree"
+compare 'exclude two dirs' grep - -rl --exclude-dir=inner --exclude-dir=other alpha "$work/tree"
+compare 'include and exclude' grep - -rl --include='*.txt' --exclude='three*' alpha "$work/tree"
+compare 'include on named'  grep - -l --include='*.log' alpha "$work/tree/one.txt" "$work/tree/two.log"
+compare 'exclude on named'  grep - -l --exclude='*.txt' alpha "$work/tree/one.txt" "$work/tree/two.log"
+compare 'colour never'    grep -  --color=never alpha "$work/tree/one.txt"
+compare 'colour auto'     grep -  --color=auto alpha "$work/tree/one.txt"
+compare 'colour bare'     grep -  --color alpha "$work/tree/one.txt"
+compare 'colour british'  grep -  --colour=never alpha "$work/tree/one.txt"
+
 case_start grep2
 compare 'nested star'    grep m  '\(ab\)*'
 compare 'group star'     grep m  '^\(ab\)*$'
@@ -617,6 +681,45 @@ compare 'N join'         sed s  'N;s/\n/+/'
 compare 'multiple files' sed -  -n '$p' "$work/s" "$work/m"
 compare 'char class rep' sed n  's/[[:blank:]]\+/ /g'
 compare 'leading blanks' sed n  's/^[ \t]*//'
+
+#       Address forms GNU added to the ones POSIX has: a step, a range that
+#       ends a count of lines later or at the next line a number divides, and
+#       line zero, which is not a line and is only an address at all as the
+#       open end of a range a pattern closes.
+
+case_start sedaddr
+compare 'step from one'  sed i  -n '1~2p'
+compare 'step from zero' sed i  -n '0~3p'
+compare 'step of one'    sed i  -n '3~1p'
+compare 'step of none'   sed i  -n '4~0p'
+compare 'step past end'  sed i  -n '99~2p'
+compare 'step deletes'   sed i  '1~4d'
+compare 'step negated'   sed i  -n '1~2!p'
+compare 'ahead two'      sed i  -n '3,+2p'
+compare 'ahead none'     sed i  -n '3,+0p'
+compare 'ahead past end' sed i  -n '14,+9p'
+compare 'ahead from match' sed a -n '/delta/,+1p'
+compare 'multiple three' sed i  -n '2,~3p'
+compare 'multiple on it' sed i  -n '3,~3p'
+compare 'multiple of one' sed i -n '2,~1p'
+compare 'multiple of none' sed i -n '2,~0p'
+compare 'zero to match'  sed i  -n '0,/1/p'
+compare 'zero to later'  sed i  -n '0,/3/p'
+compare 'zero to nothing' sed i -n '0,/nope/p'
+compare 'zero deletes'   sed a  '0,/alpha/d'
+compare 'one deletes'    sed a  '1,/alpha/d'
+compare 'zero negated'   sed i  -n '0,/2/!p'
+compare 'zero alone'     sed i  -n '0p'
+compare 'zero to line'   sed i  -n '0,5p'
+compare 'zero two files' sed -  -n '0,/alpha/p' "$work/a" "$work/e"
+compare 'zero separate'  sed -  -s -n '0,/a/p' "$work/a" "$work/e"
+compare 'quit silently'  sed i  'Q'
+compare 'quit at line'   sed i  '3Q'
+compare 'quit with status' sed i '3Q5'
+compare 'quit after print' sed i -n '2{p;Q}'
+compare 'name of input'  sed -  -n 'F' "$work/a"
+compare 'name of stdin'  sed a  -n 'F'
+compare 'name once'      sed -  -n '1F' "$work/a" "$work/b"
 
 case_start cut2
 compare 'comma delim'    cut p  -d, -f2
@@ -1001,6 +1104,42 @@ compare 'dash is first'  cmp a  - "$work/a3"
 compare 'no operands'    cmp -
 compare 'three operands' cmp -  "$work/a" "$work/a" "$work/a"
 
+#       -b puts the differing bytes beside their octal, -i and the operands
+#       after the names say where to start, and -n says how far to go.
+compare 'print bytes'    cmp -  -b "$work/cl1" "$work/cl2"
+compare 'print bytes listed' cmp - -bl "$work/cl1" "$work/cl2"
+compare 'print bytes other order' cmp - -lb "$work/cl1" "$work/cl2"
+compare 'print bytes odd'  cmp - -b "$work/wide" "$work/spaced"
+compare 'print bytes listed odd' cmp - -bl "$work/wide" "$work/spaced"
+compare 'print bytes prefix' cmp - -b "$work/cl1" "$work/cl3"
+compare 'print bytes same' cmp - -b "$work/cl1" "$work/cl1"
+compare 'skip both'      cmp -  -i 5 "$work/cl1" "$work/cl2"
+compare 'skip each'      cmp -  -i 5:7 "$work/cl1" "$work/cl2"
+compare 'skip nothing'   cmp -  -i 0:0 "$work/cl1" "$work/cl2"
+compare 'skip past end'  cmp -  -i 9999 "$work/cl1" "$work/cl3"
+compare 'skip listed'    cmp -  -l -i 5 "$work/cl1" "$work/cl2"
+compare 'skip is not a number' cmp - -i zz "$work/cl1" "$work/cl2"
+compare 'limit short'    cmp -  -n 3 "$work/cl1" "$work/cl2"
+compare 'limit none'     cmp -  -n 0 "$work/cl1" "$work/cl2"
+compare 'limit long'     cmp -  -n 9999 "$work/cl1" "$work/cl2"
+compare 'limit listed'   cmp -  -l -n 60 "$work/cl1" "$work/cl2"
+compare 'limit suffix'   cmp -  -n 1K "$work/cl1" "$work/cl2"
+compare 'limit thousand' cmp -  -n 1kB "$work/cl1" "$work/cl2"
+compare 'limit is not a number' cmp - -n zz "$work/cl1" "$work/cl2"
+compare 'skip one operand' cmp - "$work/cl1" "$work/cl2" 5
+compare 'skip two operands' cmp - "$work/cl1" "$work/cl2" 5 7
+compare 'skip zero operands' cmp - "$work/cl1" "$work/cl2" 0 0
+compare 'five operands'  cmp -  "$work/cl1" "$work/cl2" 1 2 3
+compare 'long print bytes' cmp - --print-bytes "$work/cl1" "$work/cl2"
+compare 'long ignore initial' cmp - --ignore-initial=5 "$work/cl1" "$work/cl2"
+compare 'long ignore each' cmp - --ignore-initial=5:7 "$work/cl1" "$work/cl2"
+compare 'long bytes'     cmp -  --bytes=3 "$work/cl1" "$work/cl2"
+compare 'long quiet'     cmp -  --quiet "$work/cl1" "$work/cl2"
+compare 'long silent'    cmp -  --silent "$work/cl1" "$work/cl2"
+compare 'long verbose'   cmp -  --verbose "$work/cl1" "$work/cl2"
+compare 'skip and silent' cmp - -s -i 5 "$work/cl1" "$work/cl2"
+compare 'skip prefix'    cmp -  -i 3 "$work/h" "$work/a"
+
 #       expr, whose answer is on standard output and whose verdict is the exit
 #       status, so both halves of compare matter here.
 
@@ -1062,6 +1201,18 @@ compare 'unclosed'       expr -  '(' 1
 compare 'trailing word'  expr -  1 1
 compare 'no arguments'   expr -
 compare 'end of options' expr -  -- 1
+
+#       Sixty four bits where GNU has as many as it likes, written down here
+#       so the wrap is a decision and not a surprise: what is asserted is that
+#       it wraps the way two's complement does, not that it agrees.
+overflow=$("$bin/expr" 9223372036854775807 + 1)
+if [ "$overflow" = "-9223372036854775808" ]; then
+        pass=$((pass + 1))
+else
+        fail=$((fail + 1))
+        printf '  %-8s %-30s want %-24s got %s\n' expr 'overflow wraps' \
+                '-9223372036854775808' "$overflow"
+fi
 
 printf '  %-12s %s of %s\n' listed "$pass" "$((pass + fail))"
 [ -z "${TEST_TALLY:-}" ] ||

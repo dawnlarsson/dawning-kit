@@ -2928,133 +2928,6 @@ static b32 text_rev()
         return text_done(text_status);
 }
 
-static text_long head_long_options[] = {
-    {"bytes", 'c', TEXT_LONG_NEEDS},
-    {"lines", 'n', TEXT_LONG_NEEDS},
-    {"quiet", 'q', TEXT_LONG_ALONE},
-    {"silent", 'q', TEXT_LONG_ALONE},
-    {"verbose", 'v', TEXT_LONG_ALONE},
-    {"zero-terminated", 'z', TEXT_LONG_ALONE},
-    {null, 0, 0}};
-
-static b32 text_head()
-{
-        positive count = 10;
-        bool by_bytes = false;
-        bool quiet = false;
-        bool loud = false;
-
-        text_begin("head");
-
-        if (!text_expand_long(head_long_options))
-                return text_done(1);
-
-        for (b32 i = 1; i < text_argument_count; i++)
-        {
-                string_address argument = text_argument(i);
-
-                if (argument[0] != '-' || !argument[1])
-                {
-                        text_file_add(i);
-                        continue;
-                }
-
-                if (argument[1] == '-' && !argument[2])
-                {
-                        for (b32 j = i + 1; j < text_argument_count; j++)
-                                text_file_add(j);
-
-                        break;
-                }
-
-                if (text_digit(argument[1]))
-                {
-                        text_number_of(argument + 1, address_of count);
-                        continue;
-                }
-
-                for (positive c = 1; argument[c]; c++)
-                {
-                        p8 flag = argument[c];
-
-                        if (flag == 'q')
-                        {
-                                quiet = true;
-                                continue;
-                        }
-
-                        if (flag == 'v')
-                        {
-                                loud = true;
-                                continue;
-                        }
-
-                        if (flag == 'z')
-                        {
-                                text_delimiter = '\0';
-                                continue;
-                        }
-
-                        if (flag == 'n' || flag == 'c')
-                        {
-                                string_address value = argument[c + 1] ? argument + c + 1
-                                                                       : text_argument(++i);
-
-                                by_bytes = flag == 'c';
-
-                                if (!value || !text_number_of(value, address_of count))
-                                {
-                                        text_error(null, "invalid number of lines");
-                                        return text_done(1);
-                                }
-
-                                break;
-                        }
-                }
-        }
-
-        b32 inputs = text_files_count ? text_files_count : 1;
-        bool headers = (text_files_count > 1 || loud) && !quiet;
-
-        for (b32 i = 0; i < inputs; i++)
-        {
-                if (!text_open(text_files_count ? text_argument(text_files[i]) : null))
-                        continue;
-
-                if (headers)
-                        text_banner(i, i == 0);
-
-                if (by_bytes)
-                {
-                        positive left = count;
-
-                        while (left && text_fill())
-                        {
-                                positive have = text_input.filled - text_input.position;
-                                positive take = have < left ? have : left;
-
-                                text_put(text_input.buffer + text_input.position, take);
-                                text_input.position += take;
-                                left -= take;
-                        }
-                }
-                else
-                {
-                        positive done = 0;
-
-                        while (done < count && text_line_next())
-                        {
-                                text_put_line();
-                                done++;
-                        }
-                }
-
-                text_close();
-        }
-
-        return text_done(text_status);
-}
-
 /*
         Lines held whole, because sort and tail both need every line at once
         and a line is a slice of the arena rather than a string: nothing here
@@ -3202,6 +3075,228 @@ static fn text_stream_from(positive start)
                          text_input.filled - text_input.position);
                 text_input.position = text_input.filled;
         }
+}
+
+// Everything from start up to but not including stop, which is where head
+// stops when the count it was given was counted from the end.
+static fn text_stream_span(positive start, positive stop)
+{
+        system_call_3(syscall(lseek), text_input.handle, start, FILE_SEEK_SET);
+        text_input.filled = 0;
+        text_input.position = 0;
+        text_input.finished = false;
+
+        positive left = stop > start ? stop - start : 0;
+
+        while (left && text_fill())
+        {
+                positive have = text_input.filled - text_input.position;
+                positive take = have < left ? have : left;
+
+                text_put(text_input.buffer + text_input.position, take);
+                text_input.position += take;
+                left -= take;
+        }
+}
+
+static text_long head_long_options[] = {
+    {"bytes", 'c', TEXT_LONG_NEEDS},
+    {"lines", 'n', TEXT_LONG_NEEDS},
+    {"quiet", 'q', TEXT_LONG_ALONE},
+    {"silent", 'q', TEXT_LONG_ALONE},
+    {"verbose", 'v', TEXT_LONG_ALONE},
+    {"zero-terminated", 'z', TEXT_LONG_ALONE},
+    {null, 0, 0}};
+
+/*
+        A count written with a minus in front of it names what to leave off
+        the end rather than what to take from the front, so where head stops
+        is found the same way tail finds where it starts.
+*/
+static fn text_head_short(positive count, bool by_bytes)
+{
+        positive size = 0;
+
+        text_lines_count = 0;
+        text_arena_used = text_lines ? TEXT_LINES_MAX * sizeof(text_slice) : 0;
+
+        if (text_regular_size(text_input.handle, address_of size))
+        {
+                text_stream_span(0, by_bytes
+                                        ? (count < size ? size - count : 0)
+                                        : text_tail_start(text_input.handle, size, count));
+                return;
+        }
+
+        if (!text_lines_ready())
+                return;
+
+        if (by_bytes)
+        {
+                p8 address_to held = (p8 address_to)text_arena_take(0);
+                positive have = 0;
+
+                while (text_fill())
+                {
+                        positive left = text_input.filled - text_input.position;
+                        p8 address_to room = (p8 address_to)text_arena_take(left);
+
+                        if (!room)
+                                return;
+
+                        if (!have)
+                                held = room;
+
+                        memory_copy(room, text_input.buffer + text_input.position, left);
+                        have += left;
+                        text_input.position = text_input.filled;
+                }
+
+                if (count < have)
+                        text_put(held, have - count);
+
+                return;
+        }
+
+        if (!text_lines_gather())
+                return;
+
+        positive stop = text_lines_count > count ? text_lines_count - count : 0;
+
+        for (positive c = 0; c < stop; c++)
+                text_put_slice(text_lines + c);
+}
+
+static b32 text_head()
+{
+        positive count = 10;
+        bool by_bytes = false;
+        bool from_end = false;
+        bool quiet = false;
+        bool loud = false;
+
+        text_begin("head");
+
+        if (!text_expand_long(head_long_options))
+                return text_done(1);
+
+        for (b32 i = 1; i < text_argument_count; i++)
+        {
+                string_address argument = text_argument(i);
+
+                if (argument[0] != '-' || !argument[1])
+                {
+                        text_file_add(i);
+                        continue;
+                }
+
+                if (argument[1] == '-' && !argument[2])
+                {
+                        for (b32 j = i + 1; j < text_argument_count; j++)
+                                text_file_add(j);
+
+                        break;
+                }
+
+                if (text_digit(argument[1]))
+                {
+                        text_number_of(argument + 1, address_of count);
+                        continue;
+                }
+
+                for (positive c = 1; argument[c]; c++)
+                {
+                        p8 flag = argument[c];
+
+                        if (flag == 'q')
+                        {
+                                quiet = true;
+                                continue;
+                        }
+
+                        if (flag == 'v')
+                        {
+                                loud = true;
+                                continue;
+                        }
+
+                        if (flag == 'z')
+                        {
+                                text_delimiter = '\0';
+                                continue;
+                        }
+
+                        if (flag == 'n' || flag == 'c')
+                        {
+                                string_address value = argument[c + 1] ? argument + c + 1
+                                                                       : text_argument(++i);
+
+                                by_bytes = flag == 'c';
+
+                                if (value && value[0] == '-')
+                                {
+                                        from_end = true;
+                                        value++;
+                                }
+
+                                if (!value || !text_number_of(value, address_of count))
+                                {
+                                        text_error(null, "invalid number of lines");
+                                        return text_done(1);
+                                }
+
+                                break;
+                        }
+                }
+        }
+
+        b32 inputs = text_files_count ? text_files_count : 1;
+        bool headers = (text_files_count > 1 || loud) && !quiet;
+
+        for (b32 i = 0; i < inputs; i++)
+        {
+                if (!text_open(text_files_count ? text_argument(text_files[i]) : null))
+                        continue;
+
+                if (headers)
+                        text_banner(i, i == 0);
+
+                if (from_end)
+                {
+                        text_head_short(count, by_bytes);
+                        text_close();
+                        continue;
+                }
+
+                if (by_bytes)
+                {
+                        positive left = count;
+
+                        while (left && text_fill())
+                        {
+                                positive have = text_input.filled - text_input.position;
+                                positive take = have < left ? have : left;
+
+                                text_put(text_input.buffer + text_input.position, take);
+                                text_input.position += take;
+                                left -= take;
+                        }
+                }
+                else
+                {
+                        positive done = 0;
+
+                        while (done < count && text_line_next())
+                        {
+                                text_put_line();
+                                done++;
+                        }
+                }
+
+                text_close();
+        }
+
+        return text_done(text_status);
 }
 
 /*
@@ -5308,6 +5403,346 @@ static fn grep_head(string_address name, p8 separator, positive number, positive
 }
 
 /*
+        The globs --include and the two beside it are matched against.
+
+        A file's own name and never the path it was found down: GNU matches
+        d/sub/s.txt against s.txt and against nothing with a slash in it, so
+        there is no path walking here and * does not have to stop anywhere.
+*/
+static positive text_glob_set(string_address pattern, positive at, p8 character,
+                              bool address_to hit)
+{
+        bool negate = false;
+        bool found = false;
+        positive p = at + 1;
+        bool first = true;
+
+        if (pattern[p] == '!' || pattern[p] == '^')
+        {
+                negate = true;
+                p++;
+        }
+
+        while (pattern[p] && (pattern[p] != ']' || first))
+        {
+                p8 low = pattern[p++];
+
+                first = false;
+
+                if (pattern[p] == '-' && pattern[p + 1] && pattern[p + 1] != ']')
+                {
+                        p8 high = pattern[p + 1];
+
+                        p += 2;
+
+                        if (character >= low && character <= high)
+                                found = true;
+
+                        continue;
+                }
+
+                if (character == low)
+                        found = true;
+        }
+
+        // No closing bracket, so the '[' was never a set at all.
+        if (!pattern[p])
+                return 0;
+
+        address_to hit = found != negate;
+        return p + 1;
+}
+
+static bool text_glob(string_address pattern, string_address name)
+{
+        positive p = 0;
+        positive n = 0;
+        positive star = TEXT_UNSET;
+        positive back = 0;
+
+        while (name[n])
+        {
+                p8 want = pattern[p];
+
+                if (want == '*')
+                {
+                        star = ++p;
+                        back = n;
+                        continue;
+                }
+
+                if (want == '[')
+                {
+                        bool hit = false;
+                        positive after = text_glob_set(pattern, p, name[n],
+                                                       address_of hit);
+
+                        if (after)
+                        {
+                                if (hit)
+                                {
+                                        p = after;
+                                        n++;
+                                        continue;
+                                }
+
+                                if (star == TEXT_UNSET)
+                                        return false;
+
+                                p = star;
+                                n = ++back;
+                                continue;
+                        }
+                }
+
+                if (want == '\\' && pattern[p + 1])
+                        want = pattern[++p];
+
+                if ((want == '?' || want == name[n]) && want)
+                {
+                        p++;
+                        n++;
+                        continue;
+                }
+
+                if (star == TEXT_UNSET)
+                        return false;
+
+                p = star;
+                n = ++back;
+        }
+
+        while (pattern[p] == '*')
+                p++;
+
+        return !pattern[p];
+}
+
+/*
+        -r turns a directory operand into the files under it, in the order the
+        kernel hands them back: nothing here sorts, and neither does GNU's own
+        walk, so the two agree line for line on the same directory.
+
+        A symlink met on the way down is skipped, which is what -r means and
+        what -R undoes. The one named on the command line is followed either
+        way -- opening it is how it was found at all.
+*/
+#define GREP_PATHS_MAX (1 << 20)
+#define GREP_GLOBS_MAX 32
+#define GREP_GLOB_BYTES 4096
+
+static string_address address_to grep_paths;
+static positive grep_path_count;
+static bool grep_recursive;
+static bool grep_dereference;
+static bool grep_expanded;
+static bool grep_skip_directories;
+
+static string_address grep_include[GREP_GLOBS_MAX];
+static b32 grep_include_count;
+static string_address grep_exclude[GREP_GLOBS_MAX];
+static b32 grep_exclude_count;
+static string_address grep_exclude_dir[GREP_GLOBS_MAX];
+static b32 grep_exclude_dir_count;
+static p8 grep_glob_pool[GREP_GLOB_BYTES];
+static positive grep_glob_used;
+
+// --exclude-dir=sub and --exclude-dir=sub/ name the same directory.
+static string_address grep_glob_keep(string_address value)
+{
+        positive length = string_length(value);
+
+        while (length && value[length - 1] == '/')
+                length--;
+
+        if (grep_glob_used + length + 1 > GREP_GLOB_BYTES)
+                return value;
+
+        p8 address_to room = grep_glob_pool + grep_glob_used;
+
+        memory_copy(room, value, length);
+        room[length] = '\0';
+        grep_glob_used += length + 1;
+
+        return (string_address)room;
+}
+
+static string_address grep_base(string_address path)
+{
+        string_address at = path;
+
+        for (positive c = 0; path[c]; c++)
+                if (path[c] == '/')
+                        at = path + c + 1;
+
+        return at;
+}
+
+static bool grep_globs_have(string_address address_to list, b32 count,
+                            string_address name)
+{
+        for (b32 i = 0; i < count; i++)
+                if (text_glob(list[i], name))
+                        return true;
+
+        return false;
+}
+
+static bool grep_wanted_file(string_address path)
+{
+        string_address name = grep_base(path);
+
+        if (grep_include_count &&
+            !grep_globs_have(grep_include, grep_include_count, name))
+                return false;
+
+        return !grep_globs_have(grep_exclude, grep_exclude_count, name);
+}
+
+static bool grep_wanted_directory(string_address path)
+{
+        return !grep_globs_have(grep_exclude_dir, grep_exclude_dir_count,
+                                grep_base(path));
+}
+
+// The kernel's mode for a path, or zero when there is none to be had.
+static p32 text_path_mode(string_address path)
+{
+        p8 raw[256];
+        bipolar handle = text_open_handle(path, FILE_READ, 0);
+
+        if (handle < 0)
+                return 0;
+
+        memory_fill(raw, 0, sizeof(raw));
+
+        bipolar told = system_call_2(syscall(fstat), (positive)handle, (positive)raw);
+
+        system_call_1(syscall(close), (positive)handle);
+
+        if (told < 0)
+                return 0;
+
+        return address_to(p32 address_to)(raw + TEXT_STAT_MODE);
+}
+
+static bool grep_path_add(string_address path)
+{
+        if (grep_path_count >= GREP_PATHS_MAX)
+        {
+                text_error(null, "too many files");
+                return false;
+        }
+
+        grep_paths[grep_path_count++] = path;
+        return true;
+}
+
+// An empty prefix is grep -r with nothing named, where GNU walks the working
+// directory and prints what it finds without a ./ in front of it.
+static string_address grep_path_join(string_address directory, string_address name)
+{
+        positive have = directory ? string_length(directory) : 0;
+        positive extra = string_length(name);
+
+        while (have > 1 && directory[have - 1] == '/')
+                have--;
+
+        if (have == 1 && directory[0] == '/')
+                have = 0;
+
+        p8 address_to room = (p8 address_to)text_arena_take(have + extra + 2);
+
+        if (!room)
+                return null;
+
+        memory_copy(room, directory, have);
+
+        if (have || (directory && directory[0] == '/'))
+                room[have++] = '/';
+
+        memory_copy(room + have, name, extra);
+        room[have + extra] = '\0';
+
+        return (string_address)room;
+}
+
+#define GREP_DIRENT_BYTES 2048
+
+static bool grep_walk(string_address path)
+{
+        bipolar handle = text_open_handle(
+            path && path[0] ? path : (string_address) ".", FILE_READ, 0);
+        p8 entries[GREP_DIRENT_BYTES];
+        bool fine = true;
+
+        if (handle < 0)
+                return false;
+
+        for (;;)
+        {
+                bipolar got = system_call_3(syscall(getdents64), (positive)handle,
+                                            (positive)entries, sizeof(entries));
+
+                if (got <= 0)
+                        break;
+
+                for (p8 address_to step = entries; step < entries + got;)
+                {
+                        struct linux_dirent64 address_to entry =
+                            (struct linux_dirent64 address_to)step;
+                        string_address name = (string_address)entry->d_name;
+                        p8 kind = entry->d_type;
+
+                        step += entry->d_reclen;
+
+                        if (name[0] == '.' &&
+                            (!name[1] || (name[1] == '.' && !name[2])))
+                                continue;
+
+                        if (kind == 10 && !grep_dereference)
+                                continue;
+
+                        string_address full = grep_path_join(path, name);
+
+                        if (!full)
+                                return false;
+
+                        if (kind == 0 || kind == 10)
+                        {
+                                p32 mode = text_path_mode(full);
+
+                                if (!mode)
+                                        continue;
+
+                                kind = (mode & 0170000) == 0040000 ? 4
+                                     : (mode & 0170000) == 0100000 ? 8
+                                                                   : 1;
+                        }
+
+                        if (kind == 4)
+                        {
+                                if (grep_wanted_directory(full) && !grep_walk(full))
+                                        fine = false;
+
+                                continue;
+                        }
+
+                        // Anything that is not a plain file is a device, and
+                        // a walk does not read devices.
+                        if (kind != 8)
+                                continue;
+
+                        if (grep_wanted_file(full) && !grep_path_add(full))
+                                return false;
+                }
+        }
+
+        system_call_1(syscall(close), (positive)handle);
+        return fine;
+}
+
+/*
         The long spellings grep answers to.
 
         --label and the three that have no letter of their own borrow a byte
@@ -5315,9 +5750,9 @@ static fn grep_head(string_address name, p8 separator, positive number, positive
         grep -\001 mean something.
 
         Not here, and deliberately: -P and --perl-regexp, which is a second
-        regular expression language; --include and the four around it, which
-        are glob machinery for a -r this does not have; and --color, whose
-        answer is a terminal capability rather than a fact about the input.
+        regular expression language; and --color=always, whose escape codes
+        would have to be woven through every line this prints for an answer
+        no script reads. The when words that mean no colour are taken.
 */
 enum
 {
@@ -5326,7 +5761,12 @@ enum
         GREP_LONG_UNFOLD = 3,
         GREP_LONG_BINARY_FILES = 4,
         GREP_LONG_SEPARATOR = 5,
-        GREP_LONG_NO_SEPARATOR = 6
+        GREP_LONG_NO_SEPARATOR = 6,
+        GREP_LONG_INCLUDE = 7,
+        GREP_LONG_EXCLUDE = 8,
+        GREP_LONG_EXCLUDE_DIR = 9,
+        GREP_LONG_COLOUR = 10,
+        GREP_LONG_COLOUR_WHEN = 11
 };
 
 static text_long grep_long_options[] = {
@@ -5367,6 +5807,13 @@ static text_long grep_long_options[] = {
     {"before-context", 'B', TEXT_LONG_NEEDS},
     {"after-context", 'A', TEXT_LONG_NEEDS},
     {"context", 'C', TEXT_LONG_NEEDS},
+    {"recursive", 'r', TEXT_LONG_ALONE},
+    {"dereference-recursive", 'R', TEXT_LONG_ALONE},
+    {"include", GREP_LONG_INCLUDE, TEXT_LONG_NEEDS},
+    {"exclude", GREP_LONG_EXCLUDE, TEXT_LONG_NEEDS},
+    {"exclude-dir", GREP_LONG_EXCLUDE_DIR, TEXT_LONG_NEEDS},
+    {"color", GREP_LONG_COLOUR, TEXT_LONG_MAYBE, GREP_LONG_COLOUR_WHEN},
+    {"colour", GREP_LONG_COLOUR, TEXT_LONG_MAYBE, GREP_LONG_COLOUR_WHEN},
     {null, 0, 0}};
 
 static b32 text_grep()
@@ -5442,7 +5889,9 @@ static b32 text_grep()
                             flag == 'A' || flag == 'B' || flag == 'C' ||
                             flag == 'd' || flag == 'D' ||
                             flag == GREP_LONG_LABEL || flag == GREP_LONG_BINARY_FILES ||
-                            flag == GREP_LONG_SEPARATOR)
+                            flag == GREP_LONG_SEPARATOR || flag == GREP_LONG_INCLUDE ||
+                            flag == GREP_LONG_EXCLUDE || flag == GREP_LONG_EXCLUDE_DIR ||
+                            flag == GREP_LONG_COLOUR_WHEN)
                         {
                                 string_address value = argument[c + 1] ? argument + c + 1
                                                                        : text_argument(++i);
@@ -5501,11 +5950,45 @@ static b32 text_grep()
                                         The three exit statuses below are not a
                                         pattern. They are what grep 3.11 did.
                                 */
+                                else if (flag == GREP_LONG_INCLUDE)
+                                {
+                                        if (grep_include_count < GREP_GLOBS_MAX)
+                                                grep_include[grep_include_count++] = value;
+                                }
+                                else if (flag == GREP_LONG_EXCLUDE)
+                                {
+                                        if (grep_exclude_count < GREP_GLOBS_MAX)
+                                                grep_exclude[grep_exclude_count++] = value;
+                                }
+                                else if (flag == GREP_LONG_EXCLUDE_DIR)
+                                {
+                                        if (grep_exclude_dir_count < GREP_GLOBS_MAX)
+                                                grep_exclude_dir[grep_exclude_dir_count++] =
+                                                    grep_glob_keep(value);
+                                }
+                                // Colour is a terminal's business, and the
+                                // one word here that asks for it is refused
+                                // rather than answered wrongly.
+                                else if (flag == GREP_LONG_COLOUR_WHEN)
+                                {
+                                        if (!string_equals(value, "never") &&
+                                            !string_equals(value, "no") &&
+                                            !string_equals(value, "none") &&
+                                            !string_equals(value, "auto") &&
+                                            !string_equals(value, "tty") &&
+                                            !string_equals(value, "if-tty"))
+                                        {
+                                                text_error(value, "invalid argument for --color");
+                                                return text_done(2);
+                                        }
+                                }
                                 else if (flag == 'd')
                                 {
-                                        if (!string_equals(value, "read") &&
-                                            !string_equals(value, "recurse") &&
-                                            !string_equals(value, "skip"))
+                                        if (string_equals(value, "recurse"))
+                                                grep_recursive = true;
+                                        else if (string_equals(value, "skip"))
+                                                grep_skip_directories = true;
+                                        else if (!string_equals(value, "read"))
                                         {
                                                 text_error(value, "invalid argument for --directories");
                                                 return text_done(1);
@@ -5577,6 +6060,12 @@ static b32 text_grep()
                         case 'x': whole_line = true; break;
                         case 'w': whole_word = true; break;
                         case 'T': grep_tabbed = true; break;
+                        case 'r': grep_recursive = true; break;
+                        case 'R':
+                                grep_recursive = true;
+                                grep_dereference = true;
+                                break;
+                        case GREP_LONG_COLOUR: break;
                         // -Z ends the file name, -z ends the line, and a
                         // caller may well want both.
                         case 'Z': grep_null_name = true; break;
@@ -5663,16 +6152,61 @@ static b32 text_grep()
         if ((limit == 0 || never) && !invert)
                 return text_done(1);
 
-        b32 inputs = text_files_count ? text_files_count : 1;
+        // Nothing named and no -r is the one way standard input is read;
+        // -r with nothing named walks the working directory instead.
+        bool from_stdin = !text_files_count && !grep_recursive;
         bool found_any = false;
         bool shown_any = false;
         b32 trouble = 0;
 
-        grep_names = (text_files_count > 1 || with_names) && !no_names;
+        grep_paths = (string_address address_to)text_arena_take(
+            GREP_PATHS_MAX * sizeof(string_address));
+
+        if (!grep_paths)
+                return text_done(2);
+
+        if (grep_recursive && !text_files_count)
+        {
+                grep_expanded = true;
+                grep_walk((string_address) "");
+        }
+
+        for (b32 i = 0; i < text_files_count; i++)
+        {
+                string_address name = text_argument(text_files[i]);
+                p32 mode = grep_recursive ? text_path_mode(name) : 0;
+
+                if (grep_recursive && !mode)
+                {
+                        trouble = 2;
+
+                        if (!quietly)
+                                text_error(name, "No such file or directory");
+
+                        continue;
+                }
+
+                if (grep_recursive && (mode & 0170000) == 0040000)
+                {
+                        if (!grep_wanted_directory(name))
+                                continue;
+
+                        grep_expanded = true;
+                        grep_walk(name);
+                        continue;
+                }
+
+                if (grep_wanted_file(name))
+                        grep_path_add(name);
+        }
+
+        b32 inputs = from_stdin ? 1 : (b32)grep_path_count;
+
+        grep_names = (grep_path_count > 1 || with_names || grep_expanded) && !no_names;
 
         for (b32 i = 0; i < inputs; i++)
         {
-                string_address name = text_files_count ? text_argument(text_files[i]) : null;
+                string_address name = from_stdin ? null : grep_paths[i];
                 positive matches = 0;
                 positive number = 0;
                 positive offset = 0;
@@ -5687,6 +6221,21 @@ static b32 text_grep()
                         if (quietly)
                                 text_status = 0;
 
+                        continue;
+                }
+
+                // A directory reads as EISDIR rather than as bytes, which is
+                // where GNU's message comes from and why -d skip has one to
+                // suppress.
+                if (name && (text_path_mode(name) & 0170000) == 0040000)
+                {
+                        text_close();
+
+                        if (grep_skip_directories)
+                                continue;
+
+                        text_error(name, "Is a directory");
+                        trouble = 2;
                         continue;
                 }
 
@@ -5926,7 +6475,12 @@ enum
         SED_ADDRESS_NONE = 0,
         SED_ADDRESS_LINE,
         SED_ADDRESS_LAST,
-        SED_ADDRESS_REGEX
+        SED_ADDRESS_REGEX,
+        // first~step, and the two an address range can end with: ,+N lines
+        // further on and ,~N at the next line number N divides.
+        SED_ADDRESS_STEP,
+        SED_ADDRESS_AHEAD,
+        SED_ADDRESS_MULTIPLE
 };
 
 typedef struct
@@ -5936,8 +6490,13 @@ typedef struct
         p8 second_type;
         bool negate;
         bool active;
+        // 0,/re/ is the one range that is open before its first line is read,
+        // which is what lets its end match on line one.
+        bool begins;
         positive first_line;
+        positive first_step;
         positive second_line;
+        positive stop;
         b32 first_regex;
         b32 second_regex;
         b32 pattern;
@@ -6142,18 +6701,45 @@ static positive sed_unescape(p8 address_to text, positive length)
         return have;
 }
 
-static bool sed_parse_address(p8 address_to type, positive address_to line, b32 address_to which)
+static positive sed_number_at()
+{
+        positive value = 0;
+
+        while (text_digit(sed_peek()))
+        {
+                value = value * 10 + (positive)(sed_peek() - '0');
+                sed_at++;
+        }
+
+        return value;
+}
+
+static bool sed_parse_address(p8 address_to type, positive address_to line,
+                              b32 address_to which, positive address_to step,
+                              bool second)
 {
         p8 character = sed_peek();
 
+        if (second && (character == '+' || character == '~'))
+        {
+                sed_at++;
+                address_to type = character == '+' ? SED_ADDRESS_AHEAD
+                                                   : SED_ADDRESS_MULTIPLE;
+                address_to line = sed_number_at();
+                return true;
+        }
+
         if (text_digit(character))
         {
-                positive value = 0;
+                positive value = sed_number_at();
 
-                while (text_digit(sed_peek()))
+                if (!second && sed_peek() == '~')
                 {
-                        value = value * 10 + (positive)(sed_peek() - '0');
                         sed_at++;
+                        address_to type = SED_ADDRESS_STEP;
+                        address_to line = value;
+                        address_to step = sed_number_at();
+                        return true;
                 }
 
                 address_to type = SED_ADDRESS_LINE;
@@ -6241,11 +6827,14 @@ static fn sed_parse()
                 command->second_type = SED_ADDRESS_NONE;
                 command->negate = false;
                 command->active = false;
+                command->begins = false;
+                command->first_step = 0;
                 command->which = 1;
 
                 if (sed_parse_address(address_of command->first_type,
                                       address_of command->first_line,
-                                      address_of command->first_regex))
+                                      address_of command->first_regex,
+                                      address_of command->first_step, false))
                 {
                         sed_skip_blanks();
 
@@ -6256,11 +6845,27 @@ static fn sed_parse()
 
                                 if (!sed_parse_address(address_of command->second_type,
                                                        address_of command->second_line,
-                                                       address_of command->second_regex))
+                                                       address_of command->second_regex,
+                                                       address_of command->first_step, true))
                                 {
                                         sed_broken = true;
                                         return;
                                 }
+                        }
+
+                        // Line zero is not a line, so it is only an address at
+                        // all as the open end of a range a pattern closes.
+                        if (command->first_type == SED_ADDRESS_LINE &&
+                            !command->first_line)
+                        {
+                                if (command->second_type != SED_ADDRESS_REGEX)
+                                {
+                                        sed_broken = true;
+                                        return;
+                                }
+
+                                command->begins = true;
+                                command->active = true;
                         }
                 }
 
@@ -6430,26 +7035,18 @@ static fn sed_parse()
                         continue;
                 }
 
-                if (kind == 'q')
+                if (kind == 'q' || kind == 'Q')
                 {
                         sed_skip_blanks();
-
-                        positive value = 0;
-
-                        while (text_digit(sed_peek()))
-                        {
-                                value = value * 10 + (positive)(sed_peek() - '0');
-                                sed_at++;
-                        }
-
-                        command->which = value;
+                        command->which = sed_number_at();
                         sed_command_count++;
                         continue;
                 }
 
                 if (kind == 'p' || kind == 'P' || kind == 'd' || kind == 'D' ||
                     kind == '=' || kind == 'n' || kind == 'N' || kind == 'h' ||
-                    kind == 'H' || kind == 'g' || kind == 'G' || kind == 'x')
+                    kind == 'H' || kind == 'g' || kind == 'G' || kind == 'x' ||
+                    kind == 'F')
                 {
                         sed_command_count++;
                         continue;
@@ -6460,10 +7057,14 @@ static fn sed_parse()
         }
 }
 
-static bool sed_address_matches(p8 type, positive line, b32 which)
+static bool sed_address_matches(p8 type, positive line, b32 which, positive step)
 {
         if (type == SED_ADDRESS_LINE)
                 return sed_number == line;
+
+        if (type == SED_ADDRESS_STEP)
+                return step ? sed_number >= line && !((sed_number - line) % step)
+                            : sed_number == line;
 
         if (type == SED_ADDRESS_LAST)
                 return sed_last;
@@ -6491,36 +7092,52 @@ static bool sed_selects(sed_command address_to command)
         else if (command->second_type == SED_ADDRESS_NONE)
         {
                 answer = sed_address_matches(command->first_type, command->first_line,
-                                             command->first_regex);
+                                             command->first_regex, command->first_step);
         }
         else if (!command->active)
         {
+                positive by = command->second_line;
+                bool counted = command->second_type == SED_ADDRESS_LINE ||
+                               command->second_type == SED_ADDRESS_AHEAD ||
+                               command->second_type == SED_ADDRESS_MULTIPLE;
+
                 answer = sed_address_matches(command->first_type, command->first_line,
-                                             command->first_regex);
+                                             command->first_regex, command->first_step);
 
                 if (answer)
                 {
                         command->active = true;
 
+                        if (command->second_type == SED_ADDRESS_LINE)
+                                command->stop = by;
+                        else if (command->second_type == SED_ADDRESS_AHEAD)
+                                command->stop = sed_number + by;
+                        else if (command->second_type == SED_ADDRESS_MULTIPLE)
+                                command->stop = by ? sed_number + by - sed_number % by
+                                                   : sed_number;
+
                         // A range whose end is a line already passed is one
                         // line long, which is the only way the end can be
                         // decided without seeing another line.
-                        if (command->second_type == SED_ADDRESS_LINE &&
-                            command->second_line <= sed_number)
+                        if (counted && command->stop <= sed_number)
                                 command->active = false;
                 }
         }
         else
         {
+                bool counted = command->second_type == SED_ADDRESS_LINE ||
+                               command->second_type == SED_ADDRESS_AHEAD ||
+                               command->second_type == SED_ADDRESS_MULTIPLE;
+
                 answer = true;
 
-                if (command->second_type == SED_ADDRESS_LINE)
+                if (counted)
                 {
-                        if (sed_number >= command->second_line)
+                        if (sed_number >= command->stop)
                                 command->active = false;
                 }
                 else if (sed_address_matches(command->second_type, command->second_line,
-                                             command->second_regex))
+                                             command->second_regex, 0))
                 {
                         command->active = false;
                 }
@@ -6966,7 +7583,13 @@ static b32 text_sed()
                 // -s, and -i with it, makes every file its own input: the line
                 // numbers start again and $ is that file's last line.
                 if (sed_separate)
+                {
                         sed_number = 0;
+
+                        for (b32 c = 0; c < sed_command_count; c++)
+                                if (sed_commands[c].begins)
+                                        sed_commands[c].active = true;
+                }
 
                 while (text_line_next())
                 {
@@ -7071,10 +7694,19 @@ static b32 text_sed()
                                         continue;
                                 }
 
-                                if (kind == 'q')
+                                if (kind == 'q' || kind == 'Q')
                                 {
                                         leaving = (b32)command->which;
+                                        dropped = kind == 'Q';
                                         break;
+                                }
+
+                                if (kind == 'F')
+                                {
+                                        text_put_string(name ? name
+                                                             : (string_address) "-");
+                                        text_put_character('\n');
+                                        continue;
                                 }
 
                                 if (kind == 'n')
@@ -8502,6 +9134,11 @@ static b32 text_sort()
         to know how large the files are before it starts: the columns are
         lined up to the width of the shorter one, which cannot be known from
         the bytes as they go past.
+
+        Two operands after the names, and -i, say where in each file to start
+        -- the byte numbers printed then count from there and not from the
+        front -- and -n says how far to go. -b puts the differing bytes
+        themselves beside their octal, the way a terminal can show them.
 */
 #define CMP_BLOCK 65536
 
@@ -8597,7 +9234,9 @@ static bipolar cmp_byte(cmp_side address_to side)
         return side->buffer[side->position++];
 }
 
-// Nothing, for a pipe: what is behind one has no length until it has ended.
+// What is left of a side, which is the whole of it until -i has skipped
+// something. Nothing, for a pipe: what is behind one has no length until it
+// has ended.
 static positive cmp_length(cmp_side address_to side)
 {
         bipolar here = system_call_3(syscall(lseek), side->handle, 0, FILE_SEEK_CUR);
@@ -8609,7 +9248,21 @@ static positive cmp_length(cmp_side address_to side)
         last = system_call_3(syscall(lseek), side->handle, 0, FILE_SEEK_END);
         system_call_3(syscall(lseek), side->handle, (positive)here, FILE_SEEK_SET);
 
-        return last < 0 ? 0 : (positive)last;
+        return last < 0 || last < here ? 0 : (positive)(last - here);
+}
+
+// Past a skip, by seeking where that is allowed and by reading where it is
+// not. A skip past the end leaves the side empty rather than failing.
+static fn cmp_pass(cmp_side address_to side, positive count)
+{
+        if (!count)
+                return;
+
+        if (system_call_3(syscall(lseek), side->handle, count, FILE_SEEK_CUR) >= 0)
+                return;
+
+        while (count-- && cmp_byte(side) >= 0)
+                ;
 }
 
 // The line is left out when the differences were listed, because that is
@@ -8636,12 +9289,93 @@ static fn cmp_ended(cmp_side address_to side, positive at, positive line,
 
         if (!listing)
         {
-                text_error_raw(", line ");
+                text_error_raw(", in line ");
                 text_digits(text, newline ? line : line + 1);
                 text_error_raw(text);
         }
 
         text_error_raw("\n");
+}
+
+// A byte the way cmp writes one: ^A for a control, M- in front of anything
+// with the high bit set, and the byte itself when it is printable.
+static positive cmp_shown(p8 address_to into, positive value)
+{
+        positive have = 0;
+
+        if (value >= 128)
+        {
+                into[have++] = 'M';
+                into[have++] = '-';
+                value -= 128;
+        }
+
+        if (value == 127)
+        {
+                into[have++] = '^';
+                into[have++] = '?';
+        }
+        else if (value < 32)
+        {
+                into[have++] = '^';
+                into[have++] = (p8)(value + 64);
+        }
+        else
+                into[have++] = (p8)value;
+
+        into[have] = end;
+        return have;
+}
+
+// A skip or a limit: a count, and one of the suffixes the tool this is
+// measured against multiplies it by.
+static bool cmp_count_of(string_address value, positive address_to result)
+{
+        string_address letters = (string_address) "KMGTPEZY";
+        positive total = 0;
+        positive seen = 0;
+        positive at = 0;
+        positive power = 0;
+        positive by = 1024;
+
+        if (!value)
+                return false;
+
+        for (; text_digit(value[at]); at++, seen++)
+                total = total * 10 + (positive)(value[at] - '0');
+
+        if (!seen)
+                return false;
+
+        if (!value[at])
+        {
+                address_to result = total;
+                return true;
+        }
+
+        if (value[at] == 'k')
+                power = 1;
+        else
+                for (positive step = 0; letters[step]; step++)
+                        if (value[at] == letters[step])
+                        {
+                                power = step + 1;
+                                break;
+                        }
+
+        if (!power)
+                return false;
+
+        if (value[at + 1] == 'B' && !value[at + 2])
+                by = 1000;
+        else if (value[at + 1])
+                return false;
+
+        for (positive step = 0; step < power; step++)
+                total *= by;
+
+        address_to result = total;
+        return true;
 }
 
 static fn cmp_octal(positive value)
@@ -8665,18 +9399,34 @@ static fn cmp_octal(positive value)
                 text_put_character(digits[--have]);
 }
 
+static text_long cmp_long_options[] = {
+    {"print-bytes", 'b', TEXT_LONG_ALONE},
+    {"ignore-initial", 'i', TEXT_LONG_NEEDS},
+    {"bytes", 'n', TEXT_LONG_NEEDS},
+    {"quiet", 's', TEXT_LONG_ALONE},
+    {"silent", 's', TEXT_LONG_ALONE},
+    {"verbose", 'l', TEXT_LONG_ALONE},
+    {null, 0, 0}};
+
 static b32 text_cmp()
 {
         bool silent = false;
         bool listing = false;
+        bool shown = false;
         b32 index = 1;
         positive at = 0;
         positive lines = 0;
+        positive skip_left = 0;
+        positive skip_right = 0;
+        positive limit = TEXT_UNSET;
         bool newline = true;
         positive width = 1;
         b32 answer = 0;
 
         text_begin("cmp");
+
+        if (!text_expand_long(cmp_long_options))
+                return text_done(2);
 
         while (index < text_argument_count)
         {
@@ -8697,6 +9447,69 @@ static b32 text_cmp()
                                 silent = true;
                         else if (argument[letter] == 'l')
                                 listing = true;
+                        else if (argument[letter] == 'b')
+                                shown = true;
+                        else if (argument[letter] == 'i' || argument[letter] == 'n')
+                        {
+                                bool skipping = argument[letter] == 'i';
+                                string_address value = argument[letter + 1]
+                                                           ? argument + letter + 1
+                                                           : text_argument(++index);
+                                positive one = 0;
+
+                                if (!value)
+                                {
+                                        text_error(null, "option requires an argument");
+                                        return text_done(2);
+                                }
+
+                                // -i takes one count for both sides or, with
+                                // a colon between them, one for each.
+                                positive split = 0;
+
+                                while (value[split] && value[split] != ':')
+                                        split++;
+
+                                p8 head[32];
+
+                                if (skipping && value[split] == ':')
+                                {
+                                        positive two = 0;
+
+                                        if (split >= sizeof(head))
+                                                split = sizeof(head) - 1;
+
+                                        memory_copy(head, value, split);
+                                        head[split] = end;
+
+                                        if (!cmp_count_of(head, address_of one) ||
+                                            !cmp_count_of(value + split + 1,
+                                                          address_of two))
+                                        {
+                                                text_error(value, "invalid --ignore-initial value");
+                                                return text_done(2);
+                                        }
+
+                                        skip_left = one;
+                                        skip_right = two;
+                                        break;
+                                }
+
+                                if (!cmp_count_of(value, address_of one))
+                                {
+                                        text_error(value, skipping
+                                                              ? "invalid --ignore-initial value"
+                                                              : "invalid --bytes value");
+                                        return text_done(2);
+                                }
+
+                                if (skipping)
+                                        skip_left = skip_right = one;
+                                else
+                                        limit = one;
+
+                                break;
+                        }
                         else
                         {
                                 text_error(null, "invalid option");
@@ -8707,27 +9520,51 @@ static b32 text_cmp()
                 index++;
         }
 
-        if (index >= text_argument_count || index + 2 < text_argument_count)
+        b32 operands = text_argument_count - index;
+
+        if (operands < 1 || operands > 4)
         {
-                text_error(null, index < text_argument_count ? "extra operand"
-                                                             : "missing operand");
+                text_error(null, operands ? "extra operand" : "missing operand");
                 return text_done(2);
+        }
+
+        // The third and fourth operands say the same thing -i does, and say
+        // it last, so they win.
+        for (b32 which = 2; which < operands; which++)
+        {
+                positive value = 0;
+
+                if (!cmp_count_of(text_argument(index + which), address_of value))
+                {
+                        text_error(text_argument(index + which), "invalid byte count");
+                        return text_done(2);
+                }
+
+                if (which == 2)
+                        skip_left = value;
+                else
+                        skip_right = value;
         }
 
         // A second name that was not given is standard input, which is how
         // "cmp saved" reads a pipe against a file.
         if (!cmp_open(address_of cmp_left, text_argument(index)) ||
             !cmp_open(address_of cmp_right,
-                      index + 2 == text_argument_count
-                          ? text_argument(index + 1)
-                          : (string_address) "-"))
+                      operands > 1 ? text_argument(index + 1)
+                                   : (string_address) "-"))
                 return text_done(2);
+
+        cmp_pass(address_of cmp_left, skip_left);
+        cmp_pass(address_of cmp_right, skip_right);
 
         if (listing)
         {
                 positive one = cmp_length(address_of cmp_left);
                 positive two = cmp_length(address_of cmp_right);
                 positive smaller = one < two ? one : two;
+
+                if (limit != TEXT_UNSET && limit < smaller)
+                        smaller = limit;
 
                 while (smaller >= 10)
                 {
@@ -8738,6 +9575,9 @@ static b32 text_cmp()
 
         for (;;)
         {
+                if (limit != TEXT_UNSET && at >= limit)
+                        break;
+
                 bipolar a = cmp_byte(address_of cmp_left);
                 bipolar b = cmp_byte(address_of cmp_right);
 
@@ -8765,15 +9605,39 @@ static b32 text_cmp()
 
                         answer = 1;
 
+                        p8 left[8];
+                        p8 right[8];
+                        positive wide = 0;
+
+                        if (shown)
+                        {
+                                wide = cmp_shown(left, (positive)a);
+                                cmp_shown(right, (positive)b);
+                        }
+
                         if (!listing)
                         {
                                 text_put_string(cmp_left.name);
                                 text_put_character(' ');
                                 text_put_string(cmp_right.name);
-                                text_put_string(" differ: char ");
+                                text_put_string(shown ? " differ: byte "
+                                                      : " differ: char ");
                                 text_put_number(at, 0);
                                 text_put_string(", line ");
                                 text_put_number(lines + 1, 0);
+
+                                if (shown)
+                                {
+                                        text_put_string(" is ");
+                                        cmp_octal((positive)a);
+                                        text_put_character(' ');
+                                        text_put_string(left);
+                                        text_put_character(' ');
+                                        cmp_octal((positive)b);
+                                        text_put_character(' ');
+                                        text_put_string(right);
+                                }
+
                                 text_put_character('\n');
                                 break;
                         }
@@ -8782,7 +9646,27 @@ static b32 text_cmp()
                         text_put_character(' ');
                         cmp_octal((positive)a);
                         text_put_character(' ');
+
+                        if (shown)
+                        {
+                                text_put_string(left);
+
+                                // The listing's own column, which is four
+                                // wide because M-^? is.
+                                while (wide++ < 4)
+                                        text_put_character(' ');
+
+                                text_put_character(' ');
+                        }
+
                         cmp_octal((positive)b);
+
+                        if (shown)
+                        {
+                                text_put_character(' ');
+                                text_put_string(right);
+                        }
+
                         text_put_character('\n');
                 }
 
