@@ -1527,6 +1527,33 @@ fn file_complain(string_address program, string_address message, string_address 
 }
 
 /*
+        The question -i asks before something is destroyed.
+
+        Written to the standard error and answered from the standard input,
+        because that is where a person is when a script is not. Anything that
+        does not begin with a y is a no, and so is an input that has ended --
+        which is what makes the tools safe to run with no input at all.
+*/
+bool file_ask(string_address program, string_address question, string_address subject)
+{
+        string_format(file_fail, "%s: %s '%s'? ", program, question, subject);
+
+        p8 answer[2];
+        bipolar got = system_call_3(syscall(read), 0, (positive)answer, 1);
+
+        if (got != 1)
+                return false;
+
+        bool yes = answer[0] == 'y' || answer[0] == 'Y';
+
+        while (answer[0] != '\n' &&
+               system_call_3(syscall(read), 0, (positive)answer, 1) == 1)
+                ;
+
+        return yes;
+}
+
+/*
         The long spellings.
 
         Every tool here thinks in letters, and GNU's tools answer to a word as
@@ -3705,14 +3732,56 @@ static b32 file_chown()
 
 // ln ------------------------------------------------------------
 // ln [-s] [-f] TARGET [NAME], and ln [-s] [-f] TARGET... DIRECTORY.
-static bool ln_make(string_address target, string_address name, bool symbolic, bool force)
+static bool ln_symbolic;
+static bool ln_force;
+static bool ln_ask;
+static bool ln_loud;
+static bool ln_relative;
+
+// realpath's, and named here because ln is written before it.
+static fn realpath_relative(string_address from, string_address path, p8 address_to into);
+
+// -r says where the target is from where the link will sit rather than from
+// here, which is the only spelling of a symbolic link that survives the whole
+// tree being moved somewhere else.
+static fn ln_relative_text(string_address target, string_address name,
+                           p8 address_to into)
 {
-        if (force)
+        p8 there[FILE_PATH_MAX];
+        p8 here[FILE_PATH_MAX];
+        p8 above[FILE_PATH_MAX];
+
+        if (!file_resolve(target, there, true) || !file_resolve(name, here, false))
+        {
+                string_copy_max(into, target, FILE_PATH_MAX - 1);
+                into[FILE_PATH_MAX - 1] = end;
+                return;
+        }
+
+        file_head(here, above);
+        realpath_relative(above, there, into);
+}
+
+static bool ln_make(string_address target, string_address name)
+{
+        p8 relative[FILE_PATH_MAX];
+
+        if (ln_relative && ln_symbolic)
+        {
+                ln_relative_text(target, name, relative);
+                target = relative;
+        }
+
+        if (ln_ask && file_exists(AT_FDCWD, name) &&
+            !file_ask((string_address) "ln", (string_address) "replace", name))
+                return true;
+
+        if (ln_force || ln_ask)
                 system_call_3(syscall(unlinkat), AT_FDCWD, (positive)name, 0);
 
         bipolar done;
 
-        if (symbolic)
+        if (ln_symbolic)
                 done = system_call_3(syscall(symlinkat), (positive)target, AT_FDCWD,
                                      (positive)name);
         else
@@ -3721,22 +3790,57 @@ static bool ln_make(string_address target, string_address name, bool symbolic, b
 
         if (done < 0)
         {
-                string_format(file_fail, "ln: failed to create link '%s': %s\n",
+                string_format(file_fail, "ln: failed to create %s link '%s': %s\n",
+                              ln_symbolic ? (string_address) "symbolic"
+                                          : (string_address) "hard",
                               name, file_reason(done));
                 return false;
         }
 
+        if (ln_loud)
+                string_format(log, "'%s' -> '%s'\n", name, target);
+
         return true;
 }
 
+static const file_long ln_longs[] = {
+    {(string_address) "force", 'f'},
+    {(string_address) "interactive", 'i'},
+    {(string_address) "logical", 'L'},
+    {(string_address) "no-dereference", 'n'},
+    {(string_address) "no-target-directory", 'T'},
+    {(string_address) "physical", 'P'},
+    {(string_address) "relative", 'r'},
+    {(string_address) "symbolic", 's'},
+    {(string_address) "target-directory", 't'},
+    {(string_address) "verbose", 'v'},
+    {null, 0},
+};
+
 static b32 file_ln()
 {
-        positive first = 0;
         positive count = (positive)program_argument_count();
-        positive flags = file_take_options((string_address) "sfnvTP", address_of first);
+        file_taking taking = {
+            .program = (string_address) "ln",
+            .allowed = (string_address) "fiLnPrstTv",
+            .valued = (string_address) "t",
+            .longs = ln_longs,
+        };
 
-        bool symbolic = (flags & FILE_FLAG('s')) != 0;
-        bool force = (flags & FILE_FLAG('f')) != 0;
+        if (!file_take(address_of taking))
+                return 1;
+
+        positive flags = taking.flags;
+        positive first = taking.first;
+
+        ln_symbolic = (flags & FILE_FLAG('s')) != 0;
+        ln_force = (flags & FILE_FLAG('f')) != 0;
+        ln_ask = (flags & FILE_FLAG('i')) != 0;
+        ln_loud = (flags & FILE_FLAG('v')) != 0;
+        ln_relative = (flags & FILE_FLAG('r')) != 0;
+
+        if (ln_force)
+                ln_ask = false;
 
         if (first >= count)
         {
@@ -3744,9 +3848,21 @@ static b32 file_ln()
                 return 1;
         }
 
-        positive given = count - first;
+        string_address into = file_option_value(address_of taking, 't');
+        bool alone = (flags & FILE_FLAG('T')) != 0;
 
-        if (given == 1)
+        if (into && alone)
+        {
+                file_fail("ln: cannot combine --target-directory and --no-target-directory\n", 0);
+                return 1;
+        }
+
+        // -n is about the destination and not the target: a link that already
+        // points at a directory is a thing to replace rather than a directory
+        // to link into.
+        bool through = (flags & FILE_FLAG('n')) == 0;
+
+        if (!into && count - first == 1)
         {
                 // One operand links into the working directory under the
                 // target's own last component.
@@ -3755,25 +3871,28 @@ static b32 file_ln()
 
                 file_tail(target, name);
 
-                return ln_make(target, name, symbolic, force) ? 0 : 1;
+                return ln_make(target, name) ? 0 : 1;
         }
 
-        string_address last = program_argument((b32)(count - 1));
+        string_address last = into ? into : program_argument((b32)(count - 1));
+        positive after = into ? count : count - 1;
+        bool directory = into || (through ? file_is_directory_through(last)
+                                          : file_is_directory(AT_FDCWD, last));
 
-        if (given == 2 && !file_is_directory_through(last))
+        if (alone || !directory)
         {
-                return ln_make(program_argument((b32)first), last, symbolic, force) ? 0 : 1;
-        }
+                if (after - first != 1)
+                {
+                        string_format(file_fail, "ln: target '%s' is not a directory\n", last);
+                        return 1;
+                }
 
-        if (!file_is_directory_through(last))
-        {
-                string_format(file_fail, "ln: target '%s' is not a directory\n", last);
-                return 1;
+                return ln_make(program_argument((b32)first), last) ? 0 : 1;
         }
 
         b32 status = 0;
 
-        while (first < count - 1)
+        while (first < after)
         {
                 string_address target = program_argument((b32)first++);
                 p8 tail[FILE_PATH_MAX];
@@ -3782,7 +3901,7 @@ static b32 file_ln()
                 file_tail(target, tail);
                 file_join(name, FILE_PATH_MAX, last, tail);
 
-                if (!ln_make(target, name, symbolic, force))
+                if (!ln_make(target, name))
                         status = 1;
         }
 
@@ -4377,11 +4496,28 @@ static b32 file_rmdir()
 
         A destination that is a directory takes each source under its own last
         component; two operands where the second is not a directory make the
-        copy itself.
+        copy itself. -t names the directory instead of positioning it, and -T
+        refuses to treat the destination as one at all.
+
+        A symbolic link named on the command line is followed and what it
+        points at is copied, which is what cp is for; -R walks a tree and
+        copies the links inside it as links, which is what a tree is. -P, -d
+        and -a hold to the second everywhere and -L to the first.
 */
 static bool cp_recursive;
 static bool cp_preserve;
+static bool cp_force;
+static bool cp_ask;
+static bool cp_never_clobber;
+static bool cp_newer_only;
+static bool cp_hard;
+static bool cp_symbolic;
+static bool cp_loud;
 static b32 cp_status;
+
+// 0 copies a symbolic link as itself, 1 copies what it points at, 2 does
+// that only for the links named on the command line.
+static positive cp_dereference;
 
 static fn cp_keep(string_address destination, file_facts address_to facts)
 {
@@ -4401,15 +4537,105 @@ static fn cp_keep(string_address destination, file_facts address_to facts)
         system_call_4(syscall(utimensat), AT_FDCWD, (positive)destination,
                       (positive)times, AT_SYMLINK_NOFOLLOW);
 
+        // A symbolic link has no mode of its own, and fchmodat has no way to
+        // stop at one: the chmod would land on whatever it points at.
+        if ((facts->mode & MODE_FORMAT) == MODE_LINK)
+                return;
+
         system_call_4(syscall(fchmodat), AT_FDCWD, (positive)destination,
                       facts->mode & 07777, 0);
 }
 
-static bool cp_one(string_address source, string_address destination, positive depth)
+// -n, -i and -u are three ways of asking the same question about a
+// destination that is already there, and a destination that is not there is
+// never in question.
+static bool cp_allowed(string_address destination, file_facts address_to facts)
+{
+        file_facts there;
+
+        if (!cp_never_clobber && !cp_newer_only && !cp_ask)
+                return true;
+
+        if (!file_look_link(destination, address_of there))
+                return true;
+
+        if (cp_never_clobber)
+                return false;
+
+        if (cp_newer_only)
+        {
+                if (facts->modified.seconds < there.modified.seconds)
+                        return false;
+
+                if (facts->modified.seconds == there.modified.seconds &&
+                    facts->modified.nanoseconds <= there.modified.nanoseconds)
+                        return false;
+        }
+
+        if (cp_ask && !file_ask((string_address) "cp", (string_address) "overwrite",
+                                destination))
+                return false;
+
+        return true;
+}
+
+static fn cp_said(string_address source, string_address destination)
+{
+        if (cp_loud)
+                string_format(log, "'%s' -> '%s'\n", source, destination);
+}
+
+// -l and -s make a name for the file rather than a copy of it, and neither
+// has anything to say about a directory: with -r the directory is still made
+// and it is what lands inside that is linked.
+static bool cp_linked(string_address source, string_address destination)
+{
+        if (cp_force || cp_ask || cp_never_clobber)
+                system_call_3(syscall(unlinkat), AT_FDCWD, (positive)destination, 0);
+
+        bipolar done;
+
+        if (cp_symbolic)
+        {
+                // A relative target is read from where the link sits, so a
+                // link made anywhere but here would point somewhere else.
+                if (!string_is(source, '/') && string_first_of(destination, '/'))
+                {
+                        string_format(file_fail,
+                                      "cp: %s: can make relative symbolic links only in current directory\n",
+                                      destination);
+                        cp_status = 1;
+                        return false;
+                }
+
+                done = system_call_3(syscall(symlinkat), (positive)source, AT_FDCWD,
+                                     (positive)destination);
+        }
+        else
+                done = system_call_5(syscall(linkat), AT_FDCWD, (positive)source,
+                                     AT_FDCWD, (positive)destination, 0);
+
+        if (done < 0)
+        {
+                string_format(file_fail, "cp: cannot create link '%s': %s\n",
+                              destination, file_reason(done));
+                cp_status = 1;
+                return false;
+        }
+
+        cp_said(source, destination);
+
+        return true;
+}
+
+static bool cp_one(string_address source, string_address destination, positive depth,
+                   bool named)
 {
         file_facts facts;
+        bool follow = cp_dereference == 1 || (cp_dereference == 2 && named);
 
-        if (!file_look_link(source, address_of facts))
+        if (!(follow ? file_look_at(source, address_of facts)
+                     : file_look_link(source, address_of facts)))
         {
                 string_format(file_fail, "cp: cannot stat '%s': No such file or directory\n",
                               source);
@@ -4418,6 +4644,12 @@ static bool cp_one(string_address source, string_address destination, positive d
         }
 
         positive kind = facts.mode & MODE_FORMAT;
+
+        if (kind != MODE_DIRECTORY && !cp_allowed(destination, address_of facts))
+                return true;
+
+        if ((cp_hard || cp_symbolic) && kind != MODE_DIRECTORY)
+                return cp_linked(source, destination);
 
         if (kind == MODE_LINK)
         {
@@ -4440,6 +4672,7 @@ static bool cp_one(string_address source, string_address destination, positive d
                 }
 
                 cp_keep(destination, address_of facts);
+                cp_said(source, destination);
                 return true;
         }
 
@@ -4448,9 +4681,25 @@ static bool cp_one(string_address source, string_address destination, positive d
                 if (!file_copy_contents(AT_FDCWD, source, AT_FDCWD, destination,
                                         facts.mode & 07777))
                 {
-                        string_format(file_fail, "cp: cannot copy '%s'\n", source);
-                        cp_status = 1;
-                        return false;
+                        // -f is for a destination that cannot be written to
+                        // but can be replaced, which is what an unwritable
+                        // file in a writable directory is.
+                        if (!cp_force)
+                        {
+                                string_format(file_fail, "cp: cannot copy '%s'\n", source);
+                                cp_status = 1;
+                                return false;
+                        }
+
+                        system_call_3(syscall(unlinkat), AT_FDCWD, (positive)destination, 0);
+
+                        if (!file_copy_contents(AT_FDCWD, source, AT_FDCWD, destination,
+                                                facts.mode & 07777))
+                        {
+                                string_format(file_fail, "cp: cannot copy '%s'\n", source);
+                                cp_status = 1;
+                                return false;
+                        }
                 }
 
                 // The open above only sets the mode on a file it created, so a
@@ -4460,6 +4709,7 @@ static bool cp_one(string_address source, string_address destination, positive d
                               facts.mode & 07777, 0);
 
                 cp_keep(destination, address_of facts);
+                cp_said(source, destination);
                 return true;
         }
 
@@ -4498,6 +4748,8 @@ static bool cp_one(string_address source, string_address destination, positive d
                 return false;
         }
 
+        cp_said(source, destination);
+
         struct linux_dirent64 address_to entry;
         bool complete = true;
 
@@ -4512,7 +4764,7 @@ static bool cp_one(string_address source, string_address destination, positive d
                 file_join(from, FILE_PATH_MAX, source, entry->d_name);
                 file_join(to, FILE_PATH_MAX, destination, entry->d_name);
 
-                if (!cp_one(from, to, depth - 1))
+                if (!cp_one(from, to, depth - 1, false))
                         complete = false;
         }
 
@@ -4523,26 +4775,95 @@ static bool cp_one(string_address source, string_address destination, positive d
         return complete;
 }
 
+static const file_long cp_longs[] = {
+    {(string_address) "archive", 'a'},
+    {(string_address) "dereference", 'L'},
+    {(string_address) "force", 'f'},
+    {(string_address) "interactive", 'i'},
+    {(string_address) "link", 'l'},
+    {(string_address) "no-clobber", 'n'},
+    {(string_address) "no-dereference", 'P'},
+    {(string_address) "no-target-directory", 'T'},
+    {(string_address) "preserve", 'p'},
+    {(string_address) "recursive", 'R'},
+    {(string_address) "symbolic-link", 's'},
+    {(string_address) "target-directory", 't'},
+    {(string_address) "update", 'u'},
+    {(string_address) "verbose", 'v'},
+    {null, 0},
+};
+
 static b32 file_cp()
 {
-        positive first = 0;
         positive count = (positive)program_argument_count();
-        positive flags = file_take_options((string_address) "rRpafdvit", address_of first);
+        file_taking taking = {
+            .program = (string_address) "cp",
+            .allowed = (string_address) "aHLPRdfilnprstTuv",
+            .valued = (string_address) "t",
+            .longs = cp_longs,
+        };
+
+        if (!file_take(address_of taking))
+                return 1;
+
+        positive flags = taking.flags;
+        positive first = taking.first;
 
         cp_recursive = (flags & (FILE_FLAG('r') | FILE_FLAG('R') | FILE_FLAG('a'))) != 0;
         cp_preserve = (flags & (FILE_FLAG('p') | FILE_FLAG('a'))) != 0;
+        cp_force = (flags & FILE_FLAG('f')) != 0;
+        cp_ask = (flags & FILE_FLAG('i')) != 0;
+        cp_never_clobber = (flags & FILE_FLAG('n')) != 0;
+        cp_newer_only = (flags & FILE_FLAG('u')) != 0;
+        cp_hard = (flags & FILE_FLAG('l')) != 0;
+        cp_symbolic = (flags & FILE_FLAG('s')) != 0;
+        cp_loud = (flags & FILE_FLAG('v')) != 0;
 
-        if (first + 1 >= count)
+        // A link named as a source is followed, because copying a file is
+        // what cp was asked for; a link found inside a tree being walked is
+        // not, because the tree is what -R was asked for.
+        cp_dereference = cp_recursive ? 0 : 1;
+
+        if (flags & (FILE_FLAG('P') | FILE_FLAG('d') | FILE_FLAG('a')))
+                cp_dereference = 0;
+
+        if (flags & FILE_FLAG('H'))
+                cp_dereference = 2;
+
+        if (flags & FILE_FLAG('L'))
+                cp_dereference = 1;
+
+        string_address into = file_option_value(address_of taking, 't');
+        bool alone = (flags & FILE_FLAG('T')) != 0;
+
+        if (into && alone)
+        {
+                file_fail("cp: cannot combine --target-directory and --no-target-directory\n", 0);
+                return 1;
+        }
+
+        if (first >= count || (!into && first + 1 >= count))
         {
                 file_fail("cp: missing operand\n", 0);
                 return 1;
         }
 
-        string_address last = program_argument((b32)(count - 1));
+        string_address last = into ? into : program_argument((b32)(count - 1));
+        positive after = into ? count : count - 1;
 
-        if (count - first == 2 && !file_is_directory_through(last))
+        // -T says the destination is the copy itself however many names it
+        // has and whatever is already there, which is the one case where a
+        // directory on the right is not a directory to copy into.
+        if (alone || (!into && count - first == 2 && !file_is_directory_through(last)))
         {
-                cp_one(program_argument((b32)first), last, FILE_MAX_DEPTH);
+                if (after - first != 1)
+                {
+                        string_format(file_fail, "cp: extra operand '%s'\n",
+                                      program_argument((b32)(first + 1)));
+                        return 1;
+                }
+
+                cp_one(program_argument((b32)first), last, FILE_MAX_DEPTH, true);
                 log_flush();
                 return cp_status;
         }
@@ -4553,7 +4874,7 @@ static b32 file_cp()
                 return 1;
         }
 
-        while (first < count - 1)
+        while (first < after)
         {
                 string_address source = program_argument((b32)first++);
                 p8 tail[FILE_PATH_MAX];
@@ -4562,7 +4883,7 @@ static b32 file_cp()
                 file_tail(source, tail);
                 file_join(destination, FILE_PATH_MAX, last, tail);
 
-                cp_one(source, destination, FILE_MAX_DEPTH);
+                cp_one(source, destination, FILE_MAX_DEPTH, true);
         }
 
         log_flush();
@@ -4572,12 +4893,15 @@ static b32 file_cp()
 
 // mv ------------------------------------------------------------
 /*
-        mv [-f] SOURCE... DESTINATION
+        mv [-f] [-i] [-n] [-t DIR] [-T] SOURCE... DESTINATION
 
         renameat2 rather than renameat, because riscv64 never had renameat and
         this tree builds for it; a flags word of zero is the same operation.
 */
 static b32 mv_status;
+static bool mv_ask;
+static bool mv_never_clobber;
+static bool mv_loud;
 
 static bool mv_across(string_address source, string_address destination, positive depth);
 
@@ -4670,39 +4994,116 @@ static bool mv_across(string_address source, string_address destination, positiv
         return system_call_3(syscall(unlinkat), AT_FDCWD, (positive)source, 0) == 0;
 }
 
+// -n, -i and -f are the same question mv asks about a destination that is
+// already there, and -f is the default it asks nothing under.
+static bool mv_allowed(string_address destination)
+{
+        if (!mv_never_clobber && !mv_ask)
+                return true;
+
+        if (!file_exists(AT_FDCWD, destination))
+                return true;
+
+        if (mv_never_clobber)
+                return false;
+
+        return file_ask((string_address) "mv", (string_address) "overwrite", destination);
+}
+
 static fn mv_one(string_address source, string_address destination)
 {
+        if (!mv_allowed(destination))
+                return;
+
         bipolar done = system_call_5(syscall(renameat2), AT_FDCWD, (positive)source,
                                      AT_FDCWD, (positive)destination, 0);
 
         if (done == 0)
+        {
+                if (mv_loud)
+                        string_format(log, "renamed '%s' -> '%s'\n", source, destination);
+
                 return;
+        }
 
         if (done == -ERROR_CROSS_DEVICE && mv_across(source, destination, FILE_MAX_DEPTH))
+        {
+                if (mv_loud)
+                        string_format(log, "renamed '%s' -> '%s'\n", source, destination);
+
                 return;
+        }
 
         string_format(file_fail, "mv: cannot move '%s' to '%s': %s\n", source,
                       destination, file_reason(done));
         mv_status = 1;
 }
 
+static const file_long mv_longs[] = {
+    {(string_address) "force", 'f'},
+    {(string_address) "interactive", 'i'},
+    {(string_address) "no-clobber", 'n'},
+    {(string_address) "no-target-directory", 'T'},
+    {(string_address) "target-directory", 't'},
+    {(string_address) "verbose", 'v'},
+    {null, 0},
+};
+
 static b32 file_mv()
 {
-        positive first = 0;
         positive count = (positive)program_argument_count();
+        file_taking taking = {
+            .program = (string_address) "mv",
+            .allowed = (string_address) "finTtv",
+            .valued = (string_address) "t",
+            .longs = mv_longs,
+        };
 
-        file_take_options((string_address) "fivnT", address_of first);
+        if (!file_take(address_of taking))
+                return 1;
 
-        if (first + 1 >= count)
+        positive first = taking.first;
+
+        mv_ask = (taking.flags & FILE_FLAG('i')) != 0;
+        mv_never_clobber = (taking.flags & FILE_FLAG('n')) != 0;
+        mv_loud = (taking.flags & FILE_FLAG('v')) != 0;
+
+        // The last of -f, -i and -n wins in the system's mv; here -f is the
+        // absence of the other two, which comes to the same thing for
+        // anything but the order they were typed in.
+        if (taking.flags & FILE_FLAG('f'))
+        {
+                mv_ask = false;
+                mv_never_clobber = false;
+        }
+
+        string_address into = file_option_value(address_of taking, 't');
+        bool alone = (taking.flags & FILE_FLAG('T')) != 0;
+
+        if (into && alone)
+        {
+                file_fail("mv: cannot combine --target-directory and --no-target-directory\n", 0);
+                return 1;
+        }
+
+        if (first >= count || (!into && first + 1 >= count))
         {
                 file_fail("mv: missing operand\n", 0);
                 return 1;
         }
 
-        string_address last = program_argument((b32)(count - 1));
+        string_address last = into ? into : program_argument((b32)(count - 1));
+        positive after = into ? count : count - 1;
 
-        if (count - first == 2 && !file_is_directory_through(last))
+        if (alone || (!into && count - first == 2 && !file_is_directory_through(last)))
         {
+                if (after - first != 1)
+                {
+                        string_format(file_fail, "mv: extra operand '%s'\n",
+                                      program_argument((b32)(first + 1)));
+                        return 1;
+                }
+
                 mv_one(program_argument((b32)first), last);
                 log_flush();
                 return mv_status;
@@ -4714,7 +5115,7 @@ static b32 file_mv()
                 return 1;
         }
 
-        while (first < count - 1)
+        while (first < after)
         {
                 string_address source = program_argument((b32)first++);
                 p8 tail[FILE_PATH_MAX];
@@ -4732,12 +5133,52 @@ static b32 file_mv()
 }
 
 // rm ------------------------------------------------------------
-// rm [-r] [-f] FILE...
+/*
+        rm [-r] [-f] [-d] [-i] [-v] FILE...
+
+        -r takes a tree, -d takes a directory that is already empty and
+        nothing else, and neither of them takes a directory that is in the way
+        of the other.
+*/
 static bool rm_force;
+static bool rm_recursive;
+static bool rm_empty_directories;
+static bool rm_ask;
+static bool rm_loud;
+static bool rm_one_system;
+static bool rm_careful;
+static p32 rm_device_major;
+static p32 rm_device_minor;
 static b32 rm_status;
 
 static bool rm_tree(bipolar directory, string_address name, string_address shown,
                     positive depth);
+
+static string_address rm_wording(file_facts address_to facts)
+{
+        positive kind = facts->mode & MODE_FORMAT;
+
+        if (kind == MODE_DIRECTORY)
+                return (string_address) "remove directory";
+
+        if (kind == MODE_LINK)
+                return (string_address) "remove symbolic link";
+
+        if (kind != MODE_FILE)
+                return (string_address) "remove";
+
+        return facts->size ? (string_address) "remove regular file"
+                           : (string_address) "remove regular empty file";
+}
+
+static fn rm_said(string_address shown, bool directory)
+{
+        if (!rm_loud)
+                return;
+
+        string_format(log, directory ? "removed directory '%s'\n" : "removed '%s'\n",
+                      shown);
+}
 
 static bool rm_contents(bipolar directory, string_address shown, positive depth)
 {
@@ -4790,8 +5231,42 @@ static bool rm_contents(bipolar directory, string_address shown, positive depth)
 static bool rm_tree(bipolar directory, string_address name, string_address shown,
                     positive depth)
 {
-        if (system_call_3(syscall(unlinkat), directory, (positive)name, 0) == 0)
-                return true;
+        file_facts facts;
+
+        /*
+                The unlink is tried before the name is looked at, because for
+                a file that is the whole of the work and a stat first would
+                double the calls it takes. Only the flags that have a question
+                to ask about what a name is pay for the answer.
+        */
+        if (!rm_careful)
+        {
+                if (system_call_3(syscall(unlinkat), directory, (positive)name, 0) == 0)
+                        return true;
+        }
+        else if (!file_look(directory, name, AT_SYMLINK_NOFOLLOW, address_of facts))
+        {
+                if (!rm_force)
+                {
+                        string_format(file_fail, "rm: cannot remove '%s': %s\n", shown,
+                                      file_reason(-ERROR_NO_ENTRY));
+                        rm_status = 1;
+                }
+
+                return false;
+        }
+        else if ((facts.mode & MODE_FORMAT) != MODE_DIRECTORY)
+        {
+                if (rm_ask && !file_ask((string_address) "rm", rm_wording(address_of facts),
+                                        shown))
+                        return false;
+
+                if (system_call_3(syscall(unlinkat), directory, (positive)name, 0) == 0)
+                {
+                        rm_said(shown, false);
+                        return true;
+                }
+        }
 
         if (!file_is_directory(directory, name))
         {
@@ -4805,38 +5280,65 @@ static bool rm_tree(bipolar directory, string_address name, string_address shown
                 return false;
         }
 
-        if (depth == 0)
+        if (rm_one_system &&
+            file_look(directory, name, AT_SYMLINK_NOFOLLOW, address_of facts) &&
+            (facts.device_major != rm_device_major ||
+             facts.device_minor != rm_device_minor))
         {
-                string_format(file_fail, "rm: '%s' is nested too deep\n", shown);
+                string_format(file_fail,
+                              "rm: skipping '%s', since it's on a different device\n", shown);
                 rm_status = 1;
                 return false;
         }
 
-        bipolar inside = system_call_3(syscall(openat), directory, (positive)name,
-                                       FILE_READ | O_DIRECTORY);
+        // -d asks for the directory and not for what is under it, so the
+        // remove below is the whole of it and a directory with anything in it
+        // says so rather than being emptied.
+        bool complete = true;
 
-        if (inside < 0)
+        if (rm_recursive)
         {
-                if (!rm_force)
+                if (depth == 0)
                 {
-                        string_format(file_fail, "rm: cannot read '%s': %s\n", shown,
-                                      file_reason(inside));
+                        string_format(file_fail, "rm: '%s' is nested too deep\n", shown);
                         rm_status = 1;
+                        return false;
                 }
 
-                return false;
+                if (rm_ask && !file_ask((string_address) "rm",
+                                        (string_address) "descend into directory", shown))
+                        return false;
+
+                bipolar inside = system_call_3(syscall(openat), directory, (positive)name,
+                                               FILE_READ | O_DIRECTORY);
+
+                if (inside < 0)
+                {
+                        if (!rm_force)
+                        {
+                                string_format(file_fail, "rm: cannot read '%s': %s\n", shown,
+                                              file_reason(inside));
+                                rm_status = 1;
+                        }
+
+                        return false;
+                }
+
+                complete = rm_contents(inside, shown, depth - 1);
+
+                system_call_1(syscall(close), inside);
         }
 
-        bool complete = rm_contents(inside, shown, depth - 1);
-
-        system_call_1(syscall(close), inside);
+        if (rm_ask && !rm_recursive &&
+            !file_ask((string_address) "rm", (string_address) "remove directory", shown))
+                return false;
 
         bipolar gone = system_call_3(syscall(unlinkat), directory, (positive)name,
                                      AT_REMOVEDIR);
 
         if (gone < 0)
         {
-                if (!rm_force)
+                if (!rm_force || (!rm_recursive && gone == -ERROR_NOT_EMPTY))
                 {
                         string_format(file_fail, "rm: cannot remove '%s': %s\n", shown,
                                       file_reason(gone));
@@ -4846,18 +5348,49 @@ static bool rm_tree(bipolar directory, string_address name, string_address shown
                 return false;
         }
 
+        rm_said(shown, true);
+
         return complete;
 }
 
+static const file_long rm_longs[] = {
+    {(string_address) "dir", 'd'},
+    {(string_address) "force", 'f'},
+    {(string_address) "interactive", 'i'},
+    {(string_address) "one-file-system", 'o'},
+    {(string_address) "no-preserve-root", 'N'},
+    {(string_address) "preserve-root", 'P'},
+    {(string_address) "recursive", 'R'},
+    {(string_address) "verbose", 'v'},
+    {null, 0},
+};
+
 static b32 file_rm()
 {
-        positive first = 0;
         positive count = (positive)program_argument_count();
-        positive flags = file_take_options((string_address) "rRfivd", address_of first);
+        file_taking taking = {
+            .program = (string_address) "rm",
+            .allowed = (string_address) "dfirRv",
+            .valued = (string_address) "",
+            .longs = rm_longs,
+        };
+
+        if (!file_take(address_of taking))
+                return 1;
+
+        positive flags = taking.flags;
+        positive first = taking.first;
 
         rm_force = (flags & FILE_FLAG('f')) != 0;
+        rm_ask = (flags & FILE_FLAG('i')) != 0;
+        rm_loud = (flags & FILE_FLAG('v')) != 0;
+        rm_one_system = (flags & FILE_FLAG('o')) != 0;
+        rm_empty_directories = (flags & FILE_FLAG('d')) != 0;
+        rm_recursive = (flags & (FILE_FLAG('r') | FILE_FLAG('R'))) != 0;
+        rm_careful = rm_ask || rm_loud || rm_one_system;
 
-        bool recursive = (flags & (FILE_FLAG('r') | FILE_FLAG('R'))) != 0;
+        if (rm_force)
+                rm_ask = false;
 
         if (first >= count)
         {
@@ -4871,8 +5404,9 @@ static b32 file_rm()
         while (first < count)
         {
                 string_address path = program_argument((b32)first++);
+                file_facts facts;
 
-                if (!file_exists(AT_FDCWD, path))
+                if (!file_look(AT_FDCWD, path, AT_SYMLINK_NOFOLLOW, address_of facts))
                 {
                         if (!rm_force)
                         {
@@ -4885,13 +5419,27 @@ static b32 file_rm()
                         continue;
                 }
 
-                if (file_is_directory(AT_FDCWD, path) && !recursive)
+                bool here = (facts.mode & MODE_FORMAT) == MODE_DIRECTORY;
+
+                if (here && rm_recursive && !(flags & FILE_FLAG('N')) &&
+                    string_is(path, '/') && string_is(path + 1, end))
+                {
+                        file_fail("rm: it is dangerous to operate recursively on '/'\n", 0);
+                        file_fail("rm: use --no-preserve-root to override this failsafe\n", 0);
+                        rm_status = 1;
+                        continue;
+                }
+
+                if (here && !rm_recursive && !rm_empty_directories)
                 {
                         string_format(file_fail, "rm: cannot remove '%s': Is a directory\n",
                                       path);
                         rm_status = 1;
                         continue;
                 }
+
+                rm_device_major = facts.device_major;
+                rm_device_minor = facts.device_minor;
 
                 rm_tree(AT_FDCWD, path, path, FILE_MAX_DEPTH);
         }

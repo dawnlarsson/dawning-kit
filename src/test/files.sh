@@ -114,8 +114,11 @@ dump() {
                         # dump it, so the access times differ between the two
                         # dumps by construction. The modify time is the one
                         # touch and cp -p are for.
+                        # %h and not only %a %F %s: cp -l and ln make a name
+                        # for a file rather than a copy of it, and the two are
+                        # the same file by every other measure here.
                         printf '%s %s %s %s' "$entry" \
-                                "$(stat -c '%a %F %s' "$entry" 2>/dev/null)" \
+                                "$(stat -c '%a %F %s %h' "$entry" 2>/dev/null)" \
                                 "$(modified "$entry")" \
                                 "$(readlink "$entry" 2>/dev/null)"
                         if [ -f "$entry" ] && [ ! -L "$entry" ]; then
@@ -506,6 +509,21 @@ effect 'symbolic'       ln '$TOOL -s tree/one pointer'
 effect 'symbolic force' ln '$TOOL -s tree/two link'
 effect 'hard'           ln '$TOOL tree/one hard'
 effect 'into directory' ln '$TOOL -s ../plain tree/'
+effect 'forced'         ln '$TOOL -sf tree/two link'
+effect 'relative'       ln '$TOOL -sr plain tree/deep/rel'
+effect 'relative deep'  ln '$TOOL -sr tree/one tree/deep/deeper/rel'
+effect 'relative up'    ln '$TOOL -sr tree/deep/three near'
+effect 'relative long'  ln '$TOOL -s --relative plain tree/rel'
+effect 'no dereference' ln 'ln -s tree here; $TOOL -sfn plain here'
+effect 'through a link' ln 'ln -s tree here; $TOOL -sf plain here'
+effect 'target dir'     ln '$TOOL -st tree plain'
+effect 'no target dir'  ln '$TOOL -sT tree/one aimed'
+effect 'no target over' ln '$TOOL -sT tree/one tree'
+effect 'interactive no' ln '$TOOL -si tree/two link < /dev/null'
+effect 'interactive yes' ln 'printf "y\n" | $TOOL -si tree/two link'
+effect 'hard many'      ln '$TOOL tree/one tree/two tree/deep/'
+effect 'verbose'        ln '$TOOL -sv tree/one pointer'
+effect 'not an option'  ln '$TOOL -W tree/one pointer'
 
 group touch
 effect 'create'         touch '$TOOL fresh'
@@ -526,6 +544,32 @@ effect 'into directory' cp '$TOOL plain tree/'
 effect 'recursive'      cp '$TOOL -r tree copied'
 effect 'preserving'     cp '$TOOL -rp tree kept'
 effect 'many into dir'  cp '$TOOL tree/one tree/two tree/deep/'
+# A link named on the command line is followed and a link found inside a tree
+# is not, which is the one place cp reads its own operands two ways.
+effect 'link followed'  cp '$TOOL link followed'
+effect 'link kept'      cp '$TOOL -P link kept'
+effect 'link kept by d' cp '$TOOL -d link kept'
+effect 'link in a tree' cp 'mkdir box; ln -s ../plain box/inside; $TOOL -r box copied'
+effect 'link followed in tree' cp 'mkdir box; ln -s ../plain box/inside; $TOOL -rL box copied'
+effect 'archive'        cp '$TOOL -a tree arch'
+effect 'archive a link' cp '$TOOL -a link arch'
+effect 'target dir'     cp '$TOOL -t tree/deep tree/one plain'
+effect 'target dir long' cp '$TOOL --target-directory=tree/deep plain'
+effect 'no target dir'  cp '$TOOL -T tree/one aimed'
+effect 'no target tree' cp '$TOOL -rT tree/deep aimed'
+effect 'no clobber'     cp '$TOOL -n tree/one plain'
+effect 'no clobber new' cp '$TOOL -n tree/one fresh'
+effect 'update older'   cp '$TOOL -u tree/one plain'
+effect 'update newer'   cp '$TOOL -u plain tree/one'
+effect 'hard link'      cp '$TOOL -l tree/one hard'
+effect 'hard link tree' cp '$TOOL -rl tree linked'
+effect 'symbolic'       cp '$TOOL -s plain pointed'
+effect 'symbolic away'  cp '$TOOL -s plain tree/pointed'
+effect 'interactive no' cp '$TOOL -i tree/one plain < /dev/null'
+effect 'interactive yes' cp 'printf "y\n" | $TOOL -i tree/one plain'
+effect 'verbose'        cp '$TOOL -rv tree copied'
+effect 'not an option'  cp '$TOOL -W tree/one copy'
+effect 'both targets'   cp '$TOOL -T -t tree tree/one'
 
 group mv
 effect 'rename'         mv '$TOOL plain renamed'
@@ -533,6 +577,17 @@ effect 'into directory' mv '$TOOL plain tree/'
 effect 'directory'      mv '$TOOL tree moved'
 effect 'over file'      mv '$TOOL tree/one tree/two'
 effect 'many'           mv '$TOOL tree/one tree/two tree/deep/'
+effect 'no clobber'     mv '$TOOL -n tree/one plain'
+effect 'no clobber new' mv '$TOOL -n tree/one fresh'
+effect 'interactive no' mv '$TOOL -i tree/one plain < /dev/null'
+effect 'interactive yes' mv 'printf "y\n" | $TOOL -i tree/one plain'
+effect 'forced'         mv '$TOOL -f tree/one plain'
+effect 'target dir'     mv '$TOOL -t tree/deep plain'
+effect 'target dir long' mv '$TOOL --target-directory=tree/deep plain'
+effect 'no target dir'  mv '$TOOL -T tree/deep elsewhere'
+effect 'no target extra' mv '$TOOL -T tree/one tree/two tree/deep'
+effect 'verbose'        mv '$TOOL -v plain renamed'
+effect 'not an option'  mv '$TOOL -W plain renamed'
 
 group rm
 effect 'file'           rm '$TOOL plain'
@@ -541,6 +596,16 @@ effect 'recursive'      rm '$TOOL -r tree'
 effect 'forced missing' rm '$TOOL -f nothing'
 effect 'recursive force' rm '$TOOL -rf tree plain nothing'
 effect 'link'           rm '$TOOL link'
+effect 'empty directory' rm 'mkdir hole; $TOOL -d hole'
+effect 'directory in use' rm '$TOOL -d tree'
+effect 'directory forced' rm '$TOOL -fd tree'
+effect 'dir long'       rm 'mkdir hole; $TOOL --dir hole'
+effect 'interactive no' rm '$TOOL -i plain < /dev/null'
+effect 'interactive yes' rm 'printf "y\n" | $TOOL -i plain'
+effect 'interactive tree' rm '$TOOL -ri tree < /dev/null'
+effect 'verbose'        rm '$TOOL -rv tree'
+effect 'one file system' rm '$TOOL -r --one-file-system tree'
+effect 'not an option'  rm '$TOOL -W plain'
 
 #
 #       Names that are awkward to hold.
