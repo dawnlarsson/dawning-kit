@@ -2378,6 +2378,8 @@ static bool ls_reversed;
 static bool ls_inode;
 static bool ls_numeric;
 static bool ls_as_itself;
+static bool ls_classify;
+static bool ls_slash;
 static bool ls_headings;
 
 static b32 ls_status;
@@ -2517,6 +2519,33 @@ static fn ls_owner_text(positive id, bool group, p8 address_to into)
         file_digits(into, id);
 }
 
+// -F and -p put a letter after a name saying what it is: the slash for a
+// directory that -p asks for on its own, and the rest of them for -F.
+static p8 ls_mark(positive mode)
+{
+        positive kind = mode & MODE_FORMAT;
+
+        if (kind == MODE_DIRECTORY)
+                return '/';
+
+        if (!ls_classify)
+                return 0;
+
+        if (kind == MODE_LINK)
+                return '@';
+
+        if (kind == MODE_PIPE)
+                return '|';
+
+        if (kind == MODE_SOCKET)
+                return '=';
+
+        if (kind == MODE_FILE && (mode & 0111))
+                return '*';
+
+        return 0;
+}
+
 static fn ls_print(string_address directory)
 {
         positive link_width = 1;
@@ -2616,7 +2645,17 @@ static fn ls_print(string_address directory)
 
                 log(name, 0);
 
-                if (ls_long && (entry->mode & MODE_FORMAT) == MODE_LINK)
+                bool marking = ls_classify || ls_slash;
+                bool link = (entry->mode & MODE_FORMAT) == MODE_LINK;
+                p8 mark = marking ? ls_mark(entry->mode) : 0;
+
+                // In the long form the arrow is written and the mark goes on
+                // what the link points at; on a line of its own the link is
+                // the only thing there is to mark.
+                if (mark && !(ls_long && link))
+                        log(address_of mark, 1);
+
+                if (ls_long && link)
                 {
                         p8 where[FILE_PATH_MAX];
                         p8 full[FILE_PATH_MAX];
@@ -2628,8 +2667,18 @@ static fn ls_print(string_address directory)
 
                         if (file_link_text(full, where, FILE_PATH_MAX) >= 0)
                         {
+                                file_facts through;
+
                                 log(" -> ", 0);
                                 log(where, 0);
+
+                                if (marking && file_look_at(full, address_of through))
+                                {
+                                        p8 there = ls_mark(through.mode);
+
+                                        if (there)
+                                                log(address_of there, 1);
+                                }
                         }
                 }
 
@@ -2770,7 +2819,7 @@ static b32 file_ls()
 {
         positive first = 0;
         positive count = (positive)program_argument_count();
-        positive flags = file_take_options((string_address) "laARtShr1dinF", address_of first);
+        positive flags = file_take_options((string_address) "laARtShr1dinFp", address_of first);
 
         ls_now = file_now();
 
@@ -2785,6 +2834,8 @@ static b32 file_ls()
         ls_inode = (flags & FILE_FLAG('i')) != 0;
         ls_numeric = (flags & FILE_FLAG('n')) != 0;
         ls_as_itself = (flags & FILE_FLAG('d')) != 0;
+        ls_classify = (flags & FILE_FLAG('F')) != 0;
+        ls_slash = (flags & FILE_FLAG('p')) != 0;
 
         if (first >= count)
         {
@@ -3635,6 +3686,7 @@ static b32 find_parse_primary()
                         return -1;
 
                 b64 when;
+                b64 exact = 0;
 
                 if (find_is(word, (string_address) "-newermt"))
                 {
@@ -3658,12 +3710,16 @@ static b32 find_parse_primary()
                         }
 
                         when = facts.modified.seconds;
+                        exact = facts.modified.nanoseconds;
                 }
 
                 b32 node = find_make('w');
 
                 if (node >= 0)
+                {
                         find_nodes[node].number = when;
+                        find_nodes[node].extra = exact;
+                }
 
                 return node;
         }
@@ -3920,7 +3976,7 @@ static bool find_true(b32 which)
                 if (find_facts->modified.seconds != node->number)
                         return find_facts->modified.seconds > node->number;
 
-                return find_facts->modified.nanoseconds > 0;
+                return (b64)find_facts->modified.nanoseconds > node->extra;
 
         case 'd':
                 file_line(find_path);
@@ -4762,12 +4818,13 @@ static b32 file_du()
 
 // df ------------------------------------------------------------
 /*
-        df [-h] [PATH...]
+        df [-h] [-i] [-T] [-a] [-P] [PATH...]
 
         The mounted filesystems come from /proc/mounts, because the kernel is
         the only thing that knows what is mounted and this is where it says
         so. A filesystem with no blocks at all is one of the kernel's own
-        bookkeeping mounts and is left out, the way df has always left it out.
+        bookkeeping mounts and is left out unless -a asks for it, the way df
+        has always left it out.
 
         The whole table is measured before any of it is written: each column
         ends up as wide as the widest thing under it and no wider, which is
@@ -4777,20 +4834,28 @@ static b32 file_du()
 
 static p8 df_text[DF_TEXT];
 static bool df_human;
+static bool df_inodes;
+static bool df_types;
+static bool df_all;
+static bool df_posix;
 
 static positive df_device_width;
+static positive df_type_width;
+static positive df_full_width;
 static positive df_blocks_width;
 static positive df_used_width;
 static positive df_free_width;
 
 // The kernel counts in whatever unit the filesystem uses; df has always
-// reported in 1024 byte ones, and rounds a part of one up to a whole.
+// reported in 1024 byte ones, and rounds a part of one up to a whole. An
+// inode is not a byte and is reported as the number it is.
 static positive df_amount(p8 address_to into, p64 blocks, p64 size)
 {
         p64 bytes = blocks * size;
 
         if (!df_human)
-                return file_digits(into, (bytes + 1023) / 1024);
+                return df_inodes ? file_digits(into, blocks)
+                                 : file_digits(into, (bytes + 1023) / 1024);
 
         positive divisor = 1;
         positive unit = 0;
@@ -4833,36 +4898,81 @@ static fn df_column(p8 address_to text, positive width)
         log(" ", 1);
 }
 
-static fn df_row(string_address device, string_address where,
-                 file_mount_facts address_to facts)
+// What is being measured: blocks by default, and the inode table under -i.
+static fn df_reading(file_mount_facts address_to facts, p64 address_to total,
+                     p64 address_to used, p64 address_to spare, p64 address_to size)
 {
-        p64 size = (p64)(facts->fragment_size ? facts->fragment_size : facts->block_size);
-        p64 used = facts->blocks - facts->blocks_free;
+        if (df_inodes)
+        {
+                address_to size = 1;
+                address_to total = facts->files;
+                address_to used = facts->files - facts->files_free;
+                address_to spare = facts->files_free;
+
+                return;
+        }
+
+        address_to size = (p64)(facts->fragment_size ? facts->fragment_size
+                                                     : facts->block_size);
+        address_to total = facts->blocks;
+        address_to used = facts->blocks - facts->blocks_free;
+        address_to spare = facts->blocks_available;
+}
+
+static fn df_row(string_address device, string_address type, string_address where,
+                 file_mount_facts address_to facts, bool measured)
+{
+        p64 total, used, spare, size;
         p8 text[64];
+        string_address dash = (string_address) "-";
+
+        df_reading(facts, address_of total, address_of used, address_of spare,
+                   address_of size);
 
         file_text_padded(log, device, df_device_width);
         log(" ", 1);
 
-        df_amount(text, facts->blocks, size);
-        df_column(text, df_blocks_width);
+        if (df_types)
+        {
+                file_text_padded(log, measured ? type : dash, df_type_width);
+                log(" ", 1);
+        }
 
-        df_amount(text, used, size);
-        df_column(text, df_used_width);
+        for (positive column = 0; column < 3; column++)
+        {
+                positive width = column == 0   ? df_blocks_width
+                                 : column == 1 ? df_used_width
+                                               : df_free_width;
 
-        df_amount(text, facts->blocks_available, size);
-        df_column(text, df_free_width);
+                if (!measured)
+                {
+                        df_column(dash, width);
+                        continue;
+                }
 
-        p64 wanted = used + facts->blocks_available;
-        positive percent = wanted ? (positive)((used * 100 + wanted - 1) / wanted) : 0;
+                df_amount(text, column == 0 ? total : column == 1 ? used : spare, size);
+                df_column(text, width);
+        }
 
-        file_number_padded(log, percent, 3);
-        log("% ", 0);
+        p64 wanted = used + spare;
+
+        // A filesystem with nothing in it to fill has no proportion full, and
+        // saying nought percent would be an answer where there is none.
+        if (!measured || !wanted)
+                df_column(dash, df_full_width);
+        else
+        {
+                file_number_padded(log, (positive)((used * 100 + wanted - 1) / wanted),
+                                   df_full_width - 1);
+                log("% ", 2);
+        }
+
         log(where, 0);
         log("\n", 1);
 }
 
 // Every line of /proc/mounts is device, mount point, type, options; the first
-// two are all df needs and both may carry \040 where a space was.
+// three are all df needs and both names may carry \040 where a space was.
 static positive df_field(p8 address_to text, positive at, p8 address_to into,
                          positive limit)
 {
@@ -4894,13 +5004,35 @@ static positive df_field(p8 address_to text, positive at, p8 address_to into,
         return at;
 }
 
+static const file_long df_longs[] = {
+    {(string_address) "all", 'a'},
+    {(string_address) "human-readable", 'h'},
+    {(string_address) "inodes", 'i'},
+    {(string_address) "portability", 'P'},
+    {(string_address) "print-type", 'T'},
+    {null, 0},
+};
+
 static b32 file_df()
 {
-        positive first = 0;
         positive count = (positive)program_argument_count();
-        positive flags = file_take_options((string_address) "hkPT", address_of first);
+        file_taking taking = {
+            .program = (string_address) "df",
+            .allowed = (string_address) "ahikPT",
+            .valued = (string_address) "",
+            .longs = df_longs,
+        };
 
-        df_human = (flags & FILE_FLAG('h')) != 0;
+        if (!file_take(address_of taking))
+                return 1;
+
+        positive first = taking.first;
+
+        df_human = (taking.flags & FILE_FLAG('h')) != 0;
+        df_inodes = (taking.flags & FILE_FLAG('i')) != 0;
+        df_types = (taking.flags & FILE_FLAG('T')) != 0;
+        df_all = (taking.flags & FILE_FLAG('a')) != 0;
+        df_posix = (taking.flags & FILE_FLAG('P')) != 0;
 
         if (file_slurp((string_address) "/proc/mounts", df_text, DF_TEXT) <= 0 &&
             file_slurp((string_address) "/proc/self/mounts", df_text, DF_TEXT) <= 0)
@@ -4909,10 +5041,18 @@ static b32 file_df()
                 return 1;
         }
 
-        string_address blocks_heading = df_human ? (string_address) "Size"
-                                                 : (string_address) "1K-blocks";
-        string_address free_heading = df_human ? (string_address) "Avail"
-                                               : (string_address) "Available";
+        string_address blocks_heading = df_inodes ? (string_address) "Inodes"
+                                        : df_human ? (string_address) "Size"
+                                        : df_posix ? (string_address) "1024-blocks"
+                                                   : (string_address) "1K-blocks";
+        string_address used_heading = df_inodes ? (string_address) "IUsed"
+                                                : (string_address) "Used";
+        string_address free_heading = df_inodes  ? (string_address) "IFree"
+                                      : df_human ? (string_address) "Avail"
+                                                 : (string_address) "Available";
+        string_address full_heading = df_inodes ? (string_address) "IUse%"
+                                      : df_posix && !df_human ? (string_address) "Capacity"
+                                                              : (string_address) "Use%";
 
         /*
                 Each column is the widest of three things: a floor the column
@@ -4922,6 +5062,7 @@ static b32 file_df()
                 filesystem, five for each amount, four for the percentage.
         */
         df_device_width = 14;
+        df_type_width = 4;
         df_blocks_width = 5;
         df_used_width = 5;
         df_free_width = 5;
@@ -4929,8 +5070,13 @@ static b32 file_df()
         if (string_length(blocks_heading) > df_blocks_width)
                 df_blocks_width = string_length(blocks_heading);
 
+        if (string_length(used_heading) > df_used_width)
+                df_used_width = string_length(used_heading);
+
         if (string_length(free_heading) > df_free_width)
                 df_free_width = string_length(free_heading);
+
+        df_full_width = string_length(full_heading);
 
         bool filtering = first < count;
 
@@ -4940,10 +5086,18 @@ static b32 file_df()
                 {
                         file_text_padded(log, (string_address) "Filesystem", df_device_width);
                         log(" ", 1);
+
+                        if (df_types)
+                        {
+                                file_text_padded(log, (string_address) "Type", df_type_width);
+                                log(" ", 1);
+                        }
+
                         df_column(blocks_heading, df_blocks_width);
-                        df_column((string_address) "Used", df_used_width);
+                        df_column(used_heading, df_used_width);
                         df_column(free_heading, df_free_width);
-                        log("Use% Mounted on\n", 0);
+                        log(full_heading, 0);
+                        log(" Mounted on\n", 0);
                 }
 
                 positive at = 0;
@@ -4952,10 +5106,12 @@ static b32 file_df()
                 {
                         p8 device[FILE_PATH_MAX];
                         p8 where[FILE_PATH_MAX];
+                        p8 type[FILE_NAME_MAX];
                         p8 text[64];
 
                         at = df_field(df_text, at, device, FILE_PATH_MAX);
                         at = df_field(df_text, at, where, FILE_PATH_MAX);
+                        at = df_field(df_text, at, type, FILE_NAME_MAX);
 
                         while (df_text[at] && df_text[at] != '\n')
                                 at++;
@@ -4970,11 +5126,37 @@ static b32 file_df()
 
                         memory_fill(address_of facts, 0, sizeof(facts));
 
-                        if (system_call_2(syscall(statfs), (positive)where,
-                                          (positive)address_of facts) < 0)
+                        /*
+                                An automount point is not asked how full it
+                                is: asking is what mounts it, and df is a
+                                question and not an instruction.
+
+                                A mount under a directory this user cannot
+                                walk into is there and is not measurable, and
+                                is said with dashes. Anything else that will
+                                not answer is a fault rather than a wall, and
+                                is complained about and left out.
+                        */
+                        bool automount = string_compare(type, "autofs") == 0;
+                        bipolar answered = automount
+                                               ? -ERROR_ACCESS
+                                               : system_call_2(syscall(statfs),
+                                                               (positive)where,
+                                                               (positive)address_of facts);
+
+                        if (answered < 0 && answered != -ERROR_ACCESS)
+                        {
+                                string_format(file_fail, "df: %s: %s\n", where,
+                                              file_reason(answered));
+                                continue;
+                        }
+
+                        bool measured = answered >= 0;
+
+                        if (!measured && !df_all)
                                 continue;
 
-                        if (facts.blocks == 0)
+                        if (facts.blocks == 0 && !df_all)
                                 continue;
 
                         if (filtering)
@@ -5008,24 +5190,31 @@ static b32 file_df()
 
                         if (pass == 1)
                         {
-                                df_row(device, where, address_of facts);
+                                df_row(device, type, where, address_of facts, measured);
                                 continue;
                         }
 
-                        p64 size = (p64)(facts.fragment_size ? facts.fragment_size
-                                                             : facts.block_size);
-                        p64 used = facts.blocks - facts.blocks_free;
+                        p64 total, used, spare, size;
+
+                        df_reading(address_of facts, address_of total, address_of used,
+                                   address_of spare, address_of size);
 
                         if (string_length(device) > df_device_width)
                                 df_device_width = string_length(device);
 
-                        if (df_amount(text, facts.blocks, size) > df_blocks_width)
+                        if (measured && string_length(type) > df_type_width)
+                                df_type_width = string_length(type);
+
+                        if (!measured)
+                                continue;
+
+                        if (df_amount(text, total, size) > df_blocks_width)
                                 df_blocks_width = string_length(text);
 
                         if (df_amount(text, used, size) > df_used_width)
                                 df_used_width = string_length(text);
 
-                        if (df_amount(text, facts.blocks_available, size) > df_free_width)
+                        if (df_amount(text, spare, size) > df_free_width)
                                 df_free_width = string_length(text);
                 }
         }
@@ -5039,6 +5228,45 @@ static b32 file_df()
 // chmod [-R] MODE FILE..., with MODE octal or symbolic.
 static string_address chmod_specification;
 static b32 chmod_status;
+
+static bool chmod_loud;
+static bool chmod_changes;
+static bool chmod_quiet;
+static bool chmod_referenced;
+static positive chmod_reference_mode;
+
+static fn chmod_mode_said(positive mode)
+{
+        p8 letters[12];
+
+        file_octal(log, mode & 07777, 4);
+        file_mode_letters(letters, mode);
+        log(" (", 2);
+        log(letters + 1, 9);
+        log(")", 1);
+}
+
+static fn chmod_said(string_address shown, positive was, positive now)
+{
+        if (!chmod_loud && !(chmod_changes && (was & 07777) != (now & 07777)))
+                return;
+
+        string_format(log, "mode of '%s' ", shown);
+
+        if ((was & 07777) == (now & 07777))
+        {
+                log("retained as ", 0);
+                chmod_mode_said(now);
+                log("\n", 1);
+                return;
+        }
+
+        log("changed from ", 0);
+        chmod_mode_said(was);
+        log(" to ", 4);
+        chmod_mode_said(now);
+        log("\n", 1);
+}
 
 static bool chmod_one(bipolar directory, string_address name, string_address shown)
 {
@@ -5055,18 +5283,25 @@ static bool chmod_one(bipolar directory, string_address name, string_address sho
                 if (file_look(directory, name, AT_SYMLINK_NOFOLLOW, address_of itself))
                         return true;
 
-                string_format(file_fail, "chmod: cannot access '%s': No such file or directory\n",
-                              shown);
+                if (!chmod_quiet)
+                        string_format(file_fail,
+                                      "chmod: cannot access '%s': No such file or directory\n",
+                                      shown);
+
                 chmod_status = 1;
                 return false;
         }
 
-        positive wanted = 0;
+        positive wanted = chmod_reference_mode & 07777;
 
-        if (!file_mode_of(chmod_specification, facts.mode,
+        if (!chmod_referenced &&
+            !file_mode_of(chmod_specification, facts.mode,
                           (facts.mode & MODE_FORMAT) == MODE_DIRECTORY, address_of wanted))
         {
-                string_format(file_fail, "chmod: invalid mode: %s\n", chmod_specification);
+                if (!chmod_quiet)
+                        string_format(file_fail, "chmod: invalid mode: %s\n",
+                                      chmod_specification);
+
                 chmod_status = 1;
                 return false;
         }
@@ -5075,11 +5310,15 @@ static bool chmod_one(bipolar directory, string_address name, string_address sho
 
         if (done < 0)
         {
-                string_format(file_fail, "chmod: changing permissions of '%s': %s\n",
-                              shown, file_reason(done));
+                if (!chmod_quiet)
+                        string_format(file_fail, "chmod: changing permissions of '%s': %s\n",
+                                      shown, file_reason(done));
+
                 chmod_status = 1;
                 return false;
         }
+
+        chmod_said(shown, facts.mode, wanted | (facts.mode & MODE_FORMAT));
 
         return true;
 }
@@ -5115,25 +5354,69 @@ static fn chmod_walk(bipolar directory, string_address name, string_address show
         file_walk_close(address_of walk);
 }
 
+static const file_long chmod_longs[] = {
+    {(string_address) "changes", 'c'},
+    {(string_address) "quiet", 'f'},
+    {(string_address) "recursive", 'R'},
+    {(string_address) "reference", 'e'},
+    {(string_address) "silent", 'f'},
+    {(string_address) "verbose", 'v'},
+    {null, 0},
+};
+
 static b32 file_chmod()
 {
-        positive first = 0;
         positive count = (positive)program_argument_count();
-        positive flags = file_take_options((string_address) "Rfvc", address_of first);
+        file_taking taking = {
+            .program = (string_address) "chmod",
+            .allowed = (string_address) "Rcfv",
+            .valued = (string_address) "e",
+            .longs = chmod_longs,
+        };
 
-        if (first + 1 >= count)
+        if (!file_take(address_of taking))
+                return 1;
+
+        positive first = taking.first;
+
+        chmod_loud = (taking.flags & FILE_FLAG('v')) != 0;
+        chmod_changes = (taking.flags & FILE_FLAG('c')) != 0;
+        chmod_quiet = (taking.flags & FILE_FLAG('f')) != 0;
+
+        string_address like = file_option_value(address_of taking, 'e');
+
+        // --reference says the mode without spelling it, and takes the place
+        // of the mode operand rather than standing beside it.
+        if (like)
+        {
+                file_facts facts;
+
+                if (!file_look_at(like, address_of facts))
+                {
+                        string_format(file_fail,
+                                      "chmod: cannot access '%s': No such file or directory\n",
+                                      like);
+                        return 1;
+                }
+
+                chmod_referenced = true;
+                chmod_reference_mode = facts.mode;
+        }
+
+        if (first >= count || (!chmod_referenced && first + 1 >= count))
         {
                 file_fail("chmod: missing operand\n", 0);
                 return 1;
         }
 
-        chmod_specification = program_argument((b32)first++);
+        if (!chmod_referenced)
+                chmod_specification = program_argument((b32)first++);
 
         while (first < count)
         {
                 string_address path = program_argument((b32)first++);
 
-                if (flags & FILE_FLAG('R'))
+                if (taking.flags & FILE_FLAG('R'))
                         chmod_walk(AT_FDCWD, path, path, FILE_MAX_DEPTH);
                 else
                         chmod_one(AT_FDCWD, path, path);
@@ -5151,19 +5434,79 @@ static bipolar chown_user = -1;
 static bipolar chown_group = -1;
 static b32 chown_status;
 static positive chown_flags;
+static bool chown_loud;
+static bool chown_changes;
+static bool chown_quiet;
+
+// Who a file will belong to, said the way chown says it: the user alone when
+// only a user was named, and user:group when a group was.
+static fn chown_who(positive user, positive group, p8 address_to into)
+{
+        positive length = 0;
+
+        if (!file_user_name(user, into, FILE_NAME_MAX))
+                length = file_digits(into, user);
+        else
+                length = string_length(into);
+
+        if (chown_group < 0)
+                return;
+
+        into[length++] = ':';
+
+        if (!file_group_name(group, into + length, FILE_NAME_MAX))
+                file_digits(into + length, group);
+}
+
+static fn chown_said(string_address shown, file_facts address_to was, bool changed)
+{
+        if (!chown_loud && !(chown_changes && changed))
+                return;
+
+        p8 who[FILE_PATH_MAX];
+
+        if (!changed)
+        {
+                chown_who(was->owner, was->group, who);
+                string_format(log, "ownership of '%s' retained as %s\n", shown, who);
+                return;
+        }
+
+        p8 before[FILE_PATH_MAX];
+
+        chown_who(was->owner, was->group, before);
+        chown_who(chown_user < 0 ? was->owner : (positive)chown_user,
+                  chown_group < 0 ? was->group : (positive)chown_group, who);
+
+        string_format(log, "changed ownership of '%s' from %s to %s\n", shown, before, who);
+}
 
 static fn chown_one(bipolar directory, string_address name, string_address shown)
 {
+        positive through = (chown_flags & FILE_FLAG('h')) ? AT_SYMLINK_NOFOLLOW : 0;
+        file_facts facts;
+        bool known = file_look(directory, name, through, address_of facts);
+
         bipolar done = system_call_5(syscall(fchownat), directory, (positive)name,
-                                     (positive)chown_user, (positive)chown_group,
-                                     (chown_flags & FILE_FLAG('h')) ? AT_SYMLINK_NOFOLLOW : 0);
+                                     (positive)chown_user, (positive)chown_group, through);
 
         if (done < 0)
         {
-                string_format(file_fail, "chown: changing ownership of '%s': %s\n",
-                              shown, file_reason(done));
+                if (!chown_quiet)
+                        string_format(file_fail, "chown: changing ownership of '%s': %s\n",
+                                      shown, file_reason(done));
+
                 chown_status = 1;
+                return;
         }
+
+        if (!known)
+                return;
+
+        bool changed = (chown_user >= 0 && facts.owner != (positive)chown_user) ||
+                       (chown_group >= 0 && facts.group != (positive)chown_group);
+
+        chown_said(shown, address_of facts, changed);
 }
 
 static fn chown_walk(bipolar directory, string_address name, string_address shown,
@@ -5195,17 +5538,77 @@ static fn chown_walk(bipolar directory, string_address name, string_address show
         file_walk_close(address_of walk);
 }
 
+static const file_long chown_longs[] = {
+    {(string_address) "changes", 'c'},
+    {(string_address) "dereference", 'd'},
+    {(string_address) "no-dereference", 'h'},
+    {(string_address) "quiet", 'f'},
+    {(string_address) "recursive", 'R'},
+    {(string_address) "reference", 'e'},
+    {(string_address) "silent", 'f'},
+    {(string_address) "verbose", 'v'},
+    {null, 0},
+};
+
 static b32 file_chown()
 {
-        positive first = 0;
         positive count = (positive)program_argument_count();
+        file_taking taking = {
+            .program = (string_address) "chown",
+            .allowed = (string_address) "Rcfhv",
+            .valued = (string_address) "e",
+            .longs = chown_longs,
+        };
 
-        chown_flags = file_take_options((string_address) "Rhfvc", address_of first);
+        if (!file_take(address_of taking))
+                return 1;
 
-        if (first + 1 >= count)
+        positive first = taking.first;
+
+        chown_flags = taking.flags;
+        chown_loud = (taking.flags & FILE_FLAG('v')) != 0;
+        chown_changes = (taking.flags & FILE_FLAG('c')) != 0;
+        chown_quiet = (taking.flags & FILE_FLAG('f')) != 0;
+
+        string_address like = file_option_value(address_of taking, 'e');
+
+        if (like)
+        {
+                file_facts facts;
+
+                if (!file_look_at(like, address_of facts))
+                {
+                        string_format(file_fail,
+                                      "chown: cannot access '%s': No such file or directory\n",
+                                      like);
+                        return 1;
+                }
+
+                chown_user = (bipolar)facts.owner;
+                chown_group = (bipolar)facts.group;
+        }
+
+        if (first >= count || (!like && first + 1 >= count))
         {
                 file_fail("chown: missing operand\n", 0);
                 return 1;
+        }
+
+        if (like)
+        {
+                while (first < count)
+                {
+                        string_address path = program_argument((b32)first++);
+
+                        if (chown_flags & FILE_FLAG('R'))
+                                chown_walk(AT_FDCWD, path, path, FILE_MAX_DEPTH);
+                        else
+                                chown_one(AT_FDCWD, path, path);
+                }
+
+                log_flush();
+
+                return chown_status;
         }
 
         string_address who = program_argument((b32)first++);
@@ -8192,7 +8595,10 @@ static b32 file_hostname()
 {
         file_machine facts;
         positive first = 0;
-        positive flags = file_take_options((string_address) "sf", address_of first);
+
+        // -f is not here. The kernel's node name is the whole of what this
+        // knows, and the full name -f asks for is a question for a resolver.
+        positive flags = file_take_options((string_address) "s", address_of first);
 
         memory_fill(address_of facts, 0, sizeof(facts));
 

@@ -456,6 +456,16 @@ near 'default link'     "grep -v '^Access: 2'" stat "$fixture/sub/back"
 same 'quoted name'      stat -c '%N' "$fixture/alpha"
 same 'quoted link'      stat -c '%N' "$fixture/sub/back"
 
+#       One of everything a name can be, for the tools that say which it is.
+kinds=$work/kinds
+mkdir -p "$kinds/adir"
+printf 'x\n' > "$kinds/plain"
+printf 'x\n' > "$kinds/runnable"
+chmod 0755 "$kinds/runnable"
+ln -s plain "$kinds/pointer"
+ln -s nowhere "$kinds/broken"
+mkfifo "$kinds/pipe" 2>/dev/null || true
+
 group ls
 near 'plain'            'cat' ls "$fixture"
 near 'all'              'cat' ls -a "$fixture"
@@ -485,6 +495,16 @@ near 'file and dir'     'cat' ls "$fixture/alpha" "$fixture/empty"
 near 'recursive deep'   'cat' ls -R "$fixture/sub"
 near 'recursive all'    'cat' ls -aR "$fixture/empty"
 near 'missing'          'cat' ls "$fixture/nothing"
+near 'classified'       'cat' ls -F "$fixture"
+near 'classified all'   'cat' ls -aF "$fixture"
+near 'classified deep'  'cat' ls -F "$fixture/sub"
+near 'slashed'          'cat' ls -p "$fixture"
+same 'long classified'  ls -lF "$fixture"
+same 'long classified link' ls -lF "$fixture/sub"
+same 'long slashed'     ls -lp "$fixture"
+near 'classified kinds' 'cat' ls -F "$kinds"
+near 'classified kinds long' 'cat' ls -lF "$kinds"
+near 'slashed kinds'    'cat' ls -p "$kinds"
 
 #       A file with two names in the tree is one file. Nothing above has one,
 #       so a tree with a pair of them is built for the tools that have to
@@ -542,6 +562,20 @@ near 'human'            "sed 's/[0-9]/X/g'" df -h
 near 'root'             "sed 's/[0-9]/X/g'" df /
 near 'a path'           "sed 's/[0-9]/X/g'" df /tmp
 near 'mount points'     "tail -n +2 | awk '{print \$NF}' | LC_ALL=C sort" df
+near 'inodes'           "sed 's/[0-9]/X/g'" df -i
+near 'inodes of a path' "sed 's/[0-9]/X/g'" df -i /tmp
+near 'types'            "sed 's/[0-9]/X/g'" df -T
+near 'types of a path'  "sed 's/[0-9]/X/g'" df -T /tmp
+near 'portable'         "sed 's/[0-9]/X/g'" df -P
+near 'portable human'   "sed 's/[0-9]/X/g'" df -Ph
+near 'everything'       "sed 's/[0-9]/X/g' | LC_ALL=C sort" df -a
+near 'everything typed' "sed 's/[0-9]/X/g' | LC_ALL=C sort" df -aT
+near 'inodes and types' "sed 's/[0-9]/X/g'" df -iT /tmp
+near 'inodes portable'  "sed 's/[0-9]/X/g'" df -Pi /tmp
+near 'all long'         "sed 's/[0-9]/X/g' | LC_ALL=C sort" df --all
+near 'inodes long'      "sed 's/[0-9]/X/g'" df --inodes /tmp
+near 'types long'       "sed 's/[0-9]/X/g'" df --print-type /tmp
+same 'not an option'    df -W
 
 group env
 # The shell sets _ to the path of the command it is about to run, so the two
@@ -577,6 +611,13 @@ effect 'recursive'      chown '$TOOL -R '"$(id -un):$(id -gn)"' tree'
 effect 'unknown user'   chown '$TOOL nosuchuser tree/one'
 effect 'through link'   chown '$TOOL '"$(id -un)"' link'
 effect 'not the link'   chown '$TOOL -h '"$(id -un)"' link'
+effect 'verbose'        chown '$TOOL -v '"$(id -un)"' tree/one > said'
+effect 'verbose group'  chown '$TOOL -v '"$(id -un):$(id -gn)"' tree/one > said'
+effect 'changes'        chown '$TOOL -c '"$(id -un)"' tree/one > said'
+effect 'quiet'          chown '$TOOL -f '"$(id -un)"' nothing > said 2>&1'
+effect 'reference'      chown '$TOOL --reference=tree/two tree/one'
+effect 'reference gone' chown '$TOOL --reference=nothing tree/one'
+effect 'not an option'  chown '$TOOL -W '"$(id -un)"' tree/one'
 
 group sleep
 timing 'fraction'       0.3
@@ -609,6 +650,22 @@ effect 'recursive'      chmod '$TOOL -R 0755 tree'
 effect 'setuid'         chmod '$TOOL 4755 tree/one'
 effect 'sticky'         chmod '$TOOL 1777 tree/deep'
 effect 'through link'   chmod '$TOOL 0600 link'
+effect 'verbose'        chmod '$TOOL -v 0600 tree/one > said'
+effect 'verbose retained' chmod '$TOOL -v 0640 tree/two > said'
+effect 'changes'        chmod '$TOOL -c 0600 tree/one > said'
+effect 'changes retained' chmod '$TOOL -c 0640 tree/two > said'
+effect 'verbose recursive' chmod '$TOOL -Rv a+rX tree | LC_ALL=C sort > said'
+effect 'verbose setuid' chmod '$TOOL -v 4755 tree/one > said'
+effect 'verbose sticky' chmod '$TOOL -v 1777 tree/deep > said'
+effect 'quiet'          chmod '$TOOL -f 0600 nothing > said 2>&1'
+effect 'loud'           chmod '$TOOL 0600 nothing > said 2>&1'
+effect 'reference'      chmod '$TOOL --reference=tree/two tree/one'
+effect 'reference many' chmod '$TOOL --reference=tree/two tree/one plain'
+effect 'reference gone' chmod '$TOOL --reference=nothing tree/one'
+effect 'capital x on a file' chmod '$TOOL a+X plain'
+effect 'capital x once set' chmod 'chmod 0700 tree/one; $TOOL -R go+X tree'
+effect 'capital x equals' chmod '$TOOL -R a=rwX tree'
+effect 'not an option'  chmod '$TOOL -W 0600 tree/one'
 
 group ln
 effect 'symbolic'       ln '$TOOL -s tree/one pointer'
@@ -628,7 +685,7 @@ effect 'no target over' ln '$TOOL -sT tree/one tree'
 effect 'interactive no' ln '$TOOL -si tree/two link < /dev/null'
 effect 'interactive yes' ln 'printf "y\n" | $TOOL -si tree/two link'
 effect 'hard many'      ln '$TOOL tree/one tree/two tree/deep/'
-effect 'verbose'        ln '$TOOL -sv tree/one pointer'
+effect 'verbose'        ln '$TOOL -sv tree/one pointer > said'
 effect 'not an option'  ln '$TOOL -W tree/one pointer'
 
 group touch
@@ -695,7 +752,8 @@ effect 'symbolic'       cp '$TOOL -s plain pointed'
 effect 'symbolic away'  cp '$TOOL -s plain tree/pointed'
 effect 'interactive no' cp '$TOOL -i tree/one plain < /dev/null'
 effect 'interactive yes' cp 'printf "y\n" | $TOOL -i tree/one plain'
-effect 'verbose'        cp '$TOOL -rv tree copied'
+effect 'verbose'        cp '$TOOL -rv tree copied | LC_ALL=C sort > said'
+effect 'verbose one'    cp '$TOOL -v tree/one copy > said'
 effect 'not an option'  cp '$TOOL -W tree/one copy'
 effect 'both targets'   cp '$TOOL -T -t tree tree/one'
 
@@ -714,7 +772,7 @@ effect 'target dir'     mv '$TOOL -t tree/deep plain'
 effect 'target dir long' mv '$TOOL --target-directory=tree/deep plain'
 effect 'no target dir'  mv '$TOOL -T tree/deep elsewhere'
 effect 'no target extra' mv '$TOOL -T tree/one tree/two tree/deep'
-effect 'verbose'        mv '$TOOL -v plain renamed'
+effect 'verbose'        mv '$TOOL -v plain renamed > said'
 effect 'not an option'  mv '$TOOL -W plain renamed'
 
 group rm
@@ -731,7 +789,9 @@ effect 'dir long'       rm 'mkdir hole; $TOOL --dir hole'
 effect 'interactive no' rm '$TOOL -i plain < /dev/null'
 effect 'interactive yes' rm 'printf "y\n" | $TOOL -i plain'
 effect 'interactive tree' rm '$TOOL -ri tree < /dev/null'
-effect 'verbose'        rm '$TOOL -rv tree'
+effect 'verbose'        rm '$TOOL -rv tree | LC_ALL=C sort > said'
+effect 'verbose one'    rm '$TOOL -v plain > said'
+effect 'verbose a directory' rm 'mkdir hole; $TOOL -dv hole > said'
 effect 'one file system' rm '$TOOL -r --one-file-system tree'
 effect 'not an option'  rm '$TOOL -W plain'
 
