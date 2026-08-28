@@ -30,6 +30,12 @@ esac
 
 [ -f "$lib" ] || { echo "run: no such library: $lib" >&2; exit 1; }
 
+#       The byte-commonness object is generated from one marked assembly
+#       payload.  Before compiling it, mutate every part of that extraction
+#       contract so missing/duplicate/mismatched wrappers, wrong size and
+#       reordered content are all known to fail closed.
+python3 "$here/extract_test.py" "$here/extract.py" "$lib" || exit 1
+
 work=$(mktemp -d "${TMPDIR:-/tmp}/native.XXXXXX") || exit 1
 trap 'rm -rf "$work"' EXIT INT TERM
 

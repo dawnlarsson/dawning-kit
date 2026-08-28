@@ -77,13 +77,16 @@ PREAMBLE = '''
         onto these, added where the file stops being compiled into a kernel.
         A .set is a second label on the same address, so there is no wrapper
         and no jump, and which names get one depends on who is linking.
+
 '''
 
 Token = namedtuple('Token', 'kind value line start')
 Directive = namedtuple('Directive', 'line start text')
 Body = namedtuple('Body', 'path name line')
+Object = namedtuple('Object', 'path name line')
 Include = namedtuple('Include', 'path name line')
 MacroBody = namedtuple('MacroBody', 'path name line')
+MacroObject = namedtuple('MacroObject', 'path name line')
 PlatformGap = namedtuple('PlatformGap', 'path arch kind symbol count')
 AsmPairIssue = namedtuple('AsmPairIssue', 'path arch line message')
 
@@ -101,7 +104,8 @@ def lex(text):
     Comments and literal contents never become punctuation tokens. A complete
     preprocessing directive, including its backslash-continued lines, is kept
     as one event and omitted from the C token stream. This is deliberately a
-    raw-source lexer: code under ``#if 0`` is still code to the body scanner.
+    raw-source lexer: code under ``#if 0`` is still code to the C-purity
+    scanners.
     """
     tokens, directives = [], []
     i, line, clean = 0, 1, True
@@ -451,6 +455,310 @@ def c_bodies(path, text=None):
     return bodies
 
 
+DECLARATOR_NON_NAMES = NON_NAMES | {
+    '_Atomic', '_Noreturn', '_Thread_local', '__auto_type', '__extension__',
+    'auto', 'constexpr', 'thread_local',
+}
+
+POINTER_QUALIFIERS = {
+    '_Atomic', 'const', 'restrict', 'volatile', '__restrict', '__restrict__',
+    '__unaligned',
+}
+
+DECLARATION_ONLY_WORDS = DECLARATOR_NON_NAMES | POINTER_QUALIFIERS | {
+    '__cdecl', '__fastcall', '__stdcall', '__thiscall', '__vectorcall',
+    '__volatile', '__volatile__',
+}
+
+
+def balanced_close(tokens, opening, end, left, right):
+    depth = 0
+    for index in range(opening, end):
+        if tokens[index].value == left:
+            depth += 1
+        elif tokens[index].value == right:
+            depth -= 1
+            if depth == 0:
+                return index
+    return None
+
+
+def decorator_end(tokens, index, end):
+    """Return the token after one declaration attribute, or ``index``."""
+    if index + 1 < end and tokens[index].value == '[' \
+            and tokens[index + 1].value == '[':
+        close = balanced_close(tokens, index, end, '[', ']')
+        return close + 1 if close is not None else index
+    if tokens[index].kind == 'identifier' and tokens[index].value in DECORATORS \
+            and index + 1 < end and tokens[index + 1].value == '(':
+        close = balanced_close(tokens, index + 1, end, '(', ')')
+        return close + 1 if close is not None else index
+    return index
+
+
+def trailing_decorator_end(tokens, index, end):
+    moved = decorator_end(tokens, index, end)
+    if moved != index:
+        return moved
+    # Projects commonly spell a visibility/calling-convention attribute as a
+    # trailing capitalised macro. It is decoration only once a complete
+    # declarator has already supplied the name.
+    if tokens[index].kind == 'identifier' \
+            and re.fullmatch(r'[A-Z_][A-Z0-9_]*', tokens[index].value):
+        if index + 1 < end and tokens[index + 1].value == '(':
+            close = balanced_close(tokens, index + 1, end, '(', ')')
+            return close + 1 if close is not None else index
+        return index + 1
+    return index
+
+
+def parse_declarator(tokens, start, end):
+    """Parse one C declarator and return (name, derived types, next token).
+
+    The derived types are ordered from the identifier outwards. Thus a real
+    function starts with ``function``, while ``(*callback)(void)`` starts with
+    ``pointer`` and remains an object. Parameter declarations need not be
+    understood: balanced function and array suffixes are enough to distinguish
+    those two cases without guessing from parentheses.
+    """
+    index = start
+    while index < end:
+        moved = decorator_end(tokens, index, end)
+        if moved == index:
+            break
+        index = moved
+
+    pointers = []
+    while index < end and tokens[index].value == '*':
+        pointers.append('pointer')
+        index += 1
+        while index < end:
+            moved = decorator_end(tokens, index, end)
+            if moved != index:
+                index = moved
+            elif tokens[index].value in POINTER_QUALIFIERS:
+                index += 1
+            else:
+                break
+
+    if index >= end:
+        return None
+    if tokens[index].kind == 'identifier' \
+            and tokens[index].value not in DECLARATOR_NON_NAMES:
+        name, operations = tokens[index], []
+        index += 1
+    elif tokens[index].value == '(':
+        close = balanced_close(tokens, index, end, '(', ')')
+        if close is None:
+            return None
+        nested = parse_declarator(tokens, index + 1, close)
+        if nested is None or nested[2] != close:
+            return None
+        name, operations = nested[0], list(nested[1])
+        index = close + 1
+    else:
+        return None
+
+    while index < end:
+        moved = trailing_decorator_end(tokens, index, end)
+        if moved != index:
+            index = moved
+            continue
+        if tokens[index].value == '[':
+            close = balanced_close(tokens, index, end, '[', ']')
+            if close is None:
+                return None
+            operations.append('array')
+            index = close + 1
+            continue
+        if tokens[index].value == '(':
+            close = balanced_close(tokens, index, end, '(', ')')
+            if close is None:
+                return None
+            operations.append('function')
+            index = close + 1
+            continue
+        break
+
+    operations.extend(pointers)
+    return name, operations, index
+
+
+def split_top_level(tokens, separator):
+    pieces, start = [], 0
+    paren = bracket = brace = 0
+    for index, token in enumerate(tokens):
+        if token.value == '(':
+            paren += 1
+        elif token.value == ')':
+            paren = max(paren - 1, 0)
+        elif token.value == '[':
+            bracket += 1
+        elif token.value == ']':
+            bracket = max(bracket - 1, 0)
+        elif token.value == '{':
+            brace += 1
+        elif token.value == '}':
+            brace = max(brace - 1, 0)
+        elif token.value == separator and not (paren or bracket or brace):
+            pieces.append(tokens[start:index])
+            start = index + 1
+    pieces.append(tokens[start:])
+    return pieces
+
+
+def initializer_start(tokens):
+    pieces = split_top_level(tokens, '=')
+    return len(pieces[0]) if len(pieces) > 1 else None
+
+
+def tag_only_declaration(tokens):
+    """A forward tag declaration has an identifier but no object."""
+    filtered, index = [], 0
+    while index < len(tokens):
+        moved = decorator_end(tokens, index, len(tokens))
+        if moved != index:
+            index = moved
+        else:
+            filtered.append(tokens[index])
+            index += 1
+    return len(filtered) == 2 and filtered[0].value in ('enum', 'struct', 'union') \
+        and filtered[1].kind == 'identifier'
+
+
+def declarator_from_segment(tokens):
+    for start in range(len(tokens)):
+        parsed = parse_declarator(tokens, start, len(tokens))
+        if parsed is not None and parsed[2] == len(tokens):
+            return start, parsed[0], parsed[1]
+    return None
+
+
+def declaration_prefix(prefix):
+    """Say whether tokens before a declarator contain a plausible C type."""
+    if not prefix:
+        return False
+    if any(token.value == '#' for token in prefix):
+        return False
+    index, have_type = 0, False
+    while index < len(prefix):
+        moved = decorator_end(prefix, index, len(prefix))
+        if moved != index:
+            index = moved
+            continue
+        token = prefix[index]
+        if token.value in ('_Alignas', 'alignas') and index + 1 < len(prefix) \
+                and prefix[index + 1].value == '(':
+            close = balanced_close(prefix, index + 1, len(prefix), '(', ')')
+            if close is None:
+                return False
+            index = close + 1
+            continue
+        if token.value in ('_Atomic', 'typeof', 'typeof_unqual', '__typeof',
+                           '__typeof__') and index + 1 < len(prefix) \
+                and prefix[index + 1].value == '(':
+            close = balanced_close(prefix, index + 1, len(prefix), '(', ')')
+            if close is None:
+                return False
+            have_type, index = True, close + 1
+            continue
+        if token.value in ('struct', 'union', 'enum'):
+            return True
+        if token.value in ('char', 'double', 'float', 'int', 'long', 'short',
+                           'signed', 'unsigned', 'void', '_Bool', '_Complex',
+                           '_Imaginary', '__auto_type'):
+            have_type = True
+        elif token.kind == 'identifier' and token.value not in DECLARATION_ONLY_WORDS:
+            # A typedef name is syntactically just an identifier. This is why
+            # the scanner validates the whole declarator instead of keeping a
+            # hard-coded list of this project's many type aliases.
+            have_type = True
+        elif token.kind in ('literal', 'number'):
+            return False
+        index += 1
+    return have_type
+
+
+def declaration_objects(path, tokens):
+    """Return object definitions in one complete file-scope declaration."""
+    if not tokens or tokens[0].value in ('_Static_assert', 'static_assert'):
+        return []
+    if tag_only_declaration(tokens):
+        return []
+
+    segments = split_top_level(tokens, ',')
+    parsed_segments = []
+    for segment in segments:
+        equals = initializer_start(segment)
+        declarator = segment if equals is None else segment[:equals]
+        parsed_segments.append((declarator_from_segment(declarator), equals))
+    first = next((item[0] for item in parsed_segments if item[0] is not None), None)
+    if first is None:
+        return []
+
+    first_segment = next(segment for segment, item in zip(segments, parsed_segments)
+                         if item[0] is first)
+    if not declaration_prefix(first_segment[:first[0]]):
+        return []
+    storage = {token.value for token in first_segment[:first[0]]}
+    if 'typedef' in storage:
+        return []
+    external = 'extern' in storage
+
+    found = []
+    for parsed, equals in parsed_segments:
+        if parsed is None:
+            continue
+        _, name, operations = parsed
+        is_function = bool(operations) and operations[0] == 'function'
+        if not is_function and (not external or equals is not None):
+            found.append(Object(path, name.value, name.line))
+    return found
+
+
+def c_objects_from_tokens(path, tokens):
+    depth, declaration, in_function, found = 0, [], False, []
+    for token in tokens:
+        if depth:
+            if token.value == '{':
+                depth += 1
+            elif token.value == '}':
+                depth -= 1
+                if not in_function:
+                    declaration.append(token)
+                elif depth == 0:
+                    declaration, in_function = [], False
+            elif not in_function:
+                declaration.append(token)
+            continue
+
+        if token.value == '{':
+            if function_header(declaration):
+                declaration, in_function, depth = [], True, 1
+            else:
+                declaration.append(token)
+                depth = 1
+            continue
+        if token.value == ';':
+            found.extend(declaration_objects(path, declaration))
+            declaration = []
+            continue
+        if token.value == '}':
+            declaration = []
+            continue
+        declaration.append(token)
+    return found
+
+
+def c_objects(path, text=None):
+    """Find every file-scope C object definition, including tentative ones."""
+    if text is None:
+        with open(path, encoding='utf-8') as source:
+            text = source.read()
+    tokens, _ = lex(text)
+    return c_objects_from_tokens(path, tokens)
+
+
 def macro_bodies(path, text):
     """Find local macros whose replacement list itself defines a function."""
     _, directives = lex(text)
@@ -481,6 +789,71 @@ def macro_bodies(path, text):
         if any(token.value == '{' for token in replacement_tokens) \
                 or c_bodies(path, replacement):
             found.append(MacroBody(path, name, directive.line))
+    return found
+
+
+def macro_objects(path, text):
+    """Find macros whose replacement list emits a file-scope C object."""
+    _, directives = lex(text)
+    definitions, aliases = [], {}
+    for directive in directives:
+        kind, _ = directive_parts(directive)
+        if kind != 'define':
+            continue
+        raw = re.sub(r'(?:\\|\?\?/)[\r]?\n', '', directive.text)
+        raw = re.sub(r'^\s*(?:%:|\?\?=)', '#', raw)
+        head = re.match(
+            r'\s*#\s*define\s+([A-Za-z_][A-Za-z0-9_]*)', raw, re.S)
+        if not head:
+            continue
+        name, index, parameters = head.group(1), head.end(), None
+        if index < len(raw) and raw[index] == '(':
+            close, depth = index + 1, 1
+            while close < len(raw) and depth:
+                if raw[close] == '(':
+                    depth += 1
+                elif raw[close] == ')':
+                    depth -= 1
+                close += 1
+            parameter_text = raw[index + 1:close - 1]
+            parameters = set(re.findall(r'[A-Za-z_][A-Za-z0-9_]*',
+                                        parameter_text))
+            index = close
+        replacement = raw[index:]
+        replacement_tokens, _ = lex(replacement)
+        if not replacement_tokens:
+            continue
+        definitions.append((directive, name, parameters, replacement_tokens))
+        if parameters is None:
+            aliases[name] = replacement_tokens
+
+    def expand(tokens, active):
+        output = []
+        for token in tokens:
+            if token.kind == 'identifier' and token.value in aliases \
+                    and token.value not in active:
+                output.extend(expand(aliases[token.value],
+                                     active | {token.value}))
+            else:
+                output.append(token)
+        return output
+
+    found = []
+    for directive, name, parameters, replacement_tokens in definitions:
+        expanded = expand(replacement_tokens, {name})
+        last = expanded[-1]
+        expanded.append(Token('punctuation', ';', last.line,
+                              last.start + len(last.value)))
+        objects = c_objects_from_tokens(path, expanded)
+        if not objects:
+            continue
+        values = {token.value for token in replacement_tokens}
+        # A bare ``a*b`` macro is an expression, not a generic pointer
+        # declaration. With only formal parameters, the two token streams are
+        # otherwise indistinguishable before the macro is invoked.
+        if parameters is not None and values == parameters | {'*'}:
+            continue
+        found.append(MacroObject(path, name, directive.line))
     return found
 
 
@@ -779,14 +1152,18 @@ def main(path, check=False, target='all'):
         text = source.read()
     original = text
     direct_bodies = c_bodies(path, text)
+    direct_objects = c_objects(path, text)
     direct_macros = macro_bodies(path, text)
+    direct_object_macros = macro_objects(path, text)
     included_bodies, c_includes, missing, selected_sources = \
         included_audit(path, target)
     root_path = os.path.realpath(path)
-    included_macros = []
+    included_objects, included_macros, included_object_macros = [], [], []
     for source_path, source_text in selected_sources.items():
         if source_path != root_path:
+            included_objects.extend(c_objects(source_path, source_text))
             included_macros.extend(macro_bodies(source_path, source_text))
+            included_object_macros.extend(macro_objects(source_path, source_text))
     if target == 'linux':
         linux_sources, parity_missing = selected_sources, missing
     else:
@@ -820,6 +1197,12 @@ def main(path, check=False, target='all'):
     body = ['/*', f'        {HEAD}', PREAMBLE.rstrip(),
             '', (f'        {len(order)} routines ({public_count} public, '
                  f'{local_count} local), {len(order)-len(gaps)} of them on all three.'),
+            (f'        Raw C purity: {len(direct_bodies) + len(included_bodies)} '
+             f'function bodies, {len(direct_objects) + len(included_objects)} '
+             f'object definitions, '
+             f'{len(direct_macros) + len(included_macros)} body macros, and '
+             f'{len(direct_object_macros) + len(included_object_macros)} '
+             f'object macros (all forbidden).'),
             '', (f'          {"routine":<30} {"scope":<7} {"x86_64":<7} '
                  f'{"arm64":<7} riscv64'),
             (f'          {"-"*30} {"-"*7} {"-"*7} {"-"*7} {"-"*7}')]
@@ -835,10 +1218,22 @@ def main(path, check=False, target='all'):
         body += ['', '        C function bodies still present (forbidden):']
         for found in direct_bodies:
             body.append(f'          {found.name} -- line {found.line}')
+    if direct_objects or included_objects:
+        body += ['', '        C object definitions still present (forbidden):']
+        for found in direct_objects + included_objects:
+            body.append(
+                f'          {found.name} -- {display_path(found.path, path)}, '
+                f'line {found.line}')
     if direct_macros:
         body += ['', '        Macros that generate C function bodies (forbidden):']
         for found in direct_macros:
             body.append(f'          {found.name} -- line {found.line}')
+    if direct_object_macros or included_object_macros:
+        body += ['', '        Macros that generate C objects (forbidden):']
+        for found in direct_object_macros + included_object_macros:
+            body.append(
+                f'          {found.name} -- {display_path(found.path, path)}, '
+                f'line {found.line}')
     if c_includes:
         direct_includes = [item for item in c_includes
                            if os.path.realpath(item.path) == os.path.realpath(path)]
@@ -893,7 +1288,10 @@ def main(path, check=False, target='all'):
         f'inventory: {len(order)} routines, {len(gaps)} not at parity, '
         f'{len(direct_bodies)} direct C bodies, '
         f'{len(included_bodies)} included C bodies, '
+        f'{len(direct_objects)} direct C objects, '
+        f'{len(included_objects)} included C objects, '
         f'{len(direct_macros) + len(included_macros)} body macros, '
+        f'{len(direct_object_macros) + len(included_object_macros)} object macros, '
         f'{len(c_includes)} .c includes, '
         f'{len(platform_gaps)} macOS parity gaps\n')
     for name in gaps:
@@ -904,9 +1302,17 @@ def main(path, check=False, target='all'):
         sys.stderr.write(
             f'inventory: forbidden C body {found.name} at '
             f'{display_path(found.path, path)}:{found.line}\n')
+    for found in direct_objects + included_objects:
+        sys.stderr.write(
+            f'inventory: forbidden C object {found.name} at '
+            f'{display_path(found.path, path)}:{found.line}\n')
     for found in direct_macros + included_macros:
         sys.stderr.write(
             f'inventory: body-generating macro {found.name} at '
+            f'{display_path(found.path, path)}:{found.line}\n')
+    for found in direct_object_macros + included_object_macros:
+        sys.stderr.write(
+            f'inventory: object-generating macro {found.name} at '
             f'{display_path(found.path, path)}:{found.line}\n')
     for found in c_includes:
         sys.stderr.write(
@@ -950,10 +1356,11 @@ def main(path, check=False, target='all'):
             f'{display_path(found.path, path)}\n')
     if check and stale:
         sys.stderr.write('inventory: generated block is stale\n')
-    invalid = (gaps or direct_bodies or included_bodies or direct_macros
-               or included_macros or c_includes or missing or parity_missing
-               or platform_missing or unscoped or duplicates or scope_mismatches
-               or pairing or platform_gaps)
+    invalid = (gaps or direct_bodies or included_bodies or direct_objects
+               or included_objects or direct_macros or included_macros
+               or direct_object_macros or included_object_macros or c_includes
+               or missing or parity_missing or platform_missing or unscoped
+               or duplicates or scope_mismatches or pairing or platform_gaps)
     if invalid or (check and stale):
         return 1
     return 0

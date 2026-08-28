@@ -55,7 +55,16 @@ static u64 next(void) { seed ^= seed<<13; seed ^= seed>>7; seed ^= seed<<17; ret
 int main(void)
 {
         static u8 a[4096], nee[64];
-        u64 checks = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0;
+        u64 checks = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, bt = 0;
+
+        // The extractor checks the marked source payload with SHA-256.  This
+        // second, deliberately cheap hash checks that the Mach-O object the
+        // native assembler and linker produced has those same 256 bytes.
+        u64 table_hash = 0xcbf29ce484222325ul;
+        for (u64 i = 0; i < sizeof(byte_commonness); i++)
+                table_hash = (table_hash ^ byte_commonness[i]) * 0x100000001b3ul;
+        checks++;
+        if (table_hash != 0x4e8034ba88cd1ac9ul) bt++;
 
         // The two adjacencies a borrow out of the prefix can forge.
         for (u64 off = 1; off < 8; off++)
@@ -101,7 +110,7 @@ int main(void)
                 if (string_find((char*)a+off,(char*)nee) != r_find((char*)a+off,(char*)nee)) b4++;
         }
 
-        printf("arm64 byte hunts: %lu checks | first_of %lu | or_end %lu | max %lu | find %lu\n",
-               checks, b1, b2, b3, b4);
-        return (b1||b2||b3||b4) != 0;
+        printf("arm64 byte hunts: %lu checks | table %lu | first_of %lu | or_end %lu | max %lu | find %lu\n",
+               checks, bt, b1, b2, b3, b4);
+        return (bt||b1||b2||b3||b4) != 0;
 }

@@ -39,12 +39,17 @@
 
 #define MAX_INPUT 4096
 
-/*
-        The logger is library state, even though assembly is now its only
-        reader. KEEP makes that dependency visible to link-time optimisation.
-*/
-KEEP p8 log_writer_buffer[MAX_INPUT];
-KEEP positive log_writer_buffer_length;
+extern p8 log_writer_buffer[MAX_INPUT];
+extern positive log_writer_buffer_length;
+
+__asm__(
+    ASM_BSS_OBJECT_BEGIN(log_writer_buffer, 64)
+    ASM_ZERO(MAX_INPUT)
+    ASM_OBJECT_END(log_writer_buffer)
+    ASM_BSS_OBJECT_BEGIN(log_writer_buffer_length, 8)
+    ".zero 8\n"
+    ASM_OBJECT_END(log_writer_buffer_length)
+);
 
 fn log_direct(address_any data, positive length);
 fn log_flush();

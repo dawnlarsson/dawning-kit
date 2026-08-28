@@ -18,11 +18,13 @@ another one -- memory_search calls memory_compare, string_find calls
 three of them -- and without the rewrite the case does not link rather
 than failing a check, which is a confusing way to find out.
 
-A routine that names a table gets the table too: byte_commonness is
-copied out of the library as C, so what the lifted code indexes here is
-the same two hundred and fifty six numbers it indexes there.
+A routine that names a table gets the table too: byte_commonness is lifted
+from its marker-delimited assembly object, converted from ELF to Mach-O, and
+checked before it is emitted.  That keeps the native case on the exact bytes
+the three production architectures index without putting a second C form of
+the table here.
 """
-import re, sys
+import ast, hashlib, json, re, sys
 
 lib, names = sys.argv[1], sys.argv[2:]
 lines = open(lib).read().split('\n')
@@ -63,15 +65,148 @@ def darwin(line):
     line = re.sub(r'^(\s*")([a-z_][a-z0-9_]*):', r'\1_\2:', line)
     return line
 
-def table(name):
-    """A global the lifted code indexes, copied out of the library as C."""
-    text = '\n'.join(lines)
-    at = text.find('const p8 %s[256] = {' % name)
-    if at < 0:
-        sys.exit('extract: no %s in %s' % (name, lib))
-    stop = text.index('};', at)
-    return ('const unsigned char %s[256] = {%s};'
-            % (name, text[text.index('{', at) + 1:stop]))
+OBJECTS = {
+    # A checksum pins the ordering as well as the size.  The table is a
+    # permutation, which is checked separately so a diagnostic says what was
+    # structurally wrong instead of reporting only an opaque digest mismatch.
+    'byte_commonness': {
+        'size': 256,
+        'alignment': 16,
+        'sha256': '470d515b123842faff312a364f32931ba37079f317e184420eb2b6bc93c30efc',
+        'permutation': True,
+    },
+}
+
+def marked_object(name):
+    """Read, verify, and Mach-O-convert one inline-assembly data object."""
+    tag = name.upper()
+    begin_tag = 'NATIVE_%s_BEGIN' % tag
+    end_tag = 'NATIVE_%s_END' % tag
+    begins = [i for i, line in enumerate(lines) if begin_tag in line]
+    ends = [i for i, line in enumerate(lines) if end_tag in line]
+    if len(begins) != 1 or len(ends) != 1 or begins[0] >= ends[0]:
+        sys.exit('extract: need one ordered %s/%s marker pair in %s'
+                 % (begin_tag, end_tag, lib))
+
+    # The marker encloses a complete __asm__ object.  Decode its C string
+    # tokens instead of interpreting formatting in library.c; adjacent string
+    # literals and any number of .byte rows consequently have the same result.
+    source = '\n'.join(lines[begins[0] + 1:ends[0]])
+    tokens = re.findall(r'"(?:\\.|[^"\\])*"', source)
+    try:
+        assembly = ''.join(ast.literal_eval(token) for token in tokens)
+    except (SyntaxError, ValueError) as error:
+        sys.exit('extract: malformed C string in %s object: %s' % (name, error))
+    if not assembly:
+        sys.exit('extract: empty %s object between native markers' % name)
+
+    # library.c keeps the payload literal only once and lets these two macros
+    # give normal builds their target object spelling.  Expand that wrapper to
+    # its canonical ELF form here, then pass it through the same explicit
+    # ELF-to-Mach conversion below.  An older fully literal marked object is
+    # accepted too, which makes malformed/missing macro wrappers diagnosable.
+    if not re.search(r'(?m)^\s*' + re.escape(name) + r':\s*$', assembly):
+        starts = re.findall(r'ASM_RODATA_OBJECT_BEGIN\(\s*' + re.escape(name)
+                            + r'\s*,\s*([0-9]+)\s*\)', source)
+        stops = re.findall(r'ASM_OBJECT_END\(\s*' + re.escape(name) + r'\s*\)',
+                           source)
+        if len(starts) != 1 or len(stops) != 1:
+            sys.exit('extract: %s markers need one object begin/end macro pair'
+                     % name)
+        alignment = int(starts[0])
+        if alignment != OBJECTS[name]['alignment']:
+            sys.exit('extract: %s alignment %d, expected %d'
+                     % (name, alignment, OBJECTS[name]['alignment']))
+        assembly = ('.pushsection .rodata.%s,"a",%%progbits\n'
+                    '.balign %d\n'
+                    '.globl %s\n'
+                    '.type %s, %%object\n'
+                    '%s:\n%s'
+                    '.size %s, .-%s\n'
+                    '.popsection\n'
+                    % (name, alignment, name, name, name, assembly, name, name))
+
+    # Verify the bytes between the label and ELF size directive.  Only .byte
+    # contributes data there: accepting a .word or .zero without accounting
+    # for it would make the declared 256-byte table check meaningless.
+    seen_label = False
+    values = []
+    for line in assembly.splitlines():
+        stripped = line.strip()
+        if stripped == name + ':':
+            seen_label = True
+            continue
+        if not seen_label:
+            continue
+        if stripped.startswith('.size '):
+            break
+        byte = re.match(r'^\.byte\s+(.+)$', stripped)
+        if byte:
+            for value in byte.group(1).split(','):
+                try:
+                    number = int(value.strip(), 0)
+                except ValueError:
+                    sys.exit('extract: non-integer byte in %s: %s'
+                             % (name, value.strip()))
+                if number < 0 or number > 255:
+                    sys.exit('extract: byte outside 0..255 in %s: %d'
+                             % (name, number))
+                values.append(number)
+            continue
+        if stripped and not stripped.startswith(('.p2align ', '.balign ',
+                                                  '.popsection')):
+            sys.exit('extract: unsupported data directive in %s: %s'
+                     % (name, stripped))
+    if not seen_label:
+        sys.exit('extract: no %s label inside native markers' % name)
+
+    spec = OBJECTS[name]
+    if len(values) != spec['size']:
+        sys.exit('extract: %s has %d bytes, expected %d'
+                 % (name, len(values), spec['size']))
+    if spec.get('permutation') and sorted(values) != list(range(spec['size'])):
+        sys.exit('extract: %s is not a permutation of 0..%d'
+                 % (name, spec['size'] - 1))
+    digest = hashlib.sha256(bytes(values)).hexdigest()
+    if digest != spec['sha256']:
+        sys.exit('extract: %s checksum %s, expected %s'
+                 % (name, digest, spec['sha256']))
+
+    out = []
+    for line in assembly.splitlines():
+        stripped = line.strip()
+        if stripped.startswith(('.type ', '.size ')):
+            continue                    # ELF symbol metadata has no Mach-O form
+        if re.match(r'^\.(?:push)?section\s+\.rodata(?:\.[^,\s]+)?(?:\s|,|$)',
+                    stripped):
+            line = re.sub(r'^\s*\.(?:push)?section.*$',
+                          '.section __TEXT,__const', line)
+        elif stripped == '.popsection':
+            line = '.text'              # restore the section for following bodies
+        line = re.sub(r'^(\s*\.(?:globl|global)\s+)' + re.escape(name) + r'\b',
+                      r'\1_' + name, line)
+        line = re.sub(r'^(\s*)' + re.escape(name) + r':',
+                      r'\1_' + name + ':', line)
+        out.append(line)
+
+    converted = '\n'.join(out) + '\n'
+    required = ('.section __TEXT,__const', '.globl _' + name, '_' + name + ':')
+    for spelling in required:
+        if spelling not in converted:
+            sys.exit('extract: converted %s object lacks %s' % (name, spelling))
+    if re.search(r'(?m)^\s*\.(?:type|size|pushsection|popsection)\b', converted):
+        sys.exit('extract: ELF-only metadata remains in converted %s object' % name)
+    if '%object' in converted or '%progbits' in converted:
+        sys.exit('extract: ELF-only type spelling remains in converted %s object'
+                 % name)
+    return converted
+
+def emit_asm(assembly):
+    """Print decoded assembly as a C top-level __asm__ declaration."""
+    print('__asm__(')
+    for line in assembly.splitlines():
+        print('    ' + json.dumps(line + '\n'))
+    print(');')
 
 def digit_pair_table():
     """The assembler digit table as a C symbol for lifted formatter leaves."""
@@ -99,7 +234,8 @@ bodies = {n: body(n) for n in names}
 print(f'// Lifted from {lib} by src/test/native/extract.py -- do not edit.')
 
 if any('byte_commonness' in l for b in bodies.values() for l in b):
-    print(table('byte_commonness'))
+    emit_asm(marked_object('byte_commonness'))
+    print('extern const unsigned char byte_commonness[256];')
 
 if any('digit_pairs' in l for b in bodies.values() for l in b):
     print(digit_pair_table())

@@ -65,6 +65,26 @@ def body_mutation(directory, label, source, expected):
            '%s body evaded the lexical scan' % label, result)
 
 
+def object_mutation(directory, label, source, expected):
+    path = fresh(directory, label + '.c')
+    path.write_text(path.read_text(encoding='utf-8') + '\n' + source,
+                    encoding='utf-8')
+    result = invoke(path, '--check', '--target', 'direct')
+    expect(result.returncode != 0 and
+           ('forbidden C object %s ' % expected) in result.stderr,
+           '%s object evaded the lexical scan' % label, result)
+
+
+def object_macro_mutation(directory, label, source, expected):
+    path = fresh(directory, label + '.c')
+    path.write_text(path.read_text(encoding='utf-8') + '\n' + source,
+                    encoding='utf-8')
+    result = invoke(path, '--check', '--target', 'direct')
+    expect(result.returncode != 0 and
+           ('object-generating macro %s ' % expected) in result.stderr,
+           '%s object macro evaded the lexical scan' % label, result)
+
+
 with tempfile.TemporaryDirectory(prefix='inventory-test-') as temporary:
     directory = pathlib.Path(temporary)
 
@@ -123,18 +143,146 @@ with tempfile.TemporaryDirectory(prefix='inventory-test-') as temporary:
     ignored = fresh(directory, 'ignored.c')
     ignored.write_text(ignored.read_text(encoding='utf-8') + r'''
 /* static int comment_body(void) { return 1; } */
-static const char body_text[] = "static int string_body(void) { return 1; }";
+extern const char body_text[];
 struct aggregate { int (*callback)(void); };
 struct __attribute__((packed)) attributed_aggregate { int value; };
-static struct aggregate data = { 0 };
-static struct aggregate compound = (struct aggregate) { 0 };
+union forward_union;
+enum forward_enum;
+extern struct aggregate data, *data_pointer;
+extern struct aggregate data_array[];
+extern int (*external_callback)(void);
+extern _Thread_local int external_tls;
+extern int external_one, external_two[2], *external_three,
+           (*external_four)(void), external_function(void);
+extern int external_attribute __attribute__((visibility("hidden")));
+extern int external_asm asm("renamed_external");
+int prototype(void);
+int *pointer_result(void);
+int (*function_result(void))(int);
+KEEP b32 retained_main();
+typedef int integer_alias;
+typedef int (*callback_alias)(void);
+typedef struct aggregate aggregate_alias;
+typedef struct local_tag { int member; } local_tag;
+typedef enum { KIND_ZERO, KIND_ONE } kind_alias;
+_Static_assert(sizeof(int) >= 2, "int width");
+static_assert(1, "accepted spelling");
 __asm__(".text\nnot_c: # { this is assembly text }\n");
 #define ASM_BODY_TEXT "static int macro_string(void) { return 1; }"
+#define ir(asm_args...) asm volatile(asm_args)
+#define ASM(name) asm_x64_##name
+#define str(string) (string), (sizeof(string) - 1)
+#define WIDE_LENGTH(W, ZEROED, ZEROS, LEAVE) \
+        "assembly" W ZEROED ZEROS LEAVE ASM_RET
+#define syscall(name) syscall_linux_x64_##name
+#define MUL(a, b) a * b
+#define address_to *
+#define TYPE_ALIAS file address_to
+#define FUNCTION_DECL(name) int name(void)
+#define EXTERN_DECL(name) extern int name
 ''' , encoding='utf-8')
     result = invoke(ignored, '--check', '--target', 'direct')
     expect(result.returncode == 0,
-           'comments, literals, data, aggregates, or global asm looked like C bodies',
+           'declarations, type/tag definitions, expressions, or global asm '
+           'looked like C storage',
            result)
+
+    object_mutation(directory, 'initialized-object',
+                    'int initialized_object = 1;\n', 'initialized_object')
+    object_mutation(directory, 'tentative-object',
+                    'positive tentative_object;\n', 'tentative_object')
+    object_mutation(directory, 'static-object',
+                    'static int static_object;\n', 'static_object')
+    object_mutation(directory, 'const-array',
+                    'const char const_array[] = { 1, 2 };\n', 'const_array')
+    object_mutation(directory, 'tentative-array',
+                    'int tentative_array[];\n', 'tentative_array')
+    object_mutation(directory, 'pointer-object',
+                    'object_type *pointer_object;\n', 'pointer_object')
+    object_mutation(directory, 'function-pointer',
+                    'int (*function_pointer)(void);\n', 'function_pointer')
+    object_mutation(directory, 'function-pointer-array',
+                    'int (*function_pointer_array[2])(void);\n',
+                    'function_pointer_array')
+    object_mutation(directory, 'thread-local',
+                    '_Thread_local int thread_local_object;\n',
+                    'thread_local_object')
+    object_mutation(directory, 'c23-thread-local',
+                    'thread_local int c23_thread_local;\n', 'c23_thread_local')
+    object_mutation(directory, 'extern-initializer',
+                    'extern int extern_definition = 1;\n', 'extern_definition')
+    object_mutation(directory, 'extern-comma-mix',
+                    'extern int declaration_only, comma_definition = 1, '
+                    'also_declaration_only;\n', 'comma_definition')
+    object_mutation(directory, 'function-object-comma-mix',
+                    'static int function_declaration(void), mixed_object;\n',
+                    'mixed_object')
+    object_mutation(directory, 'tagged-aggregate-object',
+                    'struct record { int value; } aggregate_object;\n',
+                    'aggregate_object')
+    object_mutation(directory, 'anonymous-enum-object',
+                    'enum { STATE_ZERO, STATE_ONE } enum_object;\n',
+                    'enum_object')
+    object_mutation(directory, 'compound-literal-initializer',
+                    'struct point compound_object = (struct point) { 0 };\n',
+                    'compound_object')
+    object_mutation(directory, 'attributed-object',
+                    '[[gnu::used]] static int attributed_object;\n',
+                    'attributed_object')
+    object_mutation(directory, 'suffix-attributed-object',
+                    'static int suffix_attributed_object '
+                    '__attribute__((used));\n', 'suffix_attributed_object')
+    object_mutation(directory, 'typeof-object',
+                    'typeof(0) typeof_object;\n', 'typeof_object')
+    object_mutation(directory, 'declspec-object',
+                    '__declspec(allocate("named")) int declspec_object;\n',
+                    'declspec_object')
+    object_mutation(directory, 'aligned-object',
+                    '_Alignas(64) static int aligned_object;\n',
+                    'aligned_object')
+    object_mutation(directory, 'inactive-object',
+                    '#if 0\nstatic int dormant_object;\n#endif\n',
+                    'dormant_object')
+    object_mutation(directory, 'digraph-object',
+                    'static int digraph_object[] = <% 1, 2 %>;\n',
+                    'digraph_object')
+
+    object_macro_mutation(
+        directory, 'local-var-macro',
+        '#define local_var(name) static int name\nlocal_var(local_storage);\n',
+        'local_var')
+    object_macro_mutation(
+        directory, 'conversion-constants-macro',
+        '#define CONVERSION_CONSTANTS \\\n'
+        '        static const unsigned conversion_constants[] = { 1, 2 }\n'
+        'CONVERSION_CONSTANTS;\n', 'CONVERSION_CONSTANTS')
+    object_macro_mutation(
+        directory, 'callback-object-macro',
+        '#define CALLBACK_OBJECT(name) static int (*name)(void)\n'
+        'CALLBACK_OBJECT(callback_storage);\n', 'CALLBACK_OBJECT')
+    object_macro_mutation(
+        directory, 'custom-type-object-macro',
+        '#define CUSTOM_OBJECT(name) object_type name\n'
+        'CUSTOM_OBJECT(custom_storage);\n', 'CUSTOM_OBJECT')
+    object_macro_mutation(
+        directory, 'fixed-object-macro',
+        '#define FIXED_OBJECT object_type fixed_storage\nFIXED_OBJECT;\n',
+        'FIXED_OBJECT')
+    object_macro_mutation(
+        directory, 'extern-definition-macro',
+        '#define EXTERN_DEFINITION(name) extern int name = 1\n'
+        'EXTERN_DEFINITION(extern_storage);\n', 'EXTERN_DEFINITION')
+
+    object_report = directory / 'object-report.c'
+    object_report.write_text(BASE + 'static int reported_object;\n',
+                             encoding='utf-8')
+    result = invoke(object_report, '--target', 'direct')
+    report_text = object_report.read_text(encoding='utf-8')
+    expect(result.returncode != 0 and
+           'Raw C purity: 0 function bodies, 1 object definitions' in report_text and
+           'C object definitions still present (forbidden):' in report_text and
+           'reported_object' in report_text,
+           'generated report did not account for forbidden C storage', result)
 
     write_body = directory / 'write-body.c'
     write_body.write_text(BASE + 'static int write_body(void) { return 1; }\n',
@@ -295,19 +443,48 @@ ASM_LOCAL_END(runtime_probe)
     expect(result.returncode != 0 and 'forbidden C body nested_body' in result.stderr,
            'write/rebuild mode silently accepted an included C body', result)
 
+    object_graph_root = directory / 'object-graph-root.c'
+    object_graph_root.write_text(BASE + '''\
+#if defined(LINUX)
+#include "object-first.inc"
+#endif
+''', encoding='utf-8')
+    (directory / 'object-first.inc').write_text(
+        '#include "object-second.inc"\n', encoding='utf-8')
+    (directory / 'object-second.inc').write_text(
+        'extern int declaration_only;\n'
+        'static int nested_object;\n'
+        '#define NESTED_OBJECT(name) static int name\n', encoding='utf-8')
+    result = invoke(object_graph_root, '--target', 'direct')
+    expect(result.returncode == 0,
+           'could not generate recursive object fixture', result)
+    result = invoke(object_graph_root, '--check', '--target', 'linux')
+    expect(result.returncode != 0 and
+           'forbidden C object nested_object' in result.stderr and
+           'object-generating macro NESTED_OBJECT' in result.stderr,
+           'object or object macro in a recursive .inc graph evaded the gate',
+           result)
+    result = invoke(object_graph_root, '--target', 'linux')
+    expect(result.returncode != 0 and
+           'forbidden C object nested_object' in result.stderr,
+           'write/rebuild mode silently accepted included C storage', result)
+
     inactive_root = fresh(directory, 'inactive-root.c', BASE + '''\
 #if defined(WINDOWS)
 #include "windows.inc"
 #endif
 ''')
     (directory / 'windows.inc').write_text(
-        'static int windows_body(void) { return 1; }\n', encoding='utf-8')
+        'static int windows_body(void) { return 1; }\n'
+        'static int windows_object;\n', encoding='utf-8')
     result = invoke(inactive_root, '--check', '--target', 'linux')
     expect(result.returncode == 0,
            'Linux-active gate followed a Windows-inactive include', result)
     result = invoke(inactive_root, '--check', '--target', 'all')
-    expect(result.returncode != 0 and 'forbidden C body windows_body' in result.stderr,
-           'all-platform include audit missed an inactive platform body', result)
+    expect(result.returncode != 0 and
+           'forbidden C body windows_body' in result.stderr and
+           'forbidden C object windows_object' in result.stderr,
+           'all-platform include audit missed inactive platform C', result)
 
     mac_root = directory / 'mac-root.c'
     mac_root.write_text(BASE + '''\

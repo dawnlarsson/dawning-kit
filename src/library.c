@@ -68,6 +68,7 @@
         and no jump, and which names get one depends on who is linking.
 
         138 routines (133 public, 5 local), 138 of them on all three.
+        Raw C purity: 0 function bodies, 0 object definitions, 0 body macros, and 0 object macros (all forbidden).
 
           routine                        scope   x86_64  arm64   riscv64
           ------------------------------ ------- ------- ------- -------
@@ -356,9 +357,6 @@ __attribute__((optimize("inline-max-size=" #max_size)))
 
 #define prefetch_read(addr) __builtin_prefetch((addr), 0, 3)
 #define prefetch_write(addr) __builtin_prefetch((addr), 1, 3)
-
-#define local_var(type, name) \
-        __attribute__((section(".percpu"))) __typeof__(type) name
 
 #define atomic_add(address, val) __sync_fetch_and_add(address, val)
 #define atomic_sub(address, val) __sync_fetch_and_sub(address, val)
@@ -898,14 +896,6 @@ typedef struct
 #define PI2 6.28318530718f
 #define PI_05x (PI * 0.5f)
 
-#define CONVERSION_CONSTANTS                         \
-        constexpr decimal RadToDeg = 180.0f / PI;    \
-        constexpr decimal RadToTurn = 0.5f / PI;     \
-        constexpr decimal DegToRad = PI / 180.0f;    \
-        constexpr decimal DegToTurn = 0.5f / 180.0f; \
-        constexpr decimal TurnToRad = PI / 0.5f;     \
-        constexpr decimal TurnToDeg = 180.0f / 0.5f
-
 #define AngleRad(value) (value)
 #define AngleDeg(value) ((value) * DegToRad)
 #define AngleTurn(value) ((value) * TurnToRad)
@@ -1351,6 +1341,78 @@ typedef union matrix4
 #define ASM_LOCAL_END(name) ".size " #name ", .-" #name "\n"
 
 /*
+        Storage has the same assembly-only contract as the routines.
+
+        ELF gives every object its own section so --gc-sections can discard
+        one without keeping unrelated library state. The label's alignment,
+        binding, type and size are all written down here rather than inferred
+        from a C definition that no longer exists. AArch64, x86_64 and RV64
+        all accept the percent spelling for the ELF object and section types.
+
+        Darwin's C ABI adds the leading underscore. Keep a second local label
+        without it because the shared assembly bodies use the ELF spelling;
+        C references and the raw assembly therefore land on the same bytes.
+        Mach-O has no STT_OBJECT or .size, and subsections_via_symbols is its
+        symbol-granularity dead-strip boundary.
+*/
+#if defined(MACOS) || defined(IOS)
+#define ASM_RODATA_OBJECT_BEGIN(name, alignment) \
+    ".pushsection __TEXT,__const\n"              \
+    ".balign " #alignment "\n"                  \
+    ".globl _" #name "\n"                       \
+    "_" #name ":\n"                             \
+    #name ":\n"
+
+#define ASM_BSS_OBJECT_BEGIN(name, alignment)    \
+    ".pushsection __DATA,__bss\n"                \
+    ".balign " #alignment "\n"                  \
+    ".globl _" #name "\n"                       \
+    "_" #name ":\n"                             \
+    #name ":\n"
+
+#define ASM_HIDDEN_BSS_OBJECT_BEGIN(name, alignment) \
+    ".pushsection __DATA,__bss\n"                     \
+    ".balign " #alignment "\n"                       \
+    ".globl _" #name "\n"                            \
+    ".private_extern _" #name "\n"                   \
+    "_" #name ":\n"                                  \
+    #name ":\n"
+
+#define ASM_OBJECT_END(name)             \
+    ".popsection\n"                      \
+    ".subsections_via_symbols\n"
+#else
+#define ASM_RODATA_OBJECT_BEGIN(name, alignment)                    \
+    ".pushsection .rodata." #name ", \"a\", %progbits\n"       \
+    ".balign " #alignment "\n"                                    \
+    ".globl " #name "\n"                                         \
+    ".type " #name ", %object\n"                                  \
+    #name ":\n"
+
+#define ASM_BSS_OBJECT_BEGIN(name, alignment)                       \
+    ".pushsection .bss." #name ", \"aw\", %nobits\n"          \
+    ".balign " #alignment "\n"                                    \
+    ".globl " #name "\n"                                         \
+    ".type " #name ", %object\n"                                  \
+    #name ":\n"
+
+#define ASM_HIDDEN_BSS_OBJECT_BEGIN(name, alignment)                \
+    ".pushsection .bss." #name ", \"aw\", %nobits\n"          \
+    ".balign " #alignment "\n"                                    \
+    ".globl " #name "\n"                                         \
+    ".hidden " #name "\n"                                        \
+    ".type " #name ", %object\n"                                  \
+    #name ":\n"
+
+#define ASM_OBJECT_END(name)              \
+    ".size " #name ", .-" #name "\n"  \
+    ".popsection\n"
+#endif
+
+#define ASM_ZERO_INNER(size) ".zero " #size "\n"
+#define ASM_ZERO(size) ASM_ZERO_INNER(size)
+
+/*
         An indirect call, or whatever the mitigations have made of one.
 
         A bare "call *%reg" is the branch target injection gadget retpoline
@@ -1398,24 +1460,30 @@ typedef union matrix4
         costs speed and never costs an answer: every survivor is compared in
         full whichever two were picked.
 */
-KEEP const p8 byte_commonness[256] = {
-        239, 170, 160, 157, 158, 148, 143, 139, 156, 200, 246, 117, 134, 136, 123, 183,
-        159, 107,  87,  83,  98, 120,  91,  89, 126,  76,  37,  38,  73,  71, 105, 147,
-        255, 155, 176, 195, 131, 132, 187, 145, 219, 218, 234, 164, 211, 210, 216, 235,
-        201, 193, 196, 185, 177, 171, 175, 167, 178, 173, 221, 215, 206, 194, 204,  66,
-        174, 233, 202, 223, 217, 229, 199, 208, 212, 228, 166, 184, 222, 209, 213, 207,
-        214, 181, 226, 232, 231, 197, 189, 188, 190, 180, 163, 149, 169, 154,  49, 242,
-        153, 251, 225, 244, 243, 254, 236, 230, 237, 250, 168, 198, 245, 238, 252, 248,
-        240, 182, 247, 249, 253, 241, 224, 220, 203, 227, 186, 191, 138, 192,  84,  77,
-        140,  86,  70, 162, 150, 165, 106,  51, 108, 179,   4, 172,  79, 161,  67,  62,
-        124,   6,  10,  41,  42,  92,  13,  20,  63,  16,   1,   8,  24,  48,   0,  12,
-        94,  14,  17,  25,  36,  31,   9,   7,  75,  18,   2,   3,  21,  27,   5,  15,
-        97,  26,  19,  11,  32,  82,  99,  29, 122,  45,  95,  88,  50, 102, 100, 103,
-        151, 121, 104, 133,  93, 113, 110, 137, 118, 127,  58,  22,  59,  46,  64,  54,
-        125,  61,  90,  44,  39,  28,  40,  72, 109,  30,  43,  56,  34,  23,  35,  85,
-        129,  68,  60,  33,  57,  81,  55,  78, 152, 142,  69, 111, 101,  53,  47, 114,
-        146,  65,  80, 130,  74,  52, 112, 115, 141,  96, 135, 116, 128, 119, 144, 205,
-};
+extern const p8 byte_commonness[256];
+
+// NATIVE_BYTE_COMMONNESS_BEGIN
+__asm__(
+    ASM_RODATA_OBJECT_BEGIN(byte_commonness, 16)
+    ".byte 239,170,160,157,158,148,143,139,156,200,246,117,134,136,123,183\n"
+    ".byte 159,107,87,83,98,120,91,89,126,76,37,38,73,71,105,147\n"
+    ".byte 255,155,176,195,131,132,187,145,219,218,234,164,211,210,216,235\n"
+    ".byte 201,193,196,185,177,171,175,167,178,173,221,215,206,194,204,66\n"
+    ".byte 174,233,202,223,217,229,199,208,212,228,166,184,222,209,213,207\n"
+    ".byte 214,181,226,232,231,197,189,188,190,180,163,149,169,154,49,242\n"
+    ".byte 153,251,225,244,243,254,236,230,237,250,168,198,245,238,252,248\n"
+    ".byte 240,182,247,249,253,241,224,220,203,227,186,191,138,192,84,77\n"
+    ".byte 140,86,70,162,150,165,106,51,108,179,4,172,79,161,67,62\n"
+    ".byte 124,6,10,41,42,92,13,20,63,16,1,8,24,48,0,12\n"
+    ".byte 94,14,17,25,36,31,9,7,75,18,2,3,21,27,5,15\n"
+    ".byte 97,26,19,11,32,82,99,29,122,45,95,88,50,102,100,103\n"
+    ".byte 151,121,104,133,93,113,110,137,118,127,58,22,59,46,64,54\n"
+    ".byte 125,61,90,44,39,28,40,72,109,30,43,56,34,23,35,85\n"
+    ".byte 129,68,60,33,57,81,55,78,152,142,69,111,101,53,47,114\n"
+    ".byte 146,65,80,130,74,52,112,115,141,96,135,116,128,119,144,205\n"
+    ASM_OBJECT_END(byte_commonness)
+);
+// NATIVE_BYTE_COMMONNESS_END
 
 #if ARM64
 /*
@@ -11141,13 +11209,18 @@ p8 address_to memory_copy_end(p8 address_to destination, address_any source,
         with one compare against memory and the branch predicts perfectly
         after the first call, so there is nothing to win by packing it.
 */
-/*
-        KEEP because assembly is the only thing that touches them and -flto
-        cannot see into an asm string.
-*/
 #ifndef KERNEL_MODE
-KEEP p8 cpu_has_avx2 = 0;
-KEEP p8 cpu_has_avx512 = 0;
+extern p8 cpu_has_avx2;
+extern p8 cpu_has_avx512;
+
+__asm__(
+    ASM_BSS_OBJECT_BEGIN(cpu_has_avx2, 1)
+    ".zero 1\n"
+    ASM_OBJECT_END(cpu_has_avx2)
+    ASM_BSS_OBJECT_BEGIN(cpu_has_avx512, 1)
+    ".zero 1\n"
+    ASM_OBJECT_END(cpu_has_avx512)
+);
 #endif
 fn moonwater_cpu_detect(void);
 //      the one loop in the text tools that is purely a scan -- nothing is
@@ -11220,24 +11293,17 @@ address_any memory_search(address_any block, positive size,
         of the complement and of the digits: byte_class_holds answers both.
 */
 // A space or a tab: what POSIX calls a blank, and what IFS is by default.
-const b8 string_set_blanks[STRING_SET_BYTES] = {
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-};
+extern const b8 string_set_blanks[STRING_SET_BYTES];
+
+__asm__(
+    ASM_RODATA_OBJECT_BEGIN(string_set_blanks, 16)
+    ".zero 9\n"
+    ".byte 1\n"
+    ".zero 22\n"
+    ".byte 1\n"
+    ".zero 223\n"
+    ASM_OBJECT_END(string_set_blanks)
+);
 
 /*
         The twelve names POSIX gives to sets of bytes.
@@ -11634,7 +11700,13 @@ bipolar system_call_6(positive syscall, positive argument_1,
                       positive argument_4, positive argument_5,
                       positive argument_6);
 
-KEEP p8 address_to program_stack_base = 0;
+extern p8 address_to program_stack_base;
+
+__asm__(
+    ASM_BSS_OBJECT_BEGIN(program_stack_base, 8)
+    ".zero 8\n"
+    ASM_OBJECT_END(program_stack_base)
+);
 
 /*
         A program's own arguments.
@@ -11658,8 +11730,18 @@ KEEP p8 address_to program_stack_base = 0;
         shell points these two at the words it already has and puts them back
         afterwards.
 */
-static KEEP string_address address_to program_words;
-static KEEP b32 program_words_count;
+extern string_address address_to program_words
+    __attribute__((visibility("hidden")));
+extern b32 program_words_count __attribute__((visibility("hidden")));
+
+__asm__(
+    ASM_HIDDEN_BSS_OBJECT_BEGIN(program_words, 8)
+    ".zero 8\n"
+    ASM_OBJECT_END(program_words)
+    ASM_HIDDEN_BSS_OBJECT_BEGIN(program_words_count, 4)
+    ".zero 4\n"
+    ASM_OBJECT_END(program_words_count)
+);
 
 /*
         These are state accessors, but they are hot state accessors: every
@@ -11872,7 +11954,7 @@ typedef struct timespec
 } timespec;
 
 // User required implementations
-b32 main();
+KEEP b32 main();
 
 // Platform required implementations
 fn exit(b32 code);
@@ -12092,9 +12174,6 @@ __declspec(dllimport) HMODULE __stdcall LoadLibraryA(LPCSTR);
 __declspec(dllimport) FARPROC __stdcall GetProcAddress(HMODULE, LPCSTR);
 __declspec(dllimport) int __stdcall FreeLibrary(HMODULE);
 #endif
-
-positive limit_max_name_length = 256;
-string library_fallback_system_paths = "/lib:/usr/local/lib:/usr/lib";
 
 bool file_valid(file_address source);
 fn file_new_lazy(file_address result, string_address path, positive flags);
@@ -12814,16 +12893,13 @@ __asm__(
 //
 #define MOONWATER_WORKING_DIRECTORY_SIZE 1024
 
-//
-//      KEEP, because on anything but Windows the only thing that names this
-//      is the assembly below, and -flto cannot see into an asm string. The C
-//      that used to reference it was a wrapper forwarding to that assembly;
-//      once the assembly took the name the wrapper went, and with it the last
-//      reference the optimiser could follow. It dropped the buffer and left
-//      the assembly pointing at nothing, which is a link error and not a
-//      quiet one -- but only when something links, which no lane did.
-//
-KEEP p8 working_directory[MOONWATER_WORKING_DIRECTORY_SIZE] = {0};
+extern p8 working_directory[MOONWATER_WORKING_DIRECTORY_SIZE];
+
+__asm__(
+    ASM_BSS_OBJECT_BEGIN(working_directory, 16)
+    ASM_ZERO(MOONWATER_WORKING_DIRECTORY_SIZE)
+    ASM_OBJECT_END(working_directory)
+);
 
 #ifndef WINDOWS
 
