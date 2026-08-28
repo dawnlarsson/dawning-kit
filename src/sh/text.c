@@ -4512,13 +4512,12 @@ static b32 text_cut()
                         {
                                 bool split = false;
 
-                                for (positive c = 0; c < text_line_length; c++)
-                                        if (whitespace ? text_blank(text_line[c])
-                                                       : text_line[c] == delimiter)
-                                        {
-                                                split = true;
-                                                break;
-                                        }
+                                if (whitespace)
+                                        for (positive c = 0; c < text_line_length && !split; c++)
+                                                split = text_blank(text_line[c]);
+                                else
+                                        split = memory_first_of(text_line, delimiter,
+                                                                text_line_length) != null;
 
                                 // A line with no delimiter is one whole field,
                                 // and is printed unchanged unless -s says not
@@ -5264,20 +5263,13 @@ static b32 text_uniq()
 
                         bool same = have_held && one == two;
 
-                        for (positive c = 0; same && c < one; c++)
-                        {
-                                p8 a = text_line[skip + c];
-                                p8 b = held[held_skip + c];
+                        if (same && !fold)
+                                same = !memory_compare(text_line + skip, held + held_skip, one);
 
-                                if (fold)
-                                {
-                                        a = text_lower(a);
-                                        b = text_lower(b);
-                                }
-
-                                if (a != b)
+                        for (positive c = 0; same && fold && c < one; c++)
+                                if (text_lower(text_line[skip + c]) !=
+                                    text_lower(held[held_skip + c]))
                                         same = false;
-                        }
 
                         if (same)
                         {
@@ -5488,14 +5480,12 @@ static fn grep_literal_keep()
         memory_copy(grep_literal, regex_literal, regex_literal_length);
 }
 
-static positive grep_skip(positive address_to bytes)
+static bool grep_skip(positive address_to lines, positive address_to bytes)
 {
-        positive lines = 0;
-
         for (;;)
         {
                 if (!text_fill())
-                        break;
+                        return false;
 
                 p8 address_to at = text_input.buffer + text_input.position;
                 positive left = text_input.filled - text_input.position;
@@ -5507,15 +5497,16 @@ static positive grep_skip(positive address_to bytes)
                 while (stop && at[stop - 1] != text_delimiter)
                         stop--;
 
-                lines += memory_count(at, stop, text_delimiter);
-                *bytes += stop;
+                address_to lines += memory_count(at, stop, text_delimiter);
+                address_to bytes += stop;
                 text_input.position += stop;
 
-                if (found || text_input.position < text_input.filled)
-                        break;
-        }
+                if (found)
+                        return true;
 
-        return lines;
+                if (text_input.position < text_input.filled)
+                        return false;
+        }
 }
 
 static fn grep_hold_clear()
@@ -5788,13 +5779,9 @@ static string_address grep_glob_keep(string_address value)
 
 static string_address grep_base(string_address path)
 {
-        string_address at = path;
+        string_address last = string_last_of(path, '/');
 
-        for (positive c = 0; path[c]; c++)
-                if (path[c] == '/')
-                        at = path + c + 1;
-
-        return at;
+        return last ? last + 1 : path;
 }
 
 static bool grep_globs_have(string_address address_to list, b32 count,
@@ -6571,11 +6558,19 @@ static b32 text_grep()
 
                 for (;;)
                 {
+                        // The line skipping stopped on holds the fixed string
+                        // already, and asking the machine again would be the
+                        // same search a second time -- unless -x or -w put
+                        // something around it, or the line was too long to
+                        // arrive whole.
+                        bool sure = false;
+
                         if (skipping)
                         {
                                 positive jumped = 0;
 
-                                number += grep_skip(address_of jumped);
+                                sure = grep_skip(address_of number, address_of jumped) &&
+                                       !whole_line && !whole_word;
                                 offset += jumped;
                         }
 
@@ -6589,7 +6584,8 @@ static b32 text_grep()
                         offset += text_line_length + (text_line_ended ? 1 : 0);
 
                         bool hit = !never &&
-                                   regex_search(text_line, text_line_length, 0);
+                                   ((sure && text_line_length < TEXT_LINE_MAX) ||
+                                    regex_search(text_line, text_line_length, 0));
 
                         if (hit == invert)
                         {
@@ -7890,12 +7886,8 @@ static text_long sed_long_options[] = {
 */
 static bool sed_temporary(string_address name, p8 address_to into, positive slot)
 {
-        positive length = string_length(name);
-        positive cut = 0;
-
-        for (positive i = 0; i < length; i++)
-                if (name[i] == '/')
-                        cut = i + 1;
+        string_address last = string_last_of(name, '/');
+        positive cut = last ? (positive)(last - name) + 1 : 0;
 
         if (cut + 24 >= TEXT_PATH_MAX)
                 return false;
@@ -9258,14 +9250,14 @@ static fn sort_merge(positive from, positive middle, positive to)
                         sort_spare[at++] = sort_order[left++];
         }
 
-        while (left < middle)
-                sort_spare[at++] = sort_order[left++];
-
-        while (right < to)
-                sort_spare[at++] = sort_order[right++];
-
-        for (positive i = from; i < to; i++)
-                sort_order[i] = sort_spare[i];
+        // Whichever run is left over is already in order and goes across
+        // whole; only one of the two can be.
+        memory_copy_fast(sort_spare + at, sort_order + left,
+                         (middle - left) * sizeof(positive));
+        memory_copy_fast(sort_spare + at + (middle - left), sort_order + right,
+                         (to - right) * sizeof(positive));
+        memory_copy_fast(sort_order + from, sort_spare + from,
+                         (to - from) * sizeof(positive));
 }
 
 static fn sort_run(positive from, positive to)
