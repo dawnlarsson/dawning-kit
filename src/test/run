@@ -265,6 +265,23 @@ lane_exact()
 {
         failed=0
 
+        #
+        #       The file is generated, so the file can drift from what
+        #       generates it. That is not hypothetical here: the inventory
+        #       paragraph at the top of library.c spent months saying there
+        #       was no SIMD in the file, and saying it in both places, so
+        #       every regeneration put it back.
+        #
+        if command -v python3 > /dev/null 2>&1; then
+                if ! python3 kit/exact.py | diff -q - src/test/exact.c > /dev/null; then
+                        note "src/test/exact.c is not what kit/exact.py writes"
+                        note "  regenerate it: python3 kit/exact.py > src/test/exact.c"
+                        failed=1
+                fi
+        else
+                note "no python3, so exact.c was not checked against its generator"
+        fi
+
         exact_one x86_64 "$compiler" "" || failed=1
         exact_one arm64 aarch64-linux-gnu-gcc qemu-aarch64 || failed=1
         exact_one riscv64 riscv64-linux-gnu-gcc qemu-riscv64 || failed=1
