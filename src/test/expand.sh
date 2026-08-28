@@ -268,6 +268,14 @@ answer 'no offset'      'x=abc; echo "${x:1}"; echo after'
 answer 'no bare colon'  'x=abc; echo "${x:}"; echo after'
 answer 'no colon trim'  'x=abc; echo "${x:%b}"; echo after'
 answer 'no at offset'   'set -- a b; echo "${@:1}"; echo after'
+# Bash-only transformations must be implemented or refused. Handing the
+# original value back says they succeeded and lets wrong data travel onward.
+answer 'no replace all' 'x=aXb; echo "${x//X/-}"; echo after'
+answer 'no replace one' 'x=aXb; echo "${x/X/-}"; echo after'
+answer 'no uppercase'   'x=ab; echo "${x^^}"; echo after'
+answer 'no titlecase'   'x=ab; echo "${x^}"; echo after'
+answer 'no length default' 'x=abc; echo "${#x:-}"; echo after'
+answer 'no length trim' 'x=abc; echo "${#x%}"; echo after'
 answer 'word expands'   'y=w; printf "[%s]" ${nosuch-$y} END; echo'
 answer 'word is a word' 'printf "[%s]" ${nosuch-"a  b"} END; echo'
 #       The tail of an unquoted one is the result of an expansion like any
@@ -361,6 +369,7 @@ answer 'star unset'     'set --; printf "[%s]" "${*-none}" END; echo'
 answer 'at unset plus'  'set --; printf "[%s]" "${@+set}" END; echo'
 answer 'at unset colon' 'set --; printf "[%s]" "${@:-none}" END; echo'
 answer 'at after shift' 'set -- a b c; shift; printf "[%s]" "$@" $# END; echo'
+answer 'at after block shift' 'set -- a b c d e f; shift 3; printf "[%s]" "$@" $# END; echo'
 answer 'trim all'       'set -- aX aY; printf "[%s]" ${@#a} END; echo'
 answer 'trim all quoted' 'set -- aX aY; printf "[%s]" "${@#a}" END; echo'
 answer 'trim all star'  'set -- aX aY; printf "[%s]" ${*%Y} END; echo'
@@ -412,6 +421,8 @@ answer 'modulo'         'echo $((7 % 3)) $((-7 / 2)) $((-7 % 3))'
 group bases
 answer 'hex'            'echo $((0x10)) $((0xff)) $((0XFF))'
 answer 'octal'          'echo $((010)) $((0777))'
+answer 'hex cursor'     'echo $((0x1+2)) $((0Xf*2))'
+answer 'octal cursor'   'echo $((07+1)) $((077*2))'
 answer 'a big one'      'echo $((0x7fffffffffffffff))'
 
 group names
@@ -558,6 +569,9 @@ differs 'comma is not'  '1|' 0 'echo $((1,2))'
 #       A leading zero says octal, and an eight is not an octal digit -- so
 #       this is read as decimal rather than refused.
 differs 'a bad number'  '8|' 0 'echo $((08))'
+#       Arithmetic is a machine word here. A hexadecimal spelling one past
+#       signed positive wraps to minus one; dash clamps it to signed positive.
+differs 'hex wraps'      '-1|' 0 'echo $((0xffffffffffffffff))'
 #       ++ and -- are here, which is one more than POSIX asks for.
 differs 'has increment' '1 2|' 0 'x=1; echo $((x++)) $x'
 

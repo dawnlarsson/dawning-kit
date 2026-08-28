@@ -1,4 +1,4 @@
-#include "../library.c"
+#include "../compiler_memory.c"
 
 // Reduces compiler noise for tests
 #if defined(__clang__)
@@ -809,6 +809,118 @@ test(created_file_mode) {
         return true;
 }
 
+/*
+        The folded write loop's three observable exits.
+
+        An invalid descriptor is the ordinary negative-syscall path. The
+        zero-length call pairs it with an invalid address so the assembly has
+        to take its no-syscall fast path before the pointer can matter.
+*/
+test(system_write_all_zero_and_fault) {
+        fail_not_equals(system_write_all((positive)-1, address_bad, 0), 0);
+        fail_not_equals(system_write_all((positive)-1, (address_any)"x", 1), 0);
+
+        return true;
+}
+
+/*
+        A nonblocking pipe is a controllable positive-short-write followed by
+        EAGAIN: offer more than its empty capacity, then leave it undrained
+        while system_write_all runs. The answer must be the positive prefix,
+        not the negative second result, and every reported byte must really
+        be present in the pipe.
+*/
+test(system_write_all_partial_then_fault) {
+        enum { F_GETPIPE_SZ = 1032 };
+        b32 ends[2];
+        p8 readback[4096];
+        positive seen = 0;
+        bool correct = true;
+
+        fail_not_equals(system_call_2(syscall(pipe2), (positive)ends, O_NONBLOCK), 0);
+
+        bipolar capacity = system_call_2(syscall(fcntl), ends[1], F_GETPIPE_SZ);
+        fail(capacity > 0);
+
+        positive offered_length = (positive)capacity + sizeof(readback);
+        bipolar mapped = system_call_6(syscall(mmap), 0, offered_length,
+                                       FILE_PROTECT_READ | FILE_PROTECT_WRITE,
+                                       FILE_MAP_PRIVATE | FILE_MAP_ANONYMOUS,
+                                       (positive)-1, 0);
+        fail(mapped >= 0);
+
+        memory_fill((address_any)(positive)mapped, 0x5a, offered_length);
+
+        positive wrote = system_write_all((positive)ends[1],
+                                           (address_any)(positive)mapped,
+                                           offered_length);
+
+        if (!wrote || wrote >= offered_length)
+                correct = false;
+
+        while (correct && seen < wrote)
+        {
+                positive want = wrote - seen;
+
+                if (want > sizeof(readback))
+                        want = sizeof(readback);
+
+                bipolar got = system_call_3(syscall(read), ends[0],
+                                             (positive)readback, want);
+
+                if (got <= 0)
+                {
+                        correct = false;
+                        break;
+                }
+
+                for (positive i = 0; i < (positive)got; i++)
+                        if (readback[i] != 0x5a)
+                                correct = false;
+
+                seen += (positive)got;
+        }
+
+        system_call_1(syscall(close), ends[0]);
+        system_call_1(syscall(close), ends[1]);
+        system_call_2(syscall(munmap), (positive)mapped, offered_length);
+
+        fail(correct && seen == wrote);
+        return true;
+}
+
+/*
+        Linux caps one write syscall at MAX_RW_COUNT. /dev/null consumes no
+        pages, so a 2 GiB anonymous mapping makes that cap force two positive
+        writes without allocating or storing 2 GiB. Returning the whole span
+        proves the loop advanced the pointer/count and retried after progress.
+*/
+test(system_write_all_retries_short_progress) {
+        positive span = (positive)0x80000000u;
+        bipolar mapped = system_call_6(syscall(mmap), 0, span, FILE_PROTECT_READ,
+                                       FILE_MAP_PRIVATE | FILE_MAP_ANONYMOUS,
+                                       (positive)-1, 0);
+        fail(mapped >= 0);
+
+        bipolar sink = system_call_4(syscall(openat), AT_FDCWD,
+                                     (positive)"/dev/null", FILE_READ_WRITE, 0);
+
+        if (sink < 0)
+        {
+                system_call_2(syscall(munmap), (positive)mapped, span);
+                return false;
+        }
+
+        positive wrote = system_write_all((positive)sink,
+                                           (address_any)(positive)mapped, span);
+
+        system_call_1(syscall(close), sink);
+        system_call_2(syscall(munmap), (positive)mapped, span);
+
+        fail_not_equals(wrote, span);
+        return true;
+}
+
 #endif
 
 
@@ -878,6 +990,9 @@ test_case test_cases[] = {
 #if LINUX
         case(syscall_argument_four),
         case(created_file_mode),
+        case(system_write_all_zero_and_fault),
+        case(system_write_all_partial_then_fault),
+        case(system_write_all_retries_short_progress),
 #endif
 
         {null, null},

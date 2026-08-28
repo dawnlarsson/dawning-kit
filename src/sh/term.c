@@ -153,8 +153,8 @@ static fn row_copy(unsigned int to, unsigned int from)
         struct window_cell address_to target = row_cells(to);
         unsigned int length = address_to row_length(from);
 
-        for (unsigned int c = 0; c < length; c++)
-                target[c] = source[c];
+        memory_copy(target, source,
+                    (positive)length * sizeof(struct window_cell));
 
         address_to row_length(to) = length;
 }
@@ -261,8 +261,9 @@ static fn open_gap(unsigned int at, unsigned int count)
         reach(row, last);
         cells = row_cells(row);
 
-        for (unsigned int c = last; c-- > at + count;)
-                cells[c] = cells[c - count];
+        memory_copy(cells + at + count, cells + at,
+                    (positive)(last - at - count) *
+                        sizeof(struct window_cell));
 
         for (unsigned int c = at; c < at + count && c < last; c++)
                 cell_clear(row, c);
@@ -326,18 +327,28 @@ static fn emit(unsigned int byte)
                 to_shell[to_shell_length++] = (p8)byte;
 }
 
+static fn emit_bytes(address_any data, positive length)
+{
+        positive room = TO_SHELL_MAX - to_shell_length;
+        positive take = length < room ? length : room;
+
+        if (take)
+                memory_copy_fast(to_shell + to_shell_length, data, take);
+
+        to_shell_length += (unsigned int)take;
+}
+
 static fn emit_string(const char address_to text)
 {
-        while (address_to text)
-                emit((p8) address_to text++);
+        emit_bytes((address_any)text, string_length((string_address)text));
 }
 
 static fn emit_number(unsigned int value)
 {
-        if (value >= 10)
-                emit_number(value / 10);
+        p8 digits[24];
+        positive length = positive_into(digits, value);
 
-        emit('0' + value % 10);
+        emit_bytes(digits, length);
 }
 
 // One escape sequence at a time, so the parser is a state and a few numbers.
@@ -702,8 +713,9 @@ static fn csi_final(unsigned int final)
 
                 gone = a < last - column ? a : last - column;
 
-                for (i = column; i + gone < last; i++)
-                        cells[i] = cells[i + gone];
+                memory_copy(cells + column, cells + column + gone,
+                            (positive)(last - column - gone) *
+                                sizeof(struct window_cell));
 
                 address_to length = last - gone;
                 touch(row);
@@ -727,8 +739,7 @@ static fn csi_final(unsigned int final)
         case 'g':
                 if (parameter_count && parameters[0] == 3)
                 {
-                        for (i = 0; i < TAB_STOPS; i++)
-                                tab_stop[i] = 0;
+                        memory_fill(tab_stop, 0, sizeof(tab_stop));
                 }
                 else if (column < TAB_STOPS)
                         tab_stop[column] = 0;
@@ -1185,7 +1196,10 @@ static b32 line_anchored;
 // row: the screen scrolls out from under a long line, and a row would then be
 // pointing at somebody else's text. Out here with the rest of what the output
 // half touches, because a resize has an opinion about the column.
-static unsigned int line_anchor, line_anchor_column;
+#ifndef KERNEL_MODE
+static unsigned int line_anchor;
+#endif
+static unsigned int line_anchor_column;
 
 /*
         What the output half has to say about a line being typed, and no more.
@@ -1276,8 +1290,8 @@ static fn line_insert(unsigned int character)
         if (line_length + 1 >= LINE_MAX)
                 return;
 
-        for (unsigned int at = line_length; at > line_point; at--)
-                line[at] = line[at - 1];
+        memory_copy(line + line_point + 1, line + line_point,
+                    line_length - line_point);
 
         line[line_point++] = (p8)character;
         line_length++;
@@ -1287,8 +1301,7 @@ static fn line_take(unsigned int from, unsigned int to)
 {
         unsigned int gone = to - from;
 
-        for (unsigned int at = from; at + gone < line_length; at++)
-                line[at] = line[at + gone];
+        memory_copy(line + from, line + to, line_length - to);
 
         line_length -= gone;
         line_point = from;
@@ -1317,8 +1330,7 @@ static fn line_from_history()
                                   ? history_length[history_at % LINE_HISTORY]
                                   : history_held_length;
 
-        for (unsigned int at = 0; at < length; at++)
-                line[at] = from[at];
+        memory_copy_fast(line, (address_any)from, length);
 
         line_length = length;
         line_point = length;
@@ -1348,8 +1360,7 @@ static fn line_remember()
 
         slot = history_count % LINE_HISTORY;
 
-        for (unsigned int at = 0; at < line_length; at++)
-                history[slot][at] = line[at];
+        memory_copy_fast(history[slot], line, line_length);
 
         history_length[slot] = line_length;
         history_count++;
@@ -1374,8 +1385,9 @@ static fn line_clear_screen()
         {
                 struct window_cell address_to cells = row_cells(r);
 
-                for (unsigned int at = 0; at < kept; at++)
-                        held[at] = cells[at];
+                memory_copy_fast(held, cells,
+                                 (positive)kept *
+                                     sizeof(struct window_cell));
         }
         else
                 kept = 0;
@@ -1432,8 +1444,7 @@ static fn line_accept()
 {
         line_remember();
 
-        for (unsigned int at = 0; at < line_length; at++)
-                emit(line[at]);
+        emit_bytes(line, line_length);
 
         emit('\n');
         line_done();
@@ -1485,8 +1496,7 @@ static b32 line_key(unsigned int character, unsigned int code)
 
                 if (history_at == history_count)
                 {
-                        for (unsigned int at = 0; at < line_length; at++)
-                                history_held[at] = line[at];
+                        memory_copy_fast(history_held, line, line_length);
 
                         history_held_length = line_length;
                 }
@@ -1654,8 +1664,8 @@ static fn SPARE term_key(unsigned int character, unsigned int code)
         sequence = key_sequence(code);
 
         if (sequence)
-                while (address_to sequence)
-                        emit((p8) address_to sequence++);
+                emit_bytes((address_any)sequence,
+                           string_length((string_address)sequence));
 }
 
 /*

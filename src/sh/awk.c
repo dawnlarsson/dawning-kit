@@ -967,22 +967,16 @@ static fn awk_write_exponent(p8 address_to out, positive address_to at, b32 expo
         positive where = address_to at;
         b32 magnitude = exponent < 0 ? -exponent : exponent;
         p8 digits[8];
-        b32 have = 0;
+        positive have = positive_into(digits, (positive)magnitude);
 
         out[where++] = upper ? 'E' : 'e';
         out[where++] = exponent < 0 ? '-' : '+';
 
-        while (magnitude)
-        {
-                digits[have++] = (p8)('0' + magnitude % 10);
-                magnitude /= 10;
-        }
+        if (have < 2)
+                out[where++] = '0';
 
-        while (have < 2)
-                digits[have++] = '0';
-
-        while (have)
-                out[where++] = digits[--have];
+        memory_copy_fast(out + where, digits, have);
+        where += have;
 
         address_to at = where;
 }
@@ -1304,7 +1298,7 @@ static decimal awk_scan_number(string_address text, positive length, positive ad
                 at++;
         }
 
-        while (at < length && text[at] >= '0' && text[at] <= '9')
+        while (at < length && text_digit(text[at]))
         {
                 any = true;
 
@@ -1323,7 +1317,7 @@ static decimal awk_scan_number(string_address text, positive length, positive ad
         {
                 at++;
 
-                while (at < length && text[at] >= '0' && text[at] <= '9')
+                while (at < length && text_digit(text[at]))
                 {
                         any = true;
 
@@ -1354,11 +1348,11 @@ static decimal awk_scan_number(string_address text, positive length, positive ad
                         step++;
                 }
 
-                if (step < length && text[step] >= '0' && text[step] <= '9')
+                if (step < length && text_digit(text[step]))
                 {
                         b32 value = 0;
 
-                        while (step < length && text[step] >= '0' && text[step] <= '9')
+                        while (step < length && text_digit(text[step]))
                         {
                                 if (value < 100000)
                                         value = value * 10 + (text[step] - '0');
@@ -1528,25 +1522,7 @@ static awk_text address_to awk_text_of_number(decimal number, string_address for
                 if (number > -1e18 && number < 1e18)
                 {
                         bipolar whole = (bipolar)number;
-                        positive magnitude = whole < 0 ? (positive)-whole : (positive)whole;
-                        p8 digits[24];
-                        b32 have = 0;
-                        positive at = 0;
-
-                        if (!magnitude)
-                                digits[have++] = '0';
-
-                        while (magnitude)
-                        {
-                                digits[have++] = (p8)('0' + magnitude % 10);
-                                magnitude /= 10;
-                        }
-
-                        if (whole < 0)
-                                room[at++] = '-';
-
-                        while (have)
-                                room[at++] = digits[--have];
+                        positive at = bipolar_into(room, whole);
 
                         return awk_text_new(room, at);
                 }
@@ -1691,8 +1667,8 @@ static awk_array address_to awk_array_new()
         made->count = 0;
         made->buckets = (awk_slot address_to address_to)awk_take(made->width * sizeof(address_any));
 
-        for (positive i = 0; i < made->width; i++)
-                made->buckets[i] = null;
+        memory_fill(made->buckets, 0,
+                    made->width * sizeof(address_any));
 
         return made;
 }
@@ -1703,8 +1679,7 @@ static fn awk_array_grow(awk_array address_to which)
         awk_slot address_to address_to buckets =
             (awk_slot address_to address_to)awk_take(width * sizeof(address_any));
 
-        for (positive i = 0; i < width; i++)
-                buckets[i] = null;
+        memory_fill(buckets, 0, width * sizeof(address_any));
 
         for (positive i = 0; i < which->width; i++)
         {
@@ -2069,11 +2044,10 @@ static fn awk_pieces_room(positive want)
         positive address_to starts = (positive address_to)awk_take(room * sizeof(positive));
         positive address_to lengths = (positive address_to)awk_take(room * sizeof(positive));
 
-        for (positive i = 0; i < awk_piece_count; i++)
-        {
-                starts[i] = awk_piece_start[i];
-                lengths[i] = awk_piece_length[i];
-        }
+        memory_copy_fast(starts, awk_piece_start,
+                         awk_piece_count * sizeof(positive));
+        memory_copy_fast(lengths, awk_piece_length,
+                         awk_piece_count * sizeof(positive));
 
         awk_give(awk_piece_start);
         awk_give(awk_piece_length);
@@ -2254,8 +2228,8 @@ static fn awk_fields_reserve(positive want)
                 made[i].state = AWK_UNSET;
         }
 
-        for (positive i = 0; i < awk_fields_room; i++)
-                made[i] = awk_fields[i];
+        memory_copy_fast(made, awk_fields,
+                         awk_fields_room * sizeof(awk_value));
 
         awk_give(awk_fields);
         awk_fields = made;
@@ -2467,7 +2441,7 @@ static fn awk_writer_flush(awk_writer address_to which)
         if (!which->used)
                 return;
 
-        text_write_raw((positive)which->handle, which->buffer, which->used);
+        system_write_all((positive)which->handle, which->buffer, which->used);
         which->used = 0;
 }
 
@@ -2476,14 +2450,14 @@ static fn awk_writer_put(awk_writer address_to which, string_address data, posit
         if (which->handle == 2)
         {
                 awk_writer_flush(address_of awk_standard_out);
-                text_write_raw(2, (address_any)data, length);
+                system_write_all(2, (address_any)data, length);
                 return;
         }
 
         if (length >= sizeof(which->buffer))
         {
                 awk_writer_flush(which);
-                text_write_raw((positive)which->handle, (address_any)data, length);
+                system_write_all((positive)which->handle, (address_any)data, length);
                 return;
         }
 
@@ -3034,8 +3008,12 @@ static fn awk_builder_char(awk_builder address_to build, p8 character)
 
 static fn awk_builder_fill(awk_builder address_to build, p8 character, b32 count)
 {
-        for (b32 i = 0; i < count; i++)
-                awk_builder_char(build, character);
+        if (count <= 0)
+                return;
+
+        awk_builder_room(build, build->used + (positive)count + 1);
+        memory_fill(build->data + build->used, character, (positive)count);
+        build->used += (positive)count;
 }
 
 static awk_text address_to awk_builder_text(awk_builder address_to build)
@@ -3075,24 +3053,7 @@ static b32 awk_integer_digits(decimal value, p8 address_to out, bool address_to 
 
         if (magnitude < 1e18)
         {
-                positive whole = (positive)magnitude;
-                p8 digits[24];
-                b32 have = 0;
-                b32 at = 0;
-
-                if (!whole)
-                        digits[have++] = '0';
-
-                while (whole)
-                {
-                        digits[have++] = (p8)('0' + whole % 10);
-                        whole /= 10;
-                }
-
-                while (have)
-                        out[at++] = digits[--have];
-
-                out[at] = end;
+                b32 at = (b32)positive_into_string(out, (positive)magnitude);
 
                 if (at == 1 && out[0] == '0')
                         address_to negative = false;
@@ -3173,8 +3134,13 @@ static awk_text address_to awk_sprintf(string_address format, positive length,
                         }
                 }
                 else
-                        while (at < length && format[at] >= '0' && format[at] <= '9')
-                                width = width * 10 + (format[at++] - '0');
+                {
+                        positive digits_taken;
+                        width = (b32)string_digits_max(format + at,
+                                                       length - at,
+                                                       address_of digits_taken);
+                        at += digits_taken;
+                }
 
                 if (at < length && format[at] == '.')
                 {
@@ -3194,8 +3160,13 @@ static awk_text address_to awk_sprintf(string_address format, positive length,
                                         precision = -1;
                         }
                         else
-                                while (at < length && format[at] >= '0' && format[at] <= '9')
-                                        precision = precision * 10 + (format[at++] - '0');
+                        {
+                                positive digits_taken;
+                                precision = (b32)string_digits_max(format + at,
+                                                                   length - at,
+                                                                   address_of digits_taken);
+                                at += digits_taken;
+                        }
                 }
 
                 // The length modifiers C needs and awk has no use for.
@@ -3279,9 +3250,7 @@ static awk_text address_to awk_sprintf(string_address format, positive length,
                                 {
                                         prefix[prefixed++] = '-';
                                         body--;
-
-                                        for (b32 i = 0; i < body; i++)
-                                                room[i] = room[i + 1];
+                                        body_at = room + 1;
                                 }
 
                                 break;
@@ -3289,26 +3258,26 @@ static awk_text address_to awk_sprintf(string_address format, positive length,
 
                         whole = value < 0 ? (positive)(bipolar)value : (positive)value;
 
-                        b32 base = conversion == 'o' ? 8 : (conversion == 'u' ? 10 : 16);
-                        string_address letters = conversion == 'X' ? "0123456789ABCDEF"
-                                                                   : "0123456789abcdef";
-                        p8 digits[32];
-                        b32 have = 0;
+                        positive base = conversion == 'o' ? 8
+                                                          : (conversion == 'u' ? 10 : 16);
 
-                        if (!whole && precision != 0)
-                                digits[have++] = '0';
-
-                        while (whole)
+                        /*
+                                Octal's alternate zero is a digit, not a
+                                prefix: it counts towards integer precision.
+                                Giving the converter the following byte keeps
+                                that rule without moving the result. It also
+                                makes %#.0o of zero the required single zero.
+                        */
+                        if (alternate && conversion == 'o')
                         {
-                                digits[have++] = letters[whole % base];
-                                whole /= base;
+                                room[0] = '0';
+                                body = whole ? 1 + (b32)positive_into_base(room + 1, whole, 8,
+                                                                          false)
+                                             : 1;
                         }
-
-                        if (alternate && conversion == 'o' && digits[have - 1] != '0')
-                                digits[have++] = '0';
-
-                        while (have)
-                                room[body++] = digits[--have];
+                        else if (whole || precision != 0)
+                                body = (b32)positive_into_base(room, whole, base,
+                                                               conversion == 'X');
 
                         if (alternate && (conversion == 'x' || conversion == 'X') && exact != 0)
                         {
@@ -3623,41 +3592,12 @@ static fn awk_fatal(string_address about, string_address reason)
 static fn awk_syntax(string_address reason)
 {
         p8 where[64];
-        positive at = 0;
-        b32 line = awk_line_number;
-        p8 digits[16];
-        b32 have = 0;
 
         memory_copy(where, "line ", 5);
-        at = 5;
-
-        if (!line)
-                digits[have++] = '0';
-
-        while (line)
-        {
-                digits[have++] = (p8)('0' + line % 10);
-                line /= 10;
-        }
-
-        while (have)
-                where[at++] = digits[--have];
-
-        where[at] = end;
+        positive at = 5 + positive_into_string(where + 5, (positive)awk_line_number);
         awk_flush_everything();
         text_error(where, reason);
         awk_leave(1);
-}
-
-static bool awk_name_start(p8 character)
-{
-        return (character >= 'a' && character <= 'z') ||
-               (character >= 'A' && character <= 'Z') || character == '_';
-}
-
-static bool awk_name_part(p8 character)
-{
-        return awk_name_start(character) || text_digit(character);
 }
 
 static bool awk_operand_before()
@@ -3679,18 +3619,15 @@ static bool awk_operand_before()
         return false;
 }
 
-static b32 awk_hex_of(p8 character)
+static bool awk_name_start(p8 character)
 {
-        if (character >= '0' && character <= '9')
-                return character - '0';
+        return (character >= 'a' && character <= 'z') ||
+               (character >= 'A' && character <= 'Z') || character == '_';
+}
 
-        if (character >= 'a' && character <= 'f')
-                return character - 'a' + 10;
-
-        if (character >= 'A' && character <= 'F')
-                return character - 'A' + 10;
-
-        return -1;
+static bool awk_name_part(p8 character)
+{
+        return awk_name_start(character) || text_digit(character);
 }
 
 static b32 awk_escape(positive address_to at, positive stop)
@@ -3715,38 +3652,37 @@ static b32 awk_escape(positive address_to at, positive stop)
 
         if (character >= '0' && character <= '7')
         {
-                b32 value = character - '0';
+                positive first = address_to at - 1;
+                positive limit = stop - first;
+                positive used;
 
-                for (b32 i = 0; i < 2 && address_to at < stop; i++)
-                {
-                        p8 next = awk_source[address_to at];
+                if (limit > 3)
+                        limit = 3;
 
-                        if (next < '0' || next > '7')
-                                break;
+                positive value = string_digits_octal_escape_max(
+                    awk_source + first, limit, address_of used);
 
-                        value = value * 8 + (next - '0');
-                        address_to at += 1;
-                }
+                address_to at = first + used;
 
                 return value & 0xff;
         }
 
-        if (character == 'x' && address_to at < stop && awk_hex_of(awk_source[address_to at]) >= 0)
+        if (character == 'x')
         {
-                b32 value = 0;
+                positive limit = stop - address_to at;
+                positive used;
 
-                for (b32 i = 0; i < 2 && address_to at < stop; i++)
+                if (limit > 2)
+                        limit = 2;
+
+                positive value = string_digits_hexadecimal_escape_max(
+                    awk_source + address_to at, limit, address_of used);
+
+                if (used)
                 {
-                        b32 digit = awk_hex_of(awk_source[address_to at]);
-
-                        if (digit < 0)
-                                break;
-
-                        value = value * 16 + digit;
-                        address_to at += 1;
+                        address_to at += used;
+                        return value & 0xff;
                 }
-
-                return value & 0xff;
         }
 
         return character;
@@ -6077,20 +6013,7 @@ static fn awk_builtin(awk_node address_to node, awk_value address_to out)
                 for (positive i = 0; i < awk_piece_count; i++)
                 {
                         p8 name[24];
-                        positive value = i + 1;
-                        b32 have = 0;
-                        p8 digits[24];
-
-                        while (value)
-                        {
-                                digits[have++] = (p8)('0' + value % 10);
-                                value /= 10;
-                        }
-
-                        positive at = 0;
-
-                        while (have)
-                                name[at++] = digits[--have];
+                        positive at = positive_into(name, i + 1);
 
                         awk_slot address_to slot = awk_array_place(array, name, at);
 
@@ -6725,19 +6648,16 @@ static awk_text address_to awk_unescape(string_address text, positive length)
 
                 if (character >= '0' && character <= '7')
                 {
-                        b32 value = character - '0';
+                        positive limit = length - i;
+                        positive used;
 
-                        for (b32 step = 0; step < 2 && i + 1 < length; step++)
-                        {
-                                p8 next = text[i + 1];
+                        if (limit > 3)
+                                limit = 3;
 
-                                if (next < '0' || next > '7')
-                                        break;
+                        positive value = string_digits_octal_escape_max(
+                            text + i, limit, address_of used);
 
-                                value = value * 8 + (next - '0');
-                                i++;
-                        }
-
+                        i += used - 1;
                         awk_builder_char(address_of build, (p8)(value & 0xff));
                         continue;
                 }
@@ -6750,22 +6670,8 @@ static awk_text address_to awk_unescape(string_address text, positive length)
 
 static awk_text address_to awk_number_key(positive value)
 {
-        p8 digits[24];
         p8 room[24];
-        b32 have = 0;
-        positive at = 0;
-
-        if (!value)
-                digits[have++] = '0';
-
-        while (value)
-        {
-                digits[have++] = (p8)('0' + value % 10);
-                value /= 10;
-        }
-
-        while (have)
-                room[at++] = digits[--have];
+        positive at = positive_into(room, value);
 
         return awk_text_new(room, at);
 }
@@ -7066,8 +6972,10 @@ static fn awk_start()
         awk_standard_out.live = true;
         awk_standard_out.kind = AWK_TO_FILE;
 
-        for (b32 i = 0; i < 1023 && program_environment(i); i++)
-                awk_child_environment[i] = program_environment(i);
+        string_address address_to process_environment = program_environment_list();
+
+        for (b32 i = 0; process_environment && i < 1023 && process_environment[i]; i++)
+                awk_child_environment[i] = process_environment[i];
 
         awk_where_fs = awk_global_find("FS", 2);
         awk_where_ofs = awk_global_find("OFS", 3);
@@ -7104,9 +7012,9 @@ static fn awk_start()
 
         awk_array address_to environ = awk_cell_array(address_of awk_globals[awk_where_environ]);
 
-        for (b32 i = 0; program_environment(i); i++)
+        for (b32 i = 0; process_environment && process_environment[i]; i++)
         {
-                string_address entry = program_environment(i);
+                string_address entry = process_environment[i];
                 positive at = (positive)(string_first_of_or_end(entry, '=') - entry);
 
                 if (!entry[at])
@@ -7219,7 +7127,7 @@ static b32 text_awk()
                 if (at >= text_argument_count)
                         awk_usage();
 
-                string_address text = text_argument(at++);
+                string_address text = program_argument(at++);
 
                 awk_builder_put(address_of program, text, string_length(text));
         }
@@ -7235,7 +7143,7 @@ static b32 text_awk()
         for (b32 i = at; i < text_argument_count; i++)
         {
                 awk_text address_to key = awk_number_key((positive)count++);
-                string_address one = text_argument(i);
+                string_address one = program_argument(i);
 
                 slot = awk_array_place(argv, key->text, key->length);
                 awk_set_input_bytes(address_of slot->value, one, string_length(one));

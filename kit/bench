@@ -17,7 +17,14 @@ case ${1:-} in
 "")      source_file=kit/bench.c ;;
 floor)   source_file=kit/floor.c ;;
 numbers) source_file=kit/bench_numbers.c ;;
-*)       echo "bench: use 'sh kit/bench', 'sh kit/bench floor', or 'sh kit/bench numbers'" >&2; exit 2 ;;
+bases)   source_file=kit/bench_bases.c ;;
+padded)  source_file=kit/bench_padded.c ;;
+input-bases) source_file=kit/bench_parse_bases.c ;;
+fields)  source_file=kit/bench_into_padded.c ;;
+human)   source_file=kit/bench_human.c ;;
+human-nearest) source_file=kit/bench_human_nearest.c ;;
+paths)   source_file=kit/bench_paths.c ;;
+*)       echo "bench: use 'sh kit/bench', 'sh kit/bench floor', 'sh kit/bench numbers', 'sh kit/bench bases', 'sh kit/bench padded', 'sh kit/bench input-bases', 'sh kit/bench fields', 'sh kit/bench human', 'sh kit/bench human-nearest', or 'sh kit/bench paths'" >&2; exit 2 ;;
 esac
 
 host_system=$(uname -s)
@@ -59,7 +66,11 @@ run() {
                 -o "$work/$name" "$source_file" || return 1
 
         echo "$name:"
-        $runner "$work/$name"
+        if [ -z "$runner" ] && command -v taskset >/dev/null 2>&1; then
+                taskset -c 0 "$work/$name"
+        else
+                $runner "$work/$name"
+        fi
 }
 
 target_tools()

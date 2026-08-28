@@ -101,10 +101,8 @@ bipolar start_shell(b32 device)
         return child;
 }
 
-// A wait status carries the signal in the low seven bits and the exit code in
-// the next eight, so reading it as an exit code alone reports a crash as a
-// clean exit of zero -- which is the one thing this line exists to make
-// visible.
+// Reading a wait status as an exit code alone reports a crash as a clean exit
+// of zero -- which is the one thing this line exists to make visible.
 fn report_exit(positive status)
 {
         positive signal = status & 0x7f;
@@ -434,8 +432,7 @@ fn world_name(string_address root, p8 address_to into, positive room)
         if (count >= room)
                 count = room - 1;
 
-        memory_copy(into, root + start, count);
-        into[count] = 0;
+        memory_copy_end(into, root + start, count);
 }
 
 static b32 system_world()
@@ -528,7 +525,7 @@ static b32 system_world()
                         ended = status;
         }
 
-        return (b32)((ended >> 8) & 0xff);
+        return wait_status_code(ended);
 }
 
 // edit -------------------------------------------------------------

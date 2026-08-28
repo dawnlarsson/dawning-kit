@@ -329,6 +329,7 @@ compare 'in with parentheses' /dev/null 'BEGIN{a[1,2]=1; print ((1,2) in a), ((1
 compare 'subsep by hand' /dev/null 'BEGIN{a[1,2]=1; print ((1 SUBSEP 2) in a)}'
 compare 'counting' "$work/words" '{for(i=1;i<=NF;i++) n[$i]++} END{print length(n), n["alpha"]}'
 compare 'array length' /dev/null 'BEGIN{for(i=1;i<=10;i++) a[i]=i; print length(a)}'
+compare 'array grows intact' /dev/null 'BEGIN{for(i=1;i<=140;i++)a["k" i]=i; for(i=1;i<=140;i++)s+=a["k" i]; print length(a),s,a["k1"],a["k140"]}'
 compare 'sum over keys' /dev/null 'BEGIN{a[1]=1;a[2]=2;a[3]=3; for(k in a) s+=a[k]; print s}'
 
 #
@@ -394,6 +395,9 @@ compare 'printf integers' /dev/null 'BEGIN{printf "[%d][%5d][%-5d][%05d][%+d][% 
 compare 'printf integer rounding' /dev/null 'BEGIN{printf "[%d][%d][%d][%d]\n", 3.9, -3.9, 0.5, -0.5}'
 compare 'printf integer big' /dev/null 'BEGIN{printf "[%d][%d][%d]\n", 1e18, 2^53, -1e15}'
 compare 'printf bases' /dev/null 'BEGIN{printf "[%o][%x][%X][%u][%#o][%#x]\n", 8, 255, 255, 42, 8, 255}'
+compare 'printf bases zero precision' /dev/null 'BEGIN{printf "[%.0o][%.0u][%.0x][%.0X]\n", 0, 0, 0, 0}'
+compare 'printf alternate zero precision' /dev/null 'BEGIN{printf "[%#.0o][%#.0x][%#.0X]\n", 0, 0, 0}'
+compare 'printf bases with precision' /dev/null 'BEGIN{printf "[%#.3o][%#.1o][%.5x][%#.5X]\n", 8, 8, 255, 255}'
 compare 'printf floats' /dev/null 'BEGIN{printf "[%f][%.2f][%10.3f][%-10.1f][%.0f]\n", 3.14159, 3.14159, 3.14159, 3.14159, 0.5}'
 compare 'printf scientific' /dev/null 'BEGIN{printf "[%e][%E][%.2e][%.0e]\n", 12345.678, 12345.678, 12345.678, 12345.678}'
 compare 'printf general' /dev/null 'BEGIN{printf "[%g][%G][%.3g][%g][%g]\n", 0.0001234, 1e20, 12345.6, 100000, 1000000}'
@@ -405,6 +409,7 @@ compare 'printf negative star' /dev/null 'BEGIN{printf "[%*d]\n", -5, 42}'
 compare 'printf precision on an integer' /dev/null 'BEGIN{printf "[%.5d][%.0d]\n", 42, 0}'
 compare 'printf no newline' /dev/null 'BEGIN{printf "%s", "x"}'
 compare 'printf zero and minus' /dev/null 'BEGIN{printf "[%05.1f][%-8.3e][%+.2f]\n", -3.14159, 0.000123, -0}'
+compare 'printf builder grows' /dev/null 'BEGIN{printf "[%1500s][%01500d][%-1500s]\n", "x", 7, "y"}'
 compare 'ofmt' /dev/null 'BEGIN{OFMT="%.2f"; print 3.14159; print 3.14159 ""}'
 compare 'convfmt' /dev/null 'BEGIN{CONVFMT="%.2g"; x=3.14159; print x ""; print x}'
 compare 'ofmt leaves integers' /dev/null 'BEGIN{OFMT="%.2f"; print 3, 3.0, 100000}'
@@ -532,6 +537,8 @@ compare 'regex escapes' /dev/null 'BEGIN{print ("a.b" ~ /a\.b/), ("axb" ~ /a\.b/
 compare 'regex classes' /dev/null 'BEGIN{print ("a1" ~ /[[:alpha:]][[:digit:]]/), ("11" ~ /[[:alpha:]]/)}'
 compare 'anchors' /dev/null 'BEGIN{print ("abc" ~ /^abc$/), ("abc" ~ /^b/), ("" ~ /^$/)}'
 compare 'string escapes' /dev/null 'BEGIN{print "a\tb", "c\\d", "e\"f", length("\061\x41")}'
+compare 'escape digit caps' /dev/null 'BEGIN{print "\1012", "\x414", "\1q", "\x@z"}'
+compare 'assignment escapes' /dev/null -v 'x=\1412' 'BEGIN{print x}'
 
 case_start edges
 compare 'nextfile' /dev/null 'FNR==1{nextfile} {print FILENAME, $0}' "$work/letters" "$work/grid"

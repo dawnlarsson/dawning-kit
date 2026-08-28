@@ -40,9 +40,27 @@ for i,l in enumerate(lines):
 #       why the name has to start with a letter to be rewritten.
 #
 def darwin(line):
+    # A table embedded inside a routine stays inside the extracted body. ELF
+    # and Mach-O name the read-only section differently, and ASM_SECTION is a
+    # C macro that does not come along with the literal lines being lifted.
+    line = line.replace('.section .rodata', '.section __TEXT,__const')
+    if line.strip() == 'ASM_SECTION':
+        return '    ".text\\n"'
+
+    # ELF temporary symbols begin .L; Mach-O's assembler-local spelling is L.
+    # AArch64 conditional branches cannot carry an external relocation, so a
+    # forward .L name left unchanged is rejected even though its definition is
+    # present later in the same inline assembly block.
+    line = line.replace('.L', 'L')
+
     line = re.sub(r'\b(bl|b) ([a-z_][a-z0-9_]*)\b', r'\1 _\2', line)
     line = re.sub(r'\badrp (x[0-9]+), ([a-z_][a-z0-9_]*)\b', r'adrp \1, _\2@PAGE', line)
     line = re.sub(r':lo12:([a-z_][a-z0-9_]*)\b', r'_\1@PAGEOFF', line)
+
+    # Labels defined by the extracted inline assembly need the same Mach-O
+    # spelling as the references above. Numeric and .L labels are local and
+    # deliberately do not match this form.
+    line = re.sub(r'^(\s*")([a-z_][a-z0-9_]*):', r'\1_\2:', line)
     return line
 
 def table(name):
@@ -55,6 +73,11 @@ def table(name):
     return ('const unsigned char %s[256] = {%s};'
             % (name, text[text.index('{', at) + 1:stop]))
 
+def digit_pair_table():
+    """The assembler digit table as a C symbol for lifted formatter leaves."""
+    return ('const unsigned char digit_pairs[] = '
+            '"00010203040506070809101112131415161718192021222324252627282930313233343536373839404142434445464748495051525354555657585960616263646566676869707172737475767778798081828384858687888990919293949596979899";')
+
 def body(name):
     for i,l in enumerate(lines):
         if l.strip()==f'ASM_FUNC({name})' and arch[i]=='ARM64':
@@ -63,6 +86,10 @@ def body(name):
             out=[]
             for x in lines[i+1:j]:
                 if x.strip().startswith('//'): continue
+                indirect = re.fullmatch(r'\s*ASM_CALL\("(x[0-9]+)"\)', x)
+                if indirect:
+                    out.append('    "blr %s\\n"' % indirect.group(1))
+                    continue
                 out.append(darwin(x.replace('    ASM_RET', '    "ret\\n"')))
             return out
     sys.exit(f"extract: no arm64 {name} in {lib}")
@@ -73,6 +100,9 @@ print(f'// Lifted from {lib} by src/test/native/extract.py -- do not edit.')
 
 if any('byte_commonness' in l for b in bodies.values() for l in b):
     print(table('byte_commonness'))
+
+if any('digit_pairs' in l for b in bodies.values() for l in b):
+    print(digit_pair_table())
 
 
 # The arm64 bodies are written over macros -- one wide loop shared by every

@@ -1,4 +1,4 @@
-#include "../library.c"
+#include "../compiler_memory.c"
 #include "../spark.c"
 
 /*
@@ -28,6 +28,7 @@ p8 in_data[] = "data:starts-here";
 p8 in_bss[64];
 
 p8 environment_buffer[4096];
+p8 logging_block[MAX_INPUT];
 
 static b32 probe_arguments()
 {
@@ -125,6 +126,52 @@ static b32 probe_environment()
         return 0;
 }
 
+/*
+        Exercise both sides of the logger's exact boundary. A plus 4095 bytes
+        fills the buffer without flushing; B takes it over and flushes it;
+        the 4096-byte block takes the direct path; the final zero length asks
+        string_length for DE. The harness compares every emitted byte.
+*/
+static b32 probe_logging()
+{
+        memory_fill(logging_block, 'x', sizeof(logging_block));
+
+        log("A", 1);
+        log(logging_block, MAX_INPUT - 1);
+        log("B", 1);
+        log(logging_block, MAX_INPUT);
+        log("C", 1);
+        log("DE", 0);
+
+        return 0;
+}
+
+/*
+        A diagnostic first drains buffered stdout, then makes exactly one
+        stderr write. The first call asks string_length for its size; the
+        second supplies one and leaves the trailing bytes unwritten.
+*/
+static b32 probe_diagnostic()
+{
+        log("stdout-before\n", 0);
+        log_error("stderr-zero\n", 0);
+        log("stdout-middle\n", 0);
+        log_error("stderr-explicit\nTRAIL", 16);
+        log("stdout-after\n", 0);
+
+        return 0;
+}
+
+// Redirected stdout is not a terminal, so ioctl must leave the fallback.
+static b32 probe_terminal()
+{
+        positive2 size = term_size();
+
+        string_format(log, "%p %p\n", size.width, size.height);
+
+        return 0;
+}
+
 // Through the device rather than through fork and exec: the task is created
 // with no address space to copy instead of one copied and thrown away.
 static b32 probe_spawn()
@@ -189,6 +236,12 @@ b32 main()
                 answer = probe_regions();
         else if (!string_compare(mode, "environment"))
                 answer = probe_environment();
+        else if (!string_compare(mode, "logging"))
+                answer = probe_logging();
+        else if (!string_compare(mode, "diagnostic"))
+                answer = probe_diagnostic();
+        else if (!string_compare(mode, "terminal"))
+                answer = probe_terminal();
         else if (!string_compare(mode, "spawn"))
                 answer = probe_spawn();
         else if (!string_compare(mode, "quack"))
@@ -203,7 +256,7 @@ b32 main()
         else
         {
                 string_format(log, "probe: arguments regions environment "
-                                   "spawn quack status\n");
+                                   "logging diagnostic terminal spawn quack status\n");
                 answer = 2;
         }
 

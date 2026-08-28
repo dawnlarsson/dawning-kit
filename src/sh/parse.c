@@ -388,10 +388,6 @@ static bool parse_here_register(string_address word, bool strip)
 
 fn parse_here_close();
 
-// The executor's complaint, which goes straight to standard error rather than
-// through the buffered writer everything else uses.
-static fn exec_error(address_any data, positive length);
-
 // Which delimiter the reader is waiting for, or nothing when it is waiting for
 // a command.
 string_address parse_here_open()
@@ -441,7 +437,7 @@ bool parse_here_line(string_address line)
         if (here_used + length + 2 >= HERE_TEXT)
         {
                 if (!here_overflow[here_filled])
-                        string_format(exec_error, "Here-document too long: %s\n",
+                        string_format(log_error, "Here-document too long: %s\n",
                                       here_delimiter[here_filled]);
 
                 here_overflow[here_filled] = true;
@@ -569,9 +565,8 @@ bool parse_feed(string_address line)
                         if (parse_token_text_used + length + 1 > PARSE_TEXT)
                                 return false;
 
-                        memory_copy(parse_token_text + parse_token_text_used,
-                                    source->text, length);
-                        parse_token_text[parse_token_text_used + length] = end;
+                        memory_copy_end(parse_token_text + parse_token_text_used,
+                                        source->text, length);
                         into->text = parse_token_text + parse_token_text_used;
                         parse_token_text_used += length + 1;
                 }
@@ -770,33 +765,8 @@ static bool parse_redirect_operator(b32 op)
 {
         return op == OP_LESS || op == OP_GREAT || op == OP_DGREAT ||
                op == OP_DLESS || op == OP_LESSAND || op == OP_GREATAND ||
-               op == OP_LESSGREAT || op == OP_CLOBBER;
-}
-
-static bool parse_all_digits(string_address text)
-{
-        if (!text || !string_get(text))
-                return false;
-
-        while (string_get(text))
-        {
-                if (string_get(text) < '0' || string_get(text) > '9')
-                        return false;
-
-                text++;
-        }
-
-        return true;
-}
-
-static b32 parse_number(string_address text)
-{
-        b32 value = 0;
-
-        while (string_get(text) >= '0' && string_get(text) <= '9')
-                value = value * 10 + (string_get(text++) - '0');
-
-        return value;
+               op == OP_LESSGREAT || op == OP_CLOBBER ||
+               op == OP_ANDGREAT || op == OP_ANDDGREAT;
 }
 
 static bool parse_at_redirect()
@@ -806,9 +776,14 @@ static bool parse_at_redirect()
         if (token->kind == PT_OP && parse_redirect_operator(token->op))
                 return true;
 
-        return token->kind == PT_WORD && parse_all_digits(token->text) &&
+        b32 op = parse_look(1)->op;
+
+        // &> always means descriptors one and two. In "echo 2&>file", the 2
+        // is therefore an argument, unlike the descriptor prefix in 2>file.
+        return token->kind == PT_WORD && string_digits_exact(token->text, null) &&
                parse_look(1)->kind == PT_OP && parse_look(1)->joined &&
-               parse_redirect_operator(parse_look(1)->op);
+               op != OP_ANDGREAT && op != OP_ANDDGREAT &&
+               parse_redirect_operator(op);
 }
 
 static bool parse_take_redirect(b32 index)
@@ -820,7 +795,7 @@ static bool parse_take_redirect(b32 index)
 
         if (parse_look(0)->kind == PT_WORD)
         {
-                descriptor = parse_number(parse_look(0)->text);
+                descriptor = (b32)string_digits(parse_look(0)->text, null);
                 parse_position++;
         }
 
@@ -1554,10 +1529,9 @@ static b32 parse_keep_redirects(b32 first, b32 count)
                         if (parse_kept_used + length + 1 > PARSE_KEPT_TEXT)
                                 return -1;
 
-                        memory_copy(parse_kept_text + parse_kept_used,
-                                    here_text + parse_redirects[first + index].body,
-                                    length);
-                        parse_kept_text[parse_kept_used + length] = end;
+                        memory_copy_end(parse_kept_text + parse_kept_used,
+                                        here_text + parse_redirects[first + index].body,
+                                        length);
                         parse_redirects[base + index].body = parse_kept_used;
                         parse_redirects[base + index].kept = true;
                         parse_kept_used += length + 1;

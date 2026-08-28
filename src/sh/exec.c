@@ -77,17 +77,8 @@ static p8 exec_arena[EXEC_ARENA];
 static positive exec_arena_used;
 static p8 exec_nothing[1];
 
-// A diagnostic is not output. dash writes these to standard error and a script
-// that redirects one and not the other can tell, so this does not go through
-// the buffered writer that everything else uses.
-static fn exec_error(address_any data, positive length)
-{
-        if (length == 0)
-                length = string_length(data);
-
-        log_flush();
-        system_call_3(syscall(write), stderr, (positive)data, length);
-}
+// A diagnostic bypasses the buffered output writer and goes to stderr.
+#define exec_error log_error
 
 static string_address exec_arena_copy(string_address text)
 {
@@ -248,22 +239,10 @@ static bipolar exec_here_pipe(string_address body, positive length)
 
         if (child == 0)
         {
-                positive at = 0;
-
                 system_call_1(syscall(close), ends[0]);
                 trap_default_all();
 
-                while (at < length)
-                {
-                        bipolar wrote = system_call_3(syscall(write), ends[1],
-                                                      (positive)(body + at),
-                                                      length - at);
-
-                        if (wrote <= 0)
-                                break;
-
-                        at += (positive)wrote;
-                }
+                system_write_all(ends[1], body, length);
 
                 exit(0);
         }
@@ -289,6 +268,7 @@ static bool exec_redirect_apply(b32 index)
                 parse_redirect address_to want = parse_redirects + node->redirect + at;
                 string_address target = shell_expand_word(parse_words[want->word]);
                 bipolar opened = -1;
+                bool both = want->op == OP_ANDGREAT || want->op == OP_ANDDGREAT;
 
                 /*
                         The descriptor is put aside before anything is opened.
@@ -299,7 +279,12 @@ static bool exec_redirect_apply(b32 index)
                         had just arrived as "what was there before", and put it
                         back instead of closing it.
                 */
-                if (!exec_save_fd(want->fd))
+                if (both)
+                {
+                        if (!exec_save_fd(1) || !exec_save_fd(2))
+                                return false;
+                }
+                else if (!exec_save_fd(want->fd))
                         return false;
 
                 if (want->op == OP_DLESS)
@@ -337,12 +322,13 @@ static bool exec_redirect_apply(b32 index)
                                 continue;
                         }
 
-                        opened = system_call_1(syscall(dup), parse_number(target));
+                        opened = system_call_1(
+                            syscall(dup), (b32)string_digits(target, null));
                 }
                 else if (want->op == OP_LESS)
                         opened = system_call_4(syscall(openat), AT_FDCWD,
                                                (positive)target, FILE_READ, 0);
-                else if (want->op == OP_DGREAT)
+                else if (want->op == OP_DGREAT || want->op == OP_ANDDGREAT)
                         opened = system_call_4(syscall(openat), AT_FDCWD,
                                                (positive)target, FILE_APPEND, 0666);
                 else if (want->op == OP_LESSGREAT)
@@ -360,6 +346,31 @@ static bool exec_redirect_apply(b32 index)
                 }
 
                 log_flush();
+
+                /*
+                        &>file is >file followed by 2>&1, as one indivisible
+                        redirect. Duplicating one open file description also
+                        keeps stdout and stderr on one shared file position.
+                        &>> differs only in the open flags above.
+                */
+                if (both)
+                {
+                        if (opened != 1)
+                        {
+                                if (system_call_3(syscall(dup3), opened, 1, 0) < 0)
+                                {
+                                        system_call_1(syscall(close), opened);
+                                        return false;
+                                }
+
+                                system_call_1(syscall(close), opened);
+                        }
+
+                        if (system_call_3(syscall(dup3), 1, 2, 0) < 0)
+                                return false;
+
+                        continue;
+                }
 
                 // dup3 onto the descriptor it was handed is an error rather
                 // than the no-op dup2 makes of it, and open answers with
@@ -472,7 +483,7 @@ static b32 exec_define(b32 index)
 
         exec_functions[slot].from = before;
         exec_functions[slot].to = after;
-        string_copy_max(exec_functions[slot].name, name, FUNCTION_NAME - 1);
+        string_copy_max_end(exec_functions[slot].name, name, FUNCTION_NAME - 1);
         exec_functions[slot].body = body;
         shell_status = 0;
 
@@ -560,16 +571,12 @@ static bool exec_is_assignment(string_address word)
 static fn exec_assign(string_address word)
 {
         p8 name[128];
-        positive length = 0;
-
-        while (shell_name_character(string_get(word + length)))
-                length++;
+        positive length = (positive)(string_first_of_or_end(word, '=') - word);
 
         if (length >= sizeof(name))
                 return;
 
-        memory_copy(name, word, length);
-        name[length] = end;
+        string_copy_max_end(name, word, length);
 
         env_set(name, word + length + 1);
 }
@@ -611,18 +618,14 @@ typedef struct
 
 static bool exec_keep_value(exec_kept_value address_to kept, string_address word)
 {
-        positive length = 0;
+        positive length = (positive)(string_first_of_or_end(word, '=') - word);
         string_address value;
-
-        while (shell_name_character(string_get(word + length)))
-                length++;
 
         if (exec_arena_used + length + 1 > EXEC_ARENA)
                 return false;
 
         kept->name = exec_arena + exec_arena_used;
-        memory_copy(kept->name, word, length);
-        kept->name[length] = end;
+        string_copy_max_end(kept->name, word, length);
         exec_arena_used += length + 1;
 
         value = env_get(kept->name);
@@ -660,7 +663,9 @@ static b32 exec_dispatch()
 
         if (!string_compare(name, "break") || !string_compare(name, "continue"))
         {
-                b32 levels = shell_argc > 1 ? parse_number(shell_argv[1]) : 1;
+                b32 levels = shell_argc > 1
+                                 ? (b32)string_digits(shell_argv[1], null)
+                                 : 1;
 
                 if (levels < 1)
                         levels = 1;
@@ -683,7 +688,7 @@ static b32 exec_dispatch()
         if (!string_compare(name, "return"))
         {
                 if (shell_argc > 1)
-                        shell_status = parse_number(shell_argv[1]);
+                        shell_status = (b32)string_digits(shell_argv[1], null);
 
                 exec_signal = EXEC_SIGNAL_RETURN;
                 return shell_status;
@@ -789,6 +794,10 @@ static b32 exec_simple(b32 index)
 
         token_used = 0;
         token_overflow = false;
+        // With no command name, POSIX makes the command's status that of the
+        // last command substitution it performed. Each substitution updates
+        // this while the words and redirect targets below are expanded.
+        shell_substitution_status = 0;
 
         for (at = 0; at < node->word_count && count < MAX_TOKENS; at++)
         {
@@ -861,12 +870,13 @@ static b32 exec_simple(b32 index)
         if (first == count)
         {
                 exec_redirect_restore(mark);
-                shell_status = 0;
-                return 0;
+                shell_status = shell_substitution_status;
+                return shell_status;
         }
 
-        for (at = first; at <= count; at++)
-                shell_argv[at - first] = shell_argv[at];
+        // Include argv[count], the terminating null pointer.
+        memory_copy(shell_argv, shell_argv + first,
+                    (positive)(count - first + 1) * sizeof(shell_argv[0]));
 
         shell_argc = count - first;
 
@@ -1092,9 +1102,11 @@ static b32 exec_child_status(bipolar child)
         if (child < 0)
                 return 1;
 
-        system_call_4(syscall(wait4), child, (positive)address_of state, 0, 0);
+        if (system_call_4(syscall(wait4), child,
+                          (positive)address_of state, 0, 0) < 0)
+                return 1;
 
-        return (b32)(state >> 8 & 0xff);
+        return wait_status_code(state);
 }
 
 static b32 exec_subshell(b32 index)
@@ -1197,13 +1209,30 @@ static b32 exec_pipe(b32 first, b32 count)
         if (upstream >= 0)
                 system_call_1(syscall(close), upstream);
 
+        //
+        //      Every stage is waited for either way, because a pipeline that
+        //      left a child unreaped would leave a zombie per turn of a loop.
+        //      What pipefail changes is which of the answers is kept.
+        //
+        //      pipefail: the status is that of the rightmost command to exit
+        //      non-zero, or zero if none did. Walking left to right, the last non-zero
+        //      seen is the rightmost one, so one variable holds it.
+        //
+        b32 rightmost_failure = 0;
+
         for (at = 0; at < started; at++)
         {
                 b32 got = exec_child_status(children[at]);
 
+                if (got)
+                        rightmost_failure = got;
+
                 if (at + 1 == started)
                         status = got;
         }
+
+        if (rightmost_failure && shell_pipefail())
+                status = rightmost_failure;
 
         return status;
 }

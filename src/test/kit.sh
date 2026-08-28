@@ -267,6 +267,63 @@ else
         printf '  %-10s %s\n' doc 'no bash, skipped'
 fi
 
+#
+#       The library compaction passes are generators too. In particular, the
+#       alias block must survive restructuring byte for byte: if its current
+#       shape is compared with an old template, the second pass renames both
+#       sides and quietly creates aliases from a symbol to itself.
+#
+
+group compact
+
+if command -v python3 > /dev/null 2>&1; then
+        cp src/library.c "$work/library.c"
+        python3 kit/compact/restructure.py "$work/library.c" > /dev/null 2>&1
+        python3 kit/compact/restructure.py "$work/library.c" > /dev/null 2>&1
+
+        same 'aliases preserved' yes "$(python3 - src/library.c "$work/library.c" <<'PYTHON'
+import re, sys
+
+pattern = (r'/\*\n        The libc names, as second labels rather than as code\..*?'
+           r'^__asm__\(\n.*?^\);\n\n')
+
+blocks = []
+for path in sys.argv[1:]:
+    found = re.search(pattern, open(path).read(), flags=re.S | re.M)
+    blocks.append(found.group(0) if found else None)
+
+print('yes' if blocks[0] is not None and blocks[0] == blocks[1] else 'no')
+PYTHON
+)"
+
+        mkdir -p "$work/inventory-tree/platform"
+        cp src/library.c "$work/inventory-tree/library.c"
+        cp src/platform/*.inc "$work/inventory-tree/platform/"
+        python3 kit/compact/inventory.py "$work/inventory-tree/library.c" \
+                > /dev/null 2>&1
+
+        if cmp -s src/library.c "$work/inventory-tree/library.c"; then
+                won
+        else
+                lost 'inventory current' 'src/library.c differs from its generator'
+        fi
+
+        if python3 kit/compact/inventory.py --check --target all src/library.c \
+                > /dev/null 2> "$work/inventory-all.err"; then
+                won
+        else
+                lost 'all-platform asm' "$(tail -8 "$work/inventory-all.err" | tr '\n' ' ')"
+        fi
+
+        if python3 src/test/inventory.py > "$work/inventory-test.out" 2>&1; then
+                won
+        else
+                lost 'inventory audit' "$(tail -8 "$work/inventory-test.out" | tr '\n' ' ')"
+        fi
+else
+        printf '  %-10s %s\n' compact 'no python3, skipped'
+fi
+
 printf '  %-12s %s of %s\n' kit "$pass" "$((pass + fail))"
 [ -z "${TEST_TALLY:-}" ] ||
         printf 'kit %s %s\n' "$pass" "$((pass + fail))" >> "$TEST_TALLY"

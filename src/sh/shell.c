@@ -194,10 +194,24 @@ fn token_push(p8 value)
         token_storage[token_used++] = value;
 }
 
+static fn token_push_bytes(address_any data, positive length)
+{
+        positive room = TOKEN_STORAGE - 1 - token_used;
+        positive take = length < room ? length : room;
+
+        if (take)
+                memory_copy_fast(token_storage + token_used, data, take);
+
+        token_used += take;
+
+        if (take < length)
+                token_overflow = true;
+}
+
 fn token_push_string(string_address text)
 {
-        while (text && string_get(text))
-                token_push(string_get(text++));
+        if (text)
+                token_push_bytes(text, string_length(text));
 }
 
 bool shell_name_character(p8 value)
@@ -246,20 +260,9 @@ string_address shell_expand(string_address step)
                 if (special == '?')
                 {
                         p8 digits[16];
-                        positive at = 0;
-                        b32 value = shell_status;
+                        positive length = positive_into(digits, (positive)shell_status);
 
-                        if (!value)
-                                digits[at++] = '0';
-
-                        while (value > 0)
-                        {
-                                digits[at++] = (p8)('0' + value % 10);
-                                value /= 10;
-                        }
-
-                        while (at)
-                                token_push(digits[--at]);
+                        token_push_bytes(digits, length);
 
                         return step + 1;
                 }
@@ -472,14 +475,13 @@ bool shell_redirect()
                 shell_output = redirect_writer;
                 shell_output_file = file_descriptor;
 
-                positive move = index;
+                // Include the argv null and its matching false operator slot.
+                positive moving = shell_argc - index - 1;
 
-                while (move + 2 <= shell_argc)
-                {
-                        shell_argv[move] = shell_argv[move + 2];
-                        shell_operator[move] = shell_operator[move + 2];
-                        move++;
-                }
+                memory_copy(shell_argv + index, shell_argv + index + 2,
+                            moving * sizeof(shell_argv[0]));
+                memory_copy(shell_operator + index, shell_operator + index + 2,
+                            moving * sizeof(shell_operator[0]));
 
                 shell_argc -= 2;
                 shell_argv[shell_argc] = null;
@@ -630,12 +632,12 @@ fn shell_execute_command()
         {
                 positive status = 0;
                 system_call_4(syscall(wait4), child, (positive)address_of status, 0, 0);
-                shell_status = (b32)(status >> 8 & 0xff);
+                shell_status = wait_status_code(status);
 
                 // Spawning hands back a pid before the image is loaded, so a
                 // path that cannot be run shows up as the child exiting 127
                 // rather than as an error from the spawn itself.
-                if ((status >> 8 & 0xff) == 127)
+                if (shell_status == 127)
                         string_format(shell_output, "Could not run: '%s'\n", shell_argv[0]);
         }
         else
@@ -772,4 +774,3 @@ static b32 shell_interactive()
 
         return system_call_3(syscall(ioctl), 0, TCGETS, (positive)settings) == 0;
 }
-

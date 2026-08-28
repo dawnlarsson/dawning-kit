@@ -34,6 +34,8 @@
 #define OP_GREAT 14     // >
 #define OP_LPAREN 15    // (
 #define OP_RPAREN 16    // )
+#define OP_ANDGREAT 17  // &>
+#define OP_ANDDGREAT 18 // &>>
 
 #define LEX_TOKENS 256
 #define LEX_TEXT 8192
@@ -106,8 +108,8 @@ fn lex_prepare()
                 starts an expansion -- and never the terminator, or a run would
                 walk off the end of the string.
         */
-        for (positive c = 1; c < STRING_SET_BYTES; c++)
-                lex_ordinary[c] = lex_in_double[c] = 1;
+        memory_fill(lex_ordinary + 1, 1, STRING_SET_BYTES - 1);
+        memory_fill(lex_in_double + 1, 1, STRING_SET_BYTES - 1);
 
         {
                 static const string_address decides = " \t\n|&;<>()'\"\\$`";
@@ -142,12 +144,26 @@ fn lex_prepare()
         lex_ready = true;
 }
 
-// Which operator starts here, and how long it is. Two-byte forms are tested
-// first, so >> is never a > followed by another.
+// Which operator starts here, and how long it is. Longest forms are tested
+// first, so &>> is never &> followed by > and >> is never two > tokens.
 static b32 lex_operator_at(string_address at, positive address_to length)
 {
         p8 a = string_get(at);
         p8 b = string_get(at + 1);
+
+        // These must be single operators. Reading '&' as a background
+        // separator first silently runs a different command graph.
+        if (a == '&' && b == '>')
+        {
+                if (string_is(at + 2, '>'))
+                {
+                        address_to length = 3;
+                        return OP_ANDDGREAT;
+                }
+
+                address_to length = 2;
+                return OP_ANDGREAT;
+        }
 
         address_to length = 2;
 

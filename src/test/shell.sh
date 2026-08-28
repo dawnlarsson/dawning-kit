@@ -153,6 +153,36 @@ answer()
                 "want $(shown "$work/want")[$want_status]   got $(shown "$work/got")[$got_status]"
 }
 
+# A deliberate extension has no POSIX reference answer. Check its bytes and
+# status directly so a future lexer change cannot reinterpret it as another
+# valid command while the dash-comparison lanes remain about POSIX.
+expected()
+{
+        name=$1
+        expected_output=$2
+        expected_status=$3
+        shift 3
+
+        printf '%s\n' "$*" > "$work/case.sh"
+
+        if run_shell "$subject" "$work/got"; then
+                got_status=0
+        else
+                got_status=$?
+        fi
+
+        got_ours=$(shown "$work/got")
+
+        if [ "$got_ours" = "$expected_output" ] &&
+                [ "$got_status" = "$expected_status" ]; then
+                won
+                return 0
+        fi
+
+        lost "$name" \
+                "expected ${expected_output}[$expected_status], got ${got_ours}[$got_status]"
+}
+
 # What ours says where dash says something else. The recorded output has its
 # newlines written as | so a case stays one line. Both halves are checked: if
 # ours starts agreeing with dash the case fails and moves up into answer, and
@@ -315,6 +345,13 @@ check 'return'          'f() { return 3; }; f; echo $?'
 group redirection
 check 'out'             'echo x > /tmp/pt1; cat /tmp/pt1'
 check 'append'          'echo a > /tmp/pt2; echo b >> /tmp/pt2; cat /tmp/pt2'
+expected 'stdout and stderr' 'out|err|' 0 '{ echo out; echo err >&2; } &> /tmp/ptboth.$$; cat /tmp/ptboth.$$; rm /tmp/ptboth.$$'
+expected 'both append' 'first|out|err|' 0 'echo first > /tmp/ptbotha.$$; { echo out; echo err >&2; } &>> /tmp/ptbotha.$$; cat /tmp/ptbotha.$$; rm /tmp/ptbotha.$$'
+expected 'numeric is an arg' '2|' 0 'echo 2&> /tmp/ptbothn.$$; cat /tmp/ptbothn.$$; rm /tmp/ptbothn.$$'
+expected 'both then stderr' 'out|divider|err|' 0 '{ echo out; echo err >&2; } &> /tmp/ptbotho.$$ 2> /tmp/ptbothe.$$; cat /tmp/ptbotho.$$; echo divider; cat /tmp/ptbothe.$$; rm /tmp/ptbotho.$$ /tmp/ptbothe.$$'
+expected 'stderr then both' 'out|err|divider|' 0 '{ echo out; echo err >&2; } 2> /tmp/ptbothe.$$ &> /tmp/ptbotho.$$; cat /tmp/ptbotho.$$; echo divider; cat /tmp/ptbothe.$$; rm /tmp/ptbotho.$$ /tmp/ptbothe.$$'
+expected 'both restores' 'outer-out|outer-err|inner-out|inner-err|' 0 '{ { echo inner-out; echo inner-err >&2; } &> /tmp/ptbothr.$$; echo outer-out; echo outer-err >&2; } 2>&1; cat /tmp/ptbothr.$$; rm /tmp/ptbothr.$$'
+expected 'failed both restores' 'after|' 0 '{ echo hidden; } &> /no/such/ptboth/target; echo after'
 check 'in'              'echo z > /tmp/pt3; cat < /tmp/pt3'
 check 'stderr'          'ls /nonexistent 2>/dev/null; echo done'
 check 'stderr to out'   'ls /nonexistent 2>&1 | wc -l'
@@ -400,6 +437,23 @@ section strict
 group status
 answer 'pipeline last'   'false | true; echo $?'
 answer 'pipeline fails'  'true | false; echo $?'
+expected 'pipefail left' '1|' 0 'set -o pipefail; false | true; echo $?'
+expected 'pipefail right' '1|' 0 'set -o pipefail; true | false; echo $?'
+expected 'pipefail rightmost' '7|' 0 'set -o pipefail; (exit 3) | (exit 7) | true; echo $?'
+expected 'pipefail all pass' '0|' 0 'set -o pipefail; true | true | true; echo $?'
+expected 'pipefail disabled' '0|' 0 'set -o pipefail; set +o pipefail; false | true; echo $?'
+expected 'pipefail inverted' '0|' 0 'set -o pipefail; ! false | true; echo $?'
+expected 'pipefail signal' '143|' 0 'set -o pipefail; /bin/sh -c "kill -TERM \$\$" | true; echo $?'
+expected 'pipefail errexit' '' 1 'set -eo pipefail; false | true; echo not-reached'
+expected 'pipefail assignment' '1|' 0 'set -o pipefail; x=$(false | true); echo $?'
+expected 'pipefail assignment right' '1|' 0 'set -o pipefail; x=$(true | false); echo $?'
+expected 'pipefail assignment errexit' '' 1 'set -eo pipefail; x=$(false | true); echo not-reached'
+expected 'pipefail tested' 'caught|after|' 0 'set -eo pipefail; false | true || echo caught; echo after'
+expected 'pipefail sub value' 'value:1|' 0 'set -o pipefail; x=$(echo value; false | true); echo "$x:$?"'
+expected 'last assignment sub' '7|' 0 'set -o pipefail; a=$(exit 3) b=$(false | true) c=$(exit 7); echo $?'
+expected 'pipefail is listed' '1|' 0 'set -o pipefail; set -o | grep -c pipefail'
+answer 'assignment sub status' 'x=$(exit 3); echo $?'
+answer 'assignment sub errexit' 'set -e; x=$(false); echo not-reached'
 answer 'builtin succeeds' 'false; echo hi; echo $?'
 answer 'subshell exit'   '(exit 5); echo $?'
 answer 'function return' 'f() { return 4; }; f; echo $?'
@@ -707,6 +761,7 @@ answer 'colon keeps it'   'v=o; v=n :; echo "[$v]"'
 answer 'eval keeps it'    'v=o; v=n eval echo "in \$v"; echo "out $v"'
 answer 'plain does not'   'v=o; v=n cd /; echo "[$v]"'
 answer 'two of them'      'a=1; b=2; a=x b=y true; echo "$a$b"'
+answer 'three prefixed arguments' 'a=1 b=2 c=3 printf "[%s][%s]\\n" x y; echo "[${a-unset}${b-unset}${c-unset}]"'
 answer 'empty value back' 'v=; v=n true; echo "[$v]"'
 answer 'not found either' 'v=o; v=n nosuchcommand12345 2>/dev/null; echo "[$v]"'
 answer 'alone it stays'   'v=o; v=n; echo "[$v]"'
@@ -768,6 +823,7 @@ answer 'alias redefined' 'alias e=echo; alias e=printf; alias e'
 answer 'alias runs redefined' 'alias e=printf; alias e=echo; e hi'
 answer 'alias with words' 'alias g="echo one two"; g three'
 answer 'alias taken away' 'alias e=echo; unalias e; alias e; echo $?'
+answer 'alias middle taken away' 'alias a=echo b=echo c=echo; unalias b; a A; c C; alias b 2>/dev/null; echo $?'
 answer 'alias all away'  'alias a=echo b=echo; unalias -a; alias; echo $?'
 answer 'alias unknown away' 'unalias nosuch; echo $?'
 answer 'alias to a builtin' 'alias c=cd; c /tmp; pwd'
@@ -897,6 +953,7 @@ answer 'caught twice'    'trap "echo caught" USR1; kill -USR1 $$; kill -USR1 $$;
 answer 'two commands'    'trap "echo one; echo two" USR1; kill -USR1 $$; echo after'
 answer 'ignored'         'trap "" INT; kill -INT $$; echo alive'
 answer 'given back'      'trap "echo x" WINCH; trap - WINCH; kill -WINCH $$; echo alive'
+answer 'middle trap given back' 'trap "echo one" USR1; trap "echo two" USR2; trap "echo three" TERM; trap - USR2; kill -USR1 $$; kill -TERM $$; echo end'
 answer 'status survives' 'trap "true" USR1; false; kill -USR1 $$; echo $?'
 answer 'inside a function' 'f() { trap "echo in" USR2; kill -USR2 $$; echo done; }; f; echo after'
 answer 'exit from one'   'trap "exit 7" USR1; kill -USR1 $$; echo "not reached"'
@@ -1003,7 +1060,6 @@ fi
 section differs
 
 group status
-differs 'sub status lost' '0|' 0 'x=$(exit 3); echo $?'
 differs 'negative exit'  '' 255 'exit -1'
 
 group arithmetic

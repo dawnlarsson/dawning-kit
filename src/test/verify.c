@@ -1,4 +1,4 @@
-#include "../library.c"
+#include "../compiler_memory.c"
 
 /*
         Differential test for the assembly in library.c.
@@ -110,6 +110,14 @@ address_any reference_copy(address_any destination, address_any source, positive
         }
 
         return destination;
+}
+
+p8 address_to reference_copy_end(p8 address_to destination, address_any source,
+                                 positive size)
+{
+        reference_copy(destination, source, size);
+        destination[size] = 0;
+        return destination + size;
 }
 
 positive reference_length(string_address source)
@@ -228,6 +236,160 @@ fn check_move()
                         reference_copy(theirs + 64, theirs + 64 + gap, size);
                         same_bytes("memory_copy", "backwards overlap", mine, theirs, ROOM);
                 }
+}
+
+/*
+        Exact bytes followed by a terminator through the non-overlap core.
+
+        Source and destination are separate arrays by contract. Every source
+        and destination alignment is crossed with every copy-size edge, and
+        poison across the whole destination proves that only dst[0..size]
+        moved. Embedded zeroes prove this is a memory primitive, while the
+        returned address proves the adapter preserved dst+n across its call.
+*/
+fn check_copy_fast_end()
+{
+        for (positive i = 0; i < ROOM; i++)
+                pattern[i] = (i % 11) ? (b8)(i * 37 + 5) : 0;
+
+        for (positive e = 0; e < EDGE_COUNT; e++)
+        {
+                positive size = edges[e];
+
+                for (positive destination_offset = 0; destination_offset < 16;
+                     destination_offset++)
+                        for (positive source_offset = 0; source_offset < 16;
+                             source_offset++)
+                        {
+                                positive destination = 64 + destination_offset;
+                                p8 address_to ended;
+
+                                if (destination + size + 2 >= ROOM ||
+                                    source_offset + size >= ROOM)
+                                        continue;
+
+                                reference_fill(mine, 0xA5, ROOM);
+                                reference_fill(theirs, 0xA5, ROOM);
+
+                                ended = memory_copy_fast_end(
+                                    (p8 address_to)mine + destination,
+                                    pattern + source_offset, size);
+                                reference_copy_end(
+                                    (p8 address_to)theirs + destination,
+                                    pattern + source_offset, size);
+
+                                same("memory_copy_fast_end", "returned unaligned end",
+                                     (positive)(ended - (p8 address_to)mine),
+                                     destination + size);
+                                same_bytes("memory_copy_fast_end", "guarded exact copy",
+                                           mine, theirs, ROOM);
+                        }
+        }
+
+        // A zero-byte copy writes only the terminator and never reads source.
+        reference_fill(mine, 0xA5, ROOM);
+        reference_fill(theirs, 0xA5, ROOM);
+        same("memory_copy_fast_end", "zero length end",
+             (positive)(memory_copy_fast_end((p8 address_to)mine + 31, null, 0) -
+                        (p8 address_to)mine),
+             31);
+        theirs[31] = 0;
+        same_bytes("memory_copy_fast_end", "zero length guard", mine, theirs, ROOM);
+}
+
+/*
+        Exact bytes followed by a terminator, through the overlap-aware core.
+
+        The source deliberately contains embedded zeroes: this is a memory
+        primitive and string_copy_max_end would stop early. Poison around every
+        destination catches a write on either side of dst[0..size], while the
+        returned address says the wrapper kept the original end across the
+        shared copy core.
+*/
+fn check_copy_end()
+{
+        static b32 gaps[] = {-65, -32, -9, -3, -1, 1, 3, 9, 32, 65};
+
+        for (positive i = 0; i < ROOM; i++)
+                pattern[i] = (i % 11) ? (b8)(i * 37 + 5) : 0;
+
+        // Disjoint source and destination, at every offset into a machine word.
+        for (positive e = 0; e < EDGE_COUNT; e++)
+        {
+                positive size = edges[e];
+
+                for (positive destination_offset = 0; destination_offset < 8;
+                     destination_offset++)
+                        for (positive source_offset = 0; source_offset < 8;
+                             source_offset++)
+                        {
+                                positive destination = 64 + destination_offset;
+                                p8 address_to ended;
+
+                                if (destination + size + 2 >= ROOM ||
+                                    source_offset + size >= ROOM)
+                                        continue;
+
+                                reference_fill(mine, 0xA5, ROOM);
+                                reference_fill(theirs, 0xA5, ROOM);
+
+                                ended = memory_copy_end(
+                                    (p8 address_to)mine + destination,
+                                    pattern + source_offset, size);
+                                reference_copy_end(
+                                    (p8 address_to)theirs + destination,
+                                    pattern + source_offset, size);
+
+                                same("memory_copy_end", "returned aligned end",
+                                     (positive)(ended - (p8 address_to)mine),
+                                     destination + size);
+                                same_bytes("memory_copy_end", "guarded exact copy",
+                                           mine, theirs, ROOM);
+                        }
+        }
+
+        // Both overlap directions and distances inside and outside the core's
+        // head/tail chunks, again at every word alignment.
+        for (positive e = 0; e < EDGE_COUNT; e++)
+                for (positive alignment = 0; alignment < 8; alignment++)
+                        for (positive g = 0; g < sizeof(gaps) / sizeof(gaps[0]); g++)
+                        {
+                                positive size = edges[e];
+                                b32 source = 1024 + (b32)alignment;
+                                b32 destination = source + gaps[g];
+                                p8 address_to ended;
+
+                                if (destination < 0 ||
+                                    (positive)destination + size + 2 >= ROOM ||
+                                    (positive)source + size >= ROOM)
+                                        continue;
+
+                                reference_copy(mine, pattern, ROOM);
+                                reference_copy(theirs, pattern, ROOM);
+
+                                ended = memory_copy_end(
+                                    (p8 address_to)mine + destination,
+                                    mine + source, size);
+                                reference_copy_end(
+                                    (p8 address_to)theirs + destination,
+                                    theirs + source, size);
+
+                                same("memory_copy_end", "returned overlap end",
+                                     (positive)(ended - (p8 address_to)mine),
+                                     (positive)destination + size);
+                                same_bytes("memory_copy_end", "overlap and guards",
+                                           mine, theirs, ROOM);
+                        }
+
+        // A zero-byte copy still writes its terminator and never needs a source.
+        reference_fill(mine, 0xA5, ROOM);
+        reference_fill(theirs, 0xA5, ROOM);
+        same("memory_copy_end", "zero length end",
+             (positive)(memory_copy_end((p8 address_to)mine + 31, null, 0) -
+                        (p8 address_to)mine),
+             31);
+        theirs[31] = 0;
+        same_bytes("memory_copy_end", "zero length guard", mine, theirs, ROOM);
 }
 
 fn check_strings()
@@ -851,30 +1013,11 @@ static p8 scratch_root[512];
 static string_address scratch_path(string_address name)
 {
         static p8 built[768];
-        string_address root = null;
-
-        // program_environment hands entries out one at a time rather than as
-        // a list, so the prefix is matched here rather than through
-        // string_get_environment.
-        for (b32 i = 0; ; i++)
-        {
-                string_address entry = program_environment(i);
-
-                if (!entry)
-                        break;
-
-                positive k = 0;
-                string_address want = (string_address) "TMPDIR=";
-
-                while (want[k] && entry[k] == want[k])
-                        k++;
-
-                if (!want[k])
-                {
-                        root = entry + k;
-                        break;
-                }
-        }
+        string_address address_to environment = program_environment_list();
+        string_address root = environment
+                                  ? string_get_environment(environment,
+                                                           (string_address) "TMPDIR")
+                                  : null;
 
         if (!root || !root[0])
                 root = (string_address) "/tmp";
@@ -1184,6 +1327,174 @@ positive reference_span(string_address source, const b8 address_to set)
 
                 n++;
         }
+}
+
+static string_address verify_byte_class_names[BYTE_CLASSES] = {
+    "alpha", "digit", "alnum", "upper", "lower", "space",
+    "blank", "print", "graph", "cntrl", "punct", "xdigit",
+};
+
+// The three C bodies replaced by the byte-helper assembly, kept here as the
+// independent specification the architecture entries are checked against.
+static b32 reference_byte_class_index(string_address name, positive length)
+{
+        for (b32 which = 0; which < BYTE_CLASSES; which++)
+        {
+                string_address want = verify_byte_class_names[which];
+                positive at = 0;
+
+                while (at < length && want[at] && name[at] == want[at])
+                        at++;
+
+                if (at == length && !want[at])
+                        return which;
+        }
+
+        return -1;
+}
+
+static bool reference_byte_class_holds(b32 which, p8 value)
+{
+        bool upper = value >= 'A' && value <= 'Z';
+        bool lower = value >= 'a' && value <= 'z';
+        bool digit = value >= '0' && value <= '9';
+        bool printing = value >= ' ' && value < 127;
+
+        switch (which)
+        {
+        case BYTE_ALPHA:
+                return upper || lower;
+        case BYTE_DIGIT:
+                return digit;
+        case BYTE_ALNUM:
+                return upper || lower || digit;
+        case BYTE_UPPER:
+                return upper;
+        case BYTE_LOWER:
+                return lower;
+        case BYTE_SPACE:
+                return value == ' ' || (value >= '\t' && value <= '\r');
+        case BYTE_BLANK:
+                return value == ' ' || value == '\t';
+        case BYTE_PRINT:
+                return printing;
+        case BYTE_GRAPH:
+                return printing && value != ' ';
+        case BYTE_CNTRL:
+                return value < ' ' || value == 127;
+        case BYTE_PUNCT:
+                return printing && value != ' ' && !upper && !lower && !digit;
+        case BYTE_XDIGIT:
+                return digit || (value >= 'a' && value <= 'f') ||
+                       (value >= 'A' && value <= 'F');
+        }
+
+        return false;
+}
+
+fn check_byte_helpers()
+{
+        static p8 name_room[64];
+        static p8 members[256];
+        static b8 set[STRING_SET_BYTES];
+        static b8 untouched[STRING_SET_BYTES];
+        static string_address unknown[] = {
+            "",       "alph",  "alphax", "alpha!", "Digit", "xdigi",
+            "xdigitx", "thing", "prints", "printable", null,
+        };
+
+        // Every known spelling, both as a normal string and as an exact slice
+        // with hostile bytes immediately after it. Shifting the latter reaches
+        // every alignment without ever giving the routine a terminator.
+        for (b32 which = 0; which < BYTE_CLASSES; which++)
+        {
+                string_address name = verify_byte_class_names[which];
+                positive length = reference_length(name);
+
+                same("byte_class_index", "known name",
+                     (positive)(bipolar)byte_class_index(name, length),
+                     (positive)(bipolar)which);
+
+                for (positive shift = 0; shift < 8; shift++)
+                {
+                        p8 address_to slice = name_room + 8 + shift;
+
+                        reference_fill(name_room, 0xa5, sizeof(name_room));
+                        for (positive at = 0; at < length; at++)
+                                slice[at] = (p8)name[at];
+
+                        same("byte_class_index", "bounded nonterminated name",
+                             (positive)(bipolar)byte_class_index(
+                                 (string_address)slice, length),
+                             (positive)(bipolar)which);
+                }
+
+                same("byte_class_index", "known prefix is not the class",
+                     (positive)(bipolar)byte_class_index(name, length - 1),
+                     (positive)(bipolar)-1);
+
+                reference_fill(name_room, '!', sizeof(name_room));
+                for (positive at = 0; at < length; at++)
+                        name_room[at] = (p8)name[at];
+
+                same("byte_class_index", "known extension is not the class",
+                     (positive)(bipolar)byte_class_index(
+                         (string_address)name_room, length + 1),
+                     (positive)(bipolar)-1);
+
+                name_room[length - 1] ^= 1;
+                same("byte_class_index", "one wrong byte",
+                     (positive)(bipolar)byte_class_index(
+                         (string_address)name_room, length),
+                     (positive)(bipolar)-1);
+
+                // All twelve classes over the complete byte domain, including
+                // the high half where signed comparisons tend to go wrong.
+                for (positive value = 0; value < 256; value++)
+                        same("byte_class_holds", "all classes and bytes",
+                             byte_class_holds(which, (p8)value),
+                             reference_byte_class_holds(which, (p8)value));
+        }
+
+        for (positive at = 0; unknown[at]; at++)
+        {
+                positive length = reference_length(unknown[at]);
+
+                same("byte_class_index", "unknown name",
+                     (positive)(bipolar)byte_class_index(unknown[at], length),
+                     (positive)(bipolar)reference_byte_class_index(
+                         unknown[at], length));
+        }
+
+        same("byte_class_index", "empty slice needs no address",
+             (positive)(bipolar)byte_class_index(null, 0),
+             (positive)(bipolar)-1);
+
+        for (positive value = 0; value < 256; value++)
+        {
+                same("byte_class_holds", "negative class",
+                     byte_class_holds(-1, (p8)value), 0);
+                same("byte_class_holds", "class past the table",
+                     byte_class_holds(BYTE_CLASSES, (p8)value), 0);
+        }
+
+        // A terminated string can carry every nonzero byte exactly once. Zero
+        // ends the member list and must remain absent from the set.
+        for (positive value = 1; value < 256; value++)
+                members[value - 1] = (p8)value;
+        members[255] = 0;
+        reference_fill(set, 0, sizeof(set));
+        string_set_add(set, (string_address)members);
+
+        for (positive value = 0; value < 256; value++)
+                same("string_set_add", "every nonzero byte",
+                     (positive)set[value], value != 0);
+
+        reference_fill(set, 0x5a, sizeof(set));
+        reference_copy(untouched, set, sizeof(set));
+        string_set_add(set, (string_address)"");
+        same_bytes("string_set_add", "empty member list changes nothing",
+                   set, untouched, sizeof(set));
 }
 
 fn check_span()
@@ -1602,8 +1913,60 @@ string_address reference_get_environment(string_address address_to list,
         return null;
 }
 
+fn check_environment_list()
+{
+        string_address address_to list = program_environment_list();
+        positive count = 0;
+
+        while (list && list[count])
+        {
+                same("program_environment_list", "same entry as indexed access",
+                     (positive)list[count], (positive)program_environment((b32)count));
+                count++;
+        }
+
+        same("program_environment_list", "same terminator as indexed access",
+             (positive)(list ? list[count] : null),
+             (positive)program_environment((b32)count));
+
+        if (program_stack_base)
+        {
+                string_address address_to saved_words = program_words;
+                b32 saved_count = program_words_count;
+                static string_address borrowed[] = {(string_address) "verify"};
+
+                program_arguments_use(borrowed, 0);
+
+                string_address address_to shifted =
+                    (string_address address_to)(program_stack_base +
+                                                2 * sizeof(string_address));
+
+                same("program_environment_list", "borrowed count chooses the offset",
+                     (positive)program_environment_list(), (positive)shifted);
+                same("program_environment_list", "borrowed vector agrees with index zero",
+                     (positive)program_environment_list()[0],
+                     (positive)program_environment(0));
+
+                if (saved_words)
+                        program_arguments_use(saved_words, saved_count);
+                else
+                        program_arguments_own();
+        }
+
+        {
+                p8 address_to saved_stack = program_stack_base;
+
+                program_stack_base = null;
+                same("program_environment_list", "no process stack",
+                     (positive)program_environment_list(), 0);
+                program_stack_base = saved_stack;
+        }
+}
+
 fn check_environment()
 {
+        check_environment_list();
+
         static p8 block[64][48];
         static string_address list[65];
 
@@ -1864,6 +2227,16 @@ fn check_table_find()
                 entries[count].name = names[count];
                 entries[count].marker = count;
         }
+
+        // A zero count must answer before touching the table, and the count is
+        // an exact fence rather than merely a not-found return value.
+        same("table_find", "zero count does not touch the table",
+             string_table_find((string_address)"cat", null,
+                               sizeof(find_entry), 0),
+             0);
+        same("table_find", "count fences the walk",
+             string_table_find(names[5], entries, sizeof(find_entry), 5),
+             5);
 
         // Every name in the table, which must be found at its own index.
         for (positive i = 0; i < count; i++)
@@ -2170,6 +2543,97 @@ positive reference_digits(string_address source, positive bound,
         return value;
 }
 
+static bipolar reference_bipolar(string_address source, positive address_to used)
+{
+        positive at = 0;
+        positive digits = 0;
+        positive value = 0;
+        bool negative = false;
+
+        if (source)
+        {
+                if (source[at] == '-' || source[at] == '+')
+                {
+                        negative = source[at] == '-';
+                        at++;
+                }
+
+                while (source[at] >= '0' && source[at] <= '9')
+                {
+                        value = value * 10 + (positive)(source[at] - '0');
+                        at++;
+                        digits++;
+                }
+        }
+
+        if (!digits)
+                at = 0;
+
+        if (used)
+                address_to used = at;
+
+        return negative && digits ? (bipolar)((positive)0 - value)
+                                  : (bipolar)value;
+}
+
+static positive reference_base_digit(p8 character)
+{
+        if (character >= '0' && character <= '9')
+                return (positive)(character - '0');
+
+        if (character >= 'a' && character <= 'z')
+                return (positive)(character - 'a' + 10);
+
+        if (character >= 'A' && character <= 'Z')
+                return (positive)(character - 'A' + 10);
+
+        return (positive)-1;
+}
+
+positive reference_digits_base_max(string_address source, positive bound,
+                                   positive base, positive address_to used)
+{
+        positive value = 0;
+        positive n = 0;
+
+        if (base >= 2 && base <= 36)
+        {
+                while (n < bound)
+                {
+                        positive digit = reference_base_digit(source[n]);
+
+                        if (digit >= base)
+                                break;
+
+                        value = value * base + digit;
+                        n++;
+                }
+        }
+
+        if (used)
+                address_to used = n;
+
+        return value;
+}
+
+bool reference_digits_exact(string_address source, positive address_to value)
+{
+        positive used;
+
+        if (!source)
+                return false;
+
+        positive parsed = reference_digits(source, (positive)-1, address_of used);
+
+        if (!used || source[used])
+                return false;
+
+        if (value)
+                address_to value = parsed;
+
+        return true;
+}
+
 static p8 span_room[1024];
 
 // Far enough in that a routine aligning its pointer down has plenty in front
@@ -2287,6 +2751,19 @@ static p8 digit_breakers[] = {0x00, '/', ':', ' ', 'a', 0xff, '.', '-', '+'};
 
 fn check_digits()
 {
+        // Null must be rejected before the first load, and failure must not
+        // commit through the optional result pointer.
+        {
+                positive got = (positive)0xa5a5a5a5a5a5a5a5ull;
+                positive want = got;
+
+                same("string_digits_exact", "null source",
+                     string_digits_exact(null, address_of got), false);
+                same("string_digits_exact", "null leaves output alone", got, want);
+                same("string_digits_exact", "null with no output",
+                     string_digits_exact(null, null), false);
+        }
+
         for (positive br = 0; br < DIGIT_BREAKER_COUNT; br++)
                 for (positive offset = 0; offset < 8; offset++)
                         for (positive length = 0; length <= 26; length++)
@@ -2322,6 +2799,28 @@ fn check_digits()
                                      string_digits(subject, 0),
                                      reference_digits(subject, (positive)-1, 0));
 
+                                // The exact parser accepts only the NUL-ended,
+                                // nonempty run. Both answers begin poisoned so
+                                // every failure also proves no output store.
+                                {
+                                        positive got_value =
+                                            (positive)0xa5a5a5a5a5a5a5a5ull;
+                                        positive want_value = got_value;
+
+                                        same("string_digits_exact", "validity",
+                                             string_digits_exact(
+                                                 subject, address_of got_value),
+                                             reference_digits_exact(
+                                                 subject, address_of want_value));
+                                        same("string_digits_exact",
+                                             "value or untouched output",
+                                             got_value, want_value);
+                                        same("string_digits_exact",
+                                             "optional output",
+                                             string_digits_exact(subject, null),
+                                             reference_digits_exact(subject, null));
+                                }
+
                                 for (positive bound = 0; bound <= length + 3; bound++)
                                 {
                                         same("string_digits_max", "value",
@@ -2338,6 +2837,374 @@ fn check_digits()
                                      string_digits_max(subject, length, 0),
                                      reference_digits(subject, length, 0));
                         }
+}
+
+fn check_signed_digits_and_width()
+{
+        static string_address cases[] = {
+            "", "+", "-", "0", "+0", "-0", "1", "+17", "-17",
+            "1x", "+1x", "-1x", "18446744073709551615",
+            "18446744073709551616", "-18446744073709551616",
+            "999999999999999999999999999999", " 1", "\t-1",
+        };
+
+        positive got_used = (positive)-1;
+        same("string_bipolar", "null value", string_bipolar(null, address_of got_used),
+             0);
+        same("string_bipolar", "null used", got_used, 0);
+        same("string_bipolar", "null optional used", string_bipolar(null, null), 0);
+
+        for (positive which = 0; which < sizeof(cases) / sizeof(cases[0]); which++)
+                for (positive offset = 0; offset < 8; offset++)
+                {
+                        p8 address_to subject = span_subject(offset);
+                        positive length = string_length(cases[which]);
+                        positive want_used = 0;
+
+                        reference_fill(span_room, 0xa5, sizeof(span_room));
+                        memory_copy(subject, cases[which], length + 1);
+
+                        got_used = (positive)-1;
+                        bipolar want = reference_bipolar(subject,
+                                                         address_of want_used);
+                        same("string_bipolar", "value",
+                             string_bipolar(subject, address_of got_used), want);
+                        same("string_bipolar", "used", got_used, want_used);
+                        same("string_bipolar", "optional used",
+                             string_bipolar(subject, null), want);
+                }
+
+        positive power = 1;
+        for (positive digits = 1; digits <= 20; digits++)
+        {
+                same("positive_digits", "power", positive_digits(power), digits);
+                if (power > 1)
+                        same("positive_digits", "before power",
+                             positive_digits(power - 1), digits - 1);
+                if (digits < 20)
+                {
+                        same("positive_digits", "after power",
+                             positive_digits(power + 1), digits);
+                        power *= 10;
+                }
+        }
+        same("positive_digits", "maximum", positive_digits((positive)-1), 20);
+}
+
+/*
+        A bounded digit run in every supported base.
+
+        The byte at the last place is walked through all 256 possibilities for
+        every base, so punctuation near the alphabet -- especially '@', '`',
+        '[' and '{' -- cannot accidentally become a digit through ASCII case
+        folding. The bytes after the bound are valid zeroes: crossing the
+        fence therefore changes both the consumed count and usually the value.
+
+        Every source alignment through sixteen bytes is crossed with those
+        bytes and bases. A separate long run crosses every bound through 96;
+        that reaches unsigned wrap even in base two and proves wrapping and
+        the strict pre-load fence together.
+*/
+static p8 base_digit_character(positive digit, bool upper)
+{
+        if (digit < 10)
+                return (p8)('0' + digit);
+
+        return (p8)((upper ? 'A' : 'a') + digit - 10);
+}
+
+fn check_digits_base()
+{
+        static positive invalid_bases[] = {0, 1, 37, 255, (positive)-1};
+
+        // No source exists to load. A valid base with a zero bound and an
+        // invalid base with any bound must both finish before the first load.
+        for (positive base = 2; base <= 36; base++)
+        {
+                positive got_used = (positive)-1;
+
+                same("string_digits_base_max", "zero bound null value",
+                     string_digits_base_max(null, 0, base, address_of got_used), 0);
+                same("string_digits_base_max", "zero bound null used", got_used, 0);
+                same("string_digits_base_max", "zero bound no used",
+                     string_digits_base_max(null, 0, base, null), 0);
+
+                if (base == 8)
+                {
+                        got_used = (positive)-1;
+                        same("string_digits_octal_max", "zero bound null value",
+                             string_digits_octal_max(null, 0, address_of got_used), 0);
+                        same("string_digits_octal_max", "zero bound null used",
+                             got_used, 0);
+                        same("string_digits_octal_max", "zero bound no used",
+                             string_digits_octal_max(null, 0, null), 0);
+                        got_used = (positive)-1;
+                        same("string_digits_octal_escape_max",
+                             "zero bound null value",
+                             string_digits_octal_escape_max(
+                                 null, 0, address_of got_used), 0);
+                        same("string_digits_octal_escape_max",
+                             "zero bound null used", got_used, 0);
+                        same("string_digits_octal_escape_max",
+                             "zero bound no used",
+                             string_digits_octal_escape_max(null, 0, null), 0);
+                }
+                else if (base == 16)
+                {
+                        got_used = (positive)-1;
+                        same("string_digits_hexadecimal_max", "zero bound null value",
+                             string_digits_hexadecimal_max(null, 0,
+                                                           address_of got_used),
+                             0);
+                        same("string_digits_hexadecimal_max", "zero bound null used",
+                             got_used, 0);
+                        same("string_digits_hexadecimal_max", "zero bound no used",
+                             string_digits_hexadecimal_max(null, 0, null), 0);
+                        got_used = (positive)-1;
+                        same("string_digits_hexadecimal_escape_max",
+                             "zero bound null value",
+                             string_digits_hexadecimal_escape_max(
+                                 null, 0, address_of got_used), 0);
+                        same("string_digits_hexadecimal_escape_max",
+                             "zero bound null used", got_used, 0);
+                        same("string_digits_hexadecimal_escape_max",
+                             "zero bound no used",
+                             string_digits_hexadecimal_escape_max(null, 0, null),
+                             0);
+                }
+        }
+
+        for (positive i = 0; i < sizeof(invalid_bases) / sizeof(invalid_bases[0]); i++)
+        {
+                positive got_used = (positive)-1;
+
+                same("string_digits_base_max", "invalid base null value",
+                     string_digits_base_max(null, 1, invalid_bases[i],
+                                            address_of got_used),
+                     0);
+                same("string_digits_base_max", "invalid base null used", got_used, 0);
+        }
+
+        for (positive base = 2; base <= 36; base++)
+                for (positive offset = 0; offset < 16; offset++)
+                        for (positive length = 0; length <= 24; length++)
+                        {
+                                p8 address_to subject = span_subject(offset);
+
+                                reference_fill(span_room, 0xa5, sizeof(span_room));
+
+                                for (positive i = 0; i < length; i++)
+                                {
+                                        positive digit = (i * 17 + base + offset) % base;
+
+                                        subject[i] =
+                                            base_digit_character(digit, (i & 1) != 0);
+                                }
+
+                                // A valid byte beyond the fence makes any
+                                // over-read continue instead of hiding itself.
+                                subject[length + 1] = '0';
+                                subject[length + 2] = '0';
+
+                                for (positive byte = 0; byte < 256; byte++)
+                                {
+                                        positive got_used = (positive)-1;
+                                        positive want_used = (positive)-1;
+
+                                        subject[length] = (p8)byte;
+
+                                        same("string_digits_base_max", "every byte value",
+                                             string_digits_base_max(
+                                                 subject, length + 1, base,
+                                                 address_of got_used),
+                                             reference_digits_base_max(
+                                                 subject, length + 1, base,
+                                                 address_of want_used));
+                                        same("string_digits_base_max", "every byte used",
+                                             got_used, want_used);
+
+                                        if (base == 8)
+                                        {
+                                                got_used = (positive)-1;
+                                                same("string_digits_octal_max",
+                                                     "every byte value",
+                                                     string_digits_octal_max(
+                                                         subject, length + 1,
+                                                         address_of got_used),
+                                                     reference_digits_base_max(
+                                                         subject, length + 1, 8,
+                                                         address_of want_used));
+                                                same("string_digits_octal_max",
+                                                     "every byte used", got_used,
+                                                     want_used);
+                                                got_used = (positive)-1;
+                                                same("string_digits_octal_escape_max",
+                                                     "every byte value",
+                                                     string_digits_octal_escape_max(
+                                                         subject, length + 1,
+                                                         address_of got_used),
+                                                     reference_digits_base_max(
+                                                         subject, length + 1, 8,
+                                                         address_of want_used));
+                                                same("string_digits_octal_escape_max",
+                                                     "every byte used", got_used,
+                                                     want_used);
+                                        }
+                                        else if (base == 16)
+                                        {
+                                                got_used = (positive)-1;
+                                                same("string_digits_hexadecimal_max",
+                                                     "every byte value",
+                                                     string_digits_hexadecimal_max(
+                                                         subject, length + 1,
+                                                         address_of got_used),
+                                                     reference_digits_base_max(
+                                                         subject, length + 1, 16,
+                                                         address_of want_used));
+                                                same("string_digits_hexadecimal_max",
+                                                     "every byte used", got_used,
+                                                     want_used);
+                                                got_used = (positive)-1;
+                                                same("string_digits_hexadecimal_escape_max",
+                                                     "every byte value",
+                                                     string_digits_hexadecimal_escape_max(
+                                                         subject, length + 1,
+                                                         address_of got_used),
+                                                     reference_digits_base_max(
+                                                         subject, length + 1, 16,
+                                                         address_of want_used));
+                                                same("string_digits_hexadecimal_escape_max",
+                                                     "every byte used", got_used,
+                                                     want_used);
+                                        }
+                                }
+
+                                same("string_digits_base_max", "optional used",
+                                     string_digits_base_max(subject, length, base, null),
+                                     reference_digits_base_max(subject, length, base,
+                                                               null));
+
+                                if (base == 8)
+                                {
+                                        same("string_digits_octal_max", "optional used",
+                                             string_digits_octal_max(subject, length,
+                                                                     null),
+                                             reference_digits_base_max(subject,
+                                                                       length, 8,
+                                                                       null));
+                                        same("string_digits_octal_escape_max",
+                                             "optional used",
+                                             string_digits_octal_escape_max(subject,
+                                                                            length,
+                                                                            null),
+                                             reference_digits_base_max(subject,
+                                                                       length, 8,
+                                                                       null));
+                                }
+                                else if (base == 16)
+                                {
+                                        same("string_digits_hexadecimal_max",
+                                             "optional used",
+                                             string_digits_hexadecimal_max(subject,
+                                                                           length,
+                                                                           null),
+                                             reference_digits_base_max(subject,
+                                                                       length, 16,
+                                                                       null));
+                                        same("string_digits_hexadecimal_escape_max",
+                                             "optional used",
+                                             string_digits_hexadecimal_escape_max(
+                                                 subject, length, null),
+                                             reference_digits_base_max(subject,
+                                                                       length, 16,
+                                                                       null));
+                                }
+                        }
+
+        // Ninety six binary digits are enough to overflow a 64-bit word; the
+        // same run therefore crosses the wrap point in every larger base too.
+        for (positive base = 2; base <= 36; base++)
+                for (positive offset = 0; offset < 16; offset++)
+                {
+                        p8 address_to subject = span_subject(offset);
+
+                        reference_fill(span_room, 0xa5, sizeof(span_room));
+
+                        for (positive i = 0; i < 98; i++)
+                        {
+                                positive digit = (i * 29 + base - 1) % base;
+
+                                subject[i] = base_digit_character(digit, (i & 1) != 0);
+                        }
+
+                        for (positive bound = 0; bound <= 96; bound++)
+                        {
+                                positive got_used = (positive)-1;
+                                positive want_used = (positive)-1;
+
+                                same("string_digits_base_max", "bounded wrap value",
+                                     string_digits_base_max(subject, bound, base,
+                                                            address_of got_used),
+                                     reference_digits_base_max(subject, bound, base,
+                                                               address_of want_used));
+                                same("string_digits_base_max", "bounded wrap used",
+                                     got_used, want_used);
+
+                                if (base == 8)
+                                {
+                                        got_used = (positive)-1;
+                                        same("string_digits_octal_max",
+                                             "bounded wrap value",
+                                             string_digits_octal_max(subject, bound,
+                                                                     address_of got_used),
+                                             reference_digits_base_max(
+                                                 subject, bound, 8,
+                                                 address_of want_used));
+                                        same("string_digits_octal_max",
+                                             "bounded wrap used", got_used,
+                                             want_used);
+                                        got_used = (positive)-1;
+                                        same("string_digits_octal_escape_max",
+                                             "bounded wrap value",
+                                             string_digits_octal_escape_max(
+                                                 subject, bound,
+                                                 address_of got_used),
+                                             reference_digits_base_max(
+                                                 subject, bound, 8,
+                                                 address_of want_used));
+                                        same("string_digits_octal_escape_max",
+                                             "bounded wrap used", got_used,
+                                             want_used);
+                                }
+                                else if (base == 16)
+                                {
+                                        got_used = (positive)-1;
+                                        same("string_digits_hexadecimal_max",
+                                             "bounded wrap value",
+                                             string_digits_hexadecimal_max(
+                                                 subject, bound,
+                                                 address_of got_used),
+                                             reference_digits_base_max(
+                                                 subject, bound, 16,
+                                                 address_of want_used));
+                                        same("string_digits_hexadecimal_max",
+                                             "bounded wrap used", got_used,
+                                             want_used);
+                                        got_used = (positive)-1;
+                                        same("string_digits_hexadecimal_escape_max",
+                                             "bounded wrap value",
+                                             string_digits_hexadecimal_escape_max(
+                                                 subject, bound,
+                                                 address_of got_used),
+                                             reference_digits_base_max(
+                                                 subject, bound, 16,
+                                                 address_of want_used));
+                                        same("string_digits_hexadecimal_escape_max",
+                                             "bounded wrap used", got_used,
+                                             want_used);
+                                }
+                        }
+                }
 }
 
 /*
@@ -2394,6 +3261,24 @@ fn check_digits_exact()
                                 same("string_digits", "the exact ones, taken",
                                      got_used, want_used);
 
+                                // Includes positive_max, the first value past
+                                // it and longer all-digit words. Validity is
+                                // independent of wrap, while the stored value
+                                // must wrap exactly like the prefix parser.
+                                {
+                                        positive got_value =
+                                            (positive)0x5a5a5a5a5a5a5a5aull;
+                                        positive want_value = got_value;
+
+                                        same("string_digits_exact", "wrap validity",
+                                             string_digits_exact(
+                                                 subject, address_of got_value),
+                                             reference_digits_exact(
+                                                 subject, address_of want_value));
+                                        same("string_digits_exact", "wrapped value",
+                                             got_value, want_value);
+                                }
+
                                 for (positive bound = 0; bound <= length + 1; bound++)
                                         same("string_digits_max", "the exact ones",
                                              string_digits_max(subject, bound, 0),
@@ -2429,6 +3314,77 @@ positive reference_into(p8 address_to into, positive value)
                 scratch[have++] = (p8)('0' + value % 10);
                 value /= 10;
         }
+
+        for (positive i = 0; i < have; i++)
+                into[i] = scratch[have - 1 - i];
+
+        return have;
+}
+
+/*
+        The compact binary spelling that used to be repeated in file_human,
+        df_amount and ls_human_width. This reference says the intended
+        overflow-safe rule explicitly: a ceiling is quotient plus a nonzero
+        remainder, never an addition near positive_max.
+*/
+positive reference_into_human_1024(p8 address_to into, positive value)
+{
+        static p8 units[] = "BKMGTPE";
+        positive divisor = 1;
+        positive unit = 0;
+
+        while (value / divisor >= 1024 && unit < 6)
+        {
+                divisor *= 1024;
+                unit++;
+        }
+
+        if (!unit)
+        {
+                positive length = reference_into(into, value);
+
+                into[length] = end;
+                return length;
+        }
+
+        positive quotient = value / divisor;
+        positive remainder = value % divisor;
+        positive whole = quotient + (remainder != 0);
+        positive length;
+
+        if (whole >= 10)
+                length = reference_into(into, whole);
+        else
+        {
+                positive fraction = (remainder * 10 + divisor - 1) / divisor;
+                positive tenths = quotient * 10 + fraction;
+
+                length = reference_into(into, tenths / 10);
+                into[length++] = '.';
+                length += reference_into(into + length, tenths % 10);
+        }
+
+        into[length++] = units[unit];
+        into[length] = end;
+
+        return length;
+}
+
+positive reference_into_base(p8 address_to into, positive value, positive base,
+                             bool upper)
+{
+        p8 scratch[64];
+        positive have = 0;
+
+        do
+        {
+                positive digit = value % base;
+
+                scratch[have++] =
+                    (p8)(digit < 10 ? '0' + digit
+                                    : (upper ? 'A' : 'a') + digit - 10);
+                value /= base;
+        } while (value);
 
         for (positive i = 0; i < have; i++)
                 into[i] = scratch[have - 1 - i];
@@ -2474,10 +3430,85 @@ fn check_into_one(positive value, positive offset, p8 guard)
         // the length right and is still wrong.
         for (positive back = 1; back <= 8; back++)
                 same("positive_into", "in front of it",
-                     (positive)got[0 - back], (positive)guard);
+                     (positive)*(got - back), (positive)guard);
 
         for (positive after = 0; after < 8; after++)
                 same("positive_into", "behind it",
+                     (positive)got[got_length + after], (positive)guard);
+
+        reference_fill(span_room, guard, sizeof(span_room));
+        reference_fill(field, guard, sizeof(field));
+
+        got = span_subject(offset);
+        want = (p8 address_to)aligned_at(field) + SPAN_HEAD + offset;
+
+        got_length = positive_into_string(got, value);
+        want_length = reference_into(want, value);
+        want[want_length] = end;
+
+        same("positive_into_string", "how many", got_length, want_length);
+        same_bytes("positive_into_string", "the string",
+                   got, want, want_length + 1);
+
+        for (positive back = 1; back <= 8; back++)
+                same("positive_into_string", "in front of it",
+                     (positive)*(got - back), (positive)guard);
+
+        for (positive after = 1; after <= 8; after++)
+                same("positive_into_string", "behind it",
+                     (positive)got[got_length + after], (positive)guard);
+}
+
+fn check_bipolar_into_one(bipolar value, positive offset, p8 guard)
+{
+        p8 address_to got;
+        p8 address_to want;
+        positive got_length;
+        positive want_length = 0;
+
+        reference_fill(span_room, guard, sizeof(span_room));
+        reference_fill(field, guard, sizeof(field));
+
+        got = span_subject(offset);
+        want = (p8 address_to)aligned_at(field) + SPAN_HEAD + offset;
+
+        if (value < 0)
+                want[want_length++] = '-';
+
+        want_length += reference_into(want + want_length,
+                                      value < 0
+                                          ? (positive)0 - (positive)value
+                                          : (positive)value);
+
+        got_length = bipolar_into(got, value);
+
+        same("bipolar_into", "how many", got_length, want_length);
+        same_bytes("bipolar_into", "the field", got, want, want_length);
+
+        for (positive back = 1; back <= 8; back++)
+                same("bipolar_into", "in front of it",
+                     (positive)*(got - back), (positive)guard);
+
+        for (positive after = 0; after < 8; after++)
+                same("bipolar_into", "behind it",
+                     (positive)got[got_length + after], (positive)guard);
+
+        reference_fill(span_room, guard, sizeof(span_room));
+        got = span_subject(offset);
+        want[want_length] = end;
+
+        got_length = bipolar_into_string(got, value);
+
+        same("bipolar_into_string", "how many", got_length, want_length);
+        same_bytes("bipolar_into_string", "the string",
+                   got, want, want_length + 1);
+
+        for (positive back = 1; back <= 8; back++)
+                same("bipolar_into_string", "in front of it",
+                     (positive)*(got - back), (positive)guard);
+
+        for (positive after = 1; after <= 8; after++)
+                same("bipolar_into_string", "behind it",
                      (positive)got[got_length + after], (positive)guard);
 }
 
@@ -2507,6 +3538,809 @@ fn check_into()
 
                         for (positive r = 0; r < 24; r++)
                                 check_into_one(next(), offset, guards[g]);
+
+                        /*
+                                The minimum signed value negates to its own
+                                bits. These exercise both signed entry points,
+                                every destination alignment, and the bytes on
+                                either side of their contracts.
+                        */
+                        static bipolar values[] = {
+                            bipolar_min, bipolar_min + 1, -1,
+                            0, 1, bipolar_max,
+                        };
+
+                        for (positive i = 0;
+                             i < sizeof(values) / sizeof(values[0]); i++)
+                                check_bipolar_into_one(values[i], offset, guards[g]);
+                }
+
+        /*
+                The direct table path has a finite domain, so cover all of it
+                rather than sampling it: every unsigned value through 9999,
+                every negative magnitude through 9999, and 10000 as the first
+                value handed to the shared wide core. Alignment and guard
+                rotate with the value, exercising every byte position without
+                multiplying this sweep by another forty identical passes.
+        */
+        for (positive value = 0; value <= 10000; value++)
+        {
+                positive offset = value & 7;
+                p8 guard = guards[value % (sizeof(guards) / sizeof(guards[0]))];
+
+                check_into_one(value, offset, guard);
+                if (value)
+                        check_bipolar_into_one(-(bipolar)value, offset, guard);
+        }
+}
+
+/*
+        Human sizes have two contracts: the terminated bytes and the writer
+        protocol. The old file helper sent an unscaled number as one digit
+        run, an integer-scaled number as digits then suffix, and a fractional
+        one as four single-byte calls. Capture both so folding through a
+        buffer cannot silently coalesce a writer that observes boundaries.
+*/
+static p8 human_capture[16];
+static positive human_used;
+static positive human_calls;
+static positive human_call_lengths[4];
+static p8 human_call_first[4];
+static bool human_overflow;
+
+fn human_writer(address_any data, positive length)
+{
+        p8 address_to bytes = (p8 address_to)data;
+
+        if (human_calls < sizeof(human_call_lengths) /
+                          sizeof(human_call_lengths[0]))
+        {
+                human_call_lengths[human_calls] = length;
+                human_call_first[human_calls] = length ? bytes[0] : 0;
+        }
+        else
+                human_overflow = true;
+
+        human_calls++;
+
+        if (length > sizeof(human_capture) - min(human_used,
+                                                  sizeof(human_capture)))
+        {
+                human_overflow = true;
+                return;
+        }
+
+        reference_copy(human_capture + human_used, bytes, length);
+        human_used += length;
+}
+
+fn check_human_one(positive value, positive offset, p8 guard)
+{
+        reference_fill(span_room, guard, sizeof(span_room));
+        reference_fill(field, guard, sizeof(field));
+
+        p8 address_to got = span_subject(offset);
+        p8 address_to want =
+            (p8 address_to)aligned_at(field) + SPAN_HEAD + offset;
+        positive got_length = positive_into_human_1024_string(got, value);
+        positive want_length = reference_into_human_1024(want, value);
+
+        same("positive_into_human_1024_string", "how many", got_length, want_length);
+        same_bytes("positive_into_human_1024_string", "the terminated bytes",
+                   got, want, want_length + 1);
+
+        for (positive back = 1; back <= 8; back++)
+                same("positive_into_human_1024_string", "in front of it",
+                     (positive)*(got - back), (positive)guard);
+
+        for (positive after = 1; after <= 8; after++)
+                same("positive_into_human_1024_string", "behind the terminator",
+                     (positive)got[got_length + after], (positive)guard);
+
+        reference_fill(human_capture, guard, sizeof(human_capture));
+        human_used = 0;
+        human_calls = 0;
+        human_overflow = false;
+
+        positive_to_human_1024(human_writer, value);
+
+        same("positive_to_human_1024", "did not exceed the capture",
+             human_overflow, false);
+        same("positive_to_human_1024", "how many bytes",
+             human_used, want_length);
+        same_bytes("positive_to_human_1024", "the bytes",
+                   human_capture, want, want_length);
+
+        bool fractional = want_length == 4 && want[1] == '.';
+        bool scaled = want[want_length - 1] > '9';
+        positive expected_calls = fractional ? 4 : (scaled ? 2 : 1);
+
+        same("positive_to_human_1024", "how many writer calls",
+             human_calls, expected_calls);
+
+        if (fractional)
+                for (positive call = 0; call < 4 && call < human_calls; call++)
+                {
+                        same("positive_to_human_1024",
+                             "one byte in each fractional call",
+                             human_call_lengths[call], 1);
+                        same("positive_to_human_1024",
+                             "fractional call order",
+                             human_call_first[call], want[call]);
+                }
+        else if (scaled && human_calls >= 2)
+        {
+                same("positive_to_human_1024", "integer digit run",
+                     human_call_lengths[0], want_length - 1);
+                same("positive_to_human_1024", "integer first digit",
+                     human_call_first[0], want[0]);
+                same("positive_to_human_1024", "integer suffix length",
+                     human_call_lengths[1], 1);
+                same("positive_to_human_1024", "integer suffix byte",
+                     human_call_first[1], want[want_length - 1]);
+        }
+        else if (human_calls)
+        {
+                same("positive_to_human_1024", "plain digit run",
+                     human_call_lengths[0], want_length);
+                same("positive_to_human_1024", "plain first digit",
+                     human_call_first[0], want[0]);
+        }
+}
+
+fn check_human_1024()
+{
+        static p8 guards[] = {0x00, '0', '9', 'x', 0xff};
+        positive maximum = ~(positive)0;
+
+        // Complete finite low domain, rotating every alignment and poison.
+        for (positive value = 0; value <= 65535; value++)
+                check_human_one(value, value & 15,
+                                guards[value % sizeof(guards)]);
+
+        positive divisor = 1024;
+
+        for (positive unit = 1; unit <= 6; unit++)
+        {
+                check_human_one(divisor - 1, unit, guards[unit % sizeof(guards)]);
+                check_human_one(divisor, unit + 1,
+                                guards[(unit + 1) % sizeof(guards)]);
+                check_human_one(divisor + 1, unit + 2,
+                                guards[(unit + 2) % sizeof(guards)]);
+
+                // The presentation changes at nine plus any remainder, and
+                // the unit changes only at the next exact power.
+                static positive multipliers[] = {9, 10};
+
+                for (positive m = 0;
+                     m < sizeof(multipliers) / sizeof(multipliers[0]); m++)
+                {
+                        positive edge = multipliers[m] * divisor;
+
+                        check_human_one(edge - 1, m + unit,
+                                        guards[(m + unit) % sizeof(guards)]);
+                        check_human_one(edge, m + unit + 1,
+                                        guards[(m + unit + 1) % sizeof(guards)]);
+                        check_human_one(edge + 1, m + unit + 2,
+                                        guards[(m + unit + 2) % sizeof(guards)]);
+                }
+
+                // Every tenth boundary from either side, at both ends of the
+                // one-decimal range. Powers of two are not divisible by ten,
+                // so the floor and its neighbours exercise the ceiling.
+                for (positive tenth = 1; tenth < 10; tenth++)
+                {
+                        positive remainder = (tenth * divisor) / 10;
+
+                        for (positive quotient = 1; quotient <= 8; quotient += 7)
+                        {
+                                positive edge = quotient * divisor + remainder;
+
+                                check_human_one(edge - 1, tenth,
+                                                guards[tenth % sizeof(guards)]);
+                                check_human_one(edge, tenth + 1,
+                                                guards[(tenth + 1) % sizeof(guards)]);
+                                check_human_one(edge + 1, tenth + 2,
+                                                guards[(tenth + 2) % sizeof(guards)]);
+                        }
+                }
+
+                if (divisor <= maximum / 1024)
+                        divisor *= 1024;
+        }
+
+        // The exact range where the former numerator wrapped, plus the whole
+        // u64 ceiling. These must say 15E, 16E, 16E rather than 15E, 0E, 0E.
+        divisor = (positive)1 << 60;
+        check_human_one(15 * divisor, 13, 0xa5);
+        check_human_one(15 * divisor + 1, 14, 0x5a);
+        check_human_one(maximum - 1, 15, 0xff);
+        check_human_one(maximum, 0, 0x00);
+
+        for (positive i = 0; i < 65536; i++)
+                check_human_one(next(), i & 15,
+                                guards[(i >> 4) % sizeof(guards)]);
+}
+
+#include "verify_human_nearest.inc"
+
+/*
+        A padded field is a writer protocol, not merely a byte result: every
+        leading byte is its own call, the optional prefix is its own call, and
+        all digits are the final call. These records prove that boundary and
+        order while the guarded destination proves the bytes. Widths through
+        forty cross every decimal length, every destination alignment, both
+        padding alphabets, disabled padding, and absent/present prefixes. The
+        finite 0..100000 converter domain is swept once more with those axes
+        rotating, then deliberately large widths prove there is no
+        width-sized stack allocation or hidden truncation.
+*/
+#define PADDED_ROOM 1280
+#define PADDED_CALL_MAX 1100
+
+static p8 padded_got_room[PADDED_ROOM];
+static p8 padded_want_room[PADDED_ROOM];
+static p8 address_to padded_output;
+static positive padded_capacity;
+static positive padded_used;
+static positive padded_calls;
+static positive padded_call_lengths[PADDED_CALL_MAX];
+static p8 padded_call_first[PADDED_CALL_MAX];
+static bool padded_overflow;
+
+fn padded_writer(address_any data, positive length)
+{
+        p8 address_to bytes = (p8 address_to)data;
+
+        if (padded_calls < PADDED_CALL_MAX)
+        {
+                padded_call_lengths[padded_calls] = length;
+                padded_call_first[padded_calls] = length ? bytes[0] : 0;
+        }
+        else
+                padded_overflow = true;
+
+        padded_calls++;
+
+        if (length > padded_capacity - min(padded_used, padded_capacity))
+        {
+                padded_overflow = true;
+                return;
+        }
+
+        reference_copy(padded_output + padded_used, bytes, length);
+        padded_used += length;
+}
+
+fn check_base_field()
+{
+        static positive values[] = {0, 1, 7, 8, 9, 15, 16, 255,
+                                    0xffffffffffffffffull};
+        static positive widths[] = {0, 1, 2, 5, 24, 257};
+        static bipolar precisions[] = {-1, 0, 1, 4, 25};
+
+        // writer_fill's observable contract is exactly one one-byte call per
+        // requested byte, including large counts, and no call for zero.
+        for (positive count = 0; count <= 257; count += count < 2 ? 1 : 255)
+        {
+                padded_output = padded_got_room;
+                padded_capacity = sizeof(padded_got_room);
+                padded_used = padded_calls = 0;
+                padded_overflow = false;
+                writer_fill(padded_writer, count, 0xa5);
+                same("writer_fill", "capture", padded_overflow, false);
+                same("writer_fill", "bytes", padded_used, count);
+                same("writer_fill", "calls", padded_calls, count);
+                for (positive i = 0; i < count; i++)
+                {
+                        same("writer_fill", "call length", padded_call_lengths[i], 1);
+                        same("writer_fill", "call byte", padded_call_first[i], 0xa5);
+                }
+        }
+
+        for (positive vi = 0; vi < sizeof(values) / sizeof(values[0]); vi++)
+                for (positive base = 2; base <= 36; base++)
+                        for (positive wi = 0; wi < sizeof(widths) / sizeof(widths[0]); wi++)
+                                for (positive pi = 0;
+                                     pi < sizeof(precisions) / sizeof(precisions[0]); pi++)
+                                        for (positive flags = 0; flags < 8; flags++)
+                                        {
+                                                p8 digits[72];
+                                                positive upper = flags & 1;
+                                                positive left = (flags >> 1) & 1;
+                                                positive zero = (flags >> 2) & 1;
+                                                positive sign = (vi & 1) ? '+' : 0;
+                                                positive packed_prefix_length = vi % 4;
+                                                positive prefix_length = min(packed_prefix_length, 2);
+                                                positive style = sign | ((positive)'0' << 8) |
+                                                    ((positive)'x' << 16) |
+                                                    (packed_prefix_length << 24) | (upper << 26) |
+                                                    (left << 27) | (zero << 28);
+                                                positive length = reference_into_base(
+                                                    digits, values[vi], base, upper);
+                                                positive zeros = 0;
+                                                bipolar precision = precisions[pi];
+                                                positive head = (sign != 0) + prefix_length;
+
+                                                if (precision >= 0 &&
+                                                    (positive)precision > length)
+                                                        zeros = (positive)precision - length;
+                                                if (zero && !left && precision < 0 &&
+                                                    widths[wi] > head + length)
+                                                        zeros = widths[wi] - head - length;
+
+                                                positive field = head + zeros + length;
+                                                positive spaces = widths[wi] > field
+                                                                      ? widths[wi] - field
+                                                                      : 0;
+                                                p8 want[400];
+                                                positive made = 0;
+                                                if (!left)
+                                                        while (made < spaces)
+                                                                want[made++] = ' ';
+                                                if (sign)
+                                                        want[made++] = (p8)sign;
+                                                if (prefix_length)
+                                                        want[made++] = '0';
+                                                if (prefix_length == 2)
+                                                        want[made++] = 'x';
+                                                for (positive i = 0; i < zeros; i++)
+                                                        want[made++] = '0';
+                                                reference_copy(want + made, digits, length);
+                                                made += length;
+                                                if (left)
+                                                        for (positive i = 0; i < spaces; i++)
+                                                                want[made++] = ' ';
+
+                                                padded_output = padded_got_room;
+                                                padded_capacity = sizeof(padded_got_room);
+                                                padded_used = padded_calls = 0;
+                                                padded_overflow = false;
+                                                positive_to_base_field(
+                                                    padded_writer, values[vi], base,
+                                                    widths[wi], precision, style);
+                                                same("positive_to_base_field", "capture",
+                                                     padded_overflow, false);
+                                                same("positive_to_base_field", "bytes",
+                                                     padded_used, made);
+                                                same_bytes("positive_to_base_field", "field",
+                                                           padded_got_room, want, made);
+                                                positive call = 0;
+                                                positive leading = left ? 0 : spaces;
+                                                for (positive i = 0; i < leading; i++, call++)
+                                                {
+                                                        same("positive_to_base_field", "space call",
+                                                             padded_call_lengths[call], 1);
+                                                        same("positive_to_base_field", "space byte",
+                                                             padded_call_first[call], ' ');
+                                                }
+                                                if (sign)
+                                                {
+                                                        same("positive_to_base_field", "sign call",
+                                                             padded_call_lengths[call], 1);
+                                                        same("positive_to_base_field", "sign byte",
+                                                             padded_call_first[call++], sign);
+                                                }
+                                                if (prefix_length)
+                                                {
+                                                        same("positive_to_base_field", "prefix call",
+                                                             padded_call_lengths[call], prefix_length);
+                                                        same("positive_to_base_field", "prefix byte",
+                                                             padded_call_first[call++], '0');
+                                                }
+                                                for (positive i = 0; i < zeros; i++, call++)
+                                                {
+                                                        same("positive_to_base_field", "zero call",
+                                                             padded_call_lengths[call], 1);
+                                                        same("positive_to_base_field", "zero byte",
+                                                             padded_call_first[call], '0');
+                                                }
+                                                same("positive_to_base_field", "digit call",
+                                                     padded_call_lengths[call], length);
+                                                same("positive_to_base_field", "digit byte",
+                                                     padded_call_first[call++], digits[0]);
+                                                for (positive i = 0; i < (left ? spaces : 0);
+                                                     i++, call++)
+                                                        same("positive_to_base_field", "tail space call",
+                                                             padded_call_lengths[call], 1);
+                                                same("positive_to_base_field", "call count",
+                                                     padded_calls, call);
+                                        }
+
+        static positive invalid[] = {0, 1, 37, (positive)-1};
+        for (positive i = 0; i < sizeof(invalid) / sizeof(invalid[0]); i++)
+        {
+                padded_output = padded_got_room;
+                padded_capacity = sizeof(padded_got_room);
+                padded_used = padded_calls = 0;
+                padded_overflow = false;
+                positive_to_base_field(padded_writer, 7, invalid[i], 20, 30,
+                                       '+' | ((positive)3 << 24) |
+                                           ((positive)1 << 28));
+                same("positive_to_base_field", "invalid base calls", padded_calls, 0);
+                same("positive_to_base_field", "invalid base bytes", padded_used, 0);
+        }
+}
+
+fn check_padded_one(positive value, positive width, p8 pad, p8 prefix,
+                    positive offset, p8 guard)
+{
+        reference_fill(padded_got_room, guard, sizeof(padded_got_room));
+        reference_fill(padded_want_room, guard, sizeof(padded_want_room));
+
+        p8 address_to got =
+            (p8 address_to)aligned_at(padded_got_room) + 32 + offset;
+        p8 address_to want =
+            (p8 address_to)aligned_at(padded_want_room) + 32 + offset;
+        p8 digits[24];
+        positive digit_length = reference_into(digits, value);
+        positive field_length = digit_length + (prefix != 0);
+        positive padding = pad && width > field_length ? width - field_length : 0;
+        positive wanted = 0;
+
+        for (positive i = 0; i < padding; i++)
+                want[wanted++] = pad;
+
+        if (prefix)
+                want[wanted++] = prefix;
+
+        reference_copy(want + wanted, digits, digit_length);
+        wanted += digit_length;
+
+        padded_output = got;
+        padded_capacity = sizeof(padded_got_room) -
+                          (positive)(got - padded_got_room) - 8;
+        padded_used = 0;
+        padded_calls = 0;
+        padded_overflow = false;
+
+        positive_to_padded(padded_writer, value, width, pad, prefix);
+
+        same("positive_to_padded", "did not exceed the capture",
+             padded_overflow, false);
+        same("positive_to_padded", "how many bytes", padded_used, wanted);
+        same_bytes("positive_to_padded", "the field", got, want, wanted);
+
+        positive expected_calls = padding + (prefix != 0) + 1;
+        same("positive_to_padded", "how many writer calls",
+             padded_calls, expected_calls);
+
+        positive call = 0;
+
+        for (; call < padding && call < padded_calls; call++)
+        {
+                same("positive_to_padded", "one byte in each pad call",
+                     padded_call_lengths[call], 1);
+                same("positive_to_padded", "the pad call byte",
+                     padded_call_first[call], pad);
+        }
+
+        if (prefix && call < padded_calls)
+        {
+                same("positive_to_padded", "one byte in the prefix call",
+                     padded_call_lengths[call], 1);
+                same("positive_to_padded", "the prefix call byte",
+                     padded_call_first[call], prefix);
+                call++;
+        }
+
+        if (call < padded_calls)
+        {
+                same("positive_to_padded", "all digits in the final call",
+                     padded_call_lengths[call], digit_length);
+                same("positive_to_padded", "the first digit in the final call",
+                     padded_call_first[call], digits[0]);
+                call++;
+        }
+
+        same("positive_to_padded", "no calls after the digits",
+             call, padded_calls);
+
+        for (positive back = 1; back <= 8; back++)
+                same("positive_to_padded", "in front of the field",
+                     (positive)*(got - back), (positive)guard);
+
+        for (positive after = 0; after < 8; after++)
+                same("positive_to_padded", "behind the field",
+                     (positive)got[wanted + after], (positive)guard);
+}
+
+fn check_padded()
+{
+        static p8 guards[] = {0x00, '0', '9', 'x', 0xff};
+        static p8 pads[] = {0, ' ', '0', '#'};
+        static p8 prefixes[] = {0, '-', '+'};
+
+        // Every low value, with every other finite axis rotating through it.
+        for (positive value = 0; value <= 100000; value++)
+                check_padded_one(
+                    value, value % 41,
+                    pads[(value / 41) % (sizeof(pads) / sizeof(pads[0]))],
+                    prefixes[(value / 164) %
+                             (sizeof(prefixes) / sizeof(prefixes[0]))],
+                    value & 15,
+                    guards[(value / 492) %
+                           (sizeof(guards) / sizeof(guards[0]))]);
+
+        // Full width/alignment/pad/prefix cross at every selected edge.
+        for (positive e = 0; e < INTO_EXACT_COUNT; e++)
+                for (positive width = 0; width <= 40; width++)
+                        for (positive offset = 0; offset < 16; offset++)
+                                for (positive p = 0;
+                                     p < sizeof(pads) / sizeof(pads[0]); p++)
+                                        for (positive x = 0;
+                                             x < sizeof(prefixes) /
+                                                     sizeof(prefixes[0]); x++)
+                                                check_padded_one(
+                                                    into_exacts[e], width,
+                                                    pads[p], prefixes[x], offset,
+                                                    guards[(e + width + offset + p + x) %
+                                                           (sizeof(guards) /
+                                                            sizeof(guards[0]))]);
+
+        // Bounded but deliberately much wider than any in-tree field.
+        static positive wide[] = {64, 127, 255, 1024};
+        static positive wide_values[] = {0, 9, 10, positive_max};
+
+        for (positive w = 0; w < sizeof(wide) / sizeof(wide[0]); w++)
+                for (positive v = 0;
+                     v < sizeof(wide_values) / sizeof(wide_values[0]); v++)
+                        for (positive p = 0;
+                             p < sizeof(pads) / sizeof(pads[0]); p++)
+                                for (positive x = 0;
+                                     x < sizeof(prefixes) / sizeof(prefixes[0]); x++)
+                                        check_padded_one(
+                                            wide_values[v], wide[w], pads[p],
+                                            prefixes[x], (w + v + p + x) & 15,
+                                            guards[(w + v + p + x) %
+                                                   (sizeof(guards) /
+                                                    sizeof(guards[0]))]);
+}
+
+/*
+        The buffer form has a different contract from the writer form above:
+        the complete field is contiguous and one return value owns its exact
+        length. Cross small values with rotating widths first, then cross all
+        integer length edges with every alignment, poison, pad and deliberately
+        wide minimum. The guards prove no terminator, truncation or width-sized
+        overrun; positive_max proves the twenty-digit move.
+*/
+#define INTO_PADDED_ROOM 1280
+
+static p8 into_padded_got_room[INTO_PADDED_ROOM];
+static p8 into_padded_want_room[INTO_PADDED_ROOM];
+
+fn check_into_padded_one(positive value, positive width, p8 pad,
+                         positive offset, p8 guard)
+{
+        reference_fill(into_padded_got_room, guard,
+                       sizeof(into_padded_got_room));
+        reference_fill(into_padded_want_room, guard,
+                       sizeof(into_padded_want_room));
+
+        p8 address_to got =
+            (p8 address_to)aligned_at(into_padded_got_room) + 32 + offset;
+        p8 address_to want =
+            (p8 address_to)aligned_at(into_padded_want_room) + 32 + offset;
+        p8 digits[24];
+        positive digit_length = reference_into(digits, value);
+        positive padding = pad && width > digit_length
+                               ? width - digit_length
+                               : 0;
+        positive wanted = padding + digit_length;
+
+        reference_fill(want, pad, padding);
+        reference_copy(want + padding, digits, digit_length);
+
+        positive length = positive_into_padded(got, value, width, pad);
+
+        same("positive_into_padded", "how many", length, wanted);
+        same_bytes("positive_into_padded", "the field", got, want, wanted);
+
+        for (positive back = 1; back <= 8; back++)
+                same("positive_into_padded", "in front of it",
+                     (positive)*(got - back), (positive)guard);
+
+        for (positive after = 0; after < 8; after++)
+                same("positive_into_padded", "behind it",
+                     (positive)got[wanted + after], (positive)guard);
+}
+
+fn check_into_padded()
+{
+        static p8 guards[] = {0x00, '0', '9', 'x', 0xff};
+        static p8 pads[] = {0, '0', ' ', '#'};
+        static positive widths[] = {0, 1, 2, 6, 9, 19, 20,
+                                    21, 32, 64, 127, 255, 1024};
+
+        for (positive value = 0; value <= 100000; value++)
+                check_into_padded_one(
+                    value, value % 41,
+                    pads[(value / 41) % (sizeof(pads) / sizeof(pads[0]))],
+                    value & 15,
+                    guards[(value / 164) %
+                           (sizeof(guards) / sizeof(guards[0]))]);
+
+        // Dense coverage of both bounded pair-emission lanes, including
+        // values far above the exhaustive small sweep.
+        for (positive r = 0; r < 10000; r++)
+        {
+                positive value6 = next() % 1000000;
+                positive value9 = next() % 1000000000;
+
+                check_into_padded_one(value6, 6, '0', r & 15,
+                                      guards[r % sizeof(guards)]);
+                check_into_padded_one(value9, 9, '0', (r + 7) & 15,
+                                      guards[(r + 1) % sizeof(guards)]);
+        }
+
+        for (positive e = 0; e < INTO_EXACT_COUNT; e++)
+                for (positive w = 0; w < sizeof(widths) / sizeof(widths[0]); w++)
+                        for (positive offset = 0; offset < 16; offset++)
+                                for (positive p = 0;
+                                     p < sizeof(pads) / sizeof(pads[0]); p++)
+                                        for (positive g = 0;
+                                             g < sizeof(guards) / sizeof(guards[0]); g++)
+                                                check_into_padded_one(
+                                                    into_exacts[e], widths[w],
+                                                    pads[p], offset, guards[g]);
+}
+
+fn check_into_pair()
+{
+        static p8 guards[] = {0x00, '0', '9', 'x', 0xff};
+        p8 room[64];
+
+        for (positive value = 0; value < 100; value++)
+                for (positive offset = 0; offset < 16; offset++)
+                        for (positive g = 0;
+                             g < sizeof(guards) / sizeof(guards[0]); g++)
+                        {
+                                reference_fill(room, guards[g], sizeof(room));
+                                p8 address_to got =
+                                    (p8 address_to)aligned_at(room) + 16 + offset;
+                                positive length = positive_into_pair(got, value);
+
+                                same("positive_into_pair", "how many", length, 2);
+                                same("positive_into_pair", "tens", got[0],
+                                     '0' + value / 10);
+                                same("positive_into_pair", "ones", got[1],
+                                     '0' + value % 10);
+
+                                for (positive back = 1; back <= 8; back++)
+                                        same("positive_into_pair", "in front of it",
+                                             *(got - back), guards[g]);
+                                for (positive after = 0; after < 8; after++)
+                                        same("positive_into_pair", "behind it",
+                                             got[2 + after], guards[g]);
+                        }
+}
+
+/*
+        Every power fast path, every conversion base the tree uses, and the
+        whole public 2..36 contract around it. Invalid bases return zero and
+        leave the destination untouched.
+
+        The 16-bit value domain is finite enough to exhaust for octal,
+        decimal and hexadecimal. Alignment and poison rotate through that
+        sweep, then every alignment/poison pair is crossed with zero,
+        positive_max and either side of every power of each tree base. The
+        remaining bases get both alphabets, their UINT64 edge, and a repeatable
+        spread. Together those catch a wrong digit count, an uppercase leak,
+        an assumed alignment and either kind of stray terminator/padding byte.
+*/
+static p8 base_got_room[128];
+static p8 base_want_room[128];
+
+fn check_into_base_one(positive value, positive base, bool upper,
+                       positive offset, p8 guard)
+{
+        reference_fill(base_got_room, guard, sizeof(base_got_room));
+        reference_fill(base_want_room, guard, sizeof(base_want_room));
+
+        p8 address_to got = (p8 address_to)aligned_at(base_got_room) + 16 + offset;
+        p8 address_to want = (p8 address_to)aligned_at(base_want_room) + 16 + offset;
+        positive got_length = positive_into_base(got, value, base, upper);
+        positive want_length = reference_into_base(want, value, base, upper);
+
+        same("positive_into_base", "how many", got_length, want_length);
+        same_bytes("positive_into_base", "the digits", got, want, want_length);
+
+        for (positive back = 1; back <= 8; back++)
+                same("positive_into_base", "in front of it",
+                     (positive)*(got - back), (positive)guard);
+
+        for (positive after = 0; after < 8; after++)
+                same("positive_into_base", "behind it",
+                     (positive)got[got_length + after], (positive)guard);
+}
+
+fn check_into_base()
+{
+        static positive tree_bases[] = {2, 4, 8, 10, 16, 32};
+        static positive invalid_bases[] = {0, 1, 37, ~(positive)0};
+        static p8 guards[] = {0x00, '0', '9', 'x', 0xff};
+        positive maximum = ~(positive)0;
+
+        for (positive b = 0;
+             b < sizeof(invalid_bases) / sizeof(invalid_bases[0]); b++)
+                for (bool upper = false; upper <= true; upper++)
+                        for (positive value = 0; value <= 1; value++)
+                                for (positive offset = 0; offset < 8; offset++)
+                                {
+                                        reference_fill(base_got_room, 0xa5,
+                                                       sizeof(base_got_room));
+                                        p8 address_to got =
+                                            (p8 address_to)aligned_at(base_got_room) +
+                                            16 + offset;
+                                        positive length = positive_into_base(
+                                            got, value ? maximum : 0,
+                                            invalid_bases[b], upper);
+
+                                        same("positive_into_base", "invalid length",
+                                             length, 0);
+
+                                        for (positive i = 0;
+                                             i < sizeof(base_got_room); i++)
+                                                same("positive_into_base",
+                                                     "invalid base wrote nothing",
+                                                     base_got_room[i], 0xa5);
+                                }
+
+        // Complete small-integer domain for every in-tree base and alphabet.
+        for (positive b = 0; b < sizeof(tree_bases) / sizeof(tree_bases[0]); b++)
+                for (bool upper = false; upper <= true; upper++)
+                        for (positive value = 0; value <= 65535; value++)
+                                check_into_base_one(
+                                    value, tree_bases[b], upper,
+                                    (value + tree_bases[b] + upper) & 7,
+                                    guards[(value + b + upper) % sizeof(guards)]);
+
+        // Full alignment/guard cross at every length transition and UINT64.
+        for (positive b = 0; b < sizeof(tree_bases) / sizeof(tree_bases[0]); b++)
+                for (bool upper = false; upper <= true; upper++)
+                        for (positive offset = 0; offset < 8; offset++)
+                                for (positive g = 0; g < sizeof(guards); g++)
+                                {
+                                        positive base = tree_bases[b];
+                                        positive power = 1;
+
+                                        check_into_base_one(maximum, base, upper,
+                                                            offset, guards[g]);
+                                        check_into_base_one(maximum - 1, base, upper,
+                                                            offset, guards[g]);
+
+                                        while (1)
+                                        {
+                                                check_into_base_one(power - 1, base, upper,
+                                                                    offset, guards[g]);
+                                                check_into_base_one(power, base, upper,
+                                                                    offset, guards[g]);
+                                                check_into_base_one(power + 1, base, upper,
+                                                                    offset, guards[g]);
+
+                                                if (power > maximum / base)
+                                                        break;
+
+                                                power *= base;
+                                        }
+                                }
+
+        // The reusable surface, not only its current consumers.
+        for (positive base = 2; base <= 36; base++)
+                for (bool upper = false; upper <= true; upper++)
+                {
+                        check_into_base_one(maximum, base, upper,
+                                            base & 7, guards[base % sizeof(guards)]);
+
+                        for (positive r = 0; r < 128; r++)
+                        {
+                                positive value = next();
+
+                                check_into_base_one(
+                                    value, base, upper, (value + r) & 7,
+                                    guards[(value + base + upper) % sizeof(guards)]);
+                        }
                 }
 }
 
@@ -2596,7 +4430,7 @@ fn check_copy_max_end()
                                         for (positive back = 1; back <= 8; back++)
                                                 same("string_copy_max_end",
                                                      "in front of it",
-                                                     (positive)got[0 - back],
+                                                     (positive)*(got - back),
                                                      (positive)fillers[f]);
                                 }
 }
@@ -3420,6 +5254,245 @@ fn check_memory_compare()
                         compare_twin[off + size] = compare_room[off + size];
                 }
 }
+
+#if RISCV64
+/*
+        The RV64 base ISA does not require naturally misaligned integer loads
+        and stores to complete.  QEMU and many Linux systems emulate them, so
+        a result-only test can agree while the shipped instruction stream is
+        still outside the floor.  src/test/run supplies the disassembly half
+        of this check; this is the semantic half.
+
+        Every pair of pointer residues is crossed here.  Equal residues reach
+        the aligned word paths after a byte peel, unequal residues can never
+        align in lockstep and must remain bytewise.  The ordinary bulk tests
+        cover many offsets, but did not cross all 64 pairs for compares or all
+        16 overlap distances for memmove.
+*/
+#define RV_ALIGN_ROOM 512
+#define RV_PAGE_ROOM (4096 * 3)
+
+static p8 rv_align_left[RV_ALIGN_ROOM];
+static p8 rv_align_right[RV_ALIGN_ROOM];
+static p8 rv_align_got[RV_ALIGN_ROOM];
+static p8 rv_align_want[RV_ALIGN_ROOM];
+static p8 rv_align_from[RV_ALIGN_ROOM];
+static p8 rv_page_left[RV_PAGE_ROOM];
+static p8 rv_page_right[RV_PAGE_ROOM];
+static p8 rv_page_got[RV_PAGE_ROOM];
+static p8 rv_page_want[RV_PAGE_ROOM];
+
+positive reference_trailing_positive(string_address input);
+
+static p8 address_to rv_page(p8 address_to room)
+{
+        positive address = (positive)(address_any)room;
+
+        return (p8 address_to)((address + 4095) & ~(positive)4095);
+}
+
+fn check_riscv_alignment_floor()
+{
+        static const positive bounds[] = {0, 1, 7, 8, 9, 31, 32, 33, 80, 88};
+
+        for (positive left_offset = 0; left_offset < 8; left_offset++)
+                for (positive right_offset = 0; right_offset < 8; right_offset++)
+                        for (positive size = 0; size <= 80; size++)
+                        {
+                                p8 address_to left = aligned_at(rv_align_left) + 64 +
+                                                     left_offset;
+                                p8 address_to right = aligned_at(rv_align_right) + 64 +
+                                                      right_offset;
+
+                                for (positive i = 0; i < 96; i++)
+                                {
+                                        p8 value = (p8)('a' + (i * 5 + size) % 23);
+
+                                        left[i] = value;
+                                        right[i] = value;
+                                }
+
+                                left[size] = 0;
+                                right[size] = 0;
+
+                                same("memory_compare", "every pair of RV64 residues",
+                                     (positive)memory_compare(left, right, size),
+                                     (positive)reference_memory_compare(left, right,
+                                                                        size));
+                                same("string_compare", "every pair of RV64 residues",
+                                     (positive)string_compare(left, right),
+                                     (positive)reference_compare(left, right));
+
+                                for (positive b = 0;
+                                     b < sizeof(bounds) / sizeof(bounds[0]); b++)
+                                        same("string_compare_max",
+                                             "every pair of RV64 residues",
+                                             (positive)string_compare_max(left, right,
+                                                                          bounds[b]),
+                                             (positive)reference_compare_max(left, right,
+                                                                             bounds[b]));
+
+                                for (positive where = 0; where < size; where++)
+                                {
+                                        right[where] = (p8)(left[where] ^ 0x80);
+
+                                        same("memory_compare", "a difference at every residue",
+                                             (positive)memory_compare(left, right, size),
+                                             (positive)reference_memory_compare(left, right,
+                                                                                size));
+                                        same("string_compare", "a difference at every residue",
+                                             (positive)string_compare(left, right),
+                                             (positive)reference_compare(left, right));
+                                        same("string_compare_max",
+                                             "a bounded difference at every residue",
+                                             (positive)string_compare_max(left, right, size),
+                                             (positive)reference_compare_max(left, right,
+                                                                             size));
+
+                                        right[where] = left[where];
+                                }
+                        }
+
+        // Every source/destination residue, every short size, and guards on
+        // the complete arena.  Sizes through 80 cross every 4/8/16/32-byte
+        // transition in the aligned core as well as the byte fallback.
+        for (positive destination_offset = 0; destination_offset < 8;
+             destination_offset++)
+                for (positive source_offset = 0; source_offset < 8; source_offset++)
+                        for (positive size = 0; size <= 80; size++)
+                        {
+                                p8 address_to got = aligned_at(rv_align_got) + 64 +
+                                                    destination_offset;
+                                p8 address_to want = aligned_at(rv_align_want) + 64 +
+                                                     destination_offset;
+                                p8 address_to from = aligned_at(rv_align_from) + 64 +
+                                                     source_offset;
+
+                                for (positive i = 0; i < RV_ALIGN_ROOM; i++)
+                                {
+                                        rv_align_got[i] = 0xa5;
+                                        rv_align_want[i] = 0xa5;
+                                        rv_align_from[i] = (p8)(i * 29 + size);
+                                }
+
+                                memory_copy_fast(got, from, size);
+                                reference_copy(want, from, size);
+                                same_bytes("memory_copy_fast", "every pair of RV64 residues",
+                                           rv_align_got, rv_align_want, RV_ALIGN_ROOM);
+
+                                if (source_offset == 0)
+                                {
+                                        memory_fill(got, (b8)(size + 3), size);
+                                        reference_fill(want, (b8)(size + 3), size);
+                                        same_bytes("memory_fill", "every RV64 residue",
+                                                   rv_align_got, rv_align_want,
+                                                   RV_ALIGN_ROOM);
+                                }
+                        }
+
+        // Backwards and forwards overlap at every distance modulo eight.
+        for (positive offset = 0; offset < 8; offset++)
+                for (positive distance = 1; distance <= 16; distance++)
+                        for (positive size = 0; size <= 96; size++)
+                        {
+                                positive base = 128 + offset;
+
+                                for (positive i = 0; i < RV_ALIGN_ROOM; i++)
+                                        rv_align_got[i] = rv_align_want[i] =
+                                            (p8)(i * 13 + size);
+
+                                memory_copy(rv_align_got + base + distance,
+                                            rv_align_got + base, size);
+                                reference_copy(rv_align_want + base + distance,
+                                               rv_align_want + base, size);
+                                same_bytes("memory_copy", "every backward RV64 residue",
+                                           rv_align_got, rv_align_want, RV_ALIGN_ROOM);
+
+                                for (positive i = 0; i < RV_ALIGN_ROOM; i++)
+                                        rv_align_got[i] = rv_align_want[i] =
+                                            (p8)(i * 17 + size);
+
+                                memory_copy(rv_align_got + base,
+                                            rv_align_got + base + distance, size);
+                                reference_copy(rv_align_want + base,
+                                               rv_align_want + base + distance, size);
+                                same_bytes("memory_copy", "every forward RV64 residue",
+                                           rv_align_got, rv_align_want, RV_ALIGN_ROOM);
+                        }
+
+        /*
+                Put the exclusive end at an actual 4096-byte boundary.  The
+                sixteen bytes beyond it are hostile rather than zero, so a
+                scan that skips the terminator or a bulk operation that leaks
+                across its bound is visible even on a host that maps the next
+                page.  The static audit separately proves the final wide
+                access itself is naturally aligned.
+        */
+        {
+                p8 address_to left_edge = rv_page(rv_page_left) + 4096;
+                p8 address_to right_edge = rv_page(rv_page_right) + 4096;
+                p8 address_to got_edge = rv_page(rv_page_got) + 4096;
+                p8 address_to want_edge = rv_page(rv_page_want) + 4096;
+
+                for (positive residue = 0; residue < 8; residue++)
+                {
+                        positive size = 64 + residue;
+                        p8 address_to left = left_edge - size;
+                        p8 address_to right = right_edge - size;
+                        p8 address_to got = got_edge - size;
+                        p8 address_to want = want_edge - size;
+
+                        for (positive i = 0; i < size; i++)
+                                left[i] = right[i] = (p8)('a' + (i % 17));
+
+                        left[size - 1] = 0;
+                        right[size - 1] = 0;
+
+                        for (positive i = 0; i < 16; i++)
+                        {
+                                left_edge[i] = 0xe1;
+                                right_edge[i] = 0xe2;
+                                got_edge[i] = 0xe3;
+                                want_edge[i] = 0xe3;
+                        }
+
+                        same("string_compare", "a terminator at a page edge",
+                             (positive)string_compare(left, right),
+                             (positive)reference_compare(left, right));
+                        same("string_compare_max", "a bound at a page edge",
+                             (positive)string_compare_max(left, right, size),
+                             (positive)reference_compare_max(left, right, size));
+                        same("memory_compare", "a block ending at a page edge",
+                             (positive)memory_compare(left, right, size),
+                             (positive)reference_memory_compare(left, right, size));
+                        same("memory_count", "a block ending at a page edge",
+                             memory_count(left, size, 'a'),
+                             reference_count(left, size, 'a'));
+
+                        for (positive i = 0; i < size; i++)
+                                got[i] = want[i] = 0xa5;
+
+                        memory_copy_fast(got, left, size);
+                        reference_copy(want, left, size);
+                        same_bytes("memory_copy_fast", "an end at a page edge",
+                                   got, want, size + 16);
+
+                        memory_fill(got, (b8)(residue + 1), size);
+                        reference_fill(want, (b8)(residue + 1), size);
+                        same_bytes("memory_fill", "an end at a page edge",
+                                   got, want, size + 16);
+
+                        for (positive i = 0; i + 1 < size; i++)
+                                left[i] = (p8)('0' + (i * 7 + residue) % 10);
+                        left[size - 1] = 0;
+
+                        same("string_to_positive", "a terminator at a page edge",
+                             string_to_positive(left),
+                             reference_trailing_positive(left));
+                }
+        }
+}
+#endif
 
 static p8 search_room[400];
 static p8 search_needle[200];
@@ -4329,8 +6402,8 @@ static string_address malformed[] = {
     "123456789012345678901234567890",
     "1234567", "12345678", "123456789", "1234567890123456", "12345678901234567",
     "-1234567", "-12345678", "-123456789", "-1234567890123456",
-    "z1234567890", "1234567890z", "12345678z90", "\x7f9", "9\x7f",
-    "/9", "9/", ":9", "9:", "9\xff", "\xff9",
+    "z1234567890", "1234567890z", "12345678z90", "\x7f" "9", "9\x7f",
+    "/9", "9/", ":9", "9:", "9\xff", "\xff" "9",
 };
 
 fn check_parsers_malformed()
@@ -4933,11 +7006,324 @@ fn check_decimals_deep()
         }
 }
 
+/*
+        Paths are byte operations with three unusually important boundaries:
+        capacity zero must not even inspect its pointers, capacity one owns
+        only the terminator, and a component can be much longer than the
+        shell's 4096-byte path room. These references are the C bodies the
+        assembly replaced, made truthfully bounded at zero and for dirname.
+*/
+#define PATH_ROOM 8256
+#define PATH_GUARD 64
+
+static p8 path_mine[PATH_ROOM];
+static p8 path_want[PATH_ROOM];
+static p8 path_source_a[PATH_ROOM];
+static p8 path_source_b[PATH_ROOM];
+static p8 path_page_a[3 * 4096];
+static p8 path_page_b[3 * 4096];
+static p8 path_written[PATH_ROOM];
+static positive path_written_length;
+
+static positive reference_path_join(p8 address_to into, positive capacity,
+                                    string_address directory, string_address name)
+{
+        if (!capacity)
+                return 0;
+
+        positive length = reference_length(directory);
+
+        if (length > capacity - 1)
+                length = capacity - 1;
+
+        for (positive i = 0; i < length; i++)
+                into[i] = directory[i];
+
+        if (length && into[length - 1] != '/' && length + 1 < capacity)
+                into[length++] = '/';
+
+        positive tail = reference_length(name);
+
+        if (tail > capacity - 1 - length)
+                tail = capacity - 1 - length;
+
+        for (positive i = 0; i < tail; i++)
+                into[length + i] = name[i];
+
+        length += tail;
+        into[length] = 0;
+        return length;
+}
+
+static positive reference_path_tail(p8 address_to into, positive capacity,
+                                    string_address path)
+{
+        if (!capacity)
+                return 0;
+
+        positive length = reference_length(path);
+
+        while (length > 1 && path[length - 1] == '/')
+                length--;
+
+        positive start = length;
+
+        if (!(length == 1 && path[0] == '/'))
+                while (start && path[start - 1] != '/')
+                        start--;
+        else
+                start = 0;
+
+        positive found = length - start;
+
+        if (found > capacity - 1)
+                found = capacity - 1;
+
+        for (positive i = 0; i < found; i++)
+                into[i] = path[start + i];
+
+        into[found] = 0;
+        return found;
+}
+
+static positive reference_path_head(p8 address_to into, positive capacity,
+                                    string_address path)
+{
+        if (!capacity)
+                return 0;
+
+        positive length = reference_length(path);
+
+        while (length > 1 && path[length - 1] == '/')
+                length--;
+
+        positive cut = length;
+
+        while (cut && path[cut - 1] != '/')
+                cut--;
+
+        if (!cut)
+        {
+                if (capacity > 1)
+                {
+                        into[0] = '.';
+                        into[1] = 0;
+                        return 1;
+                }
+
+                into[0] = 0;
+                return 0;
+        }
+
+        while (cut > 1 && path[cut - 1] == '/')
+                cut--;
+
+        if (cut > capacity - 1)
+                cut = capacity - 1;
+
+        for (positive i = 0; i < cut; i++)
+                into[i] = path[i];
+
+        into[cut] = 0;
+        return cut;
+}
+
+static fn path_test_writer(address_any data, positive length)
+{
+        for (positive i = 0; i < length; i++)
+                path_written[i] = ((p8 address_to)data)[i];
+
+        path_written_length = length;
+        path_written[length] = 0;
+}
+
+static fn path_buffers_reset()
+{
+        reference_fill(path_mine, (b8)0xa5, PATH_ROOM);
+        reference_fill(path_want, (b8)0xa5, PATH_ROOM);
+}
+
+static string_address path_place(p8 address_to room, positive offset,
+                                 string_address text)
+{
+        positive length = reference_length(text);
+
+        for (positive i = 0; i <= length; i++)
+                room[offset + i] = text[i];
+
+        return (string_address)(room + offset);
+}
+
+static fn path_tail_head_case(string_address path, positive capacity,
+                              positive offset, string_address detail)
+{
+        p8 address_to got = path_mine + PATH_GUARD + offset;
+        p8 address_to want = path_want + PATH_GUARD + offset;
+
+        path_buffers_reset();
+        positive got_length = path_tail_copy(got, capacity, path);
+        positive want_length = reference_path_tail(want, capacity, path);
+        same("path_tail_copy", detail, got_length, want_length);
+        same_bytes("path_tail_copy", "guarded destination", path_mine,
+                   path_want, PATH_ROOM);
+
+        path_buffers_reset();
+        got_length = path_head_copy(got, capacity, path);
+        want_length = reference_path_head(want, capacity, path);
+        same("path_head_copy", detail, got_length, want_length);
+        same_bytes("path_head_copy", "guarded destination", path_mine,
+                   path_want, PATH_ROOM);
+}
+
+static fn path_join_case(string_address directory, string_address name,
+                         positive capacity, positive offset, string_address detail)
+{
+        p8 address_to got = path_mine + PATH_GUARD + offset;
+        p8 address_to want = path_want + PATH_GUARD + offset;
+
+        path_buffers_reset();
+        positive got_length = path_join(got, capacity, directory, name);
+        positive want_length = reference_path_join(want, capacity, directory, name);
+        same("path_join", detail, got_length, want_length);
+        same_bytes("path_join", "guarded destination", path_mine,
+                   path_want, PATH_ROOM);
+}
+
+fn check_paths()
+{
+        static const string_address paths[] = {
+            "",       "/",       "//",        "///",       "a",
+            "a/",     "a//",     "/a",        "/a/",       "//a",
+            "a/b",    "a//b",    "/a//b///",  ".",         "..",
+            "./a",    "../a",    "alpha/beta", "alpha///beta////",
+        };
+        static const positive capacities[] = {0, 1, 2, 3, 7, 8, 4095, 4096};
+        static const string_address directories[] = {
+            "", "/", "//", "a", "a/", "a//", "/a", "/a/", "alpha/beta",
+        };
+        static const string_address names[] = {
+            "", "b", "/b", "b/", "//b", "gamma/delta", "////",
+        };
+
+        // Capacity zero is stronger than a zero-byte result: no pointer is
+        // inspected, so even null is a valid argument in this one case.
+        same("path_join", "zero capacity null pointers",
+             path_join(null, 0, null, null), 0);
+        same("path_tail_copy", "zero capacity null pointers",
+             path_tail_copy(null, 0, null), 0);
+        same("path_head_copy", "zero capacity null pointers",
+             path_head_copy(null, 0, null), 0);
+
+        for (positive p = 0; p < sizeof(paths) / sizeof(paths[0]); p++)
+        {
+                for (positive c = 0; c < sizeof(capacities) / sizeof(capacities[0]); c++)
+                        path_tail_head_case(paths[p], capacities[c], p & 7,
+                                            "semantic corpus and capacity");
+
+                reference_fill(path_written, (b8)0xa5, PATH_ROOM);
+                path_written_length = positive_max;
+                path_basename(path_test_writer, paths[p]);
+                reference_fill(path_want, (b8)0xa5, PATH_ROOM);
+                positive wanted = reference_path_tail(path_want, PATH_ROOM, paths[p]);
+                same("path_basename", "shared split length", path_written_length,
+                     wanted);
+                same_bytes("path_basename", "shared split bytes", path_written,
+                           path_want, wanted + 1);
+        }
+
+        for (positive i = 0; i < sizeof(directories) / sizeof(directories[0]); i++)
+                for (positive c = 0; c < sizeof(capacities) / sizeof(capacities[0]); c++)
+                        path_join_case(directories[i],
+                                       names[(i + c) % (sizeof(names) / sizeof(names[0]))],
+                                       capacities[c], (i + c) & 7,
+                                       "slash and truncation corpus");
+
+        // Every byte residue for all three pointers. The source offsets use
+        // different odd strides, so the three alignments do not accidentally
+        // stay congruent while each still visits all thirty two values.
+        for (positive residue = 0; residue < 32; residue++)
+        {
+                string_address path = path_place(path_source_a, 64 + residue * 7 % 32,
+                                                 "/alpha//beta///");
+                path_tail_head_case(path, 64, residue, "every pointer residue");
+
+                string_address directory =
+                    path_place(path_source_a, 256 + residue * 11 % 32, "alpha/beta");
+                string_address name =
+                    path_place(path_source_b, 256 + residue * 13 % 32, "/gamma");
+                path_join_case(directory, name, 64, residue, "every pointer residue");
+        }
+
+        // Overlong final component, overlong directory prefix, and both join
+        // inputs overlong. These are the old dirname overflow and join/tail
+        // truncation boundaries, with poison after the full 4096-byte room.
+        for (positive i = 0; i < 6000; i++)
+        {
+                path_source_a[64 + i] = 'a';
+                path_source_b[64 + i] = 'b';
+        }
+        path_source_a[64] = '/';
+        path_source_a[64 + 6000] = 0;
+        path_source_b[64 + 5000] = '/';
+        path_source_b[64 + 6000] = 0;
+        path_tail_head_case((string_address)(path_source_a + 64), 4096, 17,
+                            "overlong final component");
+        path_tail_head_case((string_address)(path_source_b + 64), 4096, 19,
+                            "overlong directory prefix");
+        path_join_case((string_address)(path_source_a + 64),
+                       (string_address)(path_source_b + 64), 4096, 23,
+                       "overlong directory and name");
+
+        // Terminators immediately before and after page boundaries. The path
+        // routines borrow string_length, whose aligned loads make these the
+        // significant page positions even though this static test maps all
+        // three pages so it is portable under every freestanding runner.
+        positive base_a = (positive)(address_any)path_page_a;
+        positive base_b = (positive)(address_any)path_page_b;
+        positive edge_a = (4096 - (base_a & 4095)) & 4095;
+        positive edge_b = (4096 - (base_b & 4095)) & 4095;
+        if (!edge_a) edge_a = 4096;
+        if (!edge_b) edge_b = 4096;
+
+        string_address edge_text = "/page//edge///";
+        positive edge_length = reference_length(edge_text);
+        if (edge_a <= edge_length + 1) edge_a += 4096;
+        if (edge_b < 5) edge_b += 4096;
+        string_address edge_path = path_place(path_page_a,
+                                              edge_a - edge_length - 1,
+                                              edge_text);
+        path_tail_head_case(edge_path, 4096, 29, "terminator at a page edge");
+
+        string_address edge_directory = path_place(path_page_a,
+                                                   edge_a + 1, "page/directory");
+        string_address edge_name = path_place(path_page_b,
+                                              edge_b - 5, "name");
+        path_join_case(edge_directory, edge_name, 4096, 31,
+                       "sources around page edges");
+}
+
 b32 main()
 {
+#if defined(VERIFY_FORMATTERS_ONLY)
+        // A small cross-machine lane for the shared numeric core. It avoids
+        // making a formatter change wait on unrelated platform tests when a
+        // target is available only through a minimal linker and qemu-user.
+        check_into();
+        check_padded();
+        check_base_field();
+        check_into_padded();
+        check_into_pair();
+        check_into_base();
+        check_human_1024();
+        check_human_nearest();
+        check_wait_status_code();
+#else
         check_fill();
         check_count();
         check_memory_compare();
+#if RISCV64
+        check_riscv_alignment_floor();
+#endif
         check_memory_search();
         check_find_long();
 #if X64
@@ -4965,12 +7351,15 @@ b32 main()
         check_hunts_wide();
         check_copy();
         check_move();
+        check_copy_fast_end();
+        check_copy_end();
         check_strings();
         check_string_edges();
         check_compare_edges();
         check_compare_wide();
         check_environment();
         check_bulk_strings();
+        check_paths();
         check_bulk_numbers();
         check_numbers_exhaustive();
         check_numbers_edges();
@@ -5014,6 +7403,7 @@ b32 main()
                 cpu_has_avx512 = had_avx512;
         }
 #endif
+        check_byte_helpers();
         check_span();
         check_lex_word();
         check_table_find();
@@ -5021,12 +7411,23 @@ b32 main()
         check_hostile_neighbours();
         check_span_max();
         check_digits();
+        check_signed_digits_and_width();
+        check_digits_base();
         check_digits_exact();
         check_into();
+        check_padded();
+        check_base_field();
+        check_into_padded();
+        check_into_pair();
+        check_into_base();
+        check_human_1024();
+        check_human_nearest();
+        check_wait_status_code();
         check_copy_max_end();
         check_bulk_alignments();
         check_bulk_moves();
         check_bulk_wide_strings();
+#endif
 
         if (absent_count)
                 string_format(log, "  %p routine(s) under neither name here\n",

@@ -28,6 +28,14 @@ cd "$root" || exit 1
 
 compiler=${CC:-gcc}
 
+host_system=$(uname -s)
+case $(uname -m) in
+x86_64 | amd64) host_arch=x86_64 ;;
+arm64 | aarch64) host_arch=arm64 ;;
+riscv64)         host_arch=riscv64 ;;
+*)               host_arch=unknown ;;
+esac
+
 work=$(mktemp -d "${TMPDIR:-/tmp}/dawning-test.XXXXXX") || exit 1
 trap 'rm -rf "$work"' EXIT INT TERM
 
@@ -79,9 +87,25 @@ freestanding()
 {
         source_file=$1
         output=$2
+        architecture=${3:-$host_arch}
+
+        #       GCC can lower the AArch64 atomic builtins to libgcc's outline
+        #       helpers. A spark binary has no libgcc under it, so keep the
+        #       atomics inline just as the other two architectures do.
+        #
+        #       RISC-V toolchains commonly default to GC. Every executable test
+        #       must instead be built at the documented IMAFD+Zicsr+Zicntr
+        #       floor, otherwise qemu proving a binary full of compressed
+        #       instructions says nothing about whether the floor actually
+        #       works.
+        case $architecture in
+        arm64) set -- -mno-outline-atomics ;;
+        riscv64) set -- -march=rv64imafd_zicsr_zicntr -mabi=lp64d ;;
+        *)     set -- ;;
+        esac
 
         if $compiler -O2 -static -nostdlib -nostartfiles -fno-stack-protector \
-                -fno-builtin -w -T kit/spark.ld -Wl,-e,_start \
+                -fno-builtin "$@" -w -T kit/spark.ld -Wl,-e,_start \
                 -Wl,--build-id=none -Wl,--no-warn-rwx-segments \
                 -o "$output" "$source_file" 2> "$output.err"
         then
@@ -119,9 +143,1175 @@ need_shell()
         farm="$work/bin"
 }
 
+#       Compile the whole header at the RISC-V floor it advertises, then read
+#       the ISA attribute back out of the object. A normal rv64 toolchain
+#       defaults to GC, which would let both a compressed instruction and an
+#       extension above the floor enter unnoticed. The explicit march makes
+#       the assembler reject those; the attribute check proves C did not get
+#       put back by a driver default.
+#
+#       A is part of the public surface because the atomic macros lower to it.
+#       F and D are part of the assembly itself: string_format and fast_sin
+#       use both precisions. get_cpu_time reads the time CSR, so Zicntr and its
+#       Zicsr dependency are explicit too. Software fallbacks for those are a
+#       different implementation, not something this compile check should
+#       pretend exists.
+riscv_floor()
+{
+        floor_object="$work/riscv-floor.o"
+        floor_probe="$work/riscv-floor-probe.o"
+        floor_error="$work/riscv-floor.err"
+        floor_reader=""
+
+        if command -v riscv64-linux-gnu-gcc > /dev/null 2>&1; then
+                floor_compiler=$(command -v riscv64-linux-gnu-gcc)
+                floor_reader=${floor_compiler%gcc}readelf
+                set -- "$floor_compiler"
+        else
+                floor_compiler=""
+
+                # Apple clang does not carry the RISC-V backend. Try the clang
+                # on PATH, then the two usual package-manager locations; the
+                # empty translation unit separates an unavailable target from
+                # a real failure to compile library.c.
+                for floor_try in "${CLANG:-clang}" \
+                        /opt/homebrew/opt/llvm/bin/clang \
+                        /usr/local/opt/llvm/bin/clang; do
+                        command -v "$floor_try" > /dev/null 2>&1 || continue
+                        if "$floor_try" --target=riscv64-unknown-linux-gnu \
+                                -march=rv64imafd_zicsr_zicntr -mabi=lp64d \
+                                -x c -c \
+                                -o "$floor_probe" /dev/null \
+                                > /dev/null 2>&1
+                        then
+                                floor_compiler=$(command -v "$floor_try")
+                                floor_reader=$(dirname -- "$floor_compiler")/llvm-readelf
+                                set -- "$floor_compiler" \
+                                        --target=riscv64-unknown-linux-gnu
+                                break
+                        fi
+                done
+
+                [ -n "$floor_compiler" ] || {
+                        note "riscv64 floor: NOT RUN -- no compiler with a RISC-V backend"
+                        return 2
+                }
+        fi
+
+        if ! command -v "$floor_reader" > /dev/null 2>&1; then
+                if command -v llvm-readelf > /dev/null 2>&1; then
+                        floor_reader=llvm-readelf
+                elif command -v readelf > /dev/null 2>&1; then
+                        floor_reader=readelf
+                else
+                        note "riscv64 floor: NOT RUN -- no ELF attribute reader"
+                        return 2
+                fi
+        fi
+
+        if ! "$@" -march=rv64imafd_zicsr_zicntr -mabi=lp64d -c -O2 \
+                -DSTANDARD_NO_PLATFORM -ffreestanding -fno-builtin \
+                -fno-stack-protector -w -o "$floor_object" src/library.c \
+                2> "$floor_error"
+        then
+                note "library.c does not compile at the RISC-V floor:"
+                sed 's/^/    /' "$floor_error" | head -20
+                return 1
+        fi
+
+        if ! floor_attributes=$("$floor_reader" -A "$floor_object" \
+                2> "$floor_error")
+        then
+                note "the RISC-V ELF attributes could not be read:"
+                sed 's/^/    /' "$floor_error" | head -10
+                return 1
+        fi
+
+        # GNU readelf calls this Tag_RISCV_arch; llvm-readelf prints an arch
+        # TagName followed by Value. Accept either spelling and inspect the
+        # same canonical ISA string.
+        floor_arch=$(printf '%s\n' "$floor_attributes" | sed -n \
+                -e 's/.*Tag_RISCV_arch: "\([^"]*\)".*/\1/p' \
+                -e 's/^[[:space:]]*Value: \(rv64[^[:space:]]*\).*/\1/p' | \
+                head -1)
+
+        case $floor_arch in
+        rv64i*_m*_a*_f*_d*) ;;
+        *)
+                note "RISC-V ELF floor lacks IMAFD: ${floor_arch:-missing attribute}"
+                return 1
+                ;;
+        esac
+
+        for floor_extension in zicsr zicntr; do
+                if ! printf '%s\n' "$floor_arch" | \
+                        grep -Eq "(^|_)${floor_extension}[0-9]"
+                then
+                        note "RISC-V ELF floor lacks $floor_extension: $floor_arch"
+                        return 1
+                fi
+        done
+
+        if printf '%s\n' "$floor_arch" | \
+                grep -Eq '(^|_)(c|zca|zcb|zcd|zcf|zcmp|zcmt)[0-9]'
+        then
+                note "RISC-V ELF floor unexpectedly requires C: $floor_arch"
+                return 1
+        fi
+
+        return 0
+}
+
+#       A result-only run under qemu cannot prove strict-alignment safety:
+#       qemu-user and Linux may emulate the very access the floor forbids us
+#       to rely on. Build a linked image so temporary assembler labels and
+#       relocations are resolved, then inspect the instructions that ship.
+#
+#       This is deliberately paired with check_riscv_alignment_floor in
+#       verify.c. That check crosses every pointer residue and page edge; this
+#       one proves every remaining ld/sd/lw/sw is after an alignment gate, is
+#       based on the register that gate establishes, and has a naturally
+#       aligned displacement.
+riscv_alignment_gate_audit()
+{
+        gate_disassembly=$1
+        gate_routine=$2
+        residue_register=$3
+        residue_left=$4
+        residue_right=$5
+        natural_register=$6
+        natural_base=$7
+
+        awk -v routine="$gate_routine" -v residue_gate="$residue_register" \
+                -v left="$residue_left" -v right="$residue_right" \
+                -v natural_gate="$natural_register" \
+                -v natural_base="$natural_base" '
+                function address_key(value) {
+                        sub(/[[:space:]]*<.*/, "", value)
+                        gsub(/[[:space:]]/, "", value)
+                        value = tolower(value)
+                        sub(/^0x/, "", value)
+                        sub(/^0+/, "", value)
+                        return value == "" ? "0" : value
+                }
+                function first_is(slot, wanted_register, pieces) {
+                        split(operand[slot], pieces, ",")
+                        return pieces[1] == wanted_register
+                }
+                function first_two_are(slot, first, second, pieces) {
+                        split(operand[slot], pieces, ",")
+                        return pieces[1] == first && pieces[2] == second
+                }
+                function immediate_is(value, expected) {
+                        if (value == expected)
+                                return 1
+                        if (substr(expected, 1, 1) == "-")
+                                return value == "-0x" substr(expected, 2)
+                        return value == "0x" expected
+                }
+                function addi_is(slot, destination, source, immediate,
+                                 pieces) {
+                        if (mnemonic[slot] != "addi")
+                                return 0
+                        split(operand[slot], pieces, ",")
+                        return pieces[1] == destination &&
+                               pieces[2] == source &&
+                               immediate_is(pieces[3], immediate)
+                }
+                function zero_memory_is(slot, operation, destination, base,
+                                        pieces) {
+                        if (mnemonic[slot] != operation)
+                                return 0
+                        split(operand[slot], pieces, ",")
+                        return pieces[1] == destination &&
+                               (pieces[2] == "0(" base ")" ||
+                                pieces[2] == "0x0(" base ")")
+                }
+                function branch_is(slot, operation, source, pieces) {
+                        if (mnemonic[slot] != operation)
+                                return 0
+                        split(operand[slot], pieces, ",")
+                        return pieces[1] == source
+                }
+                function branch_target_slot(slot, operand_number,
+                                            pieces, target) {
+                        split(operand[slot], pieces, ",")
+                        target = pieces[operand_number]
+                        sub(/<.*/, "", target)
+                        target = address_key(target)
+                        if (!(target in instruction_at))
+                                return 0
+                        return instruction_at[target]
+                }
+                function jump_targets(slot, wanted) {
+                        return mnemonic[slot] == "j" &&
+                               branch_target_slot(slot, 1) == wanted
+                }
+                function residue_fallback_is(slot) {
+                        if (routine == "string_compare")
+                                return addi_is(slot, "a0", "a0", "1") &&
+                                       addi_is(slot + 1, "a1", "a1", "1") &&
+                                       mnemonic[slot + 2] == "j"
+
+                        if (mnemonic[slot] != "beqz" ||
+                            !first_is(slot, "a2"))
+                                return 0
+
+                        if (routine == "string_compare_max")
+                                return zero_memory_is(slot + 1, "lbu", "t3", "a0") &&
+                                       zero_memory_is(slot + 2, "lbu", "t4", "a1")
+                        if (routine == "memory_compare")
+                                return zero_memory_is(slot + 1, "lbu", "t1", "a0") &&
+                                       zero_memory_is(slot + 2, "lbu", "t2", "a1")
+                        if (routine == "memory_copy_fast")
+                                return zero_memory_is(slot + 1, "lbu", "t0", "a1") &&
+                                       zero_memory_is(slot + 2, "sb", "t0", "a0")
+                        if (routine == "memory_copy")
+                                return addi_is(slot + 1, "a4", "a4", "-1") &&
+                                       addi_is(slot + 2, "a5", "a5", "-1")
+                        return 0
+                }
+                function natural_peel_is(slot) {
+                        if (routine == "string_compare")
+                                return addi_is(slot, "a0", "a0", "1") &&
+                                       addi_is(slot + 1, "a1", "a1", "1")
+                        if (routine == "string_compare_max")
+                                return zero_memory_is(slot, "lbu", "t3", "a0") &&
+                                       zero_memory_is(slot + 1, "lbu", "t4", "a1") &&
+                                       addi_is(slot + 5, "a0", "a0", "1") &&
+                                       addi_is(slot + 6, "a1", "a1", "1") &&
+                                       addi_is(slot + 7, "a2", "a2", "-1") &&
+                                       branch_is(slot + 8, "beqz", "a2")
+                        if (routine == "memory_count")
+                                return zero_memory_is(slot, "lbu", "t4", "a0") &&
+                                       mnemonic[slot + 1] == "bne" &&
+                                       first_two_are(slot + 1, "t4", "a2") &&
+                                       addi_is(slot + 3, "a0", "a0", "1") &&
+                                       addi_is(slot + 4, "a1", "a1", "-1") &&
+                                       branch_is(slot + 5, "beqz", "a1")
+                        if (routine == "memory_compare")
+                                return zero_memory_is(slot, "lbu", "t1", "a0") &&
+                                       zero_memory_is(slot + 1, "lbu", "t2", "a1") &&
+                                       addi_is(slot + 4, "a0", "a0", "1") &&
+                                       addi_is(slot + 5, "a1", "a1", "1") &&
+                                       addi_is(slot + 6, "a2", "a2", "-1") &&
+                                       branch_is(slot + 7, "beqz", "a2")
+                        if (routine == "memory_fill")
+                                return zero_memory_is(slot, "sb", "a1", "a0") &&
+                                       addi_is(slot + 1, "a0", "a0", "1") &&
+                                       addi_is(slot + 2, "a2", "a2", "-1") &&
+                                       branch_is(slot + 3, "beqz", "a2")
+                        if (routine == "memory_copy_fast")
+                                return zero_memory_is(slot, "lbu", "t1", "a1") &&
+                                       zero_memory_is(slot + 1, "sb", "t1", "a0") &&
+                                       addi_is(slot + 2, "a0", "a0", "1") &&
+                                       addi_is(slot + 3, "a1", "a1", "1") &&
+                                       addi_is(slot + 4, "a2", "a2", "-1") &&
+                                       branch_is(slot + 5, "beqz", "a2")
+                        if (routine == "memory_copy")
+                                return addi_is(slot, "a4", "a4", "-1") &&
+                                       addi_is(slot + 1, "a5", "a5", "-1") &&
+                                       addi_is(slot + 4, "a2", "a2", "-1") &&
+                                       branch_is(slot + 5, "beqz", "a2")
+                        if (routine == "string_to_positive")
+                                return addi_is(slot, "a0", "a0", "-1") &&
+                                       zero_memory_is(slot + 1, "lbu", "t1", "a0")
+                        return 0
+                }
+                function natural_peel_span() {
+                        if (routine == "string_compare_max") return 9
+                        if (routine == "memory_count")       return 6
+                        if (routine == "memory_compare")     return 8
+                        if (routine == "memory_fill")        return 4
+                        if (routine == "memory_copy_fast")   return 6
+                        if (routine == "memory_copy")        return 6
+                        return 0
+                }
+                function natural_wide_entry_is(slot) {
+                        if (routine == "string_compare" ||
+                            routine == "string_compare_max" ||
+                            routine == "memory_count")
+                                return mnemonic[slot] == "lui" &&
+                                       first_is(slot, "t0") &&
+                                       mnemonic[slot + 1] == "addi" &&
+                                       first_two_are(slot + 1, "t0", "t0")
+                        if (routine == "memory_compare")
+                                return mnemonic[slot] == "li" &&
+                                       first_is(slot, "t0") &&
+                                       mnemonic[slot + 1] == "bltu" &&
+                                       first_two_are(slot + 1, "a2", "t0")
+                        if (routine == "memory_fill")
+                                return mnemonic[slot] == "li" &&
+                                       first_is(slot, "t0") &&
+                                       mnemonic[slot + 1] == "bltu" &&
+                                       first_two_are(slot + 1, "a2", "t0")
+                        if (routine == "memory_copy_fast")
+                                return mnemonic[slot] == "li" &&
+                                       first_is(slot, "t4") &&
+                                       mnemonic[slot + 1] == "bltu" &&
+                                       first_two_are(slot + 1, "a2", "t4")
+                        if (routine == "memory_copy")
+                                return mnemonic[slot] == "li" &&
+                                       first_is(slot, "t6") &&
+                                       mnemonic[slot + 1] == "bltu" &&
+                                       first_two_are(slot + 1, "a2", "t6")
+                        if (routine == "string_to_positive")
+                                return addi_is(slot, "t3", "a0", "-8") &&
+                                       mnemonic[slot + 1] == "bltu" &&
+                                       first_two_are(slot + 1, "t3", "t0")
+                        return 0
+                }
+                /^[[:space:]]*[[:xdigit:]]+:/ {
+                        address = $0
+                        sub(/:.*/, "", address)
+                        address = address_key(address)
+
+                        line = $0
+                        sub(/^[^:]*:[[:space:]]*/, "", line)
+                        while (line ~ /^[[:xdigit:]][[:xdigit:]][[:space:]]+/)
+                                sub(/^[[:xdigit:]][[:xdigit:]][[:space:]]+/, "", line)
+                        sub(/[[:space:]]*#.*/, "", line)
+
+                        operation = line
+                        sub(/[[:space:]].*$/, "", operation)
+                        operation = tolower(operation)
+                        arguments = line
+                        sub(/^[^[:space:]]+[[:space:]]+/, "", arguments)
+                        gsub(/[[:space:]]/, "", arguments)
+
+                        instructions++
+                        mnemonic[instructions] = operation
+                        operand[instructions] = arguments
+                        instruction_at[address] = instructions
+                }
+                END {
+                        if (residue_gate != "-") {
+                                residue_matches = 0
+                                for (i = 1; i <= instructions; i++) {
+                                        split(operand[i], pieces, ",")
+                                        if (mnemonic[i] == "xor" &&
+                                            pieces[1] == residue_gate &&
+                                            pieces[2] == left && pieces[3] == right) {
+                                                residue_matches++
+                                                residue_index = i
+                                        }
+                                }
+
+                                if (residue_matches != 1) {
+                                        print routine ": expected one exact " residue_gate "=" \
+                                              left "^" right " residue gate, found " \
+                                              residue_matches
+                                        exit 1
+                                }
+
+                                split(operand[residue_index + 1], pieces, ",")
+                                if (mnemonic[residue_index + 1] != "andi" ||
+                                    pieces[1] != residue_gate ||
+                                    pieces[2] != residue_gate ||
+                                    (pieces[3] != "7" && pieces[3] != "0x7")) {
+                                        print routine ": residue xor is not followed by andi " \
+                                              residue_gate "," residue_gate ",7"
+                                        exit 1
+                                }
+
+                                if (!branch_is(residue_index + 2, "bnez",
+                                               residue_gate)) {
+                                        print routine ": residue mask is not followed by bnez " \
+                                              residue_gate
+                                        exit 1
+                                }
+
+                                target_index = branch_target_slot(residue_index + 2, 2)
+                                if (!target_index) {
+                                        print routine \
+                                              ": residue branch target is outside the routine"
+                                        exit 1
+                                }
+
+                                if (!residue_fallback_is(target_index)) {
+                                        print routine \
+                                              ": residue branch does not target its exact byte fallback"
+                                        exit 1
+                                }
+                        }
+
+                        natural_matches = 0
+                        for (i = 1; i <= instructions; i++) {
+                                split(operand[i], pieces, ",")
+                                if (mnemonic[i] == "andi" &&
+                                    pieces[1] == natural_gate &&
+                                    pieces[2] == natural_base &&
+                                    (pieces[3] == "7" || pieces[3] == "0x7")) {
+                                        natural_matches++
+                                        natural_index[natural_matches] = i
+                                }
+                        }
+
+                        expected_natural = routine == "string_to_positive" ? 1 : 2
+                        if (natural_matches != expected_natural) {
+                                print routine ": expected " expected_natural " exact " \
+                                      natural_gate "=" natural_base "&7 natural gates, found " \
+                                      natural_matches
+                                exit 1
+                        }
+
+                        first_natural = natural_index[1]
+                        if (!branch_is(first_natural + 1, "beqz", natural_gate)) {
+                                print routine \
+                                      ": initial natural-alignment mask is not followed by beqz " \
+                                      natural_gate
+                                exit 1
+                        }
+                        wide_entry = branch_target_slot(first_natural + 1, 2)
+                        if (!wide_entry || !natural_wide_entry_is(wide_entry)) {
+                                print routine \
+                                      ": initial natural gate does not target its aligned path"
+                                exit 1
+                        }
+
+                        if (routine == "string_to_positive") {
+                                if (mnemonic[first_natural - 1] != "beq" ||
+                                    !first_two_are(first_natural - 1, "a0", "t0") ||
+                                    !natural_peel_is(first_natural + 2) ||
+                                    !jump_targets(wide_entry - 1, first_natural - 1)) {
+                                        print routine \
+                                              ": backward natural peel lost its exact loop control"
+                                        exit 1
+                                }
+                                exit 0
+                        }
+
+                        second_natural = natural_index[2]
+                        peel_entry = first_natural + 2
+                        if (!natural_peel_is(peel_entry)) {
+                                print routine ": natural gate lost its exact byte peel"
+                                exit 1
+                        }
+
+                        if (routine == "string_compare") {
+                                if (second_natural != first_natural + 4 ||
+                                    !branch_is(second_natural + 1, "beqz", natural_gate) ||
+                                    branch_target_slot(second_natural + 1, 2) != wide_entry ||
+                                    !zero_memory_is(second_natural + 2, "lbu", "a4", "a0") ||
+                                    !zero_memory_is(second_natural + 3, "lbu", "a5", "a1") ||
+                                    !jump_targets(second_natural + 6, peel_entry)) {
+                                        print routine \
+                                              ": forward natural peel lost its exact loop control"
+                                        exit 1
+                                }
+                                exit 0
+                        }
+
+                        if (!branch_is(second_natural + 1, "bnez", natural_gate)) {
+                                print routine \
+                                      ": natural peel mask is not followed by bnez " natural_gate
+                                exit 1
+                        }
+                        if (second_natural != peel_entry + natural_peel_span()) {
+                                print routine ": natural peel has an unexpected control shape"
+                                exit 1
+                        }
+                        if (branch_target_slot(second_natural + 1, 2) != peel_entry) {
+                                print routine ": natural peel backedge targets the wrong path"
+                                exit 1
+                        }
+                        if (wide_entry != second_natural + 2) {
+                                print routine \
+                                      ": natural peel does not fall through to the aligned path"
+                                exit 1
+                        }
+                }
+        ' "$gate_disassembly"
+}
+
+riscv_alignment_audit()
+{
+        alignment_probe="$work/riscv-alignment-probe.o"
+        if command -v riscv64-linux-gnu-gcc > /dev/null 2>&1; then
+                alignment_compiler=$(command -v riscv64-linux-gnu-gcc)
+                alignment_objdump=${alignment_compiler%gcc}objdump
+                set -- "$alignment_compiler"
+        else
+                alignment_compiler=
+                alignment_objdump=
+                for alignment_try in "${CLANG:-clang}" \
+                        /opt/homebrew/opt/llvm/bin/clang \
+                        /usr/local/opt/llvm/bin/clang
+                do
+                        command -v "$alignment_try" > /dev/null 2>&1 || continue
+                        if "$alignment_try" --target=riscv64-unknown-linux-gnu \
+                                -march=rv64imafd_zicsr_zicntr -mabi=lp64d \
+                                -x c -c -o "$alignment_probe" /dev/null \
+                                > /dev/null 2>&1
+                        then
+                                alignment_compiler=$(command -v "$alignment_try")
+                                alignment_objdump=$(dirname -- \
+                                        "$alignment_compiler")/llvm-objdump
+                                set -- "$alignment_compiler" \
+                                        --target=riscv64-unknown-linux-gnu \
+                                        -fuse-ld=lld
+                                break
+                        fi
+                done
+
+                [ -n "$alignment_compiler" ] || {
+                        note "riscv64 alignment audit: NOT RUN -- no RISC-V compiler"
+                        return 2
+                }
+        fi
+
+        command -v "$alignment_objdump" > /dev/null 2>&1 || {
+                note "riscv64 alignment audit: NOT RUN -- no RISC-V objdump"
+                return 2
+        }
+
+        alignment_image="$work/riscv-alignment.elf"
+        alignment_error="$work/riscv-alignment.err"
+
+        if ! "$@" -O2 -static -nostdlib -nostartfiles \
+                -fno-stack-protector -fno-builtin -w \
+                -march=rv64imafd_zicsr_zicntr -mabi=lp64d \
+                -DSTANDARD_NO_PLATFORM -T kit/spark.ld -Wl,-e,string_length \
+                -Wl,--build-id=none -o "$alignment_image" src/library.c \
+                2> "$alignment_error"
+        then
+                note "the linked RISC-V alignment image did not build:"
+                sed 's/^/    /' "$alignment_error" | head -10
+                return 1
+        fi
+
+        alignment_all="$work/riscv-alignment.dis"
+        if ! "$alignment_objdump" -D --no-show-raw-insn "$alignment_image" \
+                > "$alignment_all" 2> "$alignment_error"
+        then
+                note "the linked RISC-V alignment image could not be disassembled:"
+                sed 's/^/    /' "$alignment_error" | head -10
+                return 1
+        fi
+
+        alignment_failed=0
+
+        for alignment_spec in \
+                'string_compare:3:a0 a1' \
+                'string_compare_max:3:a0 a1' \
+                'memory_count:2:a0' \
+                'memory_compare:3:a0 a1' \
+                'memory_fill:2:a0' \
+                'memory_copy_fast:3:a0 a1' \
+                'memory_copy:3:a4 a5' \
+                'string_to_positive:1:t3 t6'
+        do
+                alignment_routine=${alignment_spec%%:*}
+                alignment_rest=${alignment_spec#*:}
+                alignment_guards=${alignment_rest%%:*}
+                alignment_bases=${alignment_rest#*:}
+                alignment_dis="$work/riscv-alignment.$alignment_routine.dis"
+
+                # Same-address libc aliases make each objdump choose one name
+                # for a function header, and GNU and LLVM do not always choose
+                # the same one. Keep auditing the moonwater contract while
+                # selecting the label this disassembler actually printed.
+                case $alignment_routine in
+                string_compare)     alignment_labels="strcmp string_compare" ;;
+                string_compare_max) alignment_labels="strncmp string_compare_max" ;;
+                memory_compare)     alignment_labels="memcmp memory_compare" ;;
+                memory_fill)        alignment_labels="__memset memset memory_fill" ;;
+                memory_copy)        alignment_labels="__memcpy memcpy memory_copy" ;;
+                *)                  alignment_labels=$alignment_routine ;;
+                esac
+
+                alignment_label=
+                for alignment_label_try in $alignment_labels; do
+                        if grep -Fq "<$alignment_label_try>:" "$alignment_all"; then
+                                alignment_label=$alignment_label_try
+                                break
+                        fi
+                done
+                if [ -z "$alignment_label" ]; then
+                        note "$alignment_routine has no disassembly label"
+                        alignment_failed=1
+                        continue
+                fi
+
+                awk -v wanted="<$alignment_label>:" '
+                        index($0, wanted) { found = 1 }
+                        found && /^[[:xdigit:]]+ <[^>]+>:/ &&
+                            !index($0, wanted) { exit }
+                        found { print }
+                ' "$alignment_all" > "$alignment_dis"
+
+                alignment_guard_count=$(grep -Ec \
+                        '[[:space:]]andi[[:space:]]+[^,]+,[^,]+,[[:space:]]*(0x)?7([[:space:]]|$)' \
+                        "$alignment_dis" || true)
+                alignment_wide_count=$(grep -Ec \
+                        '[[:space:]](ld|sd|lw|sw)[[:space:]]' \
+                        "$alignment_dis" || true)
+                alignment_first_guard=$(grep -En \
+                        '[[:space:]]andi[[:space:]]+[^,]+,[^,]+,[[:space:]]*(0x)?7([[:space:]]|$)' \
+                        "$alignment_dis" | sed -n '1s/:.*//p')
+                alignment_first_wide=$(grep -En \
+                        '[[:space:]](ld|sd|lw|sw)[[:space:]]' \
+                        "$alignment_dis" | sed -n '1s/:.*//p')
+
+                if [ "$alignment_guard_count" -lt "$alignment_guards" ] || \
+                   [ "$alignment_wide_count" -eq 0 ] || \
+                   [ -z "$alignment_first_guard" ] || \
+                   [ -z "$alignment_first_wide" ] || \
+                   [ "$alignment_first_wide" -le "$alignment_first_guard" ]
+                then
+                        note "$alignment_routine lost its alignment gate "\
+"($alignment_guard_count guards, $alignment_wide_count wide accesses)"
+                        alignment_failed=1
+                        continue
+                fi
+
+                alignment_residue_register=-
+                alignment_residue_left=-
+                alignment_residue_right=-
+                case $alignment_routine in
+                string_compare)
+                        alignment_residue_register=a6
+                        alignment_residue_left=a0
+                        alignment_residue_right=a1
+                        alignment_natural_register=a6
+                        alignment_natural_base=a0
+                        ;;
+                string_compare_max)
+                        alignment_residue_register=t2
+                        alignment_residue_left=a0
+                        alignment_residue_right=a1
+                        alignment_natural_register=t2
+                        alignment_natural_base=a0
+                        ;;
+                memory_count)
+                        alignment_natural_register=t3
+                        alignment_natural_base=a0
+                        ;;
+                memory_compare)
+                        alignment_residue_register=t0
+                        alignment_residue_left=a0
+                        alignment_residue_right=a1
+                        alignment_natural_register=t0
+                        alignment_natural_base=a0
+                        ;;
+                memory_fill)
+                        alignment_natural_register=t0
+                        alignment_natural_base=a0
+                        ;;
+                memory_copy_fast)
+                        alignment_residue_register=t0
+                        alignment_residue_left=a0
+                        alignment_residue_right=a1
+                        alignment_natural_register=t0
+                        alignment_natural_base=a0
+                        ;;
+                memory_copy)
+                        alignment_residue_register=t0
+                        alignment_residue_left=a4
+                        alignment_residue_right=a5
+                        alignment_natural_register=t0
+                        alignment_natural_base=a4
+                        ;;
+                string_to_positive)
+                        alignment_natural_register=t3
+                        alignment_natural_base=a0
+                        ;;
+                esac
+
+                if ! riscv_alignment_gate_audit "$alignment_dis" \
+                        "$alignment_routine" "$alignment_residue_register" \
+                        "$alignment_residue_left" "$alignment_residue_right" \
+                        "$alignment_natural_register" "$alignment_natural_base" \
+                        > "$alignment_error"
+                then
+                        note "$alignment_routine lost its exact alignment control:"
+                        sed 's/^/    /' "$alignment_error" | head -10
+                        alignment_failed=1
+                        continue
+                fi
+
+                if ! awk -v routine="$alignment_routine" \
+                        -v allowed="$alignment_bases" '
+                        function number(text, sign, value, i, digit, c) {
+                                sign = 1
+                                if (substr(text, 1, 1) == "-") {
+                                        sign = -1
+                                        text = substr(text, 2)
+                                }
+                                if (substr(text, 1, 2) != "0x")
+                                        return sign * (text + 0)
+                                text = substr(text, 3)
+                                value = 0
+                                for (i = 1; i <= length(text); i++) {
+                                        c = tolower(substr(text, i, 1))
+                                        digit = index("0123456789abcdef", c) - 1
+                                        if (digit < 0)
+                                                return 1
+                                        value = value * 16 + digit
+                                }
+                                return sign * value
+                        }
+                        BEGIN { allowed = " " allowed " " }
+                        /^[[:space:]]*[[:xdigit:]]+:/ {
+                                line = $0
+                                sub(/^[^:]*:[[:space:]]*/, "", line)
+
+                                # GNU objdump normally prints raw bytes before
+                                # the mnemonic. Discard every leading hex-byte
+                                # field, then inspect the instruction itself.
+                                while (line ~ /^[[:xdigit:]][[:xdigit:]][[:space:]]+/)
+                                        sub(/^[[:xdigit:]][[:xdigit:]][[:space:]]+/, "", line)
+
+                                mnemonic = line
+                                sub(/[[:space:]].*$/, "", mnemonic)
+                                if (mnemonic != "ld" && mnemonic != "sd" &&
+                                    mnemonic != "lw" && mnemonic != "sw")
+                                        next
+
+                                operand = line
+                                sub(/^[^[:space:]]+[[:space:]]+/, "", operand)
+                                sub(/^[^,]+,[[:space:]]*/, "", operand)
+                                gsub(/[[:space:]]/, "", operand)
+
+                                base = operand
+                                sub(/^.*\(/, "", base)
+                                sub(/\).*$/, "", base)
+                                offset = operand
+                                sub(/\(.*/, "", offset)
+
+                                if (index(allowed, " " base " ") == 0) {
+                                        print routine ": wide access through ungated " base
+                                        bad = 1
+                                }
+
+                                alignment = (mnemonic == "lw" || mnemonic == "sw") ? 4 : 8
+                                if (number(offset) % alignment) {
+                                        print routine ": misaligned displacement " operand
+                                        bad = 1
+                                }
+                                accesses++
+                        }
+                        END {
+                                if (!accesses) {
+                                        print routine ": no wide access was decoded"
+                                        bad = 1
+                                }
+                                exit bad
+                        }
+                ' "$alignment_dis" > "$alignment_error"
+                then
+                        note "$alignment_routine has an unsafe wide access:"
+                        sed 's/^/    /' "$alignment_error" | head -10
+                        alignment_failed=1
+                fi
+        done
+
+        #       Prove the checker is sensitive to the dangerous one-byte
+        #       mutation that motivated it. Merely counting an xor, an andi
+        #       and a later wide access accepted this inversion: unequal
+        #       residues entered the word path while equal ones fell back to
+        #       bytes. QEMU normally emulates the resulting misaligned access,
+        #       so the semantic half can still agree.
+        alignment_mutation_source="$work/riscv-alignment.memory_copy_fast.dis"
+        alignment_mutation="$work/riscv-alignment.inverted-residue.dis"
+        if ! awk '
+                {
+                        compact = $0
+                        gsub(/[[:space:]]/, "", compact)
+                        if (state == 0 && index(compact, "xort0,a0,a1"))
+                                state = 1
+                        else if (state == 1 &&
+                                 (index(compact, "andit0,t0,7") ||
+                                  index(compact, "andit0,t0,0x7")))
+                                state = 2
+                        else if (state == 2 &&
+                                 $0 ~ /[[:space:]]bnez[[:space:]]+t0,/) {
+                                sub(/bnez/, "beqz")
+                                changed = 1
+                                state = 3
+                        }
+                        print
+                }
+                END { if (!changed) exit 1 }
+        ' "$alignment_mutation_source" > "$alignment_mutation"
+        then
+                note "the RISC-V residue-gate mutation could not be constructed"
+                alignment_failed=1
+        elif riscv_alignment_gate_audit "$alignment_mutation" \
+                memory_copy_fast t0 a0 a1 t0 a0 > "$alignment_error"
+        then
+                note "the RISC-V alignment audit accepted bnez-to-beqz inversion"
+                alignment_failed=1
+        fi
+
+        #       The single-pointer half needs the same executable proof. Flip
+        #       both decisions around memory_fill's byte peel independently:
+        #       the first inversion sends an unaligned pointer to the wide
+        #       body, and the second leaves the peel after one byte regardless
+        #       of whether alignment was reached.
+        alignment_mutation_source="$work/riscv-alignment.memory_fill.dis"
+        alignment_mutation="$work/riscv-alignment.inverted-natural-entry.dis"
+        if ! awk '
+                {
+                        compact = $0
+                        gsub(/[[:space:]]/, "", compact)
+                        if (!seen &&
+                            (index(compact, "andit0,a0,7") ||
+                             index(compact, "andit0,a0,0x7")))
+                                seen = 1
+                        else if (seen == 1 &&
+                                 $0 ~ /[[:space:]]beqz[[:space:]]+t0,/) {
+                                sub(/beqz/, "bnez")
+                                changed = 1
+                                seen = 2
+                        }
+                        print
+                }
+                END { if (!changed) exit 1 }
+        ' "$alignment_mutation_source" > "$alignment_mutation"
+        then
+                note "the RISC-V natural-entry mutation could not be constructed"
+                alignment_failed=1
+        elif riscv_alignment_gate_audit "$alignment_mutation" \
+                memory_fill - - - t0 a0 > "$alignment_error"
+        then
+                note "the RISC-V alignment audit accepted beqz-to-bnez natural entry"
+                alignment_failed=1
+        fi
+
+        alignment_mutation="$work/riscv-alignment.inverted-natural-peel.dis"
+        if ! awk '
+                {
+                        compact = $0
+                        gsub(/[[:space:]]/, "", compact)
+                        if (index(compact, "andit0,a0,7") ||
+                            index(compact, "andit0,a0,0x7"))
+                                gates++
+                        else if (gates == 2 &&
+                                 $0 ~ /[[:space:]]bnez[[:space:]]+t0,/) {
+                                sub(/bnez/, "beqz")
+                                changed = 1
+                                gates = 3
+                        }
+                        print
+                }
+                END { if (!changed) exit 1 }
+        ' "$alignment_mutation_source" > "$alignment_mutation"
+        then
+                note "the RISC-V natural-peel mutation could not be constructed"
+                alignment_failed=1
+        elif riscv_alignment_gate_audit "$alignment_mutation" \
+                memory_fill - - - t0 a0 > "$alignment_error"
+        then
+                note "the RISC-V alignment audit accepted bnez-to-beqz natural peel"
+                alignment_failed=1
+        fi
+
+        [ "$alignment_failed" = 0 ]
+}
+
+#       AArch64 makes NEON mandatory for userspace, not freely usable by the
+#       kernel: code that touches the FP/SIMD register file must bracket it
+#       with the kernel's state-management API. library.c does not do that.
+#
+#       Every routine now selects a GP-register-only body in KERNEL_MODE.
+#       Compile the real kernel preprocessor path, without an architecture
+#       header shim, and reject any instruction that touches vector state.
+arm64_kernel_vector_audit()
+{
+        arm64_kernel_compiler=
+        arm64_kernel_target=
+
+        if command -v aarch64-linux-gnu-gcc > /dev/null 2>&1; then
+                arm64_kernel_compiler=$(command -v aarch64-linux-gnu-gcc)
+        else
+                for arm64_kernel_try in "${CLANG:-clang}" \
+                        /opt/homebrew/opt/llvm/bin/clang \
+                        /usr/local/opt/llvm/bin/clang
+                do
+                        command -v "$arm64_kernel_try" > /dev/null 2>&1 || continue
+                        if "$arm64_kernel_try" --target=aarch64-unknown-linux-gnu \
+                                -march=armv8-a -x c -c /dev/null \
+                                -o "$work/arm64-kernel-probe.o" \
+                                > /dev/null 2>&1
+                        then
+                                arm64_kernel_compiler=$(command -v "$arm64_kernel_try")
+                                arm64_kernel_target=--target=aarch64-unknown-linux-gnu
+                                break
+                        fi
+                done
+        fi
+
+        [ -n "$arm64_kernel_compiler" ] || {
+                note "arm64 kernel vector audit: NOT RUN -- no AArch64 compiler"
+                return 2
+        }
+
+        arm64_kernel_objdump=
+        arm64_kernel_prefixed=${arm64_kernel_compiler%gcc}objdump
+        if [ "$arm64_kernel_prefixed" != "$arm64_kernel_compiler" ] &&
+           command -v "$arm64_kernel_prefixed" > /dev/null 2>&1
+        then
+                arm64_kernel_objdump=$arm64_kernel_prefixed
+        else
+                for arm64_kernel_try in llvm-objdump \
+                        /opt/homebrew/opt/llvm/bin/llvm-objdump \
+                        /usr/local/opt/llvm/bin/llvm-objdump \
+                        aarch64-linux-gnu-objdump
+                do
+                        command -v "$arm64_kernel_try" > /dev/null 2>&1 || continue
+                        arm64_kernel_objdump=$(command -v "$arm64_kernel_try")
+                        break
+                done
+        fi
+
+        [ -n "$arm64_kernel_objdump" ] || {
+                note "arm64 kernel vector audit: NOT RUN -- no AArch64 objdump"
+                return 2
+        }
+
+        if ! "$arm64_kernel_compiler" $arm64_kernel_target -std=gnu11 -O2 \
+                -march=armv8-a -mgeneral-regs-only -mno-outline-atomics \
+                -ffreestanding -fno-builtin \
+                -nostdlib -DSTANDARD_MODERN_C_KERNEL '-DEXPORT_SYMBOL(name)=' \
+                -c src/library.c -o "$work/arm64-kernel.o" \
+                2> "$work/arm64-kernel.err"
+        then
+                note "the standalone ARM64 KERNEL_MODE library did not compile:"
+                sed 's/^/    /' "$work/arm64-kernel.err" | head -10
+                return 1
+        fi
+
+        if ! "$arm64_kernel_objdump" -dr "$work/arm64-kernel.o" \
+                > "$work/arm64-kernel.dis" 2> "$work/arm64-kernel.err"
+        then
+                note "the ARM64 KERNEL_MODE library could not be disassembled:"
+                sed 's/^/    /' "$work/arm64-kernel.err" | head -10
+                return 1
+        fi
+
+        if awk '
+                BEGIN {
+                        # These are the only cross-symbol tails introduced by
+                        # the ARM kernel scalar selection. ARM does not alias
+                        # these libc names back onto the moonwater routines.
+                        # The full kernel gate must additionally inspect their
+                        # linked definitions; the architecture implementations
+                        # are GP-register/MOPS assembly in ordinary builds.
+                        guarded["string_length"] = 1
+                        guarded["string_first_of"] = 1
+                        guarded["string_first_of_or_end"] = 1
+                        guarded["string_last_of_or_end"] = 1
+                        guarded["memory_fill"] = 1
+                        guarded["memory_copy_fast"] = 1
+                        guarded["memory_copy"] = 1
+                        guarded["string_copy"] = 1
+                        guarded["string_copy_max"] = 1
+                        guarded["string_cut"] = 1
+
+                        expected["string_length"] = "strlen"
+                        expected["string_first_of"] = "strchr"
+                        expected["string_last_of_or_end"] = "strrchr"
+                        expected["memory_fill"] = "memset"
+                        expected["memory_copy_fast"] = "memcpy"
+                        expected["memory_copy"] = "memmove"
+
+                        allowed["string_last_of_or_end:string_first_of_or_end"] = 1
+                }
+                /^[[:xdigit:]]+ <[^+>]+>:/ {
+                        routine = $0
+                        sub(/^.*</, "", routine)
+                        sub(/>:.*/, "", routine)
+                        if (routine == "strchrnul")
+                                routine = "string_first_of_or_end"
+                        next
+                }
+                /R_AARCH64_(JUMP26|CALL26)/ {
+                        target = $NF
+                        sub(/[+-].*$/, "", target)
+                        if (routine in guarded) {
+                                key = routine ":" target
+                                if (target == expected[routine])
+                                        tails[routine]++
+                                else if (!(key in allowed)) {
+                                        print "unexpected ARM kernel tail " key
+                                        bad_relocation = 1
+                                }
+                        }
+                        next
+                }
+                /^[[:space:]]*[[:xdigit:]]+:/ {
+                        line = $0
+                        sub(/^[[:space:]]*[[:xdigit:]]+:[[:space:]]+[[:xdigit:]]+[[:space:]]+/, "", line)
+                        mnemonic = line
+                        sub(/[[:space:]].*/, "", mnemonic)
+
+                        # A branch target such as b30 is an address, not the
+                        # scalar SIMD register b30. No branch itself modifies
+                        # vector state, so discard the whole branch family.
+                        if (mnemonic == "b" || mnemonic == "bl" ||
+                            mnemonic == "br" || mnemonic == "blr" ||
+                            mnemonic ~ /^b\./ || mnemonic ~ /^cb/ ||
+                            mnemonic ~ /^tb/)
+                                next
+
+                        operands = line
+                        sub(/^[^[:space:]]+[[:space:]]+/, "", operands)
+                        gsub(/[][{},.]/, " ", operands)
+                        fields = split(operands, token, /[[:space:]]+/)
+                        # Streaming-mode transitions change vector state even
+                        # when an objdump prints them with no operand.
+                        vector = (mnemonic == "smstart" || mnemonic == "smstop")
+                        for (field = 1; field <= fields; field++)
+                                if (token[field] ~ /^(v|q|d|s|h|b|z|p)[0-9]+$/ ||
+                                    token[field] ~ /^za[0-9]*$/ ||
+                                    token[field] ~ /^fp(cr|sr)$/)
+                                        vector = 1
+
+                        if (vector) {
+                                found[routine]++
+                                total++
+                        }
+                }
+                END {
+                        bad = bad_relocation
+                        for (routine in found)
+                                if (found[routine]) {
+                                        print "vector routine " routine " (" \
+                                              found[routine] " instructions)"
+                                        bad = 1
+                                }
+                        for (routine in expected)
+                                if (tails[routine] != 1) {
+                                        print routine " has " (tails[routine] + 0) \
+                                              " tails to " expected[routine] \
+                                              ", expected one"
+                                        bad = 1
+                                }
+                        if (total != 0) {
+                                print "kernel object has " total \
+                                      " vector instructions, expected zero"
+                                bad = 1
+                        }
+                        exit bad
+                }
+        ' "$work/arm64-kernel.dis" > "$work/arm64-kernel-vector.err"
+        then
+                return 0
+        fi
+
+        note "the ARM64 KERNEL_MODE vector boundary changed:"
+        sed 's/^/    /' "$work/arm64-kernel-vector.err" | head -20
+        return 1
+}
+
 #
 #       The lanes.
 #
+
+#       A compiler that marks an ELF object as branch protected makes a claim
+#       about every callable entry in it, including the ones written in global
+#       assembly. The compiler inserts its own landing pads into C functions;
+#       it cannot insert one after ASM_FUNC's label. Build that exact shape and
+#       inspect both halves of the claim: the GNU property and representative
+#       assembly entries from the numeric, byte, syscall, and argument groups.
+#
+#       This is an ELF hardening check. Darwin has different object directives,
+#       riscv64 has neither landing-pad mechanism, and a compiler or binutils
+#       without the feature says so and skips rather than manufacturing a pass.
+hardening_entries()
+{
+        [ "$host_system" = Linux ] || return 2
+
+        case $host_arch in
+        x86_64)
+                hardening_flag=-fcf-protection=branch
+                hardening_property=IBT
+                hardening_landing='([[:space:]]endbr64([[:space:]]|$)|f3[[:space:]]+0f[[:space:]]+1e[[:space:]]+fa)'
+                ;;
+        arm64)
+                hardening_flag=-mbranch-protection=standard
+                hardening_property=BTI
+                hardening_landing='([[:space:]]bti[[:space:]]+c([[:space:]]|$)|d503245f|5f[[:space:]]+24[[:space:]]+03[[:space:]]+d5)'
+                ;;
+        *)
+                return 2
+                ;;
+        esac
+
+        if command -v readelf > /dev/null 2>&1; then
+                hardening_readelf=readelf
+        elif command -v llvm-readelf > /dev/null 2>&1; then
+                hardening_readelf=llvm-readelf
+        else
+                note "no readelf, so branch-protected object properties were not checked"
+                return 2
+        fi
+
+        if command -v objdump > /dev/null 2>&1; then
+                hardening_objdump=objdump
+        elif command -v llvm-objdump > /dev/null 2>&1; then
+                hardening_objdump=llvm-objdump
+        else
+                note "no objdump, so branch-protected assembly entries were not checked"
+                return 2
+        fi
+
+        if ! $compiler -c -O2 -DSTANDARD_NO_PLATFORM -ffreestanding \
+                -fno-builtin -w "$hardening_flag" \
+                -o "$work/hardening.o" src/library.c \
+                2> "$work/hardening.err"
+        then
+                if grep -Eiq 'unknown argument|unrecognized .*option|unsupported .*option|not supported' \
+                        "$work/hardening.err"
+                then
+                        note "$compiler has no $hardening_flag; hardening entries skipped"
+                        return 2
+                fi
+
+                note "the branch-protected library did not compile:"
+                sed 's/^/    /' "$work/hardening.err" | head -10
+                return 1
+        fi
+
+        "$hardening_readelf" -n "$work/hardening.o" \
+                > "$work/hardening.notes" 2>&1
+        if ! grep -q "$hardening_property" "$work/hardening.notes"; then
+                if grep -Eiq 'unknown|processor-specific' "$work/hardening.notes"; then
+                        note "$hardening_readelf cannot decode $hardening_property properties"
+                        return 2
+                fi
+
+                note "the branch-protected object does not advertise $hardening_property"
+                sed 's/^/    /' "$work/hardening.notes" | head -10
+                return 1
+        fi
+
+        "$hardening_objdump" -d "$work/hardening.o" \
+                > "$work/hardening.dis" 2>&1 || {
+                note "the branch-protected object could not be disassembled"
+                return 1
+        }
+
+        for hardening_symbol in positive_into string_digits byte_class_holds \
+                system_call program_argument
+        do
+                hardening_first=$(awk -v wanted="<$hardening_symbol>:" '
+                        index($0, wanted) { found = 1; next }
+                        found && /^[[:space:]]*[0-9a-f]+:/ { print; exit }
+                ' "$work/hardening.dis")
+
+                if [ -z "$hardening_first" ] ||
+                   ! printf '%s\n' "$hardening_first" | grep -Eq "$hardening_landing"
+                then
+                        note "$hardening_symbol has no $hardening_property landing pad:"
+                        printf '    %s\n' "${hardening_first:-not in disassembly}"
+                        return 1
+                fi
+        done
+
+        return 0
+}
 
 lane_standard()
 {
@@ -172,12 +1362,111 @@ lane_standard()
                 tally bare-mnemonic 1 1
         fi
 
+        floor_outcome=0
+        riscv_floor || floor_outcome=$?
+        case $floor_outcome in
+        0) tally floor-riscv64 1 1 ;;
+        2) ;;
+        *)
+                tally floor-riscv64 0 1
+                failed=$((failed + 1))
+                ;;
+        esac
+
+        alignment_outcome=0
+        riscv_alignment_audit || alignment_outcome=$?
+        case $alignment_outcome in
+        0) tally align-riscv64 1 1 ;;
+        2) ;;
+        *)
+                tally align-riscv64 0 1
+                failed=$((failed + 1))
+                ;;
+        esac
+
+        arm64_kernel_outcome=0
+        arm64_kernel_vector_audit || arm64_kernel_outcome=$?
+        case $arm64_kernel_outcome in
+        0) tally arm64-kernel-vector 1 1 ;;
+        2) ;;
+        *)
+                tally arm64-kernel-vector 0 1
+                failed=$((failed + 1))
+                ;;
+        esac
+
+        #       The inventory is also the architectural floor guard: every
+        #       routine must exist on all three targets and this file must hold
+        #       declarations and assembly, never a C function body. It scans
+        #       inactive branches too, so moving a body behind an #if cannot
+        #       make the check disappear.
+        if command -v python3 > /dev/null 2>&1; then
+                if python3 kit/compact/inventory.py --check --target all src/library.c \
+                        > /dev/null 2> "$work/asm-only.err"
+                then
+                        tally asm-only 1 1
+                else
+                        tally asm-only 0 1
+                        note "library.c is not assembly-only at full parity:"
+                        sed 's/^/    /' "$work/asm-only.err" | head -10
+                        failed=$((failed + 1))
+                fi
+        else
+                note "no python3, so assembly-only parity was not checked"
+        fi
+
+        hardening_outcome=0
+        hardening_entries || hardening_outcome=$?
+        case $hardening_outcome in
+        0)
+                tally hardening-entries 1 1
+                ;;
+        1)
+                tally hardening-entries 0 1
+                failed=$((failed + 1))
+                ;;
+        2)
+                note "branch-protected entry check not available on this host"
+                ;;
+        esac
+
         [ "$failed" = 0 ]
 }
 
 #       library.c writes its routines three times and only one of them can be
 #       run on the machine it was written on. qemu runs the other two, so a
 #       routine that is only right here fails here rather than on a board.
+target_tools()
+{
+        target=$1
+
+        #       These cases are Linux ELF spark programs. On Linux the host
+        #       architecture runs directly; every other target is built with
+        #       its cross compiler and run through qemu-user. Darwin has its
+        #       own Mach-O arm64 lane below, so all three ELF targets are
+        #       foreign there even when the processor name matches.
+        if [ "$host_system" = Linux ] && [ "$host_arch" = "$target" ]; then
+                target_compiler=$compiler
+                target_runner=
+                return 0
+        fi
+
+        case $target in
+        x86_64)
+                target_compiler=x86_64-linux-gnu-gcc
+                target_runner=qemu-x86_64
+                ;;
+        arm64)
+                target_compiler=aarch64-linux-gnu-gcc
+                target_runner=qemu-aarch64
+                ;;
+        riscv64)
+                target_compiler=riscv64-linux-gnu-gcc
+                target_runner=qemu-riscv64
+                ;;
+        esac
+}
+
 verify_one()
 {
         name=$1
@@ -185,18 +1474,18 @@ verify_one()
         runner=$3
 
         if ! command -v "$cross" > /dev/null 2>&1; then
-                note "$name: no $cross, skipped"
-                return 0
+                note "$name: NOT RUN -- no $cross"
+                return 2
         fi
 
         if [ -n "$runner" ] && ! command -v "$runner" > /dev/null 2>&1; then
-                note "$name: no $runner, skipped"
-                return 0
+                note "$name: NOT RUN -- no $runner"
+                return 2
         fi
 
         saved=$compiler
         compiler=$cross
-        freestanding src/test/verify.c "$work/verify.$name" || {
+        freestanding src/test/verify.c "$work/verify.$name" "$name" || {
                 compiler=$saved
                 return 1
         }
@@ -223,12 +1512,23 @@ verify_one()
 lane_verify()
 {
         failed=0
+        missing=0
 
-        verify_one x86_64 "$compiler" "" || failed=1
-        verify_one arm64 aarch64-linux-gnu-gcc qemu-aarch64 || failed=1
-        verify_one riscv64 riscv64-linux-gnu-gcc qemu-riscv64 || failed=1
+        for target in x86_64 arm64 riscv64; do
+                target_tools "$target"
+                outcome=0
+                verify_one "$target" "$target_compiler" "$target_runner" || outcome=$?
 
-        [ "$failed" = 0 ]
+                case $outcome in
+                0) ;;
+                2) missing=1 ;;
+                *) failed=1 ;;
+                esac
+        done
+
+        [ "$failed" = 0 ] || return 1
+        [ "$missing" = 0 ] || return 2
+        return 0
 }
 
 #       The sizes that never reach the routine.
@@ -250,18 +1550,18 @@ exact_one()
         runner=$3
 
         if ! command -v "$cross" > /dev/null 2>&1; then
-                note "$name: no $cross, skipped"
-                return 0
+                note "$name: NOT RUN -- no $cross"
+                return 2
         fi
 
         if [ -n "$runner" ] && ! command -v "$runner" > /dev/null 2>&1; then
-                note "$name: no $runner, skipped"
-                return 0
+                note "$name: NOT RUN -- no $runner"
+                return 2
         fi
 
         saved=$compiler
         compiler=$cross
-        freestanding src/test/exact.c "$work/exact.$name" || {
+        freestanding src/test/exact.c "$work/exact.$name" "$name" || {
                 compiler=$saved
                 return 1
         }
@@ -288,6 +1588,7 @@ exact_one()
 lane_exact()
 {
         failed=0
+        missing=0
 
         #
         #       The file is generated, so the file can drift from what
@@ -306,11 +1607,21 @@ lane_exact()
                 note "no python3, so exact.c was not checked against its generator"
         fi
 
-        exact_one x86_64 "$compiler" "" || failed=1
-        exact_one arm64 aarch64-linux-gnu-gcc qemu-aarch64 || failed=1
-        exact_one riscv64 riscv64-linux-gnu-gcc qemu-riscv64 || failed=1
+        for target in x86_64 arm64 riscv64; do
+                target_tools "$target"
+                outcome=0
+                exact_one "$target" "$target_compiler" "$target_runner" || outcome=$?
 
-        [ "$failed" = 0 ]
+                case $outcome in
+                0) ;;
+                2) missing=1 ;;
+                *) failed=1 ;;
+                esac
+        done
+
+        [ "$failed" = 0 ] || return 1
+        [ "$missing" = 0 ] || return 2
+        return 0
 }
 
 #       arm64 assembly on an arm64 machine.
@@ -321,12 +1632,16 @@ lane_exact()
 #       these routines makes a system call, so a body lifted out of the
 #       library runs here unchanged.
 #
-#       src/test/native/run does the lifting, out of whichever library carries
-#       the routines under the names it lifts by. That is library.next.c while
-#       the two files exist and library.c once they are one, and which one was
-#       used is printed rather than assumed.
+#       src/test/native/run does the lifting directly out of the library that
+#       ships. The compact rebuild passes library.next.c itself when it wants
+#       to prove the generated candidate separately.
 lane_native()
 {
+        if [ "$host_system" != Darwin ]; then
+                note "native lifting needs Darwin, skipped"
+                return 0
+        fi
+
         case $(uname -m) in
         arm64 | aarch64) ;;
         *)
@@ -344,13 +1659,9 @@ lane_native()
                 return 2
         fi
 
-        library=src/library.c
+        note "lifted out of src/library.c"
 
-        [ -f src/library.next.c ] && library=src/library.next.c
-
-        note "lifted out of $library"
-
-        if sh src/test/native/run "$library" > "$work/native.out" 2>&1; then
+        if sh src/test/native/run src/library.c > "$work/native.out" 2>&1; then
                 answered=0
         else
                 answered=1

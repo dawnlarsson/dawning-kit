@@ -1,4 +1,4 @@
-#include "../library.c"
+#include "../compiler_memory.c"
 
 /*
         What the file utilities share.
@@ -141,15 +141,7 @@ fn file_say(string_address text)
         log(text, 0);
 }
 
-fn file_fail(address_any data, positive length)
-{
-        if (length == 0)
-                length = string_length(data);
-
-        log_flush();
-
-        system_call_3(syscall(write), stderr, (positive)data, length);
-}
+#define file_fail log_error
 
 fn file_line(string_address text)
 {
@@ -167,170 +159,21 @@ fn file_written(string_address text, bool zero)
 
 // Numbers ---------------------------------------------------
 
-positive file_digits(p8 address_to into, positive value)
-{
-        p8 backwards[24];
-        positive length = 0;
-
-        if (value == 0)
-                backwards[length++] = '0';
-
-        while (value > 0)
-        {
-                backwards[length++] = '0' + (p8)(value % 10);
-                value /= 10;
-        }
-
-        for (positive i = 0; i < length; i++)
-                into[i] = backwards[length - 1 - i];
-
-        into[length] = end;
-
-        return length;
-}
-
-fn file_number_padded(writer write, positive value, positive width)
-{
-        p8 text[24];
-        positive length = file_digits(text, value);
-
-        for (positive i = length; i < width; i++)
-                write(" ", 1);
-
-        write(text, length);
-}
-
 fn file_text_padded(writer write, string_address text, positive width)
 {
         positive length = string_length(text);
 
         write(text, length);
-
-        for (positive i = length; i < width; i++)
-                write(" ", 1);
+        writer_fill(write, width > length ? width - length : 0, ' ');
 }
 
 fn file_text_aligned(writer write, string_address text, positive width)
 {
         positive length = string_length(text);
 
-        for (positive i = length; i < width; i++)
-                write(" ", 1);
+        writer_fill(write, width > length ? width - length : 0, ' ');
 
         write(text, length);
-}
-
-fn file_octal(writer write, positive value, positive width)
-{
-        p8 text[24];
-        positive length = 0;
-        p8 backwards[24];
-
-        if (value == 0)
-                backwards[length++] = '0';
-
-        while (value > 0)
-        {
-                backwards[length++] = '0' + (p8)(value & 7);
-                value >>= 3;
-        }
-
-        for (positive i = length; i < width; i++)
-                write("0", 1);
-
-        for (positive i = 0; i < length; i++)
-                text[i] = backwards[length - 1 - i];
-
-        write(text, length);
-}
-
-fn file_hexadecimal(writer write, positive value, positive width)
-{
-        p8 alphabet[17] = "0123456789abcdef";
-        p8 text[24];
-        positive length = 0;
-        p8 backwards[24];
-
-        if (value == 0)
-                backwards[length++] = '0';
-
-        while (value > 0)
-        {
-                backwards[length++] = alphabet[value & 15];
-                value >>= 4;
-        }
-
-        for (positive i = length; i < width; i++)
-                write("0", 1);
-
-        for (positive i = 0; i < length; i++)
-                text[i] = backwards[length - 1 - i];
-
-        write(text, length);
-}
-
-/*
-        The human readable sizes the -h flags print. Powers of 1024, rounded
-        up rather than to nearest, and a single decimal only while the value
-        is under ten -- which is what makes "1.5K" and "23K" both three or
-        four columns wide instead of a ragged edge.
-*/
-fn file_human(writer write, positive value)
-{
-        p8 units[8] = "BKMGTPEZ";
-        positive divisor = 1;
-        positive unit = 0;
-
-        while (value / divisor >= 1024 && unit < 7)
-        {
-                divisor *= 1024;
-                unit++;
-        }
-
-        if (unit == 0)
-                return positive_to_string(write, value);
-
-        positive whole = (value + divisor - 1) / divisor;
-
-        if (whole >= 10)
-        {
-                positive_to_string(write, whole);
-                write(units + unit, 1);
-                return;
-        }
-
-        positive quotient = value / divisor;
-        positive leftover = value % divisor;
-        positive tenths = quotient * 10 + (leftover * 10 + divisor - 1) / divisor;
-
-        positive_to_string(write, tenths / 10);
-        write(".", 1);
-        positive_to_string(write, tenths % 10);
-        write(units + unit, 1);
-}
-
-bipolar file_signed(string_address text)
-{
-        bipolar sign = 1;
-
-        if (string_is(text, '-'))
-        {
-                sign = -1;
-                text++;
-        }
-        else if (string_is(text, '+'))
-                text++;
-
-        return sign * (bipolar)string_digits(text, null);
-}
-
-bool file_all_digits(string_address text)
-{
-        positive have;
-
-        string_digits(text, address_of have);
-
-        return have && string_is(text + have, end);
 }
 
 // Modes -----------------------------------------------------
@@ -422,14 +265,10 @@ bool file_mode_of(string_address specification, positive current, bool directory
 
         if (string_get(specification) >= '0' && string_get(specification) <= '7')
         {
-                positive value = 0;
-                string_address step = specification;
-
-                while (string_get(step) >= '0' && string_get(step) <= '7')
-                {
-                        value = (value << 3) | (positive)(string_get(step) - '0');
-                        step++;
-                }
+                positive used;
+                positive value = string_digits_octal_max(
+                    specification, (positive)-1, address_of used);
+                string_address step = specification + used;
 
                 if (string_get(step))
                         return false;
@@ -584,100 +423,11 @@ bool file_exists(bipolar directory, string_address path)
 
 // Paths -----------------------------------------------------
 
-positive file_join(p8 address_to into, positive limit, string_address directory,
-                   string_address name)
+static string_address file_last_component(string_address path)
 {
-        positive length = string_length_max(directory, limit - 1);
+        string_address last = string_last_of(path, '/');
 
-        memory_copy_fast(into, directory, length);
-
-        // "/" already ends in one, and "//name" is a path the kernel is
-        // allowed to treat as its own root on some systems.
-        if (length > 0 && into[length - 1] != '/' && length + 1 < limit)
-                into[length++] = '/';
-
-        positive tail = string_length_max(name, limit - 1 - length);
-
-        memory_copy_fast(into + length, name, tail);
-        length += tail;
-
-        into[length] = end;
-
-        return length;
-}
-
-/*
-        basename and dirname as POSIX defines them, which is not simply "text
-        after the last slash": a trailing slash is not a component, "/" is its
-        own answer, and a path with no slash at all has "." for a directory.
-*/
-fn file_tail(string_address path, p8 address_to into)
-{
-        positive length = string_length(path);
-
-        // An empty name has an empty last component, not a "." -- POSIX
-        // leaves it unspecified and every system tool here prints nothing.
-        if (length == 0)
-        {
-                into[0] = end;
-                return;
-        }
-
-        while (length > 1 && path[length - 1] == '/')
-                length--;
-
-        if (length == 1 && path[0] == '/')
-        {
-                into[0] = '/';
-                into[1] = end;
-                return;
-        }
-
-        positive start = length;
-
-        while (start > 0 && path[start - 1] != '/')
-                start--;
-
-        positive found = length - start;
-
-        if (found > FILE_PATH_MAX - 1)
-                found = FILE_PATH_MAX - 1;
-
-        memory_copy_fast(into, path + start, found);
-        into[found] = end;
-}
-
-fn file_head(string_address path, p8 address_to into)
-{
-        positive length = string_length(path);
-
-        while (length > 1 && path[length - 1] == '/')
-                length--;
-
-        positive cut = length;
-
-        while (cut > 0 && path[cut - 1] != '/')
-                cut--;
-
-        if (cut == 0)
-        {
-                into[0] = '.';
-                into[1] = end;
-                return;
-        }
-
-        while (cut > 1 && path[cut - 1] == '/')
-                cut--;
-
-        if (cut == 0)
-        {
-                into[0] = '/';
-                into[1] = end;
-                return;
-        }
-
-        memory_copy_fast(into, path, cut);
-        into[cut] = end;
+        return last ? last + 1 : path;
 }
 
 bipolar file_link_text(string_address path, p8 address_to into, positive limit)
@@ -736,8 +486,7 @@ bool file_resolve(string_address path, p8 address_to into, bool follow)
 
         into[length] = end;
 
-        string_copy_max(rest, path, FILE_PATH_MAX - 1);
-        rest[FILE_PATH_MAX - 1] = end;
+        string_copy_max_end(rest, path, FILE_PATH_MAX - 1);
 
         while (rest[at])
         {
@@ -775,9 +524,8 @@ bool file_resolve(string_address path, p8 address_to into, bool follow)
                 if (length > 1)
                         into[length++] = '/';
 
-                memory_copy_fast(into + length, rest + start, piece);
-                length += piece;
-                into[length] = end;
+                length = (positive)(memory_copy_fast_end(
+                    into + length, rest + start, piece) - into);
 
                 if (!follow)
                         continue;
@@ -803,9 +551,8 @@ bool file_resolve(string_address path, p8 address_to into, bool follow)
 
                 positive left = string_length_max(rest + at, FILE_PATH_MAX - 1 - fill);
 
-                memory_copy_fast(merged + fill, rest + at, left);
-                fill += left;
-                merged[fill] = end;
+                fill = (positive)(memory_copy_fast_end(
+                    merged + fill, rest + at, left) - merged);
 
                 memory_copy_fast(rest, merged, fill + 1);
 
@@ -977,8 +724,7 @@ bool file_account_name(p8 address_to text, positive wanted, positive field,
                 if (found > limit - 1)
                         found = limit - 1;
 
-                memory_copy_fast(into, text + name_start, found);
-                into[found] = end;
+                memory_copy_fast_end(into, text + name_start, found);
 
                 return true;
         }
@@ -1059,6 +805,9 @@ static bool file_group_seen_known;
 
 bool file_user_name(positive id, p8 address_to into, positive limit)
 {
+        if (!limit)
+                return false;
+
         if (id != file_user_seen)
         {
                 file_user_seen = id;
@@ -1070,14 +819,16 @@ bool file_user_name(positive id, p8 address_to into, positive limit)
         if (!file_user_seen_known)
                 return false;
 
-        string_copy_max(into, file_user_seen_name, limit - 1);
-        into[limit - 1] = end;
+        string_copy_max_end(into, file_user_seen_name, limit - 1);
 
         return true;
 }
 
 bool file_group_name(positive id, p8 address_to into, positive limit)
 {
+        if (!limit)
+                return false;
+
         if (id != file_group_seen)
         {
                 file_group_seen = id;
@@ -1089,8 +840,7 @@ bool file_group_name(positive id, p8 address_to into, positive limit)
         if (!file_group_seen_known)
                 return false;
 
-        string_copy_max(into, file_group_seen_name, limit - 1);
-        into[limit - 1] = end;
+        string_copy_max_end(into, file_group_seen_name, limit - 1);
 
         return true;
 }
@@ -1156,11 +906,11 @@ fn file_split_moment(b64 seconds, b64 address_to year, positive address_to month
 fn file_two(writer write, positive value)
 {
         p8 pair[2];
+        positive length = positive_into_pair(pair, value);
 
-        pair[0] = '0' + (p8)((value / 10) % 10);
-        pair[1] = '0' + (p8)(value % 10);
-
-        write(pair, 2);
+        // Civil month/day/hour/minute/second fields are all below 100, so the
+        // historical two-byte field never relied on its implicit modulo 100.
+        write(pair, length);
 }
 
 fn file_stamp(writer write, b64 seconds, positive nanoseconds)
@@ -1184,16 +934,10 @@ fn file_stamp(writer write, b64 seconds, positive nanoseconds)
         file_two(write, second);
         write(".", 1);
 
-        p8 fraction[10];
-        positive scale = 100000000;
+        p8 fraction[9];
+        positive fraction_length = positive_into_padded(fraction, nanoseconds, 9, '0');
 
-        for (positive i = 0; i < 9; i++)
-        {
-                fraction[i] = '0' + (p8)((nanoseconds / scale) % 10);
-                scale /= 10;
-        }
-
-        write(fraction, 9);
+        write(fraction, fraction_length);
         write(" +0000", 6);
 }
 
@@ -1228,13 +972,13 @@ fn file_stamp_short(writer write, b64 seconds, b64 now)
 
         write(months[month - 1], 3);
         write(" ", 1);
-        file_number_padded(write, day, 2);
+        positive_to_padded(write, day, 2, ' ', 0);
         write(" ", 1);
 
         bool recent = seconds <= now + 3600 && seconds > now - 15778476;
 
         if (!recent)
-                return file_number_padded(write, (positive)year, 5);
+                return positive_to_padded(write, (positive)year, 5, ' ', 0);
 
         file_two(write, hour);
         write(":", 1);
@@ -1304,26 +1048,6 @@ static const file_unit file_units[] = {
     {null, 0, 0},
 };
 
-static bool file_blank(p8 letter)
-{
-        return letter == ' ' || letter == '\t';
-}
-
-static bool file_digit(p8 letter)
-{
-        return letter >= '0' && letter <= '9';
-}
-
-static p8 file_lower(p8 letter)
-{
-        return letter >= 'A' && letter <= 'Z' ? (p8)(letter + 32) : letter;
-}
-
-static bool file_letter(p8 letter)
-{
-        return file_lower(letter) >= 'a' && file_lower(letter) <= 'z';
-}
-
 // The inverse of file_civil: a day number from a calendar date, and the same
 // arithmetic run backwards. A day past the end of its month runs on into the
 // next one, which is what a month added to the 31st has to do.
@@ -1349,6 +1073,26 @@ static positive file_month_days(b64 year, b64 month)
                 return 29;
 
         return lengths[month - 1];
+}
+
+static bool file_blank(p8 letter)
+{
+        return letter == ' ' || letter == '\t';
+}
+
+static bool file_digit(p8 letter)
+{
+        return letter >= '0' && letter <= '9';
+}
+
+static p8 file_lower(p8 letter)
+{
+        return letter >= 'A' && letter <= 'Z' ? (p8)(letter + 32) : letter;
+}
+
+static bool file_letter(p8 letter)
+{
+        return file_lower(letter) >= 'a' && file_lower(letter) <= 'z';
 }
 
 static bool file_same_word(string_address text, positive length, string_address word)
@@ -1386,8 +1130,7 @@ bool file_moment_read(string_address text, b64 now, b64 address_to out)
 {
         positive at = 0;
 
-        while (file_blank(string_get(text + at)))
-                at++;
+        at += string_span(text + at, string_set_blanks);
 
         if (string_is(text + at, '@'))
         {
@@ -1412,8 +1155,7 @@ bool file_moment_read(string_address text, b64 now, b64 address_to out)
                                               address_of spare);
                 }
 
-                while (file_blank(string_get(text + at)))
-                        at++;
+                at += string_span(text + at, string_set_blanks);
 
                 if (string_get(text + at))
                         return false;
@@ -1443,8 +1185,7 @@ bool file_moment_read(string_address text, b64 now, b64 address_to out)
 
         while (string_get(text + at))
         {
-                while (file_blank(string_get(text + at)))
-                        at++;
+                at += string_span(text + at, string_set_blanks);
 
                 if (!string_get(text + at))
                         break;
@@ -1460,8 +1201,7 @@ bool file_moment_read(string_address text, b64 now, b64 address_to out)
                         sign = string_is(text + at, '-') ? -1 : 1;
                         at++;
 
-                        while (file_blank(string_get(text + at)))
-                                at++;
+                        at += string_span(text + at, string_set_blanks);
                 }
 
                 if (file_digit(string_get(text + at)))
@@ -1547,8 +1287,7 @@ bool file_moment_read(string_address text, b64 now, b64 address_to out)
                                 continue;
                         }
 
-                        while (file_blank(string_get(text + at)))
-                                at++;
+                        at += string_span(text + at, string_set_blanks);
 
                         positive length = 0;
 
@@ -1612,8 +1351,7 @@ bool file_moment_read(string_address text, b64 now, b64 address_to out)
 
                 if (ahead || file_same_word(word, length, (string_address) "last"))
                 {
-                        while (file_blank(string_get(text + at)))
-                                at++;
+                        at += string_span(text + at, string_set_blanks);
 
                         positive wide = 0;
 
@@ -1910,8 +1648,7 @@ static bool file_take(file_taking address_to taking)
 
         taking->flags = 0;
 
-        for (positive i = 0; i < FILE_LETTERS; i++)
-                taking->value[i] = null;
+        memory_fill(taking->value, 0, sizeof(taking->value));
 
         while (index < count)
         {
@@ -1937,14 +1674,13 @@ static bool file_take(file_taking address_to taking)
                 }
 
                 if (taking->numbers && !string_is(word + 1, '-') &&
-                    ((string_get(word + 1) >= '0' && string_get(word + 1) <= '9') ||
+                    (file_digit(string_get(word + 1)) ||
                      string_is(word + 1, '.')))
                         break;
 
                 index++;
 
-                if (taking->digits && string_get(word + 1) >= '0' &&
-                    string_get(word + 1) <= '9')
+                if (taking->digits && file_digit(string_get(word + 1)))
                 {
                         positive bit = file_letter_bit(taking->digits);
 
@@ -2117,25 +1853,12 @@ bool file_copy_contents(bipolar from_directory, string_address from,
                 if (taken == 0)
                         break;
 
-                positive written = 0;
-
-                while (written < (positive)taken)
+                if (system_write_all((positive)out, file_transfer,
+                                     (positive)taken) != (positive)taken)
                 {
-                        bipolar step = system_call_3(syscall(write), out,
-                                                     (positive)(file_transfer + written),
-                                                     (positive)taken - written);
-
-                        if (step <= 0)
-                        {
-                                complete = false;
-                                break;
-                        }
-
-                        written += (positive)step;
-                }
-
-                if (!complete)
+                        complete = false;
                         break;
+                }
         }
 
         system_call_1(syscall(close), in);
@@ -2149,8 +1872,7 @@ bool file_make_parents(string_address path, positive mode)
         p8 work[FILE_PATH_MAX];
         positive length = string_length_max(path, FILE_PATH_MAX - 1);
 
-        memory_copy_fast(work, path, length);
-        work[length] = end;
+        memory_copy_fast_end(work, path, length);
 
         for (positive i = 1; i < length; i++)
         {
@@ -2314,16 +2036,14 @@ static fn ls_sort()
 static fn ls_size_field(p64 value)
 {
         if (ls_human)
-                return file_human(log, value);
+                return positive_to_human_1024(log, value);
 
         positive_to_string(log, value);
 }
 
 static positive ls_width_of(p64 value)
 {
-        p8 text[24];
-
-        return file_digits(text, value);
+        return positive_digits(value);
 }
 
 static positive ls_human_width(p64 value)
@@ -2331,24 +2051,9 @@ static positive ls_human_width(p64 value)
         if (!ls_human)
                 return ls_width_of(value);
 
-        positive divisor = 1;
-        positive unit = 0;
+        p8 text[6];
 
-        while (value / divisor >= 1024 && unit < 7)
-        {
-                divisor *= 1024;
-                unit++;
-        }
-
-        if (unit == 0)
-                return ls_width_of(value);
-
-        positive whole = (value + divisor - 1) / divisor;
-
-        if (whole >= 10)
-                return ls_width_of(whole) + 1;
-
-        return 3 + 1;
+        return positive_into_human_1024_string(text, value);
 }
 
 static fn ls_owner_text(positive id, bool group, p8 address_to into)
@@ -2362,7 +2067,7 @@ static fn ls_owner_text(positive id, bool group, p8 address_to into)
                         return;
         }
 
-        file_digits(into, id);
+        positive_into_string(into, id);
 }
 
 // -F and -p put a letter after a name saying what it is: the slash for a
@@ -2414,8 +2119,10 @@ static fn ls_print(string_address directory)
                 if (ls_width_of(entry->links) > link_width)
                         link_width = ls_width_of(entry->links);
 
-                if (ls_human_width(entry->size) > size_width)
-                        size_width = ls_human_width(entry->size);
+                positive entry_size_width = ls_human_width(entry->size);
+
+                if (entry_size_width > size_width)
+                        size_width = entry_size_width;
 
                 p8 name[FILE_NAME_MAX];
 
@@ -2442,7 +2149,7 @@ static fn ls_print(string_address directory)
                 log("total ", 0);
 
                 if (ls_human)
-                        file_human(log, blocks * 1024);
+                        positive_to_human_1024(log, blocks * 1024);
                 else
                         positive_to_string(log, blocks);
 
@@ -2457,7 +2164,7 @@ static fn ls_print(string_address directory)
 
                 if (ls_inode)
                 {
-                        file_number_padded(log, entry->inode, inode_width);
+                        positive_to_padded(log, entry->inode, inode_width, ' ', 0);
                         log(" ", 1);
                 }
 
@@ -2469,7 +2176,7 @@ static fn ls_print(string_address directory)
                         file_mode_letters(letters, entry->mode);
                         log(letters, 10);
                         log(" ", 1);
-                        file_number_padded(log, entry->links, link_width);
+                        positive_to_padded(log, entry->links, link_width, ' ', 0);
                         log(" ", 1);
 
                         ls_owner_text(entry->owner, false, who);
@@ -2480,8 +2187,12 @@ static fn ls_print(string_address directory)
                         file_text_padded(log, who, group_width);
                         log(" ", 1);
 
-                        for (positive pad = ls_human_width(entry->size); pad < size_width; pad++)
-                                log(" ", 1);
+                        positive field_width = ls_human_width(entry->size);
+
+                        writer_fill(log, size_width > field_width
+                                             ? size_width - field_width
+                                             : 0,
+                                    ' ');
 
                         ls_size_field(entry->size);
                         log(" ", 1);
@@ -2507,9 +2218,9 @@ static fn ls_print(string_address directory)
                         p8 full[FILE_PATH_MAX];
 
                         if (directory)
-                                file_join(full, FILE_PATH_MAX, directory, name);
+                                path_join(full, FILE_PATH_MAX, directory, name);
                         else
-                                string_copy_max(full, name, FILE_PATH_MAX - 1);
+                                string_copy_max_end(full, name, FILE_PATH_MAX - 1);
 
                         if (file_link_text(full, where, FILE_PATH_MAX) >= 0)
                         {
@@ -2592,8 +2303,7 @@ static fn ls_below(string_address path, positive depth)
                 if (kept + length + 1 > sizeof(keep))
                         break;
 
-                for (positive j = 0; j <= length; j++)
-                        keep[kept + j] = string_get(name + j);
+                memory_copy_fast(keep + kept, name, length + 1);
 
                 kept += length + 1;
                 found++;
@@ -2605,7 +2315,7 @@ static fn ls_below(string_address path, positive depth)
         {
                 p8 below[FILE_PATH_MAX];
 
-                file_join(below, FILE_PATH_MAX, path, keep + at);
+                path_join(below, FILE_PATH_MAX, path, keep + at);
                 at += string_length(keep + at) + 1;
 
                 ls_directory(below, true, depth - 1);
@@ -2822,9 +2532,11 @@ static string_address address_to file_environment_all()
         if (shell_envp[0])
                 return shell_envp;
 
-        while (count < FILE_ENVIRONMENT - 1 && program_environment((b32)count))
+        string_address address_to process = program_environment_list();
+
+        while (process && count < FILE_ENVIRONMENT - 1 && process[count])
         {
-                file_environment_held[count] = program_environment((b32)count);
+                file_environment_held[count] = process[count];
                 count++;
         }
 
@@ -2878,9 +2590,8 @@ static fn file_exec_path(string_address address_to words)
 
                 positive named = string_length_max(name, FILE_PATH_MAX - 1 - length);
 
-                memory_copy_fast(candidate + length, name, named);
-                length += named;
-                candidate[length] = end;
+                length = (positive)(memory_copy_fast_end(
+                    candidate + length, name, named) - candidate);
 
                 if (system_call_3(syscall(execve), (positive)candidate, (positive)words,
                                   (positive)environment) == -ERROR_ACCESS)
@@ -3438,12 +3149,11 @@ static b32 find_parse_primary()
 
                 p8 how;
                 string_address step = find_marked(value, address_of how);
+                positive taken;
 
                 find_nodes[node].comparison = how;
-                find_nodes[node].number = (b64)string_digits(step, null);
-
-                while (string_get(step) >= '0' && string_get(step) <= '9')
-                        step++;
+                find_nodes[node].number = (b64)string_digits(step, address_of taken);
+                step += taken;
 
                 find_nodes[node].unit = string_get(step) ? string_get(step) : 'b';
 
@@ -3511,8 +3221,9 @@ static b32 find_parse_primary()
                         return -1;
 
                 bool group = string_is(word + 1, 'g');
-                bipolar who = file_all_digits(value)
-                                  ? (bipolar)string_digits(value, null)
+                positive number;
+                bipolar who = string_digits_exact(value, address_of number)
+                                  ? (bipolar)number
                                   : (group ? file_group_id(value) : file_user_id(value));
 
                 if (who < 0)
@@ -3693,8 +3404,7 @@ static fn find_batch_add(find_node address_to node, string_address path)
             batch->used + length + 1 > FIND_BATCH_BYTES)
                 find_batch_run(node->unit);
 
-        memory_copy(batch->text + batch->used, path, length);
-        batch->text[batch->used + length] = end;
+        memory_copy_end(batch->text + batch->used, path, length);
         batch->word[batch->words++] = batch->text + batch->used;
         batch->used += length + 1;
 }
@@ -3943,10 +3653,10 @@ static fn find_walk(string_address path, string_address name, positive depth, bo
                                 p8 below[FILE_PATH_MAX];
                                 p8 held[FILE_NAME_MAX];
 
-                                string_copy_max(held, entry->d_name, FILE_NAME_MAX - 1);
-                                held[FILE_NAME_MAX - 1] = end;
+                                string_copy_max_end(held, entry->d_name,
+                                                    FILE_NAME_MAX - 1);
 
-                                file_join(below, FILE_PATH_MAX, path, held);
+                                path_join(below, FILE_PATH_MAX, path, held);
 
                                 find_walk(below, held, depth + 1, false);
                         }
@@ -4060,7 +3770,7 @@ static b32 file_find()
                         string_address root = program_argument((b32)i);
                         p8 name[FILE_PATH_MAX];
 
-                        file_tail(root, name);
+                        path_tail_copy(name, FILE_PATH_MAX, root);
                         find_walk(root, name, 0, true);
                 }
 
@@ -4120,14 +3830,16 @@ static fn stat_one_specifier(p8 letter, string_address path, file_facts address_
                 return positive_to_string(log, 512);
 
         case 'a':
-                return file_octal(log, facts->mode & 07777, 1);
+                return positive_to_base_field(log, facts->mode & 07777, 8, 1,
+                                              -1, (positive)1 << 28);
 
         case 'A':
                 file_mode_letters(text, facts->mode);
                 return log(text, 10);
 
         case 'f':
-                return file_hexadecimal(log, facts->mode, 1);
+                return positive_to_base_field(log, facts->mode, 16, 1,
+                                              -1, (positive)1 << 28);
 
         case 'F':
                 return log(file_kind_name(facts->mode), 0);
@@ -4163,10 +3875,12 @@ static fn stat_one_specifier(p8 letter, string_address path, file_facts address_
                 return positive_to_string(log, facts->device_major * 256 + facts->device_minor);
 
         case 't':
-                return file_hexadecimal(log, facts->rdev_major, 1);
+                return positive_to_base_field(log, facts->rdev_major, 16, 1,
+                                              -1, (positive)1 << 28);
 
         case 'T':
-                return file_hexadecimal(log, facts->rdev_minor, 1);
+                return positive_to_base_field(log, facts->rdev_minor, 16, 1,
+                                              -1, (positive)1 << 28);
 
         case 'X':
                 return positive_to_string(log, (positive)facts->accessed.seconds);
@@ -4216,15 +3930,23 @@ static fn stat_formatted(string_address format, string_address path,
 
         while (string_get(step))
         {
-                if (string_is(step, '%') && string_get(step + 1))
+                string_address mark = string_first_of_or_end(step, '%');
+
+                if (mark != step)
+                        log(step, (positive)(mark - step));
+
+                if (!string_get(mark))
+                        break;
+
+                if (string_get(mark + 1))
                 {
-                        stat_one_specifier(string_get(step + 1), path, facts);
-                        step += 2;
+                        stat_one_specifier(string_get(mark + 1), path, facts);
+                        step = mark + 2;
                         continue;
                 }
 
-                log(step, 1);
-                step++;
+                log("%", 1);
+                break;
         }
 
         log("\n", 1);
@@ -4245,13 +3967,13 @@ static fn stat_readable(string_address path, file_facts address_to facts)
         }
 
         log("\n  Size: ", 0);
-        file_digits(text, facts->size);
+        positive_into_string(text, facts->size);
         file_text_padded(log, text, 10);
         log("\tBlocks: ", 0);
-        file_digits(text, facts->blocks);
+        positive_into_string(text, facts->blocks);
         file_text_padded(log, text, 10);
         log(" IO Block: ", 0);
-        file_digits(text, facts->blocksize);
+        positive_into_string(text, facts->blocksize);
         file_text_padded(log, text, 6);
         log(" ", 1);
         log(file_kind_name(facts->mode), 0);
@@ -4261,31 +3983,32 @@ static fn stat_readable(string_address path, file_facts address_to facts)
         log(",", 1);
         positive_to_string(log, facts->device_minor);
         log("\tInode: ", 0);
-        file_digits(text, facts->inode);
+        positive_into_string(text, facts->inode);
         file_text_padded(log, text, 10);
         log("  Links: ", 0);
         positive_to_string(log, facts->hard_links);
 
         log("\nAccess: (", 0);
-        file_octal(log, facts->mode & 07777, 4);
+        positive_to_base_field(log, facts->mode & 07777, 8, 4, -1,
+                               (positive)1 << 28);
         log("/", 1);
         file_mode_letters(text, facts->mode);
         log(text, 10);
         log(")  Uid: (", 0);
-        file_number_padded(log, facts->owner, 5);
+        positive_to_padded(log, facts->owner, 5, ' ', 0);
         log("/", 1);
 
         if (!file_user_name(facts->owner, text, FILE_NAME_MAX))
-                file_digits(text, facts->owner);
+                positive_into_string(text, facts->owner);
 
         file_text_aligned(log, text, 8);
 
         log(")   Gid: (", 0);
-        file_number_padded(log, facts->group, 5);
+        positive_to_padded(log, facts->group, 5, ' ', 0);
         log("/", 1);
 
         if (!file_group_name(facts->group, text, FILE_NAME_MAX))
-                file_digits(text, facts->group);
+                positive_into_string(text, facts->group);
 
         file_text_aligned(log, text, 8);
 
@@ -4451,7 +4174,7 @@ static bool du_excluded(string_address path)
         if (!du_exclude_have)
                 return false;
 
-        file_tail(path, name);
+        path_tail_copy(name, FILE_PATH_MAX, path);
 
         for (positive i = 0; i < du_exclude_have; i++)
                 if (shell_match(du_excludes[i], path) || shell_match(du_excludes[i], name))
@@ -4463,9 +4186,9 @@ static bool du_excluded(string_address path)
 static fn du_report(p64 bytes, string_address path)
 {
         if (du_human)
-                file_human(log, bytes);
+                positive_to_human_1024(log, bytes);
         else
-                positive_to_string(log, (positive)((bytes + du_unit - 1) / du_unit));
+                positive_to_string(log, bytes / du_unit + (bytes % du_unit != 0));
 
         log("\t", 1);
         log(path, 0);
@@ -4533,7 +4256,7 @@ static p64 du_walk(string_address path, positive depth, bool named, positive lev
 
                                 p8 under[FILE_PATH_MAX];
 
-                                file_join(under, FILE_PATH_MAX, path, entry->d_name);
+                                path_join(under, FILE_PATH_MAX, path, entry->d_name);
 
                                 if (du_excluded(under))
                                         continue;
@@ -4688,42 +4411,11 @@ static positive df_amount(p8 address_to into, p64 blocks, p64 size)
         p64 bytes = blocks * size;
 
         if (!df_human)
-                return df_inodes ? file_digits(into, blocks)
-                                 : file_digits(into, (bytes + 1023) / 1024);
+                return df_inodes ? positive_into_string(into, blocks)
+                                 : positive_into_string(
+                                       into, bytes / 1024 + (bytes % 1024 != 0));
 
-        positive divisor = 1;
-        positive unit = 0;
-        p8 units[8] = "BKMGTPEZ";
-
-        while (bytes / divisor >= 1024 && unit < 7)
-        {
-                divisor *= 1024;
-                unit++;
-        }
-
-        if (unit == 0)
-                return file_digits(into, bytes);
-
-        positive whole = (bytes + divisor - 1) / divisor;
-        positive length;
-
-        if (whole >= 10)
-                length = file_digits(into, whole);
-        else
-        {
-                positive quotient = bytes / divisor;
-                positive leftover = bytes % divisor;
-                positive tenths = quotient * 10 + (leftover * 10 + divisor - 1) / divisor;
-
-                length = file_digits(into, tenths / 10);
-                into[length++] = '.';
-                length += file_digits(into + length, tenths % 10);
-        }
-
-        into[length++] = units[unit];
-        into[length] = end;
-
-        return length;
+        return positive_into_human_1024_string(into, bytes);
 }
 
 static fn df_column(p8 address_to text, positive width)
@@ -4796,8 +4488,9 @@ static fn df_row(string_address device, string_address type, string_address wher
                 df_column(dash, df_full_width);
         else
         {
-                file_number_padded(log, (positive)((used * 100 + wanted - 1) / wanted),
-                                   df_full_width - 1);
+                positive_to_padded(log,
+                                   (positive)((used * 100 + wanted - 1) / wanted),
+                                   df_full_width - 1, ' ', 0);
                 log("% ", 2);
         }
 
@@ -5041,14 +4734,20 @@ static b32 file_df()
                         if (!measured)
                                 continue;
 
-                        if (df_amount(text, total, size) > df_blocks_width)
-                                df_blocks_width = string_length(text);
+                        positive length = df_amount(text, total, size);
 
-                        if (df_amount(text, used, size) > df_used_width)
-                                df_used_width = string_length(text);
+                        if (length > df_blocks_width)
+                                df_blocks_width = length;
 
-                        if (df_amount(text, spare, size) > df_free_width)
-                                df_free_width = string_length(text);
+                        length = df_amount(text, used, size);
+
+                        if (length > df_used_width)
+                                df_used_width = length;
+
+                        length = df_amount(text, spare, size);
+
+                        if (length > df_free_width)
+                                df_free_width = length;
                 }
         }
 
@@ -5072,7 +4771,8 @@ static fn chmod_mode_said(positive mode)
 {
         p8 letters[12];
 
-        file_octal(log, mode & 07777, 4);
+        positive_to_base_field(log, mode & 07777, 8, 4, -1,
+                               (positive)1 << 28);
         file_mode_letters(letters, mode);
         log(" (", 2);
         log(letters + 1, 9);
@@ -5180,7 +4880,7 @@ static fn chmod_walk(bipolar directory, string_address name, string_address show
 
                 p8 below[FILE_PATH_MAX];
 
-                file_join(below, FILE_PATH_MAX, shown, entry->d_name);
+                path_join(below, FILE_PATH_MAX, shown, entry->d_name);
                 chmod_walk(walk.handle, entry->d_name, below, depth - 1);
         }
 
@@ -5278,7 +4978,7 @@ static fn chown_who(positive user, positive group, p8 address_to into)
         positive length = 0;
 
         if (!file_user_name(user, into, FILE_NAME_MAX))
-                length = file_digits(into, user);
+                length = positive_into_string(into, user);
         else
                 length = string_length(into);
 
@@ -5288,7 +4988,7 @@ static fn chown_who(positive user, positive group, p8 address_to into)
         into[length++] = ':';
 
         if (!file_group_name(group, into + length, FILE_NAME_MAX))
-                file_digits(into + length, group);
+                positive_into_string(into + length, group);
 }
 
 static fn chown_said(string_address shown, file_facts address_to was, bool changed)
@@ -5364,7 +5064,7 @@ static fn chown_walk(bipolar directory, string_address name, string_address show
 
                 p8 below[FILE_PATH_MAX];
 
-                file_join(below, FILE_PATH_MAX, shown, entry->d_name);
+                path_join(below, FILE_PATH_MAX, shown, entry->d_name);
                 chown_walk(walk.handle, entry->d_name, below, depth - 1);
         }
 
@@ -5464,8 +5164,11 @@ static b32 file_chown()
 
         if (length > 0)
         {
-                chown_user = file_all_digits(user) ? (bipolar)string_digits(user, null)
-                                                   : file_user_id(user);
+                positive number;
+
+                chown_user = string_digits_exact(user, address_of number)
+                                 ? (bipolar)number
+                                 : file_user_id(user);
 
                 if (chown_user < 0)
                 {
@@ -5476,8 +5179,11 @@ static b32 file_chown()
 
         if (group && string_get(group))
         {
-                chown_group = file_all_digits(group) ? (bipolar)string_digits(group, null)
-                                                     : file_group_id(group);
+                positive number;
+
+                chown_group = string_digits_exact(group, address_of number)
+                                  ? (bipolar)number
+                                  : file_group_id(group);
 
                 if (chown_group < 0)
                 {
@@ -5525,12 +5231,11 @@ static fn ln_relative_text(string_address target, string_address name,
 
         if (!file_resolve(target, there, true) || !file_resolve(name, here, false))
         {
-                string_copy_max(into, target, FILE_PATH_MAX - 1);
-                into[FILE_PATH_MAX - 1] = end;
+                string_copy_max_end(into, target, FILE_PATH_MAX - 1);
                 return;
         }
 
-        file_head(here, above);
+        path_head_copy(above, FILE_PATH_MAX, here);
         realpath_relative(above, there, into);
 }
 
@@ -5646,7 +5351,7 @@ static b32 file_ln()
                 string_address target = program_argument((b32)first);
                 p8 name[FILE_PATH_MAX];
 
-                file_tail(target, name);
+                path_tail_copy(name, FILE_PATH_MAX, target);
 
                 return ln_make(target, name) ? 0 : 1;
         }
@@ -5675,8 +5380,8 @@ static b32 file_ln()
                 p8 tail[FILE_PATH_MAX];
                 p8 name[FILE_PATH_MAX];
 
-                file_tail(target, tail);
-                file_join(name, FILE_PATH_MAX, last, tail);
+                path_tail_copy(tail, FILE_PATH_MAX, target);
+                path_join(name, FILE_PATH_MAX, last, tail);
 
                 if (!ln_make(target, name))
                         status = 1;
@@ -5757,7 +5462,7 @@ static b32 file_readlink()
 
                         p8 above[FILE_PATH_MAX];
 
-                        file_head(answer, above);
+                        path_head_copy(above, FILE_PATH_MAX, answer);
 
                         // -f wants the parent to be real, -e wants the whole
                         // path to be, -m wants neither.
@@ -5826,12 +5531,10 @@ static const file_long basename_longs[] = {
 static fn basename_one(string_address name, string_address suffix, bool zero)
 {
         p8 answer[FILE_PATH_MAX];
-
-        file_tail(name, answer);
+        positive length = path_tail_copy(answer, FILE_PATH_MAX, name);
 
         if (suffix)
         {
-                positive length = string_length(answer);
                 positive cut = string_length(suffix);
 
                 // A name that is nothing but its suffix keeps it: stripping
@@ -5921,7 +5624,8 @@ static b32 file_dirname()
         {
                 p8 answer[FILE_PATH_MAX];
 
-                file_head(program_argument((b32)first++), answer);
+                path_head_copy(answer, FILE_PATH_MAX,
+                               program_argument((b32)first++));
                 file_written(answer, (taking.flags & FILE_FLAG('z')) != 0);
         }
 
@@ -5969,9 +5673,8 @@ static bool realpath_under(string_address directory, string_address path)
         if (length > 0 && string_is(directory + length - 1, '/'))
                 length--;
 
-        for (positive i = 0; i < length; i++)
-                if (string_get(path + i) != string_get(directory + i))
-                        return false;
+        if (string_compare_max(path, directory, length))
+                return false;
 
         return string_is(path + length, end) || string_is(path + length, '/');
 }
@@ -5992,8 +5695,7 @@ static bool realpath_walkable(string_address path)
                         continue;
                 }
 
-                string_copy_max(prefix, path, length);
-                prefix[length] = end;
+                string_copy_max_end(prefix, path, length);
 
                 if (!file_is_directory_through(prefix))
                         return false;
@@ -6148,7 +5850,7 @@ static b32 file_realpath()
                         continue;
                 }
 
-                file_head(answer, above);
+                path_head_copy(above, FILE_PATH_MAX, answer);
 
                 if (!written_name &&
                     ((!allow_missing && !file_is_directory_through(above)) ||
@@ -6299,14 +6001,13 @@ static b32 file_rmdir()
 
                 p8 parent[FILE_PATH_MAX];
 
-                string_copy_max(parent, path, FILE_PATH_MAX - 1);
-                parent[FILE_PATH_MAX - 1] = end;
+                string_copy_max_end(parent, path, FILE_PATH_MAX - 1);
 
                 while (1)
                 {
                         p8 above[FILE_PATH_MAX];
 
-                        file_head(parent, above);
+                        path_head_copy(above, FILE_PATH_MAX, parent);
 
                         if (string_is(above, '.') && string_is(above + 1, end))
                                 break;
@@ -6318,7 +6019,7 @@ static b32 file_rmdir()
                                           AT_REMOVEDIR) < 0)
                                 break;
 
-                        string_copy_max(parent, above, FILE_PATH_MAX - 1);
+                        string_copy_max_end(parent, above, FILE_PATH_MAX - 1);
                 }
         }
 
@@ -6598,8 +6299,8 @@ static bool cp_one(string_address source, string_address destination, positive d
                 p8 from[FILE_PATH_MAX];
                 p8 to[FILE_PATH_MAX];
 
-                file_join(from, FILE_PATH_MAX, source, entry->d_name);
-                file_join(to, FILE_PATH_MAX, destination, entry->d_name);
+                path_join(from, FILE_PATH_MAX, source, entry->d_name);
+                path_join(to, FILE_PATH_MAX, destination, entry->d_name);
 
                 if (!cp_one(from, to, depth - 1, false))
                         complete = false;
@@ -6717,8 +6418,8 @@ static b32 file_cp()
                 p8 tail[FILE_PATH_MAX];
                 p8 destination[FILE_PATH_MAX];
 
-                file_tail(source, tail);
-                file_join(destination, FILE_PATH_MAX, last, tail);
+                path_tail_copy(tail, FILE_PATH_MAX, source);
+                path_join(destination, FILE_PATH_MAX, last, tail);
 
                 cp_one(source, destination, FILE_MAX_DEPTH, true);
         }
@@ -6761,8 +6462,8 @@ static bool mv_across_directory(string_address source, string_address destinatio
                 p8 from[FILE_PATH_MAX];
                 p8 to[FILE_PATH_MAX];
 
-                file_join(from, FILE_PATH_MAX, source, entry->d_name);
-                file_join(to, FILE_PATH_MAX, destination, entry->d_name);
+                path_join(from, FILE_PATH_MAX, source, entry->d_name);
+                path_join(to, FILE_PATH_MAX, destination, entry->d_name);
 
                 if (!mv_across(from, to, depth - 1))
                         complete = false;
@@ -6958,8 +6659,8 @@ static b32 file_mv()
                 p8 tail[FILE_PATH_MAX];
                 p8 destination[FILE_PATH_MAX];
 
-                file_tail(source, tail);
-                file_join(destination, FILE_PATH_MAX, last, tail);
+                path_tail_copy(tail, FILE_PATH_MAX, source);
+                path_join(destination, FILE_PATH_MAX, last, tail);
 
                 mv_one(source, destination);
         }
@@ -7050,7 +6751,7 @@ static bool rm_contents(bipolar directory, string_address shown, positive depth)
 
                         p8 below[FILE_PATH_MAX];
 
-                        file_join(below, FILE_PATH_MAX, shown, entry->d_name);
+                        path_join(below, FILE_PATH_MAX, shown, entry->d_name);
 
                         if (rm_tree(directory, entry->d_name, below, depth))
                                 removed++;
@@ -7301,12 +7002,11 @@ static b32 file_rm()
 */
 static bool touch_stamp(string_address text, b64 now, b64 address_to out)
 {
-        positive digits = 0;
+        positive digits;
         b64 fraction = 0;
         bool has_fraction = false;
 
-        while (file_digit(string_get(text + digits)))
-                digits++;
+        string_digits(text, address_of digits);
 
         if (string_is(text + digits, '.'))
         {
@@ -7540,23 +7240,19 @@ static b32 file_touch()
 static bool sleep_read(string_address text, p64 address_to seconds,
                        p64 address_to nanoseconds)
 {
-        p64 whole = 0;
+        positive taken;
+        p64 whole = string_digits(text, address_of taken);
         p64 fraction = 0;
         p64 scale = 100000000;
-        bool any = false;
+        bool any = taken != 0;
 
-        while (string_get(text) >= '0' && string_get(text) <= '9')
-        {
-                whole = whole * 10 + (p64)(string_get(text) - '0');
-                text++;
-                any = true;
-        }
+        text += taken;
 
         if (string_is(text, '.'))
         {
                 text++;
 
-                while (string_get(text) >= '0' && string_get(text) <= '9')
+                while (file_digit(string_get(text)))
                 {
                         if (scale > 0)
                         {
@@ -7650,35 +7346,24 @@ static b32 file_sleep()
 */
 static fn seq_write(writer write, bipolar value, positive width)
 {
-        p8 text[24];
-        positive length;
-
         if (value < 0)
         {
-                length = file_digits(text, (positive)(-value));
-
-                for (positive i = length + 1; i < width; i++)
-                        write("0", 1);
-
-                write("-", 1);
-                write(text, length);
+                positive_to_padded(write, (positive)0 - (positive)value,
+                                   width, '0', '-');
                 return;
         }
 
-        length = file_digits(text, (positive)value);
-
-        for (positive i = length; i < width; i++)
-                write("0", 1);
-
-        write(text, length);
+        positive_to_padded(write, (positive)value, width, '0', 0);
 }
 
 static positive seq_width(bipolar value)
 {
-        p8 text[24];
-        positive length = file_digits(text, value < 0 ? (positive)(-value) : (positive)value);
+        positive magnitude = (positive)value;
 
-        return value < 0 ? length + 1 : length;
+        if (value < 0)
+                magnitude = (positive)0 - magnitude;
+
+        return positive_digits(magnitude) + (value < 0);
 }
 
 static const file_long seq_longs[] = {
@@ -7731,17 +7416,17 @@ static b32 file_seq()
         bipolar last;
 
         if (given == 1)
-                last = file_signed(program_argument((b32)index));
+                last = string_bipolar(program_argument((b32)index), null);
         else if (given == 2)
         {
-                first = file_signed(program_argument((b32)index));
-                last = file_signed(program_argument((b32)(index + 1)));
+                first = string_bipolar(program_argument((b32)index), null);
+                last = string_bipolar(program_argument((b32)(index + 1)), null);
         }
         else
         {
-                first = file_signed(program_argument((b32)index));
-                step = file_signed(program_argument((b32)(index + 1)));
-                last = file_signed(program_argument((b32)(index + 2)));
+                first = string_bipolar(program_argument((b32)index), null);
+                step = string_bipolar(program_argument((b32)(index + 1)), null);
+                last = string_bipolar(program_argument((b32)(index + 2)), null);
         }
 
         if (step == 0)
@@ -7886,14 +7571,9 @@ static const file_long env_longs[] = {
 static string_address env_list[ENV_MAX + 1];
 static positive env_have;
 
-static string_address env_key_end(string_address entry)
-{
-        return string_first_of(entry, '=');
-}
-
 static bool env_same_key(string_address entry, string_address name, positive length)
 {
-        string_address mark = env_key_end(entry);
+        string_address mark = string_first_of(entry, '=');
 
         if (!mark || (positive)(mark - entry) != length)
                 return false;
@@ -7915,7 +7595,7 @@ static fn env_drop(string_address name)
 
 static fn env_put(string_address entry)
 {
-        string_address mark = env_key_end(entry);
+        string_address mark = string_first_of(entry, '=');
 
         if (mark)
         {
@@ -7989,8 +7669,7 @@ static bool env_split(string_address text, string_address address_to words,
 
         while (string_get(text + i) && given < ENV_ARGUMENTS_MAX)
         {
-                while (string_is(text + i, ' ') || string_is(text + i, '\t'))
-                        i++;
+                i += string_span(text + i, string_set_blanks);
 
                 if (string_is(text + i, end))
                         break;
@@ -8041,8 +7720,10 @@ static b32 file_env()
 
         if (!empty)
         {
-                for (b32 i = 0; program_environment(i) && env_have < ENV_MAX; i++)
-                        env_list[env_have++] = program_environment(i);
+                string_address address_to process = program_environment_list();
+
+                for (b32 i = 0; process && process[i] && env_have < ENV_MAX; i++)
+                        env_list[env_have++] = process[i];
         }
 
         for (positive i = 0; i < env_drops; i++)
@@ -8067,7 +7748,7 @@ static b32 file_env()
 
         positive at = 0;
 
-        while (at < have && env_key_end(words[at]))
+        while (at < have && string_first_of(words[at], '='))
                 env_put(words[at++]);
 
         env_list[env_have] = null;
@@ -8107,11 +7788,10 @@ static b32 file_env()
         }
 
         string_address arguments[ENV_ARGUMENTS_MAX + 1];
-        positive given = 0;
+        positive given = have - at;
         string_address name = words[at];
 
-        while (at < have)
-                arguments[given++] = words[at++];
+        memory_copy_fast(arguments, words + at, given * sizeof(arguments[0]));
 
         arguments[given] = null;
 
@@ -8135,16 +7815,8 @@ static b32 file_env()
         {
                 // PATH from the environment being handed on, not from the one
                 // this program was started with: env -i changes both.
-                string_address path = null;
-
-                for (positive i = 0; i < env_have; i++)
-                {
-                        if (env_same_key(env_list[i], (string_address) "PATH", 4))
-                        {
-                                path = env_list[i] + 5;
-                                break;
-                        }
-                }
+                string_address path =
+                    string_get_environment(env_list, (string_address) "PATH");
 
                 if (!path)
                         path = (string_address) "/bin:/usr/bin:/";
@@ -8164,9 +7836,8 @@ static b32 file_env()
 
                         positive named = string_length_max(name, FILE_PATH_MAX - 1 - filled);
 
-                        memory_copy_fast(candidate + filled, name, named);
-                        filled += named;
-                        candidate[filled] = end;
+                        filled = (positive)(memory_copy_fast_end(
+                            candidate + filled, name, named) - candidate);
 
                         system_call_3(syscall(execve), (positive)candidate,
                                       (positive)arguments, (positive)env_list);
@@ -8231,7 +7902,7 @@ static fn id_alone(positive value, bool group, bool names, bool zero)
 
         if (!names || !(group ? file_group_name(value, text, FILE_NAME_MAX)
                               : file_user_name(value, text, FILE_NAME_MAX)))
-                file_digits(text, value);
+                positive_into_string(text, value);
 
         file_written(text, zero);
 }
@@ -8325,7 +7996,7 @@ static fn id_written(positive user, positive group, p32 address_to members,
                         p8 text[FILE_NAME_MAX];
 
                         if (!names || !file_group_name(members[i], text, FILE_NAME_MAX))
-                                file_digits(text, members[i]);
+                                positive_into_string(text, members[i]);
 
                         if (zero)
                                 file_written(text, true);
@@ -8656,18 +8327,9 @@ static string_address mktemp_letters =
 
 static string_address file_environment(string_address name)
 {
-        positive length = string_length(name);
+        string_address address_to process = program_environment_list();
 
-        for (b32 i = 0; program_environment(i); i++)
-        {
-                string_address entry = program_environment(i);
-
-                if (!string_compare_max(entry, name, length) &&
-                    string_is(entry + length, '='))
-                        return entry + length + 1;
-        }
-
-        return null;
+        return process ? string_get_environment(process, name) : null;
 }
 
 // The kernel's randomness, and the clock when there is none to be had.
@@ -8768,18 +8430,17 @@ static b32 file_mktemp()
                 path[length++] = '/';
         }
 
-        for (positive at = 0; string_get(template + at); at++)
-        {
-                if (length >= FILE_PATH_MAX - 1)
-                {
-                        file_fail("mktemp: template too long\n", 0);
-                        return 1;
-                }
+        p8 address_to stopped = string_copy_max_end(
+            path + length, template, FILE_PATH_MAX - 1 - length);
+        positive added = (positive)(stopped - (path + length));
 
-                path[length++] = string_get(template + at);
+        if (string_get(template + added))
+        {
+                file_fail("mktemp: template too long\n", 0);
+                return 1;
         }
 
-        path[length] = end;
+        length += added;
 
         marks_at = length;
 
@@ -8893,7 +8554,7 @@ static fn kill_name(positive number, p8 address_to into)
 
         if (number > KILL_MOST)
         {
-                file_digits(into, number);
+                positive_into_string(into, number);
                 return;
         }
 
@@ -8913,7 +8574,7 @@ static fn kill_name(positive number, p8 address_to into)
                 }
 
                 into[at++] = '+';
-                file_digits(into + at, number - KILL_LEAST_REAL);
+                positive_into_string(into + at, number - KILL_LEAST_REAL);
                 return;
         }
 
@@ -8927,15 +8588,16 @@ static fn kill_name(positive number, p8 address_to into)
         }
 
         into[at++] = '-';
-        file_digits(into + at, KILL_MOST - number);
+        positive_into_string(into + at, KILL_MOST - number);
 }
 
 static bipolar kill_number(string_address word)
 {
         p8 name[16];
+        positive number;
 
-        if (file_all_digits(word))
-                return (bipolar)string_to_positive(word);
+        if (string_digits_exact(word, address_of number))
+                return (bipolar)number;
 
         if (string_is(word, 'S') && string_is(word + 1, 'I') && string_is(word + 2, 'G'))
                 word += 3;
@@ -8971,13 +8633,11 @@ static b32 kill_list(positive count, positive index)
                 string_address word = program_argument((b32)index);
                 positive number;
 
-                if (!file_all_digits(word))
+                if (!string_digits_exact(word, address_of number))
                 {
                         string_format(file_fail, "kill: Illegal number: %s\n", word);
                         return 2;
                 }
-
-                number = string_to_positive(word);
 
                 // A status carries the signal that ended a process in its low
                 // seven bits, which is what a caller of -l usually has.
@@ -9058,9 +8718,12 @@ static b32 file_kill()
         while (index < count)
         {
                 string_address word = program_argument((b32)index++);
-                bipolar who = file_signed(word);
+                positive used;
 
-                if (!file_all_digits(string_is(word, '-') ? word + 1 : word))
+                // Unlike the shared signed grammar, kill historically does
+                // not accept a leading plus on a process id.
+                bipolar who = string_bipolar(word, address_of used);
+                if (string_is(word, '+') || !used || string_get(word + used))
                 {
                         string_format(file_fail, "kill: Illegal number: %s\n", word);
                         return 2;
@@ -9136,34 +8799,17 @@ static fn date_take(b64 when, date_moment address_to out)
                        (leap && out->month > 2 ? 1 : 0);
 }
 
-static fn date_pad(writer write, positive value, positive width, p8 pad)
-{
-        p8 text[24];
-        positive length = file_digits(text, value);
-
-        if (pad)
-                for (positive i = length; i < width; i++)
-                        write(address_of pad, 1);
-
-        write(text, length);
-}
-
 // A one means the format asked for no padding at all, which is not the same
 // as not asking, and a zero cannot say both.
 static fn date_field(writer write, positive value, positive width, p8 pad, p8 fallback)
 {
-        date_pad(write, value, width, pad == 1 ? 0 : pad ? pad : fallback);
+        positive_to_padded(write, value, width,
+                           pad == 1 ? 0 : pad ? pad : fallback, 0);
 }
 
 static fn date_signed(writer write, b64 value)
 {
-        if (value < 0)
-        {
-                write("-", 1);
-                value = -value;
-        }
-
-        positive_to_string(write, (positive)value);
+        bipolar_to_string(write, (bipolar)value);
 }
 
 static fn date_shape(writer write, date_moment address_to at, string_address format);
@@ -9308,16 +8954,17 @@ static fn date_shape(writer write, date_moment address_to at, string_address for
 {
         while (string_get(format))
         {
-                p8 letter = string_get(format++);
+                string_address mark = string_first_of_or_end(format, '%');
                 p8 pad = 0;
 
-                if (letter != '%')
-                {
-                        write(address_of letter, 1);
-                        continue;
-                }
+                if (mark != format)
+                        write(format, (positive)(mark - format));
 
-                letter = string_get(format);
+                if (!string_get(mark))
+                        return;
+
+                format = mark + 1;
+                p8 letter = string_get(format);
 
                 while (letter == '-' || letter == '_' || letter == '0')
                 {
@@ -9500,8 +9147,7 @@ static bool xargs_add(string_address text, positive length)
         if (xargs_word_count >= XARGS_WORDS || xargs_used + length + 1 > XARGS_BYTES)
                 return false;
 
-        memory_copy(xargs_bytes + xargs_used, text, length);
-        xargs_bytes[xargs_used + length] = end;
+        memory_copy_end(xargs_bytes + xargs_used, text, length);
         xargs_words[xargs_word_count++] = xargs_bytes + xargs_used;
         xargs_used += length + 1;
 
@@ -9517,11 +9163,6 @@ static bool xargs_add(string_address text, positive length)
         whether anything said permission denied, because that is a different
         number to come back with than nothing being there at all.
 */
-static fn xargs_exec()
-{
-        file_exec_path(xargs_words);
-}
-
 static fn xargs_run()
 {
         bipolar child;
@@ -9548,7 +9189,7 @@ static fn xargs_run()
         child = system_call_2(syscall(clone), SIGCHLD, 0);
 
         if (child == 0)
-                xargs_exec();
+                file_exec_path(xargs_words);
 
         if (child < 0)
         {
@@ -9845,7 +9486,7 @@ static b32 file_xargs()
 
                         // -I reads a line at a time, and the blanks around it
                         // are not part of what the mark stands for.
-                        if (letter == ' ' || letter == '\t')
+                        if (file_blank(letter))
                         {
                                 if (xargs_replace)
                                 {

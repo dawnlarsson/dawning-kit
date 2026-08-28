@@ -88,7 +88,7 @@ lost()
 
 #       The emulator, with a page of memory where the window would be.
 cat > "$work/harness.c" <<'HARNESS'
-#include "src/library.c"
+#include "src/compiler_memory.c"
 #include "src/spark.c"
 #include "src/canvas/window.c"
 #include "src/sh/term.c"
@@ -693,6 +693,7 @@ group lines
 same 'insert line'   '[]|[a]|[b]|[c]'            20 4 in 'a\r\nb\r\nc\e[1;1H\e[L' dump
 same 'delete line'   '[b]|[c]|[]|[]'             20 4 in 'a\r\nb\r\nc\e[1;1H\e[M' dump
 same 'insert below'  '[a]|[]|[b]|[c]'            20 4 in 'a\r\nb\r\nc\e[2;1H\e[L' dump
+same 'line attributes move' '1,4'                 20 4 in 'a\r\nb\r\n\e[31;44mX\e[0m\e[2;1H\e[M' attr 1,0
 same 'scroll up'     '[b]|[c]|[]|[]'             20 4 in 'a\r\nb\r\nc\e[S' dump
 same 'scroll down'   '[]|[a]|[b]|[c]'            20 4 in 'a\r\nb\r\nc\e[T' dump
 

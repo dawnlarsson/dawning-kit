@@ -129,14 +129,10 @@ static b32 screen_term()
         system_call_3(syscall(ioctl), master, TIOCSPTLCK, (positive)address_of unlock);
         system_call_3(syscall(ioctl), master, TIOCGPTN, (positive)address_of number);
 
-        p8 name[16] = "/dev/pts/";
+        p8 name[32] = "/dev/pts/";
         positive at = 9;
 
-        if (number >= 10)
-                name[at++] = (p8)('0' + number / 10);
-
-        name[at++] = (p8)('0' + number % 10);
-        name[at] = 0;
+        at += positive_into_string(name + at, number);
 
         b32 slave = system_call_4(syscall(openat), AT_FDCWD, (positive)name,
                                   FILE_READ_WRITE, 0);
@@ -343,15 +339,16 @@ static b32 screen_window()
         fill(back, INK_BACK);
         back->region = WINDOW_CENTRED;
         back->edge = 16;
-        string_copy_max((string_address)back->title,
-                        (string_address) "Centred, rounded", WINDOW_TITLE_MAX);
+        string_copy_max_end((p8 address_to)back->title,
+                            (string_address) "Centred, rounded",
+                            WINDOW_TITLE_MAX - 1);
         window_commit(back);
 
         fill(front, INK_FRONT);
         front->x = back->x + 60;
         front->y = back->y + 60;
-        string_copy_max((string_address)front->title,
-                        (string_address) "On top", WINDOW_TITLE_MAX);
+        string_copy_max_end((p8 address_to)front->title,
+                            (string_address) "On top", WINDOW_TITLE_MAX - 1);
         window_commit(front);
 
         // No frame, so no titlebar, no border, and nothing to drag it by.
@@ -386,8 +383,9 @@ static b32 screen_window()
 
                         line[at++] = (char)typed;
                         line[at] = 0;
-                        string_copy_max((string_address)back->title,
-                                        (string_address)line, WINDOW_TITLE_MAX);
+                        string_copy_max_end((p8 address_to)back->title,
+                                            (string_address)line,
+                                            WINDOW_TITLE_MAX - 1);
                         window_commit(back);
                 }
 

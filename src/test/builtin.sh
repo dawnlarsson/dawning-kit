@@ -232,6 +232,9 @@ answer 'stops the lot'   "printf '%b|second|' 'a\\cb'; echo done"
 answer 'not in a format' "printf 'a\\cb'; echo done"
 answer 'octal with zero' "printf '%b\\n' 'x\\0101y'"
 answer 'octal without'   "printf '%b\\n' 'x\\101y'"
+answer 'octal cap zero'  "printf '%b\\n' 'x\\01012y'"
+answer 'octal cap bare'  "printf '%b\\n' 'x\\1012y'"
+answer 'octal breaker'   "printf '%b\\n' 'x\\1qy'"
 
 group width
 answer 'star'            "printf '[%*d]' 5 42; echo"
@@ -239,6 +242,9 @@ answer 'star negative'   "printf '[%*d]' -5 42; echo"
 answer 'star precision'  "printf '[%.*s]' 2 abcdef; echo"
 answer 'around escapes'  "printf '[%5b]' ab; echo"
 answer 'precision cuts'  "printf '[%.2b]' abcd; echo"
+answer 'precision zero string' "printf '[%.0s]' x; echo"
+answer 'precision zero escapes' "printf '[%5.0b]' 'a\\tb'; echo"
+answer 'precision zero held' "printf '[%.4b][%.0b]' WXYZ q; echo"
 
 group status
 answer 'not a number'    "printf '%d\\n' abc; echo \$?"
@@ -346,6 +352,7 @@ answer 'v is the path'   'command -v echo'
 answer 'V is a sentence' 'command -V echo'
 answer 'V finds a file'  'PATH=/usr/bin; command -V sh'
 answer 'V says nothing found' 'command -V nosuch12345; echo $?'
+answer 'options compacted' 'command -p -- printf "[%s]\\n" compact'
 
 group type
 answer 'several names'   'type echo true'
@@ -382,6 +389,7 @@ answer 'plus and equals' 'umask 0; umask u+r,go=; umask'
 answer 'no who'          'umask 0; umask =rx; umask'
 answer 'from spoken'     'umask -S u=rwx,g=rx,o=rx; umask'
 answer 'not a mode'      'umask zzz 2>/dev/null; echo $?; umask'
+answer 'bad octal tail'  'umask 022; umask 078 2>/dev/null; echo $?; umask'
 
 section hash
 

@@ -1,7 +1,7 @@
 /*
         Experimental C standard library
 
-        single file syscall table for Linux and Apple platforms,
+        single-file syscall table for Linux and Apple platforms,
         can be used standalone or as part of the C standard library
 
         example usage without of C:

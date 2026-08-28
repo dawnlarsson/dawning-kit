@@ -630,6 +630,8 @@ near 'listing'          "grep -v '^_='" env
 same 'empty'            env -i
 same 'set and run'      env NEW=here /bin/sh -c 'echo $NEW'
 same 'empty and run'    env -i /bin/sh -c 'echo [$PATH]'
+same 'given path'       env -i PATH=/bin:/usr/bin echo through
+same 'empty path'       env -i PATH= echo not-through
 same 'unset and run'    env -u HOME /bin/sh -c 'echo [$HOME]'
 same 'plain command'    env /bin/echo through
 same 'unset long'       env --unset=HOME -i A=1 B=2
@@ -686,6 +688,8 @@ effect 'parents'        rmdir 'mkdir -p a/b/c; $TOOL -p a/b/c'
 
 group chmod
 effect 'octal'          chmod '$TOOL 0600 tree/one'
+effect 'octal leading'  chmod '$TOOL 0000600 tree/one'
+effect 'octal bad tail' chmod '$TOOL 0788 tree/one 2>/dev/null || :'
 effect 'octal directory' chmod '$TOOL 0711 tree/deep'
 effect 'symbolic add'   chmod '$TOOL u+x tree/one'
 effect 'symbolic remove' chmod '$TOOL go-rwx tree/two'

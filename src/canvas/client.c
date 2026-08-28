@@ -258,7 +258,10 @@ static unsigned int canvas_claim_all(void)
                 if (canvas_claimed & BIT_ULL(minor))
                         continue;
 
-                snprintf(path, sizeof(path), "/dev/dri/card%u", minor);
+                positive_into_string(
+                    memory_copy_fast_end(path, "/dev/dri/card",
+                                         sizeof("/dev/dri/card") - 1),
+                    minor);
 
                 if (canvas_claim(path, minor) == 0)
                         taken++;

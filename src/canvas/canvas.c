@@ -11,7 +11,10 @@
             pane.c      windows: creating, destroying, and reading the shared
                         page without trusting it
             fill.asm    one run of pixels, per architecture. Everything
-                        Canvas draws goes through it.
+                        Canvas draws goes through it, unless an engine took
+                        it instead -- see gpu.c
+            gpu.c       the engine, when the display device has one this
+                        knows how to ask
             glyph.asm   one glyph, for the same reason
             paint.c     pixels: a pointer, a pitch, a rectangle
             text.c      words: a box, where the lines break, where they sit
@@ -452,6 +455,7 @@ static _Bool output_holds(struct output *output, int x, int y)
 #include "pane.c"
 #include "../sh/term.c"
 #include "console.c"
+#include "gpu.c"
 #include "compose.c"
 #include "plane.c"
 #include "drag.c"

@@ -2,8 +2,8 @@
 """
 The inventory, read off the file rather than written beside it.
 
-Fifty odd routines, each written out once per architecture, and the three
-blocks are far apart. This is the map, and it is generated because a table
+Every hardware-floor routine is written out once per architecture, and the
+three blocks are far apart. This is the map, and it is generated because a table
 kept by hand is wrong the first time somebody adds a routine and does not
 think to come back here.
 
@@ -52,8 +52,8 @@ PREAMBLE = '''
         to say there was no SIMD here at all, on the grounds that kernel code
         cannot touch the vector registers without kernel_fpu_begin, and that
         stopped being true some time before it stopped being written down. The
-        x86 routines carry AVX2 and AVX-512 bodies and the arm64 ones use NEON,
-        picked at run time from a byte a startup pass writes.
+        x86 routines carry AVX2 and AVX-512 bodies selected from feature bytes
+        a startup pass writes; arm64 userspace uses its baseline NEON directly.
 
         Which makes the narrow body the one that has to stay correct rather
         than merely present: it is what a machine without AVX2 runs, and what
@@ -62,15 +62,16 @@ PREAMBLE = '''
         walks the flag down on purpose, and twice now a one byte sabotage has
         survived the whole suite because nothing did.
 
-        Kernel handling is not yet at parity. x86 kernel builds take only the
-        integer-register paths, keeping vector state out of routines that do
-        not call kernel_fpu_begin. The arm64 block still takes NEON paths in a
-        kernel build without kernel_neon_begin, and the riscv word paths still
-        issue unaligned loads and stores on a baseline where those may trap.
-        Those are correctness and floor-performance blockers, not settled
-        optimisations. Userspace x86 selects AVX2 and AVX-512 from the feature
-        bytes its startup pass writes; arm64 userspace may use the NEON its
-        baseline architecture guarantees.
+        Kernel memory and string paths stay outside vector state. x86 kernel
+        builds take their integer-register bodies and do not run the userspace
+        XGETBV feature probe. arm64 kernel builds use local scalar bodies or
+        tail-call the kernel's strlen, strchr, strrchr, memset, memcpy and
+        memmove; sanitizer builds deliberately use checked generic hunts.
+        RISC-V word paths peel arbitrary pointers to natural alignment, keep
+        the SWAR and unrolled cores when source and destination residues agree,
+        and fall back to bytes when they do not. Userspace x86 selects AVX2 and
+        AVX-512 from the feature bytes its startup pass writes; arm64 userspace
+        may use the NEON its baseline architecture guarantees.
 
         The libc names -- strlen, memcpy, strchr and the rest -- are aliases
         onto these, added where the file stops being compiled into a kernel.
@@ -84,6 +85,7 @@ Body = namedtuple('Body', 'path name line')
 Include = namedtuple('Include', 'path name line')
 MacroBody = namedtuple('MacroBody', 'path name line')
 PlatformGap = namedtuple('PlatformGap', 'path arch kind symbol count')
+AsmPairIssue = namedtuple('AsmPairIssue', 'path arch line message')
 
 ARCHES = ('X64', 'ARM64', 'RISCV64')
 TARGET_DEFINES = {
@@ -284,6 +286,9 @@ DECORATORS = {
     'asm', '__asm', '__asm__',
 }
 
+ASM_DECLARERS = {'ASM_FUNC': 'public', 'ASM_LOCAL_FUNC': 'local'}
+ASM_ENDERS = {'ASM_END': 'public', 'ASM_LOCAL_END': 'local'}
+
 NON_NAMES = DECORATORS | {
     '_Alignas', '_Alignof', '_Generic', '_Static_assert', 'alignas',
     'alignof', 'break', 'case', 'char', 'const', 'continue', 'default',
@@ -292,8 +297,7 @@ NON_NAMES = DECORATORS | {
     'short', 'signed', 'sizeof', 'static', 'struct', 'switch', 'typedef',
     'typeof', '__typeof', '__typeof__', 'union', 'unsigned', 'void',
     'volatile', 'while', '_Bool', '_Complex', '_Imaginary',
-    'ASM_FUNC',
-}
+} | set(ASM_DECLARERS) | set(ASM_ENDERS)
 
 
 def strip_trailing_decorators(header):
@@ -519,38 +523,80 @@ def arch_transition(current, stack, directive):
 def assembly_inventory(path, tokens, directives):
     events = [(item.start, 0, item) for item in directives]
     for index in range(len(tokens) - 3):
-        if tokens[index].value == 'ASM_FUNC' and tokens[index + 1].value == '(' \
+        macro = tokens[index].value
+        if (macro in ASM_DECLARERS or macro in ASM_ENDERS) \
+                and tokens[index + 1].value == '(' \
                 and tokens[index + 2].kind == 'identifier' \
                 and tokens[index + 3].value == ')':
             events.append((tokens[index].start, 1,
-                           (tokens[index + 2].value, tokens[index].line)))
+                           (macro, tokens[index + 2].value, tokens[index].line)))
     events.sort(key=lambda item: (item[0], item[1]))
 
     current, stack = None, []
-    have, order, unscoped = {}, [], []
-    counts = {}
+    have, order, unscoped, pairing = {}, [], [], []
+    counts, scopes = {}, {}
+    opened = {arch: None for arch in ARCHES}
     for _, event_kind, event in events:
         if event_kind:
-            name, line = event
-            if current is None:
-                unscoped.append((path, name, line))
+            macro, name, line = event
+            if macro in ASM_ENDERS:
+                scope = ASM_ENDERS[macro]
+                if current is None:
+                    pairing.append(AsmPairIssue(
+                        path, None, line, f'unscoped {macro}({name})'))
+                    continue
+                opening = opened[current]
+                if opening is None:
+                    pairing.append(AsmPairIssue(
+                        path, current, line, f'{macro}({name}) has no opener'))
+                elif opening[:2] != (scope, name):
+                    opened_macro = ('ASM_FUNC' if opening[0] == 'public'
+                                    else 'ASM_LOCAL_FUNC')
+                    pairing.append(AsmPairIssue(
+                        path, current, line,
+                        f'{macro}({name}) does not close '
+                        f'{opened_macro}({opening[1]}) from line {opening[2]}'))
+                opened[current] = None
                 continue
+
+            scope = ASM_DECLARERS[macro]
+            if current is None:
+                unscoped.append((path, macro, name, line))
+                continue
+            if opened[current] is not None:
+                prior = opened[current]
+                prior_macro = ('ASM_FUNC' if prior[0] == 'public'
+                               else 'ASM_LOCAL_FUNC')
+                pairing.append(AsmPairIssue(
+                    path, current, line,
+                    f'{macro}({name}) opens before {prior_macro}({prior[1]}) '
+                    f'from line {prior[2]} is closed'))
+            opened[current] = (scope, name, line)
             if name not in order:
                 order.append(name)
             have.setdefault(name, set()).add(current)
             counts[(name, current)] = counts.get((name, current), 0) + 1
+            scopes.setdefault((name, current), set()).add(scope)
             continue
 
         current = arch_transition(current, stack, event)
 
-    return have, order, unscoped, counts
+    for arch, opening in opened.items():
+        if opening is not None:
+            macro = 'ASM_FUNC' if opening[0] == 'public' else 'ASM_LOCAL_FUNC'
+            pairing.append(AsmPairIssue(
+                path, arch, opening[2],
+                f'{macro}({opening[1]}) has no matching end marker'))
+
+    return have, order, unscoped, counts, scopes, pairing
 
 
 def graph_assembly_inventory(sources):
-    have, order, unscoped, counts = {}, [], [], {}
+    have, order, unscoped, counts, scopes, pairing = {}, [], [], {}, {}, []
     for path, text in sources.items():
         tokens, directives = lex(text)
-        source_have, source_order, source_unscoped, source_counts = \
+        (source_have, source_order, source_unscoped, source_counts,
+         source_scopes, source_pairing) = \
             assembly_inventory(path, tokens, directives)
         for name in source_order:
             if name not in order:
@@ -560,9 +606,18 @@ def graph_assembly_inventory(sources):
         unscoped.extend(source_unscoped)
         for key, count in source_counts.items():
             counts[key] = counts.get(key, 0) + count
+        for key, kinds in source_scopes.items():
+            scopes.setdefault(key, set()).update(kinds)
+        pairing.extend(source_pairing)
     duplicates = [(name, arch, count) for (name, arch), count in counts.items()
                   if count != 1]
-    return have, order, unscoped, duplicates
+    scope_mismatches = []
+    for name in order:
+        by_arch = {arch: scopes.get((name, arch), set()) for arch in ARCHES}
+        kinds = set().union(*by_arch.values())
+        if len(kinds) > 1 or any(len(value) > 1 for value in by_arch.values()):
+            scope_mismatches.append((name, by_arch))
+    return have, order, unscoped, duplicates, scopes, scope_mismatches, pairing
 
 
 def macos_runtime_parity(sources):
@@ -736,7 +791,8 @@ def main(path, check=False, target='all'):
         linux_sources, parity_missing = selected_sources, missing
     else:
         _, _, parity_missing, linux_sources = included_audit(path, 'linux')
-    have, order, unscoped, duplicates = graph_assembly_inventory(linux_sources)
+    (have, order, unscoped, duplicates, scopes,
+     scope_mismatches, pairing) = graph_assembly_inventory(linux_sources)
     if target in ('macos', 'all'):
         macos_sources, platform_missing = selected_sources, missing
     else:
@@ -748,12 +804,25 @@ def main(path, check=False, target='all'):
         s = have[n]
         mark = lambda a: 'yes' if a in s else '--'
         if len(s) < 3: gaps.append(n)
-        rows.append(f'          {n:<30} {mark("X64"):<7} {mark("ARM64"):<7} {mark("RISCV64")}')
+        kinds = set().union(*(scopes.get((n, arch), set()) for arch in ARCHES))
+        scope = next(iter(kinds)) if len(kinds) == 1 else 'mixed'
+        rows.append(
+            f'          {n:<30} {scope:<7} {mark("X64"):<7} '
+            f'{mark("ARM64"):<7} {mark("RISCV64")}')
+
+    public_count = sum(
+        set().union(*(scopes.get((name, arch), set()) for arch in ARCHES))
+        == {'public'} for name in order)
+    local_count = sum(
+        set().union(*(scopes.get((name, arch), set()) for arch in ARCHES))
+        == {'local'} for name in order)
 
     body = ['/*', f'        {HEAD}', PREAMBLE.rstrip(),
-            '', f'        {len(order)} routines, {len(order)-len(gaps)} of them on all three.',
-            '', f'          {"routine":<30} {"x86_64":<7} {"arm64":<7} riscv64',
-            f'          {"-"*30} {"-"*7} {"-"*7} {"-"*7}']
+            '', (f'        {len(order)} routines ({public_count} public, '
+                 f'{local_count} local), {len(order)-len(gaps)} of them on all three.'),
+            '', (f'          {"routine":<30} {"scope":<7} {"x86_64":<7} '
+                 f'{"arm64":<7} riscv64'),
+            (f'          {"-"*30} {"-"*7} {"-"*7} {"-"*7} {"-"*7}')]
     body += rows
     if gaps:
         body += ['', '        Not yet on every machine:']
@@ -779,13 +848,28 @@ def main(path, check=False, target='all'):
                 body.append(f'          {found.name} -- line {found.line}')
     if unscoped:
         body += ['', '        Assembly routines outside an architecture block:']
-        for source_path, name, line in unscoped:
+        for source_path, macro, name, line in unscoped:
             body.append(
-                f'          {name} -- {display_path(source_path, path)}, line {line}')
+                f'          {macro}({name}) -- '
+                f'{display_path(source_path, path)}, line {line}')
     if duplicates:
         body += ['', '        Duplicate assembly routines on one architecture:']
         for name, arch, count in duplicates:
             body.append(f'          {name} -- {arch}, {count} definitions')
+    if scope_mismatches:
+        body += ['', '        Public/local scope mismatches:']
+        for name, by_arch in scope_mismatches:
+            detail = ', '.join(
+                f'{arch}={"/".join(sorted(by_arch[arch])) or "--"}'
+                for arch in ARCHES)
+            body.append(f'          {name} -- {detail}')
+    if pairing:
+        body += ['', '        Assembly function boundary errors:']
+        for found in pairing:
+            arch = found.arch or 'unscoped'
+            body.append(
+                f'          {arch} -- {display_path(found.path, path)}, '
+                f'line {found.line}: {found.message}')
     if platform_gaps:
         body += ['', '        macOS raw assembly runtime parity gaps:']
         for found in platform_gaps:
@@ -815,7 +899,7 @@ def main(path, check=False, target='all'):
     for name in gaps:
         absent = [arch for arch in ARCHES if arch not in have[name]]
         sys.stderr.write(
-            f'inventory: ASM_FUNC {name} missing on {", ".join(absent)}\n')
+            f'inventory: assembly function {name} missing on {", ".join(absent)}\n')
     for found in direct_bodies + included_bodies:
         sys.stderr.write(
             f'inventory: forbidden C body {found.name} at '
@@ -841,13 +925,24 @@ def main(path, check=False, target='all'):
         sys.stderr.write(
             f'inventory: missing quoted include {name} at '
             f'{display_path(source_path, path)}:{line}\n')
-    for source_path, name, line in unscoped:
+    for source_path, macro, name, line in unscoped:
         sys.stderr.write(
-            f'inventory: unscoped ASM_FUNC {name} at '
+            f'inventory: unscoped {macro} {name} at '
             f'{display_path(source_path, path)}:{line}\n')
     for name, arch, count in duplicates:
         sys.stderr.write(
-            f'inventory: duplicate ASM_FUNC {name} on {arch}: {count}\n')
+            f'inventory: duplicate assembly function {name} on {arch}: {count}\n')
+    for name, by_arch in scope_mismatches:
+        detail = ', '.join(
+            f'{arch}={"/".join(sorted(by_arch[arch])) or "--"}'
+            for arch in ARCHES)
+        sys.stderr.write(
+            f'inventory: assembly function scope mismatch {name}: {detail}\n')
+    for found in pairing:
+        arch = found.arch or 'unscoped'
+        sys.stderr.write(
+            f'inventory: assembly function boundary error on {arch} at '
+            f'{display_path(found.path, path)}:{found.line}: {found.message}\n')
     for found in platform_gaps:
         sys.stderr.write(
             f'inventory: macOS {found.arch} {found.kind} {found.symbol} '
@@ -857,7 +952,8 @@ def main(path, check=False, target='all'):
         sys.stderr.write('inventory: generated block is stale\n')
     invalid = (gaps or direct_bodies or included_bodies or direct_macros
                or included_macros or c_includes or missing or parity_missing
-               or platform_missing or unscoped or duplicates or platform_gaps)
+               or platform_missing or unscoped or duplicates or scope_mismatches
+               or pairing or platform_gaps)
     if invalid or (check and stale):
         return 1
     return 0

@@ -57,136 +57,12 @@ static fn dd_listen(b32 number)
         system_call_4(syscall(rt_sigaction), number, (positive)address_of action, 0, 8);
 }
 
-static fn dd_say(string_address text)
-{
-        text_write_raw(2, (address_any)text, string_length(text));
-}
-
 static fn dd_say_number(positive value)
 {
         p8 digits[24];
-        positive have = 0;
+        positive length = positive_into(digits, value);
 
-        if (!value)
-                digits[have++] = '0';
-
-        while (value)
-        {
-                digits[have++] = (p8)('0' + value % 10);
-                value /= 10;
-        }
-
-        while (have)
-        {
-                p8 one = digits[--have];
-
-                text_write_raw(2, address_of one, 1);
-        }
-}
-
-/*
-        gnulib's human_readable, for the one case dd asks it for: a byte count
-        with no block scaling, rounded to nearest, autoscaled, with a space
-        before the unit. The rounding is what makes 999999 read as 1.0 MB
-        rather than 1000.0 kB, and it is done in integers because there is no
-        floating point here worth trusting.
-*/
-static positive dd_human(p8 address_to into, positive n, bool binary)
-{
-        positive base = binary ? 1024 : 1000;
-        positive amount = n;
-        positive tenths = 0;
-        positive rounding = 0;
-        positive exponent = 0;
-        p8 letters[11] = {0, 'K', 'M', 'G', 'T', 'P', 'E', 'Z', 'Y', 'R', 'Q'};
-        p8 digits[24];
-        positive have = 0;
-        positive used = 0;
-        positive fraction = 0;
-        bool point = false;
-
-        if (base <= amount)
-        {
-                do
-                {
-                        positive ten = (amount % base) * 10 + tenths;
-                        positive two = (ten % base) * 2 + (rounding >> 1);
-
-                        amount /= base;
-                        tenths = ten / base;
-                        rounding = two < base ? ((two + rounding) != 0)
-                                              : 2 + (base < two + rounding);
-                        exponent++;
-                }
-                while (base <= amount && exponent < 10);
-
-                if (amount < 10)
-                {
-                        if (2 < rounding + (tenths & 1))
-                        {
-                                tenths++;
-                                rounding = 0;
-
-                                if (tenths == 10)
-                                {
-                                        amount++;
-                                        tenths = 0;
-                                }
-                        }
-
-                        if (amount < 10)
-                        {
-                                point = true;
-                                fraction = tenths;
-                                tenths = 0;
-                                rounding = 0;
-                        }
-                }
-        }
-
-        if (5 < tenths + (0 < rounding + (amount & 1)))
-        {
-                amount++;
-
-                if (amount == base && exponent < 10)
-                {
-                        exponent++;
-                        point = true;
-                        fraction = 0;
-                        amount = 1;
-                }
-        }
-
-        if (!amount)
-                digits[have++] = '0';
-
-        while (amount)
-        {
-                digits[have++] = (p8)('0' + amount % 10);
-                amount /= 10;
-        }
-
-        while (have)
-                into[used++] = digits[--have];
-
-        if (point)
-        {
-                into[used++] = '.';
-                into[used++] = (p8)('0' + fraction);
-        }
-
-        into[used++] = ' ';
-
-        if (exponent)
-                into[used++] = !binary && exponent == 1 ? 'k' : letters[exponent];
-
-        if (binary && exponent)
-                into[used++] = 'i';
-
-        into[used++] = 'B';
-        into[used] = end;
-
-        return used;
+        system_write_all(2, digits, length);
 }
 
 // A scaled count with no prefix letter is the plain number again, and dd
@@ -204,37 +80,39 @@ static fn dd_summary()
         text_flush();
 
         dd_say_number(dd_in_full);
-        dd_say("+");
+        text_error_raw("+");
         dd_say_number(dd_in_partial);
-        dd_say(" records in\n");
+        text_error_raw(" records in\n");
         dd_say_number(dd_out_full);
-        dd_say("+");
+        text_error_raw("+");
         dd_say_number(dd_out_partial);
-        dd_say(" records out\n");
+        text_error_raw(" records out\n");
 
         if (dd_status_level == DD_STATUS_NOXFER)
                 return;
 
         p8 si[32];
         p8 iec[32];
-        positive si_length = dd_human(si, dd_written, false);
-        positive iec_length = dd_human(iec, dd_written, true);
+        positive si_length = positive_into_human_nearest_string(si, dd_written,
+                                                                 false);
+        positive iec_length = positive_into_human_nearest_string(iec, dd_written,
+                                                                  true);
 
         dd_say_number(dd_written);
-        dd_say(dd_written == 1 ? " byte" : " bytes");
+        text_error_raw(dd_written == 1 ? " byte" : " bytes");
 
         if (!dd_bare(si, si_length))
         {
-                dd_say(" (");
-                dd_say(si);
+                text_error_raw(" (");
+                text_error_raw(si);
 
                 if (!dd_bare(iec, iec_length))
                 {
-                        dd_say(", ");
-                        dd_say(iec);
+                        text_error_raw(", ");
+                        text_error_raw(iec);
                 }
 
-                dd_say(")");
+                text_error_raw(")");
         }
 
         /*
@@ -251,31 +129,29 @@ static fn dd_summary()
         if (!elapsed)
                 elapsed = 1;
 
-        dd_say(" copied, ");
+        text_error_raw(" copied, ");
 
         positive whole = elapsed / 1000000000u;
         positive rest = elapsed % 1000000000u;
 
         dd_say_number(whole);
-        dd_say(".");
+        text_error_raw(".");
 
-        for (positive scale = 100000000u; scale; scale /= 10)
-        {
-                p8 one = (p8)('0' + (rest / scale) % 10);
+        p8 fraction[9];
+        positive fraction_length = positive_into_padded(fraction, rest, 9, '0');
 
-                text_write_raw(2, address_of one, 1);
-        }
+        system_write_all(2, fraction, fraction_length);
 
-        dd_say(" s, ");
+        text_error_raw(" s, ");
 
         p8 rate[32];
         positive per = elapsed >= 1000000000u
                            ? dd_written / (elapsed / 1000000000u)
                            : dd_written * (1000000000u / elapsed);
 
-        dd_human(rate, per, false);
-        dd_say(rate);
-        dd_say("/s\n");
+        positive_into_human_nearest_string(rate, per, false);
+        text_error_raw(rate);
+        text_error_raw("/s\n");
 }
 
 static bool dd_size(string_address text, positive address_to out)
@@ -394,29 +270,6 @@ static bool dd_word(string_address address_to at, string_address name)
 
 // A short read is not the end of the input, and a partial record is not an
 // error: both are counted and the next block is asked for.
-static bipolar dd_read(positive handle, p8 address_to into, positive want)
-{
-        return system_call_3(syscall(read), handle, (positive)into, want);
-}
-
-static positive dd_write(positive handle, p8 address_to from, positive length)
-{
-        positive done = 0;
-
-        while (done < length)
-        {
-                bipolar wrote = system_call_3(syscall(write), handle,
-                                              (positive)(from + done), length - done);
-
-                if (wrote <= 0)
-                        break;
-
-                done += (positive)wrote;
-        }
-
-        return done;
-}
-
 static b32 tools_dd(void)
 {
         string_address input = null;
@@ -445,7 +298,7 @@ static b32 tools_dd(void)
 
         for (b32 i = 1; i < text_argument_count; i++)
         {
-                string_address argument = text_argument(i);
+                string_address argument = program_argument(i);
                 string_address value;
 
                 if (dd_operand(argument, "if", address_of value))
@@ -549,11 +402,11 @@ static b32 tools_dd(void)
                 if (opened < 0)
                 {
                         text_flush();
-                        dd_say("dd: failed to open '");
-                        dd_say(input);
-                        dd_say("': ");
-                        dd_say(file_reason(opened));
-                        dd_say("\n");
+                        text_error_raw("dd: failed to open '");
+                        text_error_raw(input);
+                        text_error_raw("': ");
+                        text_error_raw(file_reason(opened));
+                        text_error_raw("\n");
                         return 1;
                 }
 
@@ -578,11 +431,11 @@ static b32 tools_dd(void)
                 if (opened < 0)
                 {
                         text_flush();
-                        dd_say("dd: failed to open '");
-                        dd_say(output);
-                        dd_say("': ");
-                        dd_say(file_reason(opened));
-                        dd_say("\n");
+                        text_error_raw("dd: failed to open '");
+                        text_error_raw(output);
+                        text_error_raw("': ");
+                        text_error_raw(file_reason(opened));
+                        text_error_raw("\n");
                         return 1;
                 }
 
@@ -625,7 +478,8 @@ static b32 tools_dd(void)
                         while (left)
                         {
                                 positive ask = left < ibs ? left : ibs;
-                                bipolar got = dd_read(in_handle, ibuf, ask);
+                                bipolar got = system_call_3(
+                                    syscall(read), in_handle, (positive)ibuf, ask);
 
                                 if (got <= 0)
                                         break;
@@ -641,9 +495,9 @@ static b32 tools_dd(void)
                 if (short_of_it && dd_status_level != DD_STATUS_NONE)
                 {
                         text_flush();
-                        dd_say("dd: '");
-                        dd_say(input ? input : (string_address) "standard input");
-                        dd_say("': cannot skip to specified offset\n");
+                        text_error_raw("dd: '");
+                        text_error_raw(input ? input : (string_address) "standard input");
+                        text_error_raw("': cannot skip to specified offset\n");
                 }
         }
 
@@ -657,7 +511,7 @@ static b32 tools_dd(void)
                         memory_fill(obuf, 0, obs);
 
                         for (positive i = 0; i < seek; i++)
-                                dd_write(out_handle, obuf, obs);
+                                system_write_all(out_handle, obuf, obs);
                 }
                 else if (!(conv & DD_NOTRUNC))
                 {
@@ -683,7 +537,8 @@ static b32 tools_dd(void)
                 if (conv & (DD_SYNC | DD_NOERROR))
                         memory_fill(ibuf, 0, ibs);
 
-                bipolar got = dd_read(in_handle, ibuf, ibs);
+                bipolar got = system_call_3(
+                    syscall(read), in_handle, (positive)ibuf, ibs);
 
                 if (!got)
                         break;
@@ -691,11 +546,11 @@ static b32 tools_dd(void)
                 if (got < 0)
                 {
                         text_flush();
-                        dd_say("dd: error reading '");
-                        dd_say(input ? input : (string_address) "standard input");
-                        dd_say("': ");
-                        dd_say(file_reason(got));
-                        dd_say("\n");
+                        text_error_raw("dd: error reading '");
+                        text_error_raw(input ? input : (string_address) "standard input");
+                        text_error_raw("': ");
+                        text_error_raw(file_reason(got));
+                        text_error_raw("\n");
 
                         if (!(conv & DD_NOERROR))
                         {
@@ -734,16 +589,17 @@ static b32 tools_dd(void)
 
                 if (ibuf == obuf)
                 {
-                        positive wrote = dd_write(out_handle, obuf, read_bytes);
+                        positive wrote = system_write_all(out_handle, obuf, read_bytes);
 
                         dd_written += wrote;
 
                         if (wrote != read_bytes)
                         {
                                 text_flush();
-                                dd_say("dd: error writing '");
-                                dd_say(output ? output : (string_address) "standard output");
-                                dd_say("'\n");
+                                text_error_raw("dd: error writing '");
+                                text_error_raw(output ? output
+                                                      : (string_address) "standard output");
+                                text_error_raw("'\n");
 
                                 if (wrote)
                                         dd_out_partial++;
@@ -776,7 +632,7 @@ static b32 tools_dd(void)
                         if (held < obs)
                                 continue;
 
-                        positive wrote = dd_write(out_handle, obuf, obs);
+                        positive wrote = system_write_all(out_handle, obuf, obs);
 
                         dd_written += wrote;
                         held = 0;
@@ -796,7 +652,7 @@ static b32 tools_dd(void)
 
         if (held)
         {
-                positive wrote = dd_write(out_handle, obuf, held);
+                positive wrote = system_write_all(out_handle, obuf, held);
 
                 dd_written += wrote;
 
@@ -822,11 +678,12 @@ static b32 tools_dd(void)
                 else if (done < 0)
                 {
                         text_flush();
-                        dd_say("dd: fdatasync failed for '");
-                        dd_say(output ? output : (string_address) "standard output");
-                        dd_say("': ");
-                        dd_say(file_reason(done));
-                        dd_say("\n");
+                        text_error_raw("dd: fdatasync failed for '");
+                        text_error_raw(output ? output
+                                              : (string_address) "standard output");
+                        text_error_raw("': ");
+                        text_error_raw(file_reason(done));
+                        text_error_raw("\n");
 
                         result = 1;
                 }
@@ -839,11 +696,12 @@ static b32 tools_dd(void)
                 if (done < 0)
                 {
                         text_flush();
-                        dd_say("dd: fsync failed for '");
-                        dd_say(output ? output : (string_address) "standard output");
-                        dd_say("': ");
-                        dd_say(file_reason(done));
-                        dd_say("\n");
+                        text_error_raw("dd: fsync failed for '");
+                        text_error_raw(output ? output
+                                              : (string_address) "standard output");
+                        text_error_raw("': ");
+                        text_error_raw(file_reason(done));
+                        text_error_raw("\n");
 
                         result = 1;
                 }
@@ -1827,7 +1685,7 @@ static fn diff_mark_ignorable()
 
 static fn diff_number(positive value)
 {
-        text_put_number(value, 0);
+        positive_to_string(text_put, value);
 }
 
 static fn diff_range(diff_side address_to side, bipolar first, bipolar last,
@@ -2214,8 +2072,8 @@ static b32 diff_pair(string_address left, string_address right)
         if (!diff_classes || !diff_buckets)
                 return 2;
 
-        for (positive i = 0; i < diff_bucket_count; i++)
-                diff_buckets[i] = -1;
+        memory_fill(diff_buckets, (b8)-1,
+                    diff_bucket_count * sizeof(diff_buckets[0]));
 
         diff_class_count = 0;
 
@@ -2389,8 +2247,8 @@ static b32 diff_directories(string_address left, string_address right, positive 
                                 p8 only_left[TEXT_PATH_MAX];
                                 p8 only_right[TEXT_PATH_MAX];
 
-                                file_join(only_left, TEXT_PATH_MAX, left, names[0][i]);
-                                file_join(only_right, TEXT_PATH_MAX, right, names[0][i]);
+                                path_join(only_left, TEXT_PATH_MAX, left, names[0][i]);
+                                path_join(only_right, TEXT_PATH_MAX, right, names[0][i]);
 
                                 b32 one = diff_walk(only_left, only_right, depth + 1);
 
@@ -2421,8 +2279,8 @@ static b32 diff_directories(string_address left, string_address right, positive 
                                 p8 only_left[TEXT_PATH_MAX];
                                 p8 only_right[TEXT_PATH_MAX];
 
-                                file_join(only_left, TEXT_PATH_MAX, left, names[1][j]);
-                                file_join(only_right, TEXT_PATH_MAX, right, names[1][j]);
+                                path_join(only_left, TEXT_PATH_MAX, left, names[1][j]);
+                                path_join(only_right, TEXT_PATH_MAX, right, names[1][j]);
 
                                 b32 one = diff_walk(only_left, only_right, depth + 1);
 
@@ -2449,8 +2307,8 @@ static b32 diff_directories(string_address left, string_address right, positive 
                 p8 one_left[TEXT_PATH_MAX];
                 p8 one_right[TEXT_PATH_MAX];
 
-                file_join(one_left, TEXT_PATH_MAX, left, names[0][i]);
-                file_join(one_right, TEXT_PATH_MAX, right, names[1][j]);
+                path_join(one_left, TEXT_PATH_MAX, left, names[0][i]);
+                path_join(one_right, TEXT_PATH_MAX, right, names[1][j]);
 
                 bool left_directory = file_is_directory_through(one_left);
                 bool right_directory = file_is_directory_through(one_right);
@@ -2515,13 +2373,6 @@ static b32 diff_walk(string_address left, string_address right, positive depth)
         diff_titled = titled;
 
         return one;
-}
-
-static string_address diff_basename(string_address path)
-{
-        string_address last = string_last_of(path, '/');
-
-        return last ? last + 1 : path;
 }
 
 static const file_long diff_longs[] = {
@@ -2607,9 +2458,8 @@ static b32 tools_diff(void)
                         break;
 
                 diff_switches[diff_switches_used++] = ' ';
-
-                for (string_address at = word; string_get(at); at++)
-                        diff_switches[diff_switches_used++] = string_get(at);
+                memory_copy_fast(diff_switches + diff_switches_used, word, length);
+                diff_switches_used += length;
         }
 
         if (text_argument_count - first != 2)
@@ -2618,20 +2468,20 @@ static b32 tools_diff(void)
                 return text_done(2);
         }
 
-        string_address left = text_argument(first);
-        string_address right = text_argument(first + 1);
+        string_address left = program_argument(first);
+        string_address right = program_argument(first + 1);
         p8 joined[TEXT_PATH_MAX];
 
         // diff dir file and diff file dir both mean the same file inside the
         // directory, which is the one place the two names are not the pair.
         if (file_is_directory_through(left) && !file_is_directory_through(right))
         {
-                file_join(joined, TEXT_PATH_MAX, left, diff_basename(right));
+                path_join(joined, TEXT_PATH_MAX, left, file_last_component(right));
                 left = joined;
         }
         else if (!file_is_directory_through(left) && file_is_directory_through(right))
         {
-                file_join(joined, TEXT_PATH_MAX, right, diff_basename(left));
+                path_join(joined, TEXT_PATH_MAX, right, file_last_component(left));
                 right = joined;
         }
 
@@ -2752,19 +2602,11 @@ static positive ps_take(string_address address_to at)
 static bipolar ps_signed(string_address address_to at)
 {
         string_address here = address_to at + string_span(address_to at, ps_blank_bytes);
-        bool minus = false;
+        positive taken;
+        bipolar value = string_bipolar(here, address_of taken);
 
-        if (string_get(here) == '-')
-        {
-                minus = true;
-                here++;
-        }
-
-        address_to at = here;
-
-        bipolar value = (bipolar)ps_take(at);
-
-        return minus ? -value : value;
+        address_to at = here + taken;
+        return value;
 }
 
 static fn ps_pass(string_address address_to at, positive fields)
@@ -2786,6 +2628,9 @@ static positive ps_password_size;
 
 static fn ps_name_of(positive uid, p8 address_to into, positive limit)
 {
+        if (!limit)
+                return;
+
         positive at = 0;
 
         while (at < ps_password_size)
@@ -2820,8 +2665,8 @@ static fn ps_name_of(positive uid, p8 address_to into, positive limit)
                                                 if (length >= limit)
                                                         length = limit - 1;
 
-                                                memory_copy(into, ps_password + found, length);
-                                                into[length] = end;
+                                                memory_copy_end(into, ps_password + found,
+                                                                length);
 
                                                 return;
                                         }
@@ -2836,24 +2681,11 @@ static fn ps_name_of(positive uid, p8 address_to into, positive limit)
                 at = stop + 1;
         }
 
-        positive length = 0;
         p8 digits[24];
-        positive have = 0;
-        positive value = uid;
+        positive have = positive_into(digits, uid);
+        positive length = min(have, limit - 1);
 
-        if (!value)
-                digits[have++] = '0';
-
-        while (value)
-        {
-                digits[have++] = (p8)('0' + value % 10);
-                value /= 10;
-        }
-
-        while (have && length + 1 < limit)
-                into[length++] = digits[--have];
-
-        into[length] = end;
+        memory_copy_fast_end(into, digits, length);
 }
 
 static bool ps_gather()
@@ -2925,8 +2757,7 @@ static bool ps_gather()
                 if (length > sizeof(one->comm) - 1)
                         length = sizeof(one->comm) - 1;
 
-                memory_copy(one->comm, close, length);
-                one->comm[length] = end;
+                memory_copy_end(one->comm, close, length);
 
                 at = last + 2;
 
@@ -3062,63 +2893,56 @@ static fn ps_byte(p8 value)
                 ps_room[ps_room_used++] = value;
 }
 
+static fn ps_bytes(address_any value, positive length)
+{
+        positive room = sizeof(ps_room) - 1 - ps_room_used;
+
+        length = min(length, room);
+        memory_copy_fast(ps_room + ps_room_used, value, length);
+        ps_room_used += length;
+}
+
 static fn ps_text(string_address value)
 {
-        while (string_get(value))
-                ps_byte(string_get(value++));
+        if (value)
+        {
+                positive room = sizeof(ps_room) - 1 - ps_room_used;
+                p8 address_to stopped = string_copy_max_end(ps_room + ps_room_used,
+                                                            value, room);
+
+                ps_room_used = (positive)(stopped - ps_room);
+        }
 }
 
 static fn ps_digits(positive value)
 {
-        p8 have[24];
-        positive length = 0;
+        positive room = sizeof(ps_room) - 1 - ps_room_used;
 
-        if (!value)
-                have[length++] = '0';
-
-        while (value)
+        if (room >= 20)
         {
-                have[length++] = (p8)('0' + value % 10);
-                value /= 10;
+                ps_room_used += positive_into(ps_room + ps_room_used, value);
+                return;
         }
 
-        while (length)
-                ps_byte(have[--length]);
+        p8 have[24];
+        positive length = positive_into(have, value);
+
+        ps_bytes(have, length);
 }
 
 static fn ps_pair(positive value)
 {
-        ps_byte((p8)('0' + (value / 10) % 10));
-        ps_byte((p8)('0' + value % 10));
-}
+        p8 pair[2];
+        positive length = positive_into_pair(pair, value);
 
-static fn ps_wide(positive value, positive width)
-{
-        p8 have[24];
-        positive length = 0;
-        positive scratch = value;
-
-        if (!scratch)
-                have[length++] = '0';
-
-        while (scratch)
-        {
-                have[length++] = (p8)('0' + scratch % 10);
-                scratch /= 10;
-        }
-
-        for (positive i = length; i < width; i++)
-                ps_byte('0');
-
-        while (length)
-                ps_byte(have[--length]);
+        ps_bytes(pair, length);
 }
 
 static fn ps_put_time(positive ticks)
 {
         positive seconds = ticks / ps_clock;
 
-        ps_wide(seconds / 3600, 2);
+        positive_to_padded(ps_bytes, seconds / 3600, 2, '0', 0);
         ps_byte(':');
         ps_pair((seconds / 60) % 60);
         ps_byte(':');
@@ -3138,11 +2962,11 @@ static fn ps_put_elapsed(positive seconds)
         }
         else if (rest >= 3600)
         {
-                ps_wide(rest / 3600, 2);
+                positive_to_padded(ps_bytes, rest / 3600, 2, '0', 0);
         }
         else
         {
-                ps_wide((rest / 60) % 60, 2);
+                positive_to_padded(ps_bytes, (rest / 60) % 60, 2, '0', 0);
                 ps_byte(':');
                 ps_pair(rest % 60);
                 return;
@@ -3227,14 +3051,14 @@ static fn ps_draw(ps_process address_to one, positive field)
 
                 if (year == year_now && month == month_now && day == day_now)
                 {
-                        ps_wide(hour, 2);
+                        positive_to_padded(ps_bytes, hour, 2, '0', 0);
                         ps_byte(':');
                         ps_pair(minute);
                 }
                 else if (year == year_now)
                 {
                         ps_text(months[month - 1]);
-                        ps_wide(day, 2);
+                        positive_to_padded(ps_bytes, day, 2, '0', 0);
                 }
                 else
                 {
@@ -3262,8 +3086,8 @@ static fn ps_column_out(ps_process address_to one, positive field, bool last)
 
         if (ps_columns[field].right)
         {
-                for (positive i = ps_room_used; i < width; i++)
-                        text_put_character(' ');
+                writer_fill(text_put, width > ps_room_used ? width - ps_room_used : 0,
+                            ' ');
 
                 text_put(ps_room, ps_room_used);
         }
@@ -3272,8 +3096,9 @@ static fn ps_column_out(ps_process address_to one, positive field, bool last)
                 text_put(ps_room, ps_room_used);
 
                 if (!last)
-                        for (positive i = ps_room_used; i < width; i++)
-                                text_put_character(' ');
+                        writer_fill(text_put,
+                                    width > ps_room_used ? width - ps_room_used : 0,
+                                    ' ');
         }
 
         if (!last)
@@ -3291,11 +3116,11 @@ static b32 tools_ps(void)
 
         for (b32 i = 1; i < text_argument_count; i++)
         {
-                string_address argument = text_argument(i);
+                string_address argument = program_argument(i);
 
                 if (argument[0] == '-' && argument[1] == 'o' && !argument[2])
                 {
-                        argument = text_argument(++i);
+                        argument = program_argument(++i);
 
                         if (!argument)
                         {
@@ -3444,8 +3269,7 @@ static b32 tools_ps(void)
 
                 if (ps_columns[field].right)
                 {
-                        for (positive i = length; i < width; i++)
-                                text_put_character(' ');
+                        writer_fill(text_put, width > length ? width - length : 0, ' ');
 
                         text_put_string(ps_columns[field].header);
                 }
@@ -3454,8 +3278,8 @@ static b32 tools_ps(void)
                         text_put_string(ps_columns[field].header);
 
                         if (!last)
-                                for (positive i = length; i < width; i++)
-                                        text_put_character(' ');
+                                writer_fill(text_put, width > length ? width - length : 0,
+                                            ' ');
                 }
 
                 if (!last)

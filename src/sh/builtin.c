@@ -1,25 +1,10 @@
-#include "../library.c"
+#include "../compiler_memory.c"
 
 const positive page_size = 4096;
 
 
-/*
-        Where a complaint goes.
-
-        Not through the writer a builtin was handed: that one may have been
-        pointed at a file or down a pipe, and "ls /nowhere 2>/dev/null" is a
-        script saying it wants the complaint gone and the output kept. The two
-        have to be separable, so a diagnostic is written straight to the second
-        descriptor and never buffered behind the first.
-*/
-fn shell_diagnostic(address_any data, positive length)
-{
-        if (length == 0)
-                length = string_length(data);
-
-        log_flush();
-        system_call_3(syscall(write), stderr, (positive)data, length);
-}
+// A diagnostic bypasses the builtin's output writer and goes to stderr.
+#define shell_diagnostic log_error
 
 // The status the last thing to run answered with, which $? reads.
 b32 shell_status;
@@ -64,7 +49,6 @@ bool word_is(string_address word, string_address text);
 p64 test_device(file_facts address_to facts);
 fn hash_forget();
 fn shell_here(p8 address_to into, positive room);
-positive printf_render(p8 address_to into, positive value, positive base, bool upper);
 
 /*
         The set flags, remembered but not obeyed.
@@ -153,22 +137,7 @@ string_address env_get(const_string name)
         if (name == null)
                 return null;
 
-        positive name_len = string_length(env_reading(name));
-        positive idx = 0;
-
-        while (shell_envp[idx])
-        {
-                string_address entry = shell_envp[idx];
-                string_address eq = string_first_of(entry, '=');
-
-                if (eq && (positive)(eq - entry) == name_len &&
-                    !memory_compare(entry, name, name_len))
-                        return eq + 1;
-
-                idx++;
-        }
-
-        return null;
+        return string_get_environment(shell_envp, env_reading(name));
 }
 
 /*
@@ -371,26 +340,7 @@ string_address shell_word(string_address address_to input)
 // whole words here and have to be read forwards.
 positive shell_number(string_address input)
 {
-        positive value = 0;
-
-        while (input && string_get(input) >= '0' && string_get(input) <= '9')
-                value = value * 10 + (string_get(input++) - '0');
-
-        return value;
-}
-
-fn shell_number_padded(writer write, positive value, positive width)
-{
-        p8 body[24];
-        positive length = printf_render(body, value, 10, false);
-
-        while (width > length)
-        {
-                write(" ", 1);
-                width--;
-        }
-
-        write(body, length);
+        return input ? string_digits(input, 0) : 0;
 }
 
 /*
@@ -585,12 +535,10 @@ bool shell_directory_holds()
 
 fn shell_directory_moved(string_address logical)
 {
-        string_copy_max(shell_directory_was, shell_directory,
-                        sizeof(shell_directory_was) - 1);
-        shell_directory_was[sizeof(shell_directory_was) - 1] = end;
+        string_copy_max_end(shell_directory_was, shell_directory,
+                            sizeof(shell_directory_was) - 1);
 
-        string_copy_max(shell_directory, logical, sizeof(shell_directory) - 1);
-        shell_directory[sizeof(shell_directory) - 1] = end;
+        string_copy_max_end(shell_directory, logical, sizeof(shell_directory) - 1);
 
         env_set("OLDPWD", shell_directory_was);
         env_set("PWD", shell_directory);
@@ -602,8 +550,7 @@ bool shell_cd_try(string_address candidate, bool physical)
 {
         p8 wanted[4096];
 
-        string_copy_max(wanted, candidate, sizeof(wanted) - 1);
-        wanted[sizeof(wanted) - 1] = end;
+        string_copy_max_end(wanted, candidate, sizeof(wanted) - 1);
 
         if (!physical)
                 shell_path_tidy(wanted);
@@ -646,15 +593,14 @@ bool shell_cd_walk(bool physical, bool address_to say)
                 {
                         string_address segment;
 
-                        string_copy_max(search, value, sizeof(search) - 1);
-                        search[sizeof(search) - 1] = end;
+                        string_copy_max_end(search, value, sizeof(search) - 1);
                         segment = search;
 
                         while (segment)
                         {
                                 string_address next = string_cut(segment, ':');
 
-                                file_join(candidate, sizeof(candidate),
+                                path_join(candidate, sizeof(candidate),
                                           string_get(segment) ? segment
                                                               : shell_directory,
                                           shell_cd_target);
@@ -670,7 +616,7 @@ bool shell_cd_walk(bool physical, bool address_to say)
                 }
         }
 
-        file_join(candidate, sizeof(candidate), shell_directory,
+        path_join(candidate, sizeof(candidate), shell_directory,
                   shell_cd_target);
 
         return shell_cd_try(candidate, physical);
@@ -726,8 +672,7 @@ fn shell_cd(writer write, string_address input)
 
         // On a copy: both HOME and OLDPWD point into env_storage, which the
         // first env_set below is free to move out from under them.
-        string_copy_max(shell_cd_target, name, sizeof(shell_cd_target) - 1);
-        shell_cd_target[sizeof(shell_cd_target) - 1] = end;
+        string_copy_max_end(shell_cd_target, name, sizeof(shell_cd_target) - 1);
 
         if (!shell_cd_walk(physical, address_of say))
         {
@@ -990,20 +935,11 @@ bool env_place(string_address entry)
         return true;
 }
 
-positive shell_digits(p8 address_to into, positive value)
-{
-        positive at = printf_render(into, value, 10, false);
-
-        into[at] = end;
-
-        return at;
-}
-
 fn env_set_number(string_address name, positive value)
 {
         p8 text[24];
 
-        shell_digits(text, value);
+        positive_into_string(text, value);
         env_set(name, text);
 }
 
@@ -1011,10 +947,6 @@ fn env_set_number(string_address name, positive value)
 // which answers 5 for "0.5" and 0 for anything with a space after it.
 bipolar shell_signed(string_address input, bool address_to good)
 {
-        bipolar value = 0;
-        bool negative = false;
-        bool any = false;
-
         address_to good = false;
 
         if (!input)
@@ -1023,24 +955,15 @@ bipolar shell_signed(string_address input, bool address_to good)
         while (string_is(input, ' ') || string_is(input, '\t'))
                 input++;
 
-        if (string_is(input, '-') || string_is(input, '+'))
-        {
-                negative = string_is(input, '-');
-                input++;
-        }
+        positive used;
+        bipolar value = string_bipolar(input, address_of used);
 
-        while (string_get(input) >= '0' && string_get(input) <= '9')
-        {
-                value = value * 10 + (string_get(input++) - '0');
-                any = true;
-        }
-
-        if (!any || string_get(input))
+        if (!used || string_get(input + used))
                 return 0;
 
         address_to good = true;
 
-        return negative ? -value : value;
+        return value;
 }
 
 /*
@@ -1083,6 +1006,7 @@ static shell_option shell_option_names[] = {
 
 #define SHELL_OPTION_NAMES \
         (sizeof(shell_option_names) / sizeof(shell_option_names[0]))
+#define SHELL_OPTION_PIPEFAIL 16
 
 static positive shell_options_named;
 
@@ -1120,6 +1044,25 @@ fn shell_option_told(positive index, bool on)
                 shell_options_named &= ~((positive)1 << index);
 }
 
+/*
+        Whether a failure anywhere in a pipeline is the pipeline's answer.
+
+        set -o pipefail was in the table of names from the start and was only
+        ever a name: the shell said it was on when asked, and then reported
+        the last stage's status the way it always had. A script opening with
+        set -euo pipefail got the promise and none of the behaviour, which is
+        worse than not having it -- errexit then misses exactly the earlier
+        pipeline failures that pipefail was supposed to expose.
+
+        This is the seventeenth table entry above. Reading its named-option
+        bit directly keeps every pipeline out of the general name lookup.
+*/
+bool shell_pipefail()
+{
+        return (shell_options_named &
+                ((positive)1 << SHELL_OPTION_PIPEFAIL)) != 0;
+}
+
 fn shell_options_listed(writer write, bool as_commands)
 {
         positive index = 0;
@@ -1142,11 +1085,7 @@ fn shell_options_listed(writer write, bool as_commands)
 
                         write(shell_option_names[index].name, length);
 
-                        while (length < 15)
-                        {
-                                write(" ", 1);
-                                length++;
-                        }
+                        writer_fill(write, length < 15 ? 15 - length : 0, ' ');
 
                         write(" ", 1);
                         string_format(write, "%s\n", on ? "on" : "off");
@@ -1444,8 +1383,7 @@ fn shell_local(writer write, string_address input)
                         return shell_answer(2);
                 }
 
-                memory_copy(name, word, length);
-                name[length] = end;
+                string_copy_max_end(name, word, length);
 
                 if (!local_remember(name))
                 {
@@ -1506,8 +1444,7 @@ fn shell_readonly(writer write, string_address input)
 
                         if (length < sizeof(name))
                         {
-                                memory_copy(name, word, length);
-                                name[length] = end;
+                                string_copy_max_end(name, word, length);
                                 env_set(name, mark + 1);
                         }
                 }
@@ -1517,8 +1454,7 @@ fn shell_readonly(writer write, string_address input)
                 {
                         string_address kept = readonly_storage + readonly_used;
 
-                        memory_copy(kept, word, length);
-                        kept[length] = end;
+                        string_copy_max_end(kept, word, length);
                         readonly_used += length + 1;
 
                         if (!env_readonly(kept))
@@ -2079,8 +2015,8 @@ static fn printf_sets_prepare()
         if (printf_sets_ready)
                 return;
 
-        for (positive c = 1; c < STRING_SET_BYTES; c++)
-                printf_plain[c] = printf_text[c] = 1;
+        memory_fill(printf_plain + 1, 1, STRING_SET_BYTES - 1);
+        memory_fill(printf_text + 1, 1, STRING_SET_BYTES - 1);
 
         printf_plain['\\'] = printf_plain['%'] = 0;
         printf_text['\\'] = 0;
@@ -2109,36 +2045,6 @@ string_address printf_next()
         return printf_nothing;
 }
 
-positive printf_render(p8 address_to into, positive value, positive base, bool upper)
-{
-        p8 digits[64];
-        positive length = 0;
-        positive at = 0;
-
-        if (value == 0)
-                digits[length++] = '0';
-
-        while (value && length < sizeof(digits))
-        {
-                p8 digit = value % base;
-
-                digits[length++] = digit < 10 ? '0' + digit
-                                              : (upper ? 'A' : 'a') + (digit - 10);
-                value /= base;
-        }
-
-        while (length)
-                into[at++] = digits[--length];
-
-        return at;
-}
-
-fn printf_fill(writer write, positive count, p8 filler)
-{
-        while (count--)
-                write(address_of filler, 1);
-}
-
 /*
         One backslash escape, already past the backslash. Answers where to
         carry on reading; an octal run is up to three digits, and \0 in front
@@ -2150,17 +2056,14 @@ string_address printf_escape(writer write, string_address step)
 
         if (string_is(step, '0') || (string_get(step) >= '1' && string_get(step) <= '7'))
         {
-                positive number = 0;
-                positive taken = 0;
-
                 if (string_is(step, '0'))
                         step++;
 
-                while (taken < 3 && string_get(step) >= '0' && string_get(step) <= '7')
-                {
-                        number = number * 8 + (string_get(step++) - '0');
-                        taken++;
-                }
+                positive used;
+                positive number = string_digits_octal_escape_max(
+                    step, 3, address_of used);
+
+                step += used;
 
                 value = (p8)number;
                 write(address_of value, 1);
@@ -2234,28 +2137,10 @@ fn printf_escaped(writer write, string_address text)
 fn printf_number(writer write, positive magnitude, p8 sign, positive base, bool upper,
                  positive width, bipolar precision, bool left, bool zero)
 {
-        p8 body[80];
-        positive length = printf_render(body, magnitude, base, upper);
-        positive zeros = 0;
-        positive head = sign ? 1 : 0;
+        positive style = sign | ((positive)upper << 26) |
+                         ((positive)left << 27) | ((positive)zero << 28);
 
-        if (precision >= 0 && (positive)precision > length)
-                zeros = (positive)precision - length;
-
-        if (zero && !left && precision < 0 && width > head + length + zeros)
-                zeros = width - head - length;
-
-        if (!left)
-                printf_fill(write, width > head + zeros + length ? width - head - zeros - length : 0, ' ');
-
-        if (sign)
-                write(address_of sign, 1);
-
-        printf_fill(write, zeros, '0');
-        write(body, length);
-
-        if (left)
-                printf_fill(write, width > head + zeros + length ? width - head - zeros - length : 0, ' ');
+        positive_to_base_field(write, magnitude, base, width, precision, style);
 }
 
 // An argument that is not a number is still printed, as zero, and the status
@@ -2331,8 +2216,10 @@ fn printf_one(writer write, string_address format)
                 }
                 else
                 {
-                        while (string_get(step) >= '0' && string_get(step) <= '9')
-                                width = width * 10 + (string_get(step++) - '0');
+                        positive used;
+
+                        width = string_digits(step, address_of used);
+                        step += used;
                 }
 
                 if (string_is(step, '.'))
@@ -2353,8 +2240,10 @@ fn printf_one(writer write, string_address format)
                         }
                         else
                         {
-                                while (string_get(step) >= '0' && string_get(step) <= '9')
-                                        precision = precision * 10 + (string_get(step++) - '0');
+                                positive used;
+
+                                precision = (bipolar)string_digits(step, address_of used);
+                                step += used;
                         }
                 }
 
@@ -2413,12 +2302,13 @@ fn printf_one(writer write, string_address format)
                                 length = (positive)precision;
 
                         if (!left)
-                                printf_fill(write, width > length ? width - length : 0, ' ');
+                                writer_fill(write, width > length ? width - length : 0, ' ');
 
-                        write(value, length);
+                        if (length)
+                                write(value, length);
 
                         if (left)
-                                printf_fill(write, width > length ? width - length : 0, ' ');
+                                writer_fill(write, width > length ? width - length : 0, ' ');
 
                         continue;
                 }
@@ -2429,13 +2319,13 @@ fn printf_one(writer write, string_address format)
                         positive length = string_get(value) ? 1 : 0;
 
                         if (!left)
-                                printf_fill(write, width > length ? width - length : 0, ' ');
+                                writer_fill(write, width > length ? width - length : 0, ' ');
 
                         if (length)
                                 write(value, 1);
 
                         if (left)
-                                printf_fill(write, width > length ? width - length : 0, ' ');
+                                writer_fill(write, width > length ? width - length : 0, ' ');
 
                         continue;
                 }
@@ -2457,7 +2347,12 @@ fn printf_one(writer write, string_address format)
                         else if (space)
                                 sign = ' ';
 
-                        printf_number(write, value < 0 ? (positive)(-value) : (positive)value,
+                        positive magnitude = (positive)value;
+
+                        if (value < 0)
+                                magnitude = (positive)0 - magnitude;
+
+                        printf_number(write, magnitude,
                                       sign, 10, false, width, precision, left, zero);
                         continue;
                 }
@@ -2723,8 +2618,7 @@ fn shell_read(writer write, string_address input)
                 // it.
                 if (value)
                 {
-                        string_copy_max(ifs_held, value, sizeof(ifs_held) - 1);
-                        ifs_held[sizeof(ifs_held) - 1] = end;
+                        string_copy_max_end(ifs_held, value, sizeof(ifs_held) - 1);
                         ifs = ifs_held;
                 }
                 else
@@ -3050,20 +2944,18 @@ bool umask_symbolic(string_address step, positive address_to mask)
 
 fn umask_written(writer write, positive mask)
 {
-        positive shift = 9;
+        p8 digits[3];
+        positive length = positive_into_base(digits, mask & 0777, 8, false);
+        positive padding = 3 - length;
 
-        while (shift)
-        {
-                p8 digit;
+        // Keep the historical five one-byte writer calls: prefix, three
+        // field digits (including padding), then newline.
+        write("0", 1);
 
-                shift -= 3;
-                digit = '0' + ((mask >> shift) & 7);
+        writer_fill(write, padding, '0');
 
-                if (shift == 6)
-                        write("0", 1);
-
-                write(address_of digit, 1);
-        }
+        for (positive i = 0; i < length; i++)
+                write(digits + i, 1);
 
         write("\n", 1);
 }
@@ -3128,10 +3020,11 @@ fn shell_umask(writer write, string_address input)
 
                 if (string_get(word) >= '0' && string_get(word) <= '7')
                 {
-                        positive value = 0;
+                        positive used;
+                        positive value = string_digits_octal_max(
+                            word, (positive)-1, address_of used);
 
-                        while (string_get(word) >= '0' && string_get(word) <= '7')
-                                value = value * 8 + (string_get(word++) - '0');
+                        word += used;
 
                         if (string_get(word))
                         {
@@ -3184,7 +3077,6 @@ fn shell_time_written(writer write, bipolar ticks)
 {
         positive seconds;
         positive fraction;
-        positive scale = CLOCK_PLACES / 10;
 
         if (ticks < 0)
                 ticks = 0;
@@ -3192,18 +3084,16 @@ fn shell_time_written(writer write, bipolar ticks)
         seconds = (positive)ticks / CLOCK_TICKS;
         fraction = ((positive)ticks % CLOCK_TICKS) * (CLOCK_PLACES / CLOCK_TICKS);
 
-        shell_number_padded(write, seconds / 60, 0);
+        positive_to_string(write, seconds / 60);
         write("m", 1);
-        shell_number_padded(write, seconds % 60, 0);
+        positive_to_string(write, seconds % 60);
         write(".", 1);
 
-        while (scale)
-        {
-                p8 digit = '0' + (fraction / scale) % 10;
+        p8 fraction_text[6];
+        positive fraction_length =
+            positive_into_padded(fraction_text, fraction, 6, '0');
 
-                write(address_of digit, 1);
-                scale /= 10;
-        }
+        write(fraction_text, fraction_length);
 
         write("s", 1);
 }
@@ -3333,6 +3223,8 @@ fn trap_default_all()
                 at++;
         }
 
+        // Signal handlers write these bytes asynchronously; keep the volatile
+        // byte stores rather than casting that contract away for a bulk fill.
         for (positive i = 0; i <= TRAP_SIGNAL_MAX; i++)
                 trap_pending[i] = 0;
 
@@ -3347,11 +3239,9 @@ fn trap_forget(positive number)
         {
                 if (trap_table[index].number == number)
                 {
-                        while (index + 1 < trap_count)
-                        {
-                                trap_table[index] = trap_table[index + 1];
-                                index++;
-                        }
+                        memory_copy(trap_table + index, trap_table + index + 1,
+                                    (trap_count - index - 1) *
+                                        sizeof(trap_table[0]));
 
                         trap_count--;
                         return;
@@ -3394,7 +3284,7 @@ fn shell_trap(writer write, string_address input)
                         if (number < 16)
                                 string_format(write, "%s", trap_names[number]);
                         else
-                                shell_number_padded(write, number, 0);
+                                positive_to_string(write, number);
 
                         write("\n", 1);
                         at++;
@@ -3517,8 +3407,7 @@ bool alias_record(string_address name, positive name_length, string_address valu
         {
                 string_address kept_name = alias_storage + alias_used;
 
-                memory_copy(kept_name, name, name_length);
-                kept_name[name_length] = end;
+                string_copy_max_end(kept_name, name, name_length);
                 alias_used += name_length + 1;
 
                 {
@@ -3635,11 +3524,10 @@ fn shell_unalias(writer write, string_address input)
                 if (at >= alias_count)
                         status = 1;
 
-                while (at + 1 < alias_count)
-                {
-                        alias_table[at] = alias_table[at + 1];
-                        at++;
-                }
+                if (at < alias_count)
+                        memory_copy(alias_table + at, alias_table + at + 1,
+                                    (alias_count - at - 1) *
+                                        sizeof(alias_table[0]));
 
                 if (at < alias_count)
                         alias_count--;
@@ -3926,7 +3814,7 @@ static bool shell_tool_run(string_address name)
         }
 
         system_call_4(syscall(wait4), child, (positive)address_of status, 0, 0);
-        shell_answer((b32)((status >> 8) & 0xff));
+        shell_answer(wait_status_code(status));
 
         return true;
 }
@@ -4133,7 +4021,7 @@ fn shell_wait(writer write, string_address input)
                 if (got < 0)
                         return shell_answer(127);
 
-                return shell_answer((b32)((status >> 8) & 0xff));
+                return shell_answer(wait_status_code(status));
         }
 
         while (system_call_4(syscall(wait4), -1, (positive)address_of status, 0, 0) >= 0)
@@ -4312,7 +4200,7 @@ b32 shell_find_in_path(string_address name, p8 address_to into, positive room)
         string_address segment;
         positive name_length;
 
-        if (name == null)
+        if (name == null || !room)
                 return false;
 
         if (string_first_of(name, '/'))
@@ -4321,8 +4209,7 @@ b32 shell_find_in_path(string_address name, p8 address_to into, positive room)
                                   ACCESS_EXECUTE, 0))
                         return false;
 
-                string_copy_max(into, name, room - 1);
-                into[room - 1] = end;
+                string_copy_max_end(into, name, room - 1);
                 return true;
         }
 
@@ -4331,8 +4218,7 @@ b32 shell_find_in_path(string_address name, p8 address_to into, positive room)
 
                 if (known)
                 {
-                        string_copy_max(into, known, room - 1);
-                        into[room - 1] = end;
+                        string_copy_max_end(into, known, room - 1);
                         return true;
                 }
         }
@@ -4340,8 +4226,7 @@ b32 shell_find_in_path(string_address name, p8 address_to into, positive room)
         if (value == null)
                 value = "/bin:/usr/bin:/";
 
-        string_copy_max(search, value, sizeof(search) - 1);
-        search[sizeof(search) - 1] = end;
+        string_copy_max_end(search, value, sizeof(search) - 1);
 
         segment = search;
         name_length = string_length(env_reading(name));
@@ -4537,10 +4422,9 @@ fn shell_command_builtin(writer write, string_address input)
         // Running it is the executor's business, and it is told to skip the
         // function table by the words it is handed.
         {
-                b32 at = index;
-
-                for (b32 to = 0; at < shell_argc; at++, to++)
-                        shell_argv[to] = shell_argv[at];
+                memory_copy(shell_argv, shell_argv + index,
+                            (positive)(shell_argc - index) *
+                                sizeof(shell_argv[0]));
 
                 shell_argc -= index;
                 shell_argv[shell_argc] = null;
@@ -4648,7 +4532,7 @@ fn shell_limit_said(writer write, shell_limit address_to limit, bool hard)
         if (value == LIMIT_INFINITE)
                 return string_format(write, "unlimited\n");
 
-        shell_number_padded(write, (positive)(value / limit->step), 0);
+        positive_to_string(write, (positive)(value / limit->step));
         write("\n", 1);
 }
 
@@ -4662,11 +4546,7 @@ fn shell_limit_listed(writer write)
 
                 write(limit->name, length);
 
-                while (length < 20)
-                {
-                        write(" ", 1);
-                        length++;
-                }
+                writer_fill(write, length < 20 ? 20 - length : 0, ' ');
 
                 write(" ", 1);
                 shell_limit_said(write, limit, false);

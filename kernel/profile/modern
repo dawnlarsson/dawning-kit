@@ -106,3 +106,13 @@ CONFIG_BLK_DEV_RAM=n
 # image had no network at all rather than one card fewer.
 CONFIG_IGB=n
 CONFIG_IGC=n
+
+#
+# The network card a virtual machine actually presents
+#
+# The build had E1000E, which drives 82574 and later over PCIe. qemu presents
+# an 82540EM -- [8086:100e], conventional PCI -- which wants E1000. So the
+# device sat on the bus unclaimed and the guest saw one interface, lo, while
+# the whole stack was up and waiting: PF_INET, PF_NETLINK, PF_ROUTE and
+# PF_PACKET all registered, /proc/net fully populated, and nothing to talk to.
+CONFIG_E1000=y

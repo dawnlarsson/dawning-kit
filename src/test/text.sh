@@ -49,6 +49,13 @@ printf 'a\n\\:\\:\\:\nhdr\n\\:\\:\nbody1\nbody2\n\\:\nfoot\n' > "$work/sections"
 printf 'x\n\n\n\ny\n' > "$work/blanks"
 printf 'a\tb\nlonger line here\n\rwide\n' > "$work/wide"
 printf '  ab  cd ef\nxy\tzw\nplain\n' > "$work/spaced"
+printf '\376\377\n' > "$work/tr_high"
+
+# The first numbered line leaves the output buffer exactly full. The next
+# number therefore flushes while it is being written, which must not change
+# the left-aligned field width.
+head -c 65528 /dev/zero | tr '\0' x > "$work/nl_flush"
+printf '\ny\n' >> "$work/nl_flush"
 
 #       -z reads and writes lines that end in a NUL rather than a newline,
 #       which is the one fixture here that cannot be read by eye.
@@ -556,6 +563,7 @@ compare 'join blanks'    nl blanks -ba -l3
 compare 'join blanks two' nl blanks -ba -l2
 compare 'delimiter'      nl sections -d '\:'
 compare 'format left'    nl a   -nln
+compare 'format left flush' nl nl_flush -nln -w6
 compare 'format zeros'   nl a   -nrz
 compare 'format right'   nl a   -nrn
 compare 'long body'      nl a   --body-numbering=a
@@ -698,6 +706,8 @@ compare 'anchor empty g' sed m  's/^/> /'
 compare 'end append'     sed m  's/$/ </'
 compare 'group swap'     sed r  's/\([a-z]*\)\([0-9]\)/\2\1/'
 compare 'nested group'   sed r  's/\(\([a-z]\)[0-9]\)/[\1|\2]/'
+compare 'saved loop programs' sed m -n '/^a*a*a*$/p;/^\(ab\)*$/p'
+compare 'loop overflow state' sed m -n '/^a*a*a*a*a*a*a*a*a*$/p'
 compare 'amp escape'     sed s  's/one/\&/'
 compare 'newline in rep' sed s  's/one/a\nb/'
 compare 'tab in rep'     sed s  's/one/a\tb/'
@@ -841,7 +851,11 @@ compare 'space delim'    cut u  '-d ' -f2,4
 
 case_start tr2
 compare 'octal'          tr s  '\157' O
+compare 'octal cap'      tr s  '\1570' X
+compare 'octal breaker'  tr s  '\157q' X
 compare 'repeat set'     tr s  'one' '[X*]'
+compare 'repeat clips safely' tr s 'one' '[X*2048][Y*]'
+compare 'range high bytes' tr tr_high '\376-\377' XY
 compare 'complement sub' tr s  -c 'o\n' X
 compare 'squeeze all'    tr q  -s '[:upper:]'
 compare 'delete class'   tr n  -d '[:blank:]'

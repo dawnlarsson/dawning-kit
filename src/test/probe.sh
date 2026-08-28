@@ -53,6 +53,35 @@ expect()
         lost "$name" "want [$(tr '\n' '|' < "$work/want")]($want_status) got [$(tr '\n' '|' < "$work/got")]($got_status)"
 }
 
+# Keep the two descriptors apart when their destination, rather than their
+# relative write order, is the fact under test.
+expect_streams()
+{
+        name=$1
+        want_stdout=$2
+        want_stderr=$3
+        want_status=$4
+        shift 4
+
+        if "$@" > "$work/got.stdout" 2> "$work/got.stderr"; then
+                got_status=0
+        else
+                got_status=$?
+        fi
+
+        printf '%s' "$want_stdout" > "$work/want.stdout"
+        printf '%s' "$want_stderr" > "$work/want.stderr"
+
+        if cmp -s "$work/want.stdout" "$work/got.stdout" &&
+           cmp -s "$work/want.stderr" "$work/got.stderr" &&
+           [ "$want_status" = "$got_status" ]; then
+                won
+                return 0
+        fi
+
+        lost "$name" "stdout [$(tr '\n' '|' < "$work/got.stdout")] stderr [$(tr '\n' '|' < "$work/got.stderr")] status $got_status"
+}
+
 # The same, when only one line of the answer is the point.
 expect_line()
 {
@@ -81,7 +110,7 @@ expect_line 'called as'      "  0: $probe"     2 "$probe" arguments a b c
 expect_line 'first is mode'  '  1: arguments'  3 "$probe" arguments a b c
 expect_line 'third'          '  2: a'          4 "$probe" arguments a b c
 expect_line 'last'           '  4: c'          6 "$probe" arguments a b c
-expect_line 'no mode at all' 'probe: arguments regions environment spawn quack status' 1 "$probe"
+expect_line 'no mode at all' 'probe: arguments regions environment logging diagnostic terminal spawn quack status' 1 "$probe"
 expect_line 'mode only'      '2 argument(s)'   1 "$probe" arguments
 expect_line 'an empty one'   '  2: '           4 "$probe" arguments '' x
 expect_line 'one with space' '  2: a b'        4 "$probe" arguments 'a b'
@@ -101,7 +130,7 @@ for code in 0 1 7 42 255; do
         expect "status $code" '' "$code" "$probe" status "$code"
 done
 
-expect 'unknown mode' 'probe: arguments regions environment spawn quack status
+expect 'unknown mode' 'probe: arguments regions environment logging diagnostic terminal spawn quack status
 ' 2 "$probe" nosuchmode
 
 #
@@ -116,6 +145,28 @@ bss written:  yes
 
 expect 'quack' 'quack
 ' 0 "$probe" quack
+
+#
+#       The logging boundary and terminal fallback in the runtime assembly.
+#
+
+logging_x=$(printf 'x%.0s' $(seq 4096))
+logging_want=A$(printf '%.*s' 4095 "$logging_x")B${logging_x}CDE
+expect 'logging boundaries' "$logging_want" 0 "$probe" logging
+expect 'diagnostic ordering' 'stdout-before
+stderr-zero
+stdout-middle
+stderr-explicit
+stdout-after
+' 0 "$probe" diagnostic
+expect_streams 'diagnostic descriptors' 'stdout-before
+stdout-middle
+stdout-after
+' 'stderr-zero
+stderr-explicit
+' 0 "$probe" diagnostic
+expect 'terminal fallback' '80 24
+' 0 "$probe" terminal
 
 #
 #       The environment a spawner handed over.

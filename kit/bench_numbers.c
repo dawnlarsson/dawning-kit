@@ -46,6 +46,7 @@ NOT_INLINED fn discard_writer(address_any data, positive length)
 }
 
 static positive small_values[VALUE_COUNT];
+static positive middle_values[VALUE_COUNT];
 static positive mixed_values[VALUE_COUNT];
 static positive wide_values[VALUE_COUNT];
 
@@ -56,6 +57,11 @@ static fn make_values()
         for (positive i = 0; i < VALUE_COUNT; i++)
         {
                 small_values[i] = i < 32 ? i : (i * 313u) % 10000u;
+
+                positive middle_base = 10000;
+                for (positive d = 0; d < i % 3; d++)
+                        middle_base *= 10;
+                middle_values[i] = middle_base + (i * 7919u) % middle_base;
 
                 positive digits = i % 20 + 1;
                 positive base = 1;
@@ -76,6 +82,12 @@ static fn make_values()
         small_values[3] = 99;
         small_values[4] = 100;
         small_values[5] = 9999;
+        middle_values[0] = 10000;
+        middle_values[1] = 99999;
+        middle_values[2] = 100000;
+        middle_values[3] = 999999;
+        middle_values[4] = 1000000;
+        middle_values[5] = 9999999;
         mixed_values[0] = 99999999ull;
         mixed_values[1] = 100000000ull;
         mixed_values[2] = 9999999999999999ull;
@@ -158,6 +170,7 @@ b32 main()
         string_format(log, "decimal conversion, best of %p, %p calls\n",
                       (positive)TRIES, (positive)ROUNDS);
         row((string_address)"small 1-4 digit", small_values);
+        row((string_address)"middle 5-7 digit", middle_values);
         row((string_address)"mixed 1-20 digit", mixed_values);
         row((string_address)"wide 19-20 digit", wide_values);
         log_flush();

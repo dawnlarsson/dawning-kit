@@ -720,6 +720,23 @@ static _Bool output_describe(struct output *output)
                    (unsigned long long)fb->modifier,
                    map.is_iomem ? "device" : "system");
 
+        /*
+                Which engine, asked here because this is where the device is
+                already being looked at, and asked once because a second
+                output is the same device. It belongs with attach and will
+                move there when that file is not being edited by somebody
+                else.
+        */
+        {
+                static _Bool engine_asked;
+
+                if (!engine_asked)
+                {
+                        engine_asked = true;
+                        canvas_gpu_find(output->buffer->client->dev);
+                }
+        }
+
         drm_client_buffer_vunmap_local(output->buffer);
         return true;
 }
@@ -818,6 +835,12 @@ static void output_repaint(struct output *output, const struct drm_rect *damage,
 
         output_draw_cursor(output, pixels);
 
+        //      Nothing may read these pixels with the processor, and the
+        //      driver may not be told they changed, until the engine has
+        //      finished what it was given. A branch when there is no engine,
+        //      which is every machine until a backend exists.
+        canvas_gpu_settle();
+
         drm_client_buffer_vunmap_local(output->buffer);
         pointer_draw_total += ktime_get_ns() - started;
 
@@ -862,6 +885,12 @@ static void compose_output(struct output *output)
         }
 
         output_draw_cursor(output, pixels);
+
+        //      Nothing may read these pixels with the processor, and the
+        //      driver may not be told they changed, until the engine has
+        //      finished what it was given. A branch when there is no engine,
+        //      which is every machine until a backend exists.
+        canvas_gpu_settle();
 
         drm_client_buffer_vunmap_local(output->buffer);
 

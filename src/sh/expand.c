@@ -14,7 +14,7 @@
         emptied when the next line begins.
 */
 
-#include "../library.c"
+#include "../compiler_memory.c"
 
 /*
         What the files beside this one own.
@@ -24,7 +24,6 @@
 */
 string_address env_get(const_string name);
 bool env_set(const_string name, const_string value);
-positive shell_digits(p8 address_to into, positive value);
 fn run_line(string_address line);
 fn parse_reset_all();
 fn shell_trap_exit();
@@ -140,8 +139,8 @@ static fn expand_sets_prepare()
         if (expand_sets_ready)
                 return;
 
-        for (positive c = 1; c < STRING_SET_BYTES; c++)
-                expand_plain_set[c] = expand_inside_set[c] = 1;
+        memory_fill(expand_plain_set + 1, 1, STRING_SET_BYTES - 1);
+        memory_fill(expand_inside_set + 1, 1, STRING_SET_BYTES - 1);
 
         {
                 static const string_address inside = "\\\"$`";
@@ -172,23 +171,16 @@ static bool expand_name_character(p8 value)
 
 static fn expand_copy_bounded(p8 address_to into, string_address from, positive limit)
 {
-        positive used = from ? string_length_max(from, limit - 1) : 0;
+        if (!limit)
+                return;
 
-        memory_copy_fast(into, from, used);
-        into[used] = end;
-}
-
-static positive expand_number_out(bipolar value, p8 address_to into)
-{
-        positive used = 0;
-
-        if (value < 0)
+        if (!from)
         {
-                into[used++] = '-';
-                value = -value;
+                into[0] = end;
+                return;
         }
 
-        return used + shell_digits(into + used, (positive)value);
+        string_copy_max_end(into, from, limit - 1);
 }
 
 /*
@@ -205,41 +197,28 @@ static bipolar expand_base_number(string_address address_to at)
 {
         string_address step = address_to at;
         bipolar value = 0;
+        positive used;
 
         if (string_is(step, '0') &&
             (string_is(step + 1, 'x') || string_is(step + 1, 'X')))
         {
                 step += 2;
-
-                while (1)
-                {
-                        p8 digit = string_get(step);
-
-                        if (digit >= '0' && digit <= '9')
-                                digit -= '0';
-                        else if (digit >= 'a' && digit <= 'f')
-                                digit -= 'a' - 10;
-                        else if (digit >= 'A' && digit <= 'F')
-                                digit -= 'A' - 10;
-                        else
-                                break;
-
-                        value = value * 16 + digit;
-                        step++;
-                }
+                value = (bipolar)string_digits_hexadecimal_max(
+                    step, (positive)-1, address_of used);
+                step += used;
         }
         else if (string_is(step, '0') && string_get(step + 1) >= '0' &&
                  string_get(step + 1) <= '7')
         {
                 step++;
-
-                while (string_get(step) >= '0' && string_get(step) <= '7')
-                        value = value * 8 + (string_get(step++) - '0');
+                value = (bipolar)string_digits_octal_max(
+                    step, (positive)-1, address_of used);
+                step += used;
         }
         else
         {
-                while (string_get(step) >= '0' && string_get(step) <= '9')
-                        value = value * 10 + (string_get(step++) - '0');
+                value = (bipolar)string_digits(step, address_of used);
+                step += used;
         }
 
         address_to at = step;
@@ -572,16 +551,12 @@ fn shell_parameters_restore(positive mark, positive count)
 
 fn shell_parameters_shift(positive count)
 {
-        positive index = 0;
-
         if (count > shell_parameter_count)
                 count = shell_parameter_count;
 
-        while (index + count < shell_parameter_count)
-        {
-                shell_parameter[index] = shell_parameter[index + count];
-                index++;
-        }
+        memory_copy(shell_parameter, shell_parameter + count,
+                    (shell_parameter_count - count) *
+                        sizeof(shell_parameter[0]));
 
         shell_parameter_count -= count;
         shell_parameter[shell_parameter_count] = null;
@@ -649,10 +624,7 @@ static bool expand_value_of(string_address name, p8 address_to into, positive li
 
         if (first >= '0' && first <= '9')
         {
-                positive which = 0;
-
-                while (string_get(name) >= '0' && string_get(name) <= '9')
-                        which = which * 10 + (string_get(name++) - '0');
+                positive which = string_digits(name, null);
 
                 if (!which)
                 {
@@ -671,13 +643,13 @@ static bool expand_value_of(string_address name, p8 address_to into, positive li
         {
                 if (first == '#')
                 {
-                        expand_number_out((bipolar)shell_parameter_count, into);
+                        bipolar_into_string(into, (bipolar)shell_parameter_count);
                         return true;
                 }
 
                 if (first == '?')
                 {
-                        expand_number_out((bipolar)shell_status, into);
+                        bipolar_into_string(into, (bipolar)shell_status);
                         return true;
                 }
 
@@ -695,7 +667,7 @@ static bool expand_value_of(string_address name, p8 address_to into, positive li
                         if (!expand_shell_pid)
                                 expand_shell_pid = (positive)system_call_1(syscall(getpid), 0);
 
-                        expand_number_out((bipolar)expand_shell_pid, into);
+                        bipolar_into_string(into, (bipolar)expand_shell_pid);
                         return true;
                 }
 
@@ -868,7 +840,7 @@ static bipolar arith_store(string_address name, bipolar value)
 {
         p8 written[32];
 
-        expand_number_out(value, written);
+        bipolar_into_string(written, value);
         env_set(name, written);
 
         return value;
@@ -1585,7 +1557,7 @@ static fn expand_run(string_address command, bool quoted)
                 expand_length--;
 
         if (child > 0)
-                shell_substitution_status = (b32)(status >> 8 & 0xff);
+                shell_substitution_status = wait_status_code(status);
 }
 
 static string_address expand_command(string_address step, bool quoted)
@@ -1608,8 +1580,7 @@ static string_address expand_command(string_address step, bool quoted)
         if (length >= sizeof(text))
                 length = sizeof(text) - 1;
 
-        memory_copy(text, inner, length);
-        text[length] = end;
+        memory_copy_end(text, inner, length);
 
         expand_run(text, quoted);
 
@@ -1706,8 +1677,7 @@ static string_address expand_arithmetic(string_address step, bool quoted)
         if (length >= sizeof(text))
                 length = sizeof(text) - 1;
 
-        memory_copy(text, inner, length);
-        text[length] = end;
+        memory_copy_end(text, inner, length);
 
         // What was written with a dollar in front takes its turn first; what is
         // left over is arithmetic, where a bare name is a value too.
@@ -1725,7 +1695,7 @@ static string_address expand_arithmetic(string_address step, bool quoted)
                         return stop + 2;
                 }
 
-                expand_number_out(value, written);
+                bipolar_into_string(written, value);
         }
 
         expand_push_string(written, quoted ? MARK_QUOTED : MARK_FIELD);
@@ -1871,14 +1841,7 @@ static string_address expand_braced(string_address step, bool quoted)
                 of the two the script was written against. dash refuses it and
                 so does this.
         */
-        else if (colon)
-        {
-                string_format(expand_complain, "%s: bad substitution\n", name);
-                expand_fatal();
-
-                return close + 1;
-        }
-        else if (seen == '%' || seen == '#')
+        else if (!colon && (seen == '%' || seen == '#'))
         {
                 operation = seen;
                 step++;
@@ -1890,14 +1853,33 @@ static string_address expand_braced(string_address step, bool quoted)
                 }
         }
 
+        /*
+                Nothing after a name is harmless unless it is one of the
+                operators parsed above. In particular, / and ^ introduce
+                Bash substitutions this shell does not implement. Returning
+                the unmodified value made ${x//X/-} and ${x^^} look as though
+                they had worked, with plausible but wrong data. Refuse every
+                unknown suffix just as dash does. Length form has no operator
+                tail of its own, and a colon must introduce one of :- := :?
+                or :+.
+        */
+        if (!length || (colon && !operation) ||
+            (!operation && step != close) ||
+            (want_length && operation))
+        {
+                string_format(expand_complain, "%s: bad substitution\n", name);
+                expand_fatal();
+
+                return close + 1;
+        }
+
         {
                 positive room = (positive)(close - step);
 
                 if (room >= sizeof(word))
                         room = sizeof(word) - 1;
 
-                memory_copy(word, step, room);
-                word[room] = end;
+                memory_copy_end(word, step, room);
         }
 
         if (want_length)
@@ -1910,7 +1892,7 @@ static string_address expand_braced(string_address step, bool quoted)
                 else
                         count = string_length(value);
 
-                expand_number_out((bipolar)count, written);
+                bipolar_into_string(written, (bipolar)count);
                 expand_push_string(written, mark);
 
                 return close + 1;
@@ -2473,8 +2455,7 @@ static string_address expand_keep(positive at, positive stop)
                 expand_arena_used = 0;
 
         result = expand_arena + expand_arena_used;
-        memory_copy(result, expand_text + at, stop - at);
-        result[stop - at] = end;
+        memory_copy_end(result, expand_text + at, stop - at);
         expand_arena_used += room;
 
         return result;
@@ -2497,6 +2478,29 @@ static positive expand_emit(positive at, positive stop, string_address address_t
         if (count >= limit)
                 return count;
 
+        /*
+                A bracket only makes a word a pattern if it closes.
+
+                POSIX is plain that an unterminated '[' is a literal
+                character, and nothing here enforced it. So the commonest
+                command in any script -- the test builtin, whose other name
+                is '[' -- was a pattern, and every single one of them opened
+                a directory and read it to the end looking for a file called
+                that. A loop written with '[' ran six times slower than the
+                identical loop written with 'test': 0.590s against 0.099s
+                over three hundred thousand turns, and one and a quarter
+                million system calls against thirty three.
+
+                What is allowed to close it comes from the same page. After
+                the '[' an optional '!' or '^' does not end it, and a ']'
+                standing immediately after either of those is itself literal
+                -- "[]]" is the bracket expression that matches a bracket. So
+                the first ']' that can close is the one after that, and the
+                three states below are which of those places the scan is
+                standing in.
+        */
+        positive bracket = 0;
+
         for (index = at; index < stop; index++)
         {
                 p8 value = expand_text[index];
@@ -2507,8 +2511,19 @@ static positive expand_emit(positive at, positive stop, string_address address_t
                         if ((special || value == '\\') && used + 2 < sizeof(pattern))
                                 pattern[used++] = '\\';
                 }
-                else if (special)
+                else if (value == '*' || value == '?')
                         magic = true;
+                else if (bracket == 0)
+                {
+                        if (value == '[')
+                                bracket = 1;
+                }
+                else if (bracket == 1 && (value == '!' || value == '^'))
+                        bracket = 2;
+                else if (bracket == 3 && value == ']')
+                        magic = true;
+                else
+                        bracket = 3;
 
                 if (used + 1 < sizeof(pattern))
                         pattern[used++] = value;

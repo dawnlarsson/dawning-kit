@@ -13,7 +13,20 @@ set -u
 # shellcheck disable=SC1007
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 root=$(CDPATH= cd -- "$here/../../.." && pwd)
-lib=${1:-$root/src/library.next.c}
+lib=${1:-$root/src/library.c}
+
+[ "$(uname -s)" = Darwin ] || {
+        echo "run: native lifting needs Darwin's Mach-O assembler" >&2
+        exit 2
+}
+
+case $(uname -m) in
+arm64 | aarch64) ;;
+*)
+        echo "run: native lifting needs an arm64 machine" >&2
+        exit 2
+        ;;
+esac
 
 [ -f "$lib" ] || { echo "run: no such library: $lib" >&2; exit 1; }
 
@@ -45,8 +58,47 @@ python3 "$here/extract.py" "$lib" \
         string_first_of_max string_last_of string_last_of_or_end memory_first_of \
         > "$work/wide.h" || exit 1
 
+#       Base conversion is a leaf for octal/hexadecimal. Its decimal tail is
+#       satisfied by the reference in bases.c, because that case measures only
+#       the non-decimal lanes and lifting the much larger decimal core would
+#       measure something else as well.
+python3 "$here/extract.py" "$lib" positive_into_base \
+        > "$work/bases.h" || exit 1
+python3 "$here/extract.py" "$lib" \
+        positive_into_base writer_fill positive_to_base_field \
+        > "$work/base_field.h" || exit 1
+
+#       Compact binary-size formatting calls the decimal buffer adapters on
+#       its plain and integer-scaled paths. human.c supplies those two small
+#       references; the lifted routine is otherwise byte-for-byte the library
+#       ARM64 body, including its embedded suffix table.
+python3 "$here/extract.py" "$lib" \
+        positive_into_human_1024_string positive_to_human_1024 \
+        > "$work/human.h" || exit 1
+
+#       dd's nearest formatter and the wait4 status decoder are independent
+#       leaves.  Their native case exhausts raw wait status, crosses every
+#       destination residue, and benchmarks the exact former C body.
+python3 "$here/extract.py" "$lib" \
+        positive_into_human_nearest_string wait_status_code \
+        > "$work/human_nearest.h" || exit 1
+
+#       The contiguous fixed fields are leaves on their bounded hot paths.
+#       fields.c supplies positive_into for the general-path relocation, which
+#       its width-six/nine benchmark deliberately never takes.
+python3 "$here/extract.py" "$lib" positive_into_padded positive_into_pair \
+        > "$work/fields.h" || exit 1
+
+#       Bounded input-base leaves, including the three tail destinations of
+#       the runtime-base entry.
+python3 "$here/extract.py" "$lib" \
+        string_digits_max string_digits_octal_escape_max string_digits_octal_max \
+        string_digits_hexadecimal_escape_max string_digits_hexadecimal_max \
+        string_digits_base_max \
+        > "$work/input_bases.h" || exit 1
+
 status=0
-for case in byte_hunts bounded riscv_bits bulk wide; do
+for case in byte_hunts bounded riscv_bits bulk wide bases base_field human human_nearest fields input_bases; do
         cc -O2 -w -I"$work" "$here/$case.c" -o "$work/$case" || { status=1; continue; }
         "$work/$case" || status=1
 done
