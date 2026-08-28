@@ -736,11 +736,29 @@ static positive regex_loop_at[REGEX_CODE_MAX];
 #define REGEX_FIRST_MAX 40
 #define REGEX_LOOPS_KEPT 8
 
+/*
+        The pattern that is not a pattern.
+
+        Most of what grep and sed are asked for is a fixed string, and the
+        machine above answers it one byte at a time through a first-byte table
+        -- thirteen million table lookups on a thirteen megabyte file. A
+        program that is nothing but a run of characters is that run, and
+        memory_search finds it thirty two positions at a time. Compiled once,
+        here, so every caller of regex_search gets it.
+
+        Longer than this and the machine takes it back, which costs speed on a
+        pattern nobody writes and no correctness anywhere.
+*/
+#define REGEX_LITERAL_MAX 256
+
 static p8 regex_first_store[REGEX_FIRST_MAX][256];
 static p8 regex_last_store[REGEX_FIRST_MAX][256];
+static p8 regex_literal_store[REGEX_FIRST_MAX][REGEX_LITERAL_MAX];
 static b32 regex_first_used;
 static p8 address_to regex_first = regex_first_store[0];
 static p8 address_to regex_last = regex_last_store[0];
+static p8 address_to regex_literal = regex_literal_store[0];
+static positive regex_literal_length;
 static bool regex_first_known;
 static bool regex_last_known;
 static bool regex_anchored;
@@ -1557,6 +1575,8 @@ typedef struct
         p8(address_to sets)[32];
         p8 address_to first;
         p8 address_to last;
+        p8 address_to literal;
+        positive literal_length;
         b32 length;
         b32 groups;
         bool extended;
@@ -1576,6 +1596,8 @@ static fn regex_select(regex_program address_to which)
         regex_sets = which->sets;
         regex_first = which->first;
         regex_last = which->last;
+        regex_literal = which->literal;
+        regex_literal_length = which->literal_length;
         regex_length_code = which->length;
         regex_group_count = which->groups;
         regex_extended = which->extended;
@@ -1599,6 +1621,8 @@ static fn regex_keep(regex_program address_to which)
         which->sets = regex_sets;
         which->first = regex_first;
         which->last = regex_last;
+        which->literal = regex_literal;
+        which->literal_length = regex_literal_length;
         which->length = regex_length_code;
         which->groups = regex_group_count;
         which->extended = regex_extended;
@@ -1815,6 +1839,33 @@ static fn regex_find_last()
         }
 }
 
+/*
+        A program that is a run of characters and nothing else.
+
+        regex_compile lays out SAVE 0, the body, SAVE 1, DONE, so the body is
+        every instruction between them and it is a fixed string when all of
+        them are REGEX_CHAR. An icase compile lowered each value where it
+        emitted it, which is what the search below folds against.
+*/
+static fn regex_find_literal()
+{
+        b32 body = regex_length_code - 3;
+
+        regex_literal_length = 0;
+
+        if (regex_broken || body < 1 || body > REGEX_LITERAL_MAX)
+                return;
+
+        for (b32 i = 1; i <= body; i++)
+                if (regex_code[i].code != REGEX_CHAR)
+                        return;
+
+        for (b32 i = 1; i <= body; i++)
+                regex_literal[i - 1] = regex_code[i].value;
+
+        regex_literal_length = (positive)body;
+}
+
 static fn regex_finish()
 {
         regex_slot_used = (positive)(regex_group_count + 1) * 2;
@@ -1857,6 +1908,8 @@ static fn regex_finish()
 
         if (regex_alternates)
                 regex_find_last();
+
+        regex_find_literal();
 }
 
 static bool regex_compile(string_address pattern, bool extended, bool icase, bool escapes)
@@ -1868,6 +1921,7 @@ static bool regex_compile(string_address pattern, bool extended, bool icase, boo
 
         regex_first = regex_first_store[tables];
         regex_last = regex_last_store[tables];
+        regex_literal = regex_literal_store[tables];
         memory_fill(regex_first, 0, 256);
         regex_last_known = false;
         regex_length_code = 0;
@@ -2122,11 +2176,74 @@ static fn regex_clear_state()
                 regex_loop_at[regex_loop_list[i]] = 0;
 }
 
+/*
+        Where a fixed string sits, exactly or in either case.
+
+        Exact is memory_search and nothing else. Folded has no wide routine to
+        call, so the first byte is hunted in both of its cases and only the
+        two answers race -- two passes of memory_first_of over the block
+        rather than one, which is still the width of a register against one
+        byte a step. A first byte that is not a letter has one case and takes
+        the single pass.
+*/
+static string_address text_literal_find(string_address text, positive length, positive from,
+                                        string_address want, positive size, bool icase)
+{
+        if (from > length || length - from < size)
+                return null;
+
+        if (!icase)
+                return memory_search(text + from, length - from, want, size);
+
+        p8 head = want[0];
+        p8 upper = head >= 'a' && head <= 'z' ? (p8)(head - 32) : head;
+
+        for (positive at = from; at + size <= length;)
+        {
+                positive left = length - at - size + 1;
+                string_address low = memory_first_of(text + at, head, left);
+                string_address high = upper == head
+                                          ? null
+                                          : memory_first_of(text + at, upper, left);
+                string_address hit = !low ? high : (!high || low < high ? low : high);
+
+                if (!hit)
+                        return null;
+
+                at = (positive)(hit - text);
+
+                positive i = 1;
+
+                while (i < size && text_lower(text[at + i]) == want[i])
+                        i++;
+
+                if (i == size)
+                        return text + at;
+
+                at++;
+        }
+
+        return null;
+}
+
 // Leftmost: the first position where the whole pattern succeeds.
 static bool regex_search(string_address text, positive length, positive from)
 {
         regex_text = text;
         regex_text_length = length;
+
+        if (regex_literal_length)
+        {
+                string_address found = text_literal_find(text, length, from, regex_literal,
+                                                         regex_literal_length, regex_icase);
+
+                if (!found)
+                        return false;
+
+                regex_slots[0] = (positive)(found - text);
+                regex_slots[1] = regex_slots[0] + regex_literal_length;
+                return true;
+        }
 
         for (positive at = from; at <= length; at++)
         {
@@ -5348,6 +5465,59 @@ static bool grep_hold_make(positive lines)
         return grep_hold_pool && grep_hold_at && grep_hold_size && grep_hold_number;
 }
 
+/*
+        The lines that cannot match, stepped over without being read.
+
+        A line with none of the pattern's fixed string in it cannot match the
+        pattern, and one wide search says so for a whole block at once instead
+        of the reader splitting four hundred thousand lines and the machine
+        being asked about each. What is skipped is still counted, because -n
+        and -b want to know: memory_count over the same bytes answers both.
+
+        Never past the start of the last whole line in the block, so a match
+        that straddles the boundary is left for the reader, which knows how to
+        carry a line across a refill and this does not.
+*/
+static p8 grep_literal[REGEX_LITERAL_MAX];
+static positive grep_literal_length;
+static bool grep_literal_icase;
+
+static fn grep_literal_keep()
+{
+        grep_literal_length = regex_literal_length;
+        memory_copy(grep_literal, regex_literal, regex_literal_length);
+}
+
+static positive grep_skip(positive address_to bytes)
+{
+        positive lines = 0;
+
+        for (;;)
+        {
+                if (!text_fill())
+                        break;
+
+                p8 address_to at = text_input.buffer + text_input.position;
+                positive left = text_input.filled - text_input.position;
+                string_address found = text_literal_find(at, left, 0, grep_literal,
+                                                         grep_literal_length,
+                                                         grep_literal_icase);
+                positive stop = found ? (positive)(found - at) : left;
+
+                while (stop && at[stop - 1] != text_delimiter)
+                        stop--;
+
+                lines += memory_count(at, stop, text_delimiter);
+                *bytes += stop;
+                text_input.position += stop;
+
+                if (found || text_input.position < text_input.filled)
+                        break;
+        }
+
+        return lines;
+}
+
 static fn grep_hold_clear()
 {
         grep_hold_first = 0;
@@ -6208,6 +6378,12 @@ static b32 text_grep()
         // is cheaper than a second answer from the machine.
         if ((whole_line || whole_word) && !never)
         {
+                // Taken before the anchors go on: a line without the fixed
+                // string cannot match with them either, and the wrapped
+                // pattern is no longer a fixed string to look at.
+                if (regex_compile(grep_pattern, extended, icase, false))
+                        grep_literal_keep();
+
                 p8 around[GREP_PATTERN_MAX];
                 positive have = 0;
                 string_address head = whole_line ? (extended ? "^(" : "^\\(")
@@ -6234,6 +6410,11 @@ static b32 text_grep()
                 text_error(null, "invalid regular expression");
                 return text_done(2);
         }
+
+        if (!whole_line && !whole_word)
+                grep_literal_keep();
+
+        grep_literal_icase = icase;
 
         if (before && !grep_hold_make(before))
                 return text_done(2);
@@ -6383,8 +6564,24 @@ static b32 text_grep()
 
                 grep_hold_clear();
 
-                while (text_line_next())
+                // -v wants the lines that do not match and the context flags
+                // want the ones around them, so neither can have any line go
+                // by unread.
+                bool skipping = grep_literal_length && !invert && !before && !after;
+
+                for (;;)
                 {
+                        if (skipping)
+                        {
+                                positive jumped = 0;
+
+                                number += grep_skip(address_of jumped);
+                                offset += jumped;
+                        }
+
+                        if (!text_line_next())
+                                break;
+
                         number++;
 
                         positive at = offset;
