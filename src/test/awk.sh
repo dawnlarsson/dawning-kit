@@ -21,10 +21,31 @@ export LC_ALL
 farm=${1:-/tmp/awkfarm}
 rounds=${2:-400}
 
-ours=$farm/awk
-
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT INT TERM
+
+#       The one binary, under the name awk.
+#
+#       The runner builds a directory of links for the names it knows about
+#       and awk is not one of them, so the link is made here out of whatever
+#       the farm already points at rather than by building a second shell.
+ours=$farm/awk
+
+if [ ! -x "$ours" ]; then
+        for name in cat grep sed; do
+                [ -e "$farm/$name" ] || continue
+
+                target=$(readlink -f "$farm/$name" 2> /dev/null) ||
+                        target=$(readlink "$farm/$name" 2> /dev/null)
+
+                [ -n "$target" ] || target=$farm/$name
+
+                mkdir -p "$work/bin"
+                ln -sf "$target" "$work/bin/awk"
+                ours=$work/bin/awk
+                break
+        done
+fi
 
 pass=0
 fail=0
@@ -466,6 +487,42 @@ compare 'one file' /dev/null -f "$work/p1.awk" -f "$work/p2.awk"
 printf 'function twice(n) { return n * 2 }\nBEGIN { print twice(21) }\n' > "$work/p3.awk"
 compare 'a function in a file' /dev/null -f "$work/p3.awk"
 
+case_start more
+compare 'dash v sets fs' "$work/colons" -v 'FS=:' '{print $2}'
+compare 'dash v sets ofs' "$work/grid" -v 'OFS=-' '{$1=$1; print}'
+compare 'dash v sets rs' "$work/colons" -v 'RS=:' '{print NR, $0}'
+compare 'operand sets fs' "$work/one" '{print $2}' 'FS=:' "$work/colons"
+compare 'subsep changed' /dev/null 'BEGIN{SUBSEP="-"; a[1,2]=1; for(k in a) print k}'
+compare 'convfmt in a key' /dev/null 'BEGIN{CONVFMT="%.1f"; a[1.25]=1; for(k in a) print k}'
+compare 'dynamic format' /dev/null 'BEGIN{f="%s-%d\n"; printf f, "a", 2}'
+compare 'format from a field' "$work/grid" '{printf "%d:%d\n", $1, $2}'
+compare 'assign to nr' "$work/letters" '{NR = 10; print NR}'
+compare 'assign to fnr' "$work/letters" 'NR==1{FNR=99} {print FNR}'
+compare 'assign to filename' "$work/one" '{FILENAME="x"; print FILENAME}'
+compare 'rstart and rlength survive' /dev/null 'BEGIN{match("abc",/b/); x=RSTART; match("abc",/z/); print x, RSTART, RLENGTH}'
+compare 'field assignment in end' "$work/grid" 'END{$2="X"; print; print NF}'
+compare 'record assignment in end' "$work/grid" 'END{$0="a b"; print NF}'
+compare 'ofs changed between' "$work/grid" '{OFS="-"; $1=$1; OFS="+"; print}'
+compare 'empty fs field by field' "$work/one" -F'' '{print NF}'
+compare 'many fields' /dev/null 'BEGIN{for(i=1;i<=100;i++) s = s i " "; $0 = s; print NF, $50, $100}'
+compare 'array passed empty' /dev/null 'function f(a){return length(a)} BEGIN{print f(x), length(x)}'
+compare 'array grown in a call' /dev/null 'function f(a,n,i){for(i=1;i<=n;i++)a[i]=i} BEGIN{f(z,5); print length(z), z[3]}'
+compare 'local array is fresh' /dev/null 'function f(k,  a){a[k]=1; return length(a)} BEGIN{print f(1) f(2) f(3)}'
+compare 'string of a number in a key' /dev/null 'BEGIN{a[1]=1; a["1"]=2; print length(a), a[1]}'
+compare 'negative zero' /dev/null 'BEGIN{print -0, 0*-1, -0 ""}'
+compare 'very long string' /dev/null 'BEGIN{s=""; for(i=0;i<5000;i++) s=s "ab"; print length(s), substr(s,9999)}'
+compare 'nested function calls' /dev/null 'function a(x){return b(x)+1} function b(x){return x*2} BEGIN{print a(5)}'
+compare 'function changes a global' /dev/null 'function f(){g++} BEGIN{f();f();print g}'
+compare 'concatenation in a condition' "$work/grid" '{if ($1 $2 == "12") print "yes"}'
+compare 'increment an element' /dev/null 'BEGIN{a["k"]++; a["k"]+=2; print a["k"]}'
+compare 'delete while walking' /dev/null 'BEGIN{for(i=1;i<=5;i++)a[i]=i; for(k in a) if (k%2) delete a[k]; print length(a)}'
+compare 'uninitialised in printf' /dev/null 'BEGIN{printf "[%s][%d][%5.2f]\n", u, u, u}'
+compare 'regex with a slash' "$work/one" '$0 ~ /x/ {print "yes"}'
+compare 'regex escapes' /dev/null 'BEGIN{print ("a.b" ~ /a\.b/), ("axb" ~ /a\.b/), ("a/b" ~ /a\/b/)}'
+compare 'regex classes' /dev/null 'BEGIN{print ("a1" ~ /[[:alpha:]][[:digit:]]/), ("11" ~ /[[:alpha:]]/)}'
+compare 'anchors' /dev/null 'BEGIN{print ("abc" ~ /^abc$/), ("abc" ~ /^b/), ("" ~ /^$/)}'
+compare 'string escapes' /dev/null 'BEGIN{print "a\tb", "c\\d", "e\"f", length("\061\x41")}'
+
 #
 #       What is not here.
 #
@@ -656,6 +713,50 @@ for _ in range(rounds // 2):
           % (text, text[1:3], text)], "")
     both(["BEGIN{s=\"%s\"; n=sub(/a/,\"[&]\",s); print n, s}" % text], "")
     both(["BEGIN{print toupper(\"%s\") tolower(\"%s\")}" % (text, text)], "")
+
+#       Control flow, arrays and functions, built rather than listed.
+bodies = [
+    "{ for (i = 1; i <= NF; i++) s = s $i; print s }",
+    "{ n = 0; while (n < NF) { n++; if (n == 2) continue; printf \"%s.\", $n }; print \"\" }",
+    "{ a[$1]++ } END { n = 0; for (k in a) n += a[k]; print n, length(a) }",
+    "{ if (NF > 2) print \"big\"; else if (NF == 0) print \"none\"; else print \"small\" }",
+    "{ do { x++ } while (x < NR); print x }",
+    "function f(n) { return n <= 1 ? 1 : n * f(n - 1) } { print f(NF) }",
+    "function g(a, i) { for (i in a) delete a[i]; return length(a) } { split($0, b); print g(b) }",
+    "{ for (i = NF; i > 0; i--) printf \"%s|\", $i; print \"\" }",
+    "NR % 2 { next } { print NR }",
+    "{ $2 = \"Z\"; print NF, $0 }",
+    "{ sub(/a/, \"[&]\"); print }",
+    "{ print length($0), length($1), length() }",
+    "{ x = $1; y = $2; print (x < y), (x == y), (x \"\" == y \"\") }",
+    "{ printf \"%s %d %.2f\\n\", $1, $2, $3 }",
+    "{ n = split($0, p, \"a\"); for (i = 1; i <= n; i++) t = t \"<\" p[i] \">\"; print t }",
+    "END { print NR, NF, $0 }",
+    "{ print toupper($1) tolower($2) }",
+    "{ if (match($0, /a+/)) print RSTART, RLENGTH; else print \"no\" }",
+    "{ a[NR] = $0 } END { for (i = NR; i >= 1; i--) print a[i] }",
+    "{ getline line; print NR, \"[\" line \"]\", $0 }",
+    "{ print $1 > \"/dev/stdout\" }",
+    "{ print; exit NF }",
+]
+
+for _ in range(rounds):
+    data = lines(random.randint(1, 5), 7, "ab c1 ")
+    both([random.choice(bodies)], data)
+
+#       Whole programs made of several rules at once.
+for _ in range(rounds // 2):
+    parts = [random.choice(bodies) for _ in range(random.randint(1, 3))]
+    data = lines(random.randint(1, 5), 7, "ab c1 ")
+    both(["\n".join(parts)], data)
+
+#       The same input through every separator arrangement at once.
+for _ in range(rounds // 2):
+    data = lines(4, 8, "ab:, \tx1\n")
+    both(["BEGIN{FS=\"%s\";OFS=\"%s\";ORS=\"%s\"}{$1=$1; print NF, $0}"
+          % (random.choice([":", ",", " ", "[,:]", "ab"]),
+             random.choice(["-", "", "::"]),
+             random.choice(["\\n", "|", ""]))], data)
 
 print("\n  %s of %s" % (total - bad, total))
 PYTHON

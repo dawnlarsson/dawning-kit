@@ -1983,6 +1983,7 @@ static awk_value address_to awk_fields;
 static positive awk_fields_room;
 static b32 awk_nf;
 static bool awk_record_stale;
+static awk_text address_to awk_record_separator;
 static awk_value awk_field_nothing;
 
 static positive address_to awk_piece_start;
@@ -2219,8 +2220,9 @@ static fn awk_split_record()
 
 static fn awk_record_rebuild()
 {
-        positive length;
-        string_address separator = awk_separator(awk_where_ofs, address_of length);
+        string_address separator = awk_record_separator ? awk_record_separator->text
+                                                        : (string_address) "";
+        positive length = awk_record_separator ? awk_record_separator->length : 0;
         positive total = 0;
 
         for (b32 i = 1; i <= awk_nf; i++)
@@ -2305,6 +2307,8 @@ static fn awk_field_written(b32 which)
         if (which > awk_nf)
                 awk_field_grow(which);
 
+        awk_text_drop(awk_record_separator);
+        awk_record_separator = awk_text_hold(awk_special_text(awk_where_ofs));
         awk_record_stale = true;
 }
 
@@ -2323,6 +2327,8 @@ static fn awk_nf_written(b32 want)
 
         awk_nf = want;
         awk_set_global_number(awk_where_nf, (decimal)awk_nf);
+        awk_text_drop(awk_record_separator);
+        awk_record_separator = awk_text_hold(awk_special_text(awk_where_ofs));
         awk_record_rebuild();
 }
 
@@ -2384,6 +2390,13 @@ static fn awk_writer_flush(awk_writer address_to which)
 
 static fn awk_writer_put(awk_writer address_to which, string_address data, positive length)
 {
+        if (which->handle == 2)
+        {
+                awk_writer_flush(address_of awk_standard_out);
+                text_write_raw(2, (address_any)data, length);
+                return;
+        }
+
         if (length >= sizeof(which->buffer))
         {
                 awk_writer_flush(which);
@@ -2482,6 +2495,15 @@ static awk_writer address_to awk_writer_for(awk_text address_to name, p8 kind)
 {
         b32 free_slot = -1;
 
+        /*
+                Standard output under another name is still standard output.
+                A second buffer for it would put what a rule wrote through it
+                after everything the rules around it wrote directly.
+        */
+        if (kind != AWK_TO_PIPE &&
+            (awk_name_is(name, "/dev/stdout") || awk_name_is(name, "-")))
+                return address_of awk_standard_out;
+
         for (b32 i = 0; i < AWK_STREAMS_MAX; i++)
         {
                 if (awk_writers[i].live)
@@ -2518,12 +2540,6 @@ static awk_writer address_to awk_writer_for(awk_text address_to name, p8 kind)
                 made->handle = ends[1];
                 made->child = awk_spawn(name->text, ends[0], -1);
                 system_call_1(syscall(close), (positive)ends[0]);
-                return made;
-        }
-
-        if (awk_name_is(name, "/dev/stdout") || awk_name_is(name, "-"))
-        {
-                made->handle = 1;
                 return made;
         }
 
