@@ -8843,38 +8843,48 @@ static bool sort_parse_key(string_address spec)
         which need a hash nothing else here wants; and --files0-from, which
         is a list of file names in a file.
 */
-enum
-{
-        SORT_LONG_DISCARD = 1,
-        SORT_LONG_ORDER = 2,
-        SORT_LONG_CHECK = 3
+// D takes a word and drops it, W is --sort, K is --check carrying one. None
+// of the three is a letter sort has, so -D and -W and -K stay mistakes.
+static const file_long sort_longs[] = {
+    {(string_address) "ignore-leading-blanks", 'b'},
+    {(string_address) "dictionary-order", 'd'},
+    {(string_address) "ignore-case", 'f'},
+    {(string_address) "ignore-nonprinting", 'i'},
+    {(string_address) "human-numeric-sort", 'h'},
+    {(string_address) "month-sort", 'M'},
+    {(string_address) "numeric-sort", 'n'},
+    {(string_address) "reverse", 'r'},
+    {(string_address) "sort", 'W'},
+    {(string_address) "check", 'K'},
+    {(string_address) "version-sort", 'V'},
+    {(string_address) "key", 'k'},
+    {(string_address) "merge", 'm'},
+    {(string_address) "output", 'o'},
+    {(string_address) "stable", 's'},
+    {(string_address) "buffer-size", 'D'},
+    {(string_address) "field-separator", 't'},
+    {(string_address) "temporary-directory", 'D'},
+    {(string_address) "compress-program", 'D'},
+    {(string_address) "batch-size", 'D'},
+    {(string_address) "parallel", 'D'},
+    {(string_address) "unique", 'u'},
+    {(string_address) "zero-terminated", 'z'},
+    {null, 0},
 };
 
-static text_long sort_long_options[] = {
-    {"ignore-leading-blanks", 'b', TEXT_LONG_ALONE},
-    {"dictionary-order", 'd', TEXT_LONG_ALONE},
-    {"ignore-case", 'f', TEXT_LONG_ALONE},
-    {"ignore-nonprinting", 'i', TEXT_LONG_ALONE},
-    {"human-numeric-sort", 'h', TEXT_LONG_ALONE},
-    {"month-sort", 'M', TEXT_LONG_ALONE},
-    {"numeric-sort", 'n', TEXT_LONG_ALONE},
-    {"reverse", 'r', TEXT_LONG_ALONE},
-    {"sort", SORT_LONG_ORDER, TEXT_LONG_NEEDS},
-    {"check", 'c', TEXT_LONG_MAYBE, SORT_LONG_CHECK},
-    {"version-sort", 'V', TEXT_LONG_ALONE},
-    {"key", 'k', TEXT_LONG_NEEDS},
-    {"merge", 'm', TEXT_LONG_ALONE},
-    {"output", 'o', TEXT_LONG_NEEDS},
-    {"stable", 's', TEXT_LONG_ALONE},
-    {"buffer-size", SORT_LONG_DISCARD, TEXT_LONG_NEEDS},
-    {"field-separator", 't', TEXT_LONG_NEEDS},
-    {"temporary-directory", SORT_LONG_DISCARD, TEXT_LONG_NEEDS},
-    {"compress-program", SORT_LONG_DISCARD, TEXT_LONG_NEEDS},
-    {"batch-size", SORT_LONG_DISCARD, TEXT_LONG_NEEDS},
-    {"parallel", SORT_LONG_DISCARD, TEXT_LONG_NEEDS},
-    {"unique", 'u', TEXT_LONG_ALONE},
-    {"zero-terminated", 'z', TEXT_LONG_ALONE},
-    {null, 0, 0}};
+// -k comes as many times as there are keys, and one value per letter cannot
+// hold them: they are parsed as the options arrive.
+static bool sort_key_seen(p8 letter, string_address value)
+{
+        if (letter != 'k')
+                return true;
+
+        if (sort_parse_key(value))
+                return true;
+
+        text_error(null, "invalid key");
+        return false;
+}
 
 // "sort: -:2: disorder: apple", which is the only thing -c has to say.
 static fn sort_disorder(string_address name, positive number, text_slice address_to line)
@@ -8912,161 +8922,115 @@ static fn sort_disorder(string_address name, positive number, text_slice address
 
 static b32 text_sort()
 {
-        bool checking = false;
-        bool checking_quiet = false;
-        bool merging = false;
-        bool null_data = false;
-        string_address output = null;
+        file_taking taking = {
+            .program = (string_address) "sort",
+            // -g wants a floating point number parsed, and there is no
+            // floating point anywhere in this file. -S and -T tune a
+            // temporary file this sort has not got.
+            .allowed = (string_address) "CMSTVbcdfghikmnorstuz",
+            .valued = (string_address) "DSTWkot",
+            .optional = (string_address) "K",
+            .longs = sort_longs,
+            .operand = text_file_add,
+            .seen = sort_key_seen,
+        };
 
         text_begin("sort");
 
-        if (!text_expand_long(sort_long_options))
+        if (!file_take(address_of taking))
                 return text_done(2);
 
-        for (b32 i = 1; i < text_argument_count; i++)
+        positive flags = taking.flags;
+        bool merging = (flags & FILE_FLAG('m')) != 0;
+        bool null_data = (flags & FILE_FLAG('z')) != 0;
+        bool checking = (flags & (FILE_FLAG('c') | FILE_FLAG('C') |
+                                  FILE_FLAG('K'))) != 0;
+        bool checking_quiet = (flags & FILE_FLAG('C')) != 0;
+        string_address output = file_option_value(address_of taking, 'o');
+        string_address said = file_option_value(address_of taking, 'K');
+
+        sort_reverse = (flags & FILE_FLAG('r')) != 0;
+        sort_unique = (flags & FILE_FLAG('u')) != 0;
+        sort_stable = (flags & FILE_FLAG('s')) != 0;
+        sort_skip_blanks = (flags & FILE_FLAG('b')) != 0;
+
+        if (flags & FILE_FLAG('f'))
+                sort_how |= SORT_FOLD;
+
+        if (flags & FILE_FLAG('d'))
+                sort_how |= SORT_DICTIONARY;
+
+        if (flags & FILE_FLAG('i'))
+                sort_how |= SORT_PRINTABLE;
+
+        for (positive k = 0; k < 4; k++)
         {
-                string_address argument = text_argument(i);
+                p8 letter = k == 0 ? 'n' : k == 1 ? 'h' : k == 2 ? 'M' : 'V';
 
-                if (argument[0] != '-' || !argument[1])
+                if (flags & FILE_FLAG(letter))
+                        sort_kind = letter;
+        }
+
+        if (said)
+        {
+                checking_quiet = string_equals(said, "quiet") ||
+                                 string_equals(said, "silent");
+
+                if (!checking_quiet && !string_equals(said, "diagnose-first"))
                 {
-                        text_file_add(i);
-                        continue;
+                        text_error(said, "invalid argument for --check");
+                        return text_done(2);
+                }
+        }
+
+        said = file_option_value(address_of taking, 'W');
+
+        if (said)
+        {
+                // --sort=WORD is the long options spelled a third way, and
+                // the word is what the letter would have been.
+                if (string_equals(said, "numeric"))
+                        sort_kind = 'n';
+                else if (string_equals(said, "human-numeric"))
+                        sort_kind = 'h';
+                else if (string_equals(said, "month"))
+                        sort_kind = 'M';
+                else if (string_equals(said, "version"))
+                        sort_kind = 'V';
+                else if (string_equals(said, "general-numeric") ||
+                         string_equals(said, "random"))
+                        sort_kind = 0;
+                else
+                {
+                        text_error(said, "invalid argument for --sort");
+                        return text_done(1);
+                }
+        }
+
+        said = file_option_value(address_of taking, 't');
+
+        if (said)
+        {
+                sort_have_separator = true;
+
+                // One byte, or the two that spell a NUL. Anything longer is a
+                // separator no line can be split on -- \t among them, which
+                // GNU refuses and which a literal tab is the way to ask for.
+                bool escaped = said[0] == '\\' && said[1] == '0' && !said[2];
+
+                if (!said[0])
+                {
+                        text_error(null, "empty tab");
+                        return text_done(2);
                 }
 
-                if (argument[1] == '-' && !argument[2])
+                if (said[1] && !escaped)
                 {
-                        for (b32 j = i + 1; j < text_argument_count; j++)
-                                text_file_add(j);
-
-                        break;
+                        text_error(said, "multi-character tab");
+                        return text_done(2);
                 }
 
-                for (positive c = 1; argument[c]; c++)
-                {
-                        p8 flag = argument[c];
-
-                        if (flag == 'k' || flag == 't' || flag == 'o' ||
-                            flag == 'S' || flag == 'T' ||
-                            flag == SORT_LONG_DISCARD || flag == SORT_LONG_ORDER ||
-                            flag == SORT_LONG_CHECK)
-                        {
-                                string_address value = argument[c + 1] ? argument + c + 1
-                                                                       : text_argument(++i);
-
-                                if (!value)
-                                {
-                                        text_error(null, "option requires an argument");
-                                        return text_done(2);
-                                }
-
-                                if (flag == 'k')
-                                {
-                                        if (!sort_parse_key(value))
-                                        {
-                                                text_error(null, "invalid key");
-                                                return text_done(2);
-                                        }
-                                }
-                                else if (flag == 't')
-                                {
-                                        sort_have_separator = true;
-                                        // One byte, or the two that spell a
-                                        // NUL. Anything longer is a separator
-                                        // no line can be split on -- \t among
-                                        // them, which GNU refuses and which a
-                                        // literal tab is the way to ask for.
-                                        bool escaped = value[0] == '\\' &&
-                                                       value[1] == '0' && !value[2];
-
-                                        if (!value[0])
-                                        {
-                                                text_error(null, "empty tab");
-                                                return text_done(2);
-                                        }
-
-                                        if (value[1] && !escaped)
-                                        {
-                                                text_error(value, "multi-character tab");
-                                                return text_done(2);
-                                        }
-
-                                        sort_separator = escaped ? '\0' : value[0];
-                                }
-                                else if (flag == 'o')
-                                {
-                                        output = value;
-                                }
-                                else if (flag == SORT_LONG_CHECK)
-                                {
-                                        checking = true;
-                                        checking_quiet = string_equals(value, "quiet") ||
-                                                         string_equals(value, "silent");
-
-                                        if (!checking_quiet &&
-                                            !string_equals(value, "diagnose-first"))
-                                        {
-                                                text_error(value, "invalid argument for --check");
-                                                return text_done(2);
-                                        }
-                                }
-                                else if (flag == SORT_LONG_ORDER)
-                                {
-                                        // --sort=WORD is the long options
-                                        // spelled a third way, and the word
-                                        // is what the letter would have been.
-                                        if (string_equals(value, "numeric"))
-                                                sort_kind = 'n';
-                                        else if (string_equals(value, "human-numeric"))
-                                                sort_kind = 'h';
-                                        else if (string_equals(value, "month"))
-                                                sort_kind = 'M';
-                                        else if (string_equals(value, "version"))
-                                                sort_kind = 'V';
-                                        else if (string_equals(value, "general-numeric") ||
-                                                 string_equals(value, "random"))
-                                                sort_kind = 0;
-                                        else
-                                        {
-                                                text_error(value, "invalid argument for --sort");
-                                                return text_done(1);
-                                        }
-                                }
-
-                                break;
-                        }
-
-                        switch (flag)
-                        {
-                        case 'n':
-                        case 'h':
-                        case 'M':
-                        case 'V': sort_kind = flag; break;
-                        // -g wants a floating point number parsed, and there
-                        // is no floating point anywhere in this file.
-                        case 'g': break;
-                        case 'r': sort_reverse = true; break;
-                        case 'f': sort_how |= SORT_FOLD; break;
-                        case 'd': sort_how |= SORT_DICTIONARY; break;
-                        case 'i': sort_how |= SORT_PRINTABLE; break;
-                        case 'b': sort_skip_blanks = true; break;
-                        case 'u': sort_unique = true; break;
-                        case 's': sort_stable = true; break;
-                        case 'm': merging = true; break;
-                        case 'z': null_data = true; break;
-                        case 'c': checking = true; break;
-                        case 'C':
-                                checking = true;
-                                checking_quiet = true;
-                                break;
-                        default:
-                        {
-                                p8 named[3] = {'-', flag, 0};
-
-                                text_error(named, "invalid option");
-                                return text_done(2);
-                        }
-                        }
-                }
+                sort_separator = escaped ? '\0' : said[0];
         }
 
         // The global flags are the default for every key, and -n after -k on
@@ -9078,6 +9042,10 @@ static b32 text_sort()
 
                 sort_keys[i].reverse = sort_keys[i].reverse || sort_reverse;
                 sort_keys[i].how |= sort_how;
+
+                if (sort_skip_blanks)
+                        sort_keys[i].skip_blanks_first =
+                            sort_keys[i].skip_blanks_second = true;
         }
 
         if (null_data)
