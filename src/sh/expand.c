@@ -440,14 +440,35 @@ bool shell_match(string_address pattern, string_address text)
 
                 if (value == '*')
                 {
+                        p8 want;
+
                         pattern++;
 
                         // A star at the end takes whatever is left of it.
                         if (!string_get(pattern))
                                 return true;
 
+                        /*
+                                A plain byte behind the star is the only place
+                                the rest can begin, so the walk goes there
+                                rather than trying every position on the way.
+                        */
+                        want = string_get(pattern);
+
+                        if (want == '*' || want == '?' || want == '[' ||
+                            want == '\\')
+                                want = 0;
+
                         while (1)
                         {
+                                if (want)
+                                {
+                                        text = string_first_of_or_end(text, want);
+
+                                        if (!string_get(text))
+                                                return false;
+                                }
+
                                 if (shell_match(pattern, text))
                                         return true;
 
