@@ -3178,14 +3178,15 @@ static fn text_stream_span(positive start, positive stop)
         }
 }
 
-static text_long head_long_options[] = {
-    {"bytes", 'c', TEXT_LONG_NEEDS},
-    {"lines", 'n', TEXT_LONG_NEEDS},
-    {"quiet", 'q', TEXT_LONG_ALONE},
-    {"silent", 'q', TEXT_LONG_ALONE},
-    {"verbose", 'v', TEXT_LONG_ALONE},
-    {"zero-terminated", 'z', TEXT_LONG_ALONE},
-    {null, 0, 0}};
+static const file_long head_longs[] = {
+    {(string_address) "bytes", 'c'},
+    {(string_address) "lines", 'n'},
+    {(string_address) "quiet", 'q'},
+    {(string_address) "silent", 'q'},
+    {(string_address) "verbose", 'v'},
+    {(string_address) "zero-terminated", 'z'},
+    {null, 0},
+};
 
 /*
         A count written with a minus in front of it names what to leave off
@@ -3248,84 +3249,46 @@ static fn text_head_short(positive count, bool by_bytes)
 
 static b32 text_head()
 {
-        positive count = 10;
-        bool by_bytes = false;
-        bool from_end = false;
-        bool quiet = false;
-        bool loud = false;
+        file_taking taking = {
+            .program = (string_address) "head",
+            .allowed = (string_address) "cnqvz",
+            .valued = (string_address) "cn",
+            .longs = head_longs,
+            .operand = text_file_add,
+            // head -5 is head -n 5, and the digits are the count.
+            .digits = 'n',
+        };
 
         text_begin("head");
 
-        if (!text_expand_long(head_long_options))
+        if (!file_take(address_of taking))
                 return text_done(1);
 
-        for (b32 i = 1; i < text_argument_count; i++)
+        positive count = 10;
+        bool by_bytes = (taking.flags & FILE_FLAG('c')) != 0;
+        bool from_end = false;
+        bool quiet = (taking.flags & FILE_FLAG('q')) != 0;
+        bool loud = (taking.flags & FILE_FLAG('v')) != 0;
+        string_address said = file_option_value(address_of taking,
+                                                by_bytes ? 'c' : 'n');
+
+        if (taking.flags & FILE_FLAG('z'))
+                text_delimiter = '\0';
+
+        if (said)
         {
-                string_address argument = text_argument(i);
-
-                if (argument[0] != '-' || !argument[1])
+                // A count written with a minus names what to leave off the
+                // end rather than what to take from the front.
+                if (said[0] == '-')
                 {
-                        text_file_add(i);
-                        continue;
+                        from_end = true;
+                        said++;
                 }
 
-                if (argument[1] == '-' && !argument[2])
+                if (!text_number_of(said, address_of count))
                 {
-                        for (b32 j = i + 1; j < text_argument_count; j++)
-                                text_file_add(j);
-
-                        break;
-                }
-
-                if (text_digit(argument[1]))
-                {
-                        text_number_of(argument + 1, address_of count);
-                        continue;
-                }
-
-                for (positive c = 1; argument[c]; c++)
-                {
-                        p8 flag = argument[c];
-
-                        if (flag == 'q')
-                        {
-                                quiet = true;
-                                continue;
-                        }
-
-                        if (flag == 'v')
-                        {
-                                loud = true;
-                                continue;
-                        }
-
-                        if (flag == 'z')
-                        {
-                                text_delimiter = '\0';
-                                continue;
-                        }
-
-                        if (flag == 'n' || flag == 'c')
-                        {
-                                string_address value = argument[c + 1] ? argument + c + 1
-                                                                       : text_argument(++i);
-
-                                by_bytes = flag == 'c';
-
-                                if (value && value[0] == '-')
-                                {
-                                        from_end = true;
-                                        value++;
-                                }
-
-                                if (!value || !text_number_of(value, address_of count))
-                                {
-                                        text_error(null, "invalid number of lines");
-                                        return text_done(1);
-                                }
-
-                                break;
-                        }
+                        text_error(null, "invalid number of lines");
+                        return text_done(1);
                 }
         }
 
@@ -3389,132 +3352,71 @@ static b32 text_head()
         Not here, and deliberately: --zero-terminated, which is the line
         reader's business, and -F, which promises to reopen a file by name.
 */
-enum
-{
-        TAIL_LONG_DISCARD = 1,
-        TAIL_LONG_IGNORE = 2
-};
+// --pid and --max-unchanged-stats are waited on rather than read, and --retry
+// and --debug say nothing about the bytes. P and R are letters tail has not
+// got, so the words reach a bit of the flag word and -P stays a mistake.
 
-static text_long tail_long_options[] = {
-    {"bytes", 'c', TEXT_LONG_NEEDS},
-    {"lines", 'n', TEXT_LONG_NEEDS},
-    {"quiet", 'q', TEXT_LONG_ALONE},
-    {"silent", 'q', TEXT_LONG_ALONE},
-    {"verbose", 'v', TEXT_LONG_ALONE},
-    {"follow", 'f', TEXT_LONG_MAYBE},
-    {"retry", TAIL_LONG_IGNORE, TEXT_LONG_ALONE},
-    {"pid", TAIL_LONG_DISCARD, TEXT_LONG_NEEDS},
-    {"sleep-interval", 's', TEXT_LONG_NEEDS},
-    {"max-unchanged-stats", TAIL_LONG_DISCARD, TEXT_LONG_NEEDS},
-    {"debug", TAIL_LONG_IGNORE, TEXT_LONG_ALONE},
-    {"zero-terminated", 'z', TEXT_LONG_ALONE},
-    {null, 0, 0}};
+static const file_long tail_longs[] = {
+    {(string_address) "bytes", 'c'},
+    {(string_address) "lines", 'n'},
+    {(string_address) "quiet", 'q'},
+    {(string_address) "silent", 'q'},
+    {(string_address) "verbose", 'v'},
+    {(string_address) "follow", 'f'},
+    {(string_address) "retry", 'R'},
+    {(string_address) "pid", 'P'},
+    {(string_address) "sleep-interval", 's'},
+    {(string_address) "max-unchanged-stats", 'P'},
+    {(string_address) "debug", 'R'},
+    {(string_address) "zero-terminated", 'z'},
+    {null, 0},
+};
 
 static b32 text_tail()
 {
-        positive count = 10;
-        bool by_bytes = false;
-        bool from_start = false;
-        bool quiet = false;
-        bool loud = false;
+        file_taking taking = {
+            .program = (string_address) "tail",
+            // -f waits for more to be written, which is a wait this does not
+            // do: the file is read to its end and that is where GNU would
+            // still be sitting. -s is how long it would have waited.
+            .allowed = (string_address) "cfnqsvz",
+            .valued = (string_address) "Pcns",
+            .optional = (string_address) "f",
+            .longs = tail_longs,
+            .operand = text_file_add,
+            .digits = 'n',
+        };
 
         text_begin("tail");
 
-        if (!text_expand_long(tail_long_options))
+        if (!file_take(address_of taking))
                 return text_done(1);
 
-        for (b32 i = 1; i < text_argument_count; i++)
+        positive count = 10;
+        bool by_bytes = (taking.flags & FILE_FLAG('c')) != 0;
+        bool from_start = false;
+        bool quiet = (taking.flags & FILE_FLAG('q')) != 0;
+        bool loud = (taking.flags & FILE_FLAG('v')) != 0;
+        string_address said = file_option_value(address_of taking,
+                                                by_bytes ? 'c' : 'n');
+
+        if (taking.flags & FILE_FLAG('z'))
+                text_delimiter = '\0';
+
+        if (said)
         {
-                string_address argument = text_argument(i);
-
-                if (argument[0] != '-' || !argument[1])
+                if (said[0] == '+')
                 {
-                        text_file_add(i);
-                        continue;
+                        from_start = true;
+                        said++;
                 }
+                else if (said[0] == '-')
+                        said++;
 
-                if (argument[1] == '-' && !argument[2])
+                if (!text_number_of(said, address_of count))
                 {
-                        for (b32 j = i + 1; j < text_argument_count; j++)
-                                text_file_add(j);
-
-                        break;
-                }
-
-                if (text_digit(argument[1]) || argument[1] == '+')
-                {
-                        from_start = argument[1] == '+';
-                        text_number_of(argument + 1 + (from_start ? 1 : 0), address_of count);
-                        continue;
-                }
-
-                for (positive c = 1; argument[c]; c++)
-                {
-                        p8 flag = argument[c];
-
-                        if (flag == 'q')
-                        {
-                                quiet = true;
-                                continue;
-                        }
-
-                        if (flag == 'v')
-                        {
-                                loud = true;
-                                continue;
-                        }
-
-                        // -f waits for more to be written, which is a wait
-                        // this does not do: the file is read to its end and
-                        // that is where GNU would still be sitting.
-                        if (flag == 'f' || flag == TAIL_LONG_IGNORE)
-                                continue;
-
-                        if (flag == 'z')
-                        {
-                                text_delimiter = '\0';
-                                continue;
-                        }
-
-                        if (flag == TAIL_LONG_DISCARD || flag == 's')
-                        {
-                                if (!argument[c + 1])
-                                        i++;
-
-                                break;
-                        }
-
-                        if (flag == 'n' || flag == 'c')
-                        {
-                                string_address value = argument[c + 1] ? argument + c + 1
-                                                                       : text_argument(++i);
-
-                                by_bytes = flag == 'c';
-
-                                if (!value)
-                                {
-                                        text_error(null, "invalid number of lines");
-                                        return text_done(1);
-                                }
-
-                                if (value[0] == '+')
-                                {
-                                        from_start = true;
-                                        value++;
-                                }
-                                else if (value[0] == '-')
-                                {
-                                        value++;
-                                }
-
-                                if (!text_number_of(value, address_of count))
-                                {
-                                        text_error(null, "invalid number of lines");
-                                        return text_done(1);
-                                }
-
-                                break;
-                        }
+                        text_error(null, "invalid number of lines");
+                        return text_done(1);
                 }
         }
 
@@ -3702,19 +3604,20 @@ static b32 text_tee()
         comes out in its place is an empty line, measured, not a line of the
         padding an unnumbered line gets.
 */
-static text_long nl_long_options[] = {
-    {"body-numbering", 'b', TEXT_LONG_NEEDS},
-    {"section-delimiter", 'd', TEXT_LONG_NEEDS},
-    {"footer-numbering", 'f', TEXT_LONG_NEEDS},
-    {"header-numbering", 'h', TEXT_LONG_NEEDS},
-    {"line-increment", 'i', TEXT_LONG_NEEDS},
-    {"join-blank-lines", 'l', TEXT_LONG_NEEDS},
-    {"number-format", 'n', TEXT_LONG_NEEDS},
-    {"no-renumber", 'p', TEXT_LONG_ALONE},
-    {"number-separator", 's', TEXT_LONG_NEEDS},
-    {"starting-line-number", 'v', TEXT_LONG_NEEDS},
-    {"number-width", 'w', TEXT_LONG_NEEDS},
-    {null, 0, 0}};
+static const file_long nl_longs[] = {
+    {(string_address) "body-numbering", 'b'},
+    {(string_address) "section-delimiter", 'd'},
+    {(string_address) "footer-numbering", 'f'},
+    {(string_address) "header-numbering", 'h'},
+    {(string_address) "line-increment", 'i'},
+    {(string_address) "join-blank-lines", 'l'},
+    {(string_address) "number-format", 'n'},
+    {(string_address) "no-renumber", 'p'},
+    {(string_address) "number-separator", 's'},
+    {(string_address) "starting-line-number", 'v'},
+    {(string_address) "number-width", 'w'},
+    {null, 0},
+};
 
 static regex_program nl_patterns[3];
 
@@ -3733,6 +3636,19 @@ static b32 nl_section_of(p8 address_to delimiter)
 
 static b32 text_nl()
 {
+        file_taking taking = {
+            .program = (string_address) "nl",
+            .allowed = (string_address) "bdfhilnpsvw",
+            .valued = (string_address) "bdfhilnsvw",
+            .longs = nl_longs,
+            .operand = text_file_add,
+        };
+
+        text_begin("nl");
+
+        if (!file_take(address_of taking))
+                return text_done(1);
+
         positive width = 6;
         positive number = 1;
         positive step = 1;
@@ -3746,111 +3662,73 @@ static b32 text_nl()
         string_address separator = "\t";
         p8 justify = 'r';
         bool zeros = false;
-        bool keep_counting = false;
+        bool keep_counting = (taking.flags & FILE_FLAG('p')) != 0;
+        string_address said;
 
-        text_begin("nl");
-
-        if (!text_expand_long(nl_long_options))
-                return text_done(1);
-
-        for (b32 i = 1; i < text_argument_count; i++)
+        // Header, body and footer are numbered by their own rule, and a style
+        // of p is that rule written as a pattern.
+        for (positive k = 0; k < 3; k++)
         {
-                string_address argument = text_argument(i);
+                said = file_option_value(address_of taking,
+                                         k == 0 ? 'h' : (k == 1 ? 'b' : 'f'));
 
-                if (argument[0] != '-' || !argument[1])
-                {
-                        text_file_add(i);
+                if (!said)
                         continue;
-                }
 
-                if (argument[1] == '-' && !argument[2])
-                {
-                        for (b32 j = i + 1; j < text_argument_count; j++)
-                                text_file_add(j);
+                styles[k] = said[0];
 
-                        break;
-                }
-
-                p8 flag = argument[1];
-                string_address value = argument[2] ? argument + 2 : null;
-
-                if (flag == 'p')
-                {
-                        keep_counting = true;
+                if (said[0] != 'p')
                         continue;
-                }
 
-                if (flag != 'b' && flag != 'd' && flag != 'f' && flag != 'h' &&
-                    flag != 'i' && flag != 'l' && flag != 'n' && flag != 's' &&
-                    flag != 'v' && flag != 'w')
+                if (pattern_count >= 3 ||
+                    !regex_compile(said + 1, false, false, false))
                 {
-                        p8 named[3] = {'-', flag, 0};
-
-                        text_error(named, "invalid option");
+                        text_error(said + 1, "invalid regular expression");
                         return text_done(1);
                 }
 
-                if (!value)
-                        value = text_argument(++i);
-
-                if (!value)
-                {
-                        text_error(null, "option requires an argument");
-                        return text_done(1);
-                }
-
-                if (flag == 'b' || flag == 'f' || flag == 'h')
-                {
-                        b32 which = flag == 'h' ? 0 : (flag == 'b' ? 1 : 2);
-
-                        styles[which] = value[0];
-
-                        if (value[0] != 'p')
-                                continue;
-
-                        if (pattern_count >= 3 ||
-                            !regex_compile(value + 1, false, false, false))
-                        {
-                                text_error(value + 1, "invalid regular expression");
-                                return text_done(1);
-                        }
-
-                        regex_keep(nl_patterns + pattern_count);
-                        patterns[which] = pattern_count++;
-                        continue;
-                }
-
-                if (flag == 'd')
-                {
-                        // One character given leaves the second as it was,
-                        // so nl -d @ looks for @: and not for @@.
-                        delimiter[0] = value[0];
-
-                        if (value[0] && value[1])
-                                delimiter[1] = value[1];
-
-                        continue;
-                }
-
-                if (flag == 'w')
-                        text_number_of(value, address_of width);
-                else if (flag == 's')
-                        separator = value;
-                else if (flag == 'v')
-                        text_number_of(value, address_of number);
-                else if (flag == 'i')
-                        text_number_of(value, address_of step);
-                else if (flag == 'l')
-                        text_number_of(value, address_of join);
-                else
-                {
-                        justify = value[0];
-                        zeros = value[0] == 'r' && value[1] == 'z';
-
-                        if (value[0] == 'l')
-                                justify = 'l';
-                }
+                regex_keep(nl_patterns + pattern_count);
+                patterns[k] = pattern_count++;
         }
+
+        said = file_option_value(address_of taking, 'd');
+
+        if (said)
+        {
+                // One character given leaves the second as it was, so nl -d @
+                // looks for @: and not for @@.
+                delimiter[0] = said[0];
+
+                if (said[0] && said[1])
+                        delimiter[1] = said[1];
+        }
+
+        said = file_option_value(address_of taking, 'n');
+
+        if (said)
+        {
+                justify = said[0];
+                zeros = said[0] == 'r' && said[1] == 'z';
+        }
+
+        if (taking.flags & FILE_FLAG('s'))
+                separator = file_option_value(address_of taking, 's');
+
+        if (taking.flags & FILE_FLAG('w'))
+                text_number_of(file_option_value(address_of taking, 'w'),
+                               address_of width);
+
+        if (taking.flags & FILE_FLAG('v'))
+                text_number_of(file_option_value(address_of taking, 'v'),
+                               address_of number);
+
+        if (taking.flags & FILE_FLAG('i'))
+                text_number_of(file_option_value(address_of taking, 'i'),
+                               address_of step);
+
+        if (taking.flags & FILE_FLAG('l'))
+                text_number_of(file_option_value(address_of taking, 'l'),
+                               address_of join);
 
         if (!join)
                 join = 1;
@@ -4192,142 +4070,82 @@ static bool text_list_has(positive which)
         Not here, and deliberately: --zero-terminated, which is the line
         reader's business rather than cut's.
 */
-enum
-{
-        CUT_LONG_COMPLEMENT = 1,
-        CUT_LONG_OUTPUT = 2
+static const file_long cut_longs[] = {
+    {(string_address) "bytes", 'b'},
+    {(string_address) "characters", 'c'},
+    {(string_address) "delimiter", 'd'},
+    {(string_address) "fields", 'f'},
+    {(string_address) "complement", 'C'},
+    {(string_address) "no-partial", 'n'},
+    {(string_address) "only-delimited", 's'},
+    // -O is not in cut's own help and cut takes it anyway, which is where
+    // this one comes from.
+    {(string_address) "output-delimiter", 'O'},
+    {(string_address) "zero-terminated", 'z'},
+    {null, 0},
 };
 
-static text_long cut_long_options[] = {
-    {"bytes", 'b', TEXT_LONG_NEEDS},
-    {"characters", 'c', TEXT_LONG_NEEDS},
-    {"delimiter", 'd', TEXT_LONG_NEEDS},
-    {"fields", 'f', TEXT_LONG_NEEDS},
-    {"complement", CUT_LONG_COMPLEMENT, TEXT_LONG_ALONE},
-    {"no-partial", 'n', TEXT_LONG_ALONE},
-    {"only-delimited", 's', TEXT_LONG_ALONE},
-    {"output-delimiter", CUT_LONG_OUTPUT, TEXT_LONG_NEEDS},
-    {"zero-terminated", 'z', TEXT_LONG_ALONE},
-    {null, 0, 0}};
+// A list given twice is two lists, and GNU refuses two -- which one value per
+// letter cannot say on its own, so the options are counted as they arrive.
+static b32 cut_lists;
+
+static bool cut_list_seen(p8 letter, string_address value)
+{
+        (void)value;
+
+        if (letter == 'b' || letter == 'c' || letter == 'f')
+                cut_lists++;
+
+        return true;
+}
 
 static b32 text_cut()
 {
-        p8 delimiter = '\t';
-        bool by_field = false;
-        bool by_character = false;
-        bool only_delimited = false;
-        bool have_list = false;
-        bool complement = false;
-        bool whitespace = false;
-        bool have_delimiter = false;
-        b32 kinds = 0;
-        string_address separator = null;
-        positive separator_length = 0;
+        file_taking taking = {
+            .program = (string_address) "cut",
+            // -n says a multibyte character is not to be split by -b, and
+            // every character here is one byte.
+            .allowed = (string_address) "Obcdfnswz",
+            .valued = (string_address) "Obcdf",
+            .longs = cut_longs,
+            .operand = text_file_add,
+            .seen = cut_list_seen,
+        };
 
         text_begin("cut");
 
-        if (!text_expand_long(cut_long_options))
+        cut_lists = 0;
+
+        if (!file_take(address_of taking))
                 return text_done(1);
 
-        for (b32 i = 1; i < text_argument_count; i++)
+        positive flags = taking.flags;
+        p8 delimiter = '\t';
+        bool by_field = (flags & FILE_FLAG('f')) != 0;
+        bool by_character = (flags & (FILE_FLAG('b') | FILE_FLAG('c'))) != 0;
+        bool only_delimited = (flags & FILE_FLAG('s')) != 0;
+        bool have_list = by_field || by_character;
+        bool complement = (flags & FILE_FLAG('C')) != 0;
+        bool whitespace = (flags & FILE_FLAG('w')) != 0;
+        bool have_delimiter = (flags & FILE_FLAG('d')) != 0;
+        b32 kinds = cut_lists;
+        string_address separator = file_option_value(address_of taking, 'O');
+        positive separator_length = separator ? string_length(separator) : 0;
+        string_address said = file_option_value(address_of taking,
+                                                by_field ? 'f'
+                                                : (flags & FILE_FLAG('b')) ? 'b'
+                                                                           : 'c');
+
+        if (have_delimiter)
+                delimiter = file_option_value(address_of taking, 'd')[0];
+
+        if (flags & FILE_FLAG('z'))
+                text_delimiter = '\0';
+
+        if (have_list && kinds == 1 && !text_list_parse(said))
         {
-                string_address argument = text_argument(i);
-
-                if (argument[0] != '-' || !argument[1])
-                {
-                        text_file_add(i);
-                        continue;
-                }
-
-                if (argument[1] == '-' && !argument[2])
-                {
-                        for (b32 j = i + 1; j < text_argument_count; j++)
-                                text_file_add(j);
-
-                        break;
-                }
-
-                for (positive c = 1; argument[c]; c++)
-                {
-                        p8 flag = argument[c];
-
-                        if (flag == 's')
-                        {
-                                only_delimited = true;
-                                continue;
-                        }
-
-                        // -n says a multibyte character is not to be split
-                        // by -b, and every character here is one byte.
-                        if (flag == 'n')
-                                continue;
-
-                        if (flag == CUT_LONG_COMPLEMENT)
-                        {
-                                complement = true;
-                                continue;
-                        }
-
-                        if (flag == 'w')
-                        {
-                                whitespace = true;
-                                continue;
-                        }
-
-                        if (flag == 'z')
-                        {
-                                text_delimiter = '\0';
-                                continue;
-                        }
-
-                        if (flag == 'd' || flag == 'f' || flag == 'c' || flag == 'b' ||
-                            flag == 'O' || flag == CUT_LONG_OUTPUT)
-                        {
-                                string_address value = argument[c + 1] ? argument + c + 1
-                                                                       : text_argument(++i);
-
-                                if (!value)
-                                {
-                                        text_error(null, "option requires an argument");
-                                        return text_done(1);
-                                }
-
-                                if (flag == 'd')
-                                {
-                                        delimiter = value[0];
-                                        have_delimiter = true;
-                                }
-                                // -O is not in cut's own help and cut takes it
-                                // anyway, which is where this one comes from.
-                                else if (flag == 'O' || flag == CUT_LONG_OUTPUT)
-                                {
-                                        separator = value;
-                                        separator_length = string_length(value);
-                                }
-                                else
-                                {
-                                        by_field = flag == 'f';
-                                        by_character = !by_field;
-                                        have_list = true;
-                                        kinds++;
-
-                                        if (!text_list_parse(value))
-                                        {
-                                                text_error(null, "invalid list");
-                                                return text_done(1);
-                                        }
-                                }
-
-                                break;
-                        }
-
-                        {
-                                p8 named[3] = {'-', flag, 0};
-
-                                text_error(named, "invalid option");
-                                return text_done(1);
-                        }
-                }
+                text_error(null, "invalid list");
+                return text_done(1);
         }
 
         if (!have_list)
