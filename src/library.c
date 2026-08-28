@@ -57,7 +57,7 @@
         A .set is a second label on the same address, so there is no wrapper
         and no jump, and which names get one depends on who is linking.
 
-        56 routines, 55 of them on all three.
+        57 routines, 56 of them on all three.
 
           routine                        x86_64  arm64   riscv64
           ------------------------------ ------- ------- -------
@@ -95,6 +95,7 @@
           string_compare_max             yes     yes     yes
           string_copy                    yes     yes     yes
           string_copy_max                yes     yes     yes
+          string_copy_max_end            yes     yes     yes
           string_cut                     yes     yes     yes
           string_digits                  yes     yes     yes
           string_digits_max              yes     yes     yes
@@ -3082,6 +3083,55 @@ __asm__(
     "4:  jmp memory_copy_fast\n"
     ASM_END(string_copy_max)
     //
+    //       string_copy_max_end -- the bounded copy, and where it ended.
+    //
+    //       Seventeen places take a bounded string and then want to know how
+    //       long it turned out to be, because the next thing they write goes
+    //       after it: a path joined to a name, a name joined to a suffix, a
+    //       field packed into a line. Every one of them wrote the pair out --
+    //       string_length_max to measure, memory_copy_fast to copy, a
+    //       terminator by hand, and the count kept in a local -- and every
+    //       string_length_max call in the tree is one half of that pair and
+    //       nothing else.
+    //
+    //       So this is the pair, under one name, with the terminator written
+    //       and the end handed back. The buffer must hold bound + 1 bytes,
+    //       which is what the callers already pass: they hand a limit and
+    //       subtract one for the terminator.
+    //
+    //       It is two passes over the bytes and not one, and that is worth
+    //       saying out loud because the obvious next step is to fuse them. A
+    //       fused loop cannot simply read a word at a time from the source:
+    //       the bound belongs to the destination and says nothing about what
+    //       the source owns, so a word load that reaches past the source's
+    //       terminator can cross into a page it was never given. Doing it
+    //       properly means aligning the load down the way string_length_max
+    //       does and then storing at an offset that is not aligned, and doing
+    //       it improperly means a byte loop, which is slower than these two
+    //       calls for anything longer than a name. Fusing it later changes
+    //       this routine and none of the seventeen callers, which is most of
+    //       the reason to put the name in place now.
+    //
+    ASM_FUNC(string_copy_max_end)
+    //
+    //       Three saved and no frame: the destination and the source are both
+    //       wanted after the first call, and the count after the second. Three
+    //       pushes from an entry that is eight past aligned lands back on
+    //       sixteen, which is what the calls want.
+    //
+    "push %rbx\n   push %r12\n   push %r13\n"
+    "mov %rdi, %rbx  # the destination\n"
+    "mov %rsi, %r12  # the source\n"
+    "mov %rsi, %rdi\n   mov %rdx, %rsi\n"
+    "call string_length_max\n"
+    "mov %rax, %r13  # how much of it there was\n"
+    "mov %rbx, %rdi\n   mov %r12, %rsi\n   mov %r13, %rdx\n"
+    "call memory_copy_fast\n"
+    "lea (%rbx,%r13), %rax\n   movb $0, (%rax)\n"
+    "pop %r13\n   pop %r12\n   pop %rbx\n"
+    ASM_RET
+    ASM_END(string_copy_max_end)
+    //
     //       Not quite the string_last_of_or_end above it: this one answers null
     //       for the terminator where that one answers the end of the string. For
     //       every other byte the two are the same question -- the last match, or
@@ -5187,6 +5237,25 @@ __asm__(
     ASM_RET
     ASM_END(string_copy_max)
     //
+    //       string_copy_max_end. The x86_64 block above says what it is for
+    //       and why it is two passes.
+    //
+    ASM_FUNC(string_copy_max_end)
+    "stp x29, x30, [sp, #-48]!\n   mov x29, sp\n"
+    "stp x19, x20, [sp, #16]\n   str x21, [sp, #32]\n"
+    "mov x19, x0  // the destination\n"
+    "mov x20, x1  // the source\n"
+    "mov x0, x1\n   mov x1, x2\n"
+    "bl string_length_max\n"
+    "mov x21, x0  // how much of it there was\n"
+    "mov x0, x19\n   mov x1, x20\n   mov x2, x21\n"
+    "bl memory_copy_fast\n"
+    "add x0, x19, x21\n   strb wzr, [x0]\n"
+    "ldr x21, [sp, #32]\n   ldp x19, x20, [sp, #16]\n"
+    "ldp x29, x30, [sp], #48\n"
+    ASM_RET
+    ASM_END(string_copy_max_end)
+    //
     //       null for the terminator rather than the end of the string, which is
     //       what keeps this from being strrchr.
     //
@@ -6710,6 +6779,24 @@ __asm__(
     "9:  mv a0, a3\n"
     ASM_RET
     ASM_END(string_copy_max)
+    //
+    //       string_copy_max_end. The x86_64 block above says what it is for.
+    //
+    ASM_FUNC(string_copy_max_end)
+    "addi sp, sp, -48\n   sd ra, 40(sp)\n   sd s0, 32(sp)\n"
+    "sd s1, 24(sp)\n   sd s2, 16(sp)\n"
+    "mv s0, a0  # the destination\n"
+    "mv s1, a1  # the source\n"
+    "mv a0, a1\n   mv a1, a2\n"
+    "call string_length_max\n"
+    "mv s2, a0  # how much of it there was\n"
+    "mv a0, s0\n   mv a1, s1\n   mv a2, s2\n"
+    "call memory_copy_fast\n"
+    "add a0, s0, s2\n   sb zero, 0(a0)\n"
+    "ld ra, 40(sp)\n   ld s0, 32(sp)\n   ld s1, 24(sp)\n   ld s2, 16(sp)\n"
+    "addi sp, sp, 48\n"
+    ASM_RET
+    ASM_END(string_copy_max_end)
     //       string_last_of: the arm64 block carries the reasoning. There is no
     //       vector extension to reach for here, so what it hands over to is the
     //       word at a time hunt rather than a wide one -- which is still the
@@ -7622,6 +7709,15 @@ __asm__(
 
 string_address string_copy(string_address destination, string_address source);
 string_address string_copy_max(string_address destination, string_address source, positive length);
+/*
+        The same copy, terminated, with the end handed back.
+
+        For the caller that has something to write after it: the destination
+        needs bound + 1 bytes and the answer is where the terminator went, so
+        an append is this call and then the next one from there.
+*/
+p8 address_to string_copy_max_end(p8 address_to into, string_address source,
+                                  positive bound);
 string_address string_last_of(string_address source, p8 character);
 fn string_replace_all(string_address string, b8 cut_symbol, b8 replace_symbol);
 string_address string_cut(string_address string, b8 cut_symbol);

@@ -2386,6 +2386,97 @@ fn check_into()
                 }
 }
 
+/*
+        The bounded copy that says where it ended.
+
+        The destination is filled with a byte that is not a terminator and the
+        bytes past the answer are checked, because the failure this can have
+        and still look right is padding: strncpy zeroes out to the bound, and a
+        routine that did that here would answer the right end and flatten
+        whatever the caller had already written after it.
+
+        The source is built with more bytes after its terminator, at eight
+        offsets, so a copy that reads a word past the end takes them.
+*/
+static p8 copy_room[1024];
+static p8 copy_twin[1024];
+
+p8 address_to reference_copy_max_end(p8 address_to into, string_address source,
+                                     positive bound)
+{
+        positive n = 0;
+
+        while (n < bound && source[n])
+        {
+                into[n] = source[n];
+                n++;
+        }
+
+        into[n] = end;
+
+        return into + n;
+}
+
+fn check_copy_max_end()
+{
+        static p8 fillers[] = {0x00, 'z', 0xff, '/'};
+
+        for (positive f = 0; f < sizeof(fillers); f++)
+                for (positive offset = 0; offset < 8; offset++)
+                        for (positive length = 0; length <= 40; length++)
+                                for (positive b = 0; b < SPAN_BOUND_COUNT; b++)
+                                {
+                                        positive bound = span_bounds[b];
+                                        p8 address_to source;
+                                        p8 address_to got;
+                                        p8 address_to want;
+                                        p8 address_to got_end;
+                                        p8 address_to want_end;
+
+                                        reference_fill(span_room, 'S', sizeof(span_room));
+                                        reference_fill(copy_room, fillers[f],
+                                                       sizeof(copy_room));
+                                        reference_fill(copy_twin, fillers[f],
+                                                       sizeof(copy_twin));
+
+                                        source = span_subject(offset);
+
+                                        for (positive i = 0; i < length; i++)
+                                                source[i] = (p8)('a' + i % 26);
+
+                                        // The terminator, and then more bytes
+                                        // that are not one: a read past it
+                                        // takes them and the answer grows.
+                                        source[length] = end;
+
+                                        got = (p8 address_to)aligned_at(copy_room) +
+                                              SPAN_HEAD + ((offset + 5) & 7);
+                                        want = (p8 address_to)aligned_at(copy_twin) +
+                                               SPAN_HEAD + ((offset + 5) & 7);
+
+                                        got_end = string_copy_max_end(got, source, bound);
+                                        want_end = reference_copy_max_end(want, source,
+                                                                          bound);
+
+                                        same("string_copy_max_end", "the end",
+                                             (positive)(got_end - got),
+                                             (positive)(want_end - want));
+
+                                        // The bytes written, the terminator,
+                                        // and eight past it that must not have
+                                        // been touched.
+                                        same_bytes("string_copy_max_end", "the bytes",
+                                                   got, want,
+                                                   (positive)(want_end - want) + 9);
+
+                                        for (positive back = 1; back <= 8; back++)
+                                                same("string_copy_max_end",
+                                                     "in front of it",
+                                                     (positive)got[0 - back],
+                                                     (positive)fillers[f]);
+                                }
+}
+
 
 fn check_hostile_neighbours()
 {
@@ -4808,6 +4899,7 @@ b32 main()
         check_digits();
         check_digits_exact();
         check_into();
+        check_copy_max_end();
         check_bulk_alignments();
         check_bulk_moves();
         check_bulk_wide_strings();
