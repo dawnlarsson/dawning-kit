@@ -188,12 +188,6 @@ static unsigned int pane_length(struct pane *pane, unsigned int index)
         return min(pane->lengths[index % pane->history], pane->stride);
 }
 
-static void pane_set_length(struct pane *pane, unsigned int index,
-                            unsigned int length)
-{
-        pane->lengths[index % pane->history] = min(length, pane->stride);
-}
-
 /*
         How many rows are actually drawn.
 
@@ -367,6 +361,7 @@ static struct pane *pane_create(unsigned int width, unsigned int height,
         unsigned int max_columns, max_rows;
         unsigned int stride, history;
         unsigned long ring_bytes;
+        struct window *page;
         struct pane *pane;
         unsigned long bytes;
 
@@ -423,7 +418,11 @@ static struct pane *pane_create(unsigned int width, unsigned int height,
         canvas_pane_bytes += bytes;
         pane->bytes = bytes;
         pane->pitch = width;
+        page = pane->mapping;
 
+        // The page is written either way -- the compositor's own window reads
+        // its geometry out of one too. What an owned window has not got is a
+        // program behind it, and pane->shared is what says so.
         if (!owned)
                 pane->shared = pane->mapping;
 
@@ -448,19 +447,16 @@ static struct pane *pane_create(unsigned int width, unsigned int height,
                 pane->grid_columns = columns;
                 pane->grid_rows = rows;
 
-                if (pane->shared)
-                {
-                        pane->shared->max_columns = max_columns;
-                        pane->shared->max_rows = max_rows;
-                        pane->shared->columns = columns;
-                        pane->shared->rows = rows;
-                        pane->shared->grid_columns = columns;
-                        pane->shared->grid_rows = rows;
-                        pane->shared->stride = stride;
-                        pane->shared->history = history;
-                        pane->shared->head = pane->head;
-                        pane->shared->lines = (unsigned int)lines;
-                }
+                page->max_columns = max_columns;
+                page->max_rows = max_rows;
+                page->columns = columns;
+                page->rows = rows;
+                page->grid_columns = columns;
+                page->grid_rows = rows;
+                page->stride = stride;
+                page->history = history;
+                page->head = pane->head;
+                page->lines = (unsigned int)lines;
         }
         else
         {
@@ -483,19 +479,16 @@ static struct pane *pane_create(unsigned int width, unsigned int height,
         list_add_tail(&pane->link, &desktop.windows);
         pane_raise(pane);
 
-        if (pane->shared)
-        {
-                pane->shared->style = WINDOW_FRAME;
-                pane->shared->x = pane->x;
-                pane->shared->y = pane->y;
-                pane->shared->z = pane->z;
-                pane->shared->width = width;
-                pane->shared->height = height;
-                pane->shared->pitch = pane->pitch;
-                pane->shared->max_width = (unsigned int)pane->max_width;
-                pane->shared->max_height = (unsigned int)pane->max_height;
-                pane->shared->mapping = (unsigned int)bytes;
-        }
+        page->style = WINDOW_FRAME;
+        page->x = pane->x;
+        page->y = pane->y;
+        page->z = pane->z;
+        page->width = width;
+        page->height = height;
+        page->pitch = pane->pitch;
+        page->max_width = (unsigned int)pane->max_width;
+        page->max_height = (unsigned int)pane->max_height;
+        page->mapping = (unsigned int)bytes;
 
         return pane;
 }

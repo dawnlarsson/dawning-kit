@@ -25,6 +25,9 @@
 
 #define EINTR 4
 #define EAGAIN 11
+// The kernel spells all four itself, and the two below are only wanted where
+// there is a pty to say them to.
+#ifndef KERNEL_MODE
 #define TIOCSPTLCK 0x40045431u
 #define TIOCGPTN 0x80045430u
 #define TIOCSCTTY 0x540Eu
@@ -34,6 +37,7 @@ typedef struct
 {
         unsigned short rows, columns, x_pixels, y_pixels;
 } winsize;
+#endif
 
 static struct window *window;
 
@@ -227,7 +231,7 @@ static fn reach(unsigned int r, unsigned int to)
         }
 }
 
-static fn shift_right(unsigned int at, unsigned int count)
+static fn open_gap(unsigned int at, unsigned int count)
 {
         unsigned int address_to length = row_length(row);
         struct window_cell address_to cells;
@@ -283,7 +287,7 @@ static fn put(unsigned int character)
         reach(row, column);
 
         if (insert_mode)
-                shift_right(column, 1);
+                open_gap(column, 1);
 
         cell = row_cells(row) + column;
         cell->character = character;
@@ -701,7 +705,7 @@ static fn csi_final(unsigned int final)
                 break;
         }
         case '@':
-                shift_right(column, a);
+                open_gap(column, a);
                 break;
         case 'X':
                 reach(row, column);
@@ -1117,7 +1121,7 @@ static fn cursor_hide()
         shown = false;
 }
 
-static fn cursor_show()
+static fn KEEP cursor_show()
 {
         // put leaves column at COLUMNS after filling the last cell of a row and
         // only wraps on the next character, so the cursor has to be clamped:
@@ -1611,7 +1615,7 @@ static string_address key_sequence(unsigned int code)
         is drawn; without it, it is the byte or the sequence going straight
         out, which is all this ever did.
 */
-static fn term_key(unsigned int character, unsigned int code)
+static fn KEEP term_key(unsigned int character, unsigned int code)
 {
         string_address sequence;
 
@@ -1641,7 +1645,7 @@ static fn term_key(unsigned int character, unsigned int code)
         at a time would be handing it nothing at all until Enter. So the
         editor is exactly as on as the line discipline it stands in for.
 */
-static fn term_line_editing(b32 on)
+static fn KEEP term_line_editing(b32 on)
 {
         if (line_editing == on)
                 return;
@@ -1651,6 +1655,8 @@ static fn term_line_editing(b32 on)
         line_point = 0;
         line_forget();
 }
+
+#ifndef KERNEL_MODE
 
 #define F_GETFD 1
 
@@ -1673,6 +1679,8 @@ fn claim_standard_descriptors()
                                       FILE_READ_WRITE, 0);
 }
 
+#endif
+
 /*
         The window was resized.
 
@@ -1693,7 +1701,6 @@ fn regrid(b32 master)
         unsigned int was_rows = ROWS;
         unsigned int columns = window->columns;
         unsigned int rows = window->rows;
-        winsize size;
 
         // Undone in the geometry it was made in. cursor_show inverts a cell in
         // place, so clearing "shown" and moving on left that cell inverted for
@@ -1749,10 +1756,14 @@ fn regrid(b32 master)
 
         window_grid(window, COLUMNS, ROWS);
 
+#ifndef KERNEL_MODE
+        winsize size;
+
         size.rows = (unsigned short)ROWS;
         size.columns = (unsigned short)COLUMNS;
         size.x_pixels = (unsigned short)(COLUMNS * WINDOW_CELL_W);
         size.y_pixels = (unsigned short)(ROWS * WINDOW_CELL_H);
 
         system_call_3(syscall(ioctl), master, TIOCSWINSZ, (positive)address_of size);
+#endif
 }
