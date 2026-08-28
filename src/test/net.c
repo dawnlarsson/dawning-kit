@@ -2,6 +2,7 @@
 #include "../net/netlink.c"
 #include "../net/dns.c"
 #include "../net/http.c"
+#include "../net/dhcp.c"
 /*
         The netlink wire, and the messages built on it.
 
@@ -493,6 +494,127 @@ static fn fetching_for_real(void)
         socket_close((b32)listening);
 }
 
+/*
+        The lease, built and read, without a server.
+
+        The socket dance -- broadcast from an address we do not have yet, out
+        of an interface the routing table cannot name -- is the part only a
+        real network proves, and the boot image does that under qemu. What is
+        here is the part that is wrong silently: a field in the wrong byte
+        order, an option walked past by the wrong length, a reply for somebody
+        else's hardware address believed anyway.
+*/
+static fn leasing(void)
+{
+        p8 packet[1024];
+        p8 hardware[6] = {0x52, 0x54, 0x00, 0x12, 0x34, 0x56};
+        dhcp_lease lease;
+        positive length;
+        p8 kind = 0;
+
+        length = dhcp_build(packet, sizeof packet, DHCP_DISCOVER, 0xdeadbeef,
+                            hardware, 0, 0);
+
+        check("a discover is padded to the length everything accepts", length == 300);
+        check("it is a request", packet[0] == 1);
+        check("over ethernet", packet[1] == 1);
+        check("with six byte addresses", packet[2] == 6);
+
+        //      Big endian, so the most significant byte is first. Reversed,
+        //      this would read 0xefbeadde and no reply would ever match.
+        check("the transaction is big endian",
+              packet[4] == 0xde && packet[5] == 0xad &&
+              packet[6] == 0xbe && packet[7] == 0xef);
+
+        check("a broadcast reply is asked for", (packet[10] & 0x80) != 0);
+        check("the hardware address is in it",
+              memory_compare(packet + 28, hardware, 6) == 0);
+        check("the cookie says these options are dhcp's",
+              dhcp_read_32(packet + DHCP_HEAD) == DHCP_COOKIE);
+        check("the first option is the message type",
+              packet[240] == DHCP_OPTION_TYPE && packet[241] == 1 &&
+              packet[242] == DHCP_DISCOVER);
+
+        //      A request names the address offered and the server that
+        //      offered it, so a second server knows it was not chosen.
+        length = dhcp_build(packet, sizeof packet, DHCP_REQUEST, 1, hardware,
+                            0x0a00020f, 0x0a000202);
+        check("a request carries what was offered",
+              packet[243] == DHCP_OPTION_REQUESTED && packet[244] == 4 &&
+              dhcp_read_32(packet + 245) == 0x0a00020f);
+        check("and who offered it",
+              packet[249] == DHCP_OPTION_SERVER && packet[250] == 4 &&
+              dhcp_read_32(packet + 251) == 0x0a000202);
+
+        /*
+                An offer, in the shape qemu's own server sends one: the
+                address in yiaddr and the mask, router, server and lease in
+                options, in an order nothing may depend on.
+        */
+        {
+                positive at;
+
+                memory_fill(packet, 0, sizeof packet);
+                packet[0] = 2;
+                packet[1] = 1;
+                packet[2] = 6;
+                dhcp_write_32(packet + 4, 0xdeadbeef);
+                dhcp_write_32(packet + 16, 0x0a00020f);   // yiaddr 10.0.2.15
+                memory_copy(packet + 28, hardware, 6);
+                dhcp_write_32(packet + DHCP_HEAD, DHCP_COOKIE);
+
+                at = DHCP_HEAD + 4;
+                packet[at++] = DHCP_OPTION_TYPE;  packet[at++] = 1;
+                packet[at++] = DHCP_OFFER;
+                packet[at++] = DHCP_OPTION_SERVER; packet[at++] = 4;
+                dhcp_write_32(packet + at, 0x0a000202); at += 4;
+                packet[at++] = DHCP_OPTION_MASK;  packet[at++] = 4;
+                dhcp_write_32(packet + at, 0xffffff00); at += 4;
+                packet[at++] = DHCP_OPTION_ROUTER; packet[at++] = 4;
+                dhcp_write_32(packet + at, 0x0a000202); at += 4;
+                packet[at++] = DHCP_OPTION_DNS;   packet[at++] = 4;
+                dhcp_write_32(packet + at, 0x0a000203); at += 4;
+                packet[at++] = DHCP_OPTION_LEASE; packet[at++] = 4;
+                dhcp_write_32(packet + at, 86400); at += 4;
+                packet[at++] = DHCP_OPTION_END;
+
+                memory_fill(address_of lease, 0, sizeof lease);
+                check("the offer parses",
+                      dhcp_read(packet, at, 0xdeadbeef, hardware, address_of lease,
+                                address_of kind) == 0);
+                check("it is an offer", kind == DHCP_OFFER);
+                check("the address is read", lease.address == 0x0a00020f);
+                check("the mask is read", lease.mask == 0xffffff00);
+                check("which is a /24", dhcp_prefix_of(lease.mask) == 24);
+                check("the router is read", lease.router == 0x0a000202);
+                check("the nameserver is read", lease.nameserver == 0x0a000203);
+                check("the server is read", lease.server == 0x0a000202);
+                check("the lease time is read", lease.seconds == 86400);
+
+                //      Somebody else's transaction, and somebody else's
+                //      hardware. Both are on the same broadcast domain as us.
+                check("another transaction is not ours",
+                      dhcp_read(packet, at, 0x11111111, hardware, address_of lease,
+                                address_of kind) < 0);
+
+                hardware[5] = 0x57;
+                check("another machine's reply is not ours",
+                      dhcp_read(packet, at, 0xdeadbeef, hardware, address_of lease,
+                                address_of kind) < 0);
+                hardware[5] = 0x56;
+
+                //      An option whose length runs off the end of the packet.
+                packet[DHCP_HEAD + 4 + 1] = 200;
+                check("an option longer than the packet is refused",
+                      dhcp_read(packet, at, 0xdeadbeef, hardware, address_of lease,
+                                address_of kind) < 0);
+        }
+
+        check("a /16 mask is a /16", dhcp_prefix_of(0xffff0000) == 16);
+        check("a /32 mask is a /32", dhcp_prefix_of(0xffffffff) == 32);
+        check("no mask at all falls back to /24", dhcp_prefix_of(0) == 24);
+}
+
 b32 main(void)
 {
         arithmetic();
@@ -502,6 +624,7 @@ b32 main(void)
         resolving();
         fetching();
         fetching_for_real();
+        leasing();
 
         string_format(log, "%p checks, %p failures\n", checks, failures);
         log_flush();

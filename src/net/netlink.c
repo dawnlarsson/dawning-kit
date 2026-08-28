@@ -567,7 +567,9 @@ typedef struct
         p32 flags;
         bool found;
         bool skip_loopback;
+        bool has_hardware;
         p8 name[IFNAME_SIZE];
+        p8 hardware[6];
 } netlink_search;
 
 static bool netlink_link_seen(netlink_header address_to header, address_any context)
@@ -596,6 +598,21 @@ static bool netlink_link_seen(netlink_header address_to header, address_any cont
         search->flags = link->flags;
         search->found = true;
         string_copy_max_end(search->name, name, IFNAME_SIZE - 1);
+
+        //      The hardware address, which DHCP has to put in the packet and
+        //      which is the only way a reply finds its way back before there
+        //      is an address to send it to.
+        {
+                positive width = 0;
+                p8 address_to found_hardware = (p8 address_to)netlink_find(
+                    header, sizeof(netlink_link), IFLA_ADDRESS, address_of width);
+
+                if (found_hardware && width == 6)
+                {
+                        memory_copy(search->hardware, found_hardware, 6);
+                        search->has_hardware = true;
+                }
+        }
 
         return false;
 }

@@ -147,11 +147,27 @@ CONFIG_UNIX=y
 CONFIG_NETDEVICES=y
 CONFIG_ETHERNET=y
 CONFIG_NET_VENDOR_INTEL=y
+#
+#       E1000 as well as E1000E, and they are not the same card. E1000E drives
+#       the 82574 and the PCIe parts; E1000 drives the 82540EM, which is what
+#       every qemu without an explicit -device presents. Without it our own
+#       virtual machine came up with loopback and nothing else -- the card sat
+#       on the bus unclaimed while the whole stack was up and waiting -- which
+#       is a strange way for a system that means to just work to behave inside
+#       its own test.
+#
+CONFIG_E1000=y
 CONFIG_E1000E=y
 CONFIG_IGB=y
 CONFIG_IGC=y
 CONFIG_NET_VENDOR_REALTEK=y
 CONFIG_R8169=y
+#
+#       And the card a modern hypervisor offers when it is not pretending to
+#       be hardware at all. A cloud instance or a kvm guest with virtio and no
+#       driver for it has no network by any other route.
+#
+CONFIG_VIRTIO_NET=y
 CONFIG_PHYLIB=y
 CONFIG_REALTEK_PHY=y
 

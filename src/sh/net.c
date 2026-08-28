@@ -15,6 +15,7 @@
 #include "../net/netlink.c"
 #include "../net/dns.c"
 #include "../net/http.c"
+#include "../net/dhcp.c"
 
 //      argv, declared the way builtin.c declares it: this file is
 //      pulled in before the definition further down shell.c.
@@ -563,6 +564,135 @@ static b32 net_fetch(void)
         return 0;
 }
 
+
+//      /etc/resolv.conf, written so the resolver can find it next time.
+static fn net_write_resolv(p32 nameserver)
+{
+        p8 line[64];
+        positive used = 0;
+        b32 handle;
+
+        if (!nameserver)
+                return;
+
+        //      O_WRONLY | O_CREAT | O_TRUNC, 0644
+        handle = (b32)system_call_4(syscall(openat), (positive)-100,
+                                    (positive) "/etc/resolv.conf",
+                                    (positive)(1 | 0100 | 01000), 0644);
+
+        if (handle < 0)
+                return;
+
+        memory_copy(line, "nameserver ", 11);
+        used = 11;
+        used += host_into(line + used, nameserver);
+        line[used++] = '\n';
+
+        system_write_all((positive)handle, line, used);
+        system_call_1(syscall(close), (positive)handle);
+}
+
+/*
+        ip auto -- the whole thing, without being told anything.
+
+        Find a link that is not loopback, bring it up, ask for a lease, and
+        apply what comes back. This is what "the network just works" means in
+        practice, and it is deliberately userspace rather than kernel: the
+        kernel's own IP_PNP runs once, before init, for one interface, and
+        cannot write a resolv.conf or try again when a cable is plugged in.
+
+        Every step says what it did, because the failure that matters is not
+        an error code but the machine coming up silently unreachable.
+*/
+static b32 net_auto(b32 handle)
+{
+        netlink_search search;
+        dhcp_lease lease;
+        p8 written[32];
+        positive length;
+        bipolar status;
+
+        memory_fill(address_of search, 0, sizeof search);
+        search.skip_loopback = true;
+
+        if (netlink_link_find(handle, address_of search) < 0)
+        {
+                string_format(log, "ip: no interface to configure\n");
+                log_flush();
+                return 1;
+        }
+
+        if (!search.has_hardware)
+        {
+                string_format(log, "ip: %s has no hardware address\n", search.name);
+                log_flush();
+                return 1;
+        }
+
+        string_format(log, "ip: using %s\n", search.name);
+
+        if (!(search.flags & IFF_UP))
+        {
+                status = netlink_link_up(handle, search.index);
+
+                if (status < 0)
+                        return net_refused((string_address) "link up", status);
+        }
+
+        string_format(log, "ip: asking for a lease\n");
+        log_flush();
+
+        status = dhcp_ask(search.name, search.hardware, address_of lease);
+
+        if (status != DHCP_OK)
+        {
+                if (status == DHCP_REFUSED)
+                        string_format(log, "ip: the server refused the request\n");
+                else if (status == DHCP_NO_OFFER)
+                        string_format(log, "ip: nobody offered a lease\n");
+                else
+                        string_format(log, "ip: could not ask for a lease\n");
+
+                log_flush();
+                return 1;
+        }
+
+        length = host_into(written, lease.address);
+        written[length] = end;
+        string_format(log, "ip: %s/%p on %s\n", written,
+                      (positive)dhcp_prefix_of(lease.mask), search.name);
+
+        status = netlink_address_add(handle, search.index, lease.address,
+                                     dhcp_prefix_of(lease.mask));
+
+        if (status < 0)
+                return net_refused((string_address) "addr add", status);
+
+        if (lease.router)
+        {
+                status = netlink_route_add(handle, 0, 0, lease.router, search.index);
+
+                if (status < 0)
+                        return net_refused((string_address) "route add", status);
+
+                length = host_into(written, lease.router);
+                written[length] = end;
+                string_format(log, "ip: default via %s\n", written);
+        }
+
+        if (lease.nameserver)
+        {
+                net_write_resolv(lease.nameserver);
+                length = host_into(written, lease.nameserver);
+                written[length] = end;
+                string_format(log, "ip: nameserver %s\n", written);
+        }
+
+        log_flush();
+
+        return 0;
+}
+
 static b32 net_ip(void)
 {
         bipolar handle;
@@ -572,7 +702,9 @@ static b32 net_ip(void)
 
         if (!object || net_word_is(object, "help", 4))
         {
-                string_format(log, "usage: ip link | addr | route\n");
+                string_format(log, "usage: ip auto | link | addr | route\n");
+                string_format(log, "       ip auto   find a link, bring it up, "
+                                   "take a lease\n");
                 string_format(log, "       ip link set NAME up\n");
                 string_format(log, "       ip addr add A.B.C.D/N dev NAME\n");
                 string_format(log, "       ip route add default via A.B.C.D [dev NAME]\n");
@@ -588,8 +720,13 @@ static b32 net_ip(void)
                 return 1;
         }
 
+        //      auto ------------------------------------------------------
+        if (net_word_is(object, "auto", 2))
+        {
+                status = net_auto((b32)handle);
+        }
         //      link ------------------------------------------------------
-        if (net_word_is(object, "link", 1))
+        else if (net_word_is(object, "link", 1))
         {
                 if (!verb || net_word_is(verb, "show", 1) || net_word_is(verb, "list", 1))
                 {
