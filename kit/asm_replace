@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-#       Puts a .asm from src/replace/ in the place of a file the kernel already
+#       Puts a .asm from kernel/replace/ in the place of a file the kernel already
 #       builds, which is the other half of what kit/asm is for: not everything
 #       worth writing in assembly can live in a module.
 #
@@ -13,7 +13,7 @@
 #
 #       A profile asks for one with
 #
-#               #> asm <file in src/replace/> <path under linux/>
+#               #> asm <file in kernel/replace/> <path under linux/>
 #
 #       for example
 #
@@ -132,7 +132,7 @@ while read -r source target extra; do
                 ;;
         esac
 
-        asm="src/replace/$source"
+        asm="kernel/replace/$source"
         destination="linux/$target"
         original="$destination.original"
 

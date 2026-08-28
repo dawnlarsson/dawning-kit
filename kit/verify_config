@@ -41,7 +41,7 @@ effective=$(mktemp)
 trap 'rm -f "$requests" "$effective"' EXIT
 
 for profile in "$@"; do
-        profile_path="profile/$profile"
+        profile_path="kernel/profile/$profile"
 
         is_file "$profile_path" || continue
 

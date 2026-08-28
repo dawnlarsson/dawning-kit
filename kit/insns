@@ -35,7 +35,8 @@ if ! gcc -O2 -shared -fPIC $(pkg-config --cflags glib-2.0) \
 fi
 
 one() { # compiler runner which length rounds
-        $1 -O2 -static -nostdlib -nostartfiles -fno-stack-protector -fno-builtin \
+        $1 $instruction_arch_flags \
+           -O2 -static -nostdlib -nostartfiles -fno-stack-protector -fno-builtin \
            -T kit/spark.ld -Wl,-e,_start -Wl,--build-id=none \
            -Wl,--no-warn-rwx-segments \
            -DWHICH=$3 -DLENGTH=$4 -DROUNDS=$5 -o "$work/one" kit/bench_one.c
@@ -58,6 +59,11 @@ sweep() { # name compiler runner
                 echo "$1: no $3, skipped"
                 return 0
         fi
+
+        case $1 in
+        riscv64) instruction_arch_flags='-march=rv64imafd_zicsr_zicntr -mabi=lp64d' ;;
+        *)       instruction_arch_flags= ;;
+        esac
 
         echo "$1: bytes, then byte and word for length, compare and first_of"
 

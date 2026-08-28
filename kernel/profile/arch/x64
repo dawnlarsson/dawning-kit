@@ -50,7 +50,7 @@
 #       includes POPCNT, so that fallback cannot run on a machine this kernel
 #       can boot on -- gcc is already emitting the instruction in plain C.
 #
-#       src/replace/hweight.asm is that file with the twiddling replaced by the
+#       kernel/replace/hweight.asm is that file with the twiddling replaced by the
 #       instruction. Not faster, since the call sites are patched either way;
 #       it removes unreachable code and states the floor where it is visible.
 #

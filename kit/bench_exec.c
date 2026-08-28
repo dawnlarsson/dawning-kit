@@ -1,4 +1,4 @@
-#include "../src/library.c"
+#include "../src/compiler_memory.c"
 #include "../src/spark.c"
 
 // Times fork + exec + wait for a target, repeatedly. The fork and wait cost is

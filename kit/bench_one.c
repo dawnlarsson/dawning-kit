@@ -1,4 +1,4 @@
-#include "../src/library.c"
+#include "../src/compiler_memory.c"
 
 #ifndef LENGTH
 #define LENGTH 4

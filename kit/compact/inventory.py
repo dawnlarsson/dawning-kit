@@ -8,11 +8,20 @@ kept by hand is wrong the first time somebody adds a routine and does not
 think to come back here.
 
     python3 kit/compact/inventory.py <file.c>
+    python3 kit/compact/inventory.py --check --target all <file.c>
 
 Replaces whatever inventory is already at the top, or inserts one if there
 is none. Run it last: it reports what the passes before it produced.
+
+The default ``all`` audit follows every local quoted include regardless of
+preprocessor branch. Named targets are useful for diagnostics, and ``direct``
+is only for scanner fixtures; the shipped gate always asks for ``all``.
 """
-import re, sys
+import argparse
+import os
+import re
+import sys
+from collections import Counter, namedtuple
 
 HEAD = 'The assembly inventory.'
 
@@ -26,10 +35,16 @@ PREAMBLE = '''
         arm64 alone will not always tell you why something is the way it is.
 
         The floor is baseline instruction sets: x86_64 without BMI, so bsf
-        and bsr but not tzcnt or lzcnt; armv8.0-a without SVE; RV64I without
-        Zbb, which has no count-leading-zeros at all, and is why the riscv
-        blocks build one out of a shift pair. All three targets are little
-        endian and the byte position arithmetic depends on it.
+        and bsr but not tzcnt or lzcnt; armv8.0-a without SVE; and
+        RV64IMAFD_Zicsr_Zicntr, explicitly without C or Zbb. M serves the
+        formatter and packed-byte mul/divu paths, A serves the public atomic
+        surface, F/D serve the decimal formatter and fast_sin, and Zicntr plus
+        its Zicsr dependency serve get_cpu_time's time-CSR read. Without Zbb
+        there is no count-leading-zeros, which is why the riscv blocks build
+        one out of a shift pair. C is not a floor requirement: the shipped
+        routines must assemble without compressed instructions. All three
+        targets are little endian and the byte position arithmetic depends on
+        it.
 
         That baseline is what every routine falls back to, and on riscv it is
         the whole of it: the wide operation is SWAR, eight bytes in an integer
@@ -47,12 +62,15 @@ PREAMBLE = '''
         walks the flag down on purpose, and twice now a one byte sabotage has
         survived the whole suite because nothing did.
 
-        A kernel build takes the wide paths too, and that is the one thing
-        here still owed an answer. Linux does not save the vector registers on
-        syscall entry and none of these calls kernel_fpu_begin, so whether a
-        userspace ymm can come back changed from a kernel memcpy has been
-        reasoned about and not measured. Do not read these paths as a settled
-        question.
+        Kernel handling is not yet at parity. x86 kernel builds take only the
+        integer-register paths, keeping vector state out of routines that do
+        not call kernel_fpu_begin. The arm64 block still takes NEON paths in a
+        kernel build without kernel_neon_begin, and the riscv word paths still
+        issue unaligned loads and stores on a baseline where those may trap.
+        Those are correctness and floor-performance blockers, not settled
+        optimisations. Userspace x86 selects AVX2 and AVX-512 from the feature
+        bytes its startup pass writes; arm64 userspace may use the NEON its
+        baseline architecture guarantees.
 
         The libc names -- strlen, memcpy, strchr and the rest -- are aliases
         onto these, added where the file stops being compiled into a kernel.
@@ -60,35 +78,670 @@ PREAMBLE = '''
         and no jump, and which names get one depends on who is linking.
 '''
 
-def main(path):
-    text = open(path).read()
-    lines = text.split('\n')
+Token = namedtuple('Token', 'kind value line start')
+Directive = namedtuple('Directive', 'line start text')
+Body = namedtuple('Body', 'path name line')
+Include = namedtuple('Include', 'path name line')
+MacroBody = namedtuple('MacroBody', 'path name line')
+PlatformGap = namedtuple('PlatformGap', 'path arch kind symbol count')
 
-    arch, cur = [None]*len(lines), None
-    for i, l in enumerate(lines):
-        m = re.match(r'^#(el)?if (X64|ARM64|RISCV64)$', l.strip())
-        if m: cur = m.group(2)
-        arch[i] = cur
+ARCHES = ('X64', 'ARM64', 'RISCV64')
+TARGET_DEFINES = {
+    'linux': {'LINUX', 'UNIX', '__linux__', '__unix__', 'X64', '__x86_64__'},
+    'macos': {'MACOS', 'APPLE', '__APPLE__', 'X64', '__x86_64__'},
+    'windows': {'WINDOWS', '_WIN32', 'X64', '__x86_64__'},
+}
 
-    have, order = {}, []
-    for i, l in enumerate(lines):
-        m = re.match(r'ASM_FUNC\(([A-Za-z0-9_]+)\)', l.strip())
-        if m and arch[i]:
-            have.setdefault(m.group(1), set()).add(arch[i])
-            if m.group(1) not in order: order.append(m.group(1))
 
-    # Anything still implemented in C as well, so the table is the whole
-    # story. A definition sitting under #if defined(WINDOWS) is not one of
-    # those: Windows has no assembly here and never did.
-    in_c = []
-    for i, l in enumerate(lines):
-        m = re.match(r'^[A-Za-z_][A-Za-z0-9_ *]*?\b([a-z_][a-z0-9_]*)\s*\(', l)
-        if not (m and not l.rstrip().endswith(';') and i+1 < len(lines)
-                and lines[i+1].strip() == '{' and m.group(1) in have):
+def lex(text):
+    """Return C tokens and preprocessing directives without preprocessing.
+
+    Comments and literal contents never become punctuation tokens. A complete
+    preprocessing directive, including its backslash-continued lines, is kept
+    as one event and omitted from the C token stream. This is deliberately a
+    raw-source lexer: code under ``#if 0`` is still code to the body scanner.
+    """
+    tokens, directives = [], []
+    i, line, clean = 0, 1, True
+    length = len(text)
+
+    while i < length:
+        c = text[i]
+
+        if c == '\n':
+            line += 1
+            clean = True
+            i += 1
             continue
-        if i and lines[i-1].strip() in ('#if defined(WINDOWS)', '#ifdef WINDOWS'):
+        if c in ' \t\r\f\v':
+            i += 1
             continue
-        in_c.append(m.group(1))
+
+        if text.startswith('//', i):
+            end = text.find('\n', i + 2)
+            i = length if end < 0 else end
+            continue
+        if text.startswith('/*', i):
+            i += 2
+            while i < length and not text.startswith('*/', i):
+                if text[i] == '\n':
+                    line += 1
+                    clean = True
+                i += 1
+            i = min(i + 2, length)
+            continue
+
+        directive_mark = None
+        if c == '#':
+            directive_mark = '#'
+        elif text.startswith('%:', i):
+            directive_mark = '%:'
+        elif text.startswith('??=', i):
+            directive_mark = '??='
+        if directive_mark and clean:
+            start, first_line = i, line
+            i += len(directive_mark)
+            while i < length:
+                if text[i] == '\\' and i + 1 < length and text[i + 1] == '\n':
+                    line += 1
+                    i += 2
+                    continue
+                if text.startswith('??/\n', i):
+                    line += 1
+                    i += 4
+                    continue
+                if text[i] == '\n':
+                    break
+                i += 1
+            directives.append(Directive(first_line, start, text[start:i]))
+            clean = False
+            continue
+
+        start, first_line = i, line
+        if c in ('"', "'"):
+            quote = c
+            i += 1
+            while i < length:
+                if text[i] == '\\' and i + 1 < length:
+                    if text[i + 1] == '\n':
+                        line += 1
+                    i += 2
+                    continue
+                if text[i] == quote:
+                    i += 1
+                    break
+                if text[i] == '\n':
+                    line += 1
+                i += 1
+            tokens.append(Token('literal', text[start:i], first_line, start))
+        elif c.isalpha() or c == '_':
+            i += 1
+            while i < length and (text[i].isalnum() or text[i] == '_'):
+                i += 1
+            tokens.append(Token('identifier', text[start:i], first_line, start))
+        elif c.isdigit():
+            i += 1
+            while i < length and (text[i].isalnum() or text[i] in "._'"):
+                i += 1
+            tokens.append(Token('number', text[start:i], first_line, start))
+        else:
+            alternate = None
+            for spelling, value in (('??<', '{'), ('??>', '}'),
+                                    ('??(', '['), ('??)', ']'),
+                                    ('<%', '{'), ('%>', '}'),
+                                    ('<:', '['), (':>', ']')):
+                if text.startswith(spelling, i):
+                    alternate = (spelling, value)
+                    break
+            if alternate:
+                tokens.append(Token('punctuation', alternate[1], first_line, start))
+                i += len(alternate[0])
+            else:
+                tokens.append(Token('punctuation', c, first_line, start))
+                i += 1
+        clean = False
+
+    return tokens, directives
+
+
+def strip_directive_comments(text):
+    """Replace comments with whitespace without eating quoted header names."""
+    output, index, quote = [], 0, None
+    while index < len(text):
+        if quote:
+            output.append(text[index])
+            if text[index] == '\\' and index + 1 < len(text):
+                output.append(text[index + 1])
+                index += 2
+                continue
+            if text[index] == quote:
+                quote = None
+            index += 1
+            continue
+        if text.startswith('/*', index):
+            end = text.find('*/', index + 2)
+            output.append(' ')
+            index = len(text) if end < 0 else end + 2
+            continue
+        if text.startswith('//', index):
+            break
+        if text[index] in ('"', "'"):
+            quote = text[index]
+        elif text[index] == '<' and re.fullmatch(
+                r'\s*#\s*include\s*', ''.join(output), flags=re.I):
+            quote = '>'
+        output.append(text[index])
+        index += 1
+    return ''.join(output)
+
+
+def directive_parts(directive):
+    # Line splicing precedes comment removal in translation phase order.
+    text = re.sub(r'(?:\\|\?\?/)[\r]?\n', '', directive.text)
+    text = re.sub(r'^\s*(?:%:|\?\?=)', '#', text)
+    text = strip_directive_comments(text)
+    found = re.match(r'\s*#\s*([A-Za-z_][A-Za-z0-9_]*)\b(.*)', text, re.S)
+    return (found.group(1).lower(), found.group(2).strip()) if found else ('', '')
+
+
+def literal_include(directive):
+    kind, rest = directive_parts(directive)
+    if kind != 'include' or not rest or rest[0] not in ('"', '<'):
+        return None
+    close = '"' if rest[0] == '"' else '>'
+    end = rest.find(close, 1)
+    if end < 0:
+        return None
+    return rest[1:end], rest[0] == '"'
+
+
+def matching_open(tokens, close_index, opening='(', closing=')'):
+    depth = 0
+    for index in range(close_index, -1, -1):
+        if tokens[index].value == closing:
+            depth += 1
+        elif tokens[index].value == opening:
+            depth -= 1
+            if depth == 0:
+                return index
+    return None
+
+
+def matching_close(tokens, open_index, opening='(', closing=')'):
+    depth = 0
+    for index in range(open_index, len(tokens)):
+        if tokens[index].value == opening:
+            depth += 1
+        elif tokens[index].value == closing:
+            depth -= 1
+            if depth == 0:
+                return index
+    return None
+
+
+DECORATORS = {
+    '__attribute', '__attribute__', '__declspec', '__declspec__',
+    'asm', '__asm', '__asm__',
+}
+
+NON_NAMES = DECORATORS | {
+    '_Alignas', '_Alignof', '_Generic', '_Static_assert', 'alignas',
+    'alignof', 'break', 'case', 'char', 'const', 'continue', 'default',
+    'do', 'double', 'else', 'enum', 'extern', 'float', 'for', 'goto',
+    'if', 'inline', 'int', 'long', 'register', 'restrict', 'return',
+    'short', 'signed', 'sizeof', 'static', 'struct', 'switch', 'typedef',
+    'typeof', '__typeof', '__typeof__', 'union', 'unsigned', 'void',
+    'volatile', 'while', '_Bool', '_Complex', '_Imaginary',
+    'ASM_FUNC',
+}
+
+
+def strip_trailing_decorators(header):
+    header = list(header)
+    while header:
+        # Attribute macros conventionally survive raw source as a trailing
+        # all-caps word. Once expanded they become __attribute__((...)); strip
+        # that spelling too so it cannot hide the preceding declarator.
+        if header[-1].kind == 'identifier' \
+                and re.fullmatch(r'[A-Z_][A-Z0-9_]*', header[-1].value):
+            header = header[:-1]
+            continue
+        # C23/C++-style attributes are accepted by current C compilers too.
+        if len(header) >= 2 and header[-2].value == ']' and header[-1].value == ']':
+            depth, start = 0, None
+            for index in range(len(header) - 1, -1, -1):
+                if header[index].value == ']':
+                    depth += 1
+                elif header[index].value == '[':
+                    depth -= 1
+                    if depth == 0:
+                        start = index
+                        break
+            if start is not None and start + 1 < len(header) \
+                    and header[start + 1].value == '[':
+                header = header[:start]
+                continue
+
+        if header[-1].value == ')':
+            opening = matching_open(header, len(header) - 1)
+            if opening and header[opening - 1].kind == 'identifier' \
+                    and header[opening - 1].value in DECORATORS:
+                header = header[:opening - 1]
+                continue
+        break
+    return header
+
+
+def function_header(header):
+    """Return the name token if a top-level ``{`` starts a C function."""
+    header = strip_trailing_decorators(header)
+    if not header or header[-1].value != ')':
+        return None
+
+    paren = bracket = 0
+    for token in header:
+        if token.value == '(':
+            paren += 1
+        elif token.value == ')':
+            paren = max(paren - 1, 0)
+        elif token.value == '[':
+            bracket += 1
+        elif token.value == ']':
+            bracket = max(bracket - 1, 0)
+        elif token.value == '=' and paren == 0 and bracket == 0:
+            return None
+
+    candidates = []
+    paren = bracket = 0
+    for index, token in enumerate(header[:-1]):
+        if token.kind == 'identifier' and token.value not in NON_NAMES \
+                and header[index + 1].value == '(':
+            candidates.append((paren + bracket, index, token))
+        if token.value == '(':
+            paren += 1
+        elif token.value == ')':
+            paren = max(paren - 1, 0)
+        elif token.value == '[':
+            bracket += 1
+        elif token.value == ']':
+            bracket = max(bracket - 1, 0)
+
+    if not candidates:
+        return None
+    shallowest = min(item[0] for item in candidates)
+    return [item[2] for item in candidates if item[0] == shallowest][-1]
+
+
+def old_style_function_header(header):
+    """Recognise a K&R identifier-list followed by parameter declarations."""
+    candidates = []
+    paren = bracket = 0
+    for index, token in enumerate(header[:-1]):
+        if token.kind == 'identifier' and token.value not in NON_NAMES \
+                and header[index + 1].value == '(':
+            close = matching_close(header, index + 1)
+            if close is not None:
+                candidates.append((paren + bracket, index, close, token))
+        if token.value == '(':
+            paren += 1
+        elif token.value == ')':
+            paren = max(paren - 1, 0)
+        elif token.value == '[':
+            bracket += 1
+        elif token.value == ']':
+            bracket = max(bracket - 1, 0)
+    if not candidates:
+        return None
+    shallowest = min(item[0] for item in candidates)
+    for _, opening, close, name in reversed(
+            [item for item in candidates if item[0] == shallowest]):
+        arguments = header[opening + 2:close]
+        if not arguments or any(token.kind != 'identifier' and token.value != ','
+                                for token in arguments):
+            continue
+        tail = header[close + 1:]
+        if tail and not any(token.value == '=' for token in tail):
+            return name
+    return None
+
+
+def c_bodies(path, text=None):
+    if text is None:
+        with open(path, encoding='utf-8') as source:
+            text = source.read()
+    tokens, directives = lex(text)
+    depth, header, bodies, old_style = 0, [], [], None
+
+    events = [(token.start, 1, token) for token in tokens]
+    events += [(directive.start, 0, directive) for directive in directives]
+    events.sort(key=lambda item: (item[0], item[1]))
+    for _, kind, token in events:
+        if kind == 0:
+            continue
+        if token.value == '{':
+            if depth == 0:
+                name = function_header(header)
+                if name is None and old_style is not None and not header:
+                    name = old_style
+                if name:
+                    bodies.append(Body(path, name.value, name.line))
+                old_style = None
+            depth += 1
+            continue
+        if token.value == '}':
+            if depth:
+                depth -= 1
+            if depth == 0:
+                header = []
+                old_style = None
+            continue
+        if depth == 0:
+            if token.value == ';':
+                if old_style is None:
+                    old_style = old_style_function_header(header)
+                elif any(item.value == '=' for item in header):
+                    old_style = None
+                header = []
+            else:
+                header.append(token)
+    return bodies
+
+
+def macro_bodies(path, text):
+    """Find local macros whose replacement list itself defines a function."""
+    _, directives = lex(text)
+    found = []
+    for directive in directives:
+        kind, _ = directive_parts(directive)
+        if kind != 'define':
+            continue
+        raw = re.sub(r'\\\r?\n', '', directive.text)
+        head = re.match(
+            r'\s*#\s*define\s+([A-Za-z_][A-Za-z0-9_]*)', raw, re.S)
+        if not head:
+            continue
+        name, index = head.group(1), head.end()
+        # A function-like macro's opening parenthesis has no intervening
+        # whitespace. Skip its balanced parameter list before scanning the
+        # replacement tokens as raw C.
+        if index < len(raw) and raw[index] == '(':
+            depth, index = 1, index + 1
+            while index < len(raw) and depth:
+                if raw[index] == '(':
+                    depth += 1
+                elif raw[index] == ')':
+                    depth -= 1
+                index += 1
+        replacement = raw[index:]
+        replacement_tokens, _ = lex(replacement)
+        if any(token.value == '{' for token in replacement_tokens) \
+                or c_bodies(path, replacement):
+            found.append(MacroBody(path, name, directive.line))
+    return found
+
+
+def clean_arch_expression(rest):
+    value = rest.strip()
+    while value.startswith('(') and value.endswith(')'):
+        value = value[1:-1].strip()
+    found = re.fullmatch(r'(X64|ARM64|RISCV64)', value)
+    if found:
+        return found.group(1)
+    found = re.fullmatch(r'defined\s*\(\s*(X64|ARM64|RISCV64)\s*\)', value)
+    return found.group(1) if found else None
+
+
+def arch_transition(current, stack, directive):
+    kind, rest = directive_parts(directive)
+    if kind in ('if', 'ifdef', 'ifndef'):
+        if kind == 'ifdef':
+            selected = rest if rest in ARCHES else None
+        elif kind == 'if':
+            selected = clean_arch_expression(rest)
+        else:
+            selected = None
+        stack.append({'prior': current, 'selector': bool(selected)})
+        return selected or current
+    if kind == 'elif' and stack:
+        selected = clean_arch_expression(rest)
+        frame = stack[-1]
+        if selected:
+            frame['selector'] = True
+            return selected
+        return None if frame['selector'] else frame['prior']
+    if kind == 'else' and stack:
+        return None if stack[-1]['selector'] else stack[-1]['prior']
+    if kind == 'endif' and stack:
+        return stack.pop()['prior']
+    return current
+
+
+def assembly_inventory(path, tokens, directives):
+    events = [(item.start, 0, item) for item in directives]
+    for index in range(len(tokens) - 3):
+        if tokens[index].value == 'ASM_FUNC' and tokens[index + 1].value == '(' \
+                and tokens[index + 2].kind == 'identifier' \
+                and tokens[index + 3].value == ')':
+            events.append((tokens[index].start, 1,
+                           (tokens[index + 2].value, tokens[index].line)))
+    events.sort(key=lambda item: (item[0], item[1]))
+
+    current, stack = None, []
+    have, order, unscoped = {}, [], []
+    counts = {}
+    for _, event_kind, event in events:
+        if event_kind:
+            name, line = event
+            if current is None:
+                unscoped.append((path, name, line))
+                continue
+            if name not in order:
+                order.append(name)
+            have.setdefault(name, set()).add(current)
+            counts[(name, current)] = counts.get((name, current), 0) + 1
+            continue
+
+        current = arch_transition(current, stack, event)
+
+    return have, order, unscoped, counts
+
+
+def graph_assembly_inventory(sources):
+    have, order, unscoped, counts = {}, [], [], {}
+    for path, text in sources.items():
+        tokens, directives = lex(text)
+        source_have, source_order, source_unscoped, source_counts = \
+            assembly_inventory(path, tokens, directives)
+        for name in source_order:
+            if name not in order:
+                order.append(name)
+        for name, arches in source_have.items():
+            have.setdefault(name, set()).update(arches)
+        unscoped.extend(source_unscoped)
+        for key, count in source_counts.items():
+            counts[key] = counts.get(key, 0) + count
+    duplicates = [(name, arch, count) for (name, arch), count in counts.items()
+                  if count != 1]
+    return have, order, unscoped, duplicates
+
+
+def macos_runtime_parity(sources):
+    """Audit raw Mach-O runtime labels, which cannot use ELF ASM_FUNC."""
+    expected = ('_sleep', '_exit', '_start', '__start')
+    gaps = []
+    for path, text in sources.items():
+        if os.path.basename(path) != 'macos.inc':
+            continue
+        tokens, directives = lex(text)
+        events = [(item.start, 0, item) for item in directives]
+        events += [(item.start, 1, item) for item in tokens if item.kind == 'literal']
+        events.sort(key=lambda item: (item[0], item[1]))
+        current, stack = None, []
+        globals_by_arch = {arch: Counter() for arch in ('X64', 'ARM64')}
+        labels_by_arch = {arch: Counter() for arch in ('X64', 'ARM64')}
+        for _, kind, event in events:
+            if kind == 0:
+                current = arch_transition(current, stack, event)
+                continue
+            if current not in globals_by_arch:
+                continue
+            for symbol in re.findall(
+                    r'\.globl[ \t]+(_{1,2}[A-Za-z][A-Za-z0-9_]*)', event.value):
+                globals_by_arch[current][symbol] += 1
+            for symbol in re.findall(
+                    r'(?<![A-Za-z0-9_])(_{1,2}[A-Za-z][A-Za-z0-9_]*):',
+                    event.value):
+                labels_by_arch[current][symbol] += 1
+        for arch in ('X64', 'ARM64'):
+            for symbol in expected:
+                count = globals_by_arch[arch][symbol]
+                if count != 1:
+                    gaps.append(PlatformGap(path, arch, 'global', symbol, count))
+                count = labels_by_arch[arch][symbol]
+                if count != 1:
+                    gaps.append(PlatformGap(path, arch, 'label', symbol, count))
+    return gaps
+
+
+def expression_value(expression, defines):
+    expression = re.sub(
+        r'\bdefined\s*(?:\(\s*([A-Za-z_]\w*)\s*\)|([A-Za-z_]\w*))',
+        lambda match: '1' if (match.group(1) or match.group(2)) in defines else '0',
+        expression)
+    pieces = re.findall(r'&&|\|\||!|\(|\)|0[xX][0-9A-Fa-f]+|\d+|[A-Za-z_]\w*',
+                        expression)
+    converted = []
+    for piece in pieces:
+        if piece == '&&':
+            converted.append('and')
+        elif piece == '||':
+            converted.append('or')
+        elif piece == '!':
+            converted.append('not')
+        elif re.fullmatch(r'[A-Za-z_]\w*', piece):
+            converted.append('1' if piece in defines else '0')
+        else:
+            converted.append(piece)
+    try:
+        # The input alphabet above contains no calls, attributes, or operators
+        # other than boolean grouping and integer constants.
+        return bool(eval(' '.join(converted), {'__builtins__': {}}, {}))
+    except (SyntaxError, ValueError):
+        return False
+
+
+def active_includes(directives, target):
+    if target == 'all':
+        return [(directive, literal_include(directive)) for directive in directives
+                if literal_include(directive)]
+
+    defines = TARGET_DEFINES[target]
+    active, stack, found = True, [], []
+    for directive in directives:
+        kind, rest = directive_parts(directive)
+        if kind in ('if', 'ifdef', 'ifndef'):
+            if kind == 'ifdef':
+                condition = rest in defines
+            elif kind == 'ifndef':
+                condition = rest not in defines
+            else:
+                condition = expression_value(rest, defines)
+            stack.append({'parent': active, 'taken': condition, 'else': False})
+            active = active and condition
+        elif kind == 'elif' and stack:
+            frame = stack[-1]
+            condition = not frame['taken'] and expression_value(rest, defines)
+            frame['taken'] = frame['taken'] or condition
+            active = frame['parent'] and condition
+        elif kind == 'else' and stack:
+            frame = stack[-1]
+            condition = not frame['taken'] and not frame['else']
+            frame['taken'], frame['else'] = True, True
+            active = frame['parent'] and condition
+        elif kind == 'endif' and stack:
+            active = stack.pop()['parent']
+        elif kind == 'include' and active:
+            include = literal_include(directive)
+            if include:
+                found.append((directive, include))
+    return found
+
+
+def included_audit(root, target):
+    """Scan the selected raw quoted-include graph, guarding include cycles."""
+    root = os.path.realpath(root)
+    pending, seen = [root], set()
+    bodies, c_includes, missing, sources = [], [], [], {}
+
+    while pending:
+        path = pending.pop()
+        if path in seen:
+            continue
+        seen.add(path)
+        try:
+            with open(path, encoding='utf-8') as source:
+                text = source.read()
+        except OSError as error:
+            missing.append((path, 0, str(error)))
+            continue
+        sources[path] = text
+        tokens, directives = lex(text)
+        del tokens
+        if path != root:
+            bodies.extend(c_bodies(path, text))
+
+        selected = [] if target == 'direct' else active_includes(directives, target)
+        # In the root itself, a dormant textual .c include is still forbidden.
+        hygiene = [(directive, literal_include(directive)) for directive in directives
+                   if literal_include(directive)] if path == root else selected
+        for directive, include in hygiene:
+            name, quoted = include
+            if name.lower().endswith('.c'):
+                c_includes.append(Include(path, name, directive.line))
+
+        for directive, include in selected:
+            name, quoted = include
+            if not quoted:
+                continue
+            child = os.path.realpath(os.path.join(os.path.dirname(path), name))
+            if os.path.isfile(child):
+                pending.append(child)
+            else:
+                missing.append((path, directive.line, name))
+    return bodies, c_includes, missing, sources
+
+
+def display_path(path, root):
+    base = os.path.dirname(os.path.realpath(root))
+    try:
+        return os.path.relpath(path, base)
+    except ValueError:
+        return path
+
+
+def main(path, check=False, target='all'):
+    with open(path, encoding='utf-8') as source:
+        text = source.read()
+    original = text
+    direct_bodies = c_bodies(path, text)
+    direct_macros = macro_bodies(path, text)
+    included_bodies, c_includes, missing, selected_sources = \
+        included_audit(path, target)
+    root_path = os.path.realpath(path)
+    included_macros = []
+    for source_path, source_text in selected_sources.items():
+        if source_path != root_path:
+            included_macros.extend(macro_bodies(source_path, source_text))
+    if target == 'linux':
+        linux_sources, parity_missing = selected_sources, missing
+    else:
+        _, _, parity_missing, linux_sources = included_audit(path, 'linux')
+    have, order, unscoped, duplicates = graph_assembly_inventory(linux_sources)
+    if target in ('macos', 'all'):
+        macos_sources, platform_missing = selected_sources, missing
+    else:
+        _, _, platform_missing, macos_sources = included_audit(path, 'macos')
+    platform_gaps = macos_runtime_parity(macos_sources)
 
     rows, gaps = [], []
     for n in sorted(order):
@@ -105,14 +758,40 @@ def main(path):
     if gaps:
         body += ['', '        Not yet on every machine:']
         for n in gaps:
-            missing = [a for a in ('X64','ARM64','RISCV64') if a not in have[n]]
+            missing_arches = [a for a in ARCHES if a not in have[n]]
             names = {'X64':'x86_64','ARM64':'arm64','RISCV64':'riscv64'}
             body.append(f'          {n} -- missing on ' +
-                        ', '.join(names[a] for a in missing))
-    if in_c:
-        body += ['', '        Assembly, and a C implementation as well:']
-        for n in sorted(set(in_c)):
-            body.append(f'          {n}')
+                        ', '.join(names[a] for a in missing_arches))
+    if direct_bodies:
+        body += ['', '        C function bodies still present (forbidden):']
+        for found in direct_bodies:
+            body.append(f'          {found.name} -- line {found.line}')
+    if direct_macros:
+        body += ['', '        Macros that generate C function bodies (forbidden):']
+        for found in direct_macros:
+            body.append(f'          {found.name} -- line {found.line}')
+    if c_includes:
+        direct_includes = [item for item in c_includes
+                           if os.path.realpath(item.path) == os.path.realpath(path)]
+        if direct_includes:
+            body += ['', '        Textual .c includes still present (forbidden):']
+            for found in direct_includes:
+                body.append(f'          {found.name} -- line {found.line}')
+    if unscoped:
+        body += ['', '        Assembly routines outside an architecture block:']
+        for source_path, name, line in unscoped:
+            body.append(
+                f'          {name} -- {display_path(source_path, path)}, line {line}')
+    if duplicates:
+        body += ['', '        Duplicate assembly routines on one architecture:']
+        for name, arch, count in duplicates:
+            body.append(f'          {name} -- {arch}, {count} definitions')
+    if platform_gaps:
+        body += ['', '        macOS raw assembly runtime parity gaps:']
+        for found in platform_gaps:
+            body.append(
+                f'          {found.arch} {found.kind} {found.symbol} -- '
+                f'{found.count} definitions')
     body += ['*/', '']
     block = '\n'.join(body)
 
@@ -122,7 +801,76 @@ def main(path):
     else:
         anchor = '\n#ifndef STANDARD_MODERN_C\n'
         text = text.replace(anchor, '\n' + block + anchor, 1)
-    open(path, 'w').write(text)
-    sys.stderr.write(f'inventory: {len(order)} routines, {len(gaps)} not at parity\n')
+    stale = text != original
+    if not check:
+        with open(path, 'w', encoding='utf-8') as destination:
+            destination.write(text)
+    sys.stderr.write(
+        f'inventory: {len(order)} routines, {len(gaps)} not at parity, '
+        f'{len(direct_bodies)} direct C bodies, '
+        f'{len(included_bodies)} included C bodies, '
+        f'{len(direct_macros) + len(included_macros)} body macros, '
+        f'{len(c_includes)} .c includes, '
+        f'{len(platform_gaps)} macOS parity gaps\n')
+    for name in gaps:
+        absent = [arch for arch in ARCHES if arch not in have[name]]
+        sys.stderr.write(
+            f'inventory: ASM_FUNC {name} missing on {", ".join(absent)}\n')
+    for found in direct_bodies + included_bodies:
+        sys.stderr.write(
+            f'inventory: forbidden C body {found.name} at '
+            f'{display_path(found.path, path)}:{found.line}\n')
+    for found in direct_macros + included_macros:
+        sys.stderr.write(
+            f'inventory: body-generating macro {found.name} at '
+            f'{display_path(found.path, path)}:{found.line}\n')
+    for found in c_includes:
+        sys.stderr.write(
+            f'inventory: forbidden .c include {found.name} at '
+            f'{display_path(found.path, path)}:{found.line}\n')
+    missing_diagnostics = list(missing)
+    if parity_missing is not missing:
+        for item in parity_missing:
+            if item not in missing_diagnostics:
+                missing_diagnostics.append(item)
+    if platform_missing is not missing:
+        for item in platform_missing:
+            if item not in missing_diagnostics:
+                missing_diagnostics.append(item)
+    for source_path, line, name in missing_diagnostics:
+        sys.stderr.write(
+            f'inventory: missing quoted include {name} at '
+            f'{display_path(source_path, path)}:{line}\n')
+    for source_path, name, line in unscoped:
+        sys.stderr.write(
+            f'inventory: unscoped ASM_FUNC {name} at '
+            f'{display_path(source_path, path)}:{line}\n')
+    for name, arch, count in duplicates:
+        sys.stderr.write(
+            f'inventory: duplicate ASM_FUNC {name} on {arch}: {count}\n')
+    for found in platform_gaps:
+        sys.stderr.write(
+            f'inventory: macOS {found.arch} {found.kind} {found.symbol} '
+            f'expected once, found {found.count} at '
+            f'{display_path(found.path, path)}\n')
+    if check and stale:
+        sys.stderr.write('inventory: generated block is stale\n')
+    invalid = (gaps or direct_bodies or included_bodies or direct_macros
+               or included_macros or c_includes or missing or parity_missing
+               or platform_missing or unscoped or duplicates or platform_gaps)
+    if invalid or (check and stale):
+        return 1
+    return 0
 
-main(sys.argv[1])
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(
+        description='generate or check the assembly inventory and zero-C gate')
+    parser.add_argument('--check', action='store_true',
+                        help='do not rewrite; reject a stale generated block')
+    parser.add_argument('--target', choices=('linux', 'macos', 'windows', 'all', 'direct'),
+                        default='all',
+                        help='quoted-include graph to scan (default: all)')
+    parser.add_argument('path')
+    arguments = parser.parse_args()
+    sys.exit(main(arguments.path, check=arguments.check, target=arguments.target))

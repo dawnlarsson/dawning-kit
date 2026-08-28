@@ -2,12 +2,12 @@
 #
 #       Writes src/test/exact.c.
 #
-#       The sizes in library.c that are known where the call is written expand
-#       to a straight line of moves instead of a call, and which line depends
-#       on the number. A test that gets its size from a loop counter cannot
-#       reach any of them: the size has to be a literal, sitting in the source,
-#       for the compiler to fold the choice. So the checks are written out, one
-#       per size, by this.
+#       The compiler_memory.c layer expands sizes known where the call is
+#       written to a straight line of moves instead of a call, and which line
+#       depends on the number. A test that gets its size from a loop counter
+#       cannot reach any of them: the size has to be a literal, sitting in the
+#       source, for the compiler to fold the choice. So the checks are written
+#       out, one per size, by this.
 #
 #       Sizes run past the point where the expansion stops and the routine
 #       takes over again, so the seam is covered from both sides.
@@ -22,7 +22,7 @@ SLIDE = 40              # how far a move is slid in each direction
 
 out = sys.stdout.write
 
-out('''#include "../library.c"
+out('''#include "../compiler_memory.c"
 /*
         Every size that is known where the call is written.
 

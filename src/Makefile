@@ -24,7 +24,7 @@ moonwater-y := core.o
 #       assembled by the toolchain's own assembler through the kernel's
 #       ordinary rule for .S files. See kit/asm for the dialect.
 #
-#       Two directories, named rather than found recursively. src/replace/
+#       Two directories, named rather than found recursively. kernel/replace/
 #       holds the other kind of .asm -- the ones that stand in for a file the
 #       kernel already builds -- and those must not be linked into the module
 #       as well, or the symbol they define exists twice and vmlinux does not

@@ -12,7 +12,7 @@ fi
 # silently missing whole feature sets. Check them all before writing anything.
 missing=0
 for profile in "$@"; do
-        if [ ! -f "profile/$profile" ]; then
+        if [ ! -f "kernel/profile/$profile" ]; then
         echo "config: no such profile: profile/$profile" >&2
         missing=1
         fi
@@ -26,7 +26,7 @@ cat artifacts/info >>artifacts/.config
 for profile in "$@"; do
         echo "" >>artifacts/.config
         echo "Adding profile: $profile"
-        cat "profile/$profile" >>artifacts/.config
+        cat "kernel/profile/$profile" >>artifacts/.config
 done
 
 #
@@ -53,7 +53,7 @@ if [ -n "$conflicts" ]; then
                 printf "  %s\n" "$option"
 
                 for profile in "$@"; do
-                        value=$(sed -n "s|^$option=\(.*\)\$|\1|p" "profile/$profile" | tail -1)
+                        value=$(sed -n "s|^$option=\(.*\)\$|\1|p" "kernel/profile/$profile" | tail -1)
                         [ -n "$value" ] && printf "      %-14s %s\n" "$profile" "$value"
                 done
         done

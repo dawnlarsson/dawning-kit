@@ -275,8 +275,21 @@ def main(path):
     # renamed with everything else it would alias a name onto itself. That
     # only comes up when this pass runs on its own output, which is what
     # happens once the result is landed.
+    #
+    # Do not recognize that block by comparing it with this pass's original
+    # template. The live block grows whenever another libc routine is claimed
+    # and its kernel guards change with the claim list. An exact comparison
+    # silently stopped protecting it, then the rename below produced
+    # `.set string_length, string_length` and eight more self aliases. Find
+    # the block by its structural bounds and put back the exact bytes read
+    # from the input instead.
     s = re.sub(r'ASM_EXPORT\(([a-z_0-9]+)\)', r'ASM_KEEP_EXPORT<\1>', s)
-    s = s.replace(ALIASES, 'ASM_KEEP_ALIASES\n')
+    alias_block = re.search(
+        r'/\*\n        The libc names, as second labels rather than as code\..*?'
+        r'^__asm__\(\n.*?^\);\n\n', s, flags=re.S | re.M)
+    aliases = alias_block.group(0) if alias_block else ALIASES
+    if alias_block:
+        s = s[:alias_block.start()] + 'ASM_KEEP_ALIASES\n' + s[alias_block.end():]
 
     for old, new in sorted(FROM_LIBC.items(), key=lambda kv: -len(kv[0])):
         for form in (f'ASM_FUNC({old})', f'ASM_END({old})'):
@@ -284,7 +297,7 @@ def main(path):
         s = re.sub(r'(?<=[\s,("])' + old + r'(?=[\s,:)("])', new, s)
         s = s.replace('.L' + old, '.L' + new)
     s = re.sub(r'ASM_KEEP_EXPORT<([a-z_0-9]+)>', r'ASM_EXPORT(\1)', s)
-    s = s.replace('ASM_KEEP_ALIASES\n', ALIASES)
+    s = s.replace('ASM_KEEP_ALIASES\n', aliases)
     note(f'{len(FROM_MOONWATER)} prefixed and {len(FROM_LIBC)} libc names renamed')
 
     # the libc-shaped prototypes said the same thing in another shape
@@ -368,7 +381,7 @@ address_any memcpy(address_any destination, address_any source, long unsigned in
         if ANCHOR not in s:
             note('the alias anchor is gone -- see ANCHOR in this file')
             sys.exit(1)
-        s = s.replace(ANCHOR, ALIASES + ANCHOR, 1)
+        s = s.replace(ANCHOR, aliases + ANCHOR, 1)
 
     open(path, 'w').write(s)
 

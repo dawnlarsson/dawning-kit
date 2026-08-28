@@ -1,0 +1,53 @@
+        What is in here, and why it is separate
+        =======================================
+
+        Everything in this repository that faces Linux, gathered in one place
+        so the licence boundary is a directory rather than a judgement call
+        made file by file.
+
+        The rest of the tree is Apache-2.0. Linux is GPL-2.0. Nothing here
+        changes either of those; this directory only makes the edge visible.
+
+
+        profile/
+
+        Kernel configuration, composed in order by kit/config, last request
+        winning. These are lists of CONFIG_ names and the values we want them
+        to have -- our choices about what to build, expressed in the kernel's
+        vocabulary. They contain no kernel code.
+
+        profile/modern is the one that removes what a kernel carries for
+        machines nobody here will boot. It is written to be read: every entry
+        says what it removes and, where it was found by measuring, what the
+        measurement was.
+
+
+        replace/
+
+        Assembly that stands in for a file the kernel already builds, put in
+        its place by kit/asm_replace before the kernel is configured. This is
+        the part that is genuinely entangled: a replacement occupies the same
+        position in the build as the GPL-2.0 file it displaces, and whether a
+        given one is an independent implementation or a derivative work is a
+        question about that file and not about this directory.
+
+        Nothing here declares a licence for those files. That is the owner's
+        to decide, per file, and this note exists so the decision is not made
+        by accident.
+
+
+        What is not in here, and cannot be
+
+        The module itself -- src/Makefile, src/Kconfig, src/core.c and the
+        library they build -- stays where it is. kbuild requires a module's
+        Makefile and Kconfig to sit at the root of the directory it compiles,
+        and build.sh symlinks that root to src/. Moving them here would mean
+        moving the whole library with them.
+
+        The claim and displace tables are still inside build.sh, around the
+        KERNEL CONFIG label. They are the other place this repository writes
+        into the kernel tree: a claim adds a __HAVE_ARCH_ line and a
+        declaration to the architecture's string header, and a displace
+        comments an object out of an architecture's lib/Makefile. Both edit
+        files under linux/, which is downloaded and not part of this
+        repository, and both are undone by a fresh extraction.

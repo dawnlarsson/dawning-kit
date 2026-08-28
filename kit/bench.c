@@ -1,4 +1,4 @@
-#include "../src/library.c"
+#include "../src/compiler_memory.c"
 
 /*
         The assembly against the C byte loop it replaced.
@@ -9,7 +9,7 @@
         actually turns on, so "a word at a time is faster" is a number rather
         than a belief.
 
-        The foreign two run under qemu, and a qemu tick is the emulator's work
+        Foreign targets run under qemu, and a qemu tick is the emulator's work
         and not the machine's. What it measures honestly is how much less work
         there is to do; what it cannot tell you is what a real board would say.
 

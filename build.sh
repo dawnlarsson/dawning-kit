@@ -865,7 +865,7 @@ size "$image"
 #       nothing whatsoever. This line is what stands between that and here.
 #
 #       This comment used to say the image booted on the default too. It does
-#       not, and did not; see profile/arch/x64.
+#       not, and did not; see kernel/profile/arch/x64.
 set -- \
         -m 2G \
         -smp 2 \

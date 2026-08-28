@@ -1,16 +1,32 @@
 #!/bin/sh
 #
-#       Runs kit/bench.c on every architecture.
+#       Runs the general, hardware-floor, or number-conversion suite on every
+#       architecture.
 #
 #       The same freestanding link src/test/run uses, for the same reason: the
 #       thing being measured is library.c's own assembly, and a libc in the
 #       link would supply the very functions in question.
 #
-#       arm64 and riscv64 run under qemu. A qemu tick is the emulator's work
-#       and not the machine's, so what comes out is a ratio worth reading and
-#       an absolute number that is not.
+#       Foreign targets run under qemu. A qemu tick is the emulator's work and
+#       not the machine's, so what comes out is a ratio worth reading and an
+#       absolute number that is not. A Linux host target runs directly.
 #
-set -e
+set -u
+
+case ${1:-} in
+"")      source_file=kit/bench.c ;;
+floor)   source_file=kit/floor.c ;;
+numbers) source_file=kit/bench_numbers.c ;;
+*)       echo "bench: use 'sh kit/bench', 'sh kit/bench floor', or 'sh kit/bench numbers'" >&2; exit 2 ;;
+esac
+
+host_system=$(uname -s)
+case $(uname -m) in
+x86_64 | amd64) host_arch=x86_64 ;;
+arm64 | aarch64) host_arch=arm64 ;;
+riscv64)         host_arch=riscv64 ;;
+*)               host_arch=unknown ;;
+esac
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT INT TERM
@@ -20,25 +36,67 @@ run() {
         compiler=$2
         runner=$3
 
+        case $name in
+        arm64) architecture_flags=-mno-outline-atomics ;;
+        riscv64) architecture_flags='-march=rv64imafd_zicsr_zicntr -mabi=lp64d' ;;
+        *)     architecture_flags= ;;
+        esac
+
         if ! command -v "$compiler" >/dev/null 2>&1; then
-                echo "$name: no $compiler, skipped"
-                return 0
+                echo "$name: NOT RUN -- no $compiler"
+                return 2
         fi
 
         if [ -n "$runner" ] && ! command -v "$runner" >/dev/null 2>&1; then
-                echo "$name: no $runner, skipped"
-                return 0
+                echo "$name: NOT RUN -- no $runner"
+                return 2
         fi
 
-        "$compiler" -O2 -static -nostdlib -nostartfiles -fno-stack-protector \
+        "$compiler" $architecture_flags \
+                -O2 -static -nostdlib -nostartfiles -fno-stack-protector \
                 -fno-builtin -T kit/spark.ld -Wl,-e,_start -Wl,--build-id=none \
                 -Wl,--no-warn-rwx-segments \
-                -o "$work/$name" kit/bench.c
+                -o "$work/$name" "$source_file" || return 1
 
         echo "$name:"
         $runner "$work/$name"
 }
 
-run x86_64 gcc ""
-run arm64 aarch64-linux-gnu-gcc qemu-aarch64
-run riscv64 riscv64-linux-gnu-gcc qemu-riscv64
+target_tools()
+{
+        target=$1
+
+        if [ "$host_system" = Linux ] && [ "$host_arch" = "$target" ]; then
+                target_compiler=${CC:-gcc}
+                target_runner=
+                return
+        fi
+
+        case $target in
+        x86_64) target_compiler=x86_64-linux-gnu-gcc; target_runner=qemu-x86_64 ;;
+        arm64)  target_compiler=aarch64-linux-gnu-gcc; target_runner=qemu-aarch64 ;;
+        riscv64) target_compiler=riscv64-linux-gnu-gcc; target_runner=qemu-riscv64 ;;
+        esac
+}
+
+failed=0
+missing=0
+
+for target in x86_64 arm64 riscv64; do
+        target_tools "$target"
+        outcome=0
+        run "$target" "$target_compiler" "$target_runner" || outcome=$?
+
+        case $outcome in
+        0) ;;
+        2) missing=1 ;;
+        *) failed=1 ;;
+        esac
+done
+
+[ "$failed" = 0 ] || exit 1
+
+if [ "$missing" != 0 ]; then
+        echo "bench: incomplete; every reported target above must run"
+        exit 1
+fi

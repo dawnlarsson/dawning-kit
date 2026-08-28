@@ -18,7 +18,7 @@
 
             sh kit/bench floor        every architecture
 */
-#include "../src/library.c"
+#include "../src/compiler_memory.c"
 
 #define NOT_INLINED __attribute__((noinline))
 

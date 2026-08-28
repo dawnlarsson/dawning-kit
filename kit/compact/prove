@@ -5,7 +5,10 @@
 #           sh kit/compact/prove <before.c> <after.c>
 #
 #       Compiles each for x86_64, arm64 and riscv64 and diffs the disassembly.
-#       Empty diff on all three is the only pass.
+#       RISC-V is compiled at RV64IMAFD_Zicsr_Zicntr, not the toolchain's usual
+#       GC default, so the proof is also unable to admit a compressed
+#       instruction and the time CSR is stated rather than smuggled in. Empty
+#       diff on all three is the only pass.
 #
 set -u
 
@@ -27,6 +30,9 @@ root=$(CDPATH= cd -- "$here/../.." && pwd)
 work=$(mktemp -d "${TMPDIR:-/tmp}/prove.XXXXXX") || exit 1
 trap 'rm -rf "$work"' EXIT INT TERM
 
+# Deliberately compile the pure library. Compiler-owned call-site
+# specializations live in compiler_memory.c and are not instructions emitted
+# by either library snapshot.
 echo '#include "library.c"' > "$work/tu.c"
 
 snap() {
@@ -37,7 +43,13 @@ snap() {
 
         for t in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu \
                  riscv64-unknown-linux-gnu; do
-                "$CLANG" --target="$t" -c "$work/tu.c" -o "$work/$tag-$t.o" \
+                case $t in
+                riscv64-*) set -- -march=rv64imafd_zicsr_zicntr -mabi=lp64d ;;
+                *)         set -- ;;
+                esac
+
+                "$CLANG" --target="$t" "$@" \
+                        -c "$work/tu.c" -o "$work/$tag-$t.o" \
                         -I"$work/$tag" -nostdlib -ffreestanding -fno-builtin \
                         -O2 -fno-stack-protector -fno-PIE 2>"$work/$tag-$t.err" || {
                         echo "prove: $src does not compile for $t" >&2
