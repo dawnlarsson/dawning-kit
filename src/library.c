@@ -7645,6 +7645,25 @@ ASM_EXPORT(strnchr);
         That is also why a constant pool is safe here: nothing in this block
         ever gets linked into a module.
 */
+
+//
+//      The constants both routines read, and the three characters the second
+//      writes. One table: .4byte and /* */ are what all three assemblers
+//      spell the same way, where .long, .word, # and // are not.
+//
+#define DECIMAL_TABLE                                                         \
+    ".section .rodata\n   .balign 8\n"                                        \
+    "decimal_constants:\n   .quad 0x401921fb60000000  /* PI2, widened */\n"   \
+    ".quad 0x400921fb60000000  /* PI */\n"                                    \
+    ".quad 0x3ff921fb60000000  /* PI / 2 */\n"                                \
+    ".quad 0x4023bd3ce0000000  /* PI * PI, folded in float */\n"              \
+    ".quad 0x4010000000000000  /* 4.0 */\n"                                   \
+    ".quad 0xc010000000000000  /* -4.0 */\n"                                  \
+    ".quad 0x412e848000000000  /* 1000000.0 */\n"                             \
+    ".quad 0x8000000000000000  /* the sign bit alone */\n"                    \
+    ".4byte 0x40c90fdb  /* PI2 as it was written, a float */\n"               \
+    "decimal_marks:\n   .byte 45  /* the three, written one at a time */\n"   \
+    ".byte 46\n   .byte 48\n   .text\n"
 #ifndef KERNEL_MODE
 #if X64
 __asm__(
@@ -7679,18 +7698,7 @@ __asm__(
     //      this routine and a spare load off the critical path does not move
     //      further than the machine's own noise.
     //
-    ".section .rodata\n   .balign 8\n"
-    "decimal_constants:\n   .quad 0x401921fb60000000  # PI2, widened\n"
-    ".quad 0x400921fb60000000  # PI\n"
-    ".quad 0x3ff921fb60000000  # PI / 2\n"
-    ".quad 0x4023bd3ce0000000  # PI * PI, folded in float\n"
-    ".quad 0x4010000000000000  # 4.0\n"
-    ".quad 0xc010000000000000  # -4.0\n"
-    ".quad 0x412e848000000000  # 1000000.0\n"
-    ".quad 0x8000000000000000  # the sign bit alone\n"
-    ".long 0x40c90fdb  # PI2 as it was written, a float\n"
-    "decimal_marks:\n   .byte 45  # the three characters written one at a time\n"
-    ".byte 46\n   .byte 48\n   .text\n"
+    DECIMAL_TABLE
     ASM_FUNC(fast_sin)
     "movsd decimal_constants(%rip), %xmm2\n   movapd %xmm0, %xmm1  # keep x\n"
     "divsd %xmm2, %xmm0\n   cvttsd2siq %xmm0, %rax\n   pxor %xmm0, %xmm0\n   cvtsi2ssq %rax, %xmm0  # single: PI2 is a float constant\n"
@@ -7768,18 +7776,7 @@ __asm__(
     // float and only the subtraction happens in double. One anchor in x1
     // covers every constant the routine wants, which is what gcc does with its
     // own .LANCHOR0.
-    ".section .rodata\n   .balign 8\n"
-    "decimal_constants:\n   .quad 0x401921fb60000000  // PI2, widened\n"
-    ".quad 0x400921fb60000000  // PI\n"
-    ".quad 0x3ff921fb60000000  // PI / 2\n"
-    ".quad 0x4023bd3ce0000000  // PI * PI, folded in float\n"
-    ".quad 0x4010000000000000  // 4.0\n"
-    ".quad 0xc010000000000000  // -4.0\n"
-    ".quad 0x412e848000000000  // 1000000.0\n"
-    ".quad 0x8000000000000000  // the sign bit alone\n"
-    ".word 0x40c90fdb  // PI2 as it was written, a float\n"
-    "decimal_marks:\n   .byte 45  // the three characters written one at a time\n"
-    ".byte 46\n   .byte 48\n   .text\n"
+    DECIMAL_TABLE
     ASM_FUNC(fast_sin)
     "adrp x1, decimal_constants\n   add x1, x1, :lo12:decimal_constants\n   ldr d1, [x1]  // PI2, widened\n"
     "fdiv d2, d0, d1\n   fcvtzs x2, d2\n   scvtf s2, x2\n   ldr s3, [x1, #64]  // single: PI2 is a float constant\n"
@@ -7856,18 +7853,7 @@ __asm__(
 __asm__(
     // Same again. fcvt.s.l then fmul.s then fcvt.d.s is the float multiply the
     // C asks for, not a widening left half done.
-    ".section .rodata\n   .balign 8\n"
-    "decimal_constants:\n   .quad 0x401921fb60000000  # PI2, widened\n"
-    ".quad 0x400921fb60000000  # PI\n"
-    ".quad 0x3ff921fb60000000  # PI / 2\n"
-    ".quad 0x4023bd3ce0000000  # PI * PI, folded in float\n"
-    ".quad 0x4010000000000000  # 4.0\n"
-    ".quad 0xc010000000000000  # -4.0\n"
-    ".quad 0x412e848000000000  # 1000000.0\n"
-    ".quad 0x8000000000000000  # the sign bit alone\n"
-    ".word 0x40c90fdb  # PI2 as it was written, a float\n"
-    "decimal_marks:\n   .byte 45  # the three characters written one at a time\n"
-    ".byte 46\n   .byte 48\n   .text\n"
+    DECIMAL_TABLE
     ASM_FUNC(fast_sin)
     "lla t2, decimal_constants\n   fld ft1, 0(t2)  # PI2, widened\n"
     "fdiv.d ft2, fa0, ft1\n   fcvt.l.d t0, ft2, rtz\n   fcvt.s.l ft2, t0\n   flw ft3, 64(t2)  # single: PI2 is a float constant\n"
