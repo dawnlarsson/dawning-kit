@@ -42,6 +42,39 @@
 #
 #       LC_ALL=C for the same reason every other lane sets it, and TZ so that
 #       the reference and ours agree about what +0000 means.
+#
+#       What is not here, written down so that the absence is a decision and
+#       not an oversight:
+#
+#         * TZ. Our diff prints a -u timestamp in UTC, always: the tree has
+#           no reader for /usr/share/zoneinfo and nothing else in it wants
+#           one. Pinning TZ=UTC0 above makes the reference agree, which also
+#           means no case here covers a machine whose clock is not UTC.
+#
+#         * The formats we do not have. Context (-c), -U with a count of its
+#           own, -I, -Z, --from-file, and the obsolete -NUM spelling of the
+#           context count are not implemented and are not compared. diff -Z9
+#           is a real GNU invocation and ours refuses it.
+#
+#         * Names with a space or a quote in them. GNU quotes a name in a
+#           header and in an "Only in" line; ours prints the bytes. Nothing
+#           below uses such a name.
+#
+#         * Where the binary check looks. GNU decides a file is binary from
+#           the first buffer it read; ours looks at the whole file, so a
+#           large file whose first zero byte is a long way in is binary to us
+#           and text to GNU.
+#
+#         * A read that comes back short from a pipe that is still being
+#           written. The one case below that reaches it uses a fifo with a
+#           pause in it, and only to check that a signal does not shorten a
+#           read. Two runs of a racing writer do not agree with each other,
+#           so there is no comparison against the reference to be had.
+#
+#         * ps content. RSS here is the page count out of /proc/PID/stat
+#           rather than the field procps reads, STIME is UTC, and C is a
+#           simpler ratio than the reference computes. The ps cases compare
+#           shape for that reason as well as the obvious one.
 
 LC_ALL=C
 TZ=UTC0
@@ -492,7 +525,8 @@ listed_fail=$fail
 #
 #       The generated ones.
 #
-#       Random pairs of files over a small alphabet, diffed both ways. The
+#       Random pairs of files over a small alphabet diffed both ways, and dd
+#       given operands drawn out of a hat. The
 #       alphabet is small on purpose: with every line distinct the longest
 #       common subsequence is unique and any correct implementation agrees,
 #       so a generator over distinct lines reports green and proves nothing.
@@ -649,6 +683,141 @@ for _ in range(rounds // 2):
         for cut_b in (False, True):
             both([], a[:-1] if cut_a else a, b[:-1] if cut_b else b)
             both(["-u"], a[:-1] if cut_a else a, b[:-1] if cut_b else b)
+
+#       Directory trees, which are the one place a name from one level can be
+#       compared against a name from another: the walk recurses, and a level
+#       that kept its names in a buffer shared with the level below went on
+#       comparing whatever the level below left there. What is compared is
+#       the whole listing -- the "Only in" lines, their order, the headers
+#       naming each pair, and the diffs themselves.
+import shutil
+
+
+def tree(root, seed):
+    shutil.rmtree(root, ignore_errors=True)
+    os.makedirs(root)
+
+    own = random.Random(seed)
+
+    for _ in range(own.randint(0, 8)):
+        name = os.path.join(root, "f%d" % own.randint(0, 10))
+        open(name, "w").write("".join(own.choice("abcde") + "\n"
+                                     for _ in range(own.randint(0, 12))))
+
+    for _ in range(own.randint(0, 3)):
+        under = os.path.join(root, "d%d" % own.randint(0, 4))
+        os.makedirs(under, exist_ok=True)
+
+        for _ in range(own.randint(0, 4)):
+            name = os.path.join(under, "g%d" % own.randint(0, 6))
+            open(name, "w").write("".join(own.choice("xyz") + "\n"
+                                          for _ in range(own.randint(0, 8))))
+
+        deeper = os.path.join(under, "deeper")
+        os.makedirs(deeper, exist_ok=True)
+        open(os.path.join(deeper, "h"), "w").write(
+            "".join(own.choice("pq") + "\n" for _ in range(own.randint(0, 5))))
+
+
+one = os.path.join(work, "tree_a")
+two = os.path.join(work, "tree_b")
+
+for round_number in range(rounds // 6):
+    tree(one, round_number * 2)
+    tree(two, round_number * 2 + random.choice([0, 1, 7]))
+
+    for flags in (["-r"], ["-r", "-u"], ["-r", "-q"], ["-r", "-N"],
+                  ["-r", "-N", "-u"], []):
+        want = subprocess.run(["diff"] + flags + [one, two],
+                              capture_output=True, env=environment)
+        got = subprocess.run([binary + "/diff"] + flags + [one, two],
+                             capture_output=True, env=environment)
+
+        total += 1
+
+        if want.stdout == got.stdout and want.returncode == got.returncode:
+            continue
+
+        bad += 1
+
+        if bad <= 6:
+            print("  diff %-14s want %r[%d] got %r[%d]"
+                  % (" ".join(flags) or "(plain)",
+                     want.stdout[:70], want.returncode,
+                     got.stdout[:70], got.returncode))
+
+shutil.rmtree(one, ignore_errors=True)
+shutil.rmtree(two, ignore_errors=True)
+
+#       dd, with operands drawn at random rather than listed. What is
+#       compared is standard output, the exit status, and the summary on the
+#       error stream with the duration and rate cut off. Sizes on either side
+#       of a block boundary are what make the records lines interesting: the
+#       counting is per block, and a naive one gets the last block wrong.
+sizes = [0, 1, 7, 511, 512, 513, 1000, 4096, 10000]
+feeds = []
+
+for which, size in enumerate(sizes):
+    name = os.path.join(work, "dd_feed_%d" % which)
+    open(name, "wb").write(bytes(random.randrange(256) for _ in range(size)))
+    feeds.append(name)
+
+suffixes = ["", "c", "b", "K", "KB", "KiB", "M"]
+
+
+def dd_both(args, feed):
+    global total, bad
+
+    want = subprocess.run(["dd"] + args, stdin=open(feed, "rb"),
+                          capture_output=True, env=environment)
+    got = subprocess.run([binary + "/dd"] + args, stdin=open(feed, "rb"),
+                         capture_output=True, env=environment)
+
+    want_error = want.stderr.split(b" copied,")[0]
+    got_error = got.stderr.split(b" copied,")[0]
+
+    total += 1
+
+    if (want.stdout == got.stdout and want_error == got_error
+            and want.returncode == got.returncode):
+        return
+
+    bad += 1
+
+    if bad <= 6:
+        print("  dd %-20s want %r[%d] got %r[%d]"
+              % (" ".join(args),
+                 want_error[:70], want.returncode,
+                 got_error[:70], got.returncode))
+
+
+for _ in range(rounds):
+    args = []
+
+    if random.random() < 0.6:
+        args.append("bs=%d%s" % (random.randint(1, 17), random.choice(suffixes)))
+    else:
+        args.append("ibs=%d" % random.randint(1, 300))
+        args.append("obs=%d" % random.randint(1, 300))
+
+    if random.random() < 0.5:
+        args.append("count=%d" % random.randint(0, 40))
+
+    if random.random() < 0.4:
+        args.append("skip=%d" % random.randint(0, 40))
+
+    conversions = [name for name in ("sync", "noerror", "fsync", "fdatasync")
+                   if random.random() < 0.25]
+
+    if conversions:
+        args.append("conv=" + ",".join(conversions))
+
+    level = random.choice(["status=noxfer", "status=noxfer", "status=none", ""])
+
+    if level:
+        args.append(level)
+
+    dd_both(args, random.choice(feeds))
 
 print("\n  %s of %s" % (total - bad, total))
 PYTHON

@@ -27,6 +27,7 @@
 #define DD_STATUS_NONE 2
 
 #define DD_SIGNAL_INFO 10
+#define DD_NO_SUCH_CALL 38
 
 static positive dd_in_full;
 static positive dd_in_partial;
@@ -616,7 +617,10 @@ static b32 tools_dd(void)
                         {
                                 system_call_3(syscall(lseek), in_handle, (positive)landed, 0);
 
-                                if ((positive)stop < want)
+                                // A size of zero is what a file that has no
+                                // size to report says, so it is not a file
+                                // that is too short.
+                                if (stop > 0 && (positive)stop < want)
                                         short_of_it = true;
                         }
                 }
@@ -798,8 +802,50 @@ static b32 tools_dd(void)
                         dd_out_partial++;
         }
 
-        if (conv & (DD_FSYNC | DD_FDATASYNC))
-                system_call_1(syscall(fsync), out_handle);
+        /*
+                A stream that cannot be synced says so and is a failure. A
+                pipe answers the narrower call with "invalid argument", and
+                dd asks the wider one rather than giving up, which is why the
+                complaint about a pipe names fsync even when nobody asked for
+                it.
+        */
+        if (conv & DD_FDATASYNC)
+        {
+                bipolar done = system_call_1(syscall(fdatasync), out_handle);
+
+                if (done == -ERROR_INVALID || done == -DD_NO_SUCH_CALL)
+                {
+                        conv |= DD_FSYNC;
+                }
+                else if (done < 0)
+                {
+                        text_flush();
+                        dd_say("dd: fdatasync failed for '");
+                        dd_say(output ? output : (string_address) "standard output");
+                        dd_say("': ");
+                        dd_say(file_reason(done));
+                        dd_say("\n");
+
+                        result = 1;
+                }
+        }
+
+        if (conv & DD_FSYNC)
+        {
+                bipolar done = system_call_1(syscall(fsync), out_handle);
+
+                if (done < 0)
+                {
+                        text_flush();
+                        dd_say("dd: fsync failed for '");
+                        dd_say(output ? output : (string_address) "standard output");
+                        dd_say("': ");
+                        dd_say(file_reason(done));
+                        dd_say("\n");
+
+                        result = 1;
+                }
+        }
 
         if (out_handle != 1)
                 system_call_1(syscall(close), out_handle);
@@ -2237,17 +2283,19 @@ static b32 diff_pair(string_address left, string_address right)
 
 #define DIFF_NAMES_MAX 2048
 
-static string_address diff_names[2][DIFF_NAMES_MAX];
-static positive diff_name_count[2];
-static p8 diff_name_store[2][1 << 18];
-static positive diff_name_used[2];
+/*
+        The names in one directory, with the bytes taken from the arena.
 
-static bool diff_gather(b32 which, string_address path)
+        A walk that is going to recurse cannot keep its names in a buffer of
+        its own, because the level below would write over them and the level
+        above would go on comparing whatever landed there.
+*/
+static bool diff_gather(string_address path, string_address address_to names,
+                        positive address_to count)
 {
         file_walk walk;
 
-        diff_name_count[which] = 0;
-        diff_name_used[which] = 0;
+        address_to count = 0;
 
         if (!file_walk_open(address_of walk, AT_FDCWD, path))
         {
@@ -2268,33 +2316,37 @@ static bool diff_gather(b32 which, string_address path)
                 if (file_is_dot(entry->d_name))
                         continue;
 
-                positive length = string_length(entry->d_name);
-
-                if (diff_name_count[which] >= DIFF_NAMES_MAX ||
-                    diff_name_used[which] + length + 1 >= sizeof(diff_name_store[0]))
+                if (address_to count >= DIFF_NAMES_MAX)
                         break;
 
-                p8 address_to at = diff_name_store[which] + diff_name_used[which];
+                positive length = string_length(entry->d_name);
+                p8 address_to at = (p8 address_to)text_arena_take(length + 1);
+
+                if (!at)
+                {
+                        file_walk_close(address_of walk);
+                        return false;
+                }
 
                 memory_copy(at, entry->d_name, length + 1);
-                diff_name_used[which] += length + 1;
-                diff_names[which][diff_name_count[which]++] = at;
+                names[address_to count] = at;
+                address_to count += 1;
         }
 
         file_walk_close(address_of walk);
 
-        for (positive i = 1; i < diff_name_count[which]; i++)
+        for (positive i = 1; i < address_to count; i++)
         {
-                string_address one = diff_names[which][i];
+                string_address one = names[i];
                 positive j = i;
 
-                while (j && string_compare(diff_names[which][j - 1], one) > 0)
+                while (j && string_compare(names[j - 1], one) > 0)
                 {
-                        diff_names[which][j] = diff_names[which][j - 1];
+                        names[j] = names[j - 1];
                         j--;
                 }
 
-                diff_names[which][j] = one;
+                names[j] = one;
         }
 
         return true;
@@ -2310,16 +2362,9 @@ static b32 diff_directories(string_address left, string_address right, positive 
         string_address names[2][DIFF_NAMES_MAX];
         positive counts[2];
 
-        if (!diff_gather(0, left) || !diff_gather(1, right))
+        if (!diff_gather(left, names[0], address_of counts[0]) ||
+            !diff_gather(right, names[1], address_of counts[1]))
                 return 2;
-
-        for (b32 f = 0; f < 2; f++)
-        {
-                counts[f] = diff_name_count[f];
-
-                for (positive i = 0; i < counts[f]; i++)
-                        names[f][i] = diff_names[f][i];
-        }
 
         positive i = 0, j = 0;
         b32 worst = 0;
