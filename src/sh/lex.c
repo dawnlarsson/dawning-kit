@@ -500,7 +500,7 @@ static b32 lex_word(string_address address_to at)
                         if (lex_used + run + 2 >= LEX_TEXT)
                                 return false;
 
-                        memory_copy(lex_text + lex_used, step, run);
+                        memory_copy_fast(lex_text + lex_used, step, run);
                         lex_used += run;
                         step += run;
 
