@@ -2311,24 +2311,64 @@ __asm__(
     "80: vzeroupper\n   jmp 8f\n"
     //
     //       The narrow path: a machine without the wide registers, and every
-    //       haystack too short for one block. memchr finds where the first
+    //       haystack too short for one block. memchr finds where the anchor
     //       byte is and memcmp says whether the rest followed, which is the
     //       naive search with both of its loops already written wide.
     //
-    //       The first byte rather than the rarest, because this path exists
-    //       for haystacks under sixty bytes, where choosing costs more than
-    //       it saves.
+    //       The rarest byte of the needle, not the first.
+    //
+    //       This said the first byte, on the grounds that the path existed
+    //       for haystacks under sixty bytes and choosing cost more than it
+    //       saved. That was true when it was written and stopped being true
+    //       when a kernel build stopped taking any wide path at all: there,
+    //       this body is the whole routine, at every length. Hunting the
+    //       first byte of "abcdefgh" through four kilobytes of "a" makes a
+    //       candidate of every position and calls memcmp on all of them --
+    //       measured at 228 times the wide body, and three times slower than
+    //       the naive loop in lib/string.c that this was meant to replace.
+    //       The rarest byte of that needle is in none of those positions and
+    //       the hunt ends in one pass.
+    //
+    //       One pass over the needle to choose, which is bounded by its
+    //       length and is why choosing was thought not to pay: against a
+    //       haystack that is one candidate per position it pays for itself
+    //       many times over, and against one that is not it is a handful of
+    //       byte loads.
+    //
+    //       Only the rarest, where the wide body takes the two rarest and
+    //       ands the masks. One is enough here because the check that
+    //       follows is a call, not a lane: a second probe would save part of
+    //       one memcmp per surviving position and cost a byte load at every
+    //       position.
     //
     //       A failed candidate is left one byte, not needle_size: "aab" is in
     //       "aaab", and a scan that resumes past what it matched cannot see
     //       it.
     //
     "6:  lea (%rbx,%rsi), %r14\n   sub %r12, %r14  # the last position a match could start at\n"
+    //
+    //      The needle is at least two bytes here: one was answered by memchr
+    //      at the top and zero by the front of the haystack. r13 keeps the
+    //      offset of the rarest byte, and nothing this calls writes r13.
+    //
+    "lea byte_commonness(%rip), %rdx\n"
+    "mov $256, %r8d\n   xor %r13d, %r13d\n   xor %ecx, %ecx\n"
+    "62: movzbl (%rbp,%rcx), %eax\n   movzbl (%rdx,%rax), %eax\n"
+    "cmp %r8, %rax\n   jae 63f\n   mov %rax, %r8\n   mov %rcx, %r13\n"
+    "63: inc %rcx\n   cmp %r12, %rcx\n   jb 62b\n"
     "mov %rbx, %r15\n"
+    //
+    //      The hunt runs at the anchor's offset, so a hit is that many bytes
+    //      into the candidate and the start is the hit less the offset. The
+    //      count is unchanged: there are as many anchors left to look at as
+    //      there are positions left to try, and the last of them is inside
+    //      the haystack because the offset is under the needle's length.
+    //
     "61: mov %r14, %rdx\n   sub %r15, %rdx\n   inc %rdx  # positions still to try\n"
-    "mov %r15, %rdi\n   movzbl (%rbp), %esi\n   call memory_first_of\n"
+    "lea (%r15,%r13), %rdi\n   movzbl (%rbp,%r13), %esi\n   call memory_first_of\n"
     "test %rax, %rax\n   jz 8f\n"
-    "mov %rax, %r15\n   mov %rax, %rdi\n   mov %rbp, %rsi\n   mov %r12, %rdx\n"
+    "sub %r13, %rax\n   mov %rax, %r15\n"
+    "mov %rax, %rdi\n   mov %rbp, %rsi\n   mov %r12, %rdx\n"
     "call memory_compare\n   test %eax, %eax\n   jz 7f\n"
     "inc %r15\n   cmp %r14, %r15\n   jbe 61b\n"
     "8:  xor %eax, %eax\n   jmp 9f\n"
@@ -4393,6 +4433,7 @@ ASM_EXPORT(memcmp);
 ASM_EXPORT(strchr);
 ASM_EXPORT(strchrnul);
 ASM_EXPORT(strcmp);
+ASM_EXPORT(strcpy);
 ASM_EXPORT(strlen);
 ASM_EXPORT(strnchr);
 ASM_EXPORT(strncmp);
@@ -8444,9 +8485,17 @@ __asm__(
     ASM_ALIAS(__memcpy,  memory_copy)
     ASM_ALIAS(__memmove, memory_copy)
     ASM_ALIAS(__memset,  memory_fill)
+    /*
+            strcpy, which x86 leaves to lib/string.c and lib/string.c writes
+            a byte at a time. 794 call sites. Ours is 2.8x it at 256 bytes
+            and 1.4x at sixteen, with the word at a time body a kernel build
+            runs, and it is the one name in the group below whose meaning
+            already matches: it returns the destination, and a copy has no
+            input that is bad for it the way a search does.
+    */
+    ASM_ALIAS(strcpy,    string_copy)
 #endif
 #ifndef KERNEL_MODE
-    ASM_ALIAS(strcpy,    string_copy)
     ASM_ALIAS(strncpy,   string_copy_max)
     /*
             strncpy is the one name here that does not mean what libc means
@@ -8454,6 +8503,20 @@ __asm__(
             the source filled the bound. The alias keeps the behaviour the
             wrapper before it had rather than quietly changing it, and this is
             the warning that went with it.
+    */
+    /*
+            strstr stays here, and is not claimed, on the numbers.
+
+            lib/string.c is naive -- strlen both, then memcmp at every offset
+            -- and against it string_find is 12.3x on a needle that matches
+            late in four kilobytes and 0.3x on one that never matches at all
+            in the same four kilobytes. Three times slower, on the case a
+            scan spends most of its life in.
+
+            1022 call sites, so being wrong about which shape they are is
+            expensive in the direction nobody would notice. It wants the two
+            rarest bytes memory_search picks, and until it has them this is
+            not a trade to make on a kernel.
     */
     ASM_ALIAS(strstr,    string_find)
     ASM_ALIAS(memmem,    memory_search)
