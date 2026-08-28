@@ -505,6 +505,38 @@ static b32 exec_call(b32 body)
         return status;
 }
 
+/*
+        set -x: the command about to run, written out.
+
+        After the words are expanded, so what is traced is what runs, and
+        before anything is redirected, so a command that sends its own errors
+        somewhere does not send the trace there with them. PS4 goes in front,
+        which is what a script marking its own depth changes.
+*/
+#define SHELL_XTRACE ((positive)1 << ('x' - 'a'))
+
+static fn exec_trace(b32 count)
+{
+        string_address prefix;
+        b32 at;
+
+        if (!(shell_options & SHELL_XTRACE))
+                return;
+
+        prefix = env_get("PS4");
+        exec_error(prefix ? prefix : (string_address) "+ ", 0);
+
+        for (at = 0; at < count; at++)
+        {
+                if (at)
+                        exec_error((string_address) " ", 1);
+
+                exec_error(shell_argv[at], 0);
+        }
+
+        exec_error((string_address) "\n", 1);
+}
+
 static bool exec_is_assignment(string_address word)
 {
         positive length = 0;
@@ -809,6 +841,8 @@ static b32 exec_simple(b32 index)
 
         for (at = 0; at < first; at++)
                 exec_assign(shell_argv[at]);
+
+        exec_trace(count);
 
         if (!exec_redirect_apply(index))
         {

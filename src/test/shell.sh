@@ -725,6 +725,27 @@ answer 'trap listed'     'trap "echo x" EXIT; trap'
 answer 'wait alone'      'wait; echo $?'
 answer 'background wait' 'sleep 0 & wait $!; echo $?'
 
+# set -x, whose output is on standard error and so has to be caught in a file
+# to be compared at all. What is traced is what runs: the words after they are
+# expanded, in front of PS4, and before the command's own redirections take
+# effect so that a command sending its errors away does not send the trace
+# with them. A compound command is not traced; the commands inside it are.
+
+group tracing
+answer 'trace a command'  '{ set -x; echo hi; } 2>/tmp/gx1.$$; cat /tmp/gx1.$$'
+answer 'trace expanded'   'x=ab; { set -x; echo $x$x; } 2>/tmp/gx2.$$; cat /tmp/gx2.$$'
+answer 'trace a glob'     'cd /; { set -x; echo /et*; } 2>/tmp/gx3.$$; cat /tmp/gx3.$$'
+answer 'trace assignment' '{ set -x; x=1 y=2; } 2>/tmp/gx4.$$; cat /tmp/gx4.$$'
+answer 'trace a prefix'   '{ set -x; x=1 true; } 2>/tmp/gx5.$$; cat /tmp/gx5.$$'
+answer 'trace a loop'     '{ set -x; for i in a b; do :; done; } 2>/tmp/gx6.$$; cat /tmp/gx6.$$'
+answer 'trace a condition' '{ set -x; if true; then :; fi; } 2>/tmp/gx7.$$; cat /tmp/gx7.$$'
+answer 'trace a function' 'f() { echo in; }; { set -x; f; } 2>/tmp/gx8.$$; cat /tmp/gx8.$$'
+answer 'trace a case'     '{ set -x; case x in x) echo m;; esac; } 2>/tmp/gx9.$$; cat /tmp/gx9.$$'
+answer 'trace uses ps4'   '{ set -x; PS4="> "; echo hi; } 2>/tmp/gxa.$$; cat /tmp/gxa.$$'
+answer 'trace turned off' '{ set -x; set +x; echo hi; } 2>/tmp/gxb.$$; cat /tmp/gxb.$$'
+answer 'trace not the redirect' '{ set -x; echo hi 2>/dev/null; } 2>/tmp/gxc.$$; cat /tmp/gxc.$$'
+answer 'trace a subshell' '{ set -x; (echo s); } 2>/tmp/gxd.$$; cat /tmp/gxd.$$'
+
 group globbing
 answer 'question mark'   'cd /; echo /et?'
 answer 'one of a class'  'cd /; echo /[e]tc'
@@ -963,6 +984,10 @@ differs 'escaped pattern' 'yes|' 0 'case aXb in a\*b) echo yes;; *) echo no;; es
 # The ceilings that are left, each of them refused out loud rather than
 # quietly answered wrong. A function goes as deep as the table its locals sit
 # in, which is a hundred and twenty eight calls.
+# echo drops an argument that expanded to nothing rather than writing the
+# separator around it, so "echo '' x" is one byte short.
+differs 'echo an empty word' 'x|' 0 'echo "" x'
+
 differs 'recursion has a floor' '' 1 'f() { [ $1 -le 0 ] && { echo bottom; return; }; f $(($1-1)); }; f 300'
 
 # MAX_TOKENS in shell.c is what a command line holds, so a glob that matches
