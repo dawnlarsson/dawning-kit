@@ -2536,77 +2536,59 @@ static fn cat_walked()
         }
 }
 
-static text_long cat_long_options[] = {
-    {"show-all", 'A', TEXT_LONG_ALONE},
-    {"number-nonblank", 'b', TEXT_LONG_ALONE},
-    {"show-ends", 'E', TEXT_LONG_ALONE},
-    {"number", 'n', TEXT_LONG_ALONE},
-    {"squeeze-blank", 's', TEXT_LONG_ALONE},
-    {"show-tabs", 'T', TEXT_LONG_ALONE},
-    {"show-nonprinting", 'v', TEXT_LONG_ALONE},
-    {null, 0, 0}};
+static const file_long cat_longs[] = {
+    {(string_address) "show-all", 'A'},
+    {(string_address) "number-nonblank", 'b'},
+    {(string_address) "show-ends", 'E'},
+    {(string_address) "number", 'n'},
+    {(string_address) "squeeze-blank", 's'},
+    {(string_address) "show-tabs", 'T'},
+    {(string_address) "show-nonprinting", 'v'},
+    {null, 0},
+};
 
 static b32 text_cat()
 {
-        b32 first = 1;
-        b32 inputs = 0;
+        file_taking taking = {
+            .program = (string_address) "cat",
+            // -u asks for unbuffered, which this always is.
+            .allowed = (string_address) "AETbenstuv",
+            .valued = (string_address) "",
+            .longs = cat_longs,
+        };
 
         text_begin("cat");
 
-        if (!text_expand_long(cat_long_options))
+        if (!file_take(address_of taking))
                 return text_done(1);
+
+        b32 first = (b32)taking.first;
+        b32 inputs = 0;
+        positive flags = taking.flags;
 
         cat_flags = 0;
         cat_line_number = 1;
         cat_blank_before = false;
         cat_at_line_start = true;
 
-        while (first < text_argument_count)
-        {
-                string_address argument = text_argument(first);
-                string_address letter;
+        if (flags & FILE_FLAG('b'))
+                cat_flags |= CAT_NUMBER_FULL;
+        else if (flags & FILE_FLAG('n'))
+                // -b wins over -n, as it does everywhere else.
+                cat_flags |= CAT_NUMBER;
 
-                if (argument[0] != '-' || !argument[1])
-                        break;
+        if (flags & (FILE_FLAG('E') | FILE_FLAG('e') | FILE_FLAG('A')))
+                cat_flags |= CAT_ENDS;
 
-                if (argument[1] == '-' && !argument[2])
-                {
-                        first++;
-                        break;
-                }
+        if (flags & (FILE_FLAG('T') | FILE_FLAG('t') | FILE_FLAG('A')))
+                cat_flags |= CAT_TABS;
 
-                for (letter = argument + 1; string_get(letter); letter++)
-                        switch (string_get(letter))
-                        {
-                        case 'n': cat_flags |= CAT_NUMBER; break;
-                        case 'b': cat_flags |= CAT_NUMBER_FULL; break;
-                        case 'E': cat_flags |= CAT_ENDS; break;
-                        case 'T': cat_flags |= CAT_TABS; break;
-                        case 'v': cat_flags |= CAT_SHOW; break;
-                        case 's': cat_flags |= CAT_SQUEEZE; break;
-                        case 'e': cat_flags |= CAT_SHOW | CAT_ENDS; break;
-                        case 't': cat_flags |= CAT_SHOW | CAT_TABS; break;
-                        case 'A':
-                                cat_flags |= CAT_SHOW | CAT_ENDS | CAT_TABS;
-                                break;
-                        // Unbuffered, which this always is.
-                        case 'u': break;
-                        default:
-                        {
-                                p8 named[3] = {'-', string_get(letter), 0};
+        if (flags & (FILE_FLAG('v') | FILE_FLAG('e') | FILE_FLAG('t') |
+                     FILE_FLAG('A')))
+                cat_flags |= CAT_SHOW;
 
-                                text_error(named, "invalid option");
-                                text_status = 1;
-                                return 1;
-                        }
-                        }
-
-                first++;
-        }
-
-        // -b wins over -n, as it does everywhere else.
-        if (cat_flags & CAT_NUMBER_FULL)
-                cat_flags &= ~(positive)CAT_NUMBER;
+        if (flags & FILE_FLAG('s'))
+                cat_flags |= CAT_SQUEEZE;
 
         for (b32 i = first; i < text_argument_count; i++)
                 inputs++;
@@ -2636,63 +2618,44 @@ static b32 text_cat()
         return text_status;
 }
 
-enum
-{
-        WC_LONG_DEBUG = 1
-};
-
-static text_long wc_long_options[] = {
-    {"lines", 'l', TEXT_LONG_ALONE},
-    {"words", 'w', TEXT_LONG_ALONE},
-    {"bytes", 'c', TEXT_LONG_ALONE},
-    {"chars", 'm', TEXT_LONG_ALONE},
-    {"max-line-length", 'L', TEXT_LONG_ALONE},
+static const file_long wc_longs[] = {
+    {(string_address) "lines", 'l'},
+    {(string_address) "words", 'w'},
+    {(string_address) "bytes", 'c'},
+    {(string_address) "chars", 'm'},
+    {(string_address) "max-line-length", 'L'},
     // --debug names the counting strategy on the error stream and leaves
-    // the counts alone, and there is one strategy here to name. A byte no
-    // keyboard sends, so wc -W stays the error GNU makes of it.
-    {"debug", WC_LONG_DEBUG, TEXT_LONG_ALONE},
-    {null, 0, 0}};
+    // the counts alone, and there is one strategy here to name. It borrows a
+    // D that `allowed` refuses, so wc -D stays the error GNU makes of it.
+    {(string_address) "debug", 'D'},
+    {null, 0},
+};
 
 static b32 text_wc()
 {
-        bool want_lines = false, want_words = false, want_bytes = false, want_chars = false;
-        bool want_longest = false;
+        file_taking taking = {
+            .program = (string_address) "wc",
+            .allowed = (string_address) "Lclmw",
+            .valued = (string_address) "",
+            .longs = wc_longs,
+            .operand = text_file_add,
+        };
+
+        text_begin("wc");
+
+        if (!file_take(address_of taking))
+                return text_done(1);
+
+        positive flags = taking.flags;
+        bool want_lines = (flags & FILE_FLAG('l')) != 0;
+        bool want_words = (flags & FILE_FLAG('w')) != 0;
+        bool want_bytes = (flags & FILE_FLAG('c')) != 0;
+        bool want_chars = (flags & FILE_FLAG('m')) != 0;
+        bool want_longest = (flags & FILE_FLAG('L')) != 0;
         positive total_lines = 0, total_words = 0, total_bytes = 0, total_longest = 0;
         positive width = 1;
         positive known = 0;
         bool unknown = false;
-
-        text_begin("wc");
-
-        if (!text_expand_long(wc_long_options))
-                return text_done(1);
-
-        for (b32 i = 1; i < text_argument_count; i++)
-        {
-                string_address argument = text_argument(i);
-
-                if (argument[0] == '-' && argument[1] && !text_files_count)
-                {
-                        if (argument[1] == '-' && !argument[2])
-                                continue;
-
-                        for (positive c = 1; argument[c]; c++)
-                                switch (argument[c])
-                                {
-                                case 'l': want_lines = true; break;
-                                case 'w': want_words = true; break;
-                                case 'c': want_bytes = true; break;
-                                case 'm': want_chars = true; break;
-                                case 'L': want_longest = true; break;
-                                case WC_LONG_DEBUG: break;
-                                default: break;
-                                }
-
-                        continue;
-                }
-
-                text_file_add(i);
-        }
 
         if (!want_lines && !want_words && !want_bytes && !want_chars && !want_longest)
         {
@@ -2999,29 +2962,28 @@ static b32 text_wc()
 }
 
 // util-linux's rev, not coreutils': -0 rather than -z, and no -q or -v.
-static text_long rev_long_options[] = {
-    {"zero", '0', TEXT_LONG_ALONE},
-    {null, 0, 0}};
+static const file_long rev_longs[] = {
+    {(string_address) "zero", '0'},
+    {null, 0},
+};
 
 static b32 text_rev()
 {
+        file_taking taking = {
+            .program = (string_address) "rev",
+            .allowed = (string_address) "0",
+            .valued = (string_address) "",
+            .longs = rev_longs,
+            .operand = text_file_add,
+        };
+
         text_begin("rev");
 
-        if (!text_expand_long(rev_long_options))
+        if (!file_take(address_of taking))
                 return text_done(1);
 
-        for (b32 i = 1; i < text_argument_count; i++)
-        {
-                string_address argument = text_argument(i);
-
-                if (argument[0] == '-' && argument[1] == '0' && !argument[2])
-                {
-                        text_delimiter = '\0';
-                        continue;
-                }
-
-                text_file_add(i);
-        }
+        if (taking.flags & FILE_FLAG('0'))
+                text_delimiter = '\0';
 
         b32 inputs = text_files_count ? text_files_count : 1;
 
@@ -3660,57 +3622,34 @@ static b32 text_tail()
         bytes, and both are taken and dropped -- but a letter that is not one
         of tee's is refused, because a script that misspelled one is told so.
 */
-static text_long tee_long_options[] = {
-    {"append", 'a', TEXT_LONG_ALONE},
-    {"ignore-interrupts", 'i', TEXT_LONG_ALONE},
-    {"output-error", 'p', TEXT_LONG_MAYBE, 'p'},
-    {null, 0, 0}};
+static const file_long tee_longs[] = {
+    {(string_address) "append", 'a'},
+    {(string_address) "ignore-interrupts", 'i'},
+    {(string_address) "output-error", 'p'},
+    {null, 0},
+};
 
 static b32 text_tee()
 {
-        bool append = false;
         positive handles[TEXT_FILES_MAX];
         b32 handle_count = 0;
+        file_taking taking = {
+            .program = (string_address) "tee",
+            .allowed = (string_address) "aip",
+            .valued = (string_address) "",
+            // --output-error names a kind of failure to go on through, and
+            // the word it carries is taken and dropped like -i and -p are.
+            .optional = (string_address) "p",
+            .longs = tee_longs,
+            .operand = text_file_add,
+        };
 
         text_begin("tee");
 
-        if (!text_expand_long(tee_long_options))
+        if (!file_take(address_of taking))
                 return text_done(1);
 
-        for (b32 i = 1; i < text_argument_count; i++)
-        {
-                string_address argument = text_argument(i);
-
-                if (argument[0] == '-' && argument[1] == '-' && !argument[2])
-                {
-                        for (b32 j = i + 1; j < text_argument_count; j++)
-                                text_file_add(j);
-
-                        break;
-                }
-
-                if (argument[0] == '-' && argument[1])
-                {
-                        for (positive c = 1; argument[c]; c++)
-                        {
-                                if (argument[c] == 'a')
-                                        append = true;
-                                else if (argument[c] == 'i' || argument[c] == 'p')
-                                        (void)argument[c];
-                                else
-                                {
-                                        p8 named[3] = {'-', argument[c], 0};
-
-                                        text_error(named, "invalid option");
-                                        return text_done(1);
-                                }
-                        }
-
-                        continue;
-                }
-
-                text_file_add(i);
-        }
+        bool append = (taking.flags & FILE_FLAG('a')) != 0;
 
         for (b32 i = 0; i < text_files_count; i++)
         {
@@ -4031,70 +3970,40 @@ static b32 text_nl()
         return text_done(text_status);
 }
 
-static text_long fold_long_options[] = {
-    {"bytes", 'b', TEXT_LONG_ALONE},
-    {"characters", 'c', TEXT_LONG_ALONE},
-    {"spaces", 's', TEXT_LONG_ALONE},
-    {"width", 'w', TEXT_LONG_NEEDS},
-    {null, 0, 0}};
+static const file_long fold_longs[] = {
+    {(string_address) "bytes", 'b'},
+    {(string_address) "characters", 'c'},
+    {(string_address) "spaces", 's'},
+    {(string_address) "width", 'w'},
+    {null, 0},
+};
 
 static b32 text_fold()
 {
-        positive width = 80;
-        bool spaces = false;
-        bool bytes = false;
+        file_taking taking = {
+            .program = (string_address) "fold",
+            .allowed = (string_address) "bcsw",
+            .valued = (string_address) "w",
+            .longs = fold_longs,
+            .operand = text_file_add,
+            // fold -5 is fold -w 5, and the digits are the width.
+            .digits = 'w',
+        };
 
         text_begin("fold");
 
-        if (!text_expand_long(fold_long_options))
+        if (!file_take(address_of taking))
                 return text_done(1);
 
-        for (b32 i = 1; i < text_argument_count; i++)
-        {
-                string_address argument = text_argument(i);
+        positive width = 80;
+        bool spaces = (taking.flags & FILE_FLAG('s')) != 0;
+        // -c counts characters where -b counts bytes, and every character
+        // here is one byte.
+        bool bytes = (taking.flags & (FILE_FLAG('b') | FILE_FLAG('c'))) != 0;
 
-                if (argument[0] != '-' || !argument[1])
-                {
-                        text_file_add(i);
-                        continue;
-                }
-
-                if (text_digit(argument[1]))
-                {
-                        text_number_of(argument + 1, address_of width);
-                        continue;
-                }
-
-                for (positive c = 1; argument[c]; c++)
-                {
-                        p8 flag = argument[c];
-
-                        if (flag == 's')
-                        {
-                                spaces = true;
-                                continue;
-                        }
-
-                        // -c counts characters where -b counts bytes, and
-                        // every character here is one byte.
-                        if (flag == 'b' || flag == 'c')
-                        {
-                                bytes = true;
-                                continue;
-                        }
-
-                        if (flag == 'w')
-                        {
-                                string_address value = argument[c + 1] ? argument + c + 1
-                                                                       : text_argument(++i);
-
-                                if (value)
-                                        text_number_of(value, address_of width);
-
-                                break;
-                        }
-                }
-        }
+        if (taking.flags & FILE_FLAG('w'))
+                text_number_of(file_option_value(address_of taking, 'w'),
+                               address_of width);
 
         if (!width)
                 width = 1;
