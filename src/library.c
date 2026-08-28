@@ -8185,7 +8185,20 @@ typedef b64 ptrdiff_t;
 
 #define O_NOCTTY 0400
 #define O_NONBLOCK 04000
+/*
+        arm64 is the one architecture that did not take asm-generic's fcntl.
+
+        0200000 is O_DIRECTORY everywhere else and O_DIRECT there, so asking
+        to open a directory asked for unbuffered io on one instead and came
+        back EINVAL. Globbing opens a directory to read it, so there was no
+        globbing at all on arm64 -- a pattern that matched nothing stayed a
+        pattern, quietly.
+*/
+#if ARM64
+#define O_DIRECTORY 040000
+#else
 #define O_DIRECTORY 0200000
+#endif
 #define AT_FDCWD -100
 #define O_TRUNC 01000
 #define O_CLOEXEC 02000000
