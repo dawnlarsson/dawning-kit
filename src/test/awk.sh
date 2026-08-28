@@ -848,6 +848,31 @@ for _ in range(rounds // 2):
              random.choice(["-", "", "::"]),
              random.choice(["\\n", "|", ""]))], data)
 
+#       Programs that are mostly not programs.
+#
+#       Nothing here compares against the reference: what is being asked is
+#       only that a program made of tokens in an order nobody meant is an
+#       error rather than a signal. A parser reached for a null in eleven
+#       places before this asked.
+tokens = ["BEGIN", "END", "{", "}", "(", ")", "[", "]", ";", ",", "$", "print",
+          "printf", "if", "else", "while", "for", "do", "in", "delete",
+          "getline", "function", "return", "next", "exit", "break", "continue",
+          "+", "-", "*", "/", "%", "^", "=", "==", "!=", "<", ">", "<=", ">=",
+          "&&", "||", "!", "~", "!~", "?", ":", "++", "--", "+=", "-=", "|",
+          ">>", "x", "y", "a", "1", "2", "\"s\"", "/re/", "NF", "NR", "$0",
+          "$1", "length", "substr", "split", "sub", "gsub", "sprintf", "sin",
+          "int", "\n", "# comment\n"]
+
+for _ in range(rounds * 2):
+    total += 1
+    program = " ".join(random.choice(tokens)
+                       for _ in range(random.randint(1, 14)))
+    mine, status = run(ours, [program], "a b\nc d\n")
+
+    if status < 0 or status >= 128:
+        bad += 1
+        report(program, "", ("no signal", 0), ("", status))
+
 print("\n  %s of %s" % (total - bad, total))
 PYTHON
 

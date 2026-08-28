@@ -10,6 +10,13 @@
         gawk and the standard disagree the tests say which one this followed.
         The regular expression machine is text.c's, above this in the same
         translation unit; there is no second one here.
+
+        Three ceilings, all of them refusals rather than crashes: text.c's
+        pool holds a few dozen patterns at once, so a program written around
+        more than that compiles the rest one at a time through a small cache;
+        a function calls itself until what is left of the machine's stack runs
+        out, measured rather than counted; and a value that would need more
+        than the arena has says so.
 */
 
 #define AWK_CHUNK (4u << 20)
