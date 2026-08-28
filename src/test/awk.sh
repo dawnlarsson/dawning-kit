@@ -523,6 +523,42 @@ compare 'regex classes' /dev/null 'BEGIN{print ("a1" ~ /[[:alpha:]][[:digit:]]/)
 compare 'anchors' /dev/null 'BEGIN{print ("abc" ~ /^abc$/), ("abc" ~ /^b/), ("" ~ /^$/)}'
 compare 'string escapes' /dev/null 'BEGIN{print "a\tb", "c\\d", "e\"f", length("\061\x41")}'
 
+case_start edges
+compare 'nextfile' /dev/null 'FNR==1{nextfile} {print FILENAME, $0}' "$work/letters" "$work/grid"
+compare 'nextfile is the last file' /dev/null '{nextfile} END{print NR}' "$work/letters" "$work/grid"
+compare 'getline in end' "$work/letters" 'END{print (getline), NR}'
+compare 'getline in begin' "$work/letters" 'BEGIN{print (getline), $0, NR}'
+compare 'close a pipe status' /dev/null 'BEGIN{c="exit 3"; print "x" | c; print close(c)}'
+compare 'close a read pipe status' /dev/null 'BEGIN{c="exit 4"; c | getline x; print close(c)}'
+compare 'a pipe with a lot in it' /dev/null 'BEGIN{for(i=0;i<20000;i++) print i | "wc -l"; close("wc -l")}'
+compare 'getline a lot' /dev/null 'BEGIN{while (("seq 1 20000" | getline l) > 0) n++; print n}'
+compare 'a very long record' /dev/null 'BEGIN{for(i=0;i<100000;i++) s = s "x"; $0 = s; print length($0), NF}'
+compare 'substr of a nan' /dev/null 'BEGIN{print "[" substr("hello", log(-1), 2) "]"}'
+compare 'substr of an infinity' /dev/null 'BEGIN{x = 1e300*1e300; print "[" substr("hello", 1, x) "]", "[" substr("hello", x) "]"}'
+compare 'split on an empty match' /dev/null 'BEGIN{n=split("abc",a,"x*"); print n, a[1], a[2]}'
+compare 'record set in begin' /dev/null 'BEGIN{$0="a b c"; print NF, $2}'
+compare 'record set empty' /dev/null 'BEGIN{$0=""; print NF, length($0)}'
+compare 'deeply parenthesised' /dev/null 'BEGIN{print ((((((((((1+2))))))))))}'
+compare 'many arguments' /dev/null 'BEGIN{printf "%s%s%s%s%s%s%s%s%s%s\n",1,2,3,4,5,6,7,8,9,10}'
+compare 'a field far past the end' /dev/null 'BEGIN{$0="a"; print "[" $1000 "]", NF}'
+compare 'ors is not printf' /dev/null 'BEGIN{ORS="X"; printf "a\n"}'
+compare 'end only exit' /dev/null 'END{exit 7}'
+compare 'a file that is not there' /dev/null '{print}' "$work/letters" /nonesuch/at/all "$work/grid"
+compare 'a nan through arithmetic' /dev/null 'BEGIN{x = log(-1); print (x==x), (x<1), x+1}'
+compare 'infinities' /dev/null 'BEGIN{x=1e300*1e300; print x, -x, x-x, 1/x}'
+compare 'thirty six patterns' /dev/null 'BEGIN{s="abcdefghij"; n=0
+if (s~/a/) n++; if (s~/b/) n++; if (s~/c/) n++; if (s~/d/) n++; if (s~/e/) n++
+if (s~/f/) n++; if (s~/g/) n++; if (s~/h/) n++; if (s~/i/) n++; if (s~/j/) n++
+if (s~/ab/) n++; if (s~/bc/) n++; if (s~/cd/) n++; if (s~/de/) n++; if (s~/ef/) n++
+if (s~/fg/) n++; if (s~/gh/) n++; if (s~/hi/) n++; if (s~/ij/) n++; if (s~/ja/) n++
+if (s~/a.c/) n++; if (s~/b.d/) n++; if (s~/c.e/) n++; if (s~/d.f/) n++; if (s~/e.g/) n++
+if (s~/x/) n++; if (s~/y/) n++; if (s~/z/) n++; if (s~/aa/) n++; if (s~/bb/) n++
+if (s~/[a-c]/) n++; if (s~/[x-z]/) n++; if (s~/a+/) n++; if (s~/q*/) n++; if (s~/^a/) n++
+if (s~/(ab|cd)/) n++; if (s~/z|a/) n++
+print n}'
+compare 'patterns built at run time' "$work/letters" '{r = "^" $0 "$"; if ($0 ~ r) n++} END{print n}'
+compare 'static and dynamic together' "$work/letters" '{if (/a/) x++; r="^" $0; if ($0 ~ r) y++; if (/b/) z++} END{print x, y, z}'
+
 #
 #       What is not here.
 #
@@ -551,6 +587,16 @@ if "$ours" 'END{next}' < /dev/null > /dev/null 2>&1; then
 else
         fail=$((fail + 1))
         echo "  known-gaps next in END did not run"
+fi
+
+#       gawk refuses at run time to use a scalar as an array or an array as a
+#       scalar. This does neither: an array read where a scalar goes is the
+#       empty string, and a scalar subscripted starts an array beside it.
+if [ "$("$ours" 'BEGIN{a[1]=1; print "[" a "]"}' 2> /dev/null)" = "[]" ]; then
+        pass=$((pass + 1))
+else
+        fail=$((fail + 1))
+        echo "  known-gaps an array read as a scalar"
 fi
 
 #       Neither uninitialised nor a strnum: a name followed by a space and a

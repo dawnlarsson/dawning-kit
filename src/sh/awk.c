@@ -236,6 +236,41 @@ static decimal awk_absolute(decimal value)
         return value < 0 ? -value : value;
 }
 
+/*
+        A double where a count is wanted.
+
+        Not a cast: a cast of something that is not a number, or of something
+        too big for the width, is undefined, and substr of a nan reached the
+        allocator asking for two to the sixty fourth bytes.
+*/
+static b32 awk_whole(decimal value)
+{
+        if (value != value)
+                return 0;
+
+        if (value >= 2147483647.0)
+                return 2147483647;
+
+        if (value <= -2147483648.0)
+                return -2147483647 - 1;
+
+        return (b32)value;
+}
+
+static bipolar awk_whole_wide(decimal value)
+{
+        if (value != value)
+                return 0;
+
+        if (value >= 9223372036854775808.0)
+                return bipolar_max;
+
+        if (value <= -9223372036854775808.0)
+                return bipolar_min;
+
+        return (bipolar)value;
+}
+
 static decimal awk_truncate(decimal value)
 {
         if (!awk_is_finite(value) || awk_is_nan(value))
@@ -1579,12 +1614,17 @@ static bool awk_numeric_side(awk_value address_to which)
         return (which->state & AWK_HAS_NUMBER) && !(which->state & AWK_HAS_TEXT);
 }
 
+// Below, above, the same, or -- for a value that is not a number at all --
+// none of the three, which is what two says.
 static b32 awk_compare(awk_value address_to left, awk_value address_to right)
 {
         if (awk_numeric_side(left) && awk_numeric_side(right))
         {
                 decimal a = awk_to_number(left);
                 decimal b = awk_to_number(right);
+
+                if (a != a || b != b)
+                        return 2;
 
                 return a < b ? -1 : (a > b ? 1 : 0);
         }
@@ -3072,7 +3112,7 @@ static awk_text address_to awk_sprintf(string_address format, positive length,
                                             ? awk_to_number(address_of arguments[taken++])
                                             : 0;
 
-                        width = (b32)value;
+                        width = awk_whole(value);
                         at++;
 
                         if (width < 0)
@@ -3096,7 +3136,7 @@ static awk_text address_to awk_sprintf(string_address format, positive length,
                                                     ? awk_to_number(address_of arguments[taken++])
                                                     : 0;
 
-                                precision = (b32)value;
+                                precision = awk_whole(value);
                                 at++;
 
                                 if (precision < 0)
@@ -3231,7 +3271,8 @@ static awk_text address_to awk_sprintf(string_address format, positive length,
                 case 'c':
                 {
                         if (awk_numeric_side(argument))
-                                room[body++] = (p8)((positive)(bipolar)awk_to_number(argument) & 0xff);
+                                room[body++] =
+                                    (p8)((positive)awk_whole_wide(awk_to_number(argument)) & 0xff);
                         else
                         {
                                 awk_text address_to text = awk_to_text(argument);
@@ -5313,10 +5354,8 @@ static fn awk_target_of(awk_node address_to node, awk_target address_to into)
 
         case N_FIELD:
         {
-                decimal which = awk_eval_number(node->a);
-
                 into->kind = LV_FIELD;
-                into->field = (b32)which;
+                into->field = awk_whole(awk_eval_number(node->a));
 
                 if (into->field < 0)
                         awk_fatal(null, "attempt to assign to a field before the first");
@@ -5369,7 +5408,7 @@ static fn awk_target_written(awk_target address_to which)
                 return;
 
         if (awk_global_meaning[which->index] == AWK_NF)
-                awk_nf_written((b32)awk_to_number(address_of which->cell->value));
+                awk_nf_written(awk_whole(awk_to_number(address_of which->cell->value)));
 }
 
 static fn awk_do_assign(awk_node address_to node, awk_value address_to out)
@@ -5482,7 +5521,7 @@ static fn awk_eval(awk_node address_to node, awk_value address_to out)
                 return;
 
         case N_FIELD:
-                awk_value_copy(out, awk_field((b32)awk_eval_number(node->a)));
+                awk_value_copy(out, awk_field(awk_whole(awk_eval_number(node->a))));
                 return;
 
         case N_SUBSCRIPT:
@@ -5563,10 +5602,10 @@ static fn awk_eval(awk_node address_to node, awk_value address_to out)
 
                 switch (node->sub)
                 {
-                case T_LESS: order = order < 0; break;
-                case T_LESS_EQUAL: order = order <= 0; break;
-                case T_GREATER: order = order > 0; break;
-                case T_GREATER_EQUAL: order = order >= 0; break;
+                case T_LESS: order = order == -1; break;
+                case T_LESS_EQUAL: order = order == -1 || order == 0; break;
+                case T_GREATER: order = order == 1; break;
+                case T_GREATER_EQUAL: order = order == 1 || order == 0; break;
                 case T_EQUAL: order = order == 0; break;
                 default: order = order != 0; break;
                 }
@@ -5883,19 +5922,21 @@ static fn awk_builtin(awk_node address_to node, awk_value address_to out)
                 positive from;
                 positive want;
 
-                if (start < 1)
+                if (awk_is_nan(start) || start < 1)
                         start = 1;
 
-                from = start > (decimal)text->length ? text->length : (positive)start - 1;
+                from = start > (decimal)text->length ? text->length
+                                                     : (positive)start - 1;
 
                 if (third)
                 {
                         decimal length = awk_truncate(awk_eval_number(third));
 
-                        if (length < 0)
+                        if (awk_is_nan(length) || length < 0)
                                 length = 0;
 
-                        want = length > (decimal)text->length ? text->length : (positive)length;
+                        want = length > (decimal)text->length ? text->length
+                                                              : (positive)length;
                 }
                 else
                         want = text->length;
@@ -6108,7 +6149,7 @@ static fn awk_builtin(awk_node address_to node, awk_value address_to out)
                 positive before = awk_seed;
 
                 if (node->count)
-                        awk_seed = (positive)(bipolar)awk_eval_number(first);
+                        awk_seed = (positive)awk_whole_wide(awk_eval_number(first));
                 else
                 {
                         positive when[2] = {0, 0};
@@ -6531,7 +6572,7 @@ static b32 awk_run(awk_node address_to node)
 
                 case S_EXIT:
                         if (node->a)
-                                awk_exit_code = (b32)awk_eval_number(node->a);
+                                awk_exit_code = awk_whole(awk_eval_number(node->a));
 
                         awk_exiting = true;
                         return RUN_EXIT;
@@ -6662,7 +6703,7 @@ static bool awk_assignment(string_address text, positive length)
         awk_globals[where].kind = AWK_CELL_SCALAR;
 
         if (awk_global_meaning[where] == AWK_NF)
-                awk_nf_written((b32)awk_global_number(where));
+                awk_nf_written(awk_whole(awk_global_number(where)));
 
         awk_text_drop(name);
         return true;
@@ -6674,7 +6715,7 @@ static bool awk_open_next_input()
 
         for (;;)
         {
-                b32 count = (b32)awk_global_number(awk_where_argc);
+                b32 count = awk_whole(awk_global_number(awk_where_argc));
 
                 if (awk_argv_at >= count)
                 {
@@ -6896,7 +6937,9 @@ static b32 awk_run_rules()
 static fn awk_start()
 {
         awk_infinity = awk_from_bits((positive)0x7ff0000000000000ull);
-        awk_not_a_number = awk_from_bits((positive)0x7ff8000000000000ull);
+        // The sign bit is set because that is the one the machine's own log
+        // and square root hand back, and it is visible: it prints as -nan.
+        awk_not_a_number = awk_from_bits((positive)0xfff8000000000000ull);
         awk_returned.state = AWK_UNSET;
         awk_field_nothing.state = AWK_UNSET;
         awk_standard_out.handle = 1;
