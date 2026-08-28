@@ -4934,31 +4934,24 @@ static b32 text_tr()
         The long spellings uniq answers to.
 
         --all-repeated and --group both take a word or no word at all and mean
-        something different either way, so each has two letters: one for the
-        bare name and one that arrives carrying the word.
-
-        Not here, and deliberately: --zero-terminated, which is the line
-        reader's business rather than uniq's.
+        something different either way, which is what `optional` below is for:
+        the letter is set either way and only carries a value when one came.
 */
-enum
-{
-        UNIQ_LONG_ALL = 1,
-        UNIQ_LONG_GROUP = 2,
-        UNIQ_LONG_GROUP_HOW = 3
+// --group is the one name here without a letter, so it borrows a G that uniq
+// has not got and that `allowed` goes on refusing.
+static const file_long uniq_longs[] = {
+    {(string_address) "count", 'c'},
+    {(string_address) "repeated", 'd'},
+    {(string_address) "all-repeated", 'D'},
+    {(string_address) "group", 'G'},
+    {(string_address) "skip-fields", 'f'},
+    {(string_address) "ignore-case", 'i'},
+    {(string_address) "skip-chars", 's'},
+    {(string_address) "unique", 'u'},
+    {(string_address) "check-chars", 'w'},
+    {(string_address) "zero-terminated", 'z'},
+    {null, 0},
 };
-
-static text_long uniq_long_options[] = {
-    {"count", 'c', TEXT_LONG_ALONE},
-    {"repeated", 'd', TEXT_LONG_ALONE},
-    {"all-repeated", 'D', TEXT_LONG_MAYBE, UNIQ_LONG_ALL},
-    {"group", UNIQ_LONG_GROUP, TEXT_LONG_MAYBE, UNIQ_LONG_GROUP_HOW},
-    {"skip-fields", 'f', TEXT_LONG_NEEDS},
-    {"ignore-case", 'i', TEXT_LONG_ALONE},
-    {"skip-chars", 's', TEXT_LONG_NEEDS},
-    {"unique", 'u', TEXT_LONG_ALONE},
-    {"check-chars", 'w', TEXT_LONG_NEEDS},
-    {"zero-terminated", 'z', TEXT_LONG_ALONE},
-    {null, 0, 0}};
 
 enum
 {
@@ -4969,159 +4962,90 @@ enum
         UNIQ_GROUP_BOTH
 };
 
+// The words both names take, and the two more that only --group does.
+static bool uniq_grouping_of(string_address word, bool ends, positive address_to how)
+{
+        if (string_equals(word, "none"))
+                address_to how = UNIQ_GROUP_NONE;
+        else if (string_equals(word, "prepend"))
+                address_to how = UNIQ_GROUP_PREPEND;
+        else if (string_equals(word, "separate"))
+                address_to how = UNIQ_GROUP_SEPARATE;
+        else if (ends && string_equals(word, "append"))
+                address_to how = UNIQ_GROUP_APPEND;
+        else if (ends && string_equals(word, "both"))
+                address_to how = UNIQ_GROUP_BOTH;
+        else
+                return false;
+
+        return true;
+}
+
+static bool uniq_number_of(file_taking address_to taking, p8 letter,
+                           positive address_to into)
+{
+        if (!(taking->flags & FILE_FLAG(letter)))
+                return true;
+
+        if (text_number_of(file_option_value(taking, letter), into))
+                return true;
+
+        text_error(null, "invalid number");
+        return false;
+}
+
 static b32 text_uniq()
 {
-        bool counting = false;
-        bool repeated_only = false;
-        bool unique_only = false;
-        bool fold = false;
-        bool all_repeated = false;
+        file_taking taking = {
+            .program = (string_address) "uniq",
+            .allowed = (string_address) "Dcdfisuwz",
+            .valued = (string_address) "fsw",
+            .optional = (string_address) "DG",
+            .longs = uniq_longs,
+            .operand = text_file_add,
+        };
+
+        text_begin("uniq");
+
+        if (!file_take(address_of taking))
+                return text_done(1);
+
+        positive flags = taking.flags;
+        bool counting = (flags & FILE_FLAG('c')) != 0;
+        bool repeated_only = (flags & FILE_FLAG('d')) != 0;
+        bool unique_only = (flags & FILE_FLAG('u')) != 0;
+        bool fold = (flags & FILE_FLAG('i')) != 0;
+        bool all_repeated = (flags & FILE_FLAG('D')) != 0;
+        bool grouping = (flags & FILE_FLAG('G')) != 0;
+        bool bounded = (flags & FILE_FLAG('w')) != 0;
         positive all_how = UNIQ_GROUP_NONE;
-        bool grouping = false;
         positive group_how = UNIQ_GROUP_SEPARATE;
         positive skip_fields = 0;
         positive skip_characters = 0;
         positive compare_width = 0;
-        bool bounded = false;
+        string_address said = file_option_value(address_of taking, 'D');
 
-        text_begin("uniq");
+        if (flags & FILE_FLAG('z'))
+                text_delimiter = '\0';
 
-        if (!text_expand_long(uniq_long_options))
-                return text_done(1);
-
-        for (b32 i = 1; i < text_argument_count; i++)
+        if (said && !uniq_grouping_of(said, false, address_of all_how))
         {
-                string_address argument = text_argument(i);
-
-                if (argument[0] != '-' || !argument[1])
-                {
-                        text_file_add(i);
-                        continue;
-                }
-
-                if (argument[1] == '-' && !argument[2])
-                {
-                        for (b32 j = i + 1; j < text_argument_count; j++)
-                                text_file_add(j);
-
-                        break;
-                }
-
-                for (positive c = 1; argument[c]; c++)
-                {
-                        p8 flag = argument[c];
-
-                        if (flag == 'c')
-                        {
-                                counting = true;
-                                continue;
-                        }
-
-                        if (flag == 'd')
-                        {
-                                repeated_only = true;
-                                continue;
-                        }
-
-                        if (flag == 'u')
-                        {
-                                unique_only = true;
-                                continue;
-                        }
-
-                        if (flag == 'i')
-                        {
-                                fold = true;
-                                continue;
-                        }
-
-                        if (flag == 'D')
-                        {
-                                all_repeated = true;
-                                continue;
-                        }
-
-                        if (flag == 'z')
-                        {
-                                text_delimiter = '\0';
-                                continue;
-                        }
-
-                        if (flag == UNIQ_LONG_GROUP)
-                        {
-                                grouping = true;
-                                continue;
-                        }
-
-                        if (flag == UNIQ_LONG_ALL || flag == UNIQ_LONG_GROUP_HOW)
-                        {
-                                string_address value = text_argument(++i);
-                                positive how = UNIQ_GROUP_NONE;
-
-                                if (!value)
-                                {
-                                        text_error(null, "option requires an argument");
-                                        return text_done(1);
-                                }
-
-                                if (string_equals(value, "none"))
-                                        how = UNIQ_GROUP_NONE;
-                                else if (string_equals(value, "prepend"))
-                                        how = UNIQ_GROUP_PREPEND;
-                                else if (string_equals(value, "separate"))
-                                        how = UNIQ_GROUP_SEPARATE;
-                                else if (string_equals(value, "append") &&
-                                         flag == UNIQ_LONG_GROUP_HOW)
-                                        how = UNIQ_GROUP_APPEND;
-                                else if (string_equals(value, "both") &&
-                                         flag == UNIQ_LONG_GROUP_HOW)
-                                        how = UNIQ_GROUP_BOTH;
-                                else
-                                {
-                                        text_error(value, "invalid argument");
-                                        return text_done(1);
-                                }
-
-                                if (flag == UNIQ_LONG_ALL)
-                                {
-                                        all_repeated = true;
-                                        all_how = how;
-                                }
-                                else
-                                {
-                                        grouping = true;
-                                        group_how = how;
-                                }
-
-                                break;
-                        }
-
-                        if (flag == 'f' || flag == 's' || flag == 'w')
-                        {
-                                string_address value = argument[c + 1] ? argument + c + 1
-                                                                       : text_argument(++i);
-                                positive number = 0;
-
-                                if (!value || !text_number_of(value, address_of number))
-                                {
-                                        text_error(null, "invalid number");
-                                        return text_done(1);
-                                }
-
-                                if (flag == 'f')
-                                        skip_fields = number;
-                                else if (flag == 's')
-                                        skip_characters = number;
-                                else
-                                {
-                                        compare_width = number;
-                                        bounded = true;
-                                }
-
-                                break;
-                        }
-                }
+                text_error(said, "invalid argument");
+                return text_done(1);
         }
+
+        said = file_option_value(address_of taking, 'G');
+
+        if (said && !uniq_grouping_of(said, true, address_of group_how))
+        {
+                text_error(said, "invalid argument");
+                return text_done(1);
+        }
+
+        if (!uniq_number_of(address_of taking, 'f', address_of skip_fields) ||
+            !uniq_number_of(address_of taking, 's', address_of skip_characters) ||
+            !uniq_number_of(address_of taking, 'w', address_of compare_width))
+                return text_done(1);
 
         if (all_repeated && counting)
         {

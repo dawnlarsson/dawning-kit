@@ -1826,6 +1826,16 @@ typedef struct
         // seq is the one tool here where -4 is a number and not a flag.
         bool numbers;
 
+        // head -5 and tail -5 and fold -5 are the count said without its
+        // letter, and this is the letter it belongs to.
+        p8 digits;
+
+        // The text tools go on reading options after an operand, the way
+        // GNU's do -- wc -l a -c counts the bytes too. Each operand is handed
+        // over as it is reached, in the order it was written, because that
+        // order is the whole of what an operand list is.
+        fn(address_to operand)(b32 index);
+
         // env is the one tool here where an option given twice means it
         // twice, and one value per letter is not enough to say so: it is
         // told about each option as the option is read.
@@ -1889,11 +1899,21 @@ static bool file_take(file_taking address_to taking)
                 string_address word = program_argument((b32)index);
 
                 if (!string_is(word, '-') || string_is(word + 1, end))
-                        break;
+                {
+                        if (!taking->operand)
+                                break;
+
+                        taking->operand((b32)index++);
+                        continue;
+                }
 
                 if (string_is(word + 1, '-') && string_is(word + 2, end))
                 {
                         index++;
+
+                        while (taking->operand && index < count)
+                                taking->operand((b32)index++);
+
                         break;
                 }
 
@@ -1903,6 +1923,16 @@ static bool file_take(file_taking address_to taking)
                         break;
 
                 index++;
+
+                if (taking->digits && string_get(word + 1) >= '0' &&
+                    string_get(word + 1) <= '9')
+                {
+                        positive bit = file_letter_bit(taking->digits);
+
+                        taking->flags |= (positive)1 << bit;
+                        taking->value[bit] = word + 1;
+                        continue;
+                }
 
                 if (string_is(word + 1, '-'))
                 {
