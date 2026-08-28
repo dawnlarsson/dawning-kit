@@ -890,11 +890,52 @@ static b32 exec_for(b32 index)
 
         token_used = 0;
 
+        /*
+                The list is expanded the way a command's arguments are.
+
+                "for i in $x" walks the fields of x and "for i in *.c" walks
+                the names on disk; expanding each word whole made a list of
+                one item that happened to contain blanks and a pattern that
+                was never asked about. The fields come back in storage the
+                next word's expansion reuses, so each is copied out before
+                the next one is asked for.
+        */
         if (node->flags)
         {
-                for (at = 1; at < node->word_count && count < (b32)(sizeof(items) / sizeof(items[0])); at++)
-                        items[count++] = exec_arena_copy(
-                            shell_expand_word(parse_words[node->word + at]));
+                bool room = true;
+
+                for (at = 1; at < node->word_count && room; at++)
+                {
+                        string_address fields[POSITIONAL_MAX];
+                        positive made = shell_expand_fields(
+                            parse_words[node->word + at], fields, POSITIONAL_MAX);
+                        positive field;
+
+                        for (field = 0; field < made; field++)
+                        {
+                                string_address kept;
+
+                                if (count >= (b32)(sizeof(items) / sizeof(items[0])))
+                                {
+                                        room = false;
+                                        break;
+                                }
+
+                                kept = exec_arena_copy(fields[field]);
+
+                                // An arena with nothing left in it gives back
+                                // the empty string, and a loop that quietly
+                                // ran over empty items is worse than one that
+                                // stops where it ran out.
+                                if (kept == exec_nothing)
+                                {
+                                        room = false;
+                                        break;
+                                }
+
+                                items[count++] = kept;
+                        }
+                }
         }
         else
         {

@@ -512,6 +512,16 @@ answer 'while read'      'printf "1\n2\n" | while read v; do echo "[$v]"; done'
 answer 'until once'      'until true; do echo no; done; echo done'
 answer 'for nothing'     'for i in; do echo $i; done; echo done'
 answer 'glob no match'   'cd /tmp; for i in nosuchglob*; do echo "$i"; done'
+
+# A for loop expands its list exactly as a command expands its arguments:
+# fields split, patterns matched, quotes honoured.
+answer 'for splits'      'x="a b"; for i in $x; do echo "[$i]"; done'
+answer 'for globs'       'cd /; for i in /et*; do echo "$i"; done'
+answer 'for keeps quotes' 'x="a b"; for i in "$x" c; do echo "[$i]"; done'
+answer 'for at is many'  'set -- "a b" c; for i in "$@"; do echo "[$i]"; done'
+answer 'for star is one' 'set -- a b; for i in "$*"; do echo "[$i]"; done'
+answer 'for ifs'         'IFS=:; y=a:b; for i in $y; do echo "[$i]"; done'
+answer 'for unset makes none' 'for i in $nosuch; do echo no; done; echo done'
 answer 'break two'       'for i in 1 2; do for j in a b; do break 2; done; echo $i; done; echo done'
 answer 'continue two'    'for i in 1 2; do for j in a b; do continue 2; done; echo $i; done; echo done'
 answer 'recursion'       'f() { [ $1 -gt 0 ] && { echo $1; f $(($1-1)); }; }; f 3'
@@ -761,7 +771,6 @@ differs 'a bad number'   '8|' 0 'echo $((08))'
 
 group language
 differs 'echo keeps them' 'a\b|' 0 'echo "a\b"'
-differs 'at is one word' '[a b c]|' 0 'set -- "a b" c; for i in "$@"; do echo "[$i]"; done'
 differs 'no dash heredoc' '' 0 'cat <<-EOF
 	indented
 	EOF'
@@ -777,12 +786,6 @@ differs 'closed fd'      '0|' 0 'echo x >&- 2>/dev/null; echo $?'
 differs 'local goes on'  '2|after|' 0 'local v=1 2>/dev/null; echo $?; echo after'
 differs 'kill takes sig' '1|' 0 'kill -SIGTERM 999999 2>/dev/null; echo $?'
 differs 'expr is sixty four' '-9223372036854775808|' 0 'expr 9223372036854775807 + 1'
-
-# The for loop expands its list without splitting it and without asking the
-# filesystem, which is exec.c handing the words to shell_expand_word instead
-# of shell_expand_fields. Everywhere else in the language both happen.
-differs 'for keeps a word' '[a b]|' 0 'x="a b"; for i in $x; do echo "[$i]"; done'
-differs 'for keeps a glob' '/et*|' 0 'cd /; for i in /et*; do echo "$i"; done'
 
 # A here-document body goes through shell.c's older expander, which knows
 # $name and ${name} and nothing else -- so the forms that make a here-document
