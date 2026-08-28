@@ -112,6 +112,28 @@ address_any reference_copy(address_any destination, address_any source, positive
         return destination;
 }
 
+address_any reference_reverse(address_any block, positive size)
+{
+        p8 address_to left = block;
+        p8 address_to right = left + size;
+
+        while (left < right)
+        {
+                p8 value;
+
+                right--;
+
+                if (left >= right)
+                        break;
+
+                value = address_to left;
+                address_to left++ = address_to right;
+                address_to right = value;
+        }
+
+        return block;
+}
+
 p8 address_to reference_copy_end(p8 address_to destination, address_any source,
                                  positive size)
 {
@@ -205,6 +227,122 @@ fn check_copy()
 
                 same_bytes("memory_copy_fast", "forward", mine, theirs, ROOM);
         }
+}
+
+/*
+        Exact in-place reversal, not string reversal: zero bytes in the span
+        are ordinary data and there is no terminator to find.  Every short
+        size is crossed with every residue through thirty one, poison proves
+        both guards remain untouched, and a second turn proves the operation
+        is its own inverse.  The random, page-edge and one-megabyte cases keep
+        the small exhaustive matrix from being the only shape exercised.
+*/
+#define REVERSE_MEDIUM (1 << 15)
+#define REVERSE_LARGE ((1 << 20) + 128)
+
+static p8 reverse_got[REVERSE_MEDIUM];
+static p8 reverse_want[REVERSE_MEDIUM];
+static p8 reverse_large_got[REVERSE_LARGE];
+static p8 reverse_large_want[REVERSE_LARGE];
+
+static fn reverse_prepare(positive extent, positive offset, positive size)
+{
+        reference_fill(reverse_got, 0xa5, extent);
+        reference_fill(reverse_want, 0xa5, extent);
+
+        for (positive i = 0; i < size; i++)
+                reverse_got[offset + i] = reverse_want[offset + i] = (p8)next();
+}
+
+fn check_reverse()
+{
+        same("memory_reverse", "null zero-sized return",
+             (positive)memory_reverse(null, 0), 0);
+
+        for (positive size = 0; size <= 512; size++)
+                for (positive residue = 0; residue < 32; residue++)
+                {
+                        positive offset = 64 + residue;
+                        positive extent = offset + size + 64;
+                        p8 address_to got = reverse_got + offset;
+                        p8 address_to want = reverse_want + offset;
+
+                        reverse_prepare(extent, offset, size);
+
+                        same("memory_reverse", "returned original address",
+                             (positive)memory_reverse(got, size),
+                             (positive)(address_any)got);
+                        reference_reverse(want, size);
+                        same_bytes("memory_reverse", "all small sizes and residues",
+                                   reverse_got, reverse_want, extent);
+
+                        memory_reverse(got, size);
+                        reference_reverse(want, size);
+                        same_bytes("memory_reverse", "double reverse",
+                                   reverse_got, reverse_want, extent);
+                }
+
+        // Repeatable random lengths and contents, with an independently
+        // changing residue and guard width on every turn.
+        for (positive turn = 0; turn < 512; turn++)
+        {
+                positive size = next() % 16385;
+                positive offset = 33 + (next() & 63);
+                positive extent = offset + size + 71;
+
+                reverse_prepare(extent, offset, size);
+                memory_reverse(reverse_got + offset, size);
+                reference_reverse(reverse_want + offset, size);
+                same_bytes("memory_reverse", "random length and contents",
+                           reverse_got, reverse_want, extent);
+        }
+
+        // Put each exclusive end exactly on a 4096-byte boundary.  The
+        // arrays keep mapped poison on both sides; exact-access floor audits
+        // separately prove the implementations do not issue a wider access.
+        {
+                static const positive page_sizes[] = {
+                    0, 1, 2, 7, 8, 9, 15, 16, 17, 31, 32, 33,
+                    63, 64, 65, 255, 256, 257, 4095, 4096, 4097,
+                };
+                positive base = (positive)(address_any)reverse_got;
+                positive edge_offset = ((base + 4095) & ~(positive)4095) - base +
+                                       8192;
+
+                for (positive c = 0;
+                     c < sizeof(page_sizes) / sizeof(page_sizes[0]); c++)
+                {
+                        positive size = page_sizes[c];
+                        positive offset = edge_offset - size;
+                        positive extent = edge_offset + 64;
+
+                        reverse_prepare(extent, offset, size);
+                        memory_reverse(reverse_got + offset, size);
+                        reference_reverse(reverse_want + offset, size);
+                        same_bytes("memory_reverse", "exclusive end at page edge",
+                                   reverse_got, reverse_want, extent);
+                }
+        }
+
+        // A resident one-megabyte span makes the bulk loop do real work and
+        // catches counters or pointer arithmetic accidentally narrowed to 32
+        // bits in a way the short matrix cannot.
+        for (positive i = 0; i < REVERSE_LARGE; i++)
+        {
+                p8 value = (p8)next();
+
+                reverse_large_got[i] = reverse_large_want[i] = value;
+        }
+
+        memory_reverse(reverse_large_got + 37, 1 << 20);
+        reference_reverse(reverse_large_want + 37, 1 << 20);
+        same_bytes("memory_reverse", "one megabyte with guards",
+                   reverse_large_got, reverse_large_want, REVERSE_LARGE);
+
+        memory_reverse(reverse_large_got + 37, 1 << 20);
+        reference_reverse(reverse_large_want + 37, 1 << 20);
+        same_bytes("memory_reverse", "one megabyte double reverse",
+                   reverse_large_got, reverse_large_want, REVERSE_LARGE);
 }
 
 // Both directions, and the case where they do not overlap at all: a memmove
@@ -3764,6 +3902,58 @@ fn check_human_1024()
 
 #include "verify_human_nearest.inc"
 
+static b32 reference_wait_status_code_base(positive raw, b32 signal_base)
+{
+        positive signal = raw & 0x7f;
+
+        if (!signal)
+                return (b32)((raw >> 8) & 0xff);
+
+        b32 answer = signal_base + (b32)signal;
+
+        if ((raw & 0x80) && (signal_base & 0x100))
+                answer += 0x100;
+
+        return answer;
+}
+
+/*
+        Every kernel-owned status word under each public policy.  Core is
+        deliberately crossed here rather than tested with only one signal:
+        base zero and the shell's 128 ignore bit seven, while gawk's base 256
+        reports it as another 256.  Repeating the complete low word under
+        hostile high-bit masks proves no caller garbage reaches the answer.
+*/
+fn check_wait_status_code_base()
+{
+        static const b32 bases[] = {0, 128, 256};
+        static const positive high_bits[] = {
+            0x0000000100000000ull,
+            0x8000000000000000ull,
+            0xffffffffffff0000ull,
+        };
+
+        for (positive b = 0; b < sizeof(bases) / sizeof(bases[0]); b++)
+                for (positive low = 0; low <= 65535; low++)
+                {
+                        b32 want = reference_wait_status_code_base(low, bases[b]);
+
+                        same("wait_status_code_base", "every raw 16-bit status",
+                             (positive)wait_status_code_base(low, bases[b]),
+                             (positive)want);
+
+                        for (positive h = 0;
+                             h < sizeof(high_bits) / sizeof(high_bits[0]); h++)
+                        {
+                                positive raw = low | high_bits[h];
+
+                                same("wait_status_code_base", "ignores every high-bit mask",
+                                     (positive)wait_status_code_base(raw, bases[b]),
+                                     (positive)want);
+                        }
+                }
+}
+
 /*
         A padded field is a writer protocol, not merely a byte result: every
         leading byte is its own call, the optional prefix is its own call, and
@@ -7317,6 +7507,7 @@ b32 main()
         check_human_1024();
         check_human_nearest();
         check_wait_status_code();
+        check_wait_status_code_base();
 #else
         check_fill();
         check_count();
@@ -7350,6 +7541,7 @@ b32 main()
         check_first_of_wide();
         check_hunts_wide();
         check_copy();
+        check_reverse();
         check_move();
         check_copy_fast_end();
         check_copy_end();
@@ -7423,6 +7615,7 @@ b32 main()
         check_human_1024();
         check_human_nearest();
         check_wait_status_code();
+        check_wait_status_code_base();
         check_copy_max_end();
         check_bulk_alignments();
         check_bulk_moves();

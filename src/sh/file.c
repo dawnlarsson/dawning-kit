@@ -591,36 +591,7 @@ bool file_real(string_address path, p8 address_to into)
         return file_resolve(path, into, true);
 }
 
-// Reading a small file whole --------------------------------
-
-bipolar file_slurp(string_address path, p8 address_to into, positive limit)
-{
-        bipolar handle = system_call_3(syscall(openat), AT_FDCWD, (positive)path,
-                                       FILE_READ);
-
-        if (handle < 0)
-                return handle;
-
-        positive filled = 0;
-
-        while (filled + 1 < limit)
-        {
-                bipolar taken = system_call_3(syscall(read), handle,
-                                              (positive)(into + filled),
-                                              limit - 1 - filled);
-
-                if (taken <= 0)
-                        break;
-
-                filled += (positive)taken;
-        }
-
-        system_call_1(syscall(close), handle);
-
-        into[filled] = end;
-
-        return (bipolar)filled;
-}
+// Reading a small file whole is shared Linux assembly in platform/linux.inc.
 
 // Users and groups ------------------------------------------
 

@@ -2538,7 +2538,7 @@ static b32 awk_wait_for(bipolar child)
                 return 0;
 
         system_call_4(syscall(wait4), (positive)child, (positive)address_of status, 0, 0);
-        return (b32)((status >> 8) & 0xff);
+        return wait_status_code_base(status, 256);
 }
 
 static bool awk_name_is(awk_text address_to name, string_address what)

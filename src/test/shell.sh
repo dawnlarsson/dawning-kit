@@ -183,6 +183,210 @@ expected()
                 "expected ${expected_output}[$expected_status], got ${got_ours}[$got_status]"
 }
 
+# Expansion errors are different at a terminal: they end the current input
+# line but leave the shell there to read the next one. A pipe cannot exercise
+# that branch, so give the subject a real pseudo-terminal with echo disabled
+# and verify the diagnostic, status, recovery, and absence of both commands
+# that followed the failure on its line.
+interactive_fatal()
+{
+        name=$1
+        diagnostic=$2
+        setup=$3
+        command=$4
+        behavior=${5:-abort}
+        recovery=${6:-:}
+        recovered=${7:-}
+
+        if python3 - "$subject" "$diagnostic" "$setup" "$command" \
+                "$behavior" "$recovery" "$recovered" <<'PY'
+import os
+import pty
+import re
+import select
+import subprocess
+import sys
+import termios
+import time
+
+subject, diagnostic, setup, command, behavior, recovery, recovered = sys.argv[1:]
+master, slave = pty.openpty()
+settings = termios.tcgetattr(slave)
+settings[3] &= ~termios.ECHO
+termios.tcsetattr(slave, termios.TCSANOW, settings)
+
+process = subprocess.Popen(
+    [subject], stdin=slave, stdout=slave, stderr=slave, close_fds=True
+)
+os.close(slave)
+
+script = "\n".join(
+    (
+        "echo START",
+        setup,
+        command,
+        "echo STATUS:$?",
+        recovery,
+        "echo NEXT",
+        "exit",
+        "",
+    )
+).encode()
+sent = 0
+
+while sent < len(script):
+    sent += os.write(master, script[sent:])
+
+data = bytearray()
+deadline = time.monotonic() + 5
+
+while time.monotonic() < deadline:
+    ready, _, _ = select.select([master], [], [], 0.1)
+
+    if ready:
+        try:
+            data.extend(os.read(master, 4096))
+        except OSError:
+            break
+
+    if process.poll() is not None:
+        break
+
+if process.poll() is None:
+    process.kill()
+
+process.wait()
+os.close(master)
+
+plain = re.sub(rb"\x1b\[[0-9;?]*[ -/]*[@-~]", b"", bytes(data)).replace(
+    b"\r", b""
+)
+good = (
+    b"START\n" in plain
+    and diagnostic.encode() in plain
+    and b"NEXT\n" in plain
+    and b"RAN-BAD" not in plain
+)
+
+if behavior == "abort":
+    good = good and b"STATUS:2\n" in plain and b"SAME-LINE" not in plain
+else:
+    good = good and b"STATUS:0\n" in plain and b"SAME-LINE\n" in plain
+
+if recovered:
+    good = good and recovered.encode() + b"\n" in plain
+
+if not good:
+    sys.stderr.buffer.write(plain)
+    raise SystemExit(1)
+PY
+        then
+                won
+                return 0
+        fi
+
+        lost "$name" "interactive failure did not abort and recover"
+}
+
+# A signal caught during the expansion that fails belongs after that aborted
+# line and before the next command. It must not be lost, run as the failed
+# command's tail, or wait until after the recovery command.
+interactive_fatal_trap()
+{
+        if python3 - "$subject" <<'PY'
+import os
+import pty
+import re
+import select
+import subprocess
+import sys
+import termios
+import time
+
+master, slave = pty.openpty()
+settings = termios.tcgetattr(slave)
+settings[3] &= ~termios.ECHO
+termios.tcsetattr(slave, termios.TCSANOW, settings)
+process = subprocess.Popen(
+    [sys.argv[1]], stdin=slave, stdout=slave, stderr=slave, close_fds=True
+)
+os.close(slave)
+
+script = b"""trap 'echo CAUGHT' USR1
+unset x
+echo "$(kill -USR1 $$)" "${x:?boom}"; echo SAME-LINE
+echo STATUS:$?
+echo NEXT
+exit
+"""
+os.write(master, script)
+data = bytearray()
+deadline = time.monotonic() + 5
+
+while time.monotonic() < deadline:
+    ready, _, _ = select.select([master], [], [], 0.1)
+    if ready:
+        try:
+            data.extend(os.read(master, 4096))
+        except OSError:
+            break
+    if process.poll() is not None:
+        break
+
+if process.poll() is None:
+    process.kill()
+process.wait()
+os.close(master)
+
+plain = re.sub(rb"\x1b\[[0-9;?]*[ -/]*[@-~]", b"", bytes(data)).replace(
+    b"\r", b""
+)
+caught = plain.find(b"CAUGHT\n")
+status = plain.find(b"STATUS:2\n")
+good = (
+    b"x: boom" in plain
+    and caught >= 0
+    and status > caught
+    and b"NEXT\n" in plain
+    and b"SAME-LINE" not in plain
+)
+
+if not good:
+    sys.stderr.buffer.write(plain)
+    raise SystemExit(1)
+PY
+        then
+                won
+        else
+                lost 'interactive fatal trap order' 'expected CAUGHT before STATUS:2'
+        fi
+}
+
+# Every descriptor below the limit except stdin/out/err is available here.
+# A literal source at the highest usable slot used to force hidden saves above
+# the limit even though lower slots were free.
+low_fd_literal_sources()
+{
+        for limit in 7 8 9 10 11 12 13 14 15 16
+        do
+                fd=$((limit - 1))
+                file=$work/low-fd-$limit
+                got=$(printf '%s\n' \
+                        "ulimit -n $limit; exec $fd>$file; echo literal >&$fd; echo STATUS:\$?; exec $fd>&-; cat $file; rm $file" |
+                        "$subject" 2>&1)
+
+                if [ "$got" != 'STATUS:0
+literal' ]
+                then
+                        lost 'low fd literal sources' \
+                                "limit $limit fd $fd expected STATUS:0/literal, got $got"
+                        return
+                fi
+        done
+
+        won
+}
+
 # What ours says where dash says something else. The recorded output has its
 # newlines written as | so a case stays one line. Both halves are checked: if
 # ours starts agreeing with dash the case fails and moves up into answer, and
@@ -352,6 +556,12 @@ expected 'both then stderr' 'out|divider|err|' 0 '{ echo out; echo err >&2; } &>
 expected 'stderr then both' 'out|err|divider|' 0 '{ echo out; echo err >&2; } 2> /tmp/ptbothe.$$ &> /tmp/ptbotho.$$; cat /tmp/ptbotho.$$; echo divider; cat /tmp/ptbothe.$$; rm /tmp/ptbotho.$$ /tmp/ptbothe.$$'
 expected 'both restores' 'outer-out|outer-err|inner-out|inner-err|' 0 '{ { echo inner-out; echo inner-err >&2; } &> /tmp/ptbothr.$$; echo outer-out; echo outer-err >&2; } 2>&1; cat /tmp/ptbothr.$$; rm /tmp/ptbothr.$$'
 expected 'failed both restores' 'after|' 0 '{ echo hidden; } &> /no/such/ptboth/target; echo after'
+expected 'low fd ordinary' 'after-out|after-err|in|' 0 '{ ulimit -n 10; echo in > /tmp/ptlowo.$$; echo after-out; echo after-err >&2; cat /tmp/ptlowo.$$; rm /tmp/ptlowo.$$; } 2>&1'
+expected 'low fd both ten' 'after-out|after-err|out|err|' 0 '{ ulimit -n 10; { echo out; echo err >&2; } &> /tmp/ptlowb.$$; echo after-out; echo after-err >&2; cat /tmp/ptlowb.$$; rm /tmp/ptlowb.$$; } 2>&1'
+expected 'low fd both eleven' 'after-out|after-err|out|err|' 0 '{ ulimit -n 11; { echo out; echo err >&2; } &> /tmp/ptlowe.$$; echo after-out; echo after-err >&2; cat /tmp/ptlowe.$$; rm /tmp/ptlowe.$$; } 2>&1'
+expected 'low fd append' 'after-out|after-err|first|out|err|' 0 '{ ulimit -n 10; echo first > /tmp/ptlowa.$$; { echo out; echo err >&2; } &>> /tmp/ptlowa.$$; echo after-out; echo after-err >&2; cat /tmp/ptlowa.$$; rm /tmp/ptlowa.$$; } 2>&1'
+low_fd_literal_sources
+expected 'low fd nested eight' 'tail|one|two|middle|' 0 '{ ulimit -n 8; { { echo one; echo two >&2; } > /tmp/ptlni-a.$$ 2> /tmp/ptlni-b.$$; echo middle; } > /tmp/ptlni-c.$$ 2> /tmp/ptlni-d.$$; echo tail; cat /tmp/ptlni-a.$$ /tmp/ptlni-b.$$ /tmp/ptlni-c.$$ /tmp/ptlni-d.$$; rm /tmp/ptlni-a.$$ /tmp/ptlni-b.$$ /tmp/ptlni-c.$$ /tmp/ptlni-d.$$; } 2>&1'
 check 'in'              'echo z > /tmp/pt3; cat < /tmp/pt3'
 check 'stderr'          'ls /nonexistent 2>/dev/null; echo done'
 check 'stderr to out'   'ls /nonexistent 2>&1 | wc -l'
@@ -360,6 +570,12 @@ line
 EOF'
 check 'heredoc quoted'  'cat <<"EOF"
 $notexpanded
+EOF'
+answer 'heredoc default' 'cat <<EOF
+${nosuch:-fallback}
+EOF'
+answer 'heredoc command' 'cat <<EOF
+$(echo sub)
 EOF'
 
 group builtins
@@ -461,6 +677,60 @@ answer 'function body'   'f() { false; }; f; echo $?'
 answer 'loop body'       'for i in 1; do false; done; echo $?'
 answer 'branch taken'    'if true; then if false; then echo a; else echo b; fi; fi'
 answer 'not a command'   'nosuchcommand12345; echo $?'
+answer 'external exit 127' '/bin/sh -c "exit 127"; echo $?'
+
+group interactive-fatal
+interactive_fatal 'unsupported uppercase' 'bad substitution' 'x=ab' \
+        'echo RAN-BAD "${x^^}"; echo SAME-LINE'
+interactive_fatal 'unsupported replace' 'bad substitution' 'x=ab' \
+        'echo RAN-BAD "${x//a/b}"; echo SAME-LINE'
+interactive_fatal 'parameter required' 'x: boom' 'unset x' \
+        'echo RAN-BAD "${x:?boom}"; echo SAME-LINE'
+interactive_fatal 'bad arithmetic' 'arithmetic: 1/0' ':' \
+        'echo RAN-BAD "$((1/0))"; echo SAME-LINE'
+interactive_fatal 'redirect expansion' 'bad substitution' 'x=ab' \
+        'echo RAN-BAD >"${x^^}"; echo SAME-LINE'
+interactive_fatal 'for expansion' 'bad substitution' 'x=ab' \
+        'for v in ${x^^}; do echo RAN-BAD; done; echo SAME-LINE'
+interactive_fatal 'case expansion' 'bad substitution' 'x=ab' \
+        'case ${x^^} in *) echo RAN-BAD;; esac; echo SAME-LINE'
+interactive_fatal 'heredoc expansion' 'bad substitution' 'x=ab' \
+        'cat <<EOF; echo SAME-LINE
+${x^^}
+EOF' continue
+interactive_fatal 'command substitution child' 'bad substitution' 'x=ab' \
+        'value=$(echo "${x^^}"
+echo RAN-BAD >&2
+)'
+interactive_fatal 'nested fatal has no assignment' 'bad substitution' \
+        'unset x; y=ab' 'echo RAN-BAD "${x:=${y^^}}"; echo SAME-LINE' \
+        abort 'echo X:${x+set}:${x-UNSET}' 'X::UNSET'
+interactive_fatal 'pipeline child expansion' 'bad substitution' 'x=ab' \
+        'echo RAN-BAD "${x^^}" | cat; echo SAME-LINE' continue
+interactive_fatal 'pipeline child redirect' 'x: boom' 'unset x' \
+        'echo RAN-BAD >"${x:?boom}" | cat; echo SAME-LINE' continue
+interactive_fatal_trap
+
+group heredoc-isolation
+expected 'required status' 'FIRST:2|AFTER|' 0 'unset x
+cat <<EOF
+${x:?boom}
+EOF
+echo FIRST:$?
+echo AFTER'
+expected 'assignment isolated' 'made|FIRST:0|X::UNSET|' 0 'unset x
+cat <<EOF
+${x:=made}
+EOF
+echo FIRST:$?
+echo X:${x+set}:${x-UNSET}'
+expected 'nested fatal isolated' 'FIRST:2|X::UNSET|AFTER|' 0 'unset x; y=ab
+cat <<EOF
+${x:=${y^^}}
+EOF
+echo FIRST:$?
+echo X:${x+set}:${x-UNSET}
+echo AFTER'
 
 # A builtin that cannot fail still has to say it did not, and each of these
 # runs one after a failure so the old status is there to be left behind.
@@ -1079,16 +1349,6 @@ differs 'closed fd'      '0|' 0 'echo x >&- 2>/dev/null; echo $?'
 differs 'local goes on'  '2|after|' 0 'local v=1 2>/dev/null; echo $?; echo after'
 differs 'kill takes sig' '1|' 0 'kill -SIGTERM 999999 2>/dev/null; echo $?'
 differs 'expr is sixty four' '-9223372036854775808|' 0 'expr 9223372036854775807 + 1'
-
-# A here-document body goes through shell.c's older expander, which knows
-# $name and ${name} and nothing else -- so the forms that make a here-document
-# worth writing come out as themselves.
-differs 'heredoc plain only' ':-fallback}|' 0 'cat <<EOF
-${nosuch:-fallback}
-EOF'
-differs 'heredoc no sub'  '$(echo sub)|' 0 'cat <<EOF
-$(echo sub)
-EOF'
 
 # The expanded form of a here-document body is built in the storage a command
 # line shares, which holds eight kilobytes. A body that outgrows it is refused

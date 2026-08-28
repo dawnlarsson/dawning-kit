@@ -43,7 +43,7 @@ TEST_TALLY="$work/tally"
 export TEST_TALLY
 : > "$TEST_TALLY"
 
-lanes="standard verify exact native probe shell expand builtin awk text tools files term kit boot canvas"
+lanes="standard verify exact socket native probe shell expand builtin awk text tools files term kit boot canvas"
 
 describe()
 {
@@ -51,6 +51,7 @@ describe()
         standard) echo "the standard library, and that it still builds with no platform under it" ;;
         verify)   echo "the assembly in library.c against the C it replaced, on three machines" ;;
         exact)    echo "every size that is known where the call is written, and both tiers" ;;
+        socket)   echo "byte order against a reference, and real sockets on three machines" ;;
         native)   echo "arm64 assembly on an arm64 machine, with no emulator in the way" ;;
         probe)    echo "what only a separate process can prove: arguments, status, regions" ;;
         shell)    echo "the shell language against dash, the names it answers to, and the gaps" ;;
@@ -1623,6 +1624,77 @@ lane_exact()
         [ "$missing" = 0 ] || return 2
         return 0
 }
+
+socket_one()
+{
+        name=$1
+        cross=$2
+        runner=$3
+
+        if ! command -v "$cross" > /dev/null 2>&1; then
+                note "$name: NOT RUN -- no $cross"
+                return 2
+        fi
+
+        if [ -n "$runner" ] && ! command -v "$runner" > /dev/null 2>&1; then
+                note "$name: NOT RUN -- no $runner"
+                return 2
+        fi
+
+        saved=$compiler
+        compiler=$cross
+        freestanding src/test/socket.c "$work/socket.$name" "$name" || {
+                compiler=$saved
+                return 1
+        }
+        compiler=$saved
+
+        $runner "$work/socket.$name" > "$work/socket.$name.out" 2>&1
+        status=$?
+
+        sed -n '/FAIL/p' "$work/socket.$name.out"
+
+        line=$(sed -n 's/^\([0-9]*\) checks, \([0-9]*\) failures$/\1 \2/p' \
+                "$work/socket.$name.out")
+
+        [ -n "$line" ] || { note "$name printed no verdict"; return 1; }
+
+        checks=${line% *}
+        bad=${line#* }
+
+        tally "socket-$name" "$((checks - bad))" "$checks"
+
+        [ "$status" = 0 ] && [ "$bad" = 0 ]
+}
+
+#
+#       The byte order half is arithmetic and proves itself anywhere. The
+#       socket half needs a loopback interface to bind to, which qemu-user
+#       hands straight to the host kernel, so all three targets open real
+#       sockets rather than only compiling the calls.
+#
+lane_socket()
+{
+        failed=0
+        missing=0
+
+        for target in x86_64 arm64 riscv64; do
+                target_tools "$target"
+                outcome=0
+                socket_one "$target" "$target_compiler" "$target_runner" || outcome=$?
+
+                case $outcome in
+                0) ;;
+                2) missing=1 ;;
+                *) failed=1 ;;
+                esac
+        done
+
+        [ "$failed" = 0 ] || return 1
+        [ "$missing" = 0 ] || return 2
+        return 0
+}
+
 
 #       arm64 assembly on an arm64 machine.
 #

@@ -2730,8 +2730,8 @@ static b32 text_rev()
 
                 while (text_line_next())
                 {
-                        for (positive c = text_line_length; c > 0; c--)
-                                text_put_character(text_line[c - 1]);
+                        memory_reverse(text_line, text_line_length);
+                        text_put(text_line, text_line_length);
 
                         if (text_line_ended)
                                 text_put_character(text_delimiter);

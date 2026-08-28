@@ -51,22 +51,23 @@
         walks the flag down on purpose, and twice now a one byte sabotage has
         survived the whole suite because nothing did.
 
-        Kernel handling is not yet at parity. x86 kernel builds take only the
-        integer-register paths, keeping vector state out of routines that do
-        not call kernel_fpu_begin. The arm64 block still takes NEON paths in a
-        kernel build without kernel_neon_begin, and the riscv word paths still
-        issue unaligned loads and stores on a baseline where those may trap.
-        Those are correctness and floor-performance blockers, not settled
-        optimisations. Userspace x86 selects AVX2 and AVX-512 from the feature
-        bytes its startup pass writes; arm64 userspace may use the NEON its
-        baseline architecture guarantees.
+        Kernel memory and string paths stay outside vector state. x86 kernel
+        builds take their integer-register bodies and do not run the userspace
+        XGETBV feature probe. arm64 kernel builds use local scalar bodies or
+        tail-call the kernel's strlen, strchr, strrchr, memset, memcpy and
+        memmove; sanitizer builds deliberately use checked generic hunts.
+        RISC-V word paths peel arbitrary pointers to natural alignment, keep
+        the SWAR and unrolled cores when source and destination residues agree,
+        and fall back to bytes when they do not. Userspace x86 selects AVX2 and
+        AVX-512 from the feature bytes its startup pass writes; arm64 userspace
+        may use the NEON its baseline architecture guarantees.
 
         The libc names -- strlen, memcpy, strchr and the rest -- are aliases
         onto these, added where the file stops being compiled into a kernel.
         A .set is a second label on the same address, so there is no wrapper
         and no jump, and which names get one depends on who is linking.
 
-        106 routines (103 public, 3 local), 106 of them on all three.
+        134 routines (130 public, 4 local), 134 of them on all three.
 
           routine                        scope   x86_64  arm64   riscv64
           ------------------------------ ------- ------- ------- -------
@@ -77,6 +78,8 @@
           bipolar_to_string              public  yes     yes     yes
           byte_class_holds               public  yes     yes     yes
           byte_class_index               public  yes     yes     yes
+          bytes_reverse_16               public  yes     yes     yes
+          bytes_reverse_32               public  yes     yes     yes
           decimal_to_string              public  yes     yes     yes
           exit                           public  yes     yes     yes
           fast_sin                       public  yes     yes     yes
@@ -86,10 +89,12 @@
           file_new                       public  yes     yes     yes
           file_new_lazy                  public  yes     yes     yes
           file_read                      public  yes     yes     yes
+          file_slurp                     public  yes     yes     yes
           file_unload                    public  yes     yes     yes
           file_valid                     public  yes     yes     yes
           file_write                     public  yes     yes     yes
           get_cpu_time                   public  yes     yes     yes
+          host_into                      public  yes     yes     yes
           library_close                  public  yes     yes     yes
           library_get                    public  yes     yes     yes
           library_open                   public  yes     yes     yes
@@ -107,18 +112,25 @@
           memory_fill                    public  yes     yes     yes
           memory_first_of                public  yes     yes     yes
           memory_free                    public  yes     yes     yes
+          memory_reverse                 public  yes     yes     yes
           memory_search                  public  yes     yes     yes
           moonwater_cpu_detect           public  yes     yes     yes
           path_basename                  public  yes     yes     yes
+          path_head_copy                 public  yes     yes     yes
+          path_join                      public  yes     yes     yes
+          path_split_core                local   yes     yes     yes
+          path_tail_copy                 public  yes     yes     yes
           positive_digits                public  yes     yes     yes
           positive_digits_core           local   yes     yes     yes
           positive_into                  public  yes     yes     yes
           positive_into_base             public  yes     yes     yes
           positive_into_core             local   yes     yes     yes
           positive_into_human_1024_string public  yes     yes     yes
+          positive_into_human_nearest_string public  yes     yes     yes
           positive_into_padded           public  yes     yes     yes
           positive_into_pair             public  yes     yes     yes
           positive_into_string           public  yes     yes     yes
+          positive_to_base_field         public  yes     yes     yes
           positive_to_human_1024         public  yes     yes     yes
           positive_to_padded             public  yes     yes     yes
           positive_to_string             public  yes     yes     yes
@@ -130,6 +142,18 @@
           program_environment_list       public  yes     yes     yes
           shell_set_cursor               public  yes     yes     yes
           sleep                          public  yes     yes     yes
+          socket_accept                  public  yes     yes     yes
+          socket_bind                    public  yes     yes     yes
+          socket_close                   public  yes     yes     yes
+          socket_connect                 public  yes     yes     yes
+          socket_listen                  public  yes     yes     yes
+          socket_name                    public  yes     yes     yes
+          socket_new                     public  yes     yes     yes
+          socket_option_get              public  yes     yes     yes
+          socket_option_set              public  yes     yes     yes
+          socket_receive                 public  yes     yes     yes
+          socket_send                    public  yes     yes     yes
+          socket_shutdown                public  yes     yes     yes
           string_append                  public  yes     yes     yes
           string_bipolar                 public  yes     yes     yes
           string_compare                 public  yes     yes     yes
@@ -164,6 +188,7 @@
           string_span_max                public  yes     yes     yes
           string_table_find              public  yes     yes     yes
           string_to_bipolar              public  yes     yes     yes
+          string_to_host                 public  yes     yes     yes
           string_to_positive             public  yes     yes     yes
           system_call                    public  yes     yes     yes
           system_call_1                  public  yes     yes     yes
@@ -172,10 +197,14 @@
           system_call_4                  public  yes     yes     yes
           system_call_5                  public  yes     yes     yes
           system_call_6                  public  yes     yes     yes
+          system_read_retry              public  yes     yes     yes
           system_write_all               public  yes     yes     yes
           term_size                      public  yes     yes     yes
+          wait_status_code               public  yes     yes     yes
+          wait_status_code_base          public  yes     yes     yes
           working_directory_get          public  yes     yes     yes
           working_directory_set          public  yes     yes     yes
+          writer_fill                    public  yes     yes     yes
 */
 
 #ifndef STANDARD_MODERN_C
@@ -2897,6 +2926,61 @@ __asm__(
     ASM_RET
     ASM_END(memory_fill)
 
+    /*
+            Reverse an exact byte span in place and hand its original address
+            back.  The two ends are loaded before either is stored, so every
+            wide turn is safe even when the span has shrunk to exactly two
+            blocks.  Anything smaller is settled by the pair loop underneath;
+            zero and one return without even reading the block.
+
+            AVX2 reverses each 128-bit lane with pshufb, then exchanges the
+            lanes.  The kernel cannot own ymm state here and therefore never
+            emits that body.  Its floor, and the userspace floor on a machine
+            without AVX2, is two unaligned integer words and bswap: baseline
+            x86_64 instructions, sixteen bytes retired per turn.
+    */
+    ASM_FUNC(memory_reverse)
+    "mov %rdi, %rax\n   lea (%rdi,%rsi), %rdx\n"
+#ifndef KERNEL_MODE
+    "cmp $64, %rsi\n   jb 5f\n"
+    ASM_NARROW("cpu_has_avx2", "5f")
+    "vmovdqu .Lmemory_reverse_x86_mask(%rip), %ymm2\n"
+    ".balign 16\n"
+    "1:  vmovdqu (%rdi), %ymm0\n   sub $32, %rdx\n"
+    "vmovdqu (%rdx), %ymm1\n"
+    "vpshufb %ymm2, %ymm0, %ymm0\n"
+    "vpshufb %ymm2, %ymm1, %ymm1\n"
+    "vperm2i128 $1, %ymm0, %ymm0, %ymm0\n"
+    "vperm2i128 $1, %ymm1, %ymm1, %ymm1\n"
+    "vmovdqu %ymm1, (%rdi)\n   vmovdqu %ymm0, (%rdx)\n"
+    "add $32, %rdi\n   sub $64, %rsi\n   cmp $64, %rsi\n   jae 1b\n"
+    "vzeroupper\n"
+#endif
+    "5:  cmp $16, %rsi\n   jb 2f\n"
+    ".balign 16\n"
+    "1:  mov (%rdi), %r8\n   sub $8, %rdx\n   mov (%rdx), %r9\n"
+    "bswap %r8\n   bswap %r9\n   mov %r9, (%rdi)\n   mov %r8, (%rdx)\n"
+    "add $8, %rdi\n   sub $16, %rsi\n   cmp $16, %rsi\n   jae 1b\n"
+    // Exact sub-word spans are one load, one reversal and one store.  The
+    // general pair loop remains for the odd sizes around them.
+    "2:  cmp $8, %rsi\n   jne 3f\n   mov (%rdi), %r8\n"
+    "bswap %r8\n   mov %r8, (%rdi)\n" ASM_RET
+    "3:  cmp $4, %rsi\n   jne 4f\n   mov (%rdi), %r8d\n"
+    "bswap %r8d\n   mov %r8d, (%rdi)\n" ASM_RET
+    "4:  cmp $2, %rsi\n   jne 6f\n   movzwl (%rdi), %r8d\n"
+    "rol $8, %r8w\n   mov %r8w, (%rdi)\n" ASM_RET
+    "6:  cmp $2, %rsi\n   jb 9f\n"
+    "1:  movzbl (%rdi), %ecx\n   dec %rdx\n   movzbl (%rdx), %r8d\n"
+    "mov %r8b, (%rdi)\n   mov %cl, (%rdx)\n   inc %rdi\n"
+    "sub $2, %rsi\n   cmp $2, %rsi\n   jae 1b\n"
+    "9:  " ASM_RET
+    ".section .rodata\n   .balign 32\n"
+    ".Lmemory_reverse_x86_mask:\n"
+    "        .byte 15,14,13,12,11,10,9,8,7,6,5,4,3,2,1,0\n"
+    "        .byte 15,14,13,12,11,10,9,8,7,6,5,4,3,2,1,0\n"
+    ASM_SECTION
+    ASM_END(memory_reverse)
+
     ASM_FUNC(memory_copy_fast)
     KERNEL_BULK_COPY
     "mov %rdi, %rax\n   cmp $32, %rdx\n   ja 6f\n"
@@ -3454,8 +3538,9 @@ __asm__(
     "cmpb $47, (%r14)\n   jne 5f\n   mov %r14, %rdi\n   mov $1, %esi\n"
     "jmp 6f\n"
     "5:  lea (%r14,%rcx,1), %rdi\n   mov %rdx, %rsi\n   sub %rcx, %rsi\n"
-    "6:  mov %rbx, %r11\n   add $8, %rsp\n   pop %r14\n   pop %r13\n"
-    "pop %r12\n   pop %rbx\n   jmp *%r11\n"
+    "6:  mov %rbx, %r11\n"
+    ASM_CALL("r11")
+    "jmp .Lpath_x86_return\n"
     ASM_LOCAL_END(path_split_core)
 
     ASM_FUNC(path_basename)
@@ -3478,17 +3563,20 @@ __asm__(
     // already end in one, then the name. Directory-first truncation and the
     // preservation of leading/trailing slashes are the former C contract.
     ASM_FUNC(path_join)
-    "test %rsi, %rsi\n   jz 8f\n   push %rbx\n   push %r12\n   push %r13\n"
-    "mov %rdi, %rbx\n   mov %rsi, %r12\n   mov %rcx, %r13\n"
-    "mov %rdx, %rsi\n   mov %r12, %rdx\n   dec %rdx\n"
-    "call string_copy_max_end\n   sub %rbx, %rax\n"
-    "test %rax, %rax\n   jz 2f\n   cmpb $47, -1(%rbx,%rax,1)\n   je 2f\n"
-    "lea 1(%rax), %rcx\n   cmp %r12, %rcx\n   jae 2f\n"
-    "movb $47, (%rbx,%rax,1)\n   inc %rax\n"
-    "2:  mov %r12, %rdx\n   dec %rdx\n   sub %rax, %rdx\n"
-    "lea (%rbx,%rax,1), %rdi\n   mov %r13, %rsi\n   mov %rax, %r12\n"
-    "call string_copy_max_end\n   sub %rbx, %rax\n"
-    "pop %r13\n   pop %r12\n   pop %rbx\n"
+    "test %rsi, %rsi\n   jz 8f\n   push %rbx\n   push %r12\n"
+    "push %r13\n   push %r14\n   push %r15\n"
+    "mov %rdi, %rbx\n   mov %rsi, %r12\n   mov %rdx, %r13\n   mov %rcx, %r14\n"
+    "mov %r13, %rdi\n   lea -1(%r12), %rsi\n   call string_length_max\n"
+    "mov %rax, %r15\n   mov %rbx, %rdi\n   mov %r13, %rsi\n"
+    "mov %r15, %rdx\n   call memory_copy_fast\n"
+    "test %r15, %r15\n   jz 2f\n   cmpb $47, -1(%rbx,%r15,1)\n   je 2f\n"
+    "lea 1(%r15), %rax\n   cmp %r12, %rax\n   jae 2f\n"
+    "movb $47, (%rbx,%r15,1)\n   mov %rax, %r15\n"
+    "2:  lea -1(%r12), %rsi\n   sub %r15, %rsi\n   mov %r14, %rdi\n"
+    "call string_length_max\n   mov %rax, %rdx\n"
+    "lea (%rbx,%r15,1), %rdi\n   mov %r14, %rsi\n"
+    "call memory_copy_fast_end\n   sub %rbx, %rax\n"
+    "pop %r15\n   pop %r14\n   pop %r13\n   pop %r12\n   pop %rbx\n"
     ASM_RET
     "8:  xor %eax, %eax\n"
     ASM_RET
@@ -4218,15 +4306,32 @@ ASM_FUNC(positive_to_string)
     "movw $16928, (%rdi,%rax)\n   movb $0, 2(%rdi,%rax)\n   add $2, %rax\n"
     ASM_RET
     ASM_END(positive_into_human_nearest_string)
-    // A wait4 status has its signal in bits zero through six and an ordinary
-    // exit code in bits eight through fifteen.  Prefer the overwhelmingly
-    // common ordinary-exit branch and expose a signal as shell 128+signal.
-    ASM_FUNC(wait_status_code)
+    /*
+            A wait4 status has its signal in bits zero through six, the core
+            flag in bit seven, and an ordinary exit code in bits eight through
+            fifteen.  signal_base selects the consumer's convention:
+
+              0    signal itself, core ignored
+              128  shell 128+signal, core ignored
+              256  gawk 256+signal, plus another 256 for a core dump
+
+            The bit-256 test makes that last distinction without putting AWK
+            policy in its caller.  Bits above the kernel-owned status word are
+            ignored.  Ordinary exit is overwhelmingly common and remains the
+            fall-through path.
+    */
+    ASM_FUNC(wait_status_code_base)
     "mov %edi, %eax\n   and $127, %eax\n   jnz 1f\n"
     "mov %edi, %eax\n   shr $8, %eax\n   movzbl %al, %eax\n"
     ASM_RET
-    "1:  add $128, %eax\n"
+    "1:  add %esi, %eax\n   and $128, %edi\n   shl $1, %edi\n"
+    "and %esi, %edi\n   add %edi, %eax\n"
     ASM_RET
+    ASM_END(wait_status_code_base)
+    // The shell surface stays a two-instruction tail adapter onto the shared
+    // decoder, so the policy and bit extraction have one implementation.
+    ASM_FUNC(wait_status_code)
+    "mov $128, %esi\n   jmp wait_status_code_base\n"
     ASM_END(wait_status_code)
     //
     //       The writer adapter preserves the calls made by file_human: one
@@ -6244,6 +6349,42 @@ __asm__(
 #endif
     ASM_END(memory_fill)
 
+    // Same exact in-place contract as x86_64.  Userspace has baseline NEON:
+    // rev64 reverses each eight-byte lane and ext exchanges the lanes, so a
+    // pair of q registers retires thirty two bytes per turn.  A kernel build
+    // owns no vector state here and takes only the integer-register body,
+    // where rev is baseline ARMv8 and every access stays inside the span.
+    ASM_FUNC(memory_reverse)
+    "mov x3, x0\n   add x4, x0, x1\n"
+#ifndef KERNEL_MODE
+    "cmp x1, #32\n   b.lo 5f\n"
+    ".balign 16\n"
+    "1:  ldr q0, [x0]\n   sub x4, x4, #16\n   ldr q1, [x4]\n"
+    "rev64 v0.16b, v0.16b\n   rev64 v1.16b, v1.16b\n"
+    "ext v0.16b, v0.16b, v0.16b, #8\n"
+    "ext v1.16b, v1.16b, v1.16b, #8\n"
+    "str q1, [x0]\n   str q0, [x4]\n   add x0, x0, #16\n"
+    "sub x1, x1, #32\n   cmp x1, #32\n   b.hs 1b\n"
+#endif
+    "5:  cmp x1, #16\n   b.lo 2f\n"
+    ".balign 16\n"
+    "1:  ldr x5, [x0]\n   sub x4, x4, #8\n   ldr x6, [x4]\n"
+    "rev x5, x5\n   rev x6, x6\n   str x6, [x0]\n   str x5, [x4]\n"
+    "add x0, x0, #8\n   sub x1, x1, #16\n   cmp x1, #16\n   b.hs 1b\n"
+    "2:  cmp x1, #8\n   b.ne 3f\n   ldr x5, [x0]\n"
+    "rev x5, x5\n   str x5, [x0]\n   b 9f\n"
+    "3:  cmp x1, #4\n   b.ne 4f\n   ldr w5, [x0]\n"
+    "rev w5, w5\n   str w5, [x0]\n   b 9f\n"
+    "4:  cmp x1, #2\n   b.ne 6f\n   ldrh w5, [x0]\n"
+    "rev16 w5, w5\n   strh w5, [x0]\n   b 9f\n"
+    "6:  cmp x1, #2\n   b.lo 9f\n"
+    "1:  ldrb w5, [x0]\n   sub x4, x4, #1\n   ldrb w6, [x4]\n"
+    "strb w6, [x0], #1\n   strb w5, [x4]\n"
+    "sub x1, x1, #2\n   cmp x1, #2\n   b.hs 1b\n"
+    "9:  mov x0, x3\n"
+    ASM_RET
+    ASM_END(memory_reverse)
+
     ASM_FUNC(memory_copy_fast)
 #ifdef KERNEL_MODE
     // The fast contract excludes overlap, exactly the kernel memcpy contract.
@@ -6546,81 +6687,84 @@ __asm__(
 #endif
     ASM_END(string_cut)
 
-    // path_split_core returns the original path in x0, its trailing-slash-
-    // trimmed end in x1, and the final component start in x2. See x86_64 for
-    // the shared contract and why this is a real local function.
+    // One tail-dispatched frame for all three public shapes. x9 selects
+    // writer/tail/head until the core has saved it; x19-x22 keep the public
+    // arguments live across the optimized length and copy calls.
     ASM_LOCAL_FUNC(path_split_core)
-    "stp x29, x30, [sp, #-32]!\n   str x19, [sp, #16]\n"
-    "mov x19, x0\n   bl string_length\n   mov x1, x0\n"
-    "1:  cmp x1, #1\n   b.ls 2f\n   sub x3, x1, #1\n"
-    "ldrb w4, [x19, x3]\n   cmp w4, #47\n   b.ne 2f\n"
-    "mov x1, x3\n   b 1b\n"
-    "2:  mov x2, x1\n"
-    "3:  cbz x2, 4f\n   sub x3, x2, #1\n   ldrb w4, [x19, x3]\n"
-    "cmp w4, #47\n   b.eq 4f\n   mov x2, x3\n   b 3b\n"
-    "4:  mov x0, x19\n   ldr x19, [sp, #16]\n"
-    "ldp x29, x30, [sp], #32\n"
+    "stp x29, x30, [sp, #-48]!\n   stp x19, x20, [sp, #16]\n"
+    "stp x21, x22, [sp, #32]\n   mov x19, x0\n   mov x20, x1\n"
+    "mov x21, x9\n   mov x22, x2\n   cbnz x21, 1f\n   mov x22, x1\n"
+    "1:  mov x0, x22\n   bl string_length\n   mov x1, x0\n"
+    "2:  cmp x1, #1\n   b.ls 3f\n   sub x3, x1, #1\n"
+    "ldrb w4, [x22, x3]\n   cmp w4, #47\n   b.ne 3f\n"
+    "mov x1, x3\n   b 2b\n"
+    "3:  mov x2, x1\n"
+    "4:  cbz x2, 5f\n   sub x3, x2, #1\n   ldrb w4, [x22, x3]\n"
+    "cmp w4, #47\n   b.eq 5f\n   mov x2, x3\n   b 4b\n"
+    "5:  cbz x21, .Lpath_arm_writer\n   cmp x21, #1\n"
+    "b.ne .Lpath_arm_head\n"
+    // tail copy
+    "cmp x1, #1\n   b.ne 6f\n   ldrb w3, [x22]\n   cmp w3, #47\n"
+    "b.ne 6f\n   mov x2, #1\n   mov x1, x22\n   b 7f\n"
+    "6:  add x3, x22, x2\n   sub x2, x1, x2\n   mov x1, x3\n"
+    "7:  sub x3, x20, #1\n   cmp x2, x3\n   csel x2, x2, x3, ls\n"
+    "mov x0, x19\n   bl memory_copy_fast_end\n   sub x0, x0, x19\n"
+    "b .Lpath_arm_return\n"
+    // dirname copy
+    ".Lpath_arm_head:\n   cbnz x2, 8f\n   cmp x20, #1\n   b.eq 9f\n"
+    "mov w3, #46\n   strb w3, [x19]\n   strb wzr, [x19, #1]\n"
+    "mov x0, #1\n   b .Lpath_arm_return\n"
+    "9:  strb wzr, [x19]\n   mov x0, #0\n   b .Lpath_arm_return\n"
+    "8:  cmp x2, #1\n   b.ls 7f\n   sub x3, x2, #1\n"
+    "ldrb w4, [x22, x3]\n   cmp w4, #47\n   b.ne 7f\n"
+    "mov x2, x3\n   b 8b\n"
+    "7:  sub x3, x20, #1\n   cmp x2, x3\n   csel x2, x2, x3, ls\n"
+    "mov x0, x19\n   mov x1, x22\n   bl memory_copy_fast_end\n"
+    "sub x0, x0, x19\n"
+    ".Lpath_arm_return:\n   ldp x21, x22, [sp, #32]\n"
+    "ldp x19, x20, [sp, #16]\n   ldp x29, x30, [sp], #48\n"
     ASM_RET
+    // writer basename, with root retaining its slash
+    ".Lpath_arm_writer:\n   cmp x1, #1\n   b.ne 6f\n"
+    "ldrb w3, [x22]\n   cmp w3, #47\n   b.ne 6f\n"
+    "mov x0, x22\n   mov x1, #1\n   b 7f\n"
+    "6:  add x0, x22, x2\n   sub x1, x1, x2\n"
+    "7:  mov x16, x19\n   ldp x21, x22, [sp, #32]\n"
+    "ldp x19, x20, [sp, #16]\n   ldp x29, x30, [sp], #48\n   br x16\n"
     ASM_LOCAL_END(path_split_core)
 
     ASM_FUNC(path_basename)
-    "stp x29, x30, [sp, #-32]!\n   str x19, [sp, #16]\n"
-    "mov x19, x0\n   mov x0, x1\n   bl path_split_core\n"
-    "cmp x1, #1\n   b.ne 1f\n   ldrb w3, [x0]\n   cmp w3, #47\n"
-    "b.ne 1f\n   mov x1, #1\n   b 2f\n"
-    "1:  add x0, x0, x2\n   sub x1, x1, x2\n"
-    "2:  mov x16, x19\n   ldr x19, [sp, #16]\n"
-    "ldp x29, x30, [sp], #32\n   br x16\n"
+    "mov x9, #0\n   b path_split_core\n"
     ASM_END(path_basename)
 
     ASM_FUNC(path_tail_copy)
-    "cbz x1, 8f\n   stp x29, x30, [sp, #-32]!\n"
-    "stp x19, x20, [sp, #16]\n   mov x19, x0\n   mov x20, x1\n"
-    "mov x0, x2\n   bl path_split_core\n"
-    "cmp x1, #1\n   b.ne 1f\n   ldrb w3, [x0]\n   cmp w3, #47\n"
-    "b.ne 1f\n   mov x2, #1\n   mov x1, x0\n   b 2f\n"
-    "1:  add x3, x0, x2\n   sub x2, x1, x2\n   mov x1, x3\n"
-    "2:  sub x3, x20, #1\n   cmp x2, x3\n   csel x2, x2, x3, ls\n"
-    "mov x0, x19\n   bl memory_copy_fast_end\n   sub x0, x0, x19\n"
-    "ldp x19, x20, [sp, #16]\n   ldp x29, x30, [sp], #32\n"
-    ASM_RET
-    "8:  mov x0, #0\n"
+    "cbz x1, 1f\n   mov x9, #1\n   b path_split_core\n"
+    "1:  mov x0, #0\n"
     ASM_RET
     ASM_END(path_tail_copy)
 
     ASM_FUNC(path_head_copy)
-    "cbz x1, 8f\n   stp x29, x30, [sp, #-32]!\n"
-    "stp x19, x20, [sp, #16]\n   mov x19, x0\n   mov x20, x1\n"
-    "mov x0, x2\n   bl path_split_core\n   cbnz x2, 2f\n"
-    "cmp x20, #1\n   b.eq 1f\n   mov w3, #46\n   strb w3, [x19]\n"
-    "strb wzr, [x19, #1]\n   mov x0, #1\n   b 7f\n"
-    "1:  strb wzr, [x19]\n   mov x0, #0\n   b 7f\n"
-    "2:  cmp x2, #1\n   b.ls 3f\n   sub x3, x2, #1\n"
-    "ldrb w4, [x0, x3]\n   cmp w4, #47\n   b.ne 3f\n"
-    "mov x2, x3\n   b 2b\n"
-    "3:  sub x3, x20, #1\n   cmp x2, x3\n   csel x2, x2, x3, ls\n"
-    "mov x1, x0\n   mov x0, x19\n   bl memory_copy_fast_end\n"
-    "sub x0, x0, x19\n"
-    "7:  ldp x19, x20, [sp, #16]\n   ldp x29, x30, [sp], #32\n"
-    ASM_RET
-    "8:  mov x0, #0\n"
+    "cbz x1, 1f\n   mov x9, #2\n   b path_split_core\n"
+    "1:  mov x0, #0\n"
     ASM_RET
     ASM_END(path_head_copy)
 
     ASM_FUNC(path_join)
-    "cbz x1, 8f\n   stp x29, x30, [sp, #-48]!\n"
-    "stp x19, x20, [sp, #16]\n   str x21, [sp, #32]\n"
-    "mov x19, x0\n   mov x20, x1\n   mov x21, x3\n"
-    "mov x1, x2\n   sub x2, x20, #1\n   bl string_copy_max_end\n"
-    "sub x4, x0, x19\n   cbz x4, 2f\n"
-    "sub x5, x4, #1\n   ldrb w6, [x19, x5]\n   cmp w6, #47\n   b.eq 2f\n"
-    "add x5, x4, #1\n   cmp x5, x20\n   b.hs 2f\n"
-    "mov w6, #47\n   strb w6, [x19, x4]\n   mov x4, x5\n"
-    "2:  sub x2, x20, #1\n   sub x2, x2, x4\n"
-    "add x0, x19, x4\n   mov x1, x21\n   mov x20, x4\n"
-    "bl string_copy_max_end\n   sub x0, x0, x19\n"
-    "ldr x21, [sp, #32]\n   ldp x19, x20, [sp, #16]\n"
-    "ldp x29, x30, [sp], #48\n"
+    "cbz x1, 8f\n   stp x29, x30, [sp, #-64]!\n"
+    "stp x19, x20, [sp, #16]\n   stp x21, x22, [sp, #32]\n"
+    "str x23, [sp, #48]\n   mov x19, x0\n   mov x20, x1\n"
+    "mov x21, x2\n   mov x22, x3\n"
+    "mov x0, x21\n   sub x1, x20, #1\n   bl string_length_max\n"
+    "mov x23, x0\n   mov x0, x19\n   mov x1, x21\n   mov x2, x23\n"
+    "bl memory_copy_fast\n   cbz x23, 2f\n"
+    "sub x4, x23, #1\n   ldrb w5, [x19, x4]\n   cmp w5, #47\n"
+    "b.eq 2f\n   add x4, x23, #1\n   cmp x4, x20\n   b.hs 2f\n"
+    "mov w5, #47\n   strb w5, [x19, x23]\n   mov x23, x4\n"
+    "2:  sub x1, x20, #1\n   sub x1, x1, x23\n   mov x0, x22\n"
+    "bl string_length_max\n   mov x2, x0\n   add x0, x19, x23\n"
+    "mov x1, x22\n   bl memory_copy_fast_end\n   sub x0, x0, x19\n"
+    "ldr x23, [sp, #48]\n   ldp x21, x22, [sp, #32]\n"
+    "ldp x19, x20, [sp, #16]\n   ldp x29, x30, [sp], #64\n"
     ASM_RET
     "8:  mov x0, #0\n"
     ASM_RET
@@ -7131,12 +7275,19 @@ ASM_FUNC(positive_to_string)
     "strb wzr, [x2, x8]\n   mov x0, x8\n"
     ASM_RET
     ASM_END(positive_into_human_nearest_string)
-    //       wait_status_code: the x86_64 block carries the wait4 contract.
-    ASM_FUNC(wait_status_code)
-    "and w1, w0, #0x7f\n   ubfx w0, w0, #8, #8\n   cbz w1, 1f\n"
-    "add w0, w1, #128\n"
+    //       wait_status_code_base: the x86_64 block carries the complete
+    //       wait4/base/core contract. w2 is the signal and w3 becomes 0 or
+    //       256, then the base's bit 256 decides whether it contributes.
+    ASM_FUNC(wait_status_code_base)
+    "and w2, w0, #0x7f\n   and w3, w0, #0x80\n"
+    "ubfx w0, w0, #8, #8\n   cbz w2, 1f\n"
+    "add w0, w2, w1\n   lsl w3, w3, #1\n   and w3, w3, w1\n"
+    "add w0, w0, w3\n"
     "1:\n"
     ASM_RET
+    ASM_END(wait_status_code_base)
+    ASM_FUNC(wait_status_code)
+    "mov w1, #128\n   b wait_status_code_base\n"
     ASM_END(wait_status_code)
     //       positive_to_human_1024: the x86_64 block carries the callback
     //       contract. The six-byte scratch starts at sp+24; its length has a
@@ -8655,6 +8806,43 @@ __asm__(
     ASM_RET
     ASM_END(memory_fill)
 
+#define RV_REVERSE_FOUR                                                       \
+    "lbu t0, 0(a0)\n   lbu t1, 1(a0)\n   lbu t2, 2(a0)\n"                \
+    "lbu t3, 3(a0)\n   lbu t4, -1(a3)\n   lbu t5, -2(a3)\n"             \
+    "lbu t6, -3(a3)\n   lbu a4, -4(a3)\n"                                 \
+    "sb t4, 0(a0)\n   sb t5, 1(a0)\n   sb t6, 2(a0)\n   sb a4, 3(a0)\n" \
+    "sb t0, -1(a3)\n   sb t1, -2(a3)\n   sb t2, -3(a3)\n"                 \
+    "sb t3, -4(a3)\n"
+    /*
+            Baseline RV64 has neither Zbb's rev8 nor a guarantee that an
+            unaligned ld/sd completes.  Aligning both ends in lockstep is only
+            possible for one residue combination in eight, and the shift/mask
+            expansion of a software word reversal costs more instructions than
+            unrolled byte pairs.  This is therefore the strict-floor hot loop:
+            every access is one byte, eight pairs retire per back edge, a last
+            half-block takes four at once, and no address outside the caller's
+            exact span is touched.
+    */
+    ASM_FUNC(memory_reverse)
+    "mv a2, a0\n   add a3, a0, a1\n   li a5, 16\n   bltu a1, a5, 3f\n"
+    ".balign 16\n"
+    "1:  " RV_REVERSE_FOUR
+    "addi a0, a0, 4\n   addi a3, a3, -4\n"
+    RV_REVERSE_FOUR
+    "addi a0, a0, 4\n   addi a3, a3, -4\n   addi a1, a1, -16\n"
+    "bgeu a1, a5, 1b\n"
+    "3:  li a5, 8\n   bltu a1, a5, 2f\n"
+    RV_REVERSE_FOUR
+    "addi a0, a0, 4\n   addi a3, a3, -4\n   addi a1, a1, -8\n"
+    "2:  li a5, 2\n   bltu a1, a5, 9f\n"
+    "1:  lbu t0, 0(a0)\n   addi a3, a3, -1\n   lbu t1, 0(a3)\n"
+    "sb t1, 0(a0)\n   sb t0, 0(a3)\n   addi a0, a0, 1\n"
+    "addi a1, a1, -2\n   bgeu a1, a5, 1b\n"
+    "9:  mv a0, a2\n"
+    ASM_RET
+    ASM_END(memory_reverse)
+#undef RV_REVERSE_FOUR
+
     ASM_FUNC(memory_copy_fast)
     "mv a3, a0\n   beqz a2, 9f\n"
     "xor t0, a0, a1\n   andi t0, t0, 7\n   bnez t0, 8f\n"
@@ -8895,77 +9083,94 @@ __asm__(
     ASM_RET
     ASM_END(string_cut)
 
-    // path_split_core returns path/end/component-start in a0/a1/a2. The
-    // x86_64 block documents the shared contract in full.
+    // The public entries tail-dispatch with t6 selecting writer/tail/head.
+    // One core frame owns the length, split walk, and requested finish.
     ASM_LOCAL_FUNC(path_split_core)
-    "addi sp, sp, -16\n   sd ra, 8(sp)\n   sd s0, 0(sp)\n"
-    "mv s0, a0\n   call string_length\n   mv a1, a0\n   li t3, 47\n"
-    "1:  li t0, 2\n   bltu a1, t0, 2f\n   add t1, s0, a1\n"
-    "lbu t2, -1(t1)\n   bne t2, t3, 2f\n   addi a1, a1, -1\n   j 1b\n"
-    "2:  mv a2, a1\n"
-    "3:  beqz a2, 4f\n   add t1, s0, a2\n   lbu t2, -1(t1)\n"
-    "beq t2, t3, 4f\n   addi a2, a2, -1\n   j 3b\n"
-    "4:  mv a0, s0\n   ld ra, 8(sp)\n   ld s0, 0(sp)\n   addi sp, sp, 16\n"
+    "addi sp, sp, -48\n   sd ra, 40(sp)\n   sd s0, 32(sp)\n"
+    "sd s1, 24(sp)\n   sd s2, 16(sp)\n   sd s3, 8(sp)\n"
+    "mv s0, a0\n   mv s1, a1\n   mv s2, t6\n   mv s3, a2\n"
+    "bnez s2, .Lpath_rv_have_path\n   mv s3, a1\n"
+    ".Lpath_rv_have_path:\n   mv a0, s3\n   call string_length\n"
+    "mv a1, a0\n   li t3, 47\n"
+    ".Lpath_rv_trim:\n   li t0, 2\n   bltu a1, t0, .Lpath_rv_component\n"
+    "add t1, s3, a1\n   lbu t2, -1(t1)\n   bne t2, t3, .Lpath_rv_component\n"
+    "addi a1, a1, -1\n   j .Lpath_rv_trim\n"
+    ".Lpath_rv_component:\n   mv a2, a1\n"
+    ".Lpath_rv_component_loop:\n   beqz a2, .Lpath_rv_found\n"
+    "add t1, s3, a2\n   lbu t2, -1(t1)\n   beq t2, t3, .Lpath_rv_found\n"
+    "addi a2, a2, -1\n   j .Lpath_rv_component_loop\n"
+    ".Lpath_rv_found:\n   beqz s2, .Lpath_rv_writer\n"
+    "li t0, 1\n   bne s2, t0, .Lpath_rv_head\n"
+    // tail copy
+    "li t0, 1\n   bne a1, t0, .Lpath_rv_tail_normal\n"
+    "lbu t1, 0(s3)\n   li t2, 47\n   bne t1, t2, .Lpath_rv_tail_normal\n"
+    "li a2, 1\n   mv a1, s3\n   j .Lpath_rv_tail_copy\n"
+    ".Lpath_rv_tail_normal:\n   add t0, s3, a2\n   sub a2, a1, a2\n   mv a1, t0\n"
+    ".Lpath_rv_tail_copy:\n   addi t0, s1, -1\n"
+    "bleu a2, t0, .Lpath_rv_tail_bounded\n   mv a2, t0\n"
+    ".Lpath_rv_tail_bounded:\n   mv a0, s0\n   call memory_copy_fast_end\n"
+    "sub a0, a0, s0\n   j .Lpath_rv_return\n"
+    // dirname copy
+    ".Lpath_rv_head:\n   bnez a2, .Lpath_rv_head_trim\n"
+    "li t0, 1\n   beq s1, t0, .Lpath_rv_head_cap1\n"
+    "li t1, 46\n   sb t1, 0(s0)\n   sb zero, 1(s0)\n   li a0, 1\n"
+    "j .Lpath_rv_return\n"
+    ".Lpath_rv_head_cap1:\n   sb zero, 0(s0)\n   li a0, 0\n"
+    "j .Lpath_rv_return\n"
+    ".Lpath_rv_head_trim:\n   li t0, 2\n"
+    "bltu a2, t0, .Lpath_rv_head_copy\n   add t1, s3, a2\n"
+    "lbu t2, -1(t1)\n   li t3, 47\n   bne t2, t3, .Lpath_rv_head_copy\n"
+    "addi a2, a2, -1\n   j .Lpath_rv_head_trim\n"
+    ".Lpath_rv_head_copy:\n   addi t0, s1, -1\n"
+    "bleu a2, t0, .Lpath_rv_head_bounded\n   mv a2, t0\n"
+    ".Lpath_rv_head_bounded:\n   mv a0, s0\n   mv a1, s3\n"
+    "call memory_copy_fast_end\n   sub a0, a0, s0\n"
+    ".Lpath_rv_return:\n   ld ra, 40(sp)\n   ld s0, 32(sp)\n"
+    "ld s1, 24(sp)\n   ld s2, 16(sp)\n   ld s3, 8(sp)\n"
+    "addi sp, sp, 48\n"
     ASM_RET
+    // writer basename, with root retaining its slash
+    ".Lpath_rv_writer:\n   li t0, 1\n   bne a1, t0, .Lpath_rv_writer_normal\n"
+    "lbu t1, 0(s3)\n   li t2, 47\n   bne t1, t2, .Lpath_rv_writer_normal\n"
+    "mv a0, s3\n   li a1, 1\n   j .Lpath_rv_writer_call\n"
+    ".Lpath_rv_writer_normal:\n   add a0, s3, a2\n   sub a1, a1, a2\n"
+    ".Lpath_rv_writer_call:\n   mv t5, s0\n   ld ra, 40(sp)\n   ld s0, 32(sp)\n"
+    "ld s1, 24(sp)\n   ld s2, 16(sp)\n   ld s3, 8(sp)\n"
+    "addi sp, sp, 48\n   jr t5\n"
     ASM_LOCAL_END(path_split_core)
 
     ASM_FUNC(path_basename)
-    "addi sp, sp, -16\n   sd ra, 8(sp)\n   sd s0, 0(sp)\n"
-    "mv s0, a0\n   mv a0, a1\n   call path_split_core\n"
-    "li t0, 1\n   bne a1, t0, 1f\n   lbu t1, 0(a0)\n   li t2, 47\n"
-    "bne t1, t2, 1f\n   li a1, 1\n   j 2f\n"
-    "1:  add a0, a0, a2\n   sub a1, a1, a2\n"
-    "2:  mv t5, s0\n   ld ra, 8(sp)\n   ld s0, 0(sp)\n   addi sp, sp, 16\n"
-    "jr t5\n"
+    "li t6, 0\n   j path_split_core\n"
     ASM_END(path_basename)
 
     ASM_FUNC(path_tail_copy)
-    "beqz a1, 8f\n   addi sp, sp, -32\n   sd ra, 24(sp)\n"
-    "sd s0, 16(sp)\n   sd s1, 8(sp)\n   mv s0, a0\n   mv s1, a1\n"
-    "mv a0, a2\n   call path_split_core\n"
-    "li t0, 1\n   bne a1, t0, 1f\n   lbu t1, 0(a0)\n   li t2, 47\n"
-    "bne t1, t2, 1f\n   li a2, 1\n   mv a1, a0\n   j 2f\n"
-    "1:  add t0, a0, a2\n   sub a2, a1, a2\n   mv a1, t0\n"
-    "2:  addi t0, s1, -1\n   bleu a2, t0, 3f\n   mv a2, t0\n"
-    "3:  mv a0, s0\n   call memory_copy_fast_end\n   sub a0, a0, s0\n"
-    "ld ra, 24(sp)\n   ld s0, 16(sp)\n   ld s1, 8(sp)\n   addi sp, sp, 32\n"
-    ASM_RET
-    "8:  li a0, 0\n"
+    "beqz a1, 1f\n   li t6, 1\n   j path_split_core\n"
+    "1:  li a0, 0\n"
     ASM_RET
     ASM_END(path_tail_copy)
 
     ASM_FUNC(path_head_copy)
-    "beqz a1, 8f\n   addi sp, sp, -32\n   sd ra, 24(sp)\n"
-    "sd s0, 16(sp)\n   sd s1, 8(sp)\n   mv s0, a0\n   mv s1, a1\n"
-    "mv a0, a2\n   call path_split_core\n   bnez a2, 2f\n"
-    "li t0, 1\n   beq s1, t0, 1f\n   li t1, 46\n   sb t1, 0(s0)\n"
-    "sb zero, 1(s0)\n   li a0, 1\n   j 7f\n"
-    "1:  sb zero, 0(s0)\n   li a0, 0\n   j 7f\n"
-    "2:  li t0, 2\n   bltu a2, t0, 3f\n   add t1, a0, a2\n   lbu t2, -1(t1)\n"
-    "li t3, 47\n   bne t2, t3, 3f\n   addi a2, a2, -1\n   j 2b\n"
-    "3:  addi t0, s1, -1\n   bleu a2, t0, 4f\n   mv a2, t0\n"
-    "4:  mv a1, a0\n   mv a0, s0\n   call memory_copy_fast_end\n"
-    "sub a0, a0, s0\n"
-    "7:  ld ra, 24(sp)\n   ld s0, 16(sp)\n   ld s1, 8(sp)\n   addi sp, sp, 32\n"
-    ASM_RET
-    "8:  li a0, 0\n"
+    "beqz a1, 1f\n   li t6, 2\n   j path_split_core\n"
+    "1:  li a0, 0\n"
     ASM_RET
     ASM_END(path_head_copy)
 
     ASM_FUNC(path_join)
-    "beqz a1, 8f\n   addi sp, sp, -32\n   sd ra, 24(sp)\n"
-    "sd s0, 16(sp)\n   sd s1, 8(sp)\n   sd s2, 0(sp)\n"
-    "mv s0, a0\n   mv s1, a1\n   mv s2, a3\n"
-    "mv a1, a2\n   addi a2, s1, -1\n   call string_copy_max_end\n"
-    "sub t4, a0, s0\n   beqz t4, 2f\n   add t0, s0, t4\n"
-    "lbu t1, -1(t0)\n   li t2, 47\n   beq t1, t2, 2f\n"
-    "addi t0, t4, 1\n   bgeu t0, s1, 2f\n"
-    "add t1, s0, t4\n   sb t2, 0(t1)\n   mv t4, t0\n"
-    "2:  addi a2, s1, -1\n   sub a2, a2, t4\n"
-    "add a0, s0, t4\n   mv a1, s2\n   mv s1, t4\n"
-    "call string_copy_max_end\n   sub a0, a0, s0\n"
-    "ld ra, 24(sp)\n   ld s0, 16(sp)\n   ld s1, 8(sp)\n   ld s2, 0(sp)\n"
-    "addi sp, sp, 32\n"
+    "beqz a1, 8f\n   addi sp, sp, -48\n   sd ra, 40(sp)\n"
+    "sd s0, 32(sp)\n   sd s1, 24(sp)\n   sd s2, 16(sp)\n"
+    "sd s3, 8(sp)\n   sd s4, 0(sp)\n   mv s0, a0\n   mv s1, a1\n"
+    "mv s2, a2\n   mv s3, a3\n   mv a0, s2\n   addi a1, s1, -1\n"
+    "call string_length_max\n   mv s4, a0\n   mv a0, s0\n   mv a1, s2\n"
+    "mv a2, s4\n   call memory_copy_fast\n   beqz s4, 2f\n"
+    "add t0, s0, s4\n   lbu t1, -1(t0)\n   li t2, 47\n   beq t1, t2, 2f\n"
+    "addi t0, s4, 1\n   bgeu t0, s1, 2f\n   add t1, s0, s4\n"
+    "sb t2, 0(t1)\n   mv s4, t0\n"
+    "2:  addi a1, s1, -1\n   sub a1, a1, s4\n   mv a0, s3\n"
+    "call string_length_max\n   mv a2, a0\n   add a0, s0, s4\n   mv a1, s3\n"
+    "call memory_copy_fast_end\n   sub a0, a0, s0\n"
+    "ld ra, 40(sp)\n   ld s0, 32(sp)\n   ld s1, 24(sp)\n"
+    "ld s2, 16(sp)\n   ld s3, 8(sp)\n   ld s4, 0(sp)\n"
+    "addi sp, sp, 48\n"
     ASM_RET
     "8:  li a0, 0\n"
     ASM_RET
@@ -9501,12 +9706,18 @@ ASM_FUNC(positive_to_string)
     "add t2, a3, t1\n   sb zero, 0(t2)\n   mv a0, t1\n"
     ASM_RET
     ASM_END(positive_into_human_nearest_string)
-    //       wait_status_code: the x86_64 block carries the wait4 contract.
-    ASM_FUNC(wait_status_code)
-    "andi t0, a0, 127\n   srli a0, a0, 8\n   andi a0, a0, 255\n"
-    "beqz t0, 1f\n   addi a0, t0, 128\n"
+    //       wait_status_code_base: the x86_64 block carries the complete
+    //       wait4/base/core contract. Only baseline integer instructions.
+    ASM_FUNC(wait_status_code_base)
+    "andi t0, a0, 127\n   andi t1, a0, 128\n"
+    "srli a0, a0, 8\n   andi a0, a0, 255\n"
+    "beqz t0, 1f\n   add a0, t0, a1\n   slli t1, t1, 1\n"
+    "and t1, t1, a1\n   add a0, a0, t1\n"
     "1:\n"
     ASM_RET
+    ASM_END(wait_status_code_base)
+    ASM_FUNC(wait_status_code)
+    "li a1, 128\n   tail wait_status_code_base\n"
     ASM_END(wait_status_code)
     //       positive_to_human_1024: the x86_64 block carries the callback
     //       contract. All callback-live values are in the frame or s0.
@@ -10633,6 +10844,9 @@ fn positive_to_human_1024(writer write, positive value);
 */
 positive positive_into_human_nearest_string(p8 address_to into, positive value,
                                             bool binary);
+// Decode a raw wait4 status with a consumer-selected signal base. Base bit
+// 256 also requests gawk's extra 256 when the kernel core flag is set.
+b32 wait_status_code_base(positive raw, b32 signal_base);
 // Decode a raw wait4 status into shell convention (exit byte or 128+signal).
 b32 wait_status_code(positive raw);
 /*
@@ -10702,6 +10916,9 @@ positive string_table_find(string_address name, address_any table,
 positive string_lex_word(string_address source, p8 address_to into,
                             const b8 address_to class);
 address_any memory_fill(address_any destination, b8 value, positive size);
+// Reverse exactly size bytes in place. Returns block; sizes below two do not
+// read or write it, so a null block is valid when size is zero.
+address_any memory_reverse(address_any block, positive size);
 address_any memory_copy_fast(address_any destination, address_any source, positive size);
 p8 address_to memory_copy_fast_end(p8 address_to destination, address_any source,
                                    positive size);

@@ -27,6 +27,8 @@ bool env_set(const_string name, const_string value);
 fn run_line(string_address line);
 fn parse_reset_all();
 fn shell_trap_exit();
+fn exec_child_began();
+fn exec_expand_fatal();
 
 extern writer shell_output;
 extern positive shell_output_file;
@@ -78,6 +80,7 @@ static p8 expand_mark[EXPAND_WORK];
 static positive expand_length;
 static bool expand_overflow;
 static bool expand_quoted_seen;
+static bool expand_failed;
 static positive expand_depth;
 
 static p8 expand_arena[EXPAND_ARENA];
@@ -1478,6 +1481,8 @@ static fn expand_run(string_address command, bool quoted)
 
         if (child == 0)
         {
+                exec_child_began();
+
                 system_call_1(syscall(close), (positive)channel[0]);
                 system_call_3(syscall(dup3), (positive)channel[1], stdout, 0);
                 system_call_1(syscall(close), (positive)channel[1]);
@@ -1648,7 +1653,11 @@ static fn expand_fatal()
         shell_status = 2;
 
         if (shell_is_interactive)
+        {
+                expand_failed = true;
+                exec_expand_fatal();
                 return;
+        }
 
         if (!expand_in_substitution)
                 shell_trap_exit();
@@ -1682,6 +1691,13 @@ static string_address expand_arithmetic(string_address step, bool quoted)
         // What was written with a dollar in front takes its turn first; what is
         // left over is arithmetic, where a bare name is a value too.
         expand_capture(text, true, ready, sizeof(ready), false);
+
+        // A nested expansion already diagnosed the whole word.  In an
+        // interactive shell that diagnosis returns here instead of exiting
+        // the process, so nothing after it may parse the partial capture or
+        // perform one of its side effects.
+        if (expand_failed)
+                return stop + 2;
 
         {
                 bipolar value = arith_evaluate(ready);
@@ -1914,6 +1930,10 @@ static string_address expand_braced(string_address step, bool quoted)
                         that ever matched was a literal one.
                 */
                 expand_capture(word, false, pattern, sizeof(pattern), true);
+
+                if (expand_failed)
+                        return close + 1;
+
                 expand_trim(start, pattern, operation == '#', doubled);
 
                 return close + 1;
@@ -1941,6 +1961,10 @@ static string_address expand_braced(string_address step, bool quoted)
                                 p8 made[EXPAND_VALUE];
 
                                 expand_capture(word, quoted, made, sizeof(made), false);
+
+                                if (expand_failed)
+                                        return close + 1;
+
                                 env_set(name, made);
                                 expand_push_string(made, mark);
                         }
@@ -1965,6 +1989,10 @@ static string_address expand_braced(string_address step, bool quoted)
                                 p8 said[EXPAND_VALUE];
 
                                 expand_capture(word, quoted, said, sizeof(said), false);
+
+                                if (expand_failed)
+                                        return close + 1;
+
                                 string_format(expand_complain, "%s: %s\n", name,
                                               said[0] ? said : (string_address) "parameter not set");
 
@@ -2049,12 +2077,44 @@ static string_address expand_dollar(string_address step, bool quoted)
         return result;
 }
 
+/*
+        One dollar expansion in a here-document.
+
+        A here body does not remove quotes or split fields, so it cannot use
+        shell_expand_word. The dollar grammar itself is exactly the quoted
+        grammar above, including command/arithmetic expansion and rejection of
+        unsupported braced operators. Its bytes are copied into the command's
+        existing token arena, where the literal runs around it already live.
+*/
+string_address shell_expand_here_dollar(string_address step,
+                                        string_address address_to text,
+                                        positive address_to length,
+                                        bool address_to overflow)
+{
+        string_address result;
+
+        expand_sets_prepare();
+        expand_length = 0;
+        expand_overflow = false;
+        expand_quoted_seen = false;
+        expand_failed = false;
+        expand_depth = 0;
+
+        result = expand_dollar(step, true);
+
+        address_to text = expand_text;
+        address_to length = expand_failed ? 0 : expand_length;
+        address_to overflow = expand_overflow;
+
+        return result;
+}
+
 static string_address expand_double(string_address step)
 {
         expand_quoted_seen = true;
         step++;
 
-        while (string_get(step) && string_not(step, '"'))
+        while (!expand_failed && string_get(step) && string_not(step, '"'))
         {
                 positive run = string_span(step, expand_inside_set);
                 p8 seen;
@@ -2121,7 +2181,7 @@ static fn expand_into(string_address text, bool quoted, p8 plain)
 {
         string_address step = text;
 
-        while (string_get(step))
+        while (!expand_failed && string_get(step))
         {
                 positive run = string_span(step, quoted ? expand_inside_set
                                                         : expand_plain_set);
@@ -2216,6 +2276,7 @@ static fn expand_word(string_address word)
         expand_length = 0;
         expand_overflow = false;
         expand_quoted_seen = false;
+        expand_failed = false;
         expand_depth = 0;
 
         if (string_is(word, '~'))

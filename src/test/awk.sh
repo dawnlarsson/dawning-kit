@@ -381,6 +381,14 @@ compare 'rand repeats with a seed' /dev/null 'BEGIN{srand(3); x=rand(); srand(3)
 compare 'close what is not open' /dev/null 'BEGIN{print close("nothing")}'
 compare 'system' /dev/null 'BEGIN{print "a"; r = system("echo b"); print "c" r}'
 compare 'system status' /dev/null 'BEGIN{print system("exit 3")}'
+compare 'system status 255' /dev/null 'BEGIN{print system("exit 255")}'
+# gawk distinguishes an ordinary signal (256+signal) from one whose default
+# action carries WCOREDUMP (512+signal). stderr is discarded by compare, so
+# only the numeric system() contract is under test here.
+compare 'system term status' /dev/null 'BEGIN{print system("kill -TERM $$")}'
+compare 'system kill status' /dev/null 'BEGIN{print system("kill -KILL $$")}'
+compare 'system segv status' /dev/null 'BEGIN{print system("ulimit -c 0; kill -SEGV $$")}'
+compare 'system abort status' /dev/null 'BEGIN{print system("ulimit -c 0; kill -ABRT $$")}'
 
 #
 #       print and printf.

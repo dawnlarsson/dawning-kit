@@ -634,11 +634,16 @@ fn shell_execute_command()
                 system_call_4(syscall(wait4), child, (positive)address_of status, 0, 0);
                 shell_status = wait_status_code(status);
 
-                // Spawning hands back a pid before the image is loaded, so a
-                // path that cannot be run shows up as the child exiting 127
-                // rather than as an error from the spawn itself.
-                if (shell_status == 127)
-                        string_format(shell_output, "Could not run: '%s'\n", shell_argv[0]);
+                /*
+                        An exit byte is not an execve error channel.
+
+                        A program is allowed to answer 127 itself, and its wait
+                        status is bit-for-bit identical to a loader choosing
+                        that number. The portable child diagnoses its own
+                        failed execve before exiting; guessing here accused a
+                        successfully run `/bin/sh -c 'exit 127'` of not having
+                        run at all.
+                */
         }
         else
                 string_format(shell_output, "failed with error: %b\n", child);
@@ -700,10 +705,16 @@ b32 shell_incomplete()
         return shell_more;
 }
 
-fn run_line(string_address line)
+static fn run_line_inner(string_address line)
 {
         string_address waiting = parse_here_open();
         b32 root;
+
+        // A nested eval or sourced file can hand over more physical lines
+        // after one of them failed expansion. They belong to the same outer
+        // input line and none may restart execution underneath the failure.
+        if (exec_line_aborted())
+                return;
 
         if (waiting)
         {
@@ -750,7 +761,8 @@ fn run_line(string_address line)
 
         // A signal that arrived while the shell was reading rather than
         // running has no command boundary of its own to wait for.
-        exec_traps();
+        if (!exec_line_aborted())
+                exec_traps();
 
         /*
                 A terminal wants each line the moment it happens. A script does
@@ -761,6 +773,32 @@ fn run_line(string_address line)
         */
         if (shell_is_interactive)
                 log_flush();
+}
+
+/*
+        Top-level lines recover from an interactive expansion error; nested
+        lines are part of the command that failed and keep carrying it.
+
+        Keeping the depth around the entire executor call is what makes an
+        eval or a multi-line dot script stop, while the next line read from the
+        terminal gets a clean execution signal and still sees $? == 2.
+*/
+static positive shell_run_depth;
+
+fn run_line(string_address line)
+{
+        bool top = !shell_run_depth;
+
+        // Hold the depth while recovery dispatches a pending trap. Its action
+        // is a nested line and must not recursively begin another top-level
+        // recovery before this one has reached the user's next command.
+        shell_run_depth++;
+
+        if (top)
+                exec_line_begin();
+
+        run_line_inner(line);
+        shell_run_depth--;
 }
 
 // A prompt is for somebody watching. Asking the terminal about itself is the

@@ -51,6 +51,13 @@ python3 "$here/extract.py" "$lib" \
         string_copy string_copy_max string_cut string_replace_all \
         > "$work/bulk.h" || exit 1
 
+#       In-place byte reversal is an independent leaf.  Its case crosses
+#       every small size and pointer residue, page edges and a one-megabyte
+#       span; keeping it separate makes its native count and any failure
+#       attributable to this one body.
+python3 "$here/extract.py" "$lib" memory_reverse \
+        > "$work/reverse.h" || exit 1
+
 #       And one for the wide hunts, holding those eight and nothing else, so
 #       it never pulls in string_find and the routines that follow from it.
 python3 "$here/extract.py" "$lib" \
@@ -80,7 +87,7 @@ python3 "$here/extract.py" "$lib" \
 #       leaves.  Their native case exhausts raw wait status, crosses every
 #       destination residue, and benchmarks the exact former C body.
 python3 "$here/extract.py" "$lib" \
-        positive_into_human_nearest_string wait_status_code \
+        positive_into_human_nearest_string wait_status_code_base wait_status_code \
         > "$work/human_nearest.h" || exit 1
 
 #       The contiguous fixed fields are leaves on their bounded hot paths.
@@ -98,7 +105,7 @@ python3 "$here/extract.py" "$lib" \
         > "$work/input_bases.h" || exit 1
 
 status=0
-for case in byte_hunts bounded riscv_bits bulk wide bases base_field human human_nearest fields input_bases; do
+for case in byte_hunts bounded riscv_bits bulk reverse wide bases base_field human human_nearest fields input_bases; do
         cc -O2 -w -I"$work" "$here/$case.c" -o "$work/$case" || { status=1; continue; }
         "$work/$case" || status=1
 done

@@ -18,6 +18,7 @@
 #define EXEC_SIGNAL_BREAK 1
 #define EXEC_SIGNAL_CONTINUE 2
 #define EXEC_SIGNAL_RETURN 3
+#define EXEC_SIGNAL_FATAL 4
 
 static b32 exec_signal;
 static b32 exec_signal_level;
@@ -43,15 +44,56 @@ static bool exec_tested;
 static bool exec_forked;
 
 fn shell_trap_exit();
+fn exec_traps();
 
 fn exec_child_began()
 {
         exec_forked = true;
 }
 
+/*
+        An expansion error at a terminal ends this input line, not the shell.
+
+        A forked pipeline, subshell or command substitution can leave outright:
+        its parent is the interactive shell that has to survive. In the shell
+        itself the signal is carried through the executor like return and
+        break, except that no construct is allowed to consume it. The reader
+        clears it when the next top-level input line begins.
+*/
+fn exec_expand_fatal()
+{
+        if (exec_forked)
+        {
+                log_flush();
+                system_call_1(syscall(exit_group), 2);
+        }
+
+        exec_signal = EXEC_SIGNAL_FATAL;
+        exec_signal_level = 0;
+}
+
+static fn exec_line_begin()
+{
+        if (exec_signal == EXEC_SIGNAL_FATAL)
+        {
+                exec_signal = EXEC_SIGNAL_NONE;
+
+                // A trap that arrived during the failed expansion belongs
+                // between input lines: not to the tail of the aborted one,
+                // and not after the first command of the next one.
+                exec_traps();
+        }
+}
+
+static bool exec_line_aborted()
+{
+        return exec_signal == EXEC_SIGNAL_FATAL;
+}
+
 static fn exec_errexit(b32 status)
 {
-        if (!status || exec_tested || !(shell_options & SHELL_ERREXIT))
+        if (exec_line_aborted() || !status || exec_tested ||
+            !(shell_options & SHELL_ERREXIT))
                 return;
 
         shell_status = status;
@@ -112,20 +154,94 @@ typedef struct
 
 static exec_saved_fd exec_saves[REDIRECT_SAVE_MAX];
 static b32 exec_save_count;
+static b32 exec_redirect_status;
 
 #define F_DUPFD_CLOEXEC 1030
+#define ERROR_BAD_DESCRIPTOR 9
 
-static bool exec_save_fd(b32 fd)
+// A save may not occupy a descriptor this command is going to redirect. An
+// open duplication source is occupied already; a closed one is detected later
+// by exec_saved_fd_is, so neither kind needs to force every save above it.
+static bool exec_redirect_target_is(parse_node address_to node, b32 fd)
 {
+        for (b32 at = 0; at < node->redirect_count; at++)
+        {
+                parse_redirect address_to want = parse_redirects + node->redirect + at;
+
+                if (want->fd == fd ||
+                    ((want->op == OP_ANDGREAT || want->op == OP_ANDDGREAT) && fd == 2))
+                        return true;
+        }
+
+        return false;
+}
+
+static bool exec_saved_fd_is(b32 fd)
+{
+        for (b32 at = 0; at < exec_save_count; at++)
+                if (exec_saves[at].saved == fd)
+                        return true;
+
+        return false;
+}
+
+static bipolar exec_save_duplicate(b32 fd, parse_node address_to node, b32 floor)
+{
+        for (;;)
+        {
+                bipolar saved = system_call_3(syscall(fcntl), fd,
+                                               F_DUPFD_CLOEXEC, floor);
+
+                if (saved < 0)
+                        return saved;
+
+                if (!exec_redirect_target_is(node, (b32)saved))
+                        return saved;
+
+                system_call_1(syscall(close), saved);
+
+                if (saved >= 0x7ffffffe)
+                        return -1;
+
+                floor = (b32)saved + 1;
+        }
+}
+
+static bool exec_save_fd(b32 fd, parse_node address_to node)
+{
+        bipolar saved;
+        bool closed = false;
+
         if (exec_save_count >= REDIRECT_SAVE_MAX)
         {
                 string_format(exec_error, "Too many redirections\n");
                 return false;
         }
 
+        saved = exec_save_duplicate(fd, node, 10);
+
+        if (saved == -ERROR_BAD_DESCRIPTOR)
+                closed = true;
+        else if (saved < 0)
+        {
+                saved = exec_save_duplicate(fd, node, 3);
+
+                if (saved == -ERROR_BAD_DESCRIPTOR)
+                        closed = true;
+        }
+
+        // EBADF says there was nothing to restore. EINVAL/EMFILE say the
+        // original is live but cannot be saved, and must never be treated as
+        // a closed descriptor -- doing that closes it during restoration.
+        if (!closed && saved < 0)
+        {
+                string_format(exec_error, "Cannot preserve descriptor %p\n",
+                              (positive)fd);
+                return false;
+        }
+
         exec_saves[exec_save_count].fd = fd;
-        exec_saves[exec_save_count].saved =
-            (b32)system_call_3(syscall(fcntl), fd, F_DUPFD_CLOEXEC, 10);
+        exec_saves[exec_save_count].saved = closed ? -1 : (b32)saved;
         exec_save_count++;
 
         return true;
@@ -164,6 +280,25 @@ static fn exec_redirect_forget(b32 mark)
         }
 }
 
+// A failed redirect may have closed fd 2 already. Put its most recent saved
+// value back long enough for the diagnostic; normal reverse restoration still
+// owns and closes the save afterward.
+static fn exec_redirect_diagnostic_restore()
+{
+        for (b32 at = exec_save_count; at > 0; at--)
+        {
+                exec_saved_fd address_to saved = exec_saves + at - 1;
+
+                if (saved->fd != 2)
+                        continue;
+
+                if (saved->saved >= 0)
+                        system_call_3(syscall(dup3), saved->saved, 2, 0);
+
+                return;
+        }
+}
+
 /*
         A here-document body with its parameters filled in.
 
@@ -193,7 +328,24 @@ static positive exec_here_expand(string_address body, positive length,
 
                 if (value == '$')
                 {
-                        at = (positive)(shell_expand(body + at) - body);
+                        string_address expanded;
+                        positive expanded_length;
+                        bool expanded_overflow;
+
+                        at = (positive)(shell_expand_here_dollar(
+                                            body + at, address_of expanded,
+                                            address_of expanded_length,
+                                            address_of expanded_overflow) -
+                                        body);
+
+                        if (exec_line_aborted())
+                                break;
+
+                        if (expanded_overflow)
+                                token_overflow = true;
+
+                        token_push_bytes(expanded, expanded_length);
+
                         continue;
                 }
 
@@ -204,6 +356,99 @@ static positive exec_here_expand(string_address body, positive length,
         address_to out = token_storage + start;
 
         return token_used - start;
+}
+
+/*
+        Expand a here-document outside the shell process.
+
+        Parameter assignment in a here body belongs to the context executing
+        the redirected command, not to the parent shell. More importantly, an
+        expansion error ends that context with status two and does not become
+        the interactive shell's recoverable line signal. The child writes the
+        bounded result back; the parent collects it before making the pipe the
+        command will read.
+*/
+static bool exec_here_expand_isolated(string_address body, positive length,
+                                      string_address address_to out,
+                                      positive address_to out_length)
+{
+        positive start = token_used;
+        positive room = TOKEN_STORAGE - start;
+        positive filled = 0;
+        positive raw_status = 0;
+        b32 ends[2];
+        bipolar child;
+
+        if (system_call_2(syscall(pipe2), (positive)ends, 0) < 0)
+                return false;
+
+        log_flush();
+        child = system_call_2(syscall(clone), SIGCHLD, 0);
+
+        if (child == 0)
+        {
+                string_address expanded;
+                positive made;
+
+                system_call_1(syscall(close), ends[0]);
+                exec_child_began();
+                trap_default_all();
+                token_overflow = false;
+
+                made = exec_here_expand(body, length, address_of expanded);
+
+                if (token_overflow)
+                {
+                        string_format(exec_error, "Here-document too long\n");
+                        log_flush();
+                        system_call_1(syscall(exit_group), 2);
+                }
+
+                if (system_write_all(ends[1], expanded, made) != made)
+                        system_call_1(syscall(exit_group), 1);
+
+                system_call_1(syscall(exit_group), 0);
+        }
+
+        system_call_1(syscall(close), ends[1]);
+
+        if (child < 0)
+        {
+                system_call_1(syscall(close), ends[0]);
+                return false;
+        }
+
+        while (filled < room)
+        {
+                bipolar got = system_call_3(syscall(read), ends[0],
+                                             (positive)(token_storage + start + filled),
+                                             room - filled);
+
+                if (got == -4)
+                        continue;
+
+                if (got <= 0)
+                        break;
+
+                filled += (positive)got;
+        }
+
+        system_call_1(syscall(close), ends[0]);
+
+        while (system_call_4(syscall(wait4), child,
+                             (positive)address_of raw_status, 0, 0) == -4)
+                ;
+
+        exec_redirect_status = wait_status_code(raw_status);
+
+        if (exec_redirect_status)
+                return false;
+
+        token_used = start + filled;
+        address_to out = token_storage + start;
+        address_to out_length = filled;
+
+        return true;
 }
 
 /*
@@ -263,12 +508,17 @@ static bool exec_redirect_apply(b32 index)
         parse_node address_to node = parse_nodes + index;
         b32 at;
 
+        exec_redirect_status = 0;
+
         for (at = 0; at < node->redirect_count; at++)
         {
                 parse_redirect address_to want = parse_redirects + node->redirect + at;
                 string_address target = shell_expand_word(parse_words[want->word]);
                 bipolar opened = -1;
                 bool both = want->op == OP_ANDGREAT || want->op == OP_ANDDGREAT;
+
+                if (exec_line_aborted())
+                        return false;
 
                 /*
                         The descriptor is put aside before anything is opened.
@@ -281,11 +531,23 @@ static bool exec_redirect_apply(b32 index)
                 */
                 if (both)
                 {
-                        if (!exec_save_fd(1) || !exec_save_fd(2))
+                        if (!exec_save_fd(1, node) || !exec_save_fd(2, node))
                                 return false;
+
+                        system_call_1(syscall(close), 1);
+                        system_call_1(syscall(close), 2);
                 }
-                else if (!exec_save_fd(want->fd))
-                        return false;
+                else
+                {
+                        if (!exec_save_fd(want->fd, node))
+                                return false;
+
+                        // Descriptor duplication lands with dup3 below, so
+                        // its target stays live until that atomic replacement.
+                        // This also preserves the source == target no-op.
+                        if (want->op != OP_GREATAND && want->op != OP_LESSAND)
+                                system_call_1(syscall(close), want->fd);
+                }
 
                 if (want->op == OP_DLESS)
                 {
@@ -296,34 +558,39 @@ static bool exec_redirect_apply(b32 index)
 
                         if (!want->raw)
                         {
-                                // The expanded body is built in the storage a
-                                // command line shares, and what does not fit
-                                // is dropped there without a word. A body with
-                                // its end missing is not a body.
-                                token_overflow = false;
-                                length = exec_here_expand(body, length,
-                                                          address_of body);
-
-                                if (token_overflow)
-                                {
-                                        string_format(exec_error,
-                                                      "Here-document too long\n");
+                                if (!exec_here_expand_isolated(body, length,
+                                                               address_of body,
+                                                               address_of length))
                                         return false;
-                                }
                         }
 
                         opened = exec_here_pipe(body, length);
                 }
                 else if (want->op == OP_GREATAND || want->op == OP_LESSAND)
                 {
-                        if (string_is(target, '-') && string_not(target + 1, end))
+                        positive source;
+
+                        if (string_is(target, '-') && string_is(target + 1, end))
                         {
                                 system_call_1(syscall(close), want->fd);
                                 continue;
                         }
 
-                        opened = system_call_1(
-                            syscall(dup), (b32)string_digits(target, null));
+                        if (!string_digits_exact(target, address_of source) ||
+                            source >= 0x7fffffff ||
+                            exec_saved_fd_is((b32)source))
+                        {
+                                exec_redirect_diagnostic_restore();
+                                string_format(exec_error,
+                                              "Cannot redirect descriptor: %s\n",
+                                              target);
+                                return false;
+                        }
+
+                        if ((b32)source == want->fd)
+                                continue;
+
+                        opened = system_call_3(syscall(dup3), source, want->fd, 0);
                 }
                 else if (want->op == OP_LESS)
                         opened = system_call_4(syscall(openat), AT_FDCWD,
@@ -341,6 +608,7 @@ static bool exec_redirect_apply(b32 index)
 
                 if (opened < 0)
                 {
+                        exec_redirect_diagnostic_restore();
                         string_format(exec_error, "Cannot redirect: %s\n", target);
                         return false;
                 }
@@ -751,9 +1019,10 @@ fn exec_traps()
         b32 kept_signal = exec_signal;
         b32 kept_level = exec_signal_level;
         bool kept_tested = exec_tested;
+        bool action_fatal = false;
         bipolar number;
 
-        if (!trap_waiting() || !run_line)
+        if (exec_line_aborted() || !trap_waiting() || !run_line)
                 return;
 
         trap_entered(true);
@@ -770,9 +1039,24 @@ fn exec_traps()
                 parse_nest_enter();
                 run_line(action);
                 parse_nest_leave();
+
+                if (exec_line_aborted())
+                {
+                        action_fatal = true;
+                        break;
+                }
         }
 
         trap_entered(false);
+
+        if (action_fatal)
+        {
+                shell_status = 2;
+                exec_signal = EXEC_SIGNAL_FATAL;
+                exec_signal_level = 0;
+                exec_tested = kept_tested;
+                return;
+        }
 
         shell_status = kept_status;
         exec_signal = kept_signal;
@@ -812,12 +1096,26 @@ static b32 exec_simple(b32 index)
                 if (count == first && exec_is_assignment(word))
                 {
                         shell_argv[count++] = shell_expand_word(word);
+
+                        if (exec_line_aborted())
+                                break;
+
                         first++;
                         continue;
                 }
 
                 count += (b32)shell_expand_fields(word, shell_argv + count,
                                                   MAX_TOKENS - count);
+
+                if (exec_line_aborted())
+                        break;
+        }
+
+        if (exec_line_aborted())
+        {
+                exec_arena_used = arena_mark;
+                shell_status = 2;
+                return 2;
         }
 
         shell_argv[count] = null;
@@ -863,8 +1161,11 @@ static b32 exec_simple(b32 index)
                 exec_redirect_restore(mark);
                 exec_put_back(kept, kept_count);
                 exec_arena_used = arena_mark;
-                shell_status = 1;
-                return 1;
+                shell_status = exec_line_aborted() ? 2
+                                                   : exec_redirect_status
+                                                         ? exec_redirect_status
+                                                         : 1;
+                return shell_status;
         }
 
         if (first == count)
@@ -902,7 +1203,8 @@ static bool exec_loop_again()
         if (!exec_signal)
                 return true;
 
-        if (exec_signal == EXEC_SIGNAL_RETURN)
+        if (exec_signal == EXEC_SIGNAL_RETURN ||
+            exec_signal == EXEC_SIGNAL_FATAL)
                 return false;
 
         if (exec_signal_level > 1)
@@ -935,6 +1237,12 @@ static b32 exec_loop(b32 index, bool until)
                 exec_tested = true;
                 test = exec_node(node->left);
                 exec_tested = tested;
+
+                if (exec_line_aborted())
+                {
+                        status = 2;
+                        break;
+                }
 
                 if (exec_signal)
                         break;
@@ -986,6 +1294,12 @@ static b32 exec_for(b32 index)
                             parse_words[node->word + at], fields, POSITIONAL_MAX);
                         positive field;
 
+                        if (exec_line_aborted())
+                        {
+                                room = false;
+                                break;
+                        }
+
                         for (field = 0; field < made; field++)
                         {
                                 string_address kept;
@@ -1018,6 +1332,13 @@ static b32 exec_for(b32 index)
                         items[count++] = exec_arena_copy(shell_parameter[at]);
         }
 
+        if (exec_line_aborted())
+        {
+                exec_arena_used = mark;
+                shell_status = 2;
+                return 2;
+        }
+
         for (at = 0; at < count; at++)
         {
                 env_set(name, items[at]);
@@ -1044,7 +1365,16 @@ static b32 exec_case(b32 index)
         b32 status = 0;
 
         token_used = 0;
-        subject = exec_arena_copy(shell_expand_word(parse_words[node->word]));
+        subject = shell_expand_word(parse_words[node->word]);
+
+        if (exec_line_aborted())
+        {
+                exec_arena_used = mark;
+                shell_status = 2;
+                return 2;
+        }
+
+        subject = exec_arena_copy(subject);
 
         for (item = node->left; item; item = parse_nodes[item].next)
         {
@@ -1057,6 +1387,13 @@ static b32 exec_case(b32 index)
                         token_used = 0;
                         pattern = shell_expand_word(
                             parse_words[parse_nodes[item].word + at]);
+
+                        if (exec_line_aborted())
+                        {
+                                exec_arena_used = mark;
+                                shell_status = 2;
+                                return 2;
+                        }
 
                         if (!shell_match(pattern, subject))
                                 continue;
@@ -1266,6 +1603,12 @@ static b32 exec_pipeline(b32 index)
 
         exec_tested = tested;
 
+        if (exec_line_aborted())
+        {
+                shell_status = 2;
+                return 2;
+        }
+
         if (node->flags)
         {
                 shell_status = status ? 0 : 1;
@@ -1360,7 +1703,8 @@ static b32 exec_node(b32 index)
 {
         b32 status = exec_node_kind(index);
 
-        exec_traps();
+        if (!exec_line_aborted())
+                exec_traps();
 
         return status;
 }
@@ -1404,8 +1748,11 @@ static b32 exec_node_kind(b32 index)
         if (node->redirect_count && !exec_redirect_apply(index))
         {
                 exec_redirect_restore(mark);
-                shell_status = 1;
-                return 1;
+                shell_status = exec_line_aborted() ? 2
+                                                   : exec_redirect_status
+                                                         ? exec_redirect_status
+                                                         : 1;
+                return shell_status;
         }
 
         if (node->kind == NODE_IF)
