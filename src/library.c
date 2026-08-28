@@ -26,11 +26,31 @@
         The floor is baseline instruction sets: x86_64 without BMI, so bsf
         and bsr but not tzcnt or lzcnt; armv8.0-a without SVE; RV64I without
         Zbb, which has no count-leading-zeros at all, and is why the riscv
-        blocks build one out of a shift pair. No SIMD anywhere -- kernel code
-        cannot touch the vector registers without kernel_fpu_begin -- so
-        every wide operation here is SWAR, eight bytes in an integer
-        register. All three targets are little endian and the byte position
-        arithmetic depends on it.
+        blocks build one out of a shift pair. All three targets are little
+        endian and the byte position arithmetic depends on it.
+
+        That baseline is what every routine falls back to, and on riscv it is
+        the whole of it: the wide operation is SWAR, eight bytes in an integer
+        register. It is not the whole story anywhere else. This paragraph used
+        to say there was no SIMD here at all, on the grounds that kernel code
+        cannot touch the vector registers without kernel_fpu_begin, and that
+        stopped being true some time before it stopped being written down. The
+        x86 routines carry AVX2 and AVX-512 bodies and the arm64 ones use NEON,
+        picked at run time from a byte a startup pass writes.
+
+        Which makes the narrow body the one that has to stay correct rather
+        than merely present: it is what a machine without AVX2 runs, and what
+        every machine runs before that byte has been written. Nothing on the
+        wide path is reached by a test on a modern desktop unless the test
+        walks the flag down on purpose, and twice now a one byte sabotage has
+        survived the whole suite because nothing did.
+
+        A kernel build takes the wide paths too, and that is the one thing
+        here still owed an answer. Linux does not save the vector registers on
+        syscall entry and none of these calls kernel_fpu_begin, so whether a
+        userspace ymm can come back changed from a kernel memcpy has been
+        reasoned about and not measured. Do not read these paths as a settled
+        question.
 
         The libc names -- strlen, memcpy, strchr and the rest -- are aliases
         onto these, added where the file stops being compiled into a kernel.

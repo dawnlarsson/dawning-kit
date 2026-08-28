@@ -27,6 +27,25 @@ if ! command -v qemu-system-x86_64 > /dev/null 2>&1; then
         exit 0
 fi
 
+#
+#       Same reason the missing image is loud.
+#
+#       The boot below is wrapped in timeout, which a Mac does not have. When
+#       it is missing the whole pipeline fails before qemu is reached, the
+#       transcript is written empty, and every check below says the thing it
+#       wanted is not in it -- eleven failures naming eleven features, none of
+#       which was ever asked a question. That is worse than not running: it
+#       points at the kernel for the absence of a shell utility.
+#
+if ! command -v timeout > /dev/null 2>&1; then
+        echo "  boot         NOT RUN -- no timeout here"
+        echo "               the boot is wrapped in it, and without it the"
+        echo "               transcript comes out empty and every check below"
+        echo "               fails naming a feature it never got to ask about."
+        echo "               Run this where there is one: sh kit/onbox"
+        exit 2
+fi
+
 if [ ! -f "$image" ]; then
         #
         #       Loud, and not zero.
