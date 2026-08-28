@@ -6413,7 +6413,7 @@ __asm__(
     //      way out. The alternative was a floor that cannot be tested.
     //
     ASM_FUNC(string_first_of_or_end)
-    "andi a1, a1, 0xff\n   li t0, 0x0101010101010101\n   slli t1, t0, 7  # 0x8080808080808080\n"
+    "andi a1, a1, 0xff\n   lui t0, 0x1010\n   addi t0, t0, 257\n   slli t1, t0, 32\n   add t0, t0, t1  # 0x0101010101010101\n   slli t1, t0, 7  # 0x8080808080808080\n"
     "mul a3, a1, t0  # the byte, in all eight positions\n"
     "andi a4, a0, 7  # how far into the word it begins\n"
     "andi a5, a0, -8  # align down: same page, cannot fault\n"
@@ -6441,7 +6441,7 @@ __asm__(
     //
     //      The same count-the-bytes-below sequence as string_first_of_or_end above.
     ASM_FUNC(string_first_of_max)
-    "beqz a1, 8f\n   andi a2, a2, 0xff\n   li t0, 0x0101010101010101\n   slli t1, t0, 7\n"
+    "beqz a1, 8f\n   andi a2, a2, 0xff\n   lui t0, 0x1010\n   addi t0, t0, 257\n   slli t1, t0, 32\n   add t0, t0, t1  # 0x0101010101010101\n   slli t1, t0, 7\n"
     "mul a3, a2, t0\n   add a4, a0, a1  # one past the last byte we may report\n"
     "andi t2, a0, 7\n   andi a5, a0, -8\n   ld a6, 0(a5)\n   slli t2, t2, 3\n"
     "li a7, -1\n   sll a7, a7, t2\n   addi a1, a2, 1\n   andi a1, a1, 0xff\n"
@@ -6505,7 +6505,7 @@ __asm__(
     //
     "andi a1, a1, 0xff\n   bnez a1, 1f\n"
     "tail string_first_of_or_end\n"
-    "1:  li t0, 0x0101010101010101\n   li t1, 0x7f7f7f7f7f7f7f7f\n"
+    "1:  lui t0, 0x1010\n   addi t0, t0, 257\n   slli t1, t0, 32\n   add t0, t0, t1  # 0x0101010101010101\n   li t1, 0x7f7f7f7f7f7f7f7f\n"
     "mul a3, a1, t0  # the byte, in all eight positions\n"
     "li a4, 0  # best so far: none\n"
     "andi t2, a0, 7\n   andi a5, a0, -8  # align down: same page, cannot fault\n"
@@ -6545,7 +6545,7 @@ __asm__(
     //       which already stops in the right place and gets the sign right.
     //
     ASM_FUNC(string_compare_max)
-    "li a3, 0\n   beqz a2, 4f\n   li t0, 0x0101010101010101\n   slli t1, t0, 7\n"
+    "li a3, 0\n   beqz a2, 4f\n   lui t0, 0x1010\n   addi t0, t0, 257\n   slli t1, t0, 32\n   add t0, t0, t1  # 0x0101010101010101\n   slli t1, t0, 7\n"
     "1:  li t2, 8\n   bltu a2, t2, 2f\n"
     "ld t3, 0(a0)\n   ld t4, 0(a1)\n"
     "bne t3, t4, 2f  # differ: let the byte step find where\n"
@@ -6565,7 +6565,7 @@ __asm__(
     //       back to n -- which is what the answer is when there is none inside.
     //
     ASM_FUNC(string_length_max)
-    "beqz a1, 9f\n   li t0, 0x0101010101010101\n   slli t1, t0, 7\n"
+    "beqz a1, 9f\n   lui t0, 0x1010\n   addi t0, t0, 257\n   slli t1, t0, 32\n   add t0, t0, t1  # 0x0101010101010101\n   slli t1, t0, 7\n"
     "add a4, a0, a1  # one past the last byte we may report\n"
     "andi a3, a0, 7\n   andi a5, a0, -8  # align down: same page, cannot fault\n"
     "ld a6, 0(a5)\n   beqz a3, 1f\n"
@@ -6594,7 +6594,7 @@ __asm__(
     //
     ASM_FUNC(memory_first_of)
     "beqz a2, 8f\n   andi a1, a1, 0xff\n"
-    "li t0, 0x0101010101010101\n   slli t1, t0, 7\n"
+    "lui t0, 0x1010\n   addi t0, t0, 257\n   slli t1, t0, 32\n   add t0, t0, t1  # 0x0101010101010101\n   slli t1, t0, 7\n"
     "mul a3, a1, t0  # the byte, in all eight positions\n"
     "add a4, a0, a2  # one past the last byte we may report\n"
     "andi t2, a0, 7\n   andi a5, a0, -8  # align down: same page, cannot fault\n"
@@ -6632,7 +6632,7 @@ __asm__(
     //
     ASM_FUNC(memory_count)
     "li a3, 0\n   beqz a1, 9f\n   andi a2, a2, 0xff\n"
-    "li t0, 0x0101010101010101\n   li t1, 0x7f7f7f7f7f7f7f7f\n"
+    "lui t0, 0x1010\n   addi t0, t0, 257\n   slli t1, t0, 32\n   add t0, t0, t1  # 0x0101010101010101\n   li t1, 0x7f7f7f7f7f7f7f7f\n"
     "mul t2, a2, t0  # the byte, eight times over\n"
     "1:  li t3, 8\n   bltu a1, t3, 5f\n"
     "ld t4, 0(a0)\n   xor t4, t4, t2  # a match is now a zero byte\n"
@@ -6665,7 +6665,7 @@ __asm__(
     //      bottom of its byte.
     //
     "51: xor t1, t1, t2\n   sub t2, zero, t1\n   and t1, t1, t2\n   addi t1, t1, -1\n"
-    "srli t1, t1, 7\n   li t3, 0x0101010101010101\n   and t1, t1, t3\n"
+    "srli t1, t1, 7\n   lui t3, 0x1010\n   addi t3, t3, 257\n   slli t2, t3, 32\n   add t3, t3, t2  # 0x0101010101010101\n   and t1, t1, t3\n"
     "mul t1, t1, t3\n   srli t1, t1, 56\n"
     "add t2, a0, t1\n   lbu t4, 0(t2)\n   add t2, a1, t1\n   lbu t5, 0(t2)\n"
     "sub a3, t4, t5\n   j 9f\n"
