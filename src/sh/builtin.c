@@ -44,15 +44,14 @@ fn shell_answer(b32 value)
 string_address shell_argv[];
 positive shell_argc;
 
-// eval runs a line, and what runs lines sits above this file. Weak, because
-// programs/edit.c includes this file with no shell around it.
-fn run_line(string_address line) __attribute__((weak));
-bool exec_function_here(string_address name) __attribute__((weak));
+// eval runs a line, and what runs lines sits below this file.
+fn run_line(string_address line);
+bool exec_function_here(string_address name);
 bool shell_builtin(string_address arguments);
 string_address shell_arguments();
 fn shell_execute_command();
-fn parse_nest_enter() __attribute__((weak));
-fn parse_nest_leave() __attribute__((weak));
+fn parse_nest_enter();
+fn parse_nest_leave();
 
 #define SHELL_DIRECTORY_MAX 4096
 
@@ -311,62 +310,8 @@ bool env_set(const_string name, const_string value)
 #define MODE_CHARACTER 0020000
 #define MODE_PIPE 0010000
 
-// How deep cp -r and rm -r are willing to walk. Every level holds an open
-// descriptor and a stack frame, so this is what keeps a loop of symlinked or
-// pathologically nested directories from taking the shell down with it.
-#define SHELL_MAX_DEPTH 24
-
-/*
-        file_facts is statx's 256 bytes, and file.c beside this spells all of
-        them out. This file used to carry its own shorter copy of the same
-        layout, which was the same struct written twice.
-
-        Where there is no file.c -- programs/edit.c takes this file on its own
-        -- the short form is still here, because what is wanted from it is the
-        mode and nothing further in.
-*/
-#ifndef FILE_MAX_DEPTH
-typedef struct
-{
-        p32 mask;
-        p32 blocksize;
-        p64 attributes;
-        p32 hard_links;
-        p32 owner;
-        p32 group;
-        p16 mode;
-        p16 reserved;
-        p64 inode;
-        p64 size;
-        p64 blocks;
-        p8 remainder[200];
-} file_facts;
-#endif
-
-bool shell_facts(bipolar directory, string_address path, file_facts address_to out)
-{
-        return system_call_5(syscall(statx), directory, (positive)path,
-                             AT_SYMLINK_NOFOLLOW, STATX_BASIC, (positive)out) == 0;
-}
-
-bool shell_is_directory(bipolar directory, string_address path)
-{
-        file_facts facts;
-
-        if (!shell_facts(directory, path, address_of facts))
-                return false;
-
-        return (facts.mode & MODE_FORMAT) == MODE_DIRECTORY;
-}
-
 #define SHELL_FLAG(letter) ((positive)1 << ((letter) - 'a'))
 
-/*
-        Takes the leading -abc words off the front of a builtin's arguments and
-        hands back one bit per letter. The words are only ever cut once a '-'
-        has been seen, because a caller may pass a literal: programs/edit.c
-        calls shell_ls with a string in read only memory.
-*/
 /*
         Leading options, and only the ones the command actually has.
 
@@ -825,148 +770,6 @@ fn shell_clear(writer write, string_address input)
 }
 
 
-// Only ever live at the leaf of a copy, so one block at file scope keeps it
-// off every recursion frame.
-static p8 shell_copy_buffer[4096];
-
-bool shell_copy_file(bipolar source_directory, string_address source,
-                     bipolar dest_directory, string_address destination, positive mode)
-{
-        bipolar in = system_call_3(syscall(openat), source_directory, (positive)source, FILE_READ);
-
-        if (in < 0)
-                return false;
-
-        bipolar out = system_call_4(syscall(openat), dest_directory, (positive)destination,
-                                    FILE_CREATE | FILE_WRITE | O_TRUNC, mode);
-
-        if (out < 0)
-        {
-                system_call_1(syscall(close), in);
-                return false;
-        }
-
-        bool complete = true;
-
-        while (complete)
-        {
-                bipolar bytes_read = system_call_3(syscall(read), in, (positive)shell_copy_buffer,
-                                                   sizeof(shell_copy_buffer));
-
-                if (bytes_read == 0)
-                        break;
-
-                if (bytes_read < 0)
-                {
-                        complete = false;
-                        break;
-                }
-
-                // A short write is not an error, but ignoring what it returned
-                // dropped the tail of the file without a word about it.
-                positive written = 0;
-
-                while (written < (positive)bytes_read)
-                {
-                        bipolar step = system_call_3(syscall(write), out,
-                                                     (positive)(shell_copy_buffer + written),
-                                                     (positive)bytes_read - written);
-
-                        if (step <= 0)
-                        {
-                                complete = false;
-                                break;
-                        }
-
-                        written += step;
-                }
-        }
-
-        system_call_1(syscall(close), in);
-        system_call_1(syscall(close), out);
-
-        return complete;
-}
-
-bool shell_copy_into(bipolar source, bipolar destination, positive depth);
-
-bool shell_copy_entry(bipolar source_directory, string_address name,
-                      bipolar dest_directory, string_address destination, positive depth)
-{
-        file_facts facts;
-
-        // A kernel too old for statx still gets the plain copy it always had.
-        if (!shell_facts(source_directory, name, address_of facts))
-                return shell_copy_file(source_directory, name, dest_directory, destination, 0666);
-
-        if ((facts.mode & MODE_FORMAT) != MODE_DIRECTORY)
-                return shell_copy_file(source_directory, name, dest_directory, destination,
-                                       facts.mode & 0777);
-
-        if (depth == 0)
-                return false;
-
-        bipolar in = system_call_3(syscall(openat), source_directory, (positive)name,
-                                   FILE_READ | O_DIRECTORY);
-
-        if (in < 0)
-                return false;
-
-        // Already there is not a failure: the copy merges into it.
-        system_call_3(syscall(mkdirat), dest_directory, (positive)destination, 0777);
-
-        bipolar out = system_call_3(syscall(openat), dest_directory, (positive)destination,
-                                    FILE_READ | O_DIRECTORY);
-
-        if (out < 0)
-        {
-                system_call_1(syscall(close), in);
-                return false;
-        }
-
-        bool complete = shell_copy_into(in, out, depth - 1);
-
-        system_call_1(syscall(close), in);
-        system_call_1(syscall(close), out);
-
-        return complete;
-}
-
-bool shell_copy_into(bipolar source, bipolar destination, positive depth)
-{
-        p8 entries[1024];
-        bool complete = true;
-
-        while (1)
-        {
-                bipolar bytes_read = system_call_3(syscall(getdents64), source,
-                                                   (positive)entries, sizeof(entries));
-
-                if (bytes_read <= 0)
-                        break;
-
-                p8 address_to step = entries;
-
-                while (step < entries + bytes_read)
-                {
-                        struct linux_dirent64 address_to entry = (struct linux_dirent64 address_to)step;
-
-                        if (!(entry->d_name[0] == '.' && (entry->d_name[1] == end ||
-                                                          (entry->d_name[1] == '.' && entry->d_name[2] == end))))
-                        {
-                                if (!shell_copy_entry(source, entry->d_name, destination,
-                                                      entry->d_name, depth))
-                                        complete = false;
-                        }
-
-                        step += entry->d_reclen;
-                }
-        }
-
-        return complete;
-}
-
-
 fn shell_echo(writer write, string_address input)
 {
         positive flags = shell_flags(address_of input, "n");
@@ -1003,112 +806,6 @@ fn shell_exec(writer write, string_address input)
         shell_answer(126);
         string_format(shell_diagnostic, "exec: %s: cannot run\n", shell_argv[1]);
 }
-fn shell_style(writer write, positive mode)
-{
-        if (!shell_styles)
-                return;
-
-        positive kind = mode & MODE_FORMAT;
-
-        if (kind == MODE_DIRECTORY)
-                return write(str(TERM_BOLD TERM_BLUE));
-
-        if (kind == MODE_LINK)
-                return write(str(TERM_CYAN));
-
-        if (kind == MODE_FILE)
-                return write(str(TERM_RESET));
-
-        write(str(TERM_YELLOW));
-}
-
-positive shell_kind_of_type(p8 type)
-{
-        if (type == DT_DIR)
-                return MODE_DIRECTORY;
-
-        if (type == DT_LNK)
-                return MODE_LINK;
-
-        if (type == DT_REG)
-                return MODE_FILE;
-
-        if (type == DT_CHR)
-                return MODE_CHARACTER;
-
-        if (type == DT_BLK)
-                return MODE_BLOCK;
-
-        if (type == DT_FIFO)
-                return MODE_PIPE;
-
-        if (type == DT_SOCK)
-                return MODE_SOCKET;
-
-        return 0;
-}
-
-p8 shell_kind_letter(positive mode)
-{
-        positive kind = mode & MODE_FORMAT;
-
-        if (kind == MODE_DIRECTORY)
-                return 'd';
-
-        if (kind == MODE_LINK)
-                return 'l';
-
-        if (kind == MODE_CHARACTER)
-                return 'c';
-
-        if (kind == MODE_BLOCK)
-                return 'b';
-
-        if (kind == MODE_PIPE)
-                return 'p';
-
-        if (kind == MODE_SOCKET)
-                return 's';
-
-        return '-';
-}
-
-fn shell_ls_long(writer write, bipolar directory, string_address name)
-{
-        file_facts facts;
-
-        if (!shell_facts(directory, name, address_of facts))
-        {
-                string_format(write, "?????????        ? %s\n", name);
-                return;
-        }
-
-        p8 permissions[] = "rwxrwxrwx";
-        p8 line[11];
-        positive i = 0;
-
-        line[0] = shell_kind_letter(facts.mode);
-
-        for (i = 0; i < 9; i++)
-                line[1 + i] = (facts.mode & ((positive)1 << (8 - i))) ? permissions[i] : '-';
-
-        line[10] = end;
-
-        write(line, 10);
-        write(" ", 1);
-        shell_number_padded(write, facts.hard_links, 3);
-        write(" ", 1);
-        shell_number_padded(write, facts.size, 9);
-        write(" ", 1);
-
-        shell_style(write, facts.mode);
-        write(name, 0);
-
-        if (shell_styles)
-                write(str(TERM_RESET));
-
-        write("\n", 1);
-}
 
 
 
@@ -1131,98 +828,6 @@ fn shell_mount(writer write, string_address input)
 
         string_format(shell_diagnostic, "mount: Cannot mount filesystem: %s\n", input);
 }
-
-bool shell_remove_into(bipolar directory, positive depth);
-
-bool shell_remove_entry(bipolar directory, string_address name, positive depth)
-{
-        file_facts facts;
-        bool known = shell_facts(directory, name, address_of facts);
-
-        if (!known || (facts.mode & MODE_FORMAT) != MODE_DIRECTORY)
-        {
-                if (system_call_3(syscall(unlinkat), directory, (positive)name, 0) == 0)
-                        return true;
-
-                // Without statx there is no telling a directory from a file
-                // beforehand, so a refused unlink is worth one more try below.
-                if (known)
-                        return false;
-        }
-
-        if (depth == 0)
-                return false;
-
-        bipolar inner = system_call_3(syscall(openat), directory, (positive)name,
-                                      FILE_READ | O_DIRECTORY);
-
-        if (inner < 0)
-                return false;
-
-        bool emptied = shell_remove_into(inner, depth - 1);
-
-        system_call_1(syscall(close), inner);
-
-        if (!emptied)
-                return false;
-
-        return system_call_3(syscall(unlinkat), directory, (positive)name, AT_REMOVEDIR) == 0;
-}
-
-/*
-        Removing an entry while reading through getdents64 moves the ones that
-        come after it, and the next read then skips them, so a single pass
-        leaves a directory that is not empty. Each pass starts again from the
-        beginning and the walk ends on the first pass that removes nothing.
-*/
-bool shell_remove_into(bipolar directory, positive depth)
-{
-        p8 entries[1024];
-        bool complete = true;
-
-        while (1)
-        {
-                bool removed_any = false;
-
-                if (system_call_3(syscall(lseek), directory, 0, FILE_SEEK_SET) < 0)
-                        return false;
-
-                complete = true;
-
-                while (1)
-                {
-                        bipolar bytes_read = system_call_3(syscall(getdents64), directory,
-                                                           (positive)entries, sizeof(entries));
-
-                        if (bytes_read <= 0)
-                                break;
-
-                        p8 address_to step = entries;
-
-                        while (step < entries + bytes_read)
-                        {
-                                struct linux_dirent64 address_to entry = (struct linux_dirent64 address_to)step;
-
-                                if (!(entry->d_name[0] == '.' && (entry->d_name[1] == end ||
-                                                                  (entry->d_name[1] == '.' && entry->d_name[2] == end))))
-                                {
-                                        if (shell_remove_entry(directory, entry->d_name, depth))
-                                                removed_any = true;
-                                        else
-                                                complete = false;
-                                }
-
-                                step += entry->d_reclen;
-                        }
-                }
-
-                if (!removed_any)
-                        break;
-        }
-
-        return complete;
-}
-
 
 fn shell_pwd(writer write, string_address input)
 {
@@ -1469,22 +1074,10 @@ bipolar shell_signed(string_address input, bool address_to good)
 */
 #define POSITIONAL_MAX 64
 
-#ifdef EXPAND_PARAMETERS
 extern string_address shell_parameter[];
 extern positive shell_parameter_count;
 bool shell_parameters_set(string_address address_to words, positive count);
 fn shell_parameters_shift(positive count);
-#else
-// Without the expander beside this file there is nothing to be positional
-// about -- programs/edit.c wants a few of these commands and no shell.
-static string_address shell_parameter[1];
-static positive shell_parameter_count;
-static bool shell_parameters_set(string_address address_to words, positive count)
-{
-        return false;
-}
-static fn shell_parameters_shift(positive count) {}
-#endif
 
 /*
         The long names for the same letters.
@@ -2079,23 +1672,7 @@ bool test_unary(p8 op, string_address value)
         return false;
 }
 
-/*
-        The three fields test wants from statx that the short form here has no
-        name for.
-
-        file.c spells all 256 bytes out, and when it is here those names are
-        used. Where it is not -- programs/edit.c takes this file alone -- the
-        struct above stops after the block count and the rest is reached by
-        offset: stx_mtime at 112, its nanoseconds at 120, and the device that
-        owns the file at 136, all of them 56 bytes further in than where the
-        short form gives up.
-
-        The offsets used to be the only path, and with file.c present they were
-        reading 96 bytes past the field they named: -nt and -ot compared two
-        pieces of the mount id.
-*/
-#ifdef FILE_MAX_DEPTH
-
+// The three fields test wants out of statx.
 b64 test_modified(file_facts address_to facts)
 {
         return facts->modified.seconds;
@@ -2111,38 +1688,6 @@ p64 test_device(file_facts address_to facts)
         return ((p64)facts->device_major << 32) | facts->device_minor;
 }
 
-#else
-
-b64 test_modified(file_facts address_to facts)
-{
-        b64 seconds;
-
-        memory_copy(address_of seconds, facts->remainder + 56, sizeof(seconds));
-
-        return seconds;
-}
-
-p32 test_modified_fraction(file_facts address_to facts)
-{
-        p32 nanoseconds;
-
-        memory_copy(address_of nanoseconds, facts->remainder + 64, sizeof(nanoseconds));
-
-        return nanoseconds;
-}
-
-p64 test_device(file_facts address_to facts)
-{
-        p32 major;
-        p32 minor;
-
-        memory_copy(address_of major, facts->remainder + 80, sizeof(major));
-        memory_copy(address_of minor, facts->remainder + 84, sizeof(minor));
-
-        return ((p64)major << 32) | minor;
-}
-
-#endif
 
 bool test_is_unary(string_address word)
 {
@@ -4180,10 +3725,7 @@ fn shell_eval(writer write, string_address input)
                 at, which makes the pointers good again -- and the parser is
                 told to claim from above what is in use rather than over it.
 
-                Only where there is a lexer to put back: programs/edit.c takes
-                this file with no shell around it.
         */
-#ifdef LEX_TOKENS
         {
                 lex_token kept_tokens[LEX_TOKENS];
                 p8 kept_text[LEX_TEXT];
@@ -4207,7 +3749,6 @@ fn shell_eval(writer write, string_address input)
                 lex_used = kept_used;
                 lex_count = kept_count;
         }
-#endif
 
         // After the nested line, not before it: the commands inside set the
         // status themselves, and claiming it early would eat their answer.
@@ -4242,8 +3783,6 @@ fn shell_return(writer write, string_address input)
         every fork starts from it. A hundred greps in a loop each begin the way
         the first one did.
 */
-#if defined(TEXT_ARENA_BYTES) && defined(FILE_MAX_DEPTH)
-
 typedef b32 (address_to shell_tool_function)();
 
 typedef struct
@@ -4420,17 +3959,6 @@ static bool shell_tool_run(string_address name)
 
         return true;
 }
-
-#else
-
-// Without the two layers beside this file there are no utilities to reach --
-// programs/edit.c takes this one on its own for a handful of its commands.
-b32 shell_tool_as_called() { return -1; }
-bool shell_tool_here(string_address name) { return false; }
-fn shell_tool_list(writer write) {}
-static bool shell_tool_run(string_address name) { return false; }
-
-#endif
 
 
 // The next signal that arrived and has not been acted on, or nothing.
