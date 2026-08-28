@@ -1041,6 +1041,82 @@ typedef union matrix4
 #define ASM_RET "ret\n"
 #endif
 
+//
+//      Where the routines land.
+//
+//      arch/x86/lib/memcpy_64.S puts its memcpy in .noinstr.text, and that is
+//      not decoration: head64.c calls memcpy before paging is finished and
+//      before the console exists, and code reached from there must not be
+//      instrumented. Ours went into ordinary .text when it displaced that
+//      file, and the machine booted to silence -- no panic, no output, dead
+//      before anything could say why.
+//
+//      Everything here is leaf assembly that calls nothing and touches no
+//      kernel state, so noinstr costs it nothing and makes it callable from
+//      the places the routine it replaced was callable from.
+//
+/*
+        Choosing a body at the moment the machine is ready, and not before.
+
+        A feature byte read at run time is wrong for these two reasons and not
+        one. It costs a load and a branch on every call, which is small. And it
+        cannot be read at all from head64.c, which runs before the kernel is at
+        its final address -- and the routine reached from there cannot execute
+        SSE either, because fpu__init_system has not run yet. Both of those are
+        answered by the same thing: do not decide at run time, decide once and
+        rewrite the instruction.
+
+        The kernel already does this and the order is exactly the one wanted:
+
+            arch/x86/kernel/cpu/common.c
+                2615  fpu__init_system();      the vector registers exist
+                2616  fpu__init_cpu();
+                2631  alternative_instructions();   and now the rewrite
+
+        So a routine written as
+
+            ALTERNATIVE "jmp .Lnarrow", "", X86_FEATURE_AVX2
+                <the wide body>
+            .Lnarrow:
+                <the body every context can run>
+
+        runs the narrow one for the whole of early boot, because that is what
+        the bytes say until they are rewritten, and from alternative_instructions
+        onward the jump has become padding and control falls into the wide body.
+        No load, no branch, no flag. It is what memcpy_64.S does with FSRM and
+        it is why that file has no runtime test in it either.
+
+        Userspace has no such moment handed to it, so there the feature byte
+        stays: _start_c writes it before main and every call after that reads
+        one byte out of L1. The two halves of this file disagree about the
+        mechanism on purpose -- a kernel has a defined point at which the
+        hardware is ready and a program does not.
+*/
+#ifdef KERNEL_MODE
+#include <asm/alternative.h>
+#include <asm/cpufeatures.h>
+
+//
+//      ALTERNATIVE is a C macro that expands to a string of directives -- the
+//      instruction, then a .altinstructions entry naming the feature, then the
+//      replacement in its own section. It is not an assembler mnemonic, and
+//      writing the word inside a string literal gets exactly what it says:
+//      "no such instruction: alternative".
+//
+#define ASM_PICK(feature, narrow_label)                                       \
+    ALTERNATIVE("jmp " narrow_label, "", feature) "\n"
+#else
+//      No rewrite to hang it on, so the byte cpu_detect wrote is the answer.
+#define ASM_PICK(feature, narrow_label)                                       \
+    "cmpb $0, cpu_has_avx2(%rip)\n   je " narrow_label "\n"
+#endif
+
+#ifdef KERNEL_MODE
+#define ASM_SECTION ".section .noinstr.text, \"ax\"\n"
+#else
+#define ASM_SECTION ".text\n"
+#endif
+
 #define ASM_FUNC(name)                  \
     ".balign 16\n"                      \
     ".globl " #name "\n"                \
@@ -1474,7 +1550,7 @@ __asm__(
     //       finished mask instead, which is exact and does not false-match a
     //       hunt for 0xff.
     //
-    ".text\n"
+    ASM_SECTION
     ASM_FUNC(string_length)
     //
     //      Sixty four bytes at a time, or thirty two, or eight. Measured on a
@@ -1537,7 +1613,7 @@ __asm__(
     //       loop steps a byte at a time until it is past, which happens for at
     //       most seven bytes out of every four thousand and ninety six.
     //
-    ".text\n"
+    ASM_SECTION
     ASM_FUNC(string_compare)
     //
     //      The first byte, before anything else is set up.
@@ -1659,7 +1735,7 @@ __asm__(
     //       memory_first_of has a count instead and needs none of that -- it reads
     //       whole vectors inside the bound and nothing else.
     //
-    ".text\n"
+    ASM_SECTION
     //
     //       char *strchr(const char *s, int c)
     //
@@ -1788,7 +1864,7 @@ __asm__(
     //
     ASM_FUNC(memory_count)
     "xor %eax, %eax\n   test %rsi, %rsi\n   jz 9f\n"
-    "cmpb $0, cpu_has_avx2(%rip)\n   je 5f\n"
+    ASM_PICK(X86_FEATURE_AVX2, "5f")
     "movzbl %dl, %ecx\n   vmovd %ecx, %xmm1\n   vpbroadcastb %xmm1, %ymm1\n"
     //
     //       Four accumulators, not one. vpsubb into the same register every
@@ -2131,7 +2207,7 @@ __asm__(
     //       a word, exclusive-or, and the byte that matched is the byte that is
     //       now zero -- so what follows is mostly the differences.
     //
-    ".text\n"
+    ASM_SECTION
     //
     //       char *strchrnul(const char *s, int c)
     //
@@ -2297,7 +2373,7 @@ __asm__(
     //       did not give us. That is what makes the unbounded scan safe; where a
     //       length is given the reads are bounded anyway.
     //
-    ".text\n"
+    ASM_SECTION
     //
     //       int string_compare_max(const char *a, const char *b, size_t n)
     //
@@ -2407,7 +2483,7 @@ __asm__(
     //
     //       Declared in core.c, beside the code that calls it.
     //
-    ".text\n"
+    ASM_SECTION
     ASM_FUNC(get_cpu_time)
     //
     //       rdtsc splits its answer across two 32 bit halves, which is
@@ -2564,8 +2640,26 @@ __asm__(
     //       SSE2 is baseline on x86_64, so this spelling needs no guard and
     //       this path stays where it belongs: reachable by everything.
     //
-    "movdqu (%rsi), %xmm0\n   movdqu -16(%rsi,%rdx), %xmm1\n"
-    "movdqu %xmm0, (%rdi)\n   movdqu %xmm1, -16(%rdi,%rdx)\n"
+    //
+    //       General registers, not xmm, and this is the third spelling of this
+    //       path in one day. It was vmovdqu, which is VEX encoded and #UD on
+    //       anything without AVX. It became movdqu, which is SSE2 and baseline
+    //       on x86_64 -- true of every x86_64 processor and not true of every
+    //       x86_64 *context*. The kernel calls memcpy from head64.c before
+    //       fpu__init_system has enabled SSE at all, so even SSE2 is an
+    //       invalid opcode there: qemu caught it as v=06 with rdx=0x10, a
+    //       sixteen byte copy, and the machine died before the console
+    //       existed. arch/x86/lib/memcpy_64.S touches no vector register of
+    //       any width for exactly this reason.
+    //
+    //       Four moves rather than two. The wide paths above stay behind the
+    //       feature byte, which is only written at module init and so is only
+    //       ever read after the processor is fully set up.
+    //
+    "mov (%rsi), %r9\n   mov 8(%rsi), %r10\n"
+    "mov -16(%rsi,%rdx), %r11\n   mov -8(%rsi,%rdx), %rcx\n"
+    "mov %r9, (%rdi)\n   mov %r10, 8(%rdi)\n"
+    "mov %r11, -16(%rdi,%rdx)\n   mov %rcx, -8(%rdi,%rdx)\n"
     ASM_RET
     "7:  cmp $8, %rdx\n   jb 8f\n"
     "mov (%rsi), %r9\n   mov -8(%rsi,%rdx), %r10\n"
@@ -3073,7 +3167,7 @@ __asm__(
     ".section .rodata\n   .balign 2\n"
     "digit_pairs:\n"
     "        .ascii \"00010203040506070809101112131415161718192021222324252627282930313233343536373839404142434445464748495051525354555657585960616263646566676869707172737475767778798081828384858687888990919293949596979899\"\n"
-    ".text\n"
+    ASM_SECTION
 ASM_FUNC(positive_to_string)
     //
     //       Nothing is saved and nothing is restored. The writer is wanted only
@@ -3247,7 +3341,7 @@ ASM_FUNC(positive_to_string)
     "        .quad 100000000000000\n      .quad 1000000000000000\n"
     "        .quad 10000000000000000\n    .quad 100000000000000000\n"
     "        .quad 1000000000000000000\n  .quad 10000000000000000000\n"
-    ".text\n"
+    ASM_SECTION
     ASM_END(positive_to_string)
     //
     //
@@ -3342,7 +3436,7 @@ ASM_FUNC(positive_to_string)
     "        .quad 0x00FF00FF00FF00FF\n"
     "        .quad 0x0000FFFF0000FFFF\n"
     "        .quad 0x0000271000000001  # ten thousand and one, in two halves\n"
-    ".text\n"
+    ASM_SECTION
     ASM_END(string_to_positive)
     //
     //
@@ -3788,7 +3882,7 @@ ASM_FUNC(positive_to_string)
     "        .byte 1\n           .zero 36\n"
     "        .byte 1  # the percent\n"
     "        .zero 218\n"
-    ".text\n"
+    ASM_SECTION
     ASM_END(string_format)
     //
     //       string_format is the name every caller uses and it cannot be a
@@ -3936,6 +4030,22 @@ ASM_EXPORT(memchr);
 //      links, and then every module wanting it fails at modpost with
 //      "undefined" -- efivarfs was the one that said so here.
 //
+//
+//      The three the architecture used to write for itself.
+//
+//      build.sh takes memcpy_64.o, memmove_64.o and memset_64.o out of
+//      arch/x86/lib/Makefile, so these are the only definitions left. The
+//      kernel names the underscore forms as well -- seventeen references to
+//      __memcpy, sixteen to __memset, ten to __memmove -- because that is
+//      what instrumented builds route through, so both spellings exist and
+//      both go out.
+//
+ASM_EXPORT(memcpy);
+ASM_EXPORT(memmove);
+ASM_EXPORT(memset);
+ASM_EXPORT(__memcpy);
+ASM_EXPORT(__memmove);
+ASM_EXPORT(__memset);
 ASM_EXPORT(memcmp);
 ASM_EXPORT(strchr);
 ASM_EXPORT(strchrnul);
@@ -3948,7 +4058,7 @@ ASM_EXPORT(strrchr);
 #endif
 #elif ARM64
 __asm__(
-    ".text\n"
+    ASM_SECTION
     //
     //       arm64 and riscv already define __HAVE_ARCH_STRLEN and ship their
     //       own, so the kernel's string_length on these two machines is theirs and a
@@ -4004,7 +4114,7 @@ __asm__(
     "sub x0, x5, x0  // minus where we started\n"
     ASM_RET
     ASM_END(string_length)
-    ".text\n"
+    ASM_SECTION
     //
     //       Named string_compare for the same reason string_length is:
     //       arch/arm64/lib/strcmp.S already owns the plain name in the kernel.
@@ -4107,7 +4217,7 @@ __asm__(
     "4:  mov w0, w9\n"
     ASM_RET
     ASM_END(string_compare)
-    ".text\n"
+    ASM_SECTION
     //
     //       char *strchr(const char *s, int c)
     //
@@ -4185,7 +4295,7 @@ __asm__(
     //       a word, exclusive-or, and the byte that matched is the byte that is
     //       now zero -- so what follows is mostly the differences.
     //
-    ".text\n"
+    ASM_SECTION
     //       string_first_of_or_end: the x86_64 block carries the reasoning.
     ASM_FUNC(string_first_of_or_end)
     "and w1, w1, #0xff\n   dup v1.16b, w1\n"
@@ -4240,7 +4350,7 @@ __asm__(
     //       program calling string_length_max linked on x86_64 and did not
     //       here. They are present on all three now.
     //
-    ".text\n"
+    ASM_SECTION
     //
     //       The last match, not the first. Within a word the highest set flag
     //       is wanted rather than the lowest, and arm64 has no bsr: clz counts
@@ -4948,7 +5058,7 @@ __asm__(
     ".section .rodata\n   .balign 2\n"
     "digit_pairs:\n"
     "        .ascii \"00010203040506070809101112131415161718192021222324252627282930313233343536373839404142434445464748495051525354555657585960616263646566676869707172737475767778798081828384858687888990919293949596979899\"\n"
-    ".text\n"
+    ASM_SECTION
 ASM_FUNC(positive_to_string)
     "stp x29, x30, [sp,  #-48]!\n   mov x29, sp\n   mov x9, x0\n"
     "adrp x8, digit_pairs\n   add x8, x8, :lo12:digit_pairs\n"
@@ -5064,7 +5174,7 @@ ASM_FUNC(positive_to_string)
     "        .quad 100000000000000\n      .quad 1000000000000000\n"
     "        .quad 10000000000000000\n    .quad 100000000000000000\n"
     "        .quad 1000000000000000000\n  .quad 10000000000000000000\n"
-    ".text\n"
+    ASM_SECTION
     ASM_END(positive_to_string)
     //
     //
@@ -5430,7 +5540,7 @@ ASM_EXPORT(strnchr);
 #endif
 #elif RISCV64
 __asm__(
-    ".text\n"
+    ASM_SECTION
     //
     //       arm64 and riscv already define __HAVE_ARCH_STRLEN and ship their
     //       own, so the kernel's string_length on these two machines is theirs and a
@@ -5517,7 +5627,7 @@ __asm__(
     "sub a0, t2, a0  # minus where we started\n"
     ASM_RET
     ASM_END(string_length)
-    ".text\n"
+    ASM_SECTION
     //
     //       Named string_compare for the same reason string_length is:
     //       arch/riscv/lib already owns the plain name in the kernel.
@@ -5581,7 +5691,7 @@ __asm__(
     "4:  subw a0, a4, a5\n"
     ASM_RET
     ASM_END(string_compare)
-    ".text\n"
+    ASM_SECTION
     //
     //       char *strchr(const char *s, int c)
     //
@@ -5688,7 +5798,7 @@ __asm__(
     //       a word, exclusive-or, and the byte that matched is the byte that is
     //       now zero -- so what follows is mostly the differences.
     //
-    ".text\n"
+    ASM_SECTION
     //
     //       char *strchrnul(const char *s, int c)
     //
@@ -5781,7 +5891,7 @@ __asm__(
     //       one to get the bits under it, and multiply by 0x0101..01 so the top
     //       byte becomes the count of them.
     //
-    ".text\n"
+    ASM_SECTION
     //
     //       The last match, not the first, which the forward scan does not
     //       answer directly: within a word the highest flag is wanted. There is
@@ -6070,7 +6180,7 @@ __asm__(
     //
     //       Declared in core.c, beside the code that calls it.
     //
-    ".text\n"
+    ASM_SECTION
     ASM_FUNC(get_cpu_time)
     //
     //       The time CSR is the fixed rate one and matches what the other
@@ -6392,7 +6502,7 @@ __asm__(
     ".section .rodata\n   .balign 2\n"
     "digit_pairs:\n"
     "        .ascii \"00010203040506070809101112131415161718192021222324252627282930313233343536373839404142434445464748495051525354555657585960616263646566676869707172737475767778798081828384858687888990919293949596979899\"\n"
-    ".text\n"
+    ASM_SECTION
 ASM_FUNC(positive_to_string)
     "addi sp, sp, -48\n   sd ra, 40(sp)\n   mv t6, a0\n   lla t3, digit_pairs\n"
     //
@@ -6511,7 +6621,7 @@ ASM_FUNC(positive_to_string)
     "        .quad 10000000000000000\n    .quad 100000000000000000\n"
     "        .quad 1000000000000000000\n  .quad 10000000000000000000\n"
     "        .quad 0xABCC77118461CEFD  # what dividing by a hundred million is\n"
-    ".text\n"
+    ASM_SECTION
     ASM_END(positive_to_string)
     //       bipolar_to_string: the arm64 block carries the reasoning.
     ASM_FUNC(bipolar_to_string)
@@ -6580,7 +6690,7 @@ ASM_FUNC(positive_to_string)
     "        .quad 0x0000FFFF0000FFFF\n"
     "        .quad 0x0000271000000001  # ten thousand and one, in two halves\n"
     "        .quad 100000000\n"
-    ".text\n"
+    ASM_SECTION
     ASM_END(string_to_positive)
     //       string_to_bipolar: the x86_64 block carries the reasoning.
     ASM_FUNC(string_to_bipolar)
@@ -7118,6 +7228,8 @@ address_any memory_fill(address_any destination, b8 value, positive size);
 address_any memory_copy_fast(address_any destination, address_any source, positive size);
 address_any memory_copy(address_any destination, address_any source, positive size);
 
+
+
 /*
         What this processor turned out to have.
 
@@ -7137,6 +7249,216 @@ address_any memory_copy(address_any destination, address_any source, positive si
 KEEP p8 cpu_has_avx2 = 0;
 KEEP p8 cpu_has_avx512 = 0;
 fn moonwater_cpu_detect(void);
+
+/*
+        Sizes that are known where the call is written.
+
+        Most copies in a program are a sizeof: a structure, a fixed buffer, a
+        path. The number is sitting in the source and the routine works it out
+        again anyway -- reads the length, picks a width class, branches, and
+        returns. At sixteen bytes that arithmetic is most of the work, and the
+        work is two moves.
+
+        So when the size is a literal the call is replaced, in place, by the
+        line of moves that size needs. Three million copies on a 9950X, in
+        microseconds, lower is quicker:
+
+              bytes    routine   expanded
+                  8       9714       5740
+                 16      13408       5873
+                 32      14727       6234
+                 64      17215       7398
+                128      17716      10540
+                256      18278      26913   <- the routine wins again
+
+        Which is where KNOWN_SIZE_MAX comes from. Past it the routine reaches
+        for a wider path than any straight line written here can, and the call
+        it costs stops mattering. Above the cutoff the macro is the call, so a
+        size the compiler cannot fold and a size too large both arrive at the
+        same routine, unchanged.
+
+        Up to thirty two bytes the compiler's own expansion is already the
+        best line available. It was level with hand written assembly at every
+        size tried, and it has one advantage nothing here can match: it is
+        emitted for whatever -march the program is built with, so a build
+        allowed AVX-512 gets AVX-512 without being told. Above thirty two, in
+        a build allowed nothing wider than SSE2, it lays sixteen bytes a turn,
+        and hand written AVX2 is worth 1.2x at sixty four bytes and 1.4x at a
+        hundred and twenty eight. That window is the only thing written by
+        hand here.
+
+        The wide bodies load everything before they store anything, because
+        memory_copy is the name memmove is an alias for and the two halves are
+        allowed to overlap. An expansion that interleaved would be correct on
+        every test that did not overlap, which is most of them, so the check
+        in src/test/exact.c slides every size through every overlap both ways.
+
+        Every size is checked one at a time and by its literal, because a test
+        that takes its size from a loop counter reaches none of this: the
+        choice is made by the compiler, from the token.
+*/
+#ifdef KERNEL_MODE
+/*
+        A kernel build compiles with -mno-sse and no vector registers at all,
+        so the compiler's expansion here is general purpose moves and needs no
+        permission from anybody to run. Sixty four is where that stops being
+        quicker than the routine.
+
+        Nothing in a kernel build reads cpu_has_avx2. The flag has no address
+        early boot can reach, which is what head64.c found the first time
+        memcpy was displaced and the machine stopped before it could say so.
+*/
+#define KNOWN_SIZE_MAX 64
+#define KNOWN_WIDE 0
+#else
+#define KNOWN_SIZE_MAX 128
+#if X64 && !defined(__AVX2__)
+#define KNOWN_WIDE 1
+#else
+//      Either not this machine, or a build already allowed to emit wide moves
+//      on its own, in which case the compiler's expansion is the better one.
+#define KNOWN_WIDE 0
+#endif
+#endif
+
+#if KNOWN_WIDE
+/*
+        Thirty two bytes from the front, thirty two from the back, and as many
+        whole ones between as the size has room for. The back load overlaps
+        the one before it whenever the size is not a multiple of thirty two,
+        so the middle is written twice and no size needs a remainder.
+
+        The destination and source are named as memory operands of exactly the
+        size in hand rather than clobbering all of memory. A clobber measures
+        the same in a loop that keeps nothing live across the copy, and costs
+        real work in code that does.
+
+        vzeroupper because the compiler does not know this touched the upper
+        halves, and the SSE2 it emits either side of this pays a penalty on
+        Intel parts for as long as they stay dirty.
+*/
+#define KNOWN_WIDE_ASM(body, size, back_offset, ...)                          \
+        __asm__(body "   vzeroupper\n"                                        \
+                : "=m"(*(p8(address_to)[size])(destination))                  \
+                : [to] "r"(destination), [from] "r"(source),                  \
+                  [back] "i"(back_offset),                                    \
+                  "m"(*(const p8(address_to)[size])(source))                  \
+                : __VA_ARGS__)
+
+#define KNOWN_FILL_ASM(body, size, back_offset, ...)                          \
+        __asm__("   vmovd %k[val], %%xmm0\n"                                  \
+                "   vpbroadcastb %%xmm0, %%ymm0\n" body "   vzeroupper\n"     \
+                : "=m"(*(p8(address_to)[size])(destination))                  \
+                : [to] "r"(destination), [val] "r"((b32)value),               \
+                  [back] "i"(back_offset)                                     \
+                : __VA_ARGS__)
+#endif
+
+/*
+        The size classes, chosen by a number the compiler has already folded.
+        Each returns the destination, which is what the routines return.
+*/
+static inline INLINE address_any copy_known(address_any destination,
+                                            address_any source, positive size)
+{
+#if KNOWN_WIDE
+        if (size > 32 && cpu_has_avx2) {
+                if (size <= 64)
+                        KNOWN_WIDE_ASM("   vmovdqu (%[from]), %%ymm0\n"
+                                       "   vmovdqu %c[back](%[from]), %%ymm1\n"
+                                       "   vmovdqu %%ymm0, (%[to])\n"
+                                       "   vmovdqu %%ymm1, %c[back](%[to])\n",
+                                       size, size - 32, "xmm0", "xmm1");
+                else if (size <= 96)
+                        KNOWN_WIDE_ASM("   vmovdqu (%[from]), %%ymm0\n"
+                                       "   vmovdqu 32(%[from]), %%ymm1\n"
+                                       "   vmovdqu %c[back](%[from]), %%ymm2\n"
+                                       "   vmovdqu %%ymm0, (%[to])\n"
+                                       "   vmovdqu %%ymm1, 32(%[to])\n"
+                                       "   vmovdqu %%ymm2, %c[back](%[to])\n",
+                                       size, size - 32, "xmm0", "xmm1", "xmm2");
+                else
+                        KNOWN_WIDE_ASM("   vmovdqu (%[from]), %%ymm0\n"
+                                       "   vmovdqu 32(%[from]), %%ymm1\n"
+                                       "   vmovdqu 64(%[from]), %%ymm2\n"
+                                       "   vmovdqu %c[back](%[from]), %%ymm3\n"
+                                       "   vmovdqu %%ymm0, (%[to])\n"
+                                       "   vmovdqu %%ymm1, 32(%[to])\n"
+                                       "   vmovdqu %%ymm2, 64(%[to])\n"
+                                       "   vmovdqu %%ymm3, %c[back](%[to])\n",
+                                       size, size - 32,
+                                       "xmm0", "xmm1", "xmm2", "xmm3");
+                return destination;
+        }
+#endif
+        //      Overlap safe: the compiler's memmove expansion loads every
+        //      piece before it stores any of them. Checked, at -O2, from
+        //      forty bytes to a hundred: three loads, then three stores.
+        __builtin_memmove(destination, source, size);
+        return destination;
+}
+
+static inline INLINE address_any copy_fast_known(address_any destination,
+                                                 address_any source, positive size)
+{
+#if KNOWN_WIDE
+        if (size > 32 && cpu_has_avx2)
+                return copy_known(destination, source, size);
+#endif
+        __builtin_memcpy(destination, source, size);
+        return destination;
+}
+
+static inline INLINE address_any fill_known(address_any destination,
+                                            b8 value, positive size)
+{
+#if KNOWN_WIDE
+        if (size > 32 && cpu_has_avx2) {
+                if (size <= 64)
+                        KNOWN_FILL_ASM("   vmovdqu %%ymm0, (%[to])\n"
+                                       "   vmovdqu %%ymm0, %c[back](%[to])\n",
+                                       size, size - 32, "xmm0");
+                else if (size <= 96)
+                        KNOWN_FILL_ASM("   vmovdqu %%ymm0, (%[to])\n"
+                                       "   vmovdqu %%ymm0, 32(%[to])\n"
+                                       "   vmovdqu %%ymm0, %c[back](%[to])\n",
+                                       size, size - 32, "xmm0");
+                else
+                        KNOWN_FILL_ASM("   vmovdqu %%ymm0, (%[to])\n"
+                                       "   vmovdqu %%ymm0, 32(%[to])\n"
+                                       "   vmovdqu %%ymm0, 64(%[to])\n"
+                                       "   vmovdqu %%ymm0, %c[back](%[to])\n",
+                                       size, size - 32, "xmm0");
+                return destination;
+        }
+#endif
+        __builtin_memset(destination, value, size);
+        return destination;
+}
+
+/*
+        A macro names itself in its own replacement, which the preprocessor
+        leaves alone: the inner one is the routine, and the call site does not
+        change. Function-like, so it only fires where a call is written, and
+        taking the address of any of these still names the routine.
+
+        These must come after the prototypes above, which are the same names
+        followed by an open bracket and would expand.
+*/
+#define memory_copy(destination, source, size)                                \
+        (__builtin_constant_p(size) && (positive)(size) <= KNOWN_SIZE_MAX     \
+                 ? copy_known((destination), (source), (size))                \
+                 : memory_copy((destination), (source), (size)))
+
+#define memory_copy_fast(destination, source, size)                           \
+        (__builtin_constant_p(size) && (positive)(size) <= KNOWN_SIZE_MAX     \
+                 ? copy_fast_known((destination), (source), (size))           \
+                 : memory_copy_fast((destination), (source), (size)))
+
+#define memory_fill(destination, value, size)                                 \
+        (__builtin_constant_p(size) && (positive)(size) <= KNOWN_SIZE_MAX     \
+                 ? fill_known((destination), (value), (size))                 \
+                 : memory_fill((destination), (value), (size)))
 
 //
 //      How many times a byte appears in a block.
@@ -7391,11 +7713,28 @@ __asm__(
     ASM_ALIAS(strncmp,   string_compare_max)
     ASM_ALIAS(strchr,    string_first_of)
     ASM_ALIAS(strrchr,   string_last_of_or_end)
-#endif
-#ifndef KERNEL_MODE
+    /*
+            The three the architecture used to write for itself, and the
+            underscore spellings an instrumented build routes through.
+
+            These were under #ifndef KERNEL_MODE, which was right while
+            arch/x86/lib/memcpy_64.S existed: claiming a name the architecture
+            already defines is two definitions and no link. build.sh takes
+            those objects out of arch/x86/lib/Makefile now, so ours are the
+            only ones left and the kernel needs them by name -- seventeen
+            references to __memcpy, sixteen to __memset, ten to __memmove.
+
+            Still x86_64 only. arm64 and riscv64 keep their own; nothing has
+            measured ours against those.
+    */
     ASM_ALIAS(memcpy,    memory_copy)
     ASM_ALIAS(memmove,   memory_copy)
     ASM_ALIAS(memset,    memory_fill)
+    ASM_ALIAS(__memcpy,  memory_copy)
+    ASM_ALIAS(__memmove, memory_copy)
+    ASM_ALIAS(__memset,  memory_fill)
+#endif
+#ifndef KERNEL_MODE
     ASM_ALIAS(strcpy,    string_copy)
     ASM_ALIAS(strncpy,   string_copy_max)
     /*
@@ -7999,7 +8338,7 @@ positive file_read(file_address source, address_any buffer, positive size, posit
 #ifndef WINDOWS
 #if X64
 __asm__(
-    ".text\n"
+    ASM_SECTION
     //
     //       A handle is what openat returned, so every negative errno is a
     //       handle that is not -1. The C compares against -1 alone and this
@@ -8112,7 +8451,7 @@ __asm__(
 );
 #elif ARM64
 __asm__(
-    ".text\n"
+    ASM_SECTION
     ASM_FUNC(file_valid)
     "ldr x1, [x0]\n   cmn x1, #1  // zero only when the handle is -1\n"
     "cset w0, ne\n"
@@ -8215,7 +8554,7 @@ __asm__(
 );
 #elif RISCV64
 __asm__(
-    ".text\n"
+    ASM_SECTION
     ASM_FUNC(file_valid)
     "ld a1, 0(a0)\n   li a2, -1\n   xor a1, a1, a2  # zero only when the handle is -1\n"
     "snez a0, a1\n"
@@ -8356,7 +8695,7 @@ positive file_write(file_address source, address_any buffer, positive size, posi
 
 #if X64
 __asm__(
-    ".text\n"
+    ASM_SECTION
     // Both arguments the syscall wants are fields of the one it was given,
     // so the handle has to be read before rdi is overwritten with it.
     ASM_FUNC(file_get_status)
@@ -8429,7 +8768,7 @@ __asm__(
     "        " SYSCALL_INSTRUCTION "\n"
 
 __asm__(
-    ".text\n"
+    ASM_SECTION
     ASM_FUNC(file_get_status)
     "add x1, x0, #40\n"
     "ldr x0, [x0]\n"
@@ -8502,7 +8841,7 @@ __asm__(
     "        ecall\n"
 
 __asm__(
-    ".text\n"
+    ASM_SECTION
     ASM_FUNC(file_get_status)
     "addi a1, a0, 40\n   ld a0, 0(a0)\n"
     MOONWATER_ECALL(fstat)
@@ -8749,7 +9088,7 @@ fn library_close(address_any library);
 
 #if X64
 __asm__(
-    ".text\n"
+    ASM_SECTION
     //
     //   dlopen, dlsym and dlclose as this file has them. Two of the three do
     //   nothing at all away from Windows and the third is a scan for one byte
@@ -8790,7 +9129,7 @@ __asm__(
 );
 #elif ARM64
 __asm__(
-    ".text\n"
+    ASM_SECTION
     ASM_FUNC(library_open)
     "mov x2, x1\n"
     "1:  ldrb w3, [x2], #1\n"
@@ -8810,7 +9149,7 @@ __asm__(
 );
 #elif RISCV64
 __asm__(
-    ".text\n"
+    ASM_SECTION
     ASM_FUNC(library_open)
     "mv a2, a1\n   li a4, '/'\n"
     "1:  lbu a3, 0(a2)\n   beqz a3, 2f\n   addi a2, a2, 1\n   bne a3, a4, 1b\n"
@@ -8914,7 +9253,7 @@ __asm__(
     //       kept somewhere across it -- one lea is cheaper than a push and pop,
     //       and cheaper than tying up a callee saved register.
     //
-    ".text\n"
+    ASM_SECTION
     ASM_FUNC(working_directory_get)
     "lea working_directory(%rip), %rdi  # buffer\n"
     "        mov     $" MOONWATER_CWD_SIZE ", %esi    # room in it\n"
@@ -8963,7 +9302,7 @@ __asm__(
     //       whole image, and works the same whether the program was linked
     //       fixed or position independent.
     //
-    ".text\n"
+    ASM_SECTION
     ASM_FUNC(working_directory_get)
     "adrp x0, working_directory\n   add x0, x0, :lo12:working_directory\n"
     "        mov     x1, #" MOONWATER_CWD_SIZE "\n"
@@ -8997,7 +9336,7 @@ __asm__(
     //       position independent. Writing either one by hand would pick for the
     //       linker.
     //
-    ".text\n"
+    ASM_SECTION
     ASM_FUNC(working_directory_get)
     "la a0, working_directory\n"
     "        li      a1, " MOONWATER_CWD_SIZE "\n"
@@ -9056,7 +9395,7 @@ fn memory_free(address_any address, positive size);
 
 #if X64
 __asm__(
-    ".text\n"
+    ASM_SECTION
     //
     //   mmap and munmap, and the syscall is the whole cost of both: nothing
     //   here can be made faster, only correct.
@@ -9100,7 +9439,7 @@ __asm__(
 );
 #elif ARM64
 __asm__(
-    ".text\n"
+    ASM_SECTION
     ASM_FUNC(memory)
     "mov x1, x0\n   mov x0, xzr\n"
     "        mov     x2, #" MOONWATER_NUMBER(FILE_PROTECT_READ | FILE_PROTECT_WRITE) "\n"
@@ -9121,7 +9460,7 @@ __asm__(
 );
 #elif RISCV64
 __asm__(
-    ".text\n"
+    ASM_SECTION
     ASM_FUNC(memory)
     "mv a1, a0\n   li a0, 0\n"
     "        li      a2, " MOONWATER_NUMBER(FILE_PROTECT_READ | FILE_PROTECT_WRITE) "\n"

@@ -35,13 +35,14 @@ TEST_TALLY="$work/tally"
 export TEST_TALLY
 : > "$TEST_TALLY"
 
-lanes="standard verify native probe shell expand builtin awk text tools files term kit boot"
+lanes="standard verify exact native probe shell expand builtin awk text tools files term kit boot"
 
 describe()
 {
         case $1 in
         standard) echo "the standard library, and that it still builds with no platform under it" ;;
         verify)   echo "the assembly in library.c against the C it replaced, on three machines" ;;
+        exact)    echo "every size that is known where the call is written, and both tiers" ;;
         native)   echo "arm64 assembly on an arm64 machine, with no emulator in the way" ;;
         probe)    echo "what only a separate process can prove: arguments, status, regions" ;;
         shell)    echo "the shell language against dash, the names it answers to, and the gaps" ;;
@@ -202,6 +203,71 @@ lane_verify()
         verify_one x86_64 "$compiler" "" || failed=1
         verify_one arm64 aarch64-linux-gnu-gcc qemu-aarch64 || failed=1
         verify_one riscv64 riscv64-linux-gnu-gcc qemu-riscv64 || failed=1
+
+        [ "$failed" = 0 ]
+}
+
+#       The sizes that never reach the routine.
+#
+#       memory_copy, memory_copy_fast and memory_fill expand in place when the
+#       size is a literal, into a line of moves chosen from the number. Nothing
+#       in the verify lane can reach any of that: its sizes come from loop
+#       counters, so every one of them is a call, and the expansions would ship
+#       having never run. src/test/exact.c is written out one size at a time by
+#       kit/exact.py for that reason.
+#
+#       On all three machines, because the expansion differs on each: x86 has a
+#       hand written window between thirty three and a hundred and twenty eight
+#       bytes and the other two do not.
+exact_one()
+{
+        name=$1
+        cross=$2
+        runner=$3
+
+        if ! command -v "$cross" > /dev/null 2>&1; then
+                note "$name: no $cross, skipped"
+                return 0
+        fi
+
+        if [ -n "$runner" ] && ! command -v "$runner" > /dev/null 2>&1; then
+                note "$name: no $runner, skipped"
+                return 0
+        fi
+
+        saved=$compiler
+        compiler=$cross
+        freestanding src/test/exact.c "$work/exact.$name" || {
+                compiler=$saved
+                return 1
+        }
+        compiler=$saved
+
+        $runner "$work/exact.$name" > "$work/exact.$name.out" 2>&1
+        status=$?
+
+        sed -n '/FAIL/p' "$work/exact.$name.out"
+
+        line=$(sed -n 's/^\([0-9]*\) checks, \([0-9]*\) failures$/\1 \2/p' \
+                "$work/exact.$name.out")
+
+        [ -n "$line" ] || { note "$name printed no verdict"; return 1; }
+
+        checks=${line% *}
+        bad=${line#* }
+
+        tally "exact-$name" "$((checks - bad))" "$checks"
+
+        [ "$status" = 0 ] && [ "$bad" = 0 ]
+}
+
+lane_exact()
+{
+        failed=0
+
+        exact_one x86_64 "$compiler" "" || failed=1
+        exact_one arm64 aarch64-linux-gnu-gcc qemu-aarch64 || failed=1
+        exact_one riscv64 riscv64-linux-gnu-gcc qemu-riscv64 || failed=1
 
         [ "$failed" = 0 ]
 }
