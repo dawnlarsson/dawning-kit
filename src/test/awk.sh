@@ -544,8 +544,12 @@ compare 'a field far past the end' /dev/null 'BEGIN{$0="a"; print "[" $1000 "]",
 compare 'ors is not printf' /dev/null 'BEGIN{ORS="X"; printf "a\n"}'
 compare 'end only exit' /dev/null 'END{exit 7}'
 compare 'a file that is not there' /dev/null '{print}' "$work/letters" /nonesuch/at/all "$work/grid"
-compare 'a nan through arithmetic' /dev/null 'BEGIN{x = log(-1); print (x==x), (x<1), x+1}'
-compare 'infinities' /dev/null 'BEGIN{x=1e300*1e300; print x, -x, x-x, 1/x}'
+#       Not printed, only compared: which way the sign bit of a value that
+#       is not a number falls is the machine's answer and not awk's, and the
+#       three machines here do not agree with each other about it.
+compare 'a nan through arithmetic' /dev/null 'BEGIN{x = log(-1); print (x==x), (x!=x), (x<1), (x>1), (x<=1), (x>=1)}'
+compare 'a nan against itself' /dev/null 'BEGIN{x = sqrt(-1); y = x + 1; print (y==y), (x==0), length(x "")}'
+compare 'infinities' /dev/null 'BEGIN{x=1e300*1e300; print x, -x, 1/x, (x>1e308), (x==x)}'
 compare 'thirty six patterns' /dev/null 'BEGIN{s="abcdefghij"; n=0
 if (s~/a/) n++; if (s~/b/) n++; if (s~/c/) n++; if (s~/d/) n++; if (s~/e/) n++
 if (s~/f/) n++; if (s~/g/) n++; if (s~/h/) n++; if (s~/i/) n++; if (s~/j/) n++
