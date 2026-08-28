@@ -7927,14 +7927,6 @@ __asm__(
 #endif
 #endif // KERNEL_MODE
 
-// What the block above actually defines here. Each architecture only
-// carries what it was missing, so this is not the same set everywhere.
-#if X64
-#endif
-#if ARM64
-#endif
-#if RISCV64
-#endif
 
 string_address string_copy(string_address destination, string_address source);
 
@@ -8304,24 +8296,16 @@ address_any memory_search(address_any block, positive size,
 #define STRING_SET_BYTES 256
 
 /*
-        The three sets a scanner asks for over and over.
+        The one set a scanner asks for over and over.
 
         string_span and string_span_max take a set and not a predicate, and
-        until now every caller that wanted one of these either built it at
-        startup or wrote the byte loop out by hand. Counted across the shell
-        and the utilities: twenty two places skipping blanks, four taking the
-        run that is not blanks, and the digit runs, which string_digits above
-        answers whole rather than as a span.
+        until now every caller that wanted this one either built it at startup
+        or wrote the byte loop out by hand: twenty two places across the shell
+        and the utilities, all of them skipping blanks.
 
-        Three and no more. A fourth with one caller would cost a load and an
-        indirection to say what a compare already said, which is the case
-        against most of these and is why there is no set of letters here.
-
-        The complement holds no terminator, on purpose. A run of everything
-        that is not a blank has to stop somewhere when the caller gives no
-        bound, and every caller counted above means the end of the string when
-        it says that. Under string_span_max the bound stops it first and the
-        difference never shows.
+        One and no more. A second with one caller costs a load and an
+        indirection to say what a compare already said, which is what became
+        of the complement and of the digits: byte_class_holds answers both.
 */
 // A space or a tab: what POSIX calls a blank, and what IFS is by default.
 const b8 string_set_blanks[STRING_SET_BYTES] = {
@@ -8329,46 +8313,6 @@ const b8 string_set_blanks[STRING_SET_BYTES] = {
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-};
-
-// Its complement, and the terminator is not in it.
-const b8 string_set_not_blanks[STRING_SET_BYTES] = {
-        0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1,
-        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-        0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-};
-
-// The decimal digits, for the callers that count a run rather than read it.
-const b8 string_set_digits[STRING_SET_BYTES] = {
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
