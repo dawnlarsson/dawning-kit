@@ -4477,69 +4477,37 @@ static fn text_set_build(string_address spec, p8 address_to into, positive addre
                 address_to have = TEXT_SET_MAX;
 }
 
-static text_long tr_long_options[] = {
-    {"complement", 'c', TEXT_LONG_ALONE},
-    {"delete", 'd', TEXT_LONG_ALONE},
-    {"squeeze-repeats", 's', TEXT_LONG_ALONE},
-    {"truncate-set1", 't', TEXT_LONG_ALONE},
-    {null, 0, 0}};
+static const file_long tr_longs[] = {
+    {(string_address) "complement", 'c'},
+    {(string_address) "delete", 'd'},
+    {(string_address) "squeeze-repeats", 's'},
+    {(string_address) "truncate-set1", 't'},
+    {null, 0},
+};
 
 static b32 text_tr()
 {
-        bool remove = false;
-        bool squeeze = false;
-        bool complement = false;
-        bool truncate = false;
-        string_address first = null;
-        string_address second = null;
-        string_address extra = null;
+        file_taking taking = {
+            .program = (string_address) "tr",
+            .allowed = (string_address) "Ccdst",
+            .valued = (string_address) "",
+            .longs = tr_longs,
+        };
 
         text_begin("tr");
 
-        if (!text_expand_long(tr_long_options))
+        if (!file_take(address_of taking))
                 return text_done(1);
 
-        for (b32 i = 1; i < text_argument_count; i++)
-        {
-                string_address argument = text_argument(i);
-
-                if (argument[0] == '-' && argument[1] && !first)
-                {
-                        if (argument[1] == '-' && !argument[2])
-                                continue;
-
-                        bool flags = true;
-
-                        for (positive c = 1; argument[c]; c++)
-                                if (argument[c] != 'd' && argument[c] != 's' &&
-                                    argument[c] != 'c' && argument[c] != 'C' &&
-                                    argument[c] != 't')
-                                        flags = false;
-
-                        if (flags)
-                        {
-                                for (positive c = 1; argument[c]; c++)
-                                        switch (argument[c])
-                                        {
-                                        case 'd': remove = true; break;
-                                        case 's': squeeze = true; break;
-                                        case 't': truncate = true; break;
-                                        case 'c':
-                                        case 'C': complement = true; break;
-                                        default: break;
-                                        }
-
-                                continue;
-                        }
-                }
-
-                if (!first)
-                        first = argument;
-                else if (!second)
-                        second = argument;
-                else if (!extra)
-                        extra = argument;
-        }
+        positive flags = taking.flags;
+        bool remove = (flags & FILE_FLAG('d')) != 0;
+        bool squeeze = (flags & FILE_FLAG('s')) != 0;
+        bool complement = (flags & (FILE_FLAG('c') | FILE_FLAG('C'))) != 0;
+        bool truncate = (flags & FILE_FLAG('t')) != 0;
+        b32 at = (b32)taking.first;
+        string_address first = at < text_argument_count ? text_argument(at++) : null;
+        string_address second = at < text_argument_count ? text_argument(at++) : null;
+        string_address extra = at < text_argument_count ? text_argument(at++) : null;
 
         if (!first)
         {
@@ -9529,21 +9497,34 @@ static fn cmp_octal(positive value)
                 text_put_character(digits[--have]);
 }
 
-static text_long cmp_long_options[] = {
-    {"print-bytes", 'b', TEXT_LONG_ALONE},
-    {"ignore-initial", 'i', TEXT_LONG_NEEDS},
-    {"bytes", 'n', TEXT_LONG_NEEDS},
-    {"quiet", 's', TEXT_LONG_ALONE},
-    {"silent", 's', TEXT_LONG_ALONE},
-    {"verbose", 'l', TEXT_LONG_ALONE},
-    {null, 0, 0}};
+static const file_long cmp_longs[] = {
+    {(string_address) "print-bytes", 'b'},
+    {(string_address) "ignore-initial", 'i'},
+    {(string_address) "bytes", 'n'},
+    {(string_address) "quiet", 's'},
+    {(string_address) "silent", 's'},
+    {(string_address) "verbose", 'l'},
+    {null, 0},
+};
 
 static b32 text_cmp()
 {
-        bool silent = false;
-        bool listing = false;
-        bool shown = false;
-        b32 index = 1;
+        file_taking taking = {
+            .program = (string_address) "cmp",
+            .allowed = (string_address) "bilns",
+            .valued = (string_address) "in",
+            .longs = cmp_longs,
+        };
+
+        text_begin("cmp");
+
+        if (!file_take(address_of taking))
+                return text_done(2);
+
+        bool silent = (taking.flags & FILE_FLAG('s')) != 0;
+        bool listing = (taking.flags & FILE_FLAG('l')) != 0;
+        bool shown = (taking.flags & FILE_FLAG('b')) != 0;
+        b32 index = (b32)taking.first;
         positive at = 0;
         positive lines = 0;
         positive skip_left = 0;
@@ -9552,102 +9533,51 @@ static b32 text_cmp()
         bool newline = true;
         positive width = 1;
         b32 answer = 0;
+        string_address said = file_option_value(address_of taking, 'n');
 
-        text_begin("cmp");
-
-        if (!text_expand_long(cmp_long_options))
-                return text_done(2);
-
-        while (index < text_argument_count)
+        if (said && !cmp_count_of(said, address_of limit))
         {
-                string_address argument = text_argument(index);
+                text_error(said, "invalid --bytes value");
+                return text_done(2);
+        }
 
-                if (argument[0] != '-' || !argument[1])
-                        break;
+        said = file_option_value(address_of taking, 'i');
 
-                if (argument[1] == '-' && !argument[2])
+        if (said)
+        {
+                // -i takes one count for both sides or, with a colon between
+                // them, one for each.
+                positive split = 0;
+                p8 head[32];
+
+                while (said[split] && said[split] != ':')
+                        split++;
+
+                if (said[split] != ':')
                 {
-                        index++;
-                        break;
-                }
-
-                for (positive letter = 1; argument[letter]; letter++)
-                {
-                        if (argument[letter] == 's')
-                                silent = true;
-                        else if (argument[letter] == 'l')
-                                listing = true;
-                        else if (argument[letter] == 'b')
-                                shown = true;
-                        else if (argument[letter] == 'i' || argument[letter] == 'n')
+                        if (!cmp_count_of(said, address_of skip_left))
                         {
-                                bool skipping = argument[letter] == 'i';
-                                string_address value = argument[letter + 1]
-                                                           ? argument + letter + 1
-                                                           : text_argument(++index);
-                                positive one = 0;
-
-                                if (!value)
-                                {
-                                        text_error(null, "option requires an argument");
-                                        return text_done(2);
-                                }
-
-                                // -i takes one count for both sides or, with
-                                // a colon between them, one for each.
-                                positive split = 0;
-
-                                while (value[split] && value[split] != ':')
-                                        split++;
-
-                                p8 head[32];
-
-                                if (skipping && value[split] == ':')
-                                {
-                                        positive two = 0;
-
-                                        if (split >= sizeof(head))
-                                                split = sizeof(head) - 1;
-
-                                        memory_copy(head, value, split);
-                                        head[split] = end;
-
-                                        if (!cmp_count_of(head, address_of one) ||
-                                            !cmp_count_of(value + split + 1,
-                                                          address_of two))
-                                        {
-                                                text_error(value, "invalid --ignore-initial value");
-                                                return text_done(2);
-                                        }
-
-                                        skip_left = one;
-                                        skip_right = two;
-                                        break;
-                                }
-
-                                if (!cmp_count_of(value, address_of one))
-                                {
-                                        text_error(value, skipping
-                                                              ? "invalid --ignore-initial value"
-                                                              : "invalid --bytes value");
-                                        return text_done(2);
-                                }
-
-                                if (skipping)
-                                        skip_left = skip_right = one;
-                                else
-                                        limit = one;
-
-                                break;
+                                text_error(said, "invalid --ignore-initial value");
+                                return text_done(2);
                         }
-                        else
+
+                        skip_right = skip_left;
+                }
+                else
+                {
+                        if (split >= sizeof(head))
+                                split = sizeof(head) - 1;
+
+                        memory_copy(head, said, split);
+                        head[split] = end;
+
+                        if (!cmp_count_of(head, address_of skip_left) ||
+                            !cmp_count_of(said + split + 1, address_of skip_right))
                         {
-                                text_error(null, "invalid option");
+                                text_error(said, "invalid --ignore-initial value");
                                 return text_done(2);
                         }
                 }
-
-                index++;
         }
 
         b32 operands = text_argument_count - index;

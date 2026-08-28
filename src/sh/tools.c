@@ -2524,111 +2524,92 @@ static string_address diff_basename(string_address path)
         return last ? last + 1 : path;
 }
 
-static text_long diff_long_options[] = {
-    {"unified", 'u', TEXT_LONG_ALONE},
-    {"brief", 'q', TEXT_LONG_ALONE},
-    {"recursive", 'r', TEXT_LONG_ALONE},
-    {"new-file", 'N', TEXT_LONG_ALONE},
-    {"ignore-case", 'i', TEXT_LONG_ALONE},
-    {"ignore-all-space", 'w', TEXT_LONG_ALONE},
-    {"ignore-space-change", 'b', TEXT_LONG_ALONE},
-    {"ignore-blank-lines", 'B', TEXT_LONG_ALONE},
-    {"text", 'a', TEXT_LONG_ALONE},
-    {"label", 'L', TEXT_LONG_NEEDS},
-    {null, 0, 0}};
+static const file_long diff_longs[] = {
+    {(string_address) "unified", 'u'},
+    {(string_address) "brief", 'q'},
+    {(string_address) "recursive", 'r'},
+    {(string_address) "new-file", 'N'},
+    {(string_address) "ignore-case", 'i'},
+    {(string_address) "ignore-all-space", 'w'},
+    {(string_address) "ignore-space-change", 'b'},
+    {(string_address) "ignore-blank-lines", 'B'},
+    {(string_address) "text", 'a'},
+    {(string_address) "label", 'L'},
+    {null, 0},
+};
+
+// -L comes twice, once for each side, and one value per letter cannot hold
+// two: the labels are taken as the options arrive.
+static bool diff_label_seen(p8 letter, string_address value)
+{
+        if (letter != 'L')
+                return true;
+
+        if (!diff_labels[0])
+                diff_labels[0] = value;
+        else
+                diff_labels[1] = value;
+
+        return true;
+}
 
 static b32 tools_diff(void)
 {
-        b32 first = 1;
+        file_taking taking = {
+            .program = (string_address) "diff",
+            .allowed = (string_address) "BLNabiqruw",
+            .valued = (string_address) "L",
+            .longs = diff_longs,
+            .seen = diff_label_seen,
+        };
 
         text_begin("diff");
 
-        diff_icase = false;
-        diff_space = DIFF_SPACE_NONE;
-        diff_blank_lines = false;
         diff_brief = false;
-        diff_recursive = false;
-        diff_new_file = false;
-        diff_text = false;
         diff_style = DIFF_NORMAL;
         diff_context = 3;
         diff_labels[0] = diff_labels[1] = null;
         diff_switches_used = 0;
         diff_titled = false;
 
-        if (!text_expand_long(diff_long_options))
+        if (!file_take(address_of taking))
                 return text_done(2);
 
-        while (first < text_argument_count)
+        positive flags = taking.flags;
+        b32 first = (b32)taking.first;
+
+        diff_icase = (flags & FILE_FLAG('i')) != 0;
+        diff_blank_lines = (flags & FILE_FLAG('B')) != 0;
+        diff_recursive = (flags & FILE_FLAG('r')) != 0;
+        diff_new_file = (flags & FILE_FLAG('N')) != 0;
+        diff_text = (flags & FILE_FLAG('a')) != 0;
+        diff_brief = (flags & FILE_FLAG('q')) != 0;
+        diff_space = (flags & FILE_FLAG('w'))   ? DIFF_SPACE_ALL
+                     : (flags & FILE_FLAG('b')) ? DIFF_SPACE_CHANGE
+                                                : DIFF_SPACE_NONE;
+
+        if (flags & FILE_FLAG('u'))
+                diff_style = DIFF_UNIFIED;
+
+        // What the header of a piece of a recursive diff repeats is the
+        // options as they were typed, not a canonical spelling -- and a label
+        // written as its own word is not one of them.
+        for (positive i = 1; i < taking.first; i++)
         {
-                string_address argument = text_argument(first);
-                string_address letter;
+                string_address word = program_argument((b32)i);
+                positive length = string_length(word);
 
-                if (argument[0] != '-' || !argument[1])
+                if (!string_is(word, '-') || length < 2 ||
+                    (string_is(word + 1, '-') && length == 2))
+                        continue;
+
+                if (diff_switches_used + length + 2 >= sizeof(diff_switches))
                         break;
 
-                if (argument[1] == '-' && !argument[2])
-                {
-                        first++;
-                        break;
-                }
+                diff_switches[diff_switches_used++] = ' ';
 
-                // What the header of a piece of a recursive diff repeats is
-                // the options as they were typed, not a canonical spelling.
-                if (diff_switches_used + string_length(argument) + 2 < sizeof(diff_switches))
-                {
-                        diff_switches[diff_switches_used++] = ' ';
-
-                        for (string_address at = argument; string_get(at); at++)
-                                diff_switches[diff_switches_used++] = string_get(at);
-                }
-
-                for (letter = argument + 1; string_get(letter); letter++)
-                        switch (string_get(letter))
-                        {
-                        case 'u': diff_style = DIFF_UNIFIED; break;
-                        case 'q': diff_brief = true; break;
-                        case 'r': diff_recursive = true; break;
-                        case 'N': diff_new_file = true; break;
-                        case 'i': diff_icase = true; break;
-                        case 'a': diff_text = true; break;
-                        case 'w': diff_space = DIFF_SPACE_ALL; break;
-                        case 'b':
-                                if (diff_space < DIFF_SPACE_CHANGE)
-                                        diff_space = DIFF_SPACE_CHANGE;
-                                break;
-                        case 'B': diff_blank_lines = true; break;
-                        case 'L':
-                        {
-                                string_address value = letter[1] ? letter + 1
-                                                                 : text_argument(++first);
-
-                                if (!value)
-                                {
-                                        text_error(null, "option requires an argument -- L");
-                                        return text_done(2);
-                                }
-
-                                if (!diff_labels[0])
-                                        diff_labels[0] = value;
-                                else
-                                        diff_labels[1] = value;
-
-                                while (letter[1])
-                                        letter++;
-
-                                break;
-                        }
-                        default:
-                        {
-                                p8 named[3] = {'-', string_get(letter), 0};
-
-                                text_error(named, "invalid option");
-                                return text_done(2);
-                        }
-                        }
-
-                first++;
+                for (string_address at = word; string_get(at); at++)
+                        diff_switches[diff_switches_used++] = string_get(at);
         }
 
         if (text_argument_count - first != 2)
