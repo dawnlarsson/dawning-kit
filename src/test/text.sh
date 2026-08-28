@@ -1008,6 +1008,11 @@ compare 'sed s empty re' sed one 's///'
 compare 'sed multiple !' sed i   -n '3!!p'
 compare 'wc four flags'  wc a    -lwmc
 compare 'sort t missing' sort b  -t: -k3
+compare 'sort t empty'   sort b  -t '' -k1
+compare 'sort t two'     sort b  -t '::' -k1
+compare 'sort t tab word' sort g -t '\t' -k2
+compare 'sort t null'    sort zpairs -t '\0' -k1
+compare 'sort t backslash' sort b -t '\' -k1
 compare 'uniq f past'    uniq a  -f9
 compare 'cut f zero pad' cut b   -d: -f1,1,1
 

@@ -9238,9 +9238,27 @@ static b32 text_sort()
                                 else if (flag == 't')
                                 {
                                         sort_have_separator = true;
-                                        sort_separator = value[0] == '\\' && value[1] == 't'
-                                                             ? '\t'
-                                                             : value[0];
+                                        // One byte, or the two that spell a
+                                        // NUL. Anything longer is a separator
+                                        // no line can be split on -- \t among
+                                        // them, which GNU refuses and which a
+                                        // literal tab is the way to ask for.
+                                        bool escaped = value[0] == '\\' &&
+                                                       value[1] == '0' && !value[2];
+
+                                        if (!value[0])
+                                        {
+                                                text_error(null, "empty tab");
+                                                return text_done(2);
+                                        }
+
+                                        if (value[1] && !escaped)
+                                        {
+                                                text_error(value, "multi-character tab");
+                                                return text_done(2);
+                                        }
+
+                                        sort_separator = escaped ? '\0' : value[0];
                                 }
                                 else if (flag == 'o')
                                 {
