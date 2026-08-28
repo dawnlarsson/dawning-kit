@@ -130,8 +130,8 @@ b32 shell_is_interactive;
 bool shell_styles = true;
 
 #include "lex.c"
-#include "text.c"
 #include "file.c"
+#include "text.c"
 #include "awk.c"
 #include "tools.c"
 #include "expand.c"

@@ -5575,10 +5575,8 @@ static fn grep_head(string_address name, p8 separator, positive number, positive
         there is no path walking here and * does not have to stop anywhere.
 
         The matcher is the shell's own, which is where every glob in this tree
-        goes now. It is declared rather than defined because expand.c is read
-        after this file.
+        goes now; file.c declares it, being the first of the two read.
 */
-bool shell_match(string_address pattern, string_address text);
 
 /*
         -r turns a directory operand into the files under it, in the order the

@@ -3681,6 +3681,10 @@ static bool find_exec_once(find_node address_to node)
         return file_run(find_exec_words) == 0;
 }
 
+// The shell's own matcher, which -name and -path and grep's globs all go
+// through. Declared here rather than defined because expand.c is read last.
+bool shell_match(string_address pattern, string_address text);
+
 static bool find_true(b32 which)
 {
         if (which < 0)
