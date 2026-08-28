@@ -278,53 +278,6 @@ static string_address expand_class_end(string_address at)
         return null;
 }
 
-static bool expand_class_named(string_address name, positive length, const_string want)
-{
-        positive at = 0;
-
-        while (at < length && want[at] && name[at] == want[at])
-                at++;
-
-        return at == length && want[at] == end;
-}
-
-// The twelve POSIX class names, in the one place that has to know them.
-static bool expand_class_has(string_address name, positive length, p8 value)
-{
-        bool upper = value >= 'A' && value <= 'Z';
-        bool lower = value >= 'a' && value <= 'z';
-        bool digit = value >= '0' && value <= '9';
-        bool printing = value >= ' ' && value < 127;
-
-        if (expand_class_named(name, length, (const_string) "alpha"))
-                return upper || lower;
-        if (expand_class_named(name, length, (const_string) "digit"))
-                return digit;
-        if (expand_class_named(name, length, (const_string) "alnum"))
-                return upper || lower || digit;
-        if (expand_class_named(name, length, (const_string) "upper"))
-                return upper;
-        if (expand_class_named(name, length, (const_string) "lower"))
-                return lower;
-        if (expand_class_named(name, length, (const_string) "space"))
-                return value == ' ' || (value >= '\t' && value <= '\r');
-        if (expand_class_named(name, length, (const_string) "blank"))
-                return value == ' ' || value == '\t';
-        if (expand_class_named(name, length, (const_string) "print"))
-                return printing;
-        if (expand_class_named(name, length, (const_string) "graph"))
-                return printing && value != ' ';
-        if (expand_class_named(name, length, (const_string) "cntrl"))
-                return value < ' ' || value == 127;
-        if (expand_class_named(name, length, (const_string) "punct"))
-                return printing && value != ' ' && !upper && !lower && !digit;
-        if (expand_class_named(name, length, (const_string) "xdigit"))
-                return digit || (value >= 'a' && value <= 'f') ||
-                       (value >= 'A' && value <= 'F');
-
-        return false;
-}
-
 /*
         A bracket set: where it ends, and whether a byte is in it.
 
@@ -373,8 +326,10 @@ static bool expand_in_set(string_address at, string_address stop, p8 value)
 
                         if (past && past <= stop)
                         {
-                                if (expand_class_has(step + 2,
-                                                     (positive)(past - step - 4), value))
+                                if (byte_class_holds(
+                                            byte_class_index(step + 2,
+                                                             (positive)(past - step - 4)),
+                                            value))
                                         found = true;
 
                                 step = past;

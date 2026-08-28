@@ -959,49 +959,14 @@ static fn regex_set_add_folded(b32 which, p8 character)
 
 static bool regex_named_class(b32 which, string_address name)
 {
+        b32 class = byte_class_index(name, string_length(name));
+
+        if (class < 0)
+                return false;
+
         for (b32 c = 0; c < 256; c++)
-        {
-                p8 character = (p8)c;
-                bool wanted = false;
-
-                if (string_compare(name, "alpha") == 0)
-                        wanted = (character >= 'a' && character <= 'z') ||
-                                 (character >= 'A' && character <= 'Z');
-                else if (string_compare(name, "digit") == 0)
-                        wanted = text_digit(character);
-                else if (string_compare(name, "alnum") == 0)
-                        wanted = text_digit(character) ||
-                                 (character >= 'a' && character <= 'z') ||
-                                 (character >= 'A' && character <= 'Z');
-                else if (string_compare(name, "upper") == 0)
-                        wanted = character >= 'A' && character <= 'Z';
-                else if (string_compare(name, "lower") == 0)
-                        wanted = character >= 'a' && character <= 'z';
-                else if (string_compare(name, "space") == 0)
-                        wanted = text_space(character);
-                else if (string_compare(name, "blank") == 0)
-                        wanted = text_blank(character);
-                else if (string_compare(name, "print") == 0)
-                        wanted = character >= 32 && character < 127;
-                else if (string_compare(name, "graph") == 0)
-                        wanted = character > 32 && character < 127;
-                else if (string_compare(name, "cntrl") == 0)
-                        wanted = character < 32 || character == 127;
-                else if (string_compare(name, "punct") == 0)
-                        wanted = character > 32 && character < 127 &&
-                                 !text_digit(character) &&
-                                 !(character >= 'a' && character <= 'z') &&
-                                 !(character >= 'A' && character <= 'Z');
-                else if (string_compare(name, "xdigit") == 0)
-                        wanted = text_digit(character) ||
-                                 (character >= 'a' && character <= 'f') ||
-                                 (character >= 'A' && character <= 'F');
-                else
-                        return false;
-
-                if (wanted)
-                        regex_set_add_folded(which, character);
-        }
+                if (byte_class_holds(class, (p8)c))
+                        regex_set_add_folded(which, (p8)c);
 
         return true;
 }
@@ -4633,51 +4598,17 @@ static fn text_set_put(p8 address_to into, positive address_to have, p8 characte
         address_to have += 1;
 }
 
-static bool text_set_class(p8 address_to into, positive address_to have, string_address name)
+static bool text_set_class(p8 address_to into, positive address_to have,
+                           string_address name)
 {
+        b32 class = byte_class_index(name, string_length(name));
+
+        if (class < 0)
+                return false;
+
         for (b32 c = 0; c < 256; c++)
-        {
-                p8 character = (p8)c;
-                bool wanted = false;
-
-                if (string_compare(name, "alpha") == 0)
-                        wanted = (character >= 'a' && character <= 'z') ||
-                                 (character >= 'A' && character <= 'Z');
-                else if (string_compare(name, "digit") == 0)
-                        wanted = text_digit(character);
-                else if (string_compare(name, "alnum") == 0)
-                        wanted = text_digit(character) ||
-                                 (character >= 'a' && character <= 'z') ||
-                                 (character >= 'A' && character <= 'Z');
-                else if (string_compare(name, "upper") == 0)
-                        wanted = character >= 'A' && character <= 'Z';
-                else if (string_compare(name, "lower") == 0)
-                        wanted = character >= 'a' && character <= 'z';
-                else if (string_compare(name, "space") == 0)
-                        wanted = text_space(character);
-                else if (string_compare(name, "blank") == 0)
-                        wanted = text_blank(character);
-                else if (string_compare(name, "print") == 0)
-                        wanted = character >= 32 && character < 127;
-                else if (string_compare(name, "graph") == 0)
-                        wanted = character > 32 && character < 127;
-                else if (string_compare(name, "cntrl") == 0)
-                        wanted = character < 32 || character == 127;
-                else if (string_compare(name, "punct") == 0)
-                        wanted = character > 32 && character < 127 &&
-                                 !text_digit(character) &&
-                                 !(character >= 'a' && character <= 'z') &&
-                                 !(character >= 'A' && character <= 'Z');
-                else if (string_compare(name, "xdigit") == 0)
-                        wanted = text_digit(character) ||
-                                 (character >= 'a' && character <= 'f') ||
-                                 (character >= 'A' && character <= 'F');
-                else
-                        return false;
-
-                if (wanted)
-                        text_set_put(into, have, character);
-        }
+                if (byte_class_holds(class, (p8)c))
+                        text_set_put(into, have, (p8)c);
 
         return true;
 }

@@ -8148,6 +8148,90 @@ const b8 string_set_digits[STRING_SET_BYTES] = {
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 };
 
+/*
+        The twelve names POSIX gives to sets of bytes.
+
+        Written out three times before this: once for grep and sed's brackets,
+        once for tr's, once for the shell's. The first two differed in two
+        lines out of forty eight -- the signature, and what to do with a byte
+        that is in the class.
+
+        The name becomes a number once, so the question about a byte is a
+        switch and not twelve string compares. That is what lets one copy
+        serve both shapes: a set built by walking all 256, and a single byte
+        asked about where no set is built at all. The name carries a length
+        because it does not end where it stops -- it is a run inside [:...:]
+        and what follows belongs to the pattern.
+*/
+enum
+{
+        BYTE_ALPHA, BYTE_DIGIT, BYTE_ALNUM, BYTE_UPPER, BYTE_LOWER, BYTE_SPACE,
+        BYTE_BLANK, BYTE_PRINT, BYTE_GRAPH, BYTE_CNTRL, BYTE_PUNCT, BYTE_XDIGIT,
+        BYTE_CLASSES
+};
+
+static const_string byte_class_names[BYTE_CLASSES] = {
+    "alpha", "digit", "alnum", "upper", "lower", "space",
+    "blank", "print", "graph", "cntrl", "punct", "xdigit",
+};
+
+// Which of the twelve, or -1 for a name that is none of them.
+b32 byte_class_index(string_address name, positive length)
+{
+        for (b32 which = 0; which < BYTE_CLASSES; which++)
+        {
+                const_string want = byte_class_names[which];
+                positive at = 0;
+
+                while (at < length && want[at] && name[at] == want[at])
+                        at++;
+
+                if (at == length && !want[at])
+                        return which;
+        }
+
+        return -1;
+}
+
+bool byte_class_holds(b32 which, p8 value)
+{
+        bool upper = value >= 'A' && value <= 'Z';
+        bool lower = value >= 'a' && value <= 'z';
+        bool digit = value >= '0' && value <= '9';
+        bool printing = value >= ' ' && value < 127;
+
+        switch (which)
+        {
+        case BYTE_ALPHA:
+                return upper || lower;
+        case BYTE_DIGIT:
+                return digit;
+        case BYTE_ALNUM:
+                return upper || lower || digit;
+        case BYTE_UPPER:
+                return upper;
+        case BYTE_LOWER:
+                return lower;
+        case BYTE_SPACE:
+                return value == ' ' || (value >= '\t' && value <= '\r');
+        case BYTE_BLANK:
+                return value == ' ' || value == '\t';
+        case BYTE_PRINT:
+                return printing;
+        case BYTE_GRAPH:
+                return printing && value != ' ';
+        case BYTE_CNTRL:
+                return value < ' ' || value == 127;
+        case BYTE_PUNCT:
+                return printing && value != ' ' && !upper && !lower && !digit;
+        case BYTE_XDIGIT:
+                return digit || (value >= 'a' && value <= 'f') ||
+                       (value >= 'A' && value <= 'F');
+        }
+
+        return false;
+}
+
 fn string_set_add(b8 address_to set, string_address members)
 {
         while (string_get(members))
