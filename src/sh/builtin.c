@@ -161,23 +161,9 @@ string_address env_get(const_string name)
                 string_address entry = shell_envp[idx];
                 string_address eq = string_first_of(entry, '=');
 
-                if (eq)
-                {
-                        positive key_len = eq - entry;
-
-                        if (key_len == name_len)
-                        {
-                                positive i = 0;
-                                for (i = 0; i < name_len; i++)
-                                {
-                                        if (string_get(entry + i) != string_get(name + i))
-                                                break;
-                                }
-
-                                if (i == name_len)
-                                        return eq + 1;
-                        }
-                }
+                if (eq && (positive)(eq - entry) == name_len &&
+                    !memory_compare(entry, name, name_len))
+                        return eq + 1;
 
                 idx++;
         }
@@ -264,29 +250,20 @@ bool env_set(const_string name, const_string value)
                 string_address entry = shell_envp[idx];
                 string_address eq = string_first_of(entry, '=');
 
-                if (eq && (eq - entry) == name_len)
+                if (eq && (positive)(eq - entry) == name_len &&
+                    !memory_compare(entry, name, name_len))
                 {
-                        positive i = 0;
-                        for (i = 0; i < name_len; i++)
-                        {
-                                if (string_get(entry + i) != string_get(name + i))
-                                        break;
-                        }
-
                         // Only where it fits. The entries sit end to end in one
                         // block, so a longer value written in place runs over
                         // the name of whatever comes next.
-                        if (i == name_len && value_len <= string_length(eq + 1))
+                        if (value_len <= string_length(eq + 1))
                         {
                                 string_copy(eq + 1, env_reading(value));
                                 return true;
                         }
 
-                        if (i == name_len)
-                        {
-                                replacing = true;
-                                break;
-                        }
+                        replacing = true;
+                        break;
                 }
                 idx++;
         }
@@ -493,12 +470,18 @@ fn shell_quoted(writer write, string_address value)
 
         while (value && string_get(value))
         {
-                if (string_is(value, '\''))
-                        write("'\\''", 4);
-                else
-                        write(value, 1);
+                string_address stop = string_first_of_or_end(value, '\'');
 
-                value++;
+                if (stop > value)
+                        write(value, (positive)(stop - value));
+
+                value = stop;
+
+                if (string_get(value))
+                {
+                        write("'\\''", 4);
+                        value++;
+                }
         }
 
         write("'", 1);
@@ -649,16 +632,20 @@ fn shell_path_tidy(p8 address_to path)
 fn shell_path_join(p8 address_to into, positive room, string_address base,
                    string_address name)
 {
-        positive at = 0;
+        positive at = base ? string_length_max(base, room - 1) : 0;
 
-        while (base && string_get(base) && at + 1 < room)
-                into[at++] = string_get(base++);
+        memory_copy_fast(into, base, at);
 
         if (at && into[at - 1] != '/' && at + 1 < room)
                 into[at++] = '/';
 
-        while (name && string_get(name) && at + 1 < room)
-                into[at++] = string_get(name++);
+        if (name)
+        {
+                positive run = string_length_max(name, room - 1 - at);
+
+                memory_copy_fast(into + at, name, run);
+                at += run;
+        }
 
         into[at] = end;
 }
@@ -2581,12 +2568,34 @@ static b32 printf_status;
 static p8 printf_hold[2048];
 static positive printf_held;
 
+// What printf writes without looking at it: everything but the terminator and
+// the one or two bytes that mean something where it is being read.
+static b8 printf_plain[STRING_SET_BYTES];
+static b8 printf_text[STRING_SET_BYTES];
+static b32 printf_sets_ready;
+
+static fn printf_sets_prepare()
+{
+        if (printf_sets_ready)
+                return;
+
+        for (positive c = 1; c < STRING_SET_BYTES; c++)
+                printf_plain[c] = printf_text[c] = 1;
+
+        printf_plain['\\'] = printf_plain['%'] = 0;
+        printf_text['\\'] = 0;
+        printf_sets_ready = true;
+}
+
 static fn printf_holder(address_any data, positive length)
 {
-        string_address from = data;
+        positive room = sizeof(printf_hold) - printf_held;
 
-        while (length-- && printf_held < sizeof(printf_hold))
-                printf_hold[printf_held++] = string_get(from++);
+        if (length > room)
+                length = room;
+
+        memory_copy_fast(printf_hold + printf_held, data, length);
+        printf_held += length;
 }
 
 string_address printf_next()
@@ -2705,16 +2714,20 @@ string_address printf_escape(writer write, string_address step)
 
 fn printf_escaped(writer write, string_address text)
 {
+        printf_sets_prepare();
+
         while (string_get(text) && !printf_cut)
         {
-                if (string_is(text, '\\'))
+                positive run = string_span(text, printf_text);
+
+                if (run)
                 {
-                        text = printf_escape(write, text + 1);
+                        write(text, run);
+                        text += run;
                         continue;
                 }
 
-                write(text, 1);
-                text++;
+                text = printf_escape(write, text + 1);
         }
 }
 
@@ -2757,6 +2770,8 @@ fn printf_one(writer write, string_address format)
 {
         string_address step = format;
 
+        printf_sets_prepare();
+
         while (string_get(step) && !printf_cut)
         {
                 bool left = false;
@@ -2765,18 +2780,19 @@ fn printf_one(writer write, string_address format)
                 bool space = false;
                 positive width = 0;
                 bipolar precision = -1;
+                positive run = string_span(step, printf_plain);
                 p8 conversion;
+
+                if (run)
+                {
+                        write(step, run);
+                        step += run;
+                        continue;
+                }
 
                 if (string_is(step, '\\'))
                 {
                         step = printf_escape(write, step + 1);
-                        continue;
-                }
-
-                if (string_not(step, '%'))
-                {
-                        write(step, 1);
-                        step++;
                         continue;
                 }
 
