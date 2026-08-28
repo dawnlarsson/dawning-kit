@@ -39,6 +39,77 @@ static void canvas_palette(u32 *palette, u32 format)
 
 
 /*
+        A bitmap, into whatever it is given. The set bits of a row are drawn as
+        runs rather than one at a time: a call for every lit pixel is thousands
+        of calls for a line of text, and a run of a few is what the fill is
+        cheapest at.
+
+        A glyph and a cursor are the same picture to this, so there is one walk
+        and not two. It lives here rather than beside the glyphs because paint.c
+        is included first and the cursor below is drawn from it.
+*/
+static void bits_draw(const struct target *t, int x, int y, int scale,
+                      const unsigned char *bits, unsigned int pitch,
+                      unsigned int w, unsigned int h, u32 colour)
+{
+        unsigned int row, column;
+
+        /*
+                The whole thing in one call, when it is entirely inside the
+                damage and drawn at its own size. That is nearly every glyph;
+                the rest go the long way round below.
+        */
+        if (scale == 1 && w == 8 && pitch == 1 &&
+            x >= max(t->clip.x1, 0) && x + 8 <= min(t->clip.x2, t->width) &&
+            y >= max(t->clip.y1, 0) && y + (int)h <= min(t->clip.y2, t->height))
+        {
+                canvas_painted += h * 8;
+                canvas_runs++;
+                canvas_glyph(t->pixels + (size_t)y * t->pitch + x, t->pitch,
+                             bits, 1, h, colour);
+                return;
+        }
+
+        for (row = 0; row < h; row++)
+        {
+                const unsigned char *line_bits = bits + row * pitch;
+
+                for (column = 0; column < w;)
+                {
+                        unsigned int run = column;
+                        int px, x1, x2, line;
+
+                        if (!(line_bits[column / 8] & (0x80 >> (column % 8))))
+                        {
+                                column++;
+                                continue;
+                        }
+
+                        while (run < w &&
+                               (line_bits[run / 8] & (0x80 >> (run % 8))))
+                                run++;
+
+                        px = x + (int)column * scale;
+                        x1 = max(max(px, t->clip.x1), 0);
+                        x2 = min(min(px + (int)(run - column) * scale, t->clip.x2),
+                                 t->width);
+
+                        for (line = 0; x2 > x1 && line < scale; line++)
+                        {
+                                int py = y + (int)row * scale + line;
+
+                                if (py >= max(t->clip.y1, 0) &&
+                                    py < min(t->clip.y2, t->height))
+                                        target_row(t, py, x1, x2, colour);
+                        }
+
+                        column = run;
+                }
+        }
+}
+
+
+/*
         Cursors.
 
         One cell for every shape so a shape change is a different bitmap and
@@ -205,16 +276,13 @@ static const int canvas_cursor_hot[CURSOR_SHAPES][2] = {
 };
 
 /*
-        The cursor, into whatever it is given. Runs of the same colour go out
-        together, the same reason a glyph does: a store per pixel would be a
-        call per pixel at scale one.
+        The cursor, into whatever it is given. Two colours, so two passes of
+        the same walk a glyph takes: the outline and the fill never share a
+        pixel, so which goes down first does not matter.
 */
 static void canvas_draw_cursor(const struct target *t, int x, int y,
                                unsigned int shape, unsigned int scale)
 {
-        int row, column;
-        unsigned int line;
-
         x -= canvas_cursor_hot[shape][0] * (int)scale;
         y -= canvas_cursor_hot[shape][1] * (int)scale;
 
@@ -237,38 +305,10 @@ static void canvas_draw_cursor(const struct target *t, int x, int y,
                 return;
         }
 
-        for (row = 0; row < CURSOR_H; row++)
-        {
-                for (column = 0; column < CURSOR_W;)
-                {
-                        char pixel = canvas_cursors[shape][row][column];
-                        int run = column, x1, x2;
-
-                        if (pixel == ' ')
-                        {
-                                column++;
-                                continue;
-                        }
-
-                        while (run < CURSOR_W && canvas_cursors[shape][row][run] == pixel)
-                                run++;
-
-                        x1 = max(max(x + column * (int)scale, t->clip.x1), 0);
-                        x2 = min(min(x + run * (int)scale, t->clip.x2), t->width);
-
-                        for (line = 0; x2 > x1 && line < scale; line++)
-                        {
-                                int py = y + row * (int)scale + (int)line;
-
-                                if (py >= max(t->clip.y1, 0) && py < min(t->clip.y2, t->height))
-                                        target_row(t, py, x1, x2,
-                                                   t->ink[pixel == 'X' ? INK_CURSOR_EDGE
-                                                                       : INK_CURSOR]);
-                        }
-
-                        column = run;
-                }
-        }
+        bits_draw(t, x, y, (int)scale, &cursor_fill[shape][0][0], 2, CURSOR_W,
+                  CURSOR_H, t->ink[INK_CURSOR]);
+        bits_draw(t, x, y, (int)scale, &cursor_edge[shape][0][0], 2, CURSOR_W,
+                  CURSOR_H, t->ink[INK_CURSOR_EDGE]);
 }
 
 // xrgb8888 is the source of truth; argb differs only in the alpha byte.

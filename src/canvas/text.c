@@ -29,71 +29,14 @@ static _Bool glyph_is_cell(void)
                font_glyph_pitch(canvas_font->width) == 1;
 }
 
-/*
-        One glyph. The set bits of a row are drawn as runs rather than one at a
-        time: a call for every lit pixel is thousands of calls for a line of
-        text, and a run of a few is what the fill is cheapest at.
-*/
+// One glyph, which is a bitmap like any other: bits_draw in paint.c is the
+// walk, and the face says how wide and how tall.
 static void glyph_draw(const struct target *t, int x, int y, int scale,
                        unsigned char character, u32 colour)
 {
-        unsigned int pitch = font_glyph_pitch(canvas_font->width);
-        const unsigned char *glyph = glyph_bits(character);
-        unsigned int row, column;
-
-        /*
-                The whole glyph in one call, when it is entirely inside the
-                damage and drawn at its own size. That is nearly every glyph;
-                the rest go the long way round below.
-        */
-        if (scale == 1 && canvas_font->width == 8 && pitch == 1 &&
-            x >= max(t->clip.x1, 0) && x + 8 <= min(t->clip.x2, t->width) &&
-            y >= max(t->clip.y1, 0) &&
-            y + (int)canvas_font->height <= min(t->clip.y2, t->height))
-        {
-                canvas_painted += canvas_font->height * 8;
-                canvas_runs++;
-                canvas_glyph(t->pixels + (size_t)y * t->pitch + x, t->pitch,
-                             glyph, 1, canvas_font->height, colour);
-                return;
-        }
-
-        for (row = 0; row < canvas_font->height; row++)
-        {
-                const unsigned char *bits = glyph + row * pitch;
-
-                for (column = 0; column < canvas_font->width;)
-                {
-                        unsigned int run = column;
-                        int px, x1, x2, line;
-
-                        if (!(bits[column / 8] & (0x80 >> (column % 8))))
-                        {
-                                column++;
-                                continue;
-                        }
-
-                        while (run < canvas_font->width &&
-                               (bits[run / 8] & (0x80 >> (run % 8))))
-                                run++;
-
-                        px = x + (int)column * scale;
-                        x1 = max(max(px, t->clip.x1), 0);
-                        x2 = min(min(px + (int)(run - column) * scale, t->clip.x2),
-                                 t->width);
-
-                        for (line = 0; x2 > x1 && line < scale; line++)
-                        {
-                                int py = y + (int)row * scale + line;
-
-                                if (py >= max(t->clip.y1, 0) &&
-                                    py < min(t->clip.y2, t->height))
-                                        target_row(t, py, x1, x2, colour);
-                        }
-
-                        column = run;
-                }
-        }
+        bits_draw(t, x, y, scale, glyph_bits(character),
+                  font_glyph_pitch(canvas_font->width), canvas_font->width,
+                  canvas_font->height, colour);
 }
 
 /*
