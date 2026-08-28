@@ -536,6 +536,8 @@ check 'all'             'set -- a b; echo $@'
 check 'status'          'true; echo $?'
 check 'status false'    'false; echo $?'
 check 'status 255'      '(exit 255); echo $?'
+check 'stdin flag'      'printf "%s\n" "$-"'
+check 'stdin option'    'set -o | while read name state; do [ "$name" = stdin ] && echo "$state"; done'
 
 group expansion
 check 'command sub'     'echo $(echo hi)'
