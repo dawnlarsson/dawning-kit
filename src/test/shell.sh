@@ -555,6 +555,25 @@ answer 'case alternates' 'case b in a|b) echo yes;; esac'
 answer 'case escaped'    'case "a*b" in a\*b) echo yes;; esac'
 answer 'case class'      'case 5 in [0-9]) echo digit;; esac'
 answer 'case catch all'  'case x in *) echo any;; esac'
+
+# case used to have a matcher of its own, which knew stars and ranges and not
+# the twelve POSIX class names -- so a pattern that worked as a glob and in a
+# ${x#...} trim did nothing in a case arm. There is one matcher now.
+answer 'case digit class' 'case 5 in [[:digit:]]) echo yes;; *) echo no;; esac'
+answer 'case alpha class' 'case a in [[:alpha:]]) echo yes;; *) echo no;; esac'
+answer 'case upper class' 'case A in [[:upper:]]) echo yes;; *) echo no;; esac'
+answer 'case lower class' 'case A in [[:lower:]]) echo yes;; *) echo no;; esac'
+answer 'case space class' 'case " " in [[:space:]]) echo yes;; *) echo no;; esac'
+answer 'case punct class' 'case - in [[:punct:]]) echo yes;; *) echo no;; esac'
+answer 'case xdigit class' 'case f in [[:xdigit:]]) echo yes;; *) echo no;; esac'
+answer 'case class negated' 'case a in [![:digit:]]) echo yes;; *) echo no;; esac'
+answer 'case class among' 'case b in [[:digit:]abc]) echo yes;; *) echo no;; esac'
+answer 'case class in a word' 'case a5z in a[[:digit:]]z) echo yes;; *) echo no;; esac'
+answer 'case class with star' 'case abC in *[[:upper:]]*) echo yes;; *) echo no;; esac'
+answer 'case unknown class' 'case a in [[:nosuch:]]) echo yes;; *) echo no;; esac'
+answer 'case bracket alone' 'case "[" in [) echo yes;; *) echo no;; esac'
+answer 'case bracket first' 'case "]" in []a]) echo yes;; *) echo no;; esac'
+answer 'case dash last'   'case - in [a-]) echo yes;; *) echo no;; esac'
 answer 'while read'      'printf "1\n2\n" | while read v; do echo "[$v]"; done'
 answer 'until once'      'until true; do echo no; done; echo done'
 answer 'for nothing'     'for i in; do echo $i; done; echo done'
@@ -913,6 +932,7 @@ EOF'
 # not the marks that say which of them were quoted -- so the star that came
 # out of "$p" is a star to the matcher as much as to the eye.
 differs 'quoted pattern' 'yes|' 0 "p='a*'; case aXX in \"\$p\") echo yes;; *) echo no;; esac"
+differs 'escaped pattern' 'yes|' 0 'case aXb in a\*b) echo yes;; *) echo no;; esac'
 
 # MAX_TOKENS in shell.c is what a command line holds, so a glob that matches
 # more than that many names is cut off rather than refused.

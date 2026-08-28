@@ -102,119 +102,6 @@ static string_address exec_arena_copy(string_address text)
 }
 
 /*
-        Glob matching, for case and for nothing else here.
-
-        A star tries every split of what is left, which is quadratic on a
-        pattern of nothing but stars and linear on everything anybody writes.
-*/
-static bool exec_match(string_address pattern, string_address text)
-{
-        while (string_get(pattern))
-        {
-                p8 mark = string_get(pattern);
-
-                if (mark == '*')
-                {
-                        while (string_get(pattern) == '*')
-                                pattern++;
-
-                        if (!string_get(pattern))
-                                return true;
-
-                        while (string_get(text))
-                        {
-                                if (exec_match(pattern, text))
-                                        return true;
-
-                                text++;
-                        }
-
-                        return exec_match(pattern, text);
-                }
-
-                if (!string_get(text))
-                        return false;
-
-                if (mark == '?')
-                {
-                        pattern++;
-                        text++;
-                        continue;
-                }
-
-                if (mark == '[')
-                {
-                        string_address scan = pattern + 1;
-                        bool negate = false;
-                        bool hit = false;
-                        bool first = true;
-
-                        if (string_get(scan) == '!' || string_get(scan) == '^')
-                        {
-                                negate = true;
-                                scan++;
-                        }
-
-                        while (string_get(scan) && (string_get(scan) != ']' || first))
-                        {
-                                p8 low = string_get(scan);
-
-                                first = false;
-
-                                if (low == '\\' && string_get(scan + 1))
-                                        low = string_get(++scan);
-
-                                if (string_get(scan + 1) == '-' &&
-                                    string_get(scan + 2) && string_get(scan + 2) != ']')
-                                {
-                                        if (string_get(text) >= low &&
-                                            string_get(text) <= string_get(scan + 2))
-                                                hit = true;
-
-                                        scan += 3;
-                                        continue;
-                                }
-
-                                if (low == string_get(text))
-                                        hit = true;
-
-                                scan++;
-                        }
-
-                        // A set nobody closed is a literal bracket, which is
-                        // what every shell does with it.
-                        if (!string_get(scan))
-                        {
-                                if (string_get(text) != '[')
-                                        return false;
-
-                                pattern++;
-                                text++;
-                                continue;
-                        }
-
-                        if (hit == negate)
-                                return false;
-
-                        pattern = scan + 1;
-                        text++;
-                        continue;
-                }
-
-                if (mark == '\\' && string_get(pattern + 1))
-                        pattern++;
-
-                if (string_get(pattern) != string_get(text))
-                        return false;
-
-                pattern++;
-                text++;
-        }
-
-        return string_get(text) == end;
-}
-
-/*
         Redirection, as file descriptors and not as a writer.
 
         The shell used to swap the function its builtins printed through, which
@@ -1116,7 +1003,7 @@ static b32 exec_case(b32 index)
                         pattern = shell_expand_word(
                             parse_words[parse_nodes[item].word + at]);
 
-                        if (!exec_match(pattern, subject))
+                        if (!shell_match(pattern, subject))
                                 continue;
 
                         status = exec_node(parse_nodes[item].right);
