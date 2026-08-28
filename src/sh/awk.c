@@ -2104,9 +2104,6 @@ static b8 awk_field_bytes[STRING_SET_BYTES];
         twice: leading and trailing blanks are not separators at all, and a
         run of them is one. Any other single character is itself and not a
         pattern -- -F. cuts on dots, not on everything.
-
-        Every caller hands over an awk_text body, so the terminator at
-        text[length] is what stops a span that is told no length.
 */
 static fn awk_split_pieces(string_address text, positive length, string_address separator,
                            positive separator_length, bool paragraph, bool as_pattern)
@@ -2119,19 +2116,14 @@ static fn awk_split_pieces(string_address text, positive length, string_address 
 
                 while (at < length)
                 {
-                        at += string_span(text + at, awk_blank_bytes);
+                        at += string_span_max(text + at, length - at, awk_blank_bytes);
 
                         if (at >= length)
                                 break;
 
                         positive start = at;
 
-                        at += string_span(text + at, awk_field_bytes);
-
-                        // A null byte inside a record is a byte of the field,
-                        // and it is the one thing that stops a span early.
-                        while (at < length && !text[at])
-                                at += 1 + string_span(text + at + 1, awk_field_bytes);
+                        at += string_span_max(text + at, length - at, awk_field_bytes);
 
                         awk_piece_add(start, at - start);
                 }
@@ -7065,7 +7057,6 @@ static fn awk_start()
 
         string_set_add(awk_blank_bytes, " \t\n");
         memory_fill(awk_field_bytes, 1, sizeof(awk_field_bytes));
-        awk_field_bytes[0] = 0;
         awk_field_bytes[' '] = 0;
         awk_field_bytes['\t'] = 0;
         awk_field_bytes['\n'] = 0;

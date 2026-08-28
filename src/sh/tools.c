@@ -288,18 +288,13 @@ static bool dd_size(string_address text, positive address_to out)
 
         while (1)
         {
-                positive value = 0;
-                bool any = false;
+                positive taken;
+                positive value = string_digits(at, address_of taken);
 
-                while (text_digit(string_get(at)))
-                {
-                        value = value * 10 + (positive)(string_get(at) - '0');
-                        at++;
-                        any = true;
-                }
-
-                if (!any)
+                if (!taken)
                         return false;
+
+                at += taken;
 
                 positive power = 0;
                 positive multiple = 1;
@@ -2765,15 +2760,10 @@ static b8 ps_field_bytes[STRING_SET_BYTES];
 static positive ps_take(string_address address_to at)
 {
         string_address here = address_to at + string_span(address_to at, ps_blank_bytes);
-        positive value = 0;
+        positive taken;
+        positive value = string_digits(here, address_of taken);
 
-        while (text_digit(string_get(here)))
-        {
-                value = value * 10 + (positive)(string_get(here) - '0');
-                here++;
-        }
-
-        address_to at = here;
+        address_to at = here + taken;
 
         return value;
 }
@@ -2839,10 +2829,8 @@ static fn ps_name_of(positive uid, p8 address_to into, positive limit)
 
                                 if (fields == 2)
                                 {
-                                        positive value = 0;
-
-                                        for (positive k = start; k < i; k++)
-                                                value = value * 10 + (positive)(ps_password[k] - '0');
+                                        positive value = string_digits_max(
+                                            ps_password + start, i - start, null);
 
                                         if (value == uid)
                                         {
