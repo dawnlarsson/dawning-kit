@@ -371,6 +371,7 @@ bipolar reference_to_bipolar(string_address input)
 }
 
 fn check_find_overlaps();
+fn check_search();
 
 string_address reference_find(string_address string, string_address input)
 {
@@ -613,6 +614,7 @@ fn check_bulk_strings()
         }
 
         check_find_overlaps();
+        check_search();
 }
 
 /*
@@ -668,6 +670,77 @@ fn check_find_overlaps()
                      (positive)string_find(hay, needle),
                      (positive)reference_find(hay, needle));
         }
+}
+
+/*
+        string_search, which is strstr, and string_find, which is not.
+
+        The two differ on an empty needle and only there: strstr answers the
+        front of the haystack and string_find answers nothing. That is one
+        byte of behaviour, which is exactly the size of thing that ships
+        working on the machine it was written on and broken on the other two.
+        The arm64 and riscv bodies had never been run when this was added.
+
+        The long cases walk the needle through a haystack that is otherwise
+        one repeated byte, at every offset into a word, because the front of
+        the haystack is answered by a byte loop and everything past it by a
+        body that aligns down and hunts the rarest byte.
+*/
+string_address reference_search(string_address hay, string_address needle)
+{
+        if (!string_get(needle))
+                return hay;
+
+        return reference_find(hay, needle);
+}
+
+fn check_search()
+{
+        static struct
+        {
+                string_address haystack;
+                string_address needle;
+        } cases[] = {
+            {(string_address) "abc", (string_address) ""},
+            {(string_address) "", (string_address) ""},
+            {(string_address) "", (string_address) "a"},
+            {(string_address) "abc", (string_address) "a"},
+            {(string_address) "abc", (string_address) "c"},
+            {(string_address) "abc", (string_address) "z"},
+            {(string_address) "abc", (string_address) "abc"},
+            {(string_address) "abc", (string_address) "abcd"},
+            {(string_address) "abcdef", (string_address) "abc"},
+            {(string_address) "abcdef", (string_address) "def"},
+            {(string_address) "abcdef", (string_address) "cde"},
+            {(string_address) "aaab", (string_address) "aab"},
+            {(string_address) "aaaa", (string_address) "aab"},
+            {(string_address) "banana", (string_address) "nana"},
+            {(string_address) "mississippi", (string_address) "issip"},
+        };
+
+        for (positive i = 0; i < sizeof(cases) / sizeof(cases[0]); i++)
+                same("string_search", "against a byte at a time strstr",
+                     (positive)string_search(cases[i].haystack, cases[i].needle),
+                     (positive)reference_search(cases[i].haystack, cases[i].needle));
+
+        static p8 room[600];
+
+        for (positive pad = 0; pad < 9; pad++)
+                for (positive at = 16; at < 560; at++)
+                {
+                        for (positive i = 0; i < sizeof(room); i++) room[i] = 'a';
+
+                        room[sizeof(room) - 1] = 0;
+                        room[at] = 'q';
+                        room[at + 1] = 'r';
+                        room[at + 2] = 's';
+
+                        string_address hay = (string_address)(room + pad);
+
+                        same("string_search", "a needle far into a long haystack",
+                             (positive)string_search(hay, (string_address) "qrs"),
+                             (positive)reference_search(hay, (string_address) "qrs"));
+                }
 }
 
 fn check_bulk_numbers()

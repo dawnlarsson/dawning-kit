@@ -3836,6 +3836,46 @@ ASM_FUNC(positive_to_string)
     "pop %rbp\n   pop %rbx\n"
     ASM_RET
     ASM_END(string_find)
+    ASM_SECTION
+    //
+    //      strstr, which is string_find and one byte of disagreement.
+    //
+    //      The two differ on an empty needle and only there: strstr answers
+    //      the front of the haystack, string_find answers nothing, and the
+    //      note on string_find above says so and says it is on purpose.
+    //      Callers in this tree were written against the second and the
+    //      kernel is written against the first, so the name the kernel links
+    //      gets its own four instructions rather than either of them being
+    //      changed into the other.
+    //
+    //      Everything else is string_find's, including the reason it is not
+    //      simply a length followed by memory_search: it discovers the
+    //      readable run a page at a time, so a match at byte nine hundred of
+    //      a megabyte does not pay for a strlen of the megabyte first.
+    //
+    //
+    //      The needle is tried against the front of the haystack first, a
+    //      byte at a time, and that one loop answers three things. An empty
+    //      needle stops it at once and the front is the answer, which is the
+    //      disagreement this routine exists for. A needle that is there at
+    //      the front is answered without setting up anything -- string_find
+    //      pushes six registers and walks a page for the terminator before it
+    //      looks, which is nothing against four kilobytes and is most of the
+    //      work when the answer is at byte zero, and measured 0.8x the naive
+    //      loop in lib/string.c for exactly that reason. Anything else leaves
+    //      on the first byte that differs, which is one compare.
+    //
+    //      It cannot read past the haystack's terminator: reaching it with
+    //      needle left over is a byte that differs, and that leaves.
+    //
+    ASM_FUNC(string_search)
+    "xor %ecx, %ecx\n"
+    "1:  movzbl (%rsi,%rcx), %edx\n   test %dl, %dl\n   jz 2f\n"
+    "movzbl (%rdi,%rcx), %eax\n   cmp %dl, %al\n   jne string_find\n"
+    "inc %rcx\n   jmp 1b\n"
+    "2:  mov %rdi, %rax  # the needle ran out, so it was all there\n"
+    ASM_RET
+    ASM_END(string_search)
     //
     //       string_format -- the loop that reads a format string and hands
     //       pieces of it to a writer, with the variadic ABI done by hand.
@@ -4434,6 +4474,7 @@ ASM_EXPORT(strchr);
 ASM_EXPORT(strchrnul);
 ASM_EXPORT(strcmp);
 ASM_EXPORT(strcpy);
+ASM_EXPORT(strstr);
 ASM_EXPORT(strlen);
 ASM_EXPORT(strnchr);
 ASM_EXPORT(strncmp);
@@ -5728,6 +5769,48 @@ ASM_FUNC(positive_to_string)
     "ldp x23, x24, [sp, #48]\n   ldp x29, x30, [sp], #64\n"
     ASM_RET
     ASM_END(string_find)
+    ASM_SECTION
+    //
+    //      strstr, which is string_find and one byte of disagreement.
+    //
+    //      The two differ on an empty needle and only there: strstr answers
+    //      the front of the haystack, string_find answers nothing, and the
+    //      note on string_find above says so and says it is on purpose.
+    //      Callers in this tree were written against the second and the
+    //      kernel is written against the first, so the name the kernel links
+    //      gets its own four instructions rather than either of them being
+    //      changed into the other.
+    //
+    //      Everything else is string_find's, including the reason it is not
+    //      simply a length followed by memory_search: it discovers the
+    //      readable run a page at a time, so a match at byte nine hundred of
+    //      a megabyte does not pay for a strlen of the megabyte first.
+    //
+    //
+    //      The needle is tried against the front of the haystack first, a
+    //      byte at a time, and that one loop answers three things. An empty
+    //      needle stops it at once and the front is the answer, which is the
+    //      disagreement this routine exists for. A needle that is there at
+    //      the front is answered without setting up anything -- string_find
+    //      pushes six registers and walks a page for the terminator before it
+    //      looks, which is nothing against four kilobytes and is most of the
+    //      work when the answer is at byte zero, and measured 0.8x the naive
+    //      loop in lib/string.c for exactly that reason. Anything else leaves
+    //      on the first byte that differs, which is one compare.
+    //
+    //      It cannot read past the haystack's terminator: reaching it with
+    //      needle left over is a byte that differs, and that leaves.
+    //
+    ASM_FUNC(string_search)
+    //      b rather than b.ne to leave, which only reaches a megabyte.
+    "mov x2, xzr\n"
+    "1:  ldrb w3, [x1, x2]\n   cbz w3, 2f\n"
+    "ldrb w4, [x0, x2]\n   cmp w3, w4\n   b.ne 3f\n"
+    "add x2, x2, #1\n   b 1b\n"
+    "3:  b string_find\n"
+    "2:  // the needle ran out, and x0 is already the answer\n"
+    ASM_RET
+    ASM_END(string_search)
     //
     //       string_format -- the loop that reads a format string and hands
     //       pieces of it to a writer, with the variadic ABI done by hand.
@@ -7241,6 +7324,47 @@ ASM_FUNC(positive_to_string)
     "ld s3, 24(sp)\n   ld s4, 16(sp)\n   ld s5, 8(sp)\n   addi sp, sp, 64\n"
     ASM_RET
     ASM_END(string_find)
+    ASM_SECTION
+    //
+    //      strstr, which is string_find and one byte of disagreement.
+    //
+    //      The two differ on an empty needle and only there: strstr answers
+    //      the front of the haystack, string_find answers nothing, and the
+    //      note on string_find above says so and says it is on purpose.
+    //      Callers in this tree were written against the second and the
+    //      kernel is written against the first, so the name the kernel links
+    //      gets its own four instructions rather than either of them being
+    //      changed into the other.
+    //
+    //      Everything else is string_find's, including the reason it is not
+    //      simply a length followed by memory_search: it discovers the
+    //      readable run a page at a time, so a match at byte nine hundred of
+    //      a megabyte does not pay for a strlen of the megabyte first.
+    //
+    //
+    //      The needle is tried against the front of the haystack first, a
+    //      byte at a time, and that one loop answers three things. An empty
+    //      needle stops it at once and the front is the answer, which is the
+    //      disagreement this routine exists for. A needle that is there at
+    //      the front is answered without setting up anything -- string_find
+    //      pushes six registers and walks a page for the terminator before it
+    //      looks, which is nothing against four kilobytes and is most of the
+    //      work when the answer is at byte zero, and measured 0.8x the naive
+    //      loop in lib/string.c for exactly that reason. Anything else leaves
+    //      on the first byte that differs, which is one compare.
+    //
+    //      It cannot read past the haystack's terminator: reaching it with
+    //      needle left over is a byte that differs, and that leaves.
+    //
+    ASM_FUNC(string_search)
+    "li t1, 0\n"
+    "1:  add t2, a1, t1\n   lbu t3, 0(t2)\n   beqz t3, 2f\n"
+    "add t2, a0, t1\n   lbu t4, 0(t2)\n   bne t3, t4, 3f\n"
+    "addi t1, t1, 1\n   j 1b\n"
+    "3:  tail string_find\n"
+    "2:  # the needle ran out, and a0 is already the answer\n"
+    ASM_RET
+    ASM_END(string_search)
     //
     //       string_format -- the loop that reads a format string and hands
     //       pieces of it to a writer, with the variadic ABI done by hand.
@@ -7789,6 +7913,9 @@ fn bipolar_to_string(writer write, bipolar number);
 positive string_to_positive(string_address input);
 bipolar string_to_bipolar(string_address input);
 string_address string_find(string_address string, string_address input);
+
+//      strstr exactly: an empty needle is the front of the haystack.
+string_address string_search(string_address haystack, string_address needle);
 /*
         string_length, string_compare and string_first_of under names the kernel has no opinion about.
 
@@ -8494,6 +8621,24 @@ __asm__(
             input that is bad for it the way a search does.
     */
     ASM_ALIAS(strcpy,    string_copy)
+    /*
+            strstr, 1022 call sites, and lib/string.c does it the naive way:
+            strlen both, then memcmp at every offset.
+
+            This was left out of the kernel one commit ago and the reason is
+            worth keeping, because it was a real one. The narrow body hunted
+            the first byte of the needle, so a needle whose first byte is
+            everywhere -- and in a kernel every third string is padding --
+            made a candidate of every position: 0.3x lib/string.c on a miss
+            through four kilobytes, against 12.3x on a late hit. Claiming it
+            then would have made a thousand call sites worse on the shape a
+            scan spends most of its life in, and nothing would have said so.
+
+            The narrow body picks the rarest byte now. Against lib/string.c:
+            15.0x on that miss, 13.4x on a late hit, 12.5x through varied
+            bytes, 4.1x on a short haystack, level on a hit at the front.
+    */
+    ASM_ALIAS(strstr,    string_search)
 #endif
 #ifndef KERNEL_MODE
     ASM_ALIAS(strncpy,   string_copy_max)
@@ -8504,21 +8649,6 @@ __asm__(
             wrapper before it had rather than quietly changing it, and this is
             the warning that went with it.
     */
-    /*
-            strstr stays here, and is not claimed, on the numbers.
-
-            lib/string.c is naive -- strlen both, then memcmp at every offset
-            -- and against it string_find is 12.3x on a needle that matches
-            late in four kilobytes and 0.3x on one that never matches at all
-            in the same four kilobytes. Three times slower, on the case a
-            scan spends most of its life in.
-
-            1022 call sites, so being wrong about which shape they are is
-            expensive in the direction nobody would notice. It wants the two
-            rarest bytes memory_search picks, and until it has them this is
-            not a trade to make on a kernel.
-    */
-    ASM_ALIAS(strstr,    string_find)
     ASM_ALIAS(memmem,    memory_search)
 #endif
 );
