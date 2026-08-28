@@ -3362,7 +3362,7 @@ static const file_long tail_longs[] = {
     {(string_address) "quiet", 'q'},
     {(string_address) "silent", 'q'},
     {(string_address) "verbose", 'v'},
-    {(string_address) "follow", 'f'},
+    {(string_address) "follow", 'F'},
     {(string_address) "retry", 'R'},
     {(string_address) "pid", 'P'},
     {(string_address) "sleep-interval", 's'},
@@ -3381,7 +3381,7 @@ static b32 text_tail()
             // still be sitting. -s is how long it would have waited.
             .allowed = (string_address) "cfnqsvz",
             .valued = (string_address) "Pcns",
-            .optional = (string_address) "f",
+            .optional = (string_address) "F",
             .longs = tail_longs,
             .operand = text_file_add,
             .digits = 'n',
@@ -3527,7 +3527,7 @@ static b32 text_tail()
 static const file_long tee_longs[] = {
     {(string_address) "append", 'a'},
     {(string_address) "ignore-interrupts", 'i'},
-    {(string_address) "output-error", 'p'},
+    {(string_address) "output-error", 'O'},
     {null, 0},
 };
 
@@ -3540,8 +3540,9 @@ static b32 text_tee()
             .allowed = (string_address) "aip",
             .valued = (string_address) "",
             // --output-error names a kind of failure to go on through, and
-            // the word it carries is taken and dropped like -i and -p are.
-            .optional = (string_address) "p",
+            // the word it carries is taken and dropped like -i and -p are. O
+            // is a letter tee has not got, so -p stays a plain flag.
+            .optional = (string_address) "O",
             .longs = tee_longs,
             .operand = text_file_add,
         };
@@ -4632,12 +4633,13 @@ static b32 text_tr()
         something different either way, which is what `optional` below is for:
         the letter is set either way and only carries a value when one came.
 */
-// --group is the one name here without a letter, so it borrows a G that uniq
-// has not got and that `allowed` goes on refusing.
+// A name that carries a word needs a letter of its own: -D is a plain flag
+// and -Dc is two of them, where --all-repeated=WORD is one option and a word.
+// A and G are letters uniq has not got and that `allowed` goes on refusing.
 static const file_long uniq_longs[] = {
     {(string_address) "count", 'c'},
     {(string_address) "repeated", 'd'},
-    {(string_address) "all-repeated", 'D'},
+    {(string_address) "all-repeated", 'A'},
     {(string_address) "group", 'G'},
     {(string_address) "skip-fields", 'f'},
     {(string_address) "ignore-case", 'i'},
@@ -4695,7 +4697,7 @@ static b32 text_uniq()
             .program = (string_address) "uniq",
             .allowed = (string_address) "Dcdfisuwz",
             .valued = (string_address) "fsw",
-            .optional = (string_address) "DG",
+            .optional = (string_address) "AG",
             .longs = uniq_longs,
             .operand = text_file_add,
         };
@@ -4710,7 +4712,7 @@ static b32 text_uniq()
         bool repeated_only = (flags & FILE_FLAG('d')) != 0;
         bool unique_only = (flags & FILE_FLAG('u')) != 0;
         bool fold = (flags & FILE_FLAG('i')) != 0;
-        bool all_repeated = (flags & FILE_FLAG('D')) != 0;
+        bool all_repeated = (flags & (FILE_FLAG('D') | FILE_FLAG('A'))) != 0;
         bool grouping = (flags & FILE_FLAG('G')) != 0;
         bool bounded = (flags & FILE_FLAG('w')) != 0;
         positive all_how = UNIQ_GROUP_NONE;
@@ -4718,7 +4720,7 @@ static b32 text_uniq()
         positive skip_fields = 0;
         positive skip_characters = 0;
         positive compare_width = 0;
-        string_address said = file_option_value(address_of taking, 'D');
+        string_address said = file_option_value(address_of taking, 'A');
 
         if (flags & FILE_FLAG('z'))
                 text_delimiter = '\0';
