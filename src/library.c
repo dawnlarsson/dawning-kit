@@ -1054,6 +1054,20 @@ typedef union matrix4
         every other function calls. Straight line speculation wants the trap
         after it instead. Neither is on in the build this was written against,
         which is the reason to decide it here rather than notice later.
+
+        Write ASM_RET and never the word itself. The kernel spells this RET in
+        its own assembly files, and RET inside a string literal here looks like
+        that and is not: the C preprocessor does not expand a macro inside a
+        string, so it reaches the assembler as three letters, and gas takes a
+        mnemonic in either case. It assembles a plain ret and skips whatever
+        the mitigation made this into.
+
+        That is not hypothetical. Nine routines here were written that way --
+        strchr, strnchr, memchr, strnlen, memset, memory_copy_fast, strncpy,
+        strrchr and string_cut, which is very nearly the list of what the rest
+        of the kernel calls. It was found by building the file with ASM_RET
+        defined as ud2 and disassembling: everything that went through the
+        macro trapped, and those nine returned.
 */
 #undef ASM_RET
 #if defined(KERNEL_MODE) && X64
@@ -1889,7 +1903,7 @@ __asm__(
     "jmp 1b\n"
     "2:  bsf %rax, %rax\n   shr $3, %rax\n   add %rdi, %rax  # the byte or the terminator, whichever\n"
     "movzbl (%rax), %ecx\n   cmp %sil, %cl\n   je 3f\n   xor %eax, %eax  # it was the terminator: not found\n"
-    "3:  RET\n"
+    "3:  " ASM_RET
     ASM_END(string_first_of)
     //
     //       void *memchr(const void *s, int c, size_t n)
@@ -1927,7 +1941,7 @@ __asm__(
     "2:  bsf %rax, %rax\n   shr $3, %rax\n   add %rdi, %rax\n   cmp %r9, %rax\n"
     "jb 9f  # inside the bound: that is the answer\n"
     "8:  xor %eax, %eax\n"
-    "9:  RET\n"
+    "9:  " ASM_RET
     ASM_END(memory_first_of)
     //
     //       moonwater_cpu_detect -- what this processor has, asked once.
@@ -2407,7 +2421,7 @@ __asm__(
     "jae 8f  # beyond the count\n"
     "movzbl (%rax), %ecx\n   cmp %sil, %cl\n   je 9f\n"
     "8:  xor %eax, %eax\n"
-    "9:  RET\n"
+    "9:  " ASM_RET
     ASM_END(string_first_of_max)
     //
     //       char *strrchr(const char *s, int c)
@@ -2587,7 +2601,7 @@ __asm__(
     "cmp %rsi, %rax\n   cmova %rsi, %rax  # never more than n\n"
     ASM_RET
     "3:  mov %rsi, %rax\n"
-    "9:  RET\n"
+    "9:  " ASM_RET
     ASM_END(string_length_max)
     //
     //       get_cpu_time -- the machine's own free running counter.
@@ -2644,7 +2658,7 @@ __asm__(
     // one to three: first, last, and the middle, which between them cover all three
     "mov %cl, (%rdi)\n   mov %cl, -1(%rdi,%rdx)\n"
     "shr $1, %rdx\n   mov %cl, (%rdi,%rdx)\n"
-    "9:  RET\n"
+    "9:  " ASM_RET
     "8:  mov %ecx, (%rdi)\n   mov %ecx, -4(%rdi,%rdx)\n"
     ASM_RET
     "7:  mov %rcx, (%rdi)\n   mov %rcx, -8(%rdi,%rdx)\n"
@@ -2800,7 +2814,7 @@ __asm__(
     "movzbl (%rsi), %r9d\n   movzbl -1(%rsi,%rdx), %r10d\n"
     "mov %rdx, %rcx\n   shr $1, %rcx\n   movzbl (%rsi,%rcx), %r11d\n"
     "mov %r9b, (%rdi)\n   mov %r10b, -1(%rdi,%rdx)\n   mov %r11b, (%rdi,%rcx)\n"
-    "9:  RET\n"
+    "9:  " ASM_RET
     //
     //       Sixteen to thirty two is the xmm pair above, which every x86_64 part
     //       can encode; wider than that needs the byte cpu_detect wrote.
@@ -3053,7 +3067,7 @@ __asm__(
     "lea 1(%rax), %rdx\n"
     "8:  jmp memory_copy_fast\n"
     "4:  vzeroupper\n   jmp memory_copy_fast\n"
-    "9:  RET\n"
+    "9:  " ASM_RET
     "5:  lea (%rsi,%rdx), %r9\n"
     "mov %rsi, %r8\n   mov %esi, %ecx\n   and $7, %ecx\n   and $-8, %r8\n"
     "mov (%r8), %r10\n   shl $3, %ecx\n   mov $1, %rax\n   shl %cl, %rax\n   dec %rax\n"
@@ -3077,7 +3091,7 @@ __asm__(
     ASM_FUNC(string_last_of)
     "xor %eax, %eax\n   test %sil, %sil\n   jz 9f  # nothing, for the terminator\n"
     "jmp string_last_of_or_end\n"
-    "9:  RET\n"
+    "9:  " ASM_RET
     ASM_END(string_last_of)
     //
     //       The byte tested is always the one that was there before the store,
@@ -3145,7 +3159,7 @@ __asm__(
     "3:  vzeroupper\n"
     "4:  cmpb $0, (%rax)\n   je 8f  # the terminator came first: no cut\n"
     "movb $0, (%rax)\n   inc %rax\n   cmpb $0, (%rax)\n   je 8f\n"
-    "RET\n"
+    ASM_RET
     "8:  xor %eax, %eax\n"
     ASM_RET
     //       No AVX2: the byte loop this replaced, rotated as described above.
@@ -7521,6 +7535,16 @@ p64 get_cpu_time();
 string_address string_get_environment(string_address address_to list, string_address name);
 fn positive_to_string(writer write, positive number);
 fn bipolar_to_string(writer write, bipolar number);
+/*
+        The trailing digits of a string, read backwards from the terminator.
+
+        Which makes "12a34" thirty four and not twelve, and "0.5" five, and
+        anything with a space after it nothing at all. That is the contract and
+        not an accident -- it is what the C this replaced did and what callers
+        were written against -- but it is a surprising one, so a caller that
+        wants a number read forwards from the front wants string_digits below
+        instead, which also says where it stopped.
+*/
 positive string_to_positive(string_address input);
 bipolar string_to_bipolar(string_address input);
 string_address string_find(string_address string, string_address input);
