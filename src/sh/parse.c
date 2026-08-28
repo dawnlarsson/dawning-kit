@@ -148,7 +148,10 @@ static positive parse_token_text_base;
         same order.
 */
 #define HERE_MAX 8
-#define HERE_TEXT 8192
+// Big enough for a configuration file or a script written inside another one,
+// which is what a here-document is for. Eight kilobytes held two hundred and
+// fifty lines and dropped everything after them without saying so.
+#define HERE_TEXT 65536
 
 static string_address here_delimiter[HERE_MAX];
 static b32 here_quoted[HERE_MAX];
@@ -157,6 +160,7 @@ static b32 here_quoted[HERE_MAX];
 static b32 here_strip[HERE_MAX];
 static positive here_body[HERE_MAX];
 static positive here_length[HERE_MAX];
+static b32 here_overflow[HERE_MAX];
 static b32 here_wanted;
 static b32 here_filled;
 static b32 here_taken;
@@ -334,6 +338,7 @@ static bool parse_here_register(string_address word, bool strip)
 
         here_quoted[here_wanted] = false;
         here_strip[here_wanted] = strip;
+        here_overflow[here_wanted] = false;
 
         while (string_get(step))
         {
@@ -383,6 +388,10 @@ static bool parse_here_register(string_address word, bool strip)
 
 fn parse_here_close();
 
+// The executor's complaint, which goes straight to standard error rather than
+// through the buffered writer everything else uses.
+static fn exec_error(address_any data, positive length);
+
 // Which delimiter the reader is waiting for, or nothing when it is waiting for
 // a command.
 string_address parse_here_open()
@@ -426,8 +435,19 @@ bool parse_here_line(string_address line)
         if (!here_length[here_filled])
                 here_body[here_filled] = here_used;
 
+        // A body that does not fit is not a body with its end cut off: the
+        // reader does not look at what this answers, so the complaint is made
+        // here and the command it belongs to is refused when it is parsed.
         if (here_used + length + 2 >= HERE_TEXT)
+        {
+                if (!here_overflow[here_filled])
+                        string_format(exec_error, "Here-document too long: %s\n",
+                                      here_delimiter[here_filled]);
+
+                here_overflow[here_filled] = true;
+
                 return false;
+        }
 
         memory_copy(here_text + here_used, line, length);
         here_used += length;
@@ -848,6 +868,13 @@ static bool parse_take_redirect(b32 index)
                 parse_redirects[slot].body = here_body[here_taken];
                 parse_redirects[slot].body_length = here_length[here_taken];
                 parse_redirects[slot].raw = here_quoted[here_taken];
+
+                if (here_overflow[here_taken])
+                {
+                        parse_state = PARSE_SYNTAX;
+                        return false;
+                }
+
                 here_taken++;
         }
 

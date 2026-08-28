@@ -527,6 +527,17 @@ plain
 answer 'plain keeps tabs' 'cat <<EOF
 	kept
 EOF'
+
+# A here-document is how a script carries a file inside it, so the body has to
+# be able to be one. Two hundred and fifty lines used to be the ceiling, and
+# reaching it dropped the rest without a word; past what a pipe will hold the
+# body is written by a child rather than into a pipe nothing is draining.
+answer 'a long body'     '{ echo "cat <<\"END\""; i=0; while [ $i -lt 1000 ]; do echo "line $i padding padding padding"; i=$((i+1)); done; echo END; } > /tmp/gh1.$$
+. /tmp/gh1.$$ > /tmp/gh2.$$
+wc -l < /tmp/gh2.$$'
+answer 'a body past a pipe' '{ echo "cat <<\"END\""; i=0; while [ $i -lt 1800 ]; do echo "line $i padding padding padding"; i=$((i+1)); done; echo END; } > /tmp/gh3.$$
+. /tmp/gh3.$$ > /tmp/gh4.$$
+wc -l < /tmp/gh4.$$'
 answer 'order of words'  'echo x > /tmp/sr2 2>&1; cat /tmp/sr2'
 answer 'loop redirected' 'for i in 1 2; do echo $i; done > /tmp/sr3; cat /tmp/sr3'
 
@@ -881,6 +892,13 @@ EOF'
 differs 'heredoc no sub'  '$(echo sub)|' 0 'cat <<EOF
 $(echo sub)
 EOF'
+
+# The expanded form of a here-document body is built in the storage a command
+# line shares, which holds eight kilobytes. A body that outgrows it is refused
+# rather than handed over with its end missing, which is what used to happen.
+differs 'expanded body ceiling' 'done|' 0 '{ echo "cat <<END"; i=0; while [ $i -lt 400 ]; do echo "line $i padding padding padding"; i=$((i+1)); done; echo END; } > /tmp/gh5.$$
+. /tmp/gh5.$$
+echo done'
 
 # A body line with nothing on it is dropped before the shell ever sees it:
 # the reader in programs/shell.c skips empty lines, which is right for a

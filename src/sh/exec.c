@@ -322,24 +322,66 @@ static positive exec_here_expand(string_address body, positive length,
         return token_used - start;
 }
 
-// A here-document body reaches the command through a pipe. The body is written
-// before anything reads it, so it has to fit what the pipe will hold without
-// anybody draining it -- 64k on Linux, and this refuses beyond that rather
-// than deadlocking against itself.
+/*
+        A here-document body, reaching the command through a pipe.
+
+        A body that fits in the pipe is written and forgotten about. A longer
+        one cannot be: nothing is draining the pipe yet, so the write would
+        block against a reader that has not started. A child is left holding
+        the writing end instead, which is the shape every shell settles on.
+*/
+#define PIPE_HOLDS 60000
+
 static bipolar exec_here_pipe(string_address body, positive length)
 {
         b32 ends[2];
-
-        if (length > 60000)
-                return -1;
+        bipolar child;
 
         if (system_call_2(syscall(pipe2), (positive)ends, 0) < 0)
                 return -1;
 
-        if (length)
-                system_call_3(syscall(write), ends[1], (positive)body, length);
+        if (length <= PIPE_HOLDS)
+        {
+                if (length)
+                        system_call_3(syscall(write), ends[1], (positive)body, length);
+
+                system_call_1(syscall(close), ends[1]);
+
+                return ends[0];
+        }
+
+        log_flush();
+        child = system_call_2(syscall(clone), SIGCHLD, 0);
+
+        if (child == 0)
+        {
+                positive at = 0;
+
+                system_call_1(syscall(close), ends[0]);
+                trap_default_all();
+
+                while (at < length)
+                {
+                        bipolar wrote = system_call_3(syscall(write), ends[1],
+                                                      (positive)(body + at),
+                                                      length - at);
+
+                        if (wrote <= 0)
+                                break;
+
+                        at += (positive)wrote;
+                }
+
+                exit(0);
+        }
 
         system_call_1(syscall(close), ends[1]);
+
+        if (child < 0)
+        {
+                system_call_1(syscall(close), ends[0]);
+                return -1;
+        }
 
         return ends[0];
 }
@@ -375,7 +417,22 @@ static bool exec_redirect_apply(b32 index)
                         positive length = want->body_length;
 
                         if (!want->raw)
-                                length = exec_here_expand(body, length, address_of body);
+                        {
+                                // The expanded body is built in the storage a
+                                // command line shares, and what does not fit
+                                // is dropped there without a word. A body with
+                                // its end missing is not a body.
+                                token_overflow = false;
+                                length = exec_here_expand(body, length,
+                                                          address_of body);
+
+                                if (token_overflow)
+                                {
+                                        string_format(exec_error,
+                                                      "Here-document too long\n");
+                                        return false;
+                                }
+                        }
 
                         opened = exec_here_pipe(body, length);
                 }
