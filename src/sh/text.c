@@ -2221,6 +2221,18 @@ static bool regex_search_longest(string_address text, positive length, positive 
 #endif
 #define TEXT_STAT_SIZE 48
 
+static bool text_directory(positive handle)
+{
+        p8 raw[256];
+
+        memory_fill(raw, 0, sizeof(raw));
+
+        if (system_call_2(syscall(fstat), handle, (positive)raw) < 0)
+                return false;
+
+        return (address_to(p32 address_to)(raw + TEXT_STAT_MODE) & 0170000) == 0040000;
+}
+
 static bool text_regular_size(positive handle, positive address_to size)
 {
         p8 raw[256];
@@ -5569,6 +5581,7 @@ static bool text_glob(string_address pattern, string_address name)
 
 static string_address address_to grep_paths;
 static positive grep_path_count;
+static positive grep_paths_room;
 static bool grep_recursive;
 static bool grep_dereference;
 static bool grep_expanded;
@@ -5664,7 +5677,7 @@ static p32 text_path_mode(string_address path)
 
 static bool grep_path_add(string_address path)
 {
-        if (grep_path_count >= GREP_PATHS_MAX)
+        if (grep_path_count >= grep_paths_room)
         {
                 text_error(null, "too many files");
                 return false;
@@ -6195,11 +6208,20 @@ static b32 text_grep()
         bool shown_any = false;
         b32 trouble = 0;
 
-        grep_paths = (string_address address_to)text_arena_take(
-            GREP_PATHS_MAX * sizeof(string_address));
+        // Room for what was named, and for a walk's worth of names when -r
+        // asked for one: nothing at all when the input is standard input,
+        // which is the arena never being touched by the usual grep.
+        grep_paths_room = grep_recursive ? GREP_PATHS_MAX
+                                         : (positive)text_files_count;
 
-        if (!grep_paths)
-                return text_done(2);
+        if (grep_paths_room)
+        {
+                grep_paths = (string_address address_to)text_arena_take(
+                    grep_paths_room * sizeof(string_address));
+
+                if (!grep_paths)
+                        return text_done(2);
+        }
 
         if (grep_recursive && !text_files_count)
         {
@@ -6263,7 +6285,7 @@ static b32 text_grep()
                 // A directory reads as EISDIR rather than as bytes, which is
                 // where GNU's message comes from and why -d skip has one to
                 // suppress.
-                if (name && (text_path_mode(name) & 0170000) == 0040000)
+                if (name && text_directory(text_input.handle))
                 {
                         text_close();
 
