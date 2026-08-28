@@ -48,6 +48,11 @@ describe()
         shell)    echo "the shell language against dash, the names it answers to, and the gaps" ;;
         text)     echo "the text utilities against the system's, listed and generated" ;;
         files)    echo "the file utilities against coreutils, by output and by effect" ;;
+        expand)   echo "quoting, the order the expansions happen in, and the arithmetic" ;;
+        builtin)  echo "the commands the shell runs without leaving itself" ;;
+        awk)      echo "awk against the one on the machine, listed and generated" ;;
+        tools)    echo "dd, diff and ps against the system's own" ;;
+        term)     echo "the emulator driven a byte at a time, and the line being edited" ;;
         kit)      echo "the byte and document kits the build scripts are made of" ;;
         boot)     echo "the image boots, init starts, and the shell answers" ;;
         esac
