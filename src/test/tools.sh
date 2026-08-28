@@ -578,6 +578,50 @@ for _ in range(rounds // 3):
     both(["-u"], a, b)
     both(["-q"], a, b)
 
+#       Longer than sixty four lines, which is where GNU stops taking every
+#       line that matches nothing on the other side and starts scaling the
+#       threshold for how many matches make a line confusing. A generator
+#       that stayed under that ceiling would never reach the branch, and the
+#       one bug that lived there -- a threshold computed from the wrong
+#       variable, so every repeated line was thrown away -- passed several
+#       thousand shorter cases without a murmur.
+for _ in range(rounds // 4):
+    for alphabet in ("abcde", "abcdefghij"):
+        a = lines(alphabet, random.randint(60, 400))
+        b = lines(alphabet, random.randint(0, 400))
+
+        both([], a, b)
+        both(["-u"], a, b)
+
+#       The same length, with one file a lightly edited copy of the other,
+#       which is the shape a diff is actually asked for.
+for _ in range(rounds // 4):
+    base = ["line %d of it" % i for i in range(random.randint(20, 300))]
+    other = list(base)
+
+    for _ in range(random.randint(0, 14)):
+        if not other:
+            break
+
+        where = random.randrange(len(other))
+        what = random.randrange(4)
+
+        if what == 0:
+            other[where] = "changed %d" % random.randrange(40)
+        elif what == 1:
+            del other[where]
+        elif what == 2:
+            other.insert(where, "inserted %d" % random.randrange(40))
+        else:
+            other.insert(where, other[where])
+
+    a = "".join(line + "\n" for line in base)
+    b = "".join(line + "\n" for line in other)
+
+    both([], a, b)
+    both(["-u"], a, b)
+    both(["-q"], a, b)
+
 #       Words rather than single letters, so a line can differ from another
 #       by its case or by its spaces and the ignore flags have something to
 #       ignore. The identical head and tail are trimmed by raw bytes while

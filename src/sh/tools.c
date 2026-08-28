@@ -1274,7 +1274,7 @@ static bool diff_discard()
                 positive many = 5;
 
                 if (bound >= 64)
-                        many <<= (diff_floor_log2(end) >> 1) - 3;
+                        many <<= (diff_floor_log2(bound) >> 1) - 3;
 
                 for (positive i = 0; i < bound; i++)
                 {
