@@ -417,6 +417,18 @@ near 'recursive deep'   'cat' ls -R "$fixture/sub"
 near 'recursive all'    'cat' ls -aR "$fixture/empty"
 near 'missing'          'cat' ls "$fixture/nothing"
 
+#       A file with two names in the tree is one file. Nothing above has one,
+#       so a tree with a pair of them is built for the tools that have to
+#       count it once, and a second pair on a directory of its own for -S and
+#       --max-depth to have something with a shape.
+linked=$work/linked
+mkdir -p "$linked/one/two"
+printf 'aaaa\n' > "$linked/first"
+ln "$linked/first" "$linked/second"
+printf 'bbbb\n' > "$linked/one/buried"
+ln "$linked/one/buried" "$linked/one/two/alias"
+printf 'cc\n' > "$linked/one/two/plain"
+
 group du
 near 'summary'          "awk '{print \$1}'" du -s "$fixture"
 near 'all'              "LC_ALL=C sort" du "$fixture"
@@ -426,6 +438,31 @@ near 'human summary'    "awk '{print \$1}'" du -sh "$fixture"
 near 'with total'       "LC_ALL=C sort" du -c "$fixture/sub"
 near 'summary of two'   "LC_ALL=C sort" du -s "$fixture/sub" "$fixture/empty"
 near 'apparent all'     "LC_ALL=C sort" du -ab "$fixture"
+# The second name of a file is not a second file: without -l it costs
+# nothing, and with -a it is not even listed.
+near 'hard links once'  "LC_ALL=C sort" du "$linked"
+near 'hard links all'   "LC_ALL=C sort" du -a "$linked"
+near 'hard links twice' "LC_ALL=C sort" du -l "$linked"
+near 'hard links deep'  "LC_ALL=C sort" du -s "$linked"
+near 'hard links apparent' "LC_ALL=C sort" du -sb "$linked"
+near 'separate dirs'    "LC_ALL=C sort" du -S "$linked"
+near 'separate summary' "LC_ALL=C sort" du -Sa "$linked"
+near 'max depth'        "LC_ALL=C sort" du -d 1 "$linked"
+near 'max depth zero'   "LC_ALL=C sort" du -d 0 "$linked"
+near 'max depth long'   "LC_ALL=C sort" du --max-depth=1 "$linked"
+near 'max depth all'    "LC_ALL=C sort" du -a -d 1 "$linked"
+near 'one file system'  "LC_ALL=C sort" du -x "$linked"
+near 'exclude a name'   "LC_ALL=C sort" du --exclude=two "$linked"
+near 'exclude a path'   "LC_ALL=C sort" du --exclude="$linked/one" "$linked"
+near 'exclude a glob'   "LC_ALL=C sort" du --exclude='*/two' "$linked"
+near 'exclude twice'    "LC_ALL=C sort" du --exclude=two --exclude=buried "$linked"
+near 'megabytes'        "LC_ALL=C sort" du -sm "$linked"
+near 'count links long' "LC_ALL=C sort" du --count-links "$linked"
+near 'separate long'    "LC_ALL=C sort" du --separate-dirs "$linked"
+near 'one system long'  "LC_ALL=C sort" du --one-file-system "$linked"
+near 'apparent long'    "LC_ALL=C sort" du -s --apparent-size "$linked"
+same 'not an option'    du -W "$linked"
+same 'not a word'       du --excluding=two "$linked"
 
 group df
 # The digits are masked and their count is not: how full a filesystem is

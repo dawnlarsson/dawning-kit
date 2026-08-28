@@ -3101,28 +3101,113 @@ static b32 file_stat()
 
 // du ------------------------------------------------------------
 /*
-        du [-a] [-s] [-h] [-k] [-b] [-c] [PATH...]
+        du [-a] [-s] [-h] [-k] [-m] [-b] [-c] [-x] [-S] [-l] [-d N] [PATH...]
 
         What a file costs on the disk, not how long it is: the kernel's block
         count, which is what makes a sparse file cheap and a tiny file cost a
         whole block. -b is the other question, and asks for the length.
+
+        A file with two names in the tree is one file and costs what one file
+        costs, so the second name is passed over entirely -- no line for it
+        under -a and nothing added to the total. -l is the flag for the other
+        answer.
 */
+#define DU_SEEN 4096
+#define DU_EXCLUDES 16
+
 static bool du_all;
 static bool du_summary;
 static bool du_human;
 static bool du_apparent;
 static bool du_total;
+static bool du_separate;
+static bool du_one_system;
+static bool du_count_links;
+static bool du_follow;
+static positive du_unit = 1024;
+static positive du_maximum = FILE_MAX_DEPTH;
 static b32 du_status;
 static p64 du_grand;
+static p64 du_device;
 
-static fn du_report(p64 blocks, string_address path)
+static string_address du_excludes[DU_EXCLUDES];
+static positive du_exclude_have;
+
+// -S needs to know whether the cost that just came back was a directory's,
+// and d_type is a hint some filesystems decline to give.
+static bool du_was_directory;
+
+// An inode of zero is not one the kernel hands out, so it is what an unused
+// slot holds. A full table stops deduplicating rather than start throwing
+// files away, and the ceiling is named above.
+static p64 du_seen_inode[DU_SEEN];
+static p64 du_seen_device[DU_SEEN];
+static positive du_seen_have;
+
+static p64 du_where(file_facts address_to facts)
+{
+        return ((p64)facts->device_major << 32) | facts->device_minor;
+}
+
+static bool du_already(file_facts address_to facts)
+{
+        if (du_count_links || facts->hard_links < 2)
+                return false;
+
+        if ((facts->mode & MODE_FORMAT) == MODE_DIRECTORY)
+                return false;
+
+        p64 device = du_where(facts);
+        positive slot = (positive)(facts->inode * 1099511628211u + device) & (DU_SEEN - 1);
+
+        for (positive step = 0; step < DU_SEEN; step++)
+        {
+                positive at = (slot + step) & (DU_SEEN - 1);
+
+                if (du_seen_inode[at] == facts->inode && du_seen_device[at] == device)
+                        return true;
+
+                if (du_seen_inode[at])
+                        continue;
+
+                if (du_seen_have + 1 >= DU_SEEN)
+                        return false;
+
+                du_seen_inode[at] = facts->inode;
+                du_seen_device[at] = device;
+                du_seen_have++;
+
+                return false;
+        }
+
+        return false;
+}
+
+// The system's du takes a pattern against the whole path it built and
+// against the last component of it, so --exclude=b and --exclude=a/b both
+// leave out a/b.
+static bool du_excluded(string_address path)
+{
+        p8 name[FILE_PATH_MAX];
+
+        if (!du_exclude_have)
+                return false;
+
+        file_tail(path, name);
+
+        for (positive i = 0; i < du_exclude_have; i++)
+                if (file_match(du_excludes[i], path) || file_match(du_excludes[i], name))
+                        return true;
+
+        return false;
+}
+
+static fn du_report(p64 bytes, string_address path)
 {
         if (du_human)
-                file_human(log, du_apparent ? blocks : blocks * 512);
-        else if (du_apparent)
-                file_number(log, blocks);
+                file_human(log, bytes);
         else
-                file_number(log, blocks / 2);
+                file_number(log, (positive)((bytes + du_unit - 1) / du_unit));
 
         log("\t", 1);
         log(path, 0);
@@ -3131,19 +3216,31 @@ static fn du_report(p64 blocks, string_address path)
 
 // Returns what the tree costs, and prints the parts of it that were asked for
 // on the way back up, which is the order du has always reported in.
-static p64 du_walk(string_address path, positive depth, bool named)
+static p64 du_walk(string_address path, positive depth, bool named, positive level)
 {
         file_facts facts;
 
-        if (!file_look_link(path, address_of facts))
+        if (!(du_follow ? file_look_at(path, address_of facts)
+                        : file_look_link(path, address_of facts)))
         {
                 string_format(file_fail, "du: cannot access '%s': No such file or directory\n",
                               path);
                 du_status = 1;
+                du_was_directory = false;
                 return 0;
         }
 
-        p64 mine = du_apparent ? facts.size : facts.blocks;
+        du_was_directory = (facts.mode & MODE_FORMAT) == MODE_DIRECTORY;
+
+        if (named)
+                du_device = du_where(address_of facts);
+        else if (du_one_system && du_where(address_of facts) != du_device)
+                return 0;
+
+        if (du_already(address_of facts))
+                return 0;
+
+        p64 mine = du_apparent ? (p64)facts.size : facts.blocks * 512;
 
         // --apparent-size is asking how much was written, and nothing was
         // written into the directory itself; only what is under it counts.
@@ -3152,13 +3249,16 @@ static p64 du_walk(string_address path, positive depth, bool named)
 
         if ((facts.mode & MODE_FORMAT) != MODE_DIRECTORY)
         {
-                if (du_all || named)
+                if ((du_all || named) && level <= du_maximum)
                         du_report(mine, path);
+
+                du_was_directory = false;
 
                 return mine;
         }
 
         p64 total = mine;
+        p64 below = 0;
 
         if (depth > 0)
         {
@@ -3173,10 +3273,19 @@ static p64 du_walk(string_address path, positive depth, bool named)
                                 if (file_is_dot(entry->d_name))
                                         continue;
 
-                                p8 below[FILE_PATH_MAX];
+                                p8 under[FILE_PATH_MAX];
 
-                                file_join(below, FILE_PATH_MAX, path, entry->d_name);
-                                total += du_walk(below, depth - 1, false);
+                                file_join(under, FILE_PATH_MAX, path, entry->d_name);
+
+                                if (du_excluded(under))
+                                        continue;
+
+                                p64 cost = du_walk(under, depth - 1, false, level + 1);
+
+                                total += cost;
+
+                                if (du_was_directory)
+                                        below += cost;
                         }
 
                         file_walk_close(address_of walk);
@@ -3188,33 +3297,91 @@ static p64 du_walk(string_address path, positive depth, bool named)
                 }
         }
 
-        if (named || !du_summary)
-                du_report(total, path);
+        if (level <= du_maximum)
+                du_report(du_separate ? total - below : total, path);
+
+        du_was_directory = true;
 
         return total;
 }
 
+static bool du_exclude_seen(p8 letter, string_address value)
+{
+        if (letter != 'e' || !value)
+                return true;
+
+        if (du_exclude_have < DU_EXCLUDES)
+                du_excludes[du_exclude_have++] = value;
+
+        return true;
+}
+
+static const file_long du_longs[] = {
+    {(string_address) "all", 'a'},
+    {(string_address) "apparent-size", 'A'},
+    {(string_address) "bytes", 'b'},
+    {(string_address) "count-links", 'l'},
+    {(string_address) "dereference", 'L'},
+    {(string_address) "exclude", 'e'},
+    {(string_address) "human-readable", 'h'},
+    {(string_address) "max-depth", 'd'},
+    {(string_address) "one-file-system", 'x'},
+    {(string_address) "separate-dirs", 'S'},
+    {(string_address) "summarize", 's'},
+    {(string_address) "total", 'c'},
+    {null, 0},
+};
+
 static b32 file_du()
 {
-        positive first = 0;
         positive count = (positive)program_argument_count();
-        positive flags = file_take_options((string_address) "ashkbcSx", address_of first);
+        file_taking taking = {
+            .program = (string_address) "du",
+            .allowed = (string_address) "abcdhklLmsSx",
+            .valued = (string_address) "de",
+            .longs = du_longs,
+            .seen = du_exclude_seen,
+        };
+
+        if (!file_take(address_of taking))
+                return 1;
+
+        positive flags = taking.flags;
+        positive first = taking.first;
 
         du_all = (flags & FILE_FLAG('a')) != 0;
         du_summary = (flags & FILE_FLAG('s')) != 0;
         du_human = (flags & FILE_FLAG('h')) != 0;
-        du_apparent = (flags & FILE_FLAG('b')) != 0;
+        du_apparent = (flags & (FILE_FLAG('b') | FILE_FLAG('A'))) != 0;
         du_total = (flags & FILE_FLAG('c')) != 0;
+        du_separate = (flags & FILE_FLAG('S')) != 0;
+        du_one_system = (flags & FILE_FLAG('x')) != 0;
+        du_count_links = (flags & FILE_FLAG('l')) != 0;
+        du_follow = (flags & FILE_FLAG('L')) != 0;
+
+        if (flags & FILE_FLAG('b'))
+                du_unit = 1;
+
+        if (flags & FILE_FLAG('m'))
+                du_unit = 1048576;
+
+        // -s is --max-depth=0 said another way, and the two are the same
+        // switch here so that giving both cannot mean two things.
+        if (du_summary)
+                du_maximum = 0;
+
+        if (flags & FILE_FLAG('d'))
+                du_maximum = file_count(file_option_value(address_of taking, 'd'));
 
         if (first >= count)
         {
-                du_grand += du_walk((string_address) ".", FILE_MAX_DEPTH, true);
+                du_grand += du_walk((string_address) ".", FILE_MAX_DEPTH, true, 0);
         }
         else
         {
                 while (first < count)
                         du_grand += du_walk(program_argument((b32)first++),
-                                            FILE_MAX_DEPTH, true);
+                                            FILE_MAX_DEPTH, true, 0);
         }
 
         if (du_total)
