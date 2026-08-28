@@ -352,8 +352,17 @@ static _Bool pane_scroll(struct pane *pane, int lines)
         return true;
 }
 
+/*
+        A window, of pixels or of cells.
+
+        An owned one is the compositor's own: nothing maps it, so there is no
+        shared page and none of what a program would have read from one is
+        written. Everything that reads a page checks for one first, so an owned
+        window is placed, moved and composed like any other.
+*/
 static struct pane *pane_create(unsigned int width, unsigned int height,
-                                unsigned int columns, unsigned int rows)
+                                unsigned int columns, unsigned int rows,
+                                _Bool owned)
 {
         unsigned int max_columns, max_rows;
         unsigned int stride, history;
@@ -403,7 +412,8 @@ static struct pane *pane_create(unsigned int width, unsigned int height,
                 return NULL;
         }
 
-        pane->mapping = vmalloc_user(bytes);
+        // Not vmalloc_user when it is the compositor's own: nothing maps it.
+        pane->mapping = owned ? vzalloc(bytes) : vmalloc_user(bytes);
         if (!pane->mapping)
         {
                 kfree(pane);
@@ -412,8 +422,10 @@ static struct pane *pane_create(unsigned int width, unsigned int height,
 
         canvas_pane_bytes += bytes;
         pane->bytes = bytes;
-        pane->shared = pane->mapping;
         pane->pitch = width;
+
+        if (!owned)
+                pane->shared = pane->mapping;
 
         if (columns)
         {
@@ -431,20 +443,24 @@ static struct pane *pane_create(unsigned int width, unsigned int height,
                 pane->rows = rows;
                 pane->max_columns = max_columns;
                 pane->max_rows = max_rows;
-                pane->shared->max_columns = max_columns;
-                pane->shared->max_rows = max_rows;
                 pane->max_width = max_columns * (unsigned int)canvas_cell_w;
                 pane->max_height = max_rows * (unsigned int)canvas_cell_h;
-                pane->shared->columns = columns;
-                pane->shared->rows = rows;
                 pane->grid_columns = columns;
                 pane->grid_rows = rows;
-                pane->shared->grid_columns = columns;
-                pane->shared->grid_rows = rows;
-                pane->shared->stride = stride;
-                pane->shared->history = history;
-                pane->shared->head = pane->head;
-                pane->shared->lines = (unsigned int)lines;
+
+                if (pane->shared)
+                {
+                        pane->shared->max_columns = max_columns;
+                        pane->shared->max_rows = max_rows;
+                        pane->shared->columns = columns;
+                        pane->shared->rows = rows;
+                        pane->shared->grid_columns = columns;
+                        pane->shared->grid_rows = rows;
+                        pane->shared->stride = stride;
+                        pane->shared->history = history;
+                        pane->shared->head = pane->head;
+                        pane->shared->lines = (unsigned int)lines;
+                }
         }
         else
         {
@@ -463,88 +479,23 @@ static struct pane *pane_create(unsigned int width, unsigned int height,
         pane->x = 80;
         pane->y = 80;
         pane->style = WINDOW_FRAME;
-        pane->shared->style = WINDOW_FRAME;
 
         list_add_tail(&pane->link, &desktop.windows);
         pane_raise(pane);
 
-        pane->shared->x = pane->x;
-        pane->shared->y = pane->y;
-        pane->shared->z = pane->z;
-        pane->shared->width = width;
-        pane->shared->height = height;
-        pane->shared->pitch = pane->pitch;
-        pane->shared->max_width = (unsigned int)pane->max_width;
-        pane->shared->max_height = (unsigned int)pane->max_height;
-        pane->shared->mapping = (unsigned int)bytes;
-
-        return pane;
-}
-
-/*
-        A window of cells the compositor draws into itself: no shared page, and
-        the cells are its own rather than a program's mapping. Everything that
-        reads a page checks for one first, so one of these is placed, moved and
-        composed like any other window.
-*/
-static __maybe_unused struct pane *pane_create_owned(unsigned int columns,
-                                                     unsigned int rows)
-{
-        unsigned int max_columns, max_rows;
-        unsigned int stride, history;
-        unsigned long ring_bytes;
-        unsigned long bytes;
-        struct pane *pane;
-
-        desktop_grid(&max_columns, &max_rows);
-
-        if (!columns || !rows || !max_columns || !max_rows)
-                return NULL;
-
-        pane_ring(max_columns, max_rows, &stride, &history, &ring_bytes);
-        bytes = PAGE_ALIGN(ring_bytes);
-
-        if (canvas_pane_bytes + bytes > canvas_pane_budget())
-                return NULL;
-
-        pane = kzalloc(sizeof(*pane), GFP_KERNEL);
-        if (!pane)
-                return NULL;
-
-        // Not vmalloc_user: nothing maps this one.
-        pane->mapping = vzalloc(bytes);
-        if (!pane->mapping)
+        if (pane->shared)
         {
-                kfree(pane);
-                return NULL;
+                pane->shared->style = WINDOW_FRAME;
+                pane->shared->x = pane->x;
+                pane->shared->y = pane->y;
+                pane->shared->z = pane->z;
+                pane->shared->width = width;
+                pane->shared->height = height;
+                pane->shared->pitch = pane->pitch;
+                pane->shared->max_width = (unsigned int)pane->max_width;
+                pane->shared->max_height = (unsigned int)pane->max_height;
+                pane->shared->mapping = (unsigned int)bytes;
         }
-
-        canvas_pane_bytes += bytes;
-        pane->bytes = bytes;
-        pane->cells = pane->mapping;
-        pane->lengths = pane->mapping + (unsigned long)history * stride *
-                                            sizeof(struct window_cell);
-        pane->stride = stride;
-        pane->history = history;
-        pane->view = PANE_LIVE;
-        pane->columns = min(columns, max_columns);
-        pane->rows = min(rows, max_rows);
-        pane->head = history + pane->rows;
-        pane->grid_columns = pane->columns;
-        pane->grid_rows = pane->rows;
-        pane->max_columns = max_columns;
-        pane->max_rows = max_rows;
-        pane->max_width = max_columns * (unsigned int)canvas_cell_w;
-        pane->max_height = max_rows * (unsigned int)canvas_cell_h;
-        pane->width = (int)pane->columns * canvas_cell_w;
-        pane->height = (int)pane->rows * canvas_cell_h;
-        pane->pitch = (unsigned int)pane->width;
-        pane->x = 80;
-        pane->y = 80;
-        pane->style = WINDOW_FRAME;
-
-        list_add_tail(&pane->link, &desktop.windows);
-        pane_raise(pane);
 
         return pane;
 }
@@ -880,7 +831,7 @@ static long window_ioctl_create(struct file *file, unsigned long argument)
         }
 
         pane = pane_create(request.width, request.height,
-                           request.columns, request.rows);
+                           request.columns, request.rows, false);
         if (!pane)
         {
                 mutex_unlock(&desktop.lock);

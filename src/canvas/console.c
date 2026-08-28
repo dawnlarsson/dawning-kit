@@ -168,7 +168,7 @@ static void console_start(void)
         if (console_registered || console_pane)
                 return;
 
-        pane = pane_create_owned(CONSOLE_COLUMNS, CONSOLE_ROWS);
+        pane = pane_create(0, 0, CONSOLE_COLUMNS, CONSOLE_ROWS, true);
 
         if (!pane)
         {
