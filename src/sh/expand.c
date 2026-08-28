@@ -747,23 +747,24 @@ static bool expand_value_of(string_address name, p8 address_to into, positive li
 /*
         A parameter pushed with the marks that decide its fate later.
 
-        $@ is the one form that makes its own field boundaries, quoted or not:
-        they go in as a byte of their own so that splitting cannot miss them and
-        "$@" keeps a parameter with a space in it whole.
+        "$@" is the one form that makes its own field boundaries: they go in
+        as a byte of their own so that splitting cannot miss them, and a
+        parameter with a space in it stays whole.
+
+        Unquoted, $@ and $* do not. Both join on the first byte of IFS and the
+        join is taken apart again, which is why set -- "" a is one field and
+        not two -- an empty parameter joins to nothing and splits to nothing.
+        Only when IFS is empty is there no byte to join on, and there the
+        boundaries have to be put in or every parameter runs together.
 */
 static bool expand_push_parameter(string_address name, bool quoted)
 {
         p8 mark = quoted ? MARK_QUOTED : MARK_FIELD;
         p8 value[EXPAND_VALUE];
+        bool all = string_get(name + 1) == end &&
+                   (string_is(name, '@') || string_is(name, '*'));
 
-        /*
-                Unquoted, $* makes them too: it joins with the first byte of
-                IFS and then the join is split back apart, which is the same
-                thing until IFS is empty -- and there $* handed back one word
-                holding every parameter run together.
-        */
-        if ((string_is(name, '@') || (!quoted && string_is(name, '*'))) &&
-            string_get(name + 1) == end)
+        if (all && (quoted ? string_is(name, '@') : !string_get(expand_ifs())))
         {
                 positive at;
 

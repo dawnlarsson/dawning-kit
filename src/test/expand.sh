@@ -321,6 +321,17 @@ answer 'star no ifs'    'set -- a b c; IFS=; printf "[%s]" "$*"; echo'
 #       which is the same thing until IFS is empty.
 answer 'bare star no ifs' 'set -- a b c; IFS=; printf "[%s]" $*; echo'
 answer 'bare star splits' 'set -- "a b" c; IFS=; printf "[%s]" $*; echo'
+#       Unquoted, an empty parameter joins to nothing and splits to nothing,
+#       so it is no field. Quoted it is a field, and with IFS empty there is
+#       no join and no splitting and it is a field again.
+answer 'bare empty goes'  'set -- "" a; printf "[%s]" $@; echo'
+answer 'bare empty star'  'set -- "" a; printf "[%s]" $*; echo'
+answer 'quoted empty stays' 'set -- "" a; printf "[%s]" "$@"; echo'
+answer 'all empty'        'set -- "" ""; printf "[%s]" $@; echo'
+answer 'empty at the end' 'set -- "a b" ""; printf "[%s]" $@; echo'
+answer 'a blank goes'     'set -- " " a; printf "[%s]" $@; echo'
+answer 'empty no ifs'     'set -- "" a; IFS=; printf "[%s]" $@; echo'
+answer 'empty colon ifs'  'set -- a "" b; IFS=:; printf "[%s]" $@; echo'
 answer 'at no ifs'      'set -- a b c; IFS=; printf "[%s]" "$@"; echo'
 answer 'braced at'      'set -- "a b" c; printf "[%s]" "${@}"; echo'
 answer 'braced star'    'set -- "a b" c; printf "[%s]" "${*}"; echo'
