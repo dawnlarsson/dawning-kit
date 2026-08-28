@@ -240,6 +240,9 @@ compare_dd 'skip past end'    "$work/ten"  's/x/x/' bs=4 skip=9 status=noxfer
 compare_dd 'ibs obs apart'    "$work/blob" 's/x/x/' ibs=1000 obs=512 status=noxfer
 compare_dd 'ibs obs ragged'   "$work/ten"  's/x/x/' ibs=3 obs=7 status=noxfer
 compare_dd 'obs larger'       "$work/ten"  's/x/x/' ibs=2 obs=64 status=noxfer
+compare_dd 'obs one byte'     "$work/ten"  's/x/x/' ibs=7 obs=1 status=noxfer
+compare_dd 'obs coprime'      "$work/blob" 's/x/x/' ibs=997 obs=311 status=noxfer
+compare_dd 'obs blocks over'  "$work/blob" 's/x/x/' ibs=8192 obs=1000 status=noxfer
 
 #       conv=sync pads the short block out to the input size, which turns a
 #       partial record in into a whole record out.
@@ -371,6 +374,8 @@ printf 'one\ntwo\nthree\n'                      > "$work/withnl"
 printf 'one\ntwo\nthre'                         > "$work/nonl2"
 printf 'a\0b\0c\n'                              > "$work/bin1"
 printf 'a\0b\0d\n'                              > "$work/bin2"
+printf 'a\0b\0c\n'                              > "$work/bin1copy"
+printf 'a\0b\0c\0\n'                            > "$work/bin3"
 
 seq 1 40 > "$work/long1"
 seq 1 40 | sed '7s/.*/SEVEN/; 23s/.*/TWENTYTHREE/' > "$work/long2"
@@ -416,6 +421,8 @@ compare_diff 'no newline u two' -u "$work/nonl" "$work/nonl2"
 
 compare_diff 'binary differ'   "$work/bin1" "$work/bin2"
 compare_diff 'binary same'     "$work/bin1" "$work/bin1"
+compare_diff 'binary two same' "$work/bin1" "$work/bin1copy"
+compare_diff 'binary lengths'  "$work/bin1" "$work/bin3"
 compare_diff 'binary as text'  -a "$work/bin1" "$work/bin2"
 compare_diff 'binary brief'    -q "$work/bin1" "$work/bin2"
 

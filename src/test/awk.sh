@@ -206,6 +206,10 @@ compare 'filename in begin' /dev/null 'BEGIN{print "[" FILENAME "]"}'
 compare 'no trailing newline' "$work/bare" '{print NR, $0}'
 compare 'empty input' "$work/empty" '{print "never"} END{print NR}'
 compare 'blank lines' "$work/paragraphs" '{print NR, NF}'
+compare 'blanks only' "$work/spaced" '$0 ~ /^[ \t]*$/ {print NR, NF}'
+compare 'fs at both ends' "$work/colons" -F: '{print NF "[" $1 "][" $NF "]"}'
+compare 'fs every byte' /dev/null 'BEGIN{n=split(":::",p,":"); print n; for(i=1;i<=n;i++) print i "[" p[i] "]"}'
+compare 'fs absent from line' "$work/words" -F: '{print NF "[" $1 "]"}'
 
 #
 #       Records: RS.
@@ -219,6 +223,9 @@ compare 'rs paragraph with fs' "$work/colons" 'BEGIN{RS="";FS=":"} {print NF, $1
 compare 'rs regex' "$work/numbers" 'BEGIN{RS="[0-9]+"} {print NR "[" $0 "]"}'
 compare 'rs changed midway' "$work/letters" 'NR==1{RS="c"} {print NR "[" $0 "]"}'
 compare 'rs and ors' "$work/colons" 'BEGIN{RS=":";ORS="-"} {print}'
+compare 'rs absent from input' "$work/letters" 'BEGIN{RS="@"} {print NR "[" $0 "]"}'
+compare 'rs paragraph to the end' "$work/bare" 'BEGIN{RS=""} {print NR "[" $0 "]"}'
+compare 'rs paragraph one line' "$work/one" 'BEGIN{RS=""} {print NR, NF}'
 
 #
 #       Expressions.
@@ -336,6 +343,9 @@ compare 'substr' /dev/null 'BEGIN{print substr("hello",2), substr("hello",2,2), 
 compare 'substr past the end' /dev/null 'BEGIN{print "[" substr("hello",6) "]", "[" substr("hello",2,99) "]"}'
 compare 'substr fractional' /dev/null 'BEGIN{print substr("hello",1.9,1.9) "|" substr("hello",2.7,2.2)}'
 compare 'index' /dev/null 'BEGIN{print index("hello","ll"), index("hello","z"), index("hello","h")}'
+compare 'index empty needle' /dev/null 'BEGIN{print index("abc",""), index("",""), index("","a")}'
+compare 'index at the end' /dev/null 'BEGIN{print index("hello","o"), index("hello","lo"), index("hello","hello")}'
+compare 'index overlapping' /dev/null 'BEGIN{print index("aaaa","aaa"), index("abababc","babc")}'
 compare 'split default' /dev/null 'BEGIN{n=split("  a b  c ",a); print n, "[" a[1] "]", "[" a[3] "]"}'
 compare 'split on a string' /dev/null 'BEGIN{n=split("a:b::c",a,":"); print n, "[" a[3] "]"}'
 compare 'split on a regex' /dev/null 'BEGIN{n=split("a1b22c",a,/[0-9]+/); print n, a[2], a[3]}'

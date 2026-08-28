@@ -384,11 +384,10 @@ static bool dd_operand(string_address argument, string_address name,
 static bool dd_word(string_address address_to at, string_address name)
 {
         string_address here = address_to at;
-        positive i = 0;
+        positive i = string_length(name);
 
-        for (; name[i]; i++)
-                if (here[i] != name[i])
-                        return false;
+        if (string_compare_max(here, name, i))
+                return false;
 
         if (here[i] && here[i] != ',')
                 return false;
@@ -766,26 +765,34 @@ static b32 tools_dd(void)
                         continue;
                 }
 
-                for (positive i = 0; i < read_bytes; i++)
+                // The input block regrouped into output blocks, which is what
+                // dd is for whenever ibs and obs differ.
+                for (positive at = 0; at < read_bytes;)
                 {
-                        obuf[held++] = ibuf[i];
+                        positive take = obs - held;
 
-                        if (held == obs)
+                        if (take > read_bytes - at)
+                                take = read_bytes - at;
+
+                        memory_copy_fast(obuf + held, ibuf + at, take);
+                        held += take;
+                        at += take;
+
+                        if (held < obs)
+                                continue;
+
+                        positive wrote = dd_write(out_handle, obuf, obs);
+
+                        dd_written += wrote;
+                        held = 0;
+
+                        if (wrote != obs)
                         {
-                                positive wrote = dd_write(out_handle, obuf, obs);
-
-                                dd_written += wrote;
-                                held = 0;
-
-                                if (wrote != obs)
-                                {
-                                        result = 1;
-                                        i = read_bytes;
-                                        break;
-                                }
-
-                                dd_out_full++;
+                                result = 1;
+                                break;
                         }
+
+                        dd_out_full++;
                 }
 
                 if (result)
@@ -1010,11 +1017,7 @@ static bool diff_slurp(diff_side address_to side, string_address path)
                 side->size = have;
         }
 
-        positive lines = 0;
-
-        for (positive i = 0; i < have; i++)
-                if (start[i] == '\n')
-                        lines++;
+        positive lines = memory_count(start, have, '\n');
 
         side->lines = lines;
         side->at = (positive address_to)text_arena_take((lines + 2) * sizeof(positive));
@@ -1025,12 +1028,15 @@ static bool diff_slurp(diff_side address_to side, string_address path)
         positive which = 0;
         positive from = 0;
 
-        for (positive i = 0; i < have; i++)
-                if (start[i] == '\n')
-                {
-                        side->at[which++] = from;
-                        from = i + 1;
-                }
+        // The last byte is a newline by now, so every hunt below finds one.
+        while (from < have)
+        {
+                p8 address_to cut = (p8 address_to)memory_first_of(start + from, '\n',
+                                                                   have - from);
+
+                side->at[which++] = from;
+                from = (positive)(cut - start) + 1;
+        }
 
         side->at[which] = have;
 
@@ -1043,11 +1049,7 @@ static bool diff_binary(diff_side address_to side)
         if (diff_text)
                 return false;
 
-        for (positive i = 0; i < side->size; i++)
-                if (!side->base[i])
-                        return true;
-
-        return false;
+        return memory_first_of(side->base, 0, side->size) != null;
 }
 
 // Lines -----------------------------------------------------
@@ -1154,6 +1156,14 @@ static p8 address_to diff_line(diff_side address_to side, bipolar middle)
         return side->base + side->at[(bipolar)side->prefix + middle];
 }
 
+// Without the newline every line in the buffer ends with.
+static positive diff_line_length(diff_side address_to side, bipolar middle)
+{
+        positive line = side->prefix + (positive)middle;
+
+        return side->at[line + 1] - side->at[line] - 1;
+}
+
 /*
         The last line of a file that has no newline of its own cannot be the
         same line as a complete one, however the bytes read -- which is the
@@ -1189,6 +1199,16 @@ static bool diff_same(diff_side address_to a, bipolar i, diff_side address_to b,
 
         if (diff_stub(a, i) != diff_stub(b, j))
                 return false;
+
+        // Nothing folded and nothing skipped: the two lines are the same
+        // line when the bytes are, and the bytes are a block compare.
+        if (!diff_icase && diff_space == DIFF_SPACE_NONE)
+        {
+                positive length = diff_line_length(a, i);
+
+                return length == diff_line_length(b, j) &&
+                       !memory_compare(diff_line(a, i), diff_line(b, j), length);
+        }
 
         diff_scan_open(address_of left, diff_line(a, i));
         diff_scan_open(address_of right, diff_line(b, j));
@@ -2074,17 +2094,7 @@ static b32 diff_pair(string_address left, string_address right)
 
         if (diff_binary(a) || diff_binary(b))
         {
-                bool same = a->size == b->size;
-
-                if (same)
-                        for (positive i = 0; i < a->size; i++)
-                                if (a->base[i] != b->base[i])
-                                {
-                                        same = false;
-                                        break;
-                                }
-
-                if (same)
+                if (a->size == b->size && !memory_compare(a->base, b->base, a->size))
                         return 0;
 
                 text_put_string(diff_brief ? "Files " : "Binary files ");
@@ -2328,7 +2338,7 @@ static bool diff_gather(string_address path, string_address address_to names,
                         return false;
                 }
 
-                memory_copy(at, entry->d_name, length + 1);
+                memory_copy_fast(at, entry->d_name, length + 1);
                 names[address_to count] = at;
                 address_to count += 1;
         }
@@ -2514,13 +2524,9 @@ static b32 diff_walk(string_address left, string_address right, positive depth)
 
 static string_address diff_basename(string_address path)
 {
-        string_address last = path;
+        string_address last = string_last_of(path, '/');
 
-        for (string_address at = path; string_get(at); at++)
-                if (string_get(at) == '/')
-                        last = at + 1;
-
-        return last;
+        return last ? last + 1 : path;
 }
 
 static text_long diff_long_options[] = {
@@ -2752,13 +2758,14 @@ static positive ps_read_file(string_address path, p8 address_to into, positive l
         return have;
 }
 
+// The bytes a /proc field is made of, and the ones between two of them.
+static b8 ps_blank_bytes[STRING_SET_BYTES];
+static b8 ps_field_bytes[STRING_SET_BYTES];
+
 static positive ps_take(string_address address_to at)
 {
-        string_address here = address_to at;
+        string_address here = address_to at + string_span(address_to at, ps_blank_bytes);
         positive value = 0;
-
-        while (string_get(here) == ' ' || string_get(here) == '\t')
-                here++;
 
         while (text_digit(string_get(here)))
         {
@@ -2773,11 +2780,8 @@ static positive ps_take(string_address address_to at)
 
 static bipolar ps_signed(string_address address_to at)
 {
-        string_address here = address_to at;
+        string_address here = address_to at + string_span(address_to at, ps_blank_bytes);
         bool minus = false;
-
-        while (string_get(here) == ' ' || string_get(here) == '\t')
-                here++;
 
         if (string_get(here) == '-')
         {
@@ -2798,11 +2802,8 @@ static fn ps_pass(string_address address_to at, positive fields)
 
         for (positive i = 0; i < fields; i++)
         {
-                while (string_get(here) == ' ')
-                        here++;
-
-                while (string_get(here) && string_get(here) != ' ')
-                        here++;
+                here += string_span(here, ps_blank_bytes);
+                here += string_span(here, ps_field_bytes);
         }
 
         address_to at = here;
@@ -2819,10 +2820,8 @@ static fn ps_name_of(positive uid, p8 address_to into, positive limit)
         while (at < ps_password_size)
         {
                 positive line = at;
-                positive stop = at;
-
-                while (stop < ps_password_size && ps_password[stop] != '\n')
-                        stop++;
+                positive stop = (positive)(string_first_of_or_end(ps_password + at, '\n') -
+                                           ps_password);
 
                 positive fields = 0;
                 positive start = line;
@@ -2896,6 +2895,12 @@ static bool ps_gather()
         ps_count = 0;
         ps_password_size = ps_read_file("/etc/passwd", ps_password, sizeof(ps_password));
 
+        string_set_add(ps_blank_bytes, " \t");
+        memory_fill(ps_field_bytes, 1, sizeof(ps_field_bytes));
+        ps_field_bytes[0] = 0;
+        ps_field_bytes[' '] = 0;
+        ps_field_bytes['\t'] = 0;
+
         {
                 p8 uptime[64];
 
@@ -2919,20 +2924,13 @@ static bool ps_gather()
                         continue;
 
                 p8 path[64];
-                positive used = 0;
 
-                for (string_address at = "/proc/"; string_get(at); at++)
-                        path[used++] = string_get(at);
+                string_copy(path, "/proc/");
+                string_copy(path + string_length(path), entry->d_name);
 
-                for (string_address at = entry->d_name; string_get(at); at++)
-                        path[used++] = string_get(at);
+                positive base = string_length(path);
 
-                positive base = used;
-
-                for (string_address at = "/stat"; string_get(at); at++)
-                        path[used++] = string_get(at);
-
-                path[used] = end;
+                string_copy(path + base, "/stat");
 
                 if (!ps_read_file(path, block, sizeof(block)))
                         continue;
@@ -2945,17 +2943,10 @@ static bool ps_gather()
 
                 one->pid = ps_take(address_of at);
 
-                while (string_get(at) && string_get(at) != '(')
-                        at++;
-
-                at++;
+                at = string_first_of_or_end(at, '(') + 1;
 
                 string_address close = at;
-                string_address last = null;
-
-                for (string_address seek = at; string_get(seek); seek++)
-                        if (string_get(seek) == ')')
-                                last = seek;
+                string_address last = string_last_of(at, ')');
 
                 if (!last)
                         continue;
@@ -3016,12 +3007,7 @@ static bool ps_gather()
 
                 one->state[mark] = end;
 
-                used = base;
-
-                for (string_address name = "/status"; string_get(name); name++)
-                        path[used++] = string_get(name);
-
-                path[used] = end;
+                string_copy(path + base, "/status");
 
                 if (ps_read_file(path, block, sizeof(block)))
                 {
@@ -3038,8 +3024,7 @@ static bool ps_gather()
                                         break;
                                 }
 
-                                while (string_get(seek) && string_get(seek) != '\n')
-                                        seek++;
+                                seek = string_first_of_or_end(seek, '\n');
 
                                 if (string_get(seek))
                                         seek++;
@@ -3048,12 +3033,7 @@ static bool ps_gather()
 
                 ps_name_of(one->uid, one->user, sizeof(one->user));
 
-                used = base;
-
-                for (string_address name = "/cmdline"; string_get(name); name++)
-                        path[used++] = string_get(name);
-
-                path[used] = end;
+                string_copy(path + base, "/cmdline");
 
                 positive got = ps_read_file(path, block, sizeof(one->args));
 
@@ -3069,10 +3049,12 @@ static bool ps_gather()
                 }
                 else
                 {
+                        positive length = string_length(one->comm);
+
                         one->args[0] = '[';
-                        memory_copy(one->args + 1, one->comm, string_length(one->comm));
-                        one->args[1 + string_length(one->comm)] = ']';
-                        one->args[2 + string_length(one->comm)] = end;
+                        memory_copy_fast(one->args + 1, one->comm, length);
+                        one->args[1 + length] = ']';
+                        one->args[2 + length] = end;
                 }
 
                 ps_count++;
@@ -3436,16 +3418,11 @@ static b32 tools_ps(void)
 
                 if (ps_read_file("/proc/self/stat", block, sizeof(block)))
                 {
-                        string_address at = block;
-                        string_address last = null;
-
-                        for (string_address seek = block; string_get(seek); seek++)
-                                if (string_get(seek) == ')')
-                                        last = seek;
+                        string_address last = string_last_of(block, ')');
 
                         if (last)
                         {
-                                at = last + 2;
+                                string_address at = last + 2;
                                 ps_pass(address_of at, 4);
                                 ps_own_tty = ps_take(address_of at);
                         }

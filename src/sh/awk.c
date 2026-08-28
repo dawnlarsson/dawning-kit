@@ -152,7 +152,7 @@ static awk_text address_to awk_text_new(string_address from, positive length)
 
         awk_text address_to made = awk_text_room(length);
 
-        memory_copy(made->text, from, length);
+        memory_copy_fast(made->text, from, length);
         return made;
 }
 
@@ -1644,10 +1644,10 @@ static b32 awk_compare(awk_value address_to left, awk_value address_to right)
         awk_text address_to a = awk_to_text(left);
         awk_text address_to b = awk_to_text(right);
         positive shortest = a->length < b->length ? a->length : b->length;
+        b32 order = memory_compare(a->text, b->text, shortest);
 
-        for (positive i = 0; i < shortest; i++)
-                if (a->text[i] != b->text[i])
-                        return a->text[i] < b->text[i] ? -1 : 1;
+        if (order)
+                return order < 0 ? -1 : 1;
 
         return a->length == b->length ? 0 : (a->length < b->length ? -1 : 1);
 }
@@ -2090,10 +2090,12 @@ static fn awk_piece_add(positive start, positive length)
         awk_piece_count++;
 }
 
-static bool awk_is_blank(p8 character)
-{
-        return character == ' ' || character == '\t' || character == '\n';
-}
+/*
+        The two byte sets the default separator is made of, built once at
+        startup because building one costs more than the scan it drives.
+*/
+static b8 awk_blank_bytes[STRING_SET_BYTES];
+static b8 awk_field_bytes[STRING_SET_BYTES];
 
 /*
         One splitter, for fields and for split().
@@ -2102,6 +2104,9 @@ static bool awk_is_blank(p8 character)
         twice: leading and trailing blanks are not separators at all, and a
         run of them is one. Any other single character is itself and not a
         pattern -- -F. cuts on dots, not on everything.
+
+        Every caller hands over an awk_text body, so the terminator at
+        text[length] is what stops a span that is told no length.
 */
 static fn awk_split_pieces(string_address text, positive length, string_address separator,
                            positive separator_length, bool paragraph, bool as_pattern)
@@ -2114,16 +2119,19 @@ static fn awk_split_pieces(string_address text, positive length, string_address 
 
                 while (at < length)
                 {
-                        while (at < length && awk_is_blank(text[at]))
-                                at++;
+                        at += string_span(text + at, awk_blank_bytes);
 
-                        if (at == length)
+                        if (at >= length)
                                 break;
 
                         positive start = at;
 
-                        while (at < length && !awk_is_blank(text[at]))
-                                at++;
+                        at += string_span(text + at, awk_field_bytes);
+
+                        // A null byte inside a record is a byte of the field,
+                        // and it is the one thing that stops a span early.
+                        while (at < length && !text[at])
+                                at += 1 + string_span(text + at + 1, awk_field_bytes);
 
                         awk_piece_add(start, at - start);
                 }
@@ -2142,12 +2150,30 @@ static fn awk_split_pieces(string_address text, positive length, string_address 
                 return;
         }
 
+        if (separator_length == 1 && !as_pattern && !paragraph)
+        {
+                positive start = 0;
+                p8 address_to cut;
+
+                while ((cut = (p8 address_to)memory_first_of(text + start, separator[0],
+                                                             length - start)))
+                {
+                        awk_piece_add(start, (positive)(cut - text) - start);
+                        start = (positive)(cut - text) + 1;
+                }
+
+                awk_piece_add(start, length - start);
+                return;
+        }
+
+        // The same cut with a newline for a second stop byte, which is one
+        // more than a single hunt takes.
         if (separator_length == 1 && !as_pattern)
         {
                 positive start = 0;
 
                 for (positive at = 0; at < length; at++)
-                        if (text[at] == separator[0] || (paragraph && text[at] == '\n'))
+                        if (text[at] == separator[0] || text[at] == '\n')
                         {
                                 awk_piece_add(start, at - start);
                                 start = at + 1;
@@ -2302,11 +2328,11 @@ static fn awk_record_rebuild()
 
                 if (i > 1)
                 {
-                        memory_copy(made->text + at, separator, length);
+                        memory_copy_fast(made->text + at, separator, length);
                         at += length;
                 }
 
-                memory_copy(made->text + at, piece->text, piece->length);
+                memory_copy_fast(made->text + at, piece->text, piece->length);
                 at += piece->length;
         }
 
@@ -2472,7 +2498,7 @@ static fn awk_writer_put(awk_writer address_to which, string_address data, posit
         if (which->used + length > sizeof(which->buffer))
                 awk_writer_flush(which);
 
-        memory_copy(which->buffer + which->used, data, length);
+        memory_copy_fast(which->buffer + which->used, data, length);
         which->used += length;
 }
 
@@ -2637,7 +2663,7 @@ static fn awk_reader_room(awk_reader address_to which, positive want)
         p8 address_to made = (p8 address_to)awk_take(room);
 
         if (which->filled > which->at)
-                memory_copy(made, which->data + which->at, which->filled - which->at);
+                memory_copy_fast(made, which->data + which->at, which->filled - which->at);
 
         which->filled -= which->at;
         which->at = 0;
@@ -2851,17 +2877,17 @@ static bool awk_read_record(awk_reader address_to which, awk_text address_to add
 
                 for (;;)
                 {
-                        while (which->at + scan + 1 < which->filled)
-                        {
-                                if (which->data[which->at + scan] == '\n' &&
-                                    which->data[which->at + scan + 1] == '\n')
-                                {
-                                        found = true;
-                                        break;
-                                }
+                        p8 address_to cut = (p8 address_to)memory_search(
+                            which->data + which->at + scan,
+                            which->filled - which->at - scan, "\n\n", 2);
 
-                                scan++;
+                        if (cut)
+                        {
+                                scan = (positive)(cut - (which->data + which->at));
+                                found = true;
                         }
+                        else
+                                scan = which->filled - which->at - 1;
 
                         if (found || !awk_reader_fill(which))
                                 break;
@@ -2886,11 +2912,19 @@ static bool awk_read_record(awk_reader address_to which, awk_text address_to add
 
                 for (;;)
                 {
-                        while (which->at + scan < which->filled &&
-                               which->data[which->at + scan] != separator[0])
-                                scan++;
+                        p8 address_to cut = (p8 address_to)memory_first_of(
+                            which->data + which->at + scan, separator[0],
+                            which->filled - which->at - scan);
 
-                        if (which->at + scan < which->filled || !awk_reader_fill(which))
+                        if (cut)
+                        {
+                                scan = (positive)(cut - (which->data + which->at));
+                                break;
+                        }
+
+                        scan = which->filled - which->at;
+
+                        if (!awk_reader_fill(which))
                                 break;
                 }
 
@@ -2983,7 +3017,7 @@ static fn awk_builder_room(awk_builder address_to build, positive want)
 
         p8 address_to made = (p8 address_to)awk_take(room);
 
-        memory_copy(made, build->data, build->used);
+        memory_copy_fast(made, build->data, build->used);
 
         if (build->heap)
                 awk_give(build->data);
@@ -2996,7 +3030,7 @@ static fn awk_builder_room(awk_builder address_to build, positive want)
 static fn awk_builder_put(awk_builder address_to build, string_address data, positive length)
 {
         awk_builder_room(build, build->used + length + 1);
-        memory_copy(build->data + build->used, data, length);
+        memory_copy_fast(build->data + build->used, data, length);
         build->used += length;
 }
 
@@ -5666,8 +5700,8 @@ static fn awk_eval(awk_node address_to node, awk_value address_to out)
                 awk_text address_to right = awk_eval_text(node->b);
                 awk_text address_to made = awk_text_room(left->length + right->length);
 
-                memory_copy(made->text, left->text, left->length);
-                memory_copy(made->text + left->length, right->text, right->length);
+                memory_copy_fast(made->text, left->text, left->length);
+                memory_copy_fast(made->text + left->length, right->text, right->length);
                 awk_text_drop(left);
                 awk_text_drop(right);
                 awk_set_text(out, made);
@@ -6005,12 +6039,13 @@ static fn awk_builtin(awk_node address_to node, awk_value address_to out)
                 positive answer = 0;
 
                 if (want->length <= text->length)
-                        for (positive i = 0; i + want->length <= text->length; i++)
-                                if (!memory_compare(text->text + i, want->text, want->length))
-                                {
-                                        answer = i + 1;
-                                        break;
-                                }
+                {
+                        p8 address_to at = (p8 address_to)memory_search(
+                            text->text, text->length, want->text, want->length);
+
+                        if (at)
+                                answer = (positive)(at - text->text) + 1;
+                }
 
                 awk_text_drop(text);
                 awk_text_drop(want);
@@ -7027,6 +7062,14 @@ static fn awk_start()
         awk_not_a_number = awk_from_bits((positive)0xfff8000000000000ull);
         awk_returned.state = AWK_UNSET;
         awk_field_nothing.state = AWK_UNSET;
+
+        string_set_add(awk_blank_bytes, " \t\n");
+        memory_fill(awk_field_bytes, 1, sizeof(awk_field_bytes));
+        awk_field_bytes[0] = 0;
+        awk_field_bytes[' '] = 0;
+        awk_field_bytes['\t'] = 0;
+        awk_field_bytes['\n'] = 0;
+
         awk_standard_out.handle = 1;
         awk_standard_out.used = 0;
         awk_standard_out.live = true;
@@ -7073,10 +7116,7 @@ static fn awk_start()
         for (b32 i = 0; program_environment(i); i++)
         {
                 string_address entry = program_environment(i);
-                positive at = 0;
-
-                while (entry[at] && entry[at] != '=')
-                        at++;
+                positive at = (positive)(string_first_of_or_end(entry, '=') - entry);
 
                 if (!entry[at])
                         continue;
