@@ -1041,7 +1041,16 @@ static b32 parse_for()
                 parse_nodes[index].flags = 1;
                 parse_position++;
 
-                while (parse_look(0)->kind == PT_WORD && !parse_word_is(0, "do"))
+                /*
+                        The list ends at the separator, not at the first word
+                        spelled "do".
+
+                        POSIX puts a semicolon or a newline between the list
+                        and the do, so "do" among the words is a word like any
+                        other -- and stopping at it made "for i in then do"
+                        walk one item and then fail to find its own do.
+                */
+                while (parse_look(0)->kind == PT_WORD)
                 {
                         parse_attach_word(index, parse_look(0)->text);
                         parse_position++;

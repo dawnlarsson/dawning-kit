@@ -601,6 +601,12 @@ answer 'case dash last'   'case - in [a-]) echo yes;; *) echo no;; esac'
 answer 'while read'      'printf "1\n2\n" | while read v; do echo "[$v]"; done'
 answer 'until once'      'until true; do echo no; done; echo done'
 answer 'for nothing'     'for i in; do echo $i; done; echo done'
+# A reserved word is only reserved where a command name was expected, and the
+# list of a for loop is not that place. The list ends at the separator, so
+# "for i in then do; ..." walks two items and finds its own do after them.
+answer 'for a word do'    'for i in then do; do echo $i; done'
+answer 'for a word done'  'for i in done esac fi; do echo $i; done'
+answer 'for wants the semi' 'for i in a b do echo x; done'
 answer 'glob no match'   'cd /tmp; for i in nosuchglob*; do echo "$i"; done'
 
 # A for loop expands its list exactly as a command expands its arguments:
@@ -987,6 +993,12 @@ differs 'escaped pattern' 'yes|' 0 'case aXb in a\*b) echo yes;; *) echo no;; es
 # echo drops an argument that expanded to nothing rather than writing the
 # separator around it, so "echo '' x" is one byte short.
 differs 'echo an empty word' 'x|' 0 'echo "" x'
+
+# A line the language is not finished with waits for the rest of it, and at
+# the end of the input there is no rest: dash calls each of these a syntax
+# error and this says nothing.
+differs 'case never closed' '' 0 'case x in x) echo m esac'
+differs 'twice negated'  '0|' 0 '! ! true; echo $?'
 
 differs 'recursion has a floor' '' 1 'f() { [ $1 -le 0 ] && { echo bottom; return; }; f $(($1-1)); }; f 300'
 
