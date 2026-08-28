@@ -23,10 +23,14 @@
 #                   today. Written down rather than left out, so that closing
 #                   the gap fails here and says so.
 #         generated a fixed cross product of form, value and IFS rather than a
-#                   list somebody thought of. Every field is printed inside
-#                   brackets, because the failure a written list misses is a
-#                   word that came out with the right bytes in the wrong
-#                   number of fields.
+#                   list somebody thought of.
+#
+#       Every field is printed inside brackets, because the failure a written
+#       list misses is a word that came out with the right bytes in the wrong
+#       number of fields. The END after it is not decoration: printf with no
+#       arguments and printf with one empty argument both write [], so without
+#       a sentinel the one distinction that "$@" turns on -- no field against
+#       one empty field -- is the one thing the brackets cannot show.
 #
 set -u
 
@@ -201,31 +205,31 @@ differs()
 section quoting
 
 group single
-check 'holds a dollar'  "x=v; printf '[%s]' '\$x'; echo"
-check 'holds a star'    "cd $tree; printf '[%s]' '*'; echo"
-check 'holds a blank'   "printf '[%s]' 'a b'; echo"
-check 'holds a brace'   "printf '[%s]' '\${x}'; echo"
-check 'holds a tick'    "printf '[%s]' '\`echo x\`'; echo"
+check 'holds a dollar'  "x=v; printf '[%s]' '\$x' END; echo"
+check 'holds a star'    "cd $tree; printf '[%s]' '*' END; echo"
+check 'holds a blank'   "printf '[%s]' 'a b' END; echo"
+check 'holds a brace'   "printf '[%s]' '\${x}' END; echo"
+check 'holds a tick'    "printf '[%s]' '\`echo x\`' END; echo"
 
 group double
-check 'backslash dollar' 'printf "[%s]" "a\$b"; echo'
-check 'backslash quote'  'printf "[%s]" "a\"b"; echo'
-check 'backslash tick'   'printf "[%s]" "a\`b"; echo'
-check 'backslash twice'  'printf "[%s]" "a\\\\b"; echo'
+check 'backslash dollar' 'printf "[%s]" "a\$b" END; echo'
+check 'backslash quote'  'printf "[%s]" "a\"b" END; echo'
+check 'backslash tick'   'printf "[%s]" "a\`b" END; echo'
+check 'backslash twice'  'printf "[%s]" "a\\\\b" END; echo'
 # A backslash in double quotes is special only in front of five bytes, and
 # stays a backslash in front of everything else.
-check 'backslash plain'  'printf "[%s]" "a\qb"; echo'
-check 'backslash digit'  'printf "[%s]" "a\1b"; echo'
-check 'single inside'    "printf '[%s]' \"a'b\"; echo"
-check 'star inside'      "cd $tree; printf '[%s]' \"*\"; echo"
-check 'adjacent'         'printf "[%s]" a"b"c; echo'
-check 'empty word'       'printf "[%s]" ""; echo'
-check 'empty single'     "printf '[%s]' ''; echo"
+check 'backslash plain'  'printf "[%s]" "a\qb" END; echo'
+check 'backslash digit'  'printf "[%s]" "a\1b" END; echo'
+check 'single inside'    "printf '[%s]' \"a'b\" END; echo"
+check 'star inside'      "cd $tree; printf '[%s]' \"*\" END; echo"
+check 'adjacent'         'printf "[%s]" a"b"c END; echo'
+check 'empty word'       'printf "[%s]" "" END; echo'
+check 'empty single'     "printf '[%s]' '' END; echo"
 
 group escape
-check 'bare backslash'  'printf "[%s]" a\ b; echo'
-check 'escaped star'    "cd $tree; printf '[%s]' \\*; echo"
-check 'escaped dollar'  'x=v; printf "[%s]" \$x; echo'
+check 'bare backslash'  'printf "[%s]" a\ b END; echo'
+check 'escaped star'    "cd $tree; printf '[%s]' \\* END; echo"
+check 'escaped dollar'  'x=v; printf "[%s]" \$x END; echo'
 
 #
 #       Parameters, in the eleven forms and in the places a name can stand.
@@ -234,26 +238,26 @@ check 'escaped dollar'  'x=v; printf "[%s]" \$x; echo'
 section parameter
 
 group simple
-answer 'plain'          'x=v; printf "[%s]" $x; echo'
-answer 'braced'         'x=v; printf "[%s]" ${x}; echo'
-answer 'unset alone'    'printf "[%s]" $nosuch; echo'
-answer 'unset in word'  'printf "[%s]" a${nosuch}b; echo'
-answer 'length'         'x=hello; printf "[%s]" ${#x}; echo'
-answer 'length unset'   'printf "[%s]" ${#nosuch}; echo'
-answer 'digits'         'set -- a b c; printf "[%s]" $1 $2 $3; echo'
-answer 'braced digits'  'set -- a b c; printf "[%s]" ${1}${2}; echo'
-answer 'count'          'set -- a b c; printf "[%s]" $#; echo'
-answer 'name in name'   'x=v; y=x; printf "[%s]" ${y}; echo'
+answer 'plain'          'x=v; printf "[%s]" $x END; echo'
+answer 'braced'         'x=v; printf "[%s]" ${x} END; echo'
+answer 'unset alone'    'printf "[%s]" $nosuch END; echo'
+answer 'unset in word'  'printf "[%s]" a${nosuch}b END; echo'
+answer 'length'         'x=hello; printf "[%s]" ${#x} END; echo'
+answer 'length unset'   'printf "[%s]" ${#nosuch} END; echo'
+answer 'digits'         'set -- a b c; printf "[%s]" $1 $2 $3 END; echo'
+answer 'braced digits'  'set -- a b c; printf "[%s]" ${1}${2} END; echo'
+answer 'count'          'set -- a b c; printf "[%s]" $# END; echo'
+answer 'name in name'   'x=v; y=x; printf "[%s]" ${y} END; echo'
 
 group default
-answer 'dash set'       'x=v; printf "[%s]" ${x-d}; echo'
-answer 'dash empty'     'x=; printf "[%s]" ${x-d}; echo'
-answer 'dash unset'     'printf "[%s]" ${nosuch-d}; echo'
-answer 'colon dash'     'x=; printf "[%s]" ${x:-d}; echo'
-answer 'plus set'       'x=v; printf "[%s]" ${x+p}; echo'
-answer 'plus empty'     'x=; printf "[%s]" ${x+p} ${x:+p}; echo'
-answer 'assign'         'printf "[%s]" ${x=d} "$x"; echo'
-answer 'colon assign'   'x=; printf "[%s]" ${x:=d} "$x"; echo'
+answer 'dash set'       'x=v; printf "[%s]" ${x-d} END; echo'
+answer 'dash empty'     'x=; printf "[%s]" ${x-d} END; echo'
+answer 'dash unset'     'printf "[%s]" ${nosuch-d} END; echo'
+answer 'colon dash'     'x=; printf "[%s]" ${x:-d} END; echo'
+answer 'plus set'       'x=v; printf "[%s]" ${x+p} END; echo'
+answer 'plus empty'     'x=; printf "[%s]" ${x+p} ${x:+p} END; echo'
+answer 'assign'         'printf "[%s]" ${x=d} "$x" END; echo'
+answer 'colon assign'   'x=; printf "[%s]" ${x:=d} "$x" END; echo'
 answer 'complain'       'printf "[%s]" ${nosuch?} ; echo after'
 answer 'complain colon' 'x=; printf "[%s]" ${x:?gone} ; echo after'
 #       A colon says one of the four is coming and nothing else. ${x:1:1} is
@@ -264,85 +268,107 @@ answer 'no offset'      'x=abc; echo "${x:1}"; echo after'
 answer 'no bare colon'  'x=abc; echo "${x:}"; echo after'
 answer 'no colon trim'  'x=abc; echo "${x:%b}"; echo after'
 answer 'no at offset'   'set -- a b; echo "${@:1}"; echo after'
-answer 'word expands'   'y=w; printf "[%s]" ${nosuch-$y}; echo'
-answer 'word is a word' 'printf "[%s]" ${nosuch-"a  b"}; echo'
+answer 'word expands'   'y=w; printf "[%s]" ${nosuch-$y} END; echo'
+answer 'word is a word' 'printf "[%s]" ${nosuch-"a  b"} END; echo'
 #       The tail of an unquoted one is the result of an expansion like any
 #       other, so it splits: ${x-D E} is two fields and "${x-D E}" is one.
-answer 'the word splits' 'printf "[%s]" ${nosuch-D E}; echo'
-answer 'the word holds'  'printf "[%s]" "${nosuch-D E}"; echo'
-answer 'plus splits'     'x=v; printf "[%s]" ${x+D E}; echo'
-answer 'splits on ifs'   'IFS=:; printf "[%s]" ${nosuch-D:E}; echo'
-answer 'assign splits'   'printf "[%s]" ${x=D E} "$x"; echo'
-answer 'nested inside'  'printf "[%s]" ${nosuch-${also-deep}}; echo'
+answer 'the word splits' 'printf "[%s]" ${nosuch-D E} END; echo'
+answer 'the word holds'  'printf "[%s]" "${nosuch-D E}" END; echo'
+answer 'plus splits'     'x=v; printf "[%s]" ${x+D E} END; echo'
+answer 'splits on ifs'   'IFS=:; printf "[%s]" ${nosuch-D:E} END; echo'
+answer 'assign splits'   'printf "[%s]" ${x=D E} "$x" END; echo'
+answer 'nested inside'  'printf "[%s]" ${nosuch-${also-deep}} END; echo'
 
 group trim
-answer 'shortest head'  'x=a.b.c; printf "[%s]" ${x#*.}; echo'
-answer 'longest head'   'x=a.b.c; printf "[%s]" ${x##*.}; echo'
-answer 'shortest tail'  'x=a.b.c; printf "[%s]" ${x%.*}; echo'
-answer 'longest tail'   'x=a.b.c; printf "[%s]" ${x%%.*}; echo'
-answer 'no match'       'x=abc; printf "[%s]" ${x#z}; echo'
-answer 'whole value'    'x=abc; printf "[%s]" ${x#abc}; echo'
-answer 'a question'     'x=abc; printf "[%s]" ${x#?}; echo'
-answer 'a set'          'x=abc; printf "[%s]" ${x%[bc]}; echo'
+answer 'shortest head'  'x=a.b.c; printf "[%s]" ${x#*.} END; echo'
+answer 'longest head'   'x=a.b.c; printf "[%s]" ${x##*.} END; echo'
+answer 'shortest tail'  'x=a.b.c; printf "[%s]" ${x%.*} END; echo'
+answer 'longest tail'   'x=a.b.c; printf "[%s]" ${x%%.*} END; echo'
+answer 'no match'       'x=abc; printf "[%s]" ${x#z} END; echo'
+answer 'whole value'    'x=abc; printf "[%s]" ${x#abc} END; echo'
+answer 'a question'     'x=abc; printf "[%s]" ${x#?} END; echo'
+answer 'a set'          'x=abc; printf "[%s]" ${x%[bc]} END; echo'
 #       The pattern is not inside the quotes around the substitution, which
 #       is where "${x##*/}" used to hand back the whole path: every byte of
 #       the pattern was marked quoted, so the star matched only a star.
-answer 'quoted head'    'x=/a/b/c; printf "[%s]" "${x##*/}"; echo'
-answer 'quoted tail'    'x=a.b.c; printf "[%s]" "${x%%.*}"; echo'
-answer 'quoted middle'  'x=abc; printf "[%s]" "${x#*b}"; echo'
-answer 'quotes in it'   "x=abc; printf '[%s]' \"\${x#'a'}\"; echo"
+answer 'quoted head'    'x=/a/b/c; printf "[%s]" "${x##*/}" END; echo'
+answer 'quoted tail'    'x=a.b.c; printf "[%s]" "${x%%.*}" END; echo'
+answer 'quoted middle'  'x=abc; printf "[%s]" "${x#*b}" END; echo'
+answer 'quotes in it'   "x=abc; printf '[%s]' \"\${x#'a'}\" END; echo"
 #       And a star that was written quoted is still a star to the eye and a
 #       byte to the matcher, inside the enclosing quotes as much as outside.
-answer 'escaped star'   'x="a*c"; printf "[%s]" "${x#a\*}" ${x#a\*}; echo'
-answer 'pattern by name' 'x=/a/b/c; y="*/"; printf "[%s]" "${x#$y}" "${x#"$y"}"; echo'
+answer 'escaped star'   'x="a*c"; printf "[%s]" "${x#a\*}" ${x#a\*} END; echo'
+answer 'pattern by name' 'x=/a/b/c; y="*/"; printf "[%s]" "${x#$y}" "${x#"$y"}" END; echo'
 
 group special
-answer 'status'         'false; printf "[%s]" $?; true; printf "[%s]" $?; echo'
-answer 'status quoted'  'false; printf "[%s]" "$?"; echo'
-answer 'status braced'  'false; printf "[%s]" ${?}; echo'
-answer 'status in word' 'false; printf "[%s]" a$?b; echo'
-answer 'count in word'  'set -- a b; printf "[%s]" x${#}y; echo'
+answer 'status'         'false; printf "[%s]" $?; true; printf "[%s]" $? END; echo'
+answer 'status quoted'  'false; printf "[%s]" "$?" END; echo'
+answer 'status braced'  'false; printf "[%s]" ${?} END; echo'
+answer 'status in word' 'false; printf "[%s]" a$?b END; echo'
+answer 'count in word'  'set -- a b; printf "[%s]" x${#}y END; echo'
 answer 'pid is a number' 'case $$ in [0-9]*) echo yes;; *) echo no;; esac'
 answer 'pid twice'      'a=$$; b=$$; [ "$a" = "$b" ] && echo same'
-answer 'no last job'    'printf "[%s]" "$!"; echo'
+answer 'no last job'    'printf "[%s]" "$!" END; echo'
 
 group at and star
-answer 'at bare'        'set -- a b c; printf "[%s]" $@; echo'
-answer 'at quoted'      'set -- "a b" c; printf "[%s]" "$@"; echo'
-answer 'at empty'       'set --; printf "[%s]" "$@"; echo'
-answer 'at one'         'set -- "a b"; printf "[%s]" "$@"; echo'
-answer 'at joined'      'set -- a b; printf "[%s]" "x$@y"; echo'
-answer 'star quoted'    'set -- "a b" c; printf "[%s]" "$*"; echo'
-answer 'star bare'      'set -- "a b" c; printf "[%s]" $*; echo'
-answer 'star separator' 'set -- a b c; IFS=-; printf "[%s]" "$*"; echo'
-answer 'star no ifs'    'set -- a b c; IFS=; printf "[%s]" "$*"; echo'
+answer 'at bare'        'set -- a b c; printf "[%s]" $@ END; echo'
+answer 'at quoted'      'set -- "a b" c; printf "[%s]" "$@" END; echo'
+#       A word that is only "$@" with no parameters is no word: f "$@" hands
+#       a function nothing, where it used to hand it one empty argument.
+#       Everywhere else in a word the quotes still leave an empty field.
+answer 'at empty'       'set --; printf "[%s]" "$@" END; echo'
+answer 'at empty braced' 'set --; printf "[%s]" "${@}" END; echo'
+answer 'at empty twice' 'set --; printf "[%s]" "$@" "$@" END; echo'
+answer 'at empty counted' 'set --; f() { echo $#; }; f "$@"'
+answer 'at empty set'   'set --; set -- "$@"; echo $#'
+answer 'at empty joined' 'set --; printf "[%s]" x"$@" END; echo'
+answer 'at empty beside' 'set --; printf "[%s]" "$nosuch$@" END; echo'
+answer 'at empty doubled' 'set --; printf "[%s]" "$@$@" END; echo'
+answer 'star empty'     'set --; printf "[%s]" "$*" END; echo'
+answer 'empty word is one' 'printf "[%s]" "" END; echo'
+answer 'unset is none'  'printf "[%s]" $nosuch END; echo'
+answer 'unset quoted is one' 'printf "[%s]" "$nosuch" END; echo'
+answer 'at one'         'set -- "a b"; printf "[%s]" "$@" END; echo'
+answer 'at joined'      'set -- a b; printf "[%s]" "x$@y" END; echo'
+answer 'star quoted'    'set -- "a b" c; printf "[%s]" "$*" END; echo'
+answer 'star bare'      'set -- "a b" c; printf "[%s]" $* END; echo'
+answer 'star separator' 'set -- a b c; IFS=-; printf "[%s]" "$*" END; echo'
+answer 'star no ifs'    'set -- a b c; IFS=; printf "[%s]" "$*" END; echo'
 #       Unquoted, $* makes one field per parameter exactly as $@ does. It
 #       joins on the first byte of IFS and the join is split back apart,
 #       which is the same thing until IFS is empty.
-answer 'bare star no ifs' 'set -- a b c; IFS=; printf "[%s]" $*; echo'
-answer 'bare star splits' 'set -- "a b" c; IFS=; printf "[%s]" $*; echo'
+answer 'bare star no ifs' 'set -- a b c; IFS=; printf "[%s]" $* END; echo'
+answer 'bare star splits' 'set -- "a b" c; IFS=; printf "[%s]" $* END; echo'
 #       Unquoted, an empty parameter joins to nothing and splits to nothing,
 #       so it is no field. Quoted it is a field, and with IFS empty there is
 #       no join and no splitting and it is a field again.
-answer 'bare empty goes'  'set -- "" a; printf "[%s]" $@; echo'
-answer 'bare empty star'  'set -- "" a; printf "[%s]" $*; echo'
-answer 'quoted empty stays' 'set -- "" a; printf "[%s]" "$@"; echo'
-answer 'all empty'        'set -- "" ""; printf "[%s]" $@; echo'
-answer 'empty at the end' 'set -- "a b" ""; printf "[%s]" $@; echo'
-answer 'a blank goes'     'set -- " " a; printf "[%s]" $@; echo'
-answer 'empty no ifs'     'set -- "" a; IFS=; printf "[%s]" $@; echo'
-answer 'empty colon ifs'  'set -- a "" b; IFS=:; printf "[%s]" $@; echo'
-answer 'at no ifs'      'set -- a b c; IFS=; printf "[%s]" "$@"; echo'
-answer 'braced at'      'set -- "a b" c; printf "[%s]" "${@}"; echo'
-answer 'braced star'    'set -- "a b" c; printf "[%s]" "${*}"; echo'
+answer 'bare empty goes'  'set -- "" a; printf "[%s]" $@ END; echo'
+answer 'bare empty star'  'set -- "" a; printf "[%s]" $* END; echo'
+answer 'quoted empty stays' 'set -- "" a; printf "[%s]" "$@" END; echo'
+answer 'all empty'        'set -- "" ""; printf "[%s]" $@ END; echo'
+answer 'empty at the end' 'set -- "a b" ""; printf "[%s]" $@ END; echo'
+answer 'a blank goes'     'set -- " " a; printf "[%s]" $@ END; echo'
+answer 'empty no ifs'     'set -- "" a; IFS=; printf "[%s]" $@ END; echo'
+answer 'empty colon ifs'  'set -- a "" b; IFS=:; printf "[%s]" $@ END; echo'
+answer 'at no ifs'      'set -- a b c; IFS=; printf "[%s]" "$@" END; echo'
+answer 'braced at'      'set -- "a b" c; printf "[%s]" "${@}" END; echo'
+answer 'braced star'    'set -- "a b" c; printf "[%s]" "${*}" END; echo'
 #       $@ and $* are set with nothing in them, not unset: the default is
 #       not what an empty parameter list falls back to.
-answer 'at unset'       'set --; printf "[%s]" "${@-none}"; echo'
-answer 'at unset bare'  'set --; printf "[%s]" ${@-none}; echo'
-answer 'star unset'     'set --; printf "[%s]" "${*-none}"; echo'
-answer 'at unset plus'  'set --; printf "[%s]" "${@+set}"; echo'
-answer 'at unset colon' 'set --; printf "[%s]" "${@:-none}"; echo'
-answer 'at after shift' 'set -- a b c; shift; printf "[%s]" "$@" $#; echo'
+answer 'at unset'       'set --; printf "[%s]" "${@-none}" END; echo'
+answer 'at unset bare'  'set --; printf "[%s]" ${@-none} END; echo'
+answer 'star unset'     'set --; printf "[%s]" "${*-none}" END; echo'
+answer 'at unset plus'  'set --; printf "[%s]" "${@+set}" END; echo'
+answer 'at unset colon' 'set --; printf "[%s]" "${@:-none}" END; echo'
+answer 'at after shift' 'set -- a b c; shift; printf "[%s]" "$@" $# END; echo'
+answer 'trim all'       'set -- aX aY; printf "[%s]" ${@#a} END; echo'
+answer 'trim all quoted' 'set -- aX aY; printf "[%s]" "${@#a}" END; echo'
+answer 'trim all star'  'set -- aX aY; printf "[%s]" ${*%Y} END; echo'
+answer 'trim the join'  'set -- ab cb db eb; printf "[%s]" ${*%b} END; echo'
+answer 'trim the head'  'set -- xa xb xc; printf "[%s]" ${@#x} END; echo'
+answer 'trim all no ifs' 'set -- aX aY; IFS=; printf "[%s]" ${@#a} END; echo'
+answer 'trim all colon' 'set -- aX aY; IFS=:; printf "[%s]" ${@#a} END; echo'
+answer 'trim all blanks' 'set -- "a b" c; printf "[%s]" "${@#a}" END; echo'
 
 #
 #       Command substitution, in both spellings and nested.
@@ -351,18 +377,18 @@ answer 'at after shift' 'set -- a b c; shift; printf "[%s]" "$@" $#; echo'
 section command
 
 group substitution
-answer 'plain'          'printf "[%s]" $(echo x); echo'
-answer 'quoted'         'printf "[%s]" "$(echo a b)"; echo'
-answer 'unquoted splits' 'printf "[%s]" $(echo a b); echo'
-answer 'backtick'       'printf "[%s]" `echo x`; echo'
-answer 'quotes inside'  'printf "[%s]" "$(echo "a b")"; echo'
-answer 'nested'         'printf "[%s]" "$(echo "$(echo deep)")"; echo'
-answer 'nested backtick' 'printf "[%s]" "`echo \`echo deep\``"; echo'
-answer 'mixed nesting'  'printf "[%s]" $(echo `echo x`); echo'
-answer 'newlines go'    'printf "[%s]" "$(printf "a\nb\n\n\n")"; echo'
-answer 'empty output'   'printf "[%s]" "$(true)"; echo'
-answer 'in the middle'  'printf "[%s]" a$(echo b)c; echo'
-answer 'a dollar out'   'printf "[%s]" "$(echo "\$x")"; echo'
+answer 'plain'          'printf "[%s]" $(echo x) END; echo'
+answer 'quoted'         'printf "[%s]" "$(echo a b)" END; echo'
+answer 'unquoted splits' 'printf "[%s]" $(echo a b) END; echo'
+answer 'backtick'       'printf "[%s]" `echo x` END; echo'
+answer 'quotes inside'  'printf "[%s]" "$(echo "a b")" END; echo'
+answer 'nested'         'printf "[%s]" "$(echo "$(echo deep)")" END; echo'
+answer 'nested backtick' 'printf "[%s]" "`echo \`echo deep\``" END; echo'
+answer 'mixed nesting'  'printf "[%s]" $(echo `echo x`) END; echo'
+answer 'newlines go'    'printf "[%s]" "$(printf "a\nb\n\n\n")" END; echo'
+answer 'empty output'   'printf "[%s]" "$(true)" END; echo'
+answer 'in the middle'  'printf "[%s]" a$(echo b)c END; echo'
+answer 'a dollar out'   'printf "[%s]" "$(echo "\$x")" END; echo'
 
 #
 #       Arithmetic.
@@ -431,25 +457,25 @@ answer 'under the floor' 'echo $((-9223372036854775807 - 1))'
 section splitting
 
 group ifs
-answer 'default blanks' 'x="a b	c"; printf "[%s]" $x; echo'
-answer 'runs are one'   'x="a   b"; printf "[%s]" $x; echo'
-answer 'leading blanks' 'x="   a"; printf "[%s]" $x; echo'
-answer 'trailing blanks' 'x="a   "; printf "[%s]" $x; echo'
-answer 'all blanks'     'x="   "; printf "[%s]" $x; echo'
-answer 'a colon'        'IFS=:; x="a:b:c"; printf "[%s]" $x; echo'
-answer 'colon empty'    'IFS=:; x="a::b"; printf "[%s]" $x; echo'
-answer 'colon leading'  'IFS=:; x=":a"; printf "[%s]" $x; echo'
-answer 'colon trailing' 'IFS=:; x="a:"; printf "[%s]" $x; echo'
-answer 'colon alone'    'IFS=:; x=":"; printf "[%s]" $x; echo'
-answer 'blank and colon' 'IFS=" :"; x="a : b"; printf "[%s]" $x; echo'
-answer 'blank then colon' 'IFS=" :"; x="a  :  b"; printf "[%s]" $x; echo'
-answer 'colon then blank' 'IFS=" :"; x="a::b"; printf "[%s]" $x; echo'
-answer 'ifs empty'      'IFS=; x="a b"; printf "[%s]" $x; echo'
-answer 'ifs restored'   'IFS=:; IFS=" "; x="a:b c"; printf "[%s]" $x; echo'
-answer 'quoted holds'   'IFS=:; x="a:b"; printf "[%s]" "$x"; echo'
-answer 'literal blank'  'printf "[%s]" a" "b; echo'
-answer 'only expansions split' 'x="a b"; printf "[%s]" "$x"c; echo'
-answer 'substitution splits' 'IFS=:; printf "[%s]" $(echo a:b); echo'
+answer 'default blanks' 'x="a b	c"; printf "[%s]" $x END; echo'
+answer 'runs are one'   'x="a   b"; printf "[%s]" $x END; echo'
+answer 'leading blanks' 'x="   a"; printf "[%s]" $x END; echo'
+answer 'trailing blanks' 'x="a   "; printf "[%s]" $x END; echo'
+answer 'all blanks'     'x="   "; printf "[%s]" $x END; echo'
+answer 'a colon'        'IFS=:; x="a:b:c"; printf "[%s]" $x END; echo'
+answer 'colon empty'    'IFS=:; x="a::b"; printf "[%s]" $x END; echo'
+answer 'colon leading'  'IFS=:; x=":a"; printf "[%s]" $x END; echo'
+answer 'colon trailing' 'IFS=:; x="a:"; printf "[%s]" $x END; echo'
+answer 'colon alone'    'IFS=:; x=":"; printf "[%s]" $x END; echo'
+answer 'blank and colon' 'IFS=" :"; x="a : b"; printf "[%s]" $x END; echo'
+answer 'blank then colon' 'IFS=" :"; x="a  :  b"; printf "[%s]" $x END; echo'
+answer 'colon then blank' 'IFS=" :"; x="a::b"; printf "[%s]" $x END; echo'
+answer 'ifs empty'      'IFS=; x="a b"; printf "[%s]" $x END; echo'
+answer 'ifs restored'   'IFS=:; IFS=" "; x="a:b c"; printf "[%s]" $x END; echo'
+answer 'quoted holds'   'IFS=:; x="a:b"; printf "[%s]" "$x" END; echo'
+answer 'literal blank'  'printf "[%s]" a" "b END; echo'
+answer 'only expansions split' 'x="a b"; printf "[%s]" "$x"c END; echo'
+answer 'substitution splits' 'IFS=:; printf "[%s]" $(echo a:b) END; echo'
 
 #
 #       Pathname expansion.
@@ -458,53 +484,53 @@ answer 'substitution splits' 'IFS=:; printf "[%s]" $(echo a:b); echo'
 section glob
 
 group patterns
-answer 'a star'         "cd $tree; printf '[%s]' *; echo"
-answer 'a question'     "cd $tree; printf '[%s]' ?one; echo"
-answer 'a suffix'       "cd $tree; printf '[%s]' *.txt; echo"
-answer 'a prefix'       "cd $tree; printf '[%s]' a*; echo"
-answer 'in the middle'  "cd $tree; printf '[%s]' a*t; echo"
-answer 'a directory'    "cd $tree; printf '[%s]' */; echo"
-answer 'a path'         "printf '[%s]' $tree/a*; echo"
-answer 'no match'       "cd $tree; printf '[%s]' nosuch*; echo"
-answer 'no match path'  "cd $tree; printf '[%s]' nosuch*/x; echo"
+answer 'a star'         "cd $tree; printf '[%s]' * END; echo"
+answer 'a question'     "cd $tree; printf '[%s]' ?one END; echo"
+answer 'a suffix'       "cd $tree; printf '[%s]' *.txt END; echo"
+answer 'a prefix'       "cd $tree; printf '[%s]' a* END; echo"
+answer 'in the middle'  "cd $tree; printf '[%s]' a*t END; echo"
+answer 'a directory'    "cd $tree; printf '[%s]' */ END; echo"
+answer 'a path'         "printf '[%s]' $tree/a* END; echo"
+answer 'no match'       "cd $tree; printf '[%s]' nosuch* END; echo"
+answer 'no match path'  "cd $tree; printf '[%s]' nosuch*/x END; echo"
 
 group sets
-answer 'a range'        "cd $tree; printf '[%s]' [a-b]*; echo"
-answer 'a list'         "cd $tree; printf '[%s]' [ab].txt; echo"
-answer 'negated'        "cd $tree; printf '[%s]' [!a]*.txt; echo"
-answer 'negated caret'  "cd $tree; printf '[%s]' [^a]*.txt; echo"
-answer 'a dash inside'  "cd $tree; printf '[%s]' a[-.]*; echo"
-answer 'unclosed is a byte' "cd $tree; printf '[%s]' '[ab'; echo"
+answer 'a range'        "cd $tree; printf '[%s]' [a-b]* END; echo"
+answer 'a list'         "cd $tree; printf '[%s]' [ab].txt END; echo"
+answer 'negated'        "cd $tree; printf '[%s]' [!a]*.txt END; echo"
+answer 'negated caret'  "cd $tree; printf '[%s]' [^a]*.txt END; echo"
+answer 'a dash inside'  "cd $tree; printf '[%s]' a[-.]* END; echo"
+answer 'unclosed is a byte' "cd $tree; printf '[%s]' '[ab' END; echo"
 #       [[:alpha:]] used to be a set holding a bracket, a colon and five
 #       letters, because the ] that closes the class was read as the ] that
 #       closes the set.
-answer 'class alpha'    "cd $tree; printf '[%s]' [[:alpha:]]*; echo"
-answer 'class digit'    "cd $tree; printf '[%s]' [[:digit:]]*; echo"
-answer 'class upper'    "cd $tree; printf '[%s]' [[:upper:]]*; echo"
-answer 'class lower'    "cd $tree; printf '[%s]' [[:lower:]]*; echo"
-answer 'class alnum'    "cd $tree; printf '[%s]' [[:alnum:]]*; echo"
-answer 'class punct'    "cd $tree; printf '[%s]' *[[:punct:]]*; echo"
-answer 'class xdigit'   "cd $tree; printf '[%s]' [[:xdigit:]]*; echo"
-answer 'two classes'    "cd $tree; printf '[%s]' [[:upper:][:digit:]]*; echo"
-answer 'class negated'  "cd $tree; printf '[%s]' [![:digit:]]*.txt; echo"
-answer 'class and byte' "cd $tree; printf '[%s]' [[:digit:]b]*.txt; echo"
-answer 'no such class'  "cd $tree; printf '[%s]' [[:nosuch:]]*; echo"
-answer 'class trims'    'x=abc9; printf "[%s]" ${x%[[:digit:]]}; echo'
+answer 'class alpha'    "cd $tree; printf '[%s]' [[:alpha:]]* END; echo"
+answer 'class digit'    "cd $tree; printf '[%s]' [[:digit:]]* END; echo"
+answer 'class upper'    "cd $tree; printf '[%s]' [[:upper:]]* END; echo"
+answer 'class lower'    "cd $tree; printf '[%s]' [[:lower:]]* END; echo"
+answer 'class alnum'    "cd $tree; printf '[%s]' [[:alnum:]]* END; echo"
+answer 'class punct'    "cd $tree; printf '[%s]' *[[:punct:]]* END; echo"
+answer 'class xdigit'   "cd $tree; printf '[%s]' [[:xdigit:]]* END; echo"
+answer 'two classes'    "cd $tree; printf '[%s]' [[:upper:][:digit:]]* END; echo"
+answer 'class negated'  "cd $tree; printf '[%s]' [![:digit:]]*.txt END; echo"
+answer 'class and byte' "cd $tree; printf '[%s]' [[:digit:]b]*.txt END; echo"
+answer 'no such class'  "cd $tree; printf '[%s]' [[:nosuch:]]* END; echo"
+answer 'class trims'    'x=abc9; printf "[%s]" ${x%[[:digit:]]} END; echo'
 
 group hidden
 #       A leading dot is not what a star matches, which is the one rule that
 #       keeps rm * out of the dot files.
-answer 'star skips dots' "cd $tree; printf '[%s]' *; echo"
-answer 'dot star'       "cd $tree; printf '[%s]' .*; echo"
-answer 'dot named'      "cd $tree; printf '[%s]' .h*; echo"
-answer 'a set is not a dot' "cd $tree; printf '[%s]' [.]*; echo"
+answer 'star skips dots' "cd $tree; printf '[%s]' * END; echo"
+answer 'dot star'       "cd $tree; printf '[%s]' .* END; echo"
+answer 'dot named'      "cd $tree; printf '[%s]' .h* END; echo"
+answer 'a set is not a dot' "cd $tree; printf '[%s]' [.]* END; echo"
 
 group quoted
-answer 'quoted star'    "cd $tree; printf '[%s]' '*'; echo"
-answer 'star by name'   "cd $tree; x='*'; printf '[%s]' \"\$x\"; echo"
-answer 'star from name' "cd $tree; x='*'; printf '[%s]' \$x; echo"
-answer 'half quoted'    "cd $tree; printf '[%s]' a'*'; echo"
-answer 'no glob flag'   "cd $tree; set -f; printf '[%s]' *; echo"
+answer 'quoted star'    "cd $tree; printf '[%s]' '*' END; echo"
+answer 'star by name'   "cd $tree; x='*'; printf '[%s]' \"\$x\" END; echo"
+answer 'star from name' "cd $tree; x='*'; printf '[%s]' \$x END; echo"
+answer 'half quoted'    "cd $tree; printf '[%s]' a'*' END; echo"
+answer 'no glob flag'   "cd $tree; set -f; printf '[%s]' * END; echo"
 
 #
 #       Tilde.
@@ -512,8 +538,8 @@ answer 'no glob flag'   "cd $tree; set -f; printf '[%s]' *; echo"
 
 section tilde
 group tilde
-answer 'only in front'  'printf "[%s]" a~ "~" "a~b"; echo'
-answer 'not after slash' 'printf "[%s]" /~; echo'
+answer 'only in front'  'printf "[%s]" a~ "~" "a~b" END; echo'
+answer 'not after slash' 'printf "[%s]" /~ END; echo'
 
 #
 #       What ours says where dash says something else.
@@ -535,6 +561,17 @@ differs 'a bad number'  '8|' 0 'echo $((08))'
 #       ++ and -- are here, which is one more than POSIX asks for.
 differs 'has increment' '1 2|' 0 'x=1; echo $((x++)) $x'
 
+group trim
+#       ${*%pat} and ${@%pat} take the parameters joined and cut the join, so
+#       set -- ab cb db eb loses one b and not four -- which is what POSIX
+#       says and what dash does. Where the pattern matches somewhere other
+#       than the end, dash cuts from there to the end of the join and ours
+#       cuts nothing; bash and ksh trim each parameter on its own and neither
+#       of the other two is that. There is no shape here that all three agree
+#       on, so this is written down rather than chased.
+differs 'the join is cut' '[ab][cd][END]|' 0 \
+        'set -- ab cd; printf "[%s]" ${*%b} END; echo'
+
 group tilde
 #       ~name wants a password file and the image this ships in has none, so
 #       the name is left standing rather than answered with a guess.
@@ -554,24 +591,26 @@ differs 'no home'       '~root|' 0 'echo ~root'
 
 section generated
 
-forms='printf "[%s]" $x
-printf "[%s]" "$x"
-printf "[%s]" a${x}b
-printf "[%s]" "a${x}b"
-printf "[%s]" ${x-D}
-printf "[%s]" "${x-D}"
-printf "[%s]" ${x:-D E}
-printf "[%s]" "${x:+Y Z}"
-printf "[%s]" ${x#a}
-printf "[%s]" "${x#a}"
-printf "[%s]" ${x##*b}
-printf "[%s]" "${x%c}"
-printf "[%s]" "${x%%*}"
-printf "[%s]" ${#x}
-set -- $x; printf "[%s]" "$@"; printf "(%s)" $#
-set -- $x; printf "[%s]" "$*"
-set -- $x; printf "[%s]" $*
-set -- "$x"; printf "[%s]" "$@"'
+forms='printf "[%s]" $x END
+printf "[%s]" "$x" END
+printf "[%s]" a${x}b END
+printf "[%s]" "a${x}b" END
+printf "[%s]" ${x-D} END
+printf "[%s]" "${x-D}" END
+printf "[%s]" ${x:-D E} END
+printf "[%s]" "${x:+Y Z}" END
+printf "[%s]" ${x#a} END
+printf "[%s]" "${x#a}" END
+printf "[%s]" ${x##*b} END
+printf "[%s]" "${x%c}" END
+printf "[%s]" "${x%%*}" END
+printf "[%s]" ${#x} END
+set -- $x; printf "[%s]" "$@" END; printf "(%s)" $#
+set -- $x; printf "[%s]" "$*" END
+set -- $x; printf "[%s]" $* END
+set -- "$x"; printf "[%s]" "$@" END
+set -- $x; printf "[%s]" ${@#a} END
+set -- $x; printf "[%s]" "${@#a}" END'
 
 made=0
 

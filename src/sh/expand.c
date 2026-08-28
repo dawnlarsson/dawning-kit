@@ -2261,6 +2261,18 @@ static fn expand_word(string_address word)
                 step = expand_tilde(word);
 
         expand_into(step, false, MARK_PLAIN);
+
+        /*
+                A word that is only "$@" and has no parameters behind it is no
+                word: f "$@" hands a function nothing, where it used to hand
+                it one empty argument and $# came back 1. The quotes are what
+                make "" an empty argument everywhere else, and they still do
+                -- "a$@b" and "$nosuch$@" are both an empty field here as they
+                are in dash. This is the one shape that disappears.
+        */
+        if (!expand_length && !shell_parameter_count &&
+            (string_equals(word, "\"$@\"") || string_equals(word, "\"${@}\"")))
+                expand_quoted_seen = false;
 }
 
 static string_address glob_result[GLOB_RESULTS];
