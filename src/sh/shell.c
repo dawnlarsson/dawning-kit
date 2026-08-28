@@ -259,10 +259,7 @@ string_address shell_expand(string_address step)
 
                 if (special == '?')
                 {
-                        p8 digits[16];
-                        positive length = positive_into(digits, (positive)shell_status);
-
-                        token_push_bytes(digits, length);
+                        positive_to_string(token_push_bytes, (positive)shell_status);
 
                         return step + 1;
                 }
@@ -631,7 +628,7 @@ fn shell_execute_command()
         if (child > 0)
         {
                 positive status = 0;
-                system_call_4(syscall(wait4), child, (positive)address_of status, 0, 0);
+                system_wait4_retry(child, address_of status, 0, null);
                 shell_status = wait_status_code(status);
 
                 /*

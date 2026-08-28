@@ -470,6 +470,7 @@ check 'count'           'set -- a b c; echo $#'
 check 'all'             'set -- a b; echo $@'
 check 'status'          'true; echo $?'
 check 'status false'    'false; echo $?'
+check 'status 255'      '(exit 255); echo $?'
 
 group expansion
 check 'command sub'     'echo $(echo hi)'

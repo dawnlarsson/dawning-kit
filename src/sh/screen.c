@@ -288,7 +288,7 @@ static b32 screen_term()
 
         positive status = 0;
 
-        system_call_4(syscall(wait4), child, (positive)address_of status, 0, 0);
+        system_wait4_retry(child, address_of status, 0, null);
         system_call_1(syscall(close), master);
         window_close(window);
 

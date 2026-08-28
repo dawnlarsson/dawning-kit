@@ -966,17 +966,10 @@ static fn awk_write_exponent(p8 address_to out, positive address_to at, b32 expo
 {
         positive where = address_to at;
         b32 magnitude = exponent < 0 ? -exponent : exponent;
-        p8 digits[8];
-        positive have = positive_into(digits, (positive)magnitude);
 
         out[where++] = upper ? 'E' : 'e';
         out[where++] = exponent < 0 ? '-' : '+';
-
-        if (have < 2)
-                out[where++] = '0';
-
-        memory_copy_fast(out + where, digits, have);
-        where += have;
+        where += positive_into_padded(out + where, (positive)magnitude, 2, '0');
 
         address_to at = where;
 }
@@ -2537,7 +2530,7 @@ static b32 awk_wait_for(bipolar child)
         if (child <= 0)
                 return 0;
 
-        system_call_4(syscall(wait4), (positive)child, (positive)address_of status, 0, 0);
+        system_wait4_retry(child, address_of status, 0, null);
         return wait_status_code_base(status, 256);
 }
 
@@ -2651,8 +2644,9 @@ static bool awk_reader_fill(awk_reader address_to which)
 
         awk_reader_room(which, which->filled + AWK_READ_CHUNK + 1);
 
-        bipolar got = system_call_3(syscall(read), (positive)which->handle,
-                                    (positive)(which->data + which->filled), AWK_READ_CHUNK);
+        bipolar got = system_read_retry((positive)which->handle,
+                                        which->data + which->filled,
+                                        AWK_READ_CHUNK);
 
         if (got <= 0)
         {
@@ -7080,8 +7074,7 @@ static bool awk_option_seen(p8 letter, string_address value)
         for (;;)
         {
                 p8 room[65536];
-                bipolar got = system_call_3(syscall(read), (positive)handle,
-                                            (positive)room, sizeof(room));
+                bipolar got = system_read_retry((positive)handle, room, sizeof(room));
 
                 if (got <= 0)
                         break;

@@ -2438,18 +2438,7 @@ static b32 text_wc()
                         width = 7;
                 }
                 else
-                {
-                        positive digits = 1;
-                        positive scale = 10;
-
-                        while (known >= scale)
-                        {
-                                digits++;
-                                scale *= 10;
-                        }
-
-                        width = digits;
-                }
+                        width = positive_digits(known);
         }
 
         for (b32 i = 0; i < inputs; i++)
@@ -5654,18 +5643,7 @@ static b32 text_grep()
                         grep_column = 19;
 
                         if (text_regular_size(text_input.handle, address_of size))
-                        {
-                                positive digits = 1;
-                                positive scale = 10;
-
-                                while (size >= scale)
-                                {
-                                        digits++;
-                                        scale *= 10;
-                                }
-
-                                grep_column = digits;
-                        }
+                                grep_column = positive_digits(size);
                 }
 
                 grep_hold_clear();
@@ -9114,11 +9092,7 @@ static b32 text_cmp()
                 if (limit != TEXT_UNSET && limit < smaller)
                         smaller = limit;
 
-                while (smaller >= 10)
-                {
-                        smaller /= 10;
-                        width++;
-                }
+                width = positive_digits(smaller);
         }
 
         for (;;)

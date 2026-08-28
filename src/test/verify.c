@@ -4002,6 +4002,244 @@ fn padded_writer(address_any data, positive length)
         padded_used += length;
 }
 
+/*
+        writer_field is a callback protocol as much as a byte operation.  The
+        capture records every boundary and its address, while the assembly
+        shim deliberately destroys every general caller-saved register after
+        the C capture returns.  A field implementation that keeps its body,
+        count, pad, or writer in scratch registers cannot pass by accident.
+*/
+#define FIELD_ROOM 512
+#define FIELD_CALL_MAX 320
+
+static p8 field_room[FIELD_ROOM];
+static p8 field_body_room[128];
+static p8 field_string_room[128];
+static p8 field_body_before[128];
+static p8 address_to field_output;
+static positive field_capacity;
+static positive field_used;
+static positive field_calls;
+static positive field_call_lengths[FIELD_CALL_MAX];
+static p8 field_call_first[FIELD_CALL_MAX];
+static address_any field_call_data[FIELD_CALL_MAX];
+static bool field_overflow;
+
+__attribute__((noinline, used))
+fn field_capture(address_any data, positive length)
+{
+        p8 address_to bytes = (p8 address_to)data;
+
+        if (field_calls < FIELD_CALL_MAX)
+        {
+                field_call_lengths[field_calls] = length;
+                field_call_first[field_calls] = length ? bytes[0] : 0;
+                field_call_data[field_calls] = data;
+        }
+        else
+                field_overflow = true;
+
+        field_calls++;
+
+        if (!length || length > field_capacity - min(field_used, field_capacity))
+        {
+                field_overflow = true;
+                return;
+        }
+
+        reference_copy(field_output + field_used, bytes, length);
+        field_used += length;
+}
+
+fn field_writer(address_any data, positive length);
+
+#if X64
+__asm__(
+    ASM_SECTION
+    ASM_FUNC(field_writer)
+    "sub $8, %rsp\n   call field_capture\n   add $8, %rsp\n"
+    "mov $1, %eax\n   mov $2, %ecx\n   mov $3, %edx\n"
+    "mov $4, %esi\n   mov $5, %edi\n   mov $6, %r8d\n"
+    "mov $7, %r9d\n   mov $8, %r10d\n   mov $9, %r11d\n"
+    ASM_RET
+    ASM_END(field_writer));
+#elif ARM64
+__asm__(
+    ASM_SECTION
+    ASM_FUNC(field_writer)
+    "stp x29, x30, [sp, #-16]!\n   mov x29, sp\n   bl field_capture\n"
+    "ldp x29, x30, [sp], #16\n"
+    "mov x0, #1\n   mov x1, #2\n   mov x2, #3\n   mov x3, #4\n"
+    "mov x4, #5\n   mov x5, #6\n   mov x6, #7\n   mov x7, #8\n"
+    "mov x8, #9\n   mov x9, #10\n   mov x10, #11\n   mov x11, #12\n"
+    "mov x12, #13\n   mov x13, #14\n   mov x14, #15\n   mov x15, #16\n"
+    "mov x16, #17\n   mov x17, #18\n   mov x18, #19\n"
+    ASM_RET
+    ASM_END(field_writer));
+#else
+__asm__(
+    ASM_SECTION
+    ASM_FUNC(field_writer)
+    "addi sp, sp, -16\n   sd ra, 8(sp)\n   call field_capture\n"
+    "ld ra, 8(sp)\n   addi sp, sp, 16\n"
+    "li t0, 1\n   li t1, 2\n   li t2, 3\n   li t3, 4\n"
+    "li t4, 5\n   li t5, 6\n   li t6, 7\n"
+    "li a0, 8\n   li a1, 9\n   li a2, 10\n   li a3, 11\n"
+    "li a4, 12\n   li a5, 13\n   li a6, 14\n   li a7, 15\n"
+    ASM_RET
+    ASM_END(field_writer));
+#endif
+
+fn check_field_case(string_address name, address_any data, positive length,
+                    positive width, p8 pad, bool left, positive output_residue,
+                    bool string_form)
+{
+        positive padding = width > length ? width - length : 0;
+        positive total = length + padding;
+        positive body_call = left ? 0 : padding;
+        p8 address_to bytes = (p8 address_to)data;
+
+        if (length)
+                reference_copy(field_body_before, data, length);
+
+        reference_fill(field_room, 0xa5, sizeof(field_room));
+        field_output = field_room + 16 + output_residue;
+        field_capacity = total;
+        field_used = field_calls = 0;
+        field_overflow = false;
+
+        if (string_form)
+                string_to_field(field_writer, (string_address)data,
+                                width, (b8)pad, left);
+        else
+                writer_field(field_writer, data, length,
+                             width, (b8)pad, left);
+
+        same(name, "capture stayed in bounds", field_overflow, false);
+        same(name, "total byte count", field_used, total);
+        same(name, "exact callback count", field_calls,
+             padding + (length ? 1 : 0));
+
+        for (positive guard = 1; guard <= 8; guard++)
+        {
+                same(name, "guard before output",
+                     field_output[-(bipolar)guard], 0xa5);
+                same(name, "guard after output",
+                     field_output[total + guard - 1], 0xa5);
+        }
+
+        for (positive at = 0; at < total; at++)
+        {
+                bool in_body = left ? at < length : at >= padding;
+                positive body_at = left ? at : at - padding;
+                p8 want = in_body ? field_body_before[body_at] : pad;
+
+                same(name, "byte order", field_output[at], want);
+        }
+
+        for (positive call = 0; call < field_calls && call < FIELD_CALL_MAX;
+             call++)
+        {
+                bool is_body = length && call == body_call;
+
+                same(name, "callback length", field_call_lengths[call],
+                     is_body ? length : 1);
+                same(name, "callback first byte", field_call_first[call],
+                     is_body ? field_body_before[0] : pad);
+
+                if (is_body)
+                        same(name, "body callback address",
+                             (positive)field_call_data[call], (positive)data);
+        }
+
+        if (length)
+                same_bytes(name, "input remains unchanged",
+                           (b8 address_to)data,
+                           (b8 address_to)field_body_before, length);
+}
+
+fn check_writer_fields()
+{
+        // Counted input is deliberately binary and not NUL terminated. Every
+        // small length, minimum width, pointer residue, alignment direction,
+        // and a rotating full-byte pad reaches the hostile callback.
+        for (positive length = 0; length <= 64; length++)
+                for (positive width = 0; width <= 64; width++)
+                        for (positive residue = 0; residue < 16; residue++)
+                                for (positive left = 0; left < 2; left++)
+                                {
+                                        p8 address_to data =
+                                            field_body_room + 16 + residue;
+                                        p8 pad = (p8)(length * 67 + width * 29 +
+                                                      residue * 17 + left * 131);
+
+                                        reference_fill(field_body_room, 0x7d,
+                                                       sizeof(field_body_room));
+                                        for (positive i = 0; i < length; i++)
+                                                data[i] = (p8)(i * 43 + length * 11 + 1);
+                                        if (length > 2)
+                                                data[1] = 0;
+                                        data[length] = 0x7e;
+
+                                        check_field_case(
+                                            "writer_field", length ? data :
+                                                (address_any)(positive)1,
+                                            length, width, pad, (bool)left,
+                                            (length * 5 + width * 3 + residue) & 15,
+                                            false);
+                                }
+
+        // Every possible padding byte, explicitly including NUL and both
+        // halves of the signed-char range.
+        for (positive pad = 0; pad <= 255; pad++)
+        {
+                p8 address_to data = field_body_room + 16 + (pad & 15);
+
+                data[0] = 0;
+                data[1] = 0x80;
+                data[2] = 0xff;
+                data[3] = 0x7e;
+                check_field_case("writer_field pad byte", data, 3, 9,
+                                 (p8)pad, (bool)(pad >> 7), pad & 15, false);
+        }
+
+        // The string wrapper crosses the complete small length/width plane;
+        // rotating residues and pad values keeps this focused on measuring
+        // once and routing the identical core rather than repeating the much
+        // larger raw-field alignment matrix above.
+        for (positive length = 0; length <= 64; length++)
+                for (positive width = 0; width <= 64; width++)
+                        for (positive left = 0; left < 2; left++)
+                        {
+                                positive residue =
+                                    (length * 7 + width * 11 + left) & 15;
+                                p8 address_to text =
+                                    field_string_room + 16 + residue;
+                                p8 pad = (p8)(length * 31 + width * 73 + left);
+
+                                reference_fill(field_string_room, 0x6d,
+                                               sizeof(field_string_room));
+                                for (positive i = 0; i < length; i++)
+                                        text[i] = (p8)(1 + (i * 47 + length) % 255);
+                                text[length] = end;
+
+                                check_field_case("string_to_field", text, length,
+                                                 width, pad, (bool)left,
+                                                 (residue * 9 + width) & 15, true);
+                        }
+
+        // Wider than the exhaustive plane, while remaining below the fixed
+        // transcript capacity. This rejects a small-field-only counter.
+        p8 address_to data = field_body_room + 19;
+        data[0] = 0x80;
+        data[1] = 0;
+        data[2] = 0xff;
+        check_field_case("writer_field wide", data, 3, 257, 0,
+                         false, 15, false);
+        check_field_case("writer_field wide", data, 3, 257, 0xff,
+                         true, 0, false);
+}
+
 fn check_base_field()
 {
         static positive values[] = {0, 1, 7, 8, 9, 15, 16, 255,
@@ -7500,6 +7738,7 @@ b32 main()
         // target is available only through a minimal linker and qemu-user.
         check_into();
         check_padded();
+        check_writer_fields();
         check_base_field();
         check_into_padded();
         check_into_pair();
@@ -7608,6 +7847,7 @@ b32 main()
         check_digits_exact();
         check_into();
         check_padded();
+        check_writer_fields();
         check_base_field();
         check_into_padded();
         check_into_pair();

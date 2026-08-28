@@ -420,12 +420,9 @@ static bool exec_here_expand_isolated(string_address body, positive length,
 
         while (filled < room)
         {
-                bipolar got = system_call_3(syscall(read), ends[0],
-                                             (positive)(token_storage + start + filled),
-                                             room - filled);
-
-                if (got == -4)
-                        continue;
+                bipolar got = system_read_retry(ends[0],
+                                                token_storage + start + filled,
+                                                room - filled);
 
                 if (got <= 0)
                         break;
@@ -435,9 +432,7 @@ static bool exec_here_expand_isolated(string_address body, positive length,
 
         system_call_1(syscall(close), ends[0]);
 
-        while (system_call_4(syscall(wait4), child,
-                             (positive)address_of raw_status, 0, 0) == -4)
-                ;
+        system_wait4_retry(child, address_of raw_status, 0, null);
 
         exec_redirect_status = wait_status_code(raw_status);
 
@@ -1439,8 +1434,7 @@ static b32 exec_child_status(bipolar child)
         if (child < 0)
                 return 1;
 
-        if (system_call_4(syscall(wait4), child,
-                          (positive)address_of state, 0, 0) < 0)
+        if (system_wait4_retry(child, address_of state, 0, null) < 0)
                 return 1;
 
         return wait_status_code(state);

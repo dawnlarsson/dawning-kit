@@ -1081,11 +1081,8 @@ fn shell_options_listed(writer write, bool as_commands)
                 }
                 else
                 {
-                        positive length = string_length(shell_option_names[index].name);
-
-                        write(shell_option_names[index].name, length);
-
-                        writer_fill(write, length < 15 ? 15 - length : 0, ' ');
+                        string_to_field(write, shell_option_names[index].name,
+                                        15, ' ', true);
 
                         write(" ", 1);
                         string_format(write, "%s\n", on ? "on" : "off");
@@ -2301,14 +2298,7 @@ fn printf_one(writer write, string_address format)
                         if (precision >= 0 && (positive)precision < length)
                                 length = (positive)precision;
 
-                        if (!left)
-                                writer_fill(write, width > length ? width - length : 0, ' ');
-
-                        if (length)
-                                write(value, length);
-
-                        if (left)
-                                writer_fill(write, width > length ? width - length : 0, ' ');
+                        writer_field(write, value, length, width, ' ', left);
 
                         continue;
                 }
@@ -2318,14 +2308,7 @@ fn printf_one(writer write, string_address format)
                         string_address value = printf_next();
                         positive length = string_get(value) ? 1 : 0;
 
-                        if (!left)
-                                writer_fill(write, width > length ? width - length : 0, ' ');
-
-                        if (length)
-                                write(value, 1);
-
-                        if (left)
-                                writer_fill(write, width > length ? width - length : 0, ' ');
+                        writer_field(write, value, length, width, ' ', left);
 
                         continue;
                 }
@@ -3813,7 +3796,7 @@ static bool shell_tool_run(string_address name)
                 return true;
         }
 
-        system_call_4(syscall(wait4), child, (positive)address_of status, 0, 0);
+        system_wait4_retry(child, address_of status, 0, null);
         shell_answer(wait_status_code(status));
 
         return true;
@@ -3947,9 +3930,9 @@ fn shell_dot(writer write, string_address input)
 
         while (filled < SOURCE_MAX - 1)
         {
-                bipolar got = system_call_3(syscall(read), (positive)handle,
-                                            (positive)(source_text + filled),
-                                            SOURCE_MAX - 1 - filled);
+                bipolar got = system_read_retry((positive)handle,
+                                                source_text + filled,
+                                                SOURCE_MAX - 1 - filled);
 
                 if (got <= 0)
                         break;
@@ -4542,11 +4525,7 @@ fn shell_limit_listed(writer write)
 
         while (limit->name)
         {
-                positive length = string_length(limit->name);
-
-                write(limit->name, length);
-
-                writer_fill(write, length < 20 ? 20 - length : 0, ' ');
+                string_to_field(write, limit->name, 20, ' ', true);
 
                 write(" ", 1);
                 shell_limit_said(write, limit, false);

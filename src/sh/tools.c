@@ -478,8 +478,7 @@ static b32 tools_dd(void)
                         while (left)
                         {
                                 positive ask = left < ibs ? left : ibs;
-                                bipolar got = system_call_3(
-                                    syscall(read), in_handle, (positive)ibuf, ask);
+                                bipolar got = system_read_retry(in_handle, ibuf, ask);
 
                                 if (got <= 0)
                                         break;
@@ -537,8 +536,7 @@ static b32 tools_dd(void)
                 if (conv & (DD_SYNC | DD_NOERROR))
                         memory_fill(ibuf, 0, ibs);
 
-                bipolar got = system_call_3(
-                    syscall(read), in_handle, (positive)ibuf, ibs);
+                bipolar got = system_read_retry(in_handle, ibuf, ibs);
 
                 if (!got)
                         break;
@@ -835,8 +833,8 @@ static bool diff_slurp(diff_side address_to side, string_address path)
                 if (!start)
                         start = block;
 
-                bipolar got = system_call_3(syscall(read), (positive)handle,
-                                            (positive)block, TEXT_READ_MAX);
+                bipolar got = system_read_retry((positive)handle, block,
+                                                TEXT_READ_MAX);
 
                 if (got <= 0)
                         break;
@@ -2569,8 +2567,8 @@ static positive ps_read_file(string_address path, p8 address_to into, positive l
 
         while (have + 1 < limit)
         {
-                bipolar got = system_call_3(syscall(read), (positive)handle,
-                                            (positive)(into + have), limit - 1 - have);
+                bipolar got = system_read_retry((positive)handle, into + have,
+                                                limit - 1 - have);
 
                 if (got <= 0)
                         break;
@@ -3084,22 +3082,9 @@ static fn ps_column_out(ps_process address_to one, positive field, bool last)
         if (!last && ps_room_used > width)
                 ps_room_used = width;
 
-        if (ps_columns[field].right)
-        {
-                writer_fill(text_put, width > ps_room_used ? width - ps_room_used : 0,
-                            ' ');
-
-                text_put(ps_room, ps_room_used);
-        }
-        else
-        {
-                text_put(ps_room, ps_room_used);
-
-                if (!last)
-                        writer_fill(text_put,
-                                    width > ps_room_used ? width - ps_room_used : 0,
-                                    ' ');
-        }
+        writer_field(text_put, ps_room, ps_room_used,
+                     !ps_columns[field].right && last ? ps_room_used : width,
+                     ' ', !ps_columns[field].right);
 
         if (!last)
                 text_put_character(' ');
@@ -3265,22 +3250,9 @@ static b32 tools_ps(void)
                 positive field = fields[f];
                 bool last = f + 1 == field_count;
                 positive width = ps_columns[field].width;
-                positive length = string_length(ps_columns[field].header);
-
-                if (ps_columns[field].right)
-                {
-                        writer_fill(text_put, width > length ? width - length : 0, ' ');
-
-                        text_put_string(ps_columns[field].header);
-                }
-                else
-                {
-                        text_put_string(ps_columns[field].header);
-
-                        if (!last)
-                                writer_fill(text_put, width > length ? width - length : 0,
-                                            ' ');
-                }
+                string_to_field(text_put, ps_columns[field].header,
+                                !ps_columns[field].right && last ? 0 : width,
+                                ' ', !ps_columns[field].right);
 
                 if (!last)
                         text_put_character(' ');

@@ -51,6 +51,22 @@ printf 'a\tb\nlonger line here\n\rwide\n' > "$work/wide"
 printf '  ab  cd ef\nxy\tzw\nplain\n' > "$work/spaced"
 printf '\376\377\n' > "$work/tr_high"
 
+# A single physical block with a ten-digit logical size exercises the wc width
+# chosen from stat(2) without making wc read a gigabyte.
+sparse_width=false
+printf 'x\n' > "$work/sparse_width"
+if dd if=/dev/zero of="$work/sparse_width" bs=1 count=1 seek=999999999 conv=notrunc 2>/dev/null
+then
+        allocated=$(stat -c %b "$work/sparse_width" 2>/dev/null) || allocated=
+
+        case $allocated in
+        ''|*[!0-9]*) ;;
+        *) [ "$allocated" -le 2048 ] && sparse_width=true ;;
+        esac
+fi
+
+[ "$sparse_width" = true ] || rm -f "$work/sparse_width"
+
 # The first numbered line leaves the output buffer exactly full. The next
 # number therefore flushes while it is being written, which must not change
 # the left-aligned field width.
@@ -523,6 +539,8 @@ compare 'named'          wc -  "$work/a"
 compare 'two files'      wc -  "$work/a" "$work/b"
 compare 'lines named'    wc -  -l "$work/a"
 compare 'lines two'      wc -  -l "$work/a" "$work/b"
+[ "$sparse_width" = false ] || \
+        compare 'width ten digits' wc - -c "$work/sparse_width" "$work/a"
 compare 'no newline'     wc h
 compare 'empty'          wc k  -l
 compare 'longest'        wc a  -L

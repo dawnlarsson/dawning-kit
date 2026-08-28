@@ -343,14 +343,6 @@ static fn emit_string(const char address_to text)
         emit_bytes((address_any)text, string_length((string_address)text));
 }
 
-static fn emit_number(unsigned int value)
-{
-        p8 digits[24];
-        positive length = positive_into(digits, value);
-
-        emit_bytes(digits, length);
-}
-
 // One escape sequence at a time, so the parser is a state and a few numbers.
 #define PARAMETERS 16
 static unsigned int parameters[PARAMETERS];
@@ -759,9 +751,10 @@ static fn csi_final(unsigned int final)
                 if (parameter_count && parameters[0] == 6)
                 {
                         emit_string("\x1b[");
-                        emit_number(row + 1);
+                        positive_to_string(emit_bytes, row + 1);
                         emit(';');
-                        emit_number(column < COLUMNS ? column + 1 : COLUMNS);
+                        positive_to_string(emit_bytes,
+                                           column < COLUMNS ? column + 1 : COLUMNS);
                         emit('R');
                 }
                 else if (parameter_count && parameters[0] == 5)

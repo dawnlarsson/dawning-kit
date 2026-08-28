@@ -67,7 +67,7 @@
         A .set is a second label on the same address, so there is no wrapper
         and no jump, and which names get one depends on who is linking.
 
-        134 routines (130 public, 4 local), 134 of them on all three.
+        138 routines (133 public, 5 local), 138 of them on all three.
 
           routine                        scope   x86_64  arm64   riscv64
           ------------------------------ ------- ------- ------- -------
@@ -188,6 +188,7 @@
           string_span_max                public  yes     yes     yes
           string_table_find              public  yes     yes     yes
           string_to_bipolar              public  yes     yes     yes
+          string_to_field                public  yes     yes     yes
           string_to_host                 public  yes     yes     yes
           string_to_positive             public  yes     yes     yes
           system_call                    public  yes     yes     yes
@@ -198,12 +199,15 @@
           system_call_5                  public  yes     yes     yes
           system_call_6                  public  yes     yes     yes
           system_read_retry              public  yes     yes     yes
+          system_wait4_retry             public  yes     yes     yes
           system_write_all               public  yes     yes     yes
           term_size                      public  yes     yes     yes
           wait_status_code               public  yes     yes     yes
           wait_status_code_base          public  yes     yes     yes
           working_directory_get          public  yes     yes     yes
           working_directory_set          public  yes     yes     yes
+          writer_field                   public  yes     yes     yes
+          writer_field_core              local   yes     yes     yes
           writer_fill                    public  yes     yes     yes
 */
 
@@ -4044,6 +4048,80 @@ ASM_FUNC(positive_to_string)
     "2:\n"
     ASM_RET
     ASM_END(writer_fill)
+    /*
+            A byte field is deliberately not assembled in a width-sized
+            temporary. writer_fill preserves the historical one callback per
+            pad byte, and the body remains one counted callback.
+
+            Both public entries establish the same five-register private
+            convention and call writer_field_core: writer, data, length,
+            padding, and packed pad/left. The core owns no callee-saved state,
+            so string_to_field measures and emits under one full frame instead
+            of restoring one frame only to make writer_field build another.
+            Giving the core its own STT_FUNC boundary keeps objtool's call and
+            return model truthful.
+
+            Empty counted data tail-calls the fill directly. An exact or
+            narrow nonempty field calls its writer without the general five
+            saves. Passing a zero-length body would ask a writer to measure a
+            C string, so that call never happens.
+    */
+    ASM_LOCAL_FUNC(writer_field_core)
+    "sub $8, %rsp\n   test $256, %ebp\n   jnz .Lwriter_field_core_x86_left\n"
+    "mov %rbx, %rdi\n   mov %r14, %rsi\n   movzbl %bpl, %edx\n"
+    "call writer_fill\n   test %r13, %r13\n   jz .Lwriter_field_core_x86_done\n"
+    "mov %r12, %rdi\n   mov %r13, %rsi\n"
+    ASM_CALL("rbx")
+    "jmp .Lwriter_field_core_x86_done\n"
+    ".Lwriter_field_core_x86_left:\n   test %r13, %r13\n"
+    "jz .Lwriter_field_core_x86_left_fill\n   mov %r12, %rdi\n"
+    "mov %r13, %rsi\n"
+    ASM_CALL("rbx")
+    ".Lwriter_field_core_x86_left_fill:\n   mov %rbx, %rdi\n"
+    "mov %r14, %rsi\n   movzbl %bpl, %edx\n   call writer_fill\n"
+    ".Lwriter_field_core_x86_done:\n   add $8, %rsp\n"
+    ASM_RET
+    ASM_LOCAL_END(writer_field_core)
+    ASM_FUNC(writer_field)
+    "xor %eax, %eax\n   cmp %rdx, %rcx\n   jbe .Lwriter_field_x86_counted\n"
+    "mov %rcx, %rax\n   sub %rdx, %rax\n"
+    ".Lwriter_field_x86_counted:\n   test %rax, %rax\n"
+    "jz .Lwriter_field_x86_body_only\n   test %rdx, %rdx\n"
+    "jz .Lwriter_field_x86_empty\n   push %rbx\n   push %rbp\n"
+    "push %r12\n   push %r13\n   push %r14\n   mov %rdi, %rbx\n"
+    "mov %rsi, %r12\n   mov %rdx, %r13\n   mov %rax, %r14\n"
+    "movzbl %r8b, %ebp\n   test %r9b, %r9b\n   jz 1f\n"
+    "or $256, %ebp\n   1: call writer_field_core\n"
+    "pop %r14\n   pop %r13\n   pop %r12\n   pop %rbp\n   pop %rbx\n"
+    ASM_RET
+    ".Lwriter_field_x86_body_only:\n   test %rdx, %rdx\n"
+    "jz .Lwriter_field_x86_return\n   mov %rdi, %rax\n   mov %rsi, %rdi\n"
+    "mov %rdx, %rsi\n   sub $8, %rsp\n"
+    ASM_CALL("rax")
+    "add $8, %rsp\n"
+    ".Lwriter_field_x86_return:\n"
+    ASM_RET
+    ".Lwriter_field_x86_empty:\n   mov %rcx, %rsi\n   movzbl %r8b, %edx\n"
+    "jmp writer_fill\n"
+    ASM_END(writer_field)
+    ASM_FUNC(string_to_field)
+    "push %rbx\n   push %rbp\n   push %r12\n   push %r13\n   push %r14\n"
+    "mov %rdi, %rbx\n   mov %rsi, %r12\n   mov %rdx, %r13\n"
+    "movzbl %cl, %ebp\n   test %r8b, %r8b\n   jz 1f\n"
+    "or $256, %ebp\n   1: mov %rsi, %rdi\n   call string_length\n"
+    "mov %rax, %r14\n   xor %eax, %eax\n   cmp %r14, %r13\n"
+    "jbe .Lstring_to_field_x86_counted\n   mov %r13, %rax\n   sub %r14, %rax\n"
+    ".Lstring_to_field_x86_counted:\n   mov %r14, %r13\n   mov %rax, %r14\n"
+    "test %r14, %r14\n   jnz .Lstring_to_field_x86_general\n"
+    "test %r13, %r13\n   jz .Lstring_to_field_x86_done\n"
+    "mov %r12, %rdi\n   mov %r13, %rsi\n"
+    ASM_CALL("rbx")
+    "jmp .Lstring_to_field_x86_done\n"
+    ".Lstring_to_field_x86_general:\n   call writer_field_core\n"
+    ".Lstring_to_field_x86_done:\n   pop %r14\n   pop %r13\n   pop %r12\n"
+    "pop %rbp\n   pop %rbx\n"
+    ASM_RET
+    ASM_END(string_to_field)
     // A complete integer base field. style packs sign in bits 0..7, two
     // prefix bytes in 8..23, prefix length in 24..25, then upper/left/zero.
     ASM_FUNC(positive_to_base_field)
@@ -7092,6 +7170,61 @@ ASM_FUNC(positive_to_string)
     "2:\n"
     ASM_RET
     ASM_END(writer_fill)
+    // The x86_64 block documents the shared private convention.
+    ASM_LOCAL_FUNC(writer_field_core)
+    "stp x29, x30, [sp, #-16]!\n   mov x29, sp\n"
+    "tbnz w23, #8, .Lwriter_field_core_arm_left\n"
+    "mov x0, x19\n   mov x1, x22\n   and w2, w23, #255\n"
+    "bl writer_fill\n   cbz x21, .Lwriter_field_core_arm_done\n"
+    "mov x0, x20\n   mov x1, x21\n"
+    ASM_CALL("x19")
+    "b .Lwriter_field_core_arm_done\n"
+    ".Lwriter_field_core_arm_left:\n   cbz x21, .Lwriter_field_core_arm_left_fill\n"
+    "mov x0, x20\n   mov x1, x21\n"
+    ASM_CALL("x19")
+    ".Lwriter_field_core_arm_left_fill:\n   mov x0, x19\n   mov x1, x22\n"
+    "and w2, w23, #255\n   bl writer_fill\n"
+    ".Lwriter_field_core_arm_done:\n   ldp x29, x30, [sp], #16\n"
+    ASM_RET
+    ASM_LOCAL_END(writer_field_core)
+    ASM_FUNC(writer_field)
+    "subs x6, x3, x2\n   csel x6, x6, xzr, hi\n"
+    "cbz x6, .Lwriter_field_arm_body_only\n   cbz x2, .Lwriter_field_arm_empty\n"
+    "stp x29, x30, [sp, #-64]!\n   mov x29, sp\n"
+    "stp x19, x20, [sp, #16]\n   stp x21, x22, [sp, #32]\n"
+    "stp x23, x24, [sp, #48]\n   mov x19, x0\n   mov x20, x1\n"
+    "mov x21, x2\n   mov x22, x6\n   and w23, w4, #255\n"
+    "tst w5, #255\n   b.eq 1f\n   orr w23, w23, #256\n   1: bl writer_field_core\n"
+    "ldp x23, x24, [sp, #48]\n   ldp x21, x22, [sp, #32]\n"
+    "ldp x19, x20, [sp, #16]\n   ldp x29, x30, [sp], #64\n"
+    ASM_RET
+    ".Lwriter_field_arm_body_only:\n   cbz x2, .Lwriter_field_arm_return\n"
+    "stp x29, x30, [sp, #-16]!\n   mov x29, sp\n   mov x6, x0\n"
+    "mov x0, x1\n   mov x1, x2\n"
+    ASM_CALL("x6")
+    "ldp x29, x30, [sp], #16\n"
+    ".Lwriter_field_arm_return:\n"
+    ASM_RET
+    ".Lwriter_field_arm_empty:\n   mov x1, x3\n   and w2, w4, #255\n"
+    "b writer_fill\n"
+    ASM_END(writer_field)
+    ASM_FUNC(string_to_field)
+    "stp x29, x30, [sp, #-64]!\n   mov x29, sp\n"
+    "stp x19, x20, [sp, #16]\n   stp x21, x22, [sp, #32]\n"
+    "stp x23, x24, [sp, #48]\n   mov x19, x0\n   mov x20, x1\n"
+    "mov x21, x2\n   and w23, w3, #255\n   tst w4, #255\n   b.eq 1f\n"
+    "orr w23, w23, #256\n   1: mov x0, x20\n   bl string_length\n"
+    "mov x22, x21\n   mov x21, x0\n   subs x22, x22, x21\n"
+    "csel x22, x22, xzr, hi\n   cbnz x22, .Lstring_to_field_arm_general\n"
+    "cbz x21, .Lstring_to_field_arm_done\n   mov x0, x20\n   mov x1, x21\n"
+    ASM_CALL("x19")
+    "b .Lstring_to_field_arm_done\n"
+    ".Lstring_to_field_arm_general:\n   bl writer_field_core\n"
+    ".Lstring_to_field_arm_done:\n   ldp x23, x24, [sp, #48]\n"
+    "ldp x21, x22, [sp, #32]\n   ldp x19, x20, [sp, #16]\n"
+    "ldp x29, x30, [sp], #64\n"
+    ASM_RET
+    ASM_END(string_to_field)
     ASM_FUNC(positive_to_base_field)
     "stp x29, x30, [sp, #-192]!\n   mov x29, sp\n   stp x19, x20, [sp, #16]\n   stp x21, x22, [sp, #32]\n   stp x23, x24, [sp, #48]\n   stp x25, x26, [sp, #64]\n   stp x27, x28, [sp, #80]\n"
     "mov x19,x0\n mov x20,x3\n mov x21,x4\n mov x22,x5\n add x0,sp,#112\n ubfx x3,x22,#26,#1\n bl positive_into_base\n mov x23,x0\n cbz x23,9f\n"
@@ -9525,6 +9658,66 @@ ASM_FUNC(positive_to_string)
     "addi s1,s1,-1\n bnez s1,1b\n ld s1,8(sp)\n ld s0,16(sp)\n ld ra,24(sp)\n addi sp,sp,32\n"
     "2:\n" ASM_RET
     ASM_END(writer_fill)
+    // The x86_64 block documents the shared private convention. Baseline
+    // integer instructions and byte accesses only.
+    ASM_LOCAL_FUNC(writer_field_core)
+    "addi sp, sp, -16\n   sd ra, 8(sp)\n"
+    "andi t0, s4, 256\n   bnez t0, .Lwriter_field_core_rv_left\n"
+    "mv a0, s0\n   mv a1, s3\n   andi a2, s4, 255\n"
+    "call writer_fill\n   beqz s2, .Lwriter_field_core_rv_done\n"
+    "mv a0, s1\n   mv a1, s2\n   mv t0, s0\n"
+    ASM_CALL("t0")
+    "j .Lwriter_field_core_rv_done\n"
+    ".Lwriter_field_core_rv_left:\n   beqz s2, .Lwriter_field_core_rv_left_fill\n"
+    "mv a0, s1\n   mv a1, s2\n   mv t0, s0\n"
+    ASM_CALL("t0")
+    ".Lwriter_field_core_rv_left_fill:\n   mv a0, s0\n   mv a1, s3\n"
+    "andi a2, s4, 255\n   call writer_fill\n"
+    ".Lwriter_field_core_rv_done:\n   ld ra, 8(sp)\n   addi sp, sp, 16\n"
+    ASM_RET
+    ASM_LOCAL_END(writer_field_core)
+    ASM_FUNC(writer_field)
+    "li t0, 0\n   bgeu a2, a3, .Lwriter_field_rv_counted\n"
+    "sub t0, a3, a2\n   .Lwriter_field_rv_counted:\n"
+    "beqz t0, .Lwriter_field_rv_body_only\n   beqz a2, .Lwriter_field_rv_empty\n"
+    "addi sp, sp, -64\n   sd ra, 56(sp)\n   sd s0, 48(sp)\n"
+    "sd s1, 40(sp)\n   sd s2, 32(sp)\n   sd s3, 24(sp)\n"
+    "sd s4, 16(sp)\n   mv s0, a0\n   mv s1, a1\n   mv s2, a2\n"
+    "mv s3, t0\n   andi s4, a4, 255\n   andi t1, a5, 255\n   beqz t1, 1f\n"
+    "ori s4, s4, 256\n   1: call writer_field_core\n"
+    "ld s4, 16(sp)\n   ld s3, 24(sp)\n   ld s2, 32(sp)\n"
+    "ld s1, 40(sp)\n   ld s0, 48(sp)\n   ld ra, 56(sp)\n"
+    "addi sp, sp, 64\n"
+    ASM_RET
+    ".Lwriter_field_rv_body_only:\n   beqz a2, .Lwriter_field_rv_return\n"
+    "addi sp, sp, -16\n   sd ra, 8(sp)\n   mv t0, a0\n"
+    "mv a0, a1\n   mv a1, a2\n"
+    ASM_CALL("t0")
+    "ld ra, 8(sp)\n   addi sp, sp, 16\n"
+    ".Lwriter_field_rv_return:\n"
+    ASM_RET
+    ".Lwriter_field_rv_empty:\n   mv a1, a3\n   andi a2, a4, 255\n"
+    "tail writer_fill\n"
+    ASM_END(writer_field)
+    ASM_FUNC(string_to_field)
+    "addi sp, sp, -64\n   sd ra, 56(sp)\n   sd s0, 48(sp)\n"
+    "sd s1, 40(sp)\n   sd s2, 32(sp)\n   sd s3, 24(sp)\n"
+    "sd s4, 16(sp)\n   mv s0, a0\n   mv s1, a1\n   mv s2, a2\n"
+    "andi s4, a3, 255\n   andi t0, a4, 255\n   beqz t0, 1f\n   ori s4, s4, 256\n"
+    "1: mv a0, s1\n   call string_length\n   mv t0, s2\n   mv s2, a0\n"
+    "mv s3, zero\n   bgeu s2, t0, .Lstring_to_field_rv_counted\n"
+    "sub s3, t0, s2\n"
+    ".Lstring_to_field_rv_counted:\n   bnez s3, .Lstring_to_field_rv_general\n"
+    "beqz s2, .Lstring_to_field_rv_done\n   mv a0, s1\n   mv a1, s2\n"
+    "mv t0, s0\n"
+    ASM_CALL("t0")
+    "j .Lstring_to_field_rv_done\n"
+    ".Lstring_to_field_rv_general:\n   call writer_field_core\n"
+    ".Lstring_to_field_rv_done:\n   ld s4, 16(sp)\n   ld s3, 24(sp)\n"
+    "ld s2, 32(sp)\n   ld s1, 40(sp)\n   ld s0, 48(sp)\n"
+    "ld ra, 56(sp)\n   addi sp, sp, 64\n"
+    ASM_RET
+    ASM_END(string_to_field)
     ASM_FUNC(positive_to_base_field)
     "addi sp,sp,-192\n sd ra,184(sp)\n sd s0,176(sp)\n sd s1,168(sp)\n sd s2,160(sp)\n sd s3,152(sp)\n sd s4,144(sp)\n sd s5,136(sp)\n sd s6,128(sp)\n sd s7,120(sp)\n sd s8,112(sp)\n"
     "mv s0,a0\n mv s1,a3\n mv s2,a4\n mv s3,a5\n addi a0,sp,32\n srli a3,s3,26\n andi a3,a3,1\n call positive_into_base\n mv s4,a0\n beqz s4,9f\n"
@@ -10820,6 +11013,18 @@ fn positive_to_padded(writer write, positive value, positive width, p8 pad,
 // writer_fill makes exactly count writer calls, each with length one and the
 // same byte; zero makes no call.
 fn writer_fill(writer write, positive count, p8 byte);
+/*
+        Emit a minimum-width byte field without a width-sized temporary.
+        Padding retains writer_fill's one callback per byte. The body is one
+        counted callback when length is nonzero and no callback when it is
+        empty, because a writer interprets zero length as a C string request.
+        Width never truncates; left selects body-before-padding.
+*/
+fn writer_field(writer write, address_any data, positive length,
+                positive width, b8 pad, bool left);
+// The same field for a C string, measured exactly once before the shared core.
+fn string_to_field(writer write, string_address text, positive width,
+                   b8 pad, bool left);
 // style: sign byte 0..7, prefix bytes 8..23, prefix length 24..25 (capped at
 // two), uppercase 26, left alignment 27, and zero-width padding 28.
 fn positive_to_base_field(writer write, positive value, positive base,

@@ -1541,8 +1541,8 @@ static fn expand_run(string_address command, bool quoted)
                 while (1)
                 {
                         p8 block[512];
-                        bipolar got = system_call_3(syscall(read), (positive)channel[0],
-                                                    (positive)block, sizeof(block));
+                        bipolar got = system_read_retry((positive)channel[0], block,
+                                                        sizeof(block));
 
                         if (got <= 0)
                                 break;
@@ -1554,7 +1554,7 @@ static fn expand_run(string_address command, bool quoted)
         system_call_1(syscall(close), (positive)channel[0]);
 
         if (child > 0)
-                system_call_4(syscall(wait4), (positive)child, (positive)address_of status, 0, 0);
+                system_wait4_retry(child, address_of status, 0, null);
 
         // The newlines at the end go, and only the ones at the end: that is the
         // single piece of editing a substitution is allowed.

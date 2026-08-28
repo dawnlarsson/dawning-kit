@@ -159,23 +159,6 @@ fn file_written(string_address text, bool zero)
 
 // Numbers ---------------------------------------------------
 
-fn file_text_padded(writer write, string_address text, positive width)
-{
-        positive length = string_length(text);
-
-        write(text, length);
-        writer_fill(write, width > length ? width - length : 0, ' ');
-}
-
-fn file_text_aligned(writer write, string_address text, positive width)
-{
-        positive length = string_length(text);
-
-        writer_fill(write, width > length ? width - length : 0, ' ');
-
-        write(text, length);
-}
-
 // Modes -----------------------------------------------------
 
 p8 file_kind_letter(positive mode)
@@ -1812,8 +1795,8 @@ bool file_copy_contents(bipolar from_directory, string_address from,
 
         while (1)
         {
-                bipolar taken = system_call_3(syscall(read), in, (positive)file_transfer,
-                                              sizeof(file_transfer));
+                bipolar taken = system_read_retry((positive)in, file_transfer,
+                                                   sizeof(file_transfer));
 
                 if (taken < 0)
                 {
@@ -2151,11 +2134,11 @@ static fn ls_print(string_address directory)
                         log(" ", 1);
 
                         ls_owner_text(entry->owner, false, who);
-                        file_text_padded(log, who, owner_width);
+                        string_to_field(log, who, owner_width, ' ', true);
                         log(" ", 1);
 
                         ls_owner_text(entry->group, true, who);
-                        file_text_padded(log, who, group_width);
+                        string_to_field(log, who, group_width, ' ', true);
                         log(" ", 1);
 
                         positive field_width = ls_human_width(entry->size);
@@ -2587,7 +2570,7 @@ static b32 file_run(string_address address_to words)
         if (child < 0)
                 return 127;
 
-        system_call_4(syscall(wait4), child, (positive)address_of status, 0, 0);
+        system_wait4_retry(child, address_of status, 0, null);
 
         if (status & 0x7f)
                 return 125;
@@ -3939,13 +3922,13 @@ static fn stat_readable(string_address path, file_facts address_to facts)
 
         log("\n  Size: ", 0);
         positive_into_string(text, facts->size);
-        file_text_padded(log, text, 10);
+        string_to_field(log, text, 10, ' ', true);
         log("\tBlocks: ", 0);
         positive_into_string(text, facts->blocks);
-        file_text_padded(log, text, 10);
+        string_to_field(log, text, 10, ' ', true);
         log(" IO Block: ", 0);
         positive_into_string(text, facts->blocksize);
-        file_text_padded(log, text, 6);
+        string_to_field(log, text, 6, ' ', true);
         log(" ", 1);
         log(file_kind_name(facts->mode), 0);
 
@@ -3955,7 +3938,7 @@ static fn stat_readable(string_address path, file_facts address_to facts)
         positive_to_string(log, facts->device_minor);
         log("\tInode: ", 0);
         positive_into_string(text, facts->inode);
-        file_text_padded(log, text, 10);
+        string_to_field(log, text, 10, ' ', true);
         log("  Links: ", 0);
         positive_to_string(log, facts->hard_links);
 
@@ -3972,7 +3955,7 @@ static fn stat_readable(string_address path, file_facts address_to facts)
         if (!file_user_name(facts->owner, text, FILE_NAME_MAX))
                 positive_into_string(text, facts->owner);
 
-        file_text_aligned(log, text, 8);
+        string_to_field(log, text, 8, ' ', false);
 
         log(")   Gid: (", 0);
         positive_to_padded(log, facts->group, 5, ' ', 0);
@@ -3981,7 +3964,7 @@ static fn stat_readable(string_address path, file_facts address_to facts)
         if (!file_group_name(facts->group, text, FILE_NAME_MAX))
                 positive_into_string(text, facts->group);
 
-        file_text_aligned(log, text, 8);
+        string_to_field(log, text, 8, ' ', false);
 
         log(")\nAccess: ", 0);
         file_stamp(log, facts->accessed.seconds, facts->accessed.nanoseconds);
@@ -4391,7 +4374,7 @@ static positive df_amount(p8 address_to into, p64 blocks, p64 size)
 
 static fn df_column(p8 address_to text, positive width)
 {
-        file_text_aligned(log, text, width);
+        string_to_field(log, text, width, ' ', false);
         log(" ", 1);
 }
 
@@ -4426,12 +4409,12 @@ static fn df_row(string_address device, string_address type, string_address wher
         df_reading(facts, address_of total, address_of used, address_of spare,
                    address_of size);
 
-        file_text_padded(log, device, df_device_width);
+        string_to_field(log, device, df_device_width, ' ', true);
         log(" ", 1);
 
         if (df_types)
         {
-                file_text_padded(log, measured ? type : dash, df_type_width);
+                string_to_field(log, measured ? type : dash, df_type_width, ' ', true);
                 log(" ", 1);
         }
 
@@ -4582,12 +4565,14 @@ static b32 file_df()
         {
                 if (pass == 1)
                 {
-                        file_text_padded(log, (string_address) "Filesystem", df_device_width);
+                        string_to_field(log, (string_address) "Filesystem",
+                                        df_device_width, ' ', true);
                         log(" ", 1);
 
                         if (df_types)
                         {
-                                file_text_padded(log, (string_address) "Type", df_type_width);
+                                string_to_field(log, (string_address) "Type",
+                                                df_type_width, ' ', true);
                                 log(" ", 1);
                         }
 
@@ -9170,7 +9155,7 @@ static fn xargs_run()
                 return;
         }
 
-        system_call_4(syscall(wait4), child, (positive)address_of status, 0, 0);
+        system_wait4_retry(child, address_of status, 0, null);
 
         if (status & 0x7f)
         {
@@ -9387,8 +9372,7 @@ static b32 file_xargs()
 
         for (;;)
         {
-                bipolar got = system_call_3(syscall(read), 0, (positive)xargs_buffer,
-                                            XARGS_BLOCK);
+                bipolar got = system_read_retry(0, xargs_buffer, XARGS_BLOCK);
 
                 if (got <= 0)
                         break;

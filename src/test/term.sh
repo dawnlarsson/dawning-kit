@@ -638,6 +638,7 @@ group report
 #       DSR with a parameter of 6 is answered with CPR, one based, which is
 #       the counting CUP takes back.
 same 'cursor position' '[\e[3;4R]'               20 5 in '\e[3;4H\e[6n' sent
+same 'cursor position three digits' '[\e[3;160R]' 200 5 in '\e[3;160H\e[6n' sent
 same 'device status'   '[\e[0n]'                 20 5 in '\e[5n' sent
 same 'device attributes' '[\e[?6c]'              20 5 in '\e[c' sent
 

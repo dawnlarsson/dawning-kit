@@ -408,6 +408,8 @@ compare 'printf alternate zero precision' /dev/null 'BEGIN{printf "[%#.0o][%#.0x
 compare 'printf bases with precision' /dev/null 'BEGIN{printf "[%#.3o][%#.1o][%.5x][%#.5X]\n", 8, 8, 255, 255}'
 compare 'printf floats' /dev/null 'BEGIN{printf "[%f][%.2f][%10.3f][%-10.1f][%.0f]\n", 3.14159, 3.14159, 3.14159, 3.14159, 0.5}'
 compare 'printf scientific' /dev/null 'BEGIN{printf "[%e][%E][%.2e][%.0e]\n", 12345.678, 12345.678, 12345.678, 12345.678}'
+compare 'printf wide exponent' /dev/null 'BEGIN{printf "[%e][%E][%e][%E]\n", 1e100, 1e-100, 1e300, 1e-300}'
+compare 'printf billion chunks' /dev/null 'BEGIN{printf "[%.0f][%.0f][%.0f][%.0f]\n", 999999999, 1000000000, 1000000001, 1e100}'
 compare 'printf general' /dev/null 'BEGIN{printf "[%g][%G][%.3g][%g][%g]\n", 0.0001234, 1e20, 12345.6, 100000, 1000000}'
 compare 'printf general edges' /dev/null 'BEGIN{printf "[%g][%g][%g][%g]\n", 0, 0.0001, 0.00001, 123456789}'
 compare 'printf percent' /dev/null 'BEGIN{printf "100%%\n"}'

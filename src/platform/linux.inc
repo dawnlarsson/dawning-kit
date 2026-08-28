@@ -24,6 +24,8 @@ struct linux_dirent64
 positive2 term_size();
 positive system_write_all(positive handle, address_any data, positive length);
 bipolar system_read_retry(positive handle, address_any data, positive length);
+bipolar system_wait4_retry(bipolar process, address_any status,
+                           positive options, address_any usage);
 bipolar file_slurp(string_address path, p8 address_to into, positive capacity);
 
 #define LINUX_RUNTIME_TEXT_INNER(value) #value
@@ -53,6 +55,12 @@ bipolar file_slurp(string_address path, p8 address_to into, positive capacity);
         registers used below, untouched. file_slurp keeps its loop state there
         across the direct call: arm64 and riscv64 stay stackless, while x86_64
         reserves just the one word its call-site alignment requires.
+
+        system_wait4_retry likewise retries only EINTR and otherwise exposes
+        wait4's result unchanged. x86_64 moves the ABI's fourth argument from
+        rcx to the syscall ABI's r10 before trapping. arm64 and riscv64 keep
+        status, options and rusage in their ABI registers and reload the pid
+        that each trap replaces with its result.
 
         file_slurp reserves one byte for a terminator and fills the rest through
         EOF or capacity. Zero capacity is a query that touches neither pointer
@@ -88,6 +96,14 @@ __asm__(
     "cmp $-4, %rax\n   je .Lsystem_read_retry_x64_more\n"
     ASM_RET
     ASM_END(system_read_retry)
+
+    ASM_FUNC(system_wait4_retry)
+    "mov %rcx, %r10\n"
+    ".Lsystem_wait4_retry_x64_more:\n"
+    "mov $" LINUX_RUNTIME_TEXT(syscall(wait4)) ", %eax\n   syscall\n"
+    "cmp $-4, %rax\n   je .Lsystem_wait4_retry_x64_more\n"
+    ASM_RET
+    ASM_END(system_wait4_retry)
 
     ASM_FUNC(file_slurp)
     "test %rdx, %rdx\n   jz .Lfile_slurp_x64_zero\n"
@@ -183,6 +199,16 @@ __asm__(
     ASM_RET
     ASM_END(system_read_retry)
 
+    ASM_FUNC(system_wait4_retry)
+    "mov x4, x0\n"
+    "mov " SYSCALL_NUMBER_REGISTER ", #" LINUX_RUNTIME_TEXT(syscall(wait4)) "\n"
+    ".Lsystem_wait4_retry_arm64_more:\n"
+    "mov x0, x4\n"
+    SYSCALL_INSTRUCTION "\n   cmn x0, #4\n"
+    "b.eq .Lsystem_wait4_retry_arm64_more\n"
+    ASM_RET
+    ASM_END(system_wait4_retry)
+
     ASM_FUNC(file_slurp)
     "cbz x2, .Lfile_slurp_arm64_zero\n"
     "mov x4, x1\n   mov x5, x2\n   mov x6, x0\n"
@@ -277,6 +303,15 @@ __asm__(
     "beq a0, t0, .Lsystem_read_retry_riscv64_more\n"
     ASM_RET
     ASM_END(system_read_retry)
+
+    ASM_FUNC(system_wait4_retry)
+    "mv t0, a0\n   li a7, " LINUX_RUNTIME_TEXT(syscall(wait4)) "\n"
+    "li t1, -4\n"
+    ".Lsystem_wait4_retry_riscv64_more:\n"
+    "mv a0, t0\n   ecall\n"
+    "beq a0, t1, .Lsystem_wait4_retry_riscv64_more\n"
+    ASM_RET
+    ASM_END(system_wait4_retry)
 
     ASM_FUNC(file_slurp)
     "beqz a2, .Lfile_slurp_riscv64_zero\n"
