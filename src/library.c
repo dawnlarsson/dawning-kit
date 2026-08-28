@@ -1540,6 +1540,34 @@ KEEP const p8 byte_commonness[256] = {
     LEAVE ASM_RET
 
 //
+//      The word at a time hunt underneath all three, written once. BYTE is
+//      where the byte starts out and MASK which register masks off what
+//      sits before the string; both are spent before the loop, which is why
+//      %sil is still the byte inside it and why %r8 serves as MASK and as
+//      scratch at once. FENCE_ENTRY and FENCE_STEP are empty for the two
+//      that run to a terminator, and TAIL turns the address into the answer.
+//
+#define NARROW_FIRST_OF(BYTE, MASK, FENCE_ENTRY, FENCE_STEP, TAIL)            \
+    FENCE_ENTRY                                                               \
+    "movzbl " BYTE ", %ecx\n   movabs $0x0101010101010101, %r10\n   mov %rcx, %rsi\n   imul %r10, %rsi  # c in every byte; %sil is still c\n" \
+    "movabs $0x8080808080808080, %r11\n   mov %edi, %ecx\n   and $7, %ecx\n   and $-8, %rdi\n" \
+    "mov (%rdi), %rdx\n   shl $3, %ecx\n   mov $-1, " MASK "\n   shl %cl, " MASK "  # which bytes of this word are ours\n" \
+    "movzbl %sil, %eax\n   inc %eax\n   movzbl %al, %eax\n   mov $1, %ecx\n"  \
+    "test %eax, %eax\n   cmovz %ecx, %eax  # never zero, never it\n"          \
+    "imul %r10, %rax\n   mov " MASK ", %rcx\n   not %rcx\n   and %rcx, %rax  # only in front of the string\n" \
+    "and " MASK ", %rdx\n   or %rax, %rdx\n"                                  \
+    "1:  mov %rdx, %rax\n   xor %rsi, %rax  # zero where the byte matched\n"  \
+    "mov %rax, %rcx\n   not %rcx\n   sub %r10, %rax\n   and %rcx, %rax\n"     \
+    "and %r11, %rax  # found the byte\n"                                      \
+    "mov %rdx, %r8\n   sub %r10, %r8\n   mov %rdx, %rcx\n   not %rcx\n"       \
+    "and %rcx, %r8\n   and %r11, %r8  # found the terminator\n"               \
+    "or %r8, %rax\n   jnz 2f\n   add $8, %rdi\n"                              \
+    FENCE_STEP                                                                \
+    "mov (%rdi), %rdx\n   jmp 1b\n"                                           \
+    "2:  bsf %rax, %rax\n   shr $3, %rax\n   add %rdi, %rax  # the byte or the terminator, whichever\n" \
+    TAIL ASM_RET
+
+//
 //      An unbounded hunt for the byte and for the terminator at once,
 //      whichever comes first. TAIL says what happens once the lowest flag has
 //      become an address, which is the only place the two callers differ.
@@ -1889,23 +1917,9 @@ __asm__(
                   AVX2_LEAVE, WIDE_FIRST_TAIL)
     "6:  " WIDE_FIRST_OF(AVX512_WIDTH, AVX512_BROADCAST, AVX512_ZEROED,
                          AVX512_EITHER, AVX512_LEAVE, WIDE_FIRST_TAIL)
-    "5:  movzbl %sil, %ecx\n   movabs $0x0101010101010101, %r10\n   mov %rcx, %rsi\n   imul %r10, %rsi  # c in every byte; %sil is still c\n"
-    "movabs $0x8080808080808080, %r11\n   mov %edi, %ecx\n   and $7, %ecx\n   and $-8, %rdi\n"
-    "mov (%rdi), %rdx\n   shl $3, %ecx\n   mov $-1, %r9\n   shl %cl, %r9  # which bytes of this word are ours\n"
-    "movzbl %sil, %eax\n   inc %eax\n   movzbl %al, %eax\n   mov $1, %ecx\n"
-    "test %eax, %eax\n   cmovz %ecx, %eax  # never zero, never it\n"
-    "imul %r10, %rax\n   mov %r9, %rcx\n   not %rcx\n   and %rcx, %rax  # only in front of the string\n"
-    "and %r9, %rdx\n   or %rax, %rdx\n"
-    "1:  mov %rdx, %rax\n   xor %rsi, %rax  # zero where the byte matched\n"
-    "mov %rax, %rcx\n   not %rcx\n   sub %r10, %rax\n   and %rcx, %rax\n"
-    "and %r11, %rax  # found the byte\n"
-    "mov %rdx, %r8\n   sub %r10, %r8\n   mov %rdx, %rcx\n   not %rcx\n"
-    "and %rcx, %r8\n   and %r11, %r8  # found the terminator\n"
-    "or %r8, %rax\n   jnz 2f\n   add $8, %rdi\n   mov (%rdi), %rdx\n"
-    "jmp 1b\n"
-    "2:  bsf %rax, %rax\n   shr $3, %rax\n   add %rdi, %rax  # the byte or the terminator, whichever\n"
-    "movzbl (%rax), %ecx\n   cmp %sil, %cl\n   je 3f\n   xor %eax, %eax  # it was the terminator: not found\n"
-    "3:  " ASM_RET
+    "5:  " NARROW_FIRST_OF("%sil", "%r9", "", "",
+        "movzbl (%rax), %ecx\n   cmp %sil, %cl\n   je 3f\n   xor %eax, %eax  # it was the terminator: not found\n"
+        "3:  ")
     ASM_END(string_first_of)
     //
     //       void *memchr(const void *s, int c, size_t n)
@@ -2400,20 +2414,7 @@ __asm__(
                   AVX2_LEAVE, WIDE_OR_END_TAIL)
     "6:  " WIDE_FIRST_OF(AVX512_WIDTH, AVX512_BROADCAST, AVX512_ZEROED,
                          AVX512_EITHER, AVX512_LEAVE, WIDE_OR_END_TAIL)
-    "5:  movzbl %sil, %ecx\n   movabs $0x0101010101010101, %r10\n   mov %rcx, %rsi\n   imul %r10, %rsi\n"
-    "movabs $0x8080808080808080, %r11\n   mov %edi, %ecx\n   and $7, %ecx\n   and $-8, %rdi\n"
-    "mov (%rdi), %rdx\n   shl $3, %ecx\n   mov $-1, %r9\n   shl %cl, %r9\n"
-    "movzbl %sil, %eax\n   inc %eax\n   movzbl %al, %eax\n   mov $1, %ecx\n"
-    "test %eax, %eax\n   cmovz %ecx, %eax  # never zero, never it\n"
-    "imul %r10, %rax\n   mov %r9, %rcx\n   not %rcx\n   and %rcx, %rax  # only in front of the string\n"
-    "and %r9, %rdx\n   or %rax, %rdx\n"
-    "1:  mov %rdx, %rax\n   xor %rsi, %rax\n   mov %rax, %rcx\n   not %rcx\n"
-    "sub %r10, %rax\n   and %rcx, %rax\n   and %r11, %rax\n   mov %rdx, %r8\n"
-    "sub %r10, %r8\n   mov %rdx, %rcx\n   not %rcx\n   and %rcx, %r8\n"
-    "and %r11, %r8\n   or %r8, %rax\n   jnz 2f\n   add $8, %rdi\n"
-    "mov (%rdi), %rdx\n   jmp 1b\n"
-    "2:  bsf %rax, %rax\n   shr $3, %rax\n   add %rdi, %rax\n"
-    ASM_RET
+    "5:  " NARROW_FIRST_OF("%sil", "%r9", "", "", "")
     ASM_END(string_first_of_or_end)
     //
     //       char *strnchr(const char *s, size_t count, int c)
@@ -2439,31 +2440,19 @@ __asm__(
     "7:\n" ASM_NARROW("cpu_has_avx2", "5f")
     WIDE_FIRST_MAX(AVX2_WIDTH, AVX2_BROADCAST, AVX2_ZEROED, AVX2_EITHER,
                    AVX2_LEAVE, "jmp 5f\n", "5f")
-    "5:  cmp %r9, %rdi\n   jae 8f  # the vectors took all of it\n"
-    "movzbl %r8b, %ecx\n   movabs $0x0101010101010101, %r10\n"
-    "mov %rcx, %rsi\n   imul %r10, %rsi  # c in every byte; %sil is still c\n"
-    "movabs $0x8080808080808080, %r11\n   mov %edi, %ecx\n   and $7, %ecx\n   and $-8, %rdi\n"
-    "mov (%rdi), %rdx\n   shl $3, %ecx\n"
     //
     //      Into %r8, not %rcx: the shift count is in %cl, which is part of
     //      %rcx, so building the mask there destroys the count before the
     //      shift reads it. That mistake passed the build, booted, and was
     //      wrong in 293398 of 1401280 cases.
     //
-    "mov $-1, %r8\n   shl %cl, %r8\n   movzbl %sil, %eax\n   inc %eax\n"
-    "movzbl %al, %eax\n   mov $1, %ecx\n   test %eax, %eax\n   cmovz %ecx, %eax  # never zero, never it\n"
-    "imul %r10, %rax\n   mov %r8, %rcx\n   not %rcx\n   and %rcx, %rax  # only in front of where we are\n"
-    "and %r8, %rdx\n   or %rax, %rdx\n"
-    "1:  mov %rdx, %rax\n   xor %rsi, %rax\n   mov %rax, %rcx\n   not %rcx\n"
-    "sub %r10, %rax\n   and %rcx, %rax\n   and %r11, %rax\n   mov %rdx, %r8\n"
-    "sub %r10, %r8\n   mov %rdx, %rcx\n   not %rcx\n   and %rcx, %r8\n"
-    "and %r11, %r8\n   or %r8, %rax\n   jnz 2f\n   add $8, %rdi\n"
-    "cmp %r9, %rdi\n   jae 8f\n   mov (%rdi), %rdx\n   jmp 1b\n"
-    "2:  bsf %rax, %rax\n   shr $3, %rax\n   add %rdi, %rax\n   cmp %r9, %rax\n"
-    "jae 8f  # beyond the count\n"
-    "movzbl (%rax), %ecx\n   cmp %sil, %cl\n   je 9f\n"
-    "8:  xor %eax, %eax\n"
-    "9:  " ASM_RET
+    "5:  " NARROW_FIRST_OF("%r8b", "%r8",
+        "cmp %r9, %rdi\n   jae 8f  # the vectors took all of it\n",
+        "cmp %r9, %rdi\n   jae 8f\n",
+        "cmp %r9, %rax\n   jae 8f  # beyond the count\n"
+        "movzbl (%rax), %ecx\n   cmp %sil, %cl\n   je 9f\n"
+        "8:  xor %eax, %eax\n"
+        "9:  ")
     ASM_END(string_first_of_max)
     //
     //       char *strrchr(const char *s, int c)
