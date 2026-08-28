@@ -25,6 +25,11 @@
 
 #define EINTR 4
 #define EAGAIN 11
+
+// Three below are the shell's, and the kernel's console has no use for them.
+// Not the attribute that keeps a symbol: this one lets the compiler drop what
+// it finds no call to, and only quiets the warning about having found none.
+#define SPARE __attribute__((unused))
 // The kernel spells all four itself, and the two below are only wanted where
 // there is a pty to say them to.
 #ifndef KERNEL_MODE
@@ -1121,7 +1126,7 @@ static fn cursor_hide()
         shown = false;
 }
 
-static fn KEEP cursor_show()
+static fn SPARE cursor_show()
 {
         // put leaves column at COLUMNS after filling the last cell of a row and
         // only wraps on the next character, so the cursor has to be clamped:
@@ -1615,7 +1620,7 @@ static string_address key_sequence(unsigned int code)
         is drawn; without it, it is the byte or the sequence going straight
         out, which is all this ever did.
 */
-static fn KEEP term_key(unsigned int character, unsigned int code)
+static fn SPARE term_key(unsigned int character, unsigned int code)
 {
         string_address sequence;
 
@@ -1645,7 +1650,7 @@ static fn KEEP term_key(unsigned int character, unsigned int code)
         at a time would be handing it nothing at all until Enter. So the
         editor is exactly as on as the line discipline it stands in for.
 */
-static fn KEEP term_line_editing(b32 on)
+static fn SPARE term_line_editing(b32 on)
 {
         if (line_editing == on)
                 return;

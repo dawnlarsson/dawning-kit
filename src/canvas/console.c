@@ -114,8 +114,13 @@ static void console_start(void)
 
         // The emulator writes through the page every window of cells has, so
         // it is pointed at this one's and started the way the terminal starts.
+        //
+        // Wrapped at the ring's width and not the window's, because a line is
+        // kept as long as it was written and folded where it is drawn. That is
+        // what lets this window be resized without the log being rewritten,
+        // and it is what the byte handler this replaced did.
         window = pane->mapping;
-        COLUMNS = pane->columns;
+        COLUMNS = pane->stride;
         ROWS = pane->rows;
         full_reset();
 
