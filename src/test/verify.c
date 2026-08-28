@@ -1995,6 +1995,288 @@ static string_address aligned_at(p8 address_to array)
         return array + ((8 - (at & 7)) & 7);
 }
 
+/*
+        The bounded span and the digit run, and the two ways they are lied to.
+
+        Both are new and both replaced a byte loop written out in six files, so
+        the reference below is that loop and not a second idea about what it
+        should do.
+
+        Neither is ever handed a string literal. Literals sit end to end in
+        .rodata, and a routine that reads one byte past its own terminator
+        reads the front of the next one and usually gets the right answer
+        anyway; a seven character name once survived forty two thousand checks
+        that way. Everything here is built in a buffer at a shifting offset,
+        with what sits in front of the subject and what sits behind the end of
+        it chosen to be the worst possible answer rather than a zero.
+*/
+positive reference_span_max(string_address source, positive bound,
+                            const b8 address_to set)
+{
+        positive n = 0;
+
+        while (n < bound)
+        {
+                p8 c = source[n];
+
+                if (!set[c])
+                        return n;
+
+                n++;
+        }
+
+        return n;
+}
+
+positive reference_digits(string_address source, positive bound,
+                          positive address_to used)
+{
+        positive value = 0;
+        positive n = 0;
+
+        while (n < bound && source[n] >= '0' && source[n] <= '9')
+        {
+                value = value * 10 + (positive)(source[n] - '0');
+                n++;
+        }
+
+        if (used)
+                address_to used = n;
+
+        return value;
+}
+
+static p8 span_room[1024];
+
+// Far enough in that a routine aligning its pointer down has plenty in front
+// of the subject to be fooled by.
+#define SPAN_HEAD 128
+
+static p8 address_to span_subject(positive offset)
+{
+        return (p8 address_to)aligned_at(span_room) + SPAN_HEAD + offset;
+}
+
+static positive span_bounds[] = {0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 11,
+                                 15, 16, 17, 23, 24, 25, 26, 31, 32, 33};
+
+#define SPAN_BOUND_COUNT (sizeof(span_bounds) / sizeof(span_bounds[0]))
+
+fn check_span_max()
+{
+        static b8 set[STRING_SET_BYTES];
+        static string_address sets[] = {
+            " \t",
+            "0123456789",
+            "abcdefghijklmnopqrstuvwxyz",
+            "|&;<>()$`\\\"' \t\n",
+        };
+
+        positive count = sizeof(sets) / sizeof(sets[0]);
+
+        // One pass past the end of that list, with every byte a member and the
+        // terminator among them. The bound is then the only thing that can end
+        // the run, and a routine that quietly stops at a zero the way
+        // string_span does is caught here and nowhere else.
+        for (positive which = 0; which <= count; which++)
+        {
+                positive members = 1;
+                p8 breaker = 0;
+
+                if (which == count)
+                        reference_fill(set, 1, sizeof(set));
+                else
+                {
+                        reference_fill(set, 0, sizeof(set));
+                        string_set_add(set, sets[which]);
+                        members = string_length(sets[which]);
+
+                        for (positive v = 1; v < 256; v++)
+                                if (!set[v])
+                                {
+                                        breaker = (p8)v;
+                                        break;
+                                }
+                }
+
+                // What sits outside the window. A member on one pass, so
+                // anything reading past the bound or in front of the pointer
+                // keeps counting; a non-member on the other, so anything
+                // reading outside it stops short instead. Both directions,
+                // because only one of the two shows up as a number too small.
+                for (positive hostile = 0; hostile < 2; hostile++)
+                {
+                        p8 outside =
+                            hostile ? (which == count ? (p8)0xff
+                                                      : (p8)sets[which][0])
+                                    : (p8)0x00;
+
+                        for (positive offset = 0; offset < 8; offset++)
+                                for (positive b = 0; b < SPAN_BOUND_COUNT; b++)
+                                {
+                                        positive bound = span_bounds[b];
+
+                                        // The last stop is the run that
+                                        // nothing inside the window ends.
+                                        for (positive stop = 0; stop <= 34; stop++)
+                                        {
+                                                p8 address_to subject =
+                                                    span_subject(offset);
+
+                                                reference_fill(span_room, outside,
+                                                               sizeof(span_room));
+
+                                                for (positive i = 0; i < 40; i++)
+                                                        subject[i] =
+                                                            which == count
+                                                                ? (p8)(i * 7 + 3)
+                                                                : (p8)sets[which]
+                                                                          [i % members];
+
+                                                if (stop < 34 && which != count)
+                                                        subject[stop] = breaker;
+
+                                                same("string_span_max",
+                                                     "against the loop",
+                                                     string_span_max(subject, bound,
+                                                                     set),
+                                                     reference_span_max(subject, bound,
+                                                                        set));
+                                        }
+                                }
+                }
+        }
+}
+
+/*
+        The digit run.
+
+        The buffer is digits from end to end and the run is a window inside it
+        ended by one byte that is not a digit. So a routine that reads a word
+        in front of its pointer, or one byte past where it was told to stop, is
+        handed more digits and answers a number that is not the one asked for
+        -- which is the only way this can be wrong and still look plausible.
+*/
+static p8 digit_breakers[] = {0x00, '/', ':', ' ', 'a', 0xff, '.', '-', '+'};
+
+#define DIGIT_BREAKER_COUNT (sizeof(digit_breakers) / sizeof(digit_breakers[0]))
+
+fn check_digits()
+{
+        for (positive br = 0; br < DIGIT_BREAKER_COUNT; br++)
+                for (positive offset = 0; offset < 8; offset++)
+                        for (positive length = 0; length <= 26; length++)
+                        {
+                                p8 address_to subject = span_subject(offset);
+                                positive want_used = 0;
+                                positive got_used = 0;
+
+                                reference_fill(span_room, '7', sizeof(span_room));
+
+                                for (positive i = 0; i < length; i++)
+                                        subject[i] = (p8)('0' + next() % 10);
+
+                                subject[length] = digit_breakers[br];
+
+                                same("string_digits", "value",
+                                     string_digits(subject, address_of got_used),
+                                     reference_digits(subject, (positive)-1,
+                                                      address_of want_used));
+
+                                same("string_digits", "bytes taken", got_used,
+                                     want_used);
+
+                                // The count is what tells a caller there were
+                                // no digits at all: a single zero and no digits
+                                // both answer nothing.
+                                same("string_digits", "none is not a zero",
+                                     (positive)(got_used == 0),
+                                     (positive)(length == 0));
+
+                                // Handed nowhere to put the count.
+                                same("string_digits", "no count wanted",
+                                     string_digits(subject, 0),
+                                     reference_digits(subject, (positive)-1, 0));
+
+                                for (positive bound = 0; bound <= length + 3; bound++)
+                                {
+                                        same("string_digits_max", "value",
+                                             string_digits_max(subject, bound,
+                                                               address_of got_used),
+                                             reference_digits(subject, bound,
+                                                              address_of want_used));
+
+                                        same("string_digits_max", "bytes taken",
+                                             got_used, want_used);
+                                }
+
+                                same("string_digits_max", "no count wanted",
+                                     string_digits_max(subject, length, 0),
+                                     reference_digits(subject, length, 0));
+                        }
+}
+
+/*
+        The numbers where the arithmetic is the question rather than the scan:
+        the largest a positive holds, the one past it that wraps, and a run of
+        leading zeros long enough that a routine keeping the place value in a
+        register would have run out of them.
+
+        Copied into the buffer rather than passed as the literal they are
+        written as, for the reason the block above gives.
+*/
+static string_address digit_exacts[] = {
+    "0",
+    "00",
+    "007",
+    "9",
+    "10",
+    "0000000000000000000000000001",
+    "18446744073709551615",
+    "18446744073709551616",
+    "18446744073709551625",
+    "99999999999999999999",
+    "999999999999999999999999999999",
+    "4294967295",
+    "4294967296",
+    "1234567890123456789",
+};
+
+#define DIGIT_EXACT_COUNT (sizeof(digit_exacts) / sizeof(digit_exacts[0]))
+
+fn check_digits_exact()
+{
+        for (positive which = 0; which < DIGIT_EXACT_COUNT; which++)
+                for (positive br = 0; br < DIGIT_BREAKER_COUNT; br++)
+                        for (positive offset = 0; offset < 8; offset++)
+                        {
+                                p8 address_to subject = span_subject(offset);
+                                positive length = string_length(digit_exacts[which]);
+                                positive want_used = 0;
+                                positive got_used = 0;
+
+                                reference_fill(span_room, '7', sizeof(span_room));
+
+                                for (positive i = 0; i < length; i++)
+                                        subject[i] = digit_exacts[which][i];
+
+                                subject[length] = digit_breakers[br];
+
+                                same("string_digits", "the exact ones",
+                                     string_digits(subject, address_of got_used),
+                                     reference_digits(subject, (positive)-1,
+                                                      address_of want_used));
+
+                                same("string_digits", "the exact ones, taken",
+                                     got_used, want_used);
+
+                                for (positive bound = 0; bound <= length + 1; bound++)
+                                        same("string_digits_max", "the exact ones",
+                                             string_digits_max(subject, bound, 0),
+                                             reference_digits(subject, bound, 0));
+                        }
+}
+
 fn check_hostile_neighbours()
 {
         // The byte hunted for, and so also the byte written in front of the
@@ -4412,6 +4694,9 @@ b32 main()
         check_table_find();
         check_table_find_page_edge();
         check_hostile_neighbours();
+        check_span_max();
+        check_digits();
+        check_digits_exact();
         check_bulk_alignments();
         check_bulk_moves();
         check_bulk_wide_strings();

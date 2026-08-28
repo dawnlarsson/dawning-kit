@@ -57,7 +57,7 @@
         A .set is a second label on the same address, so there is no wrapper
         and no jump, and which names get one depends on who is linking.
 
-        48 routines, 47 of them on all three.
+        55 routines, 54 of them on all three.
 
           routine                        x86_64  arm64   riscv64
           ------------------------------ ------- ------- -------
@@ -78,11 +78,15 @@
           library_get                    yes     yes     yes
           library_open                   yes     yes     yes
           memory                         yes     yes     yes
+          memory_compare                 yes     yes     yes
           memory_copy                    yes     yes     yes
           memory_copy_fast               yes     yes     yes
+          memory_count                   yes     yes     yes
           memory_fill                    yes     yes     yes
           memory_first_of                yes     yes     yes
           memory_free                    yes     yes     yes
+          memory_search                  yes     yes     yes
+          moonwater_cpu_detect           yes     yes     yes
           path_basename                  yes     yes     yes
           positive_to_string             yes     yes     yes
           shell_set_cursor               yes     yes     yes
@@ -91,6 +95,8 @@
           string_copy                    yes     yes     yes
           string_copy_max                yes     yes     yes
           string_cut                     yes     yes     yes
+          string_digits                  yes     yes     yes
+          string_digits_max              yes     yes     yes
           string_find                    yes     yes     yes
           string_first_of                yes     yes     yes
           string_first_of_max            yes     yes     yes
@@ -104,6 +110,7 @@
           string_lex_word                yes     yes     yes
           string_replace_all             yes     yes     yes
           string_span                    yes     yes     yes
+          string_span_max                yes     yes     yes
           string_table_find              yes     --      --
           string_to_bipolar              yes     yes     yes
           string_to_positive             yes     yes     yes
@@ -1123,12 +1130,108 @@ typedef union matrix4
 //      writing the word inside a string literal gets exactly what it says:
 //      "no such instruction: alternative".
 //
-#define ASM_PICK(feature, narrow_label)                                       \
-    ALTERNATIVE("jmp " narrow_label, "", feature) "\n"
+//
+//      Which is what this used to do. It does not any more, and the paragraph
+//      above is kept because the mechanism is right and the reason it is not
+//      used here is worth having next to it.
+//
+//      A kernel build takes the narrow body and keeps it. Not because the
+//      wide one is wrong, but because memcpy is called on device memory --
+//      the framebuffer, through a plain memcpy in the fbdev path, not through
+//      memcpy_toio -- and a device mapping is trapped and emulated. KVM's
+//      emulator has no EVEX, so a displaced memcpy with an AVX-512 body took
+//      the machine down at bochs-drm with "emulation failure" on
+//      vmovdqu64 -256(%r11), %zmm4, every boot, on any host that has AVX-512.
+//      Linux boots there. We have to as well.
+//
+//      Capping at AVX2 would very likely have been enough for KVM. It would
+//      have been a bet on one emulator's instruction coverage, and the same
+//      bet has to come out right on Hyper-V, VMware and Xen, forever. The
+//      kernel's own memcpy is general purpose moves and rep movsb, which is
+//      why every emulator handles it, and matching that is a guarantee rather
+//      than a bet.
+//
+//      It settles the other open question at the same time. Nothing here
+//      called kernel_fpu_begin and nothing saves the vector registers on
+//      syscall entry, so whether a userspace ymm could come back changed from
+//      a kernel memcpy was reasoned about and never measured. A kernel build
+//      with no vector instruction in it cannot have the problem.
+//
+#define ASM_PICK(feature, narrow_label) "   jmp " narrow_label "\n"
 #else
 //      No rewrite to hang it on, so the byte cpu_detect wrote is the answer.
 #define ASM_PICK(feature, narrow_label)                                       \
     "cmpb $0, cpu_has_avx2(%rip)\n   je " narrow_label "\n"
+#endif
+
+/*
+        A gate on a wide body, and the two directions it is written in.
+
+        ASM_NARROW jumps away to the word at a time body when the feature is
+        missing. ASM_WIDER jumps to a wider body when it is present. Which one
+        a routine uses is about which body it falls into, not about anything
+        else, and both mean the same thing in a kernel build: take the narrow
+        one. See the note on ASM_PICK above for why.
+
+        The kernel forms emit no load and no compare, so there is nothing to
+        read and no address to get wrong. That also removes the early boot
+        hazard the feature byte carried: head64.c calls memcpy before the
+        kernel is relocated, and reading cpu_has_avx2 there does not do what
+        it looks like it does.
+*/
+/*
+        The bulk of a kernel copy, which is rep movsb and has to be.
+
+        With the wide bodies gone the word at a time one carries every size,
+        and it does not scale: measured against rep movsb on a 9950X it is
+        1.5x quicker up to thirty two bytes and 0.5x at ninety six, because
+        rep movsb is flat at about seventeen microseconds for anything under a
+        hundred and twenty eight and this climbs with the count. Displacing
+        the architecture's memcpy and handing it something slower is not a
+        trade worth making.
+
+        So above thirty two bytes a kernel build does what memcpy_64.S does.
+        It is the same instruction the emulator behind a device mapping
+        already has to handle, so it costs nothing in safety.
+
+        Behind ALTERNATIVE on ERMS, not a feature byte, for two reasons. rep
+        movsb without ERMS moves a byte a turn -- Nehalem has no ERMS and the
+        boot lane runs on one -- and the byte cannot be read this early
+        anyway: head64.c calls memcpy before the kernel is relocated. Until
+        alternative_instructions rewrites it the jump stands and the word at a
+        time body runs, which is correct everywhere and is what early boot
+        gets.
+*/
+#ifdef KERNEL_MODE
+#define KERNEL_BULK_COPY                                                      \
+    "   cmp $32, %rdx\n   jbe .Lcopy_fast_short\n"                            \
+    ALTERNATIVE("jmp .Lcopy_fast_short", "", X86_FEATURE_ERMS) "\n"            \
+    "   mov %rdi, %rax\n   mov %rdx, %rcx\n   rep movsb\n" ASM_RET           \
+    ".Lcopy_fast_short:\n"
+
+//      Same, and the destination is kept in r8 because rep stosb wants the
+//      byte in al and memset still has to hand the destination back.
+#define KERNEL_BULK_FILL                                                      \
+    "   cmp $32, %rdx\n   jbe .Lfill_short\n"                                 \
+    ALTERNATIVE("jmp .Lfill_short", "", X86_FEATURE_ERMS) "\n"                 \
+    "   mov %rdi, %r8\n   movzbl %sil, %eax\n   mov %rdx, %rcx\n"             \
+    "   rep stosb\n   mov %r8, %rax\n" ASM_RET                                \
+    ".Lfill_short:\n"
+#else
+//      Userspace keeps its wide bodies, which beat rep movsb at every size
+//      that matters, so there is nothing to put in front of them.
+#define KERNEL_BULK_COPY ""
+#define KERNEL_BULK_FILL ""
+#endif
+
+#ifdef KERNEL_MODE
+#define ASM_NARROW(flag, narrow) "   jmp " narrow "\n"
+#define ASM_WIDER(flag, wide) ""
+#else
+#define ASM_NARROW(flag, narrow) \
+    "   cmpb $0, " flag "(%rip)\n   je " narrow "\n"
+#define ASM_WIDER(flag, wide) \
+    "   cmpb $0, " flag "(%rip)\n   jne " wide "\n"
 #endif
 
 #ifdef KERNEL_MODE
@@ -1385,8 +1488,8 @@ KEEP const p8 byte_commonness[256] = {
 //      three, so this reads the same everywhere it appears.
 //
 #define WIDE_PICK                                                      \
-    "cmpb $0, cpu_has_avx512(%rip)\n   jne 6f\n"                       \
-    "cmpb $0, cpu_has_avx2(%rip)\n   je 5f\n"
+    ASM_WIDER("cpu_has_avx512", "6f")                                  \
+    ASM_NARROW("cpu_has_avx2", "5f")
 
 //
 //      The bounded hunts ask it the other way up, and every branch out of
@@ -1400,7 +1503,7 @@ KEEP const p8 byte_commonness[256] = {
 //      decided not to run is not one the predictor has any use for.
 //
 #define WIDE_PICK_MAX                                                  \
-    "cmpb $0, cpu_has_avx512(%rip)\n   je 7f\n"
+    ASM_NARROW("cpu_has_avx512", "7f")
 
 //
 //      An unbounded hunt for the terminator. The pointer is aligned down so
@@ -1698,7 +1801,7 @@ __asm__(
     //      word way, 61.6 this way, against a floor of 71 for reading two
     //      streams and comparing them and answering nothing.
     //
-    "20: cmpb $0, cpu_has_avx2(%rip)\n   je 21f\n"
+    "20:\n" ASM_NARROW("cpu_has_avx2", "21f")
     "vpxor %ymm4, %ymm4, %ymm4\n"
     //
     //      0xfe0 is the last offset in a page at which thirty two bytes
@@ -1806,7 +1909,7 @@ __asm__(
     WIDE_PICK_MAX
     WIDE_MEMORY(AVX512_WIDTH, AVX512_BROADCAST, AVX512_HUNT, AVX512_LEAVE,
                 "jmp 7f\n", "7f")
-    "7:  cmpb $0, cpu_has_avx2(%rip)\n   je 5f\n"
+    "7:\n" ASM_NARROW("cpu_has_avx2", "5f")
     WIDE_MEMORY(AVX2_WIDTH, AVX2_BROADCAST, AVX2_HUNT, AVX2_LEAVE, "jmp 5f\n", "5f")
     "5:  test %rdx, %rdx\n   jz 9f\n   movzbl %sil, %ecx\n"
     "movabs $0x0101010101010101, %r10\n   mov %rcx, %rsi\n   imul %r10, %rsi\n   movabs $0x8080808080808080, %r11\n"
@@ -1952,7 +2055,7 @@ __asm__(
     //       above, and the reason this one is the easy one.
     //
     "xor %eax, %eax\n   test %rdx, %rdx\n   jz 9f\n"
-    "cmpb $0, cpu_has_avx2(%rip)\n   je 5f\n"
+    ASM_NARROW("cpu_has_avx2", "5f")
     "cmp $32, %rdx\n   jb 5f\n"
     //
     //       Four blocks a round, and-ed into one mask. A round that differs
@@ -2086,7 +2189,7 @@ __asm__(
     "push %r15\n   sub $56, %rsp\n"
     "mov %rdi, %rbx  # the haystack\n   mov %rdx, %rbp  # the needle\n"
     "mov %rcx, %r12  # its length\n"
-    "cmpb $0, cpu_has_avx2(%rip)\n   je 6f\n"
+    ASM_NARROW("cpu_has_avx2", "6f")
     //
     //       How far the block loop may go. The last position a match could
     //       start at is hay_size - needle_size; a block there reads thirty
@@ -2277,7 +2380,7 @@ __asm__(
     WIDE_PICK_MAX
     WIDE_FIRST_MAX(AVX512_WIDTH, AVX512_BROADCAST, AVX512_ZEROED,
                    AVX512_EITHER, AVX512_LEAVE, "jmp 7f\n", "7f")
-    "7:  cmpb $0, cpu_has_avx2(%rip)\n   je 5f\n"
+    "7:\n" ASM_NARROW("cpu_has_avx2", "5f")
     WIDE_FIRST_MAX(AVX2_WIDTH, AVX2_BROADCAST, AVX2_ZEROED, AVX2_EITHER,
                    AVX2_LEAVE, "jmp 5f\n", "5f")
     "5:  cmp %r9, %rdi\n   jae 8f  # the vectors took all of it\n"
@@ -2417,7 +2520,7 @@ __asm__(
     //      bound. Measured over a megabyte on a 9950X: 19.7 GB/s the word
     //      way, 63.0 this way, against a two stream floor of 71.
     //
-    "cmpb $0, cpu_has_avx2(%rip)\n   je 1f\n"
+    ASM_NARROW("cpu_has_avx2", "1f")
     "cmp $64, %rdx\n   jb 1f\n"
     "vpxor %ymm4, %ymm4, %ymm4\n"
     "10: vmovdqu (%rdi), %ymm0\n   vpcmpeqb (%rsi), %ymm0, %ymm1\n"
@@ -2467,7 +2570,7 @@ __asm__(
     WIDE_PICK_MAX
     WIDE_LENGTH_MAX(AVX512_WIDTH, AVX512_ZEROED, AVX512_ZEROS, AVX512_LEAVE,
                     "jmp 7f\n", "7f")
-    "7:  cmpb $0, cpu_has_avx2(%rip)\n   je 5f\n"
+    "7:\n" ASM_NARROW("cpu_has_avx2", "5f")
     WIDE_LENGTH_MAX(AVX2_WIDTH, AVX2_ZEROED, AVX2_ZEROS, AVX2_LEAVE, "jmp 5f\n", "5f")
     "5:  test %rdx, %rdx\n   jz 3f\n"
     "lea (%rdi,%rdx), %r9  # one past the last byte we may report\n"
@@ -2531,6 +2634,7 @@ __asm__(
     // alignment work to get there. Below the point where starting one pays,
     // eight bytes at a time out of a plain loop is cheaper.
     ASM_FUNC(memory_fill)
+    KERNEL_BULK_FILL
     "mov %rdi, %rax\n   movzbl %sil, %ecx\n"
     "movabs $0x0101010101010101, %r8\n   imul %r8, %rcx  # the byte, eight times over\n"
     "cmp $16, %rdx\n   jae 6f\n"
@@ -2545,7 +2649,7 @@ __asm__(
     ASM_RET
     "7:  mov %rcx, (%rdi)\n   mov %rcx, -8(%rdi,%rdx)\n"
     ASM_RET
-    "6:  cmpb $0, cpu_has_avx2(%rip)\n   je 2f\n"
+    "6:\n" ASM_NARROW("cpu_has_avx2", "2f")
     //
     //       vpbroadcastb into xmm rather than ymm on purpose: a VEX encoded
     //       128 bit write zeroes the upper half, which is the state a return
@@ -2556,7 +2660,7 @@ __asm__(
     "cmp $32, %rdx\n   ja 3f\n"
     "vmovdqu %xmm0, (%rdi)\n   vmovdqu %xmm0, -16(%rdi,%rdx)\n"
     ASM_RET
-    "3:  cmpb $0, cpu_has_avx512(%rip)\n   jne 5f\n"
+    "3:\n" ASM_WIDER("cpu_has_avx512", "5f")
     "vinserti128 $1, %xmm0, %ymm0, %ymm0\n"
     "cmp $64, %rdx\n   ja 4f\n"
     "vmovdqu %ymm0, (%rdi)\n   vmovdqu %ymm0, -32(%rdi,%rdx)\n"
@@ -2645,6 +2749,7 @@ __asm__(
     ASM_END(memory_fill)
 
     ASM_FUNC(memory_copy_fast)
+    KERNEL_BULK_COPY
     "mov %rdi, %rax\n   cmp $32, %rdx\n   ja 6f\n"
     "cmp $16, %rdx\n   jb 7f\n"
     //
@@ -2700,8 +2805,8 @@ __asm__(
     //       Sixteen to thirty two is the xmm pair above, which every x86_64 part
     //       can encode; wider than that needs the byte cpu_detect wrote.
     //
-    "6:  cmpb $0, cpu_has_avx2(%rip)\n   je 2f\n"
-    "cmpb $0, cpu_has_avx512(%rip)\n   jne 5f\n"
+    "6:\n" ASM_NARROW("cpu_has_avx2", "2f")
+    ASM_WIDER("cpu_has_avx512", "5f")
     "cmp $64, %rdx\n   ja 4f\n"
     "vmovdqu (%rsi), %ymm0\n   vmovdqu -32(%rsi,%rdx), %ymm1\n"
     "vmovdqu %ymm0, (%rdi)\n   vmovdqu %ymm1, -32(%rdi,%rdx)\n"
@@ -2816,7 +2921,7 @@ __asm__(
     "mov %rdi, %rax\n   cmp %rsi, %rdi\n   jbe 1f\n   mov %rsi, %r8\n"
     "add %rdx, %r8\n   cmp %r8, %rdi\n   jb 2f\n"
     "1:  jmp memory_copy_fast\n"
-    "2:  cmpb $0, cpu_has_avx2(%rip)\n   je 5f\n   cmp $128, %rdx\n   jb 5f\n"
+    "2:\n" ASM_NARROW("cpu_has_avx2", "5f") "   cmp $128, %rdx\n   jb 5f\n"
     "vmovdqu (%rsi), %ymm4\n   vmovdqu 32(%rsi), %ymm5\n"
     "vmovdqu 64(%rsi), %ymm6\n   vmovdqu 96(%rsi), %ymm7\n"
     "lea (%rdi,%rdx), %r8\n   lea (%rsi,%rdx), %r11\n"
@@ -2903,7 +3008,7 @@ __asm__(
     //       answer to a different question.
     //
     ASM_FUNC(string_copy)
-    "cmpb $0, cpu_has_avx2(%rip)\n   je 5f\n"
+    ASM_NARROW("cpu_has_avx2", "5f")
     "vpxor %xmm1, %xmm1, %xmm1\n"
     "mov %rsi, %r8\n   and $-32, %r8  # same page as the string: cannot fault\n"
     "mov %esi, %ecx\n   and $31, %ecx\n"
@@ -2934,7 +3039,7 @@ __asm__(
     //
     ASM_FUNC(string_copy_max)
     "mov %rdi, %rax\n   test %rdx, %rdx\n   jz 9f  # not even a terminator\n"
-    "cmpb $0, cpu_has_avx2(%rip)\n   je 5f\n"
+    ASM_NARROW("cpu_has_avx2", "5f")
     "vpxor %xmm1, %xmm1, %xmm1\n   lea (%rsi,%rdx), %r9  # one past the last byte we may read\n"
     "mov %rsi, %r8\n   and $-32, %r8\n   mov %esi, %ecx\n   and $31, %ecx\n"
     "vpcmpeqb (%r8), %ymm1, %ymm0\n   vpmovmskb %ymm0, %eax\n"
@@ -2983,7 +3088,7 @@ __asm__(
     //
     ASM_FUNC(string_replace_all)
     "movsbl %sil, %ecx\n   test %ecx, %ecx\n   jle 9f  # b8 at or below zero never matches\n"
-    "cmpb $0, cpu_has_avx2(%rip)\n   je 5f\n"
+    ASM_NARROW("cpu_has_avx2", "5f")
     "vpxor %xmm1, %xmm1, %xmm1\n"
     "1:  test $31, %dil\n   jz 2f\n"
     "movzbl (%rdi), %eax\n   test %al, %al\n   jz 6f\n"
@@ -3024,7 +3129,7 @@ __asm__(
     //
     ASM_FUNC(string_cut)
     "movsbl %sil, %edx\n   test %edx, %edx\n   jle 8f  # b8 at or below zero never matches\n"
-    "cmpb $0, cpu_has_avx2(%rip)\n   je 5f\n"
+    ASM_NARROW("cpu_has_avx2", "5f")
     "vmovd %edx, %xmm2\n   vpbroadcastb %xmm2, %ymm2\n   vpxor %xmm1, %xmm1, %xmm1\n"
     "mov %rdi, %r8\n   and $-32, %r8\n   mov %edi, %ecx\n   and $31, %ecx\n"
     "vmovdqa (%r8), %ymm0\n"
@@ -3755,7 +3860,7 @@ ASM_FUNC(positive_to_string)
     //       alignment reaches thirty one back, so unlike the word path this
     //       one can see something it must not answer.
     //
-    "cmpb $0, cpu_has_avx2(%rip)\n   je .Lstring_format_word_setup\n"
+    ASM_NARROW("cpu_has_avx2", ".Lstring_format_word_setup")
     "mov %rbp, %r8\n   mov %ebp, %ecx\n   and $-32, %r8\n   and $31, %ecx\n"
     "vpxor %xmm1, %xmm1, %xmm1\n   vpbroadcastb format_words+16(%rip), %ymm2\n"
     "vmovdqa (%r8), %ymm0\n"
@@ -3935,6 +4040,106 @@ ASM_FUNC(positive_to_string)
     "9:\n"
     ASM_RET
     ASM_END(string_span)
+    // The same run with a fence in front of it.
+    //
+    // string_span stops at a byte the set does not hold, and the terminator is
+    // such a byte in every set anybody builds, so a string ends the run for
+    // free. A line in a buffer has no terminator to end it: sort, uniq, awk and
+    // diff all walk a length they were handed, and thirty places in them wrote
+    // "while (i < length && class(at[i]))" out by hand because the library had
+    // only the terminated form.
+    //
+    // The bound is tested once per four bytes and not once per byte. The loop
+    // runs while four are left and the leftovers go a byte at a time, which is
+    // the same shape string_span has with the fence folded into it.
+    ASM_FUNC(string_span_max)
+    "xor %eax, %eax\n"
+    //
+    //       The bound less four, wrapping. A bound under four borrows and the
+    //       jump lands where the four is added back, so a short buffer and the
+    //       tail of a long one are the same three instructions.
+    //
+    "sub $4, %rsi\n   jb 5f\n"
+    "1:  movzbl (%rdi,%rax), %ecx\n   cmpb $0, (%rdx,%rcx)\n   je 9f\n"
+    "movzbl 1(%rdi,%rax), %ecx\n   cmpb $0, (%rdx,%rcx)\n   je 8f\n"
+    "movzbl 2(%rdi,%rax), %ecx\n   cmpb $0, (%rdx,%rcx)\n   je 7f\n"
+    "movzbl 3(%rdi,%rax), %ecx\n   cmpb $0, (%rdx,%rcx)\n   je 6f\n"
+    "add $4, %rax\n   cmp %rsi, %rax\n   jbe 1b\n"
+    "5:  add $4, %rsi  # the bound again\n"
+    "2:  cmp %rsi, %rax\n   jae 9f\n   movzbl (%rdi,%rax), %ecx\n"
+    "cmpb $0, (%rdx,%rcx)\n   je 9f\n   inc %rax\n   jmp 2b\n"
+    //
+    //       Three exits that fall through each other: a stop at the fourth byte
+    //       of the group is three past where the group began, and each label
+    //       above it adds the one it is short.
+    //
+    "6:  inc %rax\n"
+    "7:  inc %rax\n"
+    "8:  inc %rax\n"
+    "9:\n"
+    ASM_RET
+    ASM_END(string_span_max)
+    //
+    //       string_digits -- a run of decimal digits, as a number and as a
+    //       count of the bytes it took.
+    //
+    //       string_to_positive above answers half of that and reads backwards
+    //       from the terminator, which is the wrong shape for a parser: what a
+    //       parser wants is where the digits stopped, because what stopped them
+    //       is the next thing it has to look at. Thirty three loops across the
+    //       utilities were written by hand for exactly that and this is what
+    //       they fold onto.
+    //
+    //       The value wraps rather than saturating and nothing is told that it
+    //       did, which is what every one of those loops already does. There is
+    //       no overflow answer here because no caller has one: the sizes, the
+    //       line numbers and the field counts a shell parses are checked
+    //       against their own limits afterwards, and a routine that reported
+    //       something nobody reads would be a third argument passed thirty
+    //       three times to be ignored.
+    //
+    //       A count of zero is how a caller learns there were no digits at all.
+    //       "0" and "" both answer zero and only one of them consumed a byte,
+    //       which is the "have_first" flag half of these loops keep by hand.
+    //
+    ASM_FUNC(string_digits_max)
+    "xor %eax, %eax  # the number so far\n"
+    "xor %r8d, %r8d  # how many bytes it took\n"
+    "1:  cmp %rsi, %r8\n   jae 2f\n"
+    "movzbl (%rdi,%r8), %ecx\n   sub $48, %ecx\n"
+    //
+    //       One compare for both ends: a byte under the zero wraps beneath a
+    //       thirty two bit subtract and lands well above nine.
+    //
+    "cmp $9, %ecx\n   ja 2f\n"
+    "lea (%rax,%rax,4), %rax\n   lea (%rcx,%rax,2), %rax  # ten times it, plus the digit\n"
+    "inc %r8\n   jmp 1b\n"
+    //
+    //       The count is written through a pointer the caller may not have
+    //       given. A test against zero predicts perfectly -- a call site either
+    //       always wants it or never does -- and costs less than a second
+    //       routine that differs by one store.
+    //
+    "2:  test %rdx, %rdx\n   je 3f\n   mov %r8, (%rdx)\n"
+    "3:\n"
+    ASM_RET
+    ASM_END(string_digits_max)
+    //
+    //       The same over a terminated string. Written out again rather than
+    //       forwarded with a fence nothing reaches: the terminator is not a
+    //       digit, so the bound is dead weight, and dead weight inside the loop
+    //       is two instructions per byte. Forwarding was measured first and cost
+    //       a quarter of the routine at the run lengths a parser actually sees,
+    //       which are one digit to about ten.
+    //
+    ASM_FUNC(string_digits)
+    "xor %eax, %eax\n   xor %r8d, %r8d\n"
+    "1:  movzbl (%rdi,%r8), %ecx\n   sub $48, %ecx\n   cmp $9, %ecx\n   ja 2f\n"
+    "lea (%rax,%rax,4), %rax\n   lea (%rcx,%rax,2), %rax\n   inc %r8\n   jmp 1b\n"
+    "2:  test %rsi, %rsi\n   je 3f\n   mov %r8, (%rsi)\n"
+    "3:\n"
+    ASM_RET
+    ASM_END(string_digits)
     // The lexer's inner loop.
     //
     //   string_lex_word(source, into, class) -> packed result
@@ -5500,6 +5705,53 @@ ASM_FUNC(positive_to_string)
     "3:  mov x0, x2\n"
     ASM_RET
     ASM_END(string_span)
+    // The same run with a fence in front of it. The x86_64 block above carries
+    // the reasoning; here the bound is tested once per byte rather than once
+    // per four, because a compare and a branch against a register is what the
+    // unrolled form would have cost anyway.
+    ASM_FUNC(string_span_max)
+    "mov x3, xzr\n"
+    "1:  cmp x3, x1\n   b.hs 9f\n   ldrb w4, [x0, x3]\n   ldrb w5, [x2, x4]\n"
+    "cbz w5, 9f\n   add x3, x3, #1\n"
+    "cmp x3, x1\n   b.hs 9f\n   ldrb w4, [x0, x3]\n   ldrb w5, [x2, x4]\n"
+    "cbz w5, 9f\n   add x3, x3, #1\n   b 1b\n"
+    "9:  mov x0, x3\n"
+    ASM_RET
+    ASM_END(string_span_max)
+    //
+    //       string_digits_max and string_digits. The x86_64 block above says
+    //       why they are here and what the count of bytes is for.
+    //
+    //       sub on a w register is what makes one compare do both ends here as
+    //       well: the result is zero extended into the x register, so a byte
+    //       under the zero becomes a large positive number rather than a
+    //       negative one, and the unsigned compare against nine catches it.
+    //       That also means x5 is exactly the digit wherever it is used.
+    //
+    ASM_FUNC(string_digits_max)
+    "mov x3, xzr  // the number so far\n"
+    "mov x4, xzr  // how many bytes it took\n"
+    "mov w7, #10\n"
+    "1:  cmp x4, x1\n   b.hs 2f\n   ldrb w5, [x0, x4]\n   sub w5, w5, #48\n"
+    "cmp w5, #9\n   b.hi 2f\n"
+    "madd x3, x3, x7, x5  // ten times it, plus the digit\n"
+    "add x4, x4, #1\n   b 1b\n"
+    "2:  cbz x2, 3f\n   str x4, [x2]\n"
+    "3:  mov x0, x3\n"
+    ASM_RET
+    ASM_END(string_digits_max)
+    //
+    //       Written out again rather than forwarded; the x86_64 block above
+    //       says what the fence costs when nothing can reach it.
+    //
+    ASM_FUNC(string_digits)
+    "mov x2, xzr\n   mov x3, xzr\n   mov w7, #10\n"
+    "1:  ldrb w5, [x0, x3]\n   sub w5, w5, #48\n   cmp w5, #9\n   b.hi 2f\n"
+    "madd x2, x2, x7, x5\n   add x3, x3, #1\n   b 1b\n"
+    "2:  cbz x1, 3f\n   str x3, [x1]\n"
+    "3:  mov x0, x2\n"
+    ASM_RET
+    ASM_END(string_digits)
     // The lexer's inner loop.
     //
     //   string_lex_word(source, into, class) -> packed result
@@ -6862,6 +7114,52 @@ ASM_FUNC(positive_to_string)
     "3:  mv a0, a2\n"
     ASM_RET
     ASM_END(string_span)
+    // The same run with a fence in front of it, as on arm64. No index
+    // addressing here, so the offset is added to the base every turn.
+    ASM_FUNC(string_span_max)
+    "mv a3, zero\n"
+    "1:  bgeu a3, a1, 9f\n   add t0, a0, a3\n   lbu t1, 0(t0)\n   add t2, a2, t1\n"
+    "lbu t3, 0(t2)\n   beqz t3, 9f\n   addi a3, a3, 1\n"
+    "bgeu a3, a1, 9f\n   add t0, a0, a3\n   lbu t1, 0(t0)\n   add t2, a2, t1\n"
+    "lbu t3, 0(t2)\n   beqz t3, 9f\n   addi a3, a3, 1\n   j 1b\n"
+    "9:  mv a0, a3\n"
+    ASM_RET
+    ASM_END(string_span_max)
+    //
+    //       string_digits_max and string_digits. The x86_64 block above says
+    //       why they are here.
+    //
+    //       addi works on the whole register here, so a byte under the zero
+    //       goes genuinely negative rather than wrapping into a large positive
+    //       the way it does on the other two. The unsigned compare catches it
+    //       either way: minus forty eight read without a sign is far above
+    //       nine, and it is the same one branch for both ends.
+    //
+    ASM_FUNC(string_digits_max)
+    "mv a3, zero  # the number so far\n"
+    "mv a4, zero  # how many bytes it took\n"
+    "li a5, 10\n   li a6, 9\n"
+    "1:  bgeu a4, a1, 2f\n   add t0, a0, a4\n   lbu t1, 0(t0)\n   addi t1, t1, -48\n"
+    "bltu a6, t1, 2f\n"
+    "mul a3, a3, a5\n   add a3, a3, t1  # ten times it, plus the digit\n"
+    "addi a4, a4, 1\n   j 1b\n"
+    "2:  beqz a2, 3f\n   sd a4, 0(a2)\n"
+    "3:  mv a0, a3\n"
+    ASM_RET
+    ASM_END(string_digits_max)
+    //
+    //       Written out again rather than forwarded; the x86_64 block above
+    //       says what the fence costs when nothing can reach it.
+    //
+    ASM_FUNC(string_digits)
+    "mv a2, zero\n   mv a3, zero\n   li a5, 10\n   li a6, 9\n"
+    "1:  add t0, a0, a3\n   lbu t1, 0(t0)\n   addi t1, t1, -48\n"
+    "bltu a6, t1, 2f\n"
+    "mul a2, a2, a5\n   add a2, a2, t1\n   addi a3, a3, 1\n   j 1b\n"
+    "2:  beqz a1, 3f\n   sd a3, 0(a1)\n"
+    "3:  mv a0, a2\n"
+    ASM_RET
+    ASM_END(string_digits)
     // The lexer's inner loop.
     //
     //   string_lex_word(source, into, class) -> packed result
@@ -7240,6 +7538,11 @@ b32 string_compare(string_address source, string_address input);
 string_address string_first_of(string_address source, p8 character);
 
 positive string_span(string_address source, const b8 address_to set);
+positive string_span_max(string_address source, positive bound,
+                         const b8 address_to set);
+positive string_digits(string_address source, positive address_to used);
+positive string_digits_max(string_address source, positive bound,
+                           positive address_to used);
 positive string_table_find(string_address name, address_any table,
                            positive stride, positive count);
 positive string_lex_word(string_address source, p8 address_to into,
@@ -7540,6 +7843,86 @@ address_any memory_search(address_any block, positive size,
         includes the terminator unless somebody deliberately puts it in.
 */
 #define STRING_SET_BYTES 256
+
+/*
+        The three sets a scanner asks for over and over.
+
+        string_span and string_span_max take a set and not a predicate, and
+        until now every caller that wanted one of these either built it at
+        startup or wrote the byte loop out by hand. Counted across the shell
+        and the utilities: twenty two places skipping blanks, four taking the
+        run that is not blanks, and the digit runs, which string_digits above
+        answers whole rather than as a span.
+
+        Three and no more. A fourth with one caller would cost a load and an
+        indirection to say what a compare already said, which is the case
+        against most of these and is why there is no set of letters here.
+
+        The complement holds no terminator, on purpose. A run of everything
+        that is not a blank has to stop somewhere when the caller gives no
+        bound, and every caller counted above means the end of the string when
+        it says that. Under string_span_max the bound stops it first and the
+        difference never shows.
+*/
+// A space or a tab: what POSIX calls a blank, and what IFS is by default.
+const b8 string_set_blanks[STRING_SET_BYTES] = {
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+};
+
+// Its complement, and the terminator is not in it.
+const b8 string_set_not_blanks[STRING_SET_BYTES] = {
+        0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1,
+        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+        0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+};
+
+// The decimal digits, for the callers that count a run rather than read it.
+const b8 string_set_digits[STRING_SET_BYTES] = {
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+};
 
 fn string_set_add(b8 address_to set, string_address members)
 {
