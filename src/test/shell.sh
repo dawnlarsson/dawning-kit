@@ -491,6 +491,41 @@ one
 A
 two
 B'
+
+# <<- takes every leading tab off every line of the body and off the line that
+# ends it. The lexer knows << and not <<-, so the dash arrives as the front of
+# the word behind it -- on its own when a blank follows and stuck to the
+# delimiter when none does -- and both spellings have to mean the same thing.
+answer 'dash heredoc'    'cat <<-EOF
+	indented
+		deeper
+	EOF'
+answer 'dash then blank' 'cat <<- EOF
+	spaced
+	EOF'
+answer 'dash keeps spaces' 'cat <<-EOF
+	  two spaces
+	EOF'
+answer 'dash expands'    'x=v; cat <<-EOF
+	$x
+	EOF'
+answer 'dash quoted'     'x=v; cat <<-"EOF"
+	$x
+	EOF'
+answer 'dash ends bare'  'cat <<-EOF
+	body
+EOF'
+answer 'two dash bodies' 'cat <<-A; cat <<-B
+	one
+	A
+	two
+	B'
+answer 'a dash delimiter' 'cat << -EOF
+plain
+-EOF'
+answer 'plain keeps tabs' 'cat <<EOF
+	kept
+EOF'
 answer 'order of words'  'echo x > /tmp/sr2 2>&1; cat /tmp/sr2'
 answer 'loop redirected' 'for i in 1 2; do echo $i; done > /tmp/sr3; cat /tmp/sr3'
 
@@ -771,9 +806,6 @@ differs 'a bad number'   '8|' 0 'echo $((08))'
 
 group language
 differs 'echo keeps them' 'a\b|' 0 'echo "a\b"'
-differs 'no dash heredoc' '' 0 'cat <<-EOF
-	indented
-	EOF'
 differs 'no set e'       'not reached|' 0 'set -e; false; echo not reached'
 differs 'no set u'       '|after|' 0 'set -u; echo $nosuch; echo after'
 differs 'no cd dash'     '/|' 0 'cd /tmp; cd /; cd - > /dev/null; pwd'

@@ -152,6 +152,9 @@ static positive parse_token_text_base;
 
 static string_address here_delimiter[HERE_MAX];
 static b32 here_quoted[HERE_MAX];
+// <<- rather than <<, which takes the leading tabs off every line of the body
+// and off the line that ends it.
+static b32 here_strip[HERE_MAX];
 static positive here_body[HERE_MAX];
 static positive here_length[HERE_MAX];
 static b32 here_wanted;
@@ -299,7 +302,7 @@ static bool parse_word_is(b32 ahead, string_address text)
         The quotes decide whether the body is expanded, so which quotes were
         used matters as much as what is left when they are gone.
 */
-static bool parse_here_register(string_address word)
+static bool parse_here_register(string_address word, bool strip)
 {
         string_address step = word;
         positive start = here_names_used;
@@ -308,6 +311,7 @@ static bool parse_here_register(string_address word)
                 return false;
 
         here_quoted[here_wanted] = false;
+        here_strip[here_wanted] = strip;
 
         while (string_get(step))
         {
@@ -355,6 +359,8 @@ static bool parse_here_register(string_address word)
         return true;
 }
 
+fn parse_here_close();
+
 // Which delimiter the reader is waiting for, or nothing when it is waiting for
 // a command.
 string_address parse_here_open()
@@ -367,10 +373,33 @@ string_address parse_here_open()
 
 bool parse_here_line(string_address line)
 {
-        positive length = string_length(line);
+        positive length;
 
         if (here_filled >= here_wanted)
                 return false;
+
+        /*
+                The tabs a <<- body does not keep, and the terminator hiding
+                behind them.
+
+                The reader compares the line it read against the delimiter
+                before handing it over, and by then the tabs are still on it.
+                Which of the two the line is can only be decided where what
+                would be stripped is known, which is here.
+        */
+        if (here_strip[here_filled])
+        {
+                while (string_is(line, '\t'))
+                        line++;
+
+                if (!string_compare(line, here_delimiter[here_filled]))
+                {
+                        parse_here_close();
+                        return true;
+                }
+        }
+
+        length = string_length(line);
 
         if (!here_length[here_filled])
                 here_body[here_filled] = here_used;
@@ -509,10 +538,43 @@ bool parse_feed(string_address line)
 
                 // The body of a here-document is read by the caller before the
                 // parser ever runs, so the delimiter has to be noticed now.
-                if (into->kind == PT_OP && into->op == OP_DLESS &&
-                    index + 1 < count && lex_tokens[index + 1].kind == LEX_WORD)
+                if (into->kind == PT_OP && into->op == OP_DLESS)
                 {
-                        if (!parse_here_register(lex_tokens[index + 1].text))
+                        b32 word = index + 1;
+                        string_address delimiter = null;
+                        bool strip = false;
+
+                        if (word < count && lex_tokens[word].kind == LEX_WORD)
+                                delimiter = lex_tokens[word].text;
+
+                        /*
+                                <<- is one operator that arrives as two tokens.
+
+                                The lexer knows << and it does not know <<-, so
+                                the dash comes back as the start of the word
+                                behind it -- on its own when a blank follows,
+                                and stuck to the delimiter when none does. A
+                                dash with a blank in front of it is a delimiter
+                                beginning with a dash and not the operator.
+                        */
+                        if (delimiter && string_is(delimiter, '-') &&
+                            lex_tokens[word].at == source->at + source->length)
+                        {
+                                strip = true;
+                                delimiter++;
+
+                                if (!string_get(delimiter))
+                                {
+                                        word++;
+                                        delimiter =
+                                            word < count &&
+                                                    lex_tokens[word].kind == LEX_WORD
+                                                ? lex_tokens[word].text
+                                                : null;
+                                }
+                        }
+
+                        if (delimiter && !parse_here_register(delimiter, strip))
                                 return false;
                 }
         }
@@ -689,6 +751,7 @@ static bool parse_at_redirect()
 
 static bool parse_take_redirect(b32 index)
 {
+        string_address delimiter;
         b32 descriptor = -1;
         b32 op;
         b32 slot;
@@ -714,6 +777,29 @@ static bool parse_take_redirect(b32 index)
                 return false;
         }
 
+        delimiter = parse_look(0)->text;
+
+        // The dash of <<-, read here exactly as parse_feed read it when it
+        // registered the delimiter. The two have to agree on how many tokens
+        // the operator covers or the body and the command come apart.
+        if (op == OP_DLESS && parse_look(0)->joined && string_is(delimiter, '-'))
+        {
+                delimiter++;
+
+                if (!string_get(delimiter))
+                {
+                        parse_position++;
+
+                        if (parse_look(0)->kind != PT_WORD)
+                        {
+                                parse_fail();
+                                return false;
+                        }
+
+                        delimiter = parse_look(0)->text;
+                }
+        }
+
         if (parse_redirect_used + 1 >= parse_redirect_top)
         {
                 parse_state = PARSE_SYNTAX;
@@ -727,7 +813,7 @@ static bool parse_take_redirect(b32 index)
         parse_redirects[slot].raw = false;
         parse_redirects[slot].body = 0;
         parse_redirects[slot].body_length = 0;
-        parse_redirects[slot].word = parse_word_new(parse_look(0)->text);
+        parse_redirects[slot].word = parse_word_new(delimiter);
 
         if (op == OP_DLESS)
         {
