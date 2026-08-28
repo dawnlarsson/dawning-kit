@@ -454,6 +454,7 @@ answer 'ifs empty'       'IFS=; x="a b"; set -- $x; echo $#'
 answer 'read two lines'  'printf "1\n2\n" | { read a; read b; echo "$a$b"; }'
 answer 'read no newline' 'printf "x" | { read v; echo "[$v]"; }'
 answer 'read extra'      'echo a b c | { read x y; echo "$y"; }'
+answer 'read uses ifs'   'IFS=: ; echo a:b | { read x y; echo "$x-$y"; }'
 answer 'read joins'      'printf "a\\\\b\n" | { read v; printf "[%s]\n" "$v"; }'
 answer 'read raw keeps'  'printf "a\\\\b\n" | { read -r v; printf "[%s]\n" "$v"; }'
 
@@ -624,6 +625,21 @@ answer 'not found either' 'v=o; v=n nosuchcommand12345 2>/dev/null; echo "[$v]"'
 answer 'alone it stays'   'v=o; v=n; echo "[$v]"'
 answer 'in a loop'        'v=o; for i in 1 2; do v=n true; done; echo "[$v]"'
 
+# eval and . run a line from inside a line that is already running, over the
+# same arrays the outer one is standing in. What the inner line claims has to
+# be given back to where it claimed from -- giving it back to where the outer
+# line began threw the outer line's own words away, and giving nothing back
+# ran the tree out after eighty of them.
+
+group nesting
+answer 'eval in a loop'  'for i in a b c d; do eval echo x > /dev/null; printf "[%s]" "$i"; done; echo'
+answer 'eval keeps the list' 'for i in a b c d; do eval "echo $i" > /dev/null; printf "[%s]" "$i"; done; echo'
+answer 'eval many times'  'i=0; while [ $i -lt 200 ]; do eval "x=$i"; i=$((i+1)); done; echo $x'
+answer 'redefined in a loop' 'i=0; while [ $i -lt 200 ]; do eval "f() { echo body $i; }"; i=$((i+1)); done; f'
+answer 'eval under a redirect' 'f() { eval "echo a"; echo b; } > /tmp/gn1.$$; f; echo visible; cat /tmp/gn1.$$'
+answer 'dot in a loop'   'echo "echo sourced" > /tmp/gn2.$$; for i in a b c; do . /tmp/gn2.$$ > /dev/null; printf "[%s]" "$i"; done; echo'
+answer 'eval sees the case' 'for i in a b; do case $i in a) eval echo one > /dev/null;; b) eval echo two > /dev/null;; esac; printf "[%s]" "$i"; done; echo'
+
 group builtins
 answer 'printf kinds'    'printf "%d %s %c\n" 42 str x'
 answer 'printf bases'    'printf "%x %o\n" 255 8'
@@ -641,6 +657,10 @@ answer 'test parens'     '[ \( 1 = 1 \) ] && echo yes'
 answer 'test file kinds' '[ -f /etc/hostname ] && [ -r / ] && [ -x / ] && echo yes'
 answer 'test numbers'    '[ 1 -ne 2 ] && [ 1 -le 1 ] && [ 2 -ge 1 ] && echo yes'
 answer 'pwd after cd'    'cd /tmp; pwd'
+answer 'cd back'         'cd /tmp; cd /; cd - > /dev/null; pwd'
+answer 'cd sets oldpwd'  'cd /tmp; cd /; echo $OLDPWD'
+answer 'hash says so'    'hash; echo $?'
+answer 'ulimit open files' 'ulimit -n; echo $?'
 answer 'export to child' 'export X=1; sh -c "echo \$X"'
 answer 'unset unknown'   'unset nosuch; echo $?'
 answer 'alias runs'      'alias e=echo; e hi'
@@ -843,8 +863,6 @@ differs 'a bad number'   '8|' 0 'echo $((08))'
 group language
 differs 'echo keeps them' 'a\b|' 0 'echo "a\b"'
 differs 'no set u'       '|after|' 0 'set -u; echo $nosuch; echo after'
-differs 'no cd dash'     '/|' 0 'cd /tmp; cd /; cd - > /dev/null; pwd'
-differs 'read ignores ifs' 'a:b-|' 0 'IFS=: ; echo a:b | { read x y; echo "$x-$y"; }'
 differs 'readonly is not' '0|' 0 'readonly r=1; r=2; echo $?'
 differs 'unset dash f'   'a|0|' 0 'f() { echo a; }; unset -f f; f 2>/dev/null; echo $?'
 differs 'shift past end' '1|' 0 'set -- a; shift 2; echo $?'
@@ -912,8 +930,6 @@ section absent
 group missing
 absent 'tar'      '127|' 'tar --help; echo $?'
 absent 'gzip'     '127|' 'gzip --help; echo $?'
-absent 'hash'     '127|' 'hash; echo $?'
-absent 'ulimit'   '127|' 'ulimit -n; echo $?'
 
 section ""
 
