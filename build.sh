@@ -133,7 +133,16 @@ build_remote() {
         # USB prompts below read nothing, because ssh forwards whatever is on
         # stdin to the remote command.
         # shellcheck disable=SC2029,SC2086
-        ssh -n "$host" "cd $remote && sudo sh build.sh $extra" ||
+        #
+        #       sudo drops the environment, so anything the remote build has
+        #       to know is named here. env rather than a VAR=value prefix,
+        #       which sudo only passes when it has been configured to.
+        #
+        carry=""
+        [ -z "${MOONWATER_STOCK:-}" ] || carry="MOONWATER_STOCK=1"
+
+        # shellcheck disable=SC2029,SC2086
+        ssh -n "$host" "cd $remote && sudo env $carry sh build.sh $extra" ||
                 die "the build failed on $host"
 
         say "Fetching the image"
@@ -455,6 +464,18 @@ STRNCHR:char *strnchr(const char *, __kernel_size_t, int)"
                         claims=
                         ;;
                 esac
+
+                #
+                #       The same switch src/Makefile reads. With it set the
+                #       kernel keeps every symbol it came with, so an image
+                #       built this way and one built without it differ in
+                #       exactly the thing being measured.
+                #
+                if [ -n "${MOONWATER_STOCK:-}" ]; then
+                        claims=
+                        displaces=
+                        echo "  MOONWATER_STOCK: the kernel keeps its own"
+                fi
 
                 if [ -n "$header" ]; then
                         echo "$claims" | while IFS=: read -r name signature; do

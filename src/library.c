@@ -4465,7 +4465,7 @@ ASM_FUNC(positive_to_string)
     ASM_RET
     ASM_END(string_table_find)
 );
-#ifdef KERNEL_MODE
+#if defined(KERNEL_MODE) && !defined(STOCK_STRINGS)
 ASM_EXPORT(memchr);
 //
 //      memcmp goes out with the rest of them. build.sh claims it in x86's
@@ -8650,7 +8650,14 @@ fn string_format(writer write, string_address format, ...);
 __asm__(
     ASM_ALIAS(strchrnul, string_first_of_or_end)
     ASM_ALIAS(strnchr,   string_first_of_max)
-#if !defined(KERNEL_MODE) || X64
+/*
+        STOCK_STRINGS builds the module without giving the kernel any of
+        these names, so an image can be built both ways and the two timed
+        against each other. build.sh sets it, and empties the claim and
+        displace lists to match, when MOONWATER_STOCK is in the environment.
+        It is a measuring switch and nothing in the tree depends on it.
+*/
+#if (!defined(KERNEL_MODE) || X64) && !defined(STOCK_STRINGS)
     ASM_ALIAS(memchr,    memory_first_of)
     ASM_ALIAS(memcmp,    memory_compare)
     ASM_ALIAS(strlen,    string_length)

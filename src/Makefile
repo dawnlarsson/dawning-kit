@@ -8,6 +8,12 @@
 # that is one of the few places here that needs a name of its own.
 obj-$(CONFIG_MOONWATER_CORE) += moonwater.o
 
+#       A stock comparison: MOONWATER_STOCK in the environment builds the
+#       module without the alias block, so the kernel keeps its own strlen,
+#       memcpy and the rest and the two images can be timed against each
+#       other. build.sh empties the claim and displace lists to match.
+ccflags-y += $(if $(MOONWATER_STOCK),-DSTOCK_STRINGS)
+
 moonwater-y := core.o
 
 #
