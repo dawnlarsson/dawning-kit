@@ -65,6 +65,7 @@ bool word_is(string_address word, string_address text);
 p64 test_device(file_facts address_to facts);
 fn hash_forget();
 fn shell_here(p8 address_to into, positive room);
+positive printf_render(p8 address_to into, positive value, positive base, bool upper);
 
 /*
         The set flags, remembered but not obeyed.
@@ -435,17 +436,8 @@ positive shell_number(string_address input)
 
 fn shell_number_padded(writer write, positive value, positive width)
 {
-        p8 digits[24];
-        positive length = 0;
-
-        if (value == 0)
-                digits[length++] = '0';
-
-        while (value && length < sizeof(digits))
-        {
-                digits[length++] = '0' + (value % 10);
-                value /= 10;
-        }
+        p8 body[24];
+        positive length = printf_render(body, value, 10, false);
 
         while (width > length)
         {
@@ -453,8 +445,7 @@ fn shell_number_padded(writer write, positive value, positive width)
                 width--;
         }
 
-        while (length)
-                write(digits + --length, 1);
+        write(body, length);
 }
 
 /*
@@ -1417,21 +1408,7 @@ bool env_place(string_address entry)
 
 positive shell_digits(p8 address_to into, positive value)
 {
-        p8 digits[24];
-        positive length = 0;
-        positive at = 0;
-
-        if (value == 0)
-                digits[length++] = '0';
-
-        while (value && length < sizeof(digits))
-        {
-                digits[length++] = '0' + (value % 10);
-                value /= 10;
-        }
-
-        while (length)
-                into[at++] = digits[--length];
+        positive at = printf_render(into, value, 10, false);
 
         into[at] = end;
 

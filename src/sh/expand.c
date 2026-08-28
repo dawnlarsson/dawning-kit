@@ -24,6 +24,7 @@
 */
 string_address env_get(const_string name);
 bool env_set(const_string name, const_string value);
+positive shell_digits(p8 address_to into, positive value);
 fn run_line(string_address line);
 fn parse_reset_all();
 fn shell_trap_exit();
@@ -179,34 +180,15 @@ static fn expand_copy_bounded(p8 address_to into, string_address from, positive 
 
 static positive expand_number_out(bipolar value, p8 address_to into)
 {
-        p8 digits[24];
-        positive at = 0;
         positive used = 0;
-        positive magnitude;
 
         if (value < 0)
         {
                 into[used++] = '-';
-                magnitude = (positive)(-value);
-        }
-        else
-                magnitude = (positive)value;
-
-        if (!magnitude)
-                digits[at++] = '0';
-
-        while (magnitude)
-        {
-                digits[at++] = (p8)('0' + magnitude % 10);
-                magnitude /= 10;
+                value = -value;
         }
 
-        while (at)
-                into[used++] = digits[--at];
-
-        into[used] = end;
-
-        return used;
+        return used + shell_digits(into + used, (positive)value);
 }
 
 /*
