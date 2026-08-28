@@ -6313,7 +6313,10 @@ static b32 text_grep()
 
         b32 inputs = from_stdin ? 1 : (b32)grep_path_count;
 
-        grep_names = (grep_path_count > 1 || with_names || grep_expanded) && !no_names;
+        // How many files were named, not how many are left after --include
+        // took some away: GNU decides whether to print a name before it has
+        // decided which files it is going to read.
+        grep_names = (text_files_count > 1 || with_names || grep_expanded) && !no_names;
 
         for (b32 i = 0; i < inputs; i++)
         {
