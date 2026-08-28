@@ -314,16 +314,6 @@ static void fill(struct window *window, unsigned int colour)
                         pixels[y * window->pitch + x] = colour;
 }
 
-static void title(struct window *window, const char *text)
-{
-        unsigned int i;
-
-        for (i = 0; i + 1 < WINDOW_TITLE_MAX && text[i]; i++)
-                window->title[i] = text[i];
-
-        window->title[i] = 0;
-}
-
 static void hold(long seconds)
 {
         long timespec[2] = {seconds, 0};
@@ -353,13 +343,15 @@ static b32 screen_window()
         fill(back, INK_BACK);
         back->region = WINDOW_CENTRED;
         back->edge = 16;
-        title(back, "Centred, rounded");
+        string_copy_max((string_address)back->title,
+                        (string_address) "Centred, rounded", WINDOW_TITLE_MAX);
         window_commit(back);
 
         fill(front, INK_FRONT);
         front->x = back->x + 60;
         front->y = back->y + 60;
-        title(front, "On top");
+        string_copy_max((string_address)front->title,
+                        (string_address) "On top", WINDOW_TITLE_MAX);
         window_commit(front);
 
         // No frame, so no titlebar, no border, and nothing to drag it by.
@@ -394,7 +386,8 @@ static b32 screen_window()
 
                         line[at++] = (char)typed;
                         line[at] = 0;
-                        title(back, line);
+                        string_copy_max((string_address)back->title,
+                                        (string_address)line, WINDOW_TITLE_MAX);
                         window_commit(back);
                 }
 
@@ -426,7 +419,6 @@ static b32 screen_window()
 #define TEXT_ROWS_WANTED 18
 #define TYPED_MAX 46
 
-static struct window *window;
 static unsigned int columns, rows;
 static char typed[TYPED_MAX];
 static unsigned int at;
