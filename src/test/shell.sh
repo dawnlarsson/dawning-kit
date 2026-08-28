@@ -626,6 +626,16 @@ answer 'recursion locals' 'f() { local v=$1; [ $1 -le 0 ] && { echo bottom; retu
 answer 'function args'   'f() { set -- x; echo $1; }; set -- y; f; echo $1'
 answer 'function in one' 'f() { g() { echo inner; }; g; }; f'
 
+# A reserved word is not a name, so it cannot be a function either: the word
+# in front of a command is read as the keyword every time, which makes such a
+# definition something that can never be reached.
+answer 'function named if' 'if() { echo k; }; if'
+answer 'function named for' 'for() { echo k; }'
+answer 'function named done' 'done() { echo k; }'
+answer 'function named in' 'in() { echo k; }'
+answer 'a name with a digit' 'f2() { echo n; }; f2'
+answer 'a name with a bar'  '_f() { echo u; }; _f'
+
 # set -e, and the four places POSIX says it does not reach: the condition of
 # an if or a loop, everything but the last of an && or || list, and a pipeline
 # whose status is inverted. Every case here is one of those or its opposite,

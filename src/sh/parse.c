@@ -746,6 +746,26 @@ static bool parse_at_list_end()
                parse_word_is(0, "esac") || parse_word_is(0, "}");
 }
 
+/*
+        The reserved words, which are not names.
+
+        Position decides whether one of these is a keyword, but nothing makes
+        it a function name: "if() { ...; }" defines something that can never
+        be reached, because the word in front of a command is read as the
+        keyword every time. dash calls it a syntax error and so does this.
+*/
+static bool parse_reserved(b32 ahead)
+{
+        return parse_word_is(ahead, "if") || parse_word_is(ahead, "then") ||
+               parse_word_is(ahead, "else") || parse_word_is(ahead, "elif") ||
+               parse_word_is(ahead, "fi") || parse_word_is(ahead, "do") ||
+               parse_word_is(ahead, "done") || parse_word_is(ahead, "case") ||
+               parse_word_is(ahead, "esac") || parse_word_is(ahead, "while") ||
+               parse_word_is(ahead, "until") || parse_word_is(ahead, "for") ||
+               parse_word_is(ahead, "in") || parse_word_is(ahead, "!") ||
+               parse_word_is(ahead, "{") || parse_word_is(ahead, "}");
+}
+
 static bool parse_redirect_operator(b32 op)
 {
         return op == OP_LESS || op == OP_GREAT || op == OP_DGREAT ||
@@ -1209,7 +1229,7 @@ static b32 parse_command()
         b32 index;
         b32 compound = true;
 
-        if (parse_look(0)->kind == PT_WORD &&
+        if (parse_look(0)->kind == PT_WORD && !parse_reserved(0) &&
             parse_look(1)->kind == PT_OP && parse_look(1)->op == OP_LPAREN &&
             parse_look(2)->kind == PT_OP && parse_look(2)->op == OP_RPAREN)
                 return parse_function();
