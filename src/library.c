@@ -3088,6 +3088,27 @@ __asm__(
     "2:  bsf %rax, %rax\n   shr $3, %rax\n   add %r8, %rax\n   sub %rsi, %rax\n"
     "lea 1(%rax), %rdx\n   jmp memory_copy_fast\n"
     ASM_END(string_copy)
+    ASM_SECTION
+    //
+    //      strcat: the source onto the end of the destination.
+    //
+    //      Two routines that are already here, and lib/string.c does both of
+    //      them a byte at a time -- the walk to the end of the destination
+    //      and the copy after it -- so the saving compounds. 427 call sites.
+    //
+    //      No bound and no check, which is what the name means and is why
+    //      the kernel would rather callers did not use it. Ours is not more
+    //      dangerous than the one it replaces; it is the same contract.
+    //
+    ASM_FUNC(string_append)
+    "push %rbx\n   push %r12\n   sub $8, %rsp  # aligned at the calls\n"
+    "mov %rdi, %rbx\n   mov %rsi, %r12\n"
+    "call string_length  # the destination is already in rdi\n"
+    "lea (%rbx,%rax), %rdi\n   mov %r12, %rsi\n   call string_copy\n"
+    "mov %rbx, %rax  # strcat hands the destination back\n"
+    "add $8, %rsp\n   pop %r12\n   pop %rbx\n"
+    ASM_RET
+    ASM_END(string_append)
     //
     //       Not strncpy: no padding, and no terminator at all when the source
     //       filled the whole bound. Writing one unconditionally would put it at
@@ -4475,6 +4496,7 @@ ASM_EXPORT(strchrnul);
 ASM_EXPORT(strcmp);
 ASM_EXPORT(strcpy);
 ASM_EXPORT(strstr);
+ASM_EXPORT(strcat);
 ASM_EXPORT(strlen);
 ASM_EXPORT(strnchr);
 ASM_EXPORT(strncmp);
@@ -5296,6 +5318,27 @@ __asm__(
     "3:  add x2, x2, #1  // the terminator is copied too\n"
     "b memory_copy_fast\n"
     ASM_END(string_copy)
+    ASM_SECTION
+    //
+    //      strcat: the source onto the end of the destination.
+    //
+    //      Two routines that are already here, and lib/string.c does both of
+    //      them a byte at a time -- the walk to the end of the destination
+    //      and the copy after it -- so the saving compounds. 427 call sites.
+    //
+    //      No bound and no check, which is what the name means and is why
+    //      the kernel would rather callers did not use it. Ours is not more
+    //      dangerous than the one it replaces; it is the same contract.
+    //
+    ASM_FUNC(string_append)
+    "stp x29, x30, [sp, #-32]!\n   stp x19, x20, [sp, #16]\n"
+    "mov x19, x0\n   mov x20, x1\n"
+    "bl string_length\n"
+    "add x0, x19, x0\n   mov x1, x20\n   bl string_copy\n"
+    "mov x0, x19\n"
+    "ldp x19, x20, [sp, #16]\n   ldp x29, x30, [sp], #32\n"
+    ASM_RET
+    ASM_END(string_append)
     //
     //       Not strncpy: no padding, and no terminator at all when the source
     //       filled the whole bound.
@@ -6884,6 +6927,27 @@ __asm__(
     "add a2, a5, t2\n   sub a2, a2, a1\n   addi a2, a2, 1  # the terminator is copied too\n"
     "tail memory_copy_fast\n"
     ASM_END(string_copy)
+    ASM_SECTION
+    //
+    //      strcat: the source onto the end of the destination.
+    //
+    //      Two routines that are already here, and lib/string.c does both of
+    //      them a byte at a time -- the walk to the end of the destination
+    //      and the copy after it -- so the saving compounds. 427 call sites.
+    //
+    //      No bound and no check, which is what the name means and is why
+    //      the kernel would rather callers did not use it. Ours is not more
+    //      dangerous than the one it replaces; it is the same contract.
+    //
+    ASM_FUNC(string_append)
+    "addi sp, sp, -32\n   sd ra, 24(sp)\n   sd s0, 16(sp)\n   sd s1, 8(sp)\n"
+    "mv s0, a0\n   mv s1, a1\n"
+    "call string_length\n"
+    "add a0, s0, a0\n   mv a1, s1\n   call string_copy\n"
+    "mv a0, s0\n"
+    "ld ra, 24(sp)\n   ld s0, 16(sp)\n   ld s1, 8(sp)\n   addi sp, sp, 32\n"
+    ASM_RET
+    ASM_END(string_append)
     //       string_copy_max: the arm64 block carries the reasoning.
     ASM_FUNC(string_copy_max)
     "mv a3, a0\n   beqz a2, 9f  # not even a terminator\n"
@@ -7873,6 +7937,9 @@ __asm__(
 #endif
 
 string_address string_copy(string_address destination, string_address source);
+
+//      strcat exactly: the source onto the end of the destination.
+string_address string_append(string_address destination, string_address source);
 string_address string_copy_max(string_address destination, string_address source, positive length);
 /*
         The same copy, terminated, with the end handed back.
@@ -8639,6 +8706,7 @@ __asm__(
             bytes, 4.1x on a short haystack, level on a hit at the front.
     */
     ASM_ALIAS(strstr,    string_search)
+    ASM_ALIAS(strcat,    string_append)
 #endif
 #ifndef KERNEL_MODE
     ASM_ALIAS(strncpy,   string_copy_max)

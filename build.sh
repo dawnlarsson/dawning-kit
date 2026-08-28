@@ -399,6 +399,7 @@ linux/arch/x86/lib/Makefile:memmove_64.o
 linux/arch/x86/lib/Makefile:memset_64.o"
                         claims="STRCPY:char *strcpy(char *, const char *)
 STRSTR:char *strstr(const char *, const char *)
+STRCAT:char *strcat(char *, const char *)
 STRLEN:__kernel_size_t strlen(const char *)
 STRNCMP:int strncmp(const char *, const char *, __kernel_size_t)
 STRNLEN:__kernel_size_t strnlen(const char *, __kernel_size_t)

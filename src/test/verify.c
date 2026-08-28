@@ -372,6 +372,7 @@ bipolar reference_to_bipolar(string_address input)
 
 fn check_find_overlaps();
 fn check_search();
+fn check_append();
 
 string_address reference_find(string_address string, string_address input)
 {
@@ -615,6 +616,7 @@ fn check_bulk_strings()
 
         check_find_overlaps();
         check_search();
+        check_append();
 }
 
 /*
@@ -740,6 +742,55 @@ fn check_search()
                         same("string_search", "a needle far into a long haystack",
                              (positive)string_search(hay, (string_address) "qrs"),
                              (positive)reference_search(hay, (string_address) "qrs"));
+                }
+}
+
+/*
+        string_append, which is strcat: the source onto the end of the
+        destination, and the destination handed back.
+
+        Checked at every length either side can be, and with the join landing
+        at every offset into a word, because it is two routines joined at a
+        pointer one of them worked out. Guard bytes after the room, because
+        strcat's whole character is that nothing bounds it and the way to get
+        it wrong is to write one byte too many.
+*/
+fn check_append()
+{
+        static p8 room[160];
+        static p8 want[160];
+
+        for (positive first = 0; first < 40; first++)
+                for (positive second = 0; second < 40; second++)
+                {
+                        for (positive i = 0; i < sizeof(room); i++)
+                                room[i] = want[i] = 0xc7;
+
+                        static p8 tail[48];
+
+                        for (positive i = 0; i < first; i++)
+                                room[i] = want[i] = (p8)('a' + i % 23);
+
+                        room[first] = want[first] = 0;
+
+                        for (positive i = 0; i < second; i++)
+                                tail[i] = (p8)('A' + i % 19);
+
+                        tail[second] = 0;
+
+                        //      what it should look like afterwards
+                        for (positive i = 0; i <= second; i++)
+                                want[first + i] = tail[i];
+
+                        string_address back =
+                            string_append((string_address)room, (string_address)tail);
+
+                        same("string_append", "hands the destination back",
+                             (positive)back, (positive)room);
+
+                        for (positive i = 0; i < sizeof(room); i++)
+                                same("string_append", "byte for byte, guards included",
+                                     (positive)room[i], (positive)want[i]);
                 }
 }
 
