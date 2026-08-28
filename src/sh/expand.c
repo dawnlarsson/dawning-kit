@@ -222,23 +222,82 @@ static bipolar expand_base_number(string_address address_to at)
         return value;
 }
 
-static bipolar expand_number_in(string_address text)
+/*
+        Past a [:alpha:], or nothing when none starts here.
+
+        The ] that closes one of these is not the ] that closes the set around
+        it: read as one, [[:alpha:]] was a set holding a bracket, a colon and
+        five letters, followed by a stray ].
+
+        [.x.] and [=x=] are not here because dash has neither, and a pattern
+        that matches something on one shell and nothing on the other is worse
+        than a pattern that matches nothing on both.
+*/
+static string_address expand_class_end(string_address at)
 {
-        bipolar value;
-        bool negative = false;
+        string_address step;
 
-        while (string_is(text, ' ') || string_is(text, '\t'))
-                text++;
+        if (string_not(at, '[') || string_not(at + 1, ':'))
+                return null;
 
-        if (string_is(text, '-') || string_is(text, '+'))
+        step = at + 2;
+
+        while (string_get(step))
         {
-                negative = string_is(text, '-');
-                text++;
+                if (string_is(step, ':') && string_is(step + 1, ']'))
+                        return step + 2;
+
+                step++;
         }
 
-        value = expand_base_number(address_of text);
+        return null;
+}
 
-        return negative ? -value : value;
+static bool expand_class_named(string_address name, positive length, const_string want)
+{
+        positive at = 0;
+
+        while (at < length && want[at] && name[at] == want[at])
+                at++;
+
+        return at == length && want[at] == end;
+}
+
+// The twelve POSIX class names, in the one place that has to know them.
+static bool expand_class_has(string_address name, positive length, p8 value)
+{
+        bool upper = value >= 'A' && value <= 'Z';
+        bool lower = value >= 'a' && value <= 'z';
+        bool digit = value >= '0' && value <= '9';
+        bool printing = value >= ' ' && value < 127;
+
+        if (expand_class_named(name, length, (const_string) "alpha"))
+                return upper || lower;
+        if (expand_class_named(name, length, (const_string) "digit"))
+                return digit;
+        if (expand_class_named(name, length, (const_string) "alnum"))
+                return upper || lower || digit;
+        if (expand_class_named(name, length, (const_string) "upper"))
+                return upper;
+        if (expand_class_named(name, length, (const_string) "lower"))
+                return lower;
+        if (expand_class_named(name, length, (const_string) "space"))
+                return value == ' ' || (value >= '\t' && value <= '\r');
+        if (expand_class_named(name, length, (const_string) "blank"))
+                return value == ' ' || value == '\t';
+        if (expand_class_named(name, length, (const_string) "print"))
+                return printing;
+        if (expand_class_named(name, length, (const_string) "graph"))
+                return printing && value != ' ';
+        if (expand_class_named(name, length, (const_string) "cntrl"))
+                return value < ' ' || value == 127;
+        if (expand_class_named(name, length, (const_string) "punct"))
+                return printing && value != ' ' && !upper && !lower && !digit;
+        if (expand_class_named(name, length, (const_string) "xdigit"))
+                return digit || (value >= 'a' && value <= 'f') ||
+                       (value >= 'A' && value <= 'F');
+
+        return false;
 }
 
 /*
@@ -259,7 +318,11 @@ static string_address expand_set_end(string_address at)
                 step++;
 
         while (string_get(step) && string_not(step, ']'))
-                step++;
+        {
+                string_address past = expand_class_end(step);
+
+                step = past ? past : step + 1;
+        }
 
         return string_get(step) ? step : null;
 }
@@ -278,7 +341,23 @@ static bool expand_in_set(string_address at, string_address stop, p8 value)
 
         while (step < stop)
         {
-                p8 low = string_get(step);
+                p8 low;
+
+                {
+                        string_address past = expand_class_end(step);
+
+                        if (past && past <= stop)
+                        {
+                                if (expand_class_has(step + 2,
+                                                     (positive)(past - step - 4), value))
+                                        found = true;
+
+                                step = past;
+                                continue;
+                        }
+                }
+
+                low = string_get(step);
 
                 if (low == '\\' && step + 1 < stop)
                         low = string_get(++step);
@@ -677,7 +756,14 @@ static bool expand_push_parameter(string_address name, bool quoted)
         p8 mark = quoted ? MARK_QUOTED : MARK_FIELD;
         p8 value[EXPAND_VALUE];
 
-        if (string_is(name, '@') && string_get(name + 1) == end)
+        /*
+                Unquoted, $* makes them too: it joins with the first byte of
+                IFS and then the join is split back apart, which is the same
+                thing until IFS is empty -- and there $* handed back one word
+                holding every parameter run together.
+        */
+        if ((string_is(name, '@') || (!quoted && string_is(name, '*'))) &&
+            string_get(name + 1) == end)
         {
                 positive at;
 
@@ -700,7 +786,7 @@ static bool expand_push_parameter(string_address name, bool quoted)
         return true;
 }
 
-static fn expand_into(string_address text, bool quoted);
+static fn expand_into(string_address text, bool quoted, p8 plain);
 static string_address expand_double(string_address step);
 static string_address expand_dollar(string_address step, bool quoted);
 static string_address expand_backtick(string_address step, bool quoted);
@@ -721,7 +807,7 @@ static positive expand_capture(string_address text, bool quoted, p8 address_to i
         positive used = 0;
         positive step;
 
-        expand_into(text, quoted);
+        expand_into(text, quoted, MARK_PLAIN);
 
         for (step = at; step < expand_length; step++)
         {
@@ -754,6 +840,17 @@ static positive expand_capture(string_address text, bool quoted, p8 address_to i
 */
 static string_address arith_at;
 
+/*
+        What the expression could not answer.
+
+        Nothing was ever wrong here: a divide by zero was zero, a missing
+        operand was whatever had been read so far, and a name holding a word
+        was a name holding nothing. All three handed a number to the script
+        that the script never computed. dash stops on each of them and leaves
+        2 behind, and so does this.
+*/
+static bool arith_bad;
+
 static fn arith_space()
 {
         while (string_is(arith_at, ' ') || string_is(arith_at, '\t') ||
@@ -774,23 +871,83 @@ static bipolar arith_store(string_address name, bipolar value)
         return value;
 }
 
+/*
+        What a name is worth here.
+
+        Unset and empty are both zero, and anything that is not a number is
+        not a value at all -- x=bar came out as zero and the arithmetic
+        carried on around it.
+*/
+static bipolar arith_value_of(string_address name)
+{
+        p8 held[EXPAND_VALUE];
+        string_address step = held;
+        string_address digits;
+        bipolar value;
+        bool negative = false;
+
+        if (!expand_value_of(name, held, sizeof(held)))
+                return 0;
+
+        while (string_is(step, ' ') || string_is(step, '\t'))
+                step++;
+
+        if (!string_get(step))
+                return 0;
+
+        if (string_is(step, '-') || string_is(step, '+'))
+        {
+                negative = string_is(step, '-');
+                step++;
+        }
+
+        digits = step;
+        value = expand_base_number(address_of step);
+
+        if (step == digits)
+        {
+                arith_bad = true;
+                return 0;
+        }
+
+        while (string_is(step, ' ') || string_is(step, '\t'))
+                step++;
+
+        if (string_get(step))
+                arith_bad = true;
+
+        return negative ? -value : value;
+}
+
 // x++ and x--, answering with what the name held before.
 static bipolar arith_step(string_address name, bipolar by)
 {
-        p8 held[EXPAND_VALUE];
-        bipolar was;
+        bipolar was = arith_value_of(name);
 
-        if (!expand_value_of(name, held, sizeof(held)))
-                held[0] = end;
-
-        was = expand_number_in(held);
         arith_store(name, was + by);
 
         return was;
 }
 
-// What the operator in front of the = does. Division by zero answers with the
-// left hand side rather than trapping, which is what the plain / does here.
+/*
+        The one division the machine will not do.
+
+        A zero divisor faults, and so does the smallest number there is over
+        minus one, because its opposite is not a number this width holds --
+        $(( -9223372036854775808 / -1 )) killed the shell with SIGFPE.
+*/
+static bipolar arith_divide(bipolar left, bipolar right, bool remainder)
+{
+        if (!right || (right == -1 && left == (bipolar)((positive)1 << 63)))
+        {
+                arith_bad = true;
+                return 0;
+        }
+
+        return remainder ? left % right : left / right;
+}
+
+// What the operator in front of the = does.
 static bipolar arith_combine(p8 op, bipolar left, bipolar right)
 {
         switch (op)
@@ -798,10 +955,8 @@ static bipolar arith_combine(p8 op, bipolar left, bipolar right)
         case '+': return left + right;
         case '-': return left - right;
         case '*': return left * right;
-        // Zero on a divide by zero, which is what the plain / and % above
-        // answer with -- the two used to disagree.
-        case '/': return right ? left / right : 0;
-        case '%': return right ? left % right : 0;
+        case '/': return arith_divide(left, right, false);
+        case '%': return arith_divide(left, right, true);
         case '&': return left & right;
         case '|': return left | right;
         case '^': return left ^ right;
@@ -827,6 +982,8 @@ static bipolar arith_primary()
 
                 if (string_is(arith_at, ')'))
                         arith_at++;
+                else
+                        arith_bad = true;
 
                 return value;
         }
@@ -865,7 +1022,6 @@ static bipolar arith_primary()
         if (expand_name_character(string_get(arith_at)))
         {
                 p8 name[EXPAND_NAME];
-                p8 held[EXPAND_VALUE];
                 positive length = 0;
 
                 while (expand_name_character(string_get(arith_at)) && length < EXPAND_NAME - 1)
@@ -933,21 +1089,19 @@ static bipolar arith_primary()
 
                                 arith_at += skip;
 
-                                if (!expand_value_of(name, held, sizeof(held)))
-                                        held[0] = end;
-
-                                was = expand_number_in(held);
+                                was = arith_value_of(name);
 
                                 return arith_store(name,
                                                    arith_combine(op, was, arith_choose()));
                         }
                 }
 
-                if (!expand_value_of(name, held, sizeof(held)))
-                        return 0;
-
-                return expand_number_in(held);
+                return arith_value_of(name);
         }
+
+        // A byte that starts no value at all, which is where a missing
+        // operand lands: $((1 + )) answered 1 and $((2 ** 3)) answered 0.
+        arith_bad = true;
 
         return 0;
 }
@@ -970,17 +1124,9 @@ static bipolar arith_multiply()
                 if (string_is(arith_at, '/') || string_is(arith_at, '%'))
                 {
                         bool remainder = string_is(arith_at, '%');
-                        bipolar divisor;
 
                         arith_at++;
-                        divisor = arith_primary();
-
-                        // A shell that divides by zero should answer nothing,
-                        // not take the machine's fault for it.
-                        if (!divisor)
-                                return 0;
-
-                        value = remainder ? value % divisor : value / divisor;
+                        value = arith_divide(value, arith_primary(), remainder);
                         continue;
                 }
 
@@ -1241,6 +1387,8 @@ static bipolar arith_choose()
 
         if (string_is(arith_at, ':'))
                 arith_at++;
+        else
+                arith_bad = true;
 
         left = arith_choose();
 
@@ -1249,7 +1397,14 @@ static bipolar arith_choose()
 
 static bipolar arith_evaluate(string_address text)
 {
+        arith_bad = false;
         arith_at = text;
+        arith_space();
+
+        // Nothing between the brackets is nothing to get wrong. dash calls it
+        // a syntax error; here it is the zero it reads as everywhere else.
+        if (!string_get(arith_at))
+                return 0;
 
         return arith_choose();
 }
@@ -1554,6 +1709,29 @@ static string_address expand_backtick(string_address step, bool quoted)
         return step;
 }
 
+/*
+        The two things that stop a script where it stands.
+
+        ${x:?} exists to stop, and arithmetic that cannot be answered has
+        nothing to hand back -- saying so and carrying on is the one thing
+        either must not do. dash leaves 2 behind and runs the exit trap on the
+        way out. A terminal is the exception, because there is somebody there
+        to type the line again.
+*/
+static fn expand_fatal()
+{
+        shell_status = 2;
+
+        if (shell_is_interactive)
+                return;
+
+        if (!expand_in_substitution)
+                shell_trap_exit();
+
+        log_flush();
+        system_call_1(syscall(exit_group), 2);
+}
+
 static string_address expand_arithmetic(string_address step, bool quoted)
 {
         string_address inner = step + 3;
@@ -1581,7 +1759,21 @@ static string_address expand_arithmetic(string_address step, bool quoted)
         // left over is arithmetic, where a bare name is a value too.
         expand_capture(text, true, ready, sizeof(ready), false);
 
-        expand_number_out(arith_evaluate(ready), written);
+        {
+                bipolar value = arith_evaluate(ready);
+
+                if (arith_bad)
+                {
+                        string_format(expand_complain,
+                                      "arithmetic: %s\n", ready);
+                        expand_fatal();
+
+                        return stop + 2;
+                }
+
+                expand_number_out(value, written);
+        }
+
         expand_push_string(written, quoted ? MARK_QUOTED : MARK_FIELD);
 
         return stop + 2;
@@ -1717,7 +1909,22 @@ static string_address expand_braced(string_address step, bool quoted)
                 operation = seen;
                 step++;
         }
-        else if (!colon && (seen == '%' || seen == '#'))
+        /*
+                A colon says one of those four is coming, and nothing else.
+                ${x:1:1} is a substring in ksh and in three shells after it
+                and in no part of POSIX, and here it quietly handed back the
+                whole value -- which is the one answer that is wrong whichever
+                of the two the script was written against. dash refuses it and
+                so does this.
+        */
+        else if (colon)
+        {
+                string_format(expand_complain, "%s: bad substitution\n", name);
+                expand_fatal();
+
+                return close + 1;
+        }
+        else if (seen == '%' || seen == '#')
         {
                 operation = seen;
                 step++;
@@ -1761,7 +1968,16 @@ static string_address expand_braced(string_address step, bool quoted)
                 positive start = expand_length;
 
                 expand_push_parameter(name, quoted);
-                expand_capture(word, quoted, pattern, sizeof(pattern), true);
+
+                /*
+                        The pattern is not inside the quotes around the whole
+                        of this. A star in it is a star whether or not the
+                        substitution stands in double quotes; handing the
+                        outer quoting in marked every byte of the pattern
+                        quoted, so the star was escaped and the only prefix
+                        that ever matched was a literal one.
+                */
+                expand_capture(word, false, pattern, sizeof(pattern), true);
                 expand_trim(start, pattern, operation == '#', doubled);
 
                 return close + 1;
@@ -1770,22 +1986,12 @@ static string_address expand_braced(string_address step, bool quoted)
         {
                 bool present = expand_value_of(name, value, sizeof(value));
                 bool blank = present && value[0] == end;
-                bool missing;
-
-                // $@ and $* are unset when there are no parameters, not set to
-                // the empty string they would join to.
-                if (string_is(name, '@') || string_is(name, '*'))
-                {
-                        present = shell_parameter_count != 0;
-                        blank = false;
-                }
-
-                missing = !present || (colon && blank);
+                bool missing = !present || (colon && blank);
 
                 if (operation == '-')
                 {
                         if (missing)
-                                expand_into(word, quoted);
+                                expand_into(word, quoted, MARK_FIELD);
                         else
                                 expand_push_parameter(name, quoted);
 
@@ -1811,7 +2017,7 @@ static string_address expand_braced(string_address step, bool quoted)
                 if (operation == '+')
                 {
                         if (!missing)
-                                expand_into(word, quoted);
+                                expand_into(word, quoted, MARK_FIELD);
 
                         return close + 1;
                 }
@@ -1826,27 +2032,7 @@ static string_address expand_braced(string_address step, bool quoted)
                                 string_format(expand_complain, "%s: %s\n", name,
                                               said[0] ? said : (string_address) "parameter not set");
 
-                                /*
-                                        This form exists to stop the script,
-                                        and saying so and carrying on is the
-                                        one thing it must not do: a name that
-                                        was checked because it had to be set
-                                        went on to be used unset. dash leaves
-                                        2 behind and runs the exit trap on the
-                                        way out. A terminal is the exception,
-                                        because there is somebody there to
-                                        type the line again.
-                                */
-                                shell_status = 2;
-
-                                if (!shell_is_interactive)
-                                {
-                                        if (!expand_in_substitution)
-                                                shell_trap_exit();
-
-                                        log_flush();
-                                        system_call_1(syscall(exit_group), 2);
-                                }
+                                expand_fatal();
 
                                 return close + 1;
                         }
@@ -1976,7 +2162,16 @@ static string_address expand_double(string_address step)
         return step;
 }
 
-static fn expand_into(string_address text, bool quoted)
+/*
+        A word, expanded in place.
+
+        plain is what a byte nothing quoted comes out as. In the word the
+        lexer handed over it is PLAIN, because the lexer has already put every
+        separator between words; in the tail of ${x-a b} it is FIELD, because
+        those bytes are the result of an expansion and an unquoted expansion
+        splits -- ${nosuch-D E} used to be one field holding a space.
+*/
+static fn expand_into(string_address text, bool quoted, p8 plain)
 {
         string_address step = text;
 
@@ -2023,7 +2218,7 @@ static fn expand_into(string_address text, bool quoted)
                         continue;
                 }
 
-                expand_push(seen, quoted ? MARK_QUOTED : MARK_PLAIN);
+                expand_push(seen, quoted ? MARK_QUOTED : plain);
                 step++;
         }
 }
@@ -2064,7 +2259,7 @@ static fn expand_word(string_address word)
         if (string_is(word, '~'))
                 step = expand_tilde(word);
 
-        expand_into(step, false);
+        expand_into(step, false, MARK_PLAIN);
 }
 
 static string_address glob_result[GLOB_RESULTS];
