@@ -1,0 +1,455 @@
+/*
+        Experimental C standard library
+
+        A resolver: a name, and the address behind it
+
+        Dawn Larsson - Apache-2.0 license
+        github.com/dawnlarsson/dawning-kit
+
+        www.dawning.dev
+*/
+
+#ifndef STANDARD_MODERN_C_NET_DNS
+#define STANDARD_MODERN_C_NET_DNS
+
+/*
+        The smallest resolver that is not wrong.
+
+        DNS is a twelve byte header, a question written as length-prefixed
+        labels, and answers in the same shape with a fixed ten byte tail. All
+        of it is big endian, unlike netlink next door, which is the sort of
+        neighbouring difference that produces a working program and a wrong
+        one from the same afternoon.
+
+        Three things a minimal client is tempted to skip and must not:
+
+        Compression. Almost every real answer points into itself rather than
+        spelling a name twice -- two octets whose top bits are both set, the
+        remaining fourteen an offset from the start of the message. A parser
+        that does not follow those reads garbage on nearly every reply. One
+        that follows them without counting can be sent in a circle by two
+        pointers aimed at each other, so the number of jumps is bounded by the
+        size of the message, which no honest reply can exceed.
+
+        Truncation. A reply too big for the buffer arrives shortened, and a
+        shortened answer section is indistinguishable from a short one. The
+        read asks for MSG_TRUNC so the kernel says the true size, and a reply
+        bigger than what was read is refused rather than parsed.
+
+        The question coming back. A reply is matched on its transaction id,
+        and an id is sixteen bits, so it is not much of a check on its own.
+        The question section is compared against the one that was asked, byte
+        for byte, before a single answer is believed.
+
+        rcode zero does not mean there is an address. A name that exists with
+        no A record answers NOERROR with no answers at all, which is a
+        different thing from the name not existing, and a resolver that
+        conflates them reports the wrong reason forever.
+*/
+
+#define DNS_PORT 53
+#define DNS_HEADER 12
+
+#define DNS_TYPE_A 1
+#define DNS_TYPE_CNAME 5
+#define DNS_TYPE_AAAA 28
+#define DNS_CLASS_IN 1
+
+#define DNS_FLAG_RESPONSE 0x8000
+#define DNS_FLAG_TRUNCATED 0x0200
+#define DNS_FLAG_RECURSE 0x0100
+#define DNS_CODE_MASK 0x000f
+
+#define DNS_MAX_MESSAGE 4096
+
+//      Everything the caller may want to tell apart.
+#define DNS_OK 0
+#define DNS_NO_SERVER (-1)
+#define DNS_NO_REPLY (-2)
+#define DNS_MALFORMED (-3)
+#define DNS_NO_SUCH_NAME (-4)
+#define DNS_NO_ADDRESS (-5)
+#define DNS_REFUSED (-6)
+
+static p16 dns_read_16(p8 address_to at)
+{
+        return (p16)(((p16)at[0] << 8) | at[1]);
+}
+
+static fn dns_write_16(p8 address_to at, p16 value)
+{
+        at[0] = (p8)(value >> 8);
+        at[1] = (p8)value;
+}
+
+/*
+        The name, as labels.
+
+        "dawning.dev" becomes 7 d a w n i n g 3 d e v 0. A label may not
+        exceed sixty three bytes -- the two high bits of a length are what
+        marks a compression pointer, so a longer one would be unreadable
+        rather than merely unusual -- and the whole name may not exceed 255.
+*/
+static bipolar dns_write_name(p8 address_to into, positive room, string_address name)
+{
+        positive used = 0;
+        positive mark;
+        positive length;
+
+        while (string_get(name))
+        {
+                mark = used++;
+
+                if (used >= room)
+                        return DNS_MALFORMED;
+
+                length = 0;
+
+                while (string_get(name) && !string_is(name, '.'))
+                {
+                        if (used >= room || length >= 63)
+                                return DNS_MALFORMED;
+
+                        into[used++] = string_get(name);
+                        name++;
+                        length++;
+                }
+
+                if (!length)
+                        return DNS_MALFORMED;
+
+                into[mark] = (p8)length;
+
+                if (string_is(name, '.'))
+                        name++;
+        }
+
+        if (used + 1 > room || used + 1 > 255)
+                return DNS_MALFORMED;
+
+        into[used++] = 0;
+
+        return (bipolar)used;
+}
+
+/*
+        A name skipped over, following pointers but never in a circle.
+
+        The answer is where the name ENDS in the message, which for a
+        compressed name is two bytes on from where it began however far away
+        the pointer led. Every jump is counted against the size of the whole
+        message, which a legitimate reply cannot exceed.
+*/
+static bipolar dns_skip_name(p8 address_to message, positive size, positive at)
+{
+        positive jumps = 0;
+        bipolar ended = -1;
+
+        for (;;)
+        {
+                p8 length;
+
+                if (at >= size)
+                        return DNS_MALFORMED;
+
+                length = message[at];
+
+                if ((length & 0xc0) == 0xc0)
+                {
+                        positive target;
+
+                        if (at + 1 >= size)
+                                return DNS_MALFORMED;
+
+                        if (ended < 0)
+                                ended = (bipolar)(at + 2);
+
+                        target = (positive)(((length & 0x3f) << 8) | message[at + 1]);
+
+                        //      A pointer must lead backwards into the message
+                        //      that has already been seen. Anything else is a
+                        //      loop dressed as an offset.
+                        if (target >= at || ++jumps > size)
+                                return DNS_MALFORMED;
+
+                        at = target;
+                        continue;
+                }
+
+                if (length & 0xc0)
+                        return DNS_MALFORMED;
+
+                at += 1 + length;
+
+                if (!length)
+                        return ended < 0 ? (bipolar)at : ended;
+        }
+}
+
+//      A transaction id worth having. getrandom is the kernel's own, and the
+//      clock is what answers when it is unavailable -- which is better than a
+//      counter starting at one, and is why it is never simply a counter.
+static p16 dns_transaction(void)
+{
+        p16 value = 0;
+
+        if (system_call_3(syscall(getrandom), (positive)address_of value,
+                          sizeof value, 0) == sizeof value)
+                return value;
+
+        return (p16)(get_cpu_time() ^ (get_cpu_time() >> 17));
+}
+
+/*
+        The nameserver, out of resolv.conf.
+
+        Only "nameserver A.B.C.D" lines, and only the first of them. Options,
+        search domains and IPv6 servers are read past rather than understood.
+*/
+static bipolar dns_server_from_file(string_address path)
+{
+        p8 text[4096];
+        b32 handle;
+        bipolar got;
+        positive at = 0;
+
+        handle = (b32)system_call_4(syscall(openat), (positive)-100, (positive)path, 0, 0);
+
+        if (handle < 0)
+                return DNS_NO_SERVER;
+
+        got = system_call_3(syscall(read), (positive)handle, (positive)text,
+                            sizeof(text) - 1);
+        system_call_1(syscall(close), (positive)handle);
+
+        if (got <= 0)
+                return DNS_NO_SERVER;
+
+        text[got] = end;
+
+        while (at < (positive)got)
+        {
+                positive line = at;
+                positive stop;
+
+                while (at < (positive)got && text[at] != '\n')
+                        at++;
+
+                stop = at;
+
+                if (at < (positive)got)
+                        at++;
+
+                if (stop - line < 11)
+                        continue;
+
+                if (!string_compare_max(text + line, (string_address) "nameserver ", 11))
+                {
+                        p8 kept[64];
+                        positive from = line + 11;
+                        positive length;
+
+                        while (from < stop && (text[from] == ' ' || text[from] == '\t'))
+                                from++;
+
+                        length = stop - from;
+
+                        while (length && (text[from + length - 1] == '\r' ||
+                                          text[from + length - 1] == ' '))
+                                length--;
+
+                        if (length && length < sizeof(kept))
+                        {
+                                bipolar host;
+
+                                string_copy_max_end(kept, text + from, length);
+                                host = string_to_host(kept);
+
+                                if (host >= 0)
+                                        return host;
+                        }
+                }
+        }
+
+        return DNS_NO_SERVER;
+}
+
+/*
+        One question asked, and the first address in the answer.
+
+        The reply is read with a deadline rather than blocked on forever: a
+        nameserver that does not answer is the ordinary case on a network that
+        is not up yet, and a resolver that hangs there is worse than one that
+        gives up and says so. The wait is a poll on the socket rather than a
+        receive timeout, which keeps a timeval out of the assembly graph.
+*/
+static bipolar dns_resolve(p32 server, string_address name, p32 address_to found,
+                           positive seconds)
+{
+        p8 request[DNS_MAX_MESSAGE];
+        p8 reply[DNS_MAX_MESSAGE];
+        socket_address_internet where;
+        p16 id = dns_transaction();
+        bipolar handle;
+        bipolar written;
+        bipolar got;
+        positive at;
+        positive answers;
+        positive question_length;
+
+        written = dns_write_name(request + DNS_HEADER,
+                                 sizeof(request) - DNS_HEADER - 4, name);
+
+        if (written < 0)
+                return DNS_MALFORMED;
+
+        dns_write_16(request, id);
+        dns_write_16(request + 2, DNS_FLAG_RECURSE);
+        dns_write_16(request + 4, 1);
+        dns_write_16(request + 6, 0);
+        dns_write_16(request + 8, 0);
+        dns_write_16(request + 10, 0);
+
+        dns_write_16(request + DNS_HEADER + written, DNS_TYPE_A);
+        dns_write_16(request + DNS_HEADER + written + 2, DNS_CLASS_IN);
+
+        question_length = (positive)written + 4;
+
+        handle = socket_new(AF_INET, SOCK_DGRAM, 0);
+
+        if (handle < 0)
+                return DNS_NO_SERVER;
+
+        memory_fill(address_of where, 0, sizeof where);
+        where.family = AF_INET;
+        where.port = network_order_16(DNS_PORT);
+        where.host = network_order_32(server);
+
+        if (socket_connect((b32)handle, address_of where, sizeof where) < 0)
+        {
+                socket_close((b32)handle);
+                return DNS_NO_SERVER;
+        }
+
+        if (socket_send((b32)handle, request, DNS_HEADER + question_length, 0, 0, 0) < 0)
+        {
+                socket_close((b32)handle);
+                return DNS_NO_REPLY;
+        }
+
+        /*
+                Waiting, with an end to it.
+
+                ppoll rather than poll, because arm64 and riscv64 have only
+                ppoll -- the asm-generic table dropped the older call -- and
+                it takes a timespec, which is the type this library already
+                has, in nanoseconds. SO_RCVTIMEO would have wanted a timeval
+                in microseconds and a second time type in the graph for the
+                sake of one call.
+
+                A resolver that blocks forever on a server that is not there
+                is the failure that looks like a hung machine rather than a
+                network that is down.
+        */
+        {
+                p8 waited[8];
+                timespec deadline;
+
+                address_to((b32 address_to)waited) = (b32)handle;
+                address_to((p16 address_to)(waited + 4)) = 1;  // POLLIN
+                address_to((p16 address_to)(waited + 6)) = 0;
+
+                deadline.tv_sec = seconds;
+                deadline.tv_nsec = 0;
+
+                got = system_call_5(syscall(ppoll), (positive)waited, 1,
+                                    (positive)address_of deadline, 0, 8);
+
+                if (got <= 0)
+                {
+                        socket_close((b32)handle);
+                        return DNS_NO_REPLY;
+                }
+        }
+
+        got = socket_receive((b32)handle, reply, sizeof reply, MSG_TRUNC, 0, 0);
+        socket_close((b32)handle);
+
+        if (got < DNS_HEADER)
+                return DNS_NO_REPLY;
+
+        //      MSG_TRUNC answers with the true length, so a reply that did
+        //      not fit is refused rather than parsed as far as it got.
+        if ((positive)got > sizeof(reply))
+                return DNS_MALFORMED;
+
+        if (dns_read_16(reply) != id)
+                return DNS_MALFORMED;
+
+        if (!(dns_read_16(reply + 2) & DNS_FLAG_RESPONSE))
+                return DNS_MALFORMED;
+
+        if (dns_read_16(reply + 4) != 1)
+                return DNS_MALFORMED;
+
+        //      The question, byte for byte as it was asked.
+        if ((positive)got < DNS_HEADER + question_length ||
+            memory_compare(reply + DNS_HEADER, request + DNS_HEADER, question_length))
+                return DNS_MALFORMED;
+
+        switch (dns_read_16(reply + 2) & DNS_CODE_MASK)
+        {
+        case 0:
+                break;
+        case 3:
+                return DNS_NO_SUCH_NAME;
+        default:
+                return DNS_REFUSED;
+        }
+
+        answers = dns_read_16(reply + 6);
+        at = DNS_HEADER + question_length;
+
+        while (answers--)
+        {
+                bipolar next = dns_skip_name(reply, (positive)got, at);
+                p16 kind;
+                p16 class;
+                p16 size;
+
+                if (next < 0)
+                        return DNS_MALFORMED;
+
+                at = (positive)next;
+
+                if (at + 10 > (positive)got)
+                        return DNS_MALFORMED;
+
+                kind = dns_read_16(reply + at);
+                class = dns_read_16(reply + at + 2);
+                size = dns_read_16(reply + at + 8);
+                at += 10;
+
+                if (at + size > (positive)got)
+                        return DNS_MALFORMED;
+
+                //      A CNAME chain is walked by simply reading past it: the
+                //      answer section carries the A record the alias leads to
+                //      in the same reply, which is what recursion is for.
+                if (kind == DNS_TYPE_A && class == DNS_CLASS_IN && size == 4)
+                {
+                        if (found)
+                                address_to found = network_order_32(
+                                    address_to((p32 address_to)(reply + at)));
+
+                        return DNS_OK;
+                }
+
+                at += size;
+        }
+
+        //      NOERROR, and nothing in it. The name is real and has no address.
+        return DNS_NO_ADDRESS;
+}
+
+#endif // STANDARD_MODERN_C_NET_DNS

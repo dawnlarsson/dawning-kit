@@ -3673,6 +3673,8 @@ static shell_tool shell_tools[] = {
     {"find", file_find},
     {"hostname", file_hostname},
     {"ip", net_ip},
+    {"host", net_host},
+    {"fetch", net_fetch},
     {"id", file_id},
     {"kill", file_kill},
     {"ln", file_ln},

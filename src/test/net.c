@@ -1,5 +1,7 @@
 #include "../compiler_memory.c"
 #include "../net/netlink.c"
+#include "../net/dns.c"
+#include "../net/http.c"
 /*
         The netlink wire, and the messages built on it.
 
@@ -263,12 +265,243 @@ static fn talking(void)
         socket_close((b32)handle);
 }
 
+
+/*
+        The resolver's parsing, without a nameserver.
+
+        Every one of these is a shape a real reply takes and a minimal client
+        gets wrong: a name written as labels, a name that points into the
+        message rather than repeating itself, and two pointers aimed at each
+        other, which is a loop a client that does not count jumps follows
+        forever.
+*/
+static fn resolving(void)
+{
+        p8 written[64];
+        bipolar length;
+
+        length = dns_write_name(written, sizeof written, (string_address) "dawning.dev");
+        check("a name is written as labels", length == 13);
+        check("the first label is counted", written[0] == 7);
+        check("and spelled", memory_compare(written + 1, "dawning", 7) == 0);
+        check("the second label is counted", written[8] == 3);
+        check("and spelled", memory_compare(written + 9, "dev", 3) == 0);
+        check("the name ends in a zero", written[12] == 0);
+
+        length = dns_write_name(written, sizeof written, (string_address) "a.b.c.d.e");
+        check("every label is counted", length == 11);
+
+        //      An empty label is what "a..b" and a trailing dot both produce,
+        //      and neither is a name.
+        check("an empty label is refused",
+              dns_write_name(written, sizeof written, (string_address) "a..b") < 0);
+        check("no room is refused",
+              dns_write_name(written, 4, (string_address) "dawning.dev") < 0);
+
+        {
+                //      A message whose second name is a pointer back to the
+                //      first: 12 bytes of header, then "dawning.dev", then a
+                //      pointer to offset 12.
+                p8 message[64];
+                bipolar ended;
+
+                memory_fill(message, 0, sizeof message);
+                dns_write_name(message + 12, sizeof(message) - 12,
+                               (string_address) "dawning.dev");
+                message[25] = 0xc0;
+                message[26] = 12;
+
+                ended = dns_skip_name(message, 27, 12);
+                check("a plain name ends after its zero", ended == 25);
+
+                ended = dns_skip_name(message, 27, 25);
+                check("a compressed name ends after its pointer", ended == 27);
+        }
+
+        {
+                //      Two pointers aimed at each other. A parser that follows
+                //      pointers without counting never comes back from this.
+                p8 message[8];
+
+                message[0] = 0xc0;
+                message[1] = 2;
+                message[2] = 0xc0;
+                message[3] = 0;
+
+                check("a pointer loop is refused", dns_skip_name(message, 4, 0) < 0);
+                check("a forward pointer is refused", dns_skip_name(message, 4, 2) < 0);
+        }
+
+        check("a transaction id is not always the same",
+              dns_transaction() != dns_transaction() ||
+                  dns_transaction() != dns_transaction());
+}
+
+//      The URL, the headers and the chunk framing -- all of it pure.
+static fn fetching(void)
+{
+        p8 name[64];
+        string_address path;
+        p16 port;
+
+        check("a plain url splits",
+              http_split((string_address) "http://dawning.dev/index.html", name,
+                         sizeof name, address_of port, address_of path) == HTTP_OK);
+        check("the host comes out", memory_compare(name, "dawning.dev", 12) == 0);
+        check("the port defaults to 80", port == 80);
+        check("the path comes out", string_equals(path, (string_address) "/index.html"));
+
+        check("a port is taken",
+              http_split((string_address) "http://127.0.0.1:8080/x", name, sizeof name,
+                         address_of port, address_of path) == HTTP_OK);
+        check("the port is read", port == 8080);
+        check("the path after a port", string_equals(path, (string_address) "/x"));
+
+        check("a bare host gets a slash",
+              http_split((string_address) "http://dawning.dev", name, sizeof name,
+                         address_of port, address_of path) == HTTP_OK);
+        check("which is the root", string_equals(path, (string_address) "/"));
+
+        check("https is refused by name",
+              http_split((string_address) "https://dawning.dev/", name, sizeof name,
+                         address_of port, address_of path) == HTTP_NOT_PLAIN);
+        check("an empty host is refused",
+              http_split((string_address) "http:///x", name, sizeof name,
+                         address_of port, address_of path) == HTTP_BAD_URL);
+        check("a port that is not a number is refused",
+              http_split((string_address) "http://h:80x/", name, sizeof name,
+                         address_of port, address_of path) == HTTP_BAD_URL);
+
+        {
+                p8 head[] = "HTTP/1.0 200 OK\r\n"
+                            "Content-Type: text/html\r\n"
+                            "Content-Length: 42\r\n"
+                            "\r\n";
+                positive size = sizeof(head) - 1;
+                positive length = 0;
+                string_address value;
+
+                check("the header block ends at the blank line",
+                      http_header_end(head, size) == (bipolar)size);
+
+                value = http_header(head, size, (string_address) "content-length",
+                                    address_of length);
+                check("a header is found whatever its case", value != null);
+                check("and its value read", value && http_number(value, length) == 42);
+
+                check("a header that is not there is not invented",
+                      http_header(head, size, (string_address) "location", null) == null);
+        }
+
+        {
+                //      Two chunks and the terminator, unwrapped in place.
+                p8 body[] = "4\r\nabcd\r\n3\r\nefg\r\n0\r\n\r\n";
+                bipolar length = http_unchunk(body, sizeof(body) - 1);
+
+                check("chunks unwrap to their contents", length == 7);
+                check("and in order", memory_compare(body, "abcdefg", 7) == 0);
+        }
+
+        {
+                //      A chunk claiming more than arrived, which is what a
+                //      truncated response looks like.
+                p8 body[] = "9\r\nabc\r\n";
+
+                check("a chunk longer than the body is refused",
+                      http_unchunk(body, sizeof(body) - 1) < 0);
+        }
+}
+
+/*
+        A fetch, end to end, over loopback and against no server but our own.
+
+        The child answers one request with a canned response and goes away.
+        The parent fetches it the way the command does. Nothing outside this
+        machine is involved, so it runs on all three architectures and in any
+        order.
+*/
+static fn fetching_for_real(void)
+{
+        socket_address_internet where;
+        p32 size = sizeof where;
+        bipolar listening;
+        bipolar child;
+        p16 port;
+        b32 one = 1;
+
+        listening = socket_new(AF_INET, SOCK_STREAM, 0);
+        check("a listening socket opens", listening >= 0);
+
+        if (listening < 0)
+                return;
+
+        socket_option_set((b32)listening, SOL_SOCKET, SO_REUSEADDR, address_of one,
+                          sizeof one);
+
+        memory_fill(address_of where, 0, sizeof where);
+        where.family = AF_INET;
+        where.host = network_order_32(HOST_LOOPBACK);
+        check("it binds", socket_bind((b32)listening, address_of where, sizeof where) == 0);
+        check("it listens", socket_listen((b32)listening, 4) == 0);
+
+        memory_fill(address_of where, 0, sizeof where);
+        socket_name((b32)listening, address_of where, address_of size);
+        port = network_order_16(where.port);
+
+        child = system_call_2(syscall(clone), SIGCHLD, 0);
+
+        if (child == 0)
+        {
+                p8 said[256];
+                bipolar taken = socket_accept((b32)listening, 0, 0, 0);
+                p8 answer[] = "HTTP/1.0 200 OK\r\n"
+                              "Content-Length: 11\r\n"
+                              "\r\n"
+                              "hello there";
+
+                if (taken >= 0)
+                {
+                        socket_receive((b32)taken, said, sizeof said, 0, 0, 0);
+                        system_write_all((positive)taken, answer, sizeof(answer) - 1);
+                        socket_shutdown((b32)taken, SHUT_BOTH);
+                        socket_close((b32)taken);
+                }
+
+                system_call_1(syscall(exit_group), 0);
+        }
+
+        {
+                http_buffer body = {0};
+                b32 code = 0;
+                bipolar status = http_get(HOST_LOOPBACK, port,
+                                          (string_address) "127.0.0.1",
+                                          (string_address) "/", address_of body,
+                                          address_of code);
+                positive raw = 0;
+
+                check("the fetch succeeds", status == HTTP_OK);
+                check("the status line is read", code == 200);
+                check("the body is its stated length", body.used == 11);
+                check("and is what was sent",
+                      body.bytes && memory_compare(body.bytes, "hello there", 11) == 0);
+
+                http_forget(address_of body);
+                (void)raw;
+        }
+
+        system_wait4_retry((b32)child, null, 0, null);
+        socket_close((b32)listening);
+}
+
 b32 main(void)
 {
         arithmetic();
         building();
         padding();
         talking();
+        resolving();
+        fetching();
+        fetching_for_real();
 
         string_format(log, "%p checks, %p failures\n", checks, failures);
         log_flush();

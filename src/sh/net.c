@@ -13,6 +13,8 @@
 #define STANDARD_MODERN_C_SHELL_NET
 
 #include "../net/netlink.c"
+#include "../net/dns.c"
+#include "../net/http.c"
 
 //      argv, declared the way builtin.c declares it: this file is
 //      pulled in before the definition further down shell.c.
@@ -363,6 +365,202 @@ static bipolar net_index_of(b32 handle, string_address name, p8 address_to into)
                 string_copy_max_end(into, search.name, IFNAME_SIZE - 1);
 
         return (bipolar)search.index;
+}
+
+
+/*
+        host NAME [SERVER]
+
+        The server is normally the first nameserver line in /etc/resolv.conf.
+        It can be given instead, which is the only way to ask anything on a
+        machine that has no resolv.conf -- which the boot image does not, and
+        which is exactly when someone is trying to find out whether the
+        network works at all.
+*/
+static b32 net_host(void)
+{
+        p32 found = 0;
+        p8 written[32];
+        positive length;
+        bipolar server;
+        bipolar status;
+
+        if (shell_argc < 2)
+        {
+                string_format(log, "usage: host NAME [SERVER]\n");
+                log_flush();
+                return 1;
+        }
+
+        if (shell_argc > 2)
+        {
+                server = string_to_host(shell_argv[2]);
+
+                if (server < 0)
+                {
+                        string_format(log, "host: %s is not an address\n", shell_argv[2]);
+                        log_flush();
+                        return 1;
+                }
+        }
+        else
+        {
+                server = dns_server_from_file((string_address) "/etc/resolv.conf");
+
+                if (server < 0)
+                {
+                        string_format(log, "host: no nameserver in /etc/resolv.conf, "
+                                           "and none given\n");
+                        log_flush();
+                        return 1;
+                }
+        }
+
+        status = dns_resolve((p32)server, shell_argv[1], address_of found, 5);
+
+        switch (status)
+        {
+        case DNS_OK:
+                length = host_into(written, found);
+                written[length] = end;
+                string_format(log, "%s has address %s\n", shell_argv[1], written);
+                break;
+        case DNS_NO_SUCH_NAME:
+                string_format(log, "host: %s: no such name\n", shell_argv[1]);
+                break;
+        case DNS_NO_ADDRESS:
+                string_format(log, "host: %s exists but has no address\n", shell_argv[1]);
+                break;
+        case DNS_NO_REPLY:
+                string_format(log, "host: no reply from the nameserver\n");
+                break;
+        case DNS_REFUSED:
+                string_format(log, "host: the nameserver refused the question\n");
+                break;
+        default:
+                string_format(log, "host: the reply made no sense\n");
+                break;
+        }
+
+        log_flush();
+
+        return status == DNS_OK ? 0 : 1;
+}
+
+
+/*
+        fetch URL
+
+        The body goes to standard output, so it redirects into a file or pipes
+        into anything else the way every other tool here does. What went wrong
+        goes to the log, which is where a script looking only at the bytes
+        will not mistake it for content.
+*/
+static b32 net_fetch(void)
+{
+        p8 name[256];
+        http_buffer body = {0};
+        string_address path;
+        p16 port = 80;
+        p32 host = 0;
+        bipolar server;
+        bipolar status;
+        b32 code = 0;
+
+        if (shell_argc < 2)
+        {
+                string_format(log, "usage: fetch http://host[:port]/path\n");
+                log_flush();
+                return 1;
+        }
+
+        status = http_split(shell_argv[1], name, sizeof name, address_of port,
+                            address_of path);
+
+        if (status == HTTP_NOT_PLAIN)
+        {
+                string_format(log, "fetch: https is not implemented; this speaks "
+                                   "http only\n");
+                log_flush();
+                return 1;
+        }
+
+        if (status < 0)
+        {
+                string_format(log, "fetch: %s is not a url this understands\n",
+                              shell_argv[1]);
+                log_flush();
+                return 1;
+        }
+
+        //      A literal address needs no resolver, which is what makes the
+        //      test able to fetch from a socket on loopback with no nameserver
+        //      anywhere in sight.
+        server = string_to_host(name);
+
+        if (server >= 0)
+        {
+                host = (p32)server;
+        }
+        else
+        {
+                bipolar nameserver = dns_server_from_file(
+                    (string_address) "/etc/resolv.conf");
+
+                if (nameserver < 0)
+                {
+                        string_format(log, "fetch: no nameserver to ask about %s\n", name);
+                        log_flush();
+                        return 1;
+                }
+
+                if (dns_resolve((p32)nameserver, name, address_of host, 5) != DNS_OK)
+                {
+                        string_format(log, "fetch: cannot resolve %s\n", name);
+                        log_flush();
+                        return 1;
+                }
+        }
+
+        status = http_get(host, port, name, path, address_of body, address_of code);
+
+        if (status < 0)
+        {
+                if (status == HTTP_NO_ROUTE)
+                        string_format(log, "fetch: cannot reach %s\n", name);
+                else if (status == HTTP_NO_REPLY)
+                        string_format(log, "fetch: no reply from %s\n", name);
+                else
+                        string_format(log, "fetch: the reply made no sense\n");
+
+                log_flush();
+                http_forget(address_of body);
+                return 1;
+        }
+
+        if (code >= 300 && code < 400)
+        {
+                string_format(log, "fetch: %p, which is a redirect this does not "
+                                   "follow\n", (positive)code);
+                log_flush();
+                http_forget(address_of body);
+                return 1;
+        }
+
+        if (code >= 400)
+        {
+                string_format(log, "fetch: the server answered %p\n", (positive)code);
+                log_flush();
+                http_forget(address_of body);
+                return 1;
+        }
+
+        if (body.used)
+                system_write_all(1, body.bytes, body.used);
+
+        http_forget(address_of body);
+
+        return 0;
 }
 
 static b32 net_ip(void)
