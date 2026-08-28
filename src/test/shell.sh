@@ -84,22 +84,37 @@ lost()
 
 # A case is a name and a fragment. The fragment is fed to both shells on
 # standard input, which is how a script arrives, and the two outputs compared.
+#       Set for the cases that ask what a shell does with a signal that was
+#       already ignored before it started. The outer sh is the same one on
+#       both sides and does nothing but establish that and hand over, so the
+#       only difference the case can measure is what the shell under test
+#       makes of what it was handed.
+entry_ignored=""
+
+run_shell()
+{
+        # Bounded, because a shell under test is exactly the kind of thing
+        # that loops forever, and a suite that hangs tells you nothing about
+        # which case did it.
+        if [ -n "$entry_ignored" ]; then
+                timeout 5 sh -c 'trap "" INT QUIT; exec "$0"' "$1" \
+                        < "$work/case.sh" > "$2" 2>/dev/null
+        else
+                timeout 5 "$1" < "$work/case.sh" > "$2" 2>/dev/null
+        fi
+}
+
 run_both()
 {
         printf '%s\n' "$*" > "$work/case.sh"
 
-        # Bounded, because a shell under test is exactly the kind of thing
-        # that loops forever, and a suite that hangs tells you nothing about
-        # which case did it.
-        if timeout 5 "$reference" < "$work/case.sh" > "$work/want" 2>/dev/null
-        then
+        if run_shell "$reference" "$work/want"; then
                 want_status=0
         else
                 want_status=$?
         fi
 
-        if timeout 5 "$subject" < "$work/case.sh" > "$work/got" 2>/dev/null
-        then
+        if run_shell "$subject" "$work/got"; then
                 got_status=0
         else
                 got_status=$?
@@ -873,6 +888,26 @@ answer 'while waiting'   'me=$$; trap "echo got" TERM; ( sleep 1; kill -TERM $me
 answer 'a subshell has none' 'trap "echo parent-hit" USR1; ( trap "echo sub" USR1; kill -USR1 $$; echo subdone ); echo parent'
 answer 'listed'          'trap "echo x" USR1; trap'
 answer 'listed after ignore' 'trap "" USR1; trap'
+
+#       Signals the shell was handed already ignored.
+#
+#       POSIX: a non-interactive shell that inherits SIG_IGN keeps ignoring,
+#       and a trap on that signal has no effect -- neither setting one nor
+#       giving the signal back. It is what makes a command started in the
+#       background, or under nohup, stay uninterruptible however it argues
+#       with itself about it.
+
+entry_ignored=1
+answer 'entry ignored'   'trap "echo caught" INT; kill -INT $$; echo after'
+answer 'entry given back' 'trap - INT; kill -INT $$; echo after'
+answer 'entry ignored twice' 'trap "" INT; kill -INT $$; echo after'
+answer 'entry quit'      'trap "echo q" QUIT; kill -QUIT $$; echo after'
+answer 'entry not listed' 'trap "echo x" INT; trap'
+answer 'entry no trap'   'kill -INT $$; echo alive'
+answer 'entry others run' 'trap "echo hit" USR1; kill -USR1 $$; echo after'
+answer 'entry in a function' 'f() { trap "echo in" INT; kill -INT $$; }; f; echo after'
+answer 'entry through a child' 'trap "" INT; ( kill -INT $$; echo sub ); echo after'
+entry_ignored=""
 answer 'exit trap as well' 'trap "echo bye" EXIT; trap "echo hit" USR1; kill -USR1 $$; echo after'
 answer 'one pid in a fork' 'a=$$; b=$( echo $$ ); c=$( ( echo $$ ) ); [ "$a" = "$b" ] && [ "$a" = "$c" ] && echo same || echo differs'
 

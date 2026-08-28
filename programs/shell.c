@@ -24,6 +24,8 @@ b32 main()
                 }
         }
 
+        shell_signals_inherit();
+
         shell_ignore(SIGNAL_INTERRUPT);
         shell_ignore(SIGNAL_QUIT);
 

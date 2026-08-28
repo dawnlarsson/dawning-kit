@@ -3903,6 +3903,17 @@ fn shell_trap(writer write, string_address input)
                 if (number < 0)
                         continue;
 
+                /*
+                        Ignored on the way in and not a terminal: the action is
+                        written down and the signal is left alone, so trap
+                        lists what the script asked for and the script is
+                        still never woken by it. dash keeps the string the
+                        same way, and a signal that never arrives never runs
+                        what is written against it.
+                */
+                bool deaf = number > 0 && !shell_is_interactive &&
+                            shell_was_ignored((positive)number);
+
                 trap_forget((positive)number);
 
                 /*
@@ -3912,7 +3923,7 @@ fn shell_trap(writer write, string_address input)
                         needs a handler, and only signals: EXIT is something
                         the shell does to itself.
                 */
-                if (number)
+                if (number && !deaf)
                 {
                         if (!action)
                                 shell_default((b32)number);

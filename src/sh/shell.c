@@ -37,6 +37,41 @@ fn shell_signal(b32 number, positive disposition)
 #define shell_ignore(n) shell_signal(n, SIGNAL_IGNORE)
 #define shell_default(n) shell_signal(n, SIGNAL_DEFAULT)
 
+/*
+        What was already ignored when this shell started.
+
+        A non-interactive shell that inherits SIG_IGN for a signal keeps
+        ignoring it: a trap on it does nothing, and neither does giving it
+        back. The shell that started this one decided, and a script must not
+        be able to undo that decision from the inside -- which is what makes a
+        command run under nohup, or in the background, stay uninterruptible
+        however it sets its own traps.
+
+        Asked before this shell installs a disposition of its own, because
+        that is the only moment the answer is about what was inherited rather
+        than about what we just did.
+*/
+positive shell_signals_ignored;
+
+#define shell_was_ignored(n) ((shell_signals_ignored >> (n)) & 1)
+
+fn shell_signals_inherit()
+{
+        b32 number = 1;
+
+        while (number < 32)
+        {
+                positive action[4] = {0, 0, 0, 0};
+
+                if (system_call_4(syscall(rt_sigaction), number, 0,
+                                  (positive)address_of action, 8) >= 0 &&
+                    action[0] == SIGNAL_IGNORE)
+                        shell_signals_ignored |= (positive)1 << number;
+
+                number++;
+        }
+}
+
 // Set where the signal landed, read where a command ends. A handler that ran
 // the action itself would be running the parser on top of whatever the parser
 // was already in the middle of.
@@ -458,8 +493,11 @@ fn shell_thread_instance()
         // Ignored signals cross execve, and this shell ignores interrupt so
         // that control-C does not take it down with the command. Handing that
         // deafness on would leave the command uninterruptible.
-        shell_default(SIGNAL_INTERRUPT);
-        shell_default(SIGNAL_QUIT);
+        if (!shell_was_ignored(SIGNAL_INTERRUPT))
+                shell_default(SIGNAL_INTERRUPT);
+
+        if (!shell_was_ignored(SIGNAL_QUIT))
+                shell_default(SIGNAL_QUIT);
 
         // The child owns its own descriptors, so a redirection lands here and
         // never touches the shell's own output.
