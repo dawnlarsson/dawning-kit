@@ -240,5 +240,7 @@ while IFS='|' read -r name got want; do
 done < "$work/answers"
 
 printf '  %-12s %s of %s\n' canvas "$pass" "$((pass + fail))"
+[ -z "${TEST_TALLY:-}" ] ||
+        printf 'canvas %s %s\n' "$pass" "$((pass + fail))" >> "$TEST_TALLY"
 
 [ "$fail" = 0 ]
