@@ -428,6 +428,10 @@ typedef struct
 {
         p8 name[FUNCTION_NAME];
         b32 body;
+        // Where this body sits in the kept arenas, so that redefining it can
+        // hand the space back rather than leaving it behind.
+        parse_marks from;
+        parse_marks to;
 } exec_function;
 
 static exec_function exec_functions[FUNCTION_MAX];
@@ -460,15 +464,10 @@ static b32 exec_node_kind(b32 index);
 static b32 exec_define(b32 index)
 {
         string_address name = parse_words[parse_nodes[index].word];
-        b32 body = parse_keep(parse_nodes[index].right);
+        parse_marks before;
+        bool released = false;
+        b32 body;
         b32 slot;
-
-        if (!body)
-        {
-                string_format(exec_error, "No room for function: %s\n", name);
-                shell_status = 1;
-                return 1;
-        }
 
         for (slot = 0; slot < exec_function_count; slot++)
         {
@@ -485,9 +484,39 @@ static b32 exec_define(b32 index)
                         return 1;
                 }
 
+                exec_functions[slot].body = 0;
                 exec_function_count++;
         }
 
+        /*
+                The body this one replaces, given back where it can be.
+
+                The kept arenas are a stack, so only the last definition taken
+                can be handed back -- which is the one a script redefining a
+                function in a loop keeps making, and the reason such a script
+                used to run the arena out and then walk over what was left.
+        */
+        if (exec_functions[slot].body)
+                released = parse_release(address_of exec_functions[slot].from,
+                                         address_of exec_functions[slot].to);
+
+        parse_mark(address_of before);
+        body = parse_keep(parse_nodes[index].right,
+                          address_of exec_functions[slot].to);
+
+        if (!body)
+        {
+                // What was there was written over by the attempt, so saying
+                // the name is gone is the honest answer.
+                if (released)
+                        exec_functions[slot].body = 0;
+
+                string_format(exec_error, "No room for function: %s\n", name);
+                shell_status = 1;
+                return 1;
+        }
+
+        exec_functions[slot].from = before;
         string_copy_max(exec_functions[slot].name, name, FUNCTION_NAME - 1);
         exec_functions[slot].body = body;
         shell_status = 0;
@@ -1379,20 +1408,42 @@ static b32 exec_node_kind(b32 index)
 
 #define WAIT_NO_HANG 1
 
+static b32 exec_depth;
+
+/*
+        A tree, walked.
+
+        eval, . and a trap action are programs run from inside one that is
+        already running, and what they leave behind is not theirs to throw
+        away: the arena holds the items of every for loop further out and the
+        saved descriptors hold the redirections of every command further out.
+        Both used to start over here, so an eval inside a loop walked over the
+        value the loop was standing on and a redirection around it was never
+        put back.
+*/
 fn exec_program(b32 root)
 {
-        positive state = 0;
+        positive kept_arena = exec_arena_used;
+        b32 kept_saves = exec_save_count;
 
         exec_signal = EXEC_SIGNAL_NONE;
         exec_signal_level = 0;
-        exec_arena_used = 0;
-        exec_save_count = 0;
 
         // Anything started with & is nobody's to wait for, and a zombie per
         // background command is a table full of them by the end of a script.
-        while (system_call_4(syscall(wait4), (positive)-1,
-                             (positive)address_of state, WAIT_NO_HANG, 0) > 0)
-                ;
+        if (!exec_depth)
+        {
+                positive state = 0;
 
+                while (system_call_4(syscall(wait4), (positive)-1,
+                                     (positive)address_of state, WAIT_NO_HANG, 0) > 0)
+                        ;
+        }
+
+        exec_depth++;
         exec_node(root);
+        exec_depth--;
+
+        exec_arena_used = kept_arena;
+        exec_save_count = kept_saves;
 }

@@ -251,13 +251,29 @@ fn parse_nest_leave()
 
         frame = parse_frames + --parse_nest_depth;
 
+        /*
+                The tokens this nest claimed, given back to where it claimed
+                from -- which is what the bases hold now, and not where the
+                line outside it began, which is what they held before.
+
+                Giving them back to the outer base threw away the tokens of
+                the line that was still running: an eval inside a loop wrote
+                its own line over the loop's words, and the second time round
+                the name of the loop variable was the empty string. Not giving
+                the nodes back at all was the other half of it, and a loop that
+                ran eval eighty times ran the tree out.
+        */
+        parse_node_used = parse_node_base;
+        parse_word_used = parse_word_base;
+        parse_redirect_used = parse_redirect_base;
+        parse_token_count = parse_token_base;
+        parse_token_text_used = parse_token_text_base;
+
         parse_node_base = frame->node;
         parse_word_base = frame->word;
         parse_redirect_base = frame->redirect;
         parse_token_base = frame->token;
         parse_token_text_base = frame->token_text;
-        parse_token_count = frame->token;
-        parse_token_text_used = frame->token_text;
         parse_position = frame->position;
         parse_state = frame->state;
         here_wanted = frame->wanted;
@@ -1376,7 +1392,47 @@ b32 parse_program()
         body must not be. The copy goes to the far end of the same three arrays
         and the text to storage of its own, so the tree the executor walks a
         hundred lines later points at nothing that has been reused.
+
+        The far end is a stack, and one definition is one contiguous block in
+        each of the four arenas. Where a block ends is therefore enough to say
+        whether it is the last one taken, and where it began is enough to give
+        it back -- which is what a redefinition does with the body it replaces.
 */
+typedef struct
+{
+        b32 node, word, redirect;
+        positive text;
+} parse_marks;
+
+fn parse_mark(parse_marks address_to marks)
+{
+        marks->node = parse_node_top;
+        marks->word = parse_word_top;
+        marks->redirect = parse_redirect_top;
+        marks->text = parse_kept_used;
+}
+
+static fn parse_give_back(parse_marks address_to from)
+{
+        parse_node_top = from->node;
+        parse_word_top = from->word;
+        parse_redirect_top = from->redirect;
+        parse_kept_used = from->text;
+}
+
+// A block still on top of the stack, taken back. One that is not stays where
+// it is: its space is lost, and nothing that points into it is.
+bool parse_release(parse_marks address_to from, parse_marks address_to to)
+{
+        if (parse_node_top != to->node || parse_word_top != to->word ||
+            parse_redirect_top != to->redirect || parse_kept_used != to->text)
+                return false;
+
+        parse_give_back(from);
+
+        return true;
+}
+
 static b32 parse_keep_words(b32 first, b32 count)
 {
         b32 base;
@@ -1455,7 +1511,7 @@ static b32 parse_keep_redirects(b32 first, b32 count)
         return base;
 }
 
-b32 parse_keep(b32 index)
+static b32 parse_keep_tree(b32 index)
 {
         b32 copy;
 
@@ -1490,10 +1546,35 @@ b32 parse_keep(b32 index)
                 parse_nodes[copy].redirect = base;
         }
 
-        parse_nodes[copy].left = parse_keep(parse_nodes[index].left);
-        parse_nodes[copy].right = parse_keep(parse_nodes[index].right);
-        parse_nodes[copy].extra = parse_keep(parse_nodes[index].extra);
-        parse_nodes[copy].next = parse_keep(parse_nodes[index].next);
+        parse_nodes[copy].left = parse_keep_tree(parse_nodes[index].left);
+        parse_nodes[copy].right = parse_keep_tree(parse_nodes[index].right);
+        parse_nodes[copy].extra = parse_keep_tree(parse_nodes[index].extra);
+        parse_nodes[copy].next = parse_keep_tree(parse_nodes[index].next);
+
+        return copy;
+}
+
+/*
+        The same copy, and the marks it ends on.
+
+        The recursion gives up wherever it runs out, which leaves four tops
+        somewhere in the middle of a tree that will never be walked. Putting
+        them back is what turns running out into a message: without it the
+        space was gone for good and, worse, the next definition was written
+        into the middle of the one that failed.
+*/
+b32 parse_keep(b32 index, parse_marks address_to marks)
+{
+        parse_marks before;
+        b32 copy;
+
+        parse_mark(address_of before);
+        copy = parse_keep_tree(index);
+
+        if (!copy)
+                parse_give_back(address_of before);
+
+        parse_mark(marks);
 
         return copy;
 }
