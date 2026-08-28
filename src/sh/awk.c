@@ -1842,7 +1842,7 @@ enum
 };
 
 #define AWK_GLOBALS_MAX 1024
-#define AWK_FRAME_MAX 8192
+#define AWK_FRAME_MAX 32768
 #define AWK_LOCALS_MAX 128
 
 static awk_cell awk_globals[AWK_GLOBALS_MAX];
@@ -1853,6 +1853,19 @@ static b32 awk_global_count;
 static awk_cell awk_stack[AWK_FRAME_MAX];
 static b32 awk_frame;
 static b32 awk_frame_size;
+
+/*
+        How much of the machine's stack is left.
+
+        A function that calls itself uses a frame of this program's own and a
+        handful of the C ones under it, and the C ones are what runs out
+        first. Measuring the address of a local against the address of one
+        taken at the start says how much has gone, so the answer is the same
+        whatever the shape of the recursion, and a script that recurses too
+        far is told so rather than dying on a page that is not there.
+*/
+static positive awk_stack_start;
+static positive awk_stack_room;
 
 static b32 awk_where_environ;
 static b32 awk_where_argv;
@@ -5710,7 +5723,10 @@ static fn awk_call(awk_node address_to node, awk_value address_to out)
         b32 kept_size = awk_frame_size;
         awk_node address_to argument = node->a;
 
-        if (base + count >= AWK_FRAME_MAX)
+        b32 mark = 0;
+
+        if (base + count >= AWK_FRAME_MAX ||
+            awk_stack_start - (positive)address_of mark > awk_stack_room)
                 awk_fatal(which->name->text, "too deep");
 
         awk_frame_size += count;
@@ -6934,8 +6950,32 @@ static b32 awk_run_rules()
         return awk_exit_code;
 }
 
+static fn awk_stack_measure()
+{
+        positive limits[2] = {0, 0};
+        b32 here = 0;
+
+        awk_stack_start = (positive)address_of here;
+        awk_stack_room = 6u << 20;
+
+        if (system_call_4(syscall(prlimit64), 0, 3, 0, (positive)limits))
+                return;
+
+        if (!limits[0])
+                return;
+
+        if (limits[0] == ~(positive)0)
+        {
+                awk_stack_room = 256u << 20;
+                return;
+        }
+
+        awk_stack_room = limits[0] > (2u << 20) ? limits[0] - (1u << 20) : limits[0] / 2;
+}
+
 static fn awk_start()
 {
+        awk_stack_measure();
         awk_infinity = awk_from_bits((positive)0x7ff0000000000000ull);
         // The sign bit is set because that is the one the machine's own log
         // and square root hand back, and it is visible: it prints as -nan.

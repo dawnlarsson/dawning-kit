@@ -584,6 +584,22 @@ else
         echo "  known-gaps printf short of arguments: $(cat "$work/got")"
 fi
 
+#       Recursion goes as deep as the stack the machine gave this process
+#       and then stops with an error. gawk goes further; what is being
+#       checked here is that the end of it is an answer and not a signal.
+"$ours" 'function f(n){return n==0?0:1+f(n-1)} BEGIN{print f(1000)}' > "$work/got" 2>&1
+shallow=$?
+"$ours" 'function f(n){return n==0?0:1+f(n-1)} BEGIN{print f(1000000)}' > /dev/null 2>&1
+deep=$?
+
+if [ "$shallow" = 0 ] && [ "$(cat "$work/got")" = 1000 ] &&
+        [ "$deep" -gt 0 ] && [ "$deep" -lt 128 ]; then
+        pass=$((pass + 1))
+else
+        fail=$((fail + 1))
+        echo "  known-gaps recursion: shallow $shallow deep $deep"
+fi
+
 #       gawk refuses next in an END action at parse time. This runs it and
 #       treats it as the end of the action.
 if "$ours" 'END{next}' < /dev/null > /dev/null 2>&1; then
