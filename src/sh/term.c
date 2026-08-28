@@ -1178,16 +1178,37 @@ static fn SPARE cursor_show()
 // anything the shell ever said the text of.
 #define LINE_PROMPT_MAX 128
 
+static unsigned int line_drawn;
+static b32 line_anchored;
+
+// Where on the screen the line starts, as a line of the ring rather than a
+// row: the screen scrolls out from under a long line, and a row would then be
+// pointing at somebody else's text. Out here with the rest of what the output
+// half touches, because a resize has an opinion about the column.
+static unsigned int line_anchor, line_anchor_column;
+
+/*
+        What the output half has to say about a line being typed, and no more.
+
+        Anything the far end prints moves the cursor out from under a line the
+        editor drew, so consume() says so and the next keystroke draws it
+        again. That is the whole of what the kernel build needs: printk writes
+        into the console window and nobody types into it, so the editor itself
+        -- and the thirty four kilobytes of line and history behind it -- is
+        left out below.
+*/
+static fn line_forget()
+{
+        line_anchored = false;
+        line_drawn = 0;
+}
+
+#ifndef KERNEL_MODE
+
 static b32 line_editing;
 static p8 line[LINE_MAX];
 static unsigned int line_length, line_point;
 
-// Where on the screen the line starts, as a line of the ring rather than a
-// row: the screen scrolls out from under a long line, and a row would then be
-// pointing at somebody else's text.
-static unsigned int line_anchor, line_anchor_column;
-static b32 line_anchored;
-static unsigned int line_drawn;
 
 static p8 history[LINE_HISTORY][LINE_MAX];
 static unsigned int history_length[LINE_HISTORY];
@@ -1197,12 +1218,6 @@ static unsigned int history_count, history_at;
 // down off the end returns it rather than an empty line.
 static p8 history_held[LINE_MAX];
 static unsigned int history_held_length;
-
-static fn line_forget()
-{
-        line_anchored = false;
-        line_drawn = 0;
-}
 
 static unsigned int line_anchor_row()
 {
@@ -1660,6 +1675,8 @@ static fn SPARE term_line_editing(b32 on)
         line_point = 0;
         line_forget();
 }
+
+#endif
 
 #ifndef KERNEL_MODE
 
