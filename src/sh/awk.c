@@ -57,7 +57,7 @@ static address_any awk_take(positive bytes)
                         awk_out_of_memory();
 
                 address_to(p32 address_to)(positive)got = AWK_CLASSES;
-                address_to((p32 address_to)(got + 4)) = 0;
+                address_to((p32 address_to)(got + 4)) = (p32)(whole >> 12);
                 return (address_any)(got + 8);
         }
 
@@ -98,7 +98,12 @@ static fn awk_give(address_any block)
         b32 class = (b32)address_to(p32 address_to)base;
 
         if (class >= AWK_CLASSES)
+        {
+                positive pages = address_to((p32 address_to)(base + 4));
+
+                memory_free(base, pages << 12);
                 return;
+        }
 
         address_to(p8 address_to address_to)base = awk_free_list[class];
         awk_free_list[class] = base;
@@ -3552,6 +3557,19 @@ static awk_word awk_words[] = {
     {"fflush", T_BUILTIN, B_FFLUSH},
     {null, 0, 0}};
 
+/*
+        How many arguments each of them takes.
+
+        Checked where the call is parsed, because the evaluator reaches for
+        the second argument of substr without looking and there is nothing
+        there to reach for.
+*/
+static p8 awk_builtin_least[] = {0, 2, 2, 2, 2, 2, 2, 1, 1, 1, 2,
+                                 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 0};
+
+static p8 awk_builtin_most[] = {1, 3, 2, 3, 3, 3, 2, 255, 1, 1, 2,
+                                1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1};
+
 static string_address awk_source;
 static positive awk_source_length;
 static positive awk_source_at;
@@ -4416,7 +4434,7 @@ static awk_node address_to awk_primary()
 
                 if (awk_token != T_OPEN)
                 {
-                        if (which != B_LENGTH)
+                        if (awk_builtin_least[which])
                                 awk_syntax("expected ( after a function name");
 
                         return node;
@@ -4447,6 +4465,14 @@ static awk_node address_to awk_primary()
 
                 awk_print_depth = kept;
                 awk_expect(T_CLOSE, "expected ) after arguments");
+
+                if (node->count < awk_builtin_least[which] ||
+                    node->count > awk_builtin_most[which])
+                        awk_syntax("wrong number of arguments to a function");
+
+                if (which == B_SPLIT && node->a->next->kind != N_VARIABLE)
+                        awk_syntax("split wants an array");
+
                 return node;
         }
 
@@ -5994,9 +6020,6 @@ static fn awk_builtin(awk_node address_to node, awk_value address_to out)
                 awk_text address_to held = null;
                 bool pattern = false;
 
-                if (second->kind != N_VARIABLE)
-                        awk_fatal(null, "split wants an array");
-
                 if (!third)
                         separator = awk_separator(awk_where_fs, address_of separator_length);
                 else if (third->kind == N_REGEX)
@@ -6116,10 +6139,15 @@ static fn awk_builtin(awk_node address_to node, awk_value address_to out)
         case B_SPRINTF:
         {
                 awk_text address_to format = awk_eval_text(first);
-                awk_value room[64];
+                awk_value few[16];
+                b32 want = node->count - 1;
+                awk_value address_to room = want <= 16
+                                                ? few
+                                                : (awk_value address_to)awk_take(
+                                                      (positive)want * sizeof(awk_value));
                 b32 have = 0;
 
-                for (awk_node address_to one = second; one && have < 64; one = one->next)
+                for (awk_node address_to one = second; one; one = one->next)
                 {
                         awk_value_start(room[have]);
                         awk_eval(one, address_of room[have]);
@@ -6130,6 +6158,9 @@ static fn awk_builtin(awk_node address_to node, awk_value address_to out)
 
                 for (b32 i = 0; i < have; i++)
                         awk_value_done(address_of room[i]);
+
+                if (room != few)
+                        awk_give(room);
 
                 awk_text_drop(format);
                 return;
@@ -6357,7 +6388,11 @@ static fn awk_do_print(awk_node address_to node)
 
 static fn awk_do_printf(awk_node address_to node)
 {
-        awk_value room[64];
+        awk_value few[16];
+        b32 want = node->count > 1 ? node->count - 1 : 0;
+        awk_value address_to room = want <= 16 ? few
+                                               : (awk_value address_to)awk_take(
+                                                     (positive)want * sizeof(awk_value));
         b32 have = 0;
         awk_writer address_to where;
 
@@ -6366,7 +6401,7 @@ static fn awk_do_printf(awk_node address_to node)
 
         awk_text address_to format = awk_eval_text(node->a);
 
-        for (awk_node address_to one = node->a->next; one && have < 64; one = one->next)
+        for (awk_node address_to one = node->a->next; one; one = one->next)
         {
                 awk_value_start(room[have]);
                 awk_eval(one, address_of room[have]);
@@ -6377,6 +6412,9 @@ static fn awk_do_printf(awk_node address_to node)
 
         for (b32 i = 0; i < have; i++)
                 awk_value_done(address_of room[i]);
+
+        if (room != few)
+                awk_give(room);
 
         where = awk_output_of(node);
         awk_writer_put(where, made->text, made->length);

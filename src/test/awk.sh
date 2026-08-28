@@ -563,6 +563,30 @@ print n}'
 compare 'patterns built at run time' "$work/letters" '{r = "^" $0 "$"; if ($0 ~ r) n++} END{print n}'
 compare 'static and dynamic together' "$work/letters" '{if (/a/) x++; r="^" $0; if ($0 ~ r) y++; if (/b/) z++} END{print x, y, z}'
 
+#       A call with the wrong number of arguments is refused rather than
+#       reached for. gawk answers 1 for most of these and 2 for two of them,
+#       so what is compared is that the answer is an error and not a signal
+#       and that nothing was printed.
+case_start arity
+for wrong in 'sin()' 'cos()' 'substr("x")' 'split("x")' 'index("x")' \
+        'atan2(1)' 'match("x")' 'sub(/a/)' 'sprintf()' 'toupper()' 'tolower()' \
+        'close()' 'system()' 'exp()' 'log()' 'sqrt()' 'int()' 'rand(1)' \
+        'length(1,2)' 'substr("a",1,2,3)' 'split("a","b","c")' 'srand(1,2)' \
+        'gsub(/a/)' 'match("a","b","c")'; do
+        "$ours" "BEGIN{ $wrong }" > "$work/got" 2> /dev/null
+        got_status=$?
+        : > "$work/want"
+        want_status=$got_status
+
+        if [ "$got_status" -gt 0 ] && [ "$got_status" -lt 128 ] &&
+                [ ! -s "$work/got" ]; then
+                pass=$((pass + 1))
+        else
+                fail=$((fail + 1))
+                printf '  %-9s %-26s status %s\n' arity "$wrong" "$got_status"
+        fi
+done
+
 #
 #       What is not here.
 #
