@@ -3535,6 +3535,20 @@ static b32 text_tail()
         return text_done(text_status);
 }
 
+/*
+        The long spellings tee answers to.
+
+        -i asks for SIGINT to be ignored while the copy runs, and -p for a
+        pipe that has gone away not to end it. Neither is a fact about the
+        bytes, and both are taken and dropped -- but a letter that is not one
+        of tee's is refused, because a script that misspelled one is told so.
+*/
+static text_long tee_long_options[] = {
+    {"append", 'a', TEXT_LONG_ALONE},
+    {"ignore-interrupts", 'i', TEXT_LONG_ALONE},
+    {"output-error", 'p', TEXT_LONG_MAYBE, 'p'},
+    {null, 0, 0}};
+
 static b32 text_tee()
 {
         bool append = false;
@@ -3543,15 +3557,37 @@ static b32 text_tee()
 
         text_begin("tee");
 
+        if (!text_expand_long(tee_long_options))
+                return text_done(1);
+
         for (b32 i = 1; i < text_argument_count; i++)
         {
                 string_address argument = text_argument(i);
 
-                if (argument[0] == '-' && argument[1] && !text_files_count)
+                if (argument[0] == '-' && argument[1] == '-' && !argument[2])
+                {
+                        for (b32 j = i + 1; j < text_argument_count; j++)
+                                text_file_add(j);
+
+                        break;
+                }
+
+                if (argument[0] == '-' && argument[1])
                 {
                         for (positive c = 1; argument[c]; c++)
+                        {
                                 if (argument[c] == 'a')
                                         append = true;
+                                else if (argument[c] == 'i' || argument[c] == 'p')
+                                        (void)argument[c];
+                                else
+                                {
+                                        p8 named[3] = {'-', argument[c], 0};
+
+                                        text_error(named, "invalid option");
+                                        return text_done(1);
+                                }
+                        }
 
                         continue;
                 }
@@ -6460,15 +6496,21 @@ static b32 text_grep()
         a group whose address did not match is an assignment.
 
         What is here: addresses -- a line number, $, a regular expression, a
-        range of any two of those, and ! -- and the commands s y p P d D q =
-        n N h H g G x a i c, with { } around any of them. What is not: b, t
-        and labels, which are a jump table this does not have.
+        range of any two of those, first~step, ,+N, ,~N, and ! -- and the
+        commands s y p P d D q Q F = n N h H g G x a i c r w b t T :, with
+        { } around any of them. A label is an index into the same flat array,
+        which is what makes b and t an assignment to the counter.
+
+        What is not: l, which is a way of looking at a line rather than a way
+        of changing one, and e, which runs a shell.
 */
 #define SED_COMMANDS_MAX 256
 #define SED_PROGRAMS_MAX 32
 #define SED_TEXT_MAX 16384
 #define SED_MAPS_MAX 8
 #define SED_SCRIPT_MAX 16384
+#define SED_FILES_MAX 16
+#define SED_APPENDS_MAX 32
 
 enum
 {
@@ -6502,6 +6544,7 @@ typedef struct
         b32 pattern;
         b32 map;
         b32 text;
+        b32 writer;
         bool global;
         bool printing;
         positive which;
@@ -6520,6 +6563,8 @@ static p8 sed_script[SED_SCRIPT_MAX];
 static positive sed_script_length;
 static positive sed_at;
 static bool sed_broken;
+// A script that cannot be parsed is one, and a label nothing defines is four.
+static b32 sed_broken_status = 1;
 
 static p8 sed_space[TEXT_LINE_MAX];
 static positive sed_space_length;
@@ -6575,6 +6620,7 @@ static b32 sed_text_add(string_address from, positive length)
 */
 static b32 sed_recent = -1;
 static bool sed_failed;
+static bool sed_replaced;
 
 static bool sed_use_regex(b32 which)
 {
@@ -6589,6 +6635,49 @@ static bool sed_use_regex(b32 which)
 
         sed_failed = true;
         return false;
+}
+
+/*
+        The files w writes to, opened once and truncated once.
+
+        Two w commands naming the same file are one file: opening it again
+        for the second would put its output at the front of what the first had
+        already written.
+*/
+typedef struct
+{
+        b32 name;
+        bipolar handle;
+} sed_file;
+
+static sed_file sed_files[SED_FILES_MAX];
+static b32 sed_file_count;
+
+static b32 sed_file_of(p8 address_to name, positive length)
+{
+        for (b32 i = 0; i < sed_file_count; i++)
+        {
+                string_address had = sed_text + sed_files[i].name;
+                positive c = 0;
+
+                while (c < length && had[c] && had[c] == name[c])
+                        c++;
+
+                if (c == length && !had[c])
+                        return i;
+        }
+
+        if (sed_file_count >= SED_FILES_MAX)
+        {
+                sed_broken = true;
+                return 0;
+        }
+
+        b32 which = sed_file_count++;
+
+        sed_files[which].name = sed_text_add(name, length);
+        sed_files[which].handle = -1;
+        return which;
 }
 
 static bool sed_extended;
@@ -6714,6 +6803,49 @@ static positive sed_number_at()
         return value;
 }
 
+// Everything left on the line, which is what a file name is to r and w: a
+// semicolon in one is part of the name and not the end of the command.
+static positive sed_rest_of_line(p8 address_to into, positive room)
+{
+        positive have = 0;
+
+        sed_skip_blanks();
+
+        while (sed_at < sed_script_length && sed_script[sed_at] != '\n')
+        {
+                if (have < room - 1)
+                        into[have++] = sed_script[sed_at];
+
+                sed_at++;
+        }
+
+        into[have] = '\0';
+        return have;
+}
+
+// A label, which ends where the command it names would have started.
+static positive sed_label_of(p8 address_to into, positive room)
+{
+        positive have = 0;
+
+        sed_skip_blanks();
+
+        while (sed_at < sed_script_length && sed_script[sed_at] != '\n' &&
+               sed_script[sed_at] != ';' && sed_script[sed_at] != '}')
+        {
+                if (have < room - 1)
+                        into[have++] = sed_script[sed_at];
+
+                sed_at++;
+        }
+
+        while (have && text_blank(into[have - 1]))
+                have--;
+
+        into[have] = '\0';
+        return have;
+}
+
 static bool sed_parse_address(p8 address_to type, positive address_to line,
                               b32 address_to which, positive address_to step,
                               bool second)
@@ -6829,6 +6961,7 @@ static fn sed_parse()
                 command->active = false;
                 command->begins = false;
                 command->first_step = 0;
+                command->writer = -1;
                 command->which = 1;
 
                 if (sed_parse_address(address_of command->first_type,
@@ -6854,7 +6987,15 @@ static fn sed_parse()
                         }
 
                         // Line zero is not a line, so it is only an address at
-                        // all as the open end of a range a pattern closes.
+                        // all as the open end of a range a pattern closes --
+                        // or with a step, which makes it every step'th line.
+                        if (command->first_type == SED_ADDRESS_STEP &&
+                            !command->first_line && !command->first_step)
+                        {
+                                sed_broken = true;
+                                return;
+                        }
+
                         if (command->first_type == SED_ADDRESS_LINE &&
                             !command->first_line)
                         {
@@ -6922,11 +7063,22 @@ static fn sed_parse()
 
                         command->global = false;
                         command->printing = false;
+                        command->writer = -1;
                         command->which = 0;
 
                         for (;;)
                         {
                                 p8 flag = sed_peek();
+
+                                if (flag == 'w')
+                                {
+                                        p8 name[TEXT_PATH_MAX];
+
+                                        sed_at++;
+                                        command->writer = sed_file_of(
+                                            name, sed_rest_of_line(name, sizeof(name)));
+                                        break;
+                                }
 
                                 if (flag == 'g')
                                         command->global = true;
@@ -7043,6 +7195,42 @@ static fn sed_parse()
                         continue;
                 }
 
+                if (kind == 'r' || kind == 'w')
+                {
+                        p8 name[TEXT_PATH_MAX];
+                        positive have = sed_rest_of_line(name, sizeof(name));
+
+                        if (!have)
+                        {
+                                sed_broken = true;
+                                return;
+                        }
+
+                        if (kind == 'w')
+                                command->writer = sed_file_of(name, have);
+                        else
+                                command->text = sed_text_add(name, have);
+
+                        sed_command_count++;
+                        continue;
+                }
+
+                if (kind == ':' || kind == 'b' || kind == 't' || kind == 'T')
+                {
+                        p8 name[128];
+                        positive have = sed_label_of(name, sizeof(name));
+
+                        if (kind == ':' && !have)
+                        {
+                                sed_broken = true;
+                                return;
+                        }
+
+                        command->text = sed_text_add(name, have);
+                        sed_command_count++;
+                        continue;
+                }
+
                 if (kind == 'p' || kind == 'P' || kind == 'd' || kind == 'D' ||
                     kind == '=' || kind == 'n' || kind == 'N' || kind == 'h' ||
                     kind == 'H' || kind == 'g' || kind == 'G' || kind == 'x' ||
@@ -7054,6 +7242,43 @@ static fn sed_parse()
 
                 sed_broken = true;
                 return;
+        }
+
+        // Labels become indexes now that every command has one. A branch with
+        // no label named goes to the end of the script, which is where the
+        // cycle would have ended anyway.
+        for (b32 i = 0; i < sed_command_count; i++)
+        {
+                sed_command address_to command = sed_commands + i;
+
+                if (command->kind != 'b' && command->kind != 't' &&
+                    command->kind != 'T')
+                        continue;
+
+                string_address want = sed_text + command->text;
+
+                command->which = (positive)sed_command_count;
+
+                if (!want[0])
+                        continue;
+
+                bool found = false;
+
+                for (b32 c = 0; c < sed_command_count; c++)
+                        if (sed_commands[c].kind == ':' &&
+                            string_equals(sed_text + sed_commands[c].text, want))
+                        {
+                                command->which = (positive)c;
+                                found = true;
+                                break;
+                        }
+
+                if (!found)
+                {
+                        sed_broken = true;
+                        sed_broken_status = 4;
+                        return;
+                }
         }
 }
 
@@ -7150,6 +7375,66 @@ static fn sed_put_space()
 {
         text_put(sed_space, sed_space_length);
         text_put_character(text_delimiter);
+}
+
+// /dev/stdout is sed's own output, and a second descriptor onto it would put
+// what w wrote somewhere other than where the buffer had reached.
+static fn sed_write_space(b32 which)
+{
+        string_address name = sed_text + sed_files[which].name;
+        p8 mark = text_delimiter;
+
+        if (string_equals(name, "/dev/stdout"))
+        {
+                text_put(sed_space, sed_space_length);
+
+                if (sed_space_ended)
+                        text_put_character(text_delimiter);
+
+                return;
+        }
+
+        if (sed_files[which].handle < 0)
+        {
+                sed_files[which].handle = text_open_handle(name, TEXT_WRITE, 0644);
+
+                if (sed_files[which].handle < 0)
+                {
+                        text_error(name, "couldn't open file");
+                        sed_failed = true;
+                        return;
+                }
+        }
+
+        text_write_raw((positive)sed_files[which].handle, sed_space, sed_space_length);
+
+        // A last line that came without one does not leave with one.
+        if (sed_space_ended)
+                text_write_raw((positive)sed_files[which].handle, address_of mark, 1);
+}
+
+// What r names, whole, wherever the cycle's output had reached. A name that
+// is not there is nothing at all rather than a complaint.
+static fn sed_put_file(string_address name)
+{
+        p8 window[8192];
+        bipolar handle = text_open_handle(name, FILE_READ, 0);
+
+        if (handle < 0)
+                return;
+
+        for (;;)
+        {
+                bipolar got = system_call_3(syscall(read), (positive)handle,
+                                            (positive)window, sizeof(window));
+
+                if (got <= 0)
+                        break;
+
+                text_put(window, (positive)got);
+        }
+
+        system_call_1(syscall(close), (positive)handle);
 }
 
 static bool sed_substitute(sed_command address_to command)
@@ -7532,7 +7817,7 @@ static b32 text_sed()
         if (sed_broken)
         {
                 text_error(null, "unsupported or invalid script");
-                return text_done(1);
+                return text_done(sed_broken_status);
         }
 
         // -i edits files, and there is nothing to edit when the input is a
@@ -7601,7 +7886,11 @@ static b32 text_sed()
 
                         bool dropped = false;
                         b32 pc = 0;
-                        b32 appended = -1;
+                        p8 append_kind[SED_APPENDS_MAX];
+                        b32 append_which[SED_APPENDS_MAX];
+                        b32 append_count = 0;
+
+                        sed_replaced = false;
 
                         while (pc < sed_command_count)
                         {
@@ -7628,8 +7917,53 @@ static b32 text_sed()
 
                                 if (kind == 's')
                                 {
-                                        if (sed_substitute(command) && command->printing)
+                                        if (!sed_substitute(command))
+                                                continue;
+
+                                        sed_replaced = true;
+
+                                        if (command->printing)
                                                 sed_put_space();
+
+                                        if (command->writer >= 0)
+                                                sed_write_space(command->writer);
+
+                                        continue;
+                                }
+
+                                if (kind == 'w')
+                                {
+                                        sed_write_space(command->writer);
+                                        continue;
+                                }
+
+                                if (kind == 'r')
+                                {
+                                        if (append_count < SED_APPENDS_MAX)
+                                        {
+                                                append_kind[append_count] = 'r';
+                                                append_which[append_count++] = command->text;
+                                        }
+
+                                        continue;
+                                }
+
+                                if (kind == ':')
+                                        continue;
+
+                                // t and T ask whether a substitution has taken
+                                // since the line was read, and asking is what
+                                // clears the answer.
+                                if (kind == 'b' || kind == 't' || kind == 'T')
+                                {
+                                        bool take = kind == 'b' ||
+                                                    (kind == 't') == sed_replaced;
+
+                                        if (kind != 'b')
+                                                sed_replaced = false;
+
+                                        if (take)
+                                                pc = (b32)command->which;
 
                                         continue;
                                 }
@@ -7724,6 +8058,7 @@ static b32 text_sed()
                                         sed_space_length = text_line_length;
                                         sed_space_ended = text_line_ended;
                                         sed_number++;
+                                        sed_replaced = false;
                                         sed_last = !text_fill() && i == inputs - 1;
                                         continue;
                                 }
@@ -7794,7 +8129,12 @@ static b32 text_sed()
 
                                 if (kind == 'a')
                                 {
-                                        appended = command->text;
+                                        if (append_count < SED_APPENDS_MAX)
+                                        {
+                                                append_kind[append_count] = 'a';
+                                                append_which[append_count++] = command->text;
+                                        }
+
                                         continue;
                                 }
 
@@ -7825,9 +8165,15 @@ static b32 text_sed()
                                         text_put_character(text_delimiter);
                         }
 
-                        if (appended >= 0)
+                        for (b32 c = 0; c < append_count; c++)
                         {
-                                text_put_string(sed_text + appended);
+                                if (append_kind[c] == 'r')
+                                {
+                                        sed_put_file(sed_text + append_which[c]);
+                                        continue;
+                                }
+
+                                text_put_string(sed_text + append_which[c]);
                                 text_put_character('\n');
                         }
 
@@ -7868,6 +8214,10 @@ static b32 text_sed()
                 if (sed_failed)
                         break;
         }
+
+        for (b32 c = 0; c < sed_file_count; c++)
+                if (sed_files[c].handle >= 0)
+                        system_call_1(syscall(close), (positive)sed_files[c].handle);
 
         if (sed_failed)
         {

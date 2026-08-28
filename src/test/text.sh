@@ -124,6 +124,41 @@ compare_edit()
                 "$(head -c 34 "$work/edit_got" | tr '\n\t' '|>')[$got_status]"
 }
 
+#       A tool that writes somewhere other than standard output has a third
+#       thing to compare. Each side names its own file, and what landed in it
+#       is compared after the run along with what came back.
+compare_side()
+{
+        name=$1
+        tool=$2
+        feed=$3
+        script=$4
+        shift 4
+
+        rm -f "$work/side_want" "$work/side_got"
+
+        "$tool" "$@" "$(printf '%s' "$script" | sed "s|SIDE|$work/side_want|")" \
+                < "$work/$feed" > "$work/want" 2> /dev/null
+        want_status=$?
+        "$bin/$tool" "$@" "$(printf '%s' "$script" | sed "s|SIDE|$work/side_got|")" \
+                < "$work/$feed" > "$work/got" 2> /dev/null
+        got_status=$?
+
+        cat "$work/side_want" >> "$work/want" 2> /dev/null
+        cat "$work/side_got" >> "$work/got" 2> /dev/null
+
+        if cmp -s "$work/want" "$work/got" && [ "$want_status" = "$got_status" ]; then
+                pass=$((pass + 1))
+                return 0
+        fi
+
+        fail=$((fail + 1))
+        printf '  %-8s %-30s want %-24s got %s\n' \
+                "$group" "$name" \
+                "$(head -c 34 "$work/want" | tr '\n\t' '|>')[$want_status]" \
+                "$(head -c 34 "$work/got" | tr '\n\t' '|>')[$got_status]"
+}
+
 case_start grep
 compare 'literal'        grep a  alpha
 compare 'anchor start'   grep a  '^delta'
@@ -693,6 +728,7 @@ compare 'step from zero' sed i  -n '0~3p'
 compare 'step of one'    sed i  -n '3~1p'
 compare 'step of none'   sed i  -n '4~0p'
 compare 'step past end'  sed i  -n '99~2p'
+compare 'step of none from zero' sed i -n '0~0p'
 compare 'step deletes'   sed i  '1~4d'
 compare 'step negated'   sed i  -n '1~2!p'
 compare 'ahead two'      sed i  -n '3,+2p'
@@ -720,6 +756,74 @@ compare 'quit after print' sed i -n '2{p;Q}'
 compare 'name of input'  sed -  -n 'F' "$work/a"
 compare 'name of stdin'  sed a  -n 'F'
 compare 'name once'      sed -  -n '1F' "$work/a" "$work/b"
+
+#       Where sed writes other than to standard output, what it reads in the
+#       middle of a cycle, and the jump table: a label is an index into the
+#       same flat array of commands, which is what makes b and t nothing more
+#       than an assignment to the counter.
+
+case_start sedfiles
+compare_side 'write every line' sed a  'w SIDE' -n
+compare_side 'write and print'  sed a  'w SIDE'
+compare_side 'write one line'   sed a  '2w SIDE' -n
+compare_side 'write last'       sed a  '$w SIDE' -n
+compare_side 'write matched'    sed a  '/alpha/w SIDE' -n
+compare_side 'write twice'      sed a  '1w SIDE
+2w SIDE' -n
+compare_side 'substitute wrote' sed a  's/a/X/w SIDE' -n
+compare_side 'substitute all'   sed a  's/[ae]/X/gw SIDE' -n
+compare_side 'substitute none'  sed a  's/zzz/X/w SIDE' -n
+compare_side 'write unended'    sed h  'w SIDE' -n
+compare_side 'write zero ends'  sed zeros 'w SIDE' -nz
+compare_side 'write two files'  sed a  's/a/X/w SIDE' -n -e 's/b/Y/'
+compare 'write to stdout' sed a -n 'w /dev/stdout'
+compare 'substitute to stdout' sed a -n 's/alpha/X/w /dev/stdout'
+compare 'read after one'  sed -  '1r '"$work/b" "$work/a"
+compare 'read after last' sed -  '$r '"$work/b" "$work/a"
+compare 'read after match' sed - '/delta/r '"$work/b" "$work/a"
+compare 'read every line' sed -  'r '"$work/b" "$work/a"
+compare 'read quiet'      sed -  -n '1r '"$work/b" "$work/a"
+compare 'read missing'    sed -  '1r '"$work/nosuchfile" "$work/a"
+compare 'read and append' sed -  '1{r '"$work/b"'
+a APPENDED
+}' "$work/a"
+compare 'two appends'     sed a  '1a one
+1a two'
+compare 'append then read' sed - '1{a one
+r '"$work/b"'
+a two
+}' "$work/a"
+
+case_start sedjump
+compare 'join every line' sed a  ':a;N;$!ba;s/\n/,/g'
+compare 'branch forward'  sed a  's/alpha/X/;t done;s/beta/Y/;:done'
+compare 'branch not taken' sed a 's/zzz/X/;t done;s/beta/Y/;:done'
+compare 'branch when not'  sed a 's/alpha/X/;T done;s/beta/Y/;:done'
+compare 'branch to the end' sed a 'b'
+compare 'branch at a line' sed a  '2b
+s/./X/'
+compare 'branch in a block' sed a -n '/alpha/{:l;p;b};p'
+compare 'loop until last'  sed a  ':a
+$!{N;ba
+}
+s/\n/-/g'
+compare 'print each looping' sed a -n ':x;p;$!{n;bx}'
+compare 'label with no name' sed a ':'
+compare 'label not there'  sed a  'b nowhere'
+compare 'branch back once'  sed a 's/a/X/;ta;b;:a;s/$/!/'
+
+case_start tee2
+compare 'append flag'    tee a  -a /dev/null
+compare 'ignore signals' tee a  -i /dev/null
+compare 'pipe errors'    tee a  -p /dev/null
+compare 'long append'    tee a  --append /dev/null
+compare 'long ignore'    tee a  --ignore-interrupts /dev/null
+compare 'long errors'    tee a  --output-error /dev/null
+compare 'long errors when' tee a --output-error=warn /dev/null
+compare 'letters together' tee a -ai /dev/null
+compare 'unknown letter' tee a  -Q /dev/null
+compare 'end of options' tee a  -- /dev/null
+compare 'no files'       tee a
 
 case_start cut2
 compare 'comma delim'    cut p  -d, -f2
@@ -1347,6 +1451,137 @@ for _ in range(rounds // 2):
     both("tr", ["a-c", "x-z"], data)
     both("tr", ["-d", "ab"], data)
     both("tr", ["-s", "abc"], data)
+
+#       A count taken off the end, against one taken off the front of the
+#       same input read backwards. The unterminated last line is the one
+#       that decides where the boundary is, so half of these have none.
+
+for _ in range(rounds // 2):
+    count = random.randint(0, 9)
+    data = lines(random.randint(0, 8), 5)
+
+    if random.random() < 0.5:
+        data = data[:-1]
+
+    for flag in ("-n", "-c"):
+        both("head", [flag, "-%d" % count], data)
+        both("head", [flag, "%d" % count], data)
+        both("tail", [flag, "-%d" % count], data)
+        both("tail", [flag, "+%d" % count], data)
+
+#       The address forms GNU added. A step, a range that ends N lines later
+#       or at the next line a number divides, and line zero.
+
+for _ in range(rounds // 2):
+    data = lines(random.randint(1, 9), 4)
+    first = random.randint(0, 5)
+    step = random.randint(0, 4)
+    other = random.randint(0, 5)
+
+    for script in ("%d~%dp" % (first, step),
+                   "%d~%d!p" % (first, step),
+                   "%d,+%dp" % (max(first, 1), other),
+                   "%d,~%dp" % (max(first, 1), other),
+                   "/a/,+%dp" % other,
+                   "/a/,~%dp" % max(other, 1),
+                   "0,/a/p",
+                   "0,/%s/p" % random.choice("abc"),
+                   "0,/a/!p"):
+        both("sed", ["-n", script], data)
+
+    both("sed", ["0,/b/d"], data)
+    both("sed", ["%d~%dd" % (first, step)], data)
+    both("sed", ["%dQ" % max(first, 1)], data)
+    both("sed", ["-n", "%dQ%d" % (max(first, 1), other)], data)
+
+#       A substitution and a branch off the back of whether it took, which is
+#       the whole of what t and T decide.
+
+for _ in range(rounds // 4):
+    data = lines(random.randint(1, 6), 4)
+    one = random.choice("abc")
+    two = random.choice("abc")
+
+    for script in ("s/%s/X/;t e;s/%s/Y/;:e" % (one, two),
+                   "s/%s/X/;T e;s/%s/Y/;:e" % (one, two),
+                   "/%s/b e\ns/%s/Y/\n:e" % (one, two),
+                   ":a;s/%s/X/;ta" % one,
+                   ":a;N;$!ba;s/\\n/,/g",
+                   "$!{N;s/\\n/+/}"):
+        both("sed", [script], data)
+
+#       Two files, byte for byte, with a skip and a limit either side of the
+#       first difference. cmp reads names rather than standard input, so the
+#       pair is written out and handed over.
+
+import tempfile
+
+folder = tempfile.mkdtemp()
+left = folder + "/left"
+right = folder + "/right"
+
+
+def bytes_of(count):
+    return "".join(random.choice("abc\n") for _ in range(count))
+
+
+for _ in range(rounds // 2):
+    one = bytes_of(random.randint(0, 24))
+    two = one
+
+    if random.random() < 0.8:
+        at = random.randint(0, max(len(one) - 1, 0))
+        two = one[:at] + random.choice("xyz\n") + one[at + 1:]
+
+    if random.random() < 0.3:
+        two = two[:random.randint(0, len(two))]
+
+    open(left, "w").write(one)
+    open(right, "w").write(two)
+
+    skip = random.randint(0, 6)
+    limit = random.randint(0, 12)
+
+    for flags in ([], ["-b"], ["-l"], ["-bl"], ["-s"],
+                  ["-i", str(skip)],
+                  ["-i", "%d:%d" % (skip, random.randint(0, 6))],
+                  ["-n", str(limit)],
+                  ["-l", "-i", str(skip)],
+                  ["-b", "-n", str(limit)]):
+        both("cmp", flags + [left, right], "")
+
+    both("cmp", [left, right, str(skip)], "")
+    both("cmp", [left, right, str(skip), str(random.randint(0, 6))], "")
+
+os.remove(left)
+os.remove(right)
+os.rmdir(folder)
+
+#       The globs --include and the two beside it are matched against, asked
+#       here of grep itself with one file named after the other so what the
+#       glob decided is the whole of the answer.
+
+names = ["ab.txt", "a.txt", "b.log", "abc", "a-b.txt", "A.txt", ".hidden",
+         "x.tar.gz"]
+folder = tempfile.mkdtemp()
+
+for name in names:
+    open(folder + "/" + name, "w").write("alpha\n")
+
+pieces = ["*", "?", "a", "b", ".", "txt", "[ab]", "[^a]", "[a-c]", "*.txt",
+          "-", "[!b]", "]"]
+
+for _ in range(rounds // 2):
+    glob = "".join(random.choice(pieces)
+                   for _ in range(random.randint(1, 3)))
+
+    both("grep", ["-rl", "--include=" + glob, "alpha", folder], "")
+    both("grep", ["-rl", "--exclude=" + glob, "alpha", folder], "")
+
+for name in names:
+    os.remove(folder + "/" + name)
+
+os.rmdir(folder)
 
 print("\n  %s of %s" % (total - bad, total))
 PYTHON
