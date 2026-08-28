@@ -43,7 +43,7 @@ TEST_TALLY="$work/tally"
 export TEST_TALLY
 : > "$TEST_TALLY"
 
-lanes="standard verify exact socket slurp wait native probe shell expand builtin awk text tools files term kit boot canvas"
+lanes="standard verify exact socket net slurp wait native probe shell expand builtin awk text tools files term kit boot canvas"
 
 describe()
 {
@@ -52,6 +52,7 @@ describe()
         verify)   echo "the assembly in library.c against the C it replaced, on three machines" ;;
         exact)    echo "every size that is known where the call is written, and both tiers" ;;
         socket)   echo "byte order against a reference, and real sockets on three machines" ;;
+        net)      echo "the netlink wire built byte by byte, and ip against the kernel" ;;
         slurp)    echo "bounded file reads and forced EINTR at open and read, on three machines" ;;
         wait)     echo "wait4 arguments, statuses and forced EINTR retry, on three machines" ;;
         native)   echo "arm64 assembly on an arm64 machine, with no emulator in the way" ;;
@@ -125,7 +126,7 @@ freestanding()
 #       and so the only shape worth testing.
 utilities="cat awk dd diff ps grep sed cut tr sort uniq head tail wc tee rev nl fold expr cmp mktemp kill date xargs ls find
 stat du df chmod chown ln readlink basename dirname realpath mkdir rmdir cp mv
-rm touch sleep seq yes env id hostname uname"
+rm touch sleep seq yes env id hostname uname ip"
 
 shell_binary=""
 farm=""
@@ -1706,6 +1707,79 @@ lane_socket()
 {
         freestanding_checks_lane socket src/test/socket.c
 }
+
+net_one()
+{
+        name=$1
+        cross=$2
+        runner=$3
+
+        if ! command -v "$cross" > /dev/null 2>&1; then
+                note "$name: NOT RUN -- no $cross"
+                return 2
+        fi
+
+        if [ -n "$runner" ] && ! command -v "$runner" > /dev/null 2>&1; then
+                note "$name: NOT RUN -- no $runner"
+                return 2
+        fi
+
+        saved=$compiler
+        compiler=$cross
+        freestanding src/test/net.c "$work/net.$name" "$name" || {
+                compiler=$saved
+                return 1
+        }
+        compiler=$saved
+
+        $runner "$work/net.$name" > "$work/net.$name.out" 2>&1
+        status=$?
+
+        sed -n '/FAIL/p' "$work/net.$name.out"
+
+        line=$(sed -n 's/^\([0-9]*\) checks, \([0-9]*\) failures$/\1 \2/p' \
+                "$work/net.$name.out")
+
+        [ -n "$line" ] || { note "$name printed no verdict"; return 1; }
+
+        checks=${line% *}
+        bad=${line#* }
+
+        tally "net-$name" "$((checks - bad))" "$checks"
+
+        [ "$status" = 0 ] && [ "$bad" = 0 ]
+}
+
+#
+#       The message building half is arithmetic and proves itself anywhere.
+#       The talking half reads the running kernel's link table, which any user
+#       may do. Changing an interface needs privilege this may not have, so
+#       the test attempts it and accepts the refusal -- run the lane under
+#       `unshare -rn` and the same binary configures a real interface instead,
+#       which is how the mutation path is actually covered.
+#
+lane_net()
+{
+        failed=0
+        missing=0
+
+        for target in x86_64 arm64 riscv64; do
+                target_tools "$target"
+                outcome=0
+                net_one "$target" "$target_compiler" "$target_runner" || outcome=$?
+
+                case $outcome in
+                0) ;;
+                2) missing=1 ;;
+                *) failed=1 ;;
+                esac
+        done
+
+        [ "$failed" = 0 ] || return 1
+        [ "$missing" = 0 ] || return 2
+        return 0
+}
+
 
 lane_slurp()
 {

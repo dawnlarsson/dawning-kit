@@ -361,6 +361,7 @@ static fn shell_words_bind(shell_words address_to list,
 #include "text.c"
 #include "awk.c"
 #include "tools.c"
+#include "net.c"
 #include "expand.c"
 #include "../canvas/window.c"
 #include "term.c"

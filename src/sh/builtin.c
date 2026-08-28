@@ -1015,9 +1015,9 @@ static positive shell_options_named;
 bool shell_option_on(positive index)
 {
         // Two of them are not settings at all but answers about how the shell
-        // was started, and it is started one way.
+        // was started.
         if (!string_compare(shell_option_names[index].name, "stdin"))
-                return true;
+                return string_first_of(shell_option_flags, 's') != null;
 
         if (!string_compare(shell_option_names[index].name, "interactive"))
                 return shell_is_interactive != 0;
@@ -3672,6 +3672,7 @@ static shell_tool shell_tools[] = {
     {"env", file_env},
     {"find", file_find},
     {"hostname", file_hostname},
+    {"ip", net_ip},
     {"id", file_id},
     {"kill", file_kill},
     {"ln", file_ln},

@@ -1,3 +1,4 @@
+#!/bin/sh
 #
 #       A live system monitor, written in the shell it is demonstrating.
 #

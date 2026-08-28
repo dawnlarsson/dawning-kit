@@ -437,6 +437,71 @@ absent()
         lost "$name" "expected $want, got $got_ours"
 }
 
+# A script named on argv is a different entry path from the standard-input
+# cases below. Run an actual file through both interpreters so ignoring argv
+# cannot look like a successful empty script, and keep each part of the
+# process contract separate enough that a failure names what was lost.
+entry_input=""
+
+run_script_entry()
+{
+        interpreter=$1
+        output=$2
+        shift 2
+
+        if [ -n "$entry_input" ]; then
+                printf '%s' "$entry_input" |
+                        timeout 5 "$interpreter" "$work/entry.sh" "$@" \
+                                > "$output" 2>/dev/null
+        else
+                timeout 5 "$interpreter" "$work/entry.sh" "$@" \
+                        > "$output" 2>/dev/null
+        fi
+}
+
+script_answer()
+{
+        name=$1
+        source=$2
+        shift 2
+
+        printf '%s\n' "$source" > "$work/entry.sh"
+
+        if run_script_entry "$reference" "$work/want" "$@"; then
+                want_status=0
+        else
+                want_status=$?
+        fi
+
+        if run_script_entry "$subject" "$work/got" "$@"; then
+                got_status=0
+        else
+                got_status=$?
+        fi
+
+        if cmp -s "$work/want" "$work/got" &&
+                [ "$want_status" = "$got_status" ]; then
+                won
+                return 0
+        fi
+
+        lost "$name" \
+                "want $(shown "$work/want")[$want_status]   got $(shown "$work/got")[$got_status]"
+}
+
+section entry
+group script
+script_answer 'script name'  'printf "%s\n" "$0"'
+script_answer 'script count' 'printf "%s\n" "$#"' one two
+script_answer 'script first' 'printf "%s\n" "$1"' alpha beta
+script_answer 'script status' 'exit 37'
+script_answer 'script flags' 'printf "%s\n" "$-"'
+script_answer 'script stdin option' 'set -o | while read name state; do [ "$name" = stdin ] && echo "$state"; done'
+entry_input='payload
+'
+script_answer 'script keeps stdin' 'IFS= read -r value; printf "%s\n" "$value"'
+entry_input=""
+
 section posix
 group quoting
 check 'single'          "echo 'a b'"

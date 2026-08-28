@@ -344,8 +344,10 @@ __asm__(
 #define SO_RCVBUF 8
 #define SO_RCVTIMEO 20
 #define SO_SNDTIMEO 21
+#define SO_BINDTODEVICE 25
 
 #define MSG_PEEK 2
+#define MSG_TRUNC 0x20
 #define MSG_DONTWAIT 0x40
 #define MSG_NOSIGNAL 0x4000
 
@@ -354,6 +356,8 @@ __asm__(
 #define SHUT_BOTH 2
 
 #define NETLINK_ROUTE 0
+#define SOL_NETLINK 270
+#define NETLINK_EXT_ACK 11
 
 #define HOST_ANY 0x00000000u
 #define HOST_LOOPBACK 0x7f000001u

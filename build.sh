@@ -622,7 +622,7 @@ STRNCHR:char *strnchr(const char *, __kernel_size_t, int)"
                         expr cmp mktemp kill date xargs \
                         rev nl fold ls find stat du df chmod chown ln readlink \
                         basename dirname realpath mkdir rmdir cp mv rm touch \
-                        sleep seq yes env id hostname uname \
+                        sleep seq yes env id hostname uname ip \
                         init edit term window text pointer world; do
                         ln -sf shell "fs/$utility" || die "linking $utility"
                 done

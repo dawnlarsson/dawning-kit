@@ -5,6 +5,9 @@
 b32 main()
 {
         b32 interactive;
+        bipolar input = 0;
+        bool script_file = false;
+        positive process_arguments;
 
         /*
                 One binary, forty names.
@@ -29,10 +32,67 @@ b32 main()
         shell_ignore(SIGNAL_INTERRUPT);
         shell_ignore(SIGNAL_QUIT);
 
-        interactive = shell_is_interactive = shell_interactive();
-
         shell_env_init();
         expand_shell_pid = (positive)system_call_1(syscall(getpid), 0);
+
+        /*
+                sh file [word ...]
+
+                The process arguments are not commands: the first one names
+                the input file, and everything after it is the script's
+                positional-parameter list. Keep the bytes in the shell's own
+                parameter store before command parsing starts, because the
+                command argv table is reused for every line it runs.
+
+                The interpreter keeps the file descriptor apart from standard
+                input. A read command inside the script still reads what the
+                script's caller sent on descriptor zero; only this outer
+                reader consumes the source file.
+        */
+        process_arguments = (positive)program_argument_count();
+
+        if (process_arguments > 1)
+        {
+                string_address script = program_argument(1);
+                positive count = process_arguments - 2;
+                bipolar handle = system_call_3(syscall(openat), AT_FDCWD,
+                                                (positive)script, FILE_READ);
+                positive at;
+
+                if (handle < 0)
+                {
+                        string_format(log_error, "sh: %s: cannot open\n", script);
+                        return 2;
+                }
+
+                if (!shell_room((address_any address_to)address_of shell_argv,
+                                address_of shell_argv_room, count + 1,
+                                sizeof(shell_argv[0])))
+                {
+                        system_call_1(syscall(close), (positive)handle);
+                        log_error("sh: no room for arguments\n", 0);
+                        return 1;
+                }
+
+                for (at = 0; at < count; at++)
+                        shell_argv[at] = program_argument((b32)(at + 2));
+
+                shell_argv[count] = null;
+
+                if (!shell_parameters_set(shell_argv, count))
+                {
+                        system_call_1(syscall(close), (positive)handle);
+                        log_error("sh: no room for arguments\n", 0);
+                        return 1;
+                }
+
+                shell_script_name = script;
+                shell_option_flags = (string_address) "";
+                input = handle;
+                script_file = true;
+        }
+
+        interactive = shell_is_interactive = !script_file && shell_interactive();
 
         spawn_device = system_call_4(syscall(openat), AT_FDCWD,
                                      (positive)SPARK_DEVICE, FILE_READ_WRITE, 0);
@@ -58,7 +118,7 @@ b32 main()
                 if (interactive)
                         log_direct(str(TERM_MAIN_BUFFER TERM_RESET TERM_SHOW_CURSOR PROMPT));
 
-                got = system_call_3(syscall(read), 0,
+                got = system_call_3(syscall(read), (positive)input,
                                     (positive)(shell_buffer + held),
                                     MAX_INPUT - 1 - held);
 
@@ -110,6 +170,9 @@ b32 main()
                 shell_buffer[held] = end;
                 run_line(shell_buffer);
         }
+
+        if (script_file)
+                system_call_1(syscall(close), (positive)input);
 
         // Input ran out, which is a way of leaving like any other.
         shell_trap_exit();
