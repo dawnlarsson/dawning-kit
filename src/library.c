@@ -57,7 +57,7 @@
         A .set is a second label on the same address, so there is no wrapper
         and no jump, and which names get one depends on who is linking.
 
-        55 routines, 54 of them on all three.
+        56 routines, 55 of them on all three.
 
           routine                        x86_64  arm64   riscv64
           ------------------------------ ------- ------- -------
@@ -88,6 +88,7 @@
           memory_search                  yes     yes     yes
           moonwater_cpu_detect           yes     yes     yes
           path_basename                  yes     yes     yes
+          positive_into                  yes     yes     yes
           positive_to_string             yes     yes     yes
           shell_set_cursor               yes     yes     yes
           string_compare                 yes     yes     yes
@@ -3483,6 +3484,59 @@ ASM_FUNC(positive_to_string)
     ASM_SECTION
     ASM_END(positive_to_string)
     //
+    //       positive_into -- the digits of a number, into a buffer.
+    //
+    //       positive_to_string above answers the same question and hands the
+    //       answer to a writer, which is the wrong shape for most of the
+    //       callers that want it: a field that has to be padded to a width
+    //       needs the length before it writes anything, and a line assembled
+    //       in a buffer wants the bytes where the rest of the line already is.
+    //       Twenty two places across six files therefore kept their own copy
+    //       of this, all of them the same shape -- divide by ten into a
+    //       scratch array, then walk the array backwards into the output.
+    //
+    //       This is that, with the walk back replaced by a copy. It is the
+    //       same arithmetic and very nearly the same number of instructions,
+    //       so it is not faster than the loop it replaces and is not meant to
+    //       be: what it removes is seventeen copies of the loop.
+    //
+    //       Not the chunked, branchless body positive_to_string carries. That
+    //       one is built around a two hundred byte table of digit pairs which
+    //       lives inside its own delimiters, because this file is spliced by
+    //       routine name and a table in front of one routine belongs to
+    //       whatever came before it. Reaching for it from here would either
+    //       break that or duplicate the table three times, and the callers
+    //       counted above convert one small number at a time, which is the
+    //       shape that gains least from it.
+    //
+    ASM_FUNC(positive_into)
+    "sub $32, %rsp\n"
+    "lea 24(%rsp), %rcx  # one past the last scratch byte\n"
+    //
+    //       Divide by ten without dividing: the multiply and the shift the
+    //       compiler emits for the same expression. Twenty digits is the most
+    //       a sixty four bit number has, and the scratch holds twenty four.
+    //
+    "movabs $0xCCCCCCCCCCCCCCCD, %r8\n"
+    "mov %rsi, %rax\n"
+    //
+    //       Tested at the bottom, so a zero writes its digit before the loop
+    //       finds out there is nothing left. That is the "if (!value)" arm
+    //       every one of the copies had written out separately.
+    //
+    "1:  mov %rax, %r9  # the value, which the multiply is about to take\n"
+    "mul %r8\n   shr $3, %rdx  # the value over ten\n"
+    "lea (%rdx,%rdx,4), %r10\n   add %r10, %r10\n   sub %r10, %r9  # what is left over\n"
+    "add $48, %r9d\n   dec %rcx\n   mov %r9b, (%rcx)\n"
+    "mov %rdx, %rax\n   test %rax, %rax\n   jnz 1b\n"
+    "lea 24(%rsp), %rax\n   sub %rcx, %rax  # how many there were\n"
+    "xor %edx, %edx\n"
+    "2:  movzbl (%rcx,%rdx), %r9d\n   mov %r9b, (%rdi,%rdx)\n   inc %rdx\n"
+    "cmp %rax, %rdx\n   jb 2b\n"
+    "add $32, %rsp\n"
+    ASM_RET
+    ASM_END(positive_into)
+    //
     //
     //       bipolar_to_string -- a sign, then the digits.
     //
@@ -5416,6 +5470,28 @@ ASM_FUNC(positive_to_string)
     ASM_SECTION
     ASM_END(positive_to_string)
     //
+    //       positive_into. The x86_64 block above says why it is here and why
+    //       it is not the chunked body beside it.
+    //
+    //       udiv and msub, rather than the reciprocal multiply x86 needs:
+    //       arm64 has the divide and the multiply-subtract that takes the
+    //       remainder off in one instruction, so the loop is three.
+    //
+    ASM_FUNC(positive_into)
+    "sub sp, sp, #48\n"
+    "add x3, sp, #40  // one past the last scratch byte\n"
+    "mov x4, x1\n   mov w5, #10\n"
+    "1:  udiv x6, x4, x5\n   msub x7, x6, x5, x4  // what is left over\n"
+    "add w7, w7, #48\n   sub x3, x3, #1\n   strb w7, [x3]\n"
+    "mov x4, x6\n   cbnz x4, 1b\n"
+    "add x8, sp, #40\n   sub x8, x8, x3  // how many there were\n"
+    "mov x9, xzr\n"
+    "2:  ldrb w10, [x3, x9]\n   strb w10, [x0, x9]\n   add x9, x9, #1\n"
+    "cmp x9, x8\n   b.lo 2b\n"
+    "mov x0, x8\n   add sp, sp, #48\n"
+    ASM_RET
+    ASM_END(positive_into)
+    //
     //
     //       bipolar_to_string -- a sign, then the digits. See the x86_64 block.
     //
@@ -6909,6 +6985,26 @@ ASM_FUNC(positive_to_string)
     "        .quad 0xABCC77118461CEFD  # what dividing by a hundred million is\n"
     ASM_SECTION
     ASM_END(positive_to_string)
+    //
+    //       positive_into. The x86_64 block above says why it is here.
+    //
+    //       divu and a multiply back, because rv64 has the divide but no
+    //       multiply-subtract, so taking the remainder off is two.
+    //
+    ASM_FUNC(positive_into)
+    "addi sp, sp, -48\n"
+    "addi t0, sp, 40  # one past the last scratch byte\n"
+    "mv t1, a1\n   li t2, 10\n"
+    "1:  divu t3, t1, t2\n   mul t4, t3, t2\n   sub t4, t1, t4  # what is left over\n"
+    "addi t4, t4, 48\n   addi t0, t0, -1\n   sb t4, 0(t0)\n"
+    "mv t1, t3\n   bnez t1, 1b\n"
+    "addi t5, sp, 40\n   sub t5, t5, t0  # how many there were\n"
+    "mv t6, zero\n"
+    "2:  add a2, t0, t6\n   lbu a3, 0(a2)\n   add a2, a0, t6\n   sb a3, 0(a2)\n"
+    "addi t6, t6, 1\n   bltu t6, t5, 2b\n"
+    "mv a0, t5\n   addi sp, sp, 48\n"
+    ASM_RET
+    ASM_END(positive_into)
     //       bipolar_to_string: the arm64 block carries the reasoning.
     ASM_FUNC(bipolar_to_string)
     "bltz a1, 1f\n   tail positive_to_string\n"
@@ -7534,6 +7630,14 @@ fn shell_set_cursor(writer write, positive x, positive y);
 p64 get_cpu_time();
 string_address string_get_environment(string_address address_to list, string_address name);
 fn positive_to_string(writer write, positive number);
+/*
+        The same digits, into a buffer, and how many of them there were.
+
+        No terminator is written: every caller counted for this is assembling
+        a field inside a longer line and the length is what it wants. A zero
+        writes one byte. Twenty is the most a sixty four bit value can need.
+*/
+positive positive_into(p8 address_to into, positive value);
 fn bipolar_to_string(writer write, bipolar number);
 /*
         The trailing digits of a string, read backwards from the terminator.

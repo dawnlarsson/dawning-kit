@@ -2277,6 +2277,116 @@ fn check_digits_exact()
                         }
 }
 
+/*
+        The digits of a number, into a buffer.
+
+        The reference is the loop this replaced, written out the way all
+        twenty two copies of it were: least significant digit first into a
+        scratch array, then the array backwards into the output.
+
+        Two things are checked that a value comparison would miss. The buffer
+        is filled with a byte that is not a digit and the bytes on both sides
+        of the answer are checked afterwards, because a routine that writes a
+        terminator, or pads to a width, or writes the scratch out whole,
+        answers the right length and corrupts what was next to it. And the
+        destination is walked across eight offsets, so a store that assumed an
+        aligned buffer is caught.
+*/
+positive reference_into(p8 address_to into, positive value)
+{
+        p8 scratch[24];
+        positive have = 0;
+
+        if (!value)
+                scratch[have++] = '0';
+
+        while (value)
+        {
+                scratch[have++] = (p8)('0' + value % 10);
+                value /= 10;
+        }
+
+        for (positive i = 0; i < have; i++)
+                into[i] = scratch[have - 1 - i];
+
+        return have;
+}
+
+static positive into_exacts[] = {
+    0, 1, 2, 9, 10, 11, 99, 100, 101, 999, 1000, 1001,
+    9999, 10000, 65535, 65536, 99999, 100000, 999999, 1000000,
+    99999999ull, 100000000ull, 100000001ull,
+    999999999ull, 1000000000ull,
+    4294967295ull, 4294967296ull,
+    9999999999ull, 10000000000ull,
+    999999999999999999ull, 1000000000000000000ull,
+    9999999999999999999ull, 10000000000000000000ull,
+    18446744073709551615ull,
+};
+
+#define INTO_EXACT_COUNT (sizeof(into_exacts) / sizeof(into_exacts[0]))
+
+fn check_into_one(positive value, positive offset, p8 guard)
+{
+        p8 address_to got;
+        p8 address_to want;
+        positive got_length;
+        positive want_length;
+
+        reference_fill(span_room, guard, sizeof(span_room));
+        reference_fill(field, guard, sizeof(field));
+
+        got = span_subject(offset);
+        want = (p8 address_to)aligned_at(field) + SPAN_HEAD + offset;
+
+        got_length = positive_into(got, value);
+        want_length = reference_into(want, value);
+
+        same("positive_into", "how many", got_length, want_length);
+        same_bytes("positive_into", "the digits", got, want, want_length);
+
+        // Nothing in front of the answer and nothing behind it. A routine
+        // that terminates the string, or hands back the whole scratch, gets
+        // the length right and is still wrong.
+        for (positive back = 1; back <= 8; back++)
+                same("positive_into", "in front of it",
+                     (positive)got[0 - back], (positive)guard);
+
+        for (positive after = 0; after < 8; after++)
+                same("positive_into", "behind it",
+                     (positive)got[got_length + after], (positive)guard);
+}
+
+fn check_into()
+{
+        // A digit, a byte that is not one, a zero and a high byte: the four
+        // ways a stray write shows up as something plausible.
+        static p8 guards[] = {0x00, '0', '9', 'x', 0xff};
+
+        for (positive g = 0; g < sizeof(guards); g++)
+                for (positive offset = 0; offset < 8; offset++)
+                {
+                        for (positive e = 0; e < INTO_EXACT_COUNT; e++)
+                                check_into_one(into_exacts[e], offset, guards[g]);
+
+                        // And every power of ten either side, so each length
+                        // the divide loop can produce is reached.
+                        positive power = 1;
+
+                        for (positive d = 0; d < 19; d++)
+                        {
+                                check_into_one(power - 1, offset, guards[g]);
+                                check_into_one(power, offset, guards[g]);
+                                check_into_one(power + 1, offset, guards[g]);
+                                power *= 10;
+                        }
+
+                        for (positive r = 0; r < 24; r++)
+                                check_into_one(next(), offset, guards[g]);
+                }
+}
+
+
 fn check_hostile_neighbours()
 {
         // The byte hunted for, and so also the byte written in front of the
@@ -4697,6 +4807,7 @@ b32 main()
         check_span_max();
         check_digits();
         check_digits_exact();
+        check_into();
         check_bulk_alignments();
         check_bulk_moves();
         check_bulk_wide_strings();
