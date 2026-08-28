@@ -1865,6 +1865,13 @@ typedef struct
         string_address program;
         string_address allowed;
         string_address valued;
+
+        // Letters that take an argument only when it is written onto the
+        // option itself: date -Ihours, mktemp --tmpdir=/x. A bare one means
+        // whatever the tool calls the default and never eats the word after
+        // it, which is the only way --tmpdir and --tmpdir=/x can both be
+        // spelled by one option.
+        string_address optional;
         const file_long address_to longs;
 
         // seq is the one tool here where -4 is a number and not a flag.
@@ -1883,6 +1890,11 @@ typedef struct
 static string_address file_option_value(file_taking address_to taking, p8 letter)
 {
         return taking->value[file_letter_bit(letter)];
+}
+
+static bool file_option_among(string_address set, p8 letter)
+{
+        return set && string_first_of(set, letter);
 }
 
 static bool file_option_needs(file_taking address_to taking, string_address word)
@@ -1961,7 +1973,9 @@ static bool file_take(file_taking address_to taking)
 
                         taking->flags |= (positive)1 << bit;
 
-                        if (string_first_of(taking->valued, letter))
+                        if (file_option_among(taking->optional, letter))
+                                taking->value[bit] = mark ? mark + 1 : null;
+                        else if (string_first_of(taking->valued, letter))
                         {
                                 if (mark)
                                         taking->value[bit] = mark + 1;
@@ -1990,7 +2004,9 @@ static bool file_take(file_taking address_to taking)
 
                         taking->flags |= (positive)1 << bit;
 
-                        if (!string_first_of(taking->valued, string_get(letter)))
+                        bool spare = file_option_among(taking->optional, string_get(letter));
+
+                        if (!spare && !string_first_of(taking->valued, string_get(letter)))
                         {
                                 if (taking->seen && !taking->seen(string_get(letter), null))
                                         return false;
@@ -2003,6 +2019,8 @@ static bool file_take(file_taking address_to taking)
                         // argument or the next word is.
                         if (string_get(letter + 1))
                                 taking->value[bit] = letter + 1;
+                        else if (spare)
+                                taking->value[bit] = null;
                         else if (index < count)
                                 taking->value[bit] = program_argument((b32)index++);
                         else
@@ -4271,48 +4289,22 @@ static fn stat_readable(string_address path, file_facts address_to facts)
 static b32 file_stat()
 {
         positive count = (positive)program_argument_count();
-        positive index = 1;
-        string_address format = null;
+        file_taking taking = {
+            .program = (string_address) "stat",
+            .allowed = (string_address) "Lcf",
+            .valued = (string_address) "cf",
+        };
 
-        while (index < count)
-        {
-                string_address argument = program_argument((b32)index);
-
-                if (string_is(argument, '-') && string_is(argument + 1, '-') &&
-                    string_is(argument + 2, end))
-                {
-                        index++;
-                        break;
-                }
-
-                if (!string_is(argument, '-') || string_is(argument + 1, end))
-                        break;
-
-                if (string_is(argument + 1, 'L') && string_is(argument + 2, end))
-                {
-                        stat_follow = true;
-                        index++;
-                        continue;
-                }
-
-                if ((string_is(argument + 1, 'c') || string_is(argument + 1, 'f')) &&
-                    string_is(argument + 2, end) && index + 1 < count)
-                {
-                        format = program_argument((b32)(index + 1));
-                        index += 2;
-                        continue;
-                }
-
-                if (string_is(argument + 1, 'c') && string_get(argument + 2))
-                {
-                        format = argument + 2;
-                        index++;
-                        continue;
-                }
-
-                string_format(file_fail, "stat: unknown option: %s\n", argument);
+        if (!file_take(address_of taking))
                 return 1;
-        }
+
+        positive index = taking.first;
+        string_address format = file_option_value(address_of taking, 'c');
+
+        stat_follow = (taking.flags & FILE_FLAG('L')) != 0;
+
+        if (!format)
+                format = file_option_value(address_of taking, 'f');
 
         if (index >= count)
         {
@@ -6174,48 +6166,25 @@ static b32 file_realpath()
 static b32 file_mkdir()
 {
         positive count = (positive)program_argument_count();
-        positive index = 1;
-        bool parents = false;
+        file_taking taking = {
+            .program = (string_address) "mkdir",
+            .allowed = (string_address) "mp",
+            .valued = (string_address) "m",
+        };
+
+        if (!file_take(address_of taking))
+                return 1;
+
+        positive index = taking.first;
         positive mode = 0777;
-        bool given_mode = false;
+        bool parents = (taking.flags & FILE_FLAG('p')) != 0;
+        bool given_mode = (taking.flags & FILE_FLAG('m')) != 0;
 
-        while (index < count)
+        if (given_mode &&
+            !file_mode_of(file_option_value(address_of taking, 'm'), 0777, true,
+                          address_of mode))
         {
-                string_address argument = program_argument((b32)index);
-
-                if (string_is(argument, '-') && string_is(argument + 1, '-') &&
-                    string_is(argument + 2, end))
-                {
-                        index++;
-                        break;
-                }
-
-                if (!string_is(argument, '-') || string_is(argument + 1, end))
-                        break;
-
-                if (string_is(argument + 1, 'm') && string_is(argument + 2, end) &&
-                    index + 1 < count)
-                {
-                        if (!file_mode_of(program_argument((b32)(index + 1)), 0777, true,
-                                          address_of mode))
-                        {
-                                file_fail("mkdir: bad mode\n", 0);
-                                return 1;
-                        }
-
-                        given_mode = true;
-                        index += 2;
-                        continue;
-                }
-
-                if (string_is(argument + 1, 'p') && string_is(argument + 2, end))
-                {
-                        parents = true;
-                        index++;
-                        continue;
-                }
-
-                string_format(file_fail, "mkdir: unknown option: %s\n", argument);
+                file_fail("mkdir: bad mode\n", 0);
                 return 1;
         }
 
@@ -8693,107 +8662,45 @@ static fn mktemp_letters_into(p8 address_to at, positive count)
                 at[i] = mktemp_letters[raw[i % have] % 62];
 }
 
+// --tmpdir is the one option here spelled without a letter, and T is a letter
+// mktemp has not got: it is left out of `allowed` so -T is still a mistake.
+static const file_long mktemp_longs[] = {
+    {(string_address) "directory", 'd'},
+    {(string_address) "dry-run", 'u'},
+    {(string_address) "quiet", 'q'},
+    {(string_address) "tmpdir", 'T'},
+    {null, 0},
+};
+
 static b32 file_mktemp()
 {
         positive count = (positive)program_argument_count();
-        positive index = 1;
-        bool directory = false;
-        bool dry = false;
-        bool quiet = false;
-        bool rooted = false;
-        string_address base = null;
+        file_taking taking = {
+            .program = (string_address) "mktemp",
+            .allowed = (string_address) "dpqtu",
+            .valued = (string_address) "p",
+            .optional = (string_address) "T",
+            .longs = mktemp_longs,
+        };
+
+        if (!file_take(address_of taking))
+                return 1;
+
+        positive index = taking.first;
+        bool directory = (taking.flags & FILE_FLAG('d')) != 0;
+        bool dry = (taking.flags & FILE_FLAG('u')) != 0;
+        bool quiet = (taking.flags & FILE_FLAG('q')) != 0;
+        bool rooted = (taking.flags & (FILE_FLAG('p') | FILE_FLAG('t') |
+                                       FILE_FLAG('T'))) != 0;
+        string_address base = file_option_value(address_of taking, 'T');
         string_address template = null;
         p8 path[FILE_PATH_MAX];
         positive length = 0;
         positive marks_at;
         positive marks = 0;
 
-        while (index < count)
-        {
-                string_address argument = program_argument((b32)index);
-
-                if (!string_is(argument, '-') || string_is(argument + 1, end))
-                        break;
-
-                if (string_is(argument + 1, '-') && string_is(argument + 2, end))
-                {
-                        index++;
-                        break;
-                }
-
-                if (string_is(argument + 1, 'p') && string_is(argument + 2, end))
-                {
-                        if (index + 1 >= count)
-                        {
-                                file_fail("mktemp: -p needs a directory\n", 0);
-                                return 1;
-                        }
-
-                        base = program_argument((b32)(index + 1));
-                        rooted = true;
-                        index += 2;
-                        continue;
-                }
-
-                if (string_is(argument + 1, '-'))
-                {
-                        string_address named = "--tmpdir=";
-                        positive at = string_length(named);
-
-                        if (!string_compare_max(argument, named, at))
-                        {
-                                base = argument + at;
-                                rooted = true;
-                                index++;
-                                continue;
-                        }
-
-                        if (string_compare(argument, "--tmpdir") == 0)
-                        {
-                                rooted = true;
-                                index++;
-                                continue;
-                        }
-
-                        if (string_compare(argument, "--directory") == 0)
-                                directory = true;
-                        else if (string_compare(argument, "--dry-run") == 0)
-                                dry = true;
-                        else if (string_compare(argument, "--quiet") == 0)
-                                quiet = true;
-                        else
-                        {
-                                string_format(file_fail, "mktemp: unknown option: %s\n",
-                                              argument);
-                                return 1;
-                        }
-
-                        index++;
-                        continue;
-                }
-
-                for (positive letter = 1; string_get(argument + letter); letter++)
-                {
-                        p8 which = string_get(argument + letter);
-
-                        if (which == 'd')
-                                directory = true;
-                        else if (which == 'u')
-                                dry = true;
-                        else if (which == 'q')
-                                quiet = true;
-                        else if (which == 't')
-                                rooted = true;
-                        else
-                        {
-                                string_format(file_fail,
-                                              "mktemp: unknown option: %s\n", argument);
-                                return 1;
-                        }
-                }
-
-                index++;
-        }
+        if (!base)
+                base = file_option_value(address_of taking, 'p');
 
         if (index < count)
                 template = program_argument((b32)index++);
@@ -9396,140 +9303,60 @@ static fn date_shape(writer write, date_moment address_to at, string_address for
         }
 }
 
+static const file_long date_longs[] = {
+    {(string_address) "date", 'd'},
+    {(string_address) "reference", 'r'},
+    {(string_address) "utc", 'u'},
+    {(string_address) "universal", 'u'},
+    {(string_address) "rfc-2822", 'R'},
+    {(string_address) "rfc-email", 'R'},
+    {(string_address) "iso-8601", 'I'},
+    {null, 0},
+};
+
 static b32 file_date()
 {
         positive count = (positive)program_argument_count();
-        positive index = 1;
+        file_taking taking = {
+            .program = (string_address) "date",
+            .allowed = (string_address) "IRdru",
+            .valued = (string_address) "dr",
+            .optional = (string_address) "I",
+            .longs = date_longs,
+        };
+
+        if (!file_take(address_of taking))
+                return 1;
+
+        positive index = taking.first;
         string_address format = null;
-        string_address given = null;
-        string_address of_file = null;
+        string_address given = file_option_value(address_of taking, 'd');
+        string_address of_file = file_option_value(address_of taking, 'r');
         string_address iso = null;
-        bool rfc = false;
+        bool rfc = (taking.flags & FILE_FLAG('R')) != 0;
         b64 when;
         date_moment at;
 
-        while (index < count)
+        if (taking.flags & FILE_FLAG('I'))
         {
-                string_address argument = program_argument((b32)index);
-                string_address wanted = "--date=";
-                positive named = string_length(wanted);
+                string_address precision = file_option_value(address_of taking, 'I');
 
-                if (!string_is(argument, '-') || string_is(argument + 1, end))
-                        break;
-
-                if (string_is(argument + 1, '-') && string_is(argument + 2, end))
+                if (!precision || string_is(precision, end) ||
+                    !string_compare(precision, "date"))
+                        iso = (string_address) "%Y-%m-%d";
+                else if (!string_compare(precision, "hours"))
+                        iso = (string_address) "%Y-%m-%dT%H+00:00";
+                else if (!string_compare(precision, "minutes"))
+                        iso = (string_address) "%Y-%m-%dT%H:%M+00:00";
+                else if (!string_compare(precision, "seconds"))
+                        iso = (string_address) "%Y-%m-%dT%H:%M:%S+00:00";
+                else
                 {
-                        index++;
-                        break;
+                        string_format(file_fail,
+                                      "date: invalid argument '%s' for '--iso-8601'\n",
+                                      precision);
+                        return 1;
                 }
-
-                if (!string_compare_max(argument, wanted, named))
-                {
-                        given = argument + named;
-                        index++;
-                        continue;
-                }
-
-                if (string_is(argument + 1, 'd') && string_is(argument + 2, end))
-                {
-                        if (index + 1 >= count)
-                        {
-                                file_fail("date: -d needs a date\n", 0);
-                                return 1;
-                        }
-
-                        given = program_argument((b32)(index + 1));
-                        index += 2;
-                        continue;
-                }
-
-                if (string_is(argument + 1, 'r') && string_is(argument + 2, end))
-                {
-                        if (index + 1 >= count)
-                        {
-                                file_fail("date: -r needs a file\n", 0);
-                                return 1;
-                        }
-
-                        of_file = program_argument((b32)(index + 1));
-                        index += 2;
-                        continue;
-                }
-
-                if (string_is(argument + 1, 'u') && string_is(argument + 2, end))
-                {
-                        index++;
-                        continue;
-                }
-
-                if (string_is(argument + 1, 'R') && string_is(argument + 2, end))
-                {
-                        rfc = true;
-                        index++;
-                        continue;
-                }
-
-                string_address precision = null;
-
-                if (string_is(argument + 1, 'I'))
-                        precision = argument + 2;
-                else if (!string_compare_max(argument, "--iso-8601", 10) &&
-                         (string_is(argument + 10, end) || string_is(argument + 10, '=')))
-                        precision = string_is(argument + 10, '=') ? argument + 11
-                                                                  : argument + 10;
-
-                if (precision)
-                {
-                        if (string_is(precision, end) ||
-                            !string_compare(precision, "date"))
-                                iso = (string_address) "%Y-%m-%d";
-                        else if (!string_compare(precision, "hours"))
-                                iso = (string_address) "%Y-%m-%dT%H+00:00";
-                        else if (!string_compare(precision, "minutes"))
-                                iso = (string_address) "%Y-%m-%dT%H:%M+00:00";
-                        else if (!string_compare(precision, "seconds"))
-                                iso = (string_address) "%Y-%m-%dT%H:%M:%S+00:00";
-                        else
-                        {
-                                string_format(file_fail,
-                                              "date: invalid argument '%s' for '--iso-8601'\n",
-                                              precision);
-                                return 1;
-                        }
-
-                        index++;
-                        continue;
-                }
-
-                if (!string_compare(argument, "--utc") ||
-                    !string_compare(argument, "--universal"))
-                {
-                        index++;
-                        continue;
-                }
-
-                {
-                        string_address wanted_file = "--reference=";
-                        positive same = string_length(wanted_file);
-
-                        if (!string_compare_max(argument, wanted_file, same))
-                        {
-                                of_file = argument + same;
-                                index++;
-                                continue;
-                        }
-                }
-
-                if (!string_compare(argument, "--rfc-2822") ||
-                    !string_compare(argument, "--rfc-email"))
-                {
-                        rfc = true;
-                        index++;
-                        continue;
-                }
-
-                string_format(file_fail, "date: unknown option: %s\n", argument);
-                return 1;
         }
 
         if (index < count)
@@ -9856,7 +9683,6 @@ static fn xargs_item_done()
 static b32 file_xargs()
 {
         positive count = (positive)program_argument_count();
-        positive index = 1;
         p8 quote = 0;
         bool escaped = false;
         bool started = false;
@@ -9869,121 +9695,30 @@ static b32 file_xargs()
         xargs_done = false;
         xargs_ended = false;
         xargs_ran = false;
-        xargs_most = 0;
         xargs_lines = 0;
-        xargs_null = false;
-        xargs_trace = false;
-        xargs_needs_input = false;
-        xargs_replace = null;
-        xargs_ending = null;
 
-        while (index < count)
-        {
-                string_address argument = program_argument((b32)index);
+        file_taking taking = {
+            .program = (string_address) "xargs",
+            .allowed = (string_address) "0EIinrt",
+            .valued = (string_address) "EIn",
+        };
 
-                if (!string_is(argument, '-') || string_is(argument + 1, end))
-                        break;
-
-                if (string_is(argument + 1, '-') && string_is(argument + 2, end))
-                {
-                        index++;
-                        break;
-                }
-
-                if (string_is(argument + 1, '0') && string_is(argument + 2, end))
-                {
-                        xargs_null = true;
-                        index++;
-                        continue;
-                }
-
-                if (string_is(argument + 1, 't') && string_is(argument + 2, end))
-                {
-                        xargs_trace = true;
-                        index++;
-                        continue;
-                }
-
-                if (string_is(argument + 1, 'r') && string_is(argument + 2, end))
-                {
-                        xargs_needs_input = true;
-                        index++;
-                        continue;
-                }
-
-                if (string_is(argument + 1, 'n'))
-                {
-                        string_address value = argument + 2;
-
-                        if (!string_get(value))
-                        {
-                                if (index + 1 >= count)
-                                {
-                                        file_fail("xargs: -n needs a number\n", 0);
-                                        return 1;
-                                }
-
-                                value = program_argument((b32)(index + 1));
-                                index++;
-                        }
-
-                        xargs_most = string_digits(value, null);
-                        index++;
-                        continue;
-                }
-
-                if (string_is(argument + 1, 'E'))
-                {
-                        string_address value = argument + 2;
-
-                        if (!string_get(value))
-                        {
-                                if (index + 1 >= count)
-                                {
-                                        file_fail("xargs: -E needs a word\n", 0);
-                                        return 1;
-                                }
-
-                                value = program_argument((b32)(index + 1));
-                                index++;
-                        }
-
-                        xargs_ending = value;
-                        index++;
-                        continue;
-                }
-
-                if (string_is(argument + 1, 'I'))
-                {
-                        string_address value = argument + 2;
-
-                        if (!string_get(value))
-                        {
-                                if (index + 1 >= count)
-                                {
-                                        file_fail("xargs: -I needs a word\n", 0);
-                                        return 1;
-                                }
-
-                                value = program_argument((b32)(index + 1));
-                                index++;
-                        }
-
-                        xargs_replace = value;
-                        index++;
-                        continue;
-                }
-
-                if (string_is(argument + 1, 'i') && string_is(argument + 2, end))
-                {
-                        xargs_replace = "{}";
-                        index++;
-                        continue;
-                }
-
-                string_format(file_fail, "xargs: unknown option: %s\n", argument);
+        if (!file_take(address_of taking))
                 return 1;
-        }
+
+        positive index = taking.first;
+
+        xargs_null = (taking.flags & FILE_FLAG('0')) != 0;
+        xargs_trace = (taking.flags & FILE_FLAG('t')) != 0;
+        xargs_needs_input = (taking.flags & FILE_FLAG('r')) != 0;
+        xargs_ending = file_option_value(address_of taking, 'E');
+        xargs_replace = file_option_value(address_of taking, 'I');
+        xargs_most = (taking.flags & FILE_FLAG('n'))
+                         ? string_digits(file_option_value(address_of taking, 'n'), null)
+                         : 0;
+
+        if (!xargs_replace && (taking.flags & FILE_FLAG('i')))
+                xargs_replace = "{}";
 
         if (index >= count)
                 xargs_add("echo", 4);
