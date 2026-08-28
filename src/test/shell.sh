@@ -596,6 +596,8 @@ answer 'errexit turned off' 'set -e; set +e; false; echo ok'
 answer 'errexit runs the trap' 'set -e; trap "echo bye" EXIT; false; echo not reached'
 answer 'errexit sub trap once' 'set -e; trap "echo bye" EXIT; (false); echo not reached'
 answer 'errexit break'   'set -e; while true; do break; done; echo ok'
+answer 'errexit in a sub' 'set -e; trap "echo bye" EXIT; echo "[$(false)]"; echo after'
+answer 'errexit sub keeps going' 'set -e; echo "[$(false; echo x)]"; echo after'
 
 # An assignment written in front of a command belongs to that command.
 #

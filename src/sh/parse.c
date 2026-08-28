@@ -267,10 +267,16 @@ fn parse_nest_leave()
         here_names_used = frame->names_used;
 }
 
+// What a child of this shell has to know about being one. Declared here and
+// answered in exec.c, which is where being a child makes a difference.
+fn exec_child_began();
+
 // A forked substitution has the outer line's marks and no use for them: what
 // it runs is the only thing it will ever run.
 fn parse_reset_all()
 {
+        exec_child_began();
+
         parse_node_base = 1;
         parse_word_base = 0;
         parse_redirect_base = 0;

@@ -44,6 +44,11 @@ static bool exec_forked;
 
 fn shell_trap_exit();
 
+fn exec_child_began()
+{
+        exec_forked = true;
+}
+
 static fn exec_errexit(b32 status)
 {
         if (!status || exec_tested || !(shell_options & SHELL_ERREXIT))
