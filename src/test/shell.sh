@@ -494,6 +494,15 @@ B'
 answer 'order of words'  'echo x > /tmp/sr2 2>&1; cat /tmp/sr2'
 answer 'loop redirected' 'for i in 1 2; do echo $i; done > /tmp/sr3; cat /tmp/sr3'
 
+# exec with nothing to run is there for its redirections, and those outlive
+# the command. The descriptor is three because open hands back the lowest one
+# free, which is three, and dup3 onto the descriptor it was given is an error
+# rather than the no-op dup2 makes of it.
+answer 'exec keeps a write' 'exec 3> /tmp/sr4.$$; echo kept >&3; exec 3>&-; cat /tmp/sr4.$$'
+answer 'exec keeps a read' 'echo r > /tmp/sr5.$$; exec 3< /tmp/sr5.$$; read v <&3; echo $v'
+answer 'exec four as well' 'exec 4> /tmp/sr6.$$; echo four >&4; exec 4>&-; cat /tmp/sr6.$$'
+answer 'a command does not' 'echo a > /tmp/sr7.$$; true 3< /tmp/sr7.$$; read v <&3 2>/dev/null; echo "[$v]"'
+
 group control
 answer 'case alternates' 'case b in a|b) echo yes;; esac'
 answer 'case escaped'    'case "a*b" in a\*b) echo yes;; esac'
@@ -508,6 +517,31 @@ answer 'continue two'    'for i in 1 2; do for j in a b; do continue 2; done; ec
 answer 'recursion'       'f() { [ $1 -gt 0 ] && { echo $1; f $(($1-1)); }; }; f 3'
 answer 'function args'   'f() { set -- x; echo $1; }; set -- y; f; echo $1'
 answer 'function in one' 'f() { g() { echo inner; }; g; }; f'
+
+# An assignment written in front of a command belongs to that command.
+#
+# It has to be visible to what runs -- a spawned program reads it out of the
+# environment and a builtin reads it out of the same table -- and it has to be
+# gone afterwards. The exception is the fifteen names POSIX calls special, in
+# front of which the assignment stays; dash draws exactly that line and this
+# checks both sides of it.
+
+group prefixed
+answer 'gone afterwards'  'x=old; x=new true; echo "[$x]"'
+answer 'never set before' 'y=new true; echo "[${y-unset}]"'
+answer 'exported stays'   'export E=keep; E=temp true; echo "[$E]"'
+answer 'seen by the child' 'v=seen sh -c "echo [\$v]"'
+answer 'seen by a builtin' 'IFS=: ; x=a:b; set -- $x; echo $#'
+answer 'a function too'   'v=o; f() { echo "in $v"; }; v=n f; echo "out $v"'
+answer 'special keeps it' 'v=o; v=n export Q=1; echo "[$v]"'
+answer 'colon keeps it'   'v=o; v=n :; echo "[$v]"'
+answer 'eval keeps it'    'v=o; v=n eval echo "in \$v"; echo "out $v"'
+answer 'plain does not'   'v=o; v=n cd /; echo "[$v]"'
+answer 'two of them'      'a=1; b=2; a=x b=y true; echo "$a$b"'
+answer 'empty value back' 'v=; v=n true; echo "[$v]"'
+answer 'not found either' 'v=o; v=n nosuchcommand12345 2>/dev/null; echo "[$v]"'
+answer 'alone it stays'   'v=o; v=n; echo "[$v]"'
+answer 'in a loop'        'v=o; for i in 1 2; do v=n true; done; echo "[$v]"'
 
 group builtins
 answer 'printf kinds'    'printf "%d %s %c\n" 42 str x'
@@ -731,7 +765,6 @@ differs 'at is one word' '[a b c]|' 0 'set -- "a b" c; for i in "$@"; do echo "[
 differs 'no dash heredoc' '' 0 'cat <<-EOF
 	indented
 	EOF'
-differs 'no exec fd'     '' 0 "exec 4>$work/sd1; echo hi >&4; exec 4>&-; cat $work/sd1"
 differs 'no set e'       'not reached|' 0 'set -e; false; echo not reached'
 differs 'no set u'       '|after|' 0 'set -u; echo $nosuch; echo after'
 differs 'no cd dash'     '/|' 0 'cd /tmp; cd /; cd - > /dev/null; pwd'

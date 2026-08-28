@@ -227,6 +227,20 @@ static fn exec_redirect_restore(b32 mark)
         }
 }
 
+// exec with nothing to run keeps its redirections, so what was put aside to
+// undo them is dropped instead: holding the dup would keep the old file open
+// for the rest of the line and never put it back.
+static fn exec_redirect_forget(b32 mark)
+{
+        while (exec_save_count > mark)
+        {
+                exec_saved_fd address_to saved = exec_saves + --exec_save_count;
+
+                if (saved->saved >= 0)
+                        system_call_1(syscall(close), saved->saved);
+        }
+}
+
 /*
         A here-document body with its parameters filled in.
 
@@ -302,6 +316,18 @@ static bool exec_redirect_apply(b32 index)
                 string_address target = shell_expand_word(parse_words[want->word]);
                 bipolar opened = -1;
 
+                /*
+                        The descriptor is put aside before anything is opened.
+
+                        open hands back the lowest free descriptor, which is
+                        the one being redirected whenever that one was closed.
+                        Saving after the open therefore recorded the file that
+                        had just arrived as "what was there before", and put it
+                        back instead of closing it.
+                */
+                if (!exec_save_fd(want->fd))
+                        return false;
+
                 if (want->op == OP_DLESS)
                 {
                         string_address body = want->kept
@@ -318,9 +344,6 @@ static bool exec_redirect_apply(b32 index)
                 {
                         if (string_is(target, '-') && string_not(target + 1, end))
                         {
-                                if (!exec_save_fd(want->fd))
-                                        return false;
-
                                 system_call_1(syscall(close), want->fd);
                                 continue;
                         }
@@ -347,15 +370,16 @@ static bool exec_redirect_apply(b32 index)
                         return false;
                 }
 
-                if (!exec_save_fd(want->fd))
-                {
-                        system_call_1(syscall(close), opened);
-                        return false;
-                }
-
                 log_flush();
-                system_call_3(syscall(dup3), opened, want->fd, 0);
-                system_call_1(syscall(close), opened);
+
+                // dup3 onto the descriptor it was handed is an error rather
+                // than the no-op dup2 makes of it, and open answers with
+                // exactly that descriptor when it was the lowest one free.
+                if (opened != want->fd)
+                {
+                        system_call_3(syscall(dup3), opened, want->fd, 0);
+                        system_call_1(syscall(close), opened);
+                }
         }
 
         return true;
@@ -495,6 +519,79 @@ static fn exec_assign(string_address word)
         env_set(name, word + length + 1);
 }
 
+/*
+        The fifteen names POSIX calls special.
+
+        What makes them special here is only that an assignment written in
+        front of one outlives it: "x=1 export y" leaves x set and "x=1 cat"
+        does not. Everything else about them is the same as any other builtin.
+*/
+static bool exec_special_builtin(string_address name)
+{
+        return word_is(name, ":") || word_is(name, ".") ||
+               word_is(name, "break") || word_is(name, "continue") ||
+               word_is(name, "eval") || word_is(name, "exec") ||
+               word_is(name, "exit") || word_is(name, "export") ||
+               word_is(name, "readonly") || word_is(name, "return") ||
+               word_is(name, "set") || word_is(name, "shift") ||
+               word_is(name, "times") || word_is(name, "trap") ||
+               word_is(name, "unset");
+}
+
+/*
+        What a name was before the command in front of it changed it.
+
+        The value is copied rather than pointed at: env_set can compact the
+        block the value lives in, so a pointer taken before the assignment is
+        a pointer into whatever moved there after it. A name that was not set
+        is remembered as no value at all, which is what has to be put back.
+*/
+typedef struct
+{
+        string_address name;
+        string_address value;
+} exec_kept_value;
+
+#define ASSIGN_MAX 16
+
+static bool exec_keep_value(exec_kept_value address_to kept, string_address word)
+{
+        positive length = 0;
+        string_address value;
+
+        while (shell_name_character(string_get(word + length)))
+                length++;
+
+        if (exec_arena_used + length + 1 > EXEC_ARENA)
+                return false;
+
+        kept->name = exec_arena + exec_arena_used;
+        memory_copy(kept->name, word, length);
+        kept->name[length] = end;
+        exec_arena_used += length + 1;
+
+        value = env_get(kept->name);
+        kept->value = null;
+
+        if (!value)
+                return true;
+
+        kept->value = exec_arena_copy(value);
+
+        return kept->value != exec_nothing;
+}
+
+static fn exec_put_back(exec_kept_value address_to kept, b32 count)
+{
+        while (count--)
+        {
+                if (kept[count].value)
+                        env_set(kept[count].name, kept[count].value);
+                else
+                        env_unset(kept[count].name);
+        }
+}
+
 static b32 exec_dispatch()
 {
         string_address name = shell_argv[0];
@@ -623,6 +720,9 @@ fn exec_traps()
 static b32 exec_simple(b32 index)
 {
         parse_node address_to node = parse_nodes + index;
+        exec_kept_value kept[ASSIGN_MAX];
+        positive arena_mark = exec_arena_used;
+        b32 kept_count = 0;
         b32 mark = exec_save_count;
         b32 count = 0;
         b32 first = 0;
@@ -656,14 +756,44 @@ static b32 exec_simple(b32 index)
         shell_argv[count] = null;
         shell_argc = count;
 
-        // Assignments with nothing after them are the command; assignments in
-        // front of one are its environment.
+        /*
+                An assignment in front of a command covers that command only.
+
+                It has to be visible to what runs -- a spawned program reads
+                it out of the environment and a builtin reads it out of the
+                same table -- so it is made and then unmade, rather than being
+                handed over as an environment of its own. The exception is a
+                special builtin, in front of which POSIX says the assignment
+                stays; and assignments with no command after them are the
+                command, so they stay too.
+        */
+        if (first && first != count && first <= ASSIGN_MAX &&
+            !exec_special_builtin(shell_argv[first]))
+        {
+                for (at = 0; at < first; at++)
+                {
+                        if (exec_keep_value(kept + kept_count, shell_argv[at]))
+                        {
+                                kept_count++;
+                                continue;
+                        }
+
+                        // Nowhere to remember it is a reason to leave it set,
+                        // not a reason to put half of them back.
+                        exec_arena_used = arena_mark;
+                        kept_count = 0;
+                        break;
+                }
+        }
+
         for (at = 0; at < first; at++)
                 exec_assign(shell_argv[at]);
 
         if (!exec_redirect_apply(index))
         {
                 exec_redirect_restore(mark);
+                exec_put_back(kept, kept_count);
+                exec_arena_used = arena_mark;
                 shell_status = 1;
                 return 1;
         }
@@ -682,7 +812,15 @@ static b32 exec_simple(b32 index)
 
         status = exec_dispatch();
 
-        exec_redirect_restore(mark);
+        // exec with nothing to run is there for its redirections, and those
+        // belong to the shell from here on.
+        if (word_is(shell_argv[0], "exec") && shell_argc == 1)
+                exec_redirect_forget(mark);
+        else
+                exec_redirect_restore(mark);
+
+        exec_put_back(kept, kept_count);
+        exec_arena_used = arena_mark;
 
         return status;
 }
