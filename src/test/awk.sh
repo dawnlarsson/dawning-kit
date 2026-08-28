@@ -608,6 +608,33 @@ else
         echo "  known-gaps printf short of arguments: $(cat "$work/got")"
 fi
 
+#       The functions gawk adds and POSIX does not have are not here. Each
+#       is an undefined function rather than something that quietly does the
+#       wrong thing, which is the difference that matters to a script.
+for absent in 'gensub(/a/,"b","g","aa")' 'systime()' 'strftime("%Y")' \
+        'asort(a)' 'asorti(a)' 'mktime("2026 01 01 0 0 0")' 'toupper()'; do
+        "$ours" "BEGIN{ x = $absent }" > "$work/got" 2> /dev/null
+        got_status=$?
+
+        if [ "$got_status" -gt 0 ] && [ "$got_status" -lt 128 ] &&
+                [ ! -s "$work/got" ]; then
+                pass=$((pass + 1))
+        else
+                fail=$((fail + 1))
+                echo "  known-gaps $absent answered $got_status"
+        fi
+done
+
+#       IGNORECASE and RT are gawk's and mean nothing here, so they are
+#       ordinary variables and a pattern is still matched case sensitively.
+if [ "$("$ours" 'BEGIN{IGNORECASE=1; print ("A" ~ /a/), "[" RT "]"}' 2> /dev/null)" \
+        = "0 []" ]; then
+        pass=$((pass + 1))
+else
+        fail=$((fail + 1))
+        echo "  known-gaps IGNORECASE and RT are not special"
+fi
+
 #       Recursion goes as deep as the stack the machine gave this process
 #       and then stops with an error. gawk goes further; what is being
 #       checked here is that the end of it is an answer and not a signal.
