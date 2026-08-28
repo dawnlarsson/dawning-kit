@@ -334,9 +334,13 @@ lane_native()
                 ;;
         esac
 
+        #       An arm64 machine is a fact about where this is running and
+        #       says so above. A missing runner is not: it is the lane going
+        #       away, on the one kind of machine that could have run it, and
+        #       2 is how this file says a lane did not run.
         if [ ! -f src/test/native/run ]; then
-                note "src/test/native/run is not here, skipped"
-                return 0
+                note "src/test/native/run is not here"
+                return 2
         fi
 
         library=src/library.c
