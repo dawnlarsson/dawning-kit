@@ -142,6 +142,76 @@ answered() {
         report bad "$name" "want [$(head -c 50 "$work/want" | tr '\n' '|')][$want_status] got [$(head -c 50 "$work/got" | tr '\n' '|')][$got_status]"
 }
 
+generated_answer() {
+        name=$1
+        want_status=$2
+        got_status=$3
+
+        if cmp -s "$work/want" "$work/got" && [ "$want_status" = "$got_status" ]; then
+                report ok
+                return 0
+        fi
+
+        report bad "$name" "want [$(head -c 50 "$work/want" | tr '\n' '|')][$want_status] got [$(head -c 50 "$work/got" | tr '\n' '|')][$got_status]"
+}
+
+env_stress() {
+        set -- -i
+        i=0
+        while [ "$i" -lt 600 ]; do
+                set -- "$@" "INHERITED_$i=$i"
+                i=$((i + 1))
+        done
+        env "$@" /usr/bin/env -0 > "$work/want" 2>/dev/null; want_status=$?
+        env "$@" "$binaries/env" -0 > "$work/got" 2>/dev/null; got_status=$?
+        generated_answer '600 inherited variables' "$want_status" "$got_status"
+
+        set --
+        i=0
+        while [ "$i" -lt 600 ]; do
+                set -- "$@" "ASSIGNED_$i=$i"
+                i=$((i + 1))
+        done
+        env -i "$@" > "$work/want" 2>/dev/null; want_status=$?
+        "$binaries/env" -i "$@" > "$work/got" 2>/dev/null; got_status=$?
+        generated_answer '600 assigned variables' "$want_status" "$got_status"
+
+        set -- -i
+        i=0
+        while [ "$i" -lt 40 ]; do
+                set -- "$@" -u "DROP_$i"
+                i=$((i + 1))
+        done
+        i=0
+        while [ "$i" -lt 40 ]; do
+                set -- "$@" "DROP_$i=$i"
+                i=$((i + 1))
+        done
+        env "$@" > "$work/want" 2>/dev/null; want_status=$?
+        "$binaries/env" "$@" > "$work/got" 2>/dev/null; got_status=$?
+        generated_answer '40 unset variables' "$want_status" "$got_status"
+
+        set --
+        i=0
+        while [ "$i" -lt 100 ]; do
+                set -- "$@" "$i"
+                i=$((i + 1))
+        done
+        env -i /bin/echo "$@" > "$work/want" 2>/dev/null; want_status=$?
+        "$binaries/env" -i /bin/echo "$@" > "$work/got" 2>/dev/null; got_status=$?
+        generated_answer '100 command arguments' "$want_status" "$got_status"
+
+        split=/bin/echo
+        i=0
+        while [ "$i" -lt 400 ]; do
+                split="$split word$i"
+                i=$((i + 1))
+        done
+        env -i -S "$split" > "$work/want" 2>/dev/null; want_status=$?
+        "$binaries/env" -i -S "$split" > "$work/got" 2>/dev/null; got_status=$?
+        generated_answer 'large split string' "$want_status" "$got_status"
+}
+
 # Fixed-memory ceilings are permitted to refuse work, but never to emit a
 # plausible prefix and exit successfully.
 refuses_ls_ceiling() {
@@ -811,6 +881,7 @@ same 'split string'     env -S'/bin/echo one two'
 same 'split long'       env --split-string='/bin/echo three four'
 same 'nothing to run'   env -C /usr
 same 'not an option'    env -x /bin/true
+env_stress
 
 group chown
 effect 'user and group' chown '$TOOL '"$(id -un):$(id -gn)"' tree/one'

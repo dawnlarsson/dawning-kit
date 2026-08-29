@@ -2551,31 +2551,21 @@ static b32 file_ls()
         knows.
 */
 string_address env_get(const_string name);
-extern string_address address_to shell_envp;
+string_address address_to shell_environment();
 
-#define FILE_ENVIRONMENT 512
-
-static string_address file_environment_held[FILE_ENVIRONMENT];
 static string_address file_environment(string_address name);
 
 static string_address address_to file_environment_all()
 {
-        positive count = 0;
+        string_address address_to shell = shell_environment();
 
-        if (shell_envp && shell_envp[0])
-                return shell_envp;
+        if (shell && shell[0])
+                return shell;
 
         string_address address_to process = program_environment_list();
 
-        while (process && count < FILE_ENVIRONMENT - 1 && process[count])
-        {
-                file_environment_held[count] = process[count];
-                count++;
-        }
-
-        file_environment_held[count] = null;
-
-        return file_environment_held;
+        /* The initial process vector already is a terminated borrowed list. */
+        return process ? process : shell;
 }
 
 // Replaces this process, and only ever called in a child of it.
@@ -7984,11 +7974,6 @@ static b32 file_yes()
         command inherits. -v and --list-signal-handling are ignored in
         silence, since all they ever wrote was the error stream itself.
 */
-#define ENV_MAX 512
-#define ENV_ARGUMENTS_MAX 64
-#define ENV_DROPS_MAX 32
-#define ENV_SPLIT 1024
-
 static const file_long env_longs[] = {
     {(string_address) "argv0", 'a'},
     {(string_address) "ignore-environment", 'i'},
@@ -8004,7 +7989,8 @@ static const file_long env_longs[] = {
     {null, 0},
 };
 
-static string_address env_list[ENV_MAX + 1];
+static string_address address_to env_list;
+static positive env_room;
 static positive env_have;
 
 static bool env_same_key(string_address entry, string_address name, positive length)
@@ -8029,7 +8015,7 @@ static fn env_drop(string_address name)
         env_have = keep;
 }
 
-static fn env_put(string_address entry)
+static bool env_put(string_address entry)
 {
         string_address mark = string_first_of(entry, '=');
 
@@ -8042,16 +8028,25 @@ static fn env_put(string_address entry)
                         if (env_same_key(env_list[i], entry, length))
                         {
                                 env_list[i] = entry;
-                                return;
+                                return true;
                         }
                 }
         }
 
-        if (env_have < ENV_MAX)
-                env_list[env_have++] = entry;
+        if (!shell_room((address_any address_to)address_of env_list,
+                        address_of env_room, env_have + 2,
+                        sizeof(env_list[0])))
+        {
+                file_fail("env: environment is too large\n", 0);
+                return false;
+        }
+
+        env_list[env_have++] = entry;
+        return true;
 }
 
-static string_address env_dropped[ENV_DROPS_MAX];
+static string_address address_to env_dropped;
+static positive env_dropped_room;
 static positive env_drops;
 
 // -u is the one option here that means it every time it is given, and the
@@ -8062,9 +8057,11 @@ static bool env_seen(p8 letter, string_address value)
         if (letter != 'u')
                 return true;
 
-        if (env_drops >= ENV_DROPS_MAX)
+        if (!shell_room((address_any address_to)address_of env_dropped,
+                        address_of env_dropped_room, env_drops + 1,
+                        sizeof(env_dropped[0])))
         {
-                file_fail("env: too many variables to unset\n", 0);
+                file_fail("env: unset list is too large\n", 0);
                 return false;
         }
 
@@ -8083,14 +8080,17 @@ static bool env_seen(p8 letter, string_address value)
         wrong space is worse than saying so, so one carrying any of them is
         refused instead.
 */
-static p8 env_split_store[ENV_SPLIT];
+static p8 address_to env_split_store;
+static positive env_split_room;
+static string_address address_to env_words;
+static positive env_words_room;
 
-static bool env_split(string_address text, string_address address_to words,
-                      positive address_to have)
+static bool env_split(string_address text, positive address_to have)
 {
         positive filled = 0;
         positive given = address_to have;
         positive i = 0;
+        positive length = string_length(text);
 
         for (positive j = 0; string_get(text + j); j++)
         {
@@ -8103,17 +8103,33 @@ static bool env_split(string_address text, string_address address_to words,
                 }
         }
 
-        while (string_get(text + i) && given < ENV_ARGUMENTS_MAX)
+        /*
+                Reserve before storing pointers into the byte block: growing
+                it after the first word would move the text underneath those
+                pointers. At most every second byte begins a one-byte word.
+        */
+        if (!shell_room((address_any address_to)address_of env_split_store,
+                        address_of env_split_room, length + 1,
+                        sizeof(env_split_store[0])) ||
+            !shell_room((address_any address_to)address_of env_words,
+                        address_of env_words_room,
+                        given + length / 2 + 2, sizeof(env_words[0])))
+        {
+                file_fail("env: split string is too large\n", 0);
+                return false;
+        }
+
+        while (string_get(text + i))
         {
                 i += string_span(text + i, string_set_blanks);
 
                 if (string_is(text + i, end))
                         break;
 
-                words[given++] = env_split_store + filled;
+                env_words[given++] = env_split_store + filled;
 
                 while (string_get(text + i) && !string_is(text + i, ' ') &&
-                       !string_is(text + i, '\t') && filled + 1 < ENV_SPLIT)
+                       !string_is(text + i, '\t'))
                         env_split_store[filled++] = string_get(text + i++);
 
                 env_split_store[filled++] = end;
@@ -8126,6 +8142,9 @@ static bool env_split(string_address text, string_address address_to words,
 
 static b32 file_env()
 {
+        env_have = 0;
+        env_drops = 0;
+
         file_taking taking = {
             .program = (string_address) "env",
             .allowed = (string_address) "ai0uCSv",
@@ -8156,10 +8175,11 @@ static b32 file_env()
 
         if (!empty)
         {
-                string_address address_to process = program_environment_list();
+                string_address address_to process = file_environment_all();
 
-                for (b32 i = 0; process && process[i] && env_have < ENV_MAX; i++)
-                        env_list[env_have++] = process[i];
+                for (b32 i = 0; process && process[i]; i++)
+                        if (!env_put(process[i]))
+                                return 125;
         }
 
         for (positive i = 0; i < env_drops; i++)
@@ -8170,22 +8190,37 @@ static b32 file_env()
                 followed it, and the whole lot is read as though it had been
                 written out: assignments first and then the command.
         */
-        string_address words[ENV_ARGUMENTS_MAX + 1];
         positive have = 0;
         string_address split = file_option_value(address_of taking, 'S');
 
-        if (split && !env_split(split, words, address_of have))
+        if (split && !env_split(split, address_of have))
                 return 125;
 
-        while (index < count && have < ENV_ARGUMENTS_MAX)
-                words[have++] = program_argument((b32)index++);
+        if (!shell_room((address_any address_to)address_of env_words,
+                        address_of env_words_room,
+                        have + count - index + 1, sizeof(env_words[0])))
+        {
+                file_fail("env: argument list is too large\n", 0);
+                return 125;
+        }
 
-        words[have] = null;
+        while (index < count)
+                env_words[have++] = program_argument((b32)index++);
+
+        env_words[have] = null;
 
         positive at = 0;
 
-        while (at < have && string_first_of(words[at], '='))
-                env_put(words[at++]);
+        while (at < have && string_first_of(env_words[at], '='))
+        {
+                if (!env_put(env_words[at++]))
+                        return 125;
+        }
+
+        if (!shell_room((address_any address_to)address_of env_list,
+                        address_of env_room, env_have + 1,
+                        sizeof(env_list[0])))
+                return 125;
 
         env_list[env_have] = null;
 
@@ -8223,13 +8258,8 @@ static b32 file_env()
                 return 125;
         }
 
-        string_address arguments[ENV_ARGUMENTS_MAX + 1];
-        positive given = have - at;
-        string_address name = words[at];
-
-        memory_copy_fast(arguments, words + at, given * sizeof(arguments[0]));
-
-        arguments[given] = null;
+        string_address address_to arguments = env_words + at;
+        string_address name = env_words[at];
 
         // -a renames the command without changing which file is run, which is
         // the whole of what argv[0] is for.
