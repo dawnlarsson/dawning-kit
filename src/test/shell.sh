@@ -532,6 +532,10 @@ command_answer()
 }
 
 group script
+script_answer 'script starts with a comment' '# only a comment
+echo after'
+script_answer 'script starts with a shebang' '#!/bin/sh
+echo after'
 script_answer 'script name'  'printf "%s\n" "$0"'
 script_answer 'script count' 'printf "%s\n" "$#"' one two
 script_answer 'script first' 'printf "%s\n" "$1"' alpha beta

@@ -638,6 +638,18 @@ bool parse_feed(string_address line)
                 }
         }
 
+        /*
+                A comment-only line has no lexer tokens, but it is still a
+                line and the parser still needs its newline sentinel.  The
+                per-token room check above never runs for that shape.  A
+                script beginning with #! therefore wrote through the null
+                initial table before it reached its first command.
+        */
+        if (!shell_room((address_any address_to)address_of parse_tokens,
+                        address_of parse_token_room, parse_token_count + 1,
+                        sizeof(parse_token)))
+                return false;
+
         parse_tokens[parse_token_count].kind = PT_NEWLINE;
         parse_tokens[parse_token_count].op = 0;
         parse_tokens[parse_token_count].joined = 0;
