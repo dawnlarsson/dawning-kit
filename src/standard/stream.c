@@ -1254,17 +1254,24 @@ b32 stream_get_byte(stream address_to handle)
                 return (b32)handle->pushback[handle->pushback_used];
         }
 
+        /*
+                Unread input proves both that the buffer is ready and that
+                there is no staged output: the first write after a read calls
+                stream_face_writing and drops the unread run before it stages
+                anything. This is the per-byte path, so settle it before the
+                two state helpers below.
+        */
+        if (handle->read_head != handle->read_tail)
+                return (b32)handle->buffer[handle->read_head++];
+
         stream_ready(handle);
         stream_face_reading(handle);
 
-        if (handle->read_head == handle->read_tail)
-        {
-                if (handle->flags & STREAM_AT_END)
-                        return EOF;
+        if (handle->flags & STREAM_AT_END)
+                return EOF;
 
-                if (!stream_refill(handle))
-                        return EOF;
-        }
+        if (!stream_refill(handle))
+                return EOF;
 
         return (b32)handle->buffer[handle->read_head++];
 }
