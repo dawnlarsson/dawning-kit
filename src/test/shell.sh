@@ -1693,6 +1693,8 @@ answer 'unset rejects digit name' 'unset 1bad; echo after'
 answer 'unset rejects punctuated name' 'unset bad-name; echo after'
 answer 'unset function option' 'f() { echo a; }; unset -f f; f 2>/dev/null; echo $?'
 answer 'shift past end is fatal' 'set -- a; shift 2; echo $?'
+answer 'shift rejects a word' 'set -- a; shift nope; echo after'
+answer 'shift rejects negative' 'set -- a; shift -1; echo after'
 answer 'missing input status' 'cat < /nonexistent12345; echo $?'
 answer 'closed output status' 'echo x >&- 2>/dev/null; echo $?'
 

@@ -1338,7 +1338,20 @@ fn shell_shift(writer write, string_address input)
         positive amount = 1;
 
         if (shell_argc > 1)
-                amount = shell_number(shell_argv[1]);
+        {
+                bool good;
+                bipolar asked = shell_signed(shell_argv[1], address_of good);
+
+                if (!good || asked < 0)
+                {
+                        string_format(shell_diagnostic, "shift: Illegal number: %s\n",
+                                      shell_argv[1]);
+                        expand_fatal();
+                        return;
+                }
+
+                amount = (positive)asked;
+        }
 
         if (amount > shell_parameter_count)
         {
