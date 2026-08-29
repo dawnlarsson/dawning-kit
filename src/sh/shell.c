@@ -773,14 +773,14 @@ fn shell_thread_instance()
         if (shell_output_file)
                 system_call_3(syscall(dup3), shell_output_file, stdout, 0);
 
-        bipolar exec_result = system_call_3(syscall(execve), (positive)shell_argv[0],
-                                            (positive)shell_argv,
-                                            (positive)shell_environment());
+        bipolar exec_result = shell_exec_file(shell_argv[0], shell_argv,
+                                              shell_argc,
+                                              shell_environment());
 
         string_format(shell_output, "failed with error: %b\n", exec_result);
         log_flush();
 
-        exit(1);
+        exit(126);
 }
 
 // Opened once at startup. Spawning through it skips the fork whose address

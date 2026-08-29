@@ -706,6 +706,14 @@ entry_input='payload
 script_answer 'script keeps stdin' 'IFS= read -r value; printf "%s\n" "$value"'
 entry_input=""
 
+# The kernel only recognizes a script directly when it starts with #!, but a
+# shell is required to recover from ENOEXEC and interpret executable text
+# itself. Cover direct and PATH lookup, arguments, status, and the exec builtin
+# so none of the three launch routes quietly regresses to the kernel rule.
+answer 'executable text without shebang' 'p=/tmp/no-shebang.$$; printf '\''printf "plain:%s:%s\\n" "$0" "$1"\nexit 23\n'\'' > "$p"; chmod +x "$p"; "$p" one; s=$?; rm -f "$p"; echo "$s"'
+answer 'PATH text without shebang' 'd=/tmp/no-shebang-path.$$; mkdir "$d"; printf '\''printf "path:%s:%s\\n" "${0##*/}" "$1"\n'\'' > "$d/plain-script"; chmod +x "$d/plain-script"; PATH=$d:/bin plain-script two; s=$?; rm -f "$d/plain-script"; rmdir "$d"; echo "$s"'
+answer 'exec text without shebang' 'p=/tmp/no-shebang-exec.$$; printf '\''printf "exec:%s:%s\\n" "${0##*/}" "$1"\nexit 19\n'\'' > "$p"; chmod +x "$p"; exec "$p" three'
+
 # The monitor is the shell's real integration workload: a ten-kilobyte script
 # beginning with a shebang, then nested functions, locals, substitutions,
 # pipelines and external tools. A fragment suite did not catch the parser's

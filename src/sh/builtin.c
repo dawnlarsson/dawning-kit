@@ -40,6 +40,78 @@ fn shell_execute_command();
 fn parse_nest_enter();
 fn parse_nest_leave();
 
+/*
+        An executable text file does not need to name an interpreter when it
+        is launched by this shell.
+
+        The kernel quite properly answers ENOEXEC for a file with no #! line.
+        The shell interface is older and friendlier: retry that one failure by
+        invoking this shell with the file as its script operand. /proc/self/exe
+        keeps the interpreter the one that was actually running even when
+        argv[0] was a PATH spelling or the working directory has since moved.
+        /bin/sh is the portable fallback for a system without procfs; in the
+        image it is a link to this same binary.
+
+        argv[0] belongs to the attempted program and is replaced by the script
+        pathname. The remaining operands keep their exact addresses and order.
+*/
+#define ERROR_EXEC_FORMAT 8
+
+bipolar shell_exec_file(string_address path,
+                         string_address address_to arguments,
+                         positive count,
+                         string_address address_to environment)
+{
+        bipolar answered = system_call_3(syscall(execve), (positive)path,
+                                         (positive)arguments,
+                                         (positive)environment);
+        string_address address_to fallback;
+        positive entries;
+        positive bytes;
+
+        if (answered != -ERROR_EXEC_FORMAT)
+                return answered;
+
+        if (count > positive_max - 2)
+                return answered;
+
+        entries = count + 2;
+
+        if (entries > positive_max / sizeof(fallback[0]))
+                return answered;
+
+        bytes = entries * sizeof(fallback[0]);
+        fallback = (string_address address_to)memory(bytes);
+
+        if (!fallback || (positive)fallback >= (positive)-4095)
+                return answered;
+
+        fallback[0] = (string_address)"/proc/self/exe";
+        fallback[1] = path;
+
+        for (positive at = 1; at < count; at++)
+                fallback[at + 1] = arguments[at];
+
+        fallback[count + 1] = null;
+
+        answered = system_call_3(syscall(execve),
+                                 (positive)fallback[0],
+                                 (positive)fallback,
+                                 (positive)environment);
+
+        if (answered < 0)
+        {
+                fallback[0] = (string_address)"/bin/sh";
+                answered = system_call_3(syscall(execve),
+                                         (positive)fallback[0],
+                                         (positive)fallback,
+                                         (positive)environment);
+        }
+
+        memory_free(fallback, bytes);
+        return answered;
+}
+
 #define SHELL_DIRECTORY_MAX 4096
 
 extern p8 shell_directory[SHELL_DIRECTORY_MAX];
@@ -1152,8 +1224,8 @@ fn shell_exec(writer write, string_address input)
 
         // From argv[1] on, so the new program is named by what it was asked
         // for and not by the word "exec".
-        system_call_3(syscall(execve), (positive)found,
-                      (positive)(shell_argv + 1), (positive)shell_environment());
+        shell_exec_file(found, shell_argv + 1, shell_argc - 1,
+                        shell_environment());
 
         memory_free(found, found_room);
         shell_answer(126);
