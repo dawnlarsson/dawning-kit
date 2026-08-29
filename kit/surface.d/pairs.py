@@ -34,7 +34,9 @@ INPUTS = {
     'only newlines': '\n\n\n',
     'one long line': 'x' * 5000 + '\n',
     'tabs and space': 'a\tb  \n  c\t\n\td  e\n',
-    'high bytes':    'café\nÿþ\n',
+    # Deliberately not valid UTF-8: utility input and output are byte streams,
+    # and text-mode subprocess handling would either change or reject these.
+    'high bytes':    b'caf\xc3\xa9\n\xff\xfe\n',
     'repeats':       'a\na\nb\na\nb\nb\n',
     'numbers':       '10\n9\n100\n-3\n0\n',
 }
@@ -63,8 +65,16 @@ PAIRS = {
     'fold': [['-w', '-s'], ['-b', '-w']],
 }
 
-VALUES = {'-n': '2', '-c': '2', '-w': '4', '-k': '1', '-d': ':', '-s': ';',
-          '-f': '1', '-b': 'a', '-e': 's/a/A/'}
+VALUES = {
+    ('sort', '-k'): '1',
+    ('cut', '-c'): '2', ('cut', '-d'): ':', ('cut', '-f'): '1',
+    ('head', '-n'): '2', ('head', '-c'): '2',
+    ('tail', '-n'): '2', ('tail', '-c'): '2',
+    ('nl', '-b'): 'a', ('nl', '-n'): 'rn', ('nl', '-w'): '4',
+    ('nl', '-s'): ';',
+    ('sed', '-e'): 's/a/A/',
+    ('fold', '-w'): '4',
+}
 
 NEEDS = {'grep': ['a'], 'sed': [], 'tr': ['a', 'A'], 'cut': []}
 
@@ -73,25 +83,25 @@ def expand(tool, combo):
     argv = []
     for flag in combo:
         argv.append(flag)
-        # -c means a count in grep and a byte range in cut; only some take a value
-        if flag in VALUES and tool in ('sort', 'cut', 'wc', 'head', 'tail',
-                                       'nl', 'fold', 'sed', 'tr'):
-            if not (tool == 'wc' and flag in ('-c', '-l', '-w')):
-                argv.append(VALUES[flag])
-        elif flag in ('-n', '-c') and tool in ('head', 'tail'):
-            argv.append('2')
+        value = VALUES.get((tool, flag))
+        if value is not None:
+            argv.append(value)
     return argv + NEEDS.get(tool, [])
 
 
 def run(argv, feed):
     try:
-        r = subprocess.run(argv, input=feed, capture_output=True, text=True,
-                           timeout=10)
+        payload = feed if isinstance(feed, bytes) else feed.encode()
+        environment = os.environ.copy()
+        environment['LC_ALL'] = 'C'
+        environment['LANG'] = 'C'
+        r = subprocess.run(argv, input=payload, capture_output=True,
+                           timeout=10, env=environment)
         return r.stdout, r.returncode, None
     except subprocess.TimeoutExpired:
-        return '', -1, 'did not stop'
+        return b'', -1, 'did not stop'
     except OSError as e:
-        return '', -1, str(e)
+        return b'', -1, str(e)
 
 
 def main():

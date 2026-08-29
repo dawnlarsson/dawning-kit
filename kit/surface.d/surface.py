@@ -137,8 +137,11 @@ def run(argv, feed, timeout=10, cwd=None):
         # as grep's binary/text controls can make a perfectly valid probe emit
         # bytes which are not UTF-8.  Decode only --help above; compare command
         # output exactly as bytes here.
+        environment = os.environ.copy()
+        environment['LC_ALL'] = 'C'
+        environment['LANG'] = 'C'
         r = subprocess.run(argv, input=feed.encode(), capture_output=True,
-                           timeout=timeout, cwd=cwd)
+                           timeout=timeout, cwd=cwd, env=environment)
         return r.stdout, r.returncode, None
     except subprocess.TimeoutExpired:
         return b'', -1, 'did not stop'
