@@ -1497,10 +1497,22 @@ lldiv_t lldiv(b64 numerator, b64 denominator)
 #define STDLIB_RANDOM_QUOTIENT 127773
 #define STDLIB_RANDOM_REMAINDER 2836
 
-static b32 stdlib_random_state[STDLIB_RANDOM_DEGREE];
+/* The state after srandom(1)'s 310 warm-up draws.  C requires no particular
+   default seed; glibc specifies one, and it is seed one.  Keeping that exact
+   post-warm state in the image makes the first draw identical without making
+   every later draw test whether the first one has happened.  Regenerating
+   these words through srandom(1) produces the same array and leaves the two
+   indices at 3 and 0 because 310 is ten complete turns of the ring. */
+static b32 stdlib_random_state[STDLIB_RANDOM_DEGREE] = {
+        -1726662223, 379960547, 1735697613, 1040273694, 1313901226,
+        1627687941, -179304937, -2073333483, 1780058412, -1989503057,
+        -615974602, 344556628, 939512070, -1249116260, 1507946756,
+        -812545463, 154635395, 1388815473, -1926676823, 525320961,
+        -1009028674, 968117788, -123449607, 1284210865, 435012392,
+        -2017506339, -911064859, -370259173, 1132637927, 1398500161,
+        -205601318};
 static positive stdlib_random_front = STDLIB_RANDOM_SEPARATION;
 static positive stdlib_random_rear = 0;
-static bool stdlib_random_seeded = false;
 
 static b32 stdlib_random_draw(void)
 {
@@ -1511,12 +1523,12 @@ static b32 stdlib_random_draw(void)
 
         stdlib_random_front++;
 
-        if (stdlib_random_front >= STDLIB_RANDOM_DEGREE)
+        if (stdlib_random_front == STDLIB_RANDOM_DEGREE)
                 stdlib_random_front = 0;
 
         stdlib_random_rear++;
 
-        if (stdlib_random_rear >= STDLIB_RANDOM_DEGREE)
+        if (stdlib_random_rear == STDLIB_RANDOM_DEGREE)
                 stdlib_random_rear = 0;
 
         return (b32)(sum >> 1);
@@ -1550,17 +1562,12 @@ fn srandom(p32 seed)
 
         stdlib_random_front = STDLIB_RANDOM_SEPARATION;
         stdlib_random_rear = 0;
-        stdlib_random_seeded = true;
-
         for (index = 0; index < STDLIB_RANDOM_WARMUP; index++)
                 stdlib_random_draw();
 }
 
 b32 random(void)
 {
-        if (!stdlib_random_seeded)
-                srandom(1);
-
         return stdlib_random_draw();
 }
 

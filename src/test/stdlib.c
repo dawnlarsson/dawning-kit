@@ -794,6 +794,19 @@ test(random_is_glibc_number_for_number)
         return true;
 }
 
+test(random_defaults_to_seed_one)
+{
+        static const b32 expected[] = {1804289383, 846930886, 1681692777,
+                                       1714636915, 1957747793, 424238335,
+                                       719885386, 1649760492};
+
+        /* This case must remain before every case that calls srand. */
+        for (positive index = 0; index < 8; index++)
+                fail(random() == expected[index]);
+
+        return true;
+}
+
 test(random_reentrant_is_glibc_too)
 {
         static const b32 expected[] = {476707713, 1186278907, 505671508,
@@ -843,6 +856,7 @@ test_case test_cases[] = {
         case(environment_putenv_keeps_the_caller_bytes),
         case(environment_clear),
         case(environment_grows_past_its_first_vector),
+        case(random_defaults_to_seed_one),
         case(sort_every_shape_at_every_width),
         case(sort_leaves_the_degenerate_alone),
         case(sort_with_a_context),
