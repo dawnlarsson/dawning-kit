@@ -4942,6 +4942,8 @@ static positive grep_column;
 static file_color_span grep_color_value(string_address key,
                                         string_address fallback)
 {
+        // GREP_COLORS is the current GNU interface. The deprecated singular
+        // GREP_COLOR variable is deliberately not another precedence layer.
         file_color_span answer = {fallback, fallback ? string_length(fallback) : 0};
         positive wanted = string_length(key);
         bool match_alias = string_equals(key, "ms") || string_equals(key, "mc");

@@ -1825,6 +1825,9 @@ static bool file_color_active(b32 when)
 }
 
 // A colon table such as LS_COLORS or GREP_COLORS. The last spelling wins.
+// Values here are SGR fragments. GNU dircolors' escaped lc/rc/ec envelope
+// language and escaped colons are deliberately outside this bounded parser;
+// the default ESC[ ... m envelope stays fixed and reset-safe instead.
 static file_color_span file_color_value(string_address table, string_address key,
                                         string_address fallback)
 {
