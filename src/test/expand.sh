@@ -442,6 +442,11 @@ answer 'longest tail'   'x=a.b.c; printf "[%s]" ${x%%.*} END; echo'
 answer 'no match'       'x=abc; printf "[%s]" ${x#z} END; echo'
 answer 'whole value'    'x=abc; printf "[%s]" ${x#abc} END; echo'
 answer 'a question'     'x=abc; printf "[%s]" ${x#?} END; echo'
+answer 'question ends'  'x=abc; printf "[%s]" "${x#?}" "${x%?}" END; echo'
+answer 'question empty' 'x=; printf "[%s]" "${x#?}" "${x%?}" END; echo'
+answer 'question unset' 'unset x; printf "[%s]" "${x#?}" "${x%?}" END; echo'
+answer 'question head nounset' 'set -u; unset x; echo before; printf "%s" "${x#?}"; echo after'
+answer 'question tail nounset' 'set -u; unset x; echo before; printf "%s" "${x%?}"; echo after'
 answer 'a set'          'x=abc; printf "[%s]" ${x%[bc]} END; echo'
 #       The pattern is not inside the quotes around the substitution, which
 #       is where "${x##*/}" used to hand back the whole path: every byte of

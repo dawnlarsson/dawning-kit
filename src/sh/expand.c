@@ -999,6 +999,53 @@ static bool expand_push_parameter(string_address name, bool quoted)
         return true;
 }
 
+/*
+        The exact one-byte trim at the hardware floor.
+
+        ${name#?} and ${name%?} are common ways to consume one byte from a
+        shell value. The general pattern path first copies the whole value and
+        its mark bytes, captures `?`, invokes the matcher, then moves the
+        surviving value back over the byte it removed. For an ordinary named
+        variable and this exact pattern, the result is already a span of the
+        stable environment value. A bounded hash and the value length metadata
+        select that span without a scan or a temporary copy.
+
+        This deliberately stays byte-oriented, matching the shell matcher it
+        replaces. Special and positional parameters retain their existing
+        path because their value may have to be formatted or joined first.
+*/
+static fn expand_push_named_trim_one(string_address name, positive name_length,
+                                     bool prefix, bool quoted)
+{
+        positive value_length;
+        string_address value = env_get_hashed_span(
+            name, name_length, memory_hash_33(name, name_length),
+            address_of value_length);
+
+        if (!value)
+        {
+                if (shell_options & ((positive)1 << ('u' - 'a')))
+                {
+                        string_format(expand_complain,
+                                      "%s: parameter not set\n", name);
+                        expand_fatal();
+                }
+
+                return;
+        }
+
+        if (value_length)
+        {
+                if (prefix)
+                        value++;
+
+                value_length--;
+        }
+
+        expand_push_run(value, value_length,
+                        quoted ? MARK_QUOTED : MARK_FIELD);
+}
+
 static fn expand_into(string_address text, bool quoted, p8 plain);
 static string_address expand_double(string_address step);
 static string_address expand_dollar(string_address step, bool quoted);
@@ -2869,6 +2916,17 @@ static string_address expand_braced(string_address step, bool quoted)
         {
                 string_address pattern;
                 positive start = expand_length;
+
+                if (!doubled && string_is(word, '?') &&
+                    string_is(word + 1, end) &&
+                    ((string_get(name) >= 'a' && string_get(name) <= 'z') ||
+                     (string_get(name) >= 'A' && string_get(name) <= 'Z') ||
+                     string_is(name, '_')))
+                {
+                        expand_push_named_trim_one(name, length,
+                                                   operation == '#', quoted);
+                        return close + 1;
+                }
 
                 expand_push_parameter(name, quoted);
 
