@@ -34,11 +34,14 @@ fn run_line(string_address line);
 fn shell_input_end();
 bool exec_function_here(string_address name);
 bool exec_function_unset(string_address name);
+static bool exec_line_aborted();
 bool shell_builtin(string_address arguments);
 string_address shell_arguments();
 fn shell_execute_command();
 fn parse_nest_enter();
 fn parse_nest_leave();
+static bool exec_arithmetic_value(string_address text,
+                                  bipolar address_to value);
 
 /*
         An executable text file does not need to name an interpreter when it
@@ -1495,12 +1498,12 @@ typedef struct
 } shell_option;
 
 static shell_option shell_option_names[] = {
-    {"errexit", 'e'},   {"noglob", 'f'},     {"ignoreeof", 0},
-    {"interactive", 0}, {"monitor", 'm'},    {"noexec", 'n'},
-    {"stdin", 0},       {"xtrace", 'x'},     {"verbose", 'v'},
-    {"vi", 0},          {"emacs", 0},        {"noclobber", 0},
-    {"allexport", 'a'}, {"notify", 'b'},     {"nounset", 'u'},
-    {"nolog", 0},       {"pipefail", 0},     {"debug", 0},
+    {"errexit", 'e'},    {"noglob", 'f'},   {"ignoreeof", 'I'},
+    {"interactive", 'i'}, {"monitor", 'm'}, {"noexec", 'n'},
+    {"stdin", 's'},      {"xtrace", 'x'},   {"verbose", 'v'},
+    {"vi", 0},           {"emacs", 0},      {"noclobber", 'C'},
+    {"allexport", 'a'},  {"notify", 'b'},   {"nounset", 'u'},
+    {"nolog", 0},        {"pipefail", 0},   {"debug", 0},
     {null, 0},
 };
 
@@ -1513,15 +1516,8 @@ static positive shell_options_named;
 
 bool shell_option_on(positive index)
 {
-        // Two of them are not settings at all but answers about how the shell
-        // was started.
-        if (!string_compare(shell_option_names[index].name, "stdin"))
-                return string_first_of(shell_option_flags, 's') != null;
-
-        if (!string_compare(shell_option_names[index].name, "interactive"))
-                return shell_is_interactive != 0;
-
-        if (shell_option_names[index].letter)
+        if (shell_option_names[index].letter >= 'a' &&
+            shell_option_names[index].letter <= 'z')
                 return (shell_options & SHELL_FLAG(shell_option_names[index].letter)) != 0;
 
         return (shell_options_named & ((positive)1 << index)) != 0;
@@ -1529,7 +1525,8 @@ bool shell_option_on(positive index)
 
 fn shell_option_told(positive index, bool on)
 {
-        if (shell_option_names[index].letter)
+        if (shell_option_names[index].letter >= 'a' &&
+            shell_option_names[index].letter <= 'z')
         {
                 if (on)
                         shell_options |= SHELL_FLAG(shell_option_names[index].letter);
@@ -1543,6 +1540,49 @@ fn shell_option_told(positive index, bool on)
                 shell_options_named |= (positive)1 << index;
         else
                 shell_options_named &= ~((positive)1 << index);
+}
+
+/*
+        The option letters as they are now, not as the process began.
+
+        `$-` used to point straight at the startup spelling ("s", "c", or
+        empty), so `set -euxC` changed the behaviour and continued to report
+        the old flags. Dash emits these in its fixed option-table order rather
+        than the order in which set saw them; doing the same makes the value
+        stable enough for scripts to save and restore.
+*/
+string_address shell_flags_current()
+{
+        static p8 flags[16];
+        static p8 order[] = "ubaCvxsiImfne";
+        positive into = 0;
+
+        for (positive at = 0; string_get(order + at); at++)
+        {
+                p8 letter = order[at];
+                positive index;
+
+                for (index = 0; index < SHELL_OPTION_NAMES; index++)
+                        if (shell_option_names[index].letter == letter)
+                                break;
+
+                if (index < SHELL_OPTION_NAMES && shell_option_on(index))
+                        flags[into++] = letter;
+        }
+
+        flags[into] = end;
+        return flags;
+}
+
+// Entry mode supplies the initial s/i state. From this point on they are
+// ordinary set options: `set +s` and `set +i` must also disappear from `$-`.
+fn shell_options_started(bool interactive)
+{
+        if (string_first_of(shell_option_flags, 's'))
+                shell_options |= SHELL_FLAG('s');
+
+        if (interactive)
+                shell_options |= SHELL_FLAG('i');
 }
 
 /*
@@ -1679,18 +1719,15 @@ fn shell_set(writer write, string_address input)
                                         continue;
                                 }
 
-                                if (value == 'C')
-                                {
-                                        shell_option_told(SHELL_OPTION_NOCLOBBER,
-                                                          on);
-                                }
-                                else if (value >= 'a' && value <= 'z')
-                                {
-                                        if (on)
-                                                shell_options |= SHELL_FLAG(value);
-                                        else
-                                                shell_options &= ~SHELL_FLAG(value);
-                                }
+                                positive option;
+
+                                for (option = 0; option < SHELL_OPTION_NAMES;
+                                     option++)
+                                        if (shell_option_names[option].letter == value)
+                                                break;
+
+                                if (option < SHELL_OPTION_NAMES)
+                                        shell_option_told(option, on);
                                 else
                                 {
                                         p8 said[2] = {value, end};
@@ -5041,6 +5078,31 @@ fn shell_command_builtin(writer write, string_address input);
 fn shell_hash(writer write, string_address input);
 fn shell_ulimit(writer write, string_address input);
 
+/*
+        Bash's `let` is the command-shaped spelling of the arithmetic engine
+        already used by (( ... )). Each operand is one expression, evaluated
+        left to right, and the command answers for the value of the last one.
+        Keeping this as a thin builtin avoids a second arithmetic grammar and
+        gives assignments, increments and overflow exactly the same rules.
+*/
+fn shell_let(writer write, string_address input)
+{
+        bipolar value = 0;
+        positive at;
+
+        (void)write;
+        (void)input;
+
+        if (shell_argc < 2)
+                return shell_answer(1);
+
+        for (at = 1; at < shell_argc; at++)
+                if (!exec_arithmetic_value(shell_argv[at], address_of value))
+                        return shell_answer(exec_line_aborted() ? 2 : 1);
+
+        shell_answer(value ? 0 : 1);
+}
+
 typedef fn(address_to shell_command_function)(writer write, string_address input);
 
 typedef struct
@@ -5064,6 +5126,7 @@ shell_command shell_commands[] = {
     {"false", shell_false},
     {"getopts", shell_getopts},
     {"hash", shell_hash},
+    {"let", shell_let},
     {"mount", shell_mount},
     {"poweroff", shell_poweroff},
     {"printf", shell_printf},

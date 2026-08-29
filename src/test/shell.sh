@@ -551,6 +551,38 @@ script_answer()
                 "want $(shown "$work/want")[$want_status]   got $(shown "$work/got")[$got_status]"
 }
 
+# A no-operand shell consumes descriptor zero and reports `s` in `$-`. Keep a
+# literal pipe entry alongside the general redirected-fragment runner: this is
+# the way system launchers and init jobs normally supply generated source.
+piped_entry_answer()
+{
+        name=$1
+        source=$2
+
+        if printf '%s\n' "$source" | timeout 5 "$reference" \
+                > "$work/want" 2>/dev/null; then
+                want_status=0
+        else
+                want_status=$?
+        fi
+
+        if printf '%s\n' "$source" | timeout 5 "$subject" \
+                > "$work/got" 2>/dev/null; then
+                got_status=0
+        else
+                got_status=$?
+        fi
+
+        if cmp -s "$work/want" "$work/got" &&
+                [ "$want_status" = "$got_status" ]; then
+                won
+                return 0
+        fi
+
+        lost "$name" \
+                "want $(shown "$work/want")[$want_status]   got $(shown "$work/got")[$got_status]"
+}
+
 section entry
 
 # -c is the entry path everything that is not a person uses: system(), the
@@ -700,6 +732,7 @@ script_answer 'script count' 'printf "%s\n" "$#"' one two
 script_answer 'script first' 'printf "%s\n" "$1"' alpha beta
 script_answer 'script status' 'exit 37'
 script_answer 'script flags' 'printf "%s\n" "$-"'
+piped_entry_answer 'piped stdin flags' 'printf "%s\n" "$-"'
 script_answer 'script stdin option' 'set -o | while read name state; do [ "$name" = stdin ] && echo "$state"; done'
 entry_input='payload
 '
@@ -871,6 +904,9 @@ check 'status false'    'false; echo $?'
 check 'status 255'      '(exit 255); echo $?'
 check 'stdin flag'      'printf "%s\n" "$-"'
 check 'stdin option'    'set -o | while read name state; do [ "$name" = stdin ] && echo "$state"; done'
+answer 'flags follow set' 'set -euxC; before=$-; set +exC; after=$-; printf "%s:%s\n" "$before" "$after"'
+answer 'named flags follow set' 'set -o noglob; set -o ignoreeof; set -o stdin; before=$-; set +o noglob; set +o ignoreeof; set +o stdin; printf "%s:%s\n" "$before" "$-"'
+answer 'set rejects unknown lower option' 'set -q; echo after'
 
 group expansion
 check 'command sub'     'echo $(echo hi)'
@@ -2146,6 +2182,9 @@ bash_answer 'ledger arithmetic command' 'x=0; ((x+=2)); echo "$x"'
 bash_answer 'ledger c style for' 'for ((i=0;i<2;i++)); do echo "$i"; done'
 bash_answer 'ledger double brackets' '[[ x == x ]]'
 bash_answer 'ledger regex match' '[[ abc =~ ^a ]]'
+bash_answer 'ledger let' 'x=0; let x+=2 x*=3; a=$?; let x-=6; printf "%s:%s:%s\n" "$x" "$a" "$?"'
+bash_answer 'let quoted expression' 'let "x = 2 + 3" "x == 5"; printf "%s:%s\n" "$x" "$?"'
+bash_answer 'let empty and invalid' 'let 2>/dev/null; a=$?; let "1 +" 2>/dev/null; printf "%s:%s\n" "$a" "$?"'
 
 group remaining
 bash_remaining 'ledger regex captures' '' 2 '[[ abc =~ ^(a)(b) ]]; echo "${BASH_REMATCH[0]}:${BASH_REMATCH[1]}:${BASH_REMATCH[2]}"'
@@ -2156,7 +2195,6 @@ bash_remaining 'ledger extglob' '' 2 'shopt -s extglob; eval '\''case aa in +(a)
 bash_remaining 'ledger globstar' '' 127 'shopt -s globstar'
 bash_remaining 'ledger declare' '' 127 'declare x=1'
 bash_remaining 'ledger typeset' '' 127 'typeset x=1'
-bash_remaining 'ledger let' '0|' 0 'x=0; let x+=2; echo "$x"'
 bash_remaining 'ledger mapfile' '' 127 'printf "a\n" | mapfile a'
 bash_remaining 'ledger readarray' '' 127 'printf "a\n" | readarray a'
 bash_remaining 'ledger shopt' '' 127 'shopt -s nullglob'

@@ -149,6 +149,7 @@ b32 main()
         }
 
         interactive = shell_is_interactive = !script_file && shell_interactive();
+        shell_options_started(interactive);
 
         spawn_device = system_call_4(syscall(openat), AT_FDCWD,
                                      (positive)SPARK_DEVICE, FILE_READ_WRITE, 0);

@@ -29,6 +29,7 @@ fn parse_reset_all();
 fn shell_trap_exit();
 fn exec_child_began();
 fn exec_expand_fatal();
+string_address shell_flags_current();
 
 extern writer shell_output;
 extern positive shell_output_file;
@@ -521,6 +522,9 @@ string_address address_to shell_parameter;
 static positive shell_parameter_room;
 positive shell_parameter_count;
 string_address shell_script_name = (string_address) "sh";
+// Entry-only flags seed the options `set` can subsequently change. A no-arg
+// shell reads standard input and begins with s; a script file resets it and
+// -c has its own entry marker.
 string_address shell_option_flags = (string_address) "s";
 
 static p8 address_to shell_parameter_bytes;
@@ -801,7 +805,7 @@ static string_address expand_value_of(string_address name, p8 address_to scratch
                         return scratch;
 
                 if (first == '-')
-                        return shell_option_flags;
+                        return shell_flags_current();
 
                 if (first == '@' || first == '*')
                 {
