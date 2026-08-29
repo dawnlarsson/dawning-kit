@@ -323,10 +323,10 @@ def print_report(mode):
     for category in CATEGORY_DESCRIPTION:
         print('  %-20s %3d  %s' %
               (category, counts[category], CATEGORY_DESCRIPTION[category]))
-    print('  hardware-floor direct evidence %d/%d; performance-unproven %d/%d' %
+    print('  isolated timing coverage %d/%d; performance-unproven %d/%d' %
           (direct, total, total - direct, total))
-    print('  direct evidence is a measurement candidate, not proof that its '
-          'routine reached the floor')
+    print('  isolated timing is only a measurement candidate; floor evidence '
+          'also requires a defensible native lower bound and absolute gap')
     print('  benchmark context only %d/%d (not counted as direct)' %
           (context, total))
 
