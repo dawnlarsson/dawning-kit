@@ -658,12 +658,20 @@ group dirname
 same 'path'             dirname /usr/bin/ls
 same 'trailing slash'   dirname /usr/bin/
 same 'no slash'         dirname usr
+same 'empty'            dirname ''
 same 'root'             dirname /
+same 'double root'      dirname //
+same 'triple root'      dirname ///
 same 'one level'        dirname /a
+same 'repeated separators' dirname //a//b///
 same 'many'             dirname /a/b /c ./d
 same 'zero'             dirname -z /a/b /c
 same 'zero long'        dirname --zero /a/b
 same 'not an option'    dirname -x /a/b
+same '20K directory'    dirname "${long_path}/tail"
+same '20K absolute directory' dirname "/${long_path}/tail"
+same '20K trailing slash' dirname "${long_path}/tail/"
+same '20K directory zero' dirname -z "${long_path}/tail"
 
 group seq
 same 'last'             seq 5

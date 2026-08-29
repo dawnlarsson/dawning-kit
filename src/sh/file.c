@@ -6599,6 +6599,47 @@ static const file_long dirname_longs[] = {
     {null, 0},
 };
 
+static fn dirname_one(string_address name, bool zero)
+{
+        positive stop = string_length(name);
+
+        // First discard separators after the basename, then the basename
+        // itself, then separators between it and the directory. Keeping one
+        // separator makes every spelling of root answer "/".
+        while (stop && name[stop - 1] == '/')
+                stop--;
+
+        if (!stop && !name[0])
+        {
+                log(".", 1);
+                log(zero ? "\0" : "\n", 1);
+                return;
+        }
+
+        if (!stop)
+        {
+                log("/", 1);
+                log(zero ? "\0" : "\n", 1);
+                return;
+        }
+
+        while (stop && name[stop - 1] != '/')
+                stop--;
+
+        if (!stop)
+        {
+                log(".", 1);
+                log(zero ? "\0" : "\n", 1);
+                return;
+        }
+
+        while (stop > 1 && name[stop - 1] == '/')
+                stop--;
+
+        log(name, stop);
+        log(zero ? "\0" : "\n", 1);
+}
+
 static b32 file_dirname()
 {
         file_taking taking = {
@@ -6621,13 +6662,8 @@ static b32 file_dirname()
         }
 
         while (first < count)
-        {
-                p8 answer[FILE_PATH_MAX];
-
-                path_head_copy(answer, FILE_PATH_MAX,
-                               program_argument((b32)first++));
-                file_written(answer, (taking.flags & FILE_FLAG('z')) != 0);
-        }
+                dirname_one(program_argument((b32)first++),
+                            (taking.flags & FILE_FLAG('z')) != 0);
 
         log_flush();
 
