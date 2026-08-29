@@ -37,6 +37,47 @@
 string_address init_argv[] = {init_program, null};
 string_address init_envp[] = {null};
 
+/*
+        The network, brought up by the system rather than by whoever logs in.
+
+        ip watch configures whatever is plugged in and then waits on a netlink
+        socket for a link to gain or lose carrier, so a machine that boots with
+        a cable in is on the network before the prompt appears, and one whose
+        cable is moved follows it without anybody typing anything.
+
+        It is started here rather than from the shell's profile because it is
+        not a shell thing: a machine with no interactive session should still
+        be reachable, and a shell that exits should not take the network with
+        it.
+
+        /ip is the shell under another name, like every other utility, so this
+        costs no second binary.
+*/
+#define network_program "/ip"
+
+string_address network_argv[] = {(string_address)network_program,
+                                 (string_address) "watch", null};
+
+//      A watcher that dies this quickly is not going to work on the next try
+//      either -- a missing /ip, most likely -- so say so once and stop.
+#define NETWORK_SETTLED_NS 1000000000
+#define NETWORK_GIVE_UP 3
+
+static bipolar start_network(void)
+{
+        bipolar child = system_call_2(syscall(clone), SIGCHLD, 0);
+
+        if (child == 0)
+        {
+                system_call_3(syscall(execve), (positive)network_program,
+                              (positive)network_argv, (positive)init_envp);
+
+                system_call_1(syscall(exit), 127);
+        }
+
+        return child;
+}
+
 positive now_ns()
 {
         timespec now = {0, 0};
@@ -165,6 +206,10 @@ static b32 system_init()
         positive started = now_ns();
         bipolar wait_error = 0;
 
+        bipolar network = start_network();
+        positive network_started = now_ns();
+        positive network_failures = 0;
+
         bipolar shell = start_shell(device);
 
         // Returning from PID 1 panics the kernel, which on a machine with no
@@ -212,6 +257,28 @@ static b32 system_init()
                 if (reaped > 0)
                 {
                         wait_error = 0;
+
+                        if (reaped == network)
+                        {
+                                if (now_ns() - network_started >= NETWORK_SETTLED_NS)
+                                        network_failures = 0;
+                                else
+                                        network_failures++;
+
+                                if (network_failures >= NETWORK_GIVE_UP)
+                                {
+                                        string_format(log, init_label
+                                                      "%s keeps exiting; leaving the "
+                                                      "network alone\n", network_program);
+                                        log_flush();
+                                        network = -1;
+                                        continue;
+                                }
+
+                                network_started = now_ns();
+                                network = start_network();
+                                continue;
+                        }
 
                         if (reaped != shell)
                                 continue;

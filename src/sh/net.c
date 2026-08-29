@@ -17,10 +17,19 @@
 #include "../net/http.c"
 #include "../net/dhcp.c"
 
-//      argv, declared the way builtin.c declares it: this file is
-//      pulled in before the definition further down shell.c.
-string_address address_to shell_argv;
-positive shell_argc;
+/*
+        The words this was called with come from the process, not from the
+        shell's own table.
+
+        A utility here is reached two ways: typed at a prompt, where the shell
+        points program_argument at the words it just split, and exec'd by name
+        -- which is how init starts `ip watch` -- where they are the real argv
+        the kernel handed over. program_argument answers both; shell_argv only
+        answers the first, and a tool reading it comes up with no arguments at
+        all when something execs it.
+*/
+#define net_words() ((positive)program_argument_count())
+#define net_word(at) program_argument((b32)(at))
 
 /*
         The subset of ip that configures a machine.
@@ -386,30 +395,30 @@ static b32 net_host(void)
         bipolar server;
         bipolar status;
 
-        if (shell_argc < 2)
+        if (net_words() < 2)
         {
                 string_format(log, "usage: host NAME [SERVER]\n");
                 log_flush();
                 return 1;
         }
 
-        if (shell_argc > 2)
+        if (net_words() > 2)
         {
-                server = string_to_host(shell_argv[2]);
+                server = string_to_host(net_word(2));
 
                 if (server < 0)
                 {
-                        string_format(log, "host: %s is not an address\n", shell_argv[2]);
+                        string_format(log, "host: %s is not an address\n", net_word(2));
                         log_flush();
                         return 1;
                 }
 
-                status = dns_resolve((p32)server, shell_argv[1], address_of found, 5);
+                status = dns_resolve((p32)server, net_word(1), address_of found, 5);
         }
         else
         {
                 status = dns_resolve_any((string_address) "/etc/resolv.conf",
-                                         shell_argv[1], address_of found, 3);
+                                         net_word(1), address_of found, 3);
         }
 
         switch (status)
@@ -417,13 +426,13 @@ static b32 net_host(void)
         case DNS_OK:
                 length = host_into(written, found);
                 written[length] = end;
-                string_format(log, "%s has address %s\n", shell_argv[1], written);
+                string_format(log, "%s has address %s\n", net_word(1), written);
                 break;
         case DNS_NO_SUCH_NAME:
-                string_format(log, "host: %s: no such name\n", shell_argv[1]);
+                string_format(log, "host: %s: no such name\n", net_word(1));
                 break;
         case DNS_NO_ADDRESS:
-                string_format(log, "host: %s exists but has no address\n", shell_argv[1]);
+                string_format(log, "host: %s exists but has no address\n", net_word(1));
                 break;
         case DNS_NO_REPLY:
                 string_format(log, "host: no reply from the nameserver\n");
@@ -469,14 +478,14 @@ static b32 net_fetch(void)
         bipolar status;
         b32 code = 0;
 
-        if (shell_argc < 2)
+        if (net_words() < 2)
         {
                 string_format(log, "usage: fetch http://host[:port]/path\n");
                 log_flush();
                 return 1;
         }
 
-        status = http_split(shell_argv[1], name, sizeof name, address_of port,
+        status = http_split(net_word(1), name, sizeof name, address_of port,
                             address_of path);
 
         if (status == HTTP_NOT_PLAIN)
@@ -490,7 +499,7 @@ static b32 net_fetch(void)
         if (status < 0)
         {
                 string_format(log, "fetch: %s is not a url this understands\n",
-                              shell_argv[1]);
+                              net_word(1));
                 log_flush();
                 return 1;
         }
@@ -620,7 +629,7 @@ static fn net_write_resolv(p32 nameserver)
         Every step says what it did, because the failure that matters is not
         an error code but the machine coming up silently unreachable.
 */
-static b32 net_auto(b32 handle)
+static b32 net_auto(b32 handle, p32 address_to chosen)
 {
         netlink_search search;
         dhcp_lease lease;
@@ -711,16 +720,221 @@ static b32 net_auto(b32 handle)
 
         string_format(log, "\n");
 
+        if (chosen)
+                address_to chosen = search.index;
+
         log_flush();
 
         return 0;
 }
 
+
+/*
+        ip watch -- configure now, and again whenever the wires change.
+
+        The kernel will tell you when a link gains or loses carrier if you ask
+        it to: a netlink socket bound to the RTNLGRP_LINK multicast group
+        receives an RTM_NEWLINK every time an interface changes state. No
+        polling, no timer, nothing to tune -- the read simply blocks until
+        something actually happens.
+
+        What counts as "something" is deliberately narrow. An RTM_NEWLINK
+        arrives for changes nobody cares about here, so only a change in
+        IFF_RUNNING on a link that is not loopback causes anything: that is
+        the kernel saying a cable was plugged in or pulled out. Everything
+        else is read and dropped.
+
+        On such a change the whole of ip auto runs again, which re-picks the
+        best link rather than assuming the one that changed is the one to use.
+        That is what makes the wired-to-wireless case work without any code
+        that knows what wireless is: pull the cable, the wired link loses
+        carrier, the walk picks whatever else has it.
+
+        Re-running is safe to do at any time. Adding an address uses REPLACE
+        and adding a route is idempotent, so a spurious run costs a DHCP
+        exchange and changes nothing else.
+*/
+typedef struct
+{
+        p32 index;
+        p32 flags;
+} net_state;
+
+static netlink_buffer net_states;
+static positive net_state_count;
+
+//      Whether anything worth reacting to happened to this link, remembering
+//      its new state either way.
+static bool net_link_news(p32 index, p32 flags, bool address_to had_carrier)
+{
+        net_state address_to entry;
+        positive at;
+
+        address_to had_carrier = false;
+
+        for (at = 0; at < net_state_count; at++)
+        {
+                entry = ((net_state address_to)net_states.bytes) + at;
+
+                if (entry->index != index)
+                        continue;
+
+                address_to had_carrier = (entry->flags & IFF_RUNNING) != 0;
+
+                if (((entry->flags ^ flags) & IFF_RUNNING) == 0)
+                        return false;
+
+                entry->flags = flags;
+
+                return true;
+        }
+
+        if (!net_room(address_of net_states,
+                      (net_state_count + 1) * sizeof(net_state)))
+                return false;
+
+        entry = ((net_state address_to)net_states.bytes) + net_state_count++;
+        entry->index = index;
+        entry->flags = flags;
+
+        //      A link nobody has seen before is news whatever state it is
+        //      in. At boot the card is still being probed when init starts
+        //      watching, so the interface appears a moment later, down and
+        //      without carrier -- and it has to be acted on, because bringing
+        //      it up is the very thing that would give it carrier. Waiting
+        //      for a carrier event there waits forever.
+        return true;
+}
+
+static b32 net_watch(void)
+{
+        netlink_buffer message = {0};
+        bipolar events;
+        bipolar handle;
+        p32 configured = 0;
+
+        events = netlink_open_groups(RTNLGRP_LINK_MASK);
+
+        if (events < 0)
+        {
+                net_complain((string_address) "cannot listen for link changes");
+                return 1;
+        }
+
+        //      Configure whatever is already plugged in before waiting for
+        //      anything to change, or a machine that boots with its cable in
+        //      would wait forever for an event that already happened.
+        handle = netlink_open();
+
+        if (handle >= 0)
+        {
+                net_auto((b32)handle, address_of configured);
+                socket_close((b32)handle);
+        }
+
+        for (;;)
+        {
+                netlink_header address_to header;
+                positive at = 0;
+                bipolar got = netlink_receive((b32)events, address_of message);
+
+                if (got < 0)
+                        break;
+
+                while (at + NETLINK_HEADER <= message.used)
+                {
+                        netlink_link address_to link;
+                        bool interesting = false;
+
+                        header = (netlink_header address_to)(message.bytes + at);
+
+                        if (header->length < NETLINK_HEADER ||
+                            at + header->length > message.used)
+                                break;
+
+                        if (header->type == RTM_NEWLINK &&
+                            header->length >= NETLINK_HEADER + sizeof(netlink_link))
+                        {
+                                link = (netlink_link address_to)(message.bytes + at +
+                                                                 NETLINK_HEADER);
+
+                                bool had_carrier = false;
+
+                                if (!(link->flags & IFF_LOOPBACK) &&
+                                    net_link_news(link->index, link->flags,
+                                                  address_of had_carrier))
+                                {
+                                        /*
+                                                Two things are worth acting
+                                                on, and nothing else is.
+
+                                                Anything at all, while nothing
+                                                is configured: a card that has
+                                                only just finished probing is
+                                                the ordinary case at boot, and
+                                                it arrives down and without
+                                                carrier because bringing it up
+                                                is what this is for.
+
+                                                The configured link losing
+                                                carrier: the cable came out,
+                                                and whatever else has carrier
+                                                should take over.
+
+                                                A link gaining carrier while
+                                                another already works is not
+                                                news. Acting there would take
+                                                a fresh lease for no reason,
+                                                including on the link this had
+                                                just brought up itself.
+                                        */
+                                        if (configured == 0)
+                                                interesting = true;
+                                        else if (link->index == configured &&
+                                                 had_carrier &&
+                                                 !(link->flags & IFF_RUNNING))
+                                        {
+                                                //      had_carrier matters.
+                                                //      Bringing a link up
+                                                //      produces an event
+                                                //      before the carrier
+                                                //      arrives, and reading
+                                                //      that as the cable
+                                                //      coming out made this
+                                                //      configure itself
+                                                //      twice at every boot.
+                                                configured = 0;
+                                                interesting = true;
+                                        }
+                                }
+                        }
+
+                        at += netlink_align(header->length);
+
+                        if (!interesting)
+                                continue;
+
+                        handle = netlink_open();
+
+                        if (handle < 0)
+                                continue;
+
+                        net_auto((b32)handle, address_of configured);
+                        socket_close((b32)handle);
+                }
+        }
+
+        netlink_forget(address_of message);
+        socket_close((b32)events);
+
+        return 1;
+}
+
 static b32 net_ip(void)
 {
         bipolar handle;
-        string_address object = shell_argc > 1 ? shell_argv[1] : null;
-        string_address verb = shell_argc > 2 ? shell_argv[2] : null;
+        string_address object = net_words() > 1 ? net_word(1) : null;
+        string_address verb = net_words() > 2 ? net_word(2) : null;
         b32 status = 0;
 
         if (!object || net_word_is(object, "help", 4))
@@ -728,6 +942,8 @@ static b32 net_ip(void)
                 string_format(log, "usage: ip auto | link | addr | route\n");
                 string_format(log, "       ip auto   find a link, bring it up, "
                                    "take a lease\n");
+                string_format(log, "       ip watch  the same, now and whenever "
+                                   "a cable changes\n");
                 string_format(log, "       ip link set NAME up\n");
                 string_format(log, "       ip addr add A.B.C.D/N dev NAME\n");
                 string_format(log, "       ip route add default via A.B.C.D [dev NAME]\n");
@@ -746,7 +962,13 @@ static b32 net_ip(void)
         //      auto ------------------------------------------------------
         if (net_word_is(object, "auto", 2))
         {
-                status = net_auto((b32)handle);
+                status = net_auto((b32)handle, null);
+        }
+        //      watch -----------------------------------------------------
+        else if (net_word_is(object, "watch", 1))
+        {
+                socket_close((b32)handle);
+                return net_watch();
         }
         //      link ------------------------------------------------------
         else if (net_word_is(object, "link", 1))
@@ -757,10 +979,10 @@ static b32 net_ip(void)
                                          AF_UNSPEC, net_link_line, null) < 0)
                                 status = net_refused((string_address) "link show", -1);
                 }
-                else if (net_word_is(verb, "set", 3) && shell_argc > 4 &&
-                         net_word_is(shell_argv[4], "up", 2))
+                else if (net_word_is(verb, "set", 3) && net_words() > 4 &&
+                         net_word_is(net_word(4), "up", 2))
                 {
-                        bipolar index = net_index_of((b32)handle, shell_argv[3], null);
+                        bipolar index = net_index_of((b32)handle, net_word(3), null);
 
                         if (index < 0)
                                 status = net_refused((string_address) "link set", index);
@@ -788,20 +1010,20 @@ static b32 net_ip(void)
                                          AF_INET, net_address_line, null) < 0)
                                 status = net_refused((string_address) "addr show", -1);
                 }
-                else if (net_word_is(verb, "add", 1) && shell_argc > 5 &&
-                         net_word_is(shell_argv[4], "dev", 3))
+                else if (net_word_is(verb, "add", 1) && net_words() > 5 &&
+                         net_word_is(net_word(4), "dev", 3))
                 {
                         p32 host = 0;
                         p8 bits = 32;
                         bipolar index;
 
-                        if (!net_split_prefix(shell_argv[3], address_of host,
+                        if (!net_split_prefix(net_word(3), address_of host,
                                               address_of bits))
                         {
                                 net_complain((string_address) "addr add: not an address");
                                 status = 1;
                         }
-                        else if ((index = net_index_of((b32)handle, shell_argv[5], null)) < 0)
+                        else if ((index = net_index_of((b32)handle, net_word(5), null)) < 0)
                                 status = net_refused((string_address) "addr add", index);
                         else
                         {
@@ -831,11 +1053,11 @@ static b32 net_ip(void)
                                          AF_INET, net_route_line, null) < 0)
                                 status = net_refused((string_address) "route show", -1);
                 }
-                else if (net_word_is(verb, "add", 1) && shell_argc > 5 &&
-                         net_word_is(shell_argv[3], "default", 3) &&
-                         net_word_is(shell_argv[4], "via", 3))
+                else if (net_word_is(verb, "add", 1) && net_words() > 5 &&
+                         net_word_is(net_word(3), "default", 3) &&
+                         net_word_is(net_word(4), "via", 3))
                 {
-                        bipolar gateway = string_to_host(shell_argv[5]);
+                        bipolar gateway = string_to_host(net_word(5));
                         p32 index = 0;
 
                         if (gateway < 0)
@@ -847,10 +1069,10 @@ static b32 net_ip(void)
                         {
                                 bipolar done;
 
-                                if (shell_argc > 7 && net_word_is(shell_argv[6], "dev", 3))
+                                if (net_words() > 7 && net_word_is(net_word(6), "dev", 3))
                                 {
                                         bipolar found = net_index_of((b32)handle,
-                                                                     shell_argv[7], null);
+                                                                     net_word(7), null);
 
                                         if (found >= 0)
                                                 index = (p32)found;

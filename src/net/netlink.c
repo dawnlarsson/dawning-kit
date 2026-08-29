@@ -163,46 +163,20 @@ typedef struct
 
 static bool net_room(netlink_buffer address_to buffer, positive want)
 {
-        positive size = buffer->room;
-        p8 address_to fresh;
-
-        if (size >= want)
-                return true;
-
-        if (!size)
-                size = 4096;
-
-        while (size < want)
-                size += size;
-
-        fresh = (p8 address_to)memory(size);
-
-        if (!fresh || (positive)fresh >= (positive)-4095)
+        if (!memory_reserve((address_any address_to)address_of buffer->bytes,
+                            address_of buffer->room, buffer->used, want, 1, 4096))
         {
                 buffer->failed = true;
                 return false;
         }
-
-        if (buffer->bytes)
-        {
-                memory_copy(fresh, buffer->bytes, buffer->used);
-                memory_free(buffer->bytes, buffer->room);
-        }
-
-        buffer->bytes = fresh;
-        buffer->room = size;
 
         return true;
 }
 
 static fn netlink_forget(netlink_buffer address_to buffer)
 {
-        if (buffer->bytes)
-                memory_free(buffer->bytes, buffer->room);
-
-        buffer->bytes = null;
-        buffer->room = 0;
-        buffer->used = 0;
+        memory_release((address_any address_to)address_of buffer->bytes,
+                       address_of buffer->room, address_of buffer->used, 1);
         buffer->failed = false;
 }
 
@@ -300,7 +274,9 @@ static bool netlink_attribute_add_32(netlink_buffer address_to buffer, p16 type,
         a kernel too old to know the option says so and everything else works
         exactly as before.
 */
-static bipolar netlink_open(void)
+#define RTNLGRP_LINK_MASK 1
+
+static bipolar netlink_open_groups(p32 groups)
 {
         socket_address_netlink self;
         bipolar handle = socket_new(AF_NETLINK, SOCK_DGRAM, NETLINK_ROUTE);
@@ -311,6 +287,7 @@ static bipolar netlink_open(void)
 
         memory_fill(address_of self, 0, sizeof self);
         self.family = AF_NETLINK;
+        self.groups = groups;
 
         if (socket_bind((b32)handle, address_of self, sizeof self) < 0)
         {
@@ -322,6 +299,11 @@ static bipolar netlink_open(void)
                           address_of want, sizeof want);
 
         return handle;
+}
+
+static bipolar netlink_open(void)
+{
+        return netlink_open_groups(0);
 }
 
 /*
@@ -581,15 +563,35 @@ static bool netlink_link_seen(netlink_header address_to header, address_any cont
         string_address name = (string_address)netlink_find(header, sizeof(netlink_link),
                                                            IFLA_IFNAME, address_of size);
 
-        if (search->found || !name)
+        if (!name)
                 return true;
 
         if (search->skip_loopback)
         {
                 if (link->flags & IFF_LOOPBACK)
                         return true;
+
+                /*
+                        Not the first one found -- the best one.
+
+                        A machine with wired and wireless has both, and the
+                        one worth configuring is the one with something
+                        plugged into it. IFF_RUNNING is the kernel saying the
+                        link has carrier, so a candidate that has it beats one
+                        that does not, whatever order the dump arrived in, and
+                        the walk goes all the way to the end rather than
+                        stopping at whatever came first.
+                */
+                if (search->found)
+                {
+                        bool had = (search->flags & IFF_RUNNING) != 0;
+                        bool has = (link->flags & IFF_RUNNING) != 0;
+
+                        if (had || !has)
+                                return true;
+                }
         }
-        else if (!string_equals(name, search->wanted))
+        else if (search->found || !string_equals(name, search->wanted))
         {
                 return true;
         }
@@ -614,7 +616,7 @@ static bool netlink_link_seen(netlink_header address_to header, address_any cont
                 }
         }
 
-        return false;
+        return search->skip_loopback;
 }
 
 /*
@@ -748,9 +750,13 @@ static bipolar netlink_route_add(b32 handle, p32 destination, p8 bits, p32 gatew
         p32 wire_destination = network_order_32(destination);
         bipolar status;
 
+        //      REPLACE alongside CREATE, for the same reason the address
+        //      add has it: adding the route a second time is what happens
+        //      when a link comes back, and it should be the same as having
+        //      added it once rather than EEXIST.
         if (!netlink_begin(address_of request, RTM_NEWROUTE,
-                           NLM_REQUEST | NLM_ACK | NLM_CREATE, sequence,
-                           sizeof(netlink_route)))
+                           NLM_REQUEST | NLM_ACK | NLM_CREATE | NLM_REPLACE,
+                           sequence, sizeof(netlink_route)))
         {
                 netlink_forget(address_of request);
                 return -1;
