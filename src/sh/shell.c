@@ -872,7 +872,8 @@ bipolar shell_spawn_via_device()
         request.envp = (unsigned long)spawn_envp_block;
         request.envp_count = envc;
 
-        return system_call_3(syscall(ioctl), spawn_device, SPARK_IOCTL_SPAWN,
+        return system_call_3(syscall(ioctl), spawn_device,
+                             SPARK_IOCTL_SPAWN_SHELL,
                              (positive)address_of request);
 }
 

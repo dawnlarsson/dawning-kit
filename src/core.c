@@ -417,6 +417,8 @@ struct spawn_work
         char *argv_block;
         char **envp;
         char *envp_block;
+        unsigned int argc;
+        bool shell_fallback;
 };
 
 static void spawn_free(struct spawn_work *work)
@@ -458,6 +460,7 @@ static int spawn_program(const char *path)
         }
 
         work->argv[0] = work->path;
+        work->argc = 1;
 
         if (user_mode_thread(spawn_enter, work, SIGCHLD) <= 0)
         {
@@ -502,6 +505,41 @@ static int spawn_enter(void *data)
 
         ret = kernel_execve(work->path, (const char *const *)work->argv,
                             work->envp ? (const char *const *)work->envp : empty_envp);
+
+        /*
+         * The shell promises more than execve: ENOEXEC for an executable text
+         * file means interpret it, not reject it. The ioctl normally cannot
+         * return that error because this worker already exists by the time
+         * kernel_execve sees the file, so the retry has to happen here.
+         *
+         * argv becomes { /bin/sh, script, original arguments after argv[0] }.
+         * The raw spawn opcode never takes this branch.
+         */
+        if (ret == -ENOEXEC && work->shell_fallback)
+        {
+                const char **script_argv;
+                unsigned int i;
+
+                script_argv = kcalloc((size_t)work->argc + 2,
+                                      sizeof(*script_argv), GFP_KERNEL);
+
+                if (!script_argv)
+                        ret = -ENOMEM;
+                else
+                {
+                        script_argv[0] = "/bin/sh";
+                        script_argv[1] = work->path;
+
+                        for (i = 1; i < work->argc; i++)
+                                script_argv[i + 1] = work->argv[i];
+
+                        ret = kernel_execve(script_argv[0], script_argv,
+                                            work->envp
+                                              ? (const char *const *)work->envp
+                                              : empty_envp);
+                        kfree(script_argv);
+                }
+        }
 
         stat_exec_ns += ktime_get_ns() - started;
 
@@ -575,7 +613,7 @@ static int copy_strings(unsigned long user_block, unsigned int bytes,
         return 0;
 }
 
-static long do_spawn(struct spawn __user *request)
+static long do_spawn(struct spawn __user *request, bool shell_fallback)
 {
         struct spawn args;
         struct spawn_work *work;
@@ -609,6 +647,9 @@ static long do_spawn(struct spawn __user *request)
                 if (ret)
                         goto fail;
         }
+
+        work->argc = args.argv_count;
+        work->shell_fallback = shell_fallback;
 
         // SIGCHLD alone, so the new task is an ordinary child of the caller
         // and wait4 works on it the same way it does for a fork.
@@ -669,7 +710,9 @@ static long device_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
         switch (cmd)
         {
         case SPARK_IOCTL_SPAWN:
-                return do_spawn((struct spawn __user *)arg);
+                return do_spawn((struct spawn __user *)arg, false);
+        case SPARK_IOCTL_SPAWN_SHELL:
+                return do_spawn((struct spawn __user *)arg, true);
         case SPARK_IOCTL_STATS:
                 return report_stats((struct stats __user *)arg);
 #ifdef CONFIG_MOONWATER_CANVAS

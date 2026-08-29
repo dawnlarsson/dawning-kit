@@ -99,6 +99,12 @@ _Static_assert(sizeof(struct header) == SPARK_HEADER_SIZE,
 // this changes if the request struct does.
 #define SPARK_IOCTL_SPAWN 0x40287301u
 
+// Same request, with the shell's ENOEXEC rule: executable text without a #!
+// line is handed to /bin/sh. Kept separate so raw spawn remains an exact
+// execve-like interface and callers that do not want shell interpretation do
+// not acquire it accidentally.
+#define SPARK_IOCTL_SPAWN_SHELL 0x40287304u
+
 // _IOR('s', 2, struct stats). Nanoseconds accumulated inside the kernel,
 // so the split between creating the task and loading the image is measured
 // where it happens rather than inferred from the outside.
