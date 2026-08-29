@@ -1967,10 +1967,7 @@ static b32 diff_pair(string_address left, string_address right)
         positive horizon = diff_style == DIFF_UNIFIED ? diff_context : 0;
         positive prefix = 0;
         positive shortest = a->size < b->size ? a->size : b->size;
-        positive bytes = 0;
-
-        while (bytes < shortest && a->base[bytes] == b->base[bytes])
-                bytes++;
+        positive bytes = memory_common_prefix(a->base, b->base, shortest);
 
         /*
                 The newline a file did not have is in the buffer anyway, and

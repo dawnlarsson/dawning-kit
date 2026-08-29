@@ -67,7 +67,7 @@
         A .set is a second label on the same address, so there is no wrapper
         and no jump, and which names get one depends on who is linking.
 
-        151 routines (145 public, 6 local), 151 of them on all three.
+        152 routines (146 public, 6 local), 152 of them on all three.
         Raw C purity: 0 function bodies, 0 object definitions, 0 body macros, and 0 object macros (all forbidden).
 
           routine                        scope   x86_64  arm64   riscv64
@@ -109,6 +109,7 @@
           log_error                      public  yes     yes     yes
           log_flush                      public  yes     yes     yes
           memory                         public  yes     yes     yes
+          memory_common_prefix           public  yes     yes     yes
           memory_compare                 public  yes     yes     yes
           memory_copy                    public  yes     yes     yes
           memory_copy_end                public  yes     yes     yes
@@ -2322,6 +2323,35 @@ __asm__(
     "9:\n"
     ASM_RET
     ASM_END(memory_compare)
+    // Length of the equal prefix of two exact bounded spans.  This shares
+    // memory_compare's wide/common path but returns the mismatch position.
+    ASM_FUNC(memory_common_prefix)
+    "xor %eax, %eax\n   test %rdx, %rdx\n   jz .Lmemory_prefix_x64_done\n"
+    ASM_USERSPACE_WIDE(
+    ASM_NARROW("cpu_has_avx2", ".Lmemory_prefix_x64_words")
+    "cmp $32, %rdx\n   jb .Lmemory_prefix_x64_words\n"
+    ".Lmemory_prefix_x64_vector:\n   vmovdqu (%rdi), %ymm0\n"
+    "vpcmpeqb (%rsi), %ymm0, %ymm0\n   vpmovmskb %ymm0, %ecx\n"
+    "cmp $-1, %ecx\n   jne .Lmemory_prefix_x64_vector_diff\n"
+    "add $32, %rdi\n   add $32, %rsi\n   add $32, %rax\n"
+    "sub $32, %rdx\n   cmp $32, %rdx\n   jae .Lmemory_prefix_x64_vector\n"
+    "vzeroupper\n   jmp .Lmemory_prefix_x64_words\n"
+    ".Lmemory_prefix_x64_vector_diff:\n   not %ecx\n   bsf %ecx, %ecx\n"
+    "add %rcx, %rax\n   vzeroupper\n" ASM_RET
+    )
+    ".Lmemory_prefix_x64_words:\n   cmp $8, %rdx\n   jb .Lmemory_prefix_x64_bytes\n"
+    ".Lmemory_prefix_x64_word:\n   mov (%rdi), %r8\n   xor (%rsi), %r8\n"
+    "jnz .Lmemory_prefix_x64_word_diff\n   add $8, %rdi\n   add $8, %rsi\n"
+    "add $8, %rax\n   sub $8, %rdx\n   cmp $8, %rdx\n"
+    "jae .Lmemory_prefix_x64_word\n   jmp .Lmemory_prefix_x64_bytes\n"
+    ".Lmemory_prefix_x64_word_diff:\n   bsf %r8, %rcx\n   shr $3, %rcx\n"
+    "add %rcx, %rax\n" ASM_RET
+    ".Lmemory_prefix_x64_bytes:\n   test %rdx, %rdx\n   jz .Lmemory_prefix_x64_done\n"
+    ".Lmemory_prefix_x64_byte:\n   movzbl (%rdi), %ecx\n   cmpb %cl, (%rsi)\n"
+    "jne .Lmemory_prefix_x64_done\n   inc %rdi\n   inc %rsi\n   inc %rax\n"
+    "dec %rdx\n   jnz .Lmemory_prefix_x64_byte\n"
+    ".Lmemory_prefix_x64_done:\n" ASM_RET
+    ASM_END(memory_common_prefix)
     ASM_FUNC(memory_search)
     //
     //       The algorithm, which matters more here than the instructions.
@@ -6036,6 +6066,31 @@ __asm__(
     "9:  mov w0, w9\n"
     ASM_RET
     ASM_END(memory_compare)
+    ASM_FUNC(memory_common_prefix)
+    "mov x3, #0\n   cbz x2, .Lmemory_prefix_arm64_done\n"
+#ifndef KERNEL_MODE
+    "cmp x2, #32\n   b.lo .Lmemory_prefix_arm64_words\n"
+    ".Lmemory_prefix_arm64_vector:\n   ldp q0, q1, [x0]\n   ldp q2, q3, [x1]\n"
+    "cmeq v0.16b, v0.16b, v2.16b\n   cmeq v1.16b, v1.16b, v3.16b\n"
+    "and v4.16b, v0.16b, v1.16b\n   uminv b4, v4.16b\n"
+    "umov w4, v4.b[0]\n   cmp w4, #0xff\n   b.ne .Lmemory_prefix_arm64_words\n"
+    "add x0, x0, #32\n   add x1, x1, #32\n   add x3, x3, #32\n"
+    "sub x2, x2, #32\n   cmp x2, #32\n   b.hs .Lmemory_prefix_arm64_vector\n"
+#endif
+    ".Lmemory_prefix_arm64_words:\n   cmp x2, #8\n   b.lo .Lmemory_prefix_arm64_bytes\n"
+    ".Lmemory_prefix_arm64_word:\n   ldr x4, [x0]\n   ldr x5, [x1]\n   eor x4, x4, x5\n"
+    "cbnz x4, .Lmemory_prefix_arm64_word_diff\n   add x0, x0, #8\n"
+    "add x1, x1, #8\n   add x3, x3, #8\n   sub x2, x2, #8\n"
+    "cmp x2, #8\n   b.hs .Lmemory_prefix_arm64_word\n   b .Lmemory_prefix_arm64_bytes\n"
+    ".Lmemory_prefix_arm64_word_diff:\n   rbit x4, x4\n   clz x4, x4\n"
+    "lsr x4, x4, #3\n   add x3, x3, x4\n   b .Lmemory_prefix_arm64_done\n"
+    ".Lmemory_prefix_arm64_bytes:\n   cbz x2, .Lmemory_prefix_arm64_done\n"
+    ".Lmemory_prefix_arm64_byte:\n   ldrb w4, [x0]\n   ldrb w5, [x1]\n"
+    "cmp w4, w5\n   b.ne .Lmemory_prefix_arm64_done\n   add x0, x0, #1\n"
+    "add x1, x1, #1\n   add x3, x3, #1\n   subs x2, x2, #1\n"
+    "b.ne .Lmemory_prefix_arm64_byte\n"
+    ".Lmemory_prefix_arm64_done:\n   mov x0, x3\n" ASM_RET
+    ASM_END(memory_common_prefix)
     ASM_FUNC(memory_search)
     "cbz x3, 90f  // an empty needle is at the front\n"
     "cmp x1, x3\n   b.lo 95f  // longer than the haystack: nowhere\n"
@@ -8836,6 +8891,33 @@ __asm__(
     "9:  mv a0, a3\n"
     ASM_RET
     ASM_END(memory_compare)
+    ASM_FUNC(memory_common_prefix)
+    "li a3, 0\n   beqz a2, .Lmemory_prefix_rv_done\n"
+    "xor t0, a0, a1\n   andi t0, t0, 7\n"
+    "bnez t0, .Lmemory_prefix_rv_bytes\n   andi t0, a0, 7\n"
+    "beqz t0, .Lmemory_prefix_rv_words\n"
+    ".Lmemory_prefix_rv_align:\n   lbu t1, 0(a0)\n   lbu t2, 0(a1)\n"
+    "bne t1, t2, .Lmemory_prefix_rv_done\n   addi a0, a0, 1\n"
+    "addi a1, a1, 1\n   addi a2, a2, -1\n   addi a3, a3, 1\n"
+    "beqz a2, .Lmemory_prefix_rv_done\n   andi t0, a0, 7\n"
+    "bnez t0, .Lmemory_prefix_rv_align\n"
+    ".Lmemory_prefix_rv_words:\n   li t0, 8\n   bltu a2, t0, .Lmemory_prefix_rv_bytes\n"
+    ".Lmemory_prefix_rv_word:\n   ld t1, 0(a0)\n   ld t2, 0(a1)\n   xor t1, t1, t2\n"
+    "bnez t1, .Lmemory_prefix_rv_word_diff\n   addi a0, a0, 8\n"
+    "addi a1, a1, 8\n   addi a2, a2, -8\n   addi a3, a3, 8\n"
+    "bgeu a2, t0, .Lmemory_prefix_rv_word\n   j .Lmemory_prefix_rv_bytes\n"
+    ".Lmemory_prefix_rv_word_diff:\n   sub t2, zero, t1\n   and t1, t1, t2\n"
+    "addi t1, t1, -1\n   srli t1, t1, 7\n   lui t3, 0x1010\n"
+    "addi t3, t3, 257\n   slli t2, t3, 32\n   add t3, t3, t2\n"
+    "and t1, t1, t3\n   mul t1, t1, t3\n   srli t1, t1, 56\n"
+    "add a3, a3, t1\n   j .Lmemory_prefix_rv_done\n"
+    ".Lmemory_prefix_rv_bytes:\n   beqz a2, .Lmemory_prefix_rv_done\n"
+    ".Lmemory_prefix_rv_byte:\n   lbu t1, 0(a0)\n   lbu t2, 0(a1)\n"
+    "bne t1, t2, .Lmemory_prefix_rv_done\n   addi a0, a0, 1\n"
+    "addi a1, a1, 1\n   addi a2, a2, -1\n   addi a3, a3, 1\n"
+    "bnez a2, .Lmemory_prefix_rv_byte\n"
+    ".Lmemory_prefix_rv_done:\n   mv a0, a3\n" ASM_RET
+    ASM_END(memory_common_prefix)
     ASM_FUNC(memory_search)
     //
     //       One byte hunted rather than two, and no block at all: the
@@ -10894,6 +10976,7 @@ positive string_table_find(string_address name, address_any table,
 positive string_lex_word(string_address source, p8 address_to into,
                             const b8 address_to class);
 address_any memory_fill(address_any destination, b8 value, positive size);
+positive memory_common_prefix(address_any one, address_any two, positive size);
 // Reverse exactly size bytes in place. Returns block; sizes below two do not
 // read or write it, so a null block is valid when size is zero.
 address_any memory_reverse(address_any block, positive size);

@@ -9163,10 +9163,8 @@ static b32 text_cmp()
                                 }
                                 else
                                 {
-                                        positive prefix = 0;
-
-                                        while (one[prefix] == two[prefix])
-                                                prefix++;
+                                        positive prefix =
+                                            memory_common_prefix(one, two, run);
 
                                         if (prefix)
                                         {
