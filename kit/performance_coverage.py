@@ -105,6 +105,8 @@ buffered_flush buffered_write buffered_write_byte buffered_write_deferred_equal 
 ''', 'paired former-C/assembly timing over buffered and direct output shapes')
 cover('direct_benchmark', 'kit/bench_text_hot.c', 'memory_common_prefix',
       'paired scalar/assembly timing over equal and late-difference text spans')
+cover('direct_benchmark', 'kit/bench_compare_max.c', 'string_compare_max',
+      'dynamic-bound first-mismatch semantic floor and equal/late traffic proxies')
 cover('direct_benchmark', 'kit/bench_hash_33.c',
       'memory_hash_33 string_hash_33_length',
       'bounded/string verifier and paired scalar/four-byte or one-pass/two-pass timing')
@@ -205,7 +207,7 @@ file_load file_new file_read file_valid file_write memory memory_copy_end
 memory_copy_apart_end memory_free memory_search path_basename positive_digits
 positive_into_string positive_to_base_field program_arguments_own
 program_arguments_use program_environment program_environment_list
-string_append string_bipolar string_compare_max string_copy_max
+string_append string_bipolar string_copy_max
 string_copy_max_end string_cut string_digits string_digits_exact
 string_digits_max string_find string_first_of_max string_first_of_or_end
 string_format string_get_environment string_last_of string_length_max
