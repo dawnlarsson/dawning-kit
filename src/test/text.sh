@@ -447,6 +447,8 @@ compare 'numbered'       grep a  -n a
 compare 'count'          grep a  -c a
 compare 'quiet hit'      grep a  -q alpha
 compare 'quiet miss'     grep a  -q nowhere
+compare 'quiet count hit' grep a -q -c alpha
+compare 'quiet count miss' grep a -q -c nowhere
 compare 'no match'       grep a  nowhere
 compare 'combined'       grep a  -in ALPHA
 compare 'extended alt'   grep -  -E 'delta|zeta' "$work/a"
@@ -814,6 +816,9 @@ compare 'null data long' rev zeros --zero
 
 case_start nl
 compare 'default'        nl a
+compare 'no final newline' nl h
+compare 'no final numbered' nl h -b a -n rn
+compare 'no final separator' nl h -w 4 -s ';'
 compare 'all lines'      nl a  -ba
 compare 'width'          nl a  -w3
 compare 'separator'      nl a  -s:

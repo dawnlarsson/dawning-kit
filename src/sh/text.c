@@ -3560,6 +3560,12 @@ static b32 text_nl()
                         }
 
                         text_put_line();
+
+                        // nl produces complete display lines even when the
+                        // final input line had no terminator. The other line
+                        // filters preserve that byte-level distinction.
+                        if (!text_line_ended)
+                                text_put_character('\n');
                 }
 
                 text_close();
@@ -5945,7 +5951,7 @@ static b32 text_grep()
                         continue;
                 }
 
-                if (counting)
+                if (counting && !quiet)
                 {
                         if (grep_names)
                         {
