@@ -67,7 +67,7 @@
         A .set is a second label on the same address, so there is no wrapper
         and no jump, and which names get one depends on who is linking.
 
-        224 routines (217 public, 7 local), 224 of them on all three.
+        229 routines (220 public, 9 local), 229 of them on all three.
         Raw C purity: 0 function bodies, 0 object definitions, 0 body macros, and 0 object macros (all forbidden).
 
           routine                        scope   x86_64  arm64   riscv64
@@ -168,6 +168,11 @@
           memory_reverse                 public  yes     yes     yes
           memory_search                  public  yes     yes     yes
           memory_search_ascii_case       public  yes     yes     yes
+          memory_search_ascii_case_prepared public  yes     yes     yes
+          memory_search_ascii_case_prepared_core local   yes     yes     yes
+          memory_search_prepare          public  yes     yes     yes
+          memory_search_prepared         public  yes     yes     yes
+          memory_search_prepared_core    local   yes     yes     yes
           memory_span_byte               public  yes     yes     yes
           memory_to_lower_ascii          public  yes     yes     yes
           memory_to_upper_ascii          public  yes     yes     yes
@@ -2549,29 +2554,59 @@ __asm__(
     ".Lmemory_first_icase_x64_done:\n" ASM_RET
     ".Lmemory_first_icase_x64_hit:\n   mov %rdi, %rax\n" ASM_RET
     ASM_END(memory_first_of_ascii_case)
+    // The two offsets returned in rax/rdx are ordinary positive2 ABI words.
+    // Preparing is deliberately scalar and cold: the searches below consume
+    // the result many times, while this walks the needle exactly once.
+    ASM_FUNC(memory_search_prepare)
+    "mov %rdx, %r11\n   xor %eax, %eax\n   xor %edx, %edx\n"
+    "test %rsi, %rsi\n   jz 9f\n   lea -1(%rsi), %rdx\n"
+    "cmp $4, %rsi\n   jb 9f\n   push %rbx\n   push %r12\n"
+    "lea byte_commonness(%rip), %r8\n   mov $256, %r9d\n"
+    "mov $256, %r10d\n   xor %ecx, %ecx\n   xor %ebx, %ebx\n"
+    "xor %r12d, %r12d\n"
+    "1:  movzbl (%rdi,%rcx), %eax\n   test %r11, %r11\n   jz 2f\n"
+    "mov %eax, %edx\n   or $32, %edx\n   lea -'a'(%rdx), %r11d\n"
+    "cmp $25, %r11d\n   cmovbe %edx, %eax\n   mov $1, %r11d\n"
+    "2:  movzbl (%r8,%rax), %eax\n   cmp %r9, %rax\n   jae 3f\n"
+    "mov %r9, %r10\n   mov %rbx, %r12\n   mov %rax, %r9\n   mov %rcx, %rbx\n"
+    "jmp 4f\n"
+    "3:  cmp %r10, %rax\n   jae 4f\n   mov %rax, %r10\n   mov %rcx, %r12\n"
+    "4:  inc %rcx\n   cmp %rsi, %rcx\n   jb 1b\n"
+    "mov %rbx, %rax\n   mov %r12, %rdx\n   pop %r12\n   pop %rbx\n"
+    "9:\n" ASM_RET
+    ASM_END(memory_search_prepare)
     // memmem under the same ASCII-only equivalence.  The bounded hunt finds
     // candidates in one pass; the folded compare proves each whole candidate.
     // A failed candidate advances one byte, so overlaps such as aaB in aaaB
     // remain visible.
     ASM_FUNC(memory_search_ascii_case)
+    "test %rcx, %rcx\n   jz .Lmemory_search_icase_x64_empty_general\n"
+    "cmp %rcx, %rsi\n   jb .Lmemory_search_icase_x64_absent_general\n"
+    "cmp $64, %rsi\n   jb .Lmemory_search_icase_x64_short_general\n"
+    "cmp $4, %rcx\n   jb .Lmemory_search_icase_x64_short_general\n"
+    "sub $40, %rsp\n   mov %rdi, 0(%rsp)\n   mov %rsi, 8(%rsp)\n"
+    "mov %rdx, 16(%rsp)\n   mov %rcx, 24(%rsp)\n"
+    "mov %rdx, %rdi\n   mov %rcx, %rsi\n   mov $1, %edx\n"
+    "call memory_search_prepare\n   mov %rax, %r8\n"
+    "mov 0(%rsp), %rdi\n   mov 8(%rsp), %rsi\n"
+    "mov 16(%rsp), %rdx\n   mov 24(%rsp), %rcx\n   add $40, %rsp\n"
+    "jmp memory_search_ascii_case_prepared_core\n"
+    ".Lmemory_search_icase_x64_short_general:\n   xor %r8d, %r8d\n"
+    "jmp memory_search_ascii_case_prepared_core\n"
+    ".Lmemory_search_icase_x64_empty_general:\n   mov %rdi, %rax\n" ASM_RET
+    ".Lmemory_search_icase_x64_absent_general:\n   xor %eax, %eax\n" ASM_RET
+    ASM_END(memory_search_ascii_case)
+    ASM_FUNC(memory_search_ascii_case_prepared)
     "test %rcx, %rcx\n   jz .Lmemory_search_icase_x64_empty\n"
     "cmp %rcx, %rsi\n   jb .Lmemory_search_icase_x64_absent\n"
+    "jmp memory_search_ascii_case_prepared_core\n"
+    ".Lmemory_search_icase_x64_empty:\n   mov %rdi, %rax\n" ASM_RET
+    ".Lmemory_search_icase_x64_absent:\n   xor %eax, %eax\n" ASM_RET
+    ASM_END(memory_search_ascii_case_prepared)
+    ASM_LOCAL_FUNC(memory_search_ascii_case_prepared_core)
     "push %rbp\n   push %r12\n   push %r13\n   push %r14\n   push %r15\n"
     "mov %rdx, %rbp\n   mov %rcx, %r12\n   lea (%rdi,%rsi), %r13\n"
-    "sub %rcx, %r13\n   mov %rdi, %r14\n   xor %r15d, %r15d\n"
-    // For a long enough search, anchor on the least common folded byte.  The
-    // exact search uses the same corpus-derived table; normalizing only an
-    // ASCII upper-case needle byte makes its ranking case independent.
-    "cmp $64, %rsi\n   jb .Lmemory_search_icase_x64_hunt\n"
-    "cmp $4, %r12\n   jb .Lmemory_search_icase_x64_hunt\n"
-    "lea byte_commonness(%rip), %rdx\n   mov $256, %r8d\n   xor %ecx, %ecx\n"
-    ".Lmemory_search_icase_x64_choose:\n   movzbl 0(%rbp,%rcx), %eax\n"
-    "mov %eax, %r9d\n   or $32, %r9d\n   lea -'a'(%r9), %r10d\n"
-    "cmp $25, %r10d\n   cmovbe %r9d, %eax\n   movzbl (%rdx,%rax), %eax\n"
-    "cmp %r8, %rax\n   jae .Lmemory_search_icase_x64_choose_next\n"
-    "mov %rax, %r8\n   mov %rcx, %r15\n"
-    ".Lmemory_search_icase_x64_choose_next:\n   inc %rcx\n   cmp %r12, %rcx\n"
-    "jb .Lmemory_search_icase_x64_choose\n"
+    "sub %rcx, %r13\n   mov %rdi, %r14\n   mov %r8, %r15\n"
     ".Lmemory_search_icase_x64_hunt:\n   mov %r13, %rdx\n   sub %r14, %rdx\n"
     "inc %rdx\n   lea (%r14,%r15), %rdi\n   movzbl 0(%rbp,%r15), %esi\n"
     "call memory_first_of_ascii_case\n   test %rax, %rax\n"
@@ -2585,10 +2620,37 @@ __asm__(
     ".Lmemory_search_icase_x64_found:\n   mov %r14, %rax\n"
     ".Lmemory_search_icase_x64_return:\n   pop %r15\n   pop %r14\n   pop %r13\n"
     "pop %r12\n   pop %rbp\n" ASM_RET
-    ".Lmemory_search_icase_x64_empty:\n   mov %rdi, %rax\n" ASM_RET
-    ".Lmemory_search_icase_x64_absent:\n   xor %eax, %eax\n" ASM_RET
-    ASM_END(memory_search_ascii_case)
+    ASM_LOCAL_END(memory_search_ascii_case_prepared_core)
     ASM_FUNC(memory_search)
+    "test %rcx, %rcx\n   jz .Lmemory_search_x64_empty_general\n"
+    "cmp %rcx, %rsi\n   jb .Lmemory_search_x64_absent_general\n"
+    "cmp $1, %rcx\n   je .Lmemory_search_x64_one_general\n"
+    "cmp $4, %rcx\n   jb .Lmemory_search_x64_short_general\n"
+    "sub $40, %rsp\n   mov %rdi, 0(%rsp)\n   mov %rsi, 8(%rsp)\n"
+    "mov %rdx, 16(%rsp)\n   mov %rcx, 24(%rsp)\n"
+    "mov %rdx, %rdi\n   mov %rcx, %rsi\n   xor %edx, %edx\n"
+    "call memory_search_prepare\n   mov %rax, %r8\n   mov %rdx, %r9\n"
+    "mov 0(%rsp), %rdi\n   mov 8(%rsp), %rsi\n"
+    "mov 16(%rsp), %rdx\n   mov 24(%rsp), %rcx\n   add $40, %rsp\n"
+    "jmp memory_search_prepared_core\n"
+    ".Lmemory_search_x64_short_general:\n   xor %r8d, %r8d\n"
+    "lea -1(%rcx), %r9\n   jmp memory_search_prepared_core\n"
+    ".Lmemory_search_x64_one_general:\n   movzbl (%rdx), %ecx\n"
+    "mov %rsi, %rdx\n   mov %rcx, %rsi\n   jmp memory_first_of\n"
+    ".Lmemory_search_x64_empty_general:\n   mov %rdi, %rax\n" ASM_RET
+    ".Lmemory_search_x64_absent_general:\n   xor %eax, %eax\n" ASM_RET
+    ASM_END(memory_search)
+    ASM_FUNC(memory_search_prepared)
+    "test %rcx, %rcx\n   jz .Lmemory_search_prepared_x64_empty\n"
+    "cmp %rcx, %rsi\n   jb .Lmemory_search_prepared_x64_absent\n"
+    "cmp $1, %rcx\n   je .Lmemory_search_prepared_x64_one\n"
+    "jmp memory_search_prepared_core\n"
+    ".Lmemory_search_prepared_x64_one:\n   movzbl (%rdx), %ecx\n"
+    "mov %rsi, %rdx\n   mov %rcx, %rsi\n   jmp memory_first_of\n"
+    ".Lmemory_search_prepared_x64_empty:\n   mov %rdi, %rax\n" ASM_RET
+    ".Lmemory_search_prepared_x64_absent:\n   xor %eax, %eax\n" ASM_RET
+    ASM_END(memory_search_prepared)
+    ASM_LOCAL_FUNC(memory_search_prepared_core)
     //
     //       The algorithm, which matters more here than the instructions.
     //
@@ -2636,17 +2698,6 @@ __asm__(
     //       being handed it. The last row is this routine called again after
     //       every hit, setting itself up each time.
     //
-    "test %rcx, %rcx\n   jz 90f  # an empty needle is at the front\n"
-    "cmp %rcx, %rsi\n   jb 95f  # longer than the haystack: nowhere\n"
-    "cmp $1, %rcx\n   jne 20f\n"
-    //
-    //       One byte is memory_first_of, which is already here and already wide.
-    //
-    "movzbl (%rdx), %ecx\n   mov %rsi, %rdx\n   mov %rcx, %rsi\n   jmp memory_first_of\n"
-    "90:  mov %rdi, %rax\n"
-    ASM_RET
-    "95:  xor %eax, %eax\n"
-    ASM_RET
     //
     //       Six saved registers and fifty six bytes, which leaves the stack
     //       sixteen byte aligned at the calls below. The seven slots hold
@@ -2655,10 +2706,11 @@ __asm__(
     //       block after the first failed candidate read whatever
     //       memory_compare had left there.
     //
-    "20:  push %rbx\n   push %rbp\n   push %r12\n   push %r13\n"
+    "push %rbx\n   push %rbp\n   push %r12\n   push %r13\n"
     "push %r14\n   push %r15\n   sub $56, %rsp\n   mov %rdi, %rbx  # the haystack\n"
     "mov %rdx, %rbp  # the needle\n"
     "mov %rcx, %r12  # its length\n"
+    "mov %r8, 32(%rsp)\n   mov %r9, 40(%rsp)\n"
     ASM_USERSPACE_WIDE(
     ASM_NARROW("cpu_has_avx2", "6f")
     //
@@ -2674,23 +2726,8 @@ __asm__(
     "mov %rsi, %r8\n   sub %r12, %r8\n   cmp $31, %r8\n   jb 6f\n"
     "sub $31, %r8\n   mov %r8, 8(%rsp)\n"
     //
-    //       The two rarest bytes of the needle, as offsets into it. One pass,
-    //       keeping the best and the second best, which is why two offsets
-    //       always come out distinct even when the bytes at them are equal.
-    //
-    //       Under four bytes there is nothing to choose: the two ends are
-    //       almost the whole needle, and the byte in the middle of a three is
-    //       checked by hand below.
-    //
-    "cmp $4, %r12\n   jb 22f\n   lea byte_commonness(%rip), %rdx\n   mov $256, %esi\n"
-    "mov $256, %r13d\n   xor %ecx, %ecx\n   xor %edi, %edi\n   xor %r10d, %r10d\n"
-    "21:  movzbl (%rbp,%rcx), %eax\n   movzbl (%rdx,%rax), %eax\n   cmp %rsi, %rax\n   jae 23f\n"
-    "mov %rsi, %r13\n   mov %rdi, %r10\n   mov %rax, %rsi\n   mov %rcx, %rdi\n"
-    "jmp 24f\n"
-    "23:  cmp %r13, %rax\n   jae 24f\n   mov %rax, %r13\n   mov %rcx, %r10\n"
-    "24:  inc %rcx\n   cmp %r12, %rcx\n   jb 21b\n   jmp 25f\n"
-    "22:  xor %edi, %edi\n   lea -1(%r12), %r10\n"
-    "25:  movzbl (%rbp,%rdi), %eax\n   vmovd %eax, %xmm1\n   vpbroadcastb %xmm1, %ymm1\n   movzbl (%rbp,%r10), %eax\n"
+    "mov 32(%rsp), %rdi\n   mov 40(%rsp), %r10\n"
+    "movzbl (%rbp,%rdi), %eax\n   vmovd %eax, %xmm1\n   vpbroadcastb %xmm1, %ymm1\n   movzbl (%rbp,%r10), %eax\n"
     "vmovd %eax, %xmm2\n   vpbroadcastb %xmm2, %ymm2\n   lea (%rbx,%rdi), %rax\n   mov %rax, 16(%rsp)\n"
     "lea (%rbx,%r10), %rax\n   mov %rax, 24(%rsp)\n   mov %rdi, 32(%rsp)\n   mov %r10, 40(%rsp)\n"
     //
@@ -2754,7 +2791,8 @@ __asm__(
     //       byte is and memcmp says whether the rest followed, which is the
     //       naive search with both of its loops already written wide.
     //
-    //       The rarest byte of the needle, not the first.
+    //       The prepared rarest byte of the needle, not the first. The cold
+    //       pass that selected it has already happened in the caller.
     //
     //       This said the first byte, on the grounds that the path existed
     //       for haystacks under sixty bytes and choosing cost more than it
@@ -2768,8 +2806,9 @@ __asm__(
     //       The rarest byte of that needle is in none of those positions and
     //       the hunt ends in one pass.
     //
-    //       One pass over the needle to choose, which is bounded by its
-    //       length and is why choosing was thought not to pay: against a
+    //       One pass over the needle to choose is bounded by its length and
+    //       is why choosing was thought not to pay. Done once per prepared
+    //       needle, against a
     //       haystack that is one candidate per position it pays for itself
     //       many times over, and against one that is not it is a handful of
     //       byte loads.
@@ -2790,10 +2829,7 @@ __asm__(
     //      at the top and zero by the front of the haystack. r13 keeps the
     //      offset of the rarest byte, and nothing this calls writes r13.
     //
-    "lea byte_commonness(%rip), %rdx\n   mov $256, %r8d\n   xor %r13d, %r13d\n   xor %ecx, %ecx\n"
-    "62:  movzbl (%rbp,%rcx), %eax\n   movzbl (%rdx,%rax), %eax\n   cmp %r8, %rax\n   jae 63f\n"
-    "mov %rax, %r8\n   mov %rcx, %r13\n"
-    "63:  inc %rcx\n   cmp %r12, %rcx\n   jb 62b\n   mov %rbx, %r15\n"
+    "mov 32(%rsp), %r13\n   mov %rbx, %r15\n"
     //
     //      The hunt runs at the anchor's offset, so a hit is that many bytes
     //      into the candidate and the start is the hit less the offset. The
@@ -2811,7 +2847,7 @@ __asm__(
     "9:  add $56, %rsp\n   pop %r15\n   pop %r14\n   pop %r13\n"
     "pop %r12\n   pop %rbp\n   pop %rbx\n"
     ASM_RET
-    ASM_END(memory_search)
+    ASM_LOCAL_END(memory_search_prepared_core)
     //
     //       string_first_of_or_end, string_first_of_max and string_last_of_or_end -- the rest of the byte hunts.
     //
@@ -6563,22 +6599,47 @@ __asm__(
     ".Lmemory_first_icase_arm64_absent:\n   mov x0, #0\n" ASM_RET
     ".Lmemory_first_icase_arm64_found:\n" ASM_RET
     ASM_END(memory_first_of_ascii_case)
+    ASM_FUNC(memory_search_prepare)
+    "mov x9, #0\n   mov x10, #0\n   cbz x1, 9f\n"
+    "sub x10, x1, #1\n   cmp x1, #4\n   b.lo 9f\n"
+    "adrp x3, byte_commonness\n   add x3, x3, :lo12:byte_commonness\n"
+    "mov x4, #256\n   mov x5, #256\n   mov x6, #0\n"
+    "1:  ldrb w7, [x0, x6]\n   cbz w2, 2f\n"
+    "orr w8, w7, #32\n   sub w11, w8, #'a'\n   cmp w11, #25\n"
+    "csel w7, w8, w7, ls\n"
+    "2:  ldrb w7, [x3, x7]\n   cmp x7, x4\n   b.hs 3f\n"
+    "mov x5, x4\n   mov x10, x9\n   mov x4, x7\n   mov x9, x6\n"
+    "b 4f\n"
+    "3:  cmp x7, x5\n   b.hs 4f\n   mov x5, x7\n   mov x10, x6\n"
+    "4:  add x6, x6, #1\n   cmp x6, x1\n   b.lo 1b\n"
+    "9:  mov x0, x9\n   mov x1, x10\n" ASM_RET
+    ASM_END(memory_search_prepare)
     ASM_FUNC(memory_search_ascii_case)
+    "cbz x3, .Lmemory_search_icase_arm64_empty_general\n   cmp x1, x3\n"
+    "b.lo .Lmemory_search_icase_arm64_absent_general\n"
+    "cmp x1, #64\n   b.lo .Lmemory_search_icase_arm64_short_general\n"
+    "cmp x3, #4\n   b.lo .Lmemory_search_icase_arm64_short_general\n"
+    "stp x0, x1, [sp, #-48]!\n   stp x2, x3, [sp, #16]\n"
+    "str x30, [sp, #32]\n   mov x0, x2\n   mov x1, x3\n   mov x2, #1\n"
+    "bl memory_search_prepare\n   mov x4, x0\n   ldp x0, x1, [sp]\n"
+    "ldp x2, x3, [sp, #16]\n   ldr x30, [sp, #32]\n   add sp, sp, #48\n"
+    "b memory_search_ascii_case_prepared_core\n"
+    ".Lmemory_search_icase_arm64_short_general:\n   mov x4, #0\n"
+    "b memory_search_ascii_case_prepared_core\n"
+    ".Lmemory_search_icase_arm64_empty_general:\n" ASM_RET
+    ".Lmemory_search_icase_arm64_absent_general:\n   mov x0, #0\n" ASM_RET
+    ASM_END(memory_search_ascii_case)
+    ASM_FUNC(memory_search_ascii_case_prepared)
     "cbz x3, .Lmemory_search_icase_arm64_empty\n   cmp x1, x3\n"
     "b.lo .Lmemory_search_icase_arm64_absent\n"
+    "b memory_search_ascii_case_prepared_core\n"
+    ".Lmemory_search_icase_arm64_empty:\n" ASM_RET
+    ".Lmemory_search_icase_arm64_absent:\n   mov x0, #0\n" ASM_RET
+    ASM_END(memory_search_ascii_case_prepared)
+    ASM_LOCAL_FUNC(memory_search_ascii_case_prepared_core)
     "stp x19, x20, [sp, #-48]!\n   stp x21, x22, [sp, #16]\n"
     "stp x23, x30, [sp, #32]\n   mov x19, x2\n   mov x20, x3\n"
-    "add x21, x0, x1\n   sub x21, x21, x3\n   mov x22, x0\n   mov x23, #0\n"
-    "cmp x1, #64\n   b.lo .Lmemory_search_icase_arm64_hunt\n"
-    "cmp x20, #4\n   b.lo .Lmemory_search_icase_arm64_hunt\n"
-    "adrp x4, byte_commonness\n   add x4, x4, :lo12:byte_commonness\n"
-    "mov x5, #256\n   mov x6, #0\n"
-    ".Lmemory_search_icase_arm64_choose:\n   ldrb w7, [x19, x6]\n"
-    "orr w8, w7, #32\n   sub w9, w8, #'a'\n   cmp w9, #25\n"
-    "csel w7, w8, w7, ls\n   ldrb w7, [x4, x7]\n   cmp x7, x5\n"
-    "b.hs .Lmemory_search_icase_arm64_choose_next\n   mov x5, x7\n   mov x23, x6\n"
-    ".Lmemory_search_icase_arm64_choose_next:\n   add x6, x6, #1\n"
-    "cmp x6, x20\n   b.lo .Lmemory_search_icase_arm64_choose\n"
+    "add x21, x0, x1\n   sub x21, x21, x3\n   mov x22, x0\n   mov x23, x4\n"
     ".Lmemory_search_icase_arm64_hunt:\n   sub x2, x21, x22\n   add x2, x2, #1\n"
     "add x0, x22, x23\n   ldrb w1, [x19, x23]\n   bl memory_first_of_ascii_case\n"
     "cbz x0, .Lmemory_search_icase_arm64_not_found\n   sub x22, x0, x23\n"
@@ -6590,20 +6651,42 @@ __asm__(
     ".Lmemory_search_icase_arm64_found:\n   mov x0, x22\n"
     ".Lmemory_search_icase_arm64_return:\n   ldp x21, x22, [sp, #16]\n"
     "ldp x23, x30, [sp, #32]\n   ldp x19, x20, [sp], #48\n" ASM_RET
-    ".Lmemory_search_icase_arm64_empty:\n" ASM_RET
-    ".Lmemory_search_icase_arm64_absent:\n   mov x0, #0\n" ASM_RET
-    ASM_END(memory_search_ascii_case)
+    ASM_LOCAL_END(memory_search_ascii_case_prepared_core)
     ASM_FUNC(memory_search)
-    "cbz x3, 90f  // an empty needle is at the front\n"
-    "cmp x1, x3\n   b.lo 95f  // longer than the haystack: nowhere\n"
-    "cmp x3, #1\n"
-    "b.ne 20f\n   ldrb w4, [x2]\n   mov x2, x1\n   mov x1, x4\n"
-    "b memory_first_of  // one byte is memchr\n"
-    "90:\n"
-    ASM_RET
-    "95:  mov x0, #0\n"
-    ASM_RET
-    "20:  stp x29, x30, [sp,  #-96]!\n"
+    "cbz x3, .Lmemory_search_arm64_empty_general\n   cmp x1, x3\n"
+    "b.lo .Lmemory_search_arm64_absent_general\n   cmp x3, #1\n"
+    "b.eq .Lmemory_search_arm64_one_general\n"
+#ifndef KERNEL_MODE
+    "sub x4, x1, x3\n   cmp x4, #15\n"
+    "b.lo .Lmemory_search_arm64_short_general\n"
+#else
+    "b .Lmemory_search_arm64_short_general\n"
+#endif
+    "cmp x3, #4\n   b.lo .Lmemory_search_arm64_short_general\n"
+    "stp x0, x1, [sp, #-48]!\n   stp x2, x3, [sp, #16]\n"
+    "str x30, [sp, #32]\n   mov x0, x2\n   mov x1, x3\n   mov x2, #0\n"
+    "bl memory_search_prepare\n   mov x4, x0\n   mov x5, x1\n"
+    "ldp x0, x1, [sp]\n   ldp x2, x3, [sp, #16]\n"
+    "ldr x30, [sp, #32]\n   add sp, sp, #48\n   b memory_search_prepared_core\n"
+    ".Lmemory_search_arm64_short_general:\n   mov x4, #0\n"
+    "sub x5, x3, #1\n   b memory_search_prepared_core\n"
+    ".Lmemory_search_arm64_one_general:\n   ldrb w4, [x2]\n"
+    "mov x2, x1\n   mov x1, x4\n   b memory_first_of\n"
+    ".Lmemory_search_arm64_empty_general:\n" ASM_RET
+    ".Lmemory_search_arm64_absent_general:\n   mov x0, #0\n" ASM_RET
+    ASM_END(memory_search)
+    ASM_FUNC(memory_search_prepared)
+    "cbz x3, .Lmemory_search_prepared_arm64_empty\n"
+    "cmp x1, x3\n   b.lo .Lmemory_search_prepared_arm64_absent\n"
+    "cmp x3, #1\n   b.eq .Lmemory_search_prepared_arm64_one\n"
+    "b memory_search_prepared_core\n"
+    ".Lmemory_search_prepared_arm64_one:\n   ldrb w4, [x2]\n"
+    "mov x2, x1\n   mov x1, x4\n   b memory_first_of\n"
+    ".Lmemory_search_prepared_arm64_empty:\n" ASM_RET
+    ".Lmemory_search_prepared_arm64_absent:\n   mov x0, #0\n" ASM_RET
+    ASM_END(memory_search_prepared)
+    ASM_LOCAL_FUNC(memory_search_prepared_core)
+    "stp x29, x30, [sp,  #-96]!\n"
     "mov x29, sp\n   stp x19, x20, [sp, #16]\n"
     "stp x21, x22, [sp, #32]\n"
     "stp x23, x24, [sp, #48]\n"
@@ -6612,6 +6695,7 @@ __asm__(
     "mov x19, x0  // the haystack\n"
     "mov x20, x2  // the needle\n"
     "mov x21, x3  // its length\n"
+    "mov x26, x4\n   mov x27, x5\n"
 #ifndef KERNEL_MODE
     //
     //      Sixteen positions a block here rather than thirty two, which is
@@ -6623,25 +6707,10 @@ __asm__(
     "sub x25, x1, x21\n   cmp x25, #15\n"
     "b.lo 6f\n   sub x25, x25, #15\n"
     //
-    //      The two rarest bytes of the needle, as offsets into it. One pass
-    //      keeping the best and the second best, which is what makes the two
-    //      offsets distinct even when the bytes at them are equal.
+    //      The two prepared rarest-byte offsets. Preparation keeps them
+    //      distinct even when the bytes at them are equal.
     //
-    "mov x26, #0\n"
-    "sub x27, x21, #1\n"
-    "cmp x21, #4\n"
-    "b.lo 25f\n   adrp x6, byte_commonness\n   add x6, x6, :lo12:byte_commonness\n   mov x7, #256\n"
-    "mov x8, #256\n"
-    "mov x9, #0\n"
-    "mov x26, #0\n"
-    "mov x27, #0\n"
-    "21:  ldrb w10, [x20, x9]\n   ldrb w10, [x6, x10]\n   cmp x10, x7\n   b.hs 23f\n"
-    "mov x8, x7\n   mov x27, x26\n   mov x7, x10\n   mov x26, x9\n"
-    "b 24f\n"
-    "23:  cmp x10, x8\n   b.hs 24f\n   mov x8, x10\n   mov x27, x9\n"
-    "24:  add x9, x9, #1\n"
-    "cmp x9, x21\n   b.lo 21b\n"
-    "25:  ldrb w10, [x20, x26]\n   dup v2.16b, w10\n   ldrb w10, [x20, x27]\n   dup v3.16b, w10\n"
+    "ldrb w10, [x20, x26]\n   dup v2.16b, w10\n   ldrb w10, [x20, x27]\n   dup v3.16b, w10\n"
     "mov x24, #0\n"
     "mov x23, #0\n"
     "1:  add x6, x19, x24\n   ldr q0, [x6, x26]\n   cmeq v0.16b, v0.16b, v2.16b\n   ldr q1, [x6, x27]\n"
@@ -6693,21 +6762,22 @@ __asm__(
     "b 4b\n"
 #endif
     //
-    //       The narrow path: every haystack too short for one block. memory_first_of
-    //       finds where the first byte is and memcmp says whether the rest
-    //       followed, which is the naive search with both of its loops
-    //       already written wide. The first byte rather than the rarest,
-    //       because this path exists for haystacks under thirty bytes, where
-    //       choosing costs more than it saves.
+    //       The narrow path: every haystack too short for one block.
+    //       memory_first_of finds the prepared anchor and memcmp says whether
+    //       the rest followed. The general API supplies the first byte here,
+    //       preserving its short-haystack policy; a prepared caller may have
+    //       amortized a rarer choice across many searches.
     //
     //       A failed candidate is left one byte, not needle_size: "aab" is in
     //       "aaab", and a scan that resumes past what it matched cannot see
     //       it.
     //
-    "6:  add x27, x19, x1\n   sub x27, x27, x21  // the last position a match could start at\n"
+    "6:  mov x23, x26\n   add x27, x19, x1\n"
+    "sub x27, x27, x21  // the last position a match could start at\n"
     "mov x26, x19\n"
     "61:  sub x2, x27, x26\n   add x2, x2, #1  // positions still to try\n"
-    "mov x0, x26\n   ldrb w1, [x20]\n   bl memory_first_of\n   cbz x0, 8f\n"
+    "add x0, x26, x23\n   ldrb w1, [x20, x23]\n"
+    "bl memory_first_of\n   cbz x0, 8f\n   sub x0, x0, x23\n"
     "mov x28, x0\n   mov x26, x0\n   mov x1, x20\n   mov x2, x21\n"
     "bl memory_compare\n   cbz w0, 7f\n   add x26, x26, #1\n"
     "cmp x26, x27\n   b.ls 61b\n"
@@ -6721,7 +6791,7 @@ __asm__(
     "ldp x27, x28, [sp, #80]\n"
     "ldp x29, x30, [sp], #96\n"
     ASM_RET
-    ASM_END(memory_search)
+    ASM_LOCAL_END(memory_search_prepared_core)
     //
     //       moonwater_cpu_detect -- nothing to ask yet.
     //
@@ -9653,22 +9723,46 @@ __asm__(
     ".Lmemory_first_icase_rv_found1:\n   addi a0, a0, 1\n"
     ".Lmemory_first_icase_rv_found0:\n" ASM_RET
     ASM_END(memory_first_of_ascii_case)
+    ASM_FUNC(memory_search_prepare)
+    "li a3, 0\n   li a4, 0\n   beqz a1, 9f\n"
+    "addi a4, a1, -1\n   li t0, 4\n   bltu a1, t0, 9f\n"
+    "lla t0, byte_commonness\n   li t1, 256\n   li t2, 256\n   li t3, 0\n"
+    "1:  add t4, a0, t3\n   lbu t4, 0(t4)\n   beqz a2, 2f\n"
+    "ori t5, t4, 32\n   addi t6, t5, -97\n   li a5, 25\n"
+    "bgtu t6, a5, 2f\n   mv t4, t5\n"
+    "2:  add t4, t0, t4\n   lbu t4, 0(t4)\n   bgeu t4, t1, 3f\n"
+    "mv t2, t1\n   mv a4, a3\n   mv t1, t4\n   mv a3, t3\n   j 4f\n"
+    "3:  bgeu t4, t2, 4f\n   mv t2, t4\n   mv a4, t3\n"
+    "4:  addi t3, t3, 1\n   bltu t3, a1, 1b\n"
+    "9:  mv a0, a3\n   mv a1, a4\n" ASM_RET
+    ASM_END(memory_search_prepare)
     ASM_FUNC(memory_search_ascii_case)
+    "beqz a3, .Lmemory_search_icase_rv_empty_general\n"
+    "bltu a1, a3, .Lmemory_search_icase_rv_absent_general\n"
+    "li t0, 64\n   bltu a1, t0, .Lmemory_search_icase_rv_short_general\n"
+    "li t0, 4\n   bltu a3, t0, .Lmemory_search_icase_rv_short_general\n"
+    "addi sp, sp, -48\n   sd ra, 40(sp)\n   sd a0, 32(sp)\n"
+    "sd a1, 24(sp)\n   sd a2, 16(sp)\n   sd a3, 8(sp)\n"
+    "mv a0, a2\n   mv a1, a3\n   li a2, 1\n   call memory_search_prepare\n"
+    "mv a4, a0\n   ld a3, 8(sp)\n   ld a2, 16(sp)\n"
+    "ld a1, 24(sp)\n   ld a0, 32(sp)\n   ld ra, 40(sp)\n"
+    "addi sp, sp, 48\n   j memory_search_ascii_case_prepared_core\n"
+    ".Lmemory_search_icase_rv_short_general:\n   li a4, 0\n"
+    "j memory_search_ascii_case_prepared_core\n"
+    ".Lmemory_search_icase_rv_empty_general:\n" ASM_RET
+    ".Lmemory_search_icase_rv_absent_general:\n   li a0, 0\n" ASM_RET
+    ASM_END(memory_search_ascii_case)
+    ASM_FUNC(memory_search_ascii_case_prepared)
     "beqz a3, .Lmemory_search_icase_rv_empty\n   bltu a1, a3, .Lmemory_search_icase_rv_absent\n"
+    "j memory_search_ascii_case_prepared_core\n"
+    ".Lmemory_search_icase_rv_empty:\n" ASM_RET
+    ".Lmemory_search_icase_rv_absent:\n   li a0, 0\n" ASM_RET
+    ASM_END(memory_search_ascii_case_prepared)
+    ASM_LOCAL_FUNC(memory_search_ascii_case_prepared_core)
     "addi sp, sp, -48\n   sd ra, 40(sp)\n   sd s0, 32(sp)\n"
     "sd s1, 24(sp)\n   sd s2, 16(sp)\n   sd s3, 8(sp)\n   sd s4, 0(sp)\n"
     "mv s0, a2\n   mv s1, a3\n   add s2, a0, a1\n   sub s2, s2, a3\n"
-    "mv s3, a0\n   li s4, 0\n   li t0, 64\n"
-    "bltu a1, t0, .Lmemory_search_icase_rv_hunt\n   li t0, 4\n"
-    "bltu s1, t0, .Lmemory_search_icase_rv_hunt\n"
-    "lla t0, byte_commonness\n   li t1, 256\n   li t2, 0\n"
-    ".Lmemory_search_icase_rv_choose:\n   add t3, s0, t2\n   lbu t3, 0(t3)\n"
-    "ori t4, t3, 32\n   addi t5, t4, -97\n   li t6, 25\n"
-    "bgtu t5, t6, .Lmemory_search_icase_rv_choose_score\n   mv t3, t4\n"
-    ".Lmemory_search_icase_rv_choose_score:\n   add t3, t0, t3\n   lbu t3, 0(t3)\n"
-    "bgeu t3, t1, .Lmemory_search_icase_rv_choose_next\n   mv t1, t3\n   mv s4, t2\n"
-    ".Lmemory_search_icase_rv_choose_next:\n   addi t2, t2, 1\n"
-    "bltu t2, s1, .Lmemory_search_icase_rv_choose\n"
+    "mv s3, a0\n   mv s4, a4\n"
     ".Lmemory_search_icase_rv_hunt:\n   sub a2, s2, s3\n   addi a2, a2, 1\n"
     "add a0, s3, s4\n   add t0, s0, s4\n   lbu a1, 0(t0)\n"
     "call memory_first_of_ascii_case\n   beqz a0, .Lmemory_search_icase_rv_not_found\n"
@@ -9682,10 +9776,37 @@ __asm__(
     ".Lmemory_search_icase_rv_return:\n   ld s4, 0(sp)\n   ld s3, 8(sp)\n"
     "ld s2, 16(sp)\n   ld s1, 24(sp)\n   ld s0, 32(sp)\n   ld ra, 40(sp)\n"
     "addi sp, sp, 48\n" ASM_RET
-    ".Lmemory_search_icase_rv_empty:\n" ASM_RET
-    ".Lmemory_search_icase_rv_absent:\n   li a0, 0\n" ASM_RET
-    ASM_END(memory_search_ascii_case)
+    ASM_LOCAL_END(memory_search_ascii_case_prepared_core)
     ASM_FUNC(memory_search)
+    "beqz a3, .Lmemory_search_rv_empty_general\n"
+    "bltu a1, a3, .Lmemory_search_rv_absent_general\n"
+    "li t0, 1\n   beq a3, t0, .Lmemory_search_rv_one_general\n"
+    "li t0, 64\n   bltu a1, t0, .Lmemory_search_rv_short_general\n"
+    "li t0, 4\n   bltu a3, t0, .Lmemory_search_rv_short_general\n"
+    "addi sp, sp, -48\n   sd ra, 40(sp)\n   sd a0, 32(sp)\n"
+    "sd a1, 24(sp)\n   sd a2, 16(sp)\n   sd a3, 8(sp)\n"
+    "mv a0, a2\n   mv a1, a3\n   li a2, 0\n   call memory_search_prepare\n"
+    "mv a4, a0\n   mv a5, a1\n   ld a3, 8(sp)\n   ld a2, 16(sp)\n"
+    "ld a1, 24(sp)\n   ld a0, 32(sp)\n   ld ra, 40(sp)\n"
+    "addi sp, sp, 48\n   j memory_search_prepared_core\n"
+    ".Lmemory_search_rv_short_general:\n   li a4, 0\n"
+    "addi a5, a3, -1\n   j memory_search_prepared_core\n"
+    ".Lmemory_search_rv_one_general:\n   lbu t1, 0(a2)\n"
+    "mv a2, a1\n   mv a1, t1\n   j memory_first_of\n"
+    ".Lmemory_search_rv_empty_general:\n" ASM_RET
+    ".Lmemory_search_rv_absent_general:\n   li a0, 0\n" ASM_RET
+    ASM_END(memory_search)
+    ASM_FUNC(memory_search_prepared)
+    "beqz a3, .Lmemory_search_prepared_rv_empty\n"
+    "bltu a1, a3, .Lmemory_search_prepared_rv_absent\n"
+    "li t0, 1\n   beq a3, t0, .Lmemory_search_prepared_rv_one\n"
+    "j memory_search_prepared_core\n"
+    ".Lmemory_search_prepared_rv_one:\n   lbu t1, 0(a2)\n"
+    "mv a2, a1\n   mv a1, t1\n   j memory_first_of\n"
+    ".Lmemory_search_prepared_rv_empty:\n" ASM_RET
+    ".Lmemory_search_prepared_rv_absent:\n   li a0, 0\n" ASM_RET
+    ASM_END(memory_search_prepared)
+    ASM_LOCAL_FUNC(memory_search_prepared_core)
     //
     //       One byte hunted rather than two, and no block at all: the
     //       and-ing of two masks that the other two blocks are built on wants
@@ -9694,26 +9815,19 @@ __asm__(
     //       whether it did, which is the naive search with both of its loops
     //       already written eight bytes at a time.
     //
-    //       The byte hunted for is the needle's rarest and not its first,
-    //       which is the one part of the wide algorithm that survives without
+    //       The byte hunted for is the caller's prepared anchor, normally the
+    //       needle's rarest and not its first, which is the one part of the
+    //       wide algorithm that survives without
     //       a vector register and is most of what it buys: a candidate costs
     //       a call, and the point of choosing is to have fewer of them.
     //       byte_commonness is the table and the note where it is defined
     //       says how it was counted.
     //
-    //       Choosing costs a pass over the needle, so it is only done when
-    //       there is a haystack worth the pass -- under sixty four bytes the
-    //       first byte is taken and nothing is read twice.
+    //       The general API retains its old policy: under sixty four bytes it
+    //       supplies the first byte and reads nothing twice. An explicit
+    //       prepared caller already paid the one needle pass elsewhere.
     //
-    "beqz a3, 90f  # an empty needle is at the front\n"
-    "bltu a1, a3, 95f  # longer than the haystack: nowhere\n"
-    "li t0, 1\n   bne a3, t0, 20f\n   lbu t1, 0(a2)\n   mv a2, a1\n"
-    "mv a1, t1\n   j memory_first_of  # one byte is memchr\n"
-    "90:\n"
-    ASM_RET
-    "95:  li a0, 0\n"
-    ASM_RET
-    "20:  addi sp, sp, -64\n   sd ra, 56(sp)\n   sd s0, 48(sp)\n   sd s1, 40(sp)\n"
+    "addi sp, sp, -64\n   sd ra, 56(sp)\n   sd s0, 48(sp)\n   sd s1, 40(sp)\n"
     "sd s2, 32(sp)\n   sd s3, 24(sp)\n   sd s4, 16(sp)\n   sd s5, 8(sp)\n"
     "mv s0, a0  # the haystack\n"
     "mv s1, a2  # the needle\n"
@@ -9723,13 +9837,7 @@ __asm__(
     //
     //      Which byte of the needle to hunt, as an offset into it.
     //
-    "li s5, 0  # the offset\n"
-    "li t1, 64\n   bltu a1, t1, 26f\n   li t2, 4\n   bltu s2, t2, 26f\n"
-    "la t3, byte_commonness\n   li t4, 256\n   li t5, 0\n"
-    "21:  add t6, s1, t5\n   lbu t6, 0(t6)\n   add t6, t3, t6\n   lbu t6, 0(t6)\n"
-    "bgeu t6, t4, 22f\n   mv t4, t6\n   mv s5, t5\n"
-    "22:  addi t5, t5, 1\n   bltu t5, s2, 21b\n"
-    "26:\n"
+    "mv s5, a4  # the prepared offset\n"
     //
     //      The hunt runs from the offset, and a hit is a candidate that many
     //      bytes earlier. The last position a match could start at bounds it,
@@ -9751,7 +9859,7 @@ __asm__(
     "9:  ld ra, 56(sp)\n   ld s0, 48(sp)\n   ld s1, 40(sp)\n   ld s2, 32(sp)\n"
     "ld s3, 24(sp)\n   ld s4, 16(sp)\n   ld s5, 8(sp)\n   addi sp, sp, 64\n"
     ASM_RET
-    ASM_END(memory_search)
+    ASM_LOCAL_END(memory_search_prepared_core)
     //
     //       moonwater_cpu_detect -- nothing to ask yet. The vector extension is optional
     //       on riscv and would need asking about; nothing here uses it.
@@ -11867,6 +11975,21 @@ positive2 string_hash_33_length(string_address source);
 positive memory_span_byte(address_any block, p8 value, positive size);
 b32 memory_compare_ascii_case(address_any one, address_any two, positive size);
 address_any memory_first_of_ascii_case(address_any block, b8 value, positive size);
+// Select the corpus-rarest search anchors once for a needle that will be
+// searched repeatedly.  x is the rarest offset and y the second rarest;
+// ascii_case makes their ranking insensitive to ASCII letter case.
+// The prepared calls take exactly this result: for a nonempty needle every
+// supplied anchor must be below needle_size.  They do not validate anchors,
+// because doing that on every repeated search would undo preparation's point.
+positive2 memory_search_prepare(address_any needle, positive needle_size,
+                                bool ascii_case);
+address_any memory_search_prepared(address_any block, positive size,
+                                   address_any needle, positive needle_size,
+                                   positive anchor, positive second_anchor);
+address_any memory_search_ascii_case_prepared(address_any block, positive size,
+                                              address_any needle,
+                                              positive needle_size,
+                                              positive anchor);
 address_any memory_search_ascii_case(address_any block, positive size,
                                      address_any needle, positive needle_size);
 address_any memory_last_of(address_any block, b8 value, positive size);

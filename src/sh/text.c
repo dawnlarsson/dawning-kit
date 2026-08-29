@@ -565,6 +565,7 @@ static p8 address_to regex_first = regex_first_store[0];
 static p8 address_to regex_last = regex_last_store[0];
 static p8 address_to regex_literal = regex_literal_store[0];
 static positive regex_literal_length;
+static positive2 regex_literal_anchors;
 static bool regex_first_known;
 static bool regex_last_known;
 static bool regex_anchored;
@@ -1367,6 +1368,7 @@ typedef struct
         p8 address_to last;
         p8 address_to literal;
         positive literal_length;
+        positive2 literal_anchors;
         b32 length;
         b32 groups;
         bool extended;
@@ -1388,6 +1390,7 @@ static fn regex_select(regex_program address_to which)
         regex_last = which->last;
         regex_literal = which->literal;
         regex_literal_length = which->literal_length;
+        regex_literal_anchors = which->literal_anchors;
         regex_length_code = which->length;
         regex_group_count = which->groups;
         regex_extended = which->extended;
@@ -1418,6 +1421,7 @@ static fn regex_keep(regex_program address_to which)
         which->last = regex_last;
         which->literal = regex_literal;
         which->literal_length = regex_literal_length;
+        which->literal_anchors = regex_literal_anchors;
         which->length = regex_length_code;
         which->groups = regex_group_count;
         which->extended = regex_extended;
@@ -1708,6 +1712,8 @@ static fn regex_finish()
                 regex_find_last();
 
         regex_find_literal();
+        regex_literal_anchors = memory_search_prepare(
+                regex_literal, regex_literal_length, regex_icase);
 }
 
 static bool regex_compile(string_address pattern, bool extended, bool icase, bool escapes)
@@ -1972,15 +1978,20 @@ static fn regex_clear_state()
 // Where a fixed string sits, exactly or under ASCII case equivalence. Both
 // paths are bounded library searches; grep and sed keep only the range check
 // and the offset that belongs to their surrounding regular-expression state.
-static string_address text_literal_find(string_address text, positive length, positive from,
-                                        string_address want, positive size, bool icase)
+static string_address text_literal_find(string_address text, positive length,
+                                        positive from, string_address want,
+                                        positive size, bool icase,
+                                        positive2 anchors)
 {
         if (from > length || length - from < size)
                 return null;
 
-        return icase ? memory_search_ascii_case(text + from, length - from,
-                                                want, size)
-                     : memory_search(text + from, length - from, want, size);
+        return icase ? memory_search_ascii_case_prepared(
+                               text + from, length - from, want, size,
+                               anchors.x)
+                     : memory_search_prepared(text + from, length - from,
+                                              want, size, anchors.x,
+                                              anchors.y);
 }
 
 // Leftmost: the first position where the whole pattern succeeds.
@@ -1992,7 +2003,8 @@ static bool regex_search(string_address text, positive length, positive from)
         if (regex_literal_length)
         {
                 string_address found = text_literal_find(text, length, from, regex_literal,
-                                                         regex_literal_length, regex_icase);
+                                                         regex_literal_length, regex_icase,
+                                                         regex_literal_anchors);
 
                 if (!found)
                         return false;
@@ -4962,11 +4974,13 @@ static bool grep_hold_make(positive lines)
 static p8 grep_literal[REGEX_LITERAL_MAX];
 static positive grep_literal_length;
 static bool grep_literal_icase;
+static positive2 grep_literal_anchors;
 
 static fn grep_literal_keep()
 {
         grep_literal_length = regex_literal_length;
         memory_copy(grep_literal, regex_literal, regex_literal_length);
+        grep_literal_anchors = regex_literal_anchors;
 }
 
 static bool grep_skip(positive address_to lines, positive address_to bytes)
@@ -4978,9 +4992,16 @@ static bool grep_skip(positive address_to lines, positive address_to bytes)
 
                 p8 address_to at = text_input.buffer + text_input.position;
                 positive left = text_input.filled - text_input.position;
-                string_address found = text_literal_find(at, left, 0, grep_literal,
-                                                         grep_literal_length,
-                                                         grep_literal_icase);
+                string_address found = grep_literal_icase
+                                           ? memory_search_ascii_case_prepared(
+                                                 at, left, grep_literal,
+                                                 grep_literal_length,
+                                                 grep_literal_anchors.x)
+                                           : memory_search_prepared(
+                                                 at, left, grep_literal,
+                                                 grep_literal_length,
+                                                 grep_literal_anchors.x,
+                                                 grep_literal_anchors.y);
                 positive stop = found ? (positive)(found - at) : left;
 
                 while (stop && at[stop - 1] != text_delimiter)

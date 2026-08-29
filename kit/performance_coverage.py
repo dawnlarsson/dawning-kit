@@ -117,6 +117,9 @@ byte_to_lower byte_to_upper memory_to_lower_ascii memory_to_upper_ascii
 ''', 'exhaustive byte/page-edge validation and paired scalar-call/inlined-loop timing')
 cover('direct_benchmark', 'kit/bench_ascii_search.c', 'memory_search_ascii_case',
       'bounded exhaustive verifier plus paired former-C/assembly fixed-search timing')
+cover('direct_benchmark', 'kit/bench_grep_search.c', '''
+memory_search_prepared memory_search_ascii_case_prepared
+''', 'paired repeated-search timing over sparse, folded, false-candidate and dense matches')
 cover('direct_benchmark', 'kit/bench_last_of.c', 'memory_last_of',
       'guarded reverse-search validation and paired scalar/assembly timing')
 cover('direct_benchmark', 'kit/bench_words.c', 'memory_count_words',
@@ -131,6 +134,11 @@ cover('benchmark_context', 'kit/bench_ascii_search.c',
       'memory_first_of_ascii_case',
       'bounded hunt reached by the directly timed folded search',
       {'memory_first_of_ascii_case': 'memory_search_ascii_case'})
+cover('benchmark_context', 'kit/bench_grep_search.c', '''
+memory_search_prepared_core memory_search_ascii_case_prepared_core
+''', 'private cores reached by the directly timed prepared searches',
+      {'memory_search_prepared_core': 'memory_search_prepared',
+       'memory_search_ascii_case_prepared_core': 'memory_search_ascii_case_prepared'})
 cover('benchmark_context', 'kit/bench_paths.c', 'path_split_core',
       'private core reached by all three directly timed path wrappers',
       {'path_split_core': 'path_head_copy'})
@@ -202,6 +210,9 @@ string_lex_word string_replace_all string_search string_set_add string_span
 string_span_max string_table_find string_to_bipolar string_to_positive
 wait_status_code_base working_directory_get working_directory_set writer_fill
 ''', 'direct correctness coverage in the assembly verifier')
+
+cover('correctness_only', 'src/test/needle.c', 'memory_search_prepare',
+      'prepared-anchor ABI and empty, one-byte, long, exact and folded needles on all architectures')
 
 cover('correctness_only', 'src/test/verify.c', '''
 file_new_lazy library_close library_get library_open shell_set_cursor

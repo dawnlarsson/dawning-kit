@@ -394,6 +394,13 @@ string_digits_hexadecimal_max string_digits_hexadecimal_escape_max
 ''', 'the bound is a literal, but each of these is already the base-folded '
      'form of string_digits_base_max: the specialization this family has is '
      'the one that shipped as five separate routines')
+cover('folds_already', 'needle_size', '''
+memory_search_prepared memory_search_ascii_case_prepared
+''', 'prepared searches are reached with compiled run-time patterns and already '
+     'redirect empty and one-byte needles inside their assembly entry')
+cover('folds_already', 'ascii_case', 'memory_search_prepare',
+      'the case choice is made once while preparing a reusable needle; splitting '
+      'the cold pass would not shorten any repeated search')
 
 
 # ----------------------------------------------------------------------
@@ -419,6 +426,7 @@ socket_send socket_shutdown
 cover('nothing_to_fold', None, '''
 bipolar_into_core buffered_write_core path_split_core positive_digits_core
 positive_into_core string_to_number_core writer_field_core
+memory_search_prepared_core memory_search_ascii_case_prepared_core
 ''', 'a private core with no declaration, so C cannot name it and no call '
      'site can hand it a literal; its wrappers carry the classification')
 

@@ -72,6 +72,32 @@ static address_any reference_search(const p8 address_to hay, positive size,
         return null;
 }
 
+static p8 fold_ascii(p8 byte)
+{
+        return byte >= 'a' && byte <= 'z' ? (p8)(byte - 32) : byte;
+}
+
+static address_any reference_search_ascii_case(const p8 address_to hay,
+                                               positive size,
+                                               const p8 address_to want,
+                                               positive length)
+{
+        if (!length)
+                return (address_any)hay;
+        if (length > size)
+                return null;
+
+        for (positive at = 0; at + length <= size; at++) {
+                positive i = 0;
+                while (i < length &&
+                       fold_ascii(hay[at + i]) == fold_ascii(want[i]))
+                        i++;
+                if (i == length)
+                        return (address_any)(hay + at);
+        }
+        return null;
+}
+
 /*
         One haystack, three answers, and the guards either side looked at
         afterwards: a search writes nothing, so a byte that moved is a defect
@@ -124,10 +150,17 @@ static void judge_at_edge(const p8 address_to what, const p8 address_to want,
                 for (positive i = 0; i < length; i++)
                         hay[where + i] = want[i];
 
+        positive2 anchors = memory_search_prepare(want, length, false);
+        address_any expected = reference_search(hay, size, want, length);
+
         checks++;
-        if (memory_search((address_any)hay, size, want, length) !=
-            reference_search(hay, size, want, length))
+        if (memory_search((address_any)hay, size, want, length) != expected)
                 fail(what, length, size, "a different answer against the map edge");
+        checks++;
+        if (memory_search_prepared((address_any)hay, size, want, length,
+                                   anchors.x, anchors.y) != expected)
+                fail((const p8 address_to)"prepared against edge", length, size,
+                     "a different answer against the map edge");
 }
 
 /*
@@ -163,6 +196,14 @@ static void judge_at_edge(const p8 address_to what, const p8 address_to want,
                                       (memory_search)((address_any)FIELD, size, \
                                                       LITERAL, (K)),          \
                                       (K), size);                             \
+                                positive2 anchors = memory_search_prepare(   \
+                                        want, (K), false);                   \
+                                judge((const p8 address_to)"prepared",      \
+                                      memory_search_prepared(                \
+                                              (address_any)FIELD, size, want, \
+                                              (K), anchors.x, anchors.y),    \
+                                      reference_search(FIELD, size, want, (K)), \
+                                      (K), size);                            \
                                 judge_at_edge((const p8 address_to)"memory_search", \
                                               want, (K), size, where);        \
                         }                                                     \
@@ -189,6 +230,15 @@ static void judge_at_edge(const p8 address_to what, const p8 address_to want,
                                               (address_any)FIELD, size,       \
                                               LITERAL, (K)),                  \
                                       (K), size);                             \
+                                positive2 anchors = memory_search_prepare(   \
+                                        want, (K), true);                    \
+                                judge((const p8 address_to)"prepared folded", \
+                                      memory_search_ascii_case_prepared(     \
+                                              (address_any)FIELD, size, want, \
+                                              (K), anchors.x),               \
+                                      reference_search_ascii_case(           \
+                                              FIELD, size, want, (K)),       \
+                                      (K), size);                            \
                         }                                                     \
         } while (0)
 
