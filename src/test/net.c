@@ -372,6 +372,15 @@ static fn fetching(void)
         check("a port that is not a number is refused",
               http_split((string_address) "http://h:80x/", name, sizeof name,
                          address_of port, address_of path) == HTTP_BAD_URL);
+        check("an empty port is refused",
+              http_split((string_address) "http://h:/", name, sizeof name,
+                         address_of port, address_of path) == HTTP_BAD_URL);
+        check("the largest port is accepted",
+              http_split((string_address) "http://h:65535/", name, sizeof name,
+                         address_of port, address_of path) == HTTP_OK && port == 65535);
+        check("a port above the wire field is refused",
+              http_split((string_address) "http://h:65536/", name, sizeof name,
+                         address_of port, address_of path) == HTTP_BAD_URL);
 
         {
                 p8 head[] = "HTTP/1.0 200 OK\r\n"
@@ -410,6 +419,13 @@ static fn fetching(void)
                 p8 body[] = "9\r\nabc\r\n";
 
                 check("a chunk longer than the body is refused",
+                      http_unchunk(body, sizeof(body) - 1) < 0);
+        }
+
+        {
+                p8 body[] = "not-a-size\r\n";
+
+                check("a non-hex chunk size is refused",
                       http_unchunk(body, sizeof(body) - 1) < 0);
         }
 }

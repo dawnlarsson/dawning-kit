@@ -98,24 +98,19 @@ static bipolar http_split(string_address url, p8 address_to host, positive room,
 
         if (string_is(at, ':'))
         {
-                positive value = 0;
+                positive used;
+                positive bound;
+                positive value;
 
                 at++;
+                bound = (positive)(string_first_of_or_end(at, '/') - at);
+                value = string_digits_max(at, bound, address_of used);
 
-                while (string_get(at) && !string_is(at, '/'))
-                {
-                        if (string_get(at) < '0' || string_get(at) > '9')
-                                return HTTP_BAD_URL;
-
-                        value = value * 10 + (positive)(string_get(at) - '0');
-
-                        if (value > 65535)
-                                return HTTP_BAD_URL;
-
-                        at++;
-                }
+                if (!bound || used != bound || value > 65535)
+                        return HTTP_BAD_URL;
 
                 address_to port = (p16)value;
+                at += used;
         }
 
         address_to path = string_get(at) ? at : (string_address) "/";
@@ -239,6 +234,7 @@ static bipolar http_unchunk(p8 address_to bytes, positive size)
         {
                 positive line = read;
                 positive length;
+                positive used;
                 p8 address_to newline = (p8 address_to)memory_first_of(
                     bytes + read, '\n', size - read);
 
@@ -248,8 +244,11 @@ static bipolar http_unchunk(p8 address_to bytes, positive size)
                 read = (positive)(newline - bytes);
 
                 length = string_digits_hexadecimal_max(
-                    (string_address)(bytes + line), read - line, null);
+                    (string_address)(bytes + line), read - line, address_of used);
                 read++;
+
+                if (!used)
+                        return HTTP_MALFORMED;
 
                 if (!length)
                         return (bipolar)written;
