@@ -2539,6 +2539,7 @@ static fn expand_case_change(string_address name, string_address pattern_text,
                              bool quoted, bool upper, bool every)
 {
         positive start = expand_length;
+        bool default_pattern = !string_get(pattern_text);
         string_address pattern;
         p8 one[2] = {0, 0};
         positive count;
@@ -2558,6 +2559,19 @@ static fn expand_case_change(string_address name, string_address pattern_text,
 
         count = every ? expand_length - start
                       : (expand_length > start ? 1 : 0);
+
+        // With no explicit pattern the doubled forms select every byte. The
+        // scalar loop stays cheaper for short shell values; beyond that the
+        // bounded architecture loop wins without touching the parallel mark
+        // array.
+        if (default_pattern && every && count >= 32)
+        {
+                if (upper)
+                        memory_to_upper_ascii(expand_text + start, count);
+                else
+                        memory_to_lower_ascii(expand_text + start, count);
+                return;
+        }
 
         for (positive at = 0; at < count; at++)
         {

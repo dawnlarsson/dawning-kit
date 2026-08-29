@@ -30,6 +30,7 @@ writer-text) source_file=kit/bench_writer_text.c ;;
 text-hot) source_file=kit/bench_text_hot.c ;;
 translate) source_file=kit/bench_translate.c ;;
 ascii-case) source_file=kit/bench_ascii_case.c ;;
+ascii-convert) source_file=kit/bench_ascii_convert.c ;;
 ascii-search) source_file=kit/bench_ascii_search.c ;;
 last-of) source_file=kit/bench_last_of.c ;;
 words) source_file=kit/bench_words.c ;;

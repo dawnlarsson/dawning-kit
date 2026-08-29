@@ -860,6 +860,62 @@ test(byte_case) {
         return true;
 }
 
+//      Bulk case conversion is exact and bounded even when a span straddles
+//      a page boundary. The sentinels on both sides catch widened tails.
+test(memory_ascii_case) {
+        p8 original[4128];
+        p8 expected[4128];
+        p8 actual[4128];
+        positive offsets[] = {0, 1, 7, 15, 31, 4093, 4095};
+        positive lengths[] = {0, 1, 2, 7, 8, 15, 16, 17, 31, 32, 33};
+
+        fail(memory_to_lower_ascii(null, 0) == null);
+        fail(memory_to_upper_ascii(null, 0) == null);
+
+        for (positive oi = 0; oi < sizeof(offsets) / sizeof(*offsets); oi++)
+                for (positive li = 0; li < sizeof(lengths) / sizeof(*lengths); li++)
+                {
+                        positive offset = offsets[oi];
+                        positive length = lengths[li];
+
+                        if (offset + length > sizeof(original))
+                                continue;
+
+                        for (positive at = 0; at < sizeof(original); at++)
+                                original[at] = (p8)(at * 37 + offset + length);
+
+                        memory_copy(expected, original, sizeof(original));
+                        memory_copy(actual, original, sizeof(original));
+
+                        for (positive at = 0; at < length; at++)
+                        {
+                                p8 value = expected[offset + at];
+                                if (value >= 'A' && value <= 'Z')
+                                        expected[offset + at] = value + 32;
+                        }
+
+                        fail(memory_to_lower_ascii(actual + offset, length) ==
+                             actual + offset);
+                        fail(!memory_compare(actual, expected, sizeof(actual)));
+
+                        memory_copy(expected, original, sizeof(original));
+                        memory_copy(actual, original, sizeof(original));
+
+                        for (positive at = 0; at < length; at++)
+                        {
+                                p8 value = expected[offset + at];
+                                if (value >= 'a' && value <= 'z')
+                                        expected[offset + at] = value - 32;
+                        }
+
+                        fail(memory_to_upper_ascii(actual + offset, length) ==
+                             actual + offset);
+                        fail(!memory_compare(actual, expected, sizeof(actual)));
+                }
+
+        return true;
+}
+
 /*
         Square root, which is the hardware's own instruction.
 
@@ -1114,6 +1170,7 @@ test_case test_cases[] = {
         case(created_file_mode),
         case(byte_classes),
         case(byte_case),
+        case(memory_ascii_case),
         case(absolute_whole_and_wide),
         case(square_root_is_exact),
         case(absolute_value),

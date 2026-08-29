@@ -1015,6 +1015,80 @@ riscv_alignment_audit()
         [ "$alignment_failed" = 0 ]
 }
 
+#       SSE2 is the x86-64 userspace floor, but the kernel has not enabled or
+#       saved that register file when early memcpy-style consumers run. An
+#       assembler accepts XMM instructions even under -mno-sse, so only the
+#       linked instruction stream is authoritative here.
+x86_kernel_vector_audit()
+{
+        x86_kernel_compiler=
+
+        if [ "$(uname -s)" = Linux ] &&
+           [ "$(uname -m)" = x86_64 ] && command -v "${CC:-gcc}" > /dev/null 2>&1
+        then
+                x86_kernel_compiler=$(command -v "${CC:-gcc}")
+        elif command -v x86_64-linux-gnu-gcc > /dev/null 2>&1
+        then
+                x86_kernel_compiler=$(command -v x86_64-linux-gnu-gcc)
+        fi
+
+        [ -n "$x86_kernel_compiler" ] || {
+                note "x86 kernel vector audit: NOT RUN -- no x86-64 compiler"
+                return 2
+        }
+
+        x86_kernel_objdump=${x86_kernel_compiler%gcc}objdump
+        command -v "$x86_kernel_objdump" > /dev/null 2>&1 ||
+                x86_kernel_objdump=$(command -v objdump 2> /dev/null)
+
+        [ -n "$x86_kernel_objdump" ] || {
+                note "x86 kernel vector audit: NOT RUN -- no x86-64 objdump"
+                return 2
+        }
+
+        # The standalone object needs only the pre-rewrite meaning of the
+        # kernel's ALTERNATIVE macro: keep the old instruction. Supplying the
+        # two tiny headers here avoids making this library gate depend on a
+        # configured Linux source tree.
+        mkdir -p "$work/x86-kernel-include/asm" || return 1
+        printf '%s\n' \
+                '#define ALTERNATIVE(old_instruction, new_instruction, feature) old_instruction' \
+                > "$work/x86-kernel-include/asm/alternative.h"
+        printf '%s\n' '#define X86_FEATURE_ERMS 0' \
+                > "$work/x86-kernel-include/asm/cpufeatures.h"
+
+        if ! "$x86_kernel_compiler" -std=gnu11 -O2 -mno-sse -mno-sse2 \
+                -mno-mmx -msoft-float -ffreestanding -fno-builtin -nostdlib \
+                -I"$work/x86-kernel-include" \
+                -DSTANDARD_MODERN_C_KERNEL '-DEXPORT_SYMBOL(name)=' \
+                -c src/library.c -o "$work/x86-kernel.o" \
+                2> "$work/x86-kernel.err"
+        then
+                note "the standalone x86 KERNEL_MODE library did not compile:"
+                sed 's/^/    /' "$work/x86-kernel.err" | head -10
+                return 1
+        fi
+
+        if ! "$x86_kernel_objdump" -dr --no-show-raw-insn \
+                "$work/x86-kernel.o" > "$work/x86-kernel.dis" \
+                2> "$work/x86-kernel.err"
+        then
+                note "the x86 KERNEL_MODE library could not be disassembled:"
+                sed 's/^/    /' "$work/x86-kernel.err" | head -10
+                return 1
+        fi
+
+        if grep -E '(%(xmm|ymm|zmm|mm|st|k)[0-9]|vzero(all|upper)|(^|[[:space:]])(emms|femms)([[:space:]]|$))' \
+                "$work/x86-kernel.dis" > "$work/x86-kernel-vector.err"
+        then
+                note "the x86 KERNEL_MODE library touches vector/FPU state:"
+                sed 's/^/    /' "$work/x86-kernel-vector.err" | head -20
+                return 1
+        fi
+
+        return 0
+}
+
 #       AArch64 makes NEON mandatory for userspace, not freely usable by the
 #       kernel: code that touches the FP/SIMD register file must bracket it
 #       with the kernel's state-management API. library.c does not do that.
@@ -1396,6 +1470,17 @@ lane_standard()
         2) ;;
         *)
                 tally arm64-kernel-vector 0 1
+                failed=$((failed + 1))
+                ;;
+        esac
+
+        x86_kernel_outcome=0
+        x86_kernel_vector_audit || x86_kernel_outcome=$?
+        case $x86_kernel_outcome in
+        0) tally x86-kernel-vector 1 1 ;;
+        2) ;;
+        *)
+                tally x86-kernel-vector 0 1
                 failed=$((failed + 1))
                 ;;
         esac

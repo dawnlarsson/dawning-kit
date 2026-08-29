@@ -107,6 +107,9 @@ cover('direct_benchmark', 'kit/bench_text_hot.c', 'memory_common_prefix',
       'paired scalar/assembly timing over equal and late-difference text spans')
 cover('direct_benchmark', 'kit/bench_ascii_case.c', 'memory_compare_ascii_case',
       'exhaustive byte-pair validation and paired folded comparison timing')
+cover('direct_benchmark', 'kit/bench_ascii_convert.c', '''
+byte_to_lower byte_to_upper memory_to_lower_ascii memory_to_upper_ascii
+''', 'exhaustive byte/page-edge validation and paired scalar-call/inlined-loop timing')
 cover('direct_benchmark', 'kit/bench_ascii_search.c', 'memory_search_ascii_case',
       'bounded exhaustive verifier plus paired former-C/assembly fixed-search timing')
 cover('direct_benchmark', 'kit/bench_last_of.c', 'memory_last_of',
@@ -147,7 +150,7 @@ cover('static_leaf', 'src/platform/linux.inc', '_start exit sleep',
       'startup or direct Linux syscall ABI body; statically reviewed only')
 cover('static_leaf', 'src/platform/standard.inc', '''
 byte_is_alnum byte_is_alpha byte_is_digit byte_is_hexadecimal byte_is_lower
-byte_is_space byte_is_upper byte_to_lower byte_to_upper
+byte_is_space byte_is_upper
 absolute_whole absolute_wide absolute square_root
 ''', 'branchless range test, sign fold, or the hardware sqrt instruction; '
      'no loop to time and nothing between it and the silicon')

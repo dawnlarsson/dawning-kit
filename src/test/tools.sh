@@ -292,6 +292,7 @@ case_start dd
 
 dd if=/dev/urandom of="$work/blob" bs=1024 count=17 2> /dev/null
 printf 'abcdefghij' > "$work/ten"
+printf 'AaZz09-abcdefghijklmnopqrstuvwxyz-ABCDEFGHIJKLMNOPQRSTUVWXYZ' > "$work/case"
 printf '' > "$work/none"
 head -c 4096 /dev/zero > "$work/zeros"
 
@@ -335,6 +336,9 @@ compare_dd 'conv fsync'       "$work/ten"  's/x/x/' bs=4 conv=fsync status=noxfe
 compare_dd 'conv noerror'     "$work/blob" 's/x/x/' bs=512 conv=noerror status=noxfer
 compare_dd 'conv lcase'       "$work/ten" 's/x/x/' bs=3 conv=lcase status=noxfer
 compare_dd 'conv ucase'       "$work/ten" 's/x/x/' bs=3 conv=ucase status=noxfer
+compare_dd 'conv lcase 31-byte blocks' "$work/case" 's/x/x/' bs=31 conv=lcase status=noxfer
+compare_dd 'conv lcase bulk boundary' "$work/case" 's/x/x/' bs=32 conv=lcase status=noxfer
+compare_dd 'conv ucase bulk binary' "$work/blob" 's/x/x/' bs=512 conv=ucase status=noxfer
 compare_dd 'conv swab'        "$work/ten" 's/x/x/' bs=3 conv=swab status=noxfer
 compare_dd 'conv sync swab'   "$work/ten" 's/x/x/' bs=4 conv=sync,swab status=noxfer
 compare_dd 'valid cbs alone'  "$work/ten" 's/x/x/' cbs=3 status=noxfer

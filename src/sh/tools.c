@@ -827,18 +827,25 @@ static b32 tools_dd(void)
                         partial_before = 0;
                 }
 
-                // Reusable hot byte transforms: fold these two ASCII runs to
-                // the architecture library when that public ASM primitive is
-                // introduced; keeping the conversion here is temporary.
                 if (conv & DD_LCASE)
-                        for (positive i = 0; i < read_bytes; i++)
-                                if (ibuf[i] >= 'A' && ibuf[i] <= 'Z')
-                                        ibuf[i] += 'a' - 'A';
+                {
+                        if (read_bytes >= 32)
+                                memory_to_lower_ascii(ibuf, read_bytes);
+                        else
+                                for (positive i = 0; i < read_bytes; i++)
+                                        if (ibuf[i] >= 'A' && ibuf[i] <= 'Z')
+                                                ibuf[i] += 'a' - 'A';
+                }
 
                 if (conv & DD_UCASE)
-                        for (positive i = 0; i < read_bytes; i++)
-                                if (ibuf[i] >= 'a' && ibuf[i] <= 'z')
-                                        ibuf[i] -= 'a' - 'A';
+                {
+                        if (read_bytes >= 32)
+                                memory_to_upper_ascii(ibuf, read_bytes);
+                        else
+                                for (positive i = 0; i < read_bytes; i++)
+                                        if (ibuf[i] >= 'a' && ibuf[i] <= 'z')
+                                                ibuf[i] -= 'a' - 'A';
+                }
 
                 p8 address_to output_bytes = ibuf;
 

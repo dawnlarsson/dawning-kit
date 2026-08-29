@@ -67,7 +67,7 @@
         A .set is a second label on the same address, so there is no wrapper
         and no jump, and which names get one depends on who is linking.
 
-        172 routines (166 public, 6 local), 172 of them on all three.
+        174 routines (168 public, 6 local), 174 of them on all three.
         Raw C purity: 0 function bodies, 0 object definitions, 0 body macros, and 0 object macros (all forbidden).
 
           routine                        scope   x86_64  arm64   riscv64
@@ -143,6 +143,8 @@
           memory_reverse                 public  yes     yes     yes
           memory_search                  public  yes     yes     yes
           memory_search_ascii_case       public  yes     yes     yes
+          memory_to_lower_ascii          public  yes     yes     yes
+          memory_to_upper_ascii          public  yes     yes     yes
           memory_translate               public  yes     yes     yes
           moonwater_cpu_detect           public  yes     yes     yes
           network_load_16                public  yes     yes     yes
@@ -3186,6 +3188,72 @@ __asm__(
     ".Lmemory_reverse_x86_mask:\n   .byte 15,14,13,12,11,10,9,8,7,6,5,4,3,2,1,0\n   .byte 15,14,13,12,11,10,9,8,7,6,5,4,3,2,1,0\n"
     ASM_SECTION
     ASM_END(memory_reverse)
+
+    // Adding 63 maps 'A'..'Z' to the signed interval -128..-103. Nothing
+    // else lands below -102, so one signed comparison makes the conversion
+    // mask for all sixteen bytes without branches or table loads.
+    ASM_FUNC(memory_to_lower_ascii)
+    "mov %rdi, %rax\n"
+#ifndef KERNEL_MODE
+    "cmp $16, %rsi\n   jb .Lmemory_lower_x64_tail\n"
+    "movdqa .Lmemory_case_x64_add_upper(%rip), %xmm2\n"
+    "movdqa .Lmemory_case_x64_limit(%rip), %xmm3\n"
+    "movdqa .Lmemory_case_x64_delta(%rip), %xmm5\n"
+    ".balign 16\n.Lmemory_lower_x64_16:\n"
+    "movdqu (%rdi), %xmm0\n   movdqa %xmm0, %xmm1\n"
+    "paddb %xmm2, %xmm1\n   movdqa %xmm3, %xmm4\n"
+    "pcmpgtb %xmm1, %xmm4\n   pand %xmm5, %xmm4\n"
+    "paddb %xmm4, %xmm0\n   movdqu %xmm0, (%rdi)\n"
+    "add $16, %rdi\n   sub $16, %rsi\n   cmp $16, %rsi\n"
+    "jae .Lmemory_lower_x64_16\n"
+#endif
+    ".Lmemory_lower_x64_tail:\n   test %rsi, %rsi\n"
+    "jz .Lmemory_lower_x64_done\n"
+    ".Lmemory_lower_x64_one:\n   movzbl (%rdi), %ecx\n"
+    "lea -65(%rcx), %r8d\n   cmp $26, %r8d\n   setb %r8b\n"
+    "movzbl %r8b, %r8d\n   shl $5, %r8d\n   add %r8d, %ecx\n"
+    "mov %cl, (%rdi)\n   inc %rdi\n   dec %rsi\n"
+    "jnz .Lmemory_lower_x64_one\n"
+    ".Lmemory_lower_x64_done:\n"
+    ASM_RET
+    ASM_END(memory_to_lower_ascii)
+
+    // The lower-case interval has the same shape after adding 31; only the
+    // final masked operation changes from add to subtract.
+    ASM_FUNC(memory_to_upper_ascii)
+    "mov %rdi, %rax\n"
+#ifndef KERNEL_MODE
+    "cmp $16, %rsi\n   jb .Lmemory_upper_x64_tail\n"
+    "movdqa .Lmemory_case_x64_add_lower(%rip), %xmm2\n"
+    "movdqa .Lmemory_case_x64_limit(%rip), %xmm3\n"
+    "movdqa .Lmemory_case_x64_delta(%rip), %xmm5\n"
+    ".balign 16\n.Lmemory_upper_x64_16:\n"
+    "movdqu (%rdi), %xmm0\n   movdqa %xmm0, %xmm1\n"
+    "paddb %xmm2, %xmm1\n   movdqa %xmm3, %xmm4\n"
+    "pcmpgtb %xmm1, %xmm4\n   pand %xmm5, %xmm4\n"
+    "psubb %xmm4, %xmm0\n   movdqu %xmm0, (%rdi)\n"
+    "add $16, %rdi\n   sub $16, %rsi\n   cmp $16, %rsi\n"
+    "jae .Lmemory_upper_x64_16\n"
+#endif
+    ".Lmemory_upper_x64_tail:\n   test %rsi, %rsi\n"
+    "jz .Lmemory_upper_x64_done\n"
+    ".Lmemory_upper_x64_one:\n   movzbl (%rdi), %ecx\n"
+    "lea -97(%rcx), %r8d\n   cmp $26, %r8d\n   setb %r8b\n"
+    "movzbl %r8b, %r8d\n   shl $5, %r8d\n   sub %r8d, %ecx\n"
+    "mov %cl, (%rdi)\n   inc %rdi\n   dec %rsi\n"
+    "jnz .Lmemory_upper_x64_one\n"
+    ".Lmemory_upper_x64_done:\n"
+    ASM_RET
+    ASM_END(memory_to_upper_ascii)
+
+#ifndef KERNEL_MODE
+    ".section .rodata\n   .balign 16\n"
+    ".Lmemory_case_x64_add_upper:\n   .fill 16,1,63\n"
+    ".Lmemory_case_x64_add_lower:\n   .fill 16,1,31\n"
+    ".Lmemory_case_x64_limit:\n   .fill 16,1,154\n"
+    ".Lmemory_case_x64_delta:\n   .fill 16,1,32\n"
+    ASM_SECTION
+#endif
 
     // A stable 256-byte table is an indexed load per byte; four independent
     // chains overlap that latency where no byte-granularity SIMD gather can.
@@ -6645,6 +6713,90 @@ __asm__(
     ASM_RET
     ASM_END(memory_reverse)
 
+    // NEON uses the same wrapped signed interval as x86: add 63 or 31,
+    // compare against -102, then apply the resulting 0x20 mask.
+    ASM_FUNC(memory_to_lower_ascii)
+    "mov x2, x0\n"
+#ifndef KERNEL_MODE
+    "cmp x1, #8\n   b.lo .Lmemory_lower_arm64_tail\n"
+    "movi v2.16b, #63\n   movi v3.16b, #154\n   movi v4.16b, #32\n"
+    "cmp x1, #64\n   b.lo .Lmemory_lower_arm64_16_test\n"
+    ".balign 16\n.Lmemory_lower_arm64_64:\n"
+    "ldp q5, q6, [x2]\n   ldp q7, q8, [x2, #32]\n"
+    "add v9.16b, v5.16b, v2.16b\n   add v10.16b, v6.16b, v2.16b\n"
+    "add v11.16b, v7.16b, v2.16b\n   add v12.16b, v8.16b, v2.16b\n"
+    "cmgt v9.16b, v3.16b, v9.16b\n   cmgt v10.16b, v3.16b, v10.16b\n"
+    "cmgt v11.16b, v3.16b, v11.16b\n   cmgt v12.16b, v3.16b, v12.16b\n"
+    "and v9.16b, v9.16b, v4.16b\n   and v10.16b, v10.16b, v4.16b\n"
+    "and v11.16b, v11.16b, v4.16b\n   and v12.16b, v12.16b, v4.16b\n"
+    "add v5.16b, v5.16b, v9.16b\n   add v6.16b, v6.16b, v10.16b\n"
+    "add v7.16b, v7.16b, v11.16b\n   add v8.16b, v8.16b, v12.16b\n"
+    "stp q5, q6, [x2]\n   stp q7, q8, [x2, #32]\n"
+    "add x2, x2, #64\n   sub x1, x1, #64\n"
+    "cmp x1, #64\n   b.hs .Lmemory_lower_arm64_64\n"
+    ".Lmemory_lower_arm64_16_test:\n   cmp x1, #16\n"
+    "b.lo .Lmemory_lower_arm64_8\n"
+    ".balign 16\n.Lmemory_lower_arm64_16:\n"
+    "ldr q0, [x2]\n   add v1.16b, v0.16b, v2.16b\n"
+    "cmgt v1.16b, v3.16b, v1.16b\n   and v1.16b, v1.16b, v4.16b\n"
+    "add v0.16b, v0.16b, v1.16b\n   str q0, [x2], #16\n"
+    "sub x1, x1, #16\n   cmp x1, #16\n   b.hs .Lmemory_lower_arm64_16\n"
+    ".Lmemory_lower_arm64_8:\n   cmp x1, #8\n"
+    "b.lo .Lmemory_lower_arm64_tail\n   ldr d0, [x2]\n"
+    "add v1.8b, v0.8b, v2.8b\n   cmgt v1.8b, v3.8b, v1.8b\n"
+    "and v1.8b, v1.8b, v4.8b\n   add v0.8b, v0.8b, v1.8b\n"
+    "str d0, [x2], #8\n   sub x1, x1, #8\n"
+#endif
+    ".Lmemory_lower_arm64_tail:\n   cbz x1, .Lmemory_lower_arm64_done\n"
+    ".Lmemory_lower_arm64_one:\n   ldrb w3, [x2]\n"
+    "sub w4, w3, #65\n   cmp w4, #26\n   cset w4, lo\n"
+    "add w3, w3, w4, lsl #5\n   strb w3, [x2], #1\n"
+    "subs x1, x1, #1\n   b.ne .Lmemory_lower_arm64_one\n"
+    ".Lmemory_lower_arm64_done:\n"
+    ASM_RET
+    ASM_END(memory_to_lower_ascii)
+
+    ASM_FUNC(memory_to_upper_ascii)
+    "mov x2, x0\n"
+#ifndef KERNEL_MODE
+    "cmp x1, #8\n   b.lo .Lmemory_upper_arm64_tail\n"
+    "movi v2.16b, #31\n   movi v3.16b, #154\n   movi v4.16b, #32\n"
+    "cmp x1, #64\n   b.lo .Lmemory_upper_arm64_16_test\n"
+    ".balign 16\n.Lmemory_upper_arm64_64:\n"
+    "ldp q5, q6, [x2]\n   ldp q7, q8, [x2, #32]\n"
+    "add v9.16b, v5.16b, v2.16b\n   add v10.16b, v6.16b, v2.16b\n"
+    "add v11.16b, v7.16b, v2.16b\n   add v12.16b, v8.16b, v2.16b\n"
+    "cmgt v9.16b, v3.16b, v9.16b\n   cmgt v10.16b, v3.16b, v10.16b\n"
+    "cmgt v11.16b, v3.16b, v11.16b\n   cmgt v12.16b, v3.16b, v12.16b\n"
+    "and v9.16b, v9.16b, v4.16b\n   and v10.16b, v10.16b, v4.16b\n"
+    "and v11.16b, v11.16b, v4.16b\n   and v12.16b, v12.16b, v4.16b\n"
+    "sub v5.16b, v5.16b, v9.16b\n   sub v6.16b, v6.16b, v10.16b\n"
+    "sub v7.16b, v7.16b, v11.16b\n   sub v8.16b, v8.16b, v12.16b\n"
+    "stp q5, q6, [x2]\n   stp q7, q8, [x2, #32]\n"
+    "add x2, x2, #64\n   sub x1, x1, #64\n"
+    "cmp x1, #64\n   b.hs .Lmemory_upper_arm64_64\n"
+    ".Lmemory_upper_arm64_16_test:\n   cmp x1, #16\n"
+    "b.lo .Lmemory_upper_arm64_8\n"
+    ".balign 16\n.Lmemory_upper_arm64_16:\n"
+    "ldr q0, [x2]\n   add v1.16b, v0.16b, v2.16b\n"
+    "cmgt v1.16b, v3.16b, v1.16b\n   and v1.16b, v1.16b, v4.16b\n"
+    "sub v0.16b, v0.16b, v1.16b\n   str q0, [x2], #16\n"
+    "sub x1, x1, #16\n   cmp x1, #16\n   b.hs .Lmemory_upper_arm64_16\n"
+    ".Lmemory_upper_arm64_8:\n   cmp x1, #8\n"
+    "b.lo .Lmemory_upper_arm64_tail\n   ldr d0, [x2]\n"
+    "add v1.8b, v0.8b, v2.8b\n   cmgt v1.8b, v3.8b, v1.8b\n"
+    "and v1.8b, v1.8b, v4.8b\n   sub v0.8b, v0.8b, v1.8b\n"
+    "str d0, [x2], #8\n   sub x1, x1, #8\n"
+#endif
+    ".Lmemory_upper_arm64_tail:\n   cbz x1, .Lmemory_upper_arm64_done\n"
+    ".Lmemory_upper_arm64_one:\n   ldrb w3, [x2]\n"
+    "sub w4, w3, #97\n   cmp w4, #26\n   cset w4, lo\n"
+    "sub w3, w3, w4, lsl #5\n   strb w3, [x2], #1\n"
+    "subs x1, x1, #1\n   b.ne .Lmemory_upper_arm64_one\n"
+    ".Lmemory_upper_arm64_done:\n"
+    ASM_RET
+    ASM_END(memory_to_upper_ascii)
+
     // Four independent table loads hide the dependent byte-index latency.
     ASM_FUNC(memory_translate)
     "mov x8, x0\n   cmp x1, #4\n   b.lo .Lmemory_translate_arm64_tail\n"
@@ -9473,6 +9625,51 @@ __asm__(
     ASM_END(memory_reverse)
 #undef RV_REVERSE_FOUR
 
+    // Four independent base-ISA byte chains overlap load latency. The macro
+    // is source folding only: its expansion is straight RV64I in both bodies.
+#define RV_ASCII_CASE_ONE(OFFSET, VALUE, MASK, BASE, OPERATION)               \
+    "lbu " VALUE ", " OFFSET "(t0)\n   addi " MASK ", " VALUE ", -" BASE "\n" \
+    "sltiu " MASK ", " MASK ", 26\n   slli " MASK ", " MASK ", 5\n"      \
+    OPERATION " " VALUE ", " VALUE ", " MASK "\n   sb " VALUE ", " OFFSET "(t0)\n"
+#define RV_ASCII_CASE_FOUR(BASE, OPERATION)                                  \
+    RV_ASCII_CASE_ONE("0", "t1", "t2", BASE, OPERATION)                    \
+    RV_ASCII_CASE_ONE("1", "t3", "t4", BASE, OPERATION)                    \
+    RV_ASCII_CASE_ONE("2", "t5", "t6", BASE, OPERATION)                    \
+    RV_ASCII_CASE_ONE("3", "a2", "a3", BASE, OPERATION)
+
+    ASM_FUNC(memory_to_lower_ascii)
+    "mv t0, a0\n   li a4, 4\n   bltu a1, a4, .Lmemory_lower_rv_tail\n"
+    ".balign 16\n.Lmemory_lower_rv_four:\n"
+    RV_ASCII_CASE_FOUR("65", "add")
+    "addi t0, t0, 4\n   addi a1, a1, -4\n"
+    "bgeu a1, a4, .Lmemory_lower_rv_four\n"
+    ".Lmemory_lower_rv_tail:\n   beqz a1, .Lmemory_lower_rv_done\n"
+    ".Lmemory_lower_rv_one:\n"
+    RV_ASCII_CASE_ONE("0", "t1", "t2", "65", "add")
+    "addi t0, t0, 1\n   addi a1, a1, -1\n"
+    "bnez a1, .Lmemory_lower_rv_one\n"
+    ".Lmemory_lower_rv_done:\n"
+    ASM_RET
+    ASM_END(memory_to_lower_ascii)
+
+    ASM_FUNC(memory_to_upper_ascii)
+    "mv t0, a0\n   li a4, 4\n   bltu a1, a4, .Lmemory_upper_rv_tail\n"
+    ".balign 16\n.Lmemory_upper_rv_four:\n"
+    RV_ASCII_CASE_FOUR("97", "sub")
+    "addi t0, t0, 4\n   addi a1, a1, -4\n"
+    "bgeu a1, a4, .Lmemory_upper_rv_four\n"
+    ".Lmemory_upper_rv_tail:\n   beqz a1, .Lmemory_upper_rv_done\n"
+    ".Lmemory_upper_rv_one:\n"
+    RV_ASCII_CASE_ONE("0", "t1", "t2", "97", "sub")
+    "addi t0, t0, 1\n   addi a1, a1, -1\n"
+    "bnez a1, .Lmemory_upper_rv_one\n"
+    ".Lmemory_upper_rv_done:\n"
+    ASM_RET
+    ASM_END(memory_to_upper_ascii)
+
+#undef RV_ASCII_CASE_FOUR
+#undef RV_ASCII_CASE_ONE
+
     // RV64I has no required vector gather; four base-ISA chains overlap.
     ASM_FUNC(memory_translate)
     "mv t0, a0\n   li t6, 4\n   bltu a1, t6, .Lmemory_translate_rv_tail\n"
@@ -11394,6 +11591,10 @@ positive2 memory_count_words(address_any block, positive size, bool inside);
 // Reverse exactly size bytes in place. Returns block; sizes below two do not
 // read or write it, so a null block is valid when size is zero.
 address_any memory_reverse(address_any block, positive size);
+// Convert exactly size bytes in place. Bytes outside the ASCII letter range
+// are unchanged, including NUL and bytes with the high bit set.
+address_any memory_to_lower_ascii(address_any block, positive size);
+address_any memory_to_upper_ascii(address_any block, positive size);
 address_any memory_translate(address_any block, positive size,
                              address_any table);
 address_any memory_copy_fast(address_any destination, address_any source, positive size);
