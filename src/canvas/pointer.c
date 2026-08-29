@@ -251,6 +251,11 @@ static void pointer_apply(void)
                         {
                                 cursor_move(x, y);
                         }
+
+                        // cursor_move/reshape has painted the software
+                        // fallback. Clear any old plane that resisted its
+                        // explicit disable before this event is reported done.
+                        cursor_plane_recover();
                 }
         }
 
@@ -661,4 +666,39 @@ static void canvas_input_stats(struct input_stats *out)
         out->runs = canvas_runs;
         out->driver_ns = canvas_flush_ns;
         out->text_ns = canvas_text_ns;
+}
+
+static void canvas_cursor_stats(struct cursor_stats *out)
+{
+        struct output *output;
+
+        memory_fill(out, 0, sizeof(*out));
+        mutex_lock(&desktop.lock);
+
+        out->requested_generation = cursor_plane_requested_generation;
+        out->armed_generation = cursor_plane_armed_generation;
+        out->updates = (unsigned long)atomic_long_read(&cursor_plane_updates);
+        out->failures = (unsigned long)atomic_long_read(&cursor_plane_failures);
+        out->requested_x = cursor_plane_requested_x;
+        out->requested_y = cursor_plane_requested_y;
+        out->armed_x = cursor_plane_armed_x;
+        out->armed_y = cursor_plane_armed_y;
+
+        list_for_each_entry(output, &desktop.outputs, link)
+        {
+                if (output_shows_cursor(output, desktop.cursor_x, desktop.cursor_y))
+                        out->wanted++;
+
+                if (output->cursor_plane)
+                {
+                        out->active++;
+
+                        if (output->cursor_shown)
+                                out->shown++;
+                }
+        }
+
+        out->recovering = cursor_plane_recovery;
+
+        mutex_unlock(&desktop.lock);
 }

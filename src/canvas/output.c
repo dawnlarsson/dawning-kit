@@ -375,10 +375,11 @@ static void desktop_attach_buffers(void)
         a mode on a screen, and one that refuses says so in the one place that
         could have noticed.
 */
-static void desktop_commit(void)
+static _Bool desktop_commit(void)
 {
         struct canvas *committed = NULL;
         struct output *output;
+        _Bool complete = true;
 
         desktop_attach_buffers();
 
@@ -391,6 +392,9 @@ static void desktop_commit(void)
 
                 committed = output->canvas;
                 set = drm_client_modeset_commit(&committed->client);
+
+                if (set)
+                        complete = false;
 
                 // EBUSY is not now: something else is the device's master and
                 // the next commit is the one that lands.
@@ -409,6 +413,48 @@ static void desktop_commit(void)
 
         list_for_each_entry(output, &desktop.outputs, link)
                 cursor_arm_output(output);
+
+        return complete;
+}
+
+// A failed cursor-plane disable may leave the old image live over the
+// software fallback. A full client commit disables all non-primary planes.
+static void cursor_plane_recover(void)
+{
+        struct output *output;
+
+        if (!cursor_plane_recovery)
+                return;
+
+        list_for_each_entry(output, &desktop.outputs, link)
+                if (output->cursor_recovery == 1)
+                        output->cursor_recovery = 2;
+
+        cursor_plane_recovery = false;
+
+        if (!desktop_commit())
+        {
+                list_for_each_entry(output, &desktop.outputs, link)
+                        if (output->cursor_recovery == 2)
+                                output->cursor_recovery = 1;
+
+                cursor_plane_recovery = true;
+                return;
+        }
+
+        // The successful full commit covered state 2. A failure while its
+        // post-commit cursor arms ran is new state 1 and needs the next pass.
+        list_for_each_entry(output, &desktop.outputs, link)
+                if (output->cursor_recovery == 2)
+                {
+                        if (output->cursor_buffer)
+                        {
+                                drm_client_buffer_delete(output->cursor_buffer);
+                                output->cursor_buffer = NULL;
+                        }
+
+                        output->cursor_recovery = 0;
+                }
 }
 
 static void desktop_redraw(void)

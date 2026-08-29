@@ -74,10 +74,25 @@ retry:
 
 static void plane_drop(struct output *output)
 {
+        int ret = 0;
+
+        // Never delete a buffer that a failed update may still be scanning.
+        // A full client commit disables every non-primary plane; until that
+        // recovery has happened the buffer stays alive but is no longer used.
+        if (output->cursor_plane)
+                ret = plane_update(output, false, 0, 0);
+
+        if (ret)
+        {
+                atomic_long_inc(&cursor_plane_failures);
+                output->cursor_recovery = 1;
+                cursor_plane_recovery = true;
+        }
+
         output->cursor_plane = NULL;
         output->cursor_shown = false;
 
-        if (output->cursor_buffer)
+        if (!ret && !output->cursor_recovery && output->cursor_buffer)
         {
                 drm_client_buffer_delete(output->cursor_buffer);
                 output->cursor_buffer = NULL;
@@ -193,6 +208,7 @@ static void cursor_arm_output(struct output *output)
              output->cursor_scale != plane_scale(output, desktop.cursor_scale)) &&
             plane_paint(output, desktop.cursor_shape, desktop.cursor_scale))
         {
+                atomic_long_inc(&cursor_plane_failures);
                 plane_drop(output);
                 return;
         }
@@ -202,12 +218,15 @@ static void cursor_arm_output(struct output *output)
 
         if (!ret)
         {
+                if (wanted)
+                        atomic_long_inc(&cursor_plane_updates);
                 output->cursor_shown = wanted;
                 return;
         }
 
         // Give it up rather than leave a cursor that cannot move. The next
         // event repaints through the software path.
+        atomic_long_inc(&cursor_plane_failures);
         log_canvas("cursor plane refused an update (%d), drawing the cursor instead\n", ret);
         plane_drop(output);
 }
@@ -278,8 +297,9 @@ static _Bool cursor_move_core(int new_x, int new_y, _Bool planes_only)
                         }
                 }
 
-                if (wanted)
-                        plane_complete = false;
+                // A failed hide matters too: the old cursor may still be on
+                // screen, so this request was not an all-plane completion.
+                plane_complete = false;
 
                 if (!planes_only)
                         cursor_paint(output, old_x, old_y, old_shape, new_x, new_y);
@@ -298,7 +318,21 @@ static _Bool cursor_move_core(int new_x, int new_y, _Bool planes_only)
 
 static _Bool cursor_move_planes(int new_x, int new_y)
 {
-        return cursor_move_core(new_x, new_y, true);
+        _Bool complete;
+
+        cursor_plane_requested_generation++;
+        cursor_plane_requested_x = new_x;
+        cursor_plane_requested_y = new_y;
+        complete = cursor_move_core(new_x, new_y, true);
+
+        if (complete)
+        {
+                cursor_plane_armed_generation = cursor_plane_requested_generation;
+                cursor_plane_armed_x = new_x;
+                cursor_plane_armed_y = new_y;
+        }
+
+        return complete;
 }
 
 static void cursor_move(int new_x, int new_y)

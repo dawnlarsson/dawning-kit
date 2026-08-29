@@ -591,11 +591,20 @@ static b32 screen_pointer()
         }
 
         struct input_stats stats;
+        struct cursor_stats cursor;
 
         if (system_call_3(syscall(ioctl), device, SPARK_IOCTL_INPUT_STATS,
                           (positive)address_of stats) != 0)
         {
                 string_format(log, "could not read input stats\n");
+                log_flush();
+                return 1;
+        }
+
+        if (system_call_3(syscall(ioctl), device, SPARK_IOCTL_CURSOR_STATS,
+                          (positive)address_of cursor) != 0)
+        {
+                string_format(log, "could not read cursor stats\n");
                 log_flush();
                 return 1;
         }
@@ -607,6 +616,17 @@ static b32 screen_pointer()
         string_format(log, "runs             %p\n", stats.runs);
         string_format(log, "driver ns        %p\n", stats.driver_ns);
         string_format(log, "text ns          %p\n", stats.text_ns);
+        string_format(log, "cursor planes    %p active, %p shown\n",
+                      (positive)cursor.active, (positive)cursor.shown);
+        string_format(log, "cursor plane io  %p updates, %p failures\n",
+                      cursor.updates, cursor.failures);
+        string_format(log, "cursor sync      %p requested, %p armed\n",
+                      cursor.requested_generation, cursor.armed_generation);
+        string_format(log, "cursor requested %b,%b armed %b,%b\n",
+                      (bipolar)cursor.requested_x, (bipolar)cursor.requested_y,
+                      (bipolar)cursor.armed_x, (bipolar)cursor.armed_y);
+        string_format(log, "cursor outputs   %p wanted, recovery %p\n",
+                      (positive)cursor.wanted, (positive)cursor.recovering);
 
         if (!stats.events)
         {

@@ -703,6 +703,18 @@ static long report_input(struct input_stats __user *out)
 
         return 0;
 }
+
+static long report_cursor(struct cursor_stats __user *out)
+{
+        struct cursor_stats stats;
+
+        canvas_cursor_stats(&stats);
+
+        if (copy_to_user(out, &stats, sizeof(stats)))
+                return -EFAULT;
+
+        return 0;
+}
 #endif
 
 static long device_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
@@ -718,6 +730,8 @@ static long device_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 #ifdef CONFIG_MOONWATER_CANVAS
         case SPARK_IOCTL_INPUT_STATS:
                 return report_input((struct input_stats __user *)arg);
+        case SPARK_IOCTL_CURSOR_STATS:
+                return report_cursor((struct cursor_stats __user *)arg);
         case WINDOW_IOCTL_CREATE:
                 return window_ioctl_create(file, arg);
         case WINDOW_IOCTL_COMMIT:

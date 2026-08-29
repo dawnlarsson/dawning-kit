@@ -144,6 +144,23 @@ struct input_stats {
         unsigned long text_ns;    // and the share spent laying out glyphs
 };
 
+// _IOR('s', 6, struct cursor_stats). Kept separate from input_stats so the
+// existing diagnostic ABI and its encoded structure size remain stable.
+#define SPARK_IOCTL_CURSOR_STATS 0x80407306u
+
+struct cursor_stats {
+        unsigned long requested_generation; // urgent drag/resize sync request
+        unsigned long armed_generation;     // last all-plane completion
+        unsigned long updates;               // successful visible plane arms
+        unsigned long failures;              // runtime paint/update failures
+        int requested_x, requested_y;
+        int armed_x, armed_y;       // last all-plane completed request
+        unsigned int active;        // outputs retaining a hardware plane
+        unsigned int shown;         // active planes currently showing it
+        unsigned int wanted;        // outputs containing the logical cursor
+        unsigned int recovering;    // a full commit still has to clear a plane
+};
+
 struct spawn {
         unsigned long path;       // user pointer, NUL terminated
         unsigned long argv;       // user pointer to the flat argv block

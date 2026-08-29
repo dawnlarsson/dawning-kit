@@ -158,6 +158,7 @@ struct output
         unsigned int cursor_shape;
         unsigned int cursor_scale;
         _Bool cursor_shown;
+        unsigned int cursor_recovery; // 1 pending, 2 covered by this commit
 };
 
 struct canvas
@@ -331,6 +332,7 @@ static void canvas_thread_stop(void);
 static void canvas_thread_wake(void);
 static void desktop_redraw(void);
 static void desktop_repaint(void);
+static void cursor_plane_recover(void);
 static void rect_set(struct drm_rect *rect, int x, int y, int w, int h);
 static void desktop_watch(void);
 static void cursor_move(int x, int y);
@@ -344,6 +346,17 @@ static u64 pointer_draw_total;
 static u64 pointer_flush_total;
 static unsigned long pointer_counts;
 static unsigned long pointer_moved;
+
+// Hardware cursor diagnostics. Counters are atomic because plane arming also
+// happens during output commits; requested/armed coordinate pairs are changed
+// under desktop.lock. Updates include ordinary motion and urgent resize syncs.
+static atomic_long_t cursor_plane_updates = ATOMIC_LONG_INIT(0);
+static atomic_long_t cursor_plane_failures = ATOMIC_LONG_INIT(0);
+static unsigned long cursor_plane_requested_generation;
+static unsigned long cursor_plane_armed_generation;
+static int cursor_plane_requested_x, cursor_plane_requested_y;
+static int cursor_plane_armed_x, cursor_plane_armed_y;
+static _Bool cursor_plane_recovery;
 
 // What drawing costs: passes over every output, the time in them, and the
 // pixels written, which against the size of the desktop is the overdraw.
