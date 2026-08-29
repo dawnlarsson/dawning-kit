@@ -6659,8 +6659,6 @@ __asm__(
 #ifndef KERNEL_MODE
     "sub x4, x1, x3\n   cmp x4, #15\n"
     "b.lo .Lmemory_search_arm64_short_general\n"
-#else
-    "b .Lmemory_search_arm64_short_general\n"
 #endif
     "cmp x3, #4\n   b.lo .Lmemory_search_arm64_short_general\n"
     "stp x0, x1, [sp, #-48]!\n   stp x2, x3, [sp, #16]\n"
@@ -6764,9 +6762,10 @@ __asm__(
     //
     //       The narrow path: every haystack too short for one block.
     //       memory_first_of finds the prepared anchor and memcmp says whether
-    //       the rest followed. The general API supplies the first byte here,
-    //       preserving its short-haystack policy; a prepared caller may have
-    //       amortized a rarer choice across many searches.
+    //       the rest followed. Userspace supplies the first byte for a short
+    //       haystack, preserving its old policy. The kernel has no vector
+    //       path and prepares a rare byte for every needle of four or more;
+    //       an explicit prepared caller may likewise amortize that choice.
     //
     //       A failed candidate is left one byte, not needle_size: "aab" is in
     //       "aaab", and a scan that resumes past what it matched cannot see
