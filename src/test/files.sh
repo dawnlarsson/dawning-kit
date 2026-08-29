@@ -212,6 +212,90 @@ env_stress() {
         generated_answer 'large split string' "$want_status" "$got_status"
 }
 
+exec_path_stress() {
+        local_command=$work/path-local
+        denied_command=$work/path-denied
+        system_find=$(command -v find)
+        printf '#!/bin/sh\nprintf "local\\n"\n' > "$local_command"
+        printf '#!/bin/sh\nprintf "denied\\n"\n' > "$denied_command"
+        chmod 0755 "$local_command"
+        chmod 0644 "$denied_command"
+
+        (cd "$work" && env -i PATH= path-local) \
+                > "$work/want" 2>/dev/null; want_status=$?
+        (cd "$work" && "$binaries/env" -i PATH= path-local) \
+                > "$work/got" 2>/dev/null; got_status=$?
+        generated_answer 'empty PATH is current directory' "$want_status" "$got_status"
+
+        (cd "$work" && env -i PATH=/nowhere: path-local) \
+                > "$work/want" 2>/dev/null; want_status=$?
+        (cd "$work" && "$binaries/env" -i PATH=/nowhere: path-local) \
+                > "$work/got" 2>/dev/null; got_status=$?
+        generated_answer 'trailing PATH component' "$want_status" "$got_status"
+
+        if env -i PATH="$work" path-denied > "$work/want" 2>/dev/null; then
+                want_status=0
+        else
+                want_status=$?
+        fi
+        if "$binaries/env" -i PATH="$work" path-denied \
+                > "$work/got" 2>/dev/null; then
+                got_status=0
+        else
+                got_status=$?
+        fi
+        generated_answer 'permission denied is 126' "$want_status" "$got_status"
+
+        long_component=$(python3 - <<'PY'
+print("x" * 20000)
+PY
+)
+        env -i PATH="$long_component:/bin:/usr/bin" echo through \
+                > "$work/want" 2>/dev/null; want_status=$?
+        "$binaries/env" -i PATH="$long_component:/bin:/usr/bin" echo through \
+                > "$work/got" 2>/dev/null; got_status=$?
+        generated_answer 'oversized PATH then valid' "$want_status" "$got_status"
+
+        (cd "$work" && PATH= "$system_find" "$fixture" -maxdepth 0 \
+                -exec path-local ';') \
+                > "$work/want" 2>/dev/null; want_status=$?
+        (cd "$work" && PATH= "$binaries/find" "$fixture" -maxdepth 0 \
+                -exec path-local ';') > "$work/got" 2>/dev/null; got_status=$?
+        generated_answer 'find exec empty PATH' "$want_status" "$got_status"
+}
+
+yes_stress() {
+        python3 - "$binaries/yes" > "$work/yes-stress" <<'PY'
+import subprocess
+import sys
+
+ours = sys.argv[1]
+argument = "x" * 20000
+expected = (argument + "\n").encode()
+
+def first_line(program):
+    child = subprocess.Popen([program, argument], stdout=subprocess.PIPE,
+                             stderr=subprocess.DEVNULL)
+    data = bytearray()
+    while len(data) < len(expected):
+        block = child.stdout.read(len(expected) - len(data))
+        if not block:
+            break
+        data.extend(block)
+    child.terminate()
+    child.wait(timeout=10)
+    return bytes(data)
+
+print("ok" if first_line("yes") == first_line(ours) == expected else "bad")
+PY
+
+        if [ "$(cat "$work/yes-stress")" = ok ]; then
+                report ok
+        else
+                report bad '20K argument' 'first output line differs'
+        fi
+}
+
 # Fixed-memory ceilings are permitted to refuse work, but never to emit a
 # plausible prefix and exit successfully.
 refuses_ls_ceiling() {
@@ -522,6 +606,10 @@ touch -d @1500000000 "$fixture/alpha"
 touch -d @1400000000 "$fixture/beta.txt"
 printf 'old\n' > "$fixture/ancient"
 touch -d @1000000000 "$fixture/ancient"
+long_path=$(python3 - <<'PY'
+print("x" * 20000)
+PY
+)
 
 group basename
 same 'path'             basename /usr/bin/ls
@@ -568,6 +656,9 @@ same 'padded long'      seq --equal-width 8 11
 same 'separator long'   seq --separator=, 1 5
 same 'separator joined' seq -s, 1 5
 same 'not an option'    seq -x 3
+
+group yes
+yes_stress
 
 group readlink
 same 'link'             readlink "$fixture/sub/back"
@@ -627,6 +718,7 @@ answered 'missing then existing' realpath -m -e "$fixture/nothing/at/all"
 answered 'existing then missing' realpath -e -m "$fixture/nothing/at/all"
 answered 'logical then physical' realpath -L -P "$fixture/sub/away/.."
 answered 'physical then logical' realpath -P -L "$fixture/sub/away/.."
+answered 'overlong path' realpath "$long_path"
 
 group id
 same 'default'          id
@@ -1011,6 +1103,7 @@ same 'split long'       env --split-string='/bin/echo three four'
 same 'nothing to run'   env -C /usr
 same 'not an option'    env -x /bin/true
 env_stress
+exec_path_stress
 
 group chown
 effect 'user and group' chown '$TOOL '"$(id -un):$(id -gn)"' tree/one'
@@ -1062,6 +1155,7 @@ effect 'mode'           mkdir '$TOOL -m 0700 walled'
 effect 'parents mode'   mkdir '$TOOL -p -m 0705 x/y'
 effect 'parents on file' mkdir '$TOOL -p plain'
 effect 'parent is file' mkdir '$TOOL -p plain/child'
+answered 'overlong parents' mkdir -p "$long_path"
 
 group rmdir
 effect 'empty'          rmdir 'mkdir gone; $TOOL gone'
@@ -1414,6 +1508,7 @@ temporary 'in tmpdir'          run.XXXXXX     -t run.XXXXXX
 temporary 'quiet failure'      run.XX         -q run.XX
 temporary 'unmade directory'   run.XXXXXX     -u -d run.XXXXXX
 temporary 'missing directory'  run.XXXXXX     sub/run.XXXXXX
+answered 'overlong tmpdir' mktemp --tmpdir="$long_path"
 
 #       date, which is the epoch turned into a date and then into whatever
 #       the format asked for. TZ is UTC0 at the top of this file for the same

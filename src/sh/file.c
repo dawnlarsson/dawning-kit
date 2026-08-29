@@ -451,7 +451,7 @@ bool file_resolve(string_address path, p8 address_to into, bool follow)
         positive length = 0;
         positive hops = 0;
 
-        if (string_is(path, end))
+        if (string_is(path, end) || string_length(path) >= FILE_PATH_MAX)
                 return false;
 
         if (string_is(path, '/'))
@@ -2001,7 +2001,10 @@ bool file_copy_contents(bipolar from_directory, string_address from,
 bool file_make_parents(string_address path, positive mode)
 {
         p8 work[FILE_PATH_MAX];
-        positive length = string_length_max(path, FILE_PATH_MAX - 1);
+        positive length = string_length(path);
+
+        if (length >= FILE_PATH_MAX)
+                return false;
 
         memory_copy_fast_end(work, path, length);
 
@@ -2986,12 +2989,13 @@ static b32 file_ls()
 /* find -exec runs a child through PATH with the current exported vector. */
 
 // Tries every PATH candidate and returns the kernel error if none replaced us.
-// This only returns in a child process.
-static bipolar file_exec_path_try(string_address address_to words)
+// The name is separate from words[0], because env -a changes argv[0] without
+// changing the file it asks execve to run.
+static bipolar file_exec_path_try_in(string_address name,
+                                     string_address address_to words,
+                                     string_address address_to environment,
+                                     string_address path)
 {
-        string_address address_to environment = file_environment_all();
-        string_address name = words[0];
-        string_address path = env_get("PATH");
         p8 candidate[FILE_PATH_MAX];
         bool denied = false;
 
@@ -3004,48 +3008,68 @@ static bipolar file_exec_path_try(string_address address_to words)
         }
 
         if (!path)
-                path = file_environment("PATH");
-
-        if (!path || !string_get(path))
                 path = "/bin:/usr/bin:/";
 
-        while (string_get(path))
+        // An empty PATH component is the current directory. That includes a
+        // completely empty PATH and the component after a trailing colon.
+        while (1)
         {
                 string_address stop = string_first_of_or_end(path, ':');
                 positive length = (positive)(stop - path);
+                positive named = string_length(name);
+                positive filled = length ? length : 1;
 
-                if (length > FILE_PATH_MAX - 2)
-                        length = FILE_PATH_MAX - 2;
+                if (named <= positive_max - 2 &&
+                    filled <= positive_max - named - 2)
+                {
+                        positive needed = filled + named + 2;
 
-                memory_copy_fast(candidate, path, length);
+                        if (length && path[length - 1] == '/')
+                                needed--;
 
-                path = string_get(stop) ? stop + 1 : stop;
+                        if (needed <= FILE_PATH_MAX)
+                        {
+                                if (length)
+                                        memory_copy_fast(candidate, path, length);
+                                else
+                                        candidate[0] = '.';
 
-                // An empty element is this directory, which is what a leading
-                // or a doubled colon in PATH means.
-                if (!length)
-                        candidate[length++] = '.';
+                                if (candidate[filled - 1] != '/')
+                                        candidate[filled++] = '/';
 
-                if (candidate[length - 1] != '/')
-                        candidate[length++] = '/';
+                                memory_copy_fast_end(candidate + filled, name, named);
 
-                positive named = string_length_max(name, FILE_PATH_MAX - 1 - length);
+                                bipolar answer =
+                                    system_call_3(syscall(execve), (positive)candidate,
+                                                  (positive)words,
+                                                  (positive)environment);
 
-                length = (positive)(memory_copy_fast_end(
-                    candidate + length, name, named) - candidate);
+                                if (answer == -ERROR_ARGUMENT_LIST)
+                                        return answer;
 
-                bipolar answer =
-                    system_call_3(syscall(execve), (positive)candidate,
-                                  (positive)words, (positive)environment);
+                                if (answer == -ERROR_ACCESS)
+                                        denied = true;
+                        }
+                }
 
-                if (answer == -ERROR_ARGUMENT_LIST)
-                        return answer;
+                if (!string_get(stop))
+                        break;
 
-                if (answer == -ERROR_ACCESS)
-                        denied = true;
+                path = stop + 1;
         }
 
         return denied ? -ERROR_ACCESS : -ERROR_NO_ENTRY;
+}
+
+// This only returns in a child process.
+static bipolar file_exec_path_try(string_address address_to words)
+{
+        string_address path = env_get("PATH");
+
+        if (!path)
+                path = file_environment("PATH");
+
+        return file_exec_path_try_in(words[0], words, file_environment_all(), path);
 }
 
 // Replaces this process, and only ever called in a child of it.
@@ -8530,9 +8554,6 @@ static b32 file_seq()
 // yes [STRING]..., until something downstream stops reading.
 static b32 file_yes()
 {
-        p8 line[FILE_PATH_MAX];
-        positive length = 0;
-
         // No flags at all, which still has to be said: yes -x is a mistake
         // and printing -x for ever is not what was meant by it.
         file_taking taking = {
@@ -8547,44 +8568,83 @@ static b32 file_yes()
 
         positive count = (positive)program_argument_count();
         positive first = taking.first;
+        positive length = 1; // newline
 
         if (first >= count)
-        {
-                line[length++] = 'y';
-        }
+                length++;
         else
         {
                 for (positive i = first; i < count; i++)
                 {
                         string_address word = program_argument((b32)i);
+                        positive have = string_length(word);
+                        positive space = i > first;
 
-                        if (i > first && length + 1 < FILE_PATH_MAX)
-                                line[length++] = ' ';
+                        if (have > positive_max - length - space)
+                        {
+                                file_fail("yes: arguments are too large\n", 0);
+                                return 1;
+                        }
 
-                        positive have = string_length_max(word, FILE_PATH_MAX - 1 - length);
-
-                        memory_copy_fast(line + length, word, have);
-                        length += have;
+                        length += space + have;
                 }
         }
 
-        line[length++] = '\n';
+        positive mapped = (positive)memory(length);
+
+        if (!mapped || mapped >= (positive)-4095)
+        {
+                file_fail("yes: out of memory\n", 0);
+                return 1;
+        }
+
+        p8 address_to line = (p8 address_to)mapped;
+        positive used = 0;
+
+        if (first >= count)
+                line[used++] = 'y';
+        else
+        {
+                for (positive i = first; i < count; i++)
+                {
+                        string_address word = program_argument((b32)i);
+                        positive have = string_length(word);
+
+                        if (i > first)
+                                line[used++] = ' ';
+
+                        used = (positive)(memory_copy_fast_end(
+                            line + used, word, have) - line);
+                }
+        }
+
+        line[used++] = '\n';
 
         // One write of many copies rather than one write per line: the same
-        // bytes leave the program in a fraction of the system calls.
+        // bytes leave the program in a fraction of the system calls. A line
+        // larger than the batching block is already a large write by itself.
         p8 block[FILE_BLOCK * 4];
         positive filled = 0;
+        p8 address_to output = line;
 
-        while (filled + length <= sizeof(block))
+        while (length <= sizeof(block) - filled)
         {
                 memory_copy(block + filled, line, length);
                 filled += length;
         }
 
+        if (filled)
+                output = block;
+        else
+                filled = length;
+
         while (1)
         {
-                if (system_call_3(syscall(write), stdout, (positive)block, filled) <= 0)
+                if (system_write_all(stdout, output, filled) != filled)
+                {
+                        memory_free(line, length);
                         return 1;
+                }
         }
 
         return 0;
@@ -8901,54 +8961,19 @@ static b32 file_env()
 
         log_flush();
 
-        p8 candidate[FILE_PATH_MAX];
+        // PATH from the environment being handed on, not from the one this
+        // program was started with: env -i changes both. The shared search
+        // also keeps -a's argv[0] separate from the file name.
+        string_address path =
+            string_get_environment(env_list, (string_address) "PATH");
+        bipolar answer =
+            file_exec_path_try_in(name, arguments, env_list, path);
 
-        if (string_first_of(name, '/'))
-        {
-                system_call_3(syscall(execve), (positive)name, (positive)arguments,
-                              (positive)env_list);
-        }
-        else
-        {
-                // PATH from the environment being handed on, not from the one
-                // this program was started with: env -i changes both.
-                string_address path =
-                    string_get_environment(env_list, (string_address) "PATH");
+        string_format(file_fail, "env: '%s': %s\n", name,
+                      answer == -ERROR_ACCESS ? "Permission denied"
+                                              : "No such file or directory");
 
-                if (!path)
-                        path = (string_address) "/bin:/usr/bin:/";
-
-                while (string_get(path))
-                {
-                        positive length = (positive)(string_first_of_or_end(path, ':') - path);
-                        positive filled = length > FILE_PATH_MAX - 1 ? FILE_PATH_MAX - 1 : length;
-
-                        memory_copy_fast(candidate, path, filled);
-
-                        if (filled == 0)
-                                candidate[filled++] = '.';
-
-                        if (candidate[filled - 1] != '/')
-                                candidate[filled++] = '/';
-
-                        positive named = string_length_max(name, FILE_PATH_MAX - 1 - filled);
-
-                        filled = (positive)(memory_copy_fast_end(
-                            candidate + filled, name, named) - candidate);
-
-                        system_call_3(syscall(execve), (positive)candidate,
-                                      (positive)arguments, (positive)env_list);
-
-                        path += length;
-
-                        if (string_is(path, ':'))
-                                path++;
-                }
-        }
-
-        string_format(file_fail, "env: '%s': No such file or directory\n", name);
-
-        return 127;
+        return answer == -ERROR_ACCESS ? 126 : 127;
 }
 
 // id ------------------------------------------------------------
@@ -9511,7 +9536,14 @@ static b32 file_mktemp()
                 if (!base || !string_get(base))
                         base = "/tmp";
 
-                length = string_length_max(base, FILE_PATH_MAX - 2);
+                length = string_length(base);
+
+                if (length > FILE_PATH_MAX - 2)
+                {
+                        file_fail("mktemp: template too long\n", 0);
+                        return 1;
+                }
+
                 memory_copy_fast(path, base, length);
 
                 while (length > 1 && path[length - 1] == '/')
