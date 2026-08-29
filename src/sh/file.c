@@ -1914,22 +1914,40 @@ static bool ls_headings;
 
 static b32 ls_status;
 static bool ls_written;
+static bool ls_broken;
 static b64 ls_now;
 
-static positive ls_keep(string_address name)
+static fn ls_limit(string_address why)
+{
+        if (!ls_broken)
+        {
+                file_fail("ls: ", 0);
+                file_fail(why, 0);
+                file_fail("\n", 1);
+        }
+
+        ls_broken = true;
+        ls_status = 1;
+}
+
+static bool ls_keep(string_address name, positive address_to where)
 {
         positive length = string_length(name);
 
         if (ls_used + length + 1 > LS_ARENA)
-                return 0;
+        {
+                ls_limit((string_address) "directory names too large");
+                return false;
+        }
 
         positive at = ls_used;
 
         memory_copy_fast(ls_arena + at, name, length + 1);
 
         ls_used += length + 1;
+        address_to where = at;
 
-        return at;
+        return true;
 }
 
 static bipolar ls_order(ls_entry address_to left, ls_entry address_to right)
@@ -2195,16 +2213,21 @@ static fn ls_print(string_address directory)
         }
 }
 
-static fn ls_add(bipolar directory, string_address path, string_address shown)
+static bool ls_add(bipolar directory, string_address path, string_address shown)
 {
         if (ls_count >= LS_MAX_ENTRIES)
-                return;
+        {
+                ls_limit((string_address) "directory has too many entries");
+                return false;
+        }
 
         file_facts facts;
         ls_entry address_to entry = address_of ls_entries[ls_count];
 
         memory_fill(entry, 0, sizeof(ls_entry));
-        entry->name = ls_keep(shown);
+
+        if (!ls_keep(shown, address_of entry->name))
+                return false;
 
         if (file_look(directory, path, AT_SYMLINK_NOFOLLOW, address_of facts))
         {
@@ -2221,6 +2244,7 @@ static fn ls_add(bipolar directory, string_address path, string_address shown)
         }
 
         ls_count++;
+        return true;
 }
 
 static fn ls_directory(string_address path, bool heading, positive depth);
@@ -2250,7 +2274,10 @@ static fn ls_below(string_address path, positive depth)
                 positive length = string_length(name);
 
                 if (kept + length + 1 > sizeof(keep))
-                        break;
+                {
+                        ls_limit((string_address) "recursive directory list too large");
+                        return;
+                }
 
                 memory_copy_fast(keep + kept, name, length + 1);
 
@@ -2296,10 +2323,14 @@ static fn ls_directory(string_address path, bool heading, positive depth)
                 if (ls_almost && file_is_dot(entry->d_name))
                         continue;
 
-                ls_add(walk.handle, entry->d_name, entry->d_name);
+                if (!ls_add(walk.handle, entry->d_name, entry->d_name))
+                        break;
         }
 
         file_walk_close(address_of walk);
+
+        if (ls_broken)
+                return;
 
         ls_sort();
 
@@ -2335,6 +2366,10 @@ static b32 file_ls()
         if (!file_take(address_of taking))
                 return 2;
 
+        ls_status = 0;
+        ls_written = false;
+        ls_broken = false;
+
         positive flags = taking.flags;
         positive first = taking.first;
 
@@ -2369,7 +2404,15 @@ static b32 file_ls()
                 ls_used = 0;
 
                 for (positive i = first; i < count; i++)
-                        ls_add(AT_FDCWD, program_argument((b32)i), program_argument((b32)i));
+                        if (!ls_add(AT_FDCWD, program_argument((b32)i),
+                                    program_argument((b32)i)))
+                                break;
+
+                if (ls_broken)
+                {
+                        log_flush();
+                        return ls_status;
+                }
 
                 ls_sort();
                 ls_print(null);
@@ -2405,7 +2448,14 @@ static b32 file_ls()
                         continue;
                 }
 
-                ls_add(AT_FDCWD, path, path);
+                if (!ls_add(AT_FDCWD, path, path))
+                        break;
+        }
+
+        if (ls_broken)
+        {
+                log_flush();
+                return ls_status;
         }
 
         ls_headings = given > 1 || ls_recursive;
@@ -2419,6 +2469,13 @@ static b32 file_ls()
 
         // The directory operands are listed in name order however they were
         // typed, which is what ls does with every other list of names.
+        if (directories > LS_MAX_ENTRIES)
+        {
+                ls_limit((string_address) "too many directory operands");
+                log_flush();
+                return ls_status;
+        }
+
         positive order[LS_MAX_ENTRIES];
         positive have = 0;
 
@@ -4068,11 +4125,11 @@ static positive du_exclude_have;
 static bool du_was_directory;
 
 // An inode of zero is not one the kernel hands out, so it is what an unused
-// slot holds. A full table stops deduplicating rather than start throwing
-// files away, and the ceiling is named above.
+// slot holds. A full table still finds names already present, but refuses the
+// next distinct inode rather than quietly counting its later names twice.
 static p64 du_seen_inode[DU_SEEN];
 static p64 du_seen_device[DU_SEEN];
-static positive du_seen_have;
+static bool du_seen_broken;
 
 static p64 du_where(file_facts address_to facts)
 {
@@ -4100,17 +4157,20 @@ static bool du_already(file_facts address_to facts)
                 if (du_seen_inode[at])
                         continue;
 
-                if (du_seen_have + 1 >= DU_SEEN)
-                        return false;
-
                 du_seen_inode[at] = facts->inode;
                 du_seen_device[at] = device;
-                du_seen_have++;
 
                 return false;
         }
 
-        return false;
+        if (!du_seen_broken)
+                file_fail("du: too many multiply-linked files\n", 0);
+
+        du_seen_broken = true;
+        du_status = 1;
+
+        /* Counting it again would be the silent over-count this table avoids. */
+        return true;
 }
 
 // The system's du takes a pattern against the whole path it built and
@@ -4212,6 +4272,9 @@ static p64 du_walk(string_address path, positive depth, bool named, positive lev
 
                                 p64 cost = du_walk(under, depth - 1, false, level + 1);
 
+                                if (du_seen_broken)
+                                        break;
+
                                 total += cost;
 
                                 if (du_was_directory)
@@ -4227,6 +4290,12 @@ static p64 du_walk(string_address path, positive depth, bool named, positive lev
                 }
         }
 
+        if (du_seen_broken)
+        {
+                du_was_directory = true;
+                return 0;
+        }
+
         if (level <= du_maximum)
                 du_report(du_separate ? total - below : total, path);
 
@@ -4240,8 +4309,13 @@ static bool du_exclude_seen(p8 letter, string_address value)
         if (letter != 'e' || !value)
                 return true;
 
-        if (du_exclude_have < DU_EXCLUDES)
-                du_excludes[du_exclude_have++] = value;
+        if (du_exclude_have >= DU_EXCLUDES)
+        {
+                file_fail("du: too many exclude patterns\n", 0);
+                return false;
+        }
+
+        du_excludes[du_exclude_have++] = value;
 
         return true;
 }
@@ -4265,6 +4339,16 @@ static const file_long du_longs[] = {
 static b32 file_du()
 {
         positive count = (positive)program_argument_count();
+
+        du_status = 0;
+        du_grand = 0;
+        du_unit = 1024;
+        du_maximum = FILE_MAX_DEPTH;
+        du_exclude_have = 0;
+        du_seen_broken = false;
+        memory_fill(du_seen_inode, 0, sizeof(du_seen_inode));
+        memory_fill(du_seen_device, 0, sizeof(du_seen_device));
+
         file_taking taking = {
             .program = (string_address) "du",
             .allowed = (string_address) "abcdhklLmsSx",
@@ -4309,12 +4393,12 @@ static b32 file_du()
         }
         else
         {
-                while (first < count)
+                while (first < count && !du_seen_broken)
                         du_grand += du_walk(program_argument((b32)first++),
                                             FILE_MAX_DEPTH, true, 0);
         }
 
-        if (du_total)
+        if (du_total && !du_seen_broken)
                 du_report(du_grand, (string_address) "total");
 
         log_flush();

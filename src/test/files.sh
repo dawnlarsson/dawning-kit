@@ -114,6 +114,64 @@ spoken() {
         report bad "$name" "want [$(head -c 50 "$work/want" | tr '\n' '|')][$want_status] got [$(head -c 50 "$work/got" | tr '\n' '|')][$got_status]"
 }
 
+# Fixed-memory ceilings are permitted to refuse work, but never to emit a
+# plausible prefix and exit successfully.
+refuses_ls_ceiling() {
+        if "$binaries/ls" "$1" > "$work/got" 2> "$work/got.err"; then
+                got_status=0
+        else
+                got_status=$?
+        fi
+
+        if [ "$got_status" -ne 0 ] && [ ! -s "$work/got" ] &&
+           grep -q '^ls: directory has too many entries$' "$work/got.err"; then
+                report ok
+                return 0
+        fi
+
+        report bad 'entry ceiling' "wanted loud refusal, got [$(head -c 50 "$work/got" | tr '\n' '|')][$got_status] $(head -1 "$work/got.err")"
+}
+
+refuses_du_excludes() {
+        set --
+        i=0
+
+        while [ "$i" -lt 17 ]; do
+                set -- "$@" '--exclude=*'
+                i=$((i + 1))
+        done
+
+        if "$binaries/du" "$@" "$fixture" > "$work/got" 2> "$work/got.err"; then
+                got_status=0
+        else
+                got_status=$?
+        fi
+
+        if [ "$got_status" -ne 0 ] && [ ! -s "$work/got" ] &&
+           grep -q '^du: too many exclude patterns$' "$work/got.err"; then
+                report ok
+                return 0
+        fi
+
+        report bad 'exclude ceiling' "wanted loud refusal, got [$(head -c 50 "$work/got" | tr '\n' '|')][$got_status] $(head -1 "$work/got.err")"
+}
+
+refuses_du_link_ceiling() {
+        if "$binaries/du" "$1" > "$work/got" 2> "$work/got.err"; then
+                got_status=0
+        else
+                got_status=$?
+        fi
+
+        if [ "$got_status" -ne 0 ] && [ ! -s "$work/got" ] &&
+           grep -q '^du: too many multiply-linked files$' "$work/got.err"; then
+                report ok
+                return 0
+        fi
+
+        report bad 'hard-link ceiling' "wanted loud refusal, got [$(head -c 50 "$work/got" | tr '\n' '|')][$got_status] $(head -1 "$work/got.err")"
+}
+
 # When a file was last written, or the word now.
 #
 # The two trees are built one after the other and the two tools run one after
@@ -512,6 +570,16 @@ ln -s plain "$kinds/pointer"
 ln -s nowhere "$kinds/broken"
 mkfifo "$kinds/pipe" 2>/dev/null || true
 
+crowded=$work/crowded
+mkdir "$crowded"
+i=0
+while [ "$i" -lt 8193 ]; do
+        : > "$crowded/f$i"
+        i=$((i + 1))
+done
+crowded_copy=$work/crowded-copy
+cp -al "$crowded" "$crowded_copy"
+
 group ls
 near 'plain'            'cat' ls "$fixture"
 near 'all'              'cat' ls -a "$fixture"
@@ -551,6 +619,7 @@ same 'long slashed'     ls -lp "$fixture"
 near 'classified kinds' 'cat' ls -F "$kinds"
 near 'classified kinds long' 'cat' ls -lF "$kinds"
 near 'slashed kinds'    'cat' ls -p "$kinds"
+refuses_ls_ceiling "$crowded"
 
 #       A file with two names in the tree is one file. Nothing above has one,
 #       so a tree with a pair of them is built for the tools that have to
@@ -598,6 +667,8 @@ near 'one system long'  "LC_ALL=C sort" du --one-file-system "$linked"
 near 'apparent long'    "LC_ALL=C sort" du -s --apparent-size "$linked"
 same 'not an option'    du -W "$linked"
 same 'not a word'       du --excluding=two "$linked"
+refuses_du_excludes
+refuses_du_link_ceiling "$crowded"
 
 group df
 # The digits are masked and their count is not: how full a filesystem is
