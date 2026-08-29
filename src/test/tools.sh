@@ -563,6 +563,11 @@ printf 'a\0b\0c\n'                              > "$work/bin1"
 printf 'a\0b\0d\n'                              > "$work/bin2"
 printf 'a\0b\0c\n'                              > "$work/bin1copy"
 printf 'a\0b\0c\0\n'                            > "$work/bin3"
+printf 'alpha  \nbeta\t\n'                    > "$work/trailing1"
+printf 'alpha\nbeta\n'                         > "$work/trailing2"
+printf 'alpha\r\nbeta\r\n'                   > "$work/crlf"
+printf 'a\tb\nchange\n'                      > "$work/tabexpand1"
+printf 'a       b\nCHANGE\n'                  > "$work/tabexpand2"
 
 seq 1 40 > "$work/long1"
 seq 1 40 | sed '7s/.*/SEVEN/; 23s/.*/TWENTYTHREE/' > "$work/long2"
@@ -578,6 +583,15 @@ compare_diff 'both empty'      "$work/empty" "$work/empty"
 compare_diff 'shorter'         "$work/a" "$work/tight"
 compare_diff 'long change'     "$work/long1" "$work/long2"
 compare_diff 'long mixed'      "$work/long1" "$work/long3"
+compare_in 'stdin left'        diff "$work/a" - "$work/b"
+compare_in 'stdin right'       diff "$work/b" "$work/a" -
+compare_in 'stdin twice'       diff "$work/a" - -
+compare_in 'stdin twice report' diff "$work/a" -s - -
+
+compare_diff 'normal long'     --normal "$work/a" "$work/b"
+compare_diff 'report same'     -s "$work/a" "$work/a2"
+compare_diff 'report binary same' -s "$work/bin1" "$work/bin1copy"
+compare_diff 'brief report same' -qs "$work/a" "$work/a2"
 
 compare_diff 'unified'         -u "$work/a" "$work/b"
 compare_diff 'unified long'    -u "$work/long1" "$work/long2"
@@ -585,6 +599,12 @@ compare_diff 'unified mixed'   -u "$work/long1" "$work/long3"
 compare_diff 'unified same'    -u "$work/a" "$work/a2"
 compare_diff 'unified empty'   -u "$work/empty" "$work/a"
 compare_diff 'unified labels'  -u -L left -L right "$work/a" "$work/b"
+compare_diff 'unified zero'    -U0 "$work/a" "$work/b"
+compare_diff 'unified one'     -U 1 "$work/a" "$work/b"
+compare_diff 'unified long count' --unified=2 "$work/a" "$work/b"
+compare_diff 'unified bad count' -U nope "$work/a" "$work/b"
+compare_diff 'conflicting styles' -u --normal "$work/a" "$work/b"
+compare_diff 'third label refused' -u -L one -L two -L three "$work/a" "$work/b"
 compare_diff_full 'output write failure' "$work/a" "$work/b"
 
 compare_diff 'brief differ'    -q "$work/a" "$work/b"
@@ -597,6 +617,16 @@ compare_diff 'ignore change'   -b "$work/a" "$work/spaced"
 compare_diff 'ignore tabs'     -b "$work/spaced" "$work/tabbed"
 compare_diff 'ignore blanks'   -B "$work/tight" "$work/blanks"
 compare_diff 'ignore blanks u' -u -B "$work/tight" "$work/blanks"
+compare_diff 'ignore trailing'  -Z "$work/trailing1" "$work/trailing2"
+compare_diff 'ignore trailing long' --ignore-trailing-space \
+        "$work/trailing1" "$work/trailing2"
+compare_diff 'strip carriage return' --strip-trailing-cr "$work/crlf" "$work/trailing2"
+compare_diff 'ignore tab expansion' -E "$work/tabexpand1" "$work/tabexpand2"
+compare_diff 'ignore tab expansion long' --ignore-tab-expansion \
+        "$work/tabexpand1" "$work/tabexpand2"
+compare_diff 'speed hint' --speed-large-files "$work/a" "$work/b"
+compare_diff 'explicit filename case default' --no-ignore-file-name-case \
+        "$work/a" "$work/b"
 
 #       The last line of a file that has no newline of its own is not the
 #       same line as a complete one however the bytes read, and the marker
@@ -629,6 +659,14 @@ printf 'DEEP\n'       > "$work/d2/sub/inner"
 compare_diff 'directories'     "$work/d1" "$work/d2"
 compare_diff 'directories r'   -r "$work/d1" "$work/d2"
 compare_diff 'directories r u' -ru "$work/d1" "$work/d2"
+compare_diff 'directories r U'  -rU 1 "$work/d1" "$work/d2"
+compare_diff 'directories r s'  -rs "$work/d1" "$work/d2"
+compare_diff 'directories one way N' -r --unidirectional-new-file \
+        "$work/d1" "$work/d2"
+compare_diff 'directories one way N reverse' -r --unidirectional-new-file \
+        "$work/d2" "$work/d1"
+compare_diff 'missing left one way N' --unidirectional-new-file \
+        "$work/nosuch" "$work/a"
 compare_diff 'directories q'   -rq "$work/d1" "$work/d2"
 compare_diff 'directories N'   -rN "$work/d1" "$work/d2"
 compare_diff 'directory file'  "$work/d1" "$work/d2/same"
@@ -910,8 +948,8 @@ for _ in range(rounds):
     a = "".join(random.choice(words) + "\n" for _ in range(random.randint(0, 14)))
     b = "".join(random.choice(words) + "\n" for _ in range(random.randint(0, 14)))
 
-    for flags in ([], ["-i"], ["-w"], ["-b"], ["-B"], ["-u"], ["-u", "-b"],
-                  ["-u", "-B"], ["-i", "-w"]):
+    for flags in ([], ["-i"], ["-w"], ["-b"], ["-B"], ["-E"], ["-Z"],
+                  ["-u"], ["-u", "-b"], ["-u", "-B"], ["-i", "-w"]):
         both(flags, a, b)
 
 #       A file whose last line has no newline takes a different path through

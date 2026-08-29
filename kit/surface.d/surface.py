@@ -56,9 +56,17 @@ UNSTABLE = {'--help', '--version', '--random-sort', '--parallel',
 # -R is random.  Keep aliases whose output is inherently unstable scoped to
 # the tool which defines them, so they cannot hide another tool's real flag.
 UNSTABLE_BY_TOOL = {
+    'diff': {'-v'},
     'grep': {'-V'},
     'rev': {'-h', '-V'},
     'sort': {'-R'},
+}
+
+# GNU documents these as --name[=VALUE]. Passing VALUE as the next word does
+# not exercise the option; it becomes an operand, and both tools can then fail
+# for an extra-operand error while the option remains completely unsupported.
+OPTIONAL_EQUALS = {
+    ('diff', '--context'), ('diff', '--unified'), ('diff', '--color'),
 }
 
 
@@ -73,6 +81,7 @@ SAMPLES = {
     'NUMBER': '2', 'K': '1', 'BYTES': '2', 'LINES': '2', 'DIGITS': '2',
     'CHAR': 'a', 'CC': 'a', 'C': 'a', 'SEP': ',', 'STRING': 'a',
     'STYLE': 'a', 'FORMAT': 'rn', 'WORD': 'always', 'TYPE': 'a',
+    'WHEN': 'always',
     'LIST': '1', 'FIELDS': '1', 'RANGE': '1', 'PATTERN': 'a',
     'PATTERNS': 'a', 'FILE': '/dev/null', 'SUFFIX': '.bak',
     'EXPR': 'a', 'SCRIPT': 's/a/A/', 'PROGRAM': 'true', 'NAME': 'a',
@@ -140,6 +149,7 @@ def run(argv, feed, timeout=10, cwd=None):
         environment = os.environ.copy()
         environment['LC_ALL'] = 'C'
         environment['LANG'] = 'C'
+        environment['TZ'] = 'UTC0'
         r = subprocess.run(argv, input=feed.encode(), capture_output=True,
                            timeout=timeout, cwd=cwd, env=environment)
         return r.stdout, r.returncode, None
@@ -172,7 +182,24 @@ def probe(tool, ours, flag, value):
             f.write(b'apple\nplum\n')
         os.symlink('sub', os.path.join(cwd, 'linked-sub'))
         base = ['a', '.']
-    with_flag = [flag] if value is None else [flag, value]
+    elif tool == 'diff':
+        # diff without its pair of operands rejects every option for the same
+        # later reason, which made unsupported formats look implemented. Use
+        # a deterministic changed pair so output-style and ignore flags reach
+        # the code they name.
+        scratch = tempfile.TemporaryDirectory(prefix='surface-diff-')
+        cwd = scratch.name
+        with open(os.path.join(cwd, 'left'), 'wb') as f:
+            f.write(b'alpha\nbeta  \ngamma\n')
+        with open(os.path.join(cwd, 'right'), 'wb') as f:
+            f.write(b'alpha\nBETA\ngamma\n')
+        base = ['left', 'right']
+    if value is None:
+        with_flag = [flag]
+    elif (tool, flag) in OPTIONAL_EQUALS:
+        with_flag = [f'{flag}={value}']
+    else:
+        with_flag = [flag, value]
     argv_sys = [tool] + with_flag + base
     argv_our = [ours] + with_flag + base
 

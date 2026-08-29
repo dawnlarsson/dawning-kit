@@ -980,7 +980,7 @@ static b32 tools_dd(void)
 #define DIFF_NORMAL 0
 #define DIFF_UNIFIED 1
 
-#define DIFF_LARGE ((positive)1 << 60)
+#define DIFF_LARGE (positive_max / 8)
 
 static bool diff_icase;
 static positive diff_space;
@@ -988,10 +988,17 @@ static bool diff_blank_lines;
 static bool diff_brief;
 static bool diff_recursive;
 static bool diff_new_file;
+static bool diff_new_file_left;
 static bool diff_text;
+static bool diff_identical;
+static bool diff_trailing;
+static bool diff_strip_cr;
+static bool diff_tabs;
 static positive diff_style;
 static positive diff_context = 3;
 static string_address diff_labels[2];
+static positive diff_label_count;
+static bool diff_style_seen;
 static p8 address_to diff_switches;
 static positive diff_switches_used;
 static b32 diff_result;
@@ -1025,7 +1032,8 @@ static fn diff_writer(address_any data, positive length)
 
 // Reading ---------------------------------------------------
 
-static bool diff_slurp(diff_side address_to side, string_address path)
+static bool diff_slurp(diff_side address_to side, string_address path,
+                       bool allow_missing)
 {
         bipolar handle = 0;
 
@@ -1036,7 +1044,7 @@ static bool diff_slurp(diff_side address_to side, string_address path)
         side->modified_seconds = 0;
         side->modified_nanoseconds = 0;
 
-        if (path)
+        if (path && !string_equals(path, "-"))
         {
                 file_facts facts;
 
@@ -1050,7 +1058,7 @@ static bool diff_slurp(diff_side address_to side, string_address path)
 
                 if (handle < 0)
                 {
-                        if (diff_new_file && handle == -ERROR_NO_ENTRY)
+                        if (allow_missing && handle == -ERROR_NO_ENTRY)
                         {
                                 side->base = (p8 address_to)text_arena_take(16);
                                 side->at = (positive address_to)text_arena_take(2 * sizeof(positive));
@@ -1111,6 +1119,26 @@ static bool diff_slurp(diff_side address_to side, string_address path)
 
         if (handle > 0)
                 system_call_1(syscall(close), handle);
+
+        if (diff_strip_cr && have > 1)
+        {
+                positive read = 0;
+                positive write = 0;
+
+                while (read < have)
+                {
+                        if (start[read] == '\r' && read + 1 < have &&
+                            start[read + 1] == '\n')
+                        {
+                                read++;
+                                continue;
+                        }
+
+                        start[write++] = start[read++];
+                }
+
+                have = write;
+        }
 
         // One byte for the newline the file may not have, and one so the
         // scan below can look one past the end without care.
@@ -1192,14 +1220,25 @@ static bool diff_white(p8 value)
 typedef struct
 {
         p8 address_to at;
+        p8 address_to stop;
         p8 held;
+        positive column;
+        positive tab_left;
         bool done;
 } diff_scan;
 
 static fn diff_scan_open(diff_scan address_to scan, p8 address_to line)
 {
         scan->at = line;
+        scan->stop = (p8 address_to)string_first_of_or_end(line, '\n');
+
+        if (diff_trailing)
+                while (scan->stop > line && diff_white(scan->stop[-1]))
+                        scan->stop--;
+
         scan->done = false;
+        scan->column = 0;
+        scan->tab_left = 0;
 }
 
 static bool diff_scan_next(diff_scan address_to scan, p8 address_to out)
@@ -1207,12 +1246,20 @@ static bool diff_scan_next(diff_scan address_to scan, p8 address_to out)
         if (scan->done)
                 return false;
 
+        if (scan->tab_left)
+        {
+                scan->tab_left--;
+                scan->column++;
+                address_to out = ' ';
+                return true;
+        }
+
         if (diff_space == DIFF_SPACE_ALL)
         {
-                while (address_to scan->at != '\n' && diff_white(address_to scan->at))
+                while (scan->at < scan->stop && diff_white(address_to scan->at))
                         scan->at++;
 
-                if (address_to scan->at == '\n')
+                if (scan->at == scan->stop)
                 {
                         scan->done = true;
                         return false;
@@ -1226,7 +1273,7 @@ static bool diff_scan_next(diff_scan address_to scan, p8 address_to out)
 
         if (diff_space == DIFF_SPACE_CHANGE)
         {
-                if (address_to scan->at == '\n')
+                if (scan->at == scan->stop)
                 {
                         scan->done = true;
                         return false;
@@ -1234,10 +1281,10 @@ static bool diff_scan_next(diff_scan address_to scan, p8 address_to out)
 
                 if (diff_white(address_to scan->at))
                 {
-                        while (diff_white(address_to scan->at) && address_to scan->at != '\n')
+                        while (scan->at < scan->stop && diff_white(address_to scan->at))
                                 scan->at++;
 
-                        if (address_to scan->at == '\n')
+                        if (scan->at == scan->stop)
                         {
                                 scan->done = true;
                                 return false;
@@ -1254,14 +1301,26 @@ static bool diff_scan_next(diff_scan address_to scan, p8 address_to out)
                 return true;
         }
 
-        if (address_to scan->at == '\n')
+        if (scan->at == scan->stop)
         {
                 scan->done = true;
                 return false;
         }
 
+        if (diff_tabs && address_to scan->at == '\t')
+        {
+                positive spaces = 8 - scan->column % 8;
+
+                scan->at++;
+                scan->column++;
+                scan->tab_left = spaces - 1;
+                address_to out = ' ';
+                return true;
+        }
+
         address_to out = diff_fold(address_to scan->at);
         scan->at++;
+        scan->column++;
 
         return true;
 }
@@ -1317,7 +1376,7 @@ static bool diff_same(diff_side address_to a, bipolar i, diff_side address_to b,
 
         // With no whitespace normalization the lines remain exact bounded
         // spans; case folding only changes which block comparator proves it.
-        if (diff_space == DIFF_SPACE_NONE)
+        if (diff_space == DIFF_SPACE_NONE && !diff_trailing && !diff_tabs)
         {
                 positive length = diff_line_length(a, i);
 
@@ -2200,6 +2259,19 @@ static fn diff_unified_output(string_address left, string_address right)
         }
 }
 
+static fn diff_identical_output(string_address left, string_address right)
+{
+        if (!diff_identical)
+                return;
+
+        text_put_string("Files ");
+        text_put_string(left);
+        text_put_string(" and ");
+        text_put_string(right);
+        text_put_string(" are identical\n");
+        text_flush();
+}
+
 // One pair of files -----------------------------------------
 
 static b32 diff_pair(string_address left, string_address right)
@@ -2210,13 +2282,17 @@ static b32 diff_pair(string_address left, string_address right)
         memory_fill(a, 0, sizeof(diff_side));
         memory_fill(b, 0, sizeof(diff_side));
 
-        if (!diff_slurp(a, left) || !diff_slurp(b, right))
+        if (!diff_slurp(a, left, diff_new_file || diff_new_file_left) ||
+            !diff_slurp(b, right, diff_new_file))
                 return 2;
 
         if (diff_binary(a) || diff_binary(b))
         {
-                if (a->size == b->size && !memory_compare(a->base, b->base, a->size))
+            if (a->size == b->size && !memory_compare(a->base, b->base, a->size))
+                {
+                        diff_identical_output(left, right);
                         return 0;
+                }
 
                 text_put_string(diff_brief ? "Files " : "Binary files ");
                 text_put_string(left);
@@ -2378,7 +2454,10 @@ static b32 diff_pair(string_address left, string_address right)
         }
 
         if (!changes)
+        {
+                diff_identical_output(left, right);
                 return 0;
+        }
 
         if (diff_brief)
         {
@@ -2427,6 +2506,9 @@ static bool diff_name_add(diff_names address_to names, string_address value)
 {
         if (names->count >= names->room)
         {
+                if (names->room > positive_max / 2)
+                        return false;
+
                 positive room = names->room ? names->room * 2 : 32;
                 string_address address_to grown =
                     (string_address address_to)text_arena_take(
@@ -2494,7 +2576,28 @@ static bool diff_names_sort(diff_names address_to names)
         return true;
 }
 
-static bool diff_gather(string_address path, diff_names address_to names)
+static string_address diff_path(string_address directory, string_address name)
+{
+        positive head = string_length(directory);
+        positive tail = string_length(name);
+        positive slash = head && directory[head - 1] != '/';
+
+        if (tail > positive_max - slash - 1 ||
+            head > positive_max - tail - slash - 1)
+                return null;
+
+        positive room = head + tail + slash + 1;
+        p8 address_to joined = (p8 address_to)text_arena_take(room);
+
+        if (!joined)
+                return null;
+
+        path_join(joined, room, directory, name);
+        return (string_address)joined;
+}
+
+static bool diff_gather(string_address path, diff_names address_to names,
+                        bool allow_missing)
 {
         file_walk walk;
 
@@ -2504,7 +2607,7 @@ static bool diff_gather(string_address path, diff_names address_to names)
 
         if (!file_walk_open(address_of walk, AT_FDCWD, path))
         {
-                if (diff_new_file)
+                if (allow_missing)
                         return true;
 
                 text_flush();
@@ -2553,7 +2656,8 @@ static b32 diff_directories(string_address left, string_address right, positive 
 
         diff_names names[2];
 
-        if (!diff_gather(left, names + 0) || !diff_gather(right, names + 1))
+        if (!diff_gather(left, names + 0, diff_new_file || diff_new_file_left) ||
+            !diff_gather(right, names + 1, diff_new_file))
                 return 2;
 
         positive i = 0, j = 0;
@@ -2572,13 +2676,13 @@ static b32 diff_directories(string_address left, string_address right, positive 
                 {
                         if (diff_new_file)
                         {
-                                p8 only_left[TEXT_PATH_MAX];
-                                p8 only_right[TEXT_PATH_MAX];
+                                string_address only_left = diff_path(left,
+                                                                    names[0].at[i]);
+                                string_address only_right = diff_path(right,
+                                                                     names[0].at[i]);
 
-                                path_join(only_left, TEXT_PATH_MAX, left,
-                                          names[0].at[i]);
-                                path_join(only_right, TEXT_PATH_MAX, right,
-                                          names[0].at[i]);
+                                if (!only_left || !only_right)
+                                        return 2;
 
                                 b32 one = diff_walk(only_left, only_right, depth + 1);
 
@@ -2604,15 +2708,15 @@ static b32 diff_directories(string_address left, string_address right, positive 
 
                 if (order > 0)
                 {
-                        if (diff_new_file)
+                        if (diff_new_file || diff_new_file_left)
                         {
-                                p8 only_left[TEXT_PATH_MAX];
-                                p8 only_right[TEXT_PATH_MAX];
+                                string_address only_left = diff_path(left,
+                                                                    names[1].at[j]);
+                                string_address only_right = diff_path(right,
+                                                                     names[1].at[j]);
 
-                                path_join(only_left, TEXT_PATH_MAX, left,
-                                          names[1].at[j]);
-                                path_join(only_right, TEXT_PATH_MAX, right,
-                                          names[1].at[j]);
+                                if (!only_left || !only_right)
+                                        return 2;
 
                                 b32 one = diff_walk(only_left, only_right, depth + 1);
 
@@ -2636,11 +2740,11 @@ static b32 diff_directories(string_address left, string_address right, positive 
                         continue;
                 }
 
-                p8 one_left[TEXT_PATH_MAX];
-                p8 one_right[TEXT_PATH_MAX];
+                string_address one_left = diff_path(left, names[0].at[i]);
+                string_address one_right = diff_path(right, names[1].at[j]);
 
-                path_join(one_left, TEXT_PATH_MAX, left, names[0].at[i]);
-                path_join(one_right, TEXT_PATH_MAX, right, names[1].at[j]);
+                if (!one_left || !one_right)
+                        return 2;
 
                 bool left_directory = file_is_directory_through(one_left);
                 bool right_directory = file_is_directory_through(one_right);
@@ -2676,8 +2780,12 @@ static b32 diff_walk(string_address left, string_address right, positive depth)
         bool left_directory = left_here && file_is_directory_through(left);
         bool right_directory = right_here && file_is_directory_through(right);
 
+        bool absent_directory_is_empty =
+            !(left_here && right_here) &&
+            (diff_new_file || (diff_new_file_left && !left_here && right_here));
+
         if ((left_directory || right_directory) &&
-            (left_directory == right_directory || (diff_new_file && !(left_here && right_here))))
+            (left_directory == right_directory || absent_directory_is_empty))
                 return diff_directories(left, right, depth);
 
         if (left_directory != right_directory && left_here && right_here)
@@ -2708,30 +2816,83 @@ static b32 diff_walk(string_address left, string_address right, positive depth)
 }
 
 static const file_long diff_longs[] = {
-    {(string_address) "unified", 'u'},
+    {(string_address) "normal", 'z'},
+    {(string_address) "unified", 'v'},
     {(string_address) "brief", 'q'},
+    {(string_address) "report-identical-files", 's'},
     {(string_address) "recursive", 'r'},
     {(string_address) "new-file", 'N'},
+    {(string_address) "unidirectional-new-file", 'O'},
+    {(string_address) "no-ignore-file-name-case", 'J'},
     {(string_address) "ignore-case", 'i'},
+    {(string_address) "ignore-tab-expansion", 'E'},
     {(string_address) "ignore-all-space", 'w'},
     {(string_address) "ignore-space-change", 'b'},
+    {(string_address) "ignore-trailing-space", 'Z'},
     {(string_address) "ignore-blank-lines", 'B'},
     {(string_address) "text", 'a'},
+    {(string_address) "strip-trailing-cr", 'R'},
+    {(string_address) "speed-large-files", 'h'},
     {(string_address) "label", 'L'},
     {null, 0},
 };
 
-// -L comes twice, once for each side, and one value per letter cannot hold
-// two: the labels are taken as the options arrive.
-static bool diff_label_seen(p8 letter, string_address value)
+static bool diff_context_set(string_address value)
 {
-        if (letter != 'L')
-                return true;
+        positive context;
+        string_address at = value;
 
-        if (!diff_labels[0])
-                diff_labels[0] = value;
-        else
-                diff_labels[1] = value;
+        if (!value)
+        {
+                diff_context = 3;
+                return true;
+        }
+
+        if (!dd_digits(address_of at, address_of context) || string_get(at) ||
+            context > (positive_max - 1) / 2)
+        {
+                text_error(value, "invalid context length");
+                return false;
+        }
+
+        diff_context = context;
+        return true;
+}
+
+// Labels, context values and output styles need arrival order; one flag word
+// and one value per letter cannot represent any of those three contracts.
+static bool diff_option_seen(p8 letter, string_address value)
+{
+        if (letter == 'L')
+        {
+                if (diff_label_count >= 2)
+                {
+                        text_error(value, "too many file label options");
+                        return false;
+                }
+
+                diff_labels[diff_label_count++] = value;
+                return true;
+        }
+
+        if (letter == 'u' || letter == 'U' || letter == 'v' || letter == 'z')
+        {
+                positive style = letter == 'z' ? DIFF_NORMAL : DIFF_UNIFIED;
+
+                if (diff_style_seen && diff_style != style)
+                {
+                        text_error(null, "conflicting output style options");
+                        return false;
+                }
+
+                diff_style = style;
+                diff_style_seen = true;
+
+                if (style == DIFF_UNIFIED && (letter == 'U' || letter == 'v'))
+                        return diff_context_set(value);
+
+                return true;
+        }
 
         return true;
 }
@@ -2740,10 +2901,11 @@ static b32 tools_diff(void)
 {
         file_taking taking = {
             .program = (string_address) "diff",
-            .allowed = (string_address) "BLNabiqruw",
-            .valued = (string_address) "L",
+            .allowed = (string_address) "BELNUZabiqrsuw",
+            .valued = (string_address) "LU",
+            .optional = (string_address) "v",
             .longs = diff_longs,
-            .seen = diff_label_seen,
+            .seen = diff_option_seen,
         };
 
         text_begin("diff");
@@ -2752,6 +2914,8 @@ static b32 tools_diff(void)
         diff_style = DIFF_NORMAL;
         diff_context = 3;
         diff_labels[0] = diff_labels[1] = null;
+        diff_label_count = 0;
+        diff_style_seen = false;
         diff_switches_used = 0;
         diff_titled = false;
         text_arena_used = 0;
@@ -2776,14 +2940,16 @@ static b32 tools_diff(void)
         diff_blank_lines = (flags & FILE_FLAG('B')) != 0;
         diff_recursive = (flags & FILE_FLAG('r')) != 0;
         diff_new_file = (flags & FILE_FLAG('N')) != 0;
+        diff_new_file_left = (flags & FILE_FLAG('O')) != 0;
         diff_text = (flags & FILE_FLAG('a')) != 0;
+        diff_identical = (flags & FILE_FLAG('s')) != 0;
+        diff_trailing = (flags & FILE_FLAG('Z')) != 0;
+        diff_strip_cr = (flags & FILE_FLAG('R')) != 0;
+        diff_tabs = (flags & FILE_FLAG('E')) != 0;
         diff_brief = (flags & FILE_FLAG('q')) != 0;
         diff_space = (flags & FILE_FLAG('w'))   ? DIFF_SPACE_ALL
                      : (flags & FILE_FLAG('b')) ? DIFF_SPACE_CHANGE
                                                 : DIFF_SPACE_NONE;
-
-        if (flags & FILE_FLAG('u'))
-                diff_style = DIFF_UNIFIED;
 
         // What the header of a piece of a recursive diff repeats is the
         // options as they were typed, not a canonical spelling -- and a label
@@ -2800,6 +2966,17 @@ static b32 tools_diff(void)
                 diff_switches[diff_switches_used++] = ' ';
                 memory_copy_fast(diff_switches + diff_switches_used, word, length);
                 diff_switches_used += length;
+
+                if (word[length - 1] == 'U' && i + 1 < taking.first)
+                {
+                        string_address context = program_argument((b32)(i + 1));
+                        positive context_length = string_length(context);
+
+                        diff_switches[diff_switches_used++] = ' ';
+                        memory_copy_fast(diff_switches + diff_switches_used,
+                                         context, context_length);
+                        diff_switches_used += context_length;
+                }
         }
 
         if (text_argument_count - first != 2)
@@ -2810,22 +2987,39 @@ static b32 tools_diff(void)
 
         string_address left = program_argument(first);
         string_address right = program_argument(first + 1);
-        p8 joined[TEXT_PATH_MAX];
+        string_address joined;
 
         // diff dir file and diff file dir both mean the same file inside the
         // directory, which is the one place the two names are not the pair.
         if (file_is_directory_through(left) && !file_is_directory_through(right))
         {
-                path_join(joined, TEXT_PATH_MAX, left, file_last_component(right));
+                joined = diff_path(left, file_last_component(right));
+
+                if (!joined)
+                        return text_done(2);
+
                 left = joined;
         }
         else if (!file_is_directory_through(left) && file_is_directory_through(right))
         {
-                path_join(joined, TEXT_PATH_MAX, right, file_last_component(left));
+                joined = diff_path(right, file_last_component(left));
+
+                if (!joined)
+                        return text_done(2);
+
                 right = joined;
         }
 
-        diff_result = diff_walk(left, right, 0);
+        if (string_equals(left, "-") && string_equals(right, "-"))
+        {
+                diff_identical_output(left, right);
+                diff_result = 0;
+        }
+        else
+        {
+                diff_result = diff_walk(left, right, 0);
+        }
+
         text_done(diff_result);
 
         // A diagnostic utility distinguishes a difference (1) from being
