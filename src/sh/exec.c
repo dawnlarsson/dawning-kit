@@ -107,11 +107,6 @@ static fn exec_errexit(b32 status)
 
 
 #define REDIRECT_SAVE_MAX 64
-// As deep as the table a local goes in. A call further down than that gets no
-// slot for its locals and silently keeps the caller's, which is worse than
-// being told the recursion is too deep.
-#define FUNCTION_DEPTH_MAX 128
-
 //      What a command keeps while it is being built. argv and the saved
 //      assignments point in here, so like the expansion store these bytes may
 //      never move once handed out.
@@ -842,9 +837,15 @@ static b32 exec_call(b32 body)
         positive saved;
         b32 status;
 
-        if (exec_function_depth >= FUNCTION_DEPTH_MAX)
+        if (exec_function_depth == 0x7fffffff)
         {
                 string_format(exec_error, "Too deep\n");
+                shell_status = 1;
+                return 1;
+        }
+
+        if (!shell_local_enter())
+        {
                 shell_status = 1;
                 return 1;
         }
@@ -853,7 +854,6 @@ static b32 exec_call(b32 body)
         shell_parameters_set(shell_argv + 1, shell_argc > 0 ? shell_argc - 1 : 0);
 
         exec_function_depth++;
-        shell_local_enter();
         status = exec_node(body);
         shell_local_leave();
         exec_function_depth--;

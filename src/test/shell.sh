@@ -941,6 +941,9 @@ bash_answer 'function missing body' 'function f'
 answer 'one hundred twenty eight functions' 'i=0; while [ "$i" -lt 128 ]; do eval "f$i() { echo $i; }"; i=$((i+1)); done; f0; f64; f127; f64() { echo new; }; f64; unset -f f65; type f65 >/dev/null 2>&1; echo $?'
 answer 'function registry churn' 'i=0; while [ "$i" -lt 1000 ]; do eval "f$i() { :; }"; eval "unset -f f$i"; i=$((i+1)); done; final() { echo final; }; final'
 answer 'long function name' 'function_name_abcdefghijklmnopqrstuvwxyz_abcdefghijklmnopqrstuvwxyz_abcdefghijklmnopqrstuvwxyz_abcdefghijklmnopqrstuvwxyz() { echo long; }; function_name_abcdefghijklmnopqrstuvwxyz_abcdefghijklmnopqrstuvwxyz_abcdefghijklmnopqrstuvwxyz_abcdefghijklmnopqrstuvwxyz; unset -f function_name_abcdefghijklmnopqrstuvwxyz_abcdefghijklmnopqrstuvwxyz_abcdefghijklmnopqrstuvwxyz_abcdefghijklmnopqrstuvwxyz; type function_name_abcdefghijklmnopqrstuvwxyz_abcdefghijklmnopqrstuvwxyz_abcdefghijklmnopqrstuvwxyz_abcdefghijklmnopqrstuvwxyz >/dev/null 2>&1; echo $?'
+answer 'one thousand function calls with locals' 'n=outer; f() { local n=$1; if [ "$n" -eq 0 ]; then echo leaf; return; fi; f $((n-1)); }; f 1000; echo "$n"'
+answer 'two hundred fifty six locals' 'f() { i=0; while [ "$i" -lt 256 ]; do eval "local v$i=$i"; i=$((i+1)); done; echo "$v0:$v127:$v255"; }; f; echo "${v0-unset}:${v255-unset}"'
+answer 'long local name' 'local_name_abcdefghijklmnopqrstuvwxyz_abcdefghijklmnopqrstuvwxyz_abcdefghijklmnopqrstuvwxyz_abcdefghijklmnopqrstuvwxyz=outer; f() { local local_name_abcdefghijklmnopqrstuvwxyz_abcdefghijklmnopqrstuvwxyz_abcdefghijklmnopqrstuvwxyz_abcdefghijklmnopqrstuvwxyz=inner; echo "$local_name_abcdefghijklmnopqrstuvwxyz_abcdefghijklmnopqrstuvwxyz_abcdefghijklmnopqrstuvwxyz_abcdefghijklmnopqrstuvwxyz"; }; f; echo "$local_name_abcdefghijklmnopqrstuvwxyz_abcdefghijklmnopqrstuvwxyz_abcdefghijklmnopqrstuvwxyz_abcdefghijklmnopqrstuvwxyz"'
 bash_answer 'function simple body rejected' 'function f echo body'
 
 group redirection
@@ -2031,7 +2034,6 @@ answer 'echo an empty word' 'echo "" x'
 answer 'case never closed' 'case x in x) echo m esac'
 answer 'twice negated' '! ! true; echo $?'
 
-differs 'recursion has a floor' '' 1 'f() { [ $1 -le 0 ] && { echo bottom; return; }; f $(($1-1)); }; f 300'
 
 # MAX_TOKENS in shell.c is what a command line holds, so a glob that matches
 # more than that many names is cut off rather than refused.

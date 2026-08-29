@@ -1733,34 +1733,45 @@ fn shell_unset(writer write, string_address input)
         A name given without a value keeps the value it had. dash does that
         too, and it is the difference between marking a name and clearing it.
 */
-#define LOCAL_MAX 128
-#define LOCAL_NAME 64
-#define LOCAL_DEPTH 128
 #define LOCAL_ABSENT ((positive)-1)
 
 typedef struct
 {
-        p8 name[LOCAL_NAME];
+        p8 address_to name;
+        positive name_room;
         positive value;
         bool exported;
 } shell_local_entry;
 
-static shell_local_entry local_table[LOCAL_MAX];
+static shell_local_entry address_to local_table;
+static positive local_room;
 static positive local_count;
+static positive local_initialized;
 static shell_store local_storage;
-static positive local_from[LOCAL_DEPTH];
-static shell_mark local_held[LOCAL_DEPTH];
+static positive address_to local_from;
+static positive local_from_room;
+static shell_mark address_to local_held;
+static positive local_held_room;
 static positive local_depth;
 
-fn shell_local_enter()
+bool shell_local_enter()
 {
-        if (local_depth < LOCAL_DEPTH)
+        if (local_depth == positive_max ||
+            !shell_room((address_any address_to)address_of local_from,
+                        address_of local_from_room, local_depth + 1,
+                        sizeof(local_from[0])) ||
+            !shell_room((address_any address_to)address_of local_held,
+                        address_of local_held_room, local_depth + 1,
+                        sizeof(local_held[0])))
         {
-                local_from[local_depth] = local_count;
-                local_held[local_depth] = shell_store_mark(address_of local_storage);
+                string_format(shell_diagnostic, "No room for function locals\n");
+                return false;
         }
 
+        local_from[local_depth] = local_count;
+        local_held[local_depth] = shell_store_mark(address_of local_storage);
         local_depth++;
+        return true;
 }
 
 fn shell_local_leave()
@@ -1771,9 +1782,6 @@ fn shell_local_leave()
                 return;
 
         local_depth--;
-
-        if (local_depth >= LOCAL_DEPTH)
-                return;
 
         at = local_count;
 
@@ -1799,10 +1807,9 @@ fn shell_local_leave()
 
 static bool local_remember(string_address name)
 {
-        positive begin = local_depth && local_depth <= LOCAL_DEPTH
-                             ? local_from[local_depth - 1]
-                             : 0;
+        positive begin = local_depth ? local_from[local_depth - 1] : 0;
         string_address value;
+        positive name_length;
 
         // Twice in one function is once. Without this a local in a loop fills
         // the table an iteration at a time.
@@ -1810,7 +1817,26 @@ static bool local_remember(string_address name)
                 if (!string_compare(local_table[at].name, name))
                         return true;
 
-        if (local_count >= LOCAL_MAX)
+        if (local_count == positive_max ||
+            !shell_room((address_any address_to)address_of local_table,
+                        address_of local_room, local_count + 1,
+                        sizeof(local_table[0])))
+                return false;
+
+        if (local_count == local_initialized)
+        {
+                local_table[local_count].name = null;
+                local_table[local_count].name_room = 0;
+                local_initialized++;
+        }
+
+        name_length = string_length(name);
+
+        if (name_length == positive_max ||
+            !shell_room((address_any address_to)
+                          address_of local_table[local_count].name,
+                        address_of local_table[local_count].name_room,
+                        name_length + 1, 1))
                 return false;
 
         value = env_get(name);
@@ -1840,6 +1866,9 @@ static bool local_remember(string_address name)
 fn shell_local(writer write, string_address input)
 {
         positive index = 1;
+        p8 address_to name = null;
+        positive name_room = 0;
+        bool failed = false;
 
         if (!local_depth)
         {
@@ -1853,27 +1882,36 @@ fn shell_local(writer write, string_address input)
                 string_address word = shell_argv[index++];
                 string_address mark = string_first_of(word, '=');
                 positive length = mark ? (positive)(mark - word) : string_length(word);
-                p8 name[LOCAL_NAME];
 
-                if (!length || length >= LOCAL_NAME)
+                if (!length || length == positive_max ||
+                    !shell_room((address_any address_to)address_of name,
+                                address_of name_room, length + 1, 1))
                 {
                         shell_diagnostic("local: bad name\n", 0);
-                        return shell_answer(2);
+                        shell_answer(2);
+                        failed = true;
+                        break;
                 }
 
-                string_copy_max_end(name, word, length);
+                memory_copy_end(name, word, length);
 
                 if (!local_remember(name))
                 {
                         shell_diagnostic("local: too many\n", 0);
-                        return shell_answer(2);
+                        shell_answer(2);
+                        failed = true;
+                        break;
                 }
 
                 if (mark)
                         env_set(name, mark + 1);
         }
 
-        shell_answer(0);
+        if (name)
+                memory_free(name, name_room);
+
+        if (!failed)
+                shell_answer(0);
 }
 
 fn shell_readonly(writer write, string_address input)
