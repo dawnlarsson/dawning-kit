@@ -8244,6 +8244,19 @@ static fn sort_key_span(sort_key address_to key, p8 address_to at, positive leng
 
 // A number without a number parser: sign, then integer digits with the
 // leading zeros dropped, then the fraction, compared as text.
+static positive sort_zero_prefix(p8 address_to text, positive from, positive stop)
+{
+        positive length = stop - from;
+
+        if (length >= 64)
+                return from + memory_span_byte(text + from, '0', length);
+
+        while (from < stop && text[from] == '0')
+                from++;
+
+        return from;
+}
+
 static bipolar sort_compare_number(p8 address_to a, positive la, p8 address_to b, positive lb)
 {
         positive at_a = 0, at_b = 0;
@@ -8301,11 +8314,8 @@ static bipolar sort_compare_number(p8 address_to a, positive la, p8 address_to b
                 frac_b_stop = at_b;
         }
 
-        while (int_a < int_a_stop && a[int_a] == '0')
-                int_a++;
-
-        while (int_b < int_b_stop && b[int_b] == '0')
-                int_b++;
+        int_a = sort_zero_prefix(a, int_a, int_a_stop);
+        int_b = sort_zero_prefix(b, int_b, int_b_stop);
 
         bool zero_a = int_a == int_a_stop;
         bool zero_b = int_b == int_b_stop;

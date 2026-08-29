@@ -51,6 +51,12 @@ printf 'x\n\n\n\ny\n' > "$work/blanks"
 printf 'a\tb\nlonger line here\n\rwide\n' > "$work/wide"
 printf '  ab  cd ef\nxy\tzw\nplain\n' > "$work/spaced"
 printf '\376\377\n' > "$work/tr_high"
+awk 'BEGIN {
+        for (n = 70; n; n--) printf "0"; print "2"
+        for (n = 64; n; n--) printf "0"; print "10"
+        for (n = 63; n; n--) printf "0"; print "1"
+        for (n = 96; n; n--) printf "0"; print "0"
+}' > "$work/sort_zero_run"
 head -c 6000 /dev/zero | tr '\0' x > "$work/cut_wide"
 printf '\n' >> "$work/cut_wide"
 head -c 65535 /dev/zero | tr '\0' x > "$work/wc_boundary"
@@ -850,6 +856,7 @@ compare 'plain'          sort a
 compare 'reverse'        sort a  -r
 compare 'numeric'        sort c  -n
 compare 'numeric rev'    sort c  -nr
+compare 'numeric long zero runs' sort sort_zero_run -n
 compare 'unique'         sort e  -u
 compare 'unique plain'   sort a  -u
 compare 'fold'           sort f  -f
