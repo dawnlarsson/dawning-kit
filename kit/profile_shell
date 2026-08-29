@@ -6,7 +6,9 @@
 #
 #       The subject is built when omitted. Linux perf supplies retired work;
 #       strace supplies process, allocation and I/O boundaries. Each case is
-#       one invocation, so startup is visible rather than divided away.
+#       one invocation, so startup is visible rather than divided away. Two
+#       freestanding assembly rows state strict native lower bounds: the least
+#       work a process can retire, and that plus 20,000 control backedges.
 #
 set -eu
 
@@ -24,6 +26,13 @@ command -v perf >/dev/null 2>&1 || {
         echo 'profile_shell: perf is required' >&2
         exit 1
 }
+
+compiler=${CC:-cc}
+"$compiler" -static -nostdlib -nostartfiles -Wl,--build-id=none \
+        "$root/kit/floor_shell.S" -o "$work/process-floor" || exit 1
+"$compiler" -static -nostdlib -nostartfiles -Wl,--build-id=none \
+        -DFLOOR_CONTROL "$root/kit/floor_shell.S" \
+        -o "$work/control-floor" || exit 1
 
 cat > "$work/parse.sh" <<'EOF'
 EOF
@@ -65,30 +74,41 @@ EOF
 
 printf '%-11s %14s %14s %14s %12s %8s\n' \
        case cycles instructions branches branch-misses faults
+: > "$work/counters"
 
-for name in startup parse loop parameter function pipeline; do
-        if [ "$name" = startup ]; then
+for name in process-floor control-floor startup parse loop parameter function pipeline; do
+        if [ "$name" = process-floor ]; then
+                subject_run=$work/process-floor
+                set --
+        elif [ "$name" = control-floor ]; then
+                subject_run=$work/control-floor
+                set --
+        elif [ "$name" = startup ]; then
+                subject_run=$subject
                 set -- -c :
         else
+                subject_run=$subject
                 set -- "$work/$name.sh"
         fi
 
         perf stat -x, -e cycles,instructions,branches,branch-misses,page-faults \
-                "$subject" "$@" >/dev/null 2> "$work/perf"
+                "$subject_run" "$@" >/dev/null 2> "$work/perf"
 
-        awk -F, -v name="$name" '
+        awk -F, -v name="$name" -v counters="$work/counters" '
                 $3 == "cycles:u" { cycles=$1 }
                 $3 == "instructions:u" { instructions=$1 }
                 $3 == "branches:u" { branches=$1 }
                 $3 == "branch-misses:u" { misses=$1 }
                 $3 == "page-faults:u" { faults=$1 }
-                END { printf "%-11s %14s %14s %14s %12s %8s\n",
+                        END { printf "%-11s %14s %14s %14s %12s %8s\n",
                              name, cycles, instructions, branches, misses,
-                             faults }
+                             faults
+                      print name, cycles, instructions, branches, misses,
+                            faults >> counters }
         ' "$work/perf"
 
         if command -v strace >/dev/null 2>&1; then
-                strace -qq -f -c "$subject" "$@" >/dev/null 2> "$work/strace" || true
+                strace -qq -f -c "$subject_run" "$@" >/dev/null 2> "$work/strace" || true
                 awk -v name="$name" '
                         NR > 2 && $NF ~ /^(mmap|munmap|brk|read|write|openat|close|clone|clone3|pipe|pipe2|wait4|execve|exit_group)$/ {
                                 calls[$NF] += $(NF - 1)
@@ -101,3 +121,17 @@ for name in startup parse loop parameter function pipeline; do
                 ' "$work/strace"
         fi
 done
+
+awk '
+        $1 == "process-floor" { pc=$2; pi=$3; pb=$4 }
+        $1 == "control-floor" { cc=$2; ci=$3; cb=$4 }
+        $1 == "startup" { sc=$2; si=$3; sb=$4 }
+        $1 == "loop" { lc=$2; li=$3; lb=$4 }
+        END {
+                print ""
+                print "explicit native lower-bound gaps:"
+                printf "  startup: +%.0f cycles, +%.0f instructions, +%.0f branches above an empty static process\n", sc-pc, si-pi, sb-pb
+                printf "  loop: %.1f cycles, %.1f instructions, %.1f branches per iteration above the fixed 20,000-backedge control floor\n", (lc-cc)/20000, (li-ci)/20000, (lb-cb)/20000
+                print "  the control row excludes variable, arithmetic and formatting semantics; it is a strict lower bound, not a competitor"
+        }
+' "$work/counters"
