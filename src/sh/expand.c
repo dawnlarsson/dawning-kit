@@ -279,6 +279,12 @@ static positive expand_base_positive(string_address address_to at,
                 base = 8;
         }
 
+        /* The limit and base do not change with the digit. Computing their
+           quotient once keeps hardware division out of the character loop;
+           the remainder is the largest final digit accepted at the cutoff. */
+        positive cutoff = limit / base;
+        positive last = limit % base;
+
         while (1)
         {
                 p8 byte = string_get(step);
@@ -304,7 +310,7 @@ static positive expand_base_positive(string_address address_to at,
                         every digit after saturation so the parser still lands
                         at the real operator or end of the expression.
                 */
-                if (value > (limit - digit) / base)
+                if (value > cutoff || (value == cutoff && digit > last))
                         value = limit;
                 else
                         value = value * base + digit;
