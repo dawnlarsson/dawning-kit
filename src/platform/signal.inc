@@ -85,9 +85,12 @@
         below calls it by name, and a call written inside a string is
         invisible to the compiler, so a static definition would be discarded
         as unused before the assembler ever saw the reference. That is the
-        same reason src/test/run's comment gives for keeping -flto off.
+        same reason src/test/run's comment gives for keeping -flto off.  The
+        normal program build does use LTO, which can internalise even an
+        unreferenced global, so KEEP is part of this declaration's ABI: the
+        assembler reference is real even though the compiler cannot see it.
 */
-fn signal_jump_save(jump_state state, b32 save_mask);
+KEEP fn signal_jump_save(jump_state state, b32 save_mask);
 
 b32 signal_jump_mark(jump_state state, b32 save_mask) __attribute__((returns_twice));
 fn signal_jump_to_mark(jump_state state, b32 value) DEAD_END;

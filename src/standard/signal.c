@@ -853,7 +853,7 @@ b32 signal_wait(void)
         libc asks "what is blocked right now" -- blocking nothing changes
         nothing and the old value comes back through the third argument.
 */
-fn signal_jump_save(jump_state state, b32 save_mask)
+KEEP fn signal_jump_save(jump_state state, b32 save_mask)
 {
         positive mask = 0;
 
