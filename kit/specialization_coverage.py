@@ -168,10 +168,19 @@ cover('specialized', 'size', 'memory_compare',
 # ----------------------------------------------------------------------
 #       worth_it -- expected, from the shape of the body
 # ----------------------------------------------------------------------
-cover('worth_it', 'size', 'memory_common_prefix memory_compare_ascii_case',
-      'the same word walk as memory_compare with a different answer and a '
-      'fold applied; expected to track its table and to want the same '
-      'KNOWN_COMPARE_MAX rather than KNOWN_SIZE_MAX', expansion='compare_known', evidence=None)
+cover('worth_it', 'size', 'memory_common_prefix',
+      'the same word walk as memory_compare with a different answer; expected '
+      'to track its table and to want the same KNOWN_COMPARE_MAX rather than '
+      'KNOWN_SIZE_MAX', expansion='compare_known', evidence=None)
+
+cover('specialized', 'size', 'memory_compare_ascii_case',
+      'Measured at caller-shaped protocol-token lengths. The straight folded '
+      'byte line is 65-92% of the routine through twelve bytes on x86-64 and '
+      'ARM64 and 59-83% under the RV64 floor runner. ARM64 turns to 160% at '
+      'sixteen and x86-64 loses from twenty four, so the shared cutoff is '
+      'twelve, not memory_compare\'s much larger cutoff',
+      expansion='compare_ascii_case_known',
+      evidence='src/test/exact_ascii_case.c')
 
 cover('specialized', 'needle_size', 'memory_search',
       'Measured. A one byte needle is already redirected inside the routine, '

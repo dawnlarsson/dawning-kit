@@ -521,8 +521,6 @@ static inline INLINE address_any search_case_known(address_any block, positive s
 //====================================================================
 //      bounded-string
 //====================================================================
-//      Add to src/compiler_memory.c, immediately before the existing "A macro names itself in its own replacement" comment (so it sits with copy_known / fill_known and before the macro block). Durable copy: /private/tmp/claude-501/-Users-alve-dawning-kit/96a48472-b59c-4e34-b254-8c9750e693c6/scratchpad/block.c
-
 /*
         Bounds that are known where the call is written.
 
@@ -910,8 +908,6 @@ static inline INLINE string_address append_max_known(string_address destination,
 //====================================================================
 //      compare-and-find
 //====================================================================
-//      This is the complete block to add to src/compiler_memory.c. It goes AFTER fill_known and BEFORE the "A macro names itself in its own replacement" comment -- the cutoff #define block must go with it and must sit before the bodies, exactly as KNOWN_SIZE_MAX does for the copy. The byte-exact file is at /private/tmp/claude-501/-Users-alve-dawning-kit/96a48472-b59c-4e34-b254-8c9750e693c6/scratchpad/known_scan.inc and the whole spliced compiler_memory.c is at .../scratchpad/compiler_memory.candidate.c.
-
 /*
         Lengths that are known where the call is written.
 
@@ -1228,6 +1224,40 @@ static inline INLINE b32 compare_known(const address_any first,
         for (; at < size; at++)
                 if (left[at] != right[at])
                         return (b32)left[at] - (b32)right[at];
+
+        return 0;
+}
+
+/*
+        ASCII-folded compare at the short literal sizes used by protocol
+        tokens.  Twelve is the last size that wins on every floor: the
+        straight byte line stays below the routine's setup on x86-64, ARM64
+        and RV64, while ARM64 turns sharply at sixteen when the routine's
+        vector path becomes cheaper.
+*/
+#define KNOWN_ASCII_CASE_MAX 12
+
+static inline INLINE p8 known_ascii_upper(p8 value)
+{
+        return value >= 'a' && value <= 'z' ? (p8)(value - 32) : value;
+}
+
+static inline INLINE b32 compare_ascii_case_known(const address_any first,
+                                                  const address_any second,
+                                                  positive size)
+{
+        const p8 address_to left = (const p8 address_to)first;
+        const p8 address_to right = (const p8 address_to)second;
+
+        KNOWN_STRAIGHT
+        for (positive at = 0; at < size; at++)
+        {
+                p8 one = known_ascii_upper(left[at]);
+                p8 two = known_ascii_upper(right[at]);
+
+                if (one != two)
+                        return (b32)one - (b32)two;
+        }
 
         return 0;
 }
@@ -2189,7 +2219,6 @@ static inline INLINE address_any copy_until_known(address_any destination,
                                             (needle_size)))
 
 //      bounded-string
-//      Add at the bottom of src/compiler_memory.c, alongside the memory_copy / memory_copy_apart / memory_fill macros, after the prototypes above. Durable copy: /private/tmp/claude-501/-Users-alve-dawning-kit/96a48472-b59c-4e34-b254-8c9750e693c6/scratchpad/block_macros.c
 
 #define string_length_max(source, bound)                                      \
         (__builtin_constant_p(bound) && (positive)(bound) <= KNOWN_BOUND_MAX  \
@@ -2219,12 +2248,17 @@ static inline INLINE address_any copy_until_known(address_any destination,
 //      There is deliberately no string_copy_max macro. See the verdict and the block's prose.
 
 //      compare-and-find
-//      These go at the bottom of src/compiler_memory.c, beside the three that are there, after all the prototypes:
 
 #define memory_compare(first, second, size)                                   \
         (__builtin_constant_p(size) && (positive)(size) <= KNOWN_COMPARE_MAX  \
                  ? compare_known((first), (second), (size))                   \
                  : memory_compare((first), (second), (size)))
+
+#define memory_compare_ascii_case(first, second, size)                        \
+        (__builtin_constant_p(size) &&                                        \
+                         (positive)(size) <= KNOWN_ASCII_CASE_MAX             \
+                 ? compare_ascii_case_known((first), (second), (size))        \
+                 : memory_compare_ascii_case((first), (second), (size)))
 
 #define memory_first_of(block, value, size)                                   \
         (__builtin_constant_p(size) && (positive)(size) <= KNOWN_SCAN_MAX     \
@@ -2319,7 +2353,6 @@ static inline INLINE address_any copy_until_known(address_any destination,
 #define bits_first_set_wide(value) KNOWN_SINGLE(bits_first_set_wide, known_first_set_wide, (value))
 
 //      fill-and-until
-//      The existing `memory_fill` macro is replaced; the other three are new. All four go at the bottom of src/compiler_memory.c after the prototypes, in the block that already holds `memory_copy` and `memory_copy_apart`.
 
 #define memory_fill(destination, value, size)                                 \
         (__builtin_constant_p(size) && (positive)(size) <= KNOWN_SIZE_MAX     \
