@@ -26,11 +26,19 @@
         unsigned number and fails the same compare that a byte over '9' fails.
         One subtract, one compare, one set. No memory at all.
 
-        The case pair is the same trick with the answer used as a number
-        rather than a result: the comparison produces one or zero, shifting it
-        five places makes it thirty two or zero, and adding or subtracting
-        that is the whole of the conversion. No branch, so nothing to predict
-        wrongly on text that alternates.
+        Where two ranges answer one question they are disjoint -- no byte is
+        both a digit and a letter -- and disjoint ranges add rather than or.
+        x86_64 lets each compare drop its carry straight into the total and
+        never builds a second answer byte; arm64 chains the compares through
+        the flags with ccmp and spends one cset at the end.
+
+        The case pair uses the answer as a number rather than as a result.
+        arm64 and riscv64 shift the one or zero five places, making thirty two
+        or zero, and add or subtract that. x86_64 has both answers in hand
+        before the comparison resolves and picks between them with a
+        conditional move, which is shorter and puts only itself on the chain.
+        Neither branches, so nothing is predicted wrongly on text that
+        alternates case.
 
         The argument is an int, and may be EOF, which is -1. Subtracting and
         comparing unsigned handles that with nothing written down: -1 - '0'
@@ -731,18 +739,25 @@ f32 narrow_with_sign(f32 magnitude, f32 sign);
 __asm__(
     ASM_SECTION
 
+    //
+    //       The exclusive-or comes first so that setb writes into a register
+    //       that is already zero. That is the widening the trailing movzbl
+    //       used to pay for, and it also shortens the chain: the byte set no
+    //       longer waits on the lea that wrote the rest of the register.
+    //       It is the shape the ctype-rest group below already uses.
+    //
     ASM_FUNC(byte_is_digit)
-    "lea -48(%rdi), %eax\n   cmp $10, %eax\n   setb %al\n   movzbl %al, %eax\n"
+    "xor %eax, %eax\n   lea -48(%rdi), %edx\n   cmp $10, %edx\n   setb %al\n"
     ASM_RET
     ASM_END(byte_is_digit)
 
     ASM_FUNC(byte_is_upper)
-    "lea -65(%rdi), %eax\n   cmp $26, %eax\n   setb %al\n   movzbl %al, %eax\n"
+    "xor %eax, %eax\n   lea -65(%rdi), %edx\n   cmp $26, %edx\n   setb %al\n"
     ASM_RET
     ASM_END(byte_is_upper)
 
     ASM_FUNC(byte_is_lower)
-    "lea -97(%rdi), %eax\n   cmp $26, %eax\n   setb %al\n   movzbl %al, %eax\n"
+    "xor %eax, %eax\n   lea -97(%rdi), %edx\n   cmp $26, %edx\n   setb %al\n"
     ASM_RET
     ASM_END(byte_is_lower)
 
@@ -751,49 +766,63 @@ __asm__(
     //       so one range test answers for both.
     //
     ASM_FUNC(byte_is_alpha)
-    "mov %edi, %eax\n   or $32, %eax\n   sub $97, %eax\n"
-    "cmp $26, %eax\n   setb %al\n   movzbl %al, %eax\n"
+    "xor %eax, %eax\n   or $32, %edi\n   sub $97, %edi\n"
+    "cmp $26, %edi\n   setb %al\n"
     ASM_RET
     ASM_END(byte_is_alpha)
 
+    //
+    //       No byte is both a digit and a letter, so the two range tests add
+    //       rather than or: each compare leaves its answer in the carry and
+    //       adc puts it into the total, which is what byte_is_punctuation
+    //       below does and for the same reason. No flag byte is ever set,
+    //       and the argument is consumed by the test that comes last.
+    //
     ASM_FUNC(byte_is_alnum)
-    "mov %edi, %eax\n   or $32, %eax\n   sub $97, %eax\n"
-    "cmp $26, %eax\n   setb %dl\n"
-    "lea -48(%rdi), %eax\n   cmp $10, %eax\n   setb %al\n"
-    "or %dl, %al\n   movzbl %al, %eax\n"
+    "xor %eax, %eax\n"
+    "lea -48(%rdi), %edx\n   cmp $10, %edx\n   adc $0, %eax\n"
+    "or $32, %edi\n   sub $97, %edi\n   cmp $26, %edi\n   adc $0, %eax\n"
     ASM_RET
     ASM_END(byte_is_alnum)
 
     //
     //       Tab through carriage return are five in a row, so they are one
-    //       range, and the space is the only one left over.
+    //       range, and the space is the only one left over. The space is not
+    //       in that range, so the equality and the range add the same way the
+    //       two ranges above do: sete for the one it is, adc for the other.
+    //       The lea sits after the sete because it must not disturb the flags
+    //       the sete reads.
     //
     ASM_FUNC(byte_is_space)
-    "lea -9(%rdi), %eax\n   cmp $5, %eax\n   setb %dl\n"
-    "cmp $32, %edi\n   sete %al\n   or %dl, %al\n   movzbl %al, %eax\n"
+    "xor %eax, %eax\n   cmp $32, %edi\n   sete %al\n"
+    "lea -9(%rdi), %edx\n   cmp $5, %edx\n   adc $0, %eax\n"
     ASM_RET
     ASM_END(byte_is_space)
 
     ASM_FUNC(byte_is_hexadecimal)
-    "lea -48(%rdi), %eax\n   cmp $10, %eax\n   setb %dl\n"
-    "mov %edi, %eax\n   or $32, %eax\n   sub $97, %eax\n"
-    "cmp $6, %eax\n   setb %al\n   or %dl, %al\n   movzbl %al, %eax\n"
+    "xor %eax, %eax\n"
+    "lea -48(%rdi), %edx\n   cmp $10, %edx\n   adc $0, %eax\n"
+    "or $32, %edi\n   sub $97, %edi\n   cmp $6, %edi\n   adc $0, %eax\n"
     ASM_RET
     ASM_END(byte_is_hexadecimal)
 
     //
-    //       The comparison is the arithmetic: one or zero, shifted to thirty
-    //       two or zero, taken off or put on.
+    //       Both answers are ready before the comparison resolves -- the byte
+    //       as it came and the byte with thirty two taken off or put on -- so
+    //       the conditional move is the only instruction the chain runs
+    //       through, where the shift the other two machines use has to wait
+    //       for the comparison and then be waited on. Still branchless, which
+    //       is the point of not looking it up in a table.
     //
     ASM_FUNC(byte_to_upper)
-    "lea -97(%rdi), %eax\n   cmp $26, %eax\n   setb %al\n   movzbl %al, %eax\n"
-    "shl $5, %eax\n   mov %edi, %edx\n   sub %eax, %edx\n   mov %edx, %eax\n"
+    "lea -97(%rdi), %eax\n   lea -32(%rdi), %edx\n   cmp $26, %eax\n"
+    "mov %edi, %eax\n   cmovb %edx, %eax\n"
     ASM_RET
     ASM_END(byte_to_upper)
 
     ASM_FUNC(byte_to_lower)
-    "lea -65(%rdi), %eax\n   cmp $26, %eax\n   setb %al\n   movzbl %al, %eax\n"
-    "shl $5, %eax\n   add %edi, %eax\n"
+    "lea -65(%rdi), %eax\n   lea 32(%rdi), %edx\n   cmp $26, %eax\n"
+    "mov %edi, %eax\n   cmovb %edx, %eax\n"
     ASM_RET
     ASM_END(byte_to_lower)
 
@@ -1770,34 +1799,51 @@ __asm__(
     ASM_RET
     ASM_END(byte_is_alpha)
 
+    //
+    //       ccmp chains the two range tests through the flags instead of
+    //       building an answer for each and or-ing them: the letter test runs
+    //       first, and the digit test runs only where it failed. Where it did
+    //       not fail, ccmp writes all four flags clear by hand, and a clear
+    //       carry is the "lower or same" the cset then reads. Both
+    //       subtractions come first because ccmp needs its operand ready and
+    //       must not have the flags disturbed under it.
+    //
     ASM_FUNC(byte_is_alnum)
-    "orr w1, w0, #32\n   sub w1, w1, #97\n   cmp w1, #26\n   cset w1, lo\n"
-    "sub w2, w0, #48\n   cmp w2, #10\n   cset w2, lo\n   orr w0, w1, w2\n"
+    "orr w1, w0, #32\n   sub w0, w0, #48\n   sub w1, w1, #97\n"
+    "cmp w1, #25\n   ccmp w0, #9, #0, hi\n   cset w0, ls\n"
     ASM_RET
     ASM_END(byte_is_alnum)
 
+    //
+    //       The space is the only one outside the tab through carriage return
+    //       run, so its equality goes first and the range runs only where
+    //       that missed.
+    //
     ASM_FUNC(byte_is_space)
-    "sub w1, w0, #9\n   cmp w1, #5\n   cset w1, lo\n"
-    "cmp w0, #32\n   cset w2, eq\n   orr w0, w1, w2\n"
+    "sub w1, w0, #9\n   cmp w0, #32\n   ccmp w1, #4, #0, ne\n   cset w0, ls\n"
     ASM_RET
     ASM_END(byte_is_space)
 
     ASM_FUNC(byte_is_hexadecimal)
-    "sub w1, w0, #48\n   cmp w1, #10\n   cset w1, lo\n"
-    "orr w2, w0, #32\n   sub w2, w2, #97\n   cmp w2, #6\n   cset w2, lo\n"
-    "orr w0, w1, w2\n"
+    "orr w1, w0, #32\n   sub w0, w0, #48\n   sub w1, w1, #97\n"
+    "cmp w1, #5\n   ccmp w0, #9, #0, hi\n   cset w0, ls\n"
     ASM_RET
     ASM_END(byte_is_hexadecimal)
 
+    //
+    //       The second operand of a subtract may be shifted on the way in, so
+    //       the one or zero becomes thirty two or zero inside the subtract
+    //       itself and the separate lsl is not spent.
+    //
     ASM_FUNC(byte_to_upper)
     "sub w1, w0, #97\n   cmp w1, #26\n   cset w1, lo\n"
-    "lsl w1, w1, #5\n   sub w0, w0, w1\n"
+    "sub w0, w0, w1, lsl #5\n"
     ASM_RET
     ASM_END(byte_to_upper)
 
     ASM_FUNC(byte_to_lower)
     "sub w1, w0, #65\n   cmp w1, #26\n   cset w1, lo\n"
-    "lsl w1, w1, #5\n   add w0, w0, w1\n"
+    "add w0, w0, w1, lsl #5\n"
     ASM_RET
     ASM_END(byte_to_lower)
 
@@ -2152,25 +2198,32 @@ __asm__(
     "orr w7, w7, #32\n   sub w8, w7, #97\n   cmp w8, #5\n"
     "b.hi .Lnumber_a64_first\n"
     ".Lnumber_a64_take:\n   add x3, x3, #2\n"
-    ".Lnumber_a64_first:\n   ldrb w7, [x3]\n   sub w6, w7, #48\n   cmp w6, #9\n"
+    ".Lnumber_a64_first:\n   ldrb w7, [x3], #1\n   sub w6, w7, #48\n   cmp w6, #9\n"
     "b.ls .Lnumber_a64_first_value\n"
     "orr w7, w7, #32\n   sub w6, w7, #97\n   cmp w6, #25\n"
     "b.hi .Lnumber_a64_none\n   add w6, w6, #10\n"
     ".Lnumber_a64_first_value:\n   cmp w6, w4\n   b.hs .Lnumber_a64_none\n"
-    "add x3, x3, #1\n   mov x0, x6\n   mov x5, xzr\n"
+    "mov x0, x6\n   mov x5, xzr\n"
     //
     //       umulh is the half a 64 bit multiply throws away, which is the
     //       overflow, and adc folds the carry out of the digit into it.
     //
-    ".Lnumber_a64_loop:\n   ldrb w7, [x3]\n   sub w6, w7, #48\n   cmp w6, #9\n"
+    //       The load advances the pointer itself, the way the whitespace
+    //       scan above already does, so a digit is twelve instructions and
+    //       not thirteen. The one correction that costs is the sub at
+    //       .Lnumber_a64_stop, which runs once: nothing before it reads x3,
+    //       and .Lnumber_a64_none answers with x0 -- the input as it came
+    //       in -- so an overshot pointer is invisible on that path.
+    //
+    ".Lnumber_a64_loop:\n   ldrb w7, [x3], #1\n   sub w6, w7, #48\n   cmp w6, #9\n"
     "b.ls .Lnumber_a64_value\n"
     "orr w7, w7, #32\n   sub w6, w7, #97\n   cmp w6, #25\n"
     "b.hi .Lnumber_a64_stop\n   add w6, w6, #10\n"
     ".Lnumber_a64_value:\n   cmp w6, w4\n   b.hs .Lnumber_a64_stop\n"
     "umulh x8, x0, x4\n   mul x0, x0, x4\n   adds x0, x0, x6\n"
-    "adc x8, x8, xzr\n   orr x5, x5, x8\n   add x3, x3, #1\n"
+    "adc x8, x8, xzr\n   orr x5, x5, x8\n"
     "b .Lnumber_a64_loop\n"
-    ".Lnumber_a64_stop:\n   cbz x1, .Lnumber_a64_kept\n   str x3, [x1]\n"
+    ".Lnumber_a64_stop:\n   sub x3, x3, #1\n   cbz x1, .Lnumber_a64_kept\n   str x3, [x1]\n"
     //
     //       Two conditional selects rather than two branches: one clamps a
     //       magnitude that walked past the limit, the other forces the limit
