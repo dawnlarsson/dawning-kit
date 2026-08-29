@@ -733,6 +733,7 @@ typedef struct
 static exec_function address_to exec_functions;
 static positive exec_function_room;
 static positive exec_function_count;
+static positive exec_function_recent = positive_max;
 
 // Whether a name is a function, which type asks and nothing else does.
 bool exec_function_here(string_address name);
@@ -741,10 +742,21 @@ static b32 exec_function_find(string_address name)
 {
         positive index;
 
+        if (exec_function_recent < exec_function_count &&
+            exec_functions[exec_function_recent].body &&
+            !string_compare(exec_functions[exec_function_recent].name, name))
+                return exec_functions[exec_function_recent].body;
+
         for (index = 0; index < exec_function_count; index++)
         {
+                if (index == exec_function_recent)
+                        continue;
+
                 if (!string_compare(exec_functions[index].name, name))
+                {
+                        exec_function_recent = index;
                         return exec_functions[index].body;
+                }
         }
 
         return 0;
@@ -770,6 +782,8 @@ bool exec_function_unset(string_address name)
                 parse_release(address_of exec_functions[slot].from,
                               address_of exec_functions[slot].to);
                 exec_functions[slot].body = 0;
+                if (exec_function_recent == slot)
+                        exec_function_recent = positive_max;
                 return true;
         }
 
@@ -873,6 +887,7 @@ static b32 exec_define(b32 index)
         exec_functions[slot].from = before;
         exec_functions[slot].to = after;
         exec_functions[slot].body = body;
+        exec_function_recent = slot;
         shell_status = 0;
 
         return 0;
@@ -1128,15 +1143,17 @@ static fn exec_release_assignments(string_address address_to assignments,
 static b32 exec_dispatch()
 {
         string_address name = shell_argv[0];
+        p8 initial = string_get(name);
         b32 body;
 
-        if (!string_compare(name, ":"))
+        if (initial == ':' && !string_get(name + 1))
         {
                 shell_status = 0;
                 return 0;
         }
 
-        if (!string_compare(name, "break") || !string_compare(name, "continue"))
+        if ((initial == 'b' && !string_compare(name, "break")) ||
+            (initial == 'c' && !string_compare(name, "continue")))
         {
                 b32 levels = shell_argc > 1
                                  ? (b32)string_digits(shell_argv[1], null)
@@ -1150,7 +1167,7 @@ static b32 exec_dispatch()
                         if (levels > exec_loop_depth)
                                 levels = exec_loop_depth;
 
-                        exec_signal = !string_compare(name, "break")
+                        exec_signal = initial == 'b'
                                           ? EXEC_SIGNAL_BREAK
                                           : EXEC_SIGNAL_CONTINUE;
                         exec_signal_level = levels;
@@ -1160,7 +1177,7 @@ static b32 exec_dispatch()
                 return 0;
         }
 
-        if (!string_compare(name, "return"))
+        if (initial == 'r' && !string_compare(name, "return"))
         {
                 if (shell_argc > 1)
                         shell_status = (b32)string_digits(shell_argv[1], null);

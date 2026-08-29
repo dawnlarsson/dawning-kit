@@ -948,12 +948,7 @@ fn shell_execute_command()
 
 bool shell_builtin(string_address arguments)
 {
-        shell_command address_to command;
-
-        if (shell_tool_run(shell_argv[0]))
-                return true;
-
-        command = shell_command_named(shell_argv[0]);
+        shell_command address_to command = shell_command_named(shell_argv[0]);
 
         if (command)
         {
@@ -974,6 +969,12 @@ bool shell_builtin(string_address arguments)
                 command->function(shell_output, arguments);
                 return true;
         }
+
+        // Commands and utilities are disjoint tables.  A script executes the
+        // former far more often, so do not make every echo, test, read and
+        // printf pay for a guaranteed miss through all of the utility index.
+        if (shell_tool_run(shell_argv[0]))
+                return true;
 
         return false;
 }
