@@ -51,12 +51,14 @@ extern positive shell_options;
 */
 b32 shell_substitution_status;
 
-#define EXPAND_NAME 128
-#define EXPAND_VALUE 1024
-#define EXPAND_DEPTH 16
+#define EXPAND_DEPTH 64
+#define EXPAND_LOCAL_NAME 128
+#define EXPAND_LOCAL_TEXT 1024
 
-#define GLOB_PATH 1024
-#define GLOB_DEPTH 24
+// Linux accepts a pathname of 4095 bytes in one syscall. Walking beyond this
+// floor would require directory-relative opens; never quietly shorten it.
+#define GLOB_PATH 4096
+#define GLOB_DEPTH 64
 
 /*
         What a byte is allowed to become later.
@@ -190,18 +192,31 @@ static bool expand_name_character(p8 value)
                value == '_';
 }
 
-static fn expand_copy_bounded(p8 address_to into, string_address from, positive limit)
+/*
+        Keep the common case on the stack and spill only a long value into the
+        stable line store. This is one policy for names, operator words and
+        arithmetic bodies instead of three bounded copies with three subtly
+        different truncation points.
+*/
+static string_address expand_hold(string_address text, positive length,
+                                  p8 address_to scratch, positive scratch_room)
 {
-        if (!limit)
-                return;
+        p8 address_to held;
 
-        if (!from)
+        if (length < scratch_room)
+                held = scratch;
+        else
+                held = shell_store_take(address_of expand_store, length + 1);
+
+        if (!held)
         {
-                into[0] = end;
-                return;
+                expand_overflow = true;
+                expand_failed = true;
+                return null;
         }
 
-        string_copy_max_end(into, from, limit - 1);
+        memory_copy_end(held, text, length);
+        return held;
 }
 
 /*
@@ -214,11 +229,13 @@ static fn expand_copy_bounded(p8 address_to into, string_address from, positive 
         reads a literal out of the middle of an expression and a variable is
         read whole -- and both have to agree about what 010 is worth.
 */
-static bipolar expand_base_number(string_address address_to at, bool address_to valid)
+static positive expand_base_positive(string_address address_to at,
+                                     bool address_to valid, positive limit)
 {
         string_address step = address_to at;
-        bipolar value = 0;
-        positive used;
+        positive value = 0;
+        positive base = 10;
+        positive used = 0;
 
         address_to valid = true;
 
@@ -226,33 +243,60 @@ static bipolar expand_base_number(string_address address_to at, bool address_to 
             (string_is(step + 1, 'x') || string_is(step + 1, 'X')))
         {
                 step += 2;
-                value = (bipolar)string_digits_hexadecimal_max(
-                    step, (positive)-1, address_of used);
-                step += used;
-
-                if (!used)
-                        address_to valid = false;
+                base = 16;
         }
         else if (string_is(step, '0') && string_get(step + 1) >= '0' &&
                  string_get(step + 1) <= '9')
         {
                 step++;
-                value = (bipolar)string_digits_octal_max(
-                    step, (positive)-1, address_of used);
-                step += used;
+                base = 8;
+        }
 
-                if (!used)
-                        address_to valid = false;
-        }
-        else
+        while (1)
         {
-                value = (bipolar)string_digits(step, address_of used);
-                step += used;
+                p8 byte = string_get(step);
+                positive digit;
+
+                if (byte >= '0' && byte <= '9')
+                        digit = byte - '0';
+                else if (byte >= 'a' && byte <= 'f')
+                        digit = byte - 'a' + 10;
+                else if (byte >= 'A' && byte <= 'F')
+                        digit = byte - 'A' + 10;
+                else
+                        break;
+
+                if (digit >= base)
+                        break;
+
+                /*
+                        Arithmetic is a signed machine word. dash saturates a
+                        literal that does not fit instead of letting the input
+                        helper wrap its unsigned accumulator and hand a
+                        plausible negative value to the expression. Consume
+                        every digit after saturation so the parser still lands
+                        at the real operator or end of the expression.
+                */
+                if (value > (limit - digit) / base)
+                        value = limit;
+                else
+                        value = value * base + digit;
+
+                used++;
+                step++;
         }
+
+        if (!used)
+                address_to valid = false;
 
         address_to at = step;
 
         return value;
+}
+
+static bipolar expand_base_number(string_address address_to at, bool address_to valid)
+{
+        return (bipolar)expand_base_positive(at, valid, (positive)bipolar_max);
 }
 
 /*
@@ -498,9 +542,17 @@ bool shell_parameters_set(string_address address_to words, positive count)
         positive need = 0;
 
         for (at = 0; at < count; at++)
-                need += string_length(words[at]) + 1;
+        {
+                positive length = string_length(words[at]) + 1;
 
-        if (!shell_room((address_any address_to)address_of shell_parameter_staging,
+                if (need > positive_max - length)
+                        return false;
+
+                need += length;
+        }
+
+        if (need == positive_max || count > positive_max - 2 ||
+            !shell_room((address_any address_to)address_of shell_parameter_staging,
                         address_of shell_parameter_staging_room, need + 1, 1) ||
             !shell_room((address_any address_to)address_of shell_parameter_bytes,
                         address_of shell_parameter_bytes_room, need + 1, 1) ||
@@ -558,9 +610,17 @@ positive shell_parameters_save()
         positive at;
 
         for (at = 0; at < shell_parameter_count; at++)
-                used += string_length(shell_parameter[at]) + 1;
+        {
+                positive length = string_length(shell_parameter[at]) + 1;
 
-        if (!shell_room((address_any address_to)address_of shell_parameter_stack,
+                if (used > positive_max - length)
+                        return EXPAND_NO_ROOM;
+
+                used += length;
+        }
+
+        if (used == positive_max || mark > positive_max - used - 1 ||
+            !shell_room((address_any address_to)address_of shell_parameter_stack,
                         address_of shell_parameter_stack_room, mark + used + 1, 1))
                 return EXPAND_NO_ROOM;
 
@@ -587,7 +647,8 @@ fn shell_parameters_restore(positive mark, positive count)
         if (mark == EXPAND_NO_ROOM)
                 return;
 
-        if (!shell_room((address_any address_to)address_of shell_restore_words,
+        if (count == positive_max ||
+            !shell_room((address_any address_to)address_of shell_restore_words,
                         address_of shell_restore_room, count + 1,
                         sizeof(string_address)))
                 return;
@@ -871,13 +932,14 @@ static string_address expand_backtick(string_address step, bool quoted);
         A pattern gets a backslash in front of every byte that was quoted, so
         that ${x%"*"} strips one star and not everything.
 */
-static positive expand_capture(string_address text, bool quoted, p8 address_to into,
-                               positive limit, bool as_pattern)
+static string_address expand_capture(string_address text, bool quoted, bool as_pattern)
 {
         positive at = expand_length;
         bool held = expand_quoted_seen;
-        positive used = 0;
+        positive room = 1;
         positive step;
+        positive used = 0;
+        p8 address_to into;
 
         expand_into(text, quoted, MARK_PLAIN);
 
@@ -885,22 +947,42 @@ static positive expand_capture(string_address text, bool quoted, p8 address_to i
         {
                 p8 value = expand_text[step];
 
+                if (room == positive_max)
+                        break;
+
+                room++;
+
                 if (as_pattern && expand_mark[step] == MARK_QUOTED &&
                     (value == '*' || value == '?' || value == '[' || value == '\\'))
-                {
-                        if (used + 1 < limit)
-                                into[used++] = '\\';
-                }
+                        room++;
+        }
 
-                if (used + 1 < limit)
-                        into[used++] = value;
+        if (step != expand_length || !(into = shell_store_take(address_of expand_store,
+                                                                room)))
+        {
+                expand_overflow = true;
+                expand_failed = true;
+                expand_length = at;
+                expand_quoted_seen = held;
+                return null;
+        }
+
+        for (step = at; step < expand_length; step++)
+        {
+                p8 value = expand_text[step];
+
+                if (as_pattern && expand_mark[step] == MARK_QUOTED &&
+                    (value == '*' || value == '?' || value == '[' || value == '\\'))
+                        into[used++] = '\\';
+
+                into[used++] = value;
         }
 
         into[used] = end;
         expand_length = at;
         expand_quoted_seen = held;
 
-        return used;
+        return into;
 }
 
 /*
@@ -965,7 +1047,7 @@ static bipolar arith_value_of(string_address name)
         bool valid;
         string_address step = expand_value_of(name, scratch, address_of present);
         string_address digits;
-        bipolar value;
+        positive magnitude;
         bool negative = false;
 
         if (!arith_active || !present)
@@ -983,7 +1065,8 @@ static bipolar arith_value_of(string_address name)
         }
 
         digits = step;
-        value = expand_base_number(address_of step, address_of valid);
+        magnitude = expand_base_positive(address_of step, address_of valid,
+                                         (positive)bipolar_max + 1);
 
         if (step == digits || !valid)
         {
@@ -996,7 +1079,15 @@ static bipolar arith_value_of(string_address name)
         if (string_get(step))
                 arith_bad = true;
 
-        return negative ? -value : value;
+        if (!negative)
+                return magnitude > (positive)bipolar_max
+                           ? bipolar_max
+                           : (bipolar)magnitude;
+
+        if (magnitude == (positive)bipolar_max + 1)
+                return (bipolar)((positive)bipolar_max + 1);
+
+        return -(bipolar)magnitude;
 }
 
 /*
@@ -1011,13 +1102,49 @@ static bipolar arith_divide(bipolar left, bipolar right, bool remainder)
         if (!arith_active)
                 return 0;
 
-        if (!right || (right == -1 && left == (bipolar)((positive)1 << 63)))
+        if (!right || (right == -1 && left == bipolar_min))
         {
                 arith_bad = true;
                 return 0;
         }
 
         return remainder ? left % right : left / right;
+}
+
+// Shell arithmetic is the target machine word. Express wrapping through the
+// unsigned type so compiler overflow assumptions cannot change that contract.
+static bipolar arith_addition(bipolar left, bipolar right)
+{
+        return (bipolar)((positive)left + (positive)right);
+}
+
+static bipolar arith_subtraction(bipolar left, bipolar right)
+{
+        return (bipolar)((positive)left - (positive)right);
+}
+
+static bipolar arith_product(bipolar left, bipolar right)
+{
+        return (bipolar)((positive)left * (positive)right);
+}
+
+static bipolar arith_negate(bipolar value)
+{
+        return (bipolar)(0 - (positive)value);
+}
+
+static bipolar arith_shift_left(bipolar left, bipolar right)
+{
+        positive count = (positive)right & (positive_bits - 1);
+
+        return (bipolar)((positive)left << count);
+}
+
+static bipolar arith_shift_right(bipolar left, bipolar right)
+{
+        positive count = (positive)right & (positive_bits - 1);
+
+        return left >> count;
 }
 
 // What the operator in front of the = does.
@@ -1028,16 +1155,16 @@ static bipolar arith_combine(p8 op, bipolar left, bipolar right)
 
         switch (op)
         {
-        case '+': return left + right;
-        case '-': return left - right;
-        case '*': return left * right;
+        case '+': return arith_addition(left, right);
+        case '-': return arith_subtraction(left, right);
+        case '*': return arith_product(left, right);
         case '/': return arith_divide(left, right, false);
         case '%': return arith_divide(left, right, true);
         case '&': return left & right;
         case '|': return left | right;
         case '^': return left ^ right;
-        case 'l': return left << right;
-        case 'r': return left >> right;
+        case 'l': return arith_shift_left(left, right);
+        case 'r': return arith_shift_right(left, right);
         }
 
         return right;
@@ -1079,7 +1206,7 @@ static bipolar arith_primary()
         if (string_is(arith_at, '-'))
         {
                 arith_at++;
-                return -arith_primary();
+                return arith_negate(arith_primary());
         }
 
         if (string_is(arith_at, '+'))
@@ -1106,13 +1233,25 @@ static bipolar arith_primary()
         */
         if (expand_name_character(string_get(arith_at)))
         {
-                p8 name[EXPAND_NAME];
+                string_address start = arith_at;
+                p8 name_local[EXPAND_LOCAL_NAME];
+                string_address name;
                 positive length = 0;
 
-                while (expand_name_character(string_get(arith_at)) && length < EXPAND_NAME - 1)
-                        name[length++] = string_get(arith_at++);
+                while (expand_name_character(string_get(arith_at)))
+                {
+                        length++;
+                        arith_at++;
+                }
 
-                name[length] = end;
+                name = expand_hold(start, length, name_local,
+                                   sizeof(name_local));
+
+                if (!name)
+                {
+                        arith_bad = true;
+                        return 0;
+                }
                 arith_space();
 
                 if (string_is(arith_at, '=') && string_get(arith_at + 1) != '=')
@@ -1191,7 +1330,7 @@ static bipolar arith_multiply()
                 if (string_is(arith_at, '*'))
                 {
                         arith_at++;
-                        value = value * arith_primary();
+                        value = arith_product(value, arith_primary());
                         continue;
                 }
 
@@ -1219,14 +1358,14 @@ static bipolar arith_add()
                 if (string_is(arith_at, '+'))
                 {
                         arith_at++;
-                        value = value + arith_multiply();
+                        value = arith_addition(value, arith_multiply());
                         continue;
                 }
 
                 if (string_is(arith_at, '-'))
                 {
                         arith_at++;
-                        value = value - arith_multiply();
+                        value = arith_subtraction(value, arith_multiply());
                         continue;
                 }
 
@@ -1254,7 +1393,7 @@ static bipolar arith_shift()
                     !string_is(arith_at + 2, '='))
                 {
                         arith_at += 2;
-                        value = value << arith_add();
+                        value = arith_shift_left(value, arith_add());
                         continue;
                 }
 
@@ -1262,7 +1401,7 @@ static bipolar arith_shift()
                     !string_is(arith_at + 2, '='))
                 {
                         arith_at += 2;
-                        value = value >> arith_add();
+                        value = arith_shift_right(value, arith_add());
                         continue;
                 }
 
@@ -1809,8 +1948,9 @@ static string_address expand_arithmetic(string_address step, bool quoted)
 {
         string_address inner = step + 3;
         string_address stop = expand_paren_end(inner);
-        p8 text[EXPAND_VALUE];
-        p8 ready[EXPAND_VALUE];
+        p8 text_local[EXPAND_LOCAL_TEXT];
+        string_address text;
+        string_address ready;
         p8 written[32];
         positive length;
 
@@ -1822,14 +1962,14 @@ static string_address expand_arithmetic(string_address step, bool quoted)
 
         length = (positive)(stop - inner);
 
-        if (length >= sizeof(text))
-                length = sizeof(text) - 1;
+        text = expand_hold(inner, length, text_local, sizeof(text_local));
 
-        memory_copy_end(text, inner, length);
+        if (!text)
+                return stop + 2;
 
         // What was written with a dollar in front takes its turn first; what is
         // left over is arithmetic, where a bare name is a value too.
-        expand_capture(text, true, ready, sizeof(ready), false);
+        ready = expand_capture(text, true, false);
 
         // A nested expansion already diagnosed the whole word.  In an
         // interactive shell that diagnosis returns here instead of exiting
@@ -1921,8 +2061,11 @@ static fn expand_trim(positive start, string_address pattern, bool prefix, bool 
 */
 static string_address expand_braced(string_address step, bool quoted)
 {
-        p8 name[EXPAND_NAME];
-        p8 word[EXPAND_VALUE];
+        string_address name_start;
+        p8 name_local[EXPAND_LOCAL_NAME];
+        p8 word_local[EXPAND_LOCAL_TEXT];
+        string_address name;
+        string_address word;
         p8 mark = quoted ? MARK_QUOTED : MARK_FIELD;
         positive length = 0;
         bool want_length = false;
@@ -1948,29 +2091,39 @@ static string_address expand_braced(string_address step, bool quoted)
         }
 
         seen = string_get(step);
+        name_start = step;
 
         if (seen == '@' || seen == '*' || seen == '#' || seen == '?' ||
             seen == '$' || seen == '!' || seen == '-')
         {
-                name[0] = seen;
-                name[1] = end;
                 length = 1;
                 step++;
         }
         else if (seen >= '0' && seen <= '9')
         {
-                while (string_get(step) >= '0' && string_get(step) <= '9' &&
-                       length < EXPAND_NAME - 1)
-                        name[length++] = string_get(step++);
-
-                name[length] = end;
+                while (string_get(step) >= '0' && string_get(step) <= '9')
+                {
+                        length++;
+                        step++;
+                }
         }
         else
         {
-                while (expand_name_character(string_get(step)) && length < EXPAND_NAME - 1)
-                        name[length++] = string_get(step++);
+                while (expand_name_character(string_get(step)))
+                {
+                        length++;
+                        step++;
+                }
+        }
 
-                name[length] = end;
+        name = expand_hold(name_start, length, name_local,
+                           sizeof(name_local));
+
+        if (!name)
+        {
+                expand_overflow = true;
+                expand_failed = true;
+                return close + 1;
         }
 
         seen = string_get(step);
@@ -2030,10 +2183,11 @@ static string_address expand_braced(string_address step, bool quoted)
         {
                 positive room = (positive)(close - step);
 
-                if (room >= sizeof(word))
-                        room = sizeof(word) - 1;
+                word = expand_hold(step, room, word_local,
+                                   sizeof(word_local));
 
-                memory_copy_end(word, step, room);
+                if (!word)
+                        return close + 1;
         }
 
         if (want_length)
@@ -2058,7 +2212,7 @@ static string_address expand_braced(string_address step, bool quoted)
 
         if (operation == '#' || operation == '%')
         {
-                p8 pattern[EXPAND_VALUE];
+                string_address pattern;
                 positive start = expand_length;
 
                 expand_push_parameter(name, quoted);
@@ -2071,7 +2225,7 @@ static string_address expand_braced(string_address step, bool quoted)
                         quoted, so the star was escaped and the only prefix
                         that ever matched was a literal one.
                 */
-                expand_capture(word, false, pattern, sizeof(pattern), true);
+                pattern = expand_capture(word, false, true);
 
                 if (expand_failed)
                         return close + 1;
@@ -2103,9 +2257,9 @@ static string_address expand_braced(string_address step, bool quoted)
                 {
                         if (missing)
                         {
-                                p8 made[EXPAND_VALUE];
+                                string_address made;
 
-                                expand_capture(word, quoted, made, sizeof(made), false);
+                                made = expand_capture(word, quoted, false);
 
                                 if (expand_failed)
                                         return close + 1;
@@ -2131,9 +2285,9 @@ static string_address expand_braced(string_address step, bool quoted)
                 {
                         if (missing)
                         {
-                                p8 said[EXPAND_VALUE];
+                                string_address said;
 
-                                expand_capture(word, quoted, said, sizeof(said), false);
+                                said = expand_capture(word, quoted, false);
 
                                 if (expand_failed)
                                         return close + 1;
@@ -2159,26 +2313,34 @@ static string_address expand_braced(string_address step, bool quoted)
 
 static string_address expand_simple(string_address step, bool quoted)
 {
-        p8 name[EXPAND_NAME];
+        string_address start;
+        p8 name_local[EXPAND_LOCAL_NAME];
+        string_address name;
         positive length = 0;
         p8 seen;
 
         step++;
+        start = step;
         seen = string_get(step);
 
         if (seen == '?' || seen == '#' || seen == '$' || seen == '!' ||
             seen == '-' || seen == '@' || seen == '*' ||
             (seen >= '0' && seen <= '9'))
         {
-                name[0] = seen;
-                name[1] = end;
-                expand_push_parameter(name, quoted);
+                p8 special[2];
+
+                special[0] = seen;
+                special[1] = end;
+                expand_push_parameter(special, quoted);
 
                 return step + 1;
         }
 
-        while (expand_name_character(string_get(step)) && length < EXPAND_NAME - 1)
-                name[length++] = string_get(step++);
+        while (expand_name_character(string_get(step)))
+        {
+                length++;
+                step++;
+        }
 
         // A dollar in front of nothing that could be a name is a dollar.
         if (!length)
@@ -2187,7 +2349,11 @@ static string_address expand_simple(string_address step, bool quoted)
                 return step;
         }
 
-        name[length] = end;
+        name = expand_hold(start, length, name_local,
+                           sizeof(name_local));
+
+        if (!name)
+                return step;
         expand_push_parameter(name, quoted);
 
         return step;
@@ -2202,7 +2368,8 @@ static string_address expand_dollar(string_address step, bool quoted)
         // thing that would notice.
         if (expand_depth >= EXPAND_DEPTH)
         {
-                expand_push('$', MARK_PLAIN);
+                string_format(expand_complain, "Expansion nested too deeply\n");
+                expand_fatal();
                 return step + 1;
         }
 
@@ -2447,8 +2614,11 @@ static fn expand_word(string_address word)
 //      names themselves may not, since the table points at them.
 static string_address address_to glob_result;
 static positive glob_room;
+static string_address address_to glob_sort_room;
+static positive glob_sort_room_count;
 static shell_store glob_store;
 static positive glob_count;
+static bool glob_failed;
 
 static bool glob_magic(string_address pattern)
 {
@@ -2478,12 +2648,18 @@ static bool glob_add(string_address path)
         if (!shell_room((address_any address_to)address_of glob_result,
                         address_of glob_room, glob_count + 1,
                         sizeof(string_address)))
+        {
+                glob_failed = true;
                 return false;
+        }
 
         bytes = shell_store_take(address_of glob_store, length);
 
         if (!bytes)
+        {
+                glob_failed = true;
                 return false;
+        }
 
         memory_copy(bytes, path, length);
         glob_result[glob_count++] = bytes;
@@ -2514,13 +2690,21 @@ static fn glob_walk(p8 address_to prefix, positive used, string_address pattern,
         string_address rest;
 
         if (depth >= GLOB_DEPTH)
+        {
+                glob_failed = true;
                 return;
+        }
 
         // A run of slashes belongs to the prefix, not to any component.
         while (string_is(pattern, '/'))
         {
-                if (used + 1 < GLOB_PATH)
-                        prefix[used++] = '/';
+                if (used + 1 >= GLOB_PATH)
+                {
+                        glob_failed = true;
+                        return;
+                }
+
+                prefix[used++] = '/';
 
                 pattern++;
         }
@@ -2535,8 +2719,14 @@ static fn glob_walk(p8 address_to prefix, positive used, string_address pattern,
                 return;
         }
 
-        while (string_get(pattern) && string_not(pattern, '/') && length < GLOB_PATH - 2)
+        while (string_get(pattern) && string_not(pattern, '/'))
         {
+                if (length + 2 >= GLOB_PATH)
+                {
+                        glob_failed = true;
+                        return;
+                }
+
                 if (string_is(pattern, '\\') && string_get(pattern + 1))
                         component[length++] = string_get(pattern++);
 
@@ -2558,8 +2748,13 @@ static fn glob_walk(p8 address_to prefix, positive used, string_address pattern,
                         if (component[at] == '\\' && at + 1 < length)
                                 at++;
 
-                        if (out + 1 < GLOB_PATH)
-                                prefix[out++] = component[at];
+                        if (out + 1 >= GLOB_PATH)
+                        {
+                                glob_failed = true;
+                                return;
+                        }
+
+                        prefix[out++] = component[at];
 
                         at++;
                 }
@@ -2587,7 +2782,13 @@ static fn glob_walk(p8 address_to prefix, positive used, string_address pattern,
                                                     (positive)block, sizeof(block));
                         p8 address_to step = block;
 
-                        if (got <= 0)
+                        if (got < 0)
+                        {
+                                glob_failed = true;
+                                break;
+                        }
+
+                        if (!got)
                                 break;
 
                         while (step < block + got)
@@ -2607,11 +2808,28 @@ static fn glob_walk(p8 address_to prefix, positive used, string_address pattern,
                                 if (!shell_match(component, named))
                                         continue;
 
-                                while (named[at] && out + 1 < GLOB_PATH)
+                                while (named[at])
+                                {
+                                        if (out + 1 >= GLOB_PATH)
+                                        {
+                                                glob_failed = true;
+                                                break;
+                                        }
+
                                         prefix[out++] = named[at++];
+                                }
+
+                                if (glob_failed)
+                                        break;
 
                                 glob_walk(prefix, out, rest, depth + 1);
+
+                                if (glob_failed)
+                                        break;
                         }
+
+                        if (glob_failed)
+                                break;
                 }
 
                 system_call_1(syscall(close), (positive)directory);
@@ -2620,23 +2838,70 @@ static fn glob_walk(p8 address_to prefix, positive used, string_address pattern,
 
 // POSIX asks for the matches in order, and a script that reads a directory
 // twice should be told the same story both times.
-static fn glob_sort()
+static bool glob_sort()
 {
-        positive at;
+        positive width;
+        string_address address_to source = glob_result;
+        string_address address_to target;
 
-        for (at = 1; at < glob_count; at++)
+        if (glob_count < 2)
+                return true;
+
+        if (!shell_room((address_any address_to)address_of glob_sort_room,
+                        address_of glob_sort_room_count, glob_count,
+                        sizeof(string_address)))
+                return false;
+
+        target = glob_sort_room;
+
+        for (width = 1; width < glob_count; width *= 2)
         {
-                string_address holding = glob_result[at];
-                positive back = at;
+                positive left;
 
-                while (back && string_compare(glob_result[back - 1], holding) > 0)
+                for (left = 0; left < glob_count; left += width * 2)
                 {
-                        glob_result[back] = glob_result[back - 1];
-                        back--;
+                        positive middle = left + width;
+                        positive stop = left + width * 2;
+                        positive a = left;
+                        positive b;
+                        positive out = left;
+
+                        if (middle > glob_count)
+                                middle = glob_count;
+
+                        if (stop > glob_count)
+                                stop = glob_count;
+
+                        b = middle;
+
+                        while (a < middle && b < stop)
+                                target[out++] = string_compare(source[a], source[b]) <= 0
+                                                    ? source[a++]
+                                                    : source[b++];
+
+                        while (a < middle)
+                                target[out++] = source[a++];
+
+                        while (b < stop)
+                                target[out++] = source[b++];
                 }
 
-                glob_result[back] = holding;
+                {
+                        string_address address_to swap = source;
+
+                        source = target;
+                        target = swap;
+                }
+
+                if (width > glob_count / 2)
+                        break;
         }
+
+        if (source != glob_result)
+                memory_copy(glob_result, source,
+                            glob_count * sizeof(string_address));
+
+        return true;
 }
 
 static string_address expand_keep_string(string_address text)
@@ -2673,7 +2938,8 @@ static string_address expand_keep(positive at, positive stop)
 */
 static bool expand_emit(positive at, positive stop, shell_words address_to out)
 {
-        p8 pattern[GLOB_PATH];
+        p8 address_to pattern;
+        positive room = 1;
         positive used = 0;
         positive index;
         bool magic = false;
@@ -2703,12 +2969,36 @@ static bool expand_emit(positive at, positive stop, shell_words address_to out)
 
         for (index = at; index < stop; index++)
         {
+                if (room == positive_max)
+                        break;
+
+                room++;
+
+                if (expand_mark[index] == MARK_QUOTED &&
+                    (expand_text[index] == '*' || expand_text[index] == '?' ||
+                     expand_text[index] == '[' || expand_text[index] == '\\'))
+                        room++;
+        }
+
+        pattern = index == stop
+                      ? shell_store_take(address_of expand_store, room)
+                      : null;
+
+        if (!pattern)
+        {
+                expand_overflow = true;
+                expand_failed = true;
+                return false;
+        }
+
+        for (index = at; index < stop; index++)
+        {
                 p8 value = expand_text[index];
                 bool special = value == '*' || value == '?' || value == '[';
 
                 if (expand_mark[index] == MARK_QUOTED)
                 {
-                        if ((special || value == '\\') && used + 2 < sizeof(pattern))
+                        if (special || value == '\\')
                                 pattern[used++] = '\\';
                 }
                 else if (value == '*' || value == '?')
@@ -2725,8 +3015,7 @@ static bool expand_emit(positive at, positive stop, shell_words address_to out)
                 else
                         bracket = 3;
 
-                if (used + 1 < sizeof(pattern))
-                        pattern[used++] = value;
+                pattern[used++] = value;
         }
 
         pattern[used] = end;
@@ -2738,12 +3027,25 @@ static bool expand_emit(positive at, positive stop, shell_words address_to out)
                 p8 built[GLOB_PATH];
 
                 glob_count = 0;
+                glob_failed = false;
                 shell_store_reset(address_of glob_store);
                 glob_walk(built, 0, pattern, 0);
 
+                if (glob_failed)
+                {
+                        expand_overflow = true;
+                        expand_failed = true;
+                        return false;
+                }
+
                 if (glob_count)
                 {
-                        glob_sort();
+                        if (!glob_sort())
+                        {
+                                expand_overflow = true;
+                                expand_failed = true;
+                                return false;
+                        }
 
                         for (index = 0; index < glob_count; index++)
                                 if (!shell_words_add(out, expand_keep_string(
@@ -2849,15 +3151,29 @@ static positive expand_split(shell_words address_to out)
 */
 positive shell_expand_fields(string_address word, shell_words address_to out)
 {
+        positive count;
+
         expand_word(word);
 
         // A word that did not fit is a word that came out shorter than it was
         // meant to be, and a shell that says nothing about that hands the wrong
         // file name to whatever runs next.
         if (expand_overflow)
+        {
                 string_format(expand_complain, "Expansion too long: %s\n", word);
+                expand_fatal();
+                return out->count;
+        }
 
-        return expand_split(out);
+        count = expand_split(out);
+
+        if (expand_overflow)
+        {
+                string_format(expand_complain, "Expansion too long: %s\n", word);
+                expand_fatal();
+        }
+
+        return count;
 }
 
 /*
@@ -2872,7 +3188,11 @@ string_address shell_expand_word(string_address word)
         expand_word(word);
 
         if (expand_overflow)
+        {
                 string_format(expand_complain, "Expansion too long: %s\n", word);
+                expand_fatal();
+                return (string_address) "";
+        }
 
         return expand_keep(0, expand_length);
 }
@@ -2897,7 +3217,11 @@ string_address shell_expand_pattern(string_address word)
         expand_word(word);
 
         if (expand_overflow)
+        {
                 string_format(expand_complain, "Expansion too long: %s\n", word);
+                expand_fatal();
+                return (string_address) "";
+        }
 
         for (at = 0; at < expand_length; at++)
         {

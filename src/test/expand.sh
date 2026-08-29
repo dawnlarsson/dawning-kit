@@ -117,6 +117,42 @@ mkdir -p "$tree/dir"
 : > "$tree/b.txt"
 : > "$tree/a-b"
 
+#       The old expansion scratch rooms were all 1024 bytes. Keep each stress
+#       shape independently beyond that line: operator words, arithmetic text,
+#       names, split output, a pathname, and the number of glob answers.
+long_a=
+long_sum=1
+long_name=v
+long_fields=a
+deep_piece=
+i=0
+while [ "$i" -lt 1400 ]; do
+        long_a=${long_a}a
+        long_sum="$long_sum + 0"
+        long_fields="$long_fields:a"
+        [ "$i" -lt 180 ] && deep_piece=${deep_piece}d
+        [ "$i" -lt 180 ] && long_name=${long_name}n
+        i=$((i + 1))
+done
+
+deep=$tree
+i=0
+while [ "$i" -lt 7 ]; do
+        deep="$deep/${deep_piece}$i"
+        mkdir "$deep"
+        i=$((i + 1))
+done
+: > "$deep/target"
+
+many="$tree/many"
+mkdir "$many"
+i=0
+while [ "$i" -lt 1200 ]; do
+        name=$(printf 'item%04d' "$i")
+        : > "$many/$name"
+        i=$((i + 1))
+done
+
 run_both()
 {
         printf '%s\n' "$*" > "$work/case.sh"
@@ -379,6 +415,12 @@ answer 'trim all no ifs' 'set -- aX aY; IFS=; printf "[%s]" ${@#a} END; echo'
 answer 'trim all colon' 'set -- aX aY; IFS=:; printf "[%s]" ${@#a} END; echo'
 answer 'trim all blanks' 'set -- "a b" c; printf "[%s]" "${@#a}" END; echo'
 
+group long
+answer 'long simple name' "$long_name=ok; echo \$$long_name"
+answer 'long braced name' "$long_name=ok; echo \${$long_name}"
+answer 'long default word' "unset x; x=\${x-$long_a}; echo \${#x}"
+answer 'long trim pattern' "x=$long_a; printf '[%s]' \"\${x%$long_a}\" END; echo"
+
 #
 #       Command substitution, in both spellings and nested.
 #
@@ -424,6 +466,11 @@ answer 'octal'          'echo $((010)) $((0777))'
 answer 'hex cursor'     'echo $((0x1+2)) $((0Xf*2))'
 answer 'octal cursor'   'echo $((07+1)) $((077*2))'
 answer 'a big one'      'echo $((0x7fffffffffffffff))'
+answer 'hex saturates'  'echo $((0xffffffffffffffff))'
+answer 'hex far over'   'echo $((0xffffffffffffffffffffffffffffffff))'
+answer 'decimal saturates' 'echo $((18446744073709551615))'
+answer 'octal saturates' 'echo $((0777777777777777777777))'
+answer 'long expression' "echo \$(( $long_sum ))"
 
 group names
 answer 'a name reads'   'x=5; echo $((x + 1))'
@@ -464,6 +511,9 @@ group width
 answer 'the largest'    'echo $((9223372036854775807))'
 answer 'over the top'   'echo $((9223372036854775807 + 1))'
 answer 'under the floor' 'echo $((-9223372036854775807 - 1))'
+answer 'product wraps'  'echo $((9223372036854775807 * 9223372036854775807))'
+answer 'shift wraps'    'echo $((1 << 64)) $((1 << -1)) $((-1 >> 64))'
+answer 'negate floor'   'echo $((-(-9223372036854775807 - 1)))'
 
 #
 #       Field splitting.
@@ -491,6 +541,9 @@ answer 'quoted holds'   'IFS=:; x="a:b"; printf "[%s]" "$x" END; echo'
 answer 'literal blank'  'printf "[%s]" a" "b END; echo'
 answer 'only expansions split' 'x="a b"; printf "[%s]" "$x"c END; echo'
 answer 'substitution splits' 'IFS=:; printf "[%s]" $(echo a:b) END; echo'
+answer 'long split output' "IFS=:; x=$long_fields; set -- \$x; echo \$#"
+answer 'long captured value' \
+        'unset x; : "${x:=$(i=0; while [ "$i" -lt 1400 ]; do printf a; i=$((i + 1)); done)}"; echo ${#x}'
 
 #
 #       Pathname expansion.
@@ -508,6 +561,8 @@ answer 'a directory'    "cd $tree; printf '[%s]' */ END; echo"
 answer 'a path'         "printf '[%s]' $tree/a* END; echo"
 answer 'no match'       "cd $tree; printf '[%s]' nosuch* END; echo"
 answer 'no match path'  "cd $tree; printf '[%s]' nosuch*/x END; echo"
+answer 'long path'      "printf '[%s]' $deep/t* END; echo"
+answer 'many answers'   "cd $many; set -- item*; echo \"\$#:\$1\""
 
 group sets
 answer 'a range'        "cd $tree; printf '[%s]' [a-b]* END; echo"
@@ -562,19 +617,13 @@ answer 'not after slash' 'printf "[%s]" /~ END; echo'
 
 section diverges
 
-group arithmetic
-#       Arithmetic is a machine word here. A hexadecimal spelling one past
-#       signed positive wraps to minus one; dash clamps it to signed positive.
-differs 'hex wraps'      '-1|' 0 'echo $((0xffffffffffffffff))'
-
 group trim
 #       ${*%pat} and ${@%pat} take the parameters joined and cut the join, so
 #       set -- ab cb db eb loses one b and not four -- which is what POSIX
-#       says and what dash does. Where the pattern matches somewhere other
-#       than the end, dash cuts from there to the end of the join and ours
-#       cuts nothing; bash and ksh trim each parameter on its own and neither
-#       of the other two is that. There is no shape here that all three agree
-#       on, so this is written down rather than chased.
+#       says and what dash does. POSIX explicitly leaves these two parameter
+#       forms unspecified, though: bash and ksh trim each parameter on its own,
+#       dash cuts from an interior match through the join, and ours applies the
+#       ordinary whole-value suffix rule. There is no portable answer to chase.
 differs 'the join is cut' '[ab][cd][END]|' 0 \
         'set -- ab cd; printf "[%s]" ${*%b} END; echo'
 
