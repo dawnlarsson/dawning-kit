@@ -784,14 +784,47 @@ marker=$(head -c 600 /dev/zero | tr '\0' x)
 sh -c 'sleep 10' "$marker" &
 long_pid=$!
 sleep 0.1
-ps -eww -o pid,args 2> /dev/null | awk -v p="$long_pid" '$1 == p' > "$work/want"
-"$bin/ps" -eww -o pid,args 2> /dev/null | awk -v p="$long_pid" '$1 == p' > "$work/got"
+ps -eww -o pid,args 2> /dev/null | awk -v p="$long_pid" '$1 == p' > "$work/ps_long_want"
+"$bin/ps" -eww -o pid,args 2> /dev/null | awk -v p="$long_pid" '$1 == p' > "$work/ps_long_got"
+
+# A PID selector makes the otherwise racing process table deterministic: both
+# implementations read these fields from the same sleeping process. These
+# cases cover the three accepted selector spellings, repeated/list selectors,
+# numeric uid versus user name, aliases, and the header rules that scripts use
+# to turn ps into a data source.
+compare 'pid selection' ps -p "$long_pid" -o pid,ppid,uid,user,comm,sid,pgid,nlwp
+compare 'attached pid selection' ps -p"$long_pid" -o pid=,comm=
+compare 'long pid selection' ps --pid="$long_pid" -o pid=PIDX
+compare 'pid selection beats every' ps -e -p "$long_pid" -o pid=
+compare 'pid selection list' ps -p "1,$long_pid" -o pid=
+compare 'repeated pid selection' ps -p "$long_pid" -p 1 -o pid=
+compare 'blank headings' ps -p "$long_pid" -o pid=,comm=
+compare 'mixed headings' ps -p "$long_pid" -o pid=,comm
+compare 'custom heading' ps -p "$long_pid" -o pid=PROCESS
+compare 'suppress headings' ps -p "$long_pid" --no-headers -o pid,comm
+compare 'force blank headings' ps -p "$long_pid" --headers -o pid=,comm=
+compare 'format long option' ps -p "$long_pid" --format=pid,ppid,comm
+compare 'format aliases' ps -p "$long_pid" -o cmd,command,ucmd
+compare 'elapsed seconds' ps -p "$long_pid" -o etimes
+
+# More selectors than the former small option vectors commonly allowed. Only
+# PID 1 can match; repetitions select it once, exactly as procps does.
+pid_spec=1
+i=1
+while [ "$i" -lt 40 ]; do
+        pid_spec="$pid_spec,1"
+        i=$((i + 1))
+done
+compare 'many pid selectors' ps -p "$pid_spec" -o pid=
+
 kill "$long_pid" 2> /dev/null
 wait "$long_pid" 2> /dev/null
-if cmp -s "$work/want" "$work/got" && [ -s "$work/want" ]; then
+if cmp -s "$work/ps_long_want" "$work/ps_long_got" &&
+        [ -s "$work/ps_long_want" ]; then
         pass=$((pass + 1))
 else
-        report 'long process arguments' "want $(show "$work/want") got $(show "$work/got")"
+        report 'long process arguments' \
+                "want $(show "$work/ps_long_want") got $(show "$work/ps_long_got")"
 fi
 
 compare_ps_full

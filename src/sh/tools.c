@@ -3044,7 +3044,11 @@ static b32 tools_diff(void)
 #define PS_FIELD_UID 11
 #define PS_FIELD_CPU 12
 #define PS_FIELD_STIME 13
-#define PS_FIELD_COUNT 14
+#define PS_FIELD_SID 14
+#define PS_FIELD_PGID 15
+#define PS_FIELD_NLWP 16
+#define PS_FIELD_ETIMES 17
+#define PS_FIELD_COUNT 18
 
 typedef struct
 {
@@ -3060,8 +3064,10 @@ static ps_column ps_columns[PS_FIELD_COUNT] = {
     {"args", "COMMAND", 27, false}, {"stat", "STAT", 4, false},
     {"time", "TIME", 8, true},      {"etime", "ELAPSED", 11, true},
     {"rss", "RSS", 5, true},        {"vsz", "VSZ", 6, true},
-    {"tty", "TT", 2, false},        {"uid", "UID", 8, false},
-    {"c", "C", 2, true},            {"stime", "STIME", 5, false}};
+    {"tty", "TT", 2, false},        {"uid", "UID", 5, true},
+    {"c", "C", 2, true},            {"stime", "STIME", 5, false},
+    {"sid", "SID", 7, true},         {"pgid", "PGID", 7, true},
+    {"nlwp", "NLWP", 4, true},       {"etimes", "ELAPSED", 7, true}};
 
 typedef struct
 {
@@ -3093,6 +3099,7 @@ static positive ps_now;
 static positive ps_own_tty;
 static positive ps_own_uid;
 static positive ps_wall;
+static positive ps_page_kb = 4;
 
 static positive ps_read_file(string_address path, p8 address_to into, positive limit)
 {
@@ -3123,6 +3130,12 @@ static p8 address_to ps_read_growing(string_address path, positive first,
         {
                 if (used + 1 >= room)
                 {
+                        if (room > positive_max / 2)
+                        {
+                                system_call_1(syscall(close), (positive)handle);
+                                return null;
+                        }
+
                         positive larger = room * 2;
                         p8 address_to grown =
                             (p8 address_to)text_arena_take(larger);
@@ -3163,6 +3176,11 @@ static ps_process address_to ps_process_add()
 {
         if (ps_count >= ps_room_processes)
         {
+                if (ps_room_processes > positive_max / 2 ||
+                    (ps_room_processes &&
+                     ps_room_processes * 2 > positive_max / sizeof(ps_process)))
+                        return null;
+
                 positive room = ps_room_processes ? ps_room_processes * 2 : 128;
                 ps_process address_to grown =
                     (ps_process address_to)text_arena_take(
@@ -3299,11 +3317,42 @@ static bool ps_gather()
 
         ps_count = 0;
         ps_room_processes = 0;
+        ps_page_kb = 4;
 
         positive password_length = 0;
 
         ps_password = ps_read_growing("/etc/passwd", 4096,
                                       address_of password_length);
+
+        /*
+                rss in /proc/PID/stat is counted in native pages, not in the
+                4 KiB pages most machines happen to use. AT_PAGESZ is the
+                kernel's architecture-specific answer and /proc/self/auxv is
+                available anywhere the rest of this implementation is.
+        */
+        {
+                p8 auxv[512];
+                positive got = ps_read_file("/proc/self/auxv", auxv, sizeof(auxv));
+                positive pair = 2 * sizeof(positive);
+
+                for (positive at = 0; at + pair <= got; at += pair)
+                {
+                        positive type;
+                        positive value;
+
+                        memory_copy_fast(address_of type, auxv + at,
+                                         sizeof(positive));
+                        memory_copy_fast(address_of value,
+                                         auxv + at + sizeof(positive),
+                                         sizeof(positive));
+
+                        if (type == 6 && value >= 1024)
+                        {
+                                ps_page_kb = value / 1024;
+                                break;
+                        }
+                }
+        }
 
         string_set_add(ps_blank_bytes, " \t");
         memory_fill(ps_field_bytes, 1, sizeof(ps_field_bytes));
@@ -3403,7 +3452,13 @@ static bool ps_gather()
                 ps_pass(address_of at, 1);
                 one->start = ps_take(address_of at);
                 one->vsz = ps_take(address_of at) / 1024;
-                one->rss = ps_take(address_of at) * 4;
+                {
+                        positive pages = ps_take(address_of at);
+
+                        one->rss = pages > positive_max / ps_page_kb
+                                       ? positive_max
+                                       : pages * ps_page_kb;
+                }
 
                 positive mark = 1;
 
@@ -3496,18 +3551,60 @@ static bool ps_gather()
 
         file_walk_close(address_of walk);
 
-        for (positive i = 1; i < ps_count; i++)
+        /* Bottom-up merge sort avoids quadratic startup on large /proc trees. */
+        if (ps_count > 1)
         {
-                ps_process one = ps_list[i];
-                positive j = i;
+                if (ps_count > positive_max / sizeof(ps_process))
+                        return false;
 
-                while (j && ps_list[j - 1].pid > one.pid)
+                ps_process address_to spare =
+                    (ps_process address_to)text_arena_take(
+                        ps_count * sizeof(ps_process));
+
+                if (!spare)
+                        return false;
+
+                ps_process address_to from = ps_list;
+                ps_process address_to into = spare;
+
+                for (positive width = 1; width < ps_count;)
                 {
-                        ps_list[j] = ps_list[j - 1];
-                        j--;
+                        for (positive base = 0; base < ps_count; base += 2 * width)
+                        {
+                                positive left = base;
+                                positive middle = base + width < ps_count
+                                                      ? base + width
+                                                      : ps_count;
+                                positive right = base + 2 * width < ps_count
+                                                     ? base + 2 * width
+                                                     : ps_count;
+                                positive one = left;
+                                positive two = middle;
+
+                                while (one < middle || two < right)
+                                {
+                                        if (two >= right ||
+                                            (one < middle &&
+                                             from[one].pid <= from[two].pid))
+                                                into[left++] = from[one++];
+                                        else
+                                                into[left++] = from[two++];
+                                }
+                        }
+
+                        ps_process address_to swap = from;
+                        from = into;
+                        into = swap;
+
+                        if (width > ps_count / 2)
+                                break;
+
+                        width *= 2;
                 }
 
-                ps_list[j] = one;
+                if (from != ps_list)
+                        memory_copy_fast(ps_list, from,
+                                         ps_count * sizeof(ps_process));
         }
 
         return true;
@@ -3525,13 +3622,30 @@ static bool ps_failed;
 
 static bool ps_room_add(positive extra)
 {
-        if (ps_room_used + extra + 1 <= ps_room_size)
+        if (ps_room_used == positive_max ||
+            extra > positive_max - ps_room_used - 1)
+        {
+                ps_failed = true;
+                return false;
+        }
+
+        positive need = ps_room_used + extra + 1;
+
+        if (need <= ps_room_size)
                 return true;
 
         positive room = ps_room_size ? ps_room_size : 64;
 
-        while (room < ps_room_used + extra + 1)
+        while (room < need)
+        {
+                if (room > positive_max / 2)
+                {
+                        ps_failed = true;
+                        return false;
+                }
+
                 room *= 2;
+        }
 
         p8 address_to grown = (p8 address_to)text_arena_take(room);
 
@@ -3663,7 +3777,9 @@ static fn ps_draw(ps_process address_to one, positive field)
         case PS_FIELD_PID: ps_digits(one->pid); break;
         case PS_FIELD_PPID: ps_digits(one->ppid); break;
         case PS_FIELD_USER:
-        case PS_FIELD_UID: ps_text(one->user); break;
+                ps_text(one->user);
+                break;
+        case PS_FIELD_UID: ps_digits(one->uid); break;
         case PS_FIELD_COMM: ps_text(one->comm); break;
         case PS_FIELD_ARGS: ps_text(one->args); break;
         case PS_FIELD_STAT: ps_text(one->state); break;
@@ -3721,6 +3837,16 @@ static fn ps_draw(ps_process address_to one, positive field)
 
                 break;
         }
+        case PS_FIELD_SID: ps_digits(one->session); break;
+        case PS_FIELD_PGID: ps_digits(one->pgrp); break;
+        case PS_FIELD_NLWP: ps_digits(one->threads); break;
+        case PS_FIELD_ETIMES:
+        {
+                positive began = one->start / ps_clock;
+
+                ps_digits(ps_now > began ? ps_now - began : 0);
+                break;
+        }
         default: break;
         }
 
@@ -3728,10 +3854,9 @@ static fn ps_draw(ps_process address_to one, positive field)
                 ps_room[ps_room_used] = end;
 }
 
-static fn ps_column_out(ps_process address_to one, positive field, bool last)
+static fn ps_column_out(ps_process address_to one, positive field,
+                        positive width, bool last)
 {
-        positive width = ps_columns[field].width;
-
         ps_draw(one, field);
 
         // A column that something follows is exactly as wide as it says,
@@ -3747,13 +3872,64 @@ static fn ps_column_out(ps_process address_to one, positive field, bool last)
                 text_put_character(' ');
 }
 
-static bool ps_field_add(positive address_to address_to fields,
+typedef struct
+{
+        positive field;
+        string_address header;
+        bool custom_header;
+} ps_selected;
+
+static bool ps_field_add(ps_selected address_to address_to fields,
+                         positive address_to count, positive address_to room,
+                         positive value, string_address header,
+                         bool custom_header)
+{
+        if (address_to count >= address_to room)
+        {
+                if (address_to room > positive_max / 2)
+                        return false;
+
+                positive larger = address_to room ? address_to room * 2 : 16;
+
+                if (larger > positive_max / sizeof(ps_selected))
+                        return false;
+
+                ps_selected address_to grown =
+                    (ps_selected address_to)text_arena_take(
+                        larger * sizeof(ps_selected));
+
+                if (!grown)
+                        return false;
+
+                if (address_to count)
+                        memory_copy_fast(grown, address_to fields,
+                                         address_to count * sizeof(ps_selected));
+
+                address_to fields = grown;
+                address_to room = larger;
+        }
+
+        (address_to fields)[address_to count].field = value;
+        (address_to fields)[address_to count].header = header;
+        (address_to fields)[address_to count].custom_header = custom_header;
+        address_to count += 1;
+        return true;
+}
+
+static bool ps_value_add(positive address_to address_to values,
                          positive address_to count, positive address_to room,
                          positive value)
 {
         if (address_to count >= address_to room)
         {
+                if (address_to room > positive_max / 2)
+                        return false;
+
                 positive larger = address_to room ? address_to room * 2 : 16;
+
+                if (larger > positive_max / sizeof(positive))
+                        return false;
+
                 positive address_to grown =
                     (positive address_to)text_arena_take(
                         larger * sizeof(positive));
@@ -3762,25 +3938,183 @@ static bool ps_field_add(positive address_to address_to fields,
                         return false;
 
                 if (address_to count)
-                        memory_copy_fast(grown, address_to fields,
+                        memory_copy_fast(grown, address_to values,
                                          address_to count * sizeof(positive));
 
-                address_to fields = grown;
+                address_to values = grown;
                 address_to room = larger;
         }
 
-        (address_to fields)[address_to count] = value;
+        (address_to values)[address_to count] = value;
         address_to count += 1;
         return true;
 }
 
+static bool ps_pid_list(string_address list,
+                        positive address_to address_to values,
+                        positive address_to count, positive address_to room)
+{
+        string_address at = list;
+        bool any = false;
+
+        while (string_get(at))
+        {
+                while (string_get(at) == ',' || string_get(at) == ' ')
+                        at++;
+
+                if (!string_get(at))
+                        break;
+
+                positive value;
+                string_address from = at;
+
+                if (!dd_digits(address_of at, address_of value) ||
+                    !value ||
+                    (string_get(at) && string_get(at) != ',' &&
+                     string_get(at) != ' '))
+                        return false;
+
+                if (at == from || !ps_value_add(values, count, room, value))
+                        return false;
+
+                any = true;
+        }
+
+        return any;
+}
+
+static positive ps_pid_matches(positive address_to values, positive count,
+                               positive pid)
+{
+        positive matches = 0;
+
+        for (positive i = 0; i < count; i++)
+                if (values[i] == pid)
+                        matches++;
+
+        return matches;
+}
+
+static bool ps_format_list(string_address list,
+                           ps_selected address_to address_to fields,
+                           positive address_to count, positive address_to room)
+{
+        string_address at = list;
+        bool any = false;
+
+        while (string_get(at))
+        {
+                while (string_get(at) == ',' || string_get(at) == ' ')
+                        at++;
+
+                if (!string_get(at))
+                        break;
+
+                string_address name_from = at;
+
+                while (string_get(at) && string_get(at) != '=' &&
+                       string_get(at) != ',' && string_get(at) != ' ')
+                        at++;
+
+                positive name_length = (positive)(at - name_from);
+
+                if (!name_length)
+                        return false;
+
+                p8 address_to name =
+                    (p8 address_to)text_arena_take(name_length + 1);
+
+                if (!name)
+                        return false;
+
+                memory_copy_fast(name, name_from, name_length);
+                name[name_length] = end;
+
+                bool custom = string_get(at) == '=';
+                string_address header = null;
+
+                if (custom)
+                {
+                        string_address header_from = ++at;
+
+                        while (string_get(at) && string_get(at) != ',')
+                                at++;
+
+                        positive header_length = (positive)(at - header_from);
+                        p8 address_to made =
+                            (p8 address_to)text_arena_take(header_length + 1);
+
+                        if (!made)
+                                return false;
+
+                        if (header_length)
+                                memory_copy_fast(made, header_from, header_length);
+
+                        made[header_length] = end;
+                        header = (string_address)made;
+                }
+
+                positive which;
+                string_address alias_header = null;
+
+                if (string_equals(name, "cmd"))
+                {
+                        which = PS_FIELD_ARGS;
+                        alias_header = "CMD";
+                }
+                else if (string_equals(name, "command"))
+                {
+                        which = PS_FIELD_ARGS;
+                        alias_header = "COMMAND";
+                }
+                else if (string_equals(name, "ucmd"))
+                {
+                        which = PS_FIELD_COMM;
+                        alias_header = "CMD";
+                }
+                else
+                {
+                        which = string_table_find(name, ps_columns,
+                                                  sizeof(ps_columns[0]),
+                                                  PS_FIELD_COUNT);
+                }
+
+                if (which == PS_FIELD_COUNT)
+                {
+                        text_error(name, "unknown user-defined format specifier");
+                        return false;
+                }
+
+                if (!custom && alias_header)
+                {
+                        custom = true;
+                        header = alias_header;
+                }
+
+                if (!ps_field_add(fields, count, room, which, header, custom))
+                        return false;
+
+                any = true;
+
+                while (string_get(at) == ',' || string_get(at) == ' ')
+                        at++;
+        }
+
+        return any;
+}
+
 static b32 tools_ps(void)
 {
-        positive address_to fields = null;
+        ps_selected address_to fields = null;
         positive field_count = 0;
         positive field_room = 0;
+        positive address_to selected_pids = null;
+        positive selected_count = 0;
+        positive selected_room = 0;
         bool every = false;
         bool full = false;
+        bool no_headers = false;
+        bool force_headers = false;
 
         text_begin("ps");
         text_arena_used = 0;
@@ -3800,7 +4134,94 @@ static b32 tools_ps(void)
         {
                 string_address argument = program_argument(i);
 
-                if (argument[0] == '-' && argument[1] == 'o' && !argument[2])
+                if (string_equals(argument, "--no-headers"))
+                {
+                        no_headers = true;
+                        force_headers = false;
+                        continue;
+                }
+                else if (string_equals(argument, "--headers"))
+                {
+                        force_headers = true;
+                        no_headers = false;
+                        continue;
+                }
+                else if (string_equals(argument, "--format"))
+                {
+                        argument = program_argument(++i);
+
+                        if (!argument)
+                        {
+                                text_error(null, "option requires an argument -- format");
+                                return text_done(1);
+                        }
+                }
+                else if (!string_compare_max(argument,
+                                             (string_address)"--format=", 9))
+                {
+                        argument += 9;
+                }
+                else if (string_equals(argument, "--pid"))
+                {
+                        argument = program_argument(++i);
+
+                        if (!argument ||
+                            !ps_pid_list(argument, address_of selected_pids,
+                                         address_of selected_count,
+                                         address_of selected_room))
+                        {
+                                text_error(argument, "invalid process id list");
+                                return text_done(1);
+                        }
+
+                        continue;
+                }
+                else if (!string_compare_max(argument,
+                                             (string_address)"--pid=", 6))
+                {
+                        argument += 6;
+
+                        if (!ps_pid_list(argument, address_of selected_pids,
+                                         address_of selected_count,
+                                         address_of selected_room))
+                        {
+                                text_error(argument, "invalid process id list");
+                                return text_done(1);
+                        }
+
+                        continue;
+                }
+                else if (argument[0] == '-' && argument[1] == 'p')
+                {
+                        argument += 2;
+
+                        if (!string_get(argument))
+                                argument = program_argument(++i);
+
+                        if (!argument ||
+                            !ps_pid_list(argument, address_of selected_pids,
+                                         address_of selected_count,
+                                         address_of selected_room))
+                        {
+                                text_error(argument, "invalid process id list");
+                                return text_done(1);
+                        }
+
+                        continue;
+                }
+                else if (argument[0] == 'p' && text_digit(argument[1]))
+                {
+                        if (!ps_pid_list(argument + 1, address_of selected_pids,
+                                         address_of selected_count,
+                                         address_of selected_room))
+                        {
+                                text_error(argument, "invalid process id list");
+                                return text_done(1);
+                        }
+
+                        continue;
+                }
+                else if (argument[0] == '-' && argument[1] == 'o' && !argument[2])
                 {
                         argument = program_argument(++i);
 
@@ -3834,6 +4255,7 @@ static b32 tools_ps(void)
                                 case 'A': every = true; break;
                                 case 'f': full = true; break;
                                 case 'w': break;
+                                case 'h': no_headers = true; break;
                                 case 'a':
                                 case 'x':
                                 case 'u': every = true; break;
@@ -3849,37 +4271,10 @@ static b32 tools_ps(void)
                         continue;
                 }
 
-                string_address at = argument;
-
-                while (string_get(at))
-                {
-                        p8 name[24];
-                        positive used = 0;
-
-                        while (string_get(at) && string_get(at) != ',' &&
-                               string_get(at) != ' ' && used + 1 < sizeof(name))
-                                name[used++] = string_get(at++);
-
-                        name[used] = end;
-
-                        while (string_get(at) == ',' || string_get(at) == ' ')
-                                at++;
-
-                        positive which = string_table_find(name, ps_columns,
-                                                           sizeof(ps_columns[0]),
-                                                           PS_FIELD_COUNT);
-
-                        if (which == PS_FIELD_COUNT)
-                        {
-                                text_error(name, "unknown user-defined format specifier");
-                                return text_done(1);
-                        }
-
-                        if (!ps_field_add(address_of fields,
-                                          address_of field_count,
-                                          address_of field_room, which))
-                                return text_done(1);
-                }
+                if (!ps_format_list(argument, address_of fields,
+                                    address_of field_count,
+                                    address_of field_room))
+                        return text_done(1);
         }
 
         if (!ps_gather())
@@ -3922,21 +4317,29 @@ static b32 tools_ps(void)
                         ps_columns[PS_FIELD_ARGS].header = "CMD";
 
                         if (!ps_field_add(address_of fields, address_of field_count,
-                                          address_of field_room, PS_FIELD_UID) ||
+                                          address_of field_room, PS_FIELD_USER,
+                                          "UID", true) ||
                             !ps_field_add(address_of fields, address_of field_count,
-                                          address_of field_room, PS_FIELD_PID) ||
+                                          address_of field_room, PS_FIELD_PID,
+                                          null, false) ||
                             !ps_field_add(address_of fields, address_of field_count,
-                                          address_of field_room, PS_FIELD_PPID) ||
+                                          address_of field_room, PS_FIELD_PPID,
+                                          null, false) ||
                             !ps_field_add(address_of fields, address_of field_count,
-                                          address_of field_room, PS_FIELD_CPU) ||
+                                          address_of field_room, PS_FIELD_CPU,
+                                          null, false) ||
                             !ps_field_add(address_of fields, address_of field_count,
-                                          address_of field_room, PS_FIELD_STIME) ||
+                                          address_of field_room, PS_FIELD_STIME,
+                                          null, false) ||
                             !ps_field_add(address_of fields, address_of field_count,
-                                          address_of field_room, PS_FIELD_TTY) ||
+                                          address_of field_room, PS_FIELD_TTY,
+                                          null, false) ||
                             !ps_field_add(address_of fields, address_of field_count,
-                                          address_of field_room, PS_FIELD_TIME) ||
+                                          address_of field_room, PS_FIELD_TIME,
+                                          null, false) ||
                             !ps_field_add(address_of fields, address_of field_count,
-                                          address_of field_room, PS_FIELD_ARGS))
+                                          address_of field_room, PS_FIELD_ARGS,
+                                          "CMD", true))
                                 return text_done(1);
                 }
                 else
@@ -3944,43 +4347,102 @@ static b32 tools_ps(void)
                         ps_columns[PS_FIELD_COMM].header = "CMD";
 
                         if (!ps_field_add(address_of fields, address_of field_count,
-                                          address_of field_room, PS_FIELD_PID) ||
+                                          address_of field_room, PS_FIELD_PID,
+                                          null, false) ||
                             !ps_field_add(address_of fields, address_of field_count,
-                                          address_of field_room, PS_FIELD_TTY) ||
+                                          address_of field_room, PS_FIELD_TTY,
+                                          null, false) ||
                             !ps_field_add(address_of fields, address_of field_count,
-                                          address_of field_room, PS_FIELD_TIME) ||
+                                          address_of field_room, PS_FIELD_TIME,
+                                          null, false) ||
                             !ps_field_add(address_of fields, address_of field_count,
-                                          address_of field_room, PS_FIELD_COMM))
+                                          address_of field_room, PS_FIELD_COMM,
+                                          "CMD", true))
                                 return text_done(1);
                 }
         }
 
-        for (positive f = 0; f < field_count; f++)
+        bool show_headers = force_headers;
+
+        if (!force_headers && !no_headers)
+                for (positive f = 0; f < field_count; f++)
+                {
+                        string_address header = fields[f].custom_header
+                                                    ? fields[f].header
+                                                    : ps_columns[fields[f].field].header;
+
+                        if (header && string_get(header))
+                        {
+                                show_headers = true;
+                                break;
+                        }
+                }
+
+        if (show_headers)
         {
-                positive field = fields[f];
-                bool last = f + 1 == field_count;
-                positive width = ps_columns[field].width;
-                string_to_field(text_put, ps_columns[field].header,
-                                !ps_columns[field].right && last ? 0 : width,
-                                ' ', !ps_columns[field].right);
+                for (positive f = 0; f < field_count; f++)
+                {
+                        positive field = fields[f].field;
+                        bool last = f + 1 == field_count;
+                        string_address header = fields[f].custom_header
+                                                    ? fields[f].header
+                                                    : ps_columns[field].header;
+                        positive width = ps_columns[field].width;
+                        positive header_length = header ? string_length(header) : 0;
 
-                if (!last)
-                        text_put_character(' ');
+                        if (header_length > width)
+                                width = header_length;
+
+                        string_to_field(text_put,
+                                        header ? header : (string_address)"",
+                                        !ps_columns[field].right && last ? 0 : width,
+                                        ' ', !ps_columns[field].right);
+
+                        if (!last)
+                                text_put_character(' ');
+                }
+
+                text_put_character('\n');
         }
-
-        text_put_character('\n');
 
         for (positive p = 0; p < ps_count; p++)
         {
                 ps_process address_to one = ps_list + p;
+                positive repeats = 1;
 
-                if (!every && !(one->uid == ps_own_uid && one->tty == ps_own_tty))
+                if (selected_count)
+                {
+                        repeats = ps_pid_matches(selected_pids, selected_count,
+                                                 one->pid);
+
+                        if (!repeats)
+                                continue;
+                }
+                else if (!every &&
+                         !(one->uid == ps_own_uid && one->tty == ps_own_tty))
                         continue;
 
-                for (positive f = 0; f < field_count; f++)
-                        ps_column_out(one, fields[f], f + 1 == field_count);
+                for (positive repeat = 0; repeat < repeats; repeat++)
+                {
+                        for (positive f = 0; f < field_count; f++)
+                        {
+                                positive field = fields[f].field;
+                                string_address header = fields[f].custom_header
+                                                            ? fields[f].header
+                                                            : ps_columns[field].header;
+                                positive width = ps_columns[field].width;
+                                positive header_length =
+                                    header ? string_length(header) : 0;
 
-                text_put_character('\n');
+                                if (header_length > width)
+                                        width = header_length;
+
+                                ps_column_out(one, field, width,
+                                              f + 1 == field_count);
+                        }
+
+                        text_put_character('\n');
+                }
         }
 
         return text_done(ps_failed ? 1 : 0);
