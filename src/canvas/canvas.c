@@ -303,6 +303,11 @@ static struct desktop
         atomic_t key_head;
         atomic_t key_tail;
         atomic_t modifiers;
+        atomic_t focus_steps;
+        atomic_t focus_commit;
+        atomic_t focus_cycling;
+        atomic_t minimize;
+        int focus_cycle_z;
 
         // The button, and where it went down. Picking a window needs the list,
         // which the input handler cannot walk, so it records and the thread

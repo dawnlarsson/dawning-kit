@@ -66,10 +66,10 @@ qmp = work + "/qmp"
 mon = work + "/mon"
 W, H = 2560, 1080
 
-def shot(name):
+def shot(name, settle=2):
     hf.write(("screendump %s/%s.ppm\n" % (work, name)).encode())
     hf.flush()
-    time.sleep(2)
+    time.sleep(settle)
 
 def load(name):
     d = open("%s/%s.ppm" % (work, name), "rb").read()
@@ -144,6 +144,17 @@ def key(code):
           {"type": "key", "data": {"down": False,
                                       "key": {"type": "qcode", "data": code}}}])
     time.sleep(0.02)
+
+def chord(*codes):
+    events = []
+    for code in codes:
+        events.append({"type": "key", "data": {
+            "down": True, "key": {"type": "qcode", "data": code}}})
+    for code in reversed(codes):
+        events.append({"type": "key", "data": {
+            "down": False, "key": {"type": "qcode", "data": code}}})
+    send(events)
+    time.sleep(0.2)
 
 def type_text(value):
     names = {" ": "spc", ".": "dot", "/": "slash", "-": "minus",
@@ -333,8 +344,8 @@ if len(runs) >= 2:
     # blue pane is exactly 200x120; double-click its titlebar and prove those
     # are still the only blue pixels.
     type_text("/window\n")
-    time.sleep(1)
-    shot("pixel-window")
+    time.sleep(0.5)
+    shot("pixel-window", 0.3)
     pixel_w, pixel_h, pixel_before = load("pixel-window")
 
     def colour_bounds(data, width, height, colour):
@@ -359,7 +370,7 @@ if len(runs) >= 2:
             send([{"type": "btn", "data": {"down": False, "button": "left"}}])
             time.sleep(0.12)
 
-        shot("pixel-maximized")
+        shot("pixel-maximized", 0.3)
         max_w, max_h, pixel_after = load("pixel-maximized")
         blue_after = colour_bounds(pixel_after, max_w, max_h,
                                    b"\x00\x66\xcc")
@@ -383,7 +394,7 @@ if len(runs) >= 2:
         time.sleep(0.08)
         moveto(min(title_x + 120, W - 1), min(title_y + 80, H - 1))
         send([{"type": "btn", "data": {"down": False, "button": "left"}}])
-        shot("pixel-restored")
+        shot("pixel-restored", 0.3)
         drag_w, drag_h, pixel_dragged = load("pixel-restored")
         blue_dragged = colour_bounds(pixel_dragged, drag_w, drag_h,
                                      b"\x00\x66\xcc")
@@ -395,6 +406,64 @@ if len(runs) >= 2:
                 blue_dragged[2] - blue_dragged[0] + 1 == 200 and
                 blue_dragged[3] - blue_dragged[1] + 1 == 120)
     out.append(("maximized drag restores", "yes" if restored else "no", "yes"))
+
+    # One held Alt with two Tab presses must walk past the next window to the
+    # third, rather than bouncing between the top two. The orange 400x260
+    # window is third in this demo; raising it changes the pixel where its
+    # titlebar was previously obscured.
+    orange = (colour_bounds(pixel_dragged, drag_w, drag_h, b"\xff\x99\x00")
+              if blue_after else None)
+    if orange:
+        orange_x = (orange[0] + orange[2]) // 2
+        orange_y = max(orange[1] - 10, 0)
+        orange_before = pixel(pixel_dragged, drag_w, orange_x, orange_y)
+    else:
+        orange_before = None
+
+    send([{"type": "key", "data": {"down": True,
+                                     "key": {"type": "qcode", "data": "alt"}}},
+          {"type": "key", "data": {"down": True,
+                                     "key": {"type": "qcode", "data": "tab"}}},
+          {"type": "key", "data": {"down": False,
+                                     "key": {"type": "qcode", "data": "tab"}}},
+          {"type": "key", "data": {"down": True,
+                                     "key": {"type": "qcode", "data": "tab"}}},
+          {"type": "key", "data": {"down": False,
+                                     "key": {"type": "qcode", "data": "tab"}}},
+          {"type": "key", "data": {"down": False,
+                                     "key": {"type": "qcode", "data": "alt"}}}])
+    time.sleep(0.2)
+    shot("third-focused", 0.3)
+    third_w, third_h, third_px = load("third-focused")
+    third_changed = (orange_before is not None and
+                     pixel(third_px, third_w, orange_x, orange_y) !=
+                     orange_before)
+    out.append(("Alt-Tab reaches third", "yes" if third_changed else "no",
+                "yes"))
+
+    # From the newly raised orange window, one step selects the blue window
+    # again so the minimize/restore checks below have an unambiguous target.
+    chord("alt", "tab")
+
+    # Alt-F9 is a compositor shortcut, not a byte sent to the focused
+    # program. Alt-Tab includes minimized clients and restores the selected
+    # one when Alt is released.
+    chord("alt", "f9")
+    shot("pixel-minimized", 0.3)
+    min_w, min_h, pixel_minimized = load("pixel-minimized")
+    blue_minimized = colour_bounds(pixel_minimized, min_w, min_h,
+                                   b"\x00\x66\xcc")
+    out.append(("Alt-F9 minimizes", "yes" if blue_minimized is None else "no",
+                "yes"))
+
+    chord("alt", "tab")
+    shot("pixel-restored-by-key", 0.3)
+    key_w, key_h, pixel_key = load("pixel-restored-by-key")
+    blue_key = colour_bounds(pixel_key, key_w, key_h, b"\x00\x66\xcc")
+    key_extent = ("absent" if blue_key is None else
+                  "%dx%d" % (blue_key[2] - blue_key[0] + 1,
+                             blue_key[3] - blue_key[1] + 1))
+    out.append(("Alt-Tab restores", key_extent, "200x120"))
 
 try:
     serial = open(work + "/serial", "rb").read().lower()

@@ -128,7 +128,69 @@ static void keyboard_event(unsigned int code, int value)
                         modifiers &= ~bit;
 
                 atomic_set(&desktop.modifiers, (int)modifiers);
+
+                /*
+                        Alt belongs to compositor chords.
+
+                        Sending Alt-down to one client, changing focus on Tab,
+                        then sending Alt-up to another leaves both clients with
+                        a modifier state that never happened. Keep Alt in the
+                        flags of ordinary keys, but consume its own events.
+                */
+                if (bit == WINDOW_KEY_ALT)
+                {
+                        if (!value && atomic_xchg(&desktop.focus_cycling, 0))
+                        {
+                                atomic_set(&desktop.focus_commit, 1);
+                                canvas_thread_wake();
+                        }
+
+                        return;
+                }
         }
+
+        /*
+                The conservative chord is unmodified Alt-Tab. Shift-Alt-Tab
+                is left with the client until modifier buffering exists; that
+                is safer than moving focus after Shift-down was already sent
+                to the old client.
+        */
+        if ((modifiers & (WINDOW_KEY_ALT | WINDOW_KEY_SHIFT |
+                          WINDOW_KEY_CONTROL)) == WINDOW_KEY_ALT &&
+            code == KEY_TAB)
+        {
+                if (value)
+                {
+                        // library.c has an address-first atomic_inc of its
+                        // own, so use the kernel spelling that cannot collide.
+                        atomic_fetch_add(1, &desktop.focus_steps);
+                        atomic_set(&desktop.focus_cycling, 1);
+                        canvas_thread_wake();
+                }
+
+                return;
+        }
+
+        // Alt-F9 is the compositor-owned minimize affordance. Its release is
+        // consumed as part of the same chord.
+        if ((modifiers & (WINDOW_KEY_ALT | WINDOW_KEY_SHIFT |
+                          WINDOW_KEY_CONTROL)) == WINDOW_KEY_ALT &&
+            code == KEY_F9 && !atomic_read(&desktop.focus_cycling))
+        {
+                if (value)
+                {
+                        atomic_set(&desktop.minimize, 1);
+                        canvas_thread_wake();
+                }
+
+                return;
+        }
+
+        // Once an Alt-Tab traversal has started, do not leak another
+        // Alt-modified key into the selected-but-not-yet-raised client.
+        if ((modifiers & WINDOW_KEY_ALT) &&
+            atomic_read(&desktop.focus_cycling))
+                return;
 
         key.code = code;
         key.character = value ? key_character(code, modifiers) : 0;

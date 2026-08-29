@@ -686,6 +686,106 @@ static void pane_focus(struct pane *pane)
         }
 }
 
+static _Bool pane_focusable(struct pane *pane, _Bool include_minimized)
+{
+        return pane->shared && !(pane->style & WINDOW_PASSTHROUGH) &&
+               (include_minimized || !(pane->style & WINDOW_MINIMIZED));
+}
+
+/*
+        One Alt-Tab step, without changing z yet.
+
+        Focus is allowed to preview a minimized pane; releasing Alt restores
+        and raises it in pane_focus_commit. When focus is already the highest
+        eligible z, choose the one immediately behind it. When focus came from
+        minimizing that top window, choose the highest one instead, which is
+        the window the user just put away and makes Alt-Tab a restore path.
+*/
+static void pane_focus_step(void)
+{
+        struct pane *pane;
+        struct pane *top = NULL;
+        struct pane *focused = desktop.focused;
+        struct pane *next = NULL;
+        int below;
+
+        list_for_each_entry(pane, &desktop.windows, link)
+        {
+                if (!pane_focusable(pane, true))
+                        continue;
+
+                if (!top || pane->z > top->z)
+                        top = pane;
+        }
+
+        /*
+                Start behind the active top window. If focus is not top -- it
+                moved when that top window was minimized -- start from top so
+                one Alt-Tab restores the thing just put away. Further steps
+                descend the unchanged z order and wrap after the bottom.
+        */
+        if (desktop.focus_cycle_z)
+                below = desktop.focus_cycle_z;
+        else
+                below = focused == top && focused ? focused->z : INT_MAX;
+
+        list_for_each_entry(pane, &desktop.windows, link)
+                if (pane_focusable(pane, true) && pane->z < below &&
+                    (!next || pane->z > next->z))
+                        next = pane;
+
+        if (!next)
+                next = top;
+
+        if (!next || next == focused)
+                return;
+
+        desktop.focus_cycle_z = next->z;
+        pane_focus(next);
+        desktop_redraw();
+}
+
+static void pane_focus_commit(void)
+{
+        struct pane *pane = desktop.focused;
+
+        desktop.focus_cycle_z = 0;
+
+        if (!pane || !pane_focusable(pane, true))
+                return;
+
+        if (pane->style & WINDOW_MINIMIZED)
+        {
+                pane->style &= ~WINDOW_MINIMIZED;
+                WRITE_ONCE(pane->shared->style, pane->style);
+        }
+
+        pane_raise(pane);
+        list_sort(NULL, &desktop.windows, pane_by_z);
+        desktop_redraw();
+}
+
+static void pane_minimize_focused(void)
+{
+        struct pane *pane = desktop.focused;
+        struct pane *other;
+        struct pane *next = NULL;
+
+        if (!pane || !pane_focusable(pane, false))
+                return;
+
+        pane->style |= WINDOW_MINIMIZED;
+        WRITE_ONCE(pane->shared->style, pane->style);
+
+        list_for_each_entry(other, &desktop.windows, link)
+                if (other != pane && pane_focusable(other, false) &&
+                    (!next || other->z > next->z))
+                        next = other;
+
+        pane_focus(next);
+        desktop_redraw();
+}
+
 /*
         Windows the desktop no longer reaches.
 
@@ -945,9 +1045,7 @@ static void window_release(struct file *file)
         if (refocus)
         {
                 list_for_each_entry(other, &desktop.windows, link)
-                        if (other->shared &&
-                            !(other->style &
-                              (WINDOW_MINIMIZED | WINDOW_PASSTHROUGH)) &&
+                        if (pane_focusable(other, false) &&
                             (!next || other->z > next->z))
                                 next = other;
 

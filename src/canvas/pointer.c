@@ -523,12 +523,34 @@ static int canvas_loop(void *unused)
                     !atomic_read(&desktop.button_changed) &&
                     !atomic_read(&desktop.frame_pending) &&
                     !atomic_read(&desktop.wheel) &&
+                    !atomic_read(&desktop.focus_steps) &&
+                    !atomic_read(&desktop.focus_commit) &&
+                    !atomic_read(&desktop.minimize) &&
                     atomic_read(&desktop.key_head) == atomic_read(&desktop.key_tail))
                         schedule();
 
                 __set_current_state(TASK_RUNNING);
 
                 pointer_apply();
+
+                if (atomic_read(&desktop.focus_steps) ||
+                    atomic_read(&desktop.focus_commit) ||
+                    atomic_read(&desktop.minimize))
+                {
+                        unsigned int steps =
+                            (unsigned int)atomic_xchg(&desktop.focus_steps, 0);
+                        _Bool commit = atomic_xchg(&desktop.focus_commit, 0);
+                        _Bool minimize = atomic_xchg(&desktop.minimize, 0);
+
+                        mutex_lock(&desktop.lock);
+                        while (steps--)
+                                pane_focus_step();
+                        if (minimize)
+                                pane_minimize_focused();
+                        if (commit)
+                                pane_focus_commit();
+                        mutex_unlock(&desktop.lock);
+                }
 
                 if (atomic_read(&desktop.key_head) != atomic_read(&desktop.key_tail))
                 {
