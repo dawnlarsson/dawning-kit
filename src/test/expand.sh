@@ -207,6 +207,56 @@ answer()
                 "want $(shown "$work/want")[$want_status]   got $(shown "$work/got")[$got_status]"
 }
 
+# Bash extensions are compared to Bash directly and kept out of the POSIX
+# reference stream. They remain ordinary pass/fail cases in the same lane.
+bash_answer()
+{
+        name=$1
+        shift
+
+        [ -x /bin/bash ] || {
+                lost "$name" "/bin/bash is required for a Bash extension case"
+                return 0
+        }
+
+        held_reference=$reference
+        reference=/bin/bash
+        run_both "$@"
+        reference=$held_reference
+
+        if cmp -s "$work/want" "$work/got" &&
+                [ "$want_status" = "$got_status" ]; then
+                won
+                return 0
+        fi
+
+        lost "$name" \
+                "bash $(shown "$work/want")[$want_status]   got $(shown "$work/got")[$got_status]"
+}
+
+bash_check()
+{
+        name=$1
+        shift
+
+        [ -x /bin/bash ] || {
+                lost "$name" "/bin/bash is required for a Bash extension case"
+                return 0
+        }
+
+        held_reference=$reference
+        reference=/bin/bash
+        run_both "$@"
+        reference=$held_reference
+
+        if cmp -s "$work/want" "$work/got"; then
+                won
+                return 0
+        fi
+
+        lost "$name" "bash $(shown "$work/want")   got $(shown "$work/got")"
+}
+
 # What ours says where dash says something else. Both halves are checked: if
 # ours starts agreeing with dash the case fails and moves up into answer, and
 # if ours changes to a third thing it fails too.
@@ -306,8 +356,6 @@ answer 'no colon trim'  'x=abc; echo "${x:%b}"; echo after'
 answer 'no at offset'   'set -- a b; echo "${@:1}"; echo after'
 # Bash-only transformations must be implemented or refused. Handing the
 # original value back says they succeeded and lets wrong data travel onward.
-answer 'no replace all' 'x=aXb; echo "${x//X/-}"; echo after'
-answer 'no replace one' 'x=aXb; echo "${x/X/-}"; echo after'
 answer 'no uppercase'   'x=ab; echo "${x^^}"; echo after'
 answer 'no titlecase'   'x=ab; echo "${x^}"; echo after'
 answer 'no length default' 'x=abc; echo "${#x:-}"; echo after'
@@ -322,6 +370,26 @@ answer 'plus splits'     'x=v; printf "[%s]" ${x+D E} END; echo'
 answer 'splits on ifs'   'IFS=:; printf "[%s]" ${nosuch-D:E} END; echo'
 answer 'assign splits'   'printf "[%s]" ${x=D E} "$x" END; echo'
 answer 'nested inside'  'printf "[%s]" ${nosuch-${also-deep}} END; echo'
+
+group bash replace
+bash_answer 'replace first' 'x=abcabc; printf "[%s]" "${x/b/X}" END; echo'
+bash_answer 'replace all' 'x=abcabc; printf "[%s]" "${x//b/X}" END; echo'
+bash_answer 'replace no match' 'x=abc; printf "[%s]" "${x/z/X}" END; echo'
+bash_answer 'replace longest' 'x=abcabc; printf "[%s]" "${x/a*c/X}" END; echo'
+bash_answer 'replace earliest' 'x=abcabc; printf "[%s]" "${x/b?/X}" END; echo'
+bash_answer 'replace prefix' 'x=abcabc; printf "[%s]" "${x/#a/X}" END; echo'
+bash_answer 'prefix no match' 'x=abcabc; printf "[%s]" "${x/#b/X}" END; echo'
+bash_answer 'replace suffix' 'x=abcabc; printf "[%s]" "${x/%bc/X}" END; echo'
+bash_answer 'empty replacement' 'x=abcabc; printf "[%s]" "${x//b}" END; echo'
+bash_answer 'expanded pieces' 'x=abcabc; p=b; r=X; printf "[%s]" "${x//$p/$r}" END; echo'
+bash_answer 'slash in pattern' 'x="a/b/c"; printf "[%s]" "${x/\//X}" END; echo'
+bash_answer 'nested replacement' 'x=abc; y=bb; printf "[%s]" "${x/b/${y/b/X}}" END; echo'
+bash_answer 'matched ampersand' 'x=abc; printf "[%s]" "${x/b/[&]}" END; echo'
+bash_answer 'quoted ampersand' 'x=abc; printf "[%s]" "${x/b/[\&]}" END; echo'
+bash_answer 'replacement fields' 'x=a-b; printf "[%s]" ${x/-/" X Y "} END; echo'
+bash_answer 'unset is empty' 'unset x; printf "[%s]" "${x/a/b}" END; echo'
+bash_check 'nounset stays fatal' 'set -u; unset x; printf before; printf "%s" "${x/a/b}"; echo after'
+bash_answer 'long replace all' "x=$long_a; y=\${x//a/bb}; echo \${#y}"
 
 group trim
 answer 'shortest head'  'x=a.b.c; printf "[%s]" ${x#*.} END; echo'

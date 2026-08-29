@@ -932,7 +932,11 @@ static string_address expand_backtick(string_address step, bool quoted);
         A pattern gets a backslash in front of every byte that was quoted, so
         that ${x%"*"} strips one star and not everything.
 */
-static string_address expand_capture(string_address text, bool quoted, bool as_pattern)
+#define EXPAND_CAPTURE_TEXT 0
+#define EXPAND_CAPTURE_PATTERN 1
+#define EXPAND_CAPTURE_REPLACEMENT 2
+
+static string_address expand_capture(string_address text, bool quoted, b32 mode)
 {
         positive at = expand_length;
         bool held = expand_quoted_seen;
@@ -952,8 +956,10 @@ static string_address expand_capture(string_address text, bool quoted, bool as_p
 
                 room++;
 
-                if (as_pattern && expand_mark[step] == MARK_QUOTED &&
-                    (value == '*' || value == '?' || value == '[' || value == '\\'))
+                if (expand_mark[step] == MARK_QUOTED &&
+                    ((mode == EXPAND_CAPTURE_PATTERN &&
+                      (value == '*' || value == '?' || value == '[' || value == '\\')) ||
+                     (mode == EXPAND_CAPTURE_REPLACEMENT && value == '&')))
                         room++;
         }
 
@@ -971,8 +977,10 @@ static string_address expand_capture(string_address text, bool quoted, bool as_p
         {
                 p8 value = expand_text[step];
 
-                if (as_pattern && expand_mark[step] == MARK_QUOTED &&
-                    (value == '*' || value == '?' || value == '[' || value == '\\'))
+                if (expand_mark[step] == MARK_QUOTED &&
+                    ((mode == EXPAND_CAPTURE_PATTERN &&
+                      (value == '*' || value == '?' || value == '[' || value == '\\')) ||
+                     (mode == EXPAND_CAPTURE_REPLACEMENT && value == '&')))
                         into[used++] = '\\';
 
                 into[used++] = value;
@@ -2052,6 +2060,242 @@ static fn expand_trim(positive start, string_address pattern, bool prefix, bool 
         expand_length -= cut;
 }
 
+//      The slash separating a Bash replacement pattern from its replacement.
+//      A slash hidden by a quote, a backslash or a nested expansion belongs to
+//      that word and is not the separator of the outer ${.../.../...}.
+static string_address expand_replace_separator(string_address at)
+{
+        while (string_get(at))
+        {
+                p8 value = string_get(at);
+
+                if (value == '/')
+                        return at;
+
+                if (value == '\\' && string_get(at + 1))
+                {
+                        at += 2;
+                        continue;
+                }
+
+                if (value == '\'' || value == '"')
+                {
+                        p8 quote = value;
+
+                        at++;
+                        while (string_get(at) && string_not(at, quote))
+                                at += quote == '"' && string_is(at, '\\') &&
+                                              string_get(at + 1)
+                                          ? 2
+                                          : 1;
+
+                        if (string_get(at))
+                                at++;
+
+                        continue;
+                }
+
+                if (value == '$' && string_is(at + 1, '{'))
+                {
+                        string_address stop = expand_brace_end(at + 2);
+
+                        if (stop)
+                        {
+                                at = stop + 1;
+                                continue;
+                        }
+                }
+
+                if (value == '$' && string_is(at + 1, '('))
+                {
+                        string_address stop = expand_paren_end(at + 2);
+
+                        if (stop)
+                        {
+                                at = stop + 1;
+                                continue;
+                        }
+                }
+
+                at++;
+        }
+
+        return null;
+}
+
+//      Whether pattern matches exactly size bytes at source + at. The source
+//      is our private copy, so terminating one candidate in place avoids a
+//      fresh allocation for every possible match.
+static bool expand_replace_match(p8 address_to source, positive at,
+                                 positive size, string_address pattern)
+{
+        p8 held = source[at + size];
+        bool matched;
+
+        source[at + size] = end;
+        matched = shell_match(pattern, source + at);
+        source[at + size] = held;
+
+        return matched;
+}
+
+// Bash's patsub_replacement option is on by default: an unquoted ampersand in
+// the replacement is the bytes that matched, while a quoted one is literal.
+// expand_capture records the quoted one as \& so that distinction survives
+// the nested expansion buffer.
+static fn expand_replace_push(string_address replacement,
+                              string_address matched, positive match_length,
+                              p8 mark)
+{
+        string_address at = replacement;
+        string_address run = at;
+
+        while (string_get(at))
+        {
+                if (string_is(at, '\\') && string_is(at + 1, '&'))
+                {
+                        expand_push_run(run, (positive)(at - run), mark);
+                        expand_push('&', mark);
+                        at += 2;
+                        run = at;
+                        continue;
+                }
+
+                if (string_is(at, '&'))
+                {
+                        expand_push_run(run, (positive)(at - run), mark);
+                        expand_push_run(matched, match_length, mark);
+                        at++;
+                        run = at;
+                        continue;
+                }
+
+                at++;
+        }
+
+        expand_push_run(run, (positive)(at - run), mark);
+}
+
+/*
+        Bash ${name/pattern/replacement}.
+
+        The first match is the leftmost one and the match at that position is
+        the longest one accepted by the glob. A doubled slash repeats that
+        search over the remainder. # and % immediately after the operator
+        anchor the match to the beginning or end respectively.
+*/
+static fn expand_replace(string_address name, string_address pattern_text,
+                         string_address replacement_text, bool quoted,
+                         bool global)
+{
+        positive expansion_start = expand_length;
+        positive length;
+        p8 address_to source;
+        string_address pattern;
+        string_address replacement;
+        positive at = 0;
+        positive copied = 0;
+        p8 anchor = 0;
+        p8 mark = quoted ? MARK_QUOTED : MARK_FIELD;
+
+        // This also applies nounset and the special-parameter rules before
+        // the value is lifted out of the shared expansion buffer.
+        expand_push_parameter(name, quoted);
+
+        if (expand_failed)
+                return;
+
+        length = expand_length - expansion_start;
+        source = shell_store_take(address_of expand_store, length + 1);
+
+        if (!source)
+        {
+                expand_overflow = true;
+                expand_failed = true;
+                expand_length = expansion_start;
+                return;
+        }
+
+        memory_copy_end(source, expand_text + expansion_start, length);
+        expand_length = expansion_start;
+
+        pattern = expand_capture(pattern_text, false, EXPAND_CAPTURE_PATTERN);
+        replacement = expand_capture(replacement_text, false,
+                                     EXPAND_CAPTURE_REPLACEMENT);
+
+        if (expand_failed || !pattern || !replacement)
+                return;
+
+        if (string_is(pattern, '#') || string_is(pattern, '%'))
+                anchor = string_get(pattern++);
+
+        // An empty pattern does not designate a match in Bash parameter
+        // replacement; the value passes through unchanged.
+        if (!string_get(pattern))
+        {
+                expand_push_run(source, length, mark);
+                return;
+        }
+
+        while (at <= length)
+        {
+                positive begin = at;
+                positive size = 0;
+                bool found = false;
+
+                if (anchor == '#')
+                        begin = 0;
+
+                for (; begin <= length; begin++)
+                {
+                        positive largest = length - begin;
+
+                        if (anchor == '%' && begin < at)
+                                continue;
+
+                        for (size = largest + 1; size;)
+                        {
+                                size--;
+
+                                if (anchor == '%' && begin + size != length)
+                                        continue;
+
+                                if (expand_replace_match(source, begin, size,
+                                                         pattern))
+                                {
+                                        found = true;
+                                        break;
+                                }
+                        }
+
+                        if (found || anchor == '#')
+                                break;
+                }
+
+                if (!found)
+                        break;
+
+                expand_push_run(source + copied, begin - copied, mark);
+                expand_replace_push(replacement, source + begin, size, mark);
+                copied = begin + size;
+
+                if (!global || anchor)
+                        break;
+
+                // A zero-width match must still advance through the source;
+                // otherwise a global replacement never reaches its end.
+                if (!size && copied < length)
+                {
+                        expand_push(source[copied], mark);
+                        copied++;
+                }
+
+                at = copied;
+        }
+
+        expand_push_run(source + copied, length - copied, mark);
+}
+
 /*
         ${ ... } in every form POSIX gives it.
 
@@ -2159,6 +2403,17 @@ static string_address expand_braced(string_address step, bool quoted)
                         step++;
                 }
         }
+        else if (!colon && seen == '/')
+        {
+                operation = seen;
+                step++;
+
+                if (string_is(step, '/'))
+                {
+                        doubled = true;
+                        step++;
+                }
+        }
 
         /*
                 Nothing after a name is harmless unless it is one of the
@@ -2231,6 +2486,23 @@ static string_address expand_braced(string_address step, bool quoted)
                         return close + 1;
 
                 expand_trim(start, pattern, operation == '#', doubled);
+
+                return close + 1;
+        }
+
+        if (operation == '/')
+        {
+                string_address separator = expand_replace_separator(word);
+                string_address pattern = word;
+                string_address replacement = (string_address) "";
+
+                if (separator)
+                {
+                        separator[0] = end;
+                        replacement = separator + 1;
+                }
+
+                expand_replace(name, pattern, replacement, quoted, doubled);
 
                 return close + 1;
         }
