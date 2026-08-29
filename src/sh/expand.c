@@ -787,6 +787,8 @@ static string_address expand_value_of(string_address name, p8 address_to scratch
         }
 }
 
+static fn expand_fatal();
+
 /*
         A parameter pushed with the marks that decide its fate later.
 
@@ -827,7 +829,15 @@ static bool expand_push_parameter(string_address name, bool quoted)
         value = expand_value_of(name, scratch, address_of present);
 
         if (!present)
+        {
+                if (shell_options & ((positive)1 << ('u' - 'a')))
+                {
+                        string_format(expand_complain, "%s: parameter not set\n", name);
+                        expand_fatal();
+                }
+
                 return false;
+        }
 
         expand_push_string(value, mark);
 

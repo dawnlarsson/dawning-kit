@@ -612,6 +612,10 @@ static bool exec_redirect_apply(b32 index)
 
                 if (opened < 0)
                 {
+                        // A redirection is part of the shell language, not a
+                        // command reporting an ordinary false result. dash
+                        // uses status two for an open/duplication failure.
+                        exec_redirect_status = 2;
                         exec_redirect_diagnostic_restore();
                         string_format(exec_error, "Cannot redirect: %s\n", target);
                         return false;
@@ -689,6 +693,27 @@ static b32 exec_function_find(string_address name)
 bool exec_function_here(string_address name)
 {
         return exec_function_find(name) != 0;
+}
+
+bool exec_function_unset(string_address name)
+{
+        b32 slot;
+
+        for (slot = 0; slot < exec_function_count; slot++)
+        {
+                if (string_compare(exec_functions[slot].name, name))
+                        continue;
+
+                if (!exec_functions[slot].body)
+                        return false;
+
+                parse_release(address_of exec_functions[slot].from,
+                              address_of exec_functions[slot].to);
+                exec_functions[slot].body = 0;
+                return true;
+        }
+
+        return false;
 }
 
 static b32 exec_node(b32 index);
@@ -840,17 +865,24 @@ static bool exec_is_assignment(string_address word)
         return string_get(word + length) == '=';
 }
 
-static fn exec_assign(string_address word)
+static bool exec_assign(string_address word)
 {
         p8 name[128];
         positive length = (positive)(string_first_of_or_end(word, '=') - word);
 
         if (length >= sizeof(name))
-                return;
+                return false;
 
         string_copy_max_end(name, word, length);
 
-        env_set(name, word + length + 1);
+        if (env_readonly(name))
+        {
+                string_format(exec_error, "%s: is read only\n", name);
+                expand_fatal();
+                return false;
+        }
+
+        return env_set(name, word + length + 1);
 }
 
 /*
@@ -1176,7 +1208,13 @@ static b32 exec_simple(b32 index)
         }
 
         for (at = 0; at < first; at++)
-                exec_assign(shell_argv[at]);
+                if (!exec_assign(shell_argv[at]))
+                {
+                        exec_put_back(kept, kept_count);
+                        shell_store_rewind(address_of exec_store, arena_mark);
+                        shell_status = 2;
+                        return 2;
+                }
 
         exec_trace(count);
 

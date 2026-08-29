@@ -32,6 +32,7 @@ positive shell_argc;
 // eval runs a line, and what runs lines sits below this file.
 fn run_line(string_address line);
 bool exec_function_here(string_address name);
+bool exec_function_unset(string_address name);
 bool shell_builtin(string_address arguments);
 string_address shell_arguments();
 fn shell_execute_command();
@@ -63,18 +64,38 @@ positive shell_options;
         Names an assignment may no longer touch. Held apart from the values so
         that readonly can be spoken about a name that has none yet.
 */
-#define READONLY_MAX 16
-#define READONLY_STORAGE 512
-
-static p8 readonly_storage[READONLY_STORAGE];
-static positive readonly_used;
-static string_address readonly_name[READONLY_MAX];
+static shell_store readonly_storage;
+static string_address address_to readonly_name;
+static positive readonly_room;
 static positive readonly_count;
 
 bool env_readonly(const_string name)
 {
         return string_table_find((string_address)name, readonly_name,
                                  sizeof(readonly_name[0]), readonly_count) < readonly_count;
+}
+
+static bool readonly_add(string_address name, positive length)
+{
+        string_address kept;
+
+        if (env_readonly(name))
+                return true;
+
+        if (!shell_room((address_any address_to)address_of readonly_name,
+                        address_of readonly_room, readonly_count + 1,
+                        sizeof(readonly_name[0])))
+                return false;
+
+        kept = shell_store_take(address_of readonly_storage, length + 1);
+
+        if (!kept)
+                return false;
+
+        memory_copy_end(kept, name, length);
+        readonly_name[readonly_count++] = kept;
+
+        return true;
 }
 
 /*
@@ -1211,7 +1232,11 @@ fn shell_shift(writer write, string_address input)
                 amount = shell_number(shell_argv[1]);
 
         if (amount > shell_parameter_count)
-                return shell_answer(1);
+        {
+                shell_diagnostic("shift: can't shift that many\n", 0);
+                expand_fatal();
+                return;
+        }
 
         shell_parameters_shift(amount);
 
@@ -1221,21 +1246,40 @@ fn shell_shift(writer write, string_address input)
 fn shell_unset(writer write, string_address input)
 {
         positive index = 1;
+        bool functions = false;
+
+        while (index < shell_argc && string_is(shell_argv[index], '-') &&
+               string_get(shell_argv[index] + 1))
+        {
+                string_address option = shell_argv[index] + 1;
+
+                while (string_get(option))
+                {
+                        if (string_get(option) == 'f')
+                                functions = true;
+                        else if (string_get(option) == 'v')
+                                functions = false;
+                        else
+                                return shell_answer(2);
+
+                        option++;
+                }
+
+                index++;
+        }
 
         while (index < shell_argc)
         {
                 string_address word = shell_argv[index];
 
-                if (string_is(word, '-') && string_not(word + 1, end))
-                {
-                        index++;
-                        continue;
-                }
-
-                if (env_readonly(word))
+                if (!functions && env_readonly(word))
                         return shell_answer(1);
 
-                env_unset(word);
+                if (functions)
+                        exec_function_unset(word);
+                else
+                        env_unset(word);
+
                 index++;
         }
 
@@ -1435,25 +1479,33 @@ fn shell_readonly(writer write, string_address input)
 
                 if (mark)
                 {
-                        p8 name[128];
+                        bool set;
 
-                        if (length < sizeof(name))
+                        address_to mark = end;
+
+                        if (env_readonly(word))
                         {
-                                string_copy_max_end(name, word, length);
-                                env_set(name, mark + 1);
+                                string_format(shell_diagnostic, "%s: is read only\n", word);
+                                address_to mark = '=';
+                                expand_fatal();
+                                return;
                         }
+
+                        set = env_set(word, mark + 1);
+
+                        if (!set || !readonly_add(word, length))
+                        {
+                                address_to mark = '=';
+                                shell_diagnostic("readonly: no room\n", 0);
+                                return shell_answer(2);
+                        }
+
+                        address_to mark = '=';
                 }
-
-                if (readonly_count < READONLY_MAX &&
-                    readonly_used + length + 1 <= READONLY_STORAGE)
+                else if (!readonly_add(word, length))
                 {
-                        string_address kept = readonly_storage + readonly_used;
-
-                        string_copy_max_end(kept, word, length);
-                        readonly_used += length + 1;
-
-                        if (!env_readonly(kept))
-                                readonly_name[readonly_count++] = kept;
+                        shell_diagnostic("readonly: no room\n", 0);
+                        return shell_answer(2);
                 }
 
                 index++;

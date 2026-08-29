@@ -1505,11 +1505,6 @@ differs 'a bad number'   '8|' 0 'echo $((08))'
 
 group language
 differs 'echo keeps them' 'a\b|' 0 'echo "a\b"'
-differs 'no set u'       '|after|' 0 'set -u; echo $nosuch; echo after'
-differs 'readonly is not' '0|' 0 'readonly r=1; r=2; echo $?'
-differs 'unset dash f'   'a|0|' 0 'f() { echo a; }; unset -f f; f 2>/dev/null; echo $?'
-differs 'shift past end' '1|' 0 'set -- a; shift 2; echo $?'
-differs 'missing input'  '1|' 0 'cat < /nonexistent12345; echo $?'
 differs 'closed fd'      '0|' 0 'echo x >&- 2>/dev/null; echo $?'
 differs 'local goes on'  '2|after|' 0 'local v=1 2>/dev/null; echo $?; echo after'
 differs 'kill takes sig' '1|' 0 'kill -SIGTERM 999999 2>/dev/null; echo $?'
@@ -1563,6 +1558,16 @@ differs 'recursion has a floor' '' 1 'f() { [ $1 -le 0 ] && { echo bottom; retur
 answer 'no word ceiling' 'cd "$(mktemp -d)"; i=0; while [ $i -lt 200 ]; do : > f$i; i=$((i+1)); done; echo * | wc -w'
 answer 'no field ceiling' 'cd "$(mktemp -d)"; i=0; while [ $i -lt 200 ]; do : > f$i; i=$((i+1)); done; set -- *; echo $#'
 answer 'no parameter ceiling' 'cd "$(mktemp -d)"; i=0; while [ $i -lt 200 ]; do : > f$i; i=$((i+1)); done; set -- *; n=0; for f in "$@"; do n=$((n+1)); done; echo $n'
+
+group language-errors
+answer 'nounset stops the shell' 'set -u; echo $nosuch; echo after'
+answer 'readonly reassignment stops the shell' 'readonly r=1; r=2; echo $?'
+answer 'unset function option' 'f() { echo a; }; unset -f f; f 2>/dev/null; echo $?'
+answer 'shift past end is fatal' 'set -- a; shift 2; echo $?'
+answer 'missing input status' 'cat < /nonexistent12345; echo $?'
+
+many_readonly=$(awk 'BEGIN { for (i = 0; i < 40; i++) printf "readonly R%02d=%d;", i, i }')
+answer 'forty readonly names' "$many_readonly readonly -p | grep '^readonly R' | wc -l"
 
 # The shell builds its own environment rather than inheriting one, because in
 # the image it is what starts first and there is nobody above it to inherit
