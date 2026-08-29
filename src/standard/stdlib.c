@@ -270,7 +270,6 @@ static bool stdlib_environment_grow(void)
 {
         string_address address_to made;
         positive room;
-        positive index;
 
         if (stdlib_environment_count + 1 <= stdlib_environment_room)
                 return true;
@@ -283,8 +282,13 @@ static bool stdlib_environment_grow(void)
         if (is_null(made))
                 return false;
 
-        for (index = 0; index <= stdlib_environment_count; index++)
-                made[index] = stdlib_environment_vector[index];
+        /* The new arena slice cannot overlap the live vector. Copy its
+           pointers and terminating null through the architecture's bulk
+           core instead of retiring a load, store, increment and branch for
+           every entry here. */
+        memory_copy_apart(made, stdlib_environment_vector,
+                          (stdlib_environment_count + 1) *
+                              sizeof(string_address));
 
         stdlib_environment_vector = made;
         stdlib_environment_room = room;
