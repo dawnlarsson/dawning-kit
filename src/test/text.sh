@@ -343,6 +343,24 @@ refuses_sort_mode()
                 "$(head -c 34 "$work/got" | tr '\n\t' '|>')[$got_status] $(head -1 "$work/err")"
 }
 
+refuses_long_xargs_item()
+{
+        "$bin/xargs" echo < "$work/x14" > "$work/got" 2> "$work/err"
+        got_status=$?
+
+        if [ "$got_status" -ne 0 ] && [ ! -s "$work/got" ] &&
+           grep -q '^xargs: argument too long$' "$work/err"
+        then
+                pass=$((pass + 1))
+                return 0
+        fi
+
+        fail=$((fail + 1))
+        printf '  %-8s %-30s want %-24s got %s\n' \
+                "$group" 'long input item' 'loud refusal' \
+                "$(head -c 34 "$work/got" | tr '\n\t' '|>')[$got_status] $(head -1 "$work/err")"
+}
+
 case_start grep
 compare 'literal'        grep a  alpha
 compare 'anchor start'   grep a  '^delta'
@@ -1432,6 +1450,8 @@ printf '"a b" c\n' > "$work/x10"
 printf 'a b' > "$work/x11"
 printf '  a b  \n' > "$work/x12"
 printf 'a\tb\n\tc\t\n' > "$work/x13"
+(head -c 8200 /dev/zero | tr '\0' x; printf '\n') > "$work/x14"
+mkdir "$work/xread"
 
 case_start xargs
 compare 'words'          xargs x1  echo
@@ -1470,64 +1490,8 @@ compare 'each one failed' xargs x1 -n1 false
 compare 'no such command' xargs x1 nosuchcommand12345
 compare 'traced'         xargs x1  -t echo
 compare 'an option it has not' xargs x1 -Q echo
-
-
-#       xargs, which is standard input turned into arguments and a command
-#       run with them -- so both halves of compare matter: what the command
-#       printed, and the number xargs came back with when it went wrong.
-
-printf 'a b c\n' > "$work/x1"
-printf 'a\nb\nc\n' > "$work/x2"
-printf 'a\0b\0' > "$work/x3"
-printf "'a b' c\n" > "$work/x4"
-printf 'a\\ b c\n' > "$work/x5"
-printf '' > "$work/x6"
-printf '   \n\n  \n' > "$work/x7"
-printf '1 2 3 4 5 6 7 8 9 10 11 12\n' > "$work/x8"
-printf 'a\nEND\nb\n' > "$work/x9"
-printf '"a b" c\n' > "$work/x10"
-printf 'a b' > "$work/x11"
-printf '  a b  \n' > "$work/x12"
-printf 'a\tb\n\tc\t\n' > "$work/x13"
-
-case_start xargs
-compare 'words'          xargs x1  echo
-compare 'lines'          xargs x2  echo
-compare 'tabs'           xargs x13 -n1 echo
-compare 'no command'     xargs x1
-compare 'one at a time'  xargs x1  -n1 echo
-compare 'two at a time'  xargs x8  -n2 echo
-compare 'five at a time' xargs x8  -n5 echo
-compare 'joined number'  xargs x8  -n3 echo
-compare 'with a prefix'  xargs x8  -n2 echo pre
-compare 'zero ended'     xargs x3  -0 echo
-compare 'zero one each'  xargs x3  -0 -n1 echo
-compare 'single quotes'  xargs x4  -n1 echo
-compare 'double quotes'  xargs x10 -n1 echo
-compare 'a backslash'    xargs x5  -n1 echo
-compare 'nothing at all' xargs x6  echo
-compare 'blanks only'    xargs x7  echo
-compare 'nothing refused' xargs x6 -r echo
-compare 'blanks refused' xargs x7  -r echo
-compare 'nothing to replace' xargs x6 -I{} echo x
-compare 'nothing but a status' xargs x6 false
-compare 'only the end word' xargs x9 -E a echo
-compare 'no last newline' xargs x11 echo
-compare 'replacing'      xargs x2  -I{} echo x{}y
-compare 'replacing short' xargs x2 -i echo x{}y
-compare 'replacing twice' xargs x2 -I{} echo {}-{}
-compare 'replacing blanks' xargs x12 -I{} echo "[{}]"
-compare 'replacing unused' xargs x2 -I{} echo plain
-compare 'logical end'    xargs x9  -E END echo
-compare 'end ignored'    xargs x9  -0 -E END echo
-compare 'end of options' xargs x1  -- echo
-compare 'an absolute path' xargs x1 /bin/echo
-compare 'the command failed' xargs x1 false
-compare 'each one failed' xargs x1 -n1 false
-compare 'no such command' xargs x1 nosuchcommand12345
-compare 'traced'         xargs x1  -t echo
-compare 'an option it has not' xargs x1 -Q echo
-
+compare 'read error'       xargs xread echo
+refuses_long_xargs_item
 
 #       cmp, whose answer is often nothing at all -- so the exit status is
 #       most of what there is to compare, and compare looks at both.

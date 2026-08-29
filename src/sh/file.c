@@ -9084,6 +9084,7 @@ static string_address xargs_template[XARGS_WORDS + 1];
 static positive xargs_template_used;
 static p8 xargs_item[XARGS_ITEM];
 static positive xargs_item_length;
+static bool xargs_item_broken;
 static p8 xargs_buffer[XARGS_BLOCK];
 
 static bool xargs_null;
@@ -9109,6 +9110,14 @@ static bool xargs_add(string_address text, positive length)
         xargs_used += length + 1;
 
         return true;
+}
+
+static fn xargs_item_put(p8 letter)
+{
+        if (xargs_item_length < XARGS_ITEM - 1)
+                xargs_item[xargs_item_length++] = letter;
+        else
+                xargs_item_broken = true;
 }
 
 /*
@@ -9275,6 +9284,14 @@ static bool xargs_replaced(string_address item)
 
 static fn xargs_item_done()
 {
+        if (xargs_item_broken)
+        {
+                file_fail("xargs: argument too long\n", 0);
+                xargs_answer = 1;
+                xargs_done = true;
+                return;
+        }
+
         // The logical end of the input stops the reading; what was gathered
         // before it is still a command to run.
         if (xargs_ending && !xargs_null &&
@@ -9301,8 +9318,19 @@ static fn xargs_item_done()
         if (!xargs_add(xargs_item, xargs_item_length))
         {
                 xargs_run();
+
+                if (xargs_done)
+                        return;
+
                 xargs_reset();
-                xargs_add(xargs_item, xargs_item_length);
+
+                if (!xargs_add(xargs_item, xargs_item_length))
+                {
+                        file_fail("xargs: argument list too long\n", 0);
+                        xargs_answer = 1;
+                        xargs_done = true;
+                        return;
+                }
         }
 
         if (xargs_most && xargs_word_count - xargs_prefix_words >= xargs_most)
@@ -9323,6 +9351,7 @@ static b32 file_xargs()
         xargs_used = 0;
         xargs_word_count = 0;
         xargs_item_length = 0;
+        xargs_item_broken = false;
         xargs_answer = 0;
         xargs_done = false;
         xargs_ended = false;
@@ -9359,7 +9388,11 @@ static b32 file_xargs()
         {
                 string_address word = program_argument((b32)index++);
 
-                xargs_add(word, string_length(word));
+                if (!xargs_add(word, string_length(word)))
+                {
+                        file_fail("xargs: command too long\n", 0);
+                        return 1;
+                }
         }
 
         xargs_prefix_bytes = xargs_used;
@@ -9375,7 +9408,14 @@ static b32 file_xargs()
         {
                 bipolar got = system_read_retry(0, xargs_buffer, XARGS_BLOCK);
 
-                if (got <= 0)
+                if (got < 0)
+                {
+                        file_fail("xargs: read error\n", 0);
+                        xargs_answer = 1;
+                        break;
+                }
+
+                if (!got)
                         break;
 
                 for (positive at = 0;
@@ -9387,8 +9427,7 @@ static b32 file_xargs()
                         {
                                 if (letter)
                                 {
-                                        if (xargs_item_length < XARGS_ITEM - 1)
-                                                xargs_item[xargs_item_length++] = letter;
+                                        xargs_item_put(letter);
 
                                         started = true;
                                         continue;
@@ -9403,8 +9442,7 @@ static b32 file_xargs()
 
                         if (escaped)
                         {
-                                if (xargs_item_length < XARGS_ITEM - 1)
-                                        xargs_item[xargs_item_length++] = letter;
+                                xargs_item_put(letter);
 
                                 escaped = false;
                                 started = true;
@@ -9419,8 +9457,7 @@ static b32 file_xargs()
                                         continue;
                                 }
 
-                                if (xargs_item_length < XARGS_ITEM - 1)
-                                        xargs_item[xargs_item_length++] = letter;
+                                xargs_item_put(letter);
 
                                 started = true;
                                 continue;
@@ -9446,8 +9483,8 @@ static b32 file_xargs()
                         {
                                 if (xargs_replace)
                                 {
-                                        if (started && xargs_item_length < XARGS_ITEM - 1)
-                                                xargs_item[xargs_item_length++] = letter;
+                                        if (started)
+                                                xargs_item_put(letter);
 
                                         continue;
                                 }
@@ -9474,8 +9511,7 @@ static b32 file_xargs()
                                 continue;
                         }
 
-                        if (xargs_item_length < XARGS_ITEM - 1)
-                                xargs_item[xargs_item_length++] = letter;
+                        xargs_item_put(letter);
 
                         started = true;
                 }
