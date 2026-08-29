@@ -362,7 +362,7 @@ if len(runs) >= 2:
     def resize_cursor_pixels(data, width, height, x, y):
         # CURSOR_RESIZE_H has exactly 25 fill pixels at scale one. No
         # compositor ink uses pure white (terminal white is dfe7ef), so this
-        # is the cursor plane itself rather than text or the frame below it.
+        # identifies the visible cursor rather than text or the frame below it.
         return sum(1 for py in range(max(y - 7, 0), min(y + 13, height))
                    for px in range(max(x - 7, 0), min(x + 9, width))
                    if pixel(data, width, px, py) == b"\xff\xff\xff")
@@ -371,9 +371,8 @@ if len(runs) >= 2:
     send([{"type": "btn", "data": {"down": True, "button": "left"}}])
     time.sleep(0.08)
 
-    # Four positions in one held resize. The old path moved the window at
-    # every one and left the independent hardware plane at the press point;
-    # checking only the final geometry could never see that failure.
+    # Sample four positions in one held resize. Checking only the final window
+    # geometry cannot prove that the visible cursor stayed live during it.
     cursor_samples = []
     for distance in (70, 140, 210, 280):
         target_x = b_right - distance
@@ -386,9 +385,9 @@ if len(runs) >= 2:
 
     narrow_w, narrow_h, terminal_narrow = sample_w, sample_h, sample_px
 
-    # QEMU's screendump composites virtio's cursor plane, so every applied
-    # position can be inspected directly.
-    out.append(("cursor follows resize",
+    # The harness screendump exposes the rendered cursor, so every applied
+    # position can be inspected directly without claiming its rendering path.
+    out.append(("visible cursor follows resize",
                 "yes" if cursor_samples == [25, 25, 25, 25] else
                 str(cursor_samples), "yes"))
 

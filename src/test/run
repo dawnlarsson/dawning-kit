@@ -43,7 +43,7 @@ TEST_TALLY="$work/tally"
 export TEST_TALLY
 : > "$TEST_TALLY"
 
-lanes="standard verify exact socket net slurp wait writer native probe shell expand builtin awk text tools files term kit boot canvas"
+lanes="standard verify exact known socket net slurp wait writer native probe shell expand builtin awk text tools files term kit boot canvas"
 
 describe()
 {
@@ -51,6 +51,7 @@ describe()
         standard) echo "the standard library, and that it still builds with no platform under it" ;;
         verify)   echo "the assembly in library.c against the C it replaced, on three machines" ;;
         exact)    echo "every size that is known where the call is written, and both tiers" ;;
+        known)    echo "the rest of what folds when the call site knows it" ;;
         socket)   echo "byte order against a reference, and real sockets on three machines" ;;
         net)      echo "the netlink wire built byte by byte, and ip against the kernel" ;;
         slurp)    echo "bounded file reads and forced EINTR at open and read, on three machines" ;;
@@ -1713,6 +1714,92 @@ lane_exact()
         [ "$missing" = 0 ] || return 2
         return 0
 }
+
+#
+#       The other things a call site may know: a set literal, a needle length,
+#       a bound, a base, a byte. Each file is the same shape as exact.c -- the
+#       argument written as a literal, because nothing that takes it from a
+#       loop counter reaches the expansion at all.
+#
+KNOWN_FILES="exact_set needle bounded exact_scan exact_base single exact_family"
+
+known_one()
+{
+        name=$1
+        cross=$2
+        runner=$3
+        checks=0
+        bad=0
+
+        if ! command -v "$cross" > /dev/null 2>&1; then
+                note "$name: NOT RUN -- no $cross"
+                return 2
+        fi
+
+        if [ -n "$runner" ] && ! command -v "$runner" > /dev/null 2>&1; then
+                note "$name: NOT RUN -- no $runner"
+                return 2
+        fi
+
+        saved=$compiler
+        compiler=$cross
+
+        for one in $KNOWN_FILES; do
+                freestanding "src/test/$one.c" "$work/known.$name.$one" "$name" || {
+                        compiler=$saved
+                        return 1
+                }
+
+                $runner "$work/known.$name.$one" > "$work/known.$name.$one.out" 2>&1
+                status=$?
+
+                sed -n '/FAIL/p' "$work/known.$name.$one.out"
+
+                #       A file may report more than once; the verdict is
+                #       the last line it prints, not the first.
+                line=$(sed -n 's/.*[^0-9]\([0-9][0-9]*\) checks, \([0-9][0-9]*\) failures.*/\1 \2/p' \
+                        "$work/known.$name.$one.out" | tail -1)
+
+                if [ -n "$line" ]; then
+                        checks=$((checks + ${line% *}))
+                        bad=$((bad + ${line#* }))
+                elif [ "$status" != 0 ]; then
+                        note "$name: $one did not say how it went"
+                        compiler=$saved
+                        return 1
+                else
+                        checks=$((checks + 1))
+                fi
+        done
+
+        compiler=$saved
+        tally "known-$name" "$((checks - bad))" "$checks"
+
+        [ "$bad" = 0 ]
+}
+
+lane_known()
+{
+        failed=0
+        missing=0
+
+        for target in x86_64 arm64 riscv64; do
+                target_tools "$target"
+                outcome=0
+                known_one "$target" "$target_compiler" "$target_runner" || outcome=$?
+
+                case $outcome in
+                0) ;;
+                2) missing=1 ;;
+                *) failed=1 ;;
+                esac
+        done
+
+        [ "$failed" = 0 ] || return 1
+        [ "$missing" = 0 ] || return 2
+        return 0
+}
+
 
 freestanding_checks_one()
 {
