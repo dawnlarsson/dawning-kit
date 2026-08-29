@@ -11,9 +11,10 @@
         different bugs get written down.
 
         Every buffer here is a fixed array or a slice of one arena taken once
-        from the kernel. Nothing grows, and the one place a bound is reached
-        -- a line longer than TEXT_LINE_MAX -- truncates rather than walking
-        off the end.
+        from the kernel. Nothing grows. A record longer than TEXT_LINE_MAX is
+        refused instead of being handed to a utility with its tail silently
+        missing: a bounded implementation may have a ceiling, but plausible
+        truncated output is not a valid answer.
 
         The reference is the GNU tool on the machine, not the standard: the
         widths wc pads to, the "==> name <==" head prints and the six columns
@@ -171,11 +172,13 @@ typedef struct
         positive position;
         bool finished;
         bool opened;
+        string_address name;
         p8 buffer[TEXT_READ_MAX];
 } text_reader;
 
 static text_reader text_input;
-static p8 text_line[TEXT_LINE_MAX];
+/* One sentinel slot is used while a sed script file is turned into text. */
+static p8 text_line[TEXT_LINE_MAX + 1];
 static positive text_line_length;
 static bool text_line_ended;
 
@@ -197,6 +200,7 @@ static bool text_open(string_address path)
         text_input.position = 0;
         text_input.finished = false;
         text_input.opened = false;
+        text_input.name = path;
 
         if (!path || (path[0] == '-' && path[1] == '\0'))
         {
@@ -240,6 +244,13 @@ static bool text_fill()
         if (got <= 0)
         {
                 text_input.finished = true;
+
+                if (got < 0)
+                {
+                        text_error(text_input.name, "Read error");
+                        text_status = text_status ? text_status : 1;
+                }
+
                 return false;
         }
 
@@ -275,10 +286,26 @@ static bool text_line_next()
                 positive take = found ? (positive)(found - at) : left;
 
                 positive room = TEXT_LINE_MAX - text_line_length;
-                positive copy = take < room ? take : room;
 
-                memory_copy(text_line + text_line_length, at, copy);
-                text_line_length += copy;
+                if (take > room)
+                {
+                        /*
+                                Stop this input here. Merely returning false
+                                while bytes remain in the reader would let a
+                                nested sed N, or another caller that asks
+                                again, treat the dropped tail as a new line.
+                        */
+                        text_input.position = text_input.filled;
+                        text_input.finished = true;
+                        text_line_length = 0;
+                        text_line_ended = false;
+                        text_error(null, "line too long");
+                        text_status = text_status ? text_status : 1;
+                        return false;
+                }
+
+                memory_copy(text_line + text_line_length, at, take);
+                text_line_length += take;
                 text_input.position += take;
 
                 if (found)
@@ -3636,7 +3663,14 @@ static b32 text_fold()
         characters. The open ended tail is kept as a number rather than as
         marks, because "7-" means every field a line happens to have.
 */
-#define TEXT_LIST_MAX 4096
+/*
+        A line that can be accepted can name any of its bytes or fields. The
+        old 4096-entry bitmap made `cut -c5000` quietly print an empty line
+        from a 6000-byte record. One slot beyond the record is useful for the
+        final empty field after a delimiter; anything higher cannot select a
+        value before the line reader's explicit ceiling.
+*/
+#define TEXT_LIST_MAX (TEXT_LINE_MAX + 2)
 
 static p8 text_list[TEXT_LIST_MAX];
 
@@ -4624,11 +4658,14 @@ static b32 text_uniq()
 static p8 grep_pattern[GREP_PATTERN_MAX];
 static positive grep_pattern_length;
 static bool grep_pattern_any;
+static bool grep_pattern_broken;
 
 static fn grep_pattern_put(p8 character)
 {
         if (grep_pattern_length < GREP_PATTERN_MAX - 1)
                 grep_pattern[grep_pattern_length++] = character;
+        else
+                grep_pattern_broken = true;
 }
 
 static fn grep_pattern_add(string_address text, positive length, bool fixed, bool extended)
@@ -4678,9 +4715,9 @@ static fn grep_pattern_add(string_address text, positive length, bool fixed, boo
         A slot per line over one byte pool, not a line per fixed slot: -B 2
         over megabyte lines and -B 5000 over short ones both have to fit in
         the same place, and any single slot width is wrong for one of them.
-        The oldest line goes when either the slots or the pool runs out, so a
-        -B larger than what fits shows less context than GNU. Holding a
-        megabyte per line asked for is the other answer and it is worse.
+        The oldest line goes when all requested slots are full. Exhausting the
+        byte pool is different: evicting then would print less context than
+        was requested, so that bounded case is refused aloud.
 */
 #define GREP_HOLD_BYTES (1u << 20)
 #define GREP_HOLD_LINES 8192
@@ -4698,7 +4735,10 @@ static positive grep_hold_write;
 static bool grep_hold_make(positive lines)
 {
         if (lines > GREP_HOLD_LINES)
-                lines = GREP_HOLD_LINES;
+        {
+                text_error(null, "context length too large");
+                return false;
+        }
 
         grep_hold_slots = lines;
         grep_hold_pool = (p8 address_to)text_arena_take(GREP_HOLD_BYTES);
@@ -4769,23 +4809,28 @@ static fn grep_hold_clear()
         grep_hold_write = 0;
 }
 
-static fn grep_hold_put(string_address line, positive length, positive number)
+static bool grep_hold_put(string_address line, positive length, positive number)
 {
         if (!grep_hold_slots)
-                return;
+                return true;
 
         if (length > GREP_HOLD_BYTES)
         {
-                grep_hold_clear();
-                return;
+                text_error(null, "context lines too large");
+                return false;
         }
 
-        while (grep_hold_count == grep_hold_slots ||
-               grep_hold_used + length > GREP_HOLD_BYTES)
+        while (grep_hold_count == grep_hold_slots)
         {
                 grep_hold_used -= grep_hold_size[grep_hold_first];
                 grep_hold_first = (grep_hold_first + 1) % grep_hold_slots;
                 grep_hold_count--;
+        }
+
+        if (grep_hold_used + length > GREP_HOLD_BYTES)
+        {
+                text_error(null, "context lines too large");
+                return false;
         }
 
         positive slot = (grep_hold_first + grep_hold_count) % grep_hold_slots;
@@ -4806,6 +4851,7 @@ static fn grep_hold_put(string_address line, positive length, positive number)
         grep_hold_write = (at + length) % GREP_HOLD_BYTES;
         grep_hold_used += length;
         grep_hold_count++;
+        return true;
 }
 
 static fn grep_hold_say(positive slot)
@@ -5249,19 +5295,34 @@ static bool grep_option_seen(p8 letter, string_address value)
         }
         else if (letter == 'Q')
         {
-                if (grep_include_count < GREP_GLOBS_MAX)
-                        grep_include[grep_include_count++] = value;
+                if (grep_include_count >= GREP_GLOBS_MAX)
+                {
+                        text_error(null, "too many include patterns");
+                        return false;
+                }
+
+                grep_include[grep_include_count++] = value;
         }
         else if (letter == 'S')
         {
-                if (grep_exclude_count < GREP_GLOBS_MAX)
-                        grep_exclude[grep_exclude_count++] = value;
+                if (grep_exclude_count >= GREP_GLOBS_MAX)
+                {
+                        text_error(null, "too many exclude patterns");
+                        return false;
+                }
+
+                grep_exclude[grep_exclude_count++] = value;
         }
         else if (letter == 'V')
         {
-                if (grep_exclude_dir_count < GREP_GLOBS_MAX)
-                        grep_exclude_dir[grep_exclude_dir_count++] =
-                            grep_glob_keep(value);
+                if (grep_exclude_dir_count >= GREP_GLOBS_MAX)
+                {
+                        text_error(null, "too many exclude-dir patterns");
+                        return false;
+                }
+
+                grep_exclude_dir[grep_exclude_dir_count++] =
+                    grep_glob_keep(value);
         }
         else if (letter == 'f')
         {
@@ -5317,6 +5378,7 @@ static b32 text_grep()
         grep_never = false;
         grep_said_pattern = false;
         grep_pattern_from = -1;
+        grep_pattern_broken = false;
 
         if (!file_take(address_of taking))
                 return text_done(2);
@@ -5445,6 +5507,14 @@ static b32 text_grep()
                 grep_pattern_add(value, string_length(value), fixed, extended);
         }
 
+        if (grep_pattern_broken || text_status)
+        {
+                if (grep_pattern_broken)
+                        text_error(null, "pattern too long");
+
+                return text_done(2);
+        }
+
         if (!have_pattern)
         {
                 text_error(null, "no pattern given");
@@ -5469,6 +5539,12 @@ static b32 text_grep()
                 positive head_length = string_length(head);
                 positive tail_length = string_length(tail);
                 positive have = head_length + grep_pattern_length + tail_length;
+
+                if (have >= GREP_PATTERN_MAX)
+                {
+                        text_error(null, "pattern too long");
+                        return text_done(2);
+                }
 
                 memory_copy_fast(around, head, head_length);
                 memory_copy_fast(around + head_length, grep_pattern,
@@ -5689,7 +5765,12 @@ static b32 text_grep()
                                 }
                                 else if (before)
                                 {
-                                        grep_hold_put(text_line, text_line_length, number);
+                                        if (!grep_hold_put(text_line, text_line_length,
+                                                           number))
+                                        {
+                                                trouble = 2;
+                                                break;
+                                        }
                                 }
 
                                 if (limit != TEXT_UNSET && matches >= limit && !pending)
@@ -5859,7 +5940,7 @@ static b32 text_grep()
 #define SED_MAPS_MAX 8
 #define SED_SCRIPT_MAX 16384
 #define SED_FILES_MAX 16
-#define SED_APPENDS_MAX 32
+#define SED_APPENDS_MAX SED_COMMANDS_MAX
 
 enum
 {
@@ -5929,6 +6010,8 @@ static fn sed_script_put(p8 character)
 {
         if (sed_script_length < SED_SCRIPT_MAX - 1)
                 sed_script[sed_script_length++] = character;
+        else
+                sed_broken = true;
 }
 
 static fn sed_script_add(string_address text)
@@ -7037,6 +7120,7 @@ static b32 text_sed()
 
         sed_have_script = false;
         sed_option_status = 1;
+        sed_broken = false;
 
         if (!file_take(address_of taking))
                 return text_done(sed_option_status);
@@ -8299,6 +8383,7 @@ static bool sort_parse_key(string_address spec)
         sort_key address_to key = sort_keys + sort_key_count;
         positive at = 0;
         positive taken;
+        p8 local_kind = 0;
 
         key->first_field = 0;
         key->first_char = 0;
@@ -8320,6 +8405,10 @@ static bool sort_parse_key(string_address spec)
         {
                 at++;
                 key->first_char = string_digits(spec + at, address_of taken);
+
+                if (!taken || !key->first_char)
+                        return false;
+
                 at += taken;
         }
 
@@ -8327,7 +8416,13 @@ static bool sort_parse_key(string_address spec)
         {
                 if (spec[at] == 'n' || spec[at] == 'h' ||
                     spec[at] == 'M' || spec[at] == 'V')
+                {
+                        if (local_kind && local_kind != spec[at])
+                                return false;
+
+                        local_kind = spec[at];
                         key->kind = spec[at];
+                }
                 else if (spec[at] == 'r')
                         key->reverse = true;
                 else if (spec[at] == 'f')
@@ -8338,6 +8433,8 @@ static bool sort_parse_key(string_address spec)
                         key->how |= SORT_PRINTABLE;
                 else if (spec[at] == 'b')
                         key->skip_blanks_first = true;
+                else
+                        return false;
 
                 at++;
         }
@@ -8346,12 +8443,20 @@ static bool sort_parse_key(string_address spec)
         {
                 at++;
                 key->second_field = string_digits(spec + at, address_of taken);
+
+                if (!taken || !key->second_field)
+                        return false;
+
                 at += taken;
 
                 if (spec[at] == '.')
                 {
                         at++;
                         key->second_char = string_digits(spec + at, address_of taken);
+
+                        if (!taken)
+                                return false;
+
                         at += taken;
                 }
 
@@ -8359,7 +8464,13 @@ static bool sort_parse_key(string_address spec)
                 {
                         if (spec[at] == 'n' || spec[at] == 'h' ||
                             spec[at] == 'M' || spec[at] == 'V')
+                        {
+                                if (local_kind && local_kind != spec[at])
+                                        return false;
+
+                                local_kind = spec[at];
                                 key->kind = spec[at];
+                        }
                         else if (spec[at] == 'r')
                                 key->reverse = true;
                         else if (spec[at] == 'f')
@@ -8370,6 +8481,8 @@ static bool sort_parse_key(string_address spec)
                                 key->how |= SORT_PRINTABLE;
                         else if (spec[at] == 'b')
                                 key->skip_blanks_second = true;
+                        else
+                                return false;
 
                         at++;
                 }
@@ -8463,7 +8576,7 @@ static b32 text_sort()
             // -g wants a floating point number parsed, and there is no
             // floating point anywhere in this file. -S and -T tune a
             // temporary file this sort has not got.
-            .allowed = (string_address) "CMSTVbcdfghikmnorstuz",
+            .allowed = (string_address) "CMSTVbcdfhikmnorstuz",
             .valued = (string_address) "DSTWkot",
             .optional = (string_address) "K",
             .longs = sort_longs,
@@ -8539,22 +8652,30 @@ static b32 text_sort()
         {
                 // --sort=WORD is the long options spelled a third way, and
                 // the word is what the letter would have been.
-                if (string_equals(said, "numeric"))
-                        sort_kind = 'n';
-                else if (string_equals(said, "human-numeric"))
-                        sort_kind = 'h';
-                else if (string_equals(said, "month"))
-                        sort_kind = 'M';
-                else if (string_equals(said, "version"))
-                        sort_kind = 'V';
-                else if (string_equals(said, "general-numeric") ||
-                         string_equals(said, "random"))
-                        sort_kind = 0;
-                else
+                p8 kind = string_equals(said, "numeric")         ? 'n'
+                          : string_equals(said, "human-numeric") ? 'h'
+                          : string_equals(said, "month")         ? 'M'
+                          : string_equals(said, "version")       ? 'V'
+                                                                  : 0;
+
+                /*
+                        General-numeric needs floating point and random needs
+                        a hash. Accepting either as ordinary byte ordering was
+                        a plausible-looking answer to a different question.
+                */
+                if (!kind)
                 {
                         text_error(said, "invalid argument for --sort");
                         return text_done(1);
                 }
+
+                if (sort_kind && sort_kind != kind)
+                {
+                        text_error(null, "options are incompatible");
+                        return text_done(2);
+                }
+
+                sort_kind = kind;
         }
 
         said = file_option_value(address_of taking, 't');
@@ -8737,7 +8858,7 @@ static b32 text_sort()
                 text_put_character(text_delimiter);
         }
 
-        return text_done(text_status);
+        return text_done(text_status ? 2 : 0);
 }
 
 // cmp -------------------------------------------------------------

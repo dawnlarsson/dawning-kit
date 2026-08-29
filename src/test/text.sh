@@ -29,6 +29,7 @@ rounds=${2:-600}
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT INT TERM
+mkdir "$work/read_dir"
 
 pass=0
 fail=0
@@ -50,6 +51,8 @@ printf 'x\n\n\n\ny\n' > "$work/blanks"
 printf 'a\tb\nlonger line here\n\rwide\n' > "$work/wide"
 printf '  ab  cd ef\nxy\tzw\nplain\n' > "$work/spaced"
 printf '\376\377\n' > "$work/tr_high"
+head -c 6000 /dev/zero | tr '\0' x > "$work/cut_wide"
+printf '\n' >> "$work/cut_wide"
 head -c 65535 /dev/zero | tr '\0' x > "$work/wc_boundary"
 printf ' y\n' >> "$work/wc_boundary"
 
@@ -182,6 +185,162 @@ compare_side()
                 "$group" "$name" \
                 "$(head -c 34 "$work/want" | tr '\n\t' '|>')[$want_status]" \
                 "$(head -c 34 "$work/got" | tr '\n\t' '|>')[$got_status]"
+}
+
+# A fixed-memory tool may refuse a record it cannot hold, but it must not
+# print a convincing prefix and report success. The system tools have no such
+# ceiling, so these are contract checks on ours rather than differential rows.
+refuses_long_record()
+{
+        name=$1
+        tool=$2
+        shift 2
+
+        "$bin/$tool" "$@" < "$work/overlong" > "$work/got" 2> "$work/err"
+        got_status=$?
+
+        if [ "$got_status" -ne 0 ] && [ ! -s "$work/got" ] &&
+           grep -q "^$tool: line too long$" "$work/err"
+        then
+                pass=$((pass + 1))
+                return 0
+        fi
+
+        fail=$((fail + 1))
+        printf '  %-8s %-30s want %-24s got %s\n' \
+                "$group" "$name" 'loud refusal' \
+                "$(head -c 34 "$work/got" | tr '\n\t' '|>')[$got_status] $(head -1 "$work/err")"
+}
+
+refuses_long_pipe()
+{
+        name=$1
+        tool=$2
+        shift 2
+
+        cat "$work/overlong" | "$bin/$tool" "$@" > "$work/got" 2> "$work/err"
+        got_status=$?
+
+        if [ "$got_status" -ne 0 ] && [ ! -s "$work/got" ] &&
+           grep -q "^$tool: line too long$" "$work/err"
+        then
+                pass=$((pass + 1))
+                return 0
+        fi
+
+        fail=$((fail + 1))
+        printf '  %-8s %-30s want %-24s got %s\n' \
+                "$group" "$name" 'loud refusal' \
+                "$(head -c 34 "$work/got" | tr '\n\t' '|>')[$got_status] $(head -1 "$work/err")"
+}
+
+refuses_long_pattern()
+{
+        "$bin/grep" -f "$work/grep_long_pattern" "$work/grep_long_subject" \
+                > "$work/got" 2> "$work/err"
+        got_status=$?
+
+        if [ "$got_status" -eq 2 ] && [ ! -s "$work/got" ] &&
+           grep -q '^grep: pattern too long$' "$work/err"
+        then
+                pass=$((pass + 1))
+                return 0
+        fi
+
+        fail=$((fail + 1))
+        printf '  %-8s %-30s want %-24s got %s\n' \
+                "$group" 'grep pattern ceiling' 'loud refusal [2]' \
+                "$(head -c 34 "$work/got" | tr '\n\t' '|>')[$got_status] $(head -1 "$work/err")"
+}
+
+refuses_grep_context()
+{
+        name=$1
+        feed=$2
+        shift 2
+
+        "$bin/grep" "$@" "$work/$feed" > "$work/got" 2> "$work/err"
+        got_status=$?
+
+        if [ "$got_status" -eq 2 ] && [ ! -s "$work/got" ] &&
+           grep -q '^grep: context .* too large$' "$work/err"
+        then
+                pass=$((pass + 1))
+                return 0
+        fi
+
+        fail=$((fail + 1))
+        printf '  %-8s %-30s want %-24s got %s\n' \
+                "$group" "$name" 'loud refusal [2]' \
+                "$(head -c 34 "$work/got" | tr '\n\t' '|>')[$got_status] $(head -1 "$work/err")"
+}
+
+refuses_long_sed_script()
+{
+        "$bin/sed" -f "$work/sed_long_script" "$work/one" \
+                > "$work/got" 2> "$work/err"
+        got_status=$?
+
+        if [ "$got_status" -ne 0 ] && [ ! -s "$work/got" ] &&
+           grep -q '^sed: unsupported or invalid script$' "$work/err"
+        then
+                pass=$((pass + 1))
+                return 0
+        fi
+
+        fail=$((fail + 1))
+        printf '  %-8s %-30s want %-24s got %s\n' \
+                "$group" 'sed script ceiling' 'loud refusal' \
+                "$(head -c 34 "$work/got" | tr '\n\t' '|>')[$got_status] $(head -1 "$work/err")"
+}
+
+refuses_many_grep_globs()
+{
+        set --
+        i=0
+
+        while [ "$i" -lt 33 ]; do
+                set -- "$@" '--include=*'
+                i=$((i + 1))
+        done
+
+        "$bin/grep" "$@" x "$work/one" > "$work/got" 2> "$work/err"
+        got_status=$?
+
+        if [ "$got_status" -eq 2 ] && [ ! -s "$work/got" ] &&
+           grep -q '^grep: too many include patterns$' "$work/err"
+        then
+                pass=$((pass + 1))
+                return 0
+        fi
+
+        fail=$((fail + 1))
+        printf '  %-8s %-30s want %-24s got %s\n' \
+                "$group" 'grep glob ceiling' 'loud refusal [2]' \
+                "$(head -c 34 "$work/got" | tr '\n\t' '|>')[$got_status] $(head -1 "$work/err")"
+}
+
+# These modes have no correct bounded implementation here yet. They must be
+# rejected instead of silently becoming ordinary byte sorting.
+refuses_sort_mode()
+{
+        name=$1
+        shift
+
+        "$bin/sort" "$@" < "$work/a" > "$work/got" 2> "$work/err"
+        got_status=$?
+
+        if [ "$got_status" -ne 0 ] && [ ! -s "$work/got" ] &&
+           grep -q '^sort:' "$work/err"
+        then
+                pass=$((pass + 1))
+                return 0
+        fi
+
+        fail=$((fail + 1))
+        printf '  %-8s %-30s want %-24s got %s\n' \
+                "$group" "$name" 'loud refusal' \
+                "$(head -c 34 "$work/got" | tr '\n\t' '|>')[$got_status] $(head -1 "$work/err")"
 }
 
 case_start grep
@@ -1029,6 +1188,59 @@ compare 'fold'           fold long  -w 100
 compare 'rev'            rev long
 compare 'cut'            cut long   -c3990-
 
+# One byte beyond the shared line buffer. Before the explicit check these
+# nine printed exactly one MiB, silently dropped the tail, and exited zero.
+head -c 1048577 /dev/zero | tr '\0' x > "$work/overlong"
+printf '\n' >> "$work/overlong"
+head -c 17000 /dev/zero | tr '\0' x > "$work/grep_long_pattern"
+printf '\n' >> "$work/grep_long_pattern"
+head -c 16383 /dev/zero | tr '\0' x > "$work/grep_long_subject"
+printf 'Y\n' >> "$work/grep_long_subject"
+head -c 600000 /dev/zero | tr '\0' a > "$work/grep_large_context"
+printf '\n' >> "$work/grep_large_context"
+head -c 600000 /dev/zero | tr '\0' b >> "$work/grep_large_context"
+printf '\nhit\n' >> "$work/grep_large_context"
+awk 'BEGIN {
+        for (line = 0; line < 256; line++) {
+                printf "#";
+                for (i = 0; i < 62; i++) printf "x";
+                printf "\n";
+        }
+        print "s/x/y/";
+}' > "$work/sed_long_script"
+awk 'BEGIN { for (i = 1; i <= 40; i++) print "1a line" i }' \
+        > "$work/sed_many_appends"
+
+case_start ceiling
+refuses_long_record 'grep record' grep x
+refuses_long_record 'sed record'  sed 's/x/y/'
+refuses_long_record 'cut record'  cut -c1-
+refuses_long_record 'sort record' sort
+refuses_long_record 'uniq record' uniq
+refuses_long_record 'head record' head -n1
+refuses_long_record 'rev record'  rev
+refuses_long_record 'nl record'   nl
+refuses_long_record 'fold record' fold -w 2000000
+refuses_long_pipe   'tail pipe record' tail -n1
+refuses_long_pattern
+refuses_grep_context 'grep context byte ceiling' grep_large_context -B2 hit
+refuses_grep_context 'grep context slot ceiling' one -B8193 x
+refuses_long_sed_script
+refuses_many_grep_globs
+compare 'sed forty appends' sed - -f "$work/sed_many_appends" "$work/one"
+
+case_start readerr
+compare 'cat directory'  cat  - "$work/read_dir"
+compare 'wc directory'   wc   - "$work/read_dir"
+compare 'head directory' head - "$work/read_dir"
+compare 'tail directory' tail - "$work/read_dir"
+compare 'rev directory'  rev  - "$work/read_dir"
+compare 'nl directory'   nl   - "$work/read_dir"
+compare 'fold directory' fold - "$work/read_dir"
+compare 'cut directory'  cut  - -c1 "$work/read_dir"
+compare 'uniq directory' uniq - "$work/read_dir"
+compare 'sort directory' sort - "$work/read_dir"
+
 case_start big
 compare 'sort'           sort big
 compare 'sort numeric'   sort big   -n
@@ -1124,6 +1336,9 @@ done
 case_start edges
 compare 'cut mixed sep'  cut w   '-d ' -f2
 compare 'cut tab sep'    cut w   -f2
+compare 'cut byte above old ceiling' cut cut_wide -c5000
+compare 'cut range above old ceiling' cut cut_wide -c4999-5001
+compare 'cut separated high bytes' cut cut_wide -c4999,5001 -OX
 compare 'sort one line'  sort one
 compare 'uniq one line'  uniq one -c
 compare 'nl one line'    nl one
@@ -1141,6 +1356,15 @@ compare 'sort t two'     sort b  -t '::' -k1
 compare 'sort t tab word' sort g -t '\t' -k2
 compare 'sort t null'    sort zpairs -t '\0' -k1
 compare 'sort t backslash' sort b -t '\' -k1
+compare 'sort key unknown modifier' sort a -k1Q
+compare 'sort key missing end field' sort a -k1,
+compare 'sort key missing first offset' sort a -k1.
+compare 'sort key zero first offset' sort a -k1.0
+compare 'sort key conflicting kinds' sort a -k1nV
+compare 'sort conflicting global kinds' sort a -h --sort=numeric
+refuses_sort_mode 'sort general numeric' -g
+refuses_sort_mode 'sort long general numeric' --sort=general-numeric
+refuses_sort_mode 'sort random' --sort=random
 compare 'uniq f past'    uniq a  -f9
 compare 'cut f zero pad' cut b   -d: -f1,1,1
 
