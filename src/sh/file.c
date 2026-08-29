@@ -399,6 +399,12 @@ bool file_exists(bipolar directory, string_address path)
         return file_look(directory, path, AT_SYMLINK_NOFOLLOW, address_of facts);
 }
 
+static bool file_same_identity(file_facts address_to one, file_facts address_to two)
+{
+        return one->inode == two->inode && one->device_major == two->device_major &&
+               one->device_minor == two->device_minor;
+}
+
 // Paths -----------------------------------------------------
 
 static string_address file_last_component(string_address path)
@@ -1833,7 +1839,8 @@ bool file_make_parents(string_address path, positive mode)
                 bipolar made = system_call_3(syscall(mkdirat), AT_FDCWD,
                                              (positive)work, mode);
 
-                if (made < 0 && made != -ERROR_EXISTS)
+                if (made < 0 &&
+                    (made != -ERROR_EXISTS || !file_is_directory_through(work)))
                 {
                         work[i] = '/';
                         return false;
@@ -1844,7 +1851,8 @@ bool file_make_parents(string_address path, positive mode)
 
         bipolar made = system_call_3(syscall(mkdirat), AT_FDCWD, (positive)work, mode);
 
-        return made == 0 || made == -ERROR_EXISTS;
+        return made == 0 ||
+               (made == -ERROR_EXISTS && file_is_directory_through(work));
 }
 
 /*
@@ -4037,6 +4045,7 @@ static fn stat_readable(string_address path, file_facts address_to facts)
 static b32 file_stat()
 {
         positive count = (positive)program_argument_count();
+        stat_status = 0;
         file_taking taking = {
             .program = (string_address) "stat",
             .allowed = (string_address) "Lcf",
@@ -4844,13 +4853,6 @@ static bool chmod_one(bipolar directory, string_address name, string_address sho
         // own to change and chmod has always meant the thing pointed at.
         if (!file_look(directory, name, 0, address_of facts))
         {
-                file_facts itself;
-
-                // A link with nothing at the end of it is not an error worth
-                // a word, but there is nothing to change either.
-                if (file_look(directory, name, AT_SYMLINK_NOFOLLOW, address_of itself))
-                        return true;
-
                 if (!chmod_quiet)
                         string_format(file_fail,
                                       "chmod: cannot access '%s': No such file or directory\n",
@@ -4935,6 +4937,9 @@ static const file_long chmod_longs[] = {
 static b32 file_chmod()
 {
         positive count = (positive)program_argument_count();
+        chmod_status = 0;
+        chmod_referenced = false;
+
         file_taking taking = {
             .program = (string_address) "chmod",
             .allowed = (string_address) "Rcfv",
@@ -5121,6 +5126,10 @@ static const file_long chown_longs[] = {
 static b32 file_chown()
 {
         positive count = (positive)program_argument_count();
+        chown_user = -1;
+        chown_group = -1;
+        chown_status = 0;
+
         file_taking taking = {
             .program = (string_address) "chown",
             .allowed = (string_address) "Rcfhv",
@@ -5250,6 +5259,21 @@ static bool ln_ask;
 static bool ln_loud;
 static bool ln_relative;
 static bool ln_through;
+static p8 ln_collision_option;
+static p8 ln_dereference_option;
+
+static bool ln_option_seen(p8 letter, string_address value)
+{
+        (void)value;
+
+        if (letter == 'f' || letter == 'i')
+                ln_collision_option = letter;
+
+        if (letter == 'L' || letter == 'P')
+                ln_dereference_option = letter;
+
+        return true;
+}
 
 // realpath's, and named here because ln is written before it.
 static fn realpath_relative(string_address from, string_address path, p8 address_to into);
@@ -5286,7 +5310,7 @@ static bool ln_make(string_address target, string_address name)
 
         if (ln_ask && file_exists(AT_FDCWD, name) &&
             !file_ask((string_address) "ln", (string_address) "replace", name))
-                return true;
+                return false;
 
         if (ln_force || ln_ask)
                 system_call_3(syscall(unlinkat), AT_FDCWD, (positive)name, 0);
@@ -5333,11 +5357,15 @@ static const file_long ln_longs[] = {
 static b32 file_ln()
 {
         positive count = (positive)program_argument_count();
+        ln_collision_option = 0;
+        ln_dereference_option = 0;
+
         file_taking taking = {
             .program = (string_address) "ln",
             .allowed = (string_address) "fiLnPrstTv",
             .valued = (string_address) "t",
             .longs = ln_longs,
+            .seen = ln_option_seen,
         };
 
         if (!file_take(address_of taking))
@@ -5347,17 +5375,14 @@ static b32 file_ln()
         positive first = taking.first;
 
         ln_symbolic = (flags & FILE_FLAG('s')) != 0;
-        ln_force = (flags & FILE_FLAG('f')) != 0;
-        ln_ask = (flags & FILE_FLAG('i')) != 0;
+        ln_force = ln_collision_option == 'f';
+        ln_ask = ln_collision_option == 'i';
         ln_loud = (flags & FILE_FLAG('v')) != 0;
         ln_relative = (flags & FILE_FLAG('r')) != 0;
 
         // -L makes a hard link to what a symbolic target points at rather
         // than to the link, which is the one thing -L and -P are about.
-        ln_through = (flags & FILE_FLAG('L')) != 0;
-
-        if (ln_force)
-                ln_ask = false;
+        ln_through = ln_dereference_option == 'L';
 
         if (first >= count)
         {
@@ -5447,13 +5472,28 @@ static const file_long readlink_longs[] = {
     {null, 0},
 };
 
+static p8 readlink_canonical_option;
+
+static bool readlink_option_seen(p8 letter, string_address value)
+{
+        (void)value;
+
+        if (letter == 'f' || letter == 'e' || letter == 'm')
+                readlink_canonical_option = letter;
+
+        return true;
+}
+
 static b32 file_readlink()
 {
+        readlink_canonical_option = 0;
+
         file_taking taking = {
             .program = (string_address) "readlink",
             .allowed = (string_address) "fneqsvmz",
             .valued = (string_address) "",
             .longs = readlink_longs,
+            .seen = readlink_option_seen,
         };
 
         if (!file_take(address_of taking))
@@ -5469,7 +5509,7 @@ static b32 file_readlink()
                 return 1;
         }
 
-        bool resolve = (flags & (FILE_FLAG('f') | FILE_FLAG('e') | FILE_FLAG('m'))) != 0;
+        bool resolve = readlink_canonical_option != 0;
         bool no_newline = (flags & FILE_FLAG('n')) != 0;
         // Silent unless asked: readlink says nothing about a name it could
         // not read, and -q and -s are there only to say so twice.
@@ -5501,7 +5541,8 @@ static b32 file_readlink()
 
                         // -f wants the parent to be real, -e wants the whole
                         // path to be, -m wants neither.
-                        if (!(flags & FILE_FLAG('m')) && !file_is_directory_through(above))
+                        if (readlink_canonical_option != 'm' &&
+                            !file_is_directory_through(above))
                         {
                                 if (loud)
                                         string_format(file_fail,
@@ -5512,7 +5553,8 @@ static b32 file_readlink()
                                 continue;
                         }
 
-                        if ((flags & FILE_FLAG('e')) && !file_exists(AT_FDCWD, answer))
+                        if (readlink_canonical_option == 'e' &&
+                            !file_exists(AT_FDCWD, answer))
                         {
                                 if (loud)
                                         string_format(file_fail,
@@ -5699,6 +5741,22 @@ static const file_long realpath_longs[] = {
     {null, 0},
 };
 
+static p8 realpath_missing_option;
+static p8 realpath_walk_option;
+
+static bool realpath_option_seen(p8 letter, string_address value)
+{
+        (void)value;
+
+        if (letter == 'E' || letter == 'e' || letter == 'm')
+                realpath_missing_option = letter;
+
+        if (letter == 'L' || letter == 'P')
+                realpath_walk_option = letter;
+
+        return true;
+}
+
 // Whether one canonical path is the other or lies under it. Whole components
 // only: /usr/lib is not under /usr/li.
 static bool realpath_under(string_address directory, string_address path)
@@ -5807,11 +5865,15 @@ static fn realpath_relative(string_address from, string_address path, p8 address
 
 static b32 file_realpath()
 {
+        realpath_missing_option = 'E';
+        realpath_walk_option = 'P';
+
         file_taking taking = {
             .program = (string_address) "realpath",
             .allowed = (string_address) "EeLmPqsz",
             .valued = (string_address) "RB",
             .longs = realpath_longs,
+            .seen = realpath_option_seen,
         };
 
         if (!file_take(address_of taking))
@@ -5826,9 +5888,9 @@ static b32 file_realpath()
                 return 1;
         }
 
-        bool allow_missing = (taking.flags & FILE_FLAG('m')) != 0;
+        bool allow_missing = realpath_missing_option == 'm';
         bool written_name = (taking.flags & FILE_FLAG('s')) != 0;
-        bool logical = (taking.flags & FILE_FLAG('L')) != 0;
+        bool logical = realpath_walk_option == 'L';
         bool quiet = (taking.flags & FILE_FLAG('q')) != 0;
         bool zero = (taking.flags & FILE_FLAG('z')) != 0;
         b32 status = 0;
@@ -5889,7 +5951,8 @@ static b32 file_realpath()
 
                 if (!written_name &&
                     ((!allow_missing && !file_is_directory_through(above)) ||
-                     ((taking.flags & FILE_FLAG('e')) && !file_exists(AT_FDCWD, answer))))
+                     (realpath_missing_option == 'e' &&
+                      !file_exists(AT_FDCWD, answer))))
                 {
                         if (!quiet)
                                 string_format(file_fail, "realpath: %s: No such file or directory\n",
@@ -6087,6 +6150,23 @@ static bool cp_hard;
 static bool cp_symbolic;
 static bool cp_loud;
 static b32 cp_status;
+static p8 cp_collision_option;
+static p8 cp_dereference_option;
+
+static bool cp_option_seen(p8 letter, string_address value)
+{
+        (void)value;
+
+        /* -f is independent; only -i and -n supersede one another. */
+        if (letter == 'i' || letter == 'n')
+                cp_collision_option = letter;
+
+        if (letter == 'H' || letter == 'L' || letter == 'P' || letter == 'd' ||
+            letter == 'a')
+                cp_dereference_option = letter;
+
+        return true;
+}
 
 // 0 copies a symbolic link as itself, 1 copies what it points at, 2 does
 // that only for the links named on the command line.
@@ -6147,7 +6227,10 @@ static bool cp_allowed(string_address destination, file_facts address_to facts)
 
         if (cp_ask && !file_ask((string_address) "cp", (string_address) "overwrite",
                                 destination))
+        {
+                cp_status = 1;
                 return false;
+        }
 
         return true;
 }
@@ -6205,6 +6288,7 @@ static bool cp_one(string_address source, string_address destination, positive d
                    bool named)
 {
         file_facts facts;
+        file_facts there;
         bool follow = cp_dereference == 1 || (cp_dereference == 2 && named);
 
         if (!(follow ? file_look_at(source, address_of facts)
@@ -6217,6 +6301,34 @@ static bool cp_one(string_address source, string_address destination, positive d
         }
 
         positive kind = facts.mode & MODE_FORMAT;
+
+        bool destination_exists = kind == MODE_LINK && !follow
+                                      ? file_look_link(destination, address_of there)
+                                      : file_look_at(destination, address_of there);
+
+        if (destination_exists && file_same_identity(address_of facts, address_of there))
+        {
+                string_format(file_fail, "cp: '%s' and '%s' are the same file\n", source,
+                              destination);
+                cp_status = 1;
+                return false;
+        }
+
+        if (kind == MODE_DIRECTORY)
+        {
+                p8 from[FILE_PATH_MAX];
+                p8 to[FILE_PATH_MAX];
+
+                if (file_resolve(source, from, true) &&
+                    file_resolve(destination, to, false) && realpath_under(from, to))
+                {
+                        string_format(file_fail,
+                                      "cp: cannot copy a directory, '%s', into itself, '%s'\n",
+                                      source, destination);
+                        cp_status = 1;
+                        return false;
+                }
+        }
 
         if (kind != MODE_DIRECTORY && !cp_allowed(destination, address_of facts))
                 return true;
@@ -6369,11 +6481,16 @@ static const file_long cp_longs[] = {
 static b32 file_cp()
 {
         positive count = (positive)program_argument_count();
+        cp_status = 0;
+        cp_collision_option = 0;
+        cp_dereference_option = 0;
+
         file_taking taking = {
             .program = (string_address) "cp",
             .allowed = (string_address) "aHLPRdfilnprstTuv",
             .valued = (string_address) "t",
             .longs = cp_longs,
+            .seen = cp_option_seen,
         };
 
         if (!file_take(address_of taking))
@@ -6385,8 +6502,8 @@ static b32 file_cp()
         cp_recursive = (flags & (FILE_FLAG('r') | FILE_FLAG('R') | FILE_FLAG('a'))) != 0;
         cp_preserve = (flags & (FILE_FLAG('p') | FILE_FLAG('a'))) != 0;
         cp_force = (flags & FILE_FLAG('f')) != 0;
-        cp_ask = (flags & FILE_FLAG('i')) != 0;
-        cp_never_clobber = (flags & FILE_FLAG('n')) != 0;
+        cp_ask = cp_collision_option == 'i';
+        cp_never_clobber = cp_collision_option == 'n';
         cp_newer_only = (flags & FILE_FLAG('u')) != 0;
         cp_hard = (flags & FILE_FLAG('l')) != 0;
         cp_symbolic = (flags & FILE_FLAG('s')) != 0;
@@ -6397,14 +6514,12 @@ static b32 file_cp()
         // not, because the tree is what -R was asked for.
         cp_dereference = cp_recursive ? 0 : 1;
 
-        if (flags & (FILE_FLAG('P') | FILE_FLAG('d') | FILE_FLAG('a')))
-                cp_dereference = 0;
-
-        if (flags & FILE_FLAG('H'))
+        if (cp_dereference_option == 'H')
                 cp_dereference = 2;
-
-        if (flags & FILE_FLAG('L'))
+        else if (cp_dereference_option == 'L')
                 cp_dereference = 1;
+        else if (cp_dereference_option)
+                cp_dereference = 0;
 
         string_address into = file_option_value(address_of taking, 't');
         bool alone = (flags & FILE_FLAG('T')) != 0;
@@ -6475,6 +6590,17 @@ static b32 mv_status;
 static bool mv_ask;
 static bool mv_never_clobber;
 static bool mv_loud;
+static p8 mv_collision_option;
+
+static bool mv_option_seen(p8 letter, string_address value)
+{
+        (void)value;
+
+        if (letter == 'f' || letter == 'i' || letter == 'n')
+                mv_collision_option = letter;
+
+        return true;
+}
 
 static bool mv_across(string_address source, string_address destination, positive depth);
 
@@ -6580,13 +6706,30 @@ static bool mv_allowed(string_address destination)
         if (mv_never_clobber)
                 return false;
 
-        return file_ask((string_address) "mv", (string_address) "overwrite", destination);
+        if (file_ask((string_address) "mv", (string_address) "overwrite", destination))
+                return true;
+
+        mv_status = 1;
+        return false;
 }
 
 static fn mv_one(string_address source, string_address destination)
 {
         if (!mv_allowed(destination))
                 return;
+
+        file_facts from;
+        file_facts to;
+
+        if (file_look_link(source, address_of from) &&
+            file_look_link(destination, address_of to) &&
+            file_same_identity(address_of from, address_of to))
+        {
+                string_format(file_fail, "mv: '%s' and '%s' are the same file\n", source,
+                              destination);
+                mv_status = 1;
+                return;
+        }
 
         bipolar done = system_call_5(syscall(renameat2), AT_FDCWD, (positive)source,
                                      AT_FDCWD, (positive)destination, 0);
@@ -6625,11 +6768,15 @@ static const file_long mv_longs[] = {
 static b32 file_mv()
 {
         positive count = (positive)program_argument_count();
+        mv_status = 0;
+        mv_collision_option = 0;
+
         file_taking taking = {
             .program = (string_address) "mv",
             .allowed = (string_address) "finTtv",
             .valued = (string_address) "t",
             .longs = mv_longs,
+            .seen = mv_option_seen,
         };
 
         if (!file_take(address_of taking))
@@ -6637,18 +6784,9 @@ static b32 file_mv()
 
         positive first = taking.first;
 
-        mv_ask = (taking.flags & FILE_FLAG('i')) != 0;
-        mv_never_clobber = (taking.flags & FILE_FLAG('n')) != 0;
+        mv_ask = mv_collision_option == 'i';
+        mv_never_clobber = mv_collision_option == 'n';
         mv_loud = (taking.flags & FILE_FLAG('v')) != 0;
-
-        // The last of -f, -i and -n wins in the system's mv; here -f is the
-        // absence of the other two, which comes to the same thing for
-        // anything but the order they were typed in.
-        if (taking.flags & FILE_FLAG('f'))
-        {
-                mv_ask = false;
-                mv_never_clobber = false;
-        }
 
         string_address into = file_option_value(address_of taking, 't');
         bool alone = (taking.flags & FILE_FLAG('T')) != 0;
@@ -6723,6 +6861,17 @@ static bool rm_careful;
 static p32 rm_device_major;
 static p32 rm_device_minor;
 static b32 rm_status;
+static p8 rm_collision_option;
+
+static bool rm_option_seen(p8 letter, string_address value)
+{
+        (void)value;
+
+        if (letter == 'f' || letter == 'i')
+                rm_collision_option = letter;
+
+        return true;
+}
 
 static bool rm_tree(bipolar directory, string_address name, string_address shown,
                     positive depth);
@@ -6941,11 +7090,15 @@ static const file_long rm_longs[] = {
 static b32 file_rm()
 {
         positive count = (positive)program_argument_count();
+        rm_status = 0;
+        rm_collision_option = 0;
+
         file_taking taking = {
             .program = (string_address) "rm",
             .allowed = (string_address) "dfirRv",
             .valued = (string_address) "",
             .longs = rm_longs,
+            .seen = rm_option_seen,
         };
 
         if (!file_take(address_of taking))
@@ -6954,16 +7107,13 @@ static b32 file_rm()
         positive flags = taking.flags;
         positive first = taking.first;
 
-        rm_force = (flags & FILE_FLAG('f')) != 0;
-        rm_ask = (flags & FILE_FLAG('i')) != 0;
+        rm_force = rm_collision_option == 'f';
+        rm_ask = rm_collision_option == 'i';
         rm_loud = (flags & FILE_FLAG('v')) != 0;
         rm_one_system = (flags & FILE_FLAG('o')) != 0;
         rm_empty_directories = (flags & FILE_FLAG('d')) != 0;
         rm_recursive = (flags & (FILE_FLAG('r') | FILE_FLAG('R'))) != 0;
         rm_careful = rm_ask || rm_loud || rm_one_system;
-
-        if (rm_force)
-                rm_ask = false;
 
         if (first >= count)
         {
@@ -7228,7 +7378,11 @@ static b32 file_touch()
         {
                 string_address path = program_argument((b32)first++);
 
-                if (!file_exists(AT_FDCWD, path))
+                file_facts existing;
+                bool exists = through ? file_look_at(path, address_of existing)
+                                      : file_look_link(path, address_of existing);
+
+                if (!exists)
                 {
                         if (no_create)
                                 continue;

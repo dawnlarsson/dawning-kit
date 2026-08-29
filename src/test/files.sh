@@ -114,6 +114,34 @@ spoken() {
         report bad "$name" "want [$(head -c 50 "$work/want" | tr '\n' '|')][$want_status] got [$(head -c 50 "$work/got" | tr '\n' '|')][$got_status]"
 }
 
+# Standard output and status, with diagnostics deliberately out of the
+# comparison. This is for option combinations whose answer matters but whose
+# localized/system wording does not.
+answered() {
+        name=$1
+        tool=$2
+        shift 2
+
+        if "$tool" "$@" > "$work/want" 2>/dev/null; then
+                want_status=0
+        else
+                want_status=$?
+        fi
+
+        if "$binaries/$tool" "$@" > "$work/got" 2>/dev/null; then
+                got_status=0
+        else
+                got_status=$?
+        fi
+
+        if cmp -s "$work/want" "$work/got" && [ "$want_status" = "$got_status" ]; then
+                report ok
+                return 0
+        fi
+
+        report bad "$name" "want [$(head -c 50 "$work/want" | tr '\n' '|')][$want_status] got [$(head -c 50 "$work/got" | tr '\n' '|')][$got_status]"
+}
+
 # Fixed-memory ceilings are permitted to refuse work, but never to emit a
 # plausible prefix and exit successfully.
 refuses_ls_ceiling() {
@@ -227,18 +255,27 @@ effect() {
         seed "$work/a"
         seed "$work/b"
 
-        ( cd "$work/a" && eval "TOOL=$tool; $recipe" ) > "$work/want.out" 2>&1 || true
-        ( cd "$work/b" && eval "TOOL=$binaries/$tool; $recipe" ) > "$work/got.out" 2>&1 || true
+        if ( cd "$work/a" && eval "TOOL=$tool; $recipe" ) > "$work/want.out" 2>&1; then
+                want_status=0
+        else
+                want_status=$?
+        fi
+
+        if ( cd "$work/b" && eval "TOOL=$binaries/$tool; $recipe" ) > "$work/got.out" 2>&1; then
+                got_status=0
+        else
+                got_status=$?
+        fi
 
         dump "$work/a" > "$work/want"
         dump "$work/b" > "$work/got"
 
-        if cmp -s "$work/want" "$work/got"; then
+        if cmp -s "$work/want" "$work/got" && [ "$want_status" = "$got_status" ]; then
                 report ok
                 return 0
         fi
 
-        report bad "$name" "$(diff "$work/want" "$work/got" | head -4 | tr '\n' '|')"
+        report bad "$name" "status $want_status/$got_status $(diff "$work/want" "$work/got" | head -4 | tr '\n' '|')"
 }
 
 # What every effect case starts from: a small tree with a bit of everything
@@ -362,6 +399,8 @@ spoken 'quiet'          readlink -q "$fixture/alpha"
 spoken 'loud and gone'  readlink -v "$fixture/nothing"
 spoken 'loud resolving' readlink -vf "$fixture/nothing/at/all"
 spoken 'loud existing'  readlink -ve "$fixture/nothing"
+answered 'missing then existing' readlink -m -e "$fixture/nothing/at/all"
+answered 'existing then missing' readlink -e -m "$fixture/nothing/at/all"
 
 group realpath
 same 'plain'            realpath "$fixture/alpha"
@@ -394,6 +433,10 @@ same 'physical'         realpath -P "$fixture/sub/back"
 same 'physical long'    realpath --physical "$fixture/sub/back"
 same 'exists not'       realpath -E "$fixture/nothing"
 same 'not a word'       realpath --canonical "$fixture/alpha"
+answered 'missing then existing' realpath -m -e "$fixture/nothing/at/all"
+answered 'existing then missing' realpath -e -m "$fixture/nothing/at/all"
+answered 'logical then physical' realpath -L -P "$fixture/sub/away/.."
+answered 'physical then logical' realpath -P -L "$fixture/sub/away/.."
 
 group id
 same 'default'          id
@@ -751,6 +794,8 @@ effect 'parents'        mkdir '$TOOL -p a/b/c/d'
 effect 'parents exist'  mkdir '$TOOL -p tree/deep/deeper'
 effect 'mode'           mkdir '$TOOL -m 0700 walled'
 effect 'parents mode'   mkdir '$TOOL -p -m 0705 x/y'
+effect 'parents on file' mkdir '$TOOL -p plain'
+effect 'parent is file' mkdir '$TOOL -p plain/child'
 
 group rmdir
 effect 'empty'          rmdir 'mkdir gone; $TOOL gone'
@@ -787,6 +832,8 @@ effect 'capital x on a file' chmod '$TOOL a+X plain'
 effect 'capital x once set' chmod 'chmod 0700 tree/one; $TOOL -R go+X tree'
 effect 'capital x equals' chmod '$TOOL -R a=rwX tree'
 effect 'not an option'  chmod '$TOOL -W 0600 tree/one'
+effect 'broken link'    chmod 'ln -s absent broken; $TOOL 0600 broken'
+effect 'quiet broken link' chmod 'ln -s absent broken; $TOOL -f 0600 broken'
 
 group ln
 effect 'symbolic'       ln '$TOOL -s tree/one pointer'
@@ -805,6 +852,8 @@ effect 'no target dir'  ln '$TOOL -sT tree/one aimed'
 effect 'no target over' ln '$TOOL -sT tree/one tree'
 effect 'interactive no' ln '$TOOL -si tree/two link < /dev/null'
 effect 'interactive yes' ln 'printf "y\n" | $TOOL -si tree/two link'
+effect 'force then interactive' ln '$TOOL -f -i -s tree/two link < /dev/null'
+effect 'interactive then force' ln '$TOOL -i -f -s tree/two link < /dev/null'
 effect 'hard many'      ln '$TOOL tree/one tree/two tree/deep/'
 effect 'verbose'        ln '$TOOL -sv tree/one pointer > said'
 effect 'through the link' ln '$TOOL -L link followed'
@@ -843,6 +892,9 @@ effect 'time modify'    touch '$TOOL --time=modify -d @5 tree/one'
 effect 'time of nothing' touch '$TOOL --time=furlongs -d @5 tree/one'
 effect 'not the link'   touch '$TOOL -h -d @5 link'
 effect 'through a link' touch '$TOOL -d @5 link'
+effect 'through broken link' touch 'ln -s absent broken; $TOOL broken'
+effect 'no create broken link' touch 'ln -s absent broken; $TOOL -c broken'
+effect 'broken link itself' touch 'ln -s absent broken; $TOOL -h -d @5 broken'
 effect 'not an option'  touch '$TOOL -W tree/one'
 
 group cp
@@ -875,10 +927,16 @@ effect 'symbolic'       cp '$TOOL -s plain pointed'
 effect 'symbolic away'  cp '$TOOL -s plain tree/pointed'
 effect 'interactive no' cp '$TOOL -i tree/one plain < /dev/null'
 effect 'interactive yes' cp 'printf "y\n" | $TOOL -i tree/one plain'
+effect 'no clobber then interactive' cp '$TOOL -n -i tree/one plain < /dev/null'
+effect 'interactive then no clobber' cp '$TOOL -i -n tree/one plain < /dev/null'
+effect 'physical then command line' cp '$TOOL -P -H link kept'
+effect 'command line then physical' cp '$TOOL -H -P link kept'
 effect 'verbose'        cp '$TOOL -rv tree copied | LC_ALL=C sort > said'
 effect 'verbose one'    cp '$TOOL -v tree/one copy > said'
 effect 'not an option'  cp '$TOOL -W tree/one copy'
 effect 'both targets'   cp '$TOOL -T -t tree tree/one'
+effect 'same file'      cp '$TOOL tree/one tree/one'
+effect 'same hard link' cp 'ln tree/one alias; $TOOL tree/one alias'
 
 group mv
 effect 'rename'         mv '$TOOL plain renamed'
@@ -890,6 +948,10 @@ effect 'no clobber'     mv '$TOOL -n tree/one plain'
 effect 'no clobber new' mv '$TOOL -n tree/one fresh'
 effect 'interactive no' mv '$TOOL -i tree/one plain < /dev/null'
 effect 'interactive yes' mv 'printf "y\n" | $TOOL -i tree/one plain'
+effect 'force then interactive' mv '$TOOL -f -i tree/one plain < /dev/null'
+effect 'interactive then force' mv '$TOOL -i -f tree/one plain < /dev/null'
+effect 'no clobber then force' mv '$TOOL -n -f tree/one plain'
+effect 'force then no clobber' mv '$TOOL -f -n tree/one plain'
 effect 'forced'         mv '$TOOL -f tree/one plain'
 effect 'target dir'     mv '$TOOL -t tree/deep plain'
 effect 'target dir long' mv '$TOOL --target-directory=tree/deep plain'
@@ -897,6 +959,8 @@ effect 'no target dir'  mv '$TOOL -T tree/deep elsewhere'
 effect 'no target extra' mv '$TOOL -T tree/one tree/two tree/deep'
 effect 'verbose'        mv '$TOOL -v plain renamed > said'
 effect 'not an option'  mv '$TOOL -W plain renamed'
+effect 'same file'      mv '$TOOL tree/one tree/one'
+effect 'same hard link' mv 'ln tree/one alias; $TOOL tree/one alias'
 
 group rm
 effect 'file'           rm '$TOOL plain'
@@ -911,6 +975,8 @@ effect 'directory forced' rm '$TOOL -fd tree'
 effect 'dir long'       rm 'mkdir hole; $TOOL --dir hole'
 effect 'interactive no' rm '$TOOL -i plain < /dev/null'
 effect 'interactive yes' rm 'printf "y\n" | $TOOL -i plain'
+effect 'force then interactive' rm '$TOOL -f -i plain < /dev/null'
+effect 'interactive then force' rm '$TOOL -i -f plain < /dev/null'
 effect 'interactive tree' rm '$TOOL -ri tree < /dev/null'
 effect 'verbose'        rm '$TOOL -rv tree | LC_ALL=C sort > said'
 effect 'verbose one'    rm '$TOOL -v plain > said'
