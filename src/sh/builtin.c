@@ -468,6 +468,27 @@ fn shell_named_written(writer write, string_address word, string_address entry)
         write("\n", 1);
 }
 
+static bool shell_valid_name(string_address name, positive length)
+{
+        if (!length || (string_get(name) >= '0' && string_get(name) <= '9'))
+                return false;
+
+        for (positive at = 0; at < length; at++)
+                if (!expand_name_character(string_get(name + at)))
+                        return false;
+
+        return true;
+}
+
+static fn shell_bad_name(string_address command, string_address name,
+                         positive length)
+{
+        string_format(shell_diagnostic, "%s: bad variable name: ", command);
+        shell_diagnostic(name, length);
+        shell_diagnostic("\n", 1);
+        expand_fatal();
+}
+
 fn shell_export(writer write, string_address input)
 {
         positive index = 1;
@@ -493,6 +514,14 @@ fn shell_export(writer write, string_address input)
         {
                 string_address word = shell_argv[index++];
                 string_address mark = string_first_of(word, '=');
+                positive length = mark ? (positive)(mark - word)
+                                       : string_length(word);
+
+                if (!shell_valid_name(word, length))
+                {
+                        shell_bad_name("export", word, length);
+                        return;
+                }
 
                 // A name on its own is already exported here: every variable
                 // this shell has is in the block the environment is made of.
@@ -1352,6 +1381,12 @@ fn shell_unset(writer write, string_address input)
         {
                 string_address word = shell_argv[index];
 
+                if (!shell_valid_name(word, string_length(word)))
+                {
+                        shell_bad_name("unset", word, string_length(word));
+                        return;
+                }
+
                 if (!functions && env_readonly(word))
                 {
                         string_format(shell_diagnostic, "%s: is read only\n", word);
@@ -1561,6 +1596,12 @@ fn shell_readonly(writer write, string_address input)
                 string_address word = shell_argv[index];
                 string_address mark = string_first_of(word, '=');
                 positive length = mark ? (positive)(mark - word) : string_length(word);
+
+                if (!shell_valid_name(word, length))
+                {
+                        shell_bad_name("readonly", word, length);
+                        return;
+                }
 
                 if (mark)
                 {
