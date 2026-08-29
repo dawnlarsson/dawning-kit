@@ -23,6 +23,7 @@ input-bases) source_file=kit/bench_parse_bases.c ;;
 fields)  source_file=kit/bench_into_padded.c ;;
 human)   source_file=kit/bench_human.c ;;
 human-nearest) source_file=kit/bench_human_nearest.c ;;
+hash-33) source_file=kit/bench_hash_33.c ;;
 paths)   source_file=kit/bench_paths.c ;;
 reverse) source_file=kit/bench_reverse.c ;;
 writer-field) source_file=kit/bench_writer_field.c ;;

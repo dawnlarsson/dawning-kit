@@ -67,7 +67,7 @@
         A .set is a second label on the same address, so there is no wrapper
         and no jump, and which names get one depends on who is linking.
 
-        174 routines (168 public, 6 local), 174 of them on all three.
+        175 routines (169 public, 6 local), 175 of them on all three.
         Raw C purity: 0 function bodies, 0 object definitions, 0 body macros, and 0 object macros (all forbidden).
 
           routine                        scope   x86_64  arm64   riscv64
@@ -137,6 +137,7 @@
           memory_first_of_ascii_case     public  yes     yes     yes
           memory_free                    public  yes     yes     yes
           memory_growth                  public  yes     yes     yes
+          memory_hash_33                 public  yes     yes     yes
           memory_last_of                 public  yes     yes     yes
           memory_release                 public  yes     yes     yes
           memory_reserve                 public  yes     yes     yes
@@ -3254,6 +3255,28 @@ __asm__(
     ".Lmemory_case_x64_delta:\n   .fill 16,1,32\n"
     ASM_SECTION
 #endif
+
+    // Four bytes at once shorten DJB2's multiply dependency chain: 33^4 is
+    // 1185921 and the four byte weights are 33^3, 33^2, 33 and one.
+    ASM_FUNC(memory_hash_33)
+    "mov $5381, %eax\n   cmp $4, %rsi\n   jb .Lmemory_hash_33_x64_tail\n"
+    ".balign 16\n.Lmemory_hash_33_x64_four:\n"
+    "imul $1185921, %rax, %rax\n"
+    "movzbl 0(%rdi), %r8d\n   movzbl 1(%rdi), %r9d\n"
+    "movzbl 2(%rdi), %r10d\n   movzbl 3(%rdi), %ecx\n"
+    "imul $35937, %r8, %r8\n   imul $1089, %r9, %r9\n"
+    "imul $33, %r10, %r10\n   add %r8, %rax\n   add %r9, %rax\n"
+    "add %r10, %rax\n   add %rcx, %rax\n"
+    "add $4, %rdi\n   sub $4, %rsi\n   cmp $4, %rsi\n"
+    "jae .Lmemory_hash_33_x64_four\n"
+    ".Lmemory_hash_33_x64_tail:\n   test %rsi, %rsi\n"
+    "jz .Lmemory_hash_33_x64_done\n"
+    ".Lmemory_hash_33_x64_one:\n   mov %rax, %rdx\n   shl $5, %rax\n"
+    "add %rdx, %rax\n   movzbl (%rdi), %ecx\n   add %rcx, %rax\n"
+    "inc %rdi\n   dec %rsi\n   jnz .Lmemory_hash_33_x64_one\n"
+    ".Lmemory_hash_33_x64_done:\n"
+    ASM_RET
+    ASM_END(memory_hash_33)
 
     // A stable 256-byte table is an indexed load per byte; four independent
     // chains overlap that latency where no byte-granularity SIMD gather can.
@@ -6797,6 +6820,25 @@ __asm__(
     ASM_RET
     ASM_END(memory_to_upper_ascii)
 
+    ASM_FUNC(memory_hash_33)
+    "mov x2, #5381\n   cmp x1, #4\n   b.lo .Lmemory_hash_33_arm64_tail\n"
+    "movz x3, #0x1881\n   movk x3, #0x12, lsl #16\n"
+    "mov x4, #35937\n   mov x5, #1089\n   mov x6, #33\n"
+    ".balign 16\n.Lmemory_hash_33_arm64_four:\n"
+    "mul x2, x2, x3\n   ldrb w7, [x0]\n   ldrb w8, [x0, #1]\n"
+    "ldrb w9, [x0, #2]\n   ldrb w10, [x0, #3]\n"
+    "madd x2, x7, x4, x2\n   madd x2, x8, x5, x2\n"
+    "madd x2, x9, x6, x2\n   add x2, x2, x10\n"
+    "add x0, x0, #4\n   sub x1, x1, #4\n   cmp x1, #4\n"
+    "b.hs .Lmemory_hash_33_arm64_four\n"
+    ".Lmemory_hash_33_arm64_tail:\n   cbz x1, .Lmemory_hash_33_arm64_done\n"
+    ".Lmemory_hash_33_arm64_one:\n   ldrb w7, [x0], #1\n"
+    "add x2, x2, x2, lsl #5\n   add x2, x2, x7\n"
+    "subs x1, x1, #1\n   b.ne .Lmemory_hash_33_arm64_one\n"
+    ".Lmemory_hash_33_arm64_done:\n   mov x0, x2\n"
+    ASM_RET
+    ASM_END(memory_hash_33)
+
     // Four independent table loads hide the dependent byte-index latency.
     ASM_FUNC(memory_translate)
     "mov x8, x0\n   cmp x1, #4\n   b.lo .Lmemory_translate_arm64_tail\n"
@@ -9670,6 +9712,27 @@ __asm__(
 #undef RV_ASCII_CASE_FOUR
 #undef RV_ASCII_CASE_ONE
 
+    // The project RV64 floor includes M; four bytes amortize one dependent
+    // multiply by 33^4 exactly as on the other two architectures.
+    ASM_FUNC(memory_hash_33)
+    "mv t0, a0\n   li a2, 5381\n   li t1, 1185921\n"
+    "li a3, 35937\n   li a4, 1089\n   li a5, 33\n"
+    "li t6, 4\n   bltu a1, t6, .Lmemory_hash_33_rv_tail\n"
+    ".balign 16\n.Lmemory_hash_33_rv_four:\n"
+    "mul a2, a2, t1\n   lbu t2, 0(t0)\n   lbu t3, 1(t0)\n"
+    "lbu t4, 2(t0)\n   lbu t5, 3(t0)\n"
+    "mul t2, t2, a3\n   mul t3, t3, a4\n   mul t4, t4, a5\n"
+    "add a2, a2, t2\n   add a2, a2, t3\n   add a2, a2, t4\n"
+    "add a2, a2, t5\n   addi t0, t0, 4\n   addi a1, a1, -4\n"
+    "bgeu a1, t6, .Lmemory_hash_33_rv_four\n"
+    ".Lmemory_hash_33_rv_tail:\n   beqz a1, .Lmemory_hash_33_rv_done\n"
+    ".Lmemory_hash_33_rv_one:\n   lbu t2, 0(t0)\n   slli t3, a2, 5\n"
+    "add a2, a2, t3\n   add a2, a2, t2\n   addi t0, t0, 1\n"
+    "addi a1, a1, -1\n   bnez a1, .Lmemory_hash_33_rv_one\n"
+    ".Lmemory_hash_33_rv_done:\n   mv a0, a2\n"
+    ASM_RET
+    ASM_END(memory_hash_33)
+
     // RV64I has no required vector gather; four base-ISA chains overlap.
     ASM_FUNC(memory_translate)
     "mv t0, a0\n   li t6, 4\n   bltu a1, t6, .Lmemory_translate_rv_tail\n"
@@ -11582,6 +11645,7 @@ positive string_lex_word(string_address source, p8 address_to into,
                             const b8 address_to class);
 address_any memory_fill(address_any destination, b8 value, positive size);
 positive memory_common_prefix(address_any one, address_any two, positive size);
+positive memory_hash_33(address_any block, positive size);
 b32 memory_compare_ascii_case(address_any one, address_any two, positive size);
 address_any memory_first_of_ascii_case(address_any block, b8 value, positive size);
 address_any memory_search_ascii_case(address_any block, positive size,

@@ -1644,6 +1644,9 @@ typedef struct
 
 static positive awk_hash(string_address text, positive length)
 {
+        if (length >= 24)
+                return memory_hash_33(text, length);
+
         positive value = 5381;
 
         for (positive i = 0; i < length; i++)

@@ -1373,6 +1373,16 @@ static bool diff_stub(diff_side address_to side, bipolar middle)
 
 static positive diff_hash(diff_side address_to side, bipolar middle)
 {
+        positive length = diff_line_length(side, middle);
+
+        // The common exact-line path is already a bounded span. Short lines
+        // stay inline; past the measured break-even the four-byte polynomial
+        // floor removes three quarters of the dependent hash updates.
+        if (length >= 24 && diff_space == DIFF_SPACE_NONE && !diff_trailing &&
+            !diff_tabs && !diff_icase)
+                return memory_hash_33(diff_line(side, middle), length) * 2 +
+                       (diff_stub(side, middle) ? 1 : 0);
+
         diff_scan scan;
         positive value = 5381;
         p8 one;

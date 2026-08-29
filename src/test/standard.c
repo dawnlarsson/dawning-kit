@@ -916,6 +916,31 @@ test(memory_ascii_case) {
         return true;
 }
 
+test(memory_hash_33) {
+        p8 bytes[4128];
+        positive offsets[] = {0, 1, 3, 7, 15, 4093, 4095};
+
+        for (positive at = 0; at < sizeof(bytes); at++)
+                bytes[at] = (p8)(at * 37 + 11);
+
+        for (positive oi = 0; oi < sizeof(offsets) / sizeof(*offsets); oi++)
+                for (positive length = 0; length <= 257; length++)
+                {
+                        positive offset = offsets[oi];
+                        positive wanted = 5381;
+
+                        if (offset + length > sizeof(bytes))
+                                continue;
+
+                        for (positive at = 0; at < length; at++)
+                                wanted = wanted * 33 + bytes[offset + at];
+
+                        fail(memory_hash_33(bytes + offset, length) == wanted);
+                }
+
+        return true;
+}
+
 /*
         Square root, which is the hardware's own instruction.
 
@@ -1171,6 +1196,7 @@ test_case test_cases[] = {
         case(byte_classes),
         case(byte_case),
         case(memory_ascii_case),
+        case(memory_hash_33),
         case(absolute_whole_and_wide),
         case(square_root_is_exact),
         case(absolute_value),

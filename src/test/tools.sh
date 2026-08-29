@@ -567,6 +567,10 @@ printf ''                                       > "$work/empty"
 printf 'one\ntwo\nthree'                        > "$work/nonl"
 printf 'one\ntwo\nthree\n'                      > "$work/withnl"
 printf 'one\ntwo\nthre'                         > "$work/nonl2"
+printf 'abcdefghijklmnopqrstuvAb'                > "$work/longnonl"
+printf 'abcdefghijklmnopqrstuvAb\n'              > "$work/longwithnl"
+printf 'abcdefghijklmnopqrstuvAb\n'              > "$work/collision1"
+printf 'abcdefghijklmnopqrstuvBA\n'              > "$work/collision2"
 printf 'a\0b\0c\n'                              > "$work/bin1"
 printf 'a\0b\0d\n'                              > "$work/bin2"
 printf 'a\0b\0c\n'                              > "$work/bin1copy"
@@ -644,6 +648,12 @@ compare_diff 'no newline left'  "$work/nonl" "$work/withnl"
 compare_diff 'no newline both'  "$work/nonl" "$work/nonl2"
 compare_diff 'no newline u'     -u "$work/withnl" "$work/nonl"
 compare_diff 'no newline u two' -u "$work/nonl" "$work/nonl2"
+compare_diff 'no newline bulk hash' "$work/longwithnl" "$work/longnonl"
+
+#       These distinct 24-byte lines have the same 5381-times-33 hash: Ab and
+#       BA contribute the same final polynomial. The hash may choose a class,
+#       but the exact comparator must still reject the collision.
+compare_diff 'bulk hash collision' "$work/collision1" "$work/collision2"
 
 compare_diff 'binary differ'   "$work/bin1" "$work/bin2"
 compare_diff 'binary same'     "$work/bin1" "$work/bin1"
