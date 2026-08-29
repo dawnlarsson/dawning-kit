@@ -2195,12 +2195,8 @@ fn check_environment_list()
 
                 program_arguments_use(borrowed, 0);
 
-                string_address address_to shifted =
-                    (string_address address_to)(program_stack_base +
-                                                2 * sizeof(string_address));
-
-                same("program_environment_list", "borrowed count chooses the offset",
-                     (positive)program_environment_list(), (positive)shifted);
+                same("program_environment_list", "borrowed arguments keep the environment",
+                     (positive)program_environment_list(), (positive)list);
                 same("program_environment_list", "borrowed vector agrees with index zero",
                      (positive)program_environment_list()[0],
                      (positive)program_environment(0));

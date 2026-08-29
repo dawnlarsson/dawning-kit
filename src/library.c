@@ -12339,11 +12339,12 @@ __asm__(
         below spells the two-state decision directly: borrowed words first,
         then the process stack the kernel supplied.
 
-        program_environment and program_environment_list deliberately preserve
-        the old contract while words are borrowed: their vector is still the
-        process stack, but its offset uses the active argument count. That
-        oddity is observable and is not silently corrected as part of this
-        conversion.
+        program_environment and program_environment_list always use argc from
+        the original process stack. Borrowing another vector changes what a
+        builtin sees as its arguments, not where Linux put envp. Using the
+        borrowed count here made a builtin walk argv bytes as pointers whenever
+        its argument count differed from the shell's and eventually raised a
+        userspace #GP on a noncanonical address.
 
         The vector accessor repeats the small address calculation instead of
         calling the indexed accessor. Its callers walk several entries, so
@@ -12382,19 +12383,15 @@ __asm__(
     ASM_END(program_argument)
     ASM_FUNC(program_environment)
     "test %edi, %edi\n   js 9f\n   mov program_stack_base(%rip), %rdx\n   test %rdx, %rdx\n"
-    "jz 9f\n   cmpq $0, program_words(%rip)\n   je 1f\n   movslq program_words_count(%rip), %rcx\n"
-    "jmp 2f\n"
-    "1:  movslq (%rdx), %rcx\n"
-    "2:  movslq %edi, %rdi\n   add %rdi, %rcx\n   mov 16(%rdx,%rcx,8), %rax\n"
+    "jz 9f\n   movslq (%rdx), %rcx\n   movslq %edi, %rdi\n"
+    "add %rdi, %rcx\n   mov 16(%rdx,%rcx,8), %rax\n"
     ASM_RET
     "9:  xor %eax, %eax\n"
     ASM_RET
     ASM_END(program_environment)
     ASM_FUNC(program_environment_list)
-    "mov program_stack_base(%rip), %rax\n   test %rax, %rax\n   jz 9f\n   cmpq $0, program_words(%rip)\n"
-    "je 1f\n   movslq program_words_count(%rip), %rcx\n   jmp 2f\n"
-    "1:  movslq (%rax), %rcx\n"
-    "2:  lea 16(%rax,%rcx,8), %rax\n"
+    "mov program_stack_base(%rip), %rax\n   test %rax, %rax\n   jz 9f\n"
+    "movslq (%rax), %rcx\n   lea 16(%rax,%rcx,8), %rax\n"
     ASM_RET
     "9:  xor %eax, %eax\n"
     ASM_RET
@@ -12436,22 +12433,16 @@ __asm__(
     ASM_END(program_argument)
     ASM_FUNC(program_environment)
     "tbnz w0, #31, 9f\n"
-    "adrp x1, program_stack_base\n   ldr x1, [x1, :lo12:program_stack_base]\n   cbz x1, 9f\n   adrp x2, program_words\n"
-    "ldr x2, [x2, :lo12:program_words]\n   cbz x2, 1f\n   adrp x2, program_words_count\n   ldrsw x2, [x2, :lo12:program_words_count]\n"
-    "b 2f\n"
-    "1:  ldrsw x2, [x1]\n"
-    "2:  sxtw x0, w0\n   add x2, x2, x0\n   add x2, x2, #2\n"
+    "adrp x1, program_stack_base\n   ldr x1, [x1, :lo12:program_stack_base]\n   cbz x1, 9f\n"
+    "ldrsw x2, [x1]\n   sxtw x0, w0\n   add x2, x2, x0\n   add x2, x2, #2\n"
     "ldr x0, [x1, x2, lsl #3]\n"
     ASM_RET
     "9:  mov x0, xzr\n"
     ASM_RET
     ASM_END(program_environment)
     ASM_FUNC(program_environment_list)
-    "adrp x0, program_stack_base\n   ldr x0, [x0, :lo12:program_stack_base]\n   cbz x0, 9f\n   adrp x1, program_words\n"
-    "ldr x1, [x1, :lo12:program_words]\n   cbz x1, 1f\n   adrp x1, program_words_count\n   ldrsw x1, [x1, :lo12:program_words_count]\n"
-    "b 2f\n"
-    "1:  ldrsw x1, [x0]\n"
-    "2:  add x0, x0, x1, lsl #3\n"
+    "adrp x0, program_stack_base\n   ldr x0, [x0, :lo12:program_stack_base]\n   cbz x0, 9f\n"
+    "ldrsw x1, [x0]\n   add x0, x0, x1, lsl #3\n"
     "add x0, x0, #16\n"
     ASM_RET
     "9:  mov x0, xzr\n"
@@ -12491,21 +12482,16 @@ __asm__(
     ASM_END(program_argument)
     ASM_FUNC(program_environment)
     "sext.w a0, a0\n   bltz a0, 9f\n   lla t0, program_stack_base\n   ld t0, 0(t0)\n"
-    "beqz t0, 9f\n   lla t1, program_words\n   ld t1, 0(t1)\n   beqz t1, 1f\n"
-    "lla t1, program_words_count\n   lw t1, 0(t1)\n   j 2f\n"
-    "1:  lw t1, 0(t0)\n"
-    "2:  add t1, t1, a0\n   addi t1, t1, 2\n   slli t1, t1, 3\n   add t0, t0, t1\n"
+    "beqz t0, 9f\n   lw t1, 0(t0)\n   add t1, t1, a0\n   addi t1, t1, 2\n"
+    "slli t1, t1, 3\n   add t0, t0, t1\n"
     "ld a0, 0(t0)\n"
     ASM_RET
     "9:  li a0, 0\n"
     ASM_RET
     ASM_END(program_environment)
     ASM_FUNC(program_environment_list)
-    "lla t0, program_stack_base\n   ld a0, 0(t0)\n   beqz a0, 9f\n   lla t0, program_words\n"
-    "ld t0, 0(t0)\n   beqz t0, 1f\n   lla t0, program_words_count\n   lw t0, 0(t0)\n"
-    "j 2f\n"
-    "1:  lw t0, 0(a0)\n"
-    "2:  addi t0, t0, 2\n   slli t0, t0, 3\n   add a0, a0, t0\n"
+    "lla t0, program_stack_base\n   ld a0, 0(t0)\n   beqz a0, 9f\n"
+    "lw t0, 0(a0)\n   addi t0, t0, 2\n   slli t0, t0, 3\n   add a0, a0, t0\n"
     ASM_RET
     "9:  li a0, 0\n"
     ASM_RET
