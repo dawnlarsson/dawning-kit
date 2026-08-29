@@ -67,7 +67,7 @@
         A .set is a second label on the same address, so there is no wrapper
         and no jump, and which names get one depends on who is linking.
 
-        176 routines (170 public, 6 local), 176 of them on all three.
+        223 routines (216 public, 7 local), 223 of them on all three.
         Raw C purity: 0 function bodies, 0 object definitions, 0 body macros, and 0 object macros (all forbidden).
 
           routine                        scope   x86_64  arm64   riscv64
@@ -80,6 +80,11 @@
           bipolar_into_core              local   yes     yes     yes
           bipolar_into_string            public  yes     yes     yes
           bipolar_to_string              public  yes     yes     yes
+          bits_counted                   public  yes     yes     yes
+          bits_first_set                 public  yes     yes     yes
+          bits_first_set_wide            public  yes     yes     yes
+          bits_leading_zeros             public  yes     yes     yes
+          bits_trailing_zeros            public  yes     yes     yes
           buffered_flush                 public  yes     yes     yes
           buffered_write                 public  yes     yes     yes
           buffered_write_byte            public  yes     yes     yes
@@ -89,16 +94,33 @@
           byte_class_index               public  yes     yes     yes
           byte_is_alnum                  public  yes     yes     yes
           byte_is_alpha                  public  yes     yes     yes
+          byte_is_ascii                  public  yes     yes     yes
+          byte_is_blank                  public  yes     yes     yes
+          byte_is_control                public  yes     yes     yes
           byte_is_digit                  public  yes     yes     yes
+          byte_is_graphic                public  yes     yes     yes
           byte_is_hexadecimal            public  yes     yes     yes
           byte_is_lower                  public  yes     yes     yes
+          byte_is_printable              public  yes     yes     yes
+          byte_is_punctuation            public  yes     yes     yes
           byte_is_space                  public  yes     yes     yes
           byte_is_upper                  public  yes     yes     yes
+          byte_to_ascii                  public  yes     yes     yes
           byte_to_lower                  public  yes     yes     yes
           byte_to_upper                  public  yes     yes     yes
           bytes_reverse_16               public  yes     yes     yes
           bytes_reverse_32               public  yes     yes     yes
+          decimal_ceiling                public  yes     yes     yes
+          decimal_difference             public  yes     yes     yes
+          decimal_floor                  public  yes     yes     yes
+          decimal_larger                 public  yes     yes     yes
+          decimal_multiply_add           public  yes     yes     yes
+          decimal_nearest                public  yes     yes     yes
+          decimal_rounded                public  yes     yes     yes
+          decimal_smaller                public  yes     yes     yes
           decimal_to_string              public  yes     yes     yes
+          decimal_truncated              public  yes     yes     yes
+          decimal_with_sign              public  yes     yes     yes
           exit                           public  yes     yes     yes
           fast_sin                       public  yes     yes     yes
           file_close                     public  yes     yes     yes
@@ -130,6 +152,8 @@
           memory_copy_end                public  yes     yes     yes
           memory_copy_fast               public  yes     yes     yes
           memory_copy_fast_end           public  yes     yes     yes
+          memory_copy_source_first       public  yes     yes     yes
+          memory_copy_until              public  yes     yes     yes
           memory_count                   public  yes     yes     yes
           memory_count_words             public  yes     yes     yes
           memory_fill                    public  yes     yes     yes
@@ -148,7 +172,17 @@
           memory_to_lower_ascii          public  yes     yes     yes
           memory_to_upper_ascii          public  yes     yes     yes
           memory_translate               public  yes     yes     yes
+          memory_zero                    public  yes     yes     yes
           moonwater_cpu_detect           public  yes     yes     yes
+          narrow_absolute                public  yes     yes     yes
+          narrow_ceiling                 public  yes     yes     yes
+          narrow_floor                   public  yes     yes     yes
+          narrow_larger                  public  yes     yes     yes
+          narrow_rounded                 public  yes     yes     yes
+          narrow_smaller                 public  yes     yes     yes
+          narrow_square_root             public  yes     yes     yes
+          narrow_truncated               public  yes     yes     yes
+          narrow_with_sign               public  yes     yes     yes
           network_load_16                public  yes     yes     yes
           network_load_32                public  yes     yes     yes
           network_store_16               public  yes     yes     yes
@@ -194,12 +228,17 @@
           socket_shutdown                public  yes     yes     yes
           square_root                    public  yes     yes     yes
           string_append                  public  yes     yes     yes
+          string_append_max              public  yes     yes     yes
           string_bipolar                 public  yes     yes     yes
           string_compare                 public  yes     yes     yes
+          string_compare_folded          public  yes     yes     yes
+          string_compare_folded_max      public  yes     yes     yes
           string_compare_max             public  yes     yes     yes
           string_copy                    public  yes     yes     yes
+          string_copy_end                public  yes     yes     yes
           string_copy_max                public  yes     yes     yes
           string_copy_max_end            public  yes     yes     yes
+          string_copy_max_endptr         public  yes     yes     yes
           string_cut                     public  yes     yes     yes
           string_digits                  public  yes     yes     yes
           string_digits_base_max         public  yes     yes     yes
@@ -213,6 +252,7 @@
           string_first_of                public  yes     yes     yes
           string_first_of_max            public  yes     yes     yes
           string_first_of_or_end         public  yes     yes     yes
+          string_first_of_set            public  yes     yes     yes
           string_format                  public  yes     yes     yes
           string_get_environment         public  yes     yes     yes
           string_last_of                 public  yes     yes     yes
@@ -225,11 +265,18 @@
           string_set_add                 public  yes     yes     yes
           string_span                    public  yes     yes     yes
           string_span_max                public  yes     yes     yes
+          string_span_of_set             public  yes     yes     yes
+          string_span_without_set        public  yes     yes     yes
           string_table_find              public  yes     yes     yes
           string_to_bipolar              public  yes     yes     yes
           string_to_field                public  yes     yes     yes
           string_to_host                 public  yes     yes     yes
+          string_to_number               public  yes     yes     yes
+          string_to_number_core          local   yes     yes     yes
+          string_to_number_unsigned      public  yes     yes     yes
           string_to_positive             public  yes     yes     yes
+          string_to_whole                public  yes     yes     yes
+          string_to_whole_wide           public  yes     yes     yes
           system_call                    public  yes     yes     yes
           system_call_1                  public  yes     yes     yes
           system_call_2                  public  yes     yes     yes

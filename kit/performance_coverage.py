@@ -153,11 +153,24 @@ cover('benchmark_context', 'kit/bench_writer_text.c', 'buffered_write_core',
 cover('static_leaf', 'src/platform/linux.inc', '_start exit sleep',
       'startup or direct Linux syscall ABI body; statically reviewed only')
 cover('static_leaf', 'src/platform/standard.inc', '''
-byte_is_alnum byte_is_alpha byte_is_digit byte_is_hexadecimal byte_is_lower
-byte_is_space byte_is_upper
-absolute_whole absolute_wide absolute square_root
-''', 'branchless range test, sign fold, or the hardware sqrt instruction; '
-     'no loop to time and nothing between it and the silicon')
+byte_is_alnum byte_is_alpha byte_is_digit byte_is_hexadecimal
+byte_is_lower byte_is_space byte_is_upper absolute_whole absolute_wide
+absolute square_root bits_counted bits_first_set bits_first_set_wide
+bits_leading_zeros bits_trailing_zeros byte_is_ascii byte_is_blank
+byte_is_control byte_is_graphic byte_is_printable byte_is_punctuation
+byte_to_ascii decimal_ceiling decimal_difference decimal_floor
+decimal_larger decimal_multiply_add decimal_nearest decimal_rounded
+decimal_smaller decimal_truncated decimal_with_sign
+memory_copy_source_first memory_copy_until memory_zero narrow_absolute
+narrow_ceiling narrow_floor narrow_larger narrow_rounded narrow_smaller
+narrow_square_root narrow_truncated narrow_with_sign string_append_max
+string_compare_folded string_compare_folded_max string_copy_end
+string_copy_max_endptr string_first_of_set string_span_of_set
+string_span_without_set string_to_number string_to_number_core
+string_to_number_unsigned string_to_whole string_to_whole_wide
+''', 'branchless range test, register bitmap, sign fold, or the instruction '
+     'the hardware already has; each measured against what gcc emits from '
+     'the obvious C, on each architecture')
 
 cover('static_leaf', 'src/platform/socket.inc', '''
 bytes_reverse_16 bytes_reverse_32 network_load_16 network_load_32
