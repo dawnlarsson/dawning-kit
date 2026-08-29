@@ -9,19 +9,32 @@
 #       here within a second, in a way a test that runs once is not.
 #
 #       Everything comes out of /proc, so it needs no privileges and nothing
-#       outside the base system: grep, awk, sort, head, cut, sleep, printf.
+#       outside the base system: grep, awk, sort, head, cut, stty, sleep,
+#       printf.
 #
 #       Rates are real rates. Two samples are kept a frame apart in a scratch
 #       directory and the deltas are taken between them, which is why the
 #       first frame shows a settling reading and the rest do not.
 #
 #       Usage:  monitor.sh [interval] [frames]
-#               interval  seconds between redraws, default 1
+#               interval  seconds between redraws, decimals accepted,
+#                         default 0.5
 #               frames    stop after this many, default 0 meaning never
 #
 
-interval=${1:-1}
+interval=${1:-0.5}
 frames=${2:-0}
+
+#       Re-read on every frame, so dragging the window edge changes the next
+#       frame instead of waiting for a restart. stty asks the input terminal:
+#       stdout is temporarily a pipe while the command substitution runs.
+screen_rows=24
+screen_columns=80
+cpu_rows=9
+process_rows=9
+network_rows=1
+cpu_bar_width=64
+memory_bar_width=42
 
 scratch=${TMPDIR:-/tmp}/monitor.$$
 mkdir -p "$scratch" 2>/dev/null
@@ -32,10 +45,12 @@ now_net=$scratch/net.now
 old_net=$scratch/net.old
 now_pid=$scratch/pid.now
 old_pid=$scratch/pid.old
+now_time=$scratch/time.now
+old_time=$scratch/time.old
 
 #       Put the terminal back the way it was found, whichever way we leave.
 finish() {
-        printf '\033[?25h\033[0m\n'
+        printf '\033[?25h\033[0m\033[?1049l'
         rm -rf "$scratch" 2>/dev/null
         exit 0
 }
@@ -76,6 +91,8 @@ line() {
 }
 
 sample() {
+        read uptime ignored < /proc/uptime
+        printf '%s\n' "$uptime" > "$now_time"
         grep '^cpu' /proc/stat > "$now_cpu" 2>/dev/null
         grep ':' /proc/net/dev > "$now_net" 2>/dev/null
 
@@ -123,11 +140,15 @@ header() {
                     else if (h > 0) printf "%dh %dm", h, m
                     else printf "%dm", m }' /proc/uptime 2>/dev/null)
         load=$(cut -d' ' -f1-3 /proc/loadavg 2>/dev/null)
-        host=$(uname -n 2>/dev/null)
+        host=$(uname -n 2>/dev/null | cut -c1-14)
         clock=$(date +%H:%M:%S 2>/dev/null)
 
-        line "$(printf '\033[1m %-14s\033[0m up %-12s load %-18s %s' \
-                "$host" "$up" "$load" "$clock")"
+        if [ "$screen_columns" -ge 72 ]; then
+                line "$(printf '\033[1m %-14s\033[0m up %-12s load %-18s %s' \
+                        "$host" "$up" "$load" "$clock")"
+        else
+                line "$(printf '\033[1m %-14s\033[0m %s' "$host" "$clock")"
+        fi
         line ""
 }
 
@@ -159,12 +180,12 @@ cpus() {
                 [ -n "$percent" ] || continue
                 if [ "$name" = cpu ]; then
                         line "$(printf ' %-6s [%s] %3s%%' \
-                                "all" "$(bar "$percent" 34)" "$percent")"
+                                "all" "$(bar "$percent" "$cpu_bar_width")" "$percent")"
                 else
                         shown=$(( shown + 1 ))
-                        [ "$shown" -gt 12 ] && continue
+                        [ "$shown" -ge "$cpu_rows" ] && continue
                         line "$(printf ' %-6s [%s] %3s%%' \
-                                "$name" "$(bar "$percent" 34)" "$percent")"
+                                "$name" "$(bar "$percent" "$cpu_bar_width")" "$percent")"
                 fi
         done
 }
@@ -186,13 +207,13 @@ memory() {
         set -- $report
         [ -n "$1" ] || return 0
         line "$(printf ' %-6s [%s] %3s%%  %sG / %sG' \
-                "mem" "$(bar "$1" 34)" "$1" "$2" "$3")"
+                "mem" "$(bar "$1" "$memory_bar_width")" "$1" "$2" "$3")"
         [ "${4:-0}" -gt 0 ] && line "$(printf ' %-6s [%s] %3s%%  %sG' \
-                "swap" "$(bar "$4" 34)" "$4" "$5")"
+                "swap" "$(bar "$4" "$memory_bar_width")" "$4" "$5")"
 }
 
 network() {
-        awk -v interval="$interval" 'FNR == NR {
+        awk -v interval="$sample_interval" 'FNR == NR {
                 split($0, part, ":")
                 name = part[1]
                 gsub(/ /, "", name)
@@ -215,11 +236,12 @@ network() {
                 if (tx < 0) tx = 0
                 if (rx == 0 && tx == 0 && field[1] == 0) next
                 printf "%s %d %d\n", name, rx / interval, tx / interval
-             }' "$old_net" "$now_net" 2>/dev/null |
+             }' "$old_net" "$now_net" 2>/dev/null | head -"$network_rows" |
         while read name rx tx; do
                 [ -n "$name" ] || continue
                 line "$(printf ' %-10s down %-12s up %-12s' "$name" \
-                        "$(human "$rx")/s" "$(human "$tx")/s")"
+                        "$(human "$rx")/s" "$(human "$tx")/s" |
+                        cut -c1-$(( screen_columns - 1 )))"
         done
 }
 
@@ -238,23 +260,47 @@ processes() {
         #       Ticks used since the previous frame, over the ticks that
         #       elapsed. A process that was not there last frame simply has no
         #       previous entry and reads as zero rather than as its whole life.
-        awk -v interval="$interval" -v hz=100 '
+        awk -v interval="$sample_interval" -v hz=100 '
              FNR == NR { previous[$1] = $2; next }
              {
                 used = $2 - previous[$1]
                 if (used < 0 || !($1 in previous)) used = 0
                 percent = used * 100 / (hz * interval)
-                printf "%s %.1f %s %s\n", $1, percent, $3, $4
+                name = $4
+                for (i = 5; i <= NF; i++) name = name " " $i
+                printf "%s %.1f %s %s\n", $1, percent, $3, name
              }' "$old_pid" "$now_pid" 2>/dev/null |
-        sort -k2 -rn | head -9 | while read pid percent pages name; do
-                [ -n "$pid" ] || continue
-                line "$(printf ' %-7s %6s %9s  %s' "$pid" "$percent" \
-                        "$(human "$(( pages * 4096 ))")" "$name")"
-        done
+        sort -k2 -rn | head -"$process_rows" | awk -v columns="$screen_columns" '
+                function human(n) {
+                        if (n >= 1048576) return sprintf("%.1f MB", n / 1048576)
+                        if (n >= 1024) return sprintf("%.1f kB", n / 1024)
+                        return sprintf("%d B", n)
+                }
+                {
+                        name = $4
+                        for (i = 5; i <= NF; i++) name = name " " $i
+                        row = sprintf(" %-7s %6s %9s  %s", $1, $2,
+                                      human($3 * 4096), name)
+                        if (held != "") printf "%s\033[K\n", held
+                        held = substr(row, 1, columns - 1)
+                }
+                END {
+                        # The final visible row must not end in newline: when
+                        # it is the terminal bottom row, that would scroll.
+                        if (held != "") printf "%s\033[K", held
+                }'
 }
 
 draw() {
         printf '\033[H'
+
+        if [ "$screen_rows" -lt 12 ] || [ "$screen_columns" -lt 40 ]; then
+                printf ' monitor %sx%s' "$screen_columns" "$screen_rows" |
+                        cut -c1-$(( screen_columns > 1 ? screen_columns - 1 : 1 ))
+                printf '\033[K\033[J'
+                return
+        fi
+
         header
         cpus
         memory
@@ -265,20 +311,84 @@ draw() {
 
 #       Hide the cursor and take the first pair of samples, so the first
 #       drawn frame already has a delta to work from.
-printf '\033[?25l\033[2J'
+printf '\033[?1049h\033[?25l\033[2J'
 sample
 cp "$now_cpu" "$old_cpu" 2>/dev/null
 cp "$now_net" "$old_net" 2>/dev/null
 cp "$now_pid" "$old_pid" 2>/dev/null
+cp "$now_time" "$old_time" 2>/dev/null
 
 count=0
 while :; do
         sleep "$interval"
         sample
+
+        # The dimensions are live state, not startup configuration. Keep this
+        # outside a function: this shell deliberately stores function bodies,
+        # and a dashboard should not spend that arena on straight-line work.
+        set -- $(stty size 2>/dev/null)
+        measured_rows=${1:-24}
+        measured_columns=${2:-80}
+        case "$measured_rows" in ''|*[!0-9]*|0) measured_rows=24 ;; esac
+        case "$measured_columns" in ''|*[!0-9]*|0) measured_columns=80 ;; esac
+        screen_rows=$measured_rows
+        screen_columns=$measured_columns
+
+        # Leave the last cell untouched: writing it puts real terminals into
+        # pending-wrap state, where the following newline can consume a row.
+        cpu_bar_width=$(( screen_columns - 16 ))
+        memory_bar_width=$(( screen_columns - 39 ))
+        [ "$cpu_bar_width" -lt 1 ] && cpu_bar_width=1
+        [ "$memory_bar_width" -lt 1 ] && memory_bar_width=1
+
+        # One reader answers all four layout questions. At the faster redraw
+        # rate, two avoidable forks per frame are not bookkeeping, but load.
+        set -- $(awk -v cpu_file="$now_cpu" -v net_file="$now_net" \
+                -v old_time="$old_time" -v now_time="$now_time" '
+                FILENAME == cpu_file && /^cpu/ { cpus++ }
+                FILENAME == net_file {
+                        split($0, part, ":")
+                        name = part[1]
+                        gsub(/ /, "", name)
+                        if (name != "" && name != "lo") networks++
+                }
+                FILENAME == "/proc/meminfo" && /^SwapTotal:/ { total = $2 }
+                FILENAME == "/proc/meminfo" && /^SwapFree:/  { free = $2 }
+                FILENAME == old_time { before = $1 }
+                FILENAME == now_time { after = $1 }
+                END {
+                        pct = total > 0 ? int((total - free) * 100 / total + 0.5) : 0
+                        elapsed = after - before
+                        if (elapsed <= 0) elapsed = 0.01
+                        print cpus + 0, networks + 0, pct > 0 ? 1 : 0, elapsed
+                }' "$now_cpu" "$now_net" /proc/meminfo "$old_time" "$now_time" \
+                2>/dev/null)
+        cpu_count=${1:-1}
+        network_count=${2:-0}
+        swap_count=${3:-0}
+        sample_interval=${4:-0.01}
+
+        # Header (2), memory, optional swap and network, then the blank line
+        # and process heading. Divide what remains between CPUs and tasks;
+        # when there are fewer CPUs, the process table inherits every row.
+        network_rows=$network_count
+        network_room=$(( screen_rows - 7 - swap_count ))
+        [ "$network_room" -lt 0 ] && network_room=0
+        [ "$network_rows" -gt "$network_room" ] && network_rows=$network_room
+        fixed_rows=$(( 5 + swap_count + network_rows ))
+        available_rows=$(( screen_rows - fixed_rows ))
+        [ "$available_rows" -lt 2 ] && available_rows=2
+        cpu_rows=$(( available_rows / 2 ))
+        [ "$cpu_rows" -gt "$cpu_count" ] && cpu_rows=$cpu_count
+        [ "$cpu_rows" -lt 1 ] && cpu_rows=1
+        process_rows=$(( available_rows - cpu_rows ))
+        [ "$process_rows" -lt 1 ] && process_rows=1
+
         draw
         cp "$now_cpu" "$old_cpu" 2>/dev/null
         cp "$now_net" "$old_net" 2>/dev/null
         cp "$now_pid" "$old_pid" 2>/dev/null
+        cp "$now_time" "$old_time" 2>/dev/null
 
         count=$(( count + 1 ))
         [ "$frames" -gt 0 ] && [ "$count" -ge "$frames" ] && break

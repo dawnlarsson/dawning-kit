@@ -42,6 +42,7 @@ static positive text_arena_used;
 #define ERROR_NOT_DIRECTORY 20
 #define ERROR_IS_DIRECTORY 21
 #define ERROR_INVALID 22
+#define ERROR_NOT_TERMINAL 25
 #define ERROR_NOT_EMPTY 39
 
 #define STATX_BASIC 0x7ff
@@ -1939,6 +1940,9 @@ string_address file_reason(bipolar code)
 
         if (code == ERROR_INVALID)
                 return (string_address) "Invalid argument";
+
+        if (code == ERROR_NOT_TERMINAL)
+                return (string_address) "Inappropriate ioctl for device";
 
         if (code == ERROR_CROSS_DEVICE)
                 return (string_address) "Invalid cross-device link";
@@ -8414,6 +8418,48 @@ static b32 file_sleep()
                 }
         }
 
+        return 0;
+}
+
+// stty -------------------------------------------------------------
+/*
+        Only the one query scripts can portably use without parsing a
+        platform-specific mode dump: stty size writes rows then columns.
+
+        The query belongs on standard input.  In particular, stdout is a pipe
+        in set -- $(stty size), while stdin is still the controlling terminal.
+*/
+typedef struct
+{
+        p16 rows, columns, x_pixels, y_pixels;
+} file_window_size;
+
+#define FILE_TIOCGWINSZ 0x5413
+
+static b32 file_stty()
+{
+        if (program_argument_count() != 2 ||
+            !string_equals(program_argument(1), "size"))
+        {
+                file_fail("stty: only 'size' is supported\n", 0);
+                return 1;
+        }
+
+        file_window_size size = {0, 0, 0, 0};
+        bipolar answer = system_call_3(syscall(ioctl), 0, FILE_TIOCGWINSZ,
+                                       (positive)address_of size);
+
+        if (answer < 0)
+        {
+                string_format(file_fail, "stty: standard input: %s\n",
+                              file_reason(answer));
+                return 1;
+        }
+
+        positive_to_string(log, size.rows);
+        log(" ", 1);
+        positive_to_string(log, size.columns);
+        log("\n", 1);
         return 0;
 }
 

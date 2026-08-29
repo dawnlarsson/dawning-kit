@@ -719,7 +719,7 @@ answer 'exec text without shebang' 'p=/tmp/no-shebang-exec.$$; printf '\''printf
 # pipelines and external tools. A fragment suite did not catch the parser's
 # zero-token first-line crash, so one complete frame is permanent coverage.
 if [ "$(uname -s)" = Linux ]; then
-        if timeout 20 "$subject" programs/monitor.sh 0 1 \
+        if timeout 20 "$subject" programs/monitor.sh 0.05 1 \
                 > "$work/monitor.out" 2> "$work/monitor.err"
         then
                 monitor_status=0
@@ -733,6 +733,17 @@ if [ "$(uname -s)" = Linux ]; then
         else
                 lost 'monitor one frame' \
                         "status $monitor_status, stdout $(wc -c < "$work/monitor.out"), stderr $(wc -c < "$work/monitor.err")"
+        fi
+
+        # stty must query the input terminal, not its piped stdout. Give the
+        # subject a deliberately non-default PTY so a hard-coded 24x80 answer
+        # cannot pass.
+        pty_size=$(script -qec "stty rows 37 cols 111; $subject -c 'stty size'" \
+                /dev/null 2>/dev/null | tr -d '\r')
+        if [ "$pty_size" = "37 111" ]; then
+                won
+        else
+                lost 'stty size from pty' "expected 37 111, got $(printf '%s' "$pty_size")"
         fi
 fi
 

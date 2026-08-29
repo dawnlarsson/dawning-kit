@@ -241,7 +241,7 @@ if len(runs) >= 2:
     # The log window is anchored near the left edge.  The graphical terminal
     # asks to be centred and is therefore the second run.  Exercise the route
     # a person on the machine actually uses: USB keyboard -> compositor ->
-    # terminal -> pty -> shell.  The monitor redraws eight times, long enough
+    # terminal -> pty -> shell.  The monitor redraws sixteen times, long enough
     # to catch faults tied to a refresh rather than merely to startup.
     b_top = next((y for y in range(h2)
                   if at((b_left + b_right) // 2, y) != bg), 0)
@@ -256,7 +256,7 @@ if len(runs) >= 2:
 
     shot("shell-before-monitor")
     before_w, before_h, before_monitor = load("shell-before-monitor")
-    type_text("/mointor.sh 1 8\n")
+    type_text("/mointor.sh 0.5 16\n")
 
     time.sleep(2.5)
     shot("monitor-first")
@@ -283,7 +283,7 @@ if len(runs) >= 2:
     out.append(("monitor redraws", "yes" if redrawn > 32 else
                 "%d pixels" % redrawn, "yes"))
 
-    # Let all eight updates complete before looking for the fault report.
+    # Let all sixteen updates complete before looking for the fault report.
     time.sleep(5)
 
 try:

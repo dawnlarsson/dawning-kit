@@ -4338,6 +4338,7 @@ static shell_tool shell_tools[] = {
     {"seq", file_seq},
     {"sleep", file_sleep},
     {"stat", file_stat},
+    {"stty", file_stty},
     {"touch", file_touch},
     {"uname", file_uname},
     {"xargs", file_xargs},
