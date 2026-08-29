@@ -2665,15 +2665,13 @@ static b32 file_run(string_address address_to words)
         -ok and -printf are not here: -ok asks a question of a terminal, and
         -printf is a second format language. Both would be their own work.
 */
-#define FIND_NODES 128
-#define FIND_BATCHES 2
 #define FIND_BATCH_WORDS 256
 #define FIND_BATCH_BYTES 32768
 
 typedef struct
 {
         p8 kind;
-        p8 unit;
+        b32 unit;
         p8 comparison;
         b32 left;
         b32 right;
@@ -2691,17 +2689,21 @@ typedef struct
         p8 text[FIND_BATCH_BYTES];
 } find_batch;
 
-static find_node find_nodes[FIND_NODES];
+static find_node address_to find_nodes;
+static positive find_node_room;
 static positive find_used;
 static b32 find_root = -1;
 static bool find_bad;
 static bool find_has_action;
 
-static find_batch find_batches[FIND_BATCHES];
+static find_batch address_to find_batches;
+static positive find_batch_room;
 static positive find_batch_have;
 
-static p8 find_exec_text[FIND_BATCH_BYTES];
-static string_address find_exec_words[FIND_BATCH_WORDS + 1];
+static p8 address_to find_exec_text;
+static positive find_exec_text_room;
+static string_address address_to find_exec_words;
+static positive find_exec_word_room;
 
 static positive find_at;
 static positive find_count;
@@ -2808,9 +2810,11 @@ static bool find_empty(string_address path, file_facts address_to facts)
 
 static b32 find_make(p8 kind)
 {
-        if (find_used >= FIND_NODES)
+        if (!shell_room((address_any address_to)address_of find_nodes,
+                        address_of find_node_room, find_used + 1,
+                        sizeof(find_node)))
         {
-                file_fail("find: expression is too long\n", 0);
+                file_fail("find: out of memory while reading expression\n", 0);
                 find_bad = true;
                 return -1;
         }
@@ -3066,15 +3070,21 @@ static b32 find_parse_primary()
 
                         find_nodes[node].extra--;
 
-                        if (find_batch_have >= FIND_BATCHES)
+                        if (!memory_reserve(
+                                (address_any address_to)address_of find_batches,
+                                address_of find_batch_room, find_batch_have,
+                                find_batch_have + 1, sizeof(find_batch), 2))
                         {
-                                file_fail("find: too many -exec ... + in one expression\n", 0);
+                                shell_memory_failed = true;
+                                file_fail("find: out of memory while reading -exec\n", 0);
                                 find_bad = true;
                                 return -1;
                         }
 
+                        memory_fill(address_of find_batches[find_batch_have], 0,
+                                    sizeof(find_batch));
                         find_batches[find_batch_have].node = node;
-                        find_nodes[node].unit = (p8)find_batch_have++;
+                        find_nodes[node].unit = (b32)find_batch_have++;
                 }
 
                 find_has_action = true;
@@ -3401,11 +3411,24 @@ static fn find_batch_run(positive slot)
 
         find_node address_to node = address_of find_nodes[batch->node];
         positive have = 0;
+        positive template = (positive)(node->extra - node->number);
+
+        if (!shell_room((address_any address_to)address_of find_exec_words,
+                        address_of find_exec_word_room,
+                        template + batch->words + 1,
+                        sizeof(string_address)))
+        {
+                file_fail("find: out of memory while building -exec arguments\n", 0);
+                find_status = 1;
+                batch->words = 0;
+                batch->used = 0;
+                return;
+        }
 
         for (b32 i = (b32)node->number; i < (b32)node->extra; i++)
                 find_exec_words[have++] = program_argument(i);
 
-        for (positive i = 0; i < batch->words && have < FIND_BATCH_WORDS; i++)
+        for (positive i = 0; i < batch->words; i++)
                 find_exec_words[have++] = batch->word[i];
 
         find_exec_words[have] = null;
@@ -3436,6 +3459,63 @@ static bool find_exec_once(find_node address_to node)
 {
         positive used = 0;
         positive have = 0;
+        positive path_length = string_length(find_path);
+        positive words = (positive)(node->extra - node->number);
+
+        if (!shell_room((address_any address_to)address_of find_exec_words,
+                        address_of find_exec_word_room, words + 1,
+                        sizeof(string_address)))
+        {
+                file_fail("find: out of memory while building -exec arguments\n", 0);
+                find_status = 1;
+                return false;
+        }
+
+        positive needed = 0;
+
+        for (b32 i = (b32)node->number; i < (b32)node->extra; i++)
+        {
+                string_address word = program_argument(i);
+
+                for (positive k = 0; string_get(word + k);)
+                {
+                        positive add = 1;
+
+                        if (string_is(word + k, '{') && string_is(word + k + 1, '}'))
+                        {
+                                add = path_length;
+                                k += 2;
+                        }
+                        else
+                                k++;
+
+                        if (needed > (positive)-1 - add)
+                        {
+                                file_fail("find: -exec arguments are too large\n", 0);
+                                find_status = 1;
+                                return false;
+                        }
+
+                        needed += add;
+                }
+
+                if (needed == (positive)-1)
+                {
+                        file_fail("find: -exec arguments are too large\n", 0);
+                        find_status = 1;
+                        return false;
+                }
+
+                needed++;
+        }
+
+        if (!shell_room((address_any address_to)address_of find_exec_text,
+                        address_of find_exec_text_room, needed ? needed : 1, 1))
+        {
+                file_fail("find: out of memory while expanding -exec arguments\n", 0);
+                find_status = 1;
+                return false;
+        }
 
         for (b32 i = (b32)node->number; i < (b32)node->extra; i++)
         {
@@ -3447,23 +3527,20 @@ static bool find_exec_once(find_node address_to node)
                         if (string_is(word + k, '{') && string_is(word + k + 1, '}'))
                         {
                                 for (positive j = 0; string_get(find_path + j); j++)
-                                        if (used < FIND_BATCH_BYTES - 1)
-                                                find_exec_text[used++] = string_get(find_path + j);
+                                        find_exec_text[used++] = string_get(find_path + j);
 
                                 k += 2;
                                 continue;
                         }
 
-                        if (used < FIND_BATCH_BYTES - 1)
-                                find_exec_text[used++] = string_get(word + k);
+                        find_exec_text[used++] = string_get(word + k);
 
                         k++;
                 }
 
                 find_exec_text[used++] = end;
 
-                if (have < FIND_BATCH_WORDS)
-                        find_exec_words[have++] = find_exec_text + at;
+                find_exec_words[have++] = find_exec_text + at;
         }
 
         find_exec_words[have] = null;
@@ -3705,6 +3782,23 @@ static b32 file_find()
         positive count = (positive)program_argument_count();
         positive index = 1;
 
+        find_used = 0;
+        find_root = -1;
+        find_bad = false;
+        find_has_action = false;
+        find_batch_have = 0;
+        find_at = 0;
+        find_count = 0;
+        find_maximum = FILE_MAX_DEPTH;
+        find_minimum = 0;
+        find_deepest = false;
+        find_one_system = false;
+        find_follow = false;
+        find_follow_named = false;
+        find_quit = false;
+        find_pruned = false;
+        find_status = 0;
+        find_device = 0;
         find_moment = file_now();
 
         while (index < count)
@@ -4280,9 +4374,6 @@ static b32 file_stat()
         under -a and nothing added to the total. -l is the flag for the other
         answer.
 */
-#define DU_SEEN 4096
-#define DU_EXCLUDES 16
-
 static bool du_all;
 static bool du_summary;
 static bool du_human;
@@ -4298,18 +4389,26 @@ static b32 du_status;
 static p64 du_grand;
 static p64 du_device;
 
-static string_address du_excludes[DU_EXCLUDES];
+static string_address address_to du_excludes;
+static positive du_exclude_room;
 static positive du_exclude_have;
 
 // -S needs to know whether the cost that just came back was a directory's,
 // and d_type is a hint some filesystems decline to give.
 static bool du_was_directory;
 
+typedef struct
+{
+        p64 inode;
+        p64 device;
+} du_seen_name;
+
 // An inode of zero is not one the kernel hands out, so it is what an unused
-// slot holds. A full table still finds names already present, but refuses the
-// next distinct inode rather than quietly counting its later names twice.
-static p64 du_seen_inode[DU_SEEN];
-static p64 du_seen_device[DU_SEEN];
+// slot holds. The open-addressed table grows before it is half full, keeping
+// repeated hard-link lookup constant-time without imposing a file ceiling.
+static du_seen_name address_to du_seen;
+static positive du_seen_room;
+static positive du_seen_have;
 static bool du_seen_broken;
 static bool du_depth_broken;
 static p8 du_unit_option;
@@ -4317,6 +4416,56 @@ static p8 du_unit_option;
 static p64 du_where(file_facts address_to facts)
 {
         return ((p64)facts->device_major << 32) | facts->device_minor;
+}
+
+static bool du_seen_grow()
+{
+        if (du_seen_room && du_seen_have + 1 < du_seen_room / 2)
+                return true;
+
+        positive room = du_seen_room ? du_seen_room << 1 : 64;
+
+        if (room < du_seen_room || room > (positive)-1 / sizeof(du_seen_name))
+                room = 0;
+
+        du_seen_name address_to made = room
+                                          ? (du_seen_name address_to)memory(
+                                                room * sizeof(du_seen_name))
+                                          : null;
+
+        if (!made || (positive)made >= (positive)-4095)
+        {
+                shell_memory_failed = true;
+                file_fail("du: out of memory while tracking hard links\n", 0);
+                du_seen_broken = true;
+                du_status = 1;
+                return false;
+        }
+
+        memory_fill(made, 0, room * sizeof(du_seen_name));
+
+        for (positive i = 0; i < du_seen_room; i++)
+        {
+                if (!du_seen[i].inode)
+                        continue;
+
+                positive at = (positive)(du_seen[i].inode * 1099511628211u +
+                                         du_seen[i].device) &
+                              (room - 1);
+
+                while (made[at].inode)
+                        at = (at + 1) & (room - 1);
+
+                made[at] = du_seen[i];
+        }
+
+        if (du_seen)
+                memory_free(du_seen, du_seen_room * sizeof(du_seen_name));
+
+        du_seen = made;
+        du_seen_room = room;
+
+        return true;
 }
 
 static bool du_already(file_facts address_to facts)
@@ -4327,28 +4476,31 @@ static bool du_already(file_facts address_to facts)
         if ((facts->mode & MODE_FORMAT) == MODE_DIRECTORY)
                 return false;
 
+        if (!du_seen_grow())
+                return true;
+
         p64 device = du_where(facts);
-        positive slot = (positive)(facts->inode * 1099511628211u + device) & (DU_SEEN - 1);
+        positive slot = (positive)(facts->inode * 1099511628211u + device) &
+                        (du_seen_room - 1);
 
-        for (positive step = 0; step < DU_SEEN; step++)
+        for (positive step = 0; step < du_seen_room; step++)
         {
-                positive at = (slot + step) & (DU_SEEN - 1);
+                positive at = (slot + step) & (du_seen_room - 1);
 
-                if (du_seen_inode[at] == facts->inode && du_seen_device[at] == device)
+                if (du_seen[at].inode == facts->inode && du_seen[at].device == device)
                         return true;
 
-                if (du_seen_inode[at])
+                if (du_seen[at].inode)
                         continue;
 
-                du_seen_inode[at] = facts->inode;
-                du_seen_device[at] = device;
+                du_seen[at].inode = facts->inode;
+                du_seen[at].device = device;
+                du_seen_have++;
 
                 return false;
         }
 
-        if (!du_seen_broken)
-                file_fail("du: too many multiply-linked files\n", 0);
-
+        file_fail("du: hard-link table is unexpectedly full\n", 0);
         du_seen_broken = true;
         du_status = 1;
 
@@ -4517,9 +4669,11 @@ static bool du_exclude_seen(p8 letter, string_address value)
         if (letter != 'e' || !value)
                 return true;
 
-        if (du_exclude_have >= DU_EXCLUDES)
+        if (!shell_room((address_any address_to)address_of du_excludes,
+                        address_of du_exclude_room, du_exclude_have + 1,
+                        sizeof(string_address)))
         {
-                file_fail("du: too many exclude patterns\n", 0);
+                file_fail("du: out of memory while reading exclude patterns\n", 0);
                 return false;
         }
 
@@ -4553,11 +4707,12 @@ static b32 file_du()
         du_unit = 1024;
         du_maximum = FILE_MAX_DEPTH;
         du_exclude_have = 0;
+        du_seen_have = 0;
         du_seen_broken = false;
         du_depth_broken = false;
         du_unit_option = 0;
-        memory_fill(du_seen_inode, 0, sizeof(du_seen_inode));
-        memory_fill(du_seen_device, 0, sizeof(du_seen_device));
+        if (du_seen_room)
+                memory_fill(du_seen, 0, du_seen_room * sizeof(du_seen_name));
 
         file_taking taking = {
             .program = (string_address) "du",

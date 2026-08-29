@@ -230,44 +230,56 @@ refuses_ls_ceiling() {
         report bad 'entry ceiling' "wanted loud refusal, got [$(head -c 50 "$work/got" | tr '\n' '|')][$got_status] $(head -1 "$work/got.err")"
 }
 
-refuses_du_excludes() {
+du_stress() {
         set --
         i=0
 
-        while [ "$i" -lt 17 ]; do
-                set -- "$@" '--exclude=*'
+        while [ "$i" -lt 40 ]; do
+                set -- "$@" "--exclude=never-match-$i"
                 i=$((i + 1))
         done
 
-        if "$binaries/du" "$@" "$fixture" > "$work/got" 2> "$work/got.err"; then
-                got_status=0
-        else
-                got_status=$?
-        fi
-
-        if [ "$got_status" -ne 0 ] && [ ! -s "$work/got" ] &&
-           grep -q '^du: too many exclude patterns$' "$work/got.err"; then
-                report ok
-                return 0
-        fi
-
-        report bad 'exclude ceiling' "wanted loud refusal, got [$(head -c 50 "$work/got" | tr '\n' '|')][$got_status] $(head -1 "$work/got.err")"
+        du "$@" "$fixture" > "$work/want" 2>/dev/null; want_status=$?
+        "$binaries/du" "$@" "$fixture" > "$work/got" 2>/dev/null; got_status=$?
+        generated_answer '40 exclude patterns' "$want_status" "$got_status"
 }
 
-refuses_du_link_ceiling() {
-        if "$binaries/du" "$1" > "$work/got" 2> "$work/got.err"; then
-                got_status=0
-        else
-                got_status=$?
-        fi
+find_stress() {
+        set -- "$fixture"
+        i=0
 
-        if [ "$got_status" -ne 0 ] && [ ! -s "$work/got" ] &&
-           grep -q '^du: too many multiply-linked files$' "$work/got.err"; then
-                report ok
-                return 0
-        fi
+        while [ "$i" -lt 160 ]; do
+                set -- "$@" -true
+                i=$((i + 1))
+        done
 
-        report bad 'hard-link ceiling' "wanted loud refusal, got [$(head -c 50 "$work/got" | tr '\n' '|')][$got_status] $(head -1 "$work/got.err")"
+        find "$@" > "$work/want" 2>/dev/null; want_status=$?
+        "$binaries/find" "$@" > "$work/got" 2>/dev/null; got_status=$?
+        generated_answer '160 expression nodes' "$want_status" "$got_status"
+
+        find "$fixture" -exec /bin/true {} + -exec /bin/true {} + \
+             -exec /bin/true {} + > "$work/want" 2>/dev/null; want_status=$?
+        "$binaries/find" "$fixture" -exec /bin/true {} + -exec /bin/true {} + \
+             -exec /bin/true {} + > "$work/got" 2>/dev/null; got_status=$?
+        generated_answer 'three exec batches' "$want_status" "$got_status"
+
+        set -- "$fixture" -exec /bin/true
+        i=0
+
+        while [ "$i" -lt 300 ]; do
+                set -- "$@" "word-$i"
+                i=$((i + 1))
+        done
+
+        set -- "$@" {} +
+        find "$@" > "$work/want" 2>/dev/null; want_status=$?
+        "$binaries/find" "$@" > "$work/got" 2>/dev/null; got_status=$?
+        generated_answer '300 exec arguments' "$want_status" "$got_status"
+
+        command="find -L '$fixture' -name alpha -print; find '$fixture' -type l; find '$fixture' -maxdepth 0"
+        /bin/sh -c "$command" > "$work/want" 2>/dev/null; want_status=$?
+        "${binaries%/bin}/shell" -c "$command" > "$work/got" 2>/dev/null; got_status=$?
+        generated_answer 'three shell invocations' "$want_status" "$got_status"
 }
 
 refuses_du_depth_ceiling() {
@@ -653,6 +665,7 @@ effect 'delete nothing' find '$TOOL tree -name nowhere -delete'
 effect 'delete deep'    find '$TOOL tree/deep -depth -delete'
 effect 'exec removes'   find '$TOOL tree -name two -exec rm {} ";"'
 effect 'exec removes many' find '$TOOL tree -type f -exec rm {} +'
+find_stress
 
 group stat
 same 'name'             stat -c '%n' "$fixture/alpha"
@@ -827,8 +840,8 @@ answered 'summary with depth' du -s -d1 "$fixture"
 answered 'bad depth word' du -d nope "$fixture"
 answered 'negative depth means zero' du -d -1 "$fixture"
 answered 'positive signed depth' du -d +1 "$fixture"
-refuses_du_excludes
-refuses_du_link_ceiling "$crowded"
+du_stress
+answered '8193 hard-link identities' du "$crowded"
 refuses_du_depth_ceiling "$deep_du"
 
 group df
