@@ -421,6 +421,13 @@ string_address address_to shell_argv;
 positive shell_argv_room;
 positive shell_argc;
 
+/* The executor supplies these only when argv[0] came unchanged from a parsed
+   literal. They let repeated loop commands reuse dispatch work without ever
+   trusting the address of lexer storage, which is reused between lines. */
+static bool shell_command_name_stable;
+static string_address shell_command_name_address;
+static positive shell_command_name_length;
+
 // Which words arrived as a bare > or >>. A quoted ">" is a file name and must
 // not be mistaken for the operator, and by then the two look identical.
 bool address_to shell_operator;
@@ -970,10 +977,38 @@ fn shell_execute_command()
 
 bool shell_builtin(string_address arguments)
 {
-        shell_command address_to command = shell_command_named(shell_argv[0]);
+        static shell_command address_to remembered;
+        static positive remembered_length;
+        shell_command address_to command = null;
+
+        if (!arguments && shell_command_name_stable &&
+            shell_argv[0] == shell_command_name_address && remembered &&
+            remembered_length == shell_command_name_length &&
+            !memory_compare(shell_argv[0], remembered->name,
+                            remembered_length))
+                command = remembered;
+        else
+        {
+                command = shell_command_named(shell_argv[0]);
+
+                if (!arguments && shell_command_name_stable &&
+                    shell_argv[0] == shell_command_name_address && command)
+                {
+                        remembered = command;
+                        remembered_length = shell_command_name_length;
+                }
+        }
 
         if (command)
         {
+
+                /* Only these two old builtins still consume a rejoined line.
+                   Everyone else reads argv directly, so do not scan and copy
+                   every argument before every ordinary builtin. */
+                if (!arguments &&
+                    (command->function == shell_mount ||
+                     command->function == shell_which))
+                        arguments = shell_arguments();
 
                 /*
                         A builtin that finishes without an opinion succeeded.

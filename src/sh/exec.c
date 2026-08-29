@@ -1164,7 +1164,7 @@ static bool exec_control_number(string_address word, bool allow_zero,
         return true;
 }
 
-static b32 exec_dispatch()
+static b32 exec_dispatch(b32 command_word)
 {
         string_address name = shell_argv[0];
         p8 initial = string_get(name);
@@ -1232,7 +1232,17 @@ static b32 exec_dispatch()
         if (body)
                 return exec_call(body);
 
-        if (shell_builtin(shell_arguments()))
+        shell_command_name_stable =
+            parse_words[command_word] == name &&
+            (parse_word_flags[command_word] & PARSE_WORD_LITERAL);
+
+        if (shell_command_name_stable)
+        {
+                shell_command_name_address = name;
+                shell_command_name_length = parse_word_lengths[command_word];
+        }
+
+        if (shell_builtin(null))
                 return shell_status;
 
         {
@@ -1584,7 +1594,7 @@ static b32 exec_simple(b32 index)
         shell_output_failed = false;
         log_failure_reset();
 
-        status = exec_dispatch();
+        status = exec_dispatch(node->word + first);
         log_flush();
 
         /* A write to a closed descriptor reaches the buffered writer at
