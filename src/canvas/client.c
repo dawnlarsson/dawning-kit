@@ -259,7 +259,7 @@ static unsigned int canvas_claim_all(void)
                         continue;
 
                 positive_into_string(
-                    memory_copy_fast_end(path, "/dev/dri/card",
+                    memory_copy_apart_end(path, "/dev/dri/card",
                                          sizeof("/dev/dri/card") - 1),
                     minor);
 

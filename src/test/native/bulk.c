@@ -9,19 +9,19 @@
         offset crossed with source offset, and the overlap distances that put a
         memmove's read on either side of its own writes.
 
-        memory_copy branches to memory_copy_fast by name rather than carrying a
+        memory_copy branches to memory_copy_apart by name rather than carrying a
         second copy of the forward direction. Darwin spells that symbol with a
         leading underscore and extract.py writes the underscored one, so the
         plain name is set to the same address here.
 */
-__asm__(".globl memory_copy_fast\n.set memory_copy_fast, _memory_copy_fast\n");
+__asm__(".globl memory_copy_apart\n.set memory_copy_apart, _memory_copy_apart\n");
 #include "bulk.h"
 
 typedef unsigned char u8;
 typedef unsigned long u64;
 
 void *memory_fill(void *, int, u64);
-void *memory_copy_fast(void *, const void *, u64);
+void *memory_copy_apart(void *, const void *, u64);
 void *memory_copy(void *, const void *, u64);
 char *string_copy(char *, const char *);
 char *string_copy_max(char *, const char *, u64);
@@ -105,9 +105,9 @@ static void memory(void)
                         for (u64 so = 0; so < 9; so++) {
                                 r_fill(got, 0xA5, ROOM);
                                 r_fill(want, 0xA5, ROOM);
-                                memory_copy_fast(got + off, from + so, size);
+                                memory_copy_apart(got + off, from + so, size);
                                 r_copy(want + off, from + so, size);
-                                whole("memory_copy_fast", size, off);
+                                whole("memory_copy_apart", size, off);
                         }
 
                         for (u64 g = 0; g < sizeof(gaps) / sizeof(gaps[0]); g++) {

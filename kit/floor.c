@@ -144,7 +144,7 @@ b32 main(void)
 
                 row("memory_fill", n, TIMED(rounds, memory_fill(out, 7, n)), f1, 2);
                 row("memory_copy", n, TIMED(rounds, memory_copy(out, one, n)), f1, 2);
-                row("memory_copy_fast", n, TIMED(rounds, memory_copy_fast(out, one, n)), f1, 2);
+                row("memory_copy_apart", n, TIMED(rounds, memory_copy_apart(out, one, n)), f1, 2);
                 row("memory_count", n, TIMED(rounds, sink += memory_count(one, n, 7)), f1, 1);
                 row("memory_first_of", n, TIMED(rounds, sink += (positive)memory_first_of(one, 0, n)), f1, 1);
                 row("memory_compare", n, TIMED(rounds, sink += (positive)memory_compare(one, two, n)), f2, 1);

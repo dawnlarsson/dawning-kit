@@ -464,7 +464,7 @@ bool file_resolve(string_address path, p8 address_to into, bool follow)
                 string_address here = working_directory_get();
 
                 length = string_length_max(here, FILE_PATH_MAX - 1);
-                memory_copy_fast(into, here, length);
+                memory_copy_apart(into, here, length);
 
                 if (length == 0)
                 {
@@ -513,7 +513,7 @@ bool file_resolve(string_address path, p8 address_to into, bool follow)
                 if (length > 1)
                         into[length++] = '/';
 
-                length = (positive)(memory_copy_fast_end(
+                length = (positive)(memory_copy_apart_end(
                     into + length, rest + start, piece) - into);
 
                 if (!follow)
@@ -533,17 +533,17 @@ bool file_resolve(string_address path, p8 address_to into, bool follow)
 
                 positive fill = (positive)seen;
 
-                memory_copy_fast(merged, link, fill);
+                memory_copy_apart(merged, link, fill);
 
                 if (rest[at] && fill + 1 < FILE_PATH_MAX)
                         merged[fill++] = '/';
 
                 positive left = string_length_max(rest + at, FILE_PATH_MAX - 1 - fill);
 
-                fill = (positive)(memory_copy_fast_end(
+                fill = (positive)(memory_copy_apart_end(
                     merged + fill, rest + at, left) - merged);
 
-                memory_copy_fast(rest, merged, fill + 1);
+                memory_copy_apart(rest, merged, fill + 1);
 
                 at = 0;
 
@@ -684,7 +684,7 @@ bool file_account_name(p8 address_to text, positive wanted, positive field,
                 if (found > limit - 1)
                         found = limit - 1;
 
-                memory_copy_fast_end(into, text + name_start, found);
+                memory_copy_apart_end(into, text + name_start, found);
 
                 return true;
         }
@@ -2006,7 +2006,7 @@ bool file_make_parents(string_address path, positive mode)
         if (length >= FILE_PATH_MAX)
                 return false;
 
-        memory_copy_fast_end(work, path, length);
+        memory_copy_apart_end(work, path, length);
 
         for (positive i = 1; i < length; i++)
         {
@@ -2148,7 +2148,7 @@ static bool ls_keep(string_address name, positive address_to where)
 
         positive at = ls_used;
 
-        memory_copy_fast(ls_arena + at, name, length + 1);
+        memory_copy_apart(ls_arena + at, name, length + 1);
 
         ls_used += length + 1;
         address_to where = at;
@@ -2712,7 +2712,7 @@ static fn ls_below(string_address path, positive depth)
                         return;
                 }
 
-                memory_copy_fast(keep + kept, name, length + 1);
+                memory_copy_apart(keep + kept, name, length + 1);
 
                 kept += length + 1;
                 found++;
@@ -3030,14 +3030,14 @@ static bipolar file_exec_path_try_in(string_address name,
                         if (needed <= FILE_PATH_MAX)
                         {
                                 if (length)
-                                        memory_copy_fast(candidate, path, length);
+                                        memory_copy_apart(candidate, path, length);
                                 else
                                         candidate[0] = '.';
 
                                 if (candidate[filled - 1] != '/')
                                         candidate[filled++] = '/';
 
-                                memory_copy_fast_end(candidate + filled, name, named);
+                                memory_copy_apart_end(candidate + filled, name, named);
 
                                 bipolar answer =
                                     system_call_3(syscall(execve), (positive)candidate,
@@ -6745,7 +6745,7 @@ static fn realpath_relative(string_address from, string_address path, p8 address
 
                 positive rest = string_length_max(path + mark, FILE_PATH_MAX - 1 - length);
 
-                memory_copy_fast(into + length, path + mark, rest);
+                memory_copy_apart(into + length, path + mark, rest);
                 length += rest;
         }
 
@@ -8613,7 +8613,7 @@ static b32 file_yes()
                         if (i > first)
                                 line[used++] = ' ';
 
-                        used = (positive)(memory_copy_fast_end(
+                        used = (positive)(memory_copy_apart_end(
                             line + used, word, have) - line);
                 }
         }
@@ -9544,7 +9544,7 @@ static b32 file_mktemp()
                         return 1;
                 }
 
-                memory_copy_fast(path, base, length);
+                memory_copy_apart(path, base, length);
 
                 while (length > 1 && path[length - 1] == '/')
                         length--;
@@ -10299,7 +10299,7 @@ static bool xargs_words_room(positive extra)
                 return false;
 
         if (xargs_word_count)
-                memory_copy_fast(grown, xargs_words,
+                memory_copy_apart(grown, xargs_words,
                                  xargs_word_count * sizeof(string_address));
 
         xargs_words = grown;
@@ -10357,7 +10357,7 @@ static fn xargs_item_put(p8 letter)
                 }
 
                 if (xargs_item_length)
-                        memory_copy_fast(grown, xargs_item, xargs_item_length);
+                        memory_copy_apart(grown, xargs_item, xargs_item_length);
 
                 xargs_item = grown;
                 xargs_item_room = room;
@@ -10475,7 +10475,7 @@ static bool xargs_execute_range(positive first, positive count)
         }
 
         if (xargs_prefix_words)
-                memory_copy_fast(words, xargs_words,
+                memory_copy_apart(words, xargs_words,
                                  xargs_prefix_words * sizeof(string_address));
 
         for (positive i = 0; i < count; i++)
@@ -10584,7 +10584,7 @@ static bool xargs_keep_template()
         if (!xargs_template)
                 return false;
 
-        memory_copy_fast(xargs_template, xargs_words,
+        memory_copy_apart(xargs_template, xargs_words,
                          xargs_word_count * sizeof(string_address));
         return true;
 }
@@ -10641,13 +10641,13 @@ static bool xargs_replaced(string_address item)
                         string_address hit = mark ? string_find(scan, xargs_replace) : null;
                         positive kept = hit ? (positive)(hit - scan) : string_length(scan);
 
-                        memory_copy_fast(made + used, scan, kept);
+                        memory_copy_apart(made + used, scan, kept);
                         used += kept;
 
                         if (!hit)
                                 break;
 
-                        memory_copy_fast(made + used, item, item_length);
+                        memory_copy_apart(made + used, item, item_length);
                         used += item_length;
                         scan = hit + mark;
                 }

@@ -152,7 +152,7 @@ static awk_text address_to awk_text_new(string_address from, positive length)
 
         awk_text address_to made = awk_text_room(length);
 
-        memory_copy_fast(made->text, from, length);
+        memory_copy_apart(made->text, from, length);
         return made;
 }
 
@@ -2052,9 +2052,9 @@ static fn awk_pieces_room(positive want)
         positive address_to starts = (positive address_to)awk_take(room * sizeof(positive));
         positive address_to lengths = (positive address_to)awk_take(room * sizeof(positive));
 
-        memory_copy_fast(starts, awk_piece_start,
+        memory_copy_apart(starts, awk_piece_start,
                          awk_piece_count * sizeof(positive));
-        memory_copy_fast(lengths, awk_piece_length,
+        memory_copy_apart(lengths, awk_piece_length,
                          awk_piece_count * sizeof(positive));
 
         awk_give(awk_piece_start);
@@ -2237,7 +2237,7 @@ static fn awk_fields_reserve(positive want)
                 made[i].state = AWK_UNSET;
         }
 
-        memory_copy_fast(made, awk_fields,
+        memory_copy_apart(made, awk_fields,
                          awk_fields_room * sizeof(awk_value));
 
         awk_give(awk_fields);
@@ -2303,11 +2303,11 @@ static fn awk_record_rebuild()
 
                 if (i > 1)
                 {
-                        memory_copy_fast(made->text + at, separator, length);
+                        memory_copy_apart(made->text + at, separator, length);
                         at += length;
                 }
 
-                memory_copy_fast(made->text + at, piece->text, piece->length);
+                memory_copy_apart(made->text + at, piece->text, piece->length);
                 at += piece->length;
         }
 
@@ -2632,7 +2632,7 @@ static fn awk_reader_room(awk_reader address_to which, positive want)
         p8 address_to made = (p8 address_to)awk_take(room);
 
         if (which->filled > which->at)
-                memory_copy_fast(made, which->data + which->at, which->filled - which->at);
+                memory_copy_apart(made, which->data + which->at, which->filled - which->at);
 
         which->filled -= which->at;
         which->at = 0;
@@ -2987,7 +2987,7 @@ static fn awk_builder_room(awk_builder address_to build, positive want)
 
         p8 address_to made = (p8 address_to)awk_take(room);
 
-        memory_copy_fast(made, build->data, build->used);
+        memory_copy_apart(made, build->data, build->used);
 
         if (build->heap)
                 awk_give(build->data);
@@ -3000,7 +3000,7 @@ static fn awk_builder_room(awk_builder address_to build, positive want)
 static fn awk_builder_put(awk_builder address_to build, string_address data, positive length)
 {
         awk_builder_room(build, build->used + length + 1);
-        memory_copy_fast(build->data + build->used, data, length);
+        memory_copy_apart(build->data + build->used, data, length);
         build->used += length;
 }
 
@@ -5636,8 +5636,8 @@ static fn awk_eval(awk_node address_to node, awk_value address_to out)
                 awk_text address_to right = awk_eval_text(node->b);
                 awk_text address_to made = awk_text_room(left->length + right->length);
 
-                memory_copy_fast(made->text, left->text, left->length);
-                memory_copy_fast(made->text + left->length, right->text, right->length);
+                memory_copy_apart(made->text, left->text, left->length);
+                memory_copy_apart(made->text + left->length, right->text, right->length);
                 awk_text_drop(left);
                 awk_text_drop(right);
                 awk_set_text(out, made);

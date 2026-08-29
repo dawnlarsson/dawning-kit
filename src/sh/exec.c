@@ -2090,7 +2090,7 @@ static fn conditional_regex_program(regex_program address_to saved)
         saved->loop_count = regex_loop_count;
 
         if (regex_loop_count)
-                memory_copy_fast(saved->loops, regex_loop_list,
+                memory_copy_apart(saved->loops, regex_loop_list,
                                  (positive)(regex_loop_count < REGEX_LOOPS_KEPT
                                                 ? regex_loop_count
                                                 : REGEX_LOOPS_KEPT) *
@@ -2126,10 +2126,10 @@ static bool conditional_regex_match(string_address text, string_address pattern,
         bool matched = false;
 
         conditional_regex_program(address_of saved);
-        memory_copy_fast(slots, regex_slots, sizeof(slots));
-        memory_copy_fast(first, saved.first, sizeof(first));
-        memory_copy_fast(last, saved.last, sizeof(last));
-        memory_copy_fast(literal, saved.literal, sizeof(literal));
+        memory_copy_apart(slots, regex_slots, sizeof(slots));
+        memory_copy_apart(first, saved.first, sizeof(first));
+        memory_copy_apart(last, saved.last, sizeof(last));
+        memory_copy_apart(literal, saved.literal, sizeof(literal));
 
         address_to valid = regex_compile(pattern, true, false, false);
 
@@ -2139,9 +2139,9 @@ static bool conditional_regex_match(string_address text, string_address pattern,
         regex_pool_used = code_mark;
         regex_pool_sets = set_mark;
         regex_first_used = first_mark;
-        memory_copy_fast(saved.first, first, sizeof(first));
-        memory_copy_fast(saved.last, last, sizeof(last));
-        memory_copy_fast(saved.literal, literal, sizeof(literal));
+        memory_copy_apart(saved.first, first, sizeof(first));
+        memory_copy_apart(saved.last, last, sizeof(last));
+        memory_copy_apart(saved.literal, literal, sizeof(literal));
         regex_select(address_of saved);
         regex_set_count = set_count;
         regex_escapes = escapes;
@@ -2152,7 +2152,7 @@ static bool conditional_regex_match(string_address text, string_address pattern,
         regex_pattern_at = saved_pattern_at;
         regex_text = saved_text;
         regex_text_length = saved_text_length;
-        memory_copy_fast(regex_slots, slots, sizeof(slots));
+        memory_copy_apart(regex_slots, slots, sizeof(slots));
         return matched;
 }
 

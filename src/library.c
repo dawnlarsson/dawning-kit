@@ -149,9 +149,9 @@
           memory_compare                 public  yes     yes     yes
           memory_compare_ascii_case      public  yes     yes     yes
           memory_copy                    public  yes     yes     yes
+          memory_copy_apart              public  yes     yes     yes
+          memory_copy_apart_end          public  yes     yes     yes
           memory_copy_end                public  yes     yes     yes
-          memory_copy_fast               public  yes     yes     yes
-          memory_copy_fast_end           public  yes     yes     yes
           memory_copy_source_first       public  yes     yes     yes
           memory_copy_until              public  yes     yes     yes
           memory_count                   public  yes     yes     yes
@@ -1205,7 +1205,7 @@ typedef union matrix4
         the mitigation made this into.
 
         That is not hypothetical. Nine routines here were written that way --
-        string_first_of, string_first_of_max, memory_first_of, string_length_max, memset, memory_copy_fast, strncpy,
+        string_first_of, string_first_of_max, memory_first_of, string_length_max, memset, memory_copy_apart, strncpy,
         string_last_of_or_end and string_cut, which is very nearly the list of what the rest
         of the kernel calls. It was found by building the file with ASM_RET
         defined as ud2 and disassembling: everything that went through the
@@ -1364,10 +1364,10 @@ typedef union matrix4
 */
 #if defined(KERNEL_MODE) && X64
 #define KERNEL_BULK_COPY                                                      \
-    "   cmp $32, %rdx\n   jbe .Lcopy_fast_short\n"                            \
-    ALTERNATIVE("jmp .Lcopy_fast_short", "", X86_FEATURE_ERMS) "\n"            \
+    "   cmp $32, %rdx\n   jbe .Lcopy_apart_short\n"                            \
+    ALTERNATIVE("jmp .Lcopy_apart_short", "", X86_FEATURE_ERMS) "\n"            \
     "   mov %rdi, %rax\n   mov %rdx, %rcx\n   rep movsb\n" ASM_RET           \
-    ".Lcopy_fast_short:\n"
+    ".Lcopy_apart_short:\n"
 
 //      Same, and the destination is kept in r8 because rep stosb wants the
 //      byte in al and memset still has to hand the destination back.
@@ -3374,7 +3374,7 @@ __asm__(
     ASM_RET
     ASM_END(memory_translate)
 
-    ASM_FUNC(memory_copy_fast)
+    ASM_FUNC(memory_copy_apart)
     KERNEL_BULK_COPY
     "mov %rdi, %rax\n   cmp $32, %rdx\n   ja 6f\n   cmp $16, %rdx\n"
     "jb 7f\n"
@@ -3498,17 +3498,17 @@ __asm__(
     ASM_RET
     "0:  mov %rdx, %rcx\n   rep movsb\n"
     ASM_RET
-    ASM_END(memory_copy_fast)
+    ASM_END(memory_copy_apart)
 
     // Exact non-overlapping copy, followed by one terminator, with dst+n
     // returned. The end pointer is the only value that must survive the
     // shared fast-copy core. As with memory_copy_end below, a real call keeps
     // CET shadow stacks and the kernel return thunk paired truthfully.
-    ASM_FUNC(memory_copy_fast_end)
-    "lea (%rdi,%rdx), %rax\n   push %rax\n   call memory_copy_fast\n   pop %rax\n"
+    ASM_FUNC(memory_copy_apart_end)
+    "lea (%rdi,%rdx), %rax\n   push %rax\n   call memory_copy_apart\n   pop %rax\n"
     "movb $0, (%rax)\n"
     ASM_RET
-    ASM_END(memory_copy_fast_end)
+    ASM_END(memory_copy_apart_end)
 
     // Backwards only where the regions overlap the wrong way. A plain loop
     // rather than the direction flag: the kernel requires it clear on every
@@ -3516,7 +3516,7 @@ __asm__(
     ASM_FUNC(memory_copy)
     "mov %rdi, %rax\n   cmp %rsi, %rdi\n   jbe 1f\n   mov %rsi, %r8\n"
     "add %rdx, %r8\n   cmp %r8, %rdi\n   jb 2f\n"
-    "1:  jmp memory_copy_fast\n"
+    "1:  jmp memory_copy_apart\n"
     "2:\n"
     ASM_USERSPACE_WIDE(
     ASM_NARROW("cpu_has_avx2", "5f") "   cmp $128, %rdx\n   jb 5f\n"
@@ -3616,7 +3616,7 @@ __asm__(
     "jmp 3f\n"
     "2:  bsf %eax, %eax\n"
     "3:  lea 1(%rax), %rdx  # the terminator is copied too\n"
-    "vzeroupper\n   jmp memory_copy_fast\n"
+    "vzeroupper\n   jmp memory_copy_apart\n"
     )
     //       No AVX2: the same scan eight bytes at a time, as string_length does it.
     "5:  mov %rsi, %r8\n   mov %esi, %ecx\n   and $7, %ecx\n   and $-8, %r8\n"
@@ -3627,7 +3627,7 @@ __asm__(
     "and %r9, %rax\n   and %r11, %rax\n   jnz 2f\n   add $8, %r8\n"
     "mov (%r8), %rdx\n   jmp 1b\n"
     "2:  bsf %rax, %rax\n   shr $3, %rax\n   add %r8, %rax\n   sub %rsi, %rax\n"
-    "lea 1(%rax), %rdx\n   jmp memory_copy_fast\n"
+    "lea 1(%rax), %rdx\n   jmp memory_copy_apart\n"
     ASM_END(string_copy)
     ASM_SECTION
     //
@@ -3667,8 +3667,8 @@ __asm__(
     "2:  bsf %eax, %eax\n"
     "3:  vzeroupper\n   cmp %rdx, %rax\n   jae 8f  # the bound came first\n"
     "lea 1(%rax), %rdx\n"
-    "8:  jmp memory_copy_fast\n"
-    "4:  vzeroupper\n   jmp memory_copy_fast\n"
+    "8:  jmp memory_copy_apart\n"
+    "4:  vzeroupper\n   jmp memory_copy_apart\n"
     )
     "9:  " ASM_RET
     "5:  lea (%rsi,%rdx), %r9\n   mov %rsi, %r8\n   mov %esi, %ecx\n   and $7, %ecx\n"
@@ -3680,7 +3680,7 @@ __asm__(
     "jae 4f\n   mov (%r8), %r10\n   jmp 1b\n"
     "2:  bsf %rax, %rax\n   shr $3, %rax\n   add %r8, %rax\n   sub %rsi, %rax\n"
     "cmp %rdx, %rax\n   jae 4f\n   lea 1(%rax), %rdx\n"
-    "4:  jmp memory_copy_fast\n"
+    "4:  jmp memory_copy_apart\n"
     ASM_END(string_copy_max)
     //
     //       string_copy_max_end -- the bounded copy, and where it ended.
@@ -3689,7 +3689,7 @@ __asm__(
     //       long it turned out to be, because the next thing they write goes
     //       after it: a path joined to a name, a name joined to a suffix, a
     //       field packed into a line. Every one of them wrote the pair out --
-    //       string_length_max to measure, memory_copy_fast to copy, a
+    //       string_length_max to measure, memory_copy_apart to copy, a
     //       terminator by hand, and the count kept in a local -- and every
     //       string_length_max call in the tree is one half of that pair and
     //       nothing else.
@@ -3722,7 +3722,7 @@ __asm__(
     "push %rbx\n   push %r12\n   push %r13\n   mov %rdi, %rbx  # the destination\n"
     "mov %rsi, %r12  # the source\n"
     "mov %rsi, %rdi\n   mov %rdx, %rsi\n   call string_length_max\n   mov %rax, %r13  # how much of it there was\n"
-    "mov %rbx, %rdi\n   mov %r12, %rsi\n   mov %r13, %rdx\n   call memory_copy_fast\n"
+    "mov %rbx, %rdi\n   mov %r12, %rsi\n   mov %r13, %rdx\n   call memory_copy_apart\n"
     "lea (%rbx,%r13), %rax\n   movb $0, (%rax)\n   pop %r13\n   pop %r12\n"
     "pop %rbx\n"
     ASM_RET
@@ -3834,7 +3834,7 @@ __asm__(
     "mov %r14, %rsi\n   mov $1, %edx\n   jmp 6f\n"
     "5:  lea (%r14,%rcx,1), %rsi\n   sub %rcx, %rdx\n"
     "6:  lea -1(%r12), %rax\n   cmp %rax, %rdx\n   cmova %rax, %rdx\n   mov %rbx, %rdi\n"
-    "call memory_copy_fast_end\n   sub %rbx, %rax\n   jmp .Lpath_x86_return\n"
+    "call memory_copy_apart_end\n   sub %rbx, %rax\n   jmp .Lpath_x86_return\n"
     // dirname copy
     ".Lpath_x86_head:\n   test %rcx, %rcx\n   jnz 7f\n   cmp $1, %r12\n"
     "je 8f\n   movb $46, (%rbx)\n   movb $0, 1(%rbx)\n   mov $1, %eax\n"
@@ -3843,7 +3843,7 @@ __asm__(
     "7:  cmp $1, %rcx\n   jbe 9f\n   cmpb $47, -1(%r14,%rcx,1)\n   jne 9f\n"
     "dec %rcx\n   jmp 7b\n"
     "9:  lea -1(%r12), %rdx\n   cmp %rdx, %rcx\n   cmova %rdx, %rcx\n   mov %r14, %rsi\n"
-    "mov %rcx, %rdx\n   mov %rbx, %rdi\n   call memory_copy_fast_end\n   sub %rbx, %rax\n"
+    "mov %rcx, %rdx\n   mov %rbx, %rdi\n   call memory_copy_apart_end\n   sub %rbx, %rax\n"
     ".Lpath_x86_return:\n   add $8, %rsp\n   pop %r14\n   pop %r13\n"
     "pop %r12\n   pop %rbx\n"
     ASM_RET
@@ -3880,11 +3880,11 @@ __asm__(
     "push %r13\n   push %r14\n   push %r15\n   mov %rdi, %rbx\n"
     "mov %rsi, %r12\n   mov %rdx, %r13\n   mov %rcx, %r14\n   mov %r13, %rdi\n"
     "lea -1(%r12), %rsi\n   call string_length_max\n   mov %rax, %r15\n   mov %rbx, %rdi\n"
-    "mov %r13, %rsi\n   mov %r15, %rdx\n   call memory_copy_fast\n   test %r15, %r15\n"
+    "mov %r13, %rsi\n   mov %r15, %rdx\n   call memory_copy_apart\n   test %r15, %r15\n"
     "jz 2f\n   cmpb $47, -1(%rbx,%r15,1)\n   je 2f\n   lea 1(%r15), %rax\n"
     "cmp %r12, %rax\n   jae 2f\n   movb $47, (%rbx,%r15,1)\n   mov %rax, %r15\n"
     "2:  lea -1(%r12), %rsi\n   sub %r15, %rsi\n   mov %r14, %rdi\n   call string_length_max\n"
-    "mov %rax, %rdx\n   lea (%rbx,%r15,1), %rdi\n   mov %r14, %rsi\n   call memory_copy_fast_end\n"
+    "mov %rax, %rdx\n   lea (%rbx,%r15,1), %rdi\n   mov %r14, %rsi\n   call memory_copy_apart_end\n"
     "sub %rbx, %rax\n   pop %r15\n   pop %r14\n   pop %r13\n"
     "pop %r12\n   pop %rbx\n"
     ASM_RET
@@ -4180,7 +4180,7 @@ ASM_FUNC(positive_to_string)
     //       table lookup and one exact store; three and four digits take two
     //       table lookups. Larger values use the same branchless,
     //       hundred-million-chunk core as positive_to_string. On x86_64 and
-    //       arm64 memory_copy_fast moves its at-most-twenty-byte answer; the
+    //       arm64 memory_copy_apart moves its at-most-twenty-byte answer; the
     //       RISC-V block uses an unrolled byte copy because its architectural
     //       floor does not promise unaligned word access. That shares the
     //       expensive conversion without making the writer API copy its
@@ -4230,7 +4230,7 @@ ASM_FUNC(positive_to_string)
     ".Lpositive_into_wide:\n   sub $56, %rsp  # aligned calls; scratch occupies the top twenty bytes\n"
     "mov %rdi, (%rsp)\n   mov %r11, 8(%rsp)\n   lea 56(%rsp), %rdi\n   call positive_digits_core\n"
     "mov %rsi, 16(%rsp)\n   mov %rdi, %rsi\n   mov (%rsp), %rdi\n   mov 16(%rsp), %rdx\n"
-    "call memory_copy_fast\n   mov 16(%rsp), %rax\n   mov (%rsp), %rdi\n   mov 8(%rsp), %r11\n"
+    "call memory_copy_apart\n   mov 16(%rsp), %rax\n   mov (%rsp), %rdi\n   mov 8(%rsp), %r11\n"
     "test $2, %r11d\n   jz 3f\n   movb $0, (%rdi,%rax)\n"
     "3:\n   and $1, %r11d\n   add %r11, %rax\n   add $56, %rsp\n"
     ASM_RET
@@ -6954,7 +6954,7 @@ __asm__(
     ASM_RET
     ASM_END(memory_translate)
 
-    ASM_FUNC(memory_copy_fast)
+    ASM_FUNC(memory_copy_apart)
 #ifdef KERNEL_MODE
     // The fast contract excludes overlap, exactly the kernel memcpy contract.
     "b memcpy\n"
@@ -7021,16 +7021,16 @@ __asm__(
     "mov x0, x3\n"
     ASM_RET
 #endif
-    ASM_END(memory_copy_fast)
+    ASM_END(memory_copy_apart)
 
-    // memory_copy_fast_end: exact non-overlapping copy, one terminator, and
+    // memory_copy_apart_end: exact non-overlapping copy, one terminator, and
     // dst+n. The x86_64 block carries the full contract.
-    ASM_FUNC(memory_copy_fast_end)
+    ASM_FUNC(memory_copy_apart_end)
     "add x3, x0, x2\n   stp x3, x30, [sp,  #-16]!\n"
-    "bl memory_copy_fast\n   ldp x0, x30, [sp], #16\n"
+    "bl memory_copy_apart\n   ldp x0, x30, [sp], #16\n"
     "strb wzr, [x0]\n"
     ASM_RET
-    ASM_END(memory_copy_fast_end)
+    ASM_END(memory_copy_apart_end)
 
     ASM_FUNC(memory_copy)
 #ifdef KERNEL_MODE
@@ -7039,7 +7039,7 @@ __asm__(
 #else
     "cmp x0, x1\n   b.ls 1f\n   add x4, x1, x2\n   cmp x0, x4\n"
     "b.lo 2f\n"
-    "1:  b memory_copy_fast\n"
+    "1:  b memory_copy_apart\n"
     "2:  mov x3, x0\n   cmp x2, #128\n"
     "b.lo 5f\n   ldp q4, q5, [x1]\n   ldp q6, q7, [x1, #32]\n"
     "add x4, x0, x2\n   add x5, x1, x2\n   ldp q16, q17, [x5,  #-64]\n"
@@ -7133,7 +7133,7 @@ __asm__(
     "add x9, x5, x9\n   sub x2, x9, x1\n   b 3f\n"
     "2:  rbit x9, x9\n   clz x9, x9\n   lsr x2, x9, #2\n"
     "3:  add x2, x2, #1  // the terminator is copied too\n"
-    "b memory_copy_fast\n"
+    "b memory_copy_apart\n"
 #endif
     ASM_END(string_copy)
     ASM_SECTION
@@ -7181,7 +7181,7 @@ __asm__(
     "2:  rbit x9, x9\n   clz x9, x9\n   lsr x8, x9, #2\n"
     "3:  cmp x8, x2\n   b.hs 4f  // the bound came first\n"
     "add x2, x8, #1\n"
-    "4:  b memory_copy_fast\n"
+    "4:  b memory_copy_apart\n"
     "9:  mov x0, x3\n"
     ASM_RET
 #endif
@@ -7197,7 +7197,7 @@ __asm__(
     "mov x19, x0  // the destination\n"
     "mov x20, x1  // the source\n"
     "mov x0, x1\n   mov x1, x2\n   bl string_length_max\n   mov x21, x0  // how much of it there was\n"
-    "mov x0, x19\n   mov x1, x20\n   mov x2, x21\n   bl memory_copy_fast\n"
+    "mov x0, x19\n   mov x1, x20\n   mov x2, x21\n   bl memory_copy_apart\n"
     "add x0, x19, x21\n   strb wzr, [x0]\n   ldr x21, [sp, #32]\n"
     "ldp x19, x20, [sp, #16]\n"
     "ldp x29, x30, [sp], #48\n"
@@ -7321,7 +7321,7 @@ __asm__(
     "mov x1, x22\n   b 7f\n"
     "6:  add x3, x22, x2\n   sub x2, x1, x2\n   mov x1, x3\n"
     "7:  sub x3, x20, #1\n"
-    "cmp x2, x3\n   csel x2, x2, x3, ls\n   mov x0, x19\n   bl memory_copy_fast_end\n"
+    "cmp x2, x3\n   csel x2, x2, x3, ls\n   mov x0, x19\n   bl memory_copy_apart_end\n"
     "sub x0, x0, x19\n   b .Lpath_arm_return\n"
     // dirname copy
     ".Lpath_arm_head:\n   cbnz x2, 8f\n   cmp x20, #1\n"
@@ -7337,7 +7337,7 @@ __asm__(
     "b.ne 7f\n   mov x2, x3\n   b 8b\n"
     "7:  sub x3, x20, #1\n"
     "cmp x2, x3\n   csel x2, x2, x3, ls\n   mov x0, x19\n   mov x1, x22\n"
-    "bl memory_copy_fast_end\n   sub x0, x0, x19\n"
+    "bl memory_copy_apart_end\n   sub x0, x0, x19\n"
     ".Lpath_arm_return:\n   ldp x21, x22, [sp, #32]\n"
     "ldp x19, x20, [sp, #16]\n"
     "ldp x29, x30, [sp], #48\n"
@@ -7381,14 +7381,14 @@ __asm__(
     "mov x19, x0\n   mov x20, x1\n   mov x21, x2\n   mov x22, x3\n"
     "mov x0, x21\n   sub x1, x20, #1\n"
     "bl string_length_max\n   mov x23, x0\n   mov x0, x19\n   mov x1, x21\n"
-    "mov x2, x23\n   bl memory_copy_fast\n   cbz x23, 2f\n   sub x4, x23, #1\n"
+    "mov x2, x23\n   bl memory_copy_apart\n   cbz x23, 2f\n   sub x4, x23, #1\n"
     "ldrb w5, [x19, x4]\n   cmp w5, #47\n"
     "b.eq 2f\n   add x4, x23, #1\n"
     "cmp x4, x20\n   b.hs 2f\n   mov w5, #47\n"
     "strb w5, [x19, x23]\n   mov x23, x4\n"
     "2:  sub x1, x20, #1\n"
     "sub x1, x1, x23\n   mov x0, x22\n   bl string_length_max\n   mov x2, x0\n"
-    "add x0, x19, x23\n   mov x1, x22\n   bl memory_copy_fast_end\n   sub x0, x0, x19\n"
+    "add x0, x19, x23\n   mov x1, x22\n   bl memory_copy_apart_end\n   sub x0, x0, x19\n"
     "ldr x23, [sp, #48]\n"
     "ldp x21, x22, [sp, #32]\n"
     "ldp x19, x20, [sp, #16]\n"
@@ -7664,7 +7664,7 @@ ASM_FUNC(positive_to_string)
     "bl positive_digits_core\n   str x1, [sp, #32]\n"
     "mov x1, x0\n   ldr x0, [sp, #16]\n"
     "ldr x2, [sp, #32]\n"
-    "bl memory_copy_fast\n   ldr x8, [sp, #32]\n"
+    "bl memory_copy_apart\n   ldr x8, [sp, #32]\n"
     "ldr x11, [sp, #24]\n"
     "tbz x11, #1, 3f\n"
     "strb wzr, [x0, x8]\n"
@@ -9865,7 +9865,7 @@ __asm__(
     ASM_RET
     ASM_END(memory_translate)
 
-    ASM_FUNC(memory_copy_fast)
+    ASM_FUNC(memory_copy_apart)
     "mv a3, a0\n   beqz a2, 9f\n   xor t0, a0, a1\n   andi t0, t0, 7\n"
     "bnez t0, 8f\n   andi t0, a0, 7\n   beqz t0, 2f\n"
     "1:  lbu t1, 0(a1)\n   sb t1, 0(a0)\n   addi a0, a0, 1\n   addi a1, a1, 1\n"
@@ -9886,20 +9886,20 @@ __asm__(
     "addi a1, a1, 1\n   addi a2, a2, -1\n   j 8b\n"
     "9:  mv a0, a3\n"
     ASM_RET
-    ASM_END(memory_copy_fast)
+    ASM_END(memory_copy_apart)
 
-    // memory_copy_fast_end: exact non-overlapping copy, one terminator, and
+    // memory_copy_apart_end: exact non-overlapping copy, one terminator, and
     // dst+n. The x86_64 block carries the full contract.
-    ASM_FUNC(memory_copy_fast_end)
+    ASM_FUNC(memory_copy_apart_end)
     "add t0, a0, a2\n   addi sp, sp, -16\n   sd t0, 0(sp)\n   sd ra, 8(sp)\n"
-    "call memory_copy_fast\n   ld a0, 0(sp)\n   ld ra, 8(sp)\n   addi sp, sp, 16\n"
+    "call memory_copy_apart\n   ld a0, 0(sp)\n   ld ra, 8(sp)\n   addi sp, sp, 16\n"
     "sb zero, 0(a0)\n"
     ASM_RET
-    ASM_END(memory_copy_fast_end)
+    ASM_END(memory_copy_apart_end)
 
     ASM_FUNC(memory_copy)
     "bleu a0, a1, 1f\n   sub t0, a0, a1\n   bgeu t0, a2, 1f\n   j 2f\n"
-    "1:  tail memory_copy_fast\n"
+    "1:  tail memory_copy_apart\n"
     "2:  mv a3, a0\n   add a4, a0, a2\n   add a5, a1, a2\n   beqz a2, 9f\n"
     "xor t0, a4, a5\n   andi t0, t0, 7\n   bnez t0, 8f\n   andi t0, a4, 7\n"
     "beqz t0, 3f\n"
@@ -9961,7 +9961,7 @@ __asm__(
     "addi t2, t2, -1\n   and t2, t2, t0\n   mul t2, t2, t0\n   srli t2, t2, 56\n"
     "addi t2, t2, -1  # its byte within the word\n"
     "add a2, a5, t2\n   sub a2, a2, a1\n   addi a2, a2, 1  # the terminator is copied too\n"
-    "tail memory_copy_fast\n"
+    "tail memory_copy_apart\n"
     ASM_END(string_copy)
     ASM_SECTION
     //       string_append: the x86_64 block carries the reasoning.
@@ -9988,7 +9988,7 @@ __asm__(
     "sub t2, t2, a1  # the length\n"
     "bgeu t2, a2, 4f  # the bound came first\n"
     "addi a2, t2, 1\n"
-    "4:  tail memory_copy_fast\n"
+    "4:  tail memory_copy_apart\n"
     "9:  mv a0, a3\n"
     ASM_RET
     ASM_END(string_copy_max)
@@ -10000,7 +10000,7 @@ __asm__(
     "sd s2, 16(sp)\n   mv s0, a0  # the destination\n"
     "mv s1, a1  # the source\n"
     "mv a0, a1\n   mv a1, a2\n   call string_length_max\n   mv s2, a0  # how much of it there was\n"
-    "mv a0, s0\n   mv a1, s1\n   mv a2, s2\n   call memory_copy_fast\n"
+    "mv a0, s0\n   mv a1, s1\n   mv a2, s2\n   call memory_copy_apart\n"
     "add a0, s0, s2\n   sb zero, 0(a0)\n   ld ra, 40(sp)\n   ld s0, 32(sp)\n"
     "ld s1, 24(sp)\n   ld s2, 16(sp)\n   addi sp, sp, 48\n"
     ASM_RET
@@ -10097,7 +10097,7 @@ __asm__(
     "bne t1, t2, .Lpath_rv_tail_normal\n   li a2, 1\n   mv a1, s3\n   j .Lpath_rv_tail_copy\n"
     ".Lpath_rv_tail_normal:\n   add t0, s3, a2\n   sub a2, a1, a2\n   mv a1, t0\n"
     ".Lpath_rv_tail_copy:\n   addi t0, s1, -1\n   bleu a2, t0, .Lpath_rv_tail_bounded\n   mv a2, t0\n"
-    ".Lpath_rv_tail_bounded:\n   mv a0, s0\n   call memory_copy_fast_end\n   sub a0, a0, s0\n"
+    ".Lpath_rv_tail_bounded:\n   mv a0, s0\n   call memory_copy_apart_end\n   sub a0, a0, s0\n"
     "j .Lpath_rv_return\n"
     // dirname copy
     ".Lpath_rv_head:\n   bnez a2, .Lpath_rv_head_trim\n   li t0, 1\n   beq s1, t0, .Lpath_rv_head_cap1\n"
@@ -10108,7 +10108,7 @@ __asm__(
     "lbu t2, -1(t1)\n   li t3, 47\n   bne t2, t3, .Lpath_rv_head_copy\n   addi a2, a2, -1\n"
     "j .Lpath_rv_head_trim\n"
     ".Lpath_rv_head_copy:\n   addi t0, s1, -1\n   bleu a2, t0, .Lpath_rv_head_bounded\n   mv a2, t0\n"
-    ".Lpath_rv_head_bounded:\n   mv a0, s0\n   mv a1, s3\n   call memory_copy_fast_end\n"
+    ".Lpath_rv_head_bounded:\n   mv a0, s0\n   mv a1, s3\n   call memory_copy_apart_end\n"
     "sub a0, a0, s0\n"
     ".Lpath_rv_return:\n   ld ra, 40(sp)\n   ld s0, 32(sp)\n   ld s1, 24(sp)\n"
     "ld s2, 16(sp)\n   ld s3, 8(sp)\n   addi sp, sp, 48\n"
@@ -10144,12 +10144,12 @@ __asm__(
     "sd s1, 24(sp)\n   sd s2, 16(sp)\n   sd s3, 8(sp)\n   sd s4, 0(sp)\n"
     "mv s0, a0\n   mv s1, a1\n   mv s2, a2\n   mv s3, a3\n"
     "mv a0, s2\n   addi a1, s1, -1\n   call string_length_max\n   mv s4, a0\n"
-    "mv a0, s0\n   mv a1, s2\n   mv a2, s4\n   call memory_copy_fast\n"
+    "mv a0, s0\n   mv a1, s2\n   mv a2, s4\n   call memory_copy_apart\n"
     "beqz s4, 2f\n   add t0, s0, s4\n   lbu t1, -1(t0)\n   li t2, 47\n"
     "beq t1, t2, 2f\n   addi t0, s4, 1\n   bgeu t0, s1, 2f\n   add t1, s0, s4\n"
     "sb t2, 0(t1)\n   mv s4, t0\n"
     "2:  addi a1, s1, -1\n   sub a1, a1, s4\n   mv a0, s3\n   call string_length_max\n"
-    "mv a2, a0\n   add a0, s0, s4\n   mv a1, s3\n   call memory_copy_fast_end\n"
+    "mv a2, a0\n   add a0, s0, s4\n   mv a1, s3\n   call memory_copy_apart_end\n"
     "sub a0, a0, s0\n   ld ra, 40(sp)\n   ld s0, 32(sp)\n   ld s1, 24(sp)\n"
     "ld s2, 16(sp)\n   ld s3, 8(sp)\n   ld s4, 0(sp)\n   addi sp, sp, 48\n"
     ASM_RET
@@ -11776,8 +11776,8 @@ address_any memory_to_lower_ascii(address_any block, positive size);
 address_any memory_to_upper_ascii(address_any block, positive size);
 address_any memory_translate(address_any block, positive size,
                              address_any table);
-address_any memory_copy_fast(address_any destination, address_any source, positive size);
-p8 address_to memory_copy_fast_end(p8 address_to destination, address_any source,
+address_any memory_copy_apart(address_any destination, address_any source, positive size);
+p8 address_to memory_copy_apart_end(p8 address_to destination, address_any source,
                                    positive size);
 address_any memory_copy(address_any destination, address_any source, positive size);
 p8 address_to memory_copy_end(p8 address_to destination, address_any source,

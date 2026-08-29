@@ -448,9 +448,6 @@ static void desktop_repaint(void)
                 if (!output_touched(output, desktop.damage, desktop.damage_count))
                         continue;
 
-                if (output->cursor_plane)
-                        cursor_arm_output(output);
-
                 output_repaint(output, desktop.damage, desktop.damage_count);
         }
 

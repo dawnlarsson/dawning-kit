@@ -136,7 +136,7 @@ static fn expand_push_run(string_address text, positive length, p8 mark)
                 return;
         }
 
-        memory_copy_fast(expand_text + expand_length, text, length);
+        memory_copy_apart(expand_text + expand_length, text, length);
         memory_fill(expand_mark + expand_length, mark, length);
         expand_length += length;
 }
@@ -840,7 +840,7 @@ static string_address expand_value_of(string_address name, p8 address_to scratch
                                 if (at && between)
                                         into[used++] = between;
 
-                                memory_copy_fast(into + used, shell_parameter[at], run);
+                                memory_copy_apart(into + used, shell_parameter[at], run);
                                 used += run;
                         }
 

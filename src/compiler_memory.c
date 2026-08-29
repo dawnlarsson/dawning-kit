@@ -93,6 +93,15 @@
         every test that did not overlap, which is most of them, so the check
         in src/test/exact.c slides every size through every overlap both ways.
 
+        Which is what the other one is called after. memory_copy_apart was
+        memory_copy_fast until now, and "fast" said nothing true: it is not a
+        quicker memory_copy, it is memcpy where memory_copy is memmove, and
+        the whole of the difference is that its two halves are promised not to
+        overlap. A name that says which guarantee a caller is giving up is
+        worth more than one that says the answer arrives sooner, particularly
+        when the way to get it wrong is to reach for the quick-sounding one
+        and hand it two regions that touch.
+
         Every size is checked one at a time and by its literal, because a test
         that takes its size from a loop counter reaches none of this: the
         choice is made by the compiler, from the token.
@@ -198,7 +207,7 @@ static inline INLINE address_any copy_known(address_any destination,
         return destination;
 }
 
-static inline INLINE address_any copy_fast_known(address_any destination,
+static inline INLINE address_any copy_apart_known(address_any destination,
                                                  address_any source, positive size)
 {
 #if KNOWN_WIDE
@@ -250,10 +259,10 @@ static inline INLINE address_any fill_known(address_any destination,
                  ? copy_known((destination), (source), (size))                \
                  : memory_copy((destination), (source), (size)))
 
-#define memory_copy_fast(destination, source, size)                           \
+#define memory_copy_apart(destination, source, size)                           \
         (__builtin_constant_p(size) && (positive)(size) <= KNOWN_SIZE_MAX     \
-                 ? copy_fast_known((destination), (source), (size))           \
-                 : memory_copy_fast((destination), (source), (size)))
+                 ? copy_apart_known((destination), (source), (size))           \
+                 : memory_copy_apart((destination), (source), (size)))
 
 #define memory_fill(destination, value, size)                                 \
         (__builtin_constant_p(size) && (positive)(size) <= KNOWN_SIZE_MAX     \

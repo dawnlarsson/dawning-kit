@@ -45,10 +45,11 @@ static int plane_update(struct output *output, _Bool show, int x, int y)
 
         drm_modeset_acquire_init(&ctx, 0);
 retry:
-        ret = drm_modeset_lock(&plane->mutex, &ctx);
+        /* Match drm_mode_cursor_common's global modeset lock order. */
+        ret = drm_modeset_lock(&crtc->mutex, &ctx);
 
-        if (!ret && show)
-                ret = drm_modeset_lock(&crtc->mutex, &ctx);
+        if (!ret)
+                ret = drm_modeset_lock(&plane->mutex, &ctx);
 
         if (!ret)
                 ret = show ? plane->funcs->update_plane(
@@ -150,7 +151,8 @@ static int plane_claim(struct drm_client_dev *client, struct output *output)
 {
         struct drm_plane *plane = output->mode_set->crtc->cursor;
 
-        if (!plane || !plane->funcs->disable_plane || !canvas_plane_takes_argb(plane))
+        if (!plane || !plane->funcs->update_plane ||
+            !plane->funcs->disable_plane || !canvas_plane_takes_argb(plane))
                 return -ENODEV;
 
         output->cursor_w = client->dev->mode_config.cursor_width ?: CURSOR_W;

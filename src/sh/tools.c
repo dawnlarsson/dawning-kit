@@ -888,7 +888,7 @@ static b32 tools_dd(void)
                         if (take > read_bytes - at)
                                 take = read_bytes - at;
 
-                        memory_copy_fast(obuf + held, output_bytes + at, take);
+                        memory_copy_apart(obuf + held, output_bytes + at, take);
                         held += take;
                         at += take;
 
@@ -2548,7 +2548,7 @@ static bool diff_name_add(diff_names address_to names, string_address value)
                         return false;
 
                 if (names->count)
-                        memory_copy_fast(grown, names->at,
+                        memory_copy_apart(grown, names->at,
                                          names->count * sizeof(string_address));
 
                 names->at = grown;
@@ -2663,7 +2663,7 @@ static bool diff_gather(string_address path, diff_names address_to names,
                         return false;
                 }
 
-                memory_copy_fast(at, entry->d_name, length + 1);
+                memory_copy_apart(at, entry->d_name, length + 1);
 
                 if (!diff_name_add(names, (string_address)at))
                 {
@@ -2994,7 +2994,7 @@ static b32 tools_diff(void)
                         continue;
 
                 diff_switches[diff_switches_used++] = ' ';
-                memory_copy_fast(diff_switches + diff_switches_used, word, length);
+                memory_copy_apart(diff_switches + diff_switches_used, word, length);
                 diff_switches_used += length;
 
                 if (word[length - 1] == 'U' && i + 1 < taking.first)
@@ -3003,7 +3003,7 @@ static b32 tools_diff(void)
                         positive context_length = string_length(context);
 
                         diff_switches[diff_switches_used++] = ' ';
-                        memory_copy_fast(diff_switches + diff_switches_used,
+                        memory_copy_apart(diff_switches + diff_switches_used,
                                          context, context_length);
                         diff_switches_used += context_length;
                 }
@@ -3176,7 +3176,7 @@ static p8 address_to ps_read_growing(string_address path, positive first,
                                 return null;
                         }
 
-                        memory_copy_fast(grown, bytes, used);
+                        memory_copy_apart(grown, bytes, used);
                         bytes = grown;
                         room = larger;
                 }
@@ -3220,7 +3220,7 @@ static ps_process address_to ps_process_add()
                         return null;
 
                 if (ps_count)
-                        memory_copy_fast(grown, ps_list,
+                        memory_copy_apart(grown, ps_list,
                                          ps_count * sizeof(ps_process));
 
                 ps_list = grown;
@@ -3318,7 +3318,7 @@ static string_address ps_name_of(positive uid)
                                         if (!made)
                                                 return null;
 
-                                        memory_copy_fast_end(made,
+                                        memory_copy_apart_end(made,
                                                              ps_password + line,
                                                              length);
                                         return (string_address)made;
@@ -3336,7 +3336,7 @@ static string_address ps_name_of(positive uid)
         if (!made)
                 return null;
 
-        memory_copy_fast_end(made, digits, have);
+        memory_copy_apart_end(made, digits, have);
         return (string_address)made;
 }
 
@@ -3370,9 +3370,9 @@ static bool ps_gather()
                         positive type;
                         positive value;
 
-                        memory_copy_fast(address_of type, auxv + at,
+                        memory_copy_apart(address_of type, auxv + at,
                                          sizeof(positive));
-                        memory_copy_fast(address_of value,
+                        memory_copy_apart(address_of value,
                                          auxv + at + sizeof(positive),
                                          sizeof(positive));
 
@@ -3451,7 +3451,7 @@ static bool ps_gather()
                         return false;
                 }
 
-                memory_copy_fast_end(command, close, length);
+                memory_copy_apart_end(command, close, length);
                 one->comm = (string_address)command;
 
                 at = last + 2;
@@ -3570,7 +3570,7 @@ static bool ps_gather()
                         }
 
                         fallback[0] = '[';
-                        memory_copy_fast(fallback + 1, one->comm, length);
+                        memory_copy_apart(fallback + 1, one->comm, length);
                         fallback[1 + length] = ']';
                         fallback[2 + length] = end;
                         one->args = (string_address)fallback;
@@ -3633,7 +3633,7 @@ static bool ps_gather()
                 }
 
                 if (from != ps_list)
-                        memory_copy_fast(ps_list, from,
+                        memory_copy_apart(ps_list, from,
                                          ps_count * sizeof(ps_process));
         }
 
@@ -3686,7 +3686,7 @@ static bool ps_room_add(positive extra)
         }
 
         if (ps_room_used)
-                memory_copy_fast(grown, ps_room, ps_room_used);
+                memory_copy_apart(grown, ps_room, ps_room_used);
 
         ps_room = grown;
         ps_room_size = room;
@@ -3704,7 +3704,7 @@ static fn ps_bytes(address_any value, positive length)
         if (!ps_room_add(length))
                 return;
 
-        memory_copy_fast(ps_room + ps_room_used, value, length);
+        memory_copy_apart(ps_room + ps_room_used, value, length);
         ps_room_used += length;
 }
 
@@ -3932,7 +3932,7 @@ static bool ps_field_add(ps_selected address_to address_to fields,
                         return false;
 
                 if (address_to count)
-                        memory_copy_fast(grown, address_to fields,
+                        memory_copy_apart(grown, address_to fields,
                                          address_to count * sizeof(ps_selected));
 
                 address_to fields = grown;
@@ -3968,7 +3968,7 @@ static bool ps_value_add(positive address_to address_to values,
                         return false;
 
                 if (address_to count)
-                        memory_copy_fast(grown, address_to values,
+                        memory_copy_apart(grown, address_to values,
                                          address_to count * sizeof(positive));
 
                 address_to values = grown;
@@ -4066,7 +4066,7 @@ static bool ps_string_add(string_address address_to address_to values,
                         return false;
 
                 if (address_to count)
-                        memory_copy_fast(grown, address_to values,
+                        memory_copy_apart(grown, address_to values,
                                          address_to count *
                                              sizeof(string_address));
 
@@ -4079,7 +4079,7 @@ static bool ps_string_add(string_address address_to address_to values,
         if (!made)
                 return false;
 
-        memory_copy_fast(made, from, length);
+        memory_copy_apart(made, from, length);
         made[length] = end;
         (address_to values)[address_to count] = (string_address)made;
         address_to count += 1;
@@ -4217,7 +4217,7 @@ static bool ps_format_list(string_address list,
                 if (!name)
                         return false;
 
-                memory_copy_fast(name, name_from, name_length);
+                memory_copy_apart(name, name_from, name_length);
                 name[name_length] = end;
 
                 bool custom = string_get(at) == '=';
@@ -4238,7 +4238,7 @@ static bool ps_format_list(string_address list,
                                 return false;
 
                         if (header_length)
-                                memory_copy_fast(made, header_from, header_length);
+                                memory_copy_apart(made, header_from, header_length);
 
                         made[header_length] = end;
                         header = (string_address)made;

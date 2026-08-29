@@ -368,7 +368,7 @@ riscv_alignment_gate_audit()
                         if (routine == "memory_compare")
                                 return zero_memory_is(slot + 1, "lbu", "t1", "a0") &&
                                        zero_memory_is(slot + 2, "lbu", "t2", "a1")
-                        if (routine == "memory_copy_fast")
+                        if (routine == "memory_copy_apart")
                                 return zero_memory_is(slot + 1, "lbu", "t0", "a1") &&
                                        zero_memory_is(slot + 2, "sb", "t0", "a0")
                         if (routine == "memory_copy")
@@ -406,7 +406,7 @@ riscv_alignment_gate_audit()
                                        addi_is(slot + 1, "a0", "a0", "1") &&
                                        addi_is(slot + 2, "a2", "a2", "-1") &&
                                        branch_is(slot + 3, "beqz", "a2")
-                        if (routine == "memory_copy_fast")
+                        if (routine == "memory_copy_apart")
                                 return zero_memory_is(slot, "lbu", "t1", "a1") &&
                                        zero_memory_is(slot + 1, "sb", "t1", "a0") &&
                                        addi_is(slot + 2, "a0", "a0", "1") &&
@@ -428,7 +428,7 @@ riscv_alignment_gate_audit()
                         if (routine == "memory_count")       return 6
                         if (routine == "memory_compare")     return 8
                         if (routine == "memory_fill")        return 4
-                        if (routine == "memory_copy_fast")   return 6
+                        if (routine == "memory_copy_apart")   return 6
                         if (routine == "memory_copy")        return 6
                         return 0
                 }
@@ -450,7 +450,7 @@ riscv_alignment_gate_audit()
                                        first_is(slot, "t0") &&
                                        mnemonic[slot + 1] == "bltu" &&
                                        first_two_are(slot + 1, "a2", "t0")
-                        if (routine == "memory_copy_fast")
+                        if (routine == "memory_copy_apart")
                                 return mnemonic[slot] == "li" &&
                                        first_is(slot, "t4") &&
                                        mnemonic[slot + 1] == "bltu" &&
@@ -702,7 +702,7 @@ riscv_alignment_audit()
                 'memory_count:2:a0' \
                 'memory_compare:3:a0 a1' \
                 'memory_fill:2:a0' \
-                'memory_copy_fast:3:a0 a1' \
+                'memory_copy_apart:3:a0 a1' \
                 'memory_copy:3:a4 a5' \
                 'string_to_positive:1:t3 t6'
         do
@@ -803,7 +803,7 @@ riscv_alignment_audit()
                         alignment_natural_register=t0
                         alignment_natural_base=a0
                         ;;
-                memory_copy_fast)
+                memory_copy_apart)
                         alignment_residue_register=t0
                         alignment_residue_left=a0
                         alignment_residue_right=a1
@@ -917,7 +917,7 @@ riscv_alignment_audit()
         #       residues entered the word path while equal ones fell back to
         #       bytes. QEMU normally emulates the resulting misaligned access,
         #       so the semantic half can still agree.
-        alignment_mutation_source="$work/riscv-alignment.memory_copy_fast.dis"
+        alignment_mutation_source="$work/riscv-alignment.memory_copy_apart.dis"
         alignment_mutation="$work/riscv-alignment.inverted-residue.dis"
         if ! awk '
                 {
@@ -943,7 +943,7 @@ riscv_alignment_audit()
                 note "the RISC-V residue-gate mutation could not be constructed"
                 alignment_failed=1
         elif riscv_alignment_gate_audit "$alignment_mutation" \
-                memory_copy_fast t0 a0 a1 t0 a0 > "$alignment_error"
+                memory_copy_apart t0 a0 a1 t0 a0 > "$alignment_error"
         then
                 note "the RISC-V alignment audit accepted bnez-to-beqz inversion"
                 alignment_failed=1
@@ -1182,7 +1182,7 @@ arm64_kernel_vector_audit()
                         guarded["string_first_of_or_end"] = 1
                         guarded["string_last_of_or_end"] = 1
                         guarded["memory_fill"] = 1
-                        guarded["memory_copy_fast"] = 1
+                        guarded["memory_copy_apart"] = 1
                         guarded["memory_copy"] = 1
                         guarded["string_copy"] = 1
                         guarded["string_copy_max"] = 1
@@ -1192,7 +1192,7 @@ arm64_kernel_vector_audit()
                         expected["string_first_of"] = "strchr"
                         expected["string_last_of_or_end"] = "strrchr"
                         expected["memory_fill"] = "memset"
-                        expected["memory_copy_fast"] = "memcpy"
+                        expected["memory_copy_apart"] = "memcpy"
                         expected["memory_copy"] = "memmove"
 
                         allowed["string_last_of_or_end:string_first_of_or_end"] = 1
@@ -1623,7 +1623,7 @@ lane_verify()
 
 #       The sizes that never reach the routine.
 #
-#       memory_copy, memory_copy_fast and memory_fill expand in place when the
+#       memory_copy, memory_copy_apart and memory_fill expand in place when the
 #       size is a literal, into a line of moves chosen from the number. Nothing
 #       in the verify lane can reach any of that: its sizes come from loop
 #       counters, so every one of them is a call, and the expansions would ship

@@ -311,7 +311,7 @@ b32 string_compare_folded_max(string_address source, string_address input,
         Every one of them is a length the library already knows how to find
         followed by a copy the library already knows how to make, so none of
         them walks a byte at a time: memory_copy_until asks memory_first_of
-        where the stop byte is and hands the span to memory_copy_fast, and
+        where the stop byte is and hands the span to memory_copy_apart, and
         the three string routines ask string_length or string_length_max and
         do the same. That is two passes over the bytes rather than one, and
         the reasoning above string_copy_max_end is the reasoning here -- a
@@ -325,7 +325,7 @@ b32 string_compare_folded_max(string_address source, string_address input,
         has been copied and answers the position just past it, or null when
         the byte was not in the span at all, in which case the whole span was
         copied. Source and destination must not overlap, which is what memccpy
-        says and what memory_copy_fast assumes.
+        says and what memory_copy_apart assumes.
 
         string_copy_end is stpcpy, which is string_copy with the useful answer
         instead of the useless one: the destination back is a value the caller
@@ -354,7 +354,7 @@ b32 string_compare_folded_max(string_address source, string_address input,
         bcopy are not renames. bzero takes the size where memset takes the
         fill byte, and bcopy takes the source first and is specified to
         survive overlap, so it routes to memory_copy -- the memmove-shaped
-        one -- and not to memory_copy_fast. bcmp is a rename: it is memcmp
+        one -- and not to memory_copy_apart. bcmp is a rename: it is memcmp
         with only the zero/non-zero part of the answer promised, and memcmp
         promises more, so the alias is safe in the direction it is used.
 */
@@ -1103,7 +1103,7 @@ __asm__(
     "xor %r13d, %r13d  # and answers null\n   jmp 1f\n"
     "2:  sub %r12, %rax\n   lea 1(%rax), %rdx  # everything up to and including it\n"
     "lea (%rbx,%rdx), %r13  # and the answer is just past what was copied\n"
-    "1:  mov %rbx, %rdi\n   mov %r12, %rsi\n   call memory_copy_fast\n"
+    "1:  mov %rbx, %rdi\n   mov %r12, %rsi\n   call memory_copy_apart\n"
     "mov %r13, %rax\n"
     "pop %r13\n   pop %r12\n   pop %rbx\n"
     ASM_RET
@@ -1122,7 +1122,7 @@ __asm__(
     "mov %rsi, %rdi\n   call string_length\n"
     "mov %rbx, %rdi\n   mov %r12, %rsi\n   lea 1(%rax), %rdx  # the terminator is copied too\n"
     "add %rax, %rbx  # which is where it lands, and the answer\n"
-    "call memory_copy_fast\n   mov %rbx, %rax\n"
+    "call memory_copy_apart\n   mov %rbx, %rax\n"
     "add $8, %rsp\n   pop %r12\n   pop %rbx\n"
     ASM_RET
     ASM_END(string_copy_end)
@@ -1142,7 +1142,7 @@ __asm__(
     "mov %rbx, %rdi\n   mov %r12, %rsi\n   mov %rax, %rdx\n"
     "add %rax, %rbx  # the first byte the source did not fill, and the answer\n"
     "sub %rax, %r13  # what is left of the bound is padding\n"
-    "call memory_copy_fast\n"
+    "call memory_copy_apart\n"
     "test %r13, %r13\n   jz 1f\n"
     "mov %rbx, %rdi\n   xor %esi, %esi\n   mov %r13, %rdx\n   call memory_fill\n"
     "1:  mov %rbx, %rax\n"
@@ -1170,7 +1170,7 @@ __asm__(
     //
     //       Neither is a rename. bzero puts the size where memset puts the
     //       byte, and bcopy puts the source first and promises to survive
-    //       overlap, so it goes to memory_copy rather than memory_copy_fast.
+    //       overlap, so it goes to memory_copy rather than memory_copy_apart.
     //       Both are a shuffle and a tail call, and the shuffle is three
     //       register moves rather than an exchange because a move between
     //       registers is renamed away and an exchange is three uops that are
@@ -2038,7 +2038,7 @@ __asm__(
     "mov x21, #0  // and answers null\n   b 1f\n"
     "2:  sub x0, x0, x20\n   add x2, x0, #1  // everything up to and including it\n"
     "add x21, x19, x2  // and the answer is just past what was copied\n"
-    "1:  mov x0, x19\n   mov x1, x20\n   bl memory_copy_fast\n"
+    "1:  mov x0, x19\n   mov x1, x20\n   bl memory_copy_apart\n"
     "mov x0, x21\n"
     "ldr x21, [sp, #32]\n   ldp x19, x20, [sp, #16]\n   ldp x29, x30, [sp], #48\n"
     ASM_RET
@@ -2050,7 +2050,7 @@ __asm__(
     "mov x0, x1\n   bl string_length\n"
     "mov x1, x20\n   add x20, x19, x0  // where the terminator lands, and the answer\n"
     "add x2, x0, #1  // the terminator is copied too\n   mov x0, x19\n"
-    "bl memory_copy_fast\n   mov x0, x20\n"
+    "bl memory_copy_apart\n   mov x0, x20\n"
     "ldp x19, x20, [sp, #16]\n   ldp x29, x30, [sp], #32\n"
     ASM_RET
     ASM_END(string_copy_end)
@@ -2064,7 +2064,7 @@ __asm__(
     "mov x1, x20\n   mov x2, x0\n"
     "add x20, x19, x0  // the first byte the source did not fill, and the answer\n"
     "sub x21, x21, x0  // what is left of the bound is padding\n"
-    "mov x0, x19\n   bl memory_copy_fast\n"
+    "mov x0, x19\n   bl memory_copy_apart\n"
     "cbz x21, 1f\n"
     "mov x0, x20\n   mov x1, #0\n   mov x2, x21\n   bl memory_fill\n"
     "1:  mov x0, x20\n"
@@ -2702,7 +2702,7 @@ __asm__(
     "li s2, 0  # and answers null\n   j 1f\n"
     "2:  sub a0, a0, s1\n   addi a2, a0, 1  # everything up to and including it\n"
     "add s2, s0, a2  # and the answer is just past what was copied\n"
-    "1:  mv a0, s0\n   mv a1, s1\n   call memory_copy_fast\n"
+    "1:  mv a0, s0\n   mv a1, s1\n   call memory_copy_apart\n"
     "mv a0, s2\n"
     "ld ra, 40(sp)\n   ld s0, 32(sp)\n   ld s1, 24(sp)\n   ld s2, 16(sp)\n"
     "addi sp, sp, 48\n"
@@ -2715,7 +2715,7 @@ __asm__(
     "mv a0, a1\n   call string_length\n"
     "mv a1, s1\n   add s1, s0, a0  # where the terminator lands, and the answer\n"
     "addi a2, a0, 1  # the terminator is copied too\n   mv a0, s0\n"
-    "call memory_copy_fast\n   mv a0, s1\n"
+    "call memory_copy_apart\n   mv a0, s1\n"
     "ld ra, 24(sp)\n   ld s0, 16(sp)\n   ld s1, 8(sp)\n   addi sp, sp, 32\n"
     ASM_RET
     ASM_END(string_copy_end)
@@ -2729,7 +2729,7 @@ __asm__(
     "mv a1, s1\n   mv a2, a0\n"
     "add s1, s0, a0  # the first byte the source did not fill, and the answer\n"
     "sub s2, s2, a0  # what is left of the bound is padding\n"
-    "mv a0, s0\n   call memory_copy_fast\n"
+    "mv a0, s0\n   call memory_copy_apart\n"
     "beqz s2, 1f\n"
     "mv a0, s1\n   li a1, 0\n   mv a2, s2\n   call memory_fill\n"
     "1:  mv a0, s1\n"

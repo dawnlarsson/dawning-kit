@@ -34,7 +34,7 @@ import re, sys
 FROM_MOONWATER = {
     'moonwater_basename':              'path_basename',
     'moonwater_bipolar_to_string':     'bipolar_to_string',
-    'moonwater_copy':                  'memory_copy_fast',
+    'moonwater_copy':                  'memory_copy_apart',
     'moonwater_decimal_to_string':     'decimal_to_string',
     'moonwater_fast_sin':              'fast_sin',
     'moonwater_file_close':            'file_close',

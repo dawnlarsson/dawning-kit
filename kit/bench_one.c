@@ -59,7 +59,7 @@ b32 main()
                 subject[i] = (p8)('a' + i % 26);
 
         subject[LENGTH] = 0;
-        memory_copy_fast(mirror, subject, LENGTH + 1);
+        memory_copy_apart(mirror, subject, LENGTH + 1);
 
         for (positive r = 0; r < ROUNDS; r++)
         {

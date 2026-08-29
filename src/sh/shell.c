@@ -453,7 +453,7 @@ static fn token_push_bytes(address_any data, positive length)
         }
 
         if (length)
-                memory_copy_fast(token_storage + token_used, data, length);
+                memory_copy_apart(token_storage + token_used, data, length);
 
         token_used += length;
 }

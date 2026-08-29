@@ -54,7 +54,7 @@ def cover(category, evidence, names, note, anchors=None):
 # Direct subjects: these names are passed to a timed runner or appear in a
 # dedicated floor row, rather than merely helping the harness print or count.
 cover('direct_benchmark', 'kit/floor.c', '''
-memory_compare memory_copy memory_copy_fast memory_count memory_fill
+memory_compare memory_copy memory_copy_apart memory_count memory_fill
 memory_first_of string_compare string_copy string_first_of
 string_last_of_or_end string_length
 ''', 'floor-relative rows over multiple sizes')
@@ -190,7 +190,7 @@ cover('correctness_only', 'src/test/verify.c', '''
 bipolar_into bipolar_into_string bipolar_to_string byte_class_holds
 byte_class_index decimal_to_string fast_sin file_close file_get_status
 file_load file_new file_read file_valid file_write memory memory_copy_end
-memory_copy_fast_end memory_free memory_search path_basename positive_digits
+memory_copy_apart_end memory_free memory_search path_basename positive_digits
 positive_into_string positive_to_base_field program_arguments_own
 program_arguments_use program_environment program_environment_list
 string_append string_bipolar string_compare_max string_copy_max

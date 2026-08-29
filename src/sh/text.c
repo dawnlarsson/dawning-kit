@@ -1400,7 +1400,7 @@ static fn regex_select(regex_program address_to which)
         regex_loop_count = which->loop_count;
 
         if (which->loop_count > 0)
-                memory_copy_fast(
+                memory_copy_apart(
                     regex_loop_list, which->loops,
                     (positive)(which->loop_count < REGEX_LOOPS_KEPT
                                    ? which->loop_count
@@ -1430,7 +1430,7 @@ static fn regex_keep(regex_program address_to which)
         which->loop_count = regex_loop_count;
 
         if (regex_loop_count > 0)
-                memory_copy_fast(
+                memory_copy_apart(
                     which->loops, regex_loop_list,
                     (positive)(regex_loop_count < REGEX_LOOPS_KEPT
                                    ? regex_loop_count
@@ -2055,7 +2055,7 @@ static bool regex_search_longest(string_address text, positive length, positive 
         positive to = regex_slots[1];
         positive kept[REGEX_SLOT_MAX];
 
-        memory_copy_fast(kept, regex_slots, sizeof(kept));
+        memory_copy_apart(kept, regex_slots, sizeof(kept));
 
         for (positive stop = length; stop > to; stop--)
         {
@@ -2073,7 +2073,7 @@ static bool regex_search_longest(string_address text, positive length, positive 
                         return true;
         }
 
-        memory_copy_fast(regex_slots, kept, sizeof(kept));
+        memory_copy_apart(regex_slots, kept, sizeof(kept));
 
         return true;
 }
@@ -2158,7 +2158,7 @@ static fn text_file_add(b32 which)
                 b32 address_to grown = (b32 address_to)mapped;
 
                 if (text_files_count)
-                        memory_copy_fast(grown, text_files,
+                        memory_copy_apart(grown, text_files,
                                          text_files_count * sizeof(b32));
 
                 if (text_files)
@@ -5350,7 +5350,7 @@ static bool grep_glob_add(grep_glob address_to address_to list,
 
         p8 address_to room = (p8 address_to)(made + 1);
 
-        memory_copy_fast_end(room, value, length);
+        memory_copy_apart_end(room, value, length);
         made->value = (string_address)room;
         made->next = *list;
         *list = made;
@@ -5438,7 +5438,7 @@ static string_address grep_path_join(string_address directory, string_address na
         if (have || (directory && directory[0] == '/'))
                 room[have++] = '/';
 
-        memory_copy_fast_end(room + have, name, extra);
+        memory_copy_apart_end(room + have, name, extra);
 
         return (string_address)room;
 }
@@ -5963,10 +5963,10 @@ static b32 text_grep()
                         return text_done(2);
                 }
 
-                memory_copy_fast(around, head, head_length);
-                memory_copy_fast(around + head_length, grep_pattern,
+                memory_copy_apart(around, head, head_length);
+                memory_copy_apart(around + head_length, grep_pattern,
                                  grep_pattern_length);
-                memory_copy_fast(around + head_length + grep_pattern_length,
+                memory_copy_apart(around + head_length + grep_pattern_length,
                                  tail, tail_length);
 
                 around[have] = '\0';
@@ -6478,7 +6478,7 @@ static b32 sed_text_add(string_address from, positive length)
                 return 0;
         }
 
-        sed_text_used = (positive)(memory_copy_fast_end(
+        sed_text_used = (positive)(memory_copy_apart_end(
             sed_text + sed_text_used, from, length) - sed_text) + 1;
         return at;
 }
@@ -6688,7 +6688,7 @@ static positive sed_rest_of_line(p8 address_to into, positive room)
         positive length = newline ? (positive)(newline - from) : left;
         positive have = min(length, room - 1);
 
-        memory_copy_fast_end(into, from, have);
+        memory_copy_apart_end(into, from, have);
         sed_at += length;
         return have;
 }
@@ -8027,7 +8027,7 @@ static b32 text_sed()
                                 if (length + extra + 1 < TEXT_PATH_MAX)
                                 {
                                         memory_copy(kept, name, length);
-                                        memory_copy_fast_end(
+                                        memory_copy_apart_end(
                                             kept + length, sed_in_place, extra);
                                         system_call_5(syscall(renameat2), (positive)(bipolar)AT_FDCWD,
                                                       (positive)name, (positive)(bipolar)AT_FDCWD,
@@ -8853,11 +8853,11 @@ static fn sort_merge(positive from, positive middle, positive to)
 
         // Whichever run is left over is already in order and goes across
         // whole; only one of the two can be.
-        memory_copy_fast(sort_spare + at, sort_order + left,
+        memory_copy_apart(sort_spare + at, sort_order + left,
                          (middle - left) * sizeof(positive));
-        memory_copy_fast(sort_spare + at + (middle - left), sort_order + right,
+        memory_copy_apart(sort_spare + at + (middle - left), sort_order + right,
                          (to - right) * sizeof(positive));
-        memory_copy_fast(sort_order + from, sort_spare + from,
+        memory_copy_apart(sort_order + from, sort_spare + from,
                          (to - from) * sizeof(positive));
 }
 

@@ -2633,7 +2633,7 @@ static fn printf_holder(address_any data, positive length)
         if (length > room)
                 length = room;
 
-        memory_copy_fast(printf_hold + printf_held, data, length);
+        memory_copy_apart(printf_hold + printf_held, data, length);
         printf_held += length;
 }
 

@@ -222,10 +222,10 @@ fn check_copy()
                 reference_fill(mine, 0xA5, ROOM);
                 reference_fill(theirs, 0xA5, ROOM);
 
-                memory_copy_fast(mine + 64, pattern, size);
+                memory_copy_apart(mine + 64, pattern, size);
                 reference_copy(theirs + 64, pattern, size);
 
-                same_bytes("memory_copy_fast", "forward", mine, theirs, ROOM);
+                same_bytes("memory_copy_apart", "forward", mine, theirs, ROOM);
         }
 }
 
@@ -360,15 +360,15 @@ fn check_move()
                         if (size + gap + 128 > ROOM)
                                 continue;
 
-                        memory_copy_fast(mine, pattern, ROOM);
-                        memory_copy_fast(theirs, pattern, ROOM);
+                        memory_copy_apart(mine, pattern, ROOM);
+                        memory_copy_apart(theirs, pattern, ROOM);
 
                         memory_copy(mine + 64 + gap, mine + 64, size);
                         reference_copy(theirs + 64 + gap, theirs + 64, size);
                         same_bytes("memory_copy", "forwards overlap", mine, theirs, ROOM);
 
-                        memory_copy_fast(mine, pattern, ROOM);
-                        memory_copy_fast(theirs, pattern, ROOM);
+                        memory_copy_apart(mine, pattern, ROOM);
+                        memory_copy_apart(theirs, pattern, ROOM);
 
                         memory_copy(mine + 64, mine + 64 + gap, size);
                         reference_copy(theirs + 64, theirs + 64 + gap, size);
@@ -409,17 +409,17 @@ fn check_copy_fast_end()
                                 reference_fill(mine, 0xA5, ROOM);
                                 reference_fill(theirs, 0xA5, ROOM);
 
-                                ended = memory_copy_fast_end(
+                                ended = memory_copy_apart_end(
                                     (p8 address_to)mine + destination,
                                     pattern + source_offset, size);
                                 reference_copy_end(
                                     (p8 address_to)theirs + destination,
                                     pattern + source_offset, size);
 
-                                same("memory_copy_fast_end", "returned unaligned end",
+                                same("memory_copy_apart_end", "returned unaligned end",
                                      (positive)(ended - (p8 address_to)mine),
                                      destination + size);
-                                same_bytes("memory_copy_fast_end", "guarded exact copy",
+                                same_bytes("memory_copy_apart_end", "guarded exact copy",
                                            mine, theirs, ROOM);
                         }
         }
@@ -427,12 +427,12 @@ fn check_copy_fast_end()
         // A zero-byte copy writes only the terminator and never reads source.
         reference_fill(mine, 0xA5, ROOM);
         reference_fill(theirs, 0xA5, ROOM);
-        same("memory_copy_fast_end", "zero length end",
-             (positive)(memory_copy_fast_end((p8 address_to)mine + 31, null, 0) -
+        same("memory_copy_apart_end", "zero length end",
+             (positive)(memory_copy_apart_end((p8 address_to)mine + 31, null, 0) -
                         (p8 address_to)mine),
              31);
         theirs[31] = 0;
-        same_bytes("memory_copy_fast_end", "zero length guard", mine, theirs, ROOM);
+        same_bytes("memory_copy_apart_end", "zero length guard", mine, theirs, ROOM);
 }
 
 /*
@@ -562,7 +562,7 @@ fn check_strings()
                 {
                         static p8 other[512];
 
-                        memory_copy_fast(other, text, size + 1);
+                        memory_copy_apart(other, text, size + 1);
                         other[at] = (p8)(other[at] ^ 1);
 
                         same("string_compare", "one byte apart",
@@ -826,7 +826,7 @@ fn check_string_edges()
                                 text[size - 1] = keep;
                         }
 
-                        memory_copy_fast(other, text, size + 1);
+                        memory_copy_apart(other, text, size + 1);
 
                         same("string_compare", "offset equal",
                              (positive)string_compare(text, other),
@@ -5076,7 +5076,7 @@ fn check_hostile_neighbours()
                                         if (planted)
                                                 text[size - 1] = byte;
 
-                                        memory_copy_fast(twin, text, size + 1);
+                                        memory_copy_apart(twin, text, size + 1);
 
                                         same("string_length", "hostile neighbours",
                                              string_length(text),
@@ -5277,7 +5277,7 @@ fn check_first_of_wide()
 
         Two things the sweeps above cannot reach.
 
-        The first is the tier. memory_fill, memory_copy_fast and the routines
+        The first is the tier. memory_fill, memory_copy_apart and the routines
         that hand work to them have three bodies on x86_64 -- zmm, ymm, and
         eight bytes in an integer register -- and cpu_detect picks one at
         startup. On a machine with AVX-512 that is the only one that ever runs,
@@ -5390,9 +5390,9 @@ fn check_bulk_alignments()
 
                                         reference_fill(bulk_got, 0xA5, BULK_ROOM);
                                         reference_fill(bulk_want, 0xA5, BULK_ROOM);
-                                        memory_copy_fast(bulk_got + off, bulk_from + from, size);
+                                        memory_copy_apart(bulk_got + off, bulk_from + from, size);
                                         reference_copy(bulk_want + off, bulk_from + from, size);
-                                        bulk_same("memory_copy_fast", pass, size, off);
+                                        bulk_same("memory_copy_apart", pass, size, off);
                                 }
                         }
                 }
@@ -5932,9 +5932,9 @@ fn check_riscv_alignment_floor()
                                         rv_align_from[i] = (p8)(i * 29 + size);
                                 }
 
-                                memory_copy_fast(got, from, size);
+                                memory_copy_apart(got, from, size);
                                 reference_copy(want, from, size);
-                                same_bytes("memory_copy_fast", "every pair of RV64 residues",
+                                same_bytes("memory_copy_apart", "every pair of RV64 residues",
                                            rv_align_got, rv_align_want, RV_ALIGN_ROOM);
 
                                 if (source_offset == 0)
@@ -6029,9 +6029,9 @@ fn check_riscv_alignment_floor()
                         for (positive i = 0; i < size; i++)
                                 got[i] = want[i] = 0xa5;
 
-                        memory_copy_fast(got, left, size);
+                        memory_copy_apart(got, left, size);
                         reference_copy(want, left, size);
-                        same_bytes("memory_copy_fast", "an end at a page edge",
+                        same_bytes("memory_copy_apart", "an end at a page edge",
                                    got, want, size + 16);
 
                         memory_fill(got, (b8)(residue + 1), size);

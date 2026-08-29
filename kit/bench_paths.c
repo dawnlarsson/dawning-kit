@@ -19,14 +19,14 @@ NOT_INLINED positive former_path_join(p8 address_to into, positive limit,
 {
         positive length = string_length_max(directory, limit - 1);
 
-        memory_copy_fast(into, directory, length);
+        memory_copy_apart(into, directory, length);
 
         if (length > 0 && into[length - 1] != '/' && length + 1 < limit)
                 into[length++] = '/';
 
         positive tail = string_length_max(name, limit - 1 - length);
 
-        return (positive)(memory_copy_fast_end(into + length, name, tail) - into);
+        return (positive)(memory_copy_apart_end(into + length, name, tail) - into);
 }
 
 NOT_INLINED positive former_path_tail(p8 address_to into, string_address path)
@@ -59,7 +59,7 @@ NOT_INLINED positive former_path_tail(p8 address_to into, string_address path)
         if (found > PATH_CAPACITY - 1)
                 found = PATH_CAPACITY - 1;
 
-        memory_copy_fast_end(into, path + start, found);
+        memory_copy_apart_end(into, path + start, found);
         return found;
 }
 
@@ -85,7 +85,7 @@ NOT_INLINED positive former_path_head(p8 address_to into, string_address path)
         while (cut > 1 && path[cut - 1] == '/')
                 cut--;
 
-        memory_copy_fast_end(into, path, cut);
+        memory_copy_apart_end(into, path, cut);
         return cut;
 }
 

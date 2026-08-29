@@ -96,7 +96,7 @@ b32 main()
                         subject[i] = (p8)('a' + i % 26);
 
                 subject[size] = 0;
-                memory_copy_fast(mirror, subject, size + 1);
+                memory_copy_apart(mirror, subject, size + 1);
 
                 p64 start = get_cpu_time();
 

@@ -84,7 +84,7 @@ printf 'bytes%s\n' $(wc -c < /tmp/boot_probe)
 ls /monitor.sh | rev
 printf 'alias-%s\n' "$(readlink /mointor.sh | rev)"
 printf 'path-%s\n' "$(readlink /bin/monitor.sh | rev)"
-mointor.sh 1 1 2> /tmp/monitor.err
+mointor.sh 1 3 2> /tmp/monitor.err
 printf 'rotinom%s\n' $? | rev
 [ ! -s /tmp/monitor.err ] && printf 'naelc-rotinom\n' | rev
 printf 'echo plain-$1\nexit 17\n' > /tmp/plain-script
@@ -128,13 +128,14 @@ never()
 #       is the point: an AVX instruction on a path with no feature test in
 #       front of it is an invalid opcode here and a working program on the
 #       machine this was built on. It happened -- vmovdqu on the small path of
-#       memory_copy_fast, which is VEX encoded however narrow its operands --
+#       memory_copy_apart, which is VEX encoded however narrow its operands --
 #       and init died of it before anything else in this file could run.
 #
 #       Without these two the failure reads as six assertions about arithmetic
 #       and uname going missing, which is a long way from the cause.
 #
 never 'no invalid opcode'  'invalid opcode'
+never 'no protection fault' 'general protection fault'
 never 'init survived'      'Attempted to kill init'
 never 'no kernel panic'    'Kernel panic'
 
@@ -195,6 +196,8 @@ if [ -r /dev/kvm ]; then
         says 'powered down on this host'   'reboot: Power down'
         never 'nothing went unemulated'    'emulation failure'
         never 'no invalid opcode here'     'invalid opcode'
+        never 'no protection fault here'   'general protection fault'
+        never 'no oops here'               'Oops:'
         never 'no panic here'              'Kernel panic'
 else
         printf '  %-24s no /dev/kvm, the widest pass did not run\n' 'this host'

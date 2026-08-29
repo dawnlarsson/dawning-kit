@@ -709,7 +709,7 @@ static b32 lex_word(string_address address_to at)
                         if (!lex_room(lex_used + run + 3))
                                 return false;
 
-                        memory_copy_fast(lex_text + lex_used, step, run);
+                        memory_copy_apart(lex_text + lex_used, step, run);
                         lex_used += run;
                         step += run;
 

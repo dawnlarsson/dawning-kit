@@ -147,9 +147,6 @@ static void pane_reshape(struct pane *pane, int x, int y, int w, int h)
                 if (!output_touched(output, damage, 4))
                         continue;
 
-                if (output->cursor_plane)
-                        cursor_arm_output(output);
-
                 output_repaint(output, damage, 4);
         }
 

@@ -346,7 +346,7 @@ static fn emit_bytes(address_any data, positive length)
         positive take = length < room ? length : room;
 
         if (take)
-                memory_copy_fast(to_shell + to_shell_length, data, take);
+                memory_copy_apart(to_shell + to_shell_length, data, take);
 
         to_shell_length += take;
 #else
@@ -356,7 +356,7 @@ static fn emit_bytes(address_any data, positive length)
                             to_shell_length + length, sizeof(*to_shell), 64))
                 return;
 
-        memory_copy_fast(to_shell + to_shell_length, data, length);
+        memory_copy_apart(to_shell + to_shell_length, data, length);
         to_shell_length += length;
 #endif
 }
@@ -1353,7 +1353,7 @@ static fn line_from_history()
                             sizeof(*line), 64))
                 return;
 
-        memory_copy_fast(line, (address_any)from, length);
+        memory_copy_apart(line, (address_any)from, length);
 
         line_length = length;
         line_point = length;
@@ -1388,7 +1388,7 @@ static fn line_remember()
                             line_length, sizeof(*history[slot]), 64))
                 return;
 
-        memory_copy_fast(history[slot], line, line_length);
+        memory_copy_apart(history[slot], line, line_length);
 
         history_length[slot] = line_length;
         history_count++;
@@ -1416,7 +1416,7 @@ static fn line_clear_screen()
                                     sizeof(*line_prompt), 64))
                         return;
 
-                memory_copy_fast(line_prompt, cells,
+                memory_copy_apart(line_prompt, cells,
                                  (positive)kept *
                                      sizeof(struct window_cell));
         }
@@ -1539,7 +1539,7 @@ static b32 line_key(unsigned int character, unsigned int code)
                                 sizeof(*history_held), 64))
                                 return true;
 
-                        memory_copy_fast(history_held, line, line_length);
+                        memory_copy_apart(history_held, line, line_length);
 
                         history_held_length = line_length;
                 }
