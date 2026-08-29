@@ -681,6 +681,7 @@ answer 'a list'         "cd $tree; printf '[%s]' [ab].txt END; echo"
 answer 'negated'        "cd $tree; printf '[%s]' [!a]*.txt END; echo"
 answer 'negated caret'  "cd $tree; printf '[%s]' [^a]*.txt END; echo"
 answer 'a dash inside'  "cd $tree; printf '[%s]' a[-.]* END; echo"
+answer 'lone opener literal' "cd $tree; printf '[%s]' [ END; echo"
 answer 'unclosed is a byte' "cd $tree; printf '[%s]' '[ab' END; echo"
 #       [[:alpha:]] used to be a set holding a bracket, a colon and five
 #       letters, because the ] that closes the class was read as the ] that

@@ -203,7 +203,11 @@ bool shell_expand_literal(string_address word, positive length)
 {
         expand_sets_prepare();
 
-        return string_span_max(word, length, expand_literal_set) == length;
+        /* A bracket starts a glob only when another bracket can close it.
+           The overwhelmingly common lone `[` is the test builtin name and
+           expansion is provably the identity operation for that one byte. */
+        return string_span_max(word, length, expand_literal_set) == length ||
+               (length == 1 && string_is(word, '['));
 }
 
 static fn expand_complain(address_any data, positive length)
