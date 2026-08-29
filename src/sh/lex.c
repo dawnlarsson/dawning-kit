@@ -16,6 +16,7 @@
 #define LEX_END 0
 #define LEX_WORD 1
 #define LEX_OPERATOR 2
+#define LEX_ARITHMETIC 3
 
 // The operators, longest first, so that && is never read as two &.
 #define OP_AND_IF 1     // &&
@@ -271,6 +272,65 @@ static b32 lex_add(b32 kind, b32 op, string_address text, positive length)
         return true;
 }
 
+static string_address lex_nested_at(string_address at);
+static string_address lex_nesting(string_address at);
+static string_address lex_quote_end(string_address at, p8 quote);
+
+// One Bash arithmetic command token. Keeping its interior whole prevents the
+// shell operators inside ((...)) -- notably ;, &&, < and > -- from becoming
+// command-language tokens before the arithmetic parser sees them.
+static string_address lex_arithmetic_end(string_address start)
+{
+        string_address at = start + 2;
+        positive depth = 0;
+
+        while (string_get(at))
+        {
+                if (string_is(at, '\\') && string_get(at + 1))
+                {
+                        at += 2;
+                        continue;
+                }
+
+                if (string_is(at, '\'') || string_is(at, '"'))
+                {
+                        string_address stop =
+                            lex_quote_end(at + 1, string_get(at));
+
+                        if (!string_get(stop))
+                                return null;
+
+                        at = stop + 1;
+                        continue;
+                }
+
+                {
+                        string_address inner = lex_nested_at(at);
+                        string_address stop = inner ? lex_nesting(inner) : null;
+
+                        if (stop && stop > inner)
+                        {
+                                at = stop;
+                                continue;
+                        }
+                }
+
+                if (string_is(at, '('))
+                        depth++;
+                else if (string_is(at, ')'))
+                {
+                        if (depth)
+                                depth--;
+                        else if (string_is(at + 1, ')'))
+                                return at + 2;
+                }
+
+                at++;
+        }
+
+        return null;
+}
+
 /*
         Where the nesting that starts here begins, or nothing when none does.
 
@@ -289,8 +349,6 @@ static string_address lex_nested_at(string_address at)
 
         return null;
 }
-
-static string_address lex_nesting(string_address at);
 
 /*
         Where a quoted run closes, given the byte after the opening quote.
@@ -636,6 +694,22 @@ b32 lex_line(string_address line)
                         break;
 
                 lex_at = (positive)(step - line);
+
+                if (string_is(step, '(') && string_is(step + 1, '('))
+                {
+                        string_address stop = lex_arithmetic_end(step);
+
+                        if (stop)
+                        {
+                                if (!lex_add(LEX_ARITHMETIC, 0, step,
+                                             (positive)(stop - step)))
+                                        return -1;
+
+                                step = stop;
+                                continue;
+                        }
+                }
+
                 op = lex_operator_at(step, address_of length);
 
                 if (op)

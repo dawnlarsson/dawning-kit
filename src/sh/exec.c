@@ -1610,6 +1610,219 @@ static b32 exec_for(b32 index)
         return status;
 }
 
+static bool exec_arithmetic_value(string_address text,
+                                  bipolar address_to value)
+{
+        shell_mark mark = shell_store_mark(address_of expand_store);
+        string_address ready = shell_expand_arithmetic_text(text);
+        bool held = arith_bash_mode;
+
+        if (!ready || expand_failed)
+        {
+                shell_store_rewind(address_of expand_store, mark);
+                return false;
+        }
+
+        arith_bash_mode = true;
+        address_to value = arith_evaluate(ready);
+        arith_bash_mode = held;
+
+        if (!arith_bad)
+        {
+                shell_store_rewind(address_of expand_store, mark);
+                return true;
+        }
+
+        string_format(exec_error, "arithmetic: %s\n", ready);
+        shell_store_rewind(address_of expand_store, mark);
+        return false;
+}
+
+static b32 exec_arithmetic_command(b32 index)
+{
+        string_address whole = parse_words[parse_nodes[index].word];
+        positive length = string_length(whole);
+        bipolar value;
+        p8 held;
+
+        if (length < 4)
+                return 1;
+
+        held = whole[length - 2];
+        whole[length - 2] = end;
+
+        {
+                string_address at = whole + 2;
+
+                while (string_is(at, ' ') || string_is(at, '\t') ||
+                       string_is(at, '\n'))
+                        at++;
+
+                if (!string_get(at))
+                {
+                        whole[length - 2] = held;
+                        return 1;
+                }
+        }
+
+        if (!exec_arithmetic_value(whole + 2, address_of value))
+        {
+                whole[length - 2] = held;
+                return exec_line_aborted() ? 2 : 1;
+        }
+
+        whole[length - 2] = held;
+        return value ? 0 : 1;
+}
+
+// A C-for separator is a semicolon in the outer arithmetic grammar, not one
+// inside grouping, a quote, ${...}, $(...), or a backtick substitution.
+static string_address exec_cfor_separator(string_address at)
+{
+        positive depth = 0;
+
+        while (string_get(at))
+        {
+                p8 value = string_get(at);
+
+                if (value == '\\' && string_get(at + 1))
+                {
+                        at += 2;
+                        continue;
+                }
+
+                if (value == '\'' || value == '"')
+                {
+                        string_address stop = lex_quote_end(at + 1, value);
+
+                        if (!string_get(stop))
+                                return stop;
+
+                        at = stop + 1;
+                        continue;
+                }
+
+                {
+                        string_address inner = lex_nested_at(at);
+                        string_address stop = inner ? lex_nesting(inner) : null;
+
+                        if (stop && stop > inner)
+                        {
+                                at = stop;
+                                continue;
+                        }
+                }
+
+                if (value == '(')
+                        depth++;
+                else if (value == ')' && depth)
+                        depth--;
+                else if (value == ';' && !depth)
+                        return at;
+
+                at++;
+        }
+
+        return at;
+}
+
+static b32 exec_cfor(b32 index)
+{
+        parse_node address_to node = parse_nodes + index;
+        shell_mark arena = shell_store_mark(address_of exec_store);
+        string_address whole = parse_words[node->word];
+        positive length = string_length(whole);
+        positive inner_length;
+        p8 address_to expressions;
+        string_address initialize;
+        string_address condition;
+        string_address update;
+        string_address first;
+        string_address second;
+        bipolar value;
+        b32 status = 0;
+
+        if (length < 4)
+        {
+                status = 2;
+                goto done;
+        }
+
+        inner_length = length - 4;
+        expressions = shell_store_take(address_of exec_store, inner_length + 1);
+
+        if (!expressions)
+        {
+                status = 2;
+                goto done;
+        }
+
+        memory_copy_end(expressions, whole + 2, inner_length);
+        first = exec_cfor_separator(expressions);
+
+        if (!string_get(first))
+        {
+                string_format(exec_error, "arithmetic: expected two semicolons\n");
+                status = 2;
+                goto done;
+        }
+
+        address_to first = end;
+        second = exec_cfor_separator(first + 1);
+
+        if (!string_get(second))
+        {
+                string_format(exec_error, "arithmetic: expected two semicolons\n");
+                status = 2;
+                goto done;
+        }
+
+        address_to second = end;
+        initialize = expressions;
+        condition = first + 1;
+        update = second + 1;
+
+        if (string_get(initialize) &&
+            !exec_arithmetic_value(initialize, address_of value))
+        {
+                status = exec_line_aborted() ? 2 : 1;
+                goto done;
+        }
+
+        while (1)
+        {
+                if (string_get(condition))
+                {
+                        if (!exec_arithmetic_value(condition, address_of value))
+                        {
+                                status = exec_line_aborted() ? 2 : 1;
+                                goto done;
+                        }
+
+                        if (!value)
+                                break;
+                }
+
+                exec_loop_depth++;
+                status = exec_node(node->right);
+                exec_loop_depth--;
+
+                if (!exec_loop_again())
+                        break;
+
+                if (string_get(update) &&
+                    !exec_arithmetic_value(update, address_of value))
+                {
+                        status = exec_line_aborted() ? 2 : 1;
+                        goto done;
+                }
+        }
+
+done:
+        shell_store_rewind(address_of exec_store, arena);
+        return status;
+}
+
 static b32 exec_case(b32 index)
 {
         parse_node address_to node = parse_nodes + index;
@@ -2008,7 +2221,9 @@ static b32 exec_node_kind(b32 index)
                 return shell_status;
         }
 
-        if (node->kind == NODE_IF)
+        if (node->kind == NODE_ARITHMETIC)
+                status = exec_arithmetic_command(index);
+        else if (node->kind == NODE_IF)
                 status = exec_if(index);
         else if (node->kind == NODE_WHILE)
                 status = exec_loop(index, false);
@@ -2016,6 +2231,8 @@ static b32 exec_node_kind(b32 index)
                 status = exec_loop(index, true);
         else if (node->kind == NODE_FOR)
                 status = exec_for(index);
+        else if (node->kind == NODE_CFOR)
+                status = exec_cfor(index);
         else if (node->kind == NODE_CASE)
                 status = exec_case(index);
         else if (node->kind == NODE_SUBSHELL)
@@ -2026,7 +2243,7 @@ static b32 exec_node_kind(b32 index)
         exec_redirect_restore(mark);
         shell_status = status;
 
-        if (node->kind == NODE_SUBSHELL)
+        if (node->kind == NODE_SUBSHELL || node->kind == NODE_ARITHMETIC)
                 exec_errexit(status);
 
         return status;

@@ -21,6 +21,7 @@
 #define PT_WORD 1
 #define PT_OP 2
 #define PT_NEWLINE 3
+#define PT_ARITHMETIC 4
 
 
 typedef struct
@@ -67,6 +68,8 @@ static parse_token parse_no_token;
 #define NODE_SUBSHELL 11
 #define NODE_GROUP 12
 #define NODE_FUNCTION 13
+#define NODE_ARITHMETIC 14
+#define NODE_CFOR 15
 
 /*
         One node shape for every production.
@@ -592,14 +595,19 @@ bool parse_feed(string_address line)
                         return false;
 
                 into = parse_tokens + parse_token_count;
-                into->kind = source->kind == LEX_WORD ? PT_WORD : PT_OP;
+                into->kind = source->kind == LEX_WORD
+                                 ? PT_WORD
+                                 : source->kind == LEX_ARITHMETIC
+                                       ? PT_ARITHMETIC
+                                       : PT_OP;
                 into->op = source->op;
                 into->joined = index && source->at == previous_stop;
                 into->text = null;
 
                 previous_stop = source->at + source->length;
 
-                if (source->kind == LEX_WORD)
+                if (source->kind == LEX_WORD ||
+                    source->kind == LEX_ARITHMETIC)
                 {
                         positive length = source->length;
 
@@ -1077,6 +1085,29 @@ static b32 parse_for()
 
         parse_position++;
 
+        if (parse_look(0)->kind == PT_ARITHMETIC)
+        {
+                parse_nodes[index].kind = NODE_CFOR;
+                parse_attach_word(index, parse_look(0)->text);
+                parse_position++;
+
+                if (parse_look(0)->kind == PT_OP &&
+                    parse_look(0)->op == OP_SEMI)
+                        parse_position++;
+
+                parse_skip_newlines();
+
+                if (!parse_expect_word("do"))
+                        return 0;
+
+                parse_nodes[index].right = parse_list_required();
+
+                if (parse_state || !parse_expect_word("done"))
+                        return 0;
+
+                return index;
+        }
+
         if (parse_look(0)->kind != PT_WORD)
         {
                 parse_fail();
@@ -1303,6 +1334,19 @@ static b32 parse_command()
         if (parse_word_is(0, "function"))
                 return parse_function_keyword();
 
+        if (parse_look(0)->kind == PT_ARITHMETIC)
+        {
+                index = parse_node_new(NODE_ARITHMETIC);
+
+                if (!parse_state)
+                {
+                        parse_attach_word(index, parse_look(0)->text);
+                        parse_position++;
+                }
+
+                goto command_done;
+        }
+
         if (parse_look(0)->kind == PT_WORD && !parse_reserved(0) &&
             parse_look(1)->kind == PT_OP && parse_look(1)->op == OP_LPAREN &&
             parse_look(2)->kind == PT_OP && parse_look(2)->op == OP_RPAREN)
@@ -1331,6 +1375,7 @@ static b32 parse_command()
                 index = parse_simple();
         }
 
+command_done:
         if (parse_state)
                 return 0;
 

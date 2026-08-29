@@ -1017,6 +1017,7 @@ static bool arith_bad;
 // but an untaken arm is grammar only: it must not read or write variables or
 // raise evaluation errors such as division by zero.
 static bool arith_active;
+static bool arith_bash_mode;
 
 static fn arith_space()
 {
@@ -1036,7 +1037,8 @@ static bipolar arith_store(string_address name, bipolar value)
                 return 0;
 
         bipolar_into_string(written, value);
-        env_set(name, written);
+        if (!env_set(name, written))
+                return arith_bash_mode ? 0 : value;
 
         return value;
 }
@@ -1211,6 +1213,43 @@ static bipolar arith_primary()
                 return ~arith_primary();
         }
 
+        if (arith_bash_mode &&
+            ((string_is(arith_at, '+') && string_is(arith_at + 1, '+')) ||
+             (string_is(arith_at, '-') && string_is(arith_at + 1, '-'))))
+        {
+                bool increment = string_is(arith_at, '+');
+                string_address start;
+                p8 name_local[EXPAND_LOCAL_NAME];
+                string_address name;
+                positive length = 0;
+                bipolar value;
+
+                arith_at += 2;
+                arith_space();
+                start = arith_at;
+
+                while (expand_name_character(string_get(arith_at)))
+                {
+                        length++;
+                        arith_at++;
+                }
+
+                name = expand_hold(start, length, name_local,
+                                   sizeof(name_local));
+
+                if (!length || !name)
+                {
+                        arith_bad = true;
+                        return 0;
+                }
+
+                value = arith_value_of(name);
+                value = increment ? arith_addition(value, 1)
+                                  : arith_subtraction(value, 1);
+
+                return arith_store(name, value);
+        }
+
         if (string_is(arith_at, '-'))
         {
                 arith_at++;
@@ -1314,6 +1353,20 @@ static bipolar arith_primary()
 
                                 return arith_store(name,
                                                    arith_combine(op, was, arith_choose()));
+                        }
+
+                        if (arith_bash_mode &&
+                            ((string_is(arith_at, '+') && string_is(arith_at + 1, '+')) ||
+                             (string_is(arith_at, '-') && string_is(arith_at + 1, '-'))))
+                        {
+                                bool increment = string_is(arith_at, '+');
+                                bipolar was = arith_value_of(name);
+
+                                arith_at += 2;
+                                arith_store(name,
+                                            increment ? arith_addition(was, 1)
+                                                      : arith_subtraction(was, 1));
+                                return was;
                         }
                 }
 
@@ -1649,12 +1702,39 @@ static bipolar arith_evaluate(string_address text)
         value = arith_choose();
         arith_space();
 
+        // Bash arithmetic commands and C-style for clauses accept the comma
+        // operator. Keep it out of POSIX $((...)), where dash rejects it, but
+        // evaluate every Bash operand left-to-right and return the final one.
+        while (arith_bash_mode && string_is(arith_at, ','))
+        {
+                arith_at++;
+                value = arith_choose();
+                arith_space();
+        }
+
         // Every byte has to belong to the grammar. This catches comma and
         // postfix increment/decrement instead of returning the left prefix.
         if (string_get(arith_at))
                 arith_bad = true;
 
         return value;
+}
+
+/*
+        The interior of ((...)) has the same parameter, command and quote
+        expansion as arithmetic expansion, but it is a command token rather
+        than a word. Capture it whole: no field splitting or pathname lookup.
+*/
+static string_address shell_expand_arithmetic_text(string_address text)
+{
+        expand_sets_prepare();
+        expand_length = 0;
+        expand_overflow = false;
+        expand_quoted_seen = false;
+        expand_failed = false;
+        expand_depth = 0;
+
+        return expand_capture(text, true, EXPAND_CAPTURE_TEXT);
 }
 
 /*
