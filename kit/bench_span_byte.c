@@ -26,16 +26,42 @@ static span_call volatile span_calls[2] = {former_span, memory_span_byte};
 
 static bool correctness(void)
 {
-        for (positive offset = 0; offset < 16; offset++)
-                for (positive length = 0; length <= 257; length++)
-                        for (positive mismatch = 0; mismatch <= length; mismatch++)
+        static const positive long_lengths[] = {255, 256, 257, 4095};
+
+        for (positive value = 0; value < 256; value++)
+                for (positive offset = 0; offset < 16; offset++)
+                        for (positive length = 0; length <= 20; length++)
+                                for (positive mismatch = 0; mismatch <= length; mismatch++)
+                                {
+                                        memory_fill(block + offset, (p8)value, length);
+                                        if (mismatch < length)
+                                                block[offset + mismatch] = (p8)(value + 1);
+                                        if (memory_span_byte(block + offset, (p8)value,
+                                                             length) != mismatch)
+                                                return false;
+                                }
+
+        for (positive value = 0; value < 256; value++)
+                for (positive offset = 0; offset < 16; offset++)
+                        for (positive li = 0;
+                             li < sizeof(long_lengths) / sizeof(*long_lengths); li++)
                         {
-                                memory_fill(block, 0xa5, sizeof(block));
-                                memory_fill(block + offset, '0', length);
-                                if (mismatch < length)
-                                        block[offset + mismatch] = '1';
-                                if (memory_span_byte(block + offset, '0', length) != mismatch)
-                                        return false;
+                                positive length = long_lengths[li];
+                                positive positions[] = {0, 1, 15, 16, length / 2,
+                                                        length - 1, length};
+
+                                for (positive pi = 0;
+                                     pi < sizeof(positions) / sizeof(*positions); pi++)
+                                {
+                                        positive mismatch = positions[pi];
+
+                                        memory_fill(block + offset, (p8)value, length);
+                                        if (mismatch < length)
+                                                block[offset + mismatch] = (p8)(value + 1);
+                                        if (memory_span_byte(block + offset, (p8)value,
+                                                             length) != mismatch)
+                                                return false;
+                                }
                         }
         return true;
 }
