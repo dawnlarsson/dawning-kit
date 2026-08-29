@@ -3963,12 +3963,24 @@ static bool ps_value_add(positive address_to address_to values,
         return true;
 }
 
+static bool ps_value_has(positive address_to values, positive count,
+                         positive value)
+{
+        for (positive i = 0; i < count; i++)
+                if (values[i] == value)
+                        return true;
+
+        return false;
+}
+
 static bool ps_pid_list(string_address list,
                         positive address_to address_to values,
-                        positive address_to count, positive address_to room)
+                        positive address_to count, positive address_to room,
+                        bool duplicate_within_operand)
 {
         string_address at = list;
         bool any = false;
+        positive before = address_to count;
 
         while (string_get(at))
         {
@@ -3987,8 +3999,156 @@ static bool ps_pid_list(string_address list,
                      string_get(at) != ' '))
                         return false;
 
-                if (at == from || !ps_value_add(values, count, room, value))
+                if (at == from)
                         return false;
+
+                /*
+                        procps preserves a duplicate written in one -p list,
+                        but repeated selection operands are unioned. Other
+                        numeric selectors are sets in both shapes.
+                */
+                bool seen = ps_value_has(address_to values,
+                                         duplicate_within_operand
+                                             ? before
+                                             : address_to count,
+                                         value);
+
+                if (!seen && !ps_value_add(values, count, room, value))
+                        return false;
+
+                any = true;
+        }
+
+        return any;
+}
+
+static bool ps_string_add(string_address address_to address_to values,
+                          positive address_to count, positive address_to room,
+                          string_address from, positive length)
+{
+        for (positive i = 0; i < address_to count; i++)
+                if (string_length((address_to values)[i]) == length &&
+                    !string_compare_max((address_to values)[i], from, length))
+                        return true;
+
+        if (address_to count >= address_to room)
+        {
+                if (address_to room > positive_max / 2)
+                        return false;
+
+                positive larger = address_to room ? address_to room * 2 : 16;
+
+                if (larger > positive_max / sizeof(string_address))
+                        return false;
+
+                string_address address_to grown =
+                    (string_address address_to)text_arena_take(
+                        larger * sizeof(string_address));
+
+                if (!grown)
+                        return false;
+
+                if (address_to count)
+                        memory_copy_fast(grown, address_to values,
+                                         address_to count *
+                                             sizeof(string_address));
+
+                address_to values = grown;
+                address_to room = larger;
+        }
+
+        p8 address_to made = (p8 address_to)text_arena_take(length + 1);
+
+        if (!made)
+                return false;
+
+        memory_copy_fast(made, from, length);
+        made[length] = end;
+        (address_to values)[address_to count] = (string_address)made;
+        address_to count += 1;
+        return true;
+}
+
+static bool ps_command_list(string_address list,
+                            string_address address_to address_to values,
+                            positive address_to count, positive address_to room)
+{
+        string_address at = list;
+        bool any = false;
+
+        while (string_get(at))
+        {
+                while (string_get(at) == ',' || string_get(at) == ' ')
+                        at++;
+
+                if (!string_get(at))
+                        break;
+
+                string_address from = at;
+
+                while (string_get(at) && string_get(at) != ',' &&
+                       string_get(at) != ' ')
+                        at++;
+
+                positive length = (positive)(at - from);
+
+                if (!length || !ps_string_add(values, count, room, from, length))
+                        return false;
+
+                any = true;
+        }
+
+        return any;
+}
+
+static bool ps_command_selected(string_address address_to values,
+                                positive count, string_address command)
+{
+        for (positive i = 0; i < count; i++)
+        {
+                positive length = string_length(values[i]);
+
+                /* procps compares -C through Linux's 15-byte comm ceiling. */
+                if (length > 15)
+                        length = 15;
+
+                if (string_length(command) == length &&
+                    !string_compare_max(values[i], command, length))
+                        return true;
+        }
+
+        return false;
+}
+
+static bool ps_sort_pid(string_address list, bool address_to reverse)
+{
+        string_address at = list;
+        bool any = false;
+
+        while (string_get(at))
+        {
+                while (string_get(at) == ',' || string_get(at) == ' ')
+                        at++;
+
+                bool descending = false;
+
+                if (string_get(at) == '+' || string_get(at) == '-')
+                        descending = string_get(at++) == '-';
+
+                string_address from = at;
+
+                while (string_get(at) && string_get(at) != ',' &&
+                       string_get(at) != ' ')
+                        at++;
+
+                positive length = (positive)(at - from);
+
+                if (length != 3 || string_compare_max(from,
+                                                       (string_address)"pid", 3))
+                        return false;
+
+                if (!any)
+                        address_to reverse = descending;
 
                 any = true;
         }
@@ -4124,10 +4284,17 @@ static b32 tools_ps(void)
         positive address_to selected_pids = null;
         positive selected_count = 0;
         positive selected_room = 0;
+        positive address_to selected_ppids = null;
+        positive ppid_count = 0;
+        positive ppid_room = 0;
+        string_address address_to selected_commands = null;
+        positive command_count = 0;
+        positive command_room = 0;
         bool every = false;
         bool full = false;
         bool no_headers = false;
         bool force_headers = false;
+        bool reverse = false;
 
         text_begin("ps");
         text_arena_used = 0;
@@ -4181,7 +4348,7 @@ static b32 tools_ps(void)
                         if (!argument ||
                             !ps_pid_list(argument, address_of selected_pids,
                                          address_of selected_count,
-                                         address_of selected_room))
+                                         address_of selected_room, true))
                         {
                                 text_error(argument, "invalid process id list");
                                 return text_done(1);
@@ -4196,7 +4363,7 @@ static b32 tools_ps(void)
 
                         if (!ps_pid_list(argument, address_of selected_pids,
                                          address_of selected_count,
-                                         address_of selected_room))
+                                         address_of selected_room, true))
                         {
                                 text_error(argument, "invalid process id list");
                                 return text_done(1);
@@ -4214,7 +4381,7 @@ static b32 tools_ps(void)
                         if (!argument ||
                             !ps_pid_list(argument, address_of selected_pids,
                                          address_of selected_count,
-                                         address_of selected_room))
+                                         address_of selected_room, true))
                         {
                                 text_error(argument, "invalid process id list");
                                 return text_done(1);
@@ -4226,9 +4393,84 @@ static b32 tools_ps(void)
                 {
                         if (!ps_pid_list(argument + 1, address_of selected_pids,
                                          address_of selected_count,
-                                         address_of selected_room))
+                                         address_of selected_room, true))
                         {
                                 text_error(argument, "invalid process id list");
+                                return text_done(1);
+                        }
+
+                        continue;
+                }
+                else if (string_equals(argument, "--ppid"))
+                {
+                        argument = program_argument(++i);
+
+                        if (!argument ||
+                            !ps_pid_list(argument, address_of selected_ppids,
+                                         address_of ppid_count,
+                                         address_of ppid_room, false))
+                        {
+                                text_error(argument, "invalid parent process id list");
+                                return text_done(1);
+                        }
+
+                        continue;
+                }
+                else if (!string_compare_max(argument,
+                                             (string_address)"--ppid=", 7))
+                {
+                        argument += 7;
+
+                        if (!ps_pid_list(argument, address_of selected_ppids,
+                                         address_of ppid_count,
+                                         address_of ppid_room, false))
+                        {
+                                text_error(argument, "invalid parent process id list");
+                                return text_done(1);
+                        }
+
+                        continue;
+                }
+                else if (argument[0] == '-' && argument[1] == 'C')
+                {
+                        argument += 2;
+
+                        if (!string_get(argument))
+                                argument = program_argument(++i);
+
+                        if (!argument ||
+                            !ps_command_list(argument,
+                                             address_of selected_commands,
+                                             address_of command_count,
+                                             address_of command_room))
+                        {
+                                text_error(argument, "invalid command list");
+                                return text_done(1);
+                        }
+
+                        continue;
+                }
+                else if (string_equals(argument, "--sort"))
+                {
+                        argument = program_argument(++i);
+
+                        if (!argument || !ps_sort_pid(argument,
+                                                      address_of reverse))
+                        {
+                                text_error(argument, "unsupported sort key");
+                                return text_done(1);
+                        }
+
+                        continue;
+                }
+                else if (!string_compare_max(argument,
+                                             (string_address)"--sort=", 7))
+                {
+                        argument += 7;
+
+                        if (!ps_sort_pid(argument, address_of reverse))
+                        {
+                                text_error(argument, "unsupported sort key");
                                 return text_done(1);
                         }
 
@@ -4271,7 +4513,17 @@ static b32 tools_ps(void)
                                 case 'h': no_headers = true; break;
                                 case 'a':
                                 case 'x':
-                                case 'u': every = true; break;
+                                case 'u':
+                                        /*
+                                                These BSD personalities also
+                                                replace the output format.
+                                                A broad default listing is a
+                                                plausible but wrong `ps aux`,
+                                                so refuse them until that
+                                                format exists in full.
+                                        */
+                                        known = false;
+                                        break;
                                 default: known = false; break;
                                 }
 
@@ -4418,15 +4670,32 @@ static b32 tools_ps(void)
                 text_put_character('\n');
         }
 
-        for (positive p = 0; p < ps_count; p++)
+        bool selectors = selected_count || ppid_count || command_count;
+        bool alternate_selectors = ppid_count || command_count;
+        bool matched = false;
+
+        for (positive at = 0; at < ps_count; at++)
         {
+                positive p = reverse ? ps_count - at - 1 : at;
                 ps_process address_to one = ps_list + p;
                 positive repeats = 1;
 
-                if (selected_count)
+                /*
+                        procps gives -p its historical override of -e, but
+                        combines -e with -C/--ppid as a union, which is all
+                        processes. Preserve that awkward visible distinction.
+                */
+                if (selectors && !(every && alternate_selectors))
                 {
                         repeats = ps_pid_matches(selected_pids, selected_count,
                                                  one->pid);
+
+                        if (!repeats &&
+                            (ps_value_has(selected_ppids, ppid_count,
+                                          one->ppid) ||
+                             ps_command_selected(selected_commands,
+                                                 command_count, one->comm)))
+                                repeats = 1;
 
                         if (!repeats)
                                 continue;
@@ -4434,6 +4703,8 @@ static b32 tools_ps(void)
                 else if (!every &&
                          !(one->uid == ps_own_uid && one->tty == ps_own_tty))
                         continue;
+
+                matched = true;
 
                 for (positive repeat = 0; repeat < repeats; repeat++)
                 {
@@ -4458,5 +4729,5 @@ static b32 tools_ps(void)
                 }
         }
 
-        return text_done(ps_failed ? 1 : 0);
+        return text_done(ps_failed || (selectors && !matched) ? 1 : 0);
 }

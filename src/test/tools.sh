@@ -813,7 +813,19 @@ compare 'suppress headings' ps -p "$long_pid" --no-headers -o pid,comm
 compare 'force blank headings' ps -p "$long_pid" --headers -o pid=,comm=
 compare 'format long option' ps -p "$long_pid" --format=pid,ppid,comm
 compare 'format aliases' ps -p "$long_pid" -o cmd,command,ucmd
-compare 'elapsed seconds' ps -p "$long_pid" -o etimes
+want_elapsed=$(ps -p "$long_pid" -o etimes= | tr -d ' ')
+got_elapsed=$("$bin/ps" -p "$long_pid" -o etimes= 2> /dev/null | tr -d ' ')
+case $want_elapsed:$got_elapsed in
+        *[!0-9:]*|:*) report 'elapsed seconds' "want $want_elapsed got $got_elapsed" ;;
+        *)
+                elapsed_gap=$((want_elapsed - got_elapsed))
+                [ "$elapsed_gap" -lt 0 ] && elapsed_gap=$((-elapsed_gap))
+                if [ "$elapsed_gap" -le 1 ]; then
+                        pass=$((pass + 1))
+                else
+                        report 'elapsed seconds' "want $want_elapsed got $got_elapsed"
+                fi ;;
+esac
 
 # More selectors than the former small option vectors commonly allowed. Only
 # PID 1 can match; repetitions select it once, exactly as procps does.
@@ -824,6 +836,127 @@ while [ "$i" -lt 40 ]; do
         i=$((i + 1))
 done
 compare 'many pid selectors' ps -p "$pid_spec" -o pid=
+
+# Duplicate PIDs in one comma list are deliberately repeated by procps, while
+# the same PID in two selector operands is a set union. Missing selections
+# print the ordinary heading (when there is one) and return one.
+compare 'duplicate pid list' ps -p "$long_pid,$long_pid" -o pid=
+compare 'duplicate pid operands' ps -p "$long_pid" -p "$long_pid" -o pid=
+compare 'missing pid' ps -p 999999999 -o pid
+
+# PID is the one sort key this implementation advertises. Ascending is the
+# gathered order; descending must reverse both selected rows exactly.
+compare 'sort pid' ps -p "1,$long_pid" --sort pid -o pid=
+compare 'sort pid descending' ps -p "1,$long_pid" --sort=-pid -o pid=
+compare 'sort pid keys' ps -p "1,$long_pid" --sort pid,-pid -o pid=
+
+# Give -C a name unique to this suite so another user's sleep cannot enter the
+# result. Linux limits comm to fifteen bytes: the full long name must select
+# nothing, while its kernel-truncated spelling selects the live process.
+comm_name=pscommselector
+ln -s /bin/sleep "$work/$comm_name"
+"$work/$comm_name" 10 &
+comm_pid=$!
+sleep 0.1
+compare 'command selection' ps -C "$comm_name" -o pid,comm
+compare 'attached command selection' ps -C"$comm_name" -o pid=,comm=
+compare 'duplicate command list' ps -C "$comm_name,$comm_name" -o pid=
+
+long_comm=pscommselector-long
+ln -s /bin/sleep "$work/$long_comm"
+"$work/$long_comm" 10 &
+long_comm_pid=$!
+sleep 0.1
+compare 'long command refused' ps -C "$long_comm" -o pid=
+compare 'kernel command length' ps -C pscommselector- -o pid,comm
+
+# A separate parent keeps the ps process itself out of --ppid's answer. The
+# numeric and command selectors are unions; matching both does not duplicate
+# a row, and repeating a parent selector remains a set.
+# Re-parenting cannot make a deterministic fixture, so a waiting shell owns a
+# uniquely named child and reports its PID through a fifo-free temporary file.
+sh -c '"$1" 10 & echo $! > "$2"; wait' sh \
+        "$work/$comm_name" "$work/ppid-child" &
+parent_pid=$!
+i=0
+while [ ! -s "$work/ppid-child" ] && [ "$i" -lt 50 ]; do
+        sleep 0.02
+        i=$((i + 1))
+done
+selected_child=$(cat "$work/ppid-child")
+compare 'parent selection' ps --ppid "$parent_pid" -o pid,ppid,comm
+compare 'parent selection attached' ps --ppid="$parent_pid" -o pid=,comm=
+compare 'repeated parent selection' ps --ppid "$parent_pid" \
+        --ppid "$parent_pid" -o pid=
+compare 'selector union' ps -p "$long_pid" --ppid "$parent_pid" -o pid=
+compare 'missing parent' ps --ppid 999999999 -o pid
+
+# Unlike -e with -p, procps treats -e with an alternate selector as a union:
+# it is still the all-process full listing. Content races, so pin the two rows
+# that prove neither side of that union was dropped.
+if "$bin/ps" -ef --ppid "$parent_pid" 2> /dev/null |
+        awk -v one=1 -v child="$selected_child" \
+            '$2 == one { all = 1 } $2 == child { selected = 1 }
+             END { exit !(all && selected) }'; then
+        pass=$((pass + 1))
+else
+        report 'every parent union' 'all-process or selected row missing'
+fi
+
+# BSD a/x/u options select a different column personality, not merely more
+# rows. Until that full format exists, accepting `ps aux` and printing the
+# ordinary four columns is silently wrong; the deliberate gap is a refusal.
+"$bin/ps" aux > /dev/null 2>&1
+check 'BSD aux refused' 1 "$(( $? != 0 ))"
+"$bin/ps" --sort comm -p "$long_pid" > /dev/null 2>&1
+check 'unsupported sort refused' 1 "$(( $? != 0 ))"
+
+# Header overrides are invocation-local. Run two ps commands through the same
+# multicall shell and normalize only the unavoidable process number.
+shell_binary=${bin%/bin}/shell
+sh -c 'ps -p $$ -o pid=ONE; ps -p $$ -o pid' 2> /dev/null |
+        sed 's/[0-9]/#/g' > "$work/want"
+PATH="$bin" "$shell_binary" -c \
+        'ps -p $$ -o pid=ONE; ps -p $$ -o pid' 2> /dev/null |
+        sed 's/[0-9]/#/g' > "$work/got"
+if cmp -s "$work/want" "$work/got"; then
+        pass=$((pass + 1))
+else
+        report 'multicall header reset' \
+                "want $(show "$work/want") got $(show "$work/got")"
+fi
+
+# Processes vanishing between the /proc directory walk and their stat/status
+# reads are normal. Churn short-lived children while taking repeated listings;
+# every completed row must retain its two numeric identity fields.
+(
+        race=0
+        while [ "$race" -lt 200 ]; do
+                /bin/true &
+                race=$((race + 1))
+        done
+        wait
+) &
+churn=$!
+race_ok=1
+race=0
+while [ "$race" -lt 12 ]; do
+        if ! "$bin/ps" -e -o pid,ppid > "$work/ps-race" 2> /dev/null ||
+                ! sed -n '2,$p' "$work/ps-race" |
+                    awk 'NF != 2 || $1 !~ /^[0-9]+$/ || $2 !~ /^[0-9]+$/ \
+                         { bad = 1 } END { exit bad }'; then
+                race_ok=0
+                break
+        fi
+        race=$((race + 1))
+done
+wait "$churn" 2> /dev/null
+check 'process exit races' 1 "$race_ok"
+
+kill "$selected_child" "$parent_pid" \
+        "$comm_pid" "$long_comm_pid" 2> /dev/null
+wait "$selected_child" "$parent_pid" \
+        "$comm_pid" "$long_comm_pid" 2> /dev/null
 
 kill "$long_pid" 2> /dev/null
 wait "$long_pid" 2> /dev/null
