@@ -44,7 +44,16 @@ fn parse_nest_leave();
 
 extern p8 shell_directory[SHELL_DIRECTORY_MAX];
 
-b32 shell_find_in_path(string_address name, p8 address_to into, positive room);
+bipolar shell_find_in_path_alloc(string_address name,
+                                 p8 address_to address_to into,
+                                 positive address_to room);
+bipolar shell_find_in_path_query_alloc(string_address name,
+                                       p8 address_to address_to into,
+                                       positive address_to room);
+static bipolar shell_find_in_standard_path_alloc(string_address name,
+                                                  p8 address_to address_to into,
+                                                  positive address_to room,
+                                                  bool query);
 bipolar shell_signed(string_address input, bool address_to good);
 bool test_facts(string_address path, file_facts address_to out, bool follow);
 bool word_is(string_address word, string_address text);
@@ -1092,17 +1101,51 @@ fn shell_echo(writer write, string_address input)
 
 fn shell_exec(writer write, string_address input)
 {
-        p8 found[768];
+        p8 address_to found = null;
+        positive found_room = 0;
+        bipolar located;
 
         // With nothing to run, exec is only there for the redirections that
         // were already applied to get here.
         if (shell_argc < 2)
                 return shell_answer(0);
 
-        if (!shell_find_in_path(shell_argv[1], found, sizeof(found)))
+        located = shell_find_in_path_alloc(shell_argv[1], address_of found,
+                                           address_of found_room);
+
+        if (located < 0)
         {
+                if (found)
+                        memory_free(found, found_room);
+
+                shell_answer(2);
+                string_format(shell_diagnostic, "exec: no room\n");
+
+                if (!shell_is_interactive)
+                {
+                        log_flush();
+                        exit(2);
+                }
+
+                return;
+        }
+
+        if (!located)
+        {
+                if (found)
+                        memory_free(found, found_room);
+
                 shell_answer(127);
-                return string_format(shell_diagnostic, "exec: %s: not found\n", shell_argv[1]);
+                string_format(shell_diagnostic, "exec: %s: not found\n",
+                              shell_argv[1]);
+
+                if (!shell_is_interactive)
+                {
+                        log_flush();
+                        exit(127);
+                }
+
+                return;
         }
 
         log_flush();
@@ -1112,8 +1155,15 @@ fn shell_exec(writer write, string_address input)
         system_call_3(syscall(execve), (positive)found,
                       (positive)(shell_argv + 1), (positive)shell_environment());
 
+        memory_free(found, found_room);
         shell_answer(126);
         string_format(shell_diagnostic, "exec: %s: cannot run\n", shell_argv[1]);
+
+        if (!shell_is_interactive)
+        {
+                log_flush();
+                exit(126);
+        }
 }
 
 
@@ -3974,26 +4024,37 @@ fn shell_unalias(writer write, string_address input)
         reach the code that runs lines, which sits above this file and is only
         there when a shell was built around it.
 */
-#define EVAL_STORAGE 4096
-#define EVAL_DEPTH 4
-
-static p8 eval_storage[EVAL_STORAGE];
-static positive eval_depth;
-
 fn shell_eval(writer write, string_address input)
 {
+        p8 address_to eval_storage = null;
+        positive eval_room = 0;
         positive used = 0;
         positive index = 1;
+        bool room = true;
 
-        if (shell_argc < 2 || !run_line || eval_depth >= EVAL_DEPTH)
+        if (shell_argc < 2 || !run_line)
                 return shell_answer(0);
 
         while (index < shell_argc)
         {
                 positive length = string_length(shell_argv[index]);
+                positive wanted;
 
-                if (used + length + 2 > EVAL_STORAGE)
+                if (used > positive_max - 2 ||
+                    length > positive_max - used - 2)
+                {
+                        room = false;
                         break;
+                }
+
+                wanted = used + length + 2;
+
+                if (!shell_room((address_any address_to)address_of eval_storage,
+                                address_of eval_room, wanted, 1))
+                {
+                        room = false;
+                        break;
+                }
 
                 if (used)
                         eval_storage[used++] = ' ';
@@ -4001,6 +4062,23 @@ fn shell_eval(writer write, string_address input)
                 memory_copy(eval_storage + used, shell_argv[index], length);
                 used += length;
                 index++;
+        }
+
+        if (!room)
+        {
+                if (eval_storage)
+                        memory_free(eval_storage, eval_room);
+
+                string_format(shell_diagnostic, "eval: no room\n");
+                shell_answer(2);
+
+                if (!shell_is_interactive)
+                {
+                        log_flush();
+                        exit(2);
+                }
+
+                return;
         }
 
         eval_storage[used] = end;
@@ -4036,10 +4114,8 @@ fn shell_eval(writer write, string_address input)
 
                 parse_nest_enter();
 
-                eval_depth++;
                 run_line(eval_storage);
                 shell_input_end();
-                eval_depth--;
 
                 parse_nest_leave();
 
@@ -4057,6 +4133,8 @@ fn shell_eval(writer write, string_address input)
                 lex_used = kept_used;
                 lex_count = kept_count;
         }
+
+        memory_free(eval_storage, eval_room);
 
         // After the nested line, not before it: the commands inside set the
         // status themselves, and claiming it early would eat their answer.
@@ -4356,39 +4434,222 @@ fn shell_trap_exit()
         is one command, and the parser says so by staying incomplete, which is
         the same thing the reader in programs/shell.c listens to.
 */
-#define SOURCE_MAX 65536
+static bool shell_path_wanted(string_address value, positive name_length,
+                              positive address_to wanted)
+{
+        string_address segment = value;
+        positive longest = 0;
 
-static p8 source_text[SOURCE_MAX];
-static positive source_depth;
+        while (1)
+        {
+                string_address next = string_first_of(segment, ':');
+                positive length = next ? (positive)(next - segment)
+                                       : string_length(segment);
+
+                if (length > longest)
+                        longest = length;
+
+                if (!next)
+                        break;
+
+                segment = next + 1;
+        }
+
+        if (name_length > positive_max - 2 ||
+            longest > positive_max - name_length - 2)
+                return false;
+
+        *wanted = longest + name_length + 2;
+        return true;
+}
+
+static bipolar shell_source_open(string_address name,
+                                  p8 address_to address_to found,
+                                  positive address_to found_room,
+                                  bool address_to no_room)
+{
+        string_address value;
+        string_address segment;
+        positive name_length;
+
+        if (!name || !string_get(name))
+                return -1;
+
+        if (string_first_of(name, '/'))
+        {
+                bipolar handle;
+
+                do
+                        handle = system_call_4(syscall(openat), AT_FDCWD,
+                                               (positive)name, FILE_READ, 0);
+                while (handle == -4);
+
+                return handle;
+        }
+
+        value = env_get("PATH");
+
+        if (!value)
+                value = "/bin:/usr/bin:/";
+
+        name_length = string_length(name);
+
+        {
+                positive wanted;
+
+                if (!shell_path_wanted(value, name_length,
+                                       address_of wanted) ||
+                    !shell_room((address_any address_to)found, found_room,
+                                wanted, 1))
+                {
+                        *no_room = true;
+                        return -1;
+                }
+        }
+
+        segment = value;
+
+        while (1)
+        {
+                string_address next = string_first_of(segment, ':');
+                positive length = next ? (positive)(next - segment)
+                                       : string_length(segment);
+                positive used = 0;
+                bipolar handle;
+
+                if (length)
+                {
+                        memory_copy(*found, segment, length);
+                        used = length;
+
+                        if ((*found)[used - 1] != '/')
+                                (*found)[used++] = '/';
+                }
+
+                string_copy(*found + used, name);
+
+                do
+                        handle = system_call_4(syscall(openat), AT_FDCWD,
+                                               (positive)*found, FILE_READ, 0);
+                while (handle == -4);
+
+                if (handle >= 0)
+                        return handle;
+
+                if (!next)
+                        break;
+
+                segment = next + 1;
+        }
+
+        return -1;
+}
+
+static bipolar shell_source_read(bipolar handle,
+                                  p8 address_to address_to text,
+                                  positive address_to room,
+                                  bool address_to no_room)
+{
+        positive used = 0;
+
+        while (1)
+        {
+                bipolar got;
+
+                if (!*room || used == *room - 1)
+                {
+                        positive wanted;
+
+                        if (*room && *room > positive_max / 2)
+                        {
+                                *no_room = true;
+                                break;
+                        }
+
+                        wanted = *room ? *room * 2 : 4096;
+
+                        if (!shell_room((address_any address_to)text, room,
+                                        wanted, 1))
+                        {
+                                *no_room = true;
+                                break;
+                        }
+                }
+
+                got = system_read_retry((positive)handle, *text + used,
+                                        *room - used - 1);
+
+                if (got < 0)
+                {
+                        system_call_1(syscall(close), (positive)handle);
+                        return got;
+                }
+
+                if (!got)
+                        break;
+
+                used += (positive)got;
+        }
+
+        system_call_1(syscall(close), (positive)handle);
+
+        if (*no_room)
+                return -1;
+
+        (*text)[used] = end;
+        return (bipolar)used;
+}
 
 fn shell_dot(writer write, string_address input)
 {
-        p8 found[768];
+        p8 address_to found = null;
+        positive found_room = 0;
+        p8 address_to source_text = null;
+        positive source_room = 0;
         string_address path;
         bipolar got;
         positive filled;
         positive at = 0;
+        bool no_room = false;
+        bipolar handle;
 
         if (shell_argc < 2 || !run_line)
                 return shell_answer(shell_argc < 2 ? 2 : 0);
 
-        if (source_depth >= EVAL_DEPTH)
-        {
-                string_format(shell_diagnostic, "%s: too deep\n", shell_argv[0]);
-                return shell_answer(1);
-        }
-
         path = shell_argv[1];
+        handle = shell_source_open(path, address_of found, address_of found_room,
+                                   address_of no_room);
 
-        // A name with no slash is looked for on the path, which is what POSIX
-        // says and what makes ". functions" find /etc/functions.
-        if (!string_first_of(path, '/') && shell_find_in_path(path, found, sizeof(found)))
-                path = found;
+        if (handle >= 0)
+                got = shell_source_read(handle, address_of source_text,
+                                        address_of source_room,
+                                        address_of no_room);
+        else
+                got = handle;
 
-        got = file_slurp(path, source_text, sizeof(source_text));
+        if (found)
+                memory_free(found, found_room);
+
+        if (no_room)
+        {
+                if (source_text)
+                        memory_free(source_text, source_room);
+
+                string_format(shell_diagnostic, "%s: no room\n", shell_argv[0]);
+                shell_answer(2);
+
+                if (!shell_is_interactive)
+                {
+                        log_flush();
+                        exit(2);
+                }
+
+                return;
+        }
 
         if (got < 0)
         {
+                memory_free(source_text, source_room);
                 string_format(shell_diagnostic, "%s: %s: cannot open\n",
                               shell_argv[0], shell_argv[1]);
                 shell_answer(1);
@@ -4431,7 +4692,6 @@ fn shell_dot(writer write, string_address input)
                 lex_count = 0;
 
                 parse_nest_enter();
-                source_depth++;
 
                 while (at < filled)
                 {
@@ -4446,7 +4706,6 @@ fn shell_dot(writer write, string_address input)
 
                 shell_input_end();
 
-                source_depth--;
                 parse_nest_leave();
 
                 if (lex_tokens)
@@ -4463,6 +4722,8 @@ fn shell_dot(writer write, string_address input)
                 lex_used = kept_used;
                 lex_count = kept_count;
         }
+
+        memory_free(source_text, source_room);
 
         // The status of the last line it ran, which is already there.
         shell_answer(shell_status);
@@ -4631,6 +4892,8 @@ fn shell_hash(writer write, string_address input)
 {
         positive index = 1;
         b32 bad = 0;
+        p8 address_to found = null;
+        positive found_room = 0;
 
         while (index < shell_argc && word_is(shell_argv[index], "-r"))
         {
@@ -4650,9 +4913,18 @@ fn shell_hash(writer write, string_address input)
 
         while (index < shell_argc)
         {
-                p8 found[768];
+                bipolar located = shell_find_in_path_alloc(shell_argv[index],
+                                                           address_of found,
+                                                           address_of found_room);
 
-                if (!shell_find_in_path(shell_argv[index], found, sizeof(found)))
+                if (located < 0)
+                {
+                        bad = 2;
+                        string_format(shell_diagnostic, "hash: no room\n");
+                        break;
+                }
+
+                if (located != 1)
                 {
                         bad = 1;
                         string_format(shell_diagnostic, "hash: %s: not found\n",
@@ -4661,6 +4933,9 @@ fn shell_hash(writer write, string_address input)
 
                 index++;
         }
+
+        if (found)
+                memory_free(found, found_room);
 
         shell_answer(bad);
 }
@@ -4672,54 +4947,72 @@ fn shell_hash(writer write, string_address input)
         run anything typed without a slash -- and had no way to ask, so every
         program had to be named by its full path.
 */
-b32 shell_find_in_path(string_address name, p8 address_to into, positive room)
+static b32 shell_find_in_path_mode(string_address name, p8 address_to into,
+                                   positive room, positive access,
+                                   bool use_hash, string_address value)
 {
-        // On a copy: PATH points into env_storage, and cutting it apart there
-        // would leave the environment holding only its first directory.
-        p8 search[512];
-        string_address value = env_get("PATH");
         string_address segment;
         positive name_length;
 
-        if (name == null || !room)
+        if (name == null || !string_get(name) || !room)
                 return false;
 
         if (string_first_of(name, '/'))
         {
                 if (system_call_4(syscall(faccessat), AT_FDCWD, (positive)name,
-                                  ACCESS_EXECUTE, 0))
+                                  access, 0))
                         return false;
 
-                string_copy_max_end(into, name, room - 1);
+                if (string_length(name) >= room)
+                        return false;
+
+                string_copy(into, name);
                 return true;
         }
 
         {
-                string_address known = hash_find(name);
+                string_address known = use_hash ? hash_find(name) : null;
 
                 if (known)
                 {
-                        string_copy_max_end(into, known, room - 1);
+                        if (string_length(known) >= room)
+                                return false;
+
+                        string_copy(into, known);
                         return true;
                 }
         }
 
-        if (value == null)
+        if (value == null && !(value = env_get("PATH")))
                 value = "/bin:/usr/bin:/";
 
-        string_copy_max_end(search, value, sizeof(search) - 1);
-
-        segment = search;
+        segment = value;
         name_length = string_length(env_reading(name));
 
-        while (segment)
+        while (1)
         {
-                string_address next = string_cut(segment, ':');
-                positive length = string_length(segment);
+                string_address next = string_first_of(segment, ':');
+                positive length = next ? (positive)(next - segment)
+                                       : string_length(segment);
 
-                if (length && length + name_length + 2 <= room)
+                if (!length && name_length < room)
                 {
-                        string_copy(into, segment);
+                        string_copy(into, name);
+
+                        if (!system_call_4(syscall(faccessat), AT_FDCWD,
+                                           (positive)into, access, 0))
+                        {
+                                if (use_hash)
+                                        hash_remember(name, into);
+                                return true;
+                        }
+                }
+                else if (length && name_length <= positive_max - 2 &&
+                         length <= positive_max - name_length - 2 &&
+                         length + name_length + 2 <= room)
+                {
+                        memory_copy(into, segment, length);
+                        into[length] = end;
 
                         if (into[length - 1] != '/')
                                 into[length++] = '/';
@@ -4727,17 +5020,107 @@ b32 shell_find_in_path(string_address name, p8 address_to into, positive room)
                         string_copy(into + length, name);
 
                         if (!system_call_4(syscall(faccessat), AT_FDCWD,
-                                           (positive)into, ACCESS_EXECUTE, 0))
+                                           (positive)into, access, 0))
                         {
-                                hash_remember(name, into);
+                                if (use_hash)
+                                        hash_remember(name, into);
                                 return true;
                         }
                 }
 
-                segment = next;
+                if (!next)
+                        break;
+
+                segment = next + 1;
         }
 
         return false;
+}
+
+/*
+        A complete pathname may be longer than any command buffer. Size from
+        the actual inputs and keep allocation failure distinct from "not
+        found", so callers never turn memory pressure into a plausible 127.
+*/
+static bipolar shell_find_in_path_alloc_mode(string_address name,
+                                              p8 address_to address_to into,
+                                              positive address_to room,
+                                              bool query,
+                                              string_address fixed_path)
+{
+        string_address value;
+        string_address known;
+        positive name_length;
+        positive wanted;
+
+        if (!name || !string_get(name))
+                return 0;
+
+        name_length = string_length(name);
+
+        if (string_first_of(name, '/'))
+        {
+                if (name_length == positive_max)
+                        return -1;
+
+                wanted = name_length + 1;
+        }
+        else if (!fixed_path && (known = hash_find(name)))
+        {
+                positive known_length = string_length(known);
+
+                if (known_length == positive_max)
+                        return -1;
+
+                wanted = known_length + 1;
+        }
+        else
+        {
+                value = fixed_path ? fixed_path : env_get("PATH");
+
+                if (!value)
+                        value = "/bin:/usr/bin:/";
+
+                if (!shell_path_wanted(value, name_length, address_of wanted))
+                        return -1;
+        }
+
+        if (!shell_room((address_any address_to)into, room, wanted, 1))
+                return -1;
+
+        if (shell_find_in_path_mode(name, *into, *room,
+                                    query ? 0 : ACCESS_EXECUTE,
+                                    !fixed_path, fixed_path))
+                return 1;
+
+        if (!query && shell_find_in_path_mode(name, *into, *room, 0, false,
+                                              fixed_path))
+                return 2;
+
+        return 0;
+}
+
+bipolar shell_find_in_path_alloc(string_address name,
+                                 p8 address_to address_to into,
+                                 positive address_to room)
+{
+        return shell_find_in_path_alloc_mode(name, into, room, false, null);
+}
+
+bipolar shell_find_in_path_query_alloc(string_address name,
+                                       p8 address_to address_to into,
+                                       positive address_to room)
+{
+        return shell_find_in_path_alloc_mode(name, into, room, true, null);
+}
+
+static bipolar shell_find_in_standard_path_alloc(string_address name,
+                                                  p8 address_to address_to into,
+                                                  positive address_to room,
+                                                  bool query)
+{
+        return shell_find_in_path_alloc_mode(name, into, room, query,
+                                             "/bin:/usr/bin");
 }
 
 /*
@@ -4750,6 +5133,8 @@ fn shell_type(writer write, string_address input)
 {
         b32 index = 1;
         b32 bad = 0;
+        p8 address_to found = null;
+        positive found_room = 0;
 
         if (shell_argc < 2)
                 return shell_answer(0);
@@ -4758,7 +5143,7 @@ fn shell_type(writer write, string_address input)
         {
                 string_address name = shell_argv[index++];
                 shell_command address_to command = shell_command_named(name);
-                p8 found[768];
+                bipolar located;
 
                 if (command)
                 {
@@ -4778,7 +5163,17 @@ fn shell_type(writer write, string_address input)
                         continue;
                 }
 
-                if (shell_find_in_path(name, found, sizeof(found)))
+                located = shell_find_in_path_query_alloc(name, address_of found,
+                                                         address_of found_room);
+
+                if (located < 0)
+                {
+                        string_format(shell_diagnostic, "type: no room\n");
+                        bad = 2;
+                        break;
+                }
+
+                if (located)
                 {
                         string_format(write, "%s is %s\n", name, found);
                         continue;
@@ -4789,6 +5184,9 @@ fn shell_type(writer write, string_address input)
                 string_format(write, "%s: not found\n", name);
                 bad = 127;
         }
+
+        if (found)
+                memory_free(found, found_room);
 
         shell_answer(bad);
 }
@@ -4804,6 +5202,7 @@ fn shell_command_builtin(writer write, string_address input)
         b32 index = 1;
         bool only_say = false;
         bool at_length = false;
+        bool standard_path = false;
 
         while (index < shell_argc && string_is(shell_argv[index], '-') &&
                string_get(shell_argv[index] + 1))
@@ -4818,7 +5217,6 @@ fn shell_command_builtin(writer write, string_address input)
 
                 while (string_get(letter))
                 {
-                        // -p is the standard path, which is the only path here.
                         if (string_get(letter) == 'v')
                                 only_say = true;
                         else if (string_get(letter) == 'V')
@@ -4826,7 +5224,9 @@ fn shell_command_builtin(writer write, string_address input)
                                 only_say = true;
                                 at_length = true;
                         }
-                        else if (string_get(letter) != 'p')
+                        else if (string_get(letter) == 'p')
+                                standard_path = true;
+                        else
                                 break;
 
                         letter++;
@@ -4840,48 +5240,77 @@ fn shell_command_builtin(writer write, string_address input)
 
         if (only_say)
         {
-                string_address name = shell_argv[index];
-                shell_command address_to command = shell_command_named(name);
-                p8 found[768];
+                p8 address_to found = null;
+                positive found_room = 0;
+                b32 bad = 0;
+                bool any = false;
 
-                if (command)
+                while (index < shell_argc)
                 {
-                        string_format(write, at_length ? "%s is a shell builtin\n"
-                                                       : "%s\n",
-                                      name);
-                        return shell_answer(0);
-                }
+                        string_address name = shell_argv[index++];
+                        shell_command address_to command = shell_command_named(name);
+                        bipolar located;
 
-                if (shell_tool_here(name))
-                {
-                        string_format(write, at_length ? "%s is a shell builtin\n"
-                                                       : "%s\n",
-                                      name);
-                        return shell_answer(0);
-                }
+                        if (command || shell_tool_here(name))
+                        {
+                                string_format(write,
+                                              at_length
+                                                ? "%s is a shell builtin\n"
+                                                : "%s\n",
+                                              name);
+                                any = true;
+                                continue;
+                        }
 
-                if (exec_function_here && exec_function_here(name))
-                {
-                        string_format(write, at_length ? "%s is a shell function\n"
-                                                       : "%s\n",
-                                      name);
-                        return shell_answer(0);
-                }
+                        if (exec_function_here && exec_function_here(name))
+                        {
+                                string_format(write,
+                                              at_length
+                                                ? "%s is a shell function\n"
+                                                : "%s\n",
+                                              name);
+                                any = true;
+                                continue;
+                        }
 
-                if (shell_find_in_path(name, found, sizeof(found)))
-                {
-                        if (at_length)
-                                string_format(write, "%s is %s\n", name, found);
+                        located = standard_path
+                                    ? shell_find_in_standard_path_alloc(
+                                          name, address_of found,
+                                          address_of found_room, true)
+                                    : shell_find_in_path_query_alloc(
+                                          name, address_of found,
+                                          address_of found_room);
+
+                        if (located < 0)
+                        {
+                                string_format(shell_diagnostic,
+                                              "command: no room\n");
+                                bad = 2;
+                                break;
+                        }
+
+                        if (located)
+                        {
+                                if (at_length)
+                                        string_format(write, "%s is %s\n",
+                                                      name, found);
+                                else
+                                        string_format(write, "%s\n", found);
+                                any = true;
+                        }
                         else
-                                string_format(write, "%s\n", found);
+                        {
+                                if (at_length)
+                                        string_format(write, "%s: not found\n",
+                                                      name);
 
-                        return shell_answer(0);
+                        }
                 }
 
-                if (at_length)
-                        string_format(write, "%s: not found\n", name);
+                if (found)
+                        memory_free(found, found_room);
 
-                return shell_answer(127);
+                return shell_answer(bad ? bad : (any ? 0 : 127));
         }
 
         // Running it is the executor's business, and it is told to skip the
@@ -4898,11 +5327,55 @@ fn shell_command_builtin(writer write, string_address input)
         if (shell_builtin(shell_arguments()))
                 return;
 
-        shell_execute_command();
+        {
+                string_address name = shell_argv[0];
+                p8 address_to found = null;
+                positive found_room = 0;
+                bipolar located = standard_path
+                                    ? shell_find_in_standard_path_alloc(
+                                          name, address_of found,
+                                          address_of found_room, false)
+                                    : shell_find_in_path_alloc(
+                                          name, address_of found,
+                                          address_of found_room);
+
+                if (located < 0)
+                {
+                        string_format(shell_diagnostic, "command: no room\n");
+                        return shell_answer(2);
+                }
+
+                if (!located)
+                {
+                        if (found)
+                                memory_free(found, found_room);
+
+                        string_format(shell_diagnostic, "command: %s: not found\n",
+                                      name);
+                        return shell_answer(127);
+                }
+
+                if (located == 2)
+                {
+                        memory_free(found, found_room);
+                        string_format(shell_diagnostic,
+                                      "command: %s: cannot run\n", name);
+                        return shell_answer(126);
+                }
+
+                shell_argv[0] = found;
+                shell_execute_command();
+                shell_argv[0] = name;
+                memory_free(found, found_room);
+        }
 }
 
 fn shell_which(writer write, string_address input)
 {
+        p8 address_to found = null;
+        positive found_room = 0;
+        bipolar located;
+
         if (input == null)
                 return shell_diagnostic(str("which: missing operand\n"));
 
@@ -4914,10 +5387,24 @@ fn shell_which(writer write, string_address input)
         if (shell_tool_here(input))
                 return string_format(write, "%s: shell builtin\n", input);
 
-        p8 found[768];
+        located = shell_find_in_path_alloc(input, address_of found,
+                                           address_of found_room);
 
-        if (shell_find_in_path(input, found, sizeof(found)))
-                return string_format(write, "%s\n", found);
+        if (located < 0)
+        {
+                string_format(shell_diagnostic, "which: no room\n");
+                return shell_answer(2);
+        }
+
+        if (located == 1)
+        {
+                string_format(write, "%s\n", found);
+                memory_free(found, found_room);
+                return;
+        }
+
+        if (found)
+                memory_free(found, found_room);
 
         // On standard output, the same as type: both answer the same
         // question and used to answer it down different descriptors.

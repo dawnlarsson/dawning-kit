@@ -1130,6 +1130,8 @@ check 'dot runs'        'echo echo sourced > /tmp/pd1; . /tmp/pd1'
 check 'dot sets'        'echo x=42 > /tmp/pd2; . /tmp/pd2; echo $x'
 check 'dot status'      'echo false > /tmp/pd3; . /tmp/pd3; echo $?'
 check 'dot missing'     '. /tmp/nosuchfile 2>/dev/null; echo $?'
+check 'dot path need not execute' 'p=/tmp/dot-path.$$; /bin/mkdir "$p"; printf '\''echo sourced\n'\'' > "$p/include"; /bin/chmod 600 "$p/include"; cd /; PATH=$p; . include; /bin/rm -f "$p/include"; /bin/rmdir "$p"'
+check 'dot reads one stream' '{ printf '\''x=first\n#'\''; awk '\''BEGIN { for (i = 0; i < 5000; i++) printf "a" }'\''; printf '\''\necho "$x"\n'\''; } | "$0" -c '\''. /dev/stdin'\'''
 
 group naming
 check 'type builtin'    'type echo'
@@ -1138,6 +1140,17 @@ check 'type missing'    'type nosuchthing 2>/dev/null; echo $?'
 check 'command dash v'  'command -v echo'
 check 'command runs'    'command echo hi'
 check 'command v miss'  'command -v nosuchthing 2>/dev/null; echo $?'
+check 'command p finds'  'PATH= command -pv sh | /bin/sed '\''s|.*/||'\'''
+check 'command p runs'   'PATH= command -p sh -c '\''echo ok'\'''
+check 'command v empty' 'command -v '\''\'' >/dev/null 2>&1; echo $?'
+check 'type empty'      'type '\''\'' >/dev/null 2>&1; echo $?'
+check 'hash empty'      'hash '\''\'' >/dev/null 2>&1; echo $?'
+
+# Empty PATH fields are the current directory, including the first, middle,
+# and last field. Clear the command cache between them so every field is
+# actually searched rather than merely replaying the first answer.
+check 'empty path fields' 'p=/tmp/empty-path.$$; /bin/mkdir "$p"; printf '\''#!/bin/sh\necho cwd\n'\'' > "$p/pathprobe"; /bin/chmod +x "$p/pathprobe"; cd "$p"; PATH=:/bin pathprobe; hash -r; PATH=/bin::/usr/bin pathprobe; hash -r; PATH=/bin: pathprobe; /bin/rm -f "$p/pathprobe"; /bin/rmdir "$p"'
+bash_answer 'command v multiple names' 'command -v sh definitely_missing echo; echo $?'
 
 group traps
 check 'exit trap'       'trap "echo bye" EXIT; echo hi'
@@ -1158,6 +1171,10 @@ section strict
 
 group status
 answer 'pipeline last'   'false | true; echo $?'
+answer 'direct non executable' 'p=/tmp/not-executable.$$; printf '\''echo bad\n'\'' > "$p"; chmod 600 "$p"; "$p" 2>/dev/null; s=$?; rm -f "$p"; echo "$s"'
+bash_answer 'path non executable' 'd=/tmp/not-executable.$$; mkdir "$d"; printf '\''echo bad\n'\'' > "$d/x"; chmod 600 "$d/x"; PATH=$d x 2>/dev/null; s=$?; /bin/rm -f "$d/x"; /bin/rmdir "$d"; echo "$s"'
+answer 'exec missing is fatal' 'exec definitely_missing 2>/dev/null; echo BAD'
+answer 'exec denied is fatal' 'p=/tmp/exec-denied.$$; printf '\''echo bad\n'\'' > "$p"; chmod 600 "$p"; exec "$p" 2>/dev/null; echo BAD'
 answer 'pipeline fails'  'true | false; echo $?'
 expected 'pipefail left' '1|' 0 'set -o pipefail; false | true; echo $?'
 expected 'pipefail right' '1|' 0 'set -o pipefail; true | false; echo $?'
@@ -1610,9 +1627,20 @@ group nesting
 answer 'eval in a loop'  'for i in a b c d; do eval echo x > /dev/null; printf "[%s]" "$i"; done; echo'
 answer 'eval keeps the list' 'for i in a b c d; do eval "echo $i" > /dev/null; printf "[%s]" "$i"; done; echo'
 answer 'eval many times'  'i=0; while [ $i -lt 200 ]; do eval "x=$i"; i=$((i+1)); done; echo $x'
+answer 'eval nested sixty four twice' 'f() { n=$((n-1)); if [ "$n" -eq 0 ]; then echo 64; else eval f; fi; }; n=64; f; n=64; f'
 answer 'redefined in a loop' 'i=0; while [ $i -lt 200 ]; do eval "f() { echo body $i; }"; i=$((i+1)); done; f'
 answer 'eval under a redirect' 'f() { eval "echo a"; echo b; } > /tmp/gn1.$$; f; echo visible; cat /tmp/gn1.$$'
 answer 'dot in a loop'   'echo "echo sourced" > /tmp/gn2.$$; for i in a b c; do . /tmp/gn2.$$ > /dev/null; printf "[%s]" "$i"; done; echo'
+answer 'dot nested thirty two twice' 'p=/tmp/nested-dot.$$; printf '\''n=$((n-1)); if [ "$n" -eq 0 ]; then echo 32; else . "$p"; fi\n'\'' > "$p"; n=32; . "$p"; n=32; . "$p"; rm -f "$p"'
+eval_sixty_four=$(awk 'BEGIN { for (i = 0; i < 65536; i++) printf "a" }')
+answer 'eval sixty four kilobytes' "eval \"x=$eval_sixty_four\"; echo \${#x}"
+unset eval_sixty_four
+eval_two_megabytes=$(awk 'BEGIN { for (i = 0; i < 2097152; i++) printf "a" }')
+answer 'eval two megabytes' "eval \"x=$eval_two_megabytes\"; echo \${#x}"
+unset eval_two_megabytes
+answer 'dot sixty four kilobytes' 'p=/tmp/large-dot.$$; awk '\''BEGIN { printf "#"; for (i = 0; i < 65536; i++) printf "a"; print ""; print "echo 65536" }'\'' > "$p"; . "$p"; rm -f "$p"'
+answer 'dot two megabytes' 'p=/tmp/large-dot.$$; awk '\''BEGIN { printf "#"; for (i = 0; i < 2097152; i++) printf "a"; print ""; print "echo 2097152" }'\'' > "$p"; . "$p"; rm -f "$p"'
+answer 'long path command and dot' 'base=/tmp/long-path.$$; d=$base; piece=abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuv; i=0; while [ "$i" -lt 9 ]; do d=$d/$piece; i=$((i+1)); done; /bin/mkdir -p "$d"; printf '\''#!/bin/sh\necho command\n'\'' > "$d/longcommand"; printf '\''echo sourced\n'\'' > "$d/longsource"; /bin/chmod +x "$d/longcommand"; v=$(PATH=$d command -v longcommand); echo "${v##*/}"; PATH=$d longcommand; PATH=$d; . longsource; /bin/rm -f "$d/longcommand" "$d/longsource"; /bin/rm -rf "$base"'
 # A definition written over another gives its space back when it is the last
 # one taken, which is the shape a loop makes. Two names taking turns is the
 # shape it does not: those run the arena out, and what has to hold then is

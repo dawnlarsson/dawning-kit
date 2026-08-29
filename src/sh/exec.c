@@ -1094,33 +1094,42 @@ static b32 exec_dispatch()
         if (body)
                 return exec_call(body);
 
-        /*
-                A path, and only a path.
-
-                This used to take any name beginning with a dot, which made
-                "." itself a path -- so sourcing a file tried to execute it
-                and came back with permission denied. What is meant here is
-                ./name and ../name, which have a slash in them like every
-                other path does.
-        */
-        if (string_is(name, '/') || string_first_of(name, '/'))
-        {
-                shell_execute_command();
-                return shell_status;
-        }
-
         if (shell_builtin(shell_arguments()))
                 return shell_status;
 
         {
-                static p8 found[768];
+                p8 address_to found = null;
+                positive found_room = 0;
+                bipolar located = shell_find_in_path_alloc(name,
+                                                            address_of found,
+                                                            address_of found_room);
 
-                if (shell_find_in_path(name, found, sizeof(found)))
+                if (located < 0)
+                {
+                        shell_status = 2;
+                        string_format(exec_error, "%s: no room\n", name);
+                        return shell_status;
+                }
+
+                if (located == 2)
+                {
+                        shell_status = 126;
+                        string_format(exec_error, "%s: cannot run\n", name);
+                        memory_free(found, found_room);
+                        return shell_status;
+                }
+
+                if (located == 1)
                 {
                         shell_argv[0] = found;
                         shell_execute_command();
+                        shell_argv[0] = name;
+                        memory_free(found, found_room);
                         return shell_status;
                 }
+
+                if (found)
+                        memory_free(found, found_room);
         }
 
         shell_status = 127;

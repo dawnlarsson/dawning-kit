@@ -231,8 +231,6 @@ fn parse_reset()
         nesting costs a few words and not a copy of the arrays. The stack is
         here rather than at the caller because its shape is nobody else's.
 */
-#define PARSE_NEST 8
-
 typedef struct
 {
         b32 node, word, redirect, position, state;
@@ -242,15 +240,24 @@ typedef struct
         positive used, names_used;
 } parse_frame;
 
-static parse_frame parse_frames[PARSE_NEST];
+static parse_frame address_to parse_frames;
+static positive parse_frame_room;
 static b32 parse_nest_depth;
 
 fn parse_nest_enter()
 {
         parse_frame address_to frame;
 
-        if (parse_nest_depth >= PARSE_NEST)
-                return;
+        if (parse_nest_depth == 0x7fffffff ||
+            !shell_room((address_any address_to)address_of parse_frames,
+                        address_of parse_frame_room,
+                        (positive)parse_nest_depth + 1,
+                        sizeof(parse_frames[0])))
+        {
+                string_format(log_error, "No room for nested shell input\n");
+                log_flush();
+                system_call_1(syscall(exit_group), 2);
+        }
 
         frame = parse_frames + parse_nest_depth++;
 
