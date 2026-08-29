@@ -1,4 +1,11 @@
 {
+  "grep --perl-regexp": "deliberate: this is the PCRE engine, including syntax and matching semantics not provided by the bytewise basic/extended/fixed engines. A partial recognizer would silently answer the wrong language.",
+  "grep -P": "deliberate: short alias for the unimplemented PCRE engine; it is rejected rather than approximated with extended regular expressions.",
+  "sed --debug": "deliberate: GNU's execution trace and annotated-program diagnostic format, not command-result semantics. The interpreter rejects it rather than pretending to emit that debugging protocol.",
+  "sort --debug": "deliberate: GNU's key annotation and diagnostic format, not ordering semantics. It is rejected rather than producing an incomplete diagnostic stream.",
+  "sort --general-numeric-sort": "deliberate: exact GNU behavior is strtold ordering, including signed NaNs, infinities, hexadecimal floats, exponents, long-double range and architecture-specific rounding. It needs a shared cross-ISA general-number parser/comparator; a decimal-only approximation would silently misorder data.",
+  "sort --random-source": "deliberate: this supplies entropy to GNU random-sort, which is itself outside this deterministic sort's surface. Accepting and ignoring the source would falsely claim reproducible randomized ordering.",
+  "sort -g": "deliberate: short alias for GNU's strtold-based general numeric ordering. It is rejected until the full cross-ISA number syntax and comparison contract exists.",
   "uname --all": "deliberate: the operating system name is not in struct utsname and is not ours to claim on another system's behalf. This one answers Moonwater, and -a stops at the machine for the same reason.",
   "uname --operating-system": "deliberate: the operating system name is not in struct utsname and is not ours to claim on another system's behalf. This one answers Moonwater, and -a stops at the machine for the same reason.",
   "uname -a": "deliberate: the operating system name is not in struct utsname and is not ours to claim on another system's behalf. This one answers Moonwater, and -a stops at the machine for the same reason.",
