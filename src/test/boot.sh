@@ -87,6 +87,10 @@ printf 'path-%s\n' "$(readlink /bin/monitor.sh | rev)"
 mointor.sh 1 1 2> /tmp/monitor.err
 printf 'rotinom%s\n' $? | rev
 [ ! -s /tmp/monitor.err ] && printf 'naelc-rotinom\n' | rev
+printf 'echo plain-$1\nexit 17\n' > /tmp/plain-script
+chmod +x /tmp/plain-script
+/tmp/plain-script alpha
+printf 'txet%s\n' $? | rev
 poweroff
 COMMANDS
 
@@ -150,6 +154,8 @@ says 'monitor linked'      'path-hs.rotinom/..'
 says 'monitor ran'         '0monitor'
 says 'monitor was visible' 'cpu%'
 says 'monitor was clean'   'monitor-clean'
+says 'plain text script'   'plain-alpha'
+says 'plain text status'   '71text'
 says 'powered down'        'reboot: Power down'
 
 never 'no panic'           'Kernel panic'
