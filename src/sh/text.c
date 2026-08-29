@@ -35,11 +35,7 @@ static b32 text_status;
 
 static fn text_flush()
 {
-        if (!text_out_used)
-                return;
-
-        system_write_all(text_out_handle, text_out_buffer, text_out_used);
-        text_out_used = 0;
+        buffered_flush(text_out_handle, text_out_buffer, address_of text_out_used);
 }
 
 // Changing where output goes has to empty what was written for the old one.
@@ -54,26 +50,15 @@ static fn text_out_to(positive handle)
 
 static fn text_put(address_any data, positive length)
 {
-        if (length > TEXT_OUT_MAX)
-        {
-                text_flush();
-                system_write_all(text_out_handle, data, length);
-                return;
-        }
-
-        if (text_out_used + length > TEXT_OUT_MAX)
-                text_flush();
-
-        memory_copy(text_out_buffer + text_out_used, data, length);
-        text_out_used += length;
+        buffered_write_deferred_equal(text_out_handle, text_out_buffer,
+                                      TEXT_OUT_MAX, address_of text_out_used,
+                                      data, length);
 }
 
 static fn text_put_character(p8 character)
 {
-        if (text_out_used == TEXT_OUT_MAX)
-                text_flush();
-
-        text_out_buffer[text_out_used++] = character;
+        buffered_write_byte(text_out_handle, text_out_buffer, TEXT_OUT_MAX,
+                            address_of text_out_used, character);
 }
 
 static fn text_put_string(string_address value)

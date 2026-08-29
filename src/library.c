@@ -67,7 +67,7 @@
         A .set is a second label on the same address, so there is no wrapper
         and no jump, and which names get one depends on who is linking.
 
-        145 routines (140 public, 5 local), 145 of them on all three.
+        150 routines (144 public, 6 local), 150 of them on all three.
         Raw C purity: 0 function bodies, 0 object definitions, 0 body macros, and 0 object macros (all forbidden).
 
           routine                        scope   x86_64  arm64   riscv64
@@ -77,6 +77,11 @@
           bipolar_into_core              local   yes     yes     yes
           bipolar_into_string            public  yes     yes     yes
           bipolar_to_string              public  yes     yes     yes
+          buffered_flush                 public  yes     yes     yes
+          buffered_write                 public  yes     yes     yes
+          buffered_write_byte            public  yes     yes     yes
+          buffered_write_core            local   yes     yes     yes
+          buffered_write_deferred_equal  public  yes     yes     yes
           byte_class_holds               public  yes     yes     yes
           byte_class_index               public  yes     yes     yes
           bytes_reverse_16               public  yes     yes     yes

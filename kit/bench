@@ -26,7 +26,8 @@ human-nearest) source_file=kit/bench_human_nearest.c ;;
 paths)   source_file=kit/bench_paths.c ;;
 reverse) source_file=kit/bench_reverse.c ;;
 writer-field) source_file=kit/bench_writer_field.c ;;
-*)       echo "bench: use 'sh kit/bench', 'sh kit/bench floor', 'sh kit/bench numbers', 'sh kit/bench bases', 'sh kit/bench padded', 'sh kit/bench input-bases', 'sh kit/bench fields', 'sh kit/bench human', 'sh kit/bench human-nearest', 'sh kit/bench paths', 'sh kit/bench reverse', or 'sh kit/bench writer-field'" >&2; exit 2 ;;
+writer-text) source_file=kit/bench_writer_text.c ;;
+*)       echo "bench: use 'sh kit/bench', 'sh kit/bench floor', 'sh kit/bench numbers', 'sh kit/bench bases', 'sh kit/bench padded', 'sh kit/bench input-bases', 'sh kit/bench fields', 'sh kit/bench human', 'sh kit/bench human-nearest', 'sh kit/bench paths', 'sh kit/bench reverse', 'sh kit/bench writer-field', or 'sh kit/bench writer-text'" >&2; exit 2 ;;
 esac
 
 host_system=$(uname -s)

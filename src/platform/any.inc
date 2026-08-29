@@ -55,27 +55,93 @@ fn log_direct(address_any data, positive length);
 fn log_flush();
 fn log(address_any data, positive length);
 fn log_error(address_any data, positive length);
+fn buffered_flush(positive handle, p8 address_to buffer, positive address_to used);
+fn buffered_write(positive handle, p8 address_to buffer, positive capacity,
+                  positive address_to used, address_any data, positive length);
+fn buffered_write_deferred_equal(positive handle, p8 address_to buffer,
+                                 positive capacity, positive address_to used,
+                                 address_any data, positive length);
+fn buffered_write_byte(positive handle, p8 address_to buffer, positive capacity,
+                       positive address_to used, p8 byte);
 
 #define RUNTIME_TEXT_INNER(value) #value
 #define RUNTIME_TEXT(value) RUNTIME_TEXT_INNER(value)
 
 /*
-        One buffer and one policy on all three machines:
-
-          - a zero length asks string_length for the length;
-          - a write that would take the buffer past 4096 flushes first;
-          - fewer than 4096 bytes are buffered;
-          - 4096 or more go directly to write(2).
-
-        The additions and comparisons below are unsigned and wrap at the word
-        boundary, just as positive did in the C body. Neither write result is
-        inspected, and a flush clears the count after any non-empty write,
-        including a short or failed one. Those details are observable and are
-        deliberately unchanged.
+        Shared buffered output at the architecture floor.  The regular entry
+        writes runs at least as large as the buffer directly; the deferred-
+        equal entry keeps an exact fit buffered for text's historical policy.
+        Flush always clears the count, including after a failed write.
 */
 #if X64
 __asm__(
     ASM_SECTION
+    ASM_FUNC(buffered_flush)
+    "sub $8, %rsp\n   mov %rdx, (%rsp)\n   mov (%rdx), %rdx\n"
+    "test %rdx, %rdx\n   jz .Lbuffered_flush_x64_done\n"
+    "call system_write_all\n   mov (%rsp), %rdx\n   movq $0, (%rdx)\n"
+    ".Lbuffered_flush_x64_done:\n   add $8, %rsp\n"
+    ASM_RET
+    ASM_END(buffered_flush)
+
+    ASM_FUNC(buffered_write)
+    "test %r9, %r9\n   jz .Lbuffered_write_x64_empty\n"
+    "xor %eax, %eax\n   jmp buffered_write_core\n"
+    ".Lbuffered_write_x64_empty:\n" ASM_RET
+    ASM_END(buffered_write)
+    ASM_FUNC(buffered_write_deferred_equal)
+    "test %r9, %r9\n   jz .Lbuffered_write_deferred_x64_empty\n"
+    "mov $1, %eax\n   jmp buffered_write_core\n"
+    ".Lbuffered_write_deferred_x64_empty:\n" ASM_RET
+    ASM_END(buffered_write_deferred_equal)
+    ASM_LOCAL_FUNC(buffered_write_core)
+    "test %eax, %eax\n   jnz .Lbuffered_write_x64_deferred\n"
+    "cmp %rdx, %r9\n   jae .Lbuffered_write_x64_direct_entry\n"
+    "jmp .Lbuffered_write_x64_buffer_entry\n"
+    ".Lbuffered_write_x64_deferred:\n   cmp %rdx, %r9\n"
+    "ja .Lbuffered_write_x64_direct_entry\n"
+    ".Lbuffered_write_x64_buffer_entry:\n"
+    "mov %rdx, %rax\n   sub %r9, %rax\n   mov (%rcx), %r10\n"
+    "cmp %rax, %r10\n   ja .Lbuffered_write_x64_flush_first\n"
+    "sub $24, %rsp\n   mov %rcx, 0(%rsp)\n   mov %r9, 8(%rsp)\n"
+    "lea (%rsi,%r10), %rdi\n   mov %r8, %rsi\n   mov %r9, %rdx\n"
+    "call memory_copy\n   mov 0(%rsp), %rcx\n   mov 8(%rsp), %r9\n"
+    "add %r9, (%rcx)\n   add $24, %rsp\n"
+    ASM_RET
+    ".Lbuffered_write_x64_flush_first:\n   sub $40, %rsp\n"
+    "mov %rsi, 0(%rsp)\n   mov %rcx, 8(%rsp)\n"
+    "mov %r8, 16(%rsp)\n   mov %r9, 24(%rsp)\n"
+    "mov %rcx, %rdx\n   call buffered_flush\n"
+    "mov 0(%rsp), %rdi\n   mov 16(%rsp), %rsi\n   mov 24(%rsp), %rdx\n"
+    "call memory_copy\n   mov 8(%rsp), %rcx\n   mov 24(%rsp), %r9\n"
+    "add %r9, (%rcx)\n   add $40, %rsp\n"
+    ASM_RET
+    ".Lbuffered_write_x64_direct_entry:\n"
+    "sub $40, %rsp\n   mov %rdi, 0(%rsp)\n   mov %r8, 8(%rsp)\n"
+    "mov %r9, 16(%rsp)\n   mov %rcx, %rdx\n   call buffered_flush\n"
+    "mov 0(%rsp), %rdi\n   mov 8(%rsp), %rsi\n   mov 16(%rsp), %rdx\n"
+    "call system_write_all\n   add $40, %rsp\n"
+    ASM_RET
+    ASM_LOCAL_END(buffered_write_core)
+
+    ASM_FUNC(buffered_write_byte)
+    "test %rdx, %rdx\n   jz .Lbuffered_byte_x64_direct\n"
+    "mov (%rcx), %rax\n   cmp %rdx, %rax\n   jae .Lbuffered_byte_x64_flush\n"
+    "mov %r8b, (%rsi,%rax)\n   incq (%rcx)\n"
+    ".Lbuffered_byte_x64_done:\n"
+    ASM_RET
+    ".Lbuffered_byte_x64_direct:\n   sub $8, %rsp\n   mov %r8b, (%rsp)\n"
+    "mov %rsp, %rsi\n   mov $1, %edx\n   call system_write_all\n"
+    "add $8, %rsp\n"
+    ASM_RET
+    ".Lbuffered_byte_x64_flush:\n   sub $40, %rsp\n"
+    "mov %rsi, 0(%rsp)\n   mov %rcx, 8(%rsp)\n   mov %r8, 16(%rsp)\n"
+    "mov %rcx, %rdx\n   call buffered_flush\n"
+    "mov 0(%rsp), %rsi\n   mov 8(%rsp), %rcx\n   mov 16(%rsp), %r8\n"
+    "mov %r8b, (%rsi)\n   movq $1, (%rcx)\n   add $40, %rsp\n"
+    ASM_RET
+    ASM_END(buffered_write_byte)
+
     ASM_FUNC(log_direct)
     "mov %rsi, %rdx\n   mov %rdi, %rsi\n   mov $1, %edi\n"
     "mov $" RUNTIME_TEXT(syscall(write)) ", %eax\n   syscall\n"
@@ -83,12 +149,8 @@ __asm__(
     ASM_END(log_direct)
 
     ASM_FUNC(log_flush)
-    "mov log_writer_buffer_length(%rip), %rsi\n   test %rsi, %rsi\n"
-    "jz .Llog_flush_x64_done\n   sub $8, %rsp\n"
-    "lea log_writer_buffer(%rip), %rdi\n   call log_direct\n"
-    "add $8, %rsp\n   movq $0, log_writer_buffer_length(%rip)\n"
-    ".Llog_flush_x64_done:\n"
-    ASM_RET
+    "mov $1, %edi\n   lea log_writer_buffer(%rip), %rsi\n"
+    "lea log_writer_buffer_length(%rip), %rdx\n   jmp buffered_flush\n"
     ASM_END(log_flush)
 
     ASM_FUNC(log_error)
@@ -104,31 +166,87 @@ __asm__(
     ASM_END(log_error)
 
     ASM_FUNC(log)
-    "push %r12\n   push %r13\n   push %r14\n"
-    "mov %rdi, %r12\n   mov %rsi, %r13\n   test %r13, %r13\n"
-    "jnz .Llog_x64_have_length\n   call string_length\n   mov %rax, %r13\n"
-    ".Llog_x64_have_length:\n"
-    "mov log_writer_buffer_length(%rip), %r14\n"
-    "lea (%r13,%r14), %rax\n   cmp $4096, %rax\n"
-    "jbe .Llog_x64_after_flush\n   call log_flush\n   xor %r14d, %r14d\n"
-    ".Llog_x64_after_flush:\n"
-    "cmp $4096, %r13\n   jae .Llog_x64_direct\n"
-    "lea log_writer_buffer(%rip), %rdi\n   add %r14, %rdi\n"
-    "mov %r12, %rsi\n   mov %r13, %rdx\n   call memory_copy\n"
-    "add %r13, log_writer_buffer_length(%rip)\n"
-    "jmp .Llog_x64_done\n"
-    ".Llog_x64_direct:\n"
-    "lea log_writer_buffer(%rip), %rdi\n"
-    "mov log_writer_buffer_length(%rip), %rsi\n   call log_direct\n"
-    "mov %r12, %rdi\n   mov %r13, %rsi\n   call log_direct\n"
-    ".Llog_x64_done:\n"
-    "pop %r14\n   pop %r13\n   pop %r12\n"
-    ASM_RET
+    "test %rsi, %rsi\n   jnz .Llog_x64_have_length\n"
+    "push %rdi\n   call string_length\n   mov %rax, %rsi\n   pop %rdi\n"
+    ".Llog_x64_have_length:\n   mov %rsi, %r9\n   mov %rdi, %r8\n"
+    "lea log_writer_buffer_length(%rip), %rcx\n   mov $4096, %edx\n"
+    "lea log_writer_buffer(%rip), %rsi\n   mov $1, %edi\n"
+    "jmp buffered_write\n"
     ASM_END(log)
 );
 #elif ARM64
 __asm__(
     ASM_SECTION
+    ASM_FUNC(buffered_flush)
+    "ldr x3, [x2]\n   cbz x3, .Lbuffered_flush_arm64_done\n"
+    "stp x2, x30, [sp, #-16]!\n   mov x2, x3\n"
+    "bl system_write_all\n   ldp x3, x30, [sp], #16\n"
+    "str xzr, [x3]\n"
+    ".Lbuffered_flush_arm64_done:\n"
+    ASM_RET
+    ASM_END(buffered_flush)
+
+    ASM_FUNC(buffered_write)
+    "cbz x5, .Lbuffered_write_arm64_empty\n"
+    "mov w6, wzr\n   b buffered_write_core\n"
+    ".Lbuffered_write_arm64_empty:\n" ASM_RET
+    ASM_END(buffered_write)
+    ASM_FUNC(buffered_write_deferred_equal)
+    "cbz x5, .Lbuffered_write_deferred_arm64_empty\n"
+    "mov w6, #1\n   b buffered_write_core\n"
+    ".Lbuffered_write_deferred_arm64_empty:\n" ASM_RET
+    ASM_END(buffered_write_deferred_equal)
+    ASM_LOCAL_FUNC(buffered_write_core)
+    "cbnz w6, .Lbuffered_write_arm64_deferred\n"
+    "cmp x5, x2\n   b.hs .Lbuffered_write_arm64_direct_entry\n"
+    "b .Lbuffered_write_arm64_buffer_entry\n"
+    ".Lbuffered_write_arm64_deferred:\n   cmp x5, x2\n"
+    "b.hi .Lbuffered_write_arm64_direct_entry\n"
+    ".Lbuffered_write_arm64_buffer_entry:\n"
+    "sub x6, x2, x5\n   ldr x7, [x3]\n   cmp x7, x6\n"
+    "b.hi .Lbuffered_write_arm64_flush_first\n"
+    "stp x3, x5, [sp, #-32]!\n   str x30, [sp, #16]\n"
+    "add x0, x1, x7\n   mov x1, x4\n   mov x2, x5\n"
+    "bl memory_copy\n   ldp x3, x5, [sp]\n   ldr x30, [sp, #16]\n"
+    "ldr x7, [x3]\n   add x7, x7, x5\n   str x7, [x3]\n"
+    "add sp, sp, #32\n"
+    ASM_RET
+    ".Lbuffered_write_arm64_flush_first:\n"
+    "sub sp, sp, #48\n   stp x1, x3, [sp]\n"
+    "stp x4, x5, [sp, #16]\n   str x30, [sp, #32]\n"
+    "mov x2, x3\n   bl buffered_flush\n"
+    "ldp x0, x3, [sp]\n   ldp x1, x2, [sp, #16]\n"
+    "bl memory_copy\n   ldr x3, [sp, #8]\n   ldr x5, [sp, #24]\n"
+    "ldr x7, [x3]\n   add x7, x7, x5\n   str x7, [x3]\n"
+    "ldr x30, [sp, #32]\n   add sp, sp, #48\n"
+    ASM_RET
+    ".Lbuffered_write_arm64_direct_entry:\n"
+    "sub sp, sp, #32\n   stp x0, x4, [sp]\n"
+    "stp x5, x30, [sp, #16]\n   mov x2, x3\n"
+    "bl buffered_flush\n   ldp x0, x1, [sp]\n   ldr x2, [sp, #16]\n"
+    "bl system_write_all\n   ldr x30, [sp, #24]\n   add sp, sp, #32\n"
+    ASM_RET
+    ASM_LOCAL_END(buffered_write_core)
+
+    ASM_FUNC(buffered_write_byte)
+    "cbz x2, .Lbuffered_byte_arm64_direct\n   ldr x5, [x3]\n"
+    "cmp x5, x2\n   b.hs .Lbuffered_byte_arm64_flush\n"
+    "strb w4, [x1, x5]\n   add x5, x5, #1\n   str x5, [x3]\n"
+    ".Lbuffered_byte_arm64_done:\n"
+    ASM_RET
+    ".Lbuffered_byte_arm64_direct:\n"
+    "stp x29, x30, [sp, #-32]!\n   strb w4, [sp, #16]\n"
+    "add x1, sp, #16\n   mov x2, #1\n   bl system_write_all\n"
+    "ldp x29, x30, [sp], #32\n"
+    ASM_RET
+    ".Lbuffered_byte_arm64_flush:\n"
+    "stp x1, x3, [sp, #-32]!\n   stp x4, x30, [sp, #16]\n"
+    "mov x2, x3\n   bl buffered_flush\n   ldp x1, x3, [sp]\n"
+    "ldp x4, x30, [sp, #16]\n   strb w4, [x1]\n"
+    "mov x5, #1\n   str x5, [x3]\n   add sp, sp, #32\n"
+    ASM_RET
+    ASM_END(buffered_write_byte)
+
     ASM_FUNC(log_direct)
     "mov x2, x1\n   mov x1, x0\n   mov x0, #1\n"
     "movz " SYSCALL_NUMBER_REGISTER ", #((" RUNTIME_TEXT(syscall(write)) ") & 0xffff)\n"
@@ -138,15 +256,11 @@ __asm__(
     ASM_END(log_direct)
 
     ASM_FUNC(log_flush)
-    "adrp x9, log_writer_buffer_length\n"
-    "ldr x1, [x9, :lo12:log_writer_buffer_length]\n"
-    "cbz x1, .Llog_flush_arm64_done\n   str x30, [sp, #-16]!\n"
-    "adrp x0, log_writer_buffer\n   add x0, x0, :lo12:log_writer_buffer\n"
-    "bl log_direct\n   adrp x9, log_writer_buffer_length\n"
-    "str xzr, [x9, :lo12:log_writer_buffer_length]\n"
-    "ldr x30, [sp], #16\n"
-    ".Llog_flush_arm64_done:\n"
-    ASM_RET
+    "mov x0, #1\n   adrp x1, log_writer_buffer\n"
+    "add x1, x1, :lo12:log_writer_buffer\n"
+    "adrp x2, log_writer_buffer_length\n"
+    "add x2, x2, :lo12:log_writer_buffer_length\n"
+    "b buffered_flush\n"
     ASM_END(log_flush)
 
     ASM_FUNC(log_error)
@@ -164,35 +278,94 @@ __asm__(
     ASM_END(log_error)
 
     ASM_FUNC(log)
-    "stp x19, x20, [sp, #-32]!\n   stp x21, x30, [sp, #16]\n"
-    "mov x19, x0\n   mov x20, x1\n   cbnz x20, .Llog_arm64_have_length\n"
-    "bl string_length\n   mov x20, x0\n"
-    ".Llog_arm64_have_length:\n"
-    "adrp x9, log_writer_buffer_length\n"
-    "ldr x21, [x9, :lo12:log_writer_buffer_length]\n"
-    "add x9, x20, x21\n   cmp x9, #4096\n"
-    "b.ls .Llog_arm64_after_flush\n   bl log_flush\n   mov x21, xzr\n"
-    ".Llog_arm64_after_flush:\n"
-    "cmp x20, #4096\n   b.hs .Llog_arm64_direct\n"
-    "adrp x0, log_writer_buffer\n   add x0, x0, :lo12:log_writer_buffer\n"
-    "add x0, x0, x21\n   mov x1, x19\n   mov x2, x20\n"
-    "bl memory_copy\n   adrp x9, log_writer_buffer_length\n"
-    "ldr x10, [x9, :lo12:log_writer_buffer_length]\n   add x10, x10, x20\n"
-    "str x10, [x9, :lo12:log_writer_buffer_length]\n"
-    "b .Llog_arm64_done\n"
-    ".Llog_arm64_direct:\n"
-    "adrp x0, log_writer_buffer\n   add x0, x0, :lo12:log_writer_buffer\n"
-    "adrp x9, log_writer_buffer_length\n"
-    "ldr x1, [x9, :lo12:log_writer_buffer_length]\n   bl log_direct\n"
-    "mov x0, x19\n   mov x1, x20\n   bl log_direct\n"
-    ".Llog_arm64_done:\n"
-    "ldp x21, x30, [sp, #16]\n   ldp x19, x20, [sp], #32\n"
-    ASM_RET
+    "cbnz x1, .Llog_arm64_have_length\n"
+    "stp x19, x30, [sp, #-16]!\n   mov x19, x0\n"
+    "bl string_length\n   mov x1, x0\n   mov x0, x19\n"
+    "ldp x19, x30, [sp], #16\n"
+    ".Llog_arm64_have_length:\n   mov x5, x1\n   mov x4, x0\n"
+    "adrp x3, log_writer_buffer_length\n"
+    "add x3, x3, :lo12:log_writer_buffer_length\n"
+    "mov x2, #4096\n   adrp x1, log_writer_buffer\n"
+    "add x1, x1, :lo12:log_writer_buffer\n   mov x0, #1\n"
+    "b buffered_write\n"
     ASM_END(log)
 );
 #elif RISCV64
 __asm__(
     ASM_SECTION
+    ASM_FUNC(buffered_flush)
+    "ld t0, 0(a2)\n   beqz t0, .Lbuffered_flush_riscv64_done\n"
+    "addi sp, sp, -16\n   sd a2, 0(sp)\n   sd ra, 8(sp)\n"
+    "mv a2, t0\n   call system_write_all\n   ld t0, 0(sp)\n"
+    "sd zero, 0(t0)\n   ld ra, 8(sp)\n"
+    "addi sp, sp, 16\n"
+    ".Lbuffered_flush_riscv64_done:\n"
+    ASM_RET
+    ASM_END(buffered_flush)
+
+    ASM_FUNC(buffered_write)
+    "beqz a5, .Lbuffered_write_riscv64_empty\n"
+    "li t6, 0\n   tail buffered_write_core\n"
+    ".Lbuffered_write_riscv64_empty:\n" ASM_RET
+    ASM_END(buffered_write)
+    ASM_FUNC(buffered_write_deferred_equal)
+    "beqz a5, .Lbuffered_write_deferred_riscv64_empty\n"
+    "li t6, 1\n   tail buffered_write_core\n"
+    ".Lbuffered_write_deferred_riscv64_empty:\n" ASM_RET
+    ASM_END(buffered_write_deferred_equal)
+    ASM_LOCAL_FUNC(buffered_write_core)
+    "bnez t6, .Lbuffered_write_riscv64_deferred\n"
+    "bgeu a5, a2, .Lbuffered_write_riscv64_direct_entry\n"
+    "j .Lbuffered_write_riscv64_buffer_entry\n"
+    ".Lbuffered_write_riscv64_deferred:\n"
+    "bltu a2, a5, .Lbuffered_write_riscv64_direct_entry\n"
+    ".Lbuffered_write_riscv64_buffer_entry:\n"
+    "sub t0, a2, a5\n   ld t1, 0(a3)\n"
+    "bltu t0, t1, .Lbuffered_write_riscv64_flush_first\n"
+    "addi sp, sp, -32\n   sd a3, 0(sp)\n   sd a5, 8(sp)\n"
+    "sd ra, 24(sp)\n   add a0, a1, t1\n   mv a1, a4\n"
+    "mv a2, a5\n   call memory_copy\n   ld a3, 0(sp)\n"
+    "ld a5, 8(sp)\n   ld t0, 0(a3)\n   add t0, t0, a5\n"
+    "sd t0, 0(a3)\n   ld ra, 24(sp)\n   addi sp, sp, 32\n"
+    ASM_RET
+    ".Lbuffered_write_riscv64_flush_first:\n"
+    "addi sp, sp, -48\n   sd a1, 0(sp)\n   sd a3, 8(sp)\n"
+    "sd a4, 16(sp)\n   sd a5, 24(sp)\n   sd ra, 40(sp)\n"
+    "mv a2, a3\n   call buffered_flush\n   ld a0, 0(sp)\n"
+    "ld a1, 16(sp)\n   ld a2, 24(sp)\n   call memory_copy\n"
+    "ld a3, 8(sp)\n   ld a5, 24(sp)\n   ld t0, 0(a3)\n"
+    "add t0, t0, a5\n   sd t0, 0(a3)\n   ld ra, 40(sp)\n"
+    "addi sp, sp, 48\n"
+    ASM_RET
+    ".Lbuffered_write_riscv64_direct_entry:\n"
+    "addi sp, sp, -32\n   sd a0, 0(sp)\n   sd a4, 8(sp)\n"
+    "sd a5, 16(sp)\n   sd ra, 24(sp)\n   mv a2, a3\n"
+    "call buffered_flush\n   ld a0, 0(sp)\n   ld a1, 8(sp)\n"
+    "ld a2, 16(sp)\n   call system_write_all\n   ld ra, 24(sp)\n"
+    "addi sp, sp, 32\n"
+    ASM_RET
+    ASM_LOCAL_END(buffered_write_core)
+
+    ASM_FUNC(buffered_write_byte)
+    "beqz a2, .Lbuffered_byte_riscv64_direct\n   ld t0, 0(a3)\n"
+    "bgeu t0, a2, .Lbuffered_byte_riscv64_flush\n"
+    "add t1, a1, t0\n   sb a4, 0(t1)\n   addi t0, t0, 1\n   sd t0, 0(a3)\n"
+    ".Lbuffered_byte_riscv64_done:\n"
+    ASM_RET
+    ".Lbuffered_byte_riscv64_direct:\n"
+    "addi sp, sp, -16\n   sd ra, 8(sp)\n   sb a4, 0(sp)\n"
+    "mv a1, sp\n   li a2, 1\n   call system_write_all\n"
+    "ld ra, 8(sp)\n   addi sp, sp, 16\n"
+    ASM_RET
+    ".Lbuffered_byte_riscv64_flush:\n"
+    "addi sp, sp, -32\n   sd a1, 0(sp)\n   sd a3, 8(sp)\n"
+    "sd a4, 16(sp)\n   sd ra, 24(sp)\n   mv a2, a3\n"
+    "call buffered_flush\n   ld a1, 0(sp)\n   ld a3, 8(sp)\n"
+    "ld a4, 16(sp)\n   sb a4, 0(a1)\n   li t0, 1\n"
+    "sd t0, 0(a3)\n   ld ra, 24(sp)\n   addi sp, sp, 32\n"
+    ASM_RET
+    ASM_END(buffered_write_byte)
+
     ASM_FUNC(log_direct)
     "mv a2, a1\n   mv a1, a0\n   li a0, 1\n"
     "li a7, " RUNTIME_TEXT(syscall(write)) "\n   ecall\n"
@@ -200,13 +373,8 @@ __asm__(
     ASM_END(log_direct)
 
     ASM_FUNC(log_flush)
-    "lla t0, log_writer_buffer_length\n   ld a1, 0(t0)\n"
-    "beqz a1, .Llog_flush_riscv64_done\n   addi sp, sp, -16\n"
-    "sd ra, 8(sp)\n   lla a0, log_writer_buffer\n   call log_direct\n"
-    "lla t0, log_writer_buffer_length\n   sd zero, 0(t0)\n"
-    "ld ra, 8(sp)\n   addi sp, sp, 16\n"
-    ".Llog_flush_riscv64_done:\n"
-    ASM_RET
+    "li a0, 1\n   lla a1, log_writer_buffer\n"
+    "lla a2, log_writer_buffer_length\n   tail buffered_flush\n"
     ASM_END(log_flush)
 
     ASM_FUNC(log_error)
@@ -223,29 +391,13 @@ __asm__(
     ASM_END(log_error)
 
     ASM_FUNC(log)
-    "addi sp, sp, -32\n   sd ra, 24(sp)\n   sd s0, 16(sp)\n"
-    "sd s1, 8(sp)\n   sd s2, 0(sp)\n   mv s0, a0\n   mv s1, a1\n"
-    "bnez s1, .Llog_riscv64_have_length\n   call string_length\n   mv s1, a0\n"
-    ".Llog_riscv64_have_length:\n"
-    "lla t0, log_writer_buffer_length\n   ld s2, 0(t0)\n"
-    "add t0, s1, s2\n   li t1, 4096\n"
-    "bleu t0, t1, .Llog_riscv64_after_flush\n"
-    "call log_flush\n   li s2, 0\n"
-    ".Llog_riscv64_after_flush:\n"
-    "li t0, 4096\n   bgeu s1, t0, .Llog_riscv64_direct\n"
-    "lla a0, log_writer_buffer\n   add a0, a0, s2\n"
-    "mv a1, s0\n   mv a2, s1\n   call memory_copy\n"
-    "lla t0, log_writer_buffer_length\n   ld t1, 0(t0)\n"
-    "add t1, t1, s1\n   sd t1, 0(t0)\n"
-    "j .Llog_riscv64_done\n"
-    ".Llog_riscv64_direct:\n"
-    "lla a0, log_writer_buffer\n   lla t0, log_writer_buffer_length\n"
-    "ld a1, 0(t0)\n   call log_direct\n"
-    "mv a0, s0\n   mv a1, s1\n   call log_direct\n"
-    ".Llog_riscv64_done:\n"
-    "ld s2, 0(sp)\n   ld s1, 8(sp)\n   ld s0, 16(sp)\n"
-    "ld ra, 24(sp)\n   addi sp, sp, 32\n"
-    ASM_RET
+    "bnez a1, .Llog_riscv64_have_length\n"
+    "addi sp, sp, -16\n   sd s0, 0(sp)\n   sd ra, 8(sp)\n"
+    "mv s0, a0\n   call string_length\n   mv a1, a0\n   mv a0, s0\n"
+    "ld s0, 0(sp)\n   ld ra, 8(sp)\n   addi sp, sp, 16\n"
+    ".Llog_riscv64_have_length:\n   mv a5, a1\n   mv a4, a0\n"
+    "lla a3, log_writer_buffer_length\n   li a2, 4096\n"
+    "lla a1, log_writer_buffer\n   li a0, 1\n   tail buffered_write\n"
     ASM_END(log)
 );
 #else

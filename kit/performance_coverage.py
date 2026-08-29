@@ -100,6 +100,9 @@ memory_reverse
 cover('direct_benchmark', 'kit/bench_writer_field.c', '''
 string_to_field writer_field
 ''', 'paired former-C/assembly timing over exact and padded fields')
+cover('direct_benchmark', 'kit/bench_writer_text.c', '''
+buffered_flush buffered_write buffered_write_byte buffered_write_deferred_equal
+''', 'paired former-C/assembly timing over buffered and direct output shapes')
 
 
 # Private cores are present in the timed call graph, but the harness cannot
@@ -115,6 +118,9 @@ positive_digits_core positive_into_core
 cover('benchmark_context', 'kit/bench_writer_field.c', 'writer_field_core',
       'private core reached by both directly timed field wrappers',
       {'writer_field_core': 'writer_field'})
+cover('benchmark_context', 'kit/bench_writer_text.c', 'buffered_write_core',
+      'private core reached by both directly timed buffer-policy wrappers',
+      {'buffered_write_core': 'buffered_write'})
 
 
 # These are deliberately a static classification. Loading a syscall number and

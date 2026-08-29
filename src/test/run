@@ -43,7 +43,7 @@ TEST_TALLY="$work/tally"
 export TEST_TALLY
 : > "$TEST_TALLY"
 
-lanes="standard verify exact socket net slurp wait native probe shell expand builtin awk text tools files term kit boot canvas"
+lanes="standard verify exact socket net slurp wait writer native probe shell expand builtin awk text tools files term kit boot canvas"
 
 describe()
 {
@@ -55,6 +55,7 @@ describe()
         net)      echo "the netlink wire built byte by byte, and ip against the kernel" ;;
         slurp)    echo "bounded file reads and forced EINTR at open and read, on three machines" ;;
         wait)     echo "wait4 arguments, statuses and forced EINTR retry, on three machines" ;;
+        writer)   echo "buffer boundaries, direct policy and write ordering, on three machines" ;;
         native)   echo "arm64 assembly on an arm64 machine, with no emulator in the way" ;;
         probe)    echo "what only a separate process can prove: arguments, status, regions" ;;
         shell)    echo "the shell language against dash, the names it answers to, and the gaps" ;;
@@ -1789,6 +1790,11 @@ lane_slurp()
 lane_wait()
 {
         freestanding_checks_lane wait src/test/wait_retry.c
+}
+
+lane_writer()
+{
+        freestanding_checks_lane writer src/test/writer_buffer.c
 }
 
 

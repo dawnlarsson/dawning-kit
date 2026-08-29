@@ -2432,11 +2432,8 @@ static awk_writer awk_standard_out;
 
 static fn awk_writer_flush(awk_writer address_to which)
 {
-        if (!which->used)
-                return;
-
-        system_write_all((positive)which->handle, which->buffer, which->used);
-        which->used = 0;
+        buffered_flush((positive)which->handle, which->buffer,
+                       address_of which->used);
 }
 
 static fn awk_writer_put(awk_writer address_to which, string_address data, positive length)
@@ -2448,18 +2445,9 @@ static fn awk_writer_put(awk_writer address_to which, string_address data, posit
                 return;
         }
 
-        if (length >= sizeof(which->buffer))
-        {
-                awk_writer_flush(which);
-                system_write_all((positive)which->handle, (address_any)data, length);
-                return;
-        }
-
-        if (which->used + length > sizeof(which->buffer))
-                awk_writer_flush(which);
-
-        memory_copy_fast(which->buffer + which->used, data, length);
-        which->used += length;
+        buffered_write((positive)which->handle, which->buffer,
+                       sizeof(which->buffer), address_of which->used,
+                       (address_any)data, length);
 }
 
 static fn awk_flush_everything()
