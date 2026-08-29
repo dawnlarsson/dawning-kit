@@ -306,6 +306,145 @@ if len(runs) >= 2:
     send([{"type": "btn", "data": {"down": False, "button": "left"}}])
     time.sleep(0.5)
 
+    # A terminal row is kept at its written length and Canvas folds it at the
+    # width on screen. Narrowing must therefore add visible text rows without
+    # losing the tail, and widening must unfold the same cells again. Exercise
+    # the actual edge-drag path: compositor request -> shared window page ->
+    # terminal regrid -> immediate commit -> compositor redraw.
+    type_text("echo " + "abcdefghij" * 14 + "\n")
+    time.sleep(0.5)
+    shot("terminal-wide", 0.3)
+    resize_w, resize_h, terminal_wide = load("terminal-wide")
+
+    def runs_in(data, width, y):
+        found, begin = [], None
+        background = bytes(bg)
+        for x in range(width):
+            on = pixel(data, width, x, y) != background
+            if on and begin is None:
+                begin = x
+            elif not on and begin is not None:
+                if x - begin > 40:
+                    found.append((begin, x - 1))
+                begin = None
+        if begin is not None and width - begin > 40:
+            found.append((begin, width - 1))
+        return found
+
+    def ink_rows(data, width, height, left, right, top, bottom):
+        rows = []
+        for band_top in range(top + 20, min(bottom, height - 1), 16):
+            band_bottom = min(band_top + 16, bottom, height)
+            lit_pixels = 0
+            for y in range(band_top, band_bottom):
+                for x in range(left + 8, max(left + 8, right - 18)):
+                    if sum(pixel(data, width, x, y)) > 180:
+                        lit_pixels += 1
+            if lit_pixels > 8:
+                rows.append(band_top)
+        return rows
+
+    def body_difference(a, b, width, left, right, top, bottom):
+        different = 0
+        for y in range(top + 24, bottom - 2):
+            for x in range(left + 8, right - 18):
+                offset = (y * width + x) * 3
+                if a[offset:offset + 3] != b[offset:offset + 3]:
+                    different += 1
+        return different
+
+    wide_row_positions = ink_rows(terminal_wide, resize_w, resize_h,
+                                  b_left, b_right, b_top, b_bottom)
+    wide_rows = len(wide_row_positions)
+    old_width = b_right - b_left + 1
+    edge_y = (b_top + b_bottom) // 2
+
+    def resize_cursor_pixels(data, width, height, x, y):
+        # CURSOR_RESIZE_H has exactly 25 fill pixels at scale one. No
+        # compositor ink uses pure white (terminal white is dfe7ef), so this
+        # is the cursor plane itself rather than text or the frame below it.
+        return sum(1 for py in range(max(y - 7, 0), min(y + 13, height))
+                   for px in range(max(x - 7, 0), min(x + 9, width))
+                   if pixel(data, width, px, py) == b"\xff\xff\xff")
+
+    moveto(b_right - 1, edge_y)
+    send([{"type": "btn", "data": {"down": True, "button": "left"}}])
+    time.sleep(0.08)
+
+    # Four positions in one held resize. The old path moved the window at
+    # every one and left the independent hardware plane at the press point;
+    # checking only the final geometry could never see that failure.
+    cursor_samples = []
+    for distance in (70, 140, 210, 280):
+        target_x = b_right - distance
+        moveto(target_x, edge_y)
+        name = "terminal-resize-%d" % distance
+        shot(name, 0.12)
+        sample_w, sample_h, sample_px = load(name)
+        cursor_samples.append(resize_cursor_pixels(
+            sample_px, sample_w, sample_h, target_x, edge_y))
+
+    narrow_w, narrow_h, terminal_narrow = sample_w, sample_h, sample_px
+
+    # QEMU's screendump composites virtio's cursor plane, so every applied
+    # position can be inspected directly.
+    out.append(("cursor follows resize",
+                "yes" if cursor_samples == [25, 25, 25, 25] else
+                str(cursor_samples), "yes"))
+
+    narrow_runs = runs_in(terminal_narrow, narrow_w, h // 2)
+    terminal_run = (min(narrow_runs, key=lambda run: abs(run[0] - b_left))
+                    if narrow_runs else None)
+    if terminal_run:
+        narrow_left, narrow_right = terminal_run
+        narrow_row_positions = ink_rows(terminal_narrow, narrow_w, narrow_h,
+                                        narrow_left, narrow_right, b_top, b_bottom)
+        narrow_rows = len(narrow_row_positions)
+        narrow_extent = narrow_right - narrow_left + 1
+    else:
+        narrow_left, narrow_right = b_left, b_right
+        narrow_rows = 0
+        narrow_row_positions = []
+        narrow_extent = old_width
+
+    out.append(("terminal edge resizes",
+                "yes" if narrow_extent + 160 < old_width else
+                "%d to %d" % (old_width, narrow_extent), "yes"))
+    narrow_redraw = body_difference(terminal_wide, terminal_narrow, narrow_w,
+                                    narrow_left, narrow_right, b_top, b_bottom)
+    out.append(("terminal resize redraws",
+                "yes" if narrow_redraw > 200 else
+                "%d pixels" % narrow_redraw, "yes"))
+
+    # Keep the original edge grabbed. A second press has to hit a six-pixel
+    # target in an asynchronously redrawn frame and tests reacquisition more
+    # than it tests resize; the one continuous drag is what a person does.
+    moveto(b_right - 1, edge_y)
+    send([{"type": "btn", "data": {"down": False, "button": "left"}}])
+    shot("terminal-wide-again", 0.4)
+    again_w, again_h, terminal_again = load("terminal-wide-again")
+    again_runs = runs_in(terminal_again, again_w, h // 2)
+    again_run = (min(again_runs, key=lambda run: abs(run[0] - b_left))
+                 if again_runs else None)
+    if again_run:
+        again_rows = len(ink_rows(terminal_again, again_w, again_h,
+                                  again_run[0], again_run[1], b_top, b_bottom))
+        again_extent = again_run[1] - again_run[0] + 1
+        restored_difference = body_difference(
+            terminal_wide, terminal_again, again_w,
+            again_run[0], again_run[1], b_top, b_bottom)
+    else:
+        again_rows = 0
+        again_extent = 0
+        restored_difference = old_width * (b_bottom - b_top)
+
+    out.append(("terminal widens back",
+                "yes" if abs(again_extent - old_width) <= 16 and
+                again_rows == wide_rows and restored_difference < 64 else
+                "%dx%d rows %d/%d pixels %d" %
+                (old_width, again_extent, wide_rows, again_rows,
+                 restored_difference), "yes"))
+
     shot("shell-before-monitor")
     before_w, before_h, before_monitor = load("shell-before-monitor")
     type_text("/mointor.sh 0.5 16\n")
