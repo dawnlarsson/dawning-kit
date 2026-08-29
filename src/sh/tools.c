@@ -399,6 +399,9 @@ static b32 tools_dd(void)
         bool count_bytes = false;
         bool skip_bytes = false;
         bool seek_bytes = false;
+        bool count_bytes_flag = false;
+        bool skip_bytes_flag = false;
+        bool seek_bytes_flag = false;
         b32 status = 0;
 
         text_begin("dd");
@@ -513,6 +516,10 @@ static b32 tools_dd(void)
                         while (string_get(at))
                                 if (dd_word(address_of at, "fullblock"))
                                         iflags |= DD_FULLBLOCK;
+                                else if (dd_word(address_of at, "count_bytes"))
+                                        count_bytes_flag = true;
+                                else if (dd_word(address_of at, "skip_bytes"))
+                                        skip_bytes_flag = true;
                                 else
                                         return text_error(at, "invalid input flag"), 1;
                 }
@@ -526,6 +533,8 @@ static b32 tools_dd(void)
                         while (string_get(at))
                                 if (dd_word(address_of at, "append"))
                                         oflags |= DD_APPEND;
+                                else if (dd_word(address_of at, "seek_bytes"))
+                                        seek_bytes_flag = true;
                                 else
                                         return text_error(at, "invalid output flag"), 1;
                 }
@@ -547,6 +556,10 @@ static b32 tools_dd(void)
 
         if (bs_set)
                 ibs = obs = bs;
+
+        count_bytes |= count_bytes_flag;
+        skip_bytes |= skip_bytes_flag;
+        seek_bytes |= seek_bytes_flag;
 
         if ((conv & DD_LCASE) && (conv & DD_UCASE))
                 return text_error(null, "cannot combine lcase and ucase"), 1;

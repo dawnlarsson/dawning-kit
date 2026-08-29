@@ -361,6 +361,9 @@ compare_dd 'count bytes'       "$work/ten" 's/x/x/' bs=4 count=3B status=noxfer
 compare_dd 'count kibi bytes'  "$work/blob" 's/x/x/' bs=700 count=1KiB status=noxfer
 compare_dd 'skip bytes'        "$work/ten" 's/x/x/' bs=4 skip=3B status=noxfer
 compare_dd 'iseek alias'       "$work/ten" 's/x/x/' bs=4 iseek=1B status=noxfer
+compare_dd 'count bytes flag'  "$work/ten" 's/x/x/' bs=4 count=3 iflag=count_bytes status=noxfer
+compare_dd 'count bytes flag first' "$work/ten" 's/x/x/' iflag=count_bytes bs=4 count=7 status=noxfer
+compare_dd 'skip bytes flag'   "$work/ten" 's/x/x/' bs=4 skip=3 iflag=skip_bytes status=noxfer
 
 #       The default summary, with the duration and the rate cut off. What is
 #       left is the byte count and the two human readable forms of it, and
@@ -465,7 +468,8 @@ done
 
 #       oseek is seek, and a B suffix makes its displacement bytes. append is
 #       an output-open flag; with notrunc it preserves the old prefix.
-for one in 'oseek=2B' 'seek=2B' 'oflag=append conv=notrunc'; do
+for one in 'oseek=2B' 'seek=2B' 'oflag=seek_bytes seek=2' \
+        'oflag=append conv=notrunc'; do
         printf old > "$work/out_want"
         printf old > "$work/out_got"
 
