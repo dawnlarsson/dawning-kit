@@ -22,6 +22,7 @@
 #define PT_OP 2
 #define PT_NEWLINE 3
 #define PT_ARITHMETIC 4
+#define PT_CONDITIONAL 5
 
 
 typedef struct
@@ -70,6 +71,7 @@ static parse_token parse_no_token;
 #define NODE_FUNCTION 13
 #define NODE_ARITHMETIC 14
 #define NODE_CFOR 15
+#define NODE_CONDITIONAL 16
 
 /*
         One node shape for every production.
@@ -599,6 +601,8 @@ bool parse_feed(string_address line)
                                  ? PT_WORD
                                  : source->kind == LEX_ARITHMETIC
                                        ? PT_ARITHMETIC
+                                       : source->kind == LEX_CONDITIONAL
+                                             ? PT_CONDITIONAL
                                        : PT_OP;
                 into->op = source->op;
                 into->joined = index && source->at == previous_stop;
@@ -607,7 +611,8 @@ bool parse_feed(string_address line)
                 previous_stop = source->at + source->length;
 
                 if (source->kind == LEX_WORD ||
-                    source->kind == LEX_ARITHMETIC)
+                    source->kind == LEX_ARITHMETIC ||
+                    source->kind == LEX_CONDITIONAL)
                 {
                         positive length = source->length;
 
@@ -1337,6 +1342,19 @@ static b32 parse_command()
         if (parse_look(0)->kind == PT_ARITHMETIC)
         {
                 index = parse_node_new(NODE_ARITHMETIC);
+
+                if (!parse_state)
+                {
+                        parse_attach_word(index, parse_look(0)->text);
+                        parse_position++;
+                }
+
+                goto command_done;
+        }
+
+        if (parse_look(0)->kind == PT_CONDITIONAL)
+        {
+                index = parse_node_new(NODE_CONDITIONAL);
 
                 if (!parse_state)
                 {

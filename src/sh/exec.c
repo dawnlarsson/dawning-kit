@@ -1823,6 +1823,439 @@ done:
         return status;
 }
 
+/*
+        Bash [[...]] has a word grammar of its own. In particular its && and
+        || are not pipelines, and its operands expand without splitting or
+        pathname lookup. Keep raw words here so operators produced by an
+        expansion remain operands rather than turning into syntax afterward.
+*/
+static string_address address_to conditional_word;
+static positive conditional_word_room;
+static positive conditional_word_count;
+static positive conditional_at;
+static bool conditional_bad;
+static bool conditional_active;
+
+static bool conditional_add(string_address text, positive length)
+{
+        string_address kept;
+
+        if (length == positive_max || conditional_word_count == positive_max ||
+            !shell_room((address_any address_to)address_of conditional_word,
+                        address_of conditional_word_room,
+                        conditional_word_count + 1,
+                        sizeof(conditional_word[0])))
+                return false;
+
+        kept = shell_store_take(address_of exec_store, length + 1);
+
+        if (!kept)
+                return false;
+
+        memory_copy_end(kept, text, length);
+        conditional_word[conditional_word_count++] = kept;
+        return true;
+}
+
+static bool conditional_tokenize(string_address text)
+{
+        string_address at = text;
+
+        conditional_word_count = 0;
+
+        while (string_get(at))
+        {
+                string_address start;
+
+                while (string_is(at, ' ') || string_is(at, '\t') ||
+                       string_is(at, '\n'))
+                        at++;
+
+                if (!string_get(at))
+                        break;
+
+                if ((string_is(at, '&') && string_is(at + 1, '&')) ||
+                    (string_is(at, '|') && string_is(at + 1, '|')))
+                {
+                        if (!conditional_add(at, 2))
+                                return false;
+
+                        at += 2;
+                        continue;
+                }
+
+                if (string_is(at, '(') || string_is(at, ')'))
+                {
+                        if (!conditional_add(at, 1))
+                                return false;
+
+                        at++;
+                        continue;
+                }
+
+                start = at;
+
+                while (string_get(at) && !string_is(at, ' ') &&
+                       !string_is(at, '\t') && !string_is(at, '\n'))
+                {
+                        p8 value = string_get(at);
+
+                        if ((value == '&' && string_is(at + 1, '&')) ||
+                            (value == '|' && string_is(at + 1, '|')) ||
+                            value == '(' || value == ')')
+                                break;
+
+                        if (value == '\\' && string_get(at + 1))
+                        {
+                                at += 2;
+                                continue;
+                        }
+
+                        if (value == '\'' || value == '"')
+                        {
+                                string_address stop = lex_quote_end(at + 1, value);
+
+                                if (!string_get(stop))
+                                        return false;
+
+                                at = stop + 1;
+                                continue;
+                        }
+
+                        {
+                                string_address inner = lex_nested_at(at);
+                                string_address stop =
+                                    inner ? lex_nesting(inner) : null;
+
+                                if (stop && stop > inner)
+                                {
+                                        at = stop;
+                                        continue;
+                                }
+                        }
+
+                        at++;
+                }
+
+                if (at == start ||
+                    !conditional_add(start, (positive)(at - start)))
+                        return false;
+        }
+
+        return true;
+}
+
+static bool conditional_is(string_address word)
+{
+        return conditional_at < conditional_word_count &&
+               word_is(conditional_word[conditional_at], word);
+}
+
+static string_address conditional_expand(string_address word, bool pattern)
+{
+        return pattern ? shell_expand_pattern(word) : shell_expand_word(word);
+}
+
+static bool conditional_integer(positive kind, string_address left,
+                                string_address right)
+{
+        bool held = arith_bash_mode;
+        bool held_nounset = arith_nounset;
+        bipolar first;
+        bipolar second;
+
+        arith_bash_mode = true;
+        arith_nounset =
+            (shell_options & ((positive)1 << ('u' - 'a'))) != 0;
+        arith_unset = false;
+        first = arith_evaluate(left);
+
+        if (arith_bad)
+        {
+                arith_bash_mode = held;
+                arith_nounset = held_nounset;
+                conditional_bad = true;
+                return false;
+        }
+
+        second = arith_evaluate(right);
+        arith_bash_mode = held;
+        arith_nounset = held_nounset;
+
+        if (arith_bad)
+        {
+                conditional_bad = true;
+                return false;
+        }
+
+        if (kind == TEST_EQUAL)
+                return first == second;
+
+        if (kind == TEST_UNEQUAL)
+                return first != second;
+
+        if (kind == TEST_LESS)
+                return first < second;
+
+        if (kind == TEST_LESS_EQUAL)
+                return first <= second;
+
+        if (kind == TEST_GREATER)
+                return first > second;
+
+        return first >= second;
+}
+
+static fn conditional_nounset_fatal()
+{
+        string_format(exec_error, "arithmetic: parameter not set\n");
+        shell_status = 1;
+
+        if (shell_is_interactive)
+        {
+                exec_expand_fatal();
+                return;
+        }
+
+        if (!expand_in_substitution)
+                shell_trap_exit();
+
+        log_flush();
+        system_call_1(syscall(exit_group), 1);
+}
+
+static bool conditional_expression();
+
+static bool conditional_primary()
+{
+        string_address raw;
+
+        if (conditional_at >= conditional_word_count)
+        {
+                conditional_bad = true;
+                return false;
+        }
+
+        if (conditional_is("("))
+        {
+                bool value;
+
+                conditional_at++;
+                value = conditional_expression();
+
+                if (!conditional_is(")"))
+                        conditional_bad = true;
+                else
+                        conditional_at++;
+
+                return value;
+        }
+
+        raw = conditional_word[conditional_at];
+
+        if ((test_is_unary(raw) || word_is(raw, "-a") ||
+             word_is(raw, "-v") || word_is(raw, "-o")) &&
+            conditional_at + 1 < conditional_word_count)
+        {
+                string_address operand_raw = conditional_word[conditional_at + 1];
+                string_address operand;
+                bool value = false;
+
+                conditional_at += 2;
+
+                if (!conditional_active)
+                        return false;
+
+                operand = conditional_expand(operand_raw, false);
+
+                if (expand_failed)
+                        return false;
+
+                if (word_is(raw, "-a"))
+                        return test_unary('e', operand);
+
+                if (word_is(raw, "-v"))
+                        return env_get(operand) != null;
+
+                if (word_is(raw, "-o"))
+                {
+                        positive option = string_table_find(
+                            operand, shell_option_names,
+                            sizeof(shell_option_names[0]), SHELL_OPTION_NAMES);
+
+                        return option < SHELL_OPTION_NAMES &&
+                               shell_option_on(option);
+                }
+
+                value = test_unary(string_get(raw + 1), operand);
+                return value;
+        }
+
+        conditional_at++;
+
+        if (conditional_at < conditional_word_count)
+        {
+                string_address op = conditional_word[conditional_at];
+                positive kind = test_is_binary(op);
+                bool pattern = word_is(op, "=") || word_is(op, "==") ||
+                               word_is(op, "!=");
+
+                if (word_is(op, "=="))
+                        kind = TEST_SAME;
+
+                if (word_is(op, "=~"))
+                {
+                        conditional_at++;
+
+                        if (conditional_at < conditional_word_count)
+                                conditional_at++;
+
+                        conditional_bad = true;
+                        return false;
+                }
+
+                if (kind)
+                {
+                        string_address left;
+                        string_address right;
+                        bool value;
+
+                        conditional_at++;
+
+                        if (conditional_at >= conditional_word_count)
+                        {
+                                conditional_bad = true;
+                                return false;
+                        }
+
+                        if (!conditional_active)
+                        {
+                                conditional_at++;
+                                return false;
+                        }
+
+                        left = conditional_expand(raw, false);
+                        right = conditional_expand(
+                            conditional_word[conditional_at++], pattern);
+
+                        if (expand_failed)
+                                return false;
+
+                        if (pattern)
+                        {
+                                value = shell_match(right, left);
+                                return word_is(op, "!=") ? !value : value;
+                        }
+
+                        if (kind >= TEST_EQUAL && kind <= TEST_GREATER_EQUAL)
+                                return conditional_integer(kind, left, right);
+
+                        test_bad = false;
+                        value = test_compare(kind, left, right);
+
+                        if (test_bad)
+                                conditional_bad = true;
+
+                        return value;
+                }
+        }
+
+        if (!conditional_active)
+                return false;
+
+        raw = conditional_expand(raw, false);
+        return !expand_failed && string_get(raw) != end;
+}
+
+static bool conditional_negation()
+{
+        if (conditional_is("!"))
+        {
+                conditional_at++;
+                return !conditional_negation();
+        }
+
+        return conditional_primary();
+}
+
+static bool conditional_conjunction()
+{
+        bool value = conditional_negation();
+
+        while (conditional_is("&&"))
+        {
+                bool held = conditional_active;
+                bool other;
+
+                conditional_at++;
+                conditional_active = held && value;
+                other = conditional_negation();
+                conditional_active = held;
+                value = value && other;
+        }
+
+        return value;
+}
+
+static bool conditional_expression()
+{
+        bool value = conditional_conjunction();
+
+        while (conditional_is("||"))
+        {
+                bool held = conditional_active;
+                bool other;
+
+                conditional_at++;
+                conditional_active = held && !value;
+                other = conditional_conjunction();
+                conditional_active = held;
+                value = value || other;
+        }
+
+        return value;
+}
+
+static b32 exec_conditional(b32 index)
+{
+        shell_mark arena = shell_store_mark(address_of exec_store);
+        shell_mark expanded = shell_store_mark(address_of expand_store);
+        string_address whole = parse_words[parse_nodes[index].word];
+        positive length = string_length(whole);
+        p8 held;
+        bool value = false;
+        b32 status;
+
+        if (length < 4)
+                return 2;
+
+        held = whole[length - 2];
+        whole[length - 2] = end;
+
+        conditional_bad = false;
+        conditional_active = true;
+        conditional_at = 0;
+        expand_failed = false;
+        arith_unset = false;
+
+        if (!conditional_tokenize(whole + 2))
+                conditional_bad = true;
+        else if (conditional_word_count)
+                value = conditional_expression();
+
+        if (conditional_at != conditional_word_count || expand_failed)
+                conditional_bad = true;
+
+        if (arith_unset)
+                conditional_nounset_fatal();
+
+        whole[length - 2] = held;
+        status = arith_unset ? 1 : conditional_bad ? 2 : value ? 0 : 1;
+        shell_store_rewind(address_of expand_store, expanded);
+        shell_store_rewind(address_of exec_store, arena);
+        return status;
+}
+
 static b32 exec_case(b32 index)
 {
         parse_node address_to node = parse_nodes + index;
@@ -2223,6 +2656,8 @@ static b32 exec_node_kind(b32 index)
 
         if (node->kind == NODE_ARITHMETIC)
                 status = exec_arithmetic_command(index);
+        else if (node->kind == NODE_CONDITIONAL)
+                status = exec_conditional(index);
         else if (node->kind == NODE_IF)
                 status = exec_if(index);
         else if (node->kind == NODE_WHILE)
@@ -2243,7 +2678,8 @@ static b32 exec_node_kind(b32 index)
         exec_redirect_restore(mark);
         shell_status = status;
 
-        if (node->kind == NODE_SUBSHELL || node->kind == NODE_ARITHMETIC)
+        if (node->kind == NODE_SUBSHELL || node->kind == NODE_ARITHMETIC ||
+            node->kind == NODE_CONDITIONAL)
                 exec_errexit(status);
 
         return status;

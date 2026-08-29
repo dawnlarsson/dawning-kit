@@ -17,6 +17,7 @@
 #define LEX_WORD 1
 #define LEX_OPERATOR 2
 #define LEX_ARITHMETIC 3
+#define LEX_CONDITIONAL 4
 
 // The operators, longest first, so that && is never read as two &.
 #define OP_AND_IF 1     // &&
@@ -272,6 +273,22 @@ static b32 lex_add(b32 kind, b32 op, string_address text, positive length)
         return true;
 }
 
+// Words already live in lex_text. The two whole Bash tokens must live there
+// as well: lex_room rebases every handed-out text pointer when that block
+// grows, so keeping one pointed at the caller's input would turn it into an
+// unrelated address as soon as a later word enlarged the block.
+static b32 lex_add_whole(b32 kind, string_address text, positive length)
+{
+        positive start = lex_used;
+
+        if (length == positive_max || !lex_room(lex_used + length + 1))
+                return false;
+
+        memory_copy_end(lex_text + lex_used, text, length);
+        lex_used += length + 1;
+        return lex_add(kind, 0, lex_text + start, length);
+}
+
 static string_address lex_nested_at(string_address at);
 static string_address lex_nesting(string_address at);
 static string_address lex_quote_end(string_address at, p8 quote);
@@ -322,6 +339,63 @@ static string_address lex_arithmetic_end(string_address start)
                         if (depth)
                                 depth--;
                         else if (string_is(at + 1, ')'))
+                                return at + 2;
+                }
+
+                at++;
+        }
+
+        return null;
+}
+
+// A Bash [[...]] condition is one command-language token. Its own &&, ||,
+// parentheses, < and > belong to the conditional grammar, while the same
+// bytes after the closing ]] belong to the shell grammar again.
+static string_address lex_conditional_end(string_address start)
+{
+        string_address at = start + 2;
+
+        while (string_get(at))
+        {
+                p8 value = string_get(at);
+
+                if (value == '\\' && string_get(at + 1))
+                {
+                        at += 2;
+                        continue;
+                }
+
+                if (value == '\'' || value == '"')
+                {
+                        string_address stop = lex_quote_end(at + 1, value);
+
+                        if (!string_get(stop))
+                                return null;
+
+                        at = stop + 1;
+                        continue;
+                }
+
+                {
+                        string_address inner = lex_nested_at(at);
+                        string_address stop = inner ? lex_nesting(inner) : null;
+
+                        if (stop && stop > inner)
+                        {
+                                at = stop;
+                                continue;
+                        }
+                }
+
+                if (value == ']' && string_is(at + 1, ']') &&
+                    at > start + 2 &&
+                    (string_is(at - 1, ' ') || string_is(at - 1, '\t') ||
+                     string_is(at - 1, '\n')))
+                {
+                        p8 after = string_get(at + 2);
+
+                        if (!after || after == ' ' || after == '\t' ||
+                            after == '\n' || lex_operator[after])
                                 return at + 2;
                 }
 
@@ -500,6 +574,20 @@ b32 lex_unfinished(string_address line)
         {
                 p8 c = string_get(step);
                 positive run;
+
+                if (fresh && c == '[' && string_is(step + 1, '[') &&
+                    (string_is(step + 2, ' ') || string_is(step + 2, '\t') ||
+                     string_is(step + 2, '\n')))
+                {
+                        string_address stop = lex_conditional_end(step);
+
+                        if (!stop)
+                                return LEX_OPEN;
+
+                        step = stop;
+                        fresh = false;
+                        continue;
+                }
 
                 if (c == '#' && fresh)
                         return LEX_COMPLETE;
@@ -695,14 +783,31 @@ b32 lex_line(string_address line)
 
                 lex_at = (positive)(step - line);
 
+                if (string_is(step, '[') && string_is(step + 1, '[') &&
+                    (string_is(step + 2, ' ') || string_is(step + 2, '\t') ||
+                     string_is(step + 2, '\n')))
+                {
+                        string_address stop = lex_conditional_end(step);
+
+                        if (stop)
+                        {
+                                if (!lex_add_whole(LEX_CONDITIONAL, step,
+                                                   (positive)(stop - step)))
+                                        return -1;
+
+                                step = stop;
+                                continue;
+                        }
+                }
+
                 if (string_is(step, '(') && string_is(step + 1, '('))
                 {
                         string_address stop = lex_arithmetic_end(step);
 
                         if (stop)
                         {
-                                if (!lex_add(LEX_ARITHMETIC, 0, step,
-                                             (positive)(stop - step)))
+                                if (!lex_add_whole(LEX_ARITHMETIC, step,
+                                                   (positive)(stop - step)))
                                         return -1;
 
                                 step = stop;
@@ -714,7 +819,7 @@ b32 lex_line(string_address line)
 
                 if (op)
                 {
-                        if (!lex_add(LEX_OPERATOR, op, step, length))
+                        if (!lex_add(LEX_OPERATOR, op, null, length))
                                 return -1;
 
                         step += length;

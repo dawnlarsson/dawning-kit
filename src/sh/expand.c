@@ -1018,6 +1018,8 @@ static bool arith_bad;
 // raise evaluation errors such as division by zero.
 static bool arith_active;
 static bool arith_bash_mode;
+static bool arith_nounset;
+static bool arith_unset;
 
 static fn arith_space()
 {
@@ -1060,8 +1062,19 @@ static bipolar arith_value_of(string_address name)
         positive magnitude;
         bool negative = false;
 
-        if (!arith_active || !present)
+        if (!arith_active)
                 return 0;
+
+        if (!present)
+        {
+                if (arith_nounset)
+                {
+                        arith_bad = true;
+                        arith_unset = true;
+                }
+
+                return 0;
+        }
 
         step += string_span(step, string_set_blanks);
 
