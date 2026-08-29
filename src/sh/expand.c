@@ -1823,6 +1823,85 @@ static bipolar arith_choose()
         return active ? (value ? taken : left) : 0;
 }
 
+/*
+        The control-loop kernel is a name, one add/subtract, and a literal:
+
+                i=$((i + 1))
+
+        Sending that through every precedence level costs more than the
+        lookup and addition themselves. Recognize only the complete, exact
+        shape before reading the name, so a failed probe cannot duplicate an
+        assignment, increment, nounset error, or other arithmetic side
+        effect. Everything richer stays with the grammar below.
+*/
+static bool arith_simple_addition(string_address text,
+                                  bipolar address_to answer)
+{
+        string_address at = text;
+        string_address name_start;
+        string_address number_at;
+        p8 name_local[EXPAND_LOCAL_NAME];
+        string_address name;
+        positive name_length;
+        bipolar right;
+        bool valid;
+        p8 op;
+
+        while (string_is(at, ' ') || string_is(at, '\t') ||
+               string_is(at, '\n'))
+                at++;
+
+        if (!((string_get(at) >= 'a' && string_get(at) <= 'z') ||
+              (string_get(at) >= 'A' && string_get(at) <= 'Z') ||
+              string_is(at, '_')))
+                return false;
+
+        name_start = at;
+        while (expand_name_character(string_get(at)))
+                at++;
+        name_length = at - name_start;
+
+        while (string_is(at, ' ') || string_is(at, '\t') ||
+               string_is(at, '\n'))
+                at++;
+
+        op = string_get(at);
+        if (op != '+' && op != '-')
+                return false;
+        at++;
+
+        while (string_is(at, ' ') || string_is(at, '\t') ||
+               string_is(at, '\n'))
+                at++;
+
+        if (string_get(at) < '0' || string_get(at) > '9')
+                return false;
+
+        number_at = at;
+        right = expand_base_number(address_of at, address_of valid);
+
+        while (string_is(at, ' ') || string_is(at, '\t') ||
+               string_is(at, '\n'))
+                at++;
+
+        if (!valid || at == number_at || string_get(at))
+                return false;
+
+        name = expand_hold(name_start, name_length, name_local,
+                           sizeof(name_local));
+        if (!name)
+        {
+                arith_bad = true;
+                address_to answer = 0;
+                return true;
+        }
+
+        address_to answer = op == '+'
+                                  ? arith_addition(arith_value_of(name), right)
+                                  : arith_subtraction(arith_value_of(name), right);
+        return true;
+}
+
 static bipolar arith_evaluate(string_address text)
 {
         bipolar value;
@@ -1839,6 +1918,9 @@ static bipolar arith_evaluate(string_address text)
                 arith_bad = true;
                 return 0;
         }
+
+        if (arith_simple_addition(text, address_of value))
+                return value;
 
         value = arith_choose();
         arith_space();

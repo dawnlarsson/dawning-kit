@@ -599,6 +599,9 @@ answer 'compound shift' 'x=1; echo $((x <<= 4)) $((x >>= 2)) $x'
 answer 'a name is read' 'x=010; echo $((x + 0))'
 answer 'spaces inside'  'x=" 5 "; echo $((x + 1))'
 answer 'dollar inside'  'x=5; echo $(($x + 1))'
+answer 'name plus literal' 'x=7; echo $((x+1)) $(( x + 010 ))'
+answer 'name minus literal' 'x=7; echo $((x-2)) $(( x - 0x3 ))'
+answer 'name add falls through' 'x=2; echo $((x + 1 < 4)) $((x + 1 * 2))'
 
 group refused
 #       Every one of these answered with a number the script never computed.
