@@ -25,7 +25,7 @@ does less should say so once, in ledger.json, with the reason -- the way
 src/test/shell.sh keeps its own list of what it does differently from dash
 and why. What this refuses to allow is a divergence nobody has looked at.
 """
-import argparse, json, os, re, subprocess, sys
+import argparse, json, os, re, subprocess, sys, tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 LEDGER = os.path.join(HERE, 'ledger.json')
@@ -48,9 +48,18 @@ NEEDS = {
 
 # Flags that say something about the machine or the clock rather than about
 # the input, so two runs never agree and the answer means nothing.
-UNSTABLE = {'--help', '--version', '--random-sort', '-R', '--parallel',
+UNSTABLE = {'--help', '--version', '--random-sort', '--parallel',
             '--temporary-directory', '-T', '--compress-program',
             '--time-style', '--full-time'}
+
+# Short options are not globally meaningful: grep -R is recursive while sort
+# -R is random.  Keep aliases whose output is inherently unstable scoped to
+# the tool which defines them, so they cannot hide another tool's real flag.
+UNSTABLE_BY_TOOL = {
+    'grep': {'-V'},
+    'rev': {'-h', '-V'},
+    'sort': {'-R'},
+}
 
 
 #
@@ -101,7 +110,8 @@ def flags_of(tool):
                 r'(?<![\w-])(-[a-zA-Z]|--[a-z][a-z0-9-]*)'
                 r'(?:(=|\[=|\s)([A-Z][A-Z_]*)\]?)?', line):
             flag, sep, arg = m.group(1), m.group(2), m.group(3)
-            if flag in UNSTABLE or flag in seen:
+            if (flag in UNSTABLE or flag in UNSTABLE_BY_TOOL.get(tool, set())
+                    or flag in seen):
                 continue
             # a bare "-x" followed by a space and a capitalised word is only an
             # argument when the line is the flag's own description line
@@ -121,15 +131,19 @@ def flags_of(tool):
     return found
 
 
-def run(argv, feed, timeout=10):
+def run(argv, feed, timeout=10, cwd=None):
     try:
-        r = subprocess.run(argv, input=feed, capture_output=True, text=True,
-                           timeout=timeout)
+        # Tool output is an arbitrary byte stream.  In particular, flags such
+        # as grep's binary/text controls can make a perfectly valid probe emit
+        # bytes which are not UTF-8.  Decode only --help above; compare command
+        # output exactly as bytes here.
+        r = subprocess.run(argv, input=feed.encode(), capture_output=True,
+                           timeout=timeout, cwd=cwd)
         return r.stdout, r.returncode, None
     except subprocess.TimeoutExpired:
-        return '', -1, 'did not stop'
+        return b'', -1, 'did not stop'
     except OSError as e:
-        return '', -1, str(e)
+        return b'', -1, str(e)
 
 
 def looks_unsupported(out, status, tool):
@@ -138,12 +152,33 @@ def looks_unsupported(out, status, tool):
 
 def probe(tool, ours, flag, value):
     base = NEEDS.get(tool, [])
+    scratch = None
+    cwd = None
+    if tool == 'grep' and flag in {
+            '-r', '-R', '--recursive', '--dereference-recursive'}:
+        # Without a path, recursive grep walks the auditor's source checkout.
+        # Besides being huge and nondeterministic, that made system and local
+        # results depend on unrelated build artifacts.  Give both commands the
+        # same small tree and a relative path so their filenames also agree.
+        scratch = tempfile.TemporaryDirectory(prefix='surface-grep-')
+        cwd = scratch.name
+        os.mkdir(os.path.join(cwd, 'sub'))
+        with open(os.path.join(cwd, 'root'), 'wb') as f:
+            f.write(b'banana\npear\n')
+        with open(os.path.join(cwd, 'sub', 'leaf'), 'wb') as f:
+            f.write(b'apple\nplum\n')
+        os.symlink('sub', os.path.join(cwd, 'linked-sub'))
+        base = ['a', '.']
     with_flag = [flag] if value is None else [flag, value]
     argv_sys = [tool] + with_flag + base
     argv_our = [ours] + with_flag + base
 
-    want, want_status, want_err = run(argv_sys, FEED)
-    got, got_status, got_err = run(argv_our, FEED)
+    try:
+        want, want_status, want_err = run(argv_sys, FEED, cwd=cwd)
+        got, got_status, got_err = run(argv_our, FEED, cwd=cwd)
+    finally:
+        if scratch:
+            scratch.cleanup()
 
     if got_err == 'did not stop':
         return 'crashed', 'did not stop'
