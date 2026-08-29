@@ -218,6 +218,47 @@ if len(runs) >= 1:
     out.append(("log rows at the margin", "yes" if margin >= rows - 4 else
                 "%d of %d" % (margin, rows), "yes"))
 
+    # Three distinct wheel detents should move three conventional lines each,
+    # with no speed multiplier merely because they arrived close together.
+    # Compare the static log before and after: its old pixels move down by
+    # nine 16-pixel rows. Events are separated enough for the compositor to
+    # consume each one, but remain inside the old acceleration window.
+    bottom = next((y for y in range(h - 1, top, -1)
+                   if at((left + right) // 2, y) != bg), h - 1)
+    moveto((left + right) // 2, min(top + 80, bottom - 4))
+    for _ in range(3):
+        send([{"type": "btn", "data": {"down": True,
+                                        "button": "wheel-up"}},
+              {"type": "btn", "data": {"down": False,
+                                        "button": "wheel-up"}}])
+        time.sleep(0.08)
+
+    shot("wheel")
+    wheel_w, wheel_h, wheel_px = load("wheel")
+
+    def pixel(data, width, x, y):
+        offset = (y * width + x) * 3
+        return data[offset:offset + 3]
+
+    content_top = min(top + 20, bottom)
+    content_right = max(left + 1, right - 18)
+    scores = []
+    for shift in range(16, min(320, bottom - content_top), 16):
+        same_pixels = 0
+        evidence = 0
+        for y in range(content_top + shift, bottom - 2):
+            for x in range(left + 4, content_right):
+                old = pixel(px, w, x, y - shift)
+                new = pixel(wheel_px, wheel_w, x, y)
+                if sum(old) > 180 or sum(new) > 180:
+                    evidence += 1
+                    if old == new:
+                        same_pixels += 1
+        scores.append((same_pixels / max(evidence, 1), shift))
+
+    wheel_shift = max(scores, key=lambda item: item[0])[1] if scores else 0
+    out.append(("wheel is three lines", str(wheel_shift), "144"))
+
 #       A click on a titlebar takes the focus, which the titlebar says.
 if len(runs) >= 2:
     a_left, a_right = runs[0]
@@ -285,6 +326,75 @@ if len(runs) >= 2:
 
     # Let all sixteen updates complete before looking for the fault report.
     time.sleep(5)
+
+    # A framed pixel window cannot grow beyond the mapping its client owns.
+    # This used to maximize to desktop dimensions anyway, then compose read
+    # those invented pixels past the end of the mapping. The window demo's
+    # blue pane is exactly 200x120; double-click its titlebar and prove those
+    # are still the only blue pixels.
+    type_text("/window\n")
+    time.sleep(1)
+    shot("pixel-window")
+    pixel_w, pixel_h, pixel_before = load("pixel-window")
+
+    def colour_bounds(data, width, height, colour):
+        xs, ys = [], []
+        for y in range(height):
+            row = data[y * width * 3:(y + 1) * width * 3]
+            for x in range(width):
+                if row[x * 3:x * 3 + 3] == colour:
+                    xs.append(x)
+                    ys.append(y)
+        if not xs:
+            return None
+        return min(xs), min(ys), max(xs), max(ys)
+
+    blue = colour_bounds(pixel_before, pixel_w, pixel_h, b"\x00\x66\xcc")
+    if blue:
+        blue_left, blue_top, blue_right, blue_bottom = blue
+        moveto((blue_left + blue_right) // 2, max(blue_top - 10, 0))
+        for _ in range(2):
+            send([{"type": "btn", "data": {"down": True, "button": "left"}}])
+            time.sleep(0.08)
+            send([{"type": "btn", "data": {"down": False, "button": "left"}}])
+            time.sleep(0.12)
+
+        shot("pixel-maximized")
+        max_w, max_h, pixel_after = load("pixel-maximized")
+        blue_after = colour_bounds(pixel_after, max_w, max_h,
+                                   b"\x00\x66\xcc")
+    else:
+        blue_after = None
+
+    if blue_after:
+        blue_width = blue_after[2] - blue_after[0] + 1
+        blue_height = blue_after[3] - blue_after[1] + 1
+        pixel_extent = "%dx%d" % (blue_width, blue_height)
+    else:
+        pixel_extent = "absent"
+    out.append(("pixel maximize is bounded", pixel_extent, "200x120"))
+
+    if blue_after:
+        max_left, max_top, max_right, max_bottom = blue_after
+        title_x = (max_left + max_right) // 2
+        title_y = max(max_top - 10, 0)
+        moveto(title_x, title_y)
+        send([{"type": "btn", "data": {"down": True, "button": "left"}}])
+        time.sleep(0.08)
+        moveto(min(title_x + 120, W - 1), min(title_y + 80, H - 1))
+        send([{"type": "btn", "data": {"down": False, "button": "left"}}])
+        shot("pixel-restored")
+        drag_w, drag_h, pixel_dragged = load("pixel-restored")
+        blue_dragged = colour_bounds(pixel_dragged, drag_w, drag_h,
+                                     b"\x00\x66\xcc")
+    else:
+        blue_dragged = None
+
+    restored = (blue_dragged is not None and
+                blue_dragged[0] != blue_after[0] and
+                blue_dragged[2] - blue_dragged[0] + 1 == 200 and
+                blue_dragged[3] - blue_dragged[1] + 1 == 120)
+    out.append(("maximized drag restores", "yes" if restored else "no", "yes"))
 
 try:
     serial = open(work + "/serial", "rb").read().lower()

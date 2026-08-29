@@ -913,6 +913,9 @@ static int window_mmap(struct file *file, struct vm_area_struct *vma)
 static void window_release(struct file *file)
 {
         struct pane *pane = file->private_data;
+        struct pane *next = NULL;
+        struct pane *other;
+        _Bool refocus;
 
         if (!pane)
                 return;
@@ -925,10 +928,31 @@ static void window_release(struct file *file)
         if (desktop.resizing == pane)
                 desktop.resizing = NULL;
 
-        if (desktop.focused == pane)
+        if (desktop.barring == pane)
+                desktop.barring = NULL;
+
+        if (desktop.press_pane == pane)
+                desktop.press_pane = NULL;
+
+        refocus = desktop.focused == pane;
+        if (refocus)
                 desktop.focused = NULL;
 
         pane_free(pane);
+
+        // Closing the active window hands focus to what is now on top,
+        // instead of leaving a live desktop with nowhere for keys to go.
+        if (refocus)
+        {
+                list_for_each_entry(other, &desktop.windows, link)
+                        if (other->shared &&
+                            !(other->style &
+                              (WINDOW_MINIMIZED | WINDOW_PASSTHROUGH)) &&
+                            (!next || other->z > next->z))
+                                next = other;
+
+                pane_focus(next);
+        }
 
         if (!list_empty(&desktop.outputs))
                 desktop_redraw();

@@ -128,6 +128,7 @@ struct pane
         // it. A window remembers one rectangle, which is what a second double
         // click puts it back to.
         int saved_x, saved_y, saved_w, saved_h;
+        unsigned int saved_display;
         _Bool maximized;
 };
 
@@ -212,17 +213,8 @@ static struct desktop
         struct pane *press_pane;
         u64 press_ns;
 
-        /*
-                How fast the wheel is being turned.
-
-                A notch on its own moves a few lines; notches arriving one
-                after another mean a hand that wants to be somewhere else, and
-                each one moves further than the last until it stops. Kept here
-                rather than worked out per turn, because the speed is the thing
-                between two turns and not inside either.
-        */
-        unsigned int wheel_speed;
-        u64 wheel_ns;
+        // Fractions of a line left from a high-resolution wheel event.
+        int wheel_remainder;
 
         unsigned int cursor_shape;
         unsigned int drawn_shape;
@@ -272,7 +264,7 @@ static struct desktop
         struct hrtimer frame;
         atomic_t frame_pending;
 
-        // Wheel lines the pointer has turned and nothing has acted on yet.
+        // Unconsumed wheel distance in v120 units: 120 is one detent.
         // Positive is back through what has already gone past.
         atomic_t wheel;
         unsigned int idle_frames;

@@ -186,9 +186,11 @@ static void resize_move(int x, int y)
         int dy = y - desktop.press_y;
         int nx = desktop.resize_x, ny = desktop.resize_y;
         int nw = desktop.resize_w, nh = desktop.resize_h;
-        int max_w, max_h;
+        int max_w, max_h, min_w, min_h;
 
         pane_limits(pane, &max_w, &max_h);
+        min_w = min(WINDOW_MIN_WIDTH, max_w);
+        min_h = min(WINDOW_MIN_HEIGHT, max_h);
 
         if (edges & EDGE_LEFT)
                 nw = desktop.resize_w - dx;
@@ -200,8 +202,8 @@ static void resize_move(int x, int y)
         else if (edges & EDGE_BOTTOM)
                 nh = desktop.resize_h + dy;
 
-        nw = clamp(nw, WINDOW_MIN_WIDTH, max_w);
-        nh = clamp(nh, WINDOW_MIN_HEIGHT, max_h);
+        nw = clamp(nw, min_w, max_w);
+        nh = clamp(nh, min_h, max_h);
 
         // The edge that was not grabbed stays where it was.
         if (edges & EDGE_LEFT)
@@ -260,14 +262,21 @@ static void bar_move(int y)
         The rectangle it had is kept on the window itself, so a second pair of
         clicks puts it back where it was rather than somewhere a rule decided.
 */
-static void pane_maximize(struct pane *pane)
+static void pane_maximize(struct pane *pane, int at_x, int at_y)
 {
+        struct output *output = NULL;
+        struct output *candidate;
         int title = pane->style & WINDOW_FRAME ? canvas_title : 0;
         int border = pane->style & WINDOW_FRAME ? canvas_border : 0;
+        int max_w, max_h, width, height;
+        unsigned int display = pane->display, index = 0;
 
         if (pane->maximized)
         {
                 pane->maximized = false;
+                pane->display = pane->saved_display;
+                if (pane->shared)
+                        WRITE_ONCE(pane->shared->display, pane->display);
                 pane_reshape(pane, pane->saved_x, pane->saved_y,
                              pane->saved_w, pane->saved_h);
                 return;
@@ -277,10 +286,64 @@ static void pane_maximize(struct pane *pane)
         pane->saved_y = pane->y;
         pane->saved_w = pane->width;
         pane->saved_h = pane->height;
-        pane->maximized = true;
+        pane->saved_display = pane->display;
 
-        pane_reshape(pane, border, border, desktop.width - border * 2,
-                     desktop.height - title - border * 3);
+        // The click is on an output because the pointer is confined to one.
+        // Maximize on that output, not across the bounding box of every
+        // monitor. Keep the index in sync so fullscreen requests agree later.
+        list_for_each_entry(candidate, &desktop.outputs, link)
+        {
+                if (output_holds(candidate, at_x, at_y))
+                {
+                        output = candidate;
+                        display = index;
+                        break;
+                }
+
+                index++;
+        }
+
+        if (!output)
+                output = output_by_index(pane->display);
+
+        if (!output)
+                return;
+
+        pane->maximized = true;
+        pane->display = display;
+        if (pane->shared)
+                WRITE_ONCE(pane->shared->display, display);
+
+        pane_limits(pane, &max_w, &max_h);
+        width = min((int)output->width - border * 2, max_w);
+        height = min((int)output->height - title - border * 3, max_h);
+
+        pane_reshape(pane, output->x + border, output->y + border, width, height);
+}
+
+/*
+        Taking a maximized titlebar restores the saved window under the hand.
+
+        Leaving it maximized while ordinary drag_move changed x and y produced
+        a full-screen-sized loose window, and the next double-click restored
+        geometry from before the maximize. Keep the horizontal fraction that
+        was grabbed, so taking the right side does not make the restored
+        window jump until its left side is under the pointer.
+*/
+static void pane_restore_for_drag(struct pane *pane, int x, int y)
+{
+        int max_w, max_h;
+        int old_w = max(pane->width, 1);
+        int title_at = clamp(y - pane->y, 0, max(canvas_title - 1, 0));
+        int width, height, grab;
+
+        pane_limits(pane, &max_w, &max_h);
+        width = clamp(pane->saved_w, min(WINDOW_MIN_WIDTH, max_w), max_w);
+        height = clamp(pane->saved_h, min(WINDOW_MIN_HEIGHT, max_h), max_h);
+        grab = (int)((long)(x - pane->x) * width / old_w);
+
+        pane->maximized = false;
+        pane_reshape(pane, x - grab, y - title_at, width, height);
 }
 
 // Two clicks are a pair when the second lands on the same window soon enough
@@ -326,7 +389,7 @@ static void drag_press(int x, int y)
                         // rather than the window flickering under a hand that
                         // is still clicking.
                         desktop.press_pane = NULL;
-                        pane_maximize(pane);
+                        pane_maximize(pane, x, y);
                         return;
                 }
         }
@@ -355,6 +418,10 @@ static void drag_press(int x, int y)
         }
         else if (edges)
         {
+                // An edge resize makes this ordinary geometry; a later
+                // double-click must maximize it, not restore stale pre-max
+                // coordinates.
+                pane->maximized = false;
                 desktop.resizing = pane;
                 desktop.resize_edges = edges;
                 desktop.resize_x = pane->x;
@@ -364,6 +431,9 @@ static void drag_press(int x, int y)
         }
         else if ((pane->style & WINDOW_FRAME) && pane_titlebar_holds(pane, x, y))
         {
+                if (pane->maximized)
+                        pane_restore_for_drag(pane, x, y);
+
                 desktop.dragging = pane;
                 desktop.grab_x = x - pane->x;
                 desktop.grab_y = y - pane->y;
@@ -405,53 +475,45 @@ static void drag_release(void)
         program: there is nothing for it to do about one.
 */
 /*
-        How far one notch goes.
+        Linux calls one legacy REL_WHEEL unit a physical detent and calls 120
+        REL_WHEEL_HI_RES units the same distance. Three text lines per detent
+        is the conventional desktop step.
 
-        A notch was a line, which is a hand turning a wheel forty times to
-        cross a screen. Three is what everything else moves for one, and a
-        wheel that keeps turning means somewhere further off than the next few
-        lines -- so a notch that arrives while the last one is still recent
-        counts for more, up to six times the three, and a pause puts it back
-        to walking pace.
+        Do not accelerate here. The old curve made four ordinary notches move
+        3 + 6 + 9 + 12 = 30 lines, so a wheel became ten times faster merely
+        by being used continuously. Multiple input events are already
+        coalesced in desktop.wheel; this conversion preserves their distance.
+        A high-resolution wheel keeps the fraction until it amounts to a line.
 */
 #define WHEEL_LINES 3
-#define WHEEL_FASTEST 6
-#define WHEEL_QUICK_NS 150000000ull
+#define WHEEL_V120 120
 
-static int wheel_step(int notches)
+static int wheel_lines(int v120, int *remainder)
 {
-        u64 now = ktime_get_ns();
+        long scaled = (long)v120 * WHEEL_LINES + *remainder;
+        int lines = (int)(scaled / WHEEL_V120);
 
-        if (now - desktop.wheel_ns <= WHEEL_QUICK_NS)
-        {
-                if (desktop.wheel_speed < WHEEL_FASTEST)
-                        desktop.wheel_speed++;
-        }
-        else
-        {
-                desktop.wheel_speed = 1;
-        }
-
-        desktop.wheel_ns = now;
-
-        return notches * WHEEL_LINES * (int)desktop.wheel_speed;
+        *remainder = (int)(scaled % WHEEL_V120);
+        return lines;
 }
 
 static void wheel_deliver(void)
 {
-        int lines = atomic_xchg(&desktop.wheel, 0);
+        int v120 = atomic_xchg(&desktop.wheel, 0);
+        int lines;
         unsigned int edges;
         struct pane *pane;
 
-        if (!lines)
+        if (!v120)
                 return;
 
-        lines = wheel_step(lines);
-
         pane = pane_under(desktop.cursor_x, desktop.cursor_y, &edges);
-        
 
         if (!pane)
+                return;
+
+        lines = wheel_lines(v120, &desktop.wheel_remainder);
+        if (!lines)
                 return;
 
         // The same way a console write asks for a frame. Damaging and
@@ -462,6 +524,4 @@ static void wheel_deliver(void)
                 atomic_set(&desktop.frame_pending, 1);
                 canvas_thread_wake();
         }
-
-
 }

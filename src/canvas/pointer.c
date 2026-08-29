@@ -311,7 +311,9 @@ static void pointer_event_locked(struct input_handle *handle, unsigned int type,
                 {
                         desktop.raw_y += value;
                 }
-                else if (code == REL_WHEEL)
+                else if (code == REL_WHEEL_HI_RES ||
+                         (code == REL_WHEEL &&
+                          !test_bit(REL_WHEEL_HI_RES, handle->dev->relbit)))
                 {
                         // Committed here rather than at the report, because a
                         // wheel is not movement: nothing else in the report
@@ -320,7 +322,9 @@ static void pointer_event_locked(struct input_handle *handle, unsigned int type,
                         // atomic_fetch_add and not atomic_add: library.c
                         // above defines an atomic_add of its own, taking the
                         // address first, and it shadows the kernel's here.
-                        atomic_fetch_add(value, &desktop.wheel);
+                        atomic_fetch_add(code == REL_WHEEL_HI_RES ? value
+                                                                 : value * WHEEL_V120,
+                                         &desktop.wheel);
                         canvas_thread_wake();
                 }
 
