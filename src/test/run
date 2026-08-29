@@ -2068,11 +2068,74 @@ lane_native()
         [ "$answered" = 0 ] && [ "$counted" = 0 ]
 }
 
+#       spark.ld used to hide an RV64 process-entry ABI bug.  Its complete
+#       layout did not relax small globals through gp, while the ordinary GNU
+#       ELF script did; _start left the register at the kernel's unspecified
+#       value and the first relaxed store went below address zero.  Build one
+#       probe through that ordinary layout on purpose, then execute enough of
+#       C startup to publish the environment and return through exit.
+riscv_default_startup()
+{
+        startup_cross=riscv64-linux-gnu-gcc
+        startup_runner=qemu-riscv64
+        startup_image="$work/probe.riscv64-default"
+
+        command -v "$startup_cross" > /dev/null 2>&1 || {
+                note "RISC-V default-link startup: NOT RUN -- no $startup_cross"
+                return 2
+        }
+        command -v "$startup_runner" > /dev/null 2>&1 || {
+                note "RISC-V default-link startup: NOT RUN -- no $startup_runner"
+                return 2
+        }
+
+        if ! "$startup_cross" -O2 -static -nostdlib -nostartfiles \
+                -fno-stack-protector -fno-builtin \
+                -march=rv64imafd_zicsr_zicntr -mabi=lp64d -w \
+                -Wl,-e,_start -Wl,--build-id=none \
+                -Wl,--no-warn-rwx-segments \
+                -o "$startup_image" src/test/probe.c \
+                2> "$work/probe.riscv64-default.err"
+        then
+                note "the ordinary RISC-V ELF startup probe did not build:"
+                sed 's/^/    /' "$work/probe.riscv64-default.err" | head -10
+                return 1
+        fi
+
+        if ! "$startup_runner" "$startup_image" status 0 \
+                > "$work/probe.riscv64-default.out" 2>&1
+        then
+                note "the ordinary RISC-V ELF startup probe did not exit cleanly:"
+                sed 's/^/    /' "$work/probe.riscv64-default.out" | head -10
+                return 1
+        fi
+
+        [ ! -s "$work/probe.riscv64-default.out" ] || {
+                note "the ordinary RISC-V ELF startup probe wrote unexpected output:"
+                sed 's/^/    /' "$work/probe.riscv64-default.out" | head -10
+                return 1
+        }
+}
+
 lane_probe()
 {
-        freestanding src/test/probe.c "$work/probe" || return 1
+        failed=0
 
-        PROBE="$work/probe" sh src/test/probe.sh
+        freestanding src/test/probe.c "$work/probe" || return 1
+        PROBE="$work/probe" sh src/test/probe.sh || failed=1
+
+        startup_outcome=0
+        riscv_default_startup || startup_outcome=$?
+        case $startup_outcome in
+        0) tally probe-riscv64-default-startup 1 1 ;;
+        1)
+                tally probe-riscv64-default-startup 0 1
+                failed=1
+                ;;
+        2) ;;
+        esac
+
+        [ "$failed" = 0 ]
 }
 
 lane_shell()

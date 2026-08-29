@@ -41,6 +41,13 @@ SECTIONS
                 *(.sdata .sdata.*)
         }
 
+        /* RISC-V _start establishes gp as required by its psABI.  Ordinary
+           ELF linker scripts provide this anchor themselves; spark owns its
+           complete layout and therefore has to provide it explicitly.  The
+           conventional 0x800 bias reaches the full signed twelve-bit window
+           around small data.  Other architectures simply leave it unused. */
+        PROVIDE(__global_pointer$ = . + 0x800);
+
         . = ALIGN(4096);
 
         .bss : {

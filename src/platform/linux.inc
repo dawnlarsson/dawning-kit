@@ -377,6 +377,15 @@ __asm__(
     ASM_END(exit)
 
     ASM_FUNC(_start)
+    /* The RISC-V psABI reserves gp for __global_pointer$.  GNU ld relaxes
+       accesses to nearby small globals into gp-relative loads and stores,
+       including C generated after this entry point.  A kernel enters with
+       gp unspecified, so establish it before the first call.  norelax is
+       essential here: relaxing the initializer itself into mv gp,gp would
+       preserve the unknown incoming value. */
+    ".option push\n   .option norelax\n"
+    "lla gp, __global_pointer$\n"
+    ".option pop\n"
     "li s0, 0\n   li ra, 0\n   mv a0, sp\n"
     "lla t0, program_stack_base\n   sd a0, 0(t0)\n"
     "andi sp, sp, -16\n   call moonwater_cpu_detect\n   call main\n"
