@@ -643,7 +643,9 @@ STRNCHR:char *strnchr(const char *, __kernel_size_t, int)"
                 ln -sf ../shell fs/bin/sh || die "linking /bin/sh"
                 cp programs/monitor.sh fs/monitor.sh || die "installing /monitor.sh"
                 chmod 0755 fs/monitor.sh || die "making /monitor.sh executable"
+                ln -sf monitor.sh fs/mointor.sh || die "linking /mointor.sh"
                 ln -sf ../monitor.sh fs/bin/monitor.sh || die "linking /bin/monitor.sh"
+                ln -sf ../monitor.sh fs/bin/mointor.sh || die "linking /bin/mointor.sh"
 
                 #
                 #       The utilities are the shell, under other names.
