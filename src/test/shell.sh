@@ -1540,7 +1540,7 @@ answer 'echo backspace escape' 'echo "a\b" | od -An -tu1'
 answer 'echo newline escape' 'echo "a\nb"'
 answer 'echo unknown escape' 'echo "a\q"'
 answer 'echo cut escape' 'echo "a\cdiscard"; echo kept'
-differs 'local goes on'  '2|after|' 0 'local v=1 2>/dev/null; echo $?; echo after'
+answer 'local outside function is fatal' 'local v=1 2>/dev/null; echo $?; echo after'
 differs 'kill takes sig' '1|' 0 'kill -SIGTERM 999999 2>/dev/null; echo $?'
 differs 'expr is sixty four' '-9223372036854775808|' 0 'expr 9223372036854775807 + 1'
 

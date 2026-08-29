@@ -1449,7 +1449,8 @@ fn shell_local(writer write, string_address input)
         if (!local_depth)
         {
                 shell_diagnostic("local: not in a function\n", 0);
-                return shell_answer(2);
+                expand_fatal();
+                return;
         }
 
         while (index < shell_argc)
