@@ -17,6 +17,7 @@ static positive used;
 static positive null_handle;
 static volatile positive sink;
 static volatile positive benchmark_capacity = CAPACITY;
+static volatile positive benchmark_reserve_length = 16;
 
 NOT_INLINED static b32 former_flush(positive handle, p8 address_to buffer,
                                     positive address_to count)
@@ -52,6 +53,34 @@ NOT_INLINED static b32 former_put(positive handle, p8 address_to buffer,
         memory_copy(buffer + address_to count, data, length);
         address_to count += length;
         return true;
+}
+
+NOT_INLINED static p8 address_to former_reserve(
+    positive handle, p8 address_to buffer, positive capacity,
+    positive address_to count, positive length)
+{
+        if (length > capacity)
+                return null;
+
+        if (length > capacity - address_to count &&
+            !former_flush(handle, buffer, count))
+                return null;
+
+        p8 address_to answer = buffer + address_to count;
+        address_to count += length;
+        return answer;
+}
+
+// Hot no-flush traffic floor: the caller-proven span needs one old-count load,
+// one new-count store and one returned address. It deliberately omits the
+// capacity and flush semantics the public routine must retain.
+NOT_INLINED static p8 address_to reserve_floor(p8 address_to buffer,
+                                               positive address_to count,
+                                               positive length)
+{
+        p8 address_to answer = buffer + address_to count;
+        address_to count += length;
+        return answer;
 }
 
 NOT_INLINED static b32 former_byte(positive handle, p8 address_to buffer,
@@ -133,6 +162,36 @@ static p64 byte_once(bool assembly)
                                               address_of used, (p8)i);
 
                 sink += used + output[i & (capacity - 1)] + (positive)success;
+        }
+
+        return get_cpu_time() - start;
+}
+
+static p64 reserve_once(b32 which)
+{
+        positive capacity = benchmark_capacity;
+        positive length = benchmark_reserve_length;
+        p64 start = get_cpu_time();
+
+        for (positive i = 0; i < BUFFER_ROUNDS; i++)
+        {
+                // Keep this row at the no-syscall semantic floor. Flush and
+                // failure paths have their own rows and focused tests.
+                used = i & 2047;
+                p8 address_to at;
+
+                if (which == 1)
+                        at = buffered_reserve(null_handle, output, capacity,
+                                              address_of used, length);
+                else if (which == 2)
+                        at = reserve_floor(output, address_of used, length);
+                else
+                        at = former_reserve(null_handle, output, capacity,
+                                            address_of used, length);
+
+                at[0] = (p8)i;
+                at[length - 1] = (p8)(i >> 8);
+                sink += used + at[0] + at[length - 1];
         }
 
         return get_cpu_time() - start;
@@ -268,6 +327,57 @@ static fn log_row(string_address name, positive length)
                       ratios[TRIES / 2] / 100, ratios[TRIES / 2] % 100);
 }
 
+static fn reserve_row()
+{
+        positive ratios[TRIES];
+        positive assembly_each[TRIES];
+        positive floor_each[TRIES];
+
+        for (positive t = 0; t < TRIES; t++)
+        {
+                p64 former;
+                p64 assembly;
+                p64 floor;
+
+                if (t & 1)
+                {
+                        assembly = reserve_once(1);
+                        floor = reserve_once(2);
+                        former = reserve_once(0);
+                }
+                else
+                {
+                        former = reserve_once(0);
+                        floor = reserve_once(2);
+                        assembly = reserve_once(1);
+                }
+
+                ratios[t] = (positive)(assembly * 10000 / (former ? former : 1));
+                assembly_each[t] = (positive)(assembly * 100 / BUFFER_ROUNDS);
+                floor_each[t] = (positive)(floor * 100 / BUFFER_ROUNDS);
+        }
+
+        order(ratios);
+        order(assembly_each);
+        order(floor_each);
+        string_format(log, "  reserve 16  median asm/C %p.%p%%\n",
+                      ratios[TRIES / 2] / 100, ratios[TRIES / 2] % 100);
+        positive assembly = assembly_each[TRIES / 2];
+        positive floor = floor_each[TRIES / 2];
+        if (assembly >= floor)
+                string_format(log,
+                              "              asm %p.%p cycles/op, no-flush floor %p.%p, gap %p.%p\n",
+                              assembly / 100, assembly % 100,
+                              floor / 100, floor % 100,
+                              (assembly - floor) / 100,
+                              (assembly - floor) % 100);
+        else
+                string_format(log,
+                              "              asm %p.%p cycles/op beat the %p.%p floor proxy; unresolved\n",
+                              assembly / 100, assembly % 100,
+                              floor / 100, floor % 100);
+}
+
 b32 main(void)
 {
         for (positive i = 0; i < sizeof(payload); i++)
@@ -280,6 +390,7 @@ b32 main(void)
         string_format(log, "buffered writer, paired median of %p\n", (positive)TRIES);
         row((string_address)"buffer 8", 8, false, BUFFER_ROUNDS, 0, false, false);
         row((string_address)"buffer 64", 64, false, BUFFER_ROUNDS, 0, false, false);
+        reserve_row();
         row((string_address)"byte", 0, false, 0, 0, true, false);
         row((string_address)"combined overflow", 8, false, SYSCALL_ROUNDS,
             CAPACITY - 4, false, false);

@@ -61,6 +61,20 @@ static fn text_put(address_any data, positive length)
                 text_out_failed = true;
 }
 
+// Callers use this only for a span proven to fit TEXT_OUT_MAX and fill every
+// byte before making another output call.
+static p8 address_to text_reserve(positive length)
+{
+        p8 address_to at = buffered_reserve(
+            text_out_handle, text_out_buffer, TEXT_OUT_MAX,
+            address_of text_out_used, length);
+
+        if (!at)
+                text_out_failed = true;
+
+        return at;
+}
+
 static fn text_put_character(p8 character)
 {
         if (!buffered_write_byte(text_out_handle, text_out_buffer, TEXT_OUT_MAX,
@@ -2381,8 +2395,19 @@ static fn cat_number()
 {
         // Six wide and right aligned, then a tab, which is what GNU does and
         // what anything reading the output will expect.
-        positive_to_padded(text_put, cat_line_number, 6, ' ', 0);
-        text_put_character('\t');
+        positive width = positive_digits(cat_line_number);
+
+        if (width < 6)
+                width = 6;
+
+        p8 address_to field = text_reserve(width + 1);
+
+        if (field)
+        {
+                positive length = positive_into_padded(
+                    field, cat_line_number, 6, ' ');
+                field[length] = '\t';
+        }
 
         cat_line_number++;
 }
@@ -4923,18 +4948,47 @@ static b32 text_uniq()
                         {
                                 if (counting)
                                 {
-                                        // Seven is a minimum field width, not
-                                        // a digit limit. Leave room for the
-                                        // full positive value as well.
-                                        p8 field[21];
+                                        positive width = positive_digits(count);
 
-                                        positive length = positive_into_padded(
-                                            field, count, 7, ' ');
-                                        field[length++] = ' ';
-                                        text_put(field, length);
+                                        if (width < 7)
+                                                width = 7;
+
+                                        positive total = width + 1 +
+                                                         previous_length + 1;
+
+                                        if (total <= TEXT_OUT_MAX)
+                                        {
+                                                p8 address_to out = text_reserve(total);
+
+                                                if (out)
+                                                {
+                                                        positive length =
+                                                            positive_into_padded(
+                                                                out, count, 7, ' ');
+                                                        out[length++] = ' ';
+                                                        memory_copy(out + length,
+                                                                    previous,
+                                                                    previous_length + 1);
+                                                }
+                                        }
+                                        else
+                                        {
+                                                // Width is a minimum, never a
+                                                // digit cap; the stack field
+                                                // therefore needs twenty
+                                                // digits plus its separator.
+                                                p8 field[21];
+                                                positive length =
+                                                    positive_into_padded(
+                                                        field, count, 7, ' ');
+                                                field[length++] = ' ';
+                                                text_put(field, length);
+                                                text_put(previous,
+                                                         previous_length + 1);
+                                        }
                                 }
-
-                                text_put(previous, previous_length + 1);
+                                else
+                                        text_put(previous, previous_length + 1);
                         }
                 }
 

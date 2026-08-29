@@ -62,6 +62,9 @@ fn log_error(address_any data, positive length);
 fn log_failure_reset();
 bool log_failed();
 b32 buffered_flush(positive handle, p8 address_to buffer, positive address_to used);
+p8 address_to buffered_reserve(positive handle, p8 address_to buffer,
+                               positive capacity, positive address_to used,
+                               positive length);
 b32 buffered_write(positive handle, p8 address_to buffer, positive capacity,
                    positive address_to used, address_any data, positive length);
 b32 buffered_write_deferred_equal(positive handle, p8 address_to buffer,
@@ -74,7 +77,10 @@ b32 buffered_write_byte(positive handle, p8 address_to buffer, positive capacity
 #define RUNTIME_TEXT(value) RUNTIME_TEXT_INNER(value)
 
 /*
-        Shared buffered output at the architecture floor.  The regular entry
+        Shared buffered output at the architecture floor. Reserve exposes a
+        caller-sized contiguous span, flushing first when necessary and
+        refusing a span larger than the buffer; callers fill every reserved
+        byte. The regular entry
         writes runs at least as large as the buffer directly; the deferred-
         equal entry keeps an exact fit buffered for text's historical policy.
         Every entry returns one only when all bytes it accepted were written or
@@ -95,6 +101,22 @@ __asm__(
     ASM_RET
     ".Lbuffered_flush_x64_empty:\n   mov $1, %eax\n   jmp .Lbuffered_flush_x64_done\n"
     ASM_END(buffered_flush)
+
+    ASM_FUNC(buffered_reserve)
+    "cmp %rdx, %r8\n   ja .Lbuffered_reserve_x64_too_large\n"
+    "mov %rdx, %rax\n   sub %r8, %rax\n   mov (%rcx), %r9\n"
+    "cmp %rax, %r9\n   ja .Lbuffered_reserve_x64_flush\n"
+    "lea (%rsi,%r9), %rax\n   add %r8, %r9\n   mov %r9, (%rcx)\n"
+    ASM_RET
+    ".Lbuffered_reserve_x64_flush:\n   sub $40, %rsp\n"
+    "mov %rsi, 0(%rsp)\n   mov %rcx, 8(%rsp)\n   mov %r8, 16(%rsp)\n"
+    "mov %rcx, %rdx\n   call buffered_flush\n   test %eax, %eax\n"
+    "jz .Lbuffered_reserve_x64_failed\n   mov 0(%rsp), %rax\n"
+    "mov 8(%rsp), %rcx\n   mov 16(%rsp), %r8\n   mov %r8, (%rcx)\n"
+    "add $40, %rsp\n" ASM_RET
+    ".Lbuffered_reserve_x64_failed:\n   add $40, %rsp\n"
+    ".Lbuffered_reserve_x64_too_large:\n   xor %eax, %eax\n" ASM_RET
+    ASM_END(buffered_reserve)
 
     ASM_FUNC(buffered_write)
     "test %r9, %r9\n   jz .Lbuffered_write_x64_empty\n"
@@ -233,6 +255,20 @@ __asm__(
     ASM_RET
     ".Lbuffered_flush_arm64_empty:\n   mov w0, #1\n" ASM_RET
     ASM_END(buffered_flush)
+
+    ASM_FUNC(buffered_reserve)
+    "cmp x4, x2\n   b.hi .Lbuffered_reserve_arm64_failed\n"
+    "sub x5, x2, x4\n   ldr x6, [x3]\n   cmp x6, x5\n"
+    "b.hi .Lbuffered_reserve_arm64_flush\n   add x0, x1, x6\n"
+    "add x6, x6, x4\n   str x6, [x3]\n" ASM_RET
+    ".Lbuffered_reserve_arm64_flush:\n"
+    "stp x1, x3, [sp, #-32]!\n   stp x4, x30, [sp, #16]\n"
+    "mov x2, x3\n   bl buffered_flush\n   cbz w0, .Lbuffered_reserve_arm64_leave\n"
+    "ldp x0, x3, [sp]\n   ldr x4, [sp, #16]\n   str x4, [x3]\n"
+    ".Lbuffered_reserve_arm64_leave:\n   ldr x30, [sp, #24]\n"
+    "add sp, sp, #32\n" ASM_RET
+    ".Lbuffered_reserve_arm64_failed:\n   mov x0, xzr\n" ASM_RET
+    ASM_END(buffered_reserve)
 
     ASM_FUNC(buffered_write)
     "cbz x5, .Lbuffered_write_arm64_empty\n"
@@ -388,6 +424,19 @@ __asm__(
     ASM_RET
     ".Lbuffered_flush_riscv64_empty:\n   li a0, 1\n" ASM_RET
     ASM_END(buffered_flush)
+
+    ASM_FUNC(buffered_reserve)
+    "bltu a2, a4, .Lbuffered_reserve_riscv64_failed\n"
+    "sub t0, a2, a4\n   ld t1, 0(a3)\n"
+    "bltu t0, t1, .Lbuffered_reserve_riscv64_flush\n"
+    "add a0, a1, t1\n   add t1, t1, a4\n   sd t1, 0(a3)\n" ASM_RET
+    ".Lbuffered_reserve_riscv64_flush:\n   addi sp, sp, -32\n"
+    "sd a1, 0(sp)\n   sd a3, 8(sp)\n   sd a4, 16(sp)\n   sd ra, 24(sp)\n"
+    "mv a2, a3\n   call buffered_flush\n   beqz a0, .Lbuffered_reserve_riscv64_leave\n"
+    "ld a0, 0(sp)\n   ld a3, 8(sp)\n   ld a4, 16(sp)\n   sd a4, 0(a3)\n"
+    ".Lbuffered_reserve_riscv64_leave:\n   ld ra, 24(sp)\n   addi sp, sp, 32\n" ASM_RET
+    ".Lbuffered_reserve_riscv64_failed:\n   li a0, 0\n" ASM_RET
+    ASM_END(buffered_reserve)
 
     ASM_FUNC(buffered_write)
     "beqz a5, .Lbuffered_write_riscv64_empty\n"

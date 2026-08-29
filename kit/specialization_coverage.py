@@ -359,6 +359,10 @@ buffered_write buffered_write_deferred_equal log log_direct log_error
 system_write_all
 ''', 'a literal length is common and the work is the copy into the buffer, '
      'which memory_copy_apart already expands from inside these')
+cover('folds_already', 'length', 'buffered_reserve',
+      'callers commonly know the requested span, but the public hot path is '
+      'already only two capacity checks, one count update and the returned '
+      'address; the direct floor harness measures that residual')
 cover('folds_already', 'capacity', 'buffered_write_byte',
       'a compare against the capacity and a byte store; the capacity is a '
       'literal and the body is already that short')
@@ -396,6 +400,7 @@ string_digits_hexadecimal_max string_digits_hexadecimal_escape_max
      'the one that shipped as five separate routines')
 cover('folds_already', 'needle_size', '''
 memory_search_prepared memory_search_ascii_case_prepared
+memory_count_records_with_prepared
 ''', 'prepared searches are reached with compiled run-time patterns and already '
      'redirect empty and one-byte needles inside their assembly entry')
 cover('folds_already', 'ascii_case', 'memory_search_prepare',

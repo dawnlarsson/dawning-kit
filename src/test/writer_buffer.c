@@ -45,6 +45,7 @@ b32 main(void)
         b32 ends[2];
         p8 guarded[18];
         p8 address_to buffer = guarded + 1;
+        p8 address_to reserved;
         p8 received[64];
         p8 exact[16] = "0123456789abcdef";
         p8 large[17] = "ABCDEFGHIJKLMNOPQ";
@@ -64,6 +65,39 @@ b32 main(void)
                              (address_any)"ignored", 0));
         check("zero length is a no-op", used == 0 && guarded[0] == 0xa5 &&
                                                 guarded[17] == 0xa5);
+
+        reserved = buffered_reserve((positive)ends[1], buffer, 16,
+                                    address_of used, 3);
+        check("reserve answers its span", reserved == buffer && used == 3);
+        memory_copy(reserved, "abc", 3);
+        reserved = buffered_reserve((positive)ends[1], buffer, 16,
+                                    address_of used, 13);
+        check("reserve exact remainder stays buffered",
+              reserved == buffer + 3 && used == 16);
+        memory_copy(reserved, "0123456789abc", 13);
+        reserved = buffered_reserve((positive)ends[1], buffer, 16,
+                                    address_of used, 1);
+        check("reserve flushes before a new span", reserved == buffer && used == 1);
+        reserved[0] = '!';
+        check("reserved full buffer arrived",
+              read_exact((positive)ends[0], received, 16) &&
+                  bytes_are(received, "abc0123456789abc", 16));
+        check("reserved tail flush succeeds",
+              buffered_flush((positive)ends[1], buffer, address_of used));
+        check("reserved tail arrived",
+              read_exact((positive)ends[0], received, 1) && received[0] == '!');
+
+        used = 3;
+        memory_copy(buffer, "pre", 3);
+        check("over-capacity reserve is refused",
+              !buffered_reserve((positive)ends[1], buffer, 16,
+                                address_of used, 17));
+        check("refused reserve leaves pending bytes", used == 3 &&
+                                                        bytes_are(buffer, "pre", 3));
+        check("pending bytes after refusal flush",
+              buffered_flush((positive)ends[1], buffer, address_of used) &&
+                  read_exact((positive)ends[0], received, 3) &&
+                  bytes_are(received, "pre", 3));
 
         check("buffered run succeeds",
               buffered_write((positive)ends[1], buffer, 16, address_of used,
@@ -138,6 +172,13 @@ b32 main(void)
         check("failed flush is reported",
               !buffered_flush((positive)-1, buffer, address_of used));
         check("failed flush still clears pending state", used == 0);
+
+        used = 16;
+        memory_copy(buffer, exact, 16);
+        check("failed reserve flush is reported",
+              !buffered_reserve((positive)-1, buffer, 16,
+                                address_of used, 1));
+        check("failed reserve clears pending state", used == 0);
 
         check("failed direct run is reported",
               !buffered_write((positive)-1, buffer, 0, address_of used,

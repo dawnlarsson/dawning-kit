@@ -101,7 +101,7 @@ cover('direct_benchmark', 'kit/bench_writer_field.c', '''
 string_to_field writer_field
 ''', 'paired former-C/assembly timing over exact and padded fields')
 cover('direct_benchmark', 'kit/bench_writer_text.c', '''
-buffered_flush buffered_write buffered_write_byte buffered_write_deferred_equal log
+buffered_flush buffered_reserve buffered_write buffered_write_byte buffered_write_deferred_equal log
 ''', 'paired former-C/assembly timing over buffered and direct output shapes')
 cover('direct_benchmark', 'kit/bench_text_hot.c', 'memory_common_prefix',
       'paired scalar/assembly timing over equal and late-difference text spans')
