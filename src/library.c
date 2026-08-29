@@ -13796,11 +13796,16 @@ __asm__(
     //       says how wide one is, so the same leaf serves bytes, pointers and
     //       structures. Allocation is cold; the floor here is one allocation,
     //       one copy and one release, with overflow refused before any of them.
+    //       Capacity hits are hot enough to stand before the saved-register
+    //       frame: one load and compare returns without touching the stack.
     //
     ASM_FUNC(memory_reserve)
+    "mov (%rsi), %rax\n   cmp %rcx, %rax\n   jb .Lmemory_reserve_x64_grow\n"
+    "mov $1, %eax\n" ASM_RET
+    ".Lmemory_reserve_x64_grow:\n"
     "push %rbp\n   push %rbx\n   push %r12\n   push %r13\n   push %r14\n   push %r15\n   sub $8, %rsp\n"
     "mov %rdi, %rbx\n   mov %rsi, %r12\n   mov %rdx, %r13\n   mov %r8, %r14\n"
-    "mov (%r12), %r15\n   cmp %rcx, %r15\n   jae 8f\n"
+    "mov %rax, %r15\n"
     "mov %r15, %rdi\n   mov %rcx, %rsi\n   mov %r9, %rdx\n"
     "call memory_growth\n   mov %rax, %r15\n   test %r15, %r15\n   jz 9f\n"
     "test %r14, %r14\n   jz 9f\n   mov %r15, %rax\n   mul %r14\n"
@@ -13858,10 +13863,13 @@ __asm__(
     ASM_END(memory_growth)
 
     ASM_FUNC(memory_reserve)
+    "ldr x6, [x1]\n   cmp x6, x3\n   b.lo .Lmemory_reserve_arm64_grow\n"
+    "mov w0, #1\n" ASM_RET
+    ".Lmemory_reserve_arm64_grow:\n"
     "stp x19, x20, [sp, #-64]!\n   stp x21, x22, [sp, #16]\n"
     "stp x23, x24, [sp, #32]\n   stp x25, x30, [sp, #48]\n"
     "mov x19, x0\n   mov x20, x1\n   mov x21, x2\n   mov x22, x4\n"
-    "ldr x23, [x20]\n   cmp x23, x3\n   b.hs 8f\n"
+    "mov x23, x6\n"
     "mov x0, x23\n   mov x1, x3\n   mov x2, x5\n   bl memory_growth\n"
     "mov x23, x0\n   cbz x23, 9f\n"
     "cbz x22, 9f\n   umulh x6, x23, x22\n   cbnz x6, 9f\n"
@@ -13917,10 +13925,13 @@ __asm__(
     ASM_END(memory_growth)
 
     ASM_FUNC(memory_reserve)
+    "ld t1, 0(a1)\n   bltu t1, a3, .Lmemory_reserve_rv_grow\n"
+    "li a0, 1\n" ASM_RET
+    ".Lmemory_reserve_rv_grow:\n"
     "addi sp, sp, -64\n   sd s0, 0(sp)\n   sd s1, 8(sp)\n   sd s2, 16(sp)\n   sd s3, 24(sp)\n"
     "sd s4, 32(sp)\n   sd s5, 40(sp)\n   sd ra, 56(sp)\n"
     "mv s0, a0\n   mv s1, a1\n   mv s2, a2\n   mv s3, a4\n"
-    "ld s4, 0(s1)\n   bgeu s4, a3, 8f\n"
+    "mv s4, t1\n"
     "mv a0, s4\n   mv a1, a3\n   mv a2, a5\n   call memory_growth\n"
     "mv s4, a0\n   beqz s4, 9f\n"
     "beqz s3, 9f\n   mulhu t0, s4, s3\n   bnez t0, 9f\n"
