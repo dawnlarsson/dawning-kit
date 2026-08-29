@@ -219,9 +219,29 @@ answer 'numeric on text' 'test 1 -eq a; echo $?'
 #       which needs the nanoseconds, and -ef across two devices, where the
 #       inode number alone is not an answer.
 #
+#       Fixed timestamps are essential here.  Running two `touch` processes
+#       for each interpreter made the expected and actual pairs independently
+#       land on one filesystem tick: under QEMU either side could then say the
+#       files were equal while the other saw an order.  One nanosecond within
+#       one known second is the exact distinction this test means to exercise.
+#
 group precision
-answer 'same second'     'touch a1; touch a2; test a2 -nt a1; echo $?'
-answer 'same second back' 'touch b1; touch b2; test b1 -nt b2; echo $?'
+
+BUILTIN_WORK=$work python3 - <<'PYTHON'
+import os
+
+root = os.environ['BUILTIN_WORK']
+base = 1_000_000_000_100_000_000
+
+for name, stamp in [('a1', base), ('a2', base + 1),
+                    ('b1', base), ('b2', base + 1)]:
+    path = os.path.join(root, name)
+    open(path, 'ab').close()
+    os.utime(path, ns=(stamp, stamp))
+PYTHON
+
+answer 'same second'     'test a2 -nt a1; echo $?'
+answer 'same second back' 'test b1 -nt b2; echo $?'
 answer 'device counts'   'test /dev/null -ef /proc/self/environ; echo $?'
 
 section printf
