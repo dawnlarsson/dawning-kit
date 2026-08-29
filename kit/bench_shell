@@ -208,8 +208,18 @@ results = {}
 print(f"subject: {ours}")
 print(f"samples: {runs}, at least {target_seconds:.2f}s each, one CPU when available")
 print("lower is better; times are median milliseconds per invocation\n")
-print(f"{'workload':<15} {'ours':>10} {'dash':>10} {'bash':>10} {'ours/dash':>11}")
-print(f"{'-' * 15} {'-' * 10} {'-' * 10} {'-' * 10} {'-' * 11}")
+def relative_cell(value, reference):
+    change = value / reference - 1.0
+    if abs(change) < 0.005:
+        return "about equal"
+    direction = "slower" if change > 0 else "faster"
+    return f"{abs(change) * 100:.0f}% {direction}"
+
+print(
+    f"{'workload':<15} {'ours':>10} {'dash':>10} {'bash':>10}"
+    f" {'ours versus dash':>18}"
+)
+print(f"{'-' * 15} {'-' * 10} {'-' * 10} {'-' * 10} {'-' * 18}")
 
 try:
     for case_name, arguments in cases:
@@ -235,7 +245,7 @@ try:
             f" {row['ours'] * 1000:10.3f}"
             f" {row['dash'] * 1000:10.3f}"
             f" {row['bash'] * 1000:10.3f}"
-            f" {row['ours'] / row['dash']:10.2f}x"
+            f" {relative_cell(row['ours'], row['dash']):>18}"
         )
 except RuntimeError as error:
     raise SystemExit(f"bench_shell: {error}")
@@ -246,6 +256,11 @@ def geomean_ratios(name):
 
 ours_ratio = geomean_ratios("ours")
 bash_ratio = geomean_ratios("bash")
-print("\ngeometric mean relative to dash (lower is better):")
-print(f"  ours {ours_ratio:.2f}x    dash 1.00x    bash {bash_ratio:.2f}x")
+overall = {"ours": ours_ratio, "dash": 1.0, "bash": bash_ratio}
+fastest = min(overall, key=overall.get)
+
+print("\noverall geometric-mean result:")
+print(f"  fastest: {fastest}")
+print(f"  ours is {relative_cell(ours_ratio, 1.0)} than dash")
+print(f"  ours is {relative_cell(ours_ratio, bash_ratio)} than bash")
 PY
