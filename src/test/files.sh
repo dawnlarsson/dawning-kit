@@ -620,6 +620,12 @@ same 'default directory' stat "$fixture/sub"
 near 'default link'     "grep -v '^Access: 2'" stat "$fixture/sub/back"
 same 'quoted name'      stat -c '%N' "$fixture/alpha"
 same 'quoted link'      stat -c '%N' "$fixture/sub/back"
+near 'file system'      "sed 's/[0-9]/X/g'" stat -f "$fixture/alpha"
+near 'file system long' "sed 's/[0-9]/X/g'" stat --file-system "$fixture/alpha"
+same 'file system fields' stat -f -c '%n|%i|%l|%s|%S|%b|%c|%T|%t' "$fixture/alpha"
+near 'file system changing fields' "sed 's/[0-9]/X/g'" stat -f -c '%f|%a|%d' "$fixture/alpha"
+same 'file system many' stat -f -c '%n:%T' "$fixture/alpha" "$fixture/sub"
+spoken 'file system missing' stat -f "$fixture/nothing"
 
 #       One of everything a name can be, for the tools that say which it is.
 kinds=$work/kinds

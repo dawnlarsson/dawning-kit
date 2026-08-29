@@ -3826,7 +3826,140 @@ static b32 file_find()
         Times are UTC, and say so in the +0000 they carry.
 */
 static bool stat_follow;
+static bool stat_file_system;
 static b32 stat_status;
+
+static string_address statfs_type_name(b64 type)
+{
+        if ((p64)type == 0xef53)
+                return (string_address) "ext2/ext3";
+        if ((p64)type == 0x01021994)
+                return (string_address) "tmpfs";
+        if ((p64)type == 0x794c7630)
+                return (string_address) "overlayfs";
+        if ((p64)type == 0x9fa0)
+                return (string_address) "proc";
+        if ((p64)type == 0x62656572)
+                return (string_address) "sysfs";
+        if ((p64)type == 0x63677270)
+                return (string_address) "cgroup2fs";
+        if ((p64)type == 0x58465342)
+                return (string_address) "xfs";
+        if ((p64)type == 0x9123683e)
+                return (string_address) "btrfs";
+
+        return (string_address) "UNKNOWN";
+}
+
+static p64 statfs_identity(file_mount_facts address_to facts)
+{
+        /* GNU writes the kernel's two fsid words in their array order. */
+        return ((p64)(p32)facts->identity[0] << 32) | (p32)facts->identity[1];
+}
+
+static fn statfs_one_specifier(p8 letter, string_address path,
+                               file_mount_facts address_to facts)
+{
+        switch (letter)
+        {
+        case 'n':
+                return log(path, 0);
+        case 'i':
+                return positive_to_base_field(log, statfs_identity(facts), 16, 16,
+                                              -1, (positive)1 << 28);
+        case 'l':
+                return positive_to_string(log, facts->name_length);
+        case 's':
+                return positive_to_string(log, facts->block_size);
+        case 'S':
+                return positive_to_string(log, facts->fragment_size);
+        case 'b':
+                return positive_to_string(log, facts->blocks);
+        case 'f':
+                return positive_to_string(log, facts->blocks_free);
+        case 'a':
+                return positive_to_string(log, facts->blocks_available);
+        case 'c':
+                return positive_to_string(log, facts->files);
+        case 'd':
+                return positive_to_string(log, facts->files_free);
+        case 'T':
+                return log(statfs_type_name(facts->type), 0);
+        case 't':
+                return positive_to_base_field(log, (p64)facts->type, 16, 1, -1, 0);
+        case '%':
+                return log("%", 1);
+        }
+
+        log("?", 1);
+}
+
+static fn statfs_formatted(string_address format, string_address path,
+                           file_mount_facts address_to facts)
+{
+        string_address step = format;
+
+        while (string_get(step))
+        {
+                string_address mark = string_first_of_or_end(step, '%');
+
+                if (mark != step)
+                        log(step, (positive)(mark - step));
+
+                if (!string_get(mark))
+                        break;
+
+                if (string_get(mark + 1))
+                {
+                        statfs_one_specifier(string_get(mark + 1), path, facts);
+                        step = mark + 2;
+                        continue;
+                }
+
+                log("%", 1);
+                break;
+        }
+
+        log("\n", 1);
+}
+
+static fn statfs_readable(string_address path, file_mount_facts address_to facts)
+{
+        p8 text[64];
+
+        log("  File: \"", 0);
+        log(path, 0);
+        log("\"\n    ID: ", 0);
+        positive_to_base_field(log, statfs_identity(facts), 16, 16, -1,
+                               (positive)1 << 28);
+        log(" Namelen: ", 0);
+        positive_into_string(text, facts->name_length);
+        string_to_field(log, text, 8, ' ', true);
+        log("Type: ", 0);
+        log(statfs_type_name(facts->type), 0);
+
+        log("\nBlock size: ", 0);
+        positive_into_string(text, facts->block_size);
+        string_to_field(log, text, 11, ' ', true);
+        log("Fundamental block size: ", 0);
+        positive_to_string(log, facts->fragment_size);
+
+        log("\nBlocks: Total: ", 0);
+        positive_into_string(text, facts->blocks);
+        string_to_field(log, text, 11, ' ', true);
+        log("Free: ", 0);
+        positive_into_string(text, facts->blocks_free);
+        string_to_field(log, text, 11, ' ', true);
+        log("Available: ", 0);
+        positive_to_string(log, facts->blocks_available);
+
+        log("\nInodes: Total: ", 0);
+        positive_into_string(text, facts->files);
+        string_to_field(log, text, 11, ' ', true);
+        log("Free: ", 0);
+        positive_to_string(log, facts->files_free);
+        log("\n", 1);
+}
 
 static fn stat_one_specifier(p8 letter, string_address path, file_facts address_to facts)
 {
@@ -4061,6 +4194,13 @@ static fn stat_readable(string_address path, file_facts address_to facts)
         log("\n", 1);
 }
 
+static const file_long stat_longs[] = {
+    {(string_address) "dereference", 'L'},
+    {(string_address) "file-system", 'f'},
+    {(string_address) "format", 'c'},
+    {null, 0},
+};
+
 static b32 file_stat()
 {
         positive count = (positive)program_argument_count();
@@ -4068,7 +4208,8 @@ static b32 file_stat()
         file_taking taking = {
             .program = (string_address) "stat",
             .allowed = (string_address) "Lcf",
-            .valued = (string_address) "cf",
+            .valued = (string_address) "c",
+            .longs = stat_longs,
         };
 
         if (!file_take(address_of taking))
@@ -4078,9 +4219,7 @@ static b32 file_stat()
         string_address format = file_option_value(address_of taking, 'c');
 
         stat_follow = (taking.flags & FILE_FLAG('L')) != 0;
-
-        if (!format)
-                format = file_option_value(address_of taking, 'f');
+        stat_file_system = (taking.flags & FILE_FLAG('f')) != 0;
 
         if (index >= count)
         {
@@ -4091,6 +4230,30 @@ static b32 file_stat()
         while (index < count)
         {
                 string_address path = program_argument((b32)index++);
+
+                if (stat_file_system)
+                {
+                        file_mount_facts facts;
+                        bipolar done = system_call_2(syscall(statfs), (positive)path,
+                                                     (positive)address_of facts);
+
+                        if (done < 0)
+                        {
+                                string_format(file_fail,
+                                              "stat: cannot read file system information for '%s': %s\n",
+                                              path, file_reason(done));
+                                stat_status = 1;
+                                continue;
+                        }
+
+                        if (format)
+                                statfs_formatted(format, path, address_of facts);
+                        else
+                                statfs_readable(path, address_of facts);
+
+                        continue;
+                }
+
                 file_facts facts;
 
                 if (!file_look(AT_FDCWD, path, stat_follow ? 0 : AT_SYMLINK_NOFOLLOW,
