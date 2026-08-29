@@ -320,12 +320,24 @@ compare_dd 'obs one byte'     "$work/ten"  's/x/x/' ibs=7 obs=1 status=noxfer
 compare_dd 'obs coprime'      "$work/blob" 's/x/x/' ibs=997 obs=311 status=noxfer
 compare_dd 'obs blocks over'  "$work/blob" 's/x/x/' ibs=8192 obs=1000 status=noxfer
 
+#       bs overrides ibs and obs regardless of operand order. Treating the
+#       command line as last-one-wins copies the same bytes but reports the
+#       wrong records and takes a different buffering path.
+compare_dd 'bs before ibs'     "$work/ten" 's/x/x/' bs=4 ibs=2 status=noxfer
+compare_dd 'bs before obs'     "$work/ten" 's/x/x/' bs=4 obs=2 status=noxfer
+compare_dd 'bs after both'     "$work/ten" 's/x/x/' ibs=2 obs=3 bs=4 status=noxfer
+
 #       conv=sync pads the short block out to the input size, which turns a
 #       partial record in into a whole record out.
 compare_dd 'conv sync'        "$work/ten"  's/x/x/' bs=16 conv=sync status=noxfer
 compare_dd 'conv sync ragged' "$work/ten"  's/x/x/' bs=4 conv=sync status=noxfer
 compare_dd 'conv fsync'       "$work/ten"  's/x/x/' bs=4 conv=fsync status=noxfer
 compare_dd 'conv noerror'     "$work/blob" 's/x/x/' bs=512 conv=noerror status=noxfer
+compare_dd 'conv lcase'       "$work/ten" 's/x/x/' bs=3 conv=lcase status=noxfer
+compare_dd 'conv ucase'       "$work/ten" 's/x/x/' bs=3 conv=ucase status=noxfer
+compare_dd 'conv swab'        "$work/ten" 's/x/x/' bs=3 conv=swab status=noxfer
+compare_dd 'conv sync swab'   "$work/ten" 's/x/x/' bs=4 conv=sync,swab status=noxfer
+compare_dd 'valid cbs alone'  "$work/ten" 's/x/x/' cbs=3 status=noxfer
 
 #       status=none prints nothing at all, which is a summary too.
 compare_dd 'status none'      "$work/blob" 's/x/x/' bs=512 status=none
@@ -336,6 +348,19 @@ compare_dd_reject 'size digit overflow' bs=18446744073709551616 status=none
 compare_dd_reject 'size product overflow' bs=18446744073709551615x2 status=none
 compare_dd_reject 'skip offset overflow' ibs=2 skip=9223372036854775808 status=none
 compare_dd_reject 'seek offset overflow' obs=2 seek=9223372036854775808 status=none
+compare_dd_reject 'invalid cbs' cbs=not-a-number status=none
+compare_dd_reject 'invalid input flag' iflag=not-a-flag status=none
+compare_dd_reject 'invalid output flag' oflag=not-a-flag status=none
+compare_dd_reject 'empty input flags' iflag= status=none
+compare_dd_reject 'empty output flags' oflag= status=none
+compare_dd_reject 'opposite case conversions' conv=lcase,ucase status=none
+
+#       A B suffix on these three operands means bytes, not blocks. This is
+#       observably different even though B has multiplier one in a size.
+compare_dd 'count bytes'       "$work/ten" 's/x/x/' bs=4 count=3B status=noxfer
+compare_dd 'count kibi bytes'  "$work/blob" 's/x/x/' bs=700 count=1KiB status=noxfer
+compare_dd 'skip bytes'        "$work/ten" 's/x/x/' bs=4 skip=3B status=noxfer
+compare_dd 'iseek alias'       "$work/ten" 's/x/x/' bs=4 iseek=1B status=noxfer
 
 #       The default summary, with the duration and the rate cut off. What is
 #       left is the byte count and the two human readable forms of it, and
@@ -357,6 +382,35 @@ done
 
 compare_dd 'size product'     "$work/blob" 's/x/x/' bs=2x512 count=2 status=noxfer
 
+#       fullblock is the input flag whose semantics are not an open(2) bit:
+#       it gathers short pipe reads until one input block is complete.
+rm -f "$work/fullblock_pipe"
+mkfifo "$work/fullblock_pipe" 2> /dev/null
+if [ -p "$work/fullblock_pipe" ]; then
+        (printf ab; sleep 0.2; printf cd) > "$work/fullblock_pipe" &
+        writer=$!
+        dd if="$work/fullblock_pipe" bs=4 count=1 iflag=fullblock status=noxfer \
+                > "$work/want" 2> "$work/want_err"
+        want_status=$?
+        wait "$writer" 2> /dev/null
+
+        (printf ab; sleep 0.2; printf cd) > "$work/fullblock_pipe" &
+        writer=$!
+        "$bin/dd" if="$work/fullblock_pipe" bs=4 count=1 iflag=fullblock status=noxfer \
+                > "$work/got" 2> "$work/got_err"
+        got_status=$?
+        wait "$writer" 2> /dev/null
+
+        if cmp -s "$work/want" "$work/got" &&
+                cmp -s "$work/want_err" "$work/got_err" &&
+                [ "$want_status" = "$got_status" ]; then
+                pass=$((pass + 1))
+        else
+                report 'iflag fullblock' \
+                        "want $(show "$work/want_err")[$want_status] got $(show "$work/got_err")[$got_status]"
+        fi
+fi
+
 #       of= and seek= write into a file rather than to standard output, so
 #       what is compared is the file each one left behind.
 for one in 'seek=2' 'seek=2 conv=notrunc' 'seek=0'; do
@@ -377,6 +431,27 @@ for one in 'seek=2' 'seek=2 conv=notrunc' 'seek=0'; do
                 pass=$((pass + 1))
         else
                 report "of $one" "want $(show "$work/want")[$want_status] got $(show "$work/got")[$got_status]"
+        fi
+done
+
+#       oseek is seek, and a B suffix makes its displacement bytes. append is
+#       an output-open flag; with notrunc it preserves the old prefix.
+for one in 'oseek=2B' 'seek=2B' 'oflag=append conv=notrunc'; do
+        printf old > "$work/out_want"
+        printf old > "$work/out_got"
+
+        # shellcheck disable=SC2086
+        dd if="$work/ten" of="$work/out_want" bs=4 $one status=none 2> /dev/null
+        want_status=$?
+        # shellcheck disable=SC2086
+        "$bin/dd" if="$work/ten" of="$work/out_got" bs=4 $one status=none 2> /dev/null
+        got_status=$?
+
+        if cmp -s "$work/out_want" "$work/out_got" &&
+                [ "$want_status" = "$got_status" ]; then
+                pass=$((pass + 1))
+        else
+                report "$one" "output/status differ"
         fi
 done
 

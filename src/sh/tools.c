@@ -21,6 +21,13 @@
 #define DD_FDATASYNC 0x010
 #define DD_EXCL 0x020
 #define DD_NOCREAT 0x040
+#define DD_LCASE 0x080
+#define DD_UCASE 0x100
+#define DD_SWAB 0x200
+
+#define DD_FULLBLOCK 0x001
+#define DD_APPEND 0x001
+#define DD_O_APPEND 02000
 
 #define DD_STATUS_ALL 0
 #define DD_STATUS_NOXFER 1
@@ -271,6 +278,18 @@ static bool dd_size(string_address text, positive address_to out)
         return true;
 }
 
+// A final B on count, skip or seek changes the unit from blocks to bytes.
+// It is still part of the ordinary size grammar (3KB is 3000), so parsing is
+// shared and only this last-byte fact is carried separately.
+static bool dd_quantity(string_address text, positive address_to out,
+                        bool address_to bytes)
+{
+        positive length = string_length(text);
+
+        address_to bytes = length && text[length - 1] == 'B';
+        return dd_size(text, out);
+}
+
 static bool dd_operand(string_address argument, string_address name,
                        string_address address_to value)
 {
@@ -329,6 +348,37 @@ static positive dd_output(positive handle, string_address name,
         return wrote;
 }
 
+// swab is one conversion over the byte stream, not one conversion per read.
+// An odd byte therefore waits for the first byte of the next input record.
+static positive dd_swab(p8 address_to into, p8 address_to from, positive length,
+                        bool address_to pending, p8 address_to held)
+{
+        positive in = 0;
+        positive out = 0;
+
+        if (address_to pending && length)
+        {
+                into[out++] = from[in++];
+                into[out++] = address_to held;
+                address_to pending = false;
+        }
+
+        while (in + 1 < length)
+        {
+                into[out++] = from[in + 1];
+                into[out++] = from[in];
+                in += 2;
+        }
+
+        if (in < length)
+        {
+                address_to held = from[in];
+                address_to pending = true;
+        }
+
+        return out;
+}
+
 // A short read is not the end of the input, and a partial record is not an
 // error: both are counted and the next block is asked for.
 static b32 tools_dd(void)
@@ -337,10 +387,18 @@ static b32 tools_dd(void)
         string_address output = null;
         positive ibs = 512;
         positive obs = 512;
+        positive bs = 0;
         positive count = TEXT_UNSET;
         positive skip = 0;
         positive seek = 0;
+        positive cbs = 0;
         positive conv = 0;
+        positive iflags = 0;
+        positive oflags = 0;
+        bool bs_set = false;
+        bool count_bytes = false;
+        bool skip_bytes = false;
+        bool seek_bytes = false;
         b32 status = 0;
 
         text_begin("dd");
@@ -379,24 +437,29 @@ static b32 tools_dd(void)
                 }
                 else if (dd_operand(argument, "bs", address_of value))
                 {
-                        if (!dd_size(value, address_of ibs))
+                        if (!dd_size(value, address_of bs))
                                 return text_error(argument, "invalid number"), 1;
 
-                        obs = ibs;
+                        bs_set = true;
                 }
                 else if (dd_operand(argument, "count", address_of value))
                 {
-                        if (!dd_size(value, address_of count))
+                        if (!dd_quantity(value, address_of count,
+                                         address_of count_bytes))
                                 return text_error(argument, "invalid number"), 1;
                 }
-                else if (dd_operand(argument, "skip", address_of value))
+                else if (dd_operand(argument, "skip", address_of value) ||
+                         dd_operand(argument, "iseek", address_of value))
                 {
-                        if (!dd_size(value, address_of skip))
+                        if (!dd_quantity(value, address_of skip,
+                                         address_of skip_bytes))
                                 return text_error(argument, "invalid number"), 1;
                 }
-                else if (dd_operand(argument, "seek", address_of value))
+                else if (dd_operand(argument, "seek", address_of value) ||
+                         dd_operand(argument, "oseek", address_of value))
                 {
-                        if (!dd_size(value, address_of seek))
+                        if (!dd_quantity(value, address_of seek,
+                                         address_of seek_bytes))
                                 return text_error(argument, "invalid number"), 1;
                 }
                 else if (dd_operand(argument, "status", address_of value))
@@ -430,16 +493,48 @@ static b32 tools_dd(void)
                                         conv |= DD_EXCL;
                                 else if (dd_word(address_of at, "nocreat"))
                                         conv |= DD_NOCREAT;
+                                else if (dd_word(address_of at, "lcase"))
+                                        conv |= DD_LCASE;
+                                else if (dd_word(address_of at, "ucase"))
+                                        conv |= DD_UCASE;
+                                else if (dd_word(address_of at, "swab"))
+                                        conv |= DD_SWAB;
                                 else
                                         return text_error(at, "invalid conversion"), 1;
                         }
                 }
-                else if (dd_operand(argument, "iflag", address_of value) ||
-                         dd_operand(argument, "oflag", address_of value) ||
-                         dd_operand(argument, "cbs", address_of value))
+                else if (dd_operand(argument, "iflag", address_of value))
                 {
-                        // Accepted and ignored: nothing here buffers by
-                        // record or opens with anything but the defaults.
+                        string_address at = value;
+
+                        if (!string_get(at))
+                                return text_error(value, "invalid input flag"), 1;
+
+                        while (string_get(at))
+                                if (dd_word(address_of at, "fullblock"))
+                                        iflags |= DD_FULLBLOCK;
+                                else
+                                        return text_error(at, "invalid input flag"), 1;
+                }
+                else if (dd_operand(argument, "oflag", address_of value))
+                {
+                        string_address at = value;
+
+                        if (!string_get(at))
+                                return text_error(value, "invalid output flag"), 1;
+
+                        while (string_get(at))
+                                if (dd_word(address_of at, "append"))
+                                        oflags |= DD_APPEND;
+                                else
+                                        return text_error(at, "invalid output flag"), 1;
+                }
+                else if (dd_operand(argument, "cbs", address_of value))
+                {
+                        // cbs has no effect until block or unblock is chosen,
+                        // but it remains a number and nonsense must not pass.
+                        if (!dd_size(value, address_of cbs))
+                                return text_error(argument, "invalid number"), 1;
                 }
                 else
                 {
@@ -448,14 +543,22 @@ static b32 tools_dd(void)
                 }
         }
 
+        (void)cbs;
+
+        if (bs_set)
+                ibs = obs = bs;
+
+        if ((conv & DD_LCASE) && (conv & DD_UCASE))
+                return text_error(null, "cannot combine lcase and ucase"), 1;
+
         if (!ibs || !obs || ibs > positive_max - 31 || obs > positive_max - 31)
         {
                 text_error(null, "invalid number");
                 return 1;
         }
 
-        if ((skip && skip > positive_max / ibs) ||
-            (seek && seek > positive_max / obs))
+        if ((!skip_bytes && skip && skip > positive_max / ibs) ||
+            (!seek_bytes && seek && seek > positive_max / obs))
         {
                 text_error(null, "offset too large");
                 return 1;
@@ -492,7 +595,10 @@ static b32 tools_dd(void)
                 if (conv & DD_EXCL)
                         flags |= 0200;
 
-                if (!seek && !(conv & DD_NOTRUNC))
+                if (oflags & DD_APPEND)
+                        flags |= DD_O_APPEND;
+
+                if (!(conv & DD_NOTRUNC))
                         flags |= O_TRUNC;
 
                 bipolar opened = text_open_handle(output, flags, 0666);
@@ -512,16 +618,21 @@ static b32 tools_dd(void)
         }
 
         p8 address_to ibuf = (p8 address_to)text_arena_take(ibs + 16);
-        p8 address_to obuf = ibs == obs ? ibuf : (p8 address_to)text_arena_take(obs + 16);
+        p8 address_to obuf = ibs == obs && !(conv & DD_SWAB)
+                                 ? ibuf
+                                 : (p8 address_to)text_arena_take(obs + 16);
+        p8 address_to converted = conv & DD_SWAB
+                                      ? (p8 address_to)text_arena_take(ibs + 16)
+                                      : ibuf;
 
-        if (!ibuf || !obuf)
+        if (!ibuf || !obuf || !converted)
                 return 1;
 
         dd_listen(DD_SIGNAL_INFO);
 
         if (skip)
         {
-                positive want = skip * ibs;
+                positive want = skip_bytes ? skip : skip * ibs;
                 bipolar landed = system_call_3(syscall(lseek), in_handle, want, 0);
                 bool short_of_it = false;
 
@@ -571,7 +682,7 @@ static b32 tools_dd(void)
 
         if (seek)
         {
-                positive want = seek * obs;
+                positive want = seek_bytes ? seek : seek * obs;
                 bipolar landed = system_call_3(syscall(lseek), out_handle, want, 0);
 
                 if (landed < 0)
@@ -601,6 +712,9 @@ static b32 tools_dd(void)
         positive held = 0;
         b32 result = status;
         positive partial_before = 0;
+        positive input_bytes = 0;
+        bool swab_pending = false;
+        p8 swab_held = 0;
 
         while (count != 0 && !result)
         {
@@ -610,13 +724,48 @@ static b32 tools_dd(void)
                         dd_summary();
                 }
 
-                if (count != TEXT_UNSET && dd_in_full + dd_in_partial >= count)
+                if (!count_bytes && count != TEXT_UNSET &&
+                    dd_in_full + dd_in_partial >= count)
                         break;
+
+                positive ask = ibs;
+
+                if (count_bytes && count != TEXT_UNSET)
+                {
+                        if (input_bytes >= count)
+                                break;
+
+                        if (ask > count - input_bytes)
+                                ask = count - input_bytes;
+                }
 
                 if (conv & (DD_SYNC | DD_NOERROR))
                         memory_fill(ibuf, 0, ibs);
 
-                bipolar got = system_read_retry(in_handle, ibuf, ibs);
+                bipolar got;
+
+                if (iflags & DD_FULLBLOCK)
+                {
+                        positive gathered = 0;
+
+                        while (gathered < ask)
+                        {
+                                got = system_read_retry(in_handle, ibuf + gathered,
+                                                        ask - gathered);
+
+                                if (got <= 0)
+                                        break;
+
+                                gathered += (positive)got;
+                        }
+
+                        if (gathered)
+                                got = (bipolar)gathered;
+                }
+                else
+                {
+                        got = system_read_retry(in_handle, ibuf, ask);
+                }
 
                 if (!got)
                         break;
@@ -651,6 +800,8 @@ static b32 tools_dd(void)
 
                 positive read_bytes = (positive)got;
 
+                input_bytes += read_bytes;
+
                 if (read_bytes < ibs)
                 {
                         dd_in_partial++;
@@ -663,6 +814,26 @@ static b32 tools_dd(void)
                 {
                         dd_in_full++;
                         partial_before = 0;
+                }
+
+                if (conv & DD_LCASE)
+                        for (positive i = 0; i < read_bytes; i++)
+                                if (ibuf[i] >= 'A' && ibuf[i] <= 'Z')
+                                        ibuf[i] += 'a' - 'A';
+
+                if (conv & DD_UCASE)
+                        for (positive i = 0; i < read_bytes; i++)
+                                if (ibuf[i] >= 'a' && ibuf[i] <= 'z')
+                                        ibuf[i] -= 'a' - 'A';
+
+                p8 address_to output_bytes = ibuf;
+
+                if (conv & DD_SWAB)
+                {
+                        read_bytes = dd_swab(converted, ibuf, read_bytes,
+                                             address_of swab_pending,
+                                             address_of swab_held);
+                        output_bytes = converted;
                 }
 
                 if (ibuf == obuf)
@@ -696,7 +867,7 @@ static b32 tools_dd(void)
                         if (take > read_bytes - at)
                                 take = read_bytes - at;
 
-                        memory_copy_fast(obuf + held, ibuf + at, take);
+                        memory_copy_fast(obuf + held, output_bytes + at, take);
                         held += take;
                         at += take;
 
@@ -722,6 +893,9 @@ static b32 tools_dd(void)
                 if (result)
                         break;
         }
+
+        if (swab_pending)
+                obuf[held++] = swab_held;
 
         if (held)
         {
