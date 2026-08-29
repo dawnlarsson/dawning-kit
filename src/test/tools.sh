@@ -178,6 +178,43 @@ compare_dd()
         report "$name" "want $(show "$work/want")[$want_status] got $(show "$work/got")[$got_status]"
 }
 
+# A full device accepts the open and rejects the write, reaching paths that a
+# missing or read-only output never does. GNU's wording varies slightly by
+# release; the failure status is the contract compared here.
+compare_dd_full()
+{
+        name=$1
+        feed=$2
+        shift 2
+
+        [ -e /dev/full ] || return 0
+
+        dd "$@" < "$feed" > /dev/full 2> /dev/null
+        want_status=$?
+        "$bin/dd" "$@" < "$feed" > /dev/full 2> /dev/null
+        got_status=$?
+
+        if [ "$want_status" = "$got_status" ]; then
+                pass=$((pass + 1))
+                return 0
+        fi
+
+        report "$name" "want status $want_status got $got_status"
+}
+
+compare_dd_reject()
+{
+        name=$1
+        shift
+
+        dd "$@" < /dev/null > /dev/null 2> /dev/null
+        want_status=$?
+        "$bin/dd" "$@" < /dev/null > /dev/null 2> /dev/null
+        got_status=$?
+
+        check "$name" "$((want_status != 0))" "$((got_status != 0))"
+}
+
 #       diff: the whole of standard output and the exit status, with the two
 #       operands named last.
 compare_diff()
@@ -198,6 +235,34 @@ compare_diff()
         report "$name" "want $(show "$work/want")[$want_status] got $(show "$work/got")[$got_status]"
 }
 
+compare_diff_full()
+{
+        name=$1
+        shift
+
+        [ -e /dev/full ] || return 0
+
+        diff "$@" > /dev/full 2> /dev/null
+        want_status=$?
+        "$bin/diff" "$@" > /dev/full 2> /dev/null
+        got_status=$?
+
+        check "$name" "$want_status" "$got_status"
+}
+
+compare_diff_many_switches()
+{
+        set --
+        i=0
+
+        while [ "$i" -lt 80 ]; do
+                set -- "$@" -i
+                i=$((i + 1))
+        done
+
+        compare_diff 'recursive long switch title' "$@" -r "$work/d1" "$work/d2"
+}
+
 check()
 {
         if [ "$2" = "$3" ]; then
@@ -206,6 +271,17 @@ check()
         fi
 
         report "$1" "want [$2] got [$3]"
+}
+
+compare_ps_full()
+{
+        [ -e /dev/full ] || return 0
+
+        ps -e -o pid > /dev/full 2> /dev/null
+        want_status=$?
+        "$bin/ps" -e -o pid > /dev/full 2> /dev/null
+        got_status=$?
+        check 'ps output write failure' "$want_status" "$got_status"
 }
 
 #
@@ -253,6 +329,13 @@ compare_dd 'conv noerror'     "$work/blob" 's/x/x/' bs=512 conv=noerror status=n
 
 #       status=none prints nothing at all, which is a summary too.
 compare_dd 'status none'      "$work/blob" 's/x/x/' bs=512 status=none
+compare_dd_full 'write full equal blocks' "$work/ten" bs=2 status=none
+compare_dd_full 'write full regrouped' "$work/ten" ibs=3 obs=7 status=none
+compare_dd_full 'write full final partial' "$work/ten" ibs=8 obs=64 status=none
+compare_dd_reject 'size digit overflow' bs=18446744073709551616 status=none
+compare_dd_reject 'size product overflow' bs=18446744073709551615x2 status=none
+compare_dd_reject 'skip offset overflow' ibs=2 skip=9223372036854775808 status=none
+compare_dd_reject 'seek offset overflow' obs=2 seek=9223372036854775808 status=none
 
 #       The default summary, with the duration and the rate cut off. What is
 #       left is the byte count and the two human readable forms of it, and
@@ -398,6 +481,7 @@ compare_diff 'unified mixed'   -u "$work/long1" "$work/long3"
 compare_diff 'unified same'    -u "$work/a" "$work/a2"
 compare_diff 'unified empty'   -u "$work/empty" "$work/a"
 compare_diff 'unified labels'  -u -L left -L right "$work/a" "$work/b"
+compare_diff_full 'output write failure' "$work/a" "$work/b"
 
 compare_diff 'brief differ'    -q "$work/a" "$work/b"
 compare_diff 'brief same'      -q "$work/a" "$work/a2"
@@ -444,6 +528,18 @@ compare_diff 'directories r u' -ru "$work/d1" "$work/d2"
 compare_diff 'directories q'   -rq "$work/d1" "$work/d2"
 compare_diff 'directories N'   -rN "$work/d1" "$work/d2"
 compare_diff 'directory file'  "$work/d1" "$work/d2/same"
+compare_diff_many_switches
+
+# The former directory vector stopped at 2,048 entries and reported a
+# plausible but incomplete comparison. Put every name on only one side so
+# every omitted entry is visible in the exact output.
+mkdir -p "$work/many1" "$work/many2"
+i=0
+while [ "$i" -lt 2055 ]; do
+        : > "$work/many1/n$i"
+        i=$((i + 1))
+done
+compare_diff 'directory beyond old ceiling' "$work/many1" "$work/many2"
 
 #
 #       ps
@@ -522,6 +618,41 @@ want_status=$?
 "$bin/ps" -o nosuchcolumn > /dev/null 2>&1
 got_status=$?
 check 'unknown column refused' "$((want_status != 0))" "$((got_status != 0))"
+
+# More than the former 32-entry field vector. The values race, but the header
+# is fixed and proves every requested field survived parsing.
+spec=pid
+i=1
+while [ "$i" -lt 40 ]; do
+        spec="$spec,pid"
+        i=$((i + 1))
+done
+ps -o "$spec" 2> /dev/null | head -1 > "$work/want"
+"$bin/ps" -o "$spec" 2> /dev/null | head -1 > "$work/got"
+if cmp -s "$work/want" "$work/got"; then
+        pass=$((pass + 1))
+else
+        report 'more than 32 ps fields' "want $(show "$work/want") got $(show "$work/got")"
+fi
+
+# /proc/PID/cmdline is not bounded by the width of a display column. Put a
+# marker beyond the former 256-byte buffer and compare the exact row from the
+# same live process.
+marker=$(head -c 600 /dev/zero | tr '\0' x)
+sh -c 'sleep 10' "$marker" &
+long_pid=$!
+sleep 0.1
+ps -eww -o pid,args 2> /dev/null | awk -v p="$long_pid" '$1 == p' > "$work/want"
+"$bin/ps" -eww -o pid,args 2> /dev/null | awk -v p="$long_pid" '$1 == p' > "$work/got"
+kill "$long_pid" 2> /dev/null
+wait "$long_pid" 2> /dev/null
+if cmp -s "$work/want" "$work/got" && [ -s "$work/want" ]; then
+        pass=$((pass + 1))
+else
+        report 'long process arguments' "want $(show "$work/want") got $(show "$work/got")"
+fi
+
+compare_ps_full
 
 printf '  %-12s %s of %s\n' listed "$pass" "$((pass + fail))"
 [ -z "${TEST_TALLY:-}" ] ||

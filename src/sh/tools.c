@@ -154,6 +154,32 @@ static fn dd_summary()
         text_error_raw("/s\n");
 }
 
+static bool dd_digits(string_address address_to text, positive address_to value)
+{
+        string_address at = address_to text;
+        positive made = 0;
+        bool any = false;
+
+        while (text_digit(string_get(at)))
+        {
+                positive digit = (positive)(string_get(at) - '0');
+
+                if (made > (positive_max - digit) / 10)
+                        return false;
+
+                made = made * 10 + digit;
+                at++;
+                any = true;
+        }
+
+        if (!any)
+                return false;
+
+        address_to text = at;
+        address_to value = made;
+        return true;
+}
+
 static bool dd_size(string_address text, positive address_to out)
 {
         positive total = 1;
@@ -164,13 +190,10 @@ static bool dd_size(string_address text, positive address_to out)
 
         while (1)
         {
-                positive taken;
-                positive value = string_digits(at, address_of taken);
+                positive value;
 
-                if (!taken)
+                if (!dd_digits(address_of at, address_of value))
                         return false;
-
-                at += taken;
 
                 positive power = 0;
                 positive multiple = 1;
@@ -216,10 +239,23 @@ static bool dd_size(string_address text, positive address_to out)
                         }
 
                         for (positive i = 0; i < power; i++)
+                        {
+                                if (multiple > positive_max / base)
+                                        return false;
+
                                 multiple *= base;
+                        }
                 }
 
-                total *= value * multiple;
+                if (value && multiple > positive_max / value)
+                        return false;
+
+                positive piece = value * multiple;
+
+                if (piece && total > positive_max / piece)
+                        return false;
+
+                total *= piece;
 
                 if (string_get(at) != 'x' && string_get(at) != '*')
                         break;
@@ -268,6 +304,31 @@ static bool dd_word(string_address address_to at, string_address name)
         return true;
 }
 
+/*
+        Every output path has the same failure contract. Keeping it here
+        prevents regrouped blocks, the final partial block and seek padding
+        from quietly accepting a short write while the equal-size fast path
+        reports it.
+*/
+static positive dd_output(positive handle, string_address name,
+                          p8 address_to bytes, positive length, bool copied)
+{
+        positive wrote = system_write_all(handle, bytes, length);
+
+        if (copied)
+                dd_written += wrote;
+
+        if (wrote != length)
+        {
+                text_flush();
+                text_error_raw("dd: error writing '");
+                text_error_raw(name ? name : (string_address) "standard output");
+                text_error_raw("'\n");
+        }
+
+        return wrote;
+}
+
 // A short read is not the end of the input, and a partial record is not an
 // error: both are counted and the next block is asked for.
 static b32 tools_dd(void)
@@ -288,6 +349,7 @@ static b32 tools_dd(void)
         dd_written = 0;
         dd_status_level = DD_STATUS_ALL;
         dd_info_asked = 0;
+        text_arena_used = 0;
 
         {
                 p64 wall[2] = {0, 0};
@@ -386,9 +448,16 @@ static b32 tools_dd(void)
                 }
         }
 
-        if (!ibs || !obs)
+        if (!ibs || !obs || ibs > positive_max - 31 || obs > positive_max - 31)
         {
                 text_error(null, "invalid number");
+                return 1;
+        }
+
+        if ((skip && skip > positive_max / ibs) ||
+            (seek && seek > positive_max / obs))
+        {
+                text_error(null, "offset too large");
                 return 1;
         }
 
@@ -510,19 +579,30 @@ static b32 tools_dd(void)
                         memory_fill(obuf, 0, obs);
 
                         for (positive i = 0; i < seek; i++)
-                                system_write_all(out_handle, obuf, obs);
+                                if (dd_output(out_handle, output, obuf, obs, false) != obs)
+                                {
+                                        status = 1;
+                                        break;
+                                }
                 }
                 else if (!(conv & DD_NOTRUNC))
                 {
-                        system_call_2(syscall(ftruncate), out_handle, want);
+                        bipolar truncated = system_call_2(syscall(ftruncate), out_handle,
+                                                          want);
+
+                        if (truncated < 0)
+                        {
+                                text_error(output, "cannot truncate");
+                                status = 1;
+                        }
                 }
         }
 
         positive held = 0;
-        b32 result = 0;
+        b32 result = status;
         positive partial_before = 0;
 
-        while (count != 0)
+        while (count != 0 && !result)
         {
                 if (dd_info_asked)
                 {
@@ -587,18 +667,11 @@ static b32 tools_dd(void)
 
                 if (ibuf == obuf)
                 {
-                        positive wrote = system_write_all(out_handle, obuf, read_bytes);
-
-                        dd_written += wrote;
+                        positive wrote = dd_output(out_handle, output, obuf,
+                                                   read_bytes, true);
 
                         if (wrote != read_bytes)
                         {
-                                text_flush();
-                                text_error_raw("dd: error writing '");
-                                text_error_raw(output ? output
-                                                      : (string_address) "standard output");
-                                text_error_raw("'\n");
-
                                 if (wrote)
                                         dd_out_partial++;
 
@@ -630,13 +703,15 @@ static b32 tools_dd(void)
                         if (held < obs)
                                 continue;
 
-                        positive wrote = system_write_all(out_handle, obuf, obs);
-
-                        dd_written += wrote;
+                        positive wrote = dd_output(out_handle, output, obuf, obs,
+                                                   true);
                         held = 0;
 
                         if (wrote != obs)
                         {
+                                if (wrote)
+                                        dd_out_partial++;
+
                                 result = 1;
                                 break;
                         }
@@ -650,12 +725,13 @@ static b32 tools_dd(void)
 
         if (held)
         {
-                positive wrote = system_write_all(out_handle, obuf, held);
-
-                dd_written += wrote;
+                positive wrote = dd_output(out_handle, output, obuf, held, true);
 
                 if (wrote)
                         dd_out_partial++;
+
+                if (wrote != held)
+                        result = 1;
         }
 
         /*
@@ -705,8 +781,11 @@ static b32 tools_dd(void)
                 }
         }
 
-        if (out_handle != 1)
-                system_call_1(syscall(close), out_handle);
+        if (out_handle != 1 && system_call_1(syscall(close), out_handle) < 0)
+        {
+                text_error(output, "close failed");
+                result = 1;
+        }
 
         if (in_handle != 0)
                 system_call_1(syscall(close), in_handle);
@@ -738,7 +817,7 @@ static bool diff_text;
 static positive diff_style;
 static positive diff_context = 3;
 static string_address diff_labels[2];
-static p8 diff_switches[256];
+static p8 address_to diff_switches;
 static positive diff_switches_used;
 static b32 diff_result;
 static bool diff_titled;
@@ -836,7 +915,17 @@ static bool diff_slurp(diff_side address_to side, string_address path)
                 bipolar got = system_read_retry((positive)handle, block,
                                                 TEXT_READ_MAX);
 
-                if (got <= 0)
+                if (got < 0)
+                {
+                        if (handle > 0)
+                                system_call_1(syscall(close), handle);
+
+                        text_error(path ? path : (string_address) "standard input",
+                                   "Read error");
+                        return false;
+                }
+
+                if (!got)
                         break;
 
                 have += (positive)got;
@@ -2145,8 +2234,6 @@ static b32 diff_pair(string_address left, string_address right)
 
 // Directories -----------------------------------------------
 
-#define DIFF_NAMES_MAX 2048
-
 /*
         The names in one directory, with the bytes taken from the arena.
 
@@ -2154,12 +2241,91 @@ static b32 diff_pair(string_address left, string_address right)
         its own, because the level below would write over them and the level
         above would go on comparing whatever landed there.
 */
-static bool diff_gather(string_address path, string_address address_to names,
-                        positive address_to count)
+typedef struct
+{
+        string_address address_to at;
+        positive count;
+        positive room;
+} diff_names;
+
+static bool diff_name_add(diff_names address_to names, string_address value)
+{
+        if (names->count >= names->room)
+        {
+                positive room = names->room ? names->room * 2 : 32;
+                string_address address_to grown =
+                    (string_address address_to)text_arena_take(
+                        room * sizeof(string_address));
+
+                if (!grown)
+                        return false;
+
+                if (names->count)
+                        memory_copy_fast(grown, names->at,
+                                         names->count * sizeof(string_address));
+
+                names->at = grown;
+                names->room = room;
+        }
+
+        names->at[names->count++] = value;
+        return true;
+}
+
+static bool diff_names_sort(diff_names address_to names)
+{
+        if (names->count < 2)
+                return true;
+
+        string_address address_to spare =
+            (string_address address_to)text_arena_take(
+                names->count * sizeof(string_address));
+
+        if (!spare)
+                return false;
+
+        string_address address_to from = names->at;
+        string_address address_to into = spare;
+
+        for (positive width = 1; width < names->count; width *= 2)
+        {
+                for (positive base = 0; base < names->count; base += width * 2)
+                {
+                        positive middle = min(base + width, names->count);
+                        positive stop = min(middle + width, names->count);
+                        positive left = base;
+                        positive right = middle;
+                        positive out = base;
+
+                        while (left < middle && right < stop)
+                                into[out++] = string_compare(from[left], from[right]) <= 0
+                                                  ? from[left++]
+                                                  : from[right++];
+
+                        while (left < middle)
+                                into[out++] = from[left++];
+
+                        while (right < stop)
+                                into[out++] = from[right++];
+                }
+
+                string_address address_to swapped = from;
+
+                from = into;
+                into = swapped;
+        }
+
+        names->at = from;
+        return true;
+}
+
+static bool diff_gather(string_address path, diff_names address_to names)
 {
         file_walk walk;
 
-        address_to count = 0;
+        names->at = null;
+        names->count = 0;
+        names->room = 0;
 
         if (!file_walk_open(address_of walk, AT_FDCWD, path))
         {
@@ -2180,9 +2346,6 @@ static bool diff_gather(string_address path, string_address address_to names,
                 if (file_is_dot(entry->d_name))
                         continue;
 
-                if (address_to count >= DIFF_NAMES_MAX)
-                        break;
-
                 positive length = string_length(entry->d_name);
                 p8 address_to at = (p8 address_to)text_arena_take(length + 1);
 
@@ -2193,27 +2356,17 @@ static bool diff_gather(string_address path, string_address address_to names,
                 }
 
                 memory_copy_fast(at, entry->d_name, length + 1);
-                names[address_to count] = at;
-                address_to count += 1;
+
+                if (!diff_name_add(names, (string_address)at))
+                {
+                        file_walk_close(address_of walk);
+                        return false;
+                }
         }
 
         file_walk_close(address_of walk);
 
-        for (positive i = 1; i < address_to count; i++)
-        {
-                string_address one = names[i];
-                positive j = i;
-
-                while (j && string_compare(names[j - 1], one) > 0)
-                {
-                        names[j] = names[j - 1];
-                        j--;
-                }
-
-                names[j] = one;
-        }
-
-        return true;
+        return diff_names_sort(names);
 }
 
 static b32 diff_walk(string_address left, string_address right, positive depth);
@@ -2223,23 +2376,22 @@ static b32 diff_directories(string_address left, string_address right, positive 
         if (depth >= FILE_MAX_DEPTH)
                 return 2;
 
-        string_address names[2][DIFF_NAMES_MAX];
-        positive counts[2];
+        diff_names names[2];
 
-        if (!diff_gather(left, names[0], address_of counts[0]) ||
-            !diff_gather(right, names[1], address_of counts[1]))
+        if (!diff_gather(left, names + 0) || !diff_gather(right, names + 1))
                 return 2;
 
         positive i = 0, j = 0;
         b32 worst = 0;
 
-        while (i < counts[0] || j < counts[1])
+        while (i < names[0].count || j < names[1].count)
         {
-                b32 order = i >= counts[0]
+                b32 order = i >= names[0].count
                                 ? 1
-                                : j >= counts[1]
+                                : j >= names[1].count
                                       ? -1
-                                      : (b32)string_compare(names[0][i], names[1][j]);
+                                      : (b32)string_compare(names[0].at[i],
+                                                            names[1].at[j]);
 
                 if (order < 0)
                 {
@@ -2248,8 +2400,10 @@ static b32 diff_directories(string_address left, string_address right, positive 
                                 p8 only_left[TEXT_PATH_MAX];
                                 p8 only_right[TEXT_PATH_MAX];
 
-                                path_join(only_left, TEXT_PATH_MAX, left, names[0][i]);
-                                path_join(only_right, TEXT_PATH_MAX, right, names[0][i]);
+                                path_join(only_left, TEXT_PATH_MAX, left,
+                                          names[0].at[i]);
+                                path_join(only_right, TEXT_PATH_MAX, right,
+                                          names[0].at[i]);
 
                                 b32 one = diff_walk(only_left, only_right, depth + 1);
 
@@ -2261,7 +2415,7 @@ static b32 diff_directories(string_address left, string_address right, positive 
                                 text_put_string("Only in ");
                                 text_put_string(left);
                                 text_put_string(": ");
-                                text_put_string(names[0][i]);
+                                text_put_string(names[0].at[i]);
                                 text_put_character('\n');
                                 text_flush();
 
@@ -2280,8 +2434,10 @@ static b32 diff_directories(string_address left, string_address right, positive 
                                 p8 only_left[TEXT_PATH_MAX];
                                 p8 only_right[TEXT_PATH_MAX];
 
-                                path_join(only_left, TEXT_PATH_MAX, left, names[1][j]);
-                                path_join(only_right, TEXT_PATH_MAX, right, names[1][j]);
+                                path_join(only_left, TEXT_PATH_MAX, left,
+                                          names[1].at[j]);
+                                path_join(only_right, TEXT_PATH_MAX, right,
+                                          names[1].at[j]);
 
                                 b32 one = diff_walk(only_left, only_right, depth + 1);
 
@@ -2293,7 +2449,7 @@ static b32 diff_directories(string_address left, string_address right, positive 
                                 text_put_string("Only in ");
                                 text_put_string(right);
                                 text_put_string(": ");
-                                text_put_string(names[1][j]);
+                                text_put_string(names[1].at[j]);
                                 text_put_character('\n');
                                 text_flush();
 
@@ -2308,8 +2464,8 @@ static b32 diff_directories(string_address left, string_address right, positive 
                 p8 one_left[TEXT_PATH_MAX];
                 p8 one_right[TEXT_PATH_MAX];
 
-                path_join(one_left, TEXT_PATH_MAX, left, names[0][i]);
-                path_join(one_right, TEXT_PATH_MAX, right, names[1][j]);
+                path_join(one_left, TEXT_PATH_MAX, left, names[0].at[i]);
+                path_join(one_right, TEXT_PATH_MAX, right, names[1].at[j]);
 
                 bool left_directory = file_is_directory_through(one_left);
                 bool right_directory = file_is_directory_through(one_right);
@@ -2423,12 +2579,23 @@ static b32 tools_diff(void)
         diff_labels[0] = diff_labels[1] = null;
         diff_switches_used = 0;
         diff_titled = false;
+        text_arena_used = 0;
 
         if (!file_take(address_of taking))
                 return text_done(2);
 
         positive flags = taking.flags;
         b32 first = (b32)taking.first;
+
+        positive switches_room = 1;
+
+        for (positive i = 1; i < taking.first; i++)
+                switches_room += string_length(program_argument((b32)i)) + 1;
+
+        diff_switches = (p8 address_to)text_arena_take(switches_room);
+
+        if (!diff_switches)
+                return text_done(2);
 
         diff_icase = (flags & FILE_FLAG('i')) != 0;
         diff_blank_lines = (flags & FILE_FLAG('B')) != 0;
@@ -2454,9 +2621,6 @@ static b32 tools_diff(void)
                 if (!string_is(word, '-') || length < 2 ||
                     (string_is(word + 1, '-') && length == 2))
                         continue;
-
-                if (diff_switches_used + length + 2 >= sizeof(diff_switches))
-                        break;
 
                 diff_switches[diff_switches_used++] = ' ';
                 memory_copy_fast(diff_switches + diff_switches_used, word, length);
@@ -2487,14 +2651,15 @@ static b32 tools_diff(void)
         }
 
         diff_result = diff_walk(left, right, 0);
+        text_done(diff_result);
 
-        return text_done(diff_result);
+        // A diagnostic utility distinguishes a difference (1) from being
+        // unable to report one (2). A failed final buffered flush is the
+        // latter even when the comparison itself completed.
+        return text_out_failed ? 2 : diff_result;
 }
 
 // ps --------------------------------------------------------
-
-#define PS_MAX 8192
-#define PS_ARGS_MAX 512
 
 #define PS_FIELD_PID 0
 #define PS_FIELD_PPID 1
@@ -2546,13 +2711,14 @@ typedef struct
         bipolar nice;
         positive threads;
         p8 state[8];
-        p8 comm[64];
-        p8 args[256];
-        p8 user[36];
+        string_address comm;
+        string_address args;
+        string_address user;
 } ps_process;
 
-static ps_process ps_list[PS_MAX];
+static ps_process address_to ps_list;
 static positive ps_count;
+static positive ps_room_processes;
 static positive ps_clock = 100;
 static positive ps_now;
 static positive ps_own_tty;
@@ -2564,6 +2730,90 @@ static positive ps_read_file(string_address path, p8 address_to into, positive l
         bipolar got = file_slurp(path, into, limit);
 
         return got > 0 ? (positive)got : 0;
+}
+
+static p8 address_to ps_read_growing(string_address path, positive first,
+                                     positive address_to length)
+{
+        bipolar handle = text_open_handle(path, FILE_READ, 0);
+
+        if (handle < 0)
+                return null;
+
+        positive room = first ? first : 64;
+        positive used = 0;
+        p8 address_to bytes = (p8 address_to)text_arena_take(room);
+
+        if (!bytes)
+        {
+                system_call_1(syscall(close), (positive)handle);
+                return null;
+        }
+
+        for (;;)
+        {
+                if (used + 1 >= room)
+                {
+                        positive larger = room * 2;
+                        p8 address_to grown =
+                            (p8 address_to)text_arena_take(larger);
+
+                        if (!grown)
+                        {
+                                system_call_1(syscall(close), (positive)handle);
+                                return null;
+                        }
+
+                        memory_copy_fast(grown, bytes, used);
+                        bytes = grown;
+                        room = larger;
+                }
+
+                bipolar got = system_read_retry((positive)handle, bytes + used,
+                                                 room - used - 1);
+
+                if (got < 0)
+                {
+                        system_call_1(syscall(close), (positive)handle);
+                        return null;
+                }
+
+                if (!got)
+                        break;
+
+                used += (positive)got;
+        }
+
+        system_call_1(syscall(close), (positive)handle);
+        bytes[used] = end;
+        address_to length = used;
+        return bytes;
+}
+
+static ps_process address_to ps_process_add()
+{
+        if (ps_count >= ps_room_processes)
+        {
+                positive room = ps_room_processes ? ps_room_processes * 2 : 128;
+                ps_process address_to grown =
+                    (ps_process address_to)text_arena_take(
+                        room * sizeof(ps_process));
+
+                if (!grown)
+                        return null;
+
+                if (ps_count)
+                        memory_copy_fast(grown, ps_list,
+                                         ps_count * sizeof(ps_process));
+
+                ps_list = grown;
+                ps_room_processes = room;
+        }
+
+        ps_process address_to made = ps_list + ps_count;
+
+        memory_fill(made, 0, sizeof(ps_process));
+        return made;
 }
 
 // The bytes a /proc field is made of, and the ones between two of them.
@@ -2605,21 +2855,72 @@ static fn ps_pass(string_address address_to at, positive fields)
 }
 
 // The name behind a numeric user id, from the file the system keeps it in.
-static p8 ps_password[1 << 18];
+static p8 address_to ps_password;
 
-static fn ps_name_of(positive uid, p8 address_to into, positive limit)
+static string_address ps_name_of(positive uid)
 {
-        if (!limit)
-                return;
+        positive at = 0;
 
-        if (file_account_name(ps_password, uid, 2, into, limit))
-                return;
+        while (ps_password && ps_password[at])
+        {
+                positive line = at;
+                positive stop = (positive)(string_first_of_or_end(
+                                                ps_password + at, '\n') -
+                                            (string_address)ps_password);
+                positive name_stop = line;
+
+                while (name_stop < stop && ps_password[name_stop] != ':')
+                        name_stop++;
+
+                positive field = 0;
+                positive step = name_stop;
+
+                while (step < stop && field < 2)
+                {
+                        step++;
+                        field++;
+
+                        positive from = step;
+
+                        while (step < stop && ps_password[step] != ':')
+                                step++;
+
+                        if (field == 2)
+                        {
+                                positive taken = 0;
+                                positive value = string_digits(
+                                    (string_address)ps_password + from,
+                                    address_of taken);
+
+                                if (taken == step - from && value == uid)
+                                {
+                                        positive length = name_stop - line;
+                                        p8 address_to made =
+                                            (p8 address_to)text_arena_take(length + 1);
+
+                                        if (!made)
+                                                return null;
+
+                                        memory_copy_fast_end(made,
+                                                             ps_password + line,
+                                                             length);
+                                        return (string_address)made;
+                                }
+                        }
+                }
+
+                at = stop + (ps_password[stop] != end);
+        }
 
         p8 digits[24];
         positive have = positive_into(digits, uid);
-        positive length = min(have, limit - 1);
+        p8 address_to made = (p8 address_to)text_arena_take(have + 1);
 
-        memory_copy_fast_end(into, digits, length);
+        if (!made)
+                return null;
+
+        memory_copy_fast_end(made, digits, have);
+        return (string_address)made;
 }
 
 static bool ps_gather()
@@ -2628,8 +2929,12 @@ static bool ps_gather()
         file_walk walk;
 
         ps_count = 0;
-        if (!ps_read_file("/etc/passwd", ps_password, sizeof(ps_password)))
-                ps_password[0] = end;
+        ps_room_processes = 0;
+
+        positive password_length = 0;
+
+        ps_password = ps_read_growing("/etc/passwd", 4096,
+                                      address_of password_length);
 
         string_set_add(ps_blank_bytes, " \t");
         memory_fill(ps_field_bytes, 1, sizeof(ps_field_bytes));
@@ -2654,7 +2959,7 @@ static bool ps_gather()
 
         struct linux_dirent64 address_to entry;
 
-        while ((entry = file_walk_next(address_of walk)) && ps_count < PS_MAX)
+        while ((entry = file_walk_next(address_of walk)))
         {
                 if (!text_digit(entry->d_name[0]))
                         continue;
@@ -2668,9 +2973,13 @@ static bool ps_gather()
                 if (!ps_read_file(path, block, sizeof(block)))
                         continue;
 
-                ps_process address_to one = ps_list + ps_count;
+                ps_process address_to one = ps_process_add();
 
-                memory_fill(one, 0, sizeof(ps_process));
+                if (!one)
+                {
+                        file_walk_close(address_of walk);
+                        return false;
+                }
 
                 string_address at = block;
 
@@ -2685,11 +2994,17 @@ static bool ps_gather()
                         continue;
 
                 positive length = (positive)(last - close);
+                p8 address_to command =
+                    (p8 address_to)text_arena_take(length + 1);
 
-                if (length > sizeof(one->comm) - 1)
-                        length = sizeof(one->comm) - 1;
+                if (!command)
+                {
+                        file_walk_close(address_of walk);
+                        return false;
+                }
 
-                memory_copy_end(one->comm, close, length);
+                memory_copy_fast_end(command, close, length);
+                one->comm = (string_address)command;
 
                 at = last + 2;
 
@@ -2763,30 +3078,48 @@ static bool ps_gather()
                         }
                 }
 
-                ps_name_of(one->uid, one->user, sizeof(one->user));
+                one->user = ps_name_of(one->uid);
+
+                if (!one->user)
+                {
+                        file_walk_close(address_of walk);
+                        return false;
+                }
 
                 string_copy(path + base, "/cmdline");
 
-                positive got = ps_read_file(path, block, sizeof(one->args));
+                positive got = 0;
+                p8 address_to arguments = ps_read_growing(path, 256,
+                                                          address_of got);
 
-                if (got)
+                if (arguments && got)
                 {
                         for (positive i = 0; i < got; i++)
-                                one->args[i] = block[i] ? block[i] : ' ';
+                                arguments[i] = arguments[i] ? arguments[i] : ' ';
 
-                        while (got && one->args[got - 1] == ' ')
+                        while (got && arguments[got - 1] == ' ')
                                 got--;
 
-                        one->args[got] = end;
+                        arguments[got] = end;
+                        one->args = (string_address)arguments;
                 }
                 else
                 {
                         positive length = string_length(one->comm);
+                        p8 address_to fallback =
+                            (p8 address_to)text_arena_take(length + 3);
 
-                        one->args[0] = '[';
-                        memory_copy_fast(one->args + 1, one->comm, length);
-                        one->args[1 + length] = ']';
-                        one->args[2 + length] = end;
+                        if (!fallback)
+                        {
+                                file_walk_close(address_of walk);
+                                return false;
+                        }
+
+                        fallback[0] = '[';
+                        memory_copy_fast(fallback + 1, one->comm, length);
+                        fallback[1 + length] = ']';
+                        fallback[2 + length] = end;
+                        one->args = (string_address)fallback;
                 }
 
                 ps_count++;
@@ -2816,20 +3149,48 @@ static bool ps_gather()
         by how wide what it drew turned out to be and the shared output buffer
         can empty itself between one byte and the next.
 */
-static p8 ps_room[512];
+static p8 address_to ps_room;
 static positive ps_room_used;
+static positive ps_room_size;
+static bool ps_failed;
+
+static bool ps_room_add(positive extra)
+{
+        if (ps_room_used + extra + 1 <= ps_room_size)
+                return true;
+
+        positive room = ps_room_size ? ps_room_size : 64;
+
+        while (room < ps_room_used + extra + 1)
+                room *= 2;
+
+        p8 address_to grown = (p8 address_to)text_arena_take(room);
+
+        if (!grown)
+        {
+                ps_failed = true;
+                return false;
+        }
+
+        if (ps_room_used)
+                memory_copy_fast(grown, ps_room, ps_room_used);
+
+        ps_room = grown;
+        ps_room_size = room;
+        return true;
+}
 
 static fn ps_byte(p8 value)
 {
-        if (ps_room_used + 1 < sizeof(ps_room))
+        if (ps_room_add(1))
                 ps_room[ps_room_used++] = value;
 }
 
 static fn ps_bytes(address_any value, positive length)
 {
-        positive room = sizeof(ps_room) - 1 - ps_room_used;
+        if (!ps_room_add(length))
+                return;
 
-        length = min(length, room);
         memory_copy_fast(ps_room + ps_room_used, value, length);
         ps_room_used += length;
 }
@@ -2837,20 +3198,12 @@ static fn ps_bytes(address_any value, positive length)
 static fn ps_text(string_address value)
 {
         if (value)
-        {
-                positive room = sizeof(ps_room) - 1 - ps_room_used;
-                p8 address_to stopped = string_copy_max_end(ps_room + ps_room_used,
-                                                            value, room);
-
-                ps_room_used = (positive)(stopped - ps_room);
-        }
+                ps_bytes(value, string_length(value));
 }
 
 static fn ps_digits(positive value)
 {
-        positive room = sizeof(ps_room) - 1 - ps_room_used;
-
-        if (room >= 20)
+        if (ps_room_add(20))
         {
                 ps_room_used += positive_into(ps_room + ps_room_used, value);
                 return;
@@ -3002,7 +3355,8 @@ static fn ps_draw(ps_process address_to one, positive field)
         default: break;
         }
 
-        ps_room[ps_room_used] = end;
+        if (ps_room_add(0))
+                ps_room[ps_room_used] = end;
 }
 
 static fn ps_column_out(ps_process address_to one, positive field, bool last)
@@ -3024,14 +3378,54 @@ static fn ps_column_out(ps_process address_to one, positive field, bool last)
                 text_put_character(' ');
 }
 
+static bool ps_field_add(positive address_to address_to fields,
+                         positive address_to count, positive address_to room,
+                         positive value)
+{
+        if (address_to count >= address_to room)
+        {
+                positive larger = address_to room ? address_to room * 2 : 16;
+                positive address_to grown =
+                    (positive address_to)text_arena_take(
+                        larger * sizeof(positive));
+
+                if (!grown)
+                        return false;
+
+                if (address_to count)
+                        memory_copy_fast(grown, address_to fields,
+                                         address_to count * sizeof(positive));
+
+                address_to fields = grown;
+                address_to room = larger;
+        }
+
+        (address_to fields)[address_to count] = value;
+        address_to count += 1;
+        return true;
+}
+
 static b32 tools_ps(void)
 {
-        positive fields[32];
+        positive address_to fields = null;
         positive field_count = 0;
+        positive field_room = 0;
         bool every = false;
         bool full = false;
 
         text_begin("ps");
+        text_arena_used = 0;
+        ps_room = null;
+        ps_room_used = 0;
+        ps_room_size = 0;
+        ps_failed = false;
+
+        // Default formats change these three entries for display. Restore
+        // the -o table for another invocation in the same process.
+        ps_columns[PS_FIELD_TTY].header = "TT";
+        ps_columns[PS_FIELD_TTY].width = 2;
+        ps_columns[PS_FIELD_COMM].header = "COMMAND";
+        ps_columns[PS_FIELD_ARGS].header = "COMMAND";
 
         for (b32 i = 1; i < text_argument_count; i++)
         {
@@ -3070,6 +3464,7 @@ static b32 tools_ps(void)
                                 case 'e':
                                 case 'A': every = true; break;
                                 case 'f': full = true; break;
+                                case 'w': break;
                                 case 'a':
                                 case 'x':
                                 case 'u': every = true; break;
@@ -3087,7 +3482,7 @@ static b32 tools_ps(void)
 
                 string_address at = argument;
 
-                while (string_get(at) && field_count < 32)
+                while (string_get(at))
                 {
                         p8 name[24];
                         positive used = 0;
@@ -3111,7 +3506,10 @@ static b32 tools_ps(void)
                                 return text_done(1);
                         }
 
-                        fields[field_count++] = which;
+                        if (!ps_field_add(address_of fields,
+                                          address_of field_count,
+                                          address_of field_room, which))
+                                return text_done(1);
                 }
         }
 
@@ -3154,23 +3552,37 @@ static b32 tools_ps(void)
                 {
                         ps_columns[PS_FIELD_ARGS].header = "CMD";
 
-                        fields[field_count++] = PS_FIELD_UID;
-                        fields[field_count++] = PS_FIELD_PID;
-                        fields[field_count++] = PS_FIELD_PPID;
-                        fields[field_count++] = PS_FIELD_CPU;
-                        fields[field_count++] = PS_FIELD_STIME;
-                        fields[field_count++] = PS_FIELD_TTY;
-                        fields[field_count++] = PS_FIELD_TIME;
-                        fields[field_count++] = PS_FIELD_ARGS;
+                        if (!ps_field_add(address_of fields, address_of field_count,
+                                          address_of field_room, PS_FIELD_UID) ||
+                            !ps_field_add(address_of fields, address_of field_count,
+                                          address_of field_room, PS_FIELD_PID) ||
+                            !ps_field_add(address_of fields, address_of field_count,
+                                          address_of field_room, PS_FIELD_PPID) ||
+                            !ps_field_add(address_of fields, address_of field_count,
+                                          address_of field_room, PS_FIELD_CPU) ||
+                            !ps_field_add(address_of fields, address_of field_count,
+                                          address_of field_room, PS_FIELD_STIME) ||
+                            !ps_field_add(address_of fields, address_of field_count,
+                                          address_of field_room, PS_FIELD_TTY) ||
+                            !ps_field_add(address_of fields, address_of field_count,
+                                          address_of field_room, PS_FIELD_TIME) ||
+                            !ps_field_add(address_of fields, address_of field_count,
+                                          address_of field_room, PS_FIELD_ARGS))
+                                return text_done(1);
                 }
                 else
                 {
                         ps_columns[PS_FIELD_COMM].header = "CMD";
 
-                        fields[field_count++] = PS_FIELD_PID;
-                        fields[field_count++] = PS_FIELD_TTY;
-                        fields[field_count++] = PS_FIELD_TIME;
-                        fields[field_count++] = PS_FIELD_COMM;
+                        if (!ps_field_add(address_of fields, address_of field_count,
+                                          address_of field_room, PS_FIELD_PID) ||
+                            !ps_field_add(address_of fields, address_of field_count,
+                                          address_of field_room, PS_FIELD_TTY) ||
+                            !ps_field_add(address_of fields, address_of field_count,
+                                          address_of field_room, PS_FIELD_TIME) ||
+                            !ps_field_add(address_of fields, address_of field_count,
+                                          address_of field_room, PS_FIELD_COMM))
+                                return text_done(1);
                 }
         }
 
@@ -3202,5 +3614,5 @@ static b32 tools_ps(void)
                 text_put_character('\n');
         }
 
-        return text_done(0);
+        return text_done(ps_failed ? 1 : 0);
 }
