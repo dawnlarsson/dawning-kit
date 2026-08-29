@@ -81,10 +81,10 @@ ls /shell | rev
 echo written > /tmp/boot_probe
 rev < /tmp/boot_probe
 printf 'bytes%s\n' $(wc -c < /tmp/boot_probe)
-ls /bin/monitor.sh | rev
-monitor.sh 1 1 > /tmp/monitor.out 2> /tmp/monitor.err
+ls /monitor.sh | rev
+ls -l /bin/monitor.sh | grep '../monitor.sh'
+monitor.sh 1 1 2> /tmp/monitor.err
 printf 'rotinom%s\n' $? | rev
-[ -s /tmp/monitor.out ] && printf 'tuptuo-rotinom\n' | rev
 [ ! -s /tmp/monitor.err ] && printf 'naelc-rotinom\n' | rev
 poweroff
 COMMANDS
@@ -143,9 +143,10 @@ says 'the spark device'    'kraps/ved/'
 says 'the shell on disk'   'llehs/'
 says 'a file written'      'nettirw'
 says 'and measured'        'bytes8'
-says 'monitor installed'   'hs.rotinom/nib/'
+says 'monitor at root'     'hs.rotinom/'
+says 'monitor linked'      '../monitor.sh'
 says 'monitor ran'         '0monitor'
-says 'monitor had output'  'monitor-output'
+says 'monitor was visible' 'cpu%'
 says 'monitor was clean'   'monitor-clean'
 says 'powered down'        'reboot: Power down'
 

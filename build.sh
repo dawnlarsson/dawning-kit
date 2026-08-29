@@ -637,12 +637,13 @@ STRNCHR:char *strnchr(const char *, __kernel_size_t, int)"
 
                 # Scripts need a real interpreter path: /shell is the image's
                 # binary, but a #!/bin/sh shebang is resolved by the kernel
-                # before the shell gets any say. The monitor is installed in
-                # PATH as an executable workload rather than left only in the
-                # source checkout where host-side tests happen to find it.
+                # before the shell gets any say. Keep the monitor itself at
+                # the root where a person looking at the initial filesystem
+                # sees it, and make its PATH spelling a link to that one copy.
                 ln -sf ../shell fs/bin/sh || die "linking /bin/sh"
-                cp programs/monitor.sh fs/bin/monitor.sh || die "installing monitor.sh"
-                chmod 0755 fs/bin/monitor.sh || die "making monitor.sh executable"
+                cp programs/monitor.sh fs/monitor.sh || die "installing /monitor.sh"
+                chmod 0755 fs/monitor.sh || die "making /monitor.sh executable"
+                ln -sf ../monitor.sh fs/bin/monitor.sh || die "linking /bin/monitor.sh"
 
                 #
                 #       The utilities are the shell, under other names.
