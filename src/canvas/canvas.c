@@ -117,6 +117,7 @@ struct pane
         unsigned int *lengths;
         unsigned int stride, history, head;
         unsigned int view;
+        unsigned int view_skip;
         _Bool view_moved;
 
         unsigned int pitch;

@@ -252,7 +252,11 @@ static unsigned int pane_view_at(struct pane *pane, unsigned int view,
         *skip = 0;
 
         if (view != PANE_LIVE)
-                return clamp(view, oldest, pane->head - 1);
+        {
+                at = clamp(view, oldest, pane->head - 1);
+                *skip = min(pane->view_skip, pane_line_rows(pane, at) - 1);
+                return at;
+        }
 
         while (count < rows && at > oldest)
         {
@@ -320,26 +324,39 @@ static _Bool pane_extent(struct pane *pane, unsigned int *first,
 static _Bool pane_view_set(struct pane *pane, unsigned int above)
 {
         unsigned int was = pane->view;
-        unsigned int at, run = 0, live, skip;
+        unsigned int was_skip = pane->view_skip;
+        unsigned int at, run = 0, live, live_skip, skip = 0;
 
         if (!pane->cells)
                 return false;
 
-        live = pane_view_at(pane, PANE_LIVE, &skip);
+        live = pane_view_at(pane, PANE_LIVE, &live_skip);
 
         for (at = pane_oldest(pane); at != pane->head; at++)
         {
                 unsigned int past = run + pane_line_rows(pane, at);
 
                 if (above < past)
+                {
+                        skip = above - run;
                         break;
+                }
 
                 run = past;
         }
 
-        pane->view = at >= live ? PANE_LIVE : at;
+        if (at > live || (at == live && skip >= live_skip))
+        {
+                pane->view = PANE_LIVE;
+                pane->view_skip = 0;
+        }
+        else
+        {
+                pane->view = at;
+                pane->view_skip = skip;
+        }
 
-        if (pane->view == was)
+        if (pane->view == was && pane->view_skip == was_skip)
                 return false;
 
         pane->view_moved = true;
@@ -356,31 +373,22 @@ static _Bool pane_view_set(struct pane *pane, unsigned int above)
 */
 static _Bool pane_scroll(struct pane *pane, int lines)
 {
-        unsigned int was = pane->view;
-        unsigned int oldest = pane_oldest(pane);
-        unsigned int skip, live, at;
+        unsigned int above, shown, total, live;
+        long target;
 
         if (!pane->cells)
                 return false;
 
-        at = pane_view(pane, &skip);
-        live = pane_view_at(pane, PANE_LIVE, &skip);
+        pane_extent(pane, &above, &shown, &total);
+        live = total > shown ? total - shown : 0;
+        target = (long)above - lines;
 
-        if (lines > 0)
-                at = at - oldest >= (unsigned int)lines ? at - lines : oldest;
-        else if (live - at <= (unsigned int)-lines)
-                at = live;
-        else
-                at += (unsigned int)-lines;
+        if (target < 0)
+                target = 0;
+        else if ((unsigned long)target > live)
+                target = live;
 
-        pane->view = at >= live ? PANE_LIVE : at;
-
-        if (pane->view == was)
-                return false;
-
-        pane->view_moved = true;
-
-        return true;
+        return pane_view_set(pane, (unsigned int)target);
 }
 
 /*

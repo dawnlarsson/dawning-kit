@@ -1065,6 +1065,25 @@ group across
 same 'wraps'         '[> abcdef]|[ghijk]|[]'     8 3 edit on in '> ' keys 'abcdefghijk' dump
 same 'cursor wraps'  '1,5'                       8 3 edit on in '> ' keys 'abcdefghijk' cursor
 same 'scrolls'       '1,7|[> abcdef]|[ghijklm]'  8 2 edit on in '\r\n> ' keys 'abcdefghijklm' cursor row 0 row 1
+same 'scroll cursor follows point' '2,2'          8 3 edit on in '> ' \
+                                                 keys 'abcdefghijklmnopqrstuvwx' cursor
+same 'exact viewport stays put' '[abcdefgh]|[ijklmnop]|[qrstuvwx]|2,7' \
+                                                  8 3 edit on \
+                                                 keys 'abcdefghijklmnopqrstuvwx' dump cursor
+same 'scroll viewport follows point' '[ghijklmn]|[opqrstuv]|[wx]' \
+                                                  8 3 edit on in '> ' \
+                                                 keys 'abcdefghijklmnopqrstuvwx' dump
+same 'scroll cursor moves inside' '1,4'           8 3 edit on in '> ' \
+                                                 keys 'abcdefghijklmnopqrstuvwx<left><left><left><left><left><left>' cursor
+same 'scroll home pages back' '[abcdefgh]|[ijklmnop]|[qrstuvwx]|0,0' \
+                                                  8 3 edit on in '> ' \
+                                                 keys 'abcdefghijklmnopqrstuvwx<home>' dump cursor
+same 'scroll end pages forward' '[ghijklmn]|[opqrstuv]|[wx      ]|2,2' \
+                                                  8 3 edit on in '> ' \
+                                                 keys 'abcdefghijklmnopqrstuvwx<home><end>' dump cursor
+same 'scroll ctrl l keeps prompt' '[> abcdef]|[ghijklmn]|[opqrstuv]|0,2' \
+                                                  8 3 edit on in '> ' \
+                                                 keys 'abcdefghijklmnopqrstuvwx<home>^L' dump cursor
 same 'edits after wrapping' '[> abcdXe]|[fghijk]|[]' \
                                                  8 3 edit on in '> ' keys 'abcdefghijk<left><left><left><left><left><left><left>X' dump
 

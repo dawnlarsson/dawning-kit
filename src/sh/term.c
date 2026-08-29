@@ -1212,6 +1212,8 @@ static b32 line_anchored;
 // half touches, because a resize has an opinion about the column.
 #ifndef KERNEL_MODE
 static unsigned int line_anchor;
+static positive line_view;
+static unsigned int line_screen_anchor, line_screen_column;
 #endif
 static unsigned int line_anchor_column;
 
@@ -1229,6 +1231,9 @@ static fn line_forget()
 {
         line_anchored = false;
         line_drawn = 0;
+#ifndef KERNEL_MODE
+        line_view = 0;
+#endif
 }
 
 #ifndef KERNEL_MODE
@@ -1250,7 +1255,7 @@ static positive history_held_room, history_held_length;
 // Ctrl-L keeps the cells to the left of the line anchor without imposing a
 // second, unrelated limit on the width of a prompt.
 static struct window_cell address_to line_prompt;
-static positive line_prompt_room;
+static positive line_prompt_room, line_prompt_length;
 
 static unsigned int line_anchor_row()
 {
@@ -1258,6 +1263,9 @@ static unsigned int line_anchor_row()
 
         return at < ROWS ? at : 0;
 }
+
+static fn line_erase(b32 shorten);
+static fn line_hide();
 
 /*
         The line, on the screen, wherever it now is.
@@ -1269,33 +1277,91 @@ static unsigned int line_anchor_row()
 */
 static fn line_show()
 {
-        positive at, written;
+        positive at, capacity, caret, first, drawn;
+        bipolar anchor_row;
+        unsigned int top;
 
         if (!line_anchored)
                 return;
 
-        // The anchor went off the top, so there is nowhere left to write the
-        // line but the top of what is still on screen.
-        if (line_anchor - (window->head - ROWS) >= ROWS)
+        /*
+                Redrawing an entire command longer than the viewport scrolled
+                it once for every key.  Eventually the oldest part replaced
+                the newest and the cursor was pinned to the bottom-right cell.
+
+                Make the editable line a viewport of its own.  Its logical
+                anchor never moves; shift whole rows only far enough to keep
+                the insertion point visible, and draw no more than the screen
+                can hold.  Moving Home reveals the beginning again without
+                losing a byte of the command.
+        */
+        caret = line_point < line_length ? line_point
+                                        : (line_point ? line_point - 1 : 0);
+
+        line_erase(false);
+        line_drawn = 0;
+
+        /* Advance the real ring only when the insertion cell first crosses
+           its bottom.  A redraw at the same point must never scroll again. */
+        while ((positive)line_anchor +
+                   (line_anchor_column + caret) / COLUMNS >= window->head)
+                ring_scroll();
+
+        top = window->head - ROWS;
+        anchor_row = (bipolar)line_anchor - (bipolar)top;
+
+        if (line_view && caret >= line_view &&
+            caret - line_view < (positive)ROWS * COLUMNS)
         {
-                line_anchor = window->head - ROWS;
-                line_anchor_column = 0;
+                first = line_view;
+                line_screen_anchor = top;
+                line_screen_column = 0;
+        }
+        else if (anchor_row < 0)
+        {
+                bipolar hidden = -anchor_row * (bipolar)COLUMNS -
+                                 (bipolar)line_anchor_column;
+
+                first = hidden > 0 ? (positive)hidden : 0;
+
+                // Home and a long run of Lefts deliberately page back into
+                // the part which has already scrolled out of the live ring.
+                if (caret < first)
+                        first = caret - caret % COLUMNS;
+
+                line_screen_anchor = top;
+                line_screen_column = 0;
+        }
+        else
+        {
+                first = 0;
+                line_screen_anchor = top + (unsigned int)anchor_row;
+                line_screen_column = line_anchor_column;
         }
 
-        row = line_anchor_row();
-        column = line_anchor_column;
+        if (first > line_length)
+                first = line_length;
 
-        for (at = 0; at < line_length; at++)
-                put(line[at]);
+        capacity = ((positive)window->head - line_screen_anchor) * COLUMNS -
+                   line_screen_column;
+        drawn = line_length - first;
 
-        for (written = line_length; written < line_drawn; written++)
-                put(' ');
+        if (drawn > capacity)
+                drawn = capacity;
 
-        line_drawn = line_length;
+        row = line_screen_anchor - top;
+        column = line_screen_column;
 
-        at = line_anchor_row() * COLUMNS + line_anchor_column + line_point;
-        row = at / COLUMNS;
-        column = at % COLUMNS;
+        for (at = 0; at < drawn; at++)
+                put(line[first + at]);
+
+        line_view = first;
+        line_drawn = drawn;
+
+        at = line_point > first ? line_point - first : 0;
+        row = line_screen_anchor - (window->head - ROWS) +
+              (unsigned int)((line_screen_column + at) / COLUMNS);
+        column = (unsigned int)((line_screen_column + at) % COLUMNS);
 
         if (row >= ROWS)
         {
@@ -1315,17 +1381,33 @@ static fn line_show()
         empty by shortening their lengths, which is also what keeps blank
         folded rows from consuming the resized view.
 */
-static fn line_hide()
+static fn line_erase(b32 shorten)
 {
-        unsigned int r, c;
-        positive left;
+        unsigned int r, c, top;
+        positive left, skipped = 0;
+        bipolar screen_row;
 
         if (!line_anchored || !line_drawn)
                 return;
 
-        r = line_anchor_row();
-        c = line_anchor_column;
-        left = line_drawn;
+        top = window->head - ROWS;
+        screen_row = (bipolar)line_screen_anchor - (bipolar)top;
+        c = line_screen_column;
+
+        if (screen_row < 0)
+        {
+                positive past = (positive)(-screen_row) * COLUMNS;
+
+                skipped = past > c ? past - c : 0;
+                screen_row = 0;
+                c = 0;
+        }
+
+        if (skipped >= line_drawn || screen_row >= (bipolar)ROWS)
+                return;
+
+        r = (unsigned int)screen_row;
+        left = line_drawn - skipped;
 
         while (left && r < ROWS)
         {
@@ -1333,8 +1415,11 @@ static fn line_hide()
                 positive taken = left < room ? left : room;
                 unsigned int address_to length = row_length(r);
 
-                if (address_to length > c)
+                if (shorten && address_to length > c)
                         address_to length = c;
+                else if (!shorten)
+                        for (positive at = 0; at < taken; at++)
+                                cell_clear(r, c + (unsigned int)at);
 
                 touch(r);
                 left -= taken;
@@ -1346,6 +1431,11 @@ static fn line_hide()
                 if (!room)
                         break;
         }
+}
+
+static fn line_hide()
+{
+        line_erase(true);
 }
 
 static fn line_insert(unsigned int character)
@@ -1451,24 +1541,9 @@ static fn line_remember()
 */
 static fn line_clear_screen()
 {
-        unsigned int kept = line_anchor_column;
-        unsigned int r = line_anchor_row();
-
-        if (line_anchored)
-        {
-                struct window_cell address_to cells = row_cells(r);
-
-                if (!memory_reserve((address_any address_to)address_of line_prompt,
-                                    address_of line_prompt_room, 0, kept,
-                                    sizeof(*line_prompt), 64))
-                        return;
-
-                memory_copy_apart(line_prompt, cells,
-                                 (positive)kept *
-                                     sizeof(struct window_cell));
-        }
-        else
-                kept = 0;
+        unsigned int kept = line_anchored
+                                ? min((unsigned int)line_prompt_length, COLUMNS)
+                                : 0;
 
         erase(0, 0, ROWS - 1, COLUMNS - 1);
 
@@ -1542,8 +1617,31 @@ static b32 line_key(unsigned int character, unsigned int code)
 {
         if (!line_anchored)
         {
+                positive prompt;
+
                 line_anchor = window->head - ROWS + row;
                 line_anchor_column = column < COLUMNS ? column : COLUMNS - 1;
+                prompt = line_anchor_column;
+
+                /*
+                        Capture the prompt while its row is unquestionably
+                        still the anchor row.  A command taller than the
+                        viewport scrolls that row into history; waiting until
+                        Ctrl-L copied whatever happened to be at row zero and
+                        restored two command characters as the prompt.
+                */
+                if (memory_reserve(
+                        (address_any address_to)address_of line_prompt,
+                        address_of line_prompt_room, line_prompt_length, prompt,
+                        sizeof(*line_prompt), 64))
+                {
+                        memory_copy_apart(line_prompt, row_cells(row),
+                                          prompt * sizeof(*line_prompt));
+                        line_prompt_length = prompt;
+                }
+                else
+                        line_prompt_length = 0;
+
                 line_anchored = true;
                 line_drawn = 0;
         }
@@ -1875,6 +1973,9 @@ fn regrid(b32 master)
         // next keystroke left the cursor and the editable text in the old
         // geometry even though the window had already changed underneath it.
         line_drawn = 0;
+#ifndef KERNEL_MODE
+        line_view = 0;
+#endif
 
 #ifndef KERNEL_MODE
         if (line_editing)
