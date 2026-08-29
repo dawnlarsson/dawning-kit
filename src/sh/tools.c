@@ -2558,28 +2558,9 @@ static positive ps_wall;
 
 static positive ps_read_file(string_address path, p8 address_to into, positive limit)
 {
-        bipolar handle = text_open_handle(path, FILE_READ, 0);
+        bipolar got = file_slurp(path, into, limit);
 
-        if (handle < 0)
-                return 0;
-
-        positive have = 0;
-
-        while (have + 1 < limit)
-        {
-                bipolar got = system_read_retry((positive)handle, into + have,
-                                                limit - 1 - have);
-
-                if (got <= 0)
-                        break;
-
-                have += (positive)got;
-        }
-
-        system_call_1(syscall(close), handle);
-        into[have] = end;
-
-        return have;
+        return got > 0 ? (positive)got : 0;
 }
 
 // The bytes a /proc field is made of, and the ones between two of them.
