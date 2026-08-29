@@ -67,7 +67,7 @@
         A .set is a second label on the same address, so there is no wrapper
         and no jump, and which names get one depends on who is linking.
 
-        152 routines (146 public, 6 local), 152 of them on all three.
+        153 routines (147 public, 6 local), 153 of them on all three.
         Raw C purity: 0 function bodies, 0 object definitions, 0 body macros, and 0 object macros (all forbidden).
 
           routine                        scope   x86_64  arm64   riscv64
@@ -111,6 +111,7 @@
           memory                         public  yes     yes     yes
           memory_common_prefix           public  yes     yes     yes
           memory_compare                 public  yes     yes     yes
+          memory_compare_ascii_case      public  yes     yes     yes
           memory_copy                    public  yes     yes     yes
           memory_copy_end                public  yes     yes     yes
           memory_copy_fast               public  yes     yes     yes
@@ -2352,6 +2353,39 @@ __asm__(
     "dec %rdx\n   jnz .Lmemory_prefix_x64_byte\n"
     ".Lmemory_prefix_x64_done:\n" ASM_RET
     ASM_END(memory_common_prefix)
+    // memcmp after ASCII a..z have been normalized to A..Z. Bytes outside
+    // that range, including the entire high half, are compared unchanged.
+    ASM_FUNC(memory_compare_ascii_case)
+    "xor %eax, %eax\n   test %rdx, %rdx\n   jz .Lmemory_icase_x64_done\n"
+    ASM_USERSPACE_WIDE(
+    ASM_NARROW("cpu_has_avx2", ".Lmemory_icase_x64_scalar")
+    "cmp $32, %rdx\n   jb .Lmemory_icase_x64_scalar\n"
+    "mov $0x60, %ecx\n   vmovd %ecx, %xmm2\n   vpbroadcastb %xmm2, %ymm2\n"
+    "mov $0x7b, %ecx\n   vmovd %ecx, %xmm3\n   vpbroadcastb %xmm3, %ymm3\n"
+    "mov $0x20, %ecx\n   vmovd %ecx, %xmm6\n   vpbroadcastb %xmm6, %ymm6\n"
+    ".Lmemory_icase_x64_vector:\n   vmovdqu (%rdi), %ymm0\n   vmovdqu (%rsi), %ymm1\n"
+    "vpcmpgtb %ymm2, %ymm0, %ymm4\n   vpcmpgtb %ymm0, %ymm3, %ymm5\n"
+    "vpand %ymm5, %ymm4, %ymm4\n   vpand %ymm6, %ymm4, %ymm4\n"
+    "vpsubb %ymm4, %ymm0, %ymm0\n"
+    "vpcmpgtb %ymm2, %ymm1, %ymm4\n   vpcmpgtb %ymm1, %ymm3, %ymm5\n"
+    "vpand %ymm5, %ymm4, %ymm4\n   vpand %ymm6, %ymm4, %ymm4\n"
+    "vpsubb %ymm4, %ymm1, %ymm1\n   vpcmpeqb %ymm1, %ymm0, %ymm0\n"
+    "vpmovmskb %ymm0, %ecx\n   cmp $-1, %ecx\n   jne .Lmemory_icase_x64_vector_diff\n"
+    "add $32, %rdi\n   add $32, %rsi\n   sub $32, %rdx\n"
+    "cmp $32, %rdx\n   jae .Lmemory_icase_x64_vector\n"
+    "vzeroupper\n   jmp .Lmemory_icase_x64_scalar\n"
+    ".Lmemory_icase_x64_vector_diff:\n   not %ecx\n   bsf %ecx, %ecx\n"
+    "add %rcx, %rdi\n   add %rcx, %rsi\n   vzeroupper\n"
+    )
+    ".Lmemory_icase_x64_scalar:\n   test %rdx, %rdx\n   jz .Lmemory_icase_x64_done\n"
+    ".Lmemory_icase_x64_byte:\n   movzbl (%rdi), %eax\n   mov %eax, %r8d\n"
+    "sub $'a', %r8d\n   cmp $25, %r8d\n   ja .Lmemory_icase_x64_left\n   sub $32, %eax\n"
+    ".Lmemory_icase_x64_left:\n   movzbl (%rsi), %ecx\n   mov %ecx, %r8d\n"
+    "sub $'a', %r8d\n   cmp $25, %r8d\n   ja .Lmemory_icase_x64_right\n   sub $32, %ecx\n"
+    ".Lmemory_icase_x64_right:\n   sub %ecx, %eax\n   jne .Lmemory_icase_x64_done\n"
+    "inc %rdi\n   inc %rsi\n   dec %rdx\n   jnz .Lmemory_icase_x64_byte\n"
+    ".Lmemory_icase_x64_done:\n" ASM_RET
+    ASM_END(memory_compare_ascii_case)
     ASM_FUNC(memory_search)
     //
     //       The algorithm, which matters more here than the instructions.
@@ -6091,6 +6125,34 @@ __asm__(
     "b.ne .Lmemory_prefix_arm64_byte\n"
     ".Lmemory_prefix_arm64_done:\n   mov x0, x3\n" ASM_RET
     ASM_END(memory_common_prefix)
+    ASM_FUNC(memory_compare_ascii_case)
+    "mov w9, wzr\n   cbz x2, .Lmemory_icase_arm64_done\n"
+#ifndef KERNEL_MODE
+    "cmp x2, #16\n   b.lo .Lmemory_icase_arm64_scalar\n"
+    "movi v6.16b, #0x60\n   movi v7.16b, #0x7b\n   movi v16.16b, #0x20\n"
+    ".Lmemory_icase_arm64_vector:\n   ldr q0, [x0]\n   ldr q1, [x1]\n"
+    "cmhi v2.16b, v0.16b, v6.16b\n   cmhi v3.16b, v7.16b, v0.16b\n"
+    "and v2.16b, v2.16b, v3.16b\n   and v2.16b, v2.16b, v16.16b\n"
+    "sub v0.16b, v0.16b, v2.16b\n"
+    "cmhi v2.16b, v1.16b, v6.16b\n   cmhi v3.16b, v7.16b, v1.16b\n"
+    "and v2.16b, v2.16b, v3.16b\n   and v2.16b, v2.16b, v16.16b\n"
+    "sub v1.16b, v1.16b, v2.16b\n   cmeq v0.16b, v0.16b, v1.16b\n"
+    "uminv b0, v0.16b\n   umov w3, v0.b[0]\n   cmp w3, #0xff\n"
+    "b.ne .Lmemory_icase_arm64_scalar\n   add x0, x0, #16\n"
+    "add x1, x1, #16\n   sub x2, x2, #16\n   cmp x2, #16\n"
+    "b.hs .Lmemory_icase_arm64_vector\n"
+#endif
+    ".Lmemory_icase_arm64_scalar:\n   cbz x2, .Lmemory_icase_arm64_done\n"
+    ".Lmemory_icase_arm64_byte:\n   ldrb w3, [x0]\n   ldrb w4, [x1]\n"
+    "sub w5, w3, #'a'\n   cmp w5, #25\n   b.hi .Lmemory_icase_arm64_left\n"
+    "sub w3, w3, #32\n"
+    ".Lmemory_icase_arm64_left:\n   sub w5, w4, #'a'\n   cmp w5, #25\n"
+    "b.hi .Lmemory_icase_arm64_right\n   sub w4, w4, #32\n"
+    ".Lmemory_icase_arm64_right:\n   subs w9, w3, w4\n"
+    "b.ne .Lmemory_icase_arm64_done\n   add x0, x0, #1\n   add x1, x1, #1\n"
+    "subs x2, x2, #1\n   b.ne .Lmemory_icase_arm64_byte\n"
+    ".Lmemory_icase_arm64_done:\n   mov w0, w9\n" ASM_RET
+    ASM_END(memory_compare_ascii_case)
     ASM_FUNC(memory_search)
     "cbz x3, 90f  // an empty needle is at the front\n"
     "cmp x1, x3\n   b.lo 95f  // longer than the haystack: nowhere\n"
@@ -8918,6 +8980,18 @@ __asm__(
     "bnez a2, .Lmemory_prefix_rv_byte\n"
     ".Lmemory_prefix_rv_done:\n   mv a0, a3\n" ASM_RET
     ASM_END(memory_common_prefix)
+    ASM_FUNC(memory_compare_ascii_case)
+    "li a3, 0\n   beqz a2, .Lmemory_icase_rv_done\n"
+    ".Lmemory_icase_rv_byte:\n   lbu t0, 0(a0)\n   lbu t1, 0(a1)\n"
+    "addi t2, t0, -97\n   li t3, 25\n   bgtu t2, t3, .Lmemory_icase_rv_left\n"
+    "addi t0, t0, -32\n"
+    ".Lmemory_icase_rv_left:\n   addi t2, t1, -97\n"
+    "bgtu t2, t3, .Lmemory_icase_rv_right\n   addi t1, t1, -32\n"
+    ".Lmemory_icase_rv_right:\n   sub a3, t0, t1\n"
+    "bnez a3, .Lmemory_icase_rv_done\n   addi a0, a0, 1\n   addi a1, a1, 1\n"
+    "addi a2, a2, -1\n   bnez a2, .Lmemory_icase_rv_byte\n"
+    ".Lmemory_icase_rv_done:\n   mv a0, a3\n" ASM_RET
+    ASM_END(memory_compare_ascii_case)
     ASM_FUNC(memory_search)
     //
     //       One byte hunted rather than two, and no block at all: the
@@ -10977,6 +11051,7 @@ positive string_lex_word(string_address source, p8 address_to into,
                             const b8 address_to class);
 address_any memory_fill(address_any destination, b8 value, positive size);
 positive memory_common_prefix(address_any one, address_any two, positive size);
+b32 memory_compare_ascii_case(address_any one, address_any two, positive size);
 // Reverse exactly size bytes in place. Returns block; sizes below two do not
 // read or write it, so a null block is valid when size is zero.
 address_any memory_reverse(address_any block, positive size);

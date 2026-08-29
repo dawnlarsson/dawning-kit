@@ -1051,14 +1051,20 @@ static bool diff_same(diff_side address_to a, bipolar i, diff_side address_to b,
         if (diff_stub(a, i) != diff_stub(b, j))
                 return false;
 
-        // Nothing folded and nothing skipped: the two lines are the same
-        // line when the bytes are, and the bytes are a block compare.
-        if (!diff_icase && diff_space == DIFF_SPACE_NONE)
+        // With no whitespace normalization the lines remain exact bounded
+        // spans; case folding only changes which block comparator proves it.
+        if (diff_space == DIFF_SPACE_NONE)
         {
                 positive length = diff_line_length(a, i);
 
-                return length == diff_line_length(b, j) &&
-                       !memory_compare(diff_line(a, i), diff_line(b, j), length);
+                if (length != diff_line_length(b, j))
+                        return false;
+
+                return !(diff_icase
+                              ? memory_compare_ascii_case(diff_line(a, i),
+                                                          diff_line(b, j), length)
+                              : memory_compare(diff_line(a, i), diff_line(b, j),
+                                               length));
         }
 
         diff_scan_open(address_of left, diff_line(a, i));

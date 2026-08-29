@@ -105,6 +105,8 @@ buffered_flush buffered_write buffered_write_byte buffered_write_deferred_equal
 ''', 'paired former-C/assembly timing over buffered and direct output shapes')
 cover('direct_benchmark', 'kit/bench_text_hot.c', 'memory_common_prefix',
       'paired scalar/assembly timing over equal and late-difference text spans')
+cover('direct_benchmark', 'kit/bench_ascii_case.c', 'memory_compare_ascii_case',
+      'exhaustive byte-pair validation and paired folded comparison timing')
 cover('direct_benchmark', 'kit/bench_translate.c', 'memory_translate',
       'paired former-C/assembly timing over byte-table translation sizes')
 

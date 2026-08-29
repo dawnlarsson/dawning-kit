@@ -1866,20 +1866,15 @@ static b32 regex_run(b32 pc, positive sp)
                         if (sp + span > regex_text_length)
                                 return 0;
 
-                        for (positive i = 0; i < span; i++)
-                        {
-                                p8 one = regex_text[from + i];
-                                p8 two = regex_text[sp + i];
+                        b32 order = regex_icase
+                                        ? memory_compare_ascii_case(regex_text + from,
+                                                                    regex_text + sp,
+                                                                    span)
+                                        : memory_compare(regex_text + from,
+                                                         regex_text + sp, span);
 
-                                if (regex_icase)
-                                {
-                                        one = text_lower(one);
-                                        two = text_lower(two);
-                                }
-
-                                if (one != two)
-                                        return 0;
-                        }
+                        if (order)
+                                return 0;
 
                         sp += span;
                         pc++;
@@ -4526,13 +4521,13 @@ static b32 text_uniq()
 
                         bool same = have_held && one == two;
 
-                        if (same && !fold)
-                                same = !memory_compare(text_line + skip, held + held_skip, one);
-
-                        for (positive c = 0; same && fold && c < one; c++)
-                                if (text_lower(text_line[skip + c]) !=
-                                    text_lower(held[held_skip + c]))
-                                        same = false;
+                        if (same)
+                                same = !(fold
+                                             ? memory_compare_ascii_case(
+                                                   text_line + skip,
+                                                   held + held_skip, one)
+                                             : memory_compare(text_line + skip,
+                                                              held + held_skip, one));
 
                         if (same)
                         {
@@ -7822,6 +7817,17 @@ static bipolar sort_compare_bytes(p8 address_to a, positive la, p8 address_to b,
         {
                 positive length = min(la, lb);
                 bipolar order = memory_compare(a, b, length);
+
+                if (order)
+                        return order < 0 ? -1 : 1;
+
+                return la == lb ? 0 : la < lb ? -1 : 1;
+        }
+
+        if (how == SORT_FOLD)
+        {
+                positive length = min(la, lb);
+                b32 order = memory_compare_ascii_case(a, b, length);
 
                 if (order)
                         return order < 0 ? -1 : 1;
