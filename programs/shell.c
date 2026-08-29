@@ -196,8 +196,7 @@ b32 main()
                                 if (stop)
                                         address_to stop = end;
 
-                                if (string_get(at))
-                                        run_line(at);
+                                run_line(at);
 
                                 if (!stop)
                                         break;
@@ -206,6 +205,7 @@ b32 main()
                         }
                 }
 
+                shell_input_end();
                 memory_free(held_command, length + 1);
 
                 shell_trap_exit();
@@ -258,8 +258,7 @@ b32 main()
 
                         shell_buffer[stop] = end;
 
-                        if (stop > at)
-                                run_line(shell_buffer + at);
+                        run_line(shell_buffer + at);
 
                         at = stop + 1;
                 }
@@ -280,6 +279,8 @@ b32 main()
                 shell_buffer[held] = end;
                 run_line(shell_buffer);
         }
+
+        shell_input_end();
 
         if (script_file)
                 system_call_1(syscall(close), (positive)input);

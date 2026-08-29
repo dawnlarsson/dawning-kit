@@ -31,6 +31,7 @@ positive shell_argc;
 
 // eval runs a line, and what runs lines sits below this file.
 fn run_line(string_address line);
+fn shell_input_end();
 bool exec_function_here(string_address name);
 bool exec_function_unset(string_address name);
 bool shell_builtin(string_address arguments);
@@ -747,12 +748,24 @@ fn shell_clear(writer write, string_address input)
 
 fn shell_echo(writer write, string_address input)
 {
-        positive flags = shell_flags(address_of input, "n");
+        positive index = 1;
+        bool newline = true;
 
-        if (input != null)
-                write(input, 0);
+        while (index < shell_argc && word_is(shell_argv[index], "-n"))
+        {
+                newline = false;
+                index++;
+        }
 
-        if (!(flags & SHELL_FLAG('n')))
+        for (positive first = index; index < shell_argc; index++)
+        {
+                if (index != first)
+                        write(" ", 1);
+
+                write(shell_argv[index], string_length(shell_argv[index]));
+        }
+
+        if (newline)
                 write("\n", 1);
 }
 
@@ -3642,6 +3655,7 @@ fn shell_eval(writer write, string_address input)
 
                 eval_depth++;
                 run_line(eval_storage);
+                shell_input_end();
                 eval_depth--;
 
                 parse_nest_leave();
@@ -3789,6 +3803,20 @@ static string_address shell_tool_name(string_address path)
         return last;
 }
 
+static b32 shell_tool_call(positive which)
+{
+        b32 answered;
+
+        log_failure_reset();
+        answered = shell_tools[which].function() & 0xff;
+        log_flush();
+
+        if (log_failed() && !answered)
+                answered = 1;
+
+        return answered;
+}
+
 /*
         Run as the tool the binary was called as, if it was called as one.
 
@@ -3809,7 +3837,7 @@ b32 shell_tool_as_called()
         if (which == SHELL_TOOLS)
                 return -1;
 
-        return shell_tools[which].function() & 0xff;
+        return shell_tool_call(which);
 }
 
 // Whether a name is one of the utilities, without running it.
@@ -3859,7 +3887,7 @@ static bool shell_tool_run(string_address name)
                 trap_default_all();
 
                 program_arguments_use(shell_argv, (b32)shell_argc);
-                exit(shell_tools[which].function() & 0xff);
+                exit(shell_tool_call(which));
         }
 
         if (child < 0)
@@ -4031,6 +4059,8 @@ fn shell_dot(writer write, string_address input)
                         run_line(source_text + at);
                         at = stop + 1;
                 }
+
+                shell_input_end();
 
                 source_depth--;
                 parse_nest_leave();

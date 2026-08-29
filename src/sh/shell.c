@@ -366,6 +366,7 @@ p8 address_to shell_buffer;
 positive shell_buffer_room;
 
 bool shell_output_attempted;
+bool shell_output_failed;
 
 static fn shell_write(address_any data, positive length)
 {
@@ -378,13 +379,23 @@ positive shell_output_file;
 
 fn redirect_writer(address_any data, positive length)
 {
+        positive wrote;
+
+        shell_output_attempted = true;
+
         if (!shell_output_file)
+        {
+                shell_output_failed = true;
                 return string_format(shell_output, "Redirection error file not open\n");
+        }
 
         if (length == 0)
                 length = string_length(data);
 
-        system_call_3(syscall(write), shell_output_file, (positive)data, length);
+        wrote = system_write_all(shell_output_file, data, length);
+
+        if (wrote != length)
+                shell_output_failed = true;
 }
 
 
@@ -1077,6 +1088,37 @@ fn run_line(string_address line)
 
         run_line_inner(line);
         shell_run_depth--;
+}
+
+/*
+        No next line exists.
+
+        An incomplete parse means "ask the reader for more" only while the
+        reader can still answer. At EOF it is a syntax error. Nested readers
+        (eval and dot) are special builtins, so their syntax error aborts the
+        containing non-interactive shell rather than quietly returning to the
+        outer line.
+*/
+fn shell_input_end()
+{
+        if (!shell_more)
+                return;
+
+        if (parse_eof_can_complete())
+        {
+                run_line_inner((string_address) "");
+
+                if (!shell_more)
+                        return;
+        }
+
+        string_format(exec_error, "Syntax error: unexpected end of input\n");
+        parse_reset();
+        shell_more = false;
+        shell_status = 2;
+
+        if (shell_run_depth)
+                expand_fatal();
 }
 
 // A prompt is for somebody watching. Asking the terminal about itself is the

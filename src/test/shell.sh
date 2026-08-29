@@ -1540,10 +1540,9 @@ answer 'no here-document ceiling' '{ echo "cat <<END"; i=0; while [ $i -lt 400 ]
 . /tmp/gh5.$$
 rm -f /tmp/gh5.$$'
 
-# A body line with nothing on it is dropped before the shell ever sees it:
-# the reader in programs/shell.c skips empty lines, which is right for a
-# command and wrong for the inside of a here-document.
-differs 'heredoc blank'  'a|b|' 0 'cat <<EOF
+# Empty physical lines must still reach the parser: inside a here-document,
+# they are data rather than ignorable command lines.
+answer 'heredoc blank' 'cat <<EOF
 a
 
 b
@@ -1555,18 +1554,15 @@ EOF'
 differs 'quoted pattern' 'yes|' 0 "p='a*'; case aXX in \"\$p\") echo yes;; *) echo no;; esac"
 differs 'escaped pattern' 'yes|' 0 'case aXb in a\*b) echo yes;; *) echo no;; esac'
 
-# The ceilings that are left, each of them refused out loud rather than
-# quietly answered wrong. A function goes as deep as the table its locals sit
-# in, which is a hundred and twenty eight calls.
-# echo drops an argument that expanded to nothing rather than writing the
-# separator around it, so "echo '' x" is one byte short.
-differs 'echo an empty word' 'x|' 0 'echo "" x'
+# The structural ceilings that remain are explicit. A function goes as deep
+# as the table its locals sit in, which is a hundred and twenty eight calls.
+# Empty quoted arguments must remain distinct words through builtin dispatch.
+answer 'echo an empty word' 'echo "" x'
 
-# A line the language is not finished with waits for the rest of it, and at
-# the end of the input there is no rest: dash calls each of these a syntax
-# error and this says nothing.
-differs 'case never closed' '' 0 'case x in x) echo m esac'
-differs 'twice negated'  '0|' 0 '! ! true; echo $?'
+# A line the language is not finished with waits for the rest of it. At EOF,
+# missing grammar is a syntax error rather than a successful empty parse.
+answer 'case never closed' 'case x in x) echo m esac'
+answer 'twice negated' '! ! true; echo $?'
 
 differs 'recursion has a floor' '' 1 'f() { [ $1 -le 0 ] && { echo bottom; return; }; f $(($1-1)); }; f 300'
 
@@ -1596,18 +1592,20 @@ answer 'forty readonly names' "$many_readonly readonly -p | grep '^readonly R' |
 # from. Everything but PATH and SHELL therefore begins unset.
 differs 'no environment' 'unset|' 0 '[ -n "$HOME" ] && echo set || echo unset'
 
-# A line that ends in the middle of a quote now waits for the rest of it, and
-# at the end of the input there is no rest: dash calls that a syntax error and
-# this says nothing.
-differs 'quote never closed' '' 0 'echo "open'
-differs 'a bare semicolon' '' 0 ';'
-differs 'backslash at the end' '' 0 'echo one\'
+# A line ending in the middle of a quote waits for more physical input. EOF
+# finalizes the reader and turns any still-open construct into a syntax error.
+answer 'quote never closed' 'echo "open'
+answer 'a bare semicolon' ';'
+answer 'backslash at the end' 'echo one\'
 
-# An unfinished line inside eval or inside a sourced file is dropped when the
-# line that ran them ends, rather than being carried into the next one. dash
-# calls the same thing a syntax error and stops.
-differs 'eval unfinished' 'second|' 0 "eval 'echo \"unclosed'
+# Nested readers must finalize independently: unfinished eval or sourced input
+# is a fatal syntax error and cannot leak into the outer parser.
+answer 'eval unfinished' "eval 'echo \"unclosed'
 echo second"
+answer 'dot unfinished' 'f=/tmp/syntax-dot.$$
+printf '\''echo "unclosed\n'\'' > "$f"
+. "$f"
+echo second'
 
 #
 #       What the shell has no answer for at all.

@@ -197,6 +197,14 @@ static positive here_names_used;
 static p8 parse_pending[PARSE_PENDING];
 static positive parse_pending_used;
 
+// A terminal backslash removed itself and only asked for the next physical
+// line. At EOF an empty next line completes that command; an open quote or
+// substitution remains unfinished and is a syntax error instead.
+bool parse_eof_can_complete()
+{
+        return parse_pending_used && !lex_unfinished(parse_pending);
+}
+
 fn parse_reset()
 {
         parse_pending_used = 0;
@@ -1284,10 +1292,18 @@ static b32 parse_pipeline()
         if (parse_state)
                 return 0;
 
-        while (parse_word_is(0, "!"))
+        if (parse_word_is(0, "!"))
         {
-                parse_nodes[index].flags = !parse_nodes[index].flags;
+                parse_nodes[index].flags = 1;
                 parse_position++;
+
+                // The grammar has one optional Bang, not a repeatable list.
+                // dash rejects a second one rather than cancelling the first.
+                if (parse_word_is(0, "!"))
+                {
+                        parse_state = PARSE_SYNTAX;
+                        return 0;
+                }
         }
 
         while (1)
@@ -1371,7 +1387,16 @@ static b32 parse_list()
         if (parse_state)
                 return 0;
 
-        parse_skip_separators();
+        parse_skip_newlines();
+
+        // A semicolon separates two commands; it cannot stand where no
+        // command precedes it. Treating it like a blank line made `;` a
+        // successful empty program and accepted repeated separators.
+        if (parse_look(0)->kind == PT_OP && parse_look(0)->op == OP_SEMI)
+        {
+                parse_state = PARSE_SYNTAX;
+                return 0;
+        }
 
         while (!parse_at_list_end())
         {
@@ -1399,7 +1424,13 @@ static b32 parse_list()
                 else
                         break;
 
-                parse_skip_separators();
+                parse_skip_newlines();
+
+                if (parse_look(0)->kind == PT_OP && parse_look(0)->op == OP_SEMI)
+                {
+                        parse_state = PARSE_SYNTAX;
+                        return 0;
+                }
         }
 
         parse_nodes[index].left = head;
