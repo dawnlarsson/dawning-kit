@@ -4759,6 +4759,15 @@ static positive grep_hold_first;
 static positive grep_hold_count;
 static positive grep_hold_used;
 static positive grep_hold_write;
+static p8 address_to grep_hold_color;
+static bool grep_coloring;
+static bool grep_color_ne;
+static bool grep_color_reverse;
+static string_address grep_colors;
+static positive grep_match_slot;
+
+static fn grep_color_line(string_address line, positive length, bool context,
+                          bool highlight);
 
 static bool grep_hold_make(positive lines)
 {
@@ -4773,8 +4782,12 @@ static bool grep_hold_make(positive lines)
         grep_hold_at = (positive address_to)text_arena_take(lines * sizeof(positive));
         grep_hold_size = (positive address_to)text_arena_take(lines * sizeof(positive));
         grep_hold_number = (positive address_to)text_arena_take(lines * sizeof(positive));
+        grep_hold_color = grep_coloring
+                              ? (p8 address_to)text_arena_take(GREP_HOLD_BYTES)
+                              : null;
 
-        return grep_hold_pool && grep_hold_at && grep_hold_size && grep_hold_number;
+        return grep_hold_pool && grep_hold_at && grep_hold_size &&
+               grep_hold_number && (!grep_coloring || grep_hold_color);
 }
 
 /*
@@ -4882,7 +4895,7 @@ static bool grep_hold_put(string_address line, positive length, positive number)
         return true;
 }
 
-static fn grep_hold_say(positive slot)
+static fn grep_hold_say(positive slot, bool highlight)
 {
         positive at = grep_hold_at[slot];
         positive length = grep_hold_size[slot];
@@ -4891,10 +4904,24 @@ static fn grep_hold_say(positive slot)
         if (head > length)
                 head = length;
 
-        text_put(grep_hold_pool + at, head);
+        if (!grep_coloring)
+        {
+                text_put(grep_hold_pool + at, head);
+
+                if (length > head)
+                        text_put(grep_hold_pool, length - head);
+
+                return;
+        }
 
         if (length > head)
-                text_put(grep_hold_pool, length - head);
+        {
+                memory_copy(grep_hold_color, grep_hold_pool + at, head);
+                memory_copy(grep_hold_color + head, grep_hold_pool, length - head);
+                grep_color_line(grep_hold_color, length, true, highlight);
+        }
+        else
+                grep_color_line(grep_hold_pool + at, length, true, highlight);
 }
 
 /*
@@ -4912,31 +4939,198 @@ static bool grep_offsets;
 static bool grep_tabbed;
 static bool grep_null_name;
 static positive grep_column;
+static file_color_span grep_color_value(string_address key,
+                                        string_address fallback)
+{
+        file_color_span answer = {fallback, fallback ? string_length(fallback) : 0};
+        positive wanted = string_length(key);
+        bool match_alias = string_equals(key, "ms") || string_equals(key, "mc");
+
+        for (string_address at = grep_colors; at && string_get(at);)
+        {
+                string_address stop = string_first_of_or_end(at, ':');
+                string_address mark = string_first_of_or_end(at, '=');
+
+                if (mark < stop)
+                {
+                        positive length = (positive)(mark - at);
+                        bool same = length == wanted &&
+                                    !string_compare_max(at, key, wanted);
+                        bool alias = match_alias && length == 2 &&
+                                     string_is(at, 'm') && string_is(at + 1, 't');
+
+                        if (same || alias)
+                        {
+                                answer.text = mark + 1;
+                                answer.length = (positive)(stop - mark - 1);
+                        }
+                }
+
+                at = string_get(stop) ? stop + 1 : stop;
+        }
+
+        return answer;
+}
+
+static fn grep_color_start(file_color_span color)
+{
+        if (!color.length)
+                return;
+
+        file_color_sgr(text_put, color);
+
+        if (!grep_color_ne)
+                text_put_string((string_address) "\033[K");
+}
+
+static fn grep_color_stop()
+{
+        text_put_string((string_address) "\033[m");
+
+        if (!grep_color_ne)
+                text_put_string((string_address) "\033[K");
+}
+
+static fn grep_color_field(address_any data, positive length,
+                           string_address key, string_address fallback)
+{
+        if (!grep_coloring)
+        {
+                text_put(data, length);
+                return;
+        }
+
+        file_color_span color = grep_color_value(key, fallback);
+
+        if (!color.length)
+        {
+                text_put(data, length);
+                return;
+        }
+
+        grep_color_start(color);
+        text_put(data, length);
+        grep_color_stop();
+}
+
+static fn grep_color_separator(p8 separator)
+{
+        grep_color_field(address_of separator, 1, (string_address) "se",
+                         (string_address) "36");
+}
 
 static fn grep_head(string_address name, p8 separator, positive number, positive offset)
 {
         if (grep_names)
         {
-                text_put_string(name);
-                text_put_character(grep_null_name ? '\0' : separator);
+                grep_color_field(name, string_length(name), (string_address) "fn",
+                                 (string_address) "35");
+
+                if (grep_null_name)
+                        text_put_character('\0');
+                else
+                        grep_color_separator(separator);
         }
 
         if (grep_numbered)
         {
-                positive_to_padded(text_put, number,
-                                   grep_tabbed ? grep_column : 1, ' ', 0);
-                text_put_character(separator);
+                file_color_span color = grep_color_value((string_address) "ln",
+                                                         (string_address) "32");
+
+                if (grep_coloring && color.length)
+                        grep_color_start(color);
+
+                positive_to_padded(text_put, number, grep_tabbed ? grep_column : 1,
+                                   ' ', 0);
+
+                if (grep_coloring && color.length)
+                        grep_color_stop();
+
+                grep_color_separator(separator);
         }
 
         if (grep_offsets)
         {
-                positive_to_padded(text_put, offset,
-                                   grep_tabbed ? grep_column : 1, ' ', 0);
-                text_put_character(separator);
+                file_color_span color = grep_color_value((string_address) "bn",
+                                                         (string_address) "32");
+
+                if (grep_coloring && color.length)
+                        grep_color_start(color);
+
+                positive_to_padded(text_put, offset, grep_tabbed ? grep_column : 1,
+                                   ' ', 0);
+
+                if (grep_coloring && color.length)
+                        grep_color_stop();
+
+                grep_color_separator(separator);
         }
 
         if (grep_tabbed && (grep_names || grep_numbered || grep_offsets))
                 text_put_character('\t');
+}
+
+static fn grep_color_line(string_address line, positive length, bool context,
+                          bool highlight)
+{
+        if (!grep_coloring)
+        {
+                text_put(line, length);
+                return;
+        }
+
+        bool context_style = context != grep_color_reverse;
+        file_color_span line_color = grep_color_value(
+            context_style ? (string_address) "cx" : (string_address) "sl",
+            (string_address) "");
+        file_color_span match_color = grep_color_value(
+            context ? (string_address) "mc" : (string_address) "ms",
+            (string_address) "01;31");
+        bool line_styled = line_color.length != 0;
+        positive from = 0;
+        positive search = 0;
+
+        if (line_styled)
+                grep_color_start(line_color);
+
+        while (highlight && search <= length &&
+               regex_search_longest(line, length, search))
+        {
+                positive whole_stop = regex_slots[1];
+                positive begin = regex_slots[grep_match_slot];
+                positive stop = regex_slots[grep_match_slot + 1];
+
+                if (stop == begin)
+                {
+                        if (begin >= length)
+                                break;
+
+                        search = begin + 1;
+                        continue;
+                }
+
+                text_put(line + from, begin - from);
+
+                if (match_color.length)
+                {
+                        grep_color_start(match_color);
+                        text_put(line + begin, stop - begin);
+                        grep_color_stop();
+                }
+                else
+                        text_put(line + begin, stop - begin);
+
+                if (line_styled)
+                        grep_color_start(line_color);
+
+                from = stop;
+                search = whole_stop;
+        }
+
+        text_put(line + from, length - from);
+
+        if (line_styled)
+                grep_color_stop();
 }
 
 /*
@@ -5232,9 +5426,8 @@ static bool grep_walk(string_address path, b32 depth)
         out, and grep -J is still the mistake it always was.
 
         Not here, and deliberately: -P and --perl-regexp, which is a second
-        regular expression language; and --color=always, whose escape codes
-        would have to be woven through every line this prints for an answer
-        no script reads. The when words that mean no colour are taken.
+        regular expression language. Colour is handled at the output seams,
+        after matching, so it never enters byte offsets or regular expressions.
 */
 static const file_long grep_longs[] = {
     {(string_address) "extended-regexp", 'E'},
@@ -5431,6 +5624,12 @@ static b32 text_grep()
         grep_path_count = 0;
         grep_expanded = false;
         grep_skip_directories = false;
+        grep_coloring = false;
+        grep_color_ne = false;
+        grep_color_reverse = false;
+        grep_colors = null;
+        grep_match_slot = 0;
+        grep_hold_color = null;
         text_arena_used = 0;
 
         if (!file_take(address_of taking))
@@ -5514,15 +5713,24 @@ static b32 text_grep()
                 return text_done(2);
         }
 
-        // Colour is a terminal's business, and the one word here that asks
-        // for it is refused rather than answered wrongly.
         said = file_option_value(address_of taking, 'W');
 
-        if (said && !grep_word_is(said, "never", "no", "none") &&
-            !grep_word_is(said, "auto", "tty", "if-tty"))
+        if (flags & FILE_FLAG('W'))
         {
-                text_error(said, "invalid argument for --color");
-                return text_done(2);
+                b32 when = file_color_when(said, FILE_COLOR_AUTO);
+
+                if (when < 0)
+                {
+                        text_error(said, "invalid argument for --color");
+                        return text_done(2);
+                }
+
+                grep_coloring = file_color_active(when);
+                grep_colors = file_environment((string_address) "GREP_COLORS");
+                grep_color_ne = file_color_has(grep_colors, (string_address) "ne");
+                grep_color_reverse = invert &&
+                                     file_color_has(grep_colors,
+                                                    (string_address) "rv");
         }
 
         for (positive k = 0; k < 4; k++)
@@ -5608,6 +5816,9 @@ static b32 text_grep()
                 around[have] = '\0';
                 memory_copy(grep_pattern, around, have + 1);
                 grep_pattern_length = have;
+
+                if (whole_word)
+                        grep_match_slot = 4;
         }
 
         if (!never && !regex_compile(grep_pattern, extended, icase, false))
@@ -5801,16 +6012,19 @@ static b32 text_grep()
                                         if (grouped && separator &&
                                             (split || (shown && number > shown + 1)))
                                         {
-                                                text_put_string(separator);
+                                                grep_color_field(
+                                                    separator,
+                                                    string_length(separator),
+                                                    (string_address) "se",
+                                                    (string_address) "36");
                                                 text_put_character('\n');
                                         }
 
                                         split = false;
                                         grep_head(shown_name, '-', number, at);
-                                        text_put_line();
-
-                                        if (!text_line_ended)
-                                                text_put_character(text_delimiter);
+                                        grep_color_line(text_line, text_line_length,
+                                                        true, invert);
+                                        text_put_character(text_delimiter);
 
                                         shown = number;
                                         shown_any = true;
@@ -5867,13 +6081,17 @@ static b32 text_grep()
                                         if (grouped && separator &&
                                             (split || (shown && n > shown + 1)))
                                         {
-                                                text_put_string(separator);
+                                                grep_color_field(
+                                                    separator,
+                                                    string_length(separator),
+                                                    (string_address) "se",
+                                                    (string_address) "36");
                                                 text_put_character('\n');
                                         }
 
                                         split = false;
                                         grep_head(shown_name, '-', n, 0);
-                                        grep_hold_say(slot);
+                                        grep_hold_say(slot, invert);
                                         text_put_character(text_delimiter);
                                         shown = n;
                                         shown_any = true;
@@ -5887,8 +6105,9 @@ static b32 text_grep()
                                 while (from <= text_line_length &&
                                        regex_search_longest(text_line, text_line_length, from))
                                 {
-                                        positive begin = regex_slots[0];
-                                        positive stop = regex_slots[1];
+                                        positive whole_stop = regex_slots[1];
+                                        positive begin = regex_slots[grep_match_slot];
+                                        positive stop = regex_slots[grep_match_slot + 1];
 
                                         if (stop == begin)
                                         {
@@ -5899,11 +6118,14 @@ static b32 text_grep()
                                         if (!invert)
                                         {
                                                 grep_head(shown_name, ':', number, at + begin);
-                                                text_put(text_line + begin, stop - begin);
+                                                grep_color_field(
+                                                    text_line + begin, stop - begin,
+                                                    (string_address) "ms",
+                                                    (string_address) "01;31");
                                                 text_put_character(text_delimiter);
                                         }
 
-                                        from = stop;
+                                        from = whole_stop;
                                 }
 
                                 shown = number;
@@ -5919,16 +6141,18 @@ static b32 text_grep()
                         if (grouped && separator &&
                             (split || (shown && number > shown + 1)))
                         {
-                                text_put_string(separator);
+                                grep_color_field(separator,
+                                                 string_length(separator),
+                                                 (string_address) "se",
+                                                 (string_address) "36");
                                 text_put_character('\n');
                         }
 
                         split = false;
                         grep_head(shown_name, ':', number, at);
-                        text_put_line();
-
-                        if (!text_line_ended)
-                                text_put_character(text_delimiter);
+                        grep_color_line(text_line, text_line_length, false,
+                                        !invert);
+                        text_put_character(text_delimiter);
 
                         shown = number;
                         shown_any = true;
@@ -5944,7 +6168,10 @@ static b32 text_grep()
                 {
                         if ((matches != 0) == listing)
                         {
-                                text_put_string(shown_name);
+                                grep_color_field(shown_name,
+                                                 string_length(shown_name),
+                                                 (string_address) "fn",
+                                                 (string_address) "35");
                                 text_put_character(grep_null_name ? '\0' : '\n');
                         }
 
@@ -5955,8 +6182,15 @@ static b32 text_grep()
                 {
                         if (grep_names)
                         {
-                                text_put_string(shown_name);
-                                text_put_character(grep_null_name ? '\0' : ':');
+                                grep_color_field(shown_name,
+                                                 string_length(shown_name),
+                                                 (string_address) "fn",
+                                                 (string_address) "35");
+
+                                if (grep_null_name)
+                                        text_put_character('\0');
+                                else
+                                        grep_color_separator(':');
                         }
 
                         positive_to_string(text_put, matches);

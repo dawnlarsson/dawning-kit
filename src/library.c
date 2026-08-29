@@ -67,12 +67,15 @@
         A .set is a second label on the same address, so there is no wrapper
         and no jump, and which names get one depends on who is linking.
 
-        159 routines (153 public, 6 local), 159 of them on all three.
+        172 routines (166 public, 6 local), 172 of them on all three.
         Raw C purity: 0 function bodies, 0 object definitions, 0 body macros, and 0 object macros (all forbidden).
 
           routine                        scope   x86_64  arm64   riscv64
           ------------------------------ ------- ------- ------- -------
           _start                         public  yes     yes     yes
+          absolute                       public  yes     yes     yes
+          absolute_whole                 public  yes     yes     yes
+          absolute_wide                  public  yes     yes     yes
           bipolar_into                   public  yes     yes     yes
           bipolar_into_core              local   yes     yes     yes
           bipolar_into_string            public  yes     yes     yes
@@ -84,6 +87,15 @@
           buffered_write_deferred_equal  public  yes     yes     yes
           byte_class_holds               public  yes     yes     yes
           byte_class_index               public  yes     yes     yes
+          byte_is_alnum                  public  yes     yes     yes
+          byte_is_alpha                  public  yes     yes     yes
+          byte_is_digit                  public  yes     yes     yes
+          byte_is_hexadecimal            public  yes     yes     yes
+          byte_is_lower                  public  yes     yes     yes
+          byte_is_space                  public  yes     yes     yes
+          byte_is_upper                  public  yes     yes     yes
+          byte_to_lower                  public  yes     yes     yes
+          byte_to_upper                  public  yes     yes     yes
           bytes_reverse_16               public  yes     yes     yes
           bytes_reverse_32               public  yes     yes     yes
           decimal_to_string              public  yes     yes     yes
@@ -176,6 +188,7 @@
           socket_receive                 public  yes     yes     yes
           socket_send                    public  yes     yes     yes
           socket_shutdown                public  yes     yes     yes
+          square_root                    public  yes     yes     yes
           string_append                  public  yes     yes     yes
           string_bipolar                 public  yes     yes     yes
           string_compare                 public  yes     yes     yes
@@ -13239,6 +13252,10 @@ __asm__(
 //      Byte order builds everywhere; the socket calls inside are guarded
 //      for Linux on their own.
 #include "platform/socket.inc"
+
+//      The small routines a C program expects, and the names it knows
+//      them by. Arithmetic and one instruction, never a table.
+#include "platform/standard.inc"
 
 #if !defined(WINDOWS)
 

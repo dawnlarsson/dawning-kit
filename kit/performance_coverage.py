@@ -145,6 +145,13 @@ cover('benchmark_context', 'kit/bench_writer_text.c', 'buffered_write_core',
 # "hardware floor" assertion without measured evidence.
 cover('static_leaf', 'src/platform/linux.inc', '_start exit sleep',
       'startup or direct Linux syscall ABI body; statically reviewed only')
+cover('static_leaf', 'src/platform/standard.inc', '''
+byte_is_alnum byte_is_alpha byte_is_digit byte_is_hexadecimal byte_is_lower
+byte_is_space byte_is_upper byte_to_lower byte_to_upper
+absolute_whole absolute_wide absolute square_root
+''', 'branchless range test, sign fold, or the hardware sqrt instruction; '
+     'no loop to time and nothing between it and the silicon')
+
 cover('static_leaf', 'src/platform/socket.inc', '''
 bytes_reverse_16 bytes_reverse_32 network_load_16 network_load_32
 network_store_16 network_store_32 socket_accept socket_bind socket_close

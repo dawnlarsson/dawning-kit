@@ -1814,6 +1814,11 @@ static bool file_color_active(b32 when)
         if (when != FILE_COLOR_AUTO || !file_output_terminal())
                 return false;
 
+        string_address term = file_environment((string_address) "TERM");
+
+        if (term && string_equals(term, "dumb"))
+                return false;
+
         string_address no_color = file_environment((string_address) "NO_COLOR");
 
         return !no_color || !string_get(no_color);
@@ -1849,9 +1854,22 @@ static file_color_span file_color_value(string_address table, string_address key
 
 static bool file_color_has(string_address table, string_address key)
 {
-        file_color_span found = file_color_value(table, key, null);
+        positive wanted = string_length(key);
 
-        return found.text != null;
+        for (string_address at = table; at && string_get(at);)
+        {
+                string_address stop = string_first_of_or_end(at, ':');
+                string_address mark = string_first_of_or_end(at, '=');
+                string_address end_of_key = mark < stop ? mark : stop;
+
+                if ((positive)(end_of_key - at) == wanted &&
+                    !string_compare_max(at, key, wanted))
+                        return true;
+
+                at = string_get(stop) ? stop + 1 : stop;
+        }
+
+        return false;
 }
 
 static bool file_color_span_is(file_color_span span, string_address text)
@@ -2071,6 +2089,7 @@ static bool ls_slash;
 static bool ls_headings;
 static bool ls_coloring;
 static bool ls_color_started;
+static bool ls_terminal;
 static string_address ls_colors;
 
 static b32 ls_status;
@@ -2374,12 +2393,73 @@ static file_color_span ls_name_color(string_address directory,
         return file_color_value(ls_colors, key, fallback);
 }
 
+static fn ls_name_text(string_address name)
+{
+        bool quoted = false;
+
+        if (ls_terminal)
+                for (positive i = 0; string_get(name + i); i++)
+                        if (string_get(name + i) < 32 || string_get(name + i) == 127)
+                        {
+                                quoted = true;
+                                break;
+                        }
+
+        if (!quoted)
+        {
+                log(name, 0);
+                return;
+        }
+
+        for (positive at = 0; string_get(name + at);)
+        {
+                positive first = at;
+
+                while (string_get(name + at) >= 32 && string_get(name + at) != 127)
+                        at++;
+
+                if (at > first)
+                {
+                        log("'", 1);
+                        log(name + first, at - first);
+                        log("'", 1);
+                }
+
+                if (!string_get(name + at))
+                        break;
+
+                p8 escaped[4] = {'\\', 0, 0, 0};
+                p8 byte = string_get(name + at++);
+                positive length = 2;
+
+                escaped[1] = byte == '\n'   ? 'n'
+                             : byte == '\t' ? 't'
+                             : byte == '\r' ? 'r'
+                             : byte == '\b' ? 'b'
+                             : byte == '\f' ? 'f'
+                             : byte == '\v' ? 'v'
+                                             : 0;
+
+                if (!escaped[1])
+                {
+                        escaped[1] = (p8)('0' + ((byte >> 6) & 7));
+                        escaped[2] = (p8)('0' + ((byte >> 3) & 7));
+                        escaped[3] = (p8)('0' + (byte & 7));
+                        length = 4;
+                }
+
+                log("$'", 2);
+                log(escaped, length);
+                log("'", 1);
+        }
+}
+
 static fn ls_name_say(string_address directory, ls_entry address_to entry,
                       string_address name)
 {
         if (!ls_coloring)
         {
-                log(name, 0);
+                ls_name_text(name);
                 return;
         }
 
@@ -2387,7 +2467,7 @@ static fn ls_name_say(string_address directory, ls_entry address_to entry,
 
         if (!color.text || !color.length)
         {
-                log(name, 0);
+                ls_name_text(name);
                 return;
         }
 
@@ -2402,7 +2482,7 @@ static fn ls_name_say(string_address directory, ls_entry address_to entry,
         }
 
         file_color_sgr(log, color);
-        log(name, 0);
+        ls_name_text(name);
         file_color_sgr(log, reset);
 }
 
@@ -2743,6 +2823,7 @@ static b32 file_ls()
         ls_slash = (flags & FILE_FLAG('p')) != 0;
         ls_coloring = false;
         ls_color_started = false;
+        ls_terminal = file_output_terminal();
         ls_colors = file_environment((string_address) "LS_COLORS");
 
         if (ls_colors && string_get(ls_colors) &&

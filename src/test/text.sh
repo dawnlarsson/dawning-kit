@@ -121,6 +121,163 @@ compare()
                 "$(head -c 34 "$work/got" | tr '\n\t' '|>')[$got_status]"
 }
 
+grep_color_compare()
+{
+        name=$1
+        colors=$2
+        shift 2
+
+        GREP_COLORS=$colors grep "$@" > "$work/want" 2>/dev/null
+        want_status=$?
+        GREP_COLORS=$colors "$bin/grep" "$@" > "$work/got" 2>/dev/null
+        got_status=$?
+
+        if cmp -s "$work/want" "$work/got" && [ "$want_status" = "$got_status" ]; then
+                pass=$((pass + 1))
+                return 0
+        fi
+
+        fail=$((fail + 1))
+        printf '  %-8s %-30s want %-24s got %s\n' \
+                "$group" "$name" \
+                "$(head -c 34 "$work/want" | tr '\n\t' '|>')[$want_status]" \
+                "$(head -c 34 "$work/got" | tr '\n\t' '|>')[$got_status]"
+}
+
+grep_color_status()
+{
+        name=$1
+        shift
+
+        "$bin/grep" "$@" >/dev/null 2>&1
+        got_status=$?
+
+        # The box carries a grep marked "3.12-modified" whose invalid-color
+        # branch prints 4096 bytes of usage text and exits zero. Upstream GNU
+        # grep rejects the word with status two; keep that contract here.
+        if [ "$got_status" = 2 ]; then
+                pass=$((pass + 1))
+        else
+                fail=$((fail + 1))
+                printf '  %-8s %-30s want status 2 got %s\n' \
+                        "$group" "$name" "$got_status"
+        fi
+}
+
+grep_pty_capture()
+{
+        output=$1
+        colors=$2
+        no_color=$3
+        program=$4
+        shift 4
+
+        python3 - "$output" "$colors" "$no_color" "$program" "$@" <<'PY'
+import errno
+import os
+import pty
+import sys
+
+output, colors, no_color, program, *arguments = sys.argv[1:]
+pid, descriptor = pty.fork()
+
+if pid == 0:
+    os.environ["GREP_COLORS"] = colors
+    os.environ["TERM"] = "xterm"
+    if no_color == "set":
+        os.environ["NO_COLOR"] = "1"
+    else:
+        os.environ.pop("NO_COLOR", None)
+    os.execvp(program, [program, *arguments])
+
+data = bytearray()
+while True:
+    try:
+        block = os.read(descriptor, 65536)
+    except OSError as error:
+        if error.errno == errno.EIO:
+            break
+        raise
+    if not block:
+        break
+    data.extend(block)
+
+_, status = os.waitpid(pid, 0)
+with open(output, "wb") as stream:
+    stream.write(data)
+sys.exit(os.waitstatus_to_exitcode(status))
+PY
+}
+
+grep_color_pty_compare()
+{
+        name=$1
+        colors=$2
+        shift 2
+
+        grep_pty_capture "$work/want" "$colors" unset grep "$@"
+        want_status=$?
+        grep_pty_capture "$work/got" "$colors" unset "$bin/grep" "$@"
+        got_status=$?
+
+        if cmp -s "$work/want" "$work/got" && [ "$want_status" = "$got_status" ]; then
+                pass=$((pass + 1))
+        else
+                fail=$((fail + 1))
+                printf '  %-8s %-30s want pty[%s] got pty[%s]\n' \
+                        "$group" "$name" "$want_status" "$got_status"
+        fi
+}
+
+grep_color_no_color()
+{
+        grep_pty_capture "$work/want" 'mt=31' unset grep --color=never alpha "$work/grep_color"
+        want_status=$?
+        grep_pty_capture "$work/got" 'mt=31' set "$bin/grep" --color=auto alpha "$work/grep_color"
+        got_status=$?
+
+        if cmp -s "$work/want" "$work/got" && [ "$want_status" = "$got_status" ]; then
+                pass=$((pass + 1))
+        else
+                fail=$((fail + 1))
+                printf '  %-8s %-30s NO_COLOR auto leaked ANSI or changed output\n' \
+                        "$group" 'colour NO_COLOR'
+        fi
+}
+
+grep_color_no_color_always()
+{
+        NO_COLOR=1 GREP_COLORS='mt=31' grep --color=always alpha "$work/grep_color" > "$work/want" 2>/dev/null
+        want_status=$?
+        NO_COLOR=1 GREP_COLORS='mt=31' "$bin/grep" --color=always alpha "$work/grep_color" > "$work/got" 2>/dev/null
+        got_status=$?
+
+        if cmp -s "$work/want" "$work/got" && [ "$want_status" = "$got_status" ]; then
+                pass=$((pass + 1))
+        else
+                fail=$((fail + 1))
+                printf '  %-8s %-30s NO_COLOR overrode explicit always\n' \
+                        "$group" 'colour NO_COLOR always'
+        fi
+}
+
+grep_color_multicall()
+{
+        command="GREP_COLORS=mt=31 grep --color=always alpha '$work/grep_color'; grep alpha '$work/grep_color'"
+        /bin/sh -c "$command" > "$work/want" 2>/dev/null
+        want_status=$?
+        "${bin%/bin}/shell" -c "$command" > "$work/got" 2>/dev/null
+        got_status=$?
+
+        if cmp -s "$work/want" "$work/got" && [ "$want_status" = "$got_status" ]; then
+                pass=$((pass + 1))
+        else
+                fail=$((fail + 1))
+                printf '  %-8s %-30s colour state leaked between calls\n' \
+                        "$group" 'colour multicall reset'
+        fi
+}
+
 # Output errors are part of a utility's result. /dev/full accepts opens and
 # rejects writes, so it reaches both direct writes and the final buffered
 # flush without depending on a pipe reader's timing.
@@ -900,6 +1057,12 @@ printf 'gamma only\n' > "$work/tree/three.txt"
 printf 'alpha inner\n' > "$work/tree/inner/deep.txt"
 printf 'alpha other\n' > "$work/tree/other/far.log"
 ln -s one.txt "$work/tree/link.txt"
+printf 'alpha alpha beta\nzero\nalpha tail\n' > "$work/grep_color"
+printf 'raw\033[0m alpha byte\n' > "$work/grep_color_control"
+printf 'ALPHA alpha beta\na.*a\nsword word wordy\nalpha\nababa\n' > "$work/grep_color_patterns"
+printf 'final alpha' > "$work/grep_color_final"
+grep_color_name=$(printf 'name\033byte')
+printf 'alpha named\n' > "$work/$grep_color_name"
 printf '*.log\nthree*\n' > "$work/grep_excludes"
 printf 'one.txt\n' > "$work/grep_excludes_two"
 printf '*.txt' > "$work/grep_excludes_nonl"
@@ -951,6 +1114,33 @@ compare 'colour never'    grep -  --color=never alpha "$work/tree/one.txt"
 compare 'colour auto'     grep -  --color=auto alpha "$work/tree/one.txt"
 compare 'colour bare'     grep -  --color alpha "$work/tree/one.txt"
 compare 'colour british'  grep -  --colour=never alpha "$work/tree/one.txt"
+grep_color_compare 'colour always' '' --color=always alpha "$work/grep_color"
+grep_color_compare 'colour british always' '' --colour=always alpha "$work/grep_color"
+grep_color_compare 'colour repeated' 'mt=35' --color=always alpha "$work/grep_color"
+grep_color_compare 'colour only matching' 'mt=35' --color=always -o alpha "$work/grep_color"
+grep_color_compare 'colour numbered named offset' 'mt=31:fn=35:ln=32:bn=33:se=36' --color=always -Hnb alpha "$work/grep_color"
+grep_color_compare 'colour context' 'sl=44:ms=31:cx=45:mc=32:se=36' --color=always -n -A1 alpha "$work/grep_color"
+grep_color_compare 'colour no erase' 'mt=31:ne' --color=always alpha "$work/grep_color"
+grep_color_compare 'colour invert reverse' 'sl=44:ms=31:cx=45:mc=32:rv:ne' --color=always -v -A1 alpha "$work/grep_color"
+grep_color_compare 'colour zero width' 'mt=31:ne' --color=always '^' "$work/grep_color"
+grep_color_compare 'colour count' 'fn=35:se=36' --color=always -Hc alpha "$work/grep_color"
+grep_color_compare 'colour listing' 'fn=35' --color=always -l alpha "$work/grep_color"
+grep_color_compare 'colour raw input' 'mt=31' --color=always alpha "$work/grep_color_control"
+grep_color_compare 'colour raw filename' 'mt=31:fn=35:se=36' --color=always -H alpha "$work/$grep_color_name"
+grep_color_compare 'colour nul data' 'mt=31' --color=always -az a "$work/zeros"
+grep_color_compare 'colour two expressions' 'mt=31:ne' --color=always -e alpha -e beta "$work/grep_color_patterns"
+grep_color_compare 'colour fixed metacharacters' 'mt=31:ne' --color=always -F 'a.*a' "$work/grep_color_patterns"
+grep_color_compare 'colour ignore case' 'mt=31:ne' --color=always -i alpha "$work/grep_color_patterns"
+grep_color_compare 'colour whole word' 'mt=31:ne' --color=always -w word "$work/grep_color_patterns"
+grep_color_compare 'colour whole line' 'mt=31:ne' --color=always -x alpha "$work/grep_color_patterns"
+grep_color_compare 'colour empty expression' 'mt=31:ne' --color=always -e '' "$work/grep_color_patterns"
+grep_color_compare 'colour overlapping alternatives' 'mt=31:ne' --color=always -E 'aba|ba' "$work/grep_color_patterns"
+grep_color_compare 'colour final unterminated' 'mt=31:ne' --color=always alpha "$work/grep_color_final"
+grep_color_status 'colour invalid' --color=sometimes alpha "$work/grep_color"
+grep_color_pty_compare 'colour auto pty' 'mt=31' --color=auto alpha "$work/grep_color"
+grep_color_no_color
+grep_color_no_color_always
+grep_color_multicall
 
 case_start grep2
 compare 'nested star'    grep m  '\(ab\)*'

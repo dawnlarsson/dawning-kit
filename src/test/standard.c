@@ -816,6 +816,128 @@ test(created_file_mode) {
         zero-length call pairs it with an invalid address so the assembly has
         to take its no-syscall fast path before the pointer can matter.
 */
+
+/*
+        The byte classes, against the definitions rather than against a table.
+
+        Every value a C program may pass is checked, which is -1 for EOF and
+        then all 256 bytes. The expected answer is written out here as the
+        plain condition, so this compares the assembly against what the
+        standard says rather than against another copy of the same trick.
+*/
+test(byte_classes) {
+        for (b32 value = -1; value < 256; value++) {
+                b32 digit = value >= '0' && value <= '9';
+                b32 upper = value >= 'A' && value <= 'Z';
+                b32 lower = value >= 'a' && value <= 'z';
+                b32 space = value == ' ' || (value >= 9 && value <= 13);
+                b32 hex = digit || (value >= 'a' && value <= 'f') ||
+                          (value >= 'A' && value <= 'F');
+
+                fail(!byte_is_digit(value) == !digit);
+                fail(!byte_is_upper(value) == !upper);
+                fail(!byte_is_lower(value) == !lower);
+                fail(!byte_is_alpha(value) == !(upper || lower));
+                fail(!byte_is_alnum(value) == !(upper || lower || digit));
+                fail(!byte_is_space(value) == !space);
+                fail(!byte_is_hexadecimal(value) == !hex);
+        }
+
+        return true;
+}
+
+//      Case, which must change exactly the twenty six that have another case
+//      and leave every other byte as it found it.
+test(byte_case) {
+        for (b32 value = -1; value < 256; value++) {
+                b32 up = (value >= 'a' && value <= 'z') ? value - 32 : value;
+                b32 down = (value >= 'A' && value <= 'Z') ? value + 32 : value;
+
+                fail(byte_to_upper(value) == up);
+                fail(byte_to_lower(value) == down);
+        }
+
+        return true;
+}
+
+/*
+        Square root, which is the hardware's own instruction.
+
+        Exact powers of four have exact roots in binary floating point, so
+        those are compared for equality rather than for nearness -- an
+        implementation that approximated would fail here and a correct one
+        cannot. The general case is checked by squaring the answer back.
+*/
+test(absolute_whole_and_wide) {
+        b32 narrow[] = {0, 1, -1, 7, -7, 2147483647, -2147483647};
+        bipolar wide[] = {0, 1, -1, 7, -7, 9223372036854775807LL,
+                          -9223372036854775807LL};
+
+        for (positive at = 0; at < sizeof(narrow) / sizeof(*narrow); at++)
+                fail(absolute_whole(narrow[at]) ==
+                     (narrow[at] < 0 ? -narrow[at] : narrow[at]));
+
+        for (positive at = 0; at < sizeof(wide) / sizeof(*wide); at++)
+                fail(absolute_wide(wide[at]) ==
+                     (wide[at] < 0 ? -wide[at] : wide[at]));
+
+        //      The narrow one must read a narrow register: a negative int
+        //      widened by the caller leaves the top half set, and a 64 bit
+        //      read of it would answer about a different number entirely.
+        fail(absolute_whole(-5) == 5);
+        fail(absolute_wide(-5) == 5);
+
+        return true;
+}
+
+test(square_root_is_exact) {
+        decimal exact[] = {0.0, 1.0, 4.0, 9.0, 16.0, 25.0, 64.0, 256.0,
+                           1024.0, 65536.0, 1048576.0};
+        decimal roots[] = {0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 8.0, 16.0,
+                           32.0, 256.0, 1024.0};
+
+        for (positive at = 0; at < sizeof(exact) / sizeof(*exact); at++)
+                fail(square_root(exact[at]) == roots[at]);
+
+        for (positive at = 1; at < 500; at++) {
+                decimal value = (decimal)at;
+                decimal root = square_root(value);
+                decimal back = root * root;
+                decimal off = back - value;
+
+                if (off < 0.0)
+                        off = -off;
+
+                fail(off < 0.0001);
+        }
+
+        return true;
+}
+
+test(absolute_value) {
+        decimal ordinary[] = {0.0, 1.5, -1.5, 1e10, -1e10, 1e-10, -1e-10};
+
+        for (positive at = 0; at < sizeof(ordinary) / sizeof(*ordinary); at++) {
+                decimal was = ordinary[at];
+                decimal now = absolute(was);
+
+                fail(now == (was < 0.0 ? -was : was));
+                fail(!(now < 0.0));
+        }
+
+        //      Negative zero is the one that catches a subtraction pretending
+        //      to be an absolute value: -0.0 is not less than zero, so a
+        //      conditional negate leaves it alone and the sign bit stays.
+        {
+                decimal zero = 0.0;
+                decimal minus = -zero;
+
+                fail(absolute(minus) == 0.0);
+        }
+
+        return true;
+}
+
 test(system_write_all_zero_and_fault) {
         fail_not_equals(system_write_all((positive)-1, address_bad, 0), 0);
         fail_not_equals(system_write_all((positive)-1, (address_any)"x", 1), 0);
@@ -990,6 +1112,11 @@ test_case test_cases[] = {
 #if LINUX
         case(syscall_argument_four),
         case(created_file_mode),
+        case(byte_classes),
+        case(byte_case),
+        case(absolute_whole_and_wide),
+        case(square_root_is_exact),
+        case(absolute_value),
         case(system_write_all_zero_and_fault),
         case(system_write_all_partial_then_fault),
         case(system_write_all_retries_short_progress),

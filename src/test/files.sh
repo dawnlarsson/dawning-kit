@@ -310,6 +310,68 @@ ls_color_unset() {
         generated_answer 'color environment unset' "$want_status" "$got_status"
 }
 
+ls_pty_capture() {
+        output=$1
+        no_color=$2
+        program=$3
+        shift 3
+
+        python3 - "$output" "$no_color" "$program" "$@" <<'PY'
+import errno
+import os
+import pty
+import sys
+
+output, no_color, program, *arguments = sys.argv[1:]
+pid, descriptor = pty.fork()
+if pid == 0:
+    os.environ["LS_COLORS"] = "di=34:ln=36:pi=33:ex=32:fi=0:rs=0"
+    os.environ["TERM"] = "xterm"
+    if no_color == "set":
+        os.environ["NO_COLOR"] = "1"
+    else:
+        os.environ.pop("NO_COLOR", None)
+    os.execvp(program, [program, *arguments])
+
+data = bytearray()
+while True:
+    try:
+        block = os.read(descriptor, 65536)
+    except OSError as error:
+        if error.errno == errno.EIO:
+            break
+        raise
+    if not block:
+        break
+    data.extend(block)
+_, status = os.waitpid(pid, 0)
+with open(output, "wb") as stream:
+    stream.write(data)
+sys.exit(os.waitstatus_to_exitcode(status))
+PY
+}
+
+ls_color_pty_tests() {
+        ls_pty_capture "$work/want" unset ls --color=auto -1 "$colored"; want_status=$?
+        ls_pty_capture "$work/got" unset "$binaries/ls" --color=auto -1 "$colored"; got_status=$?
+        generated_answer 'color auto pty' "$want_status" "$got_status"
+
+        ls_pty_capture "$work/want" unset ls --color=never -1 "$colored"; want_status=$?
+        ls_pty_capture "$work/got" set "$binaries/ls" --color=auto -1 "$colored"; got_status=$?
+        generated_answer 'color NO_COLOR auto' "$want_status" "$got_status"
+
+        ls_pty_capture "$work/want" set ls --color=always -1 "$colored"; want_status=$?
+        ls_pty_capture "$work/got" set "$binaries/ls" --color=always -1 "$colored"; got_status=$?
+        generated_answer 'color NO_COLOR always' "$want_status" "$got_status"
+}
+
+ls_color_multicall() {
+        command="LS_COLORS=di=34:fi=0 ls --color=always -1 '$colored'; ls -1 '$colored'"
+        /bin/sh -c "$command" > "$work/want" 2>/dev/null; want_status=$?
+        "${binaries%/bin}/shell" -c "$command" > "$work/got" 2>/dev/null; got_status=$?
+        generated_answer 'color multicall reset' "$want_status" "$got_status"
+}
+
 refuses_du_depth_ceiling() {
         if "$binaries/du" "$1" > "$work/got" 2> "$work/got.err"; then
                 got_status=0
@@ -793,6 +855,8 @@ ls_color_custom 'link target color' 'ln=target:di=34:or=31' --color=always -1 "$
 ls_color_custom 'literal suffix pattern' '*.txt=33:*.?=32' --color=always -1 "$colored"
 ls_color_custom 'malformed colors' 'di=34:broken' --color=always -1 "$colored"
 answered 'bad color word' ls --color=sometimes -1 "$colored"
+ls_color_pty_tests
+ls_color_multicall
 near 'plain'            'cat' ls "$fixture"
 near 'all'              'cat' ls -a "$fixture"
 near 'almost all'       'cat' ls -A "$fixture"
