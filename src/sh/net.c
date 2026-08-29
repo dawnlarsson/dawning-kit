@@ -403,21 +403,14 @@ static b32 net_host(void)
                         log_flush();
                         return 1;
                 }
+
+                status = dns_resolve((p32)server, shell_argv[1], address_of found, 5);
         }
         else
         {
-                server = dns_server_from_file((string_address) "/etc/resolv.conf");
-
-                if (server < 0)
-                {
-                        string_format(log, "host: no nameserver in /etc/resolv.conf, "
-                                           "and none given\n");
-                        log_flush();
-                        return 1;
-                }
+                status = dns_resolve_any((string_address) "/etc/resolv.conf",
+                                         shell_argv[1], address_of found, 3);
         }
-
-        status = dns_resolve((p32)server, shell_argv[1], address_of found, 5);
 
         switch (status)
         {
@@ -434,6 +427,14 @@ static b32 net_host(void)
                 break;
         case DNS_NO_REPLY:
                 string_format(log, "host: no reply from the nameserver\n");
+                break;
+        case DNS_NO_SERVER:
+                //      Not a bad answer -- no way to ask at all. Before an
+                //      address exists there is no route to a nameserver, and
+                //      saying the reply made no sense would send somebody
+                //      looking at the wrong end of it.
+                string_format(log, "host: cannot reach a nameserver; "
+                                   "is the network up? try: ip auto\n");
                 break;
         case DNS_REFUSED:
                 string_format(log, "host: the nameserver refused the question\n");
@@ -505,17 +506,8 @@ static b32 net_fetch(void)
         }
         else
         {
-                bipolar nameserver = dns_server_from_file(
-                    (string_address) "/etc/resolv.conf");
-
-                if (nameserver < 0)
-                {
-                        string_format(log, "fetch: no nameserver to ask about %s\n", name);
-                        log_flush();
-                        return 1;
-                }
-
-                if (dns_resolve((p32)nameserver, name, address_of host, 5) != DNS_OK)
+                if (dns_resolve_any((string_address) "/etc/resolv.conf", name,
+                                    address_of host, 3) != DNS_OK)
                 {
                         string_format(log, "fetch: cannot resolve %s\n", name);
                         log_flush();
@@ -565,15 +557,30 @@ static b32 net_fetch(void)
 }
 
 
-//      /etc/resolv.conf, written so the resolver can find it next time.
+/*
+        /etc/resolv.conf, written with a resolver that is known to work.
+
+        Cloudflare goes first, and the one the network handed out goes under
+        it. A DHCP nameserver is usually the router in the corner, which is
+        also the thing most likely to answer slowly, cache a stale record, or
+        have been handed a captive portal's idea of the truth. Naming a public
+        resolver first is what lets a machine work on a network whose own
+        resolver does not.
+
+        The network's own is still written, and is still asked, because it is
+        the only one that knows the names inside the network. The resolver
+        walks this list in order and does not stop at a public resolver saying
+        it has never heard of something local.
+
+        Order is the whole of the policy. Putting it here rather than in the
+        resolver means changing which server is preferred is one line in a
+        file, not a rebuild.
+*/
 static fn net_write_resolv(p32 nameserver)
 {
         p8 line[64];
-        positive used = 0;
+        positive used;
         b32 handle;
-
-        if (!nameserver)
-                return;
 
         //      O_WRONLY | O_CREAT | O_TRUNC, 0644
         handle = (b32)system_call_4(syscall(openat), (positive)-100,
@@ -583,12 +590,21 @@ static fn net_write_resolv(p32 nameserver)
         if (handle < 0)
                 return;
 
-        memory_copy(line, "nameserver ", 11);
         used = 11;
-        used += host_into(line + used, nameserver);
+        memory_copy(line, "nameserver ", 11);
+        used += host_into(line + used, DNS_FALLBACK);
         line[used++] = '\n';
-
         system_write_all((positive)handle, line, used);
+
+        if (nameserver && nameserver != DNS_FALLBACK)
+        {
+                used = 11;
+                memory_copy(line, "nameserver ", 11);
+                used += host_into(line + used, nameserver);
+                line[used++] = '\n';
+                system_write_all((positive)handle, line, used);
+        }
+
         system_call_1(syscall(close), (positive)handle);
 }
 
@@ -680,13 +696,20 @@ static b32 net_auto(b32 handle)
                 string_format(log, "ip: default via %s\n", written);
         }
 
-        if (lease.nameserver)
+        net_write_resolv(lease.nameserver);
+
+        length = host_into(written, DNS_FALLBACK);
+        written[length] = end;
+        string_format(log, "ip: nameserver %s", written);
+
+        if (lease.nameserver && lease.nameserver != DNS_FALLBACK)
         {
-                net_write_resolv(lease.nameserver);
                 length = host_into(written, lease.nameserver);
                 written[length] = end;
-                string_format(log, "ip: nameserver %s\n", written);
+                string_format(log, ", then %s", written);
         }
+
+        string_format(log, "\n");
 
         log_flush();
 

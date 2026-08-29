@@ -203,10 +203,12 @@ static p16 dns_transaction(void)
 /*
         The nameserver, out of resolv.conf.
 
-        Only "nameserver A.B.C.D" lines, and only the first of them. Options,
-        search domains and IPv6 servers are read past rather than understood.
+        Only "nameserver A.B.C.D" lines. The wanted-th of them is returned, so
+        a caller walks 0, 1, 2 until this answers negatively and the number of
+        servers a machine may list has no ceiling. Options, search domains and
+        IPv6 servers are read past rather than understood.
 */
-static bipolar dns_server_from_file(string_address path)
+static bipolar dns_server_at(string_address path, positive wanted)
 {
         p8 text[4096];
         b32 handle;
@@ -266,7 +268,12 @@ static bipolar dns_server_from_file(string_address path)
                                 host = string_to_host(kept);
 
                                 if (host >= 0)
-                                        return host;
+                                {
+                                        if (!wanted)
+                                                return host;
+
+                                        wanted--;
+                                }
                         }
                 }
         }
@@ -450,6 +457,58 @@ static bipolar dns_resolve(p32 server, string_address name, p32 address_to found
 
         //      NOERROR, and nothing in it. The name is real and has no address.
         return DNS_NO_ADDRESS;
+}
+
+/*
+        The servers resolv.conf names, in the order it names them.
+
+        Which servers those are is not decided here -- that is what writes the
+        file, and this only reads it. What is decided here is what happens
+        when one of them does not answer, and the answer is: ask the next.
+
+        "No such name" does not end the walk either, and that is deliberate
+        rather than thorough. The file is written with a public resolver
+        first, and a public resolver has never heard of anything inside the
+        network it is outside of, so a name that exists only on the local
+        network comes back from it as NXDOMAIN. Treating that as final would
+        make a machine unable to reach anything on its own network. So it is
+        remembered as the answer to fall back on, the rest of the list is
+        asked anyway, and only an actual address stops the walk.
+
+        The cost is one extra query for a name that genuinely exists nowhere.
+
+        With no resolv.conf at all there is still somewhere to ask. A machine
+        that has not been configured yet should be able to resolve a name, if
+        only to fetch the thing that will configure it.
+*/
+#define DNS_FALLBACK 0x01010101u
+
+static bipolar dns_resolve_any(string_address path, string_address name,
+                               p32 address_to found, positive seconds)
+{
+        bipolar definite = DNS_NO_SERVER;
+        bipolar status = DNS_NO_SERVER;
+        bipolar server;
+        positive index = 0;
+        bool asked = false;
+
+        while ((server = dns_server_at(path, index++)) >= 0)
+        {
+                asked = true;
+                status = dns_resolve((p32)server, name, found, seconds);
+
+                if (status == DNS_OK)
+                        return DNS_OK;
+
+                if (definite == DNS_NO_SERVER &&
+                    (status == DNS_NO_SUCH_NAME || status == DNS_NO_ADDRESS))
+                        definite = status;
+        }
+
+        if (!asked)
+                return dns_resolve(DNS_FALLBACK, name, found, seconds);
+
+        return definite != DNS_NO_SERVER ? definite : status;
 }
 
 #endif // STANDARD_MODERN_C_NET_DNS
