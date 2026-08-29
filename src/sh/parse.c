@@ -125,7 +125,14 @@ typedef struct
 static parse_node parse_nodes[PARSE_NODES];
 static string_address parse_words[PARSE_WORDS];
 static positive parse_word_lengths[PARSE_WORDS];
+static positive parse_word_name_lengths[PARSE_WORDS];
+static positive parse_word_name_hashes[PARSE_WORDS];
+static p8 parse_word_flags[PARSE_WORDS];
 static parse_redirect parse_redirects[PARSE_REDIRECTS];
+
+#define PARSE_WORD_LITERAL 1
+#define PARSE_WORD_ASSIGNMENT 2
+#define PARSE_WORD_APPEND 4
 
 static b32 parse_node_used;
 static b32 parse_node_top;
@@ -800,6 +807,10 @@ static b32 parse_node_new(b32 kind)
 
 static b32 parse_word_new(string_address text, positive length)
 {
+        positive name_length = 0;
+        p8 assignment;
+        p8 flags;
+
         if (parse_word_used + 1 >= parse_word_top)
         {
                 parse_state = PARSE_SYNTAX;
@@ -808,6 +819,24 @@ static b32 parse_word_new(string_address text, positive length)
 
         parse_words[parse_word_used] = text;
         parse_word_lengths[parse_word_used] = length;
+        assignment = shell_assignment_kind(text, address_of name_length);
+        flags = shell_expand_literal(text, length) ? PARSE_WORD_LITERAL : 0;
+
+        if (assignment)
+        {
+                flags |= PARSE_WORD_ASSIGNMENT;
+
+                if (assignment == 2)
+                        flags |= PARSE_WORD_APPEND;
+
+                parse_word_name_hashes[parse_word_used] =
+                    memory_hash_33(text, name_length);
+        }
+        else
+                parse_word_name_hashes[parse_word_used] = 0;
+
+        parse_word_name_lengths[parse_word_used] = name_length;
+        parse_word_flags[parse_word_used] = flags;
 
         return parse_word_used++;
 }
@@ -1845,6 +1874,11 @@ static b32 parse_keep_words(b32 first, b32 count)
                             parse_words[first + index], length);
                 parse_words[base + index] = parse_kept_text + parse_kept_used;
                 parse_word_lengths[base + index] = text_length;
+                parse_word_name_lengths[base + index] =
+                    parse_word_name_lengths[first + index];
+                parse_word_name_hashes[base + index] =
+                    parse_word_name_hashes[first + index];
+                parse_word_flags[base + index] = parse_word_flags[first + index];
                 parse_kept_used += length;
         }
 

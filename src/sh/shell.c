@@ -468,6 +468,32 @@ bool shell_name_character(p8 value)
                value == '_';
 }
 
+/* Assignment syntax is a property of the parsed word, not of an execution.
+   Return one for NAME= and two for NAME+=, together with the stable name
+   length so the executor can reuse its hash metadata. */
+static p8 shell_assignment_kind(string_address word,
+                                positive address_to name_length)
+{
+        positive length = 0;
+
+        while (shell_name_character(string_get(word + length)))
+                length++;
+
+        if (name_length)
+                address_to name_length = length;
+
+        if (!length || (string_get(word) >= '0' && string_get(word) <= '9'))
+                return 0;
+
+        if (string_get(word + length) == '=')
+                return 1;
+
+        return string_get(word + length) == '+' &&
+                       string_get(word + length + 1) == '='
+                   ? 2
+                   : 0;
+}
+
 bool shell_separator(p8 value)
 {
         return value == ' ' || value == '\t';

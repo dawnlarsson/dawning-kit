@@ -982,45 +982,19 @@ static fn exec_trace(b32 count)
         exec_error((string_address) "\n", 1);
 }
 
-static bool exec_is_assignment(string_address word)
-{
-        positive length = 0;
-
-        while (shell_name_character(string_get(word + length)))
-                length++;
-
-        // A name cannot start with a digit, and 2=x is a command, not an
-        // assignment.
-        if (!length || (string_get(word) >= '0' && string_get(word) <= '9'))
-                return false;
-
-        return string_get(word + length) == '=' ||
-               (string_get(word + length) == '+' &&
-                string_get(word + length + 1) == '=');
-}
-
-static bool exec_is_append_assignment(string_address word)
-{
-        string_address equal = string_first_of_or_end(word, '=');
-
-        return string_get(equal) && equal > word && equal[-1] == '+';
-}
-
-static bool exec_assign(string_address address_to word_at)
+static bool exec_assign(string_address address_to word_at,
+                        positive name_length, positive name_hash, bool append)
 {
         string_address word = address_to word_at;
-        string_address mark = string_first_of_or_end(word, '=');
-        bool append;
-        string_address name_end;
+        string_address name_end = word + name_length;
+        string_address mark = name_end + append;
         string_address old;
         string_address made = word;
         bool answer;
 
-        if (!string_get(mark))
+        if (string_get(mark) != '=')
                 return false;
 
-        append = mark > word && mark[-1] == '+';
-        name_end = append ? mark - 1 : mark;
         address_to name_end = end;
 
         if (env_readonly(word))
@@ -1035,7 +1009,6 @@ static bool exec_assign(string_address address_to word_at)
 
         if (append)
         {
-                positive name_length = (positive)(name_end - word);
                 positive old_length = old ? string_length(old) : 0;
                 positive add_length = string_length(mark + 1);
                 positive room;
@@ -1066,9 +1039,9 @@ static bool exec_assign(string_address address_to word_at)
                                 mark + 1, add_length);
         }
 
-        answer = env_set(word,
-                         append ? made + (positive)(name_end - word) + 1
-                                : mark + 1);
+        answer = env_set_hashed_span(
+            word, name_length, name_hash,
+            append ? made + name_length + 1 : mark + 1);
         address_to name_end = append ? '+' : '=';
 
         if (answer && append)
@@ -1397,8 +1370,8 @@ static b32 exec_simple(b32 index)
         {
                 b32 word_index = node->word + at;
                 string_address word = parse_words[word_index];
-                bool literal = shell_expand_literal(
-                    word, parse_word_lengths[word_index]);
+                p8 word_flags = parse_word_flags[word_index];
+                bool literal = word_flags & PARSE_WORD_LITERAL;
 
                 /*
                         An assignment in front of a command is expanded whole:
@@ -1406,7 +1379,8 @@ static b32 exec_simple(b32 index)
                         not glob. Only in front -- past the command name the
                         same text is an ordinary argument.
                 */
-                if (count == first && exec_is_assignment(word))
+                if (count == first &&
+                    (word_flags & PARSE_WORD_ASSIGNMENT))
                 {
                         if (!shell_words_add(address_of arguments,
                                              literal ? word
@@ -1446,8 +1420,9 @@ static b32 exec_simple(b32 index)
 
         //      An empty command line never entered the loop, so the table
         //      may not exist yet to hold even the null that ends it.
-        if (!shell_room((address_any address_to)address_of shell_argv,
-                        address_of shell_argv_room, (positive)count + 2,
+        if (!count &&
+            !shell_room((address_any address_to)address_of shell_argv,
+                        address_of shell_argv_room, 2,
                         sizeof(string_address)))
         {
                 shell_status = 2;
@@ -1495,7 +1470,8 @@ static b32 exec_simple(b32 index)
 
                         if (special)
                                 for (at = 0; at < first; at++)
-                                        if (exec_is_append_assignment(assignments[at]))
+                                        if (parse_word_flags[node->word + at] &
+                                            PARSE_WORD_APPEND)
                                         {
                                                 save = true;
                                                 break;
@@ -1516,7 +1492,8 @@ static b32 exec_simple(b32 index)
 
                                 for (at = 0; at < first; at++)
                                         if ((!special ||
-                                             exec_is_append_assignment(assignments[at])) &&
+                                             (parse_word_flags[node->word + at] &
+                                              PARSE_WORD_APPEND)) &&
                                             !exec_keep_value(kept + kept_count,
                                                              assignments[at]))
                                         {
@@ -1526,14 +1503,19 @@ static b32 exec_simple(b32 index)
                                                 return 2;
                                         }
                                         else if (!special ||
-                                                 exec_is_append_assignment(assignments[at]))
+                                                 (parse_word_flags[node->word + at] &
+                                                  PARSE_WORD_APPEND))
                                                 kept_count++;
                         }
                 }
         }
 
         for (at = 0; at < first; at++)
-                if (!exec_assign(shell_argv + at))
+                if (!exec_assign(shell_argv + at,
+                                 parse_word_name_lengths[node->word + at],
+                                 parse_word_name_hashes[node->word + at],
+                                 (parse_word_flags[node->word + at] &
+                                  PARSE_WORD_APPEND) != 0))
                 {
                         exec_put_back(kept, kept_count);
                         shell_store_rewind(address_of exec_store, arena_mark);
@@ -1570,7 +1552,7 @@ static b32 exec_simple(b32 index)
 
         exec_trace(count);
 
-        if (!exec_redirect_apply(index))
+        if (node->redirect_count && !exec_redirect_apply(index))
         {
                 exec_redirect_restore(mark);
                 exec_release_assignments(assignments, temporary_count);
@@ -1585,14 +1567,17 @@ static b32 exec_simple(b32 index)
 
         if (first == count)
         {
-                exec_redirect_restore(mark);
+                if (node->redirect_count)
+                        exec_redirect_restore(mark);
                 shell_status = shell_substitution_status;
                 return shell_status;
         }
 
         // Include argv[count], the terminating null pointer.
-        memory_copy(shell_argv, shell_argv + first,
-                    (positive)(count - first + 1) * sizeof(shell_argv[0]));
+        if (first)
+                memory_copy(shell_argv, shell_argv + first,
+                            (positive)(count - first + 1) *
+                                sizeof(shell_argv[0]));
 
         shell_argc = count - first;
 
@@ -1611,10 +1596,13 @@ static b32 exec_simple(b32 index)
 
         // exec with nothing to run is there for its redirections, and those
         // belong to the shell from here on.
-        if (word_is(shell_argv[0], "exec") && shell_argc == 1)
-                exec_redirect_forget(mark);
-        else
-                exec_redirect_restore(mark);
+        if (node->redirect_count)
+        {
+                if (word_is(shell_argv[0], "exec") && shell_argc == 1)
+                        exec_redirect_forget(mark);
+                else
+                        exec_redirect_restore(mark);
+        }
 
         exec_release_assignments(assignments, temporary_count);
         exec_put_back(kept, kept_count);
