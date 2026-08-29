@@ -1,0 +1,251 @@
+#!/bin/sh
+#
+#       Compare Moonwater's shell with dash and bash on shell-owned work.
+#
+#           sh kit/bench_shell [path-to-moonwater-shell]
+#
+#       With no path, build programs/shell.c into a temporary binary.  The
+#       benchmark deliberately uses no external commands in its timed bodies:
+#       it measures entry, parsing, expansion, builtins, functions and pipes,
+#       rather than whichever coreutils happen to be installed on the host.
+#
+#       BENCH_RUNS controls the number of measured samples (default 7), and
+#       BENCH_SECONDS the minimum duration of each sample (default 0.15).
+#       Reported times are medians per shell invocation; lower is better.
+#
+set -eu
+
+case ${1:-} in
+-h|--help)
+        sed -n '3,15p' "$0" | sed 's/^# *//'
+        exit 0
+        ;;
+esac
+
+# shellcheck disable=SC1007
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT HUP INT TERM
+
+subject=${1:-${MOONWATER_SHELL:-}}
+
+if [ -z "$subject" ]; then
+        subject=$work/moonwater-shell
+        echo "building $subject" >&2
+        (cd "$root" && sh kit/build programs/shell.c "$subject")
+fi
+
+case $subject in
+/*) ;;
+*) subject=$(CDPATH= cd -- "$(dirname -- "$subject")" && pwd)/$(basename -- "$subject") ;;
+esac
+
+[ -x "$subject" ] || {
+        echo "bench_shell: not executable: $subject" >&2
+        exit 1
+}
+
+dash=$(command -v dash || true)
+bash=$(command -v bash || true)
+
+[ -n "$dash" ] || { echo "bench_shell: dash is required" >&2; exit 1; }
+[ -n "$bash" ] || { echo "bench_shell: bash is required" >&2; exit 1; }
+command -v python3 >/dev/null 2>&1 || {
+        echo "bench_shell: python3 is required for a monotonic clock" >&2
+        exit 1
+}
+
+"$subject" -c ':' >/dev/null 2>&1 || {
+        echo "bench_shell: $subject could not run a command" >&2
+        exit 1
+}
+
+exec python3 - "$subject" "$dash" "$bash" "$work" \
+        "${BENCH_RUNS:-7}" "${BENCH_SECONDS:-0.15}" <<'PY'
+import math
+import os
+import statistics
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+ours, dash, bash, work, runs_text, seconds_text = sys.argv[1:]
+
+try:
+    runs = int(runs_text)
+    target_seconds = float(seconds_text)
+except ValueError:
+    raise SystemExit("bench_shell: BENCH_RUNS and BENCH_SECONDS must be numbers")
+
+if runs < 1 or target_seconds <= 0:
+    raise SystemExit("bench_shell: BENCH_RUNS must be positive and BENCH_SECONDS > 0")
+
+# Pin the driver when Linux permits it. Children inherit the same affinity,
+# which removes migrations without putting taskset startup in the measurement.
+if hasattr(os, "sched_getaffinity") and hasattr(os, "sched_setaffinity"):
+    try:
+        allowed = os.sched_getaffinity(0)
+        os.sched_setaffinity(0, {min(allowed)})
+    except (OSError, ValueError):
+        pass
+
+environment = os.environ.copy()
+environment.update({"LC_ALL": "C", "ENV": "/dev/null", "BASH_ENV": "/dev/null"})
+
+scripts = {
+    "parse": "\n".join(": # parser token stream" for _ in range(4000))
+    + "\nprintf '%s\\n' 4000\n",
+    "loop+builtin": """i=0
+while [ "$i" -lt 20000 ]; do
+        i=$((i + 1))
+done
+printf '%s\\n' "$i"
+""",
+    "parameter": """i=0
+x=abcdefghijklmnop
+while [ "$i" -lt 10000 ]; do
+        a=${x#?}
+        b=${x%?}
+        c=${#x}
+        i=$((i + 1))
+done
+printf '%s:%s:%s:%s\\n' "$a" "$b" "$c" "$i"
+""",
+    "case": """i=0
+while [ "$i" -lt 15000 ]; do
+        case abcdef in
+                a*e?) x=yes ;;
+                *) x=no ;;
+        esac
+        i=$((i + 1))
+done
+printf '%s:%s\\n' "$x" "$i"
+""",
+    "function": """f() { :; }
+i=0
+while [ "$i" -lt 15000 ]; do
+        f
+        i=$((i + 1))
+done
+printf '%s\\n' "$i"
+""",
+    "pipeline": """i=0
+while [ "$i" -lt 4000 ]; do
+        printf '%s\\n' "$i"
+        i=$((i + 1))
+done | {
+        count=0
+        while IFS= read -r value; do
+                count=$((count + 1))
+        done
+        printf '%s\\n' "$count"
+}
+""",
+}
+
+work_path = Path(work)
+cases = [("startup", ("-c", ":"))]
+for name, source in scripts.items():
+    path = work_path / f"{name}.sh"
+    path.write_text(source, encoding="ascii")
+    cases.append((name, (str(path),)))
+
+shells = [("ours", ours), ("dash", dash), ("bash", bash)]
+
+def capture(executable, arguments):
+    result = subprocess.run(
+        (executable, *arguments),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=environment,
+        check=False,
+    )
+    if result.returncode:
+        detail = result.stderr.decode("utf-8", "replace").strip()
+        raise RuntimeError(
+            f"{executable} {' '.join(arguments)} exited {result.returncode}"
+            + (f": {detail}" if detail else "")
+        )
+    return result.stdout
+
+def invoke(executable, arguments):
+    result = subprocess.run(
+        (executable, *arguments),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        env=environment,
+        check=False,
+    )
+    if result.returncode:
+        detail = result.stderr.decode("utf-8", "replace").strip()
+        raise RuntimeError(
+            f"{executable} {' '.join(arguments)} exited {result.returncode}"
+            + (f": {detail}" if detail else "")
+        )
+
+def elapsed(executable, arguments, count):
+    started = time.perf_counter_ns()
+    for _ in range(count):
+        invoke(executable, arguments)
+    return (time.perf_counter_ns() - started) / 1_000_000_000
+
+def measure(executable, arguments):
+    # Two untimed executions warm the binary, script pages and branch paths.
+    invoke(executable, arguments)
+    invoke(executable, arguments)
+
+    count = 1
+    while elapsed(executable, arguments, count) < target_seconds:
+        count *= 2
+
+    samples = [elapsed(executable, arguments, count) / count for _ in range(runs)]
+    return statistics.median(samples)
+
+results = {}
+print(f"subject: {ours}")
+print(f"samples: {runs}, at least {target_seconds:.2f}s each, one CPU when available")
+print("lower is better; times are median milliseconds per invocation\n")
+print(f"{'workload':<15} {'ours':>10} {'dash':>10} {'bash':>10} {'ours/dash':>11}")
+print(f"{'-' * 15} {'-' * 10} {'-' * 10} {'-' * 10} {'-' * 11}")
+
+try:
+    for case_name, arguments in cases:
+        expected = capture(dash, arguments)
+        for shell_name, executable in shells:
+            actual = capture(executable, arguments)
+            if actual != expected:
+                raise RuntimeError(
+                    f"{shell_name} produced different output for {case_name}; "
+                    "refusing to benchmark unequal work"
+                )
+
+        row = {}
+        # Rotate the starting shell by workload so thermal/order bias is not
+        # always paid by the same implementation.
+        offset = len(results) % len(shells)
+        ordered = shells[offset:] + shells[:offset]
+        for shell_name, executable in ordered:
+            row[shell_name] = measure(executable, arguments)
+        results[case_name] = row
+        print(
+            f"{case_name:<15}"
+            f" {row['ours'] * 1000:10.3f}"
+            f" {row['dash'] * 1000:10.3f}"
+            f" {row['bash'] * 1000:10.3f}"
+            f" {row['ours'] / row['dash']:10.2f}x"
+        )
+except RuntimeError as error:
+    raise SystemExit(f"bench_shell: {error}")
+
+def geomean_ratios(name):
+    logs = [math.log(row[name] / row["dash"]) for row in results.values()]
+    return math.exp(sum(logs) / len(logs))
+
+ours_ratio = geomean_ratios("ours")
+bash_ratio = geomean_ratios("bash")
+print("\ngeometric mean relative to dash (lower is better):")
+print(f"  ours {ours_ratio:.2f}x    dash 1.00x    bash {bash_ratio:.2f}x")
+PY
