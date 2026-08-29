@@ -847,6 +847,7 @@ static bool parse_redirect_operator(b32 op)
 static bool parse_at_redirect()
 {
         parse_token address_to token = parse_look(0);
+        positive descriptor;
 
         if (token->kind == PT_OP && parse_redirect_operator(token->op))
                 return true;
@@ -855,7 +856,9 @@ static bool parse_at_redirect()
 
         // &> always means descriptors one and two. In "echo 2&>file", the 2
         // is therefore an argument, unlike the descriptor prefix in 2>file.
-        return token->kind == PT_WORD && string_digits_exact(token->text, null) &&
+        return token->kind == PT_WORD &&
+               string_digits_exact(token->text, address_of descriptor) &&
+               descriptor <= 0x7fffffff &&
                parse_look(1)->kind == PT_OP && parse_look(1)->joined &&
                op != OP_ANDGREAT && op != OP_ANDDGREAT &&
                parse_redirect_operator(op);
@@ -870,7 +873,17 @@ static bool parse_take_redirect(b32 index)
 
         if (parse_look(0)->kind == PT_WORD)
         {
-                descriptor = (b32)string_digits(parse_look(0)->text, null);
+                positive parsed;
+
+                if (!string_digits_exact(parse_look(0)->text,
+                                         address_of parsed) ||
+                    parsed > 0x7fffffff)
+                {
+                        parse_state = PARSE_SYNTAX;
+                        return false;
+                }
+
+                descriptor = (b32)parsed;
                 parse_position++;
         }
 

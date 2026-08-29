@@ -494,6 +494,38 @@ compare 'dash v' /dev/null -v 'x=5' 'BEGIN{print x, x+1}'
 compare 'dash v escapes' /dev/null -v 'x=a\tb' 'BEGIN{print length(x)}'
 compare 'dash v is a strnum' /dev/null -v 'x=010' 'BEGIN{print (x==10), (x=="010")}'
 compare 'two dash v' /dev/null -v 'x=1' -v 'y=2' 'BEGIN{print x+y}'
+
+# The option table used to keep only the first sixty-four assignments and
+# silently discard every later -v. Options are an argument list, not a fixed
+# language limit, and losing a tail assignment is plausible wrong output.
+set --
+i=0
+while [ "$i" -lt 100 ]; do
+        set -- "$@" -v "v$i=$i"
+        i=$((i + 1))
+done
+compare 'one hundred dash v' /dev/null "$@" 'BEGIN{print v0, v63, v64, v99}'
+
+# system() inherits the whole process environment. The old fixed child table
+# silently stopped at 1,023 entries even though ENVIRON itself saw the tail.
+set --
+i=0
+while [ "$i" -lt 1100 ]; do
+        set -- "$@" "AWK_ENV_$i=value"
+        i=$((i + 1))
+done
+env "$@" awk 'BEGIN{print system("test \"$AWK_ENV_1099\" = value")}' \
+        > "$work/want" 2> /dev/null
+want_status=$?
+env "$@" "$ours" 'BEGIN{print system("test \"$AWK_ENV_1099\" = value")}' \
+        > "$work/got" 2> /dev/null
+got_status=$?
+
+if cmp -s "$work/want" "$work/got" && [ "$want_status" = "$got_status" ]; then
+        pass=$((pass + 1))
+else
+        report 'eleven hundred environment names'
+fi
 compare 'dash v joined' /dev/null -vx=5 'BEGIN{print x}'
 compare 'dash F joined' "$work/colons" -F: '{print $2}'
 compare 'dash F separate' "$work/colons" -F : '{print $2}'

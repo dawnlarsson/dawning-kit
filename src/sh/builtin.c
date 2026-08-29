@@ -3947,19 +3947,16 @@ fn shell_times(writer write, string_address input)
         above this file, and a script that sets a trap must still get through
         the line rather than falling over on an unknown command.
 */
-#define TRAP_MAX 24
-#define TRAP_STORAGE 1024
-
 typedef struct
 {
         positive number;
         string_address action;
+        positive action_room;
 } shell_trap_entry;
 
-static shell_trap_entry trap_table[TRAP_MAX];
+static shell_trap_entry address_to trap_table;
+static positive trap_room;
 static positive trap_count;
-static p8 trap_storage[TRAP_STORAGE];
-static positive trap_used;
 
 static string_address trap_names[] = {
     "EXIT", "HUP", "INT", "QUIT", "ILL", "TRAP", "ABRT", "BUS",
@@ -4053,7 +4050,7 @@ fn trap_default_all()
         trap_caught = false;
 }
 
-fn trap_forget(positive number)
+static string_address trap_detach(positive number, positive address_to room)
 {
         positive index = 0;
 
@@ -4061,16 +4058,56 @@ fn trap_forget(positive number)
         {
                 if (trap_table[index].number == number)
                 {
+                        string_address action = trap_table[index].action;
+
+                        if (room)
+                                *room = trap_table[index].action_room;
+
                         memory_copy(trap_table + index, trap_table + index + 1,
                                     (trap_count - index - 1) *
                                         sizeof(trap_table[0]));
 
                         trap_count--;
-                        return;
+                        return action;
                 }
 
                 index++;
         }
+
+        return null;
+}
+
+fn trap_forget(positive number)
+{
+        positive room = 0;
+        string_address action = trap_detach(number, address_of room);
+
+        if (action)
+                memory_free(action, room);
+}
+
+static bool trap_record(positive number, string_address action)
+{
+        positive length = string_length(action);
+        string_address kept;
+
+        if (length == positive_max ||
+            !shell_room((address_any address_to)address_of trap_table,
+                        address_of trap_room, trap_count + 1,
+                        sizeof(trap_table[0])))
+                return false;
+
+        kept = shell_map(length + 1);
+
+        if (!kept)
+                return false;
+
+        memory_copy(kept, action, length + 1);
+        trap_table[trap_count].number = number;
+        trap_table[trap_count].action = kept;
+        trap_table[trap_count].action_room = length + 1;
+        trap_count++;
+        return true;
 }
 
 string_address trap_action(positive number)
@@ -4092,6 +4129,7 @@ fn shell_trap(writer write, string_address input)
 {
         positive index = 1;
         string_address action;
+        b32 answer = 0;
 
         if (shell_argc < 2)
         {
@@ -4135,8 +4173,13 @@ fn shell_trap(writer write, string_address input)
 
                 index++;
 
-                if (number < 0)
+                if (number < 0 || number > TRAP_SIGNAL_MAX)
+                {
+                        string_format(log_error, "trap: invalid signal: %s\n",
+                                      shell_argv[index - 1]);
+                        answer = 1;
                         continue;
+                }
 
                 /*
                         Ignored on the way in and not a terminal: the action is
@@ -4150,6 +4193,16 @@ fn shell_trap(writer write, string_address input)
                             shell_was_ignored((positive)number);
 
                 trap_forget((positive)number);
+
+                if (action && !trap_record((positive)number, action))
+                {
+                        answer = 1;
+
+                        if (number && !deaf)
+                                shell_default((b32)number);
+
+                        continue;
+                }
 
                 /*
                         "trap - INT" gives the signal back to the kernel,
@@ -4168,25 +4221,9 @@ fn shell_trap(writer write, string_address input)
                                 shell_catch((b32)number);
                 }
 
-                if (!action || trap_count >= TRAP_MAX)
-                        continue;
-
-                {
-                        positive length = string_length(action);
-
-                        if (trap_used + length + 1 > TRAP_STORAGE)
-                                continue;
-
-                        trap_table[trap_count].number = (positive)number;
-                        trap_table[trap_count].action = trap_storage + trap_used;
-
-                        memory_copy(trap_storage + trap_used, action, length + 1);
-                        trap_used += length + 1;
-                        trap_count++;
-                }
         }
 
-        shell_answer(0);
+        shell_answer(answer);
 }
 
 /*
@@ -4196,19 +4233,17 @@ fn shell_trap(writer write, string_address input)
         happens where a line is read, which is not this file, so what this holds
         is the table that side will ask.
 */
-#define ALIAS_MAX 32
-#define ALIAS_STORAGE 2048
-
 typedef struct
 {
         string_address name;
         string_address value;
+        positive name_room;
+        positive value_room;
 } shell_alias_entry;
 
-static shell_alias_entry alias_table[ALIAS_MAX];
+static shell_alias_entry address_to alias_table;
+static positive alias_room;
 static positive alias_count;
-static p8 alias_storage[ALIAS_STORAGE];
-static positive alias_used;
 
 string_address alias_lookup(string_address name)
 {
@@ -4222,40 +4257,54 @@ bool alias_record(string_address name, positive name_length, string_address valu
 {
         positive value_length = string_length(env_reading(value));
         positive index;
+        string_address kept_name;
+        string_address kept_value;
 
-        if (alias_used + name_length + 1 + value_length + 1 > ALIAS_STORAGE)
+        if (name_length == positive_max || value_length == positive_max)
                 return false;
 
+        kept_name = shell_map(name_length + 1);
+        kept_value = shell_map(value_length + 1);
+
+        if (!kept_name || !kept_value)
         {
-                string_address kept_name = alias_storage + alias_used;
+                if (kept_name)
+                        memory_free(kept_name, name_length + 1);
 
-                string_copy_max_end(kept_name, name, name_length);
-                alias_used += name_length + 1;
+                if (kept_value)
+                        memory_free(kept_value, value_length + 1);
 
-                {
-                        string_address kept_value = alias_storage + alias_used;
-
-                        memory_copy(kept_value, value, value_length + 1);
-                        alias_used += value_length + 1;
-
-                        index = string_table_find(kept_name, alias_table,
-                                                  sizeof(alias_table[0]),
-                                                  alias_count);
-
-                        if (index < alias_count)
-                        {
-                                alias_table[index].value = kept_value;
-                                return true;
-                        }
-
-                        if (alias_count >= ALIAS_MAX)
-                                return false;
-
-                        alias_table[alias_count].name = kept_name;
-                        alias_table[alias_count].value = kept_value;
-                        alias_count++;
-                }
+                return false;
         }
+
+        string_copy_max_end(kept_name, name, name_length);
+        memory_copy(kept_value, value, value_length + 1);
+        index = string_table_find(kept_name, alias_table,
+                                  sizeof(alias_table[0]), alias_count);
+
+        if (index < alias_count)
+        {
+                memory_free(kept_name, name_length + 1);
+                memory_free(alias_table[index].value,
+                            alias_table[index].value_room);
+                alias_table[index].value = kept_value;
+                alias_table[index].value_room = value_length + 1;
+                return true;
+        }
+
+        if (!shell_room((address_any address_to)address_of alias_table,
+                        address_of alias_room, alias_count + 1,
+                        sizeof(alias_table[0])))
+        {
+                memory_free(kept_name, name_length + 1);
+                memory_free(kept_value, value_length + 1);
+                return false;
+        }
+        alias_table[alias_count].name = kept_name;
+        alias_table[alias_count].value = kept_value;
+        alias_table[alias_count].name_room = name_length + 1;
+        alias_table[alias_count].value_room = value_length + 1;
+        alias_count++;
 
         return true;
 }
@@ -4289,7 +4338,9 @@ fn shell_alias(writer write, string_address input)
 
                 if (mark && mark != word)
                 {
-                        alias_record(word, mark - word, mark + 1);
+                        if (!alias_record(word, mark - word, mark + 1))
+                                answer = 1;
+
                         index++;
                         continue;
                 }
@@ -4323,8 +4374,15 @@ fn shell_unalias(writer write, string_address input)
 
                 if (word_is(word, "-a"))
                 {
+                        for (at = 0; at < alias_count; at++)
+                        {
+                                memory_free(alias_table[at].name,
+                                            alias_table[at].name_room);
+                                memory_free(alias_table[at].value,
+                                            alias_table[at].value_room);
+                        }
+
                         alias_count = 0;
-                        alias_used = 0;
                         index++;
                         continue;
                 }
@@ -4338,9 +4396,15 @@ fn shell_unalias(writer write, string_address input)
                         status = 1;
 
                 if (at < alias_count)
+                {
+                        memory_free(alias_table[at].name,
+                                    alias_table[at].name_room);
+                        memory_free(alias_table[at].value,
+                                    alias_table[at].value_room);
                         memory_copy(alias_table + at, alias_table + at + 1,
                                     (alias_count - at - 1) *
                                         sizeof(alias_table[0]));
+                }
 
                 if (at < alias_count)
                         alias_count--;
@@ -4740,18 +4804,23 @@ fn trap_entered(bool inside)
 */
 fn shell_trap_exit()
 {
-        string_address action = trap_action(0);
+        positive action_room = 0;
+        string_address action = trap_detach(0, address_of action_room);
         b32 leaving = shell_status;
 
         if (!action || !run_line || !string_get(action))
+        {
+                if (action)
+                        memory_free(action, action_room);
+
                 return;
+        }
 
         // Taken away first, so a trap that leaves again does not run twice.
-        trap_forget(0);
-
         parse_nest_enter();
         run_line(action);
         parse_nest_leave();
+        memory_free(action, action_room);
 
         shell_status = leaving;
 }

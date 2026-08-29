@@ -701,7 +701,17 @@ static bool exec_redirect_apply(b32 index)
                 // exactly that descriptor when it was the lowest one free.
                 if (opened != want->fd)
                 {
-                        system_call_3(syscall(dup3), opened, want->fd, 0);
+                        if (system_call_3(syscall(dup3), opened, want->fd, 0) < 0)
+                        {
+                                system_call_1(syscall(close), opened);
+                                exec_redirect_status = 2;
+                                exec_redirect_diagnostic_restore();
+                                string_format(exec_error,
+                                              "Cannot redirect descriptor: %p\n",
+                                              (positive)want->fd);
+                                return false;
+                        }
+
                         system_call_1(syscall(close), opened);
                 }
         }

@@ -2487,7 +2487,8 @@ static fn awk_flush_everything()
         three syscalls are made here. /bin/sh -c is what the standard says the
         command is handed to.
 */
-static string_address awk_child_environment[1024];
+static string_address address_to awk_child_environment;
+static positive awk_child_environment_room;
 
 static bipolar awk_spawn(string_address command, b32 into, b32 out_of)
 {
@@ -6982,9 +6983,23 @@ static fn awk_start()
         awk_standard_out.kind = AWK_TO_FILE;
 
         string_address address_to process_environment = program_environment_list();
+        positive environment_count = 0;
 
-        for (b32 i = 0; process_environment && i < 1023 && process_environment[i]; i++)
-                awk_child_environment[i] = process_environment[i];
+        while (process_environment && process_environment[environment_count])
+                environment_count++;
+
+        if (!shell_room((address_any address_to)address_of awk_child_environment,
+                        address_of awk_child_environment_room,
+                        environment_count + 1,
+                        sizeof(awk_child_environment[0])))
+                awk_fatal(null, "no room for the environment");
+
+        if (environment_count)
+                memory_copy(awk_child_environment, process_environment,
+                            environment_count *
+                                sizeof(awk_child_environment[0]));
+
+        awk_child_environment[environment_count] = null;
 
         awk_where_fs = awk_global_find("FS", 2);
         awk_where_ofs = awk_global_find("OFS", 3);
@@ -7056,7 +7071,8 @@ static fn awk_usage()
 */
 static awk_builder address_to awk_reading;
 static awk_text address_to awk_field_split;
-static awk_text address_to awk_pending[64];
+static awk_text address_to address_to awk_pending;
+static positive awk_pending_room;
 static b32 awk_pending_count;
 static bool awk_have_program;
 
@@ -7072,9 +7088,14 @@ static bool awk_option_seen(p8 letter, string_address value)
 
         if (letter == 'v')
         {
-                if (awk_pending_count < 64)
-                        awk_pending[awk_pending_count++] =
-                            awk_text_new(value, string_length(value));
+                if (!shell_room((address_any address_to)address_of awk_pending,
+                                address_of awk_pending_room,
+                                (positive)awk_pending_count + 1,
+                                sizeof(awk_pending[0])))
+                        awk_fatal(null, "no room for assignments");
+
+                awk_pending[awk_pending_count++] =
+                    awk_text_new(value, string_length(value));
 
                 return true;
         }
