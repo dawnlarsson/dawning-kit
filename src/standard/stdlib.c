@@ -14,6 +14,16 @@
 #define STANDARD_MODERN_C_STANDARD_STDLIB
 
 /*
+        Guarded out of the kernel build and out of a no-platform build. core.c
+        includes this umbrella and library.c sets KERNEL_MODE from __MODULE__,
+        so without this the module would pull in a second struct stat, a second
+        open and a second errno beside the ones <linux/...> already declares.
+        The three families that shipped without this guard were each correct in
+        isolation and wrong together; the ones that had it were right.
+*/
+#if !defined(KERNEL_MODE) && !defined(STANDARD_NO_PLATFORM)
+
+/*
         This is ordinary C, and it is here rather than in library.c for the
         reason netlink.c gives: library.c and its includes hold declarations
         and assembly and nothing else, and that is checked.
@@ -1360,5 +1370,7 @@ b32 system(string_address command)
 #ifdef STANDARD_EXIT_RUNS_HANDLERS
 #define exit(code) stdlib_exit(code)
 #endif
+
+#endif // KERNEL_MODE / STANDARD_NO_PLATFORM
 
 #endif // STANDARD_MODERN_C_STANDARD_STDLIB

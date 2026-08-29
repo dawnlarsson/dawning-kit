@@ -13,6 +13,16 @@
 #define STANDARD_MODERN_C_STANDARD_ERROR
 
 /*
+        Guarded out of the kernel build and out of a no-platform build. core.c
+        includes this umbrella and library.c sets KERNEL_MODE from __MODULE__,
+        so without this the module would pull in a second struct stat, a second
+        open and a second errno beside the ones <linux/...> already declares.
+        The three families that shipped without this guard were each correct in
+        isolation and wrong together; the ones that had it were right.
+*/
+#if !defined(KERNEL_MODE) && !defined(STANDARD_NO_PLATFORM)
+
+/*
         Two error contracts, and why this file holds the seam between them.
 
         Every routine in library.c that traps into the kernel returns what the
@@ -1853,5 +1863,7 @@ static b32 sync(void)
 {
         return error_whole(system_call(syscall(sync)));
 }
+
+#endif // KERNEL_MODE / STANDARD_NO_PLATFORM
 
 #endif // STANDARD_MODERN_C_STANDARD_ERROR
