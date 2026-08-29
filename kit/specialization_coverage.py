@@ -403,6 +403,7 @@ cover('nothing_to_fold', None, '''
 _start moonwater_cpu_detect get_cpu_time term_size working_directory_get
 working_directory_set program_argument_count program_arguments_own
 program_environment_list log_failed log_failure_reset log_flush sleep buffered_flush
+string_hash_33_length
 ''', 'no argument, or an argument that is a pointer into memory the caller '
      'owns; nothing the compiler could know shortens the body')
 cover('nothing_to_fold', None, '''

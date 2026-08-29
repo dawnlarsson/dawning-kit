@@ -1071,6 +1071,7 @@ static bool exec_special_builtin(string_address name)
 typedef struct
 {
         string_address name;
+        positive name_length;
         string_address value;
         bool exported;
 } exec_kept_value;
@@ -1089,10 +1090,11 @@ static bool exec_keep_value(exec_kept_value address_to kept, string_address word
                 return false;
 
         string_copy_max_end(kept->name, word, length);
+        kept->name_length = length;
 
-        value = env_get(kept->name);
+        value = env_get_span(kept->name, length);
         kept->value = null;
-        kept->exported = env_exported(kept->name);
+        kept->exported = env_export_active_span(kept->name, length);
 
         if (!value)
                 return true;
@@ -1109,7 +1111,8 @@ static fn exec_put_back(exec_kept_value address_to kept, b32 count)
                 if (kept[count].value)
                         env_set(kept[count].name, kept[count].value);
                 else
-                        env_unset(kept[count].name);
+                        env_unset_span(kept[count].name,
+                                       kept[count].name_length);
 
                 env_export_restore(kept[count].name, kept[count].exported);
         }
@@ -1307,7 +1310,10 @@ static b32 exec_simple(b32 index)
 
         for (at = 0; at < node->word_count; at++)
         {
-                string_address word = parse_words[node->word + at];
+                b32 word_index = node->word + at;
+                string_address word = parse_words[word_index];
+                bool literal = shell_expand_literal(
+                    word, parse_word_lengths[word_index]);
 
                 /*
                         An assignment in front of a command is expanded whole:
@@ -1318,7 +1324,8 @@ static b32 exec_simple(b32 index)
                 if (count == first && exec_is_assignment(word))
                 {
                         if (!shell_words_add(address_of arguments,
-                                             shell_expand_word(word)))
+                                             literal ? word
+                                                     : shell_expand_word(word)))
                                 break;
 
                         count = (b32)arguments.count;
@@ -1330,7 +1337,16 @@ static b32 exec_simple(b32 index)
                         continue;
                 }
 
-                count = (b32)shell_expand_fields(word, address_of arguments);
+                if (literal)
+                {
+                        if (!shell_words_add(address_of arguments, word))
+                                break;
+
+                        count = (b32)arguments.count;
+                }
+                else
+                        count = (b32)shell_expand_fields(word,
+                                                         address_of arguments);
 
                 if (exec_line_aborted())
                         break;
@@ -2855,7 +2871,11 @@ static b32 exec_node(b32 index)
 {
         b32 status = exec_node_kind(index);
 
-        if (!exec_line_aborted())
+        /* Signals are rare and node boundaries are not. Keep the volatile
+           byte read on the hot path, but do not enter exec_traps merely to
+           discover that no handler has written it. Checking abort state is
+           likewise unnecessary until there is a trap to run. */
+        if (trap_caught && !trap_inside && !exec_line_aborted())
                 exec_traps();
 
         return status;

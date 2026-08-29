@@ -156,8 +156,10 @@ static positive readonly_count;
 
 bool env_readonly(const_string name)
 {
-        return string_table_find((string_address)name, readonly_name,
-                                 sizeof(readonly_name[0]), readonly_count) < readonly_count;
+        return readonly_count &&
+               string_table_find((string_address)name, readonly_name,
+                                 sizeof(readonly_name[0]), readonly_count) <
+                   readonly_count;
 }
 
 static bool readonly_add(string_address name, positive length)
@@ -209,6 +211,31 @@ static string_address address_to shell_vars;
 static positive shell_vars_room;
 static positive shell_var_count;
 
+/*
+        The pointer vector above is the form execve and the utilities need,
+        but it is a terrible lookup table. A normal inherited environment is
+        already forty or fifty entries; putting a loop counter after it made
+        every `$i` and every `i=...` scan the whole environment again.
+
+        Keep the vector as the source of truth and index it by the library's
+        hardware-floor hash. Slots remember the hash and length so a probe
+        reaches the assembly byte comparison only on a real hash candidate.
+        Replacement does not change an index. Unset leaves a reusable hash
+        tombstone and adjusts vector indexes; only accumulated name churn
+        rebuilds the table.
+*/
+typedef struct
+{
+        positive hash;
+        positive length;
+        positive index_plus_one;
+} name_index_slot;
+
+static name_index_slot address_to env_index;
+static positive env_index_room;
+static positive env_index_slots;
+static positive env_index_tombstones;
+
 // Rebuilt lazily for execve and the in-process utilities that spawn children.
 string_address address_to shell_envp;
 static positive shell_envp_room;
@@ -217,6 +244,7 @@ static bool shell_envp_dirty = true;
 typedef struct
 {
         string_address name;
+        positive length;
         positive temporary;
         bool permanent;
 } env_export;
@@ -224,12 +252,189 @@ typedef struct
 static env_export address_to env_exports;
 static positive env_export_room;
 static positive env_export_count;
+static bipolar env_export_recent = -1;
+static name_index_slot address_to env_export_index;
+static positive env_export_index_room;
+static positive env_export_index_slots;
+static positive env_export_index_tombstones;
 
 static bool env_table_room(positive want)
 {
         return shell_room((address_any address_to)address_of shell_vars,
                           address_of shell_vars_room, want + 1,
                           sizeof(shell_vars[0]));
+}
+
+static positive env_name_hash(const_string name, positive length)
+{
+        return memory_hash_33((address_any)name, length);
+}
+
+static fn name_index_put(name_index_slot address_to table, positive slots,
+                         positive hash, positive length, positive index,
+                         positive address_to tombstones)
+{
+        positive at = hash & (slots - 1);
+        positive tombstone = slots;
+
+        while (table[at].index_plus_one)
+        {
+                if (table[at].index_plus_one == positive_max &&
+                    tombstone == slots)
+                        tombstone = at;
+
+                at = (at + 1) & (slots - 1);
+        }
+
+        if (tombstone != slots)
+        {
+                at = tombstone;
+                address_to tombstones = address_to tombstones - 1;
+        }
+
+        table[at].hash = hash;
+        table[at].length = length;
+        table[at].index_plus_one = index + 1;
+}
+
+static fn name_index_remove(name_index_slot address_to table, positive slots,
+                            positive hash, positive index, positive count,
+                            positive address_to tombstones)
+{
+        positive at = hash & (slots - 1);
+
+        for (positive probes = 0; probes < slots; probes++)
+        {
+                positive held = table[at].index_plus_one;
+
+                if (!held)
+                        break;
+
+                if (held == index + 1)
+                {
+                        table[at].index_plus_one = positive_max;
+                        address_to tombstones = address_to tombstones + 1;
+                        break;
+                }
+
+                at = (at + 1) & (slots - 1);
+        }
+
+        if (index + 1 == count)
+                return;
+
+        for (at = 0; at < slots; at++)
+                if (table[at].index_plus_one != positive_max &&
+                    table[at].index_plus_one > index + 1)
+                        table[at].index_plus_one--;
+}
+
+static bool env_index_rebuild(positive count)
+{
+        positive slots = 64;
+
+        if (count > positive_max / 2)
+        {
+                env_index_slots = 0;
+                return false;
+        }
+
+        while (slots < count * 2)
+        {
+                if (slots > positive_max / 2)
+                {
+                        env_index_slots = 0;
+                        return false;
+                }
+
+                slots *= 2;
+        }
+
+        if (!shell_room((address_any address_to)address_of env_index,
+                        address_of env_index_room, slots,
+                        sizeof(env_index[0])))
+        {
+                env_index_slots = 0;
+                return false;
+        }
+
+        memory_fill(env_index, 0, slots * sizeof(env_index[0]));
+        env_index_tombstones = 0;
+
+        for (positive index = 0; index < count; index++)
+        {
+                string_address entry = shell_vars[index];
+                string_address equal = string_first_of(entry, '=');
+                positive length = equal ? (positive)(equal - entry) : 0;
+
+                name_index_put(env_index, slots,
+                               env_name_hash(entry, length), length, index,
+                               address_of env_index_tombstones);
+        }
+
+        env_index_slots = slots;
+        return true;
+}
+
+static positive env_find_hashed_span(const_string name, positive length,
+                                     positive hash)
+{
+        if (env_index_slots)
+        {
+                positive at = hash & (env_index_slots - 1);
+
+                for (positive probes = 0; probes < env_index_slots; probes++)
+                {
+                        name_index_slot address_to slot = env_index + at;
+
+                        if (!slot->index_plus_one)
+                                return shell_var_count;
+
+                        if (slot->index_plus_one != positive_max &&
+                            slot->hash == hash && slot->length == length)
+                        {
+                                positive index = slot->index_plus_one - 1;
+
+                                if (index < shell_var_count &&
+                                    !memory_compare(shell_vars[index],
+                                                    (address_any)name, length))
+                                        return index;
+                        }
+
+                        at = (at + 1) & (env_index_slots - 1);
+                }
+
+                return shell_var_count;
+        }
+
+        /* Allocation failure leaves correctness, but not the acceleration. */
+        for (positive index = 0; index < shell_var_count; index++)
+        {
+                string_address entry = shell_vars[index];
+                string_address equal = string_first_of(entry, '=');
+
+                if (equal && (positive)(equal - entry) == length &&
+                    !memory_compare(entry, (address_any)name, length))
+                        return index;
+        }
+
+        return shell_var_count;
+}
+
+static positive env_find_span(const_string name, positive length)
+{
+        return env_find_hashed_span(name, length,
+                                    env_name_hash(name, length));
+}
+
+static fn env_index_remove(const_string name, positive length, positive index)
+{
+        if (!env_index_slots)
+                return;
+
+        name_index_remove(env_index, env_index_slots,
+                          env_name_hash(name, length), index, shell_var_count,
+                          address_of env_index_tombstones);
 }
 
 static env_cell address_to env_cell_take(positive needed)
@@ -286,12 +491,103 @@ static fn env_cell_drop(string_address text)
         env_free = cell;
 }
 
+static bool env_export_index_rebuild(positive count)
+{
+        positive slots = 64;
+
+        if (count > positive_max / 2)
+        {
+                env_export_index_slots = 0;
+                return false;
+        }
+
+        while (slots < count * 2)
+        {
+                if (slots > positive_max / 2)
+                {
+                        env_export_index_slots = 0;
+                        return false;
+                }
+                slots *= 2;
+        }
+
+        if (!shell_room(
+                (address_any address_to)address_of env_export_index,
+                address_of env_export_index_room, slots,
+                sizeof(env_export_index[0])))
+        {
+                env_export_index_slots = 0;
+                return false;
+        }
+
+        memory_fill(env_export_index, 0,
+                    slots * sizeof(env_export_index[0]));
+        env_export_index_tombstones = 0;
+
+        for (positive index = 0; index < count; index++)
+                name_index_put(env_export_index, slots,
+                               env_name_hash(env_exports[index].name,
+                                             env_exports[index].length),
+                               env_exports[index].length, index,
+                               address_of env_export_index_tombstones);
+
+        env_export_index_slots = slots;
+        return true;
+}
+
 static bipolar env_export_find_span(const_string name, positive length)
 {
+        positive hash;
+
+        if (env_export_recent >= 0 &&
+            (positive)env_export_recent < env_export_count &&
+            env_exports[env_export_recent].length == length &&
+            !memory_compare(env_exports[env_export_recent].name, name, length))
+                return env_export_recent;
+
+        hash = env_name_hash(name, length);
+
+        if (env_export_index_slots)
+        {
+                positive at = hash & (env_export_index_slots - 1);
+
+                for (positive probes = 0; probes < env_export_index_slots;
+                     probes++)
+                {
+                        name_index_slot address_to slot =
+                            env_export_index + at;
+
+                        if (!slot->index_plus_one)
+                                return -1;
+
+                        if (slot->index_plus_one != positive_max &&
+                            slot->hash == hash && slot->length == length)
+                        {
+                                positive index = slot->index_plus_one - 1;
+
+                                if (index < env_export_count &&
+                                    !memory_compare(env_exports[index].name,
+                                                    name, length))
+                                {
+                                        env_export_recent = (bipolar)index;
+                                        return (bipolar)index;
+                                }
+                        }
+
+                        at = (at + 1) & (env_export_index_slots - 1);
+                }
+
+                return -1;
+        }
+
+        /* As with the variable index, allocation failure keeps semantics. */
         for (positive at = 0; at < env_export_count; at++)
-                if (string_length(env_exports[at].name) == length &&
+                if (env_exports[at].length == length &&
                     !memory_compare(env_exports[at].name, name, length))
+                {
+                        env_export_recent = (bipolar)at;
                         return (bipolar)at;
+                }
 
         return -1;
 }
@@ -317,17 +613,36 @@ static env_export address_to env_export_take(const_string name, positive length)
         memory_copy_end((p8 address_to)(cell + 1), (address_any)name, length);
 
         env_exports[env_export_count].name = (string_address)(cell + 1);
+        env_exports[env_export_count].length = length;
         env_exports[env_export_count].temporary = 0;
         env_exports[env_export_count].permanent = false;
 
+        if (!env_export_index_slots ||
+            env_export_count + 1 > env_export_index_slots / 2)
+                env_export_index_rebuild(env_export_count + 1);
+        else
+                name_index_put(env_export_index, env_export_index_slots,
+                               env_name_hash(name, length), length,
+                               env_export_count,
+                               address_of env_export_index_tombstones);
+
+        env_export_recent = (bipolar)env_export_count;
         return env_exports + env_export_count++;
 }
 
 static fn env_export_drop(positive index)
 {
         positive left = env_export_count - index - 1;
+        string_address name = env_exports[index].name;
+        positive length = env_exports[index].length;
 
-        env_cell_drop(env_exports[index].name);
+        if (env_export_index_slots)
+                name_index_remove(env_export_index, env_export_index_slots,
+                                  env_name_hash(name, length), index,
+                                  env_export_count,
+                                  address_of env_export_index_tombstones);
+
+        env_cell_drop(name);
 
         if (left >= 4)
                 memory_copy(env_exports + index, env_exports + index + 1,
@@ -337,6 +652,15 @@ static fn env_export_drop(positive index)
                         env_exports[index + at] = env_exports[index + at + 1];
 
         env_export_count--;
+
+        if (env_export_recent == (bipolar)index)
+                env_export_recent = -1;
+        else if (env_export_recent > (bipolar)index)
+                env_export_recent--;
+
+        if (env_export_index_slots &&
+            env_export_index_tombstones >= env_export_index_slots / 4)
+                env_export_index_rebuild(env_export_count);
 }
 
 static bool env_export_active_span(const_string name, positive length)
@@ -482,6 +806,11 @@ fn shell_env_init(string_address address_to process_environment)
 
         shell_var_count = 0;
         shell_vars[0] = null;
+        env_index_slots = 0;
+        env_index_tombstones = 0;
+        env_export_index_slots = 0;
+        env_export_index_tombstones = 0;
+        env_export_recent = -1;
 
         // A shell launched by make, system(), or another shell starts with the
         // environment it was given. PID 1 naturally receives an empty vector,
@@ -538,18 +867,35 @@ fn shell_env_init(string_address address_to process_environment)
 */
 #define env_reading(text) ((string_address)(text))
 
-string_address env_get(const_string name)
+string_address env_get_span(const_string name, positive length)
 {
+        positive index;
+
         if (name == null)
                 return null;
 
-        return shell_vars
-                   ? string_get_environment(shell_vars, env_reading(name))
-                   : null;
+        index = env_find_span(name, length);
+
+        return index < shell_var_count ? shell_vars[index] + length + 1 : null;
 }
 
-static bool env_set_span(const_string name, positive name_len,
-                         const_string value)
+string_address env_get(const_string name)
+{
+        positive2 answer;
+        positive index;
+
+        if (!name)
+                return null;
+
+        answer = string_hash_33_length(env_reading(name));
+        index = env_find_hashed_span(name, answer.y, answer.x);
+
+        return index < shell_var_count ? shell_vars[index] + answer.y + 1
+                                       : null;
+}
+
+static bool env_set_hashed_span(const_string name, positive name_len,
+                                positive hash, const_string value)
 {
         if (!name || !value)
                 return false;
@@ -561,21 +907,8 @@ static bool env_set_span(const_string name, positive name_len,
         positive value_len = string_length(env_reading(value));
         positive needed = name_len + 1 + value_len + 1;
 
-        positive idx = 0;
+        positive idx = env_find_hashed_span(name, name_len, hash);
         env_cell address_to cell;
-
-        while (idx < shell_var_count)
-        {
-                string_address entry = shell_vars[idx];
-                string_address eq = string_first_of(entry, '=');
-
-                if (eq && (positive)(eq - entry) == name_len &&
-                    !memory_compare(entry, name, name_len))
-                {
-                        break;
-                }
-                idx++;
-        }
 
         if (idx == shell_var_count && !env_table_room(shell_var_count + 1))
                 return false;
@@ -617,6 +950,13 @@ static bool env_set_span(const_string name, positive name_len,
         {
                 shell_vars[shell_var_count++] = (string_address)(cell + 1);
                 shell_vars[shell_var_count] = null;
+
+                if (!env_index_slots || shell_var_count > env_index_slots / 2)
+                        env_index_rebuild(shell_var_count);
+                else
+                        name_index_put(env_index, env_index_slots, hash,
+                                       name_len, shell_var_count - 1,
+                                       address_of env_index_tombstones);
         }
 
         if (env_export_active_span(name, name_len))
@@ -625,12 +965,22 @@ static bool env_set_span(const_string name, positive name_len,
         return true;
 }
 
+static bool env_set_span(const_string name, positive name_len,
+                         const_string value)
+{
+        return env_set_hashed_span(name, name_len,
+                                   env_name_hash(name, name_len), value);
+}
+
 bool env_set(const_string name, const_string value)
 {
+        positive2 answer;
+
         if (!name || !value || env_readonly(name))
                 return false;
 
-        return env_set_span(name, string_length(env_reading(name)), value);
+        answer = string_hash_33_length(env_reading(name));
+        return env_set_hashed_span(name, answer.y, answer.x, value);
 }
 
 #define ERROR_NOT_PERMITTED 1
@@ -1378,53 +1728,45 @@ bool word_is(string_address word, string_address text)
         return word && !string_compare(word, text);
 }
 
-fn env_unset(string_address name)
+static fn env_unset_span(string_address name, positive length)
 {
-        positive length = string_length(env_reading(name));
-        positive index = 0;
+        positive index = env_find_span(name, length);
 
-        while (index < shell_var_count)
+        if (index < shell_var_count)
         {
-                string_address entry = shell_vars[index];
-                string_address mark = string_first_of(entry, '=');
+                string_address dropped = shell_vars[index];
+                positive left = shell_var_count - index - 1;
 
-                if (mark && (positive)(mark - entry) == length)
-                {
-                        positive same = 0;
+                env_index_remove(name, length, index);
 
-                        while (same < length &&
-                               string_get(entry + same) == string_get(name + same))
-                                same++;
+                if (left >= 4)
+                        memory_copy(shell_vars + index, shell_vars + index + 1,
+                                    left * sizeof(string_address));
+                else
+                        for (positive at = 0; at < left; at++)
+                                shell_vars[index + at] = shell_vars[index + at + 1];
 
-                        if (same == length)
-                        {
-                                string_address dropped = shell_vars[index];
-                                positive left = shell_var_count - index - 1;
+                shell_var_count--;
+                shell_vars[shell_var_count] = null;
 
-                                if (left >= 4)
-                                        memory_copy(shell_vars + index,
-                                                    shell_vars + index + 1,
-                                                    left * sizeof(string_address));
-                                else
-                                        for (positive at = 0; at < left; at++)
-                                                shell_vars[index + at] =
-                                                    shell_vars[index + at + 1];
+                if (env_index_slots &&
+                    env_index_tombstones >= env_index_slots / 4)
+                        env_index_rebuild(shell_var_count);
 
-                                shell_var_count--;
-                                shell_vars[shell_var_count] = null;
-                                env_export_forget(name);
-                                shell_envp_dirty = true;
-                                env_cell_drop(dropped);
-                                return;
-                        }
-                }
-
-                index++;
+                env_export_forget(name);
+                shell_envp_dirty = true;
+                env_cell_drop(dropped);
+                return;
         }
 
         // `export name` is state even while name has no value, and unset
         // removes that state too.
         env_export_forget(name);
+}
+
+fn env_unset(string_address name)
+{
+        env_unset_span(name, string_length(env_reading(name)));
 }
 
 // Hangs an already built "name=value" on the environment list by copying it
@@ -4575,6 +4917,86 @@ typedef struct
         shell_tool_function function;
 } shell_tool;
 
+/*
+        A static name table should not become a linear interpreter cost.
+        Every simple command asks both the utility table and the builtin table;
+        walking sixty utility names before discovering `[` made dispatch one
+        of the hottest loops in the shell.
+
+        The policy stays here, while all byte work stays at the hardware floor:
+        memory_hash_33 hashes a name and memory_compare verifies the one hash
+        candidate. The same index shape serves utilities and shell commands.
+*/
+typedef name_index_slot shell_name_slot;
+
+static fn shell_name_index_build(address_any table, positive stride,
+                                 positive count, shell_name_slot address_to slots,
+                                 positive room)
+{
+        positive tombstones = 0;
+
+        memory_fill(slots, 0, room * sizeof(slots[0]));
+
+        for (positive index = 0; index < count; index++)
+        {
+                string_address name =
+                    *(string_address address_to)((p8 address_to)table +
+                                                  index * stride);
+                positive length = string_length(name);
+                positive hash = env_name_hash(name, length);
+
+                name_index_put(slots, room, hash, length, index,
+                               address_of tombstones);
+        }
+}
+
+static positive shell_name_index_find(string_address name, address_any table,
+                                      positive stride, positive count,
+                                      shell_name_slot address_to slots,
+                                      positive room, bool address_to ready)
+{
+        positive length;
+        positive hash;
+        positive at;
+
+        if (!address_to ready)
+        {
+                shell_name_index_build(table, stride, count, slots, room);
+                address_to ready = true;
+        }
+
+        {
+                positive2 answer = string_hash_33_length(name);
+
+                hash = answer.x;
+                length = answer.y;
+        }
+        at = hash & (room - 1);
+
+        for (positive probes = 0; probes < room; probes++)
+        {
+                shell_name_slot address_to slot = slots + at;
+
+                if (!slot->index_plus_one)
+                        return count;
+
+                if (slot->hash == hash && slot->length == length)
+                {
+                        positive index = slot->index_plus_one - 1;
+                        string_address candidate =
+                            *(string_address address_to)((p8 address_to)table +
+                                                          index * stride);
+
+                        if (!memory_compare(name, candidate, length))
+                                return index;
+                }
+
+                at = (at + 1) & (room - 1);
+        }
+
+        return count;
+}
+
 static shell_tool shell_tools[] = {
     {"awk", text_awk},
     {"cat", text_cat},
@@ -4643,6 +5065,18 @@ static shell_tool shell_tools[] = {
 };
 
 #define SHELL_TOOLS (sizeof(shell_tools) / sizeof(shell_tools[0]) - 1)
+#define SHELL_TOOL_INDEX_ROOM 128
+
+static shell_name_slot shell_tool_index[SHELL_TOOL_INDEX_ROOM];
+static bool shell_tool_index_ready;
+
+static positive shell_tool_find(string_address name)
+{
+        return shell_name_index_find(name, shell_tools, sizeof(shell_tools[0]),
+                                     SHELL_TOOLS, shell_tool_index,
+                                     SHELL_TOOL_INDEX_ROOM,
+                                     address_of shell_tool_index_ready);
+}
 
 /*
         The last element of a path, so that /bin/grep is grep.
@@ -4693,7 +5127,11 @@ b32 shell_tool_as_called()
         if (!name)
                 return -1;
 
-        which = string_table_find(name, shell_tools, sizeof(shell_tool), SHELL_TOOLS);
+        /* One lookup in a process is cheaper than constructing the reusable
+           index. Ordinary shell dispatch below is where repeated names use
+           the index; argv[0] is asked only once. */
+        which = string_table_find(name, shell_tools, sizeof(shell_tool),
+                                  SHELL_TOOLS);
 
         if (which == SHELL_TOOLS)
                 return -1;
@@ -4704,8 +5142,7 @@ b32 shell_tool_as_called()
 // Whether a name is one of the utilities, without running it.
 bool shell_tool_here(string_address name)
 {
-        return string_table_find(name, shell_tools, sizeof(shell_tool),
-                                 SHELL_TOOLS) != SHELL_TOOLS;
+        return shell_tool_find(name) != SHELL_TOOLS;
 }
 
 fn shell_tool_list(writer write)
@@ -4717,8 +5154,7 @@ fn shell_tool_list(writer write)
 
 static bool shell_tool_run(string_address name)
 {
-        positive which = string_table_find(name, shell_tools, sizeof(shell_tool),
-                                           SHELL_TOOLS);
+        positive which = shell_tool_find(name);
         bipolar child;
         positive status = 0;
 
@@ -5250,12 +5686,17 @@ shell_command shell_commands[] = {
 };
 
 #define SHELL_COMMAND_COUNT ((sizeof(shell_commands) / sizeof(shell_commands[0])) - 1)
+#define SHELL_COMMAND_INDEX_ROOM 128
+
+static shell_name_slot shell_command_index[SHELL_COMMAND_INDEX_ROOM];
+static bool shell_command_index_ready;
 
 static shell_command address_to shell_command_named(string_address name)
 {
-        positive which = string_table_find(name, shell_commands,
-                                           sizeof(shell_commands[0]),
-                                           SHELL_COMMAND_COUNT);
+        positive which = shell_name_index_find(
+            name, shell_commands, sizeof(shell_commands[0]),
+            SHELL_COMMAND_COUNT, shell_command_index,
+            SHELL_COMMAND_INDEX_ROOM, address_of shell_command_index_ready);
 
         return which < SHELL_COMMAND_COUNT ? shell_commands + which : null;
 }

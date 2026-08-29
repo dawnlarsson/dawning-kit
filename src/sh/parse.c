@@ -33,6 +33,7 @@ typedef struct
         // difference between 2>file and 2 >file.
         b32 joined;
         string_address text;
+        positive length;
 } parse_token;
 
 /*
@@ -123,6 +124,7 @@ typedef struct
 
 static parse_node parse_nodes[PARSE_NODES];
 static string_address parse_words[PARSE_WORDS];
+static positive parse_word_lengths[PARSE_WORDS];
 static parse_redirect parse_redirects[PARSE_REDIRECTS];
 
 static b32 parse_node_used;
@@ -353,11 +355,89 @@ static parse_token address_to parse_look(b32 ahead)
         return parse_tokens + index;
 }
 
-static bool parse_word_is(b32 ahead, string_address text)
+static bool parse_word_is_length(b32 ahead, string_address text,
+                                 positive length)
 {
         parse_token address_to token = parse_look(ahead);
 
-        return token->kind == PT_WORD && !string_compare(token->text, text);
+        return token->kind == PT_WORD && token->length == length &&
+               !memory_compare(token->text, text, length);
+}
+
+/* Every grammar spelling is a literal. Carry its size through the call so a
+   parser comparison becomes the compiler_memory fixed-size floor rather than
+   a separate string-length pass followed by a generic comparison. */
+#define parse_word_is(ahead, text) \
+        parse_word_is_length((ahead), (string_address)(text), sizeof(text) - 1)
+
+enum
+{
+        PARSE_KEYWORD_NONE,
+        PARSE_KEYWORD_IF,
+        PARSE_KEYWORD_THEN,
+        PARSE_KEYWORD_ELSE,
+        PARSE_KEYWORD_ELIF,
+        PARSE_KEYWORD_FI,
+        PARSE_KEYWORD_DO,
+        PARSE_KEYWORD_DONE,
+        PARSE_KEYWORD_CASE,
+        PARSE_KEYWORD_ESAC,
+        PARSE_KEYWORD_WHILE,
+        PARSE_KEYWORD_UNTIL,
+        PARSE_KEYWORD_FOR,
+        PARSE_KEYWORD_IN,
+        PARSE_KEYWORD_BANG,
+        PARSE_KEYWORD_OPEN,
+        PARSE_KEYWORD_CLOSE,
+};
+
+/*
+        Classify once instead of asking fifteen exact string comparisons.
+        Ordinary commands are overwhelmingly not keywords, so length rejects
+        them immediately; the few equal-length candidates are verified by the
+        hardware-floor memory comparator.
+*/
+static b32 parse_keyword(b32 ahead)
+{
+        parse_token address_to token = parse_look(ahead);
+        string_address text;
+
+        if (token->kind != PT_WORD)
+                return PARSE_KEYWORD_NONE;
+
+        text = token->text;
+
+        switch (token->length)
+        {
+        case 1:
+                if (text[0] == '!') return PARSE_KEYWORD_BANG;
+                if (text[0] == '{') return PARSE_KEYWORD_OPEN;
+                if (text[0] == '}') return PARSE_KEYWORD_CLOSE;
+                return PARSE_KEYWORD_NONE;
+        case 2:
+                if (!memory_compare(text, "if", 2)) return PARSE_KEYWORD_IF;
+                if (!memory_compare(text, "fi", 2)) return PARSE_KEYWORD_FI;
+                if (!memory_compare(text, "do", 2)) return PARSE_KEYWORD_DO;
+                if (!memory_compare(text, "in", 2)) return PARSE_KEYWORD_IN;
+                return PARSE_KEYWORD_NONE;
+        case 3:
+                return !memory_compare(text, "for", 3) ? PARSE_KEYWORD_FOR
+                                                        : PARSE_KEYWORD_NONE;
+        case 4:
+                if (!memory_compare(text, "then", 4)) return PARSE_KEYWORD_THEN;
+                if (!memory_compare(text, "else", 4)) return PARSE_KEYWORD_ELSE;
+                if (!memory_compare(text, "elif", 4)) return PARSE_KEYWORD_ELIF;
+                if (!memory_compare(text, "done", 4)) return PARSE_KEYWORD_DONE;
+                if (!memory_compare(text, "case", 4)) return PARSE_KEYWORD_CASE;
+                if (!memory_compare(text, "esac", 4)) return PARSE_KEYWORD_ESAC;
+                return PARSE_KEYWORD_NONE;
+        case 5:
+                if (!memory_compare(text, "while", 5)) return PARSE_KEYWORD_WHILE;
+                if (!memory_compare(text, "until", 5)) return PARSE_KEYWORD_UNTIL;
+                return PARSE_KEYWORD_NONE;
+        default:
+                return PARSE_KEYWORD_NONE;
+        }
 }
 
 /*
@@ -614,6 +694,7 @@ bool parse_feed(string_address line)
                 into->op = source->op;
                 into->joined = index && source->at == previous_stop;
                 into->text = null;
+                into->length = source->length;
 
                 previous_stop = source->at + source->length;
 
@@ -694,6 +775,7 @@ bool parse_feed(string_address line)
         parse_tokens[parse_token_count].op = 0;
         parse_tokens[parse_token_count].joined = 0;
         parse_tokens[parse_token_count].text = null;
+        parse_tokens[parse_token_count].length = 0;
         parse_token_count++;
 
         return true;
@@ -716,7 +798,7 @@ static b32 parse_node_new(b32 kind)
         return index;
 }
 
-static b32 parse_word_new(string_address text)
+static b32 parse_word_new(string_address text, positive length)
 {
         if (parse_word_used + 1 >= parse_word_top)
         {
@@ -725,13 +807,14 @@ static b32 parse_word_new(string_address text)
         }
 
         parse_words[parse_word_used] = text;
+        parse_word_lengths[parse_word_used] = length;
 
         return parse_word_used++;
 }
 
-static fn parse_attach_word(b32 index, string_address text)
+static fn parse_attach_word(b32 index, string_address text, positive length)
 {
-        b32 slot = parse_word_new(text);
+        b32 slot = parse_word_new(text, length);
 
         if (parse_state)
                 return;
@@ -762,9 +845,9 @@ static fn parse_fail()
         parse_state = parse_look(0)->kind == PT_END ? PARSE_INCOMPLETE : PARSE_SYNTAX;
 }
 
-static bool parse_expect_word(string_address text)
+static bool parse_expect_word_length(string_address text, positive length)
 {
-        if (parse_word_is(0, text))
+        if (parse_word_is_length(0, text, length))
         {
                 parse_position++;
                 return true;
@@ -773,6 +856,9 @@ static bool parse_expect_word(string_address text)
         parse_fail();
         return false;
 }
+
+#define parse_expect_word(text) \
+        parse_expect_word_length((string_address)(text), sizeof(text) - 1)
 
 static bool parse_expect_operator(b32 op)
 {
@@ -798,6 +884,7 @@ static bool parse_expect_operator(b32 op)
 static bool parse_at_list_end()
 {
         parse_token address_to token = parse_look(0);
+        b32 keyword;
 
         if (token->kind == PT_END)
                 return true;
@@ -809,10 +896,16 @@ static bool parse_at_list_end()
         if (token->kind != PT_WORD)
                 return false;
 
-        return parse_word_is(0, "then") || parse_word_is(0, "elif") ||
-               parse_word_is(0, "else") || parse_word_is(0, "fi") ||
-               parse_word_is(0, "do") || parse_word_is(0, "done") ||
-               parse_word_is(0, "esac") || parse_word_is(0, "}");
+        keyword = parse_keyword(0);
+
+        return keyword == PARSE_KEYWORD_THEN ||
+               keyword == PARSE_KEYWORD_ELIF ||
+               keyword == PARSE_KEYWORD_ELSE ||
+               keyword == PARSE_KEYWORD_FI ||
+               keyword == PARSE_KEYWORD_DO ||
+               keyword == PARSE_KEYWORD_DONE ||
+               keyword == PARSE_KEYWORD_ESAC ||
+               keyword == PARSE_KEYWORD_CLOSE;
 }
 
 /*
@@ -825,14 +918,7 @@ static bool parse_at_list_end()
 */
 static bool parse_reserved(b32 ahead)
 {
-        return parse_word_is(ahead, "if") || parse_word_is(ahead, "then") ||
-               parse_word_is(ahead, "else") || parse_word_is(ahead, "elif") ||
-               parse_word_is(ahead, "fi") || parse_word_is(ahead, "do") ||
-               parse_word_is(ahead, "done") || parse_word_is(ahead, "case") ||
-               parse_word_is(ahead, "esac") || parse_word_is(ahead, "while") ||
-               parse_word_is(ahead, "until") || parse_word_is(ahead, "for") ||
-               parse_word_is(ahead, "in") || parse_word_is(ahead, "!") ||
-               parse_word_is(ahead, "{") || parse_word_is(ahead, "}");
+        return parse_keyword(ahead) != PARSE_KEYWORD_NONE;
 }
 
 static bool parse_redirect_operator(b32 op)
@@ -939,7 +1025,8 @@ static bool parse_take_redirect(b32 index)
         parse_redirects[slot].raw = false;
         parse_redirects[slot].body = 0;
         parse_redirects[slot].body_length = 0;
-        parse_redirects[slot].word = parse_word_new(delimiter);
+        parse_redirects[slot].word =
+            parse_word_new(delimiter, string_length(delimiter));
 
         if (op == OP_DLESS)
         {
@@ -1015,7 +1102,8 @@ static b32 parse_simple()
                 if (parse_look(0)->kind != PT_WORD)
                         break;
 
-                parse_attach_word(index, parse_look(0)->text);
+                parse_attach_word(index, parse_look(0)->text,
+                                  parse_look(0)->length);
                 parse_position++;
         }
 
@@ -1113,7 +1201,8 @@ static b32 parse_for()
         if (parse_look(0)->kind == PT_ARITHMETIC)
         {
                 parse_nodes[index].kind = NODE_CFOR;
-                parse_attach_word(index, parse_look(0)->text);
+                parse_attach_word(index, parse_look(0)->text,
+                                  parse_look(0)->length);
                 parse_position++;
 
                 if (parse_look(0)->kind == PT_OP &&
@@ -1139,7 +1228,8 @@ static b32 parse_for()
                 return 0;
         }
 
-        parse_attach_word(index, parse_look(0)->text);
+        parse_attach_word(index, parse_look(0)->text,
+                          parse_look(0)->length);
         parse_position++;
 
         // Without "in" the loop walks the positional parameters, which is a
@@ -1160,7 +1250,8 @@ static b32 parse_for()
                 */
                 while (parse_look(0)->kind == PT_WORD)
                 {
-                        parse_attach_word(index, parse_look(0)->text);
+                        parse_attach_word(index, parse_look(0)->text,
+                                          parse_look(0)->length);
                         parse_position++;
                 }
         }
@@ -1195,7 +1286,8 @@ static b32 parse_case()
                 return 0;
         }
 
-        parse_attach_word(index, parse_look(0)->text);
+        parse_attach_word(index, parse_look(0)->text,
+                          parse_look(0)->length);
         parse_position++;
         parse_skip_newlines();
 
@@ -1230,7 +1322,8 @@ static b32 parse_case()
                                 return 0;
                         }
 
-                        parse_attach_word(item, parse_look(0)->text);
+                        parse_attach_word(item, parse_look(0)->text,
+                                          parse_look(0)->length);
                         parse_position++;
 
                         if (parse_look(0)->kind == PT_OP && parse_look(0)->op == OP_PIPE)
@@ -1303,7 +1396,8 @@ static b32 parse_function()
         if (parse_state)
                 return 0;
 
-        parse_attach_word(index, parse_look(0)->text);
+        parse_attach_word(index, parse_look(0)->text,
+                          parse_look(0)->length);
         parse_position += 3;
         parse_skip_newlines();
 
@@ -1327,7 +1421,8 @@ static b32 parse_function_keyword()
                 return 0;
         }
 
-        parse_attach_word(index, parse_look(0)->text);
+        parse_attach_word(index, parse_look(0)->text,
+                          parse_look(0)->length);
         parse_position++;
 
         if (parse_look(0)->kind == PT_OP && parse_look(0)->op == OP_LPAREN &&
@@ -1365,7 +1460,8 @@ static b32 parse_command()
 
                 if (!parse_state)
                 {
-                        parse_attach_word(index, parse_look(0)->text);
+                        parse_attach_word(index, parse_look(0)->text,
+                                          parse_look(0)->length);
                         parse_position++;
                 }
 
@@ -1378,7 +1474,8 @@ static b32 parse_command()
 
                 if (!parse_state)
                 {
-                        parse_attach_word(index, parse_look(0)->text);
+                        parse_attach_word(index, parse_look(0)->text,
+                                          parse_look(0)->length);
                         parse_position++;
                 }
 
@@ -1685,7 +1782,8 @@ static b32 parse_keep_words(b32 first, b32 count)
 
         for (index = 0; index < count; index++)
         {
-                positive length = string_length(parse_words[first + index]) + 1;
+                positive text_length = parse_word_lengths[first + index];
+                positive length = text_length + 1;
 
                 if (parse_kept_used + length > PARSE_KEPT_TEXT)
                         return -1;
@@ -1693,6 +1791,7 @@ static b32 parse_keep_words(b32 first, b32 count)
                 memory_copy(parse_kept_text + parse_kept_used,
                             parse_words[first + index], length);
                 parse_words[base + index] = parse_kept_text + parse_kept_used;
+                parse_word_lengths[base + index] = text_length;
                 parse_kept_used += length;
         }
 

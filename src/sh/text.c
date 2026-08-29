@@ -4986,8 +4986,11 @@ static bool grep_skip(positive address_to lines, positive address_to bytes)
                 while (stop && at[stop - 1] != text_delimiter)
                         stop--;
 
-                address_to lines += memory_count(at, stop, text_delimiter);
-                address_to bytes += stop;
+                if (lines)
+                        address_to lines += memory_count(at, stop,
+                                                         text_delimiter);
+                if (bytes)
+                        address_to bytes += stop;
                 text_input.position += stop;
 
                 if (found)
@@ -4996,6 +4999,33 @@ static bool grep_skip(positive address_to lines, positive address_to bytes)
                 if (text_input.position < text_input.filled)
                         return false;
         }
+}
+
+/* Counting a proven literal match does not need the line copied into the
+   parser buffer. Consume through its delimiter in place, carrying a final
+   unterminated line across refills. */
+static bool grep_discard_line()
+{
+        bool any = false;
+
+        while (text_fill())
+        {
+                p8 address_to at = text_input.buffer + text_input.position;
+                positive left = text_input.filled - text_input.position;
+                p8 address_to delimiter = memory_first_of(
+                    at, text_delimiter, left);
+
+                if (delimiter)
+                {
+                        text_input.position += (positive)(delimiter - at) + 1;
+                        return true;
+                }
+
+                any = any || left;
+                text_input.position = text_input.filled;
+        }
+
+        return any;
 }
 
 static fn grep_hold_clear()
@@ -6134,6 +6164,9 @@ static b32 text_grep()
                 // want the ones around them, so neither can have any line go
                 // by unread.
                 bool skipping = grep_literal_length && !invert && !before && !after;
+                bool direct_counting = counting && skipping && !whole_line &&
+                                       !whole_word && !listing &&
+                                       !listing_without && !quiet;
 
                 for (;;)
                 {
@@ -6144,7 +6177,21 @@ static b32 text_grep()
                         // arrive whole.
                         bool sure = false;
 
-                        if (skipping)
+                        if (direct_counting && grep_skip(null, null))
+                        {
+                                if (!grep_discard_line())
+                                        break;
+
+                                matches++;
+                                found_any = true;
+
+                                if (limit != TEXT_UNSET && matches >= limit)
+                                        break;
+
+                                continue;
+                        }
+
+                        if (skipping && !direct_counting)
                         {
                                 positive jumped = 0;
 
@@ -8842,7 +8889,113 @@ static bipolar sort_compare(positive left, positive right)
 static positive address_to sort_order;
 static positive address_to sort_spare;
 
-static fn sort_merge(positive from, positive middle, positive to)
+static positive sort_radix_key(positive line, positive depth)
+{
+        text_slice address_to item = text_lines + line;
+
+        return depth < item->length ? (positive)item->at[depth] + 1 : 0;
+}
+
+static fn sort_insertion(positive from, positive to)
+{
+        for (positive at = from + 1; at < to; at++)
+        {
+                positive value = sort_order[at];
+                positive into = at;
+
+                while (into > from &&
+                       sort_compare(value, sort_order[into - 1]) < 0)
+                {
+                        sort_order[into] = sort_order[into - 1];
+                        into--;
+                }
+
+                sort_order[into] = value;
+        }
+}
+
+/*
+        The ordinary C-locale sort is bytes, so comparing whole prefixes at
+        every merge is avoidable. Partition on the next byte instead. Bucket
+        zero is end-of-line and bytes occupy one through 256, preserving the
+        exact length-aware order of memory_compare.
+
+        The largest child is continued in this frame and only smaller children
+        recurse, bounding stack depth even for adversarial tries. A single
+        common-byte bucket simply advances depth in the loop, so very long
+        equal prefixes do not consume stack.
+*/
+static fn sort_radix(positive from, positive to, positive depth)
+{
+        while (to - from >= 16)
+        {
+                positive boundary[258];
+                positive next[257];
+                positive largest = 0;
+                positive largest_size = 0;
+
+                memory_fill(boundary, 0, sizeof(boundary));
+
+                for (positive at = from; at < to; at++)
+                        boundary[sort_radix_key(sort_order[at], depth) + 1]++;
+
+                boundary[0] = from;
+                for (positive bucket = 0; bucket < 257; bucket++)
+                {
+                        boundary[bucket + 1] += boundary[bucket];
+                        next[bucket] = boundary[bucket];
+                }
+
+                for (positive bucket = 0; bucket < 257; bucket++)
+                        while (next[bucket] < boundary[bucket + 1])
+                        {
+                                positive key = sort_radix_key(
+                                    sort_order[next[bucket]], depth);
+
+                                if (key == bucket)
+                                        next[bucket]++;
+                                else
+                                {
+                                        positive held = sort_order[next[key]];
+
+                                        sort_order[next[key]++] =
+                                            sort_order[next[bucket]];
+                                        sort_order[next[bucket]] = held;
+                                }
+                        }
+
+                for (positive bucket = 1; bucket < 257; bucket++)
+                {
+                        positive size = boundary[bucket + 1] -
+                                        boundary[bucket];
+
+                        if (size > largest_size)
+                        {
+                                largest = bucket;
+                                largest_size = size;
+                        }
+                }
+
+                if (largest_size < 2)
+                        return;
+
+                for (positive bucket = 1; bucket < 257; bucket++)
+                        if (bucket != largest &&
+                            boundary[bucket + 1] - boundary[bucket] > 1)
+                                sort_radix(boundary[bucket],
+                                           boundary[bucket + 1], depth + 1);
+
+                from = boundary[largest];
+                to = boundary[largest + 1];
+                depth++;
+        }
+
+        sort_insertion(from, to);
+}
+
+static fn sort_merge_into(positive address_to source,
+                          positive address_to destination, positive from,
+                          positive middle, positive to)
 {
         positive left = from;
         positive right = middle;
@@ -8850,32 +9003,61 @@ static fn sort_merge(positive from, positive middle, positive to)
 
         while (left < middle && right < to)
         {
-                if (sort_compare(sort_order[right], sort_order[left]) < 0)
-                        sort_spare[at++] = sort_order[right++];
+                if (sort_compare(source[right], source[left]) < 0)
+                        destination[at++] = source[right++];
                 else
-                        sort_spare[at++] = sort_order[left++];
+                        destination[at++] = source[left++];
         }
 
-        // Whichever run is left over is already in order and goes across
-        // whole; only one of the two can be.
-        memory_copy_apart(sort_spare + at, sort_order + left,
+        memory_copy_apart(destination + at, source + left,
                          (middle - left) * sizeof(positive));
-        memory_copy_apart(sort_spare + at + (middle - left), sort_order + right,
+        memory_copy_apart(destination + at + (middle - left), source + right,
                          (to - right) * sizeof(positive));
-        memory_copy_apart(sort_order + from, sort_spare + from,
-                         (to - from) * sizeof(positive));
 }
 
-static fn sort_run(positive from, positive to)
+/*
+        Stable bottom-up merge sort with the two index arrays changing roles.
+
+        The old recursive merge copied every completed run to spare and then
+        copied the entire run back, doubling index traffic at every level.
+        A pass already produces exactly the runs the next pass consumes, so
+        it can stay where it landed. Only line indexes move; line bytes never
+        do.
+*/
+static fn sort_run(positive count)
 {
-        if (to - from < 2)
+        positive address_to source = sort_order;
+        positive address_to destination = sort_spare;
+
+        if (count < 2)
                 return;
 
-        positive middle = from + (to - from) / 2;
+        for (positive width = 1; width < count;)
+        {
+                positive from = 0;
 
-        sort_run(from, middle);
-        sort_run(middle, to);
-        sort_merge(from, middle, to);
+                while (from < count)
+                {
+                        positive middle = min(from + width, count);
+                        positive to = min(middle + width, count);
+
+                        sort_merge_into(source, destination, from, middle, to);
+                        from = to;
+                }
+
+                {
+                        positive address_to swap = source;
+
+                        source = destination;
+                        destination = swap;
+                }
+
+                if (width > count / 2)
+                        break;
+                width *= 2;
+        }
+
+        sort_order = source;
 }
 
 static bool sort_parse_key(string_address spec)
@@ -9334,7 +9516,11 @@ static b32 text_sort()
         }
         else
         {
-                sort_run(0, text_lines_count);
+                if (!sort_key_count && !sort_kind && !sort_how &&
+                    !sort_reverse && !sort_stable && !sort_unique)
+                        sort_radix(0, text_lines_count, 0);
+                else
+                        sort_run(text_lines_count);
         }
 
         // -o is opened after every line has been read, so sort -o f f still

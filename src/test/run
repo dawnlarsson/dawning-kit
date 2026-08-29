@@ -1729,7 +1729,7 @@ lane_exact()
 #       argument written as a literal, because nothing that takes it from a
 #       loop counter reaches the expansion at all.
 #
-KNOWN_FILES="exact_set needle bounded exact_scan exact_ascii_case exact_base single exact_family"
+KNOWN_FILES="exact_set needle bounded exact_scan exact_ascii_case hash_length exact_base single exact_family"
 
 known_one()
 {

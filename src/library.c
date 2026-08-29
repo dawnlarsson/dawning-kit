@@ -67,7 +67,7 @@
         A .set is a second label on the same address, so there is no wrapper
         and no jump, and which names get one depends on who is linking.
 
-        223 routines (216 public, 7 local), 223 of them on all three.
+        224 routines (217 public, 7 local), 224 of them on all three.
         Raw C purity: 0 function bodies, 0 object definitions, 0 body macros, and 0 object macros (all forbidden).
 
           routine                        scope   x86_64  arm64   riscv64
@@ -255,6 +255,7 @@
           string_first_of_set            public  yes     yes     yes
           string_format                  public  yes     yes     yes
           string_get_environment         public  yes     yes     yes
+          string_hash_33_length          public  yes     yes     yes
           string_last_of                 public  yes     yes     yes
           string_last_of_or_end          public  yes     yes     yes
           string_length                  public  yes     yes     yes
@@ -3325,6 +3326,43 @@ __asm__(
     ".Lmemory_hash_33_x64_done:\n"
     ASM_RET
     ASM_END(memory_hash_33)
+
+    /* A NUL-terminated name normally needs both of these answers. Returning
+       them together keeps the bytes in one hardware-floor pass: hash in rax,
+       length in rdx, which is the two-word aggregate return ABI. */
+    ASM_FUNC(string_hash_33_length)
+    "mov $5381, %eax\n   xor %edx, %edx\n"
+    ".Lstring_hash_length_x64_align:\n   test $7, %dil\n"
+    "jz .Lstring_hash_length_x64_word_init\n"
+    ".Lstring_hash_length_x64_one:\n"
+    "movzbl (%rdi), %ecx\n   test %cl, %cl\n"
+    "jz .Lstring_hash_length_x64_done\n   imul $33, %rax, %rax\n"
+    "add %rcx, %rax\n   inc %rdx\n   inc %rdi\n"
+    "jmp .Lstring_hash_length_x64_align\n"
+    ".Lstring_hash_length_x64_word_init:\n"
+    "movabs $0x0101010101010101, %rsi\n"
+    "movabs $0x8080808080808080, %r8\n"
+    ".balign 16\n.Lstring_hash_length_x64_word:\n"
+    "mov (%rdi), %r9\n   mov %r9, %r10\n   sub %rsi, %r10\n"
+    "not %r9\n   and %r9, %r10\n   test %r8, %r10\n"
+    "jnz .Lstring_hash_length_x64_one\n"
+    "imul $1185921, %rax, %rax\n"
+    "movzbl 0(%rdi), %r10d\n   movzbl 1(%rdi), %r11d\n"
+    "movzbl 2(%rdi), %ecx\n   movzbl 3(%rdi), %r9d\n"
+    "imul $35937, %r10, %r10\n   imul $1089, %r11, %r11\n"
+    "imul $33, %rcx, %rcx\n   add %r10, %rax\n   add %r11, %rax\n"
+    "add %rcx, %rax\n   add %r9, %rax\n"
+    "imul $1185921, %rax, %rax\n"
+    "movzbl 4(%rdi), %r10d\n   movzbl 5(%rdi), %r11d\n"
+    "movzbl 6(%rdi), %ecx\n   movzbl 7(%rdi), %r9d\n"
+    "imul $35937, %r10, %r10\n   imul $1089, %r11, %r11\n"
+    "imul $33, %rcx, %rcx\n   add %r10, %rax\n   add %r11, %rax\n"
+    "add %rcx, %rax\n   add %r9, %rax\n   add $8, %rdx\n"
+    "add $8, %rdi\n"
+    "jmp .Lstring_hash_length_x64_word\n"
+    ".Lstring_hash_length_x64_done:\n"
+    ASM_RET
+    ASM_END(string_hash_33_length)
 
     ASM_FUNC(memory_span_byte)
     "xor %eax, %eax\n"
@@ -6913,6 +6951,38 @@ __asm__(
     ASM_RET
     ASM_END(memory_hash_33)
 
+    // See the x86_64 body for the shared one-pass contract.
+    ASM_FUNC(string_hash_33_length)
+    "mov x2, #5381\n   mov x1, #0\n"
+    ".Lstring_hash_length_arm64_align:\n   tst x0, #7\n"
+    "b.eq .Lstring_hash_length_arm64_word_init\n"
+    ".Lstring_hash_length_arm64_one:\n"
+    "ldrb w3, [x0]\n   cbz w3, .Lstring_hash_length_arm64_done\n"
+    "add x2, x2, x2, lsl #5\n   add x2, x2, x3\n"
+    "add x1, x1, #1\n   add x0, x0, #1\n"
+    "b .Lstring_hash_length_arm64_align\n"
+    ".Lstring_hash_length_arm64_word_init:\n"
+    "mov x4, #0x0101010101010101\n   mov x5, #0x8080808080808080\n"
+    "movz x6, #0x1881\n   movk x6, #0x12, lsl #16\n"
+    "mov x7, #35937\n   mov x8, #1089\n   mov x9, #33\n"
+    ".balign 16\n.Lstring_hash_length_arm64_word:\n"
+    "ldr x3, [x0]\n   sub x10, x3, x4\n   bic x10, x10, x3\n"
+    "tst x10, x5\n   b.ne .Lstring_hash_length_arm64_one\n"
+    "ldrb w10, [x0]\n   ldrb w11, [x0, #1]\n"
+    "ldrb w13, [x0, #2]\n   ldrb w14, [x0, #3]\n"
+    "mul x2, x2, x6\n   madd x2, x10, x7, x2\n"
+    "madd x2, x11, x8, x2\n   madd x2, x13, x9, x2\n"
+    "add x2, x2, x14\n"
+    "ldrb w10, [x0, #4]\n   ldrb w11, [x0, #5]\n"
+    "ldrb w13, [x0, #6]\n   ldrb w14, [x0, #7]\n"
+    "mul x2, x2, x6\n   madd x2, x10, x7, x2\n"
+    "madd x2, x11, x8, x2\n   madd x2, x13, x9, x2\n"
+    "add x2, x2, x14\n   add x1, x1, #8\n   add x0, x0, #8\n"
+    "b .Lstring_hash_length_arm64_word\n"
+    ".Lstring_hash_length_arm64_done:\n   mov x0, x2\n"
+    ASM_RET
+    ASM_END(string_hash_33_length)
+
     ASM_FUNC(memory_span_byte)
     "mov x3, #0\n   mov x4, x0\n"
 #ifndef KERNEL_MODE
@@ -9828,6 +9898,39 @@ __asm__(
     ASM_RET
     ASM_END(memory_hash_33)
 
+    // See the x86_64 body for the shared one-pass contract.
+    ASM_FUNC(string_hash_33_length)
+    "mv t0, a0\n   li a2, 5381\n   li a1, 0\n"
+    ".Lstring_hash_length_rv_align:\n   andi t3, t0, 7\n"
+    "beqz t3, .Lstring_hash_length_rv_word_init\n"
+    ".Lstring_hash_length_rv_one:\n"
+    "lbu t1, 0(t0)\n   beqz t1, .Lstring_hash_length_rv_done\n"
+    "slli t2, a2, 5\n   add a2, a2, t2\n   add a2, a2, t1\n"
+    "addi t0, t0, 1\n   addi a1, a1, 1\n"
+    "j .Lstring_hash_length_rv_align\n"
+    ".Lstring_hash_length_rv_word_init:\n"
+    "li t1, 0x0101010101010101\n   li t2, 0x8080808080808080\n"
+    "li a3, 1185921\n   li a4, 35937\n   li a5, 1089\n   li a6, 33\n"
+    ".balign 16\n.Lstring_hash_length_rv_word:\n"
+    "ld a7, 0(t0)\n   sub t3, a7, t1\n   not t4, a7\n"
+    "and t3, t3, t4\n   and t3, t3, t2\n"
+    "bnez t3, .Lstring_hash_length_rv_one\n"
+    "lbu t3, 0(t0)\n   lbu t4, 1(t0)\n"
+    "lbu t5, 2(t0)\n   lbu t6, 3(t0)\n"
+    "mul a2, a2, a3\n   mul t3, t3, a4\n   mul t4, t4, a5\n"
+    "mul t5, t5, a6\n   add a2, a2, t3\n   add a2, a2, t4\n"
+    "add a2, a2, t5\n   add a2, a2, t6\n"
+    "lbu t3, 4(t0)\n   lbu t4, 5(t0)\n"
+    "lbu t5, 6(t0)\n   lbu t6, 7(t0)\n"
+    "mul a2, a2, a3\n   mul t3, t3, a4\n   mul t4, t4, a5\n"
+    "mul t5, t5, a6\n   add a2, a2, t3\n   add a2, a2, t4\n"
+    "add a2, a2, t5\n   add a2, a2, t6\n"
+    "addi t0, t0, 8\n   addi a1, a1, 8\n"
+    "j .Lstring_hash_length_rv_word\n"
+    ".Lstring_hash_length_rv_done:\n   mv a0, a2\n"
+    ASM_RET
+    ASM_END(string_hash_33_length)
+
     ASM_FUNC(memory_span_byte)
     "mv t0, a0\n   li t1, 0\n   li t6, 4\n"
     "bltu a2, t6, .Lmemory_span_byte_rv_tail\n"
@@ -11760,6 +11863,7 @@ positive string_lex_word(string_address source, p8 address_to into,
 address_any memory_fill(address_any destination, b8 value, positive size);
 positive memory_common_prefix(address_any one, address_any two, positive size);
 positive memory_hash_33(address_any block, positive size);
+positive2 string_hash_33_length(string_address source);
 positive memory_span_byte(address_any block, p8 value, positive size);
 b32 memory_compare_ascii_case(address_any one, address_any two, positive size);
 address_any memory_first_of_ascii_case(address_any block, b8 value, positive size);

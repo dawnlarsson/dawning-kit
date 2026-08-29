@@ -156,6 +156,7 @@ static fn expand_push_string(string_address text, p8 mark)
 */
 static b8 expand_plain_set[STRING_SET_BYTES];
 static b8 expand_inside_set[STRING_SET_BYTES];
+static b8 expand_literal_set[STRING_SET_BYTES];
 static b32 expand_sets_ready;
 
 static fn expand_sets_prepare()
@@ -165,6 +166,7 @@ static fn expand_sets_prepare()
 
         memory_fill(expand_plain_set + 1, 1, STRING_SET_BYTES - 1);
         memory_fill(expand_inside_set + 1, 1, STRING_SET_BYTES - 1);
+        memory_fill(expand_literal_set + 1, 1, STRING_SET_BYTES - 1);
 
         {
                 static const string_address inside = "\\\"$`";
@@ -174,7 +176,31 @@ static fn expand_sets_prepare()
         }
 
         expand_plain_set['\''] = 0;
+
+        {
+                static const string_address changes = "'\"\\$`*?[{~";
+
+                for (positive i = 0; changes[i]; i++)
+                        expand_literal_set[changes[i]] = 0;
+        }
+
         expand_sets_ready = true;
+}
+
+/*
+        Whether expansion is provably the identity operation.
+
+        The lexer has already made blanks and operators token boundaries. If
+        none of the bytes that can quote, substitute, glob, brace-expand or
+        begin tilde expansion is present, the parser's stable word is already
+        the final field. string_span_max is the hardware-floor set scan; this
+        function adds only the shell-specific policy.
+*/
+bool shell_expand_literal(string_address word, positive length)
+{
+        expand_sets_prepare();
+
+        return string_span_max(word, length, expand_literal_set) == length;
 }
 
 static fn expand_complain(address_any data, positive length)

@@ -1,0 +1,175 @@
+#!/bin/sh
+#
+#       Compare Moonwater's text/core utilities with the host implementations.
+#
+#           sh kit/bench_tools [path-to-moonwater-multicall]
+#
+#       The input is generated once outside every timed region. Each direct
+#       utility is reached through argv[0], its output is first required to be
+#       byte-identical to the host tool, and only then is it timed. Lower is
+#       better. BENCH_RUNS defaults to 7 and BENCH_SECONDS to 0.15.
+#
+set -eu
+
+case ${1:-} in
+-h|--help)
+        sed -n '3,11p' "$0" | sed 's/^# *//'
+        exit 0
+        ;;
+esac
+
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT HUP INT TERM
+subject=${1:-${MOONWATER_TOOLS:-}}
+
+if [ -z "$subject" ]; then
+        subject=$work/moonwater
+        echo "building $subject" >&2
+        (cd "$root" && sh kit/build programs/shell.c "$subject")
+fi
+
+case $subject in
+/*) ;;
+*) subject=$(CDPATH= cd -- "$(dirname -- "$subject")" && pwd)/$(basename -- "$subject") ;;
+esac
+
+[ -x "$subject" ] || {
+        echo "bench_tools: not executable: $subject" >&2
+        exit 1
+}
+
+command -v python3 >/dev/null 2>&1 || {
+        echo "bench_tools: python3 is required" >&2
+        exit 1
+}
+
+exec python3 - "$subject" "$work" "${BENCH_RUNS:-7}" \
+        "${BENCH_SECONDS:-0.15}" <<'PY'
+import os
+import shutil
+import statistics
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+subject, work, runs_text, seconds_text = sys.argv[1:]
+runs = int(runs_text)
+target_seconds = float(seconds_text)
+if runs < 1 or target_seconds <= 0:
+    raise SystemExit("bench_tools: BENCH_RUNS and BENCH_SECONDS must be positive")
+
+if hasattr(os, "sched_getaffinity") and hasattr(os, "sched_setaffinity"):
+    try:
+        os.sched_setaffinity(0, {min(os.sched_getaffinity(0))})
+    except (OSError, ValueError):
+        pass
+
+environment = os.environ.copy()
+environment["LC_ALL"] = "C"
+work_path = Path(work)
+data = work_path / "records"
+
+with data.open("wb") as output:
+    for i in range(240_000):
+        kind = b"alpha" if i % 3 else b"beta"
+        mark = b"needle" if i % 17 == 0 else b"plain"
+        output.write(kind + b":" + f"{i % 1000:03d}".encode() + b":" + mark + b"\n")
+
+tool_names = ("cat", "wc", "grep", "cut", "tr", "sed", "awk",
+              "sort", "uniq", "head", "tail", "rev")
+ours = work_path / "ours"
+ours.mkdir()
+references = {}
+for name in tool_names:
+    target = ours / name
+    target.symlink_to(subject)
+    found = shutil.which(name)
+    if not found:
+        raise SystemExit(f"bench_tools: host {name} is required")
+    references[name] = found
+
+cases = (
+    ("cat", "cat", (str(data),), None),
+    ("wc-lines", "wc", ("-l", str(data)), None),
+    ("grep-count", "grep", ("-c", "needle", str(data)), None),
+    ("cut-field", "cut", ("-d:", "-f2", str(data)), None),
+    ("tr-case", "tr", ("a-z", "A-Z"), data),
+    ("sed-substitute", "sed", ("s/alpha/omega/g", str(data)), None),
+    ("awk-fields", "awk", ("-F:", "{s += $2} END {print s}", str(data)), None),
+    ("sort", "sort", (str(data),), None),
+    ("uniq", "uniq", ("-c", str(data)), None),
+    ("head", "head", ("-n", "1000", str(data)), None),
+    ("tail", "tail", ("-n", "1000", str(data)), None),
+    ("rev", "rev", (str(data),), None),
+)
+
+def execute(executable, arguments, stdin_path, capture):
+    source = open(stdin_path, "rb") if stdin_path else subprocess.DEVNULL
+    try:
+        result = subprocess.run(
+            (str(executable), *arguments), stdin=source,
+            stdout=subprocess.PIPE if capture else subprocess.DEVNULL,
+            stderr=subprocess.PIPE, env=environment, check=False,
+        )
+    finally:
+        if stdin_path:
+            source.close()
+    if result.returncode:
+        detail = result.stderr.decode("utf-8", "replace").strip()
+        raise RuntimeError(
+            f"{executable} {' '.join(arguments)} exited {result.returncode}"
+            + (f": {detail}" if detail else "")
+        )
+    return result.stdout if capture else b""
+
+def elapsed(executable, arguments, stdin_path, count):
+    started = time.perf_counter_ns()
+    for _ in range(count):
+        execute(executable, arguments, stdin_path, False)
+    return (time.perf_counter_ns() - started) / 1_000_000_000
+
+def measure(executable, arguments, stdin_path):
+    execute(executable, arguments, stdin_path, False)
+    execute(executable, arguments, stdin_path, False)
+    count = 1
+    while elapsed(executable, arguments, stdin_path, count) < target_seconds:
+        count *= 2
+    samples = [elapsed(executable, arguments, stdin_path, count) / count
+               for _ in range(runs)]
+    return statistics.median(samples)
+
+print(f"subject: {subject}")
+print(f"input: {data.stat().st_size / (1024 * 1024):.1f} MiB, 240000 lines")
+print(f"samples: {runs}, at least {target_seconds:.2f}s each, one CPU when available")
+print("lower is better; output is verified before timing\n")
+print(f"{'workload':<18} {'ours ms':>10} {'host ms':>10} {'ours versus host':>20}")
+print(f"{'-' * 18} {'-' * 10} {'-' * 10} {'-' * 20}")
+
+ratios = []
+for label, tool, arguments, stdin_path in cases:
+    our_executable = ours / tool
+    host_executable = references[tool]
+    got = execute(our_executable, arguments, stdin_path, True)
+    want = execute(host_executable, arguments, stdin_path, True)
+    if got != want:
+        raise RuntimeError(
+            f"{label}: output differs ({len(got)} bytes ours, {len(want)} host)"
+        )
+    our_time = measure(our_executable, arguments, stdin_path)
+    host_time = measure(host_executable, arguments, stdin_path)
+    ratio = our_time / host_time
+    ratios.append(ratio)
+    change = ratio - 1.0
+    if abs(change) < .005:
+        comparison = "about equal"
+    else:
+        comparison = f"{abs(change) * 100:.0f}% {'slower' if change > 0 else 'faster'}"
+    print(f"{label:<18} {our_time * 1000:10.3f} {host_time * 1000:10.3f} {comparison:>20}")
+
+overall = statistics.geometric_mean(ratios)
+change = overall - 1.0
+print("\noverall geometric-mean result:")
+print(f"  ours is {abs(change) * 100:.0f}% {'slower' if change > 0 else 'faster'} than the host tools")
+PY
