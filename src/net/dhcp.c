@@ -92,7 +92,7 @@ typedef struct
         rather than BOOTP's, then the options themselves ending in 255.
 */
 static positive dhcp_build(p8 address_to into, positive room, p8 kind, p32 transaction,
-                           p8 address_to hardware, p32 wanted, p32 server)
+                           p8 address_to hardware, p32 wanted, p32 server, p32 holding)
 {
         positive at;
 
@@ -108,10 +108,20 @@ static positive dhcp_build(p8 address_to into, positive room, p8 kind, p32 trans
 
         network_store_32(into + 4, transaction);
 
-        //      Ask to be answered by broadcast: there is no address yet for a
-        //      unicast reply to be addressed to.
-        into[10] = (p8)(DHCP_FLAG_BROADCAST >> 8);
-        into[11] = 0;
+        //      Ask to be answered by broadcast, unless we are renewing: a
+        //      client that already holds an address can be replied to
+        //      directly, and asking for a broadcast then is noise on every
+        //      other machine's wire.
+        if (!holding)
+        {
+                into[10] = (p8)(DHCP_FLAG_BROADCAST >> 8);
+                into[11] = 0;
+        }
+
+        //      ciaddr. Zero while asking for an address; the address we
+        //      already hold while asking to keep it, which is what tells the
+        //      server this is a renewal rather than a new client.
+        network_store_32(into + 12, holding);
 
         memory_copy(into + 28, hardware, 6);
 
@@ -338,7 +348,7 @@ static bipolar dhcp_ask(string_address device, p8 address_to hardware,
                 deadline = wait;
 
                 length = dhcp_build(packet, sizeof packet, DHCP_DISCOVER, transaction,
-                                    hardware, 0, 0);
+                                    hardware, 0, 0, 0);
 
                 if (socket_send((b32)handle, packet, length, 0, address_of where,
                                 sizeof where) < 0)
@@ -383,7 +393,7 @@ static bipolar dhcp_ask(string_address device, p8 address_to hardware,
                         //      other server that offered knows it lost.
                         length = dhcp_build(packet, sizeof packet, DHCP_REQUEST,
                                             transaction, hardware, lease->address,
-                                            lease->server);
+                                            lease->server, 0);
 
                         socket_send((b32)handle, packet, length, 0, address_of where,
                                     sizeof where);
@@ -426,6 +436,148 @@ static bipolar dhcp_ask(string_address device, p8 address_to hardware,
                         }
 
                         break;
+                }
+        }
+
+        socket_close((b32)handle);
+
+        return DHCP_NO_OFFER;
+}
+
+/*
+        Keeping the address we already have.
+
+        A lease is a loan with a time on it. Half way through, a client is
+        supposed to ask to keep what it has -- unicast to the server that gave
+        it, with ciaddr set to the address and no server identifier, which is
+        what distinguishes "may I keep this" from "may I have one". The server
+        answers with an ACK and a fresh lease time.
+
+        This matters more than it looks on a machine that stays up. qemu hands
+        out a lease measured in days and nothing here would ever notice, but a
+        home router giving an hour means a machine that has been up since
+        yesterday is holding an address the server considers free, and the
+        first thing that goes wrong is somebody else being given it.
+
+        Renewing rather than starting over is the whole point: a fresh
+        DISCOVER may come back with a different address, and every connection
+        open at the time dies with it.
+
+        A failure here is not fatal and not reported as one. The caller falls
+        back to asking from scratch, which is what a client does when the
+        lease finally expires anyway.
+*/
+static bipolar dhcp_renew(string_address device, p8 address_to hardware,
+                          dhcp_lease address_to lease)
+{
+        socket_address_internet where;
+        p8 packet[1024];
+        p32 transaction;
+        dhcp_lease fresh;
+        bipolar handle;
+        positive length;
+        positive deadline;
+        b32 one = 1;
+        p8 kind = 0;
+
+        if (!lease->address || !lease->server)
+                return DHCP_NO_OFFER;
+
+        if (system_call_3(syscall(getrandom), (positive)address_of transaction,
+                          sizeof transaction, 0) != sizeof transaction)
+                transaction = (p32)get_cpu_time();
+
+        handle = socket_new(AF_INET, SOCK_DGRAM, 0);
+
+        if (handle < 0)
+                return DHCP_NO_SOCKET;
+
+        socket_option_set((b32)handle, SOL_SOCKET, SO_REUSEADDR, address_of one,
+                          sizeof one);
+        socket_option_set((b32)handle, SOL_SOCKET, SO_BINDTODEVICE, device,
+                          string_length(device) + 1);
+
+        //      Bound to the address we hold, because that is the one the
+        //      server will answer to.
+        memory_fill(address_of where, 0, sizeof where);
+        where.family = AF_INET;
+        where.port = network_order_16(DHCP_CLIENT_PORT);
+        where.host = network_order_32(lease->address);
+
+        if (socket_bind((b32)handle, address_of where, sizeof where) < 0)
+        {
+                socket_close((b32)handle);
+                return DHCP_NO_SOCKET;
+        }
+
+        memory_fill(address_of where, 0, sizeof where);
+        where.family = AF_INET;
+        where.port = network_order_16(DHCP_SERVER_PORT);
+        where.host = network_order_32(lease->server);
+
+        length = dhcp_build(packet, sizeof packet, DHCP_REQUEST, transaction,
+                            hardware, 0, 0, lease->address);
+
+        if (socket_send((b32)handle, packet, length, 0, address_of where,
+                        sizeof where) < 0)
+        {
+                socket_close((b32)handle);
+                return DHCP_NO_SOCKET;
+        }
+
+        for (deadline = 0; deadline < 4; deadline++)
+        {
+                p8 waited[8];
+                timespec limit = {1, 0};
+                bipolar got;
+
+                address_to((b32 address_to)waited) = (b32)handle;
+                address_to((p16 address_to)(waited + 4)) = 1;
+                address_to((p16 address_to)(waited + 6)) = 0;
+
+                if (system_call_5(syscall(ppoll), (positive)waited, 1,
+                                  (positive)address_of limit, 0, 8) <= 0)
+                        continue;
+
+                got = socket_receive((b32)handle, packet, sizeof packet, 0, 0, 0);
+
+                if (got <= 0)
+                        continue;
+
+                memory_fill(address_of fresh, 0, sizeof fresh);
+
+                if (dhcp_read(packet, (positive)got, transaction, hardware,
+                              address_of fresh, address_of kind) < 0)
+                        continue;
+
+                if (kind == DHCP_ACK && fresh.address == lease->address)
+                {
+                        //      Keep what the renewal said, including the new
+                        //      lease time, but do not lose what it left out:
+                        //      an ACK need not repeat every option.
+                        if (fresh.mask)
+                                lease->mask = fresh.mask;
+
+                        if (fresh.router)
+                                lease->router = fresh.router;
+
+                        if (fresh.nameserver)
+                                lease->nameserver = fresh.nameserver;
+
+                        if (fresh.server)
+                                lease->server = fresh.server;
+
+                        lease->seconds = fresh.seconds;
+
+                        socket_close((b32)handle);
+
+                        return DHCP_OK;
+                }
+
+                if (kind == DHCP_NAK)
+                {
+                        socket_close((b32)handle);
+                        return DHCP_REFUSED;
                 }
         }
 

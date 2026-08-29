@@ -530,7 +530,7 @@ static fn leasing(void)
         p8 kind = 0;
 
         length = dhcp_build(packet, sizeof packet, DHCP_DISCOVER, 0xdeadbeef,
-                            hardware, 0, 0);
+                            hardware, 0, 0, 0);
 
         check("a discover is padded to the length everything accepts", length == 300);
         check("it is a request", packet[0] == 1);
@@ -555,7 +555,7 @@ static fn leasing(void)
         //      A request names the address offered and the server that
         //      offered it, so a second server knows it was not chosen.
         length = dhcp_build(packet, sizeof packet, DHCP_REQUEST, 1, hardware,
-                            0x0a00020f, 0x0a000202);
+                            0x0a00020f, 0x0a000202, 0);
         check("a request carries what was offered",
               packet[243] == DHCP_OPTION_REQUESTED && packet[244] == 4 &&
               network_load_32(packet + 245) == 0x0a00020f);
@@ -625,6 +625,41 @@ static fn leasing(void)
                 check("an option longer than the packet is refused",
                       dhcp_read(packet, at, 0xdeadbeef, hardware, address_of lease,
                                 address_of kind) < 0);
+        }
+
+        /*
+                A renewal is a different packet from a request, and the
+                differences are the whole of what tells a server "may I keep
+                this" rather than "may I have one".
+        */
+        {
+                positive renewal = dhcp_build(packet, sizeof packet, DHCP_REQUEST,
+                                              0x0badcafe, hardware, 0, 0, 0x0a00020f);
+
+                check("a renewal is still a request", packet[0] == 1);
+                check("it says which address it holds",
+                      network_load_32(packet + 12) == 0x0a00020f);
+                check("it does not ask to be broadcast at",
+                      (packet[10] & 0x80) == 0);
+                check("its first option is the message type",
+                      packet[240] == DHCP_OPTION_TYPE && packet[242] == DHCP_REQUEST);
+
+                //      No requested-address and no server-identifier: both are
+                //      for asking, and a renewal is not asking.
+                check("it names no requested address",
+                      packet[243] != DHCP_OPTION_REQUESTED);
+                check("it names no server",
+                      packet[243] != DHCP_OPTION_SERVER);
+                check("it is padded like any other", renewal == 300);
+        }
+
+        //      And the asking form still says the opposite of all of that.
+        {
+                dhcp_build(packet, sizeof packet, DHCP_DISCOVER, 1, hardware, 0, 0, 0);
+
+                check("a discover holds no address",
+                      network_load_32(packet + 12) == 0);
+                check("and does ask to be broadcast at", (packet[10] & 0x80) != 0);
         }
 
         check("a /16 mask is a /16", dhcp_prefix_of(0xffff0000) == 16);

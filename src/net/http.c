@@ -82,13 +82,20 @@ static bipolar http_split(string_address url, p8 address_to host, positive room,
         if (!string_compare_max(url, (string_address) "http://", 7))
                 at = url + 7;
 
-        while (string_get(at) && !string_is(at, '/') && !string_is(at, ':'))
+        //      The authority ends at whichever of the two comes first, or
+        //      at the end of the string when neither does.
         {
+                string_address slash = string_first_of_or_end(at, '/');
+                string_address colon = string_first_of_or_end(at, ':');
+                string_address stop = colon < slash ? colon : slash;
+
+                length = (positive)(stop - at);
+
                 if (length + 1 >= room)
                         return HTTP_BAD_URL;
 
-                host[length++] = string_get(at);
-                at++;
+                memory_copy(host, at, length);
+                at = stop;
         }
 
         host[length] = end;
@@ -121,19 +128,18 @@ static bipolar http_split(string_address url, p8 address_to host, positive room,
 //      Where the header ends: the blank line, in either spelling.
 static bipolar http_header_end(p8 address_to bytes, positive size)
 {
-        positive at = 0;
+        //      Both spellings are looked for at once and the one that
+        //      starts first wins. A header block ending \r\n\r\n contains no
+        //      bare \n\n -- there is a \r between them -- so the two can never
+        //      both match at the same place.
+        p8 address_to full = (p8 address_to)memory_search(bytes, size, "\r\n\r\n", 4);
+        p8 address_to bare = (p8 address_to)memory_search(bytes, size, "\n\n", 2);
 
-        while (at + 1 < size)
-        {
-                if (bytes[at] == '\n' && bytes[at + 1] == '\n')
-                        return (bipolar)(at + 2);
+        if (full && (!bare || full < bare))
+                return (bipolar)(full - bytes) + 4;
 
-                if (at + 3 < size && bytes[at] == '\r' && bytes[at + 1] == '\n' &&
-                    bytes[at + 2] == '\r' && bytes[at + 3] == '\n')
-                        return (bipolar)(at + 4);
-
-                at++;
-        }
+        if (bare)
+                return (bipolar)(bare - bytes) + 2;
 
         return -1;
 }

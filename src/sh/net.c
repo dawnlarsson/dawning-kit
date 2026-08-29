@@ -710,7 +710,40 @@ static fn net_write_resolv(p32 nameserver)
         Every step says what it did, because the failure that matters is not
         an error code but the machine coming up silently unreachable.
 */
-static b32 net_auto(b32 handle, p32 address_to chosen)
+
+/*
+        What this machine is holding, and since when.
+
+        A lease has a time on it and half of that is when a client should ask
+        to keep what it has. Nothing else here needs a clock, so this is the
+        only place one is read.
+*/
+typedef struct
+{
+        p32 index;
+        p8 name[IFNAME_SIZE];
+        p8 hardware[6];
+        dhcp_lease lease;
+        positive taken;
+} net_holding;
+
+#define NET_CLOCK_MONOTONIC 1
+
+static positive net_seconds(void)
+{
+        timespec now = {0, 0};
+
+        //      A clock that will not answer leaves every lease looking
+        //      infinitely old, which renews immediately and often rather than
+        //      never -- the safe way round.
+        if (system_call_2(syscall(clock_gettime), NET_CLOCK_MONOTONIC,
+                          (positive)address_of now))
+                return 0;
+
+        return (positive)now.tv_sec;
+}
+
+static b32 net_auto(b32 handle, net_holding address_to held)
 {
         netlink_search search;
         dhcp_lease lease;
@@ -801,8 +834,14 @@ static b32 net_auto(b32 handle, p32 address_to chosen)
 
         string_format(net_out, "\n");
 
-        if (chosen)
-                address_to chosen = search.index;
+        if (held)
+        {
+                held->index = search.index;
+                held->lease = lease;
+                held->taken = net_seconds();
+                string_copy_max_end(held->name, search.name, IFNAME_SIZE - 1);
+                memory_copy(held->hardware, search.hardware, 6);
+        }
 
         net_flush();
 
@@ -890,6 +929,7 @@ static bool net_link_news(p32 index, p32 flags, bool address_to had_carrier)
 static b32 net_watch(void)
 {
         netlink_buffer message = {0};
+        net_holding held;
         bipolar events;
         bipolar handle;
         p32 configured = 0;
@@ -918,9 +958,12 @@ static b32 net_watch(void)
         //      would wait forever for an event that already happened.
         handle = netlink_open();
 
+        memory_fill(address_of held, 0, sizeof held);
+
         if (handle >= 0)
         {
-                net_auto((b32)handle, address_of configured);
+                net_auto((b32)handle, address_of held);
+                configured = held.index;
                 socket_close((b32)handle);
         }
 
@@ -928,7 +971,72 @@ static b32 net_watch(void)
         {
                 netlink_header address_to header;
                 positive at = 0;
-                bipolar got = netlink_receive((b32)events, address_of message);
+                bipolar got;
+
+                /*
+                        Wait for a link to change, or for the lease to reach
+                        the point where it should be renewed, whichever comes
+                        first. Without the second, a machine that nobody
+                        touches keeps an address the server has long since
+                        considered free, and the first sign of trouble is
+                        somebody else being handed it.
+                */
+                {
+                        p8 waited[8];
+                        timespec limit;
+                        positive due = 0;
+
+                        address_to((b32 address_to)waited) = (b32)events;
+                        address_to((p16 address_to)(waited + 4)) = 1;
+                        address_to((p16 address_to)(waited + 6)) = 0;
+
+                        if (configured && held.lease.seconds)
+                        {
+                                positive half = held.lease.seconds / 2;
+                                positive gone = net_seconds() - held.taken;
+
+                                due = gone >= half ? 1 : half - gone;
+                        }
+
+                        limit.tv_sec = due ? due : 3600;
+                        limit.tv_nsec = 0;
+
+                        if (system_call_5(syscall(ppoll), (positive)waited, 1,
+                                          (positive)address_of limit, 0, 8) == 0)
+                        {
+                                //      Nothing arrived, so this is the lease
+                                //      falling due. Ask to keep what we have;
+                                //      if the server will not say yes, start
+                                //      over, which is what a client does when
+                                //      the lease finally runs out anyway.
+                                if (!configured || !held.lease.seconds)
+                                        continue;
+
+                                if (dhcp_renew(held.name, held.hardware,
+                                               address_of held.lease) == DHCP_OK)
+                                {
+                                        held.taken = net_seconds();
+                                        string_format(net_out,
+                                                      "ip: lease renewed on %s\n",
+                                                      held.name);
+                                        net_flush();
+                                        continue;
+                                }
+
+                                handle = netlink_open();
+
+                                if (handle >= 0)
+                                {
+                                        net_auto((b32)handle, address_of held);
+                                        configured = held.index;
+                                        socket_close((b32)handle);
+                                }
+
+                                continue;
+                        }
+                }
+
+                got = netlink_receive((b32)events, address_of message);
 
                 if (got < 0)
                         break;
@@ -1011,7 +1119,8 @@ static b32 net_watch(void)
                         if (handle < 0)
                                 continue;
 
-                        net_auto((b32)handle, address_of configured);
+                        net_auto((b32)handle, address_of held);
+                        configured = held.index;
                         socket_close((b32)handle);
                 }
         }
