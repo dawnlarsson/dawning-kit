@@ -145,6 +145,7 @@ static const char address_to clock_weekday_short[7] = {
 static const char address_to clock_weekday_long[7] = {
         "Sunday", "Monday", "Tuesday", "Wednesday",
         "Thursday", "Friday", "Saturday"};
+static const p8 clock_weekday_long_length[7] = {6, 6, 7, 9, 8, 6, 8};
 
 static const char address_to clock_month_short[12] = {
         "Jan", "Feb", "Mar", "Apr", "May", "Jun",
@@ -153,6 +154,8 @@ static const char address_to clock_month_short[12] = {
 static const char address_to clock_month_long[12] = {
         "January", "February", "March", "April", "May", "June",
         "July", "August", "September", "October", "November", "December"};
+static const p8 clock_month_long_length[12] = {
+        7, 8, 5, 5, 3, 4, 4, 6, 9, 7, 8, 8};
 
 /*
         The two halves of a twelve hour clock. A table rather than a pair of
@@ -1048,20 +1051,52 @@ static fn clock_format_number_spaced(clock_format_state address_to state,
 
 // The name tables, guarded, answering what glibc answers for an index that is
 // outside them rather than reading past the end of the table.
-static const char address_to clock_weekday_name(b32 weekday, bool full)
+static const char address_to clock_weekday_name(b32 weekday, bool full,
+                                                positive address_to length)
 {
         if (weekday < 0 || weekday > 6)
+        {
+                address_to length = 1;
                 return clock_unknown_name;
+        }
+
+        address_to length = full ? clock_weekday_long_length[weekday] : 3;
 
         return full ? clock_weekday_long[weekday] : clock_weekday_short[weekday];
 }
 
-static const char address_to clock_month_name(b32 month, bool full)
+static const char address_to clock_month_name(b32 month, bool full,
+                                              positive address_to length)
 {
         if (month < 0 || month > 11)
+        {
+                address_to length = 1;
                 return clock_unknown_name;
+        }
+
+        address_to length = full ? clock_month_long_length[month] : 3;
 
         return full ? clock_month_long[month] : clock_month_short[month];
+}
+
+static fn clock_format_weekday(clock_format_state address_to state,
+                               b32 weekday, bool full)
+{
+        positive length;
+        const char address_to name =
+                clock_weekday_name(weekday, full, address_of length);
+
+        clock_format_append(state, (address_any)name, length);
+}
+
+static fn clock_format_month(clock_format_state address_to state, b32 month,
+                             bool full)
+{
+        positive length;
+        const char address_to name =
+                clock_month_name(month, full, address_of length);
+
+        clock_format_append(state, (address_any)name, length);
 }
 
 /*
@@ -1320,9 +1355,7 @@ static fn clock_format_core(clock_format_state address_to state,
                                 state->to_lower = false;
                         }
 
-                        clock_format_text(state,
-                                          clock_weekday_name(broken->tm_wday,
-                                                             false));
+                        clock_format_weekday(state, broken->tm_wday, false);
                         break;
 
                 case 'A':
@@ -1332,15 +1365,12 @@ static fn clock_format_core(clock_format_state address_to state,
                                 state->to_lower = false;
                         }
 
-                        clock_format_text(state,
-                                          clock_weekday_name(broken->tm_wday,
-                                                             true));
+                        clock_format_weekday(state, broken->tm_wday, true);
                         break;
 
                 case 'b':
                 case 'h':
-                        clock_format_text(
-                                state, clock_month_name(broken->tm_mon, false));
+                        clock_format_month(state, broken->tm_mon, false);
                         break;
 
                 case 'B':
@@ -1350,8 +1380,7 @@ static fn clock_format_core(clock_format_state address_to state,
                                 state->to_lower = false;
                         }
 
-                        clock_format_text(
-                                state, clock_month_name(broken->tm_mon, true));
+                        clock_format_month(state, broken->tm_mon, true);
                         break;
 
                 case 'c':
@@ -1467,10 +1496,12 @@ static fn clock_format_core(clock_format_state address_to state,
                                 state->to_lower = true;
                         }
 
-                        clock_format_text(state,
-                                          clock_half_day[broken->tm_hour < 12
-                                                                 ? 0
-                                                                 : 1]);
+                        clock_format_append(
+                                state,
+                                (address_any)clock_half_day[broken->tm_hour < 12
+                                                                   ? 0
+                                                                   : 1],
+                                2);
                         break;
 
                 /*
@@ -1485,10 +1516,12 @@ static fn clock_format_core(clock_format_state address_to state,
                         state->to_upper = false;
                         state->to_lower = true;
 
-                        clock_format_text(state,
-                                          clock_half_day[broken->tm_hour < 12
-                                                                 ? 0
-                                                                 : 1]);
+                        clock_format_append(
+                                state,
+                                (address_any)clock_half_day[broken->tm_hour < 12
+                                                                   ? 0
+                                                                   : 1],
+                                2);
                         break;
 
                 case 'r':
@@ -1630,9 +1663,11 @@ static fn clock_format_core(clock_format_state address_to state,
                                 state->to_lower = true;
                         }
 
-                        clock_format_text(state, is_null(broken->tm_zone)
-                                                         ? clock_zone_name
-                                                         : broken->tm_zone);
+                        if (is_null(broken->tm_zone))
+                                clock_format_append(
+                                        state, (address_any)clock_zone_name, 3);
+                        else
+                                clock_format_text(state, broken->tm_zone);
                         break;
 
                 case '%':
@@ -1653,6 +1688,31 @@ positive strftime(p8 address_to into, positive max, const char address_to format
 
         if (is_null(format) || is_null(broken))
                 return 0;
+
+        /* A literal format is already the finished answer.  This common
+           logging shape needs one terminated scan and one hardware-floor
+           copy, not the directive engine once per byte. */
+        if (address_to format != '%')
+        {
+                const char address_to directive =
+                        (const char address_to)string_first_of_or_end(
+                                (string_address)format, '%');
+
+                if (address_to directive == end)
+                {
+                        positive length = (positive)(directive - format);
+
+                        if (length >= max)
+                                return 0;
+
+                        if (length)
+                                memory_copy_apart(into, (address_any)format,
+                                                  length);
+
+                        into[length] = end;
+                        return length;
+                }
+        }
 
         state.into = into;
         state.max = max;
@@ -1720,6 +1780,7 @@ positive strftime(p8 address_to into, positive max, const char address_to format
 typedef struct clock_scan_state
 {
         const char address_to at;
+        const char address_to last;
         tm address_to broken;
         bipolar century;
         bool have_mday;
@@ -1778,24 +1839,25 @@ static bool clock_scan_number(clock_scan_state address_to state, bipolar least,
 /*
         One of a table of names, without regard to case, longest first.
 
-        The length of what is left of the input is measured once and the
-        candidates longer than that are never compared, which is what keeps
-        memory_compare_ascii_case -- which is counted, not terminated -- from
-        reading past the end of the caller's string. Answers which one, or -1.
+        strptime records the input end once.  The candidates longer than what
+        remains are never compared, which keeps memory_compare_ascii_case --
+        counted, not terminated -- from reading past the caller's string
+        without rescanning that string for every name directive. Answers
+        which one, or -1.
 */
 static b32 clock_scan_name(clock_scan_state address_to state,
                            const char address_to address_to table,
+                           const p8 address_to lengths, positive fixed_length,
                            positive count)
 {
-        positive left = string_length((string_address)state->at);
+        positive left = (positive)(state->last - state->at);
         positive best_length = 0;
         b32 best = -1;
         positive which;
 
         for (which = 0; which < count; which++)
         {
-                positive length =
-                        string_length((string_address)table[which]);
+                positive length = fixed_length ? fixed_length : lengths[which];
 
                 if (length <= left && length > best_length &&
                     memory_compare_ascii_case((address_any)state->at,
@@ -1839,20 +1901,25 @@ static bool clock_scan_core(clock_scan_state address_to state,
 
                 if (byte_is_space((p8)(address_to cursor)))
                 {
-                        while (byte_is_space((p8)(address_to state->at)))
-                                state->at++;
-
-                        cursor++;
+                        cursor += string_span_of_set(
+                                (string_address)cursor, " \t\n\r\v\f");
+                        state->at += string_span_of_set(
+                                (string_address)state->at, " \t\n\r\v\f");
                         continue;
                 }
 
                 if (address_to cursor != '%')
                 {
-                        if (address_to cursor != address_to state->at)
+                        positive run = string_span_without_set(
+                                (string_address)cursor, "% \t\n\r\v\f");
+
+                        if (run > (positive)(state->last - state->at) ||
+                            memory_compare((address_any)cursor,
+                                           (address_any)state->at, run) != 0)
                                 return false;
 
-                        state->at++;
-                        cursor++;
+                        state->at += run;
+                        cursor += run;
                         continue;
                 }
 
@@ -1875,12 +1942,13 @@ static bool clock_scan_core(clock_scan_state address_to state,
                 case 'a':
                 case 'A':
                 {
-                        b32 found = clock_scan_name(state, clock_weekday_long,
-                                                    7);
+                        b32 found = clock_scan_name(
+                                state, clock_weekday_long,
+                                clock_weekday_long_length, 0, 7);
 
                         if (found < 0)
-                                found = clock_scan_name(state,
-                                                        clock_weekday_short, 7);
+                                found = clock_scan_name(
+                                        state, clock_weekday_short, null, 3, 7);
 
                         if (found < 0)
                                 return false;
@@ -1894,12 +1962,13 @@ static bool clock_scan_core(clock_scan_state address_to state,
                 case 'B':
                 case 'h':
                 {
-                        b32 found = clock_scan_name(state, clock_month_long,
-                                                    12);
+                        b32 found = clock_scan_name(
+                                state, clock_month_long,
+                                clock_month_long_length, 0, 12);
 
                         if (found < 0)
-                                found = clock_scan_name(state,
-                                                        clock_month_short, 12);
+                                found = clock_scan_name(
+                                        state, clock_month_short, null, 3, 12);
 
                         if (found < 0)
                                 return false;
@@ -2003,7 +2072,8 @@ static bool clock_scan_core(clock_scan_state address_to state,
                 case 'p':
                 case 'P':
                 {
-                        b32 found = clock_scan_name(state, clock_half_day, 2);
+                        b32 found = clock_scan_name(state, clock_half_day, null,
+                                                   2, 2);
 
                         if (found < 0)
                                 return false;
@@ -2351,6 +2421,8 @@ p8 address_to strptime(const char address_to input, const char address_to format
                 return null;
 
         state.at = input;
+        state.last = (const char address_to)string_first_of_or_end(
+                (string_address)input, end);
         state.broken = broken;
         state.century = -1;
         state.have_mday = false;

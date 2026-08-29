@@ -40,6 +40,7 @@ ascii-search) source_file=kit/bench_ascii_search.c ;;
 grep-search) source_file=kit/bench_grep_search.c ;;
 last-of) source_file=kit/bench_last_of.c ;;
 words) source_file=kit/bench_words.c ;;
+clock) source_file=kit/bench_clock.c ;;
 *)       echo "bench: use a named benchmark lane (for this fold: ascii-search)" >&2; exit 2 ;;
 esac
 
