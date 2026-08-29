@@ -561,24 +561,6 @@ refuses_sort_mode()
                 "$(head -c 34 "$work/got" | tr '\n\t' '|>')[$got_status] $(head -1 "$work/err")"
 }
 
-refuses_long_xargs_item()
-{
-        "$bin/xargs" echo < "$work/x14" > "$work/got" 2> "$work/err"
-        got_status=$?
-
-        if [ "$got_status" -ne 0 ] && [ ! -s "$work/got" ] &&
-           grep -q '^xargs: argument too long$' "$work/err"
-        then
-                pass=$((pass + 1))
-                return 0
-        fi
-
-        fail=$((fail + 1))
-        printf '  %-8s %-30s want %-24s got %s\n' \
-                "$group" 'long input item' 'loud refusal' \
-                "$(head -c 34 "$work/got" | tr '\n\t' '|>')[$got_status] $(head -1 "$work/err")"
-}
-
 case_start grep
 compare 'literal'        grep a  alpha
 compare 'anchor start'   grep a  '^delta'
@@ -1739,6 +1721,22 @@ printf 'a b' > "$work/x11"
 printf '  a b  \n' > "$work/x12"
 printf 'a\tb\n\tc\t\n' > "$work/x13"
 (head -c 8200 /dev/zero | tr '\0' x; printf '\n') > "$work/x14"
+head -c 20000 /dev/zero | tr '\0' x > "$work/x20-item"
+printf '\n' >> "$work/x20-item"
+head -c 20000 /dev/zero | tr '\0' x > "$work/x20-zero"
+printf '\0' >> "$work/x20-zero"
+head -c 200000 /dev/zero | tr '\0' x > "$work/x200-item"
+printf '\n' >> "$work/x200-item"
+awk 'BEGIN { for (i = 0; i < 30000; i++) printf "w%05d%s", i, \
+             i % 17 == 16 ? "\n" : " " }' > "$work/x200-words"
+awk 'BEGIN { for (i = 0; i < 5000; i++) printf "z%04d%c", i, 0 }' \
+        > "$work/xzero-many"
+printf 'a b\nc d\ne f\ng h\n' > "$work/xlines"
+printf 'a b   \nc d\ne f\n' > "$work/xcontinued"
+printf "'unterminated\n" > "$work/xquote-single"
+printf '"unterminated\n' > "$work/xquote-double"
+printf 'unterminated\\' > "$work/xescape-end"
+printf '#!/bin/sh\nexit 0\n' > "$work/xdenied"
 mkdir "$work/xread"
 
 case_start xargs
@@ -1779,7 +1777,43 @@ compare 'no such command' xargs x1 nosuchcommand12345
 compare 'traced'         xargs x1  -t echo
 compare 'an option it has not' xargs x1 -Q echo
 compare 'read error'       xargs xread echo
-refuses_long_xargs_item
+compare 'long input item'  xargs x14 echo
+compare 'twenty kilobyte item' xargs x20-item echo
+compare 'twenty kilobyte zero item' xargs x20-zero -0 echo
+compare 'kernel oversized item' xargs x200-item echo
+compare 'thirty thousand words' xargs x200-words echo
+compare 'large n batches' xargs x200-words -n1000 echo
+compare 'many zero items' xargs xzero-many -0 echo
+compare 'many zero batches' xargs xzero-many -0 -n777 echo
+compare 'two logical lines' xargs xlines -L2 echo
+compare 'attached logical lines' xargs xlines -L3 echo
+compare 'continued logical line' xargs xcontinued -L1 echo
+compare 'long replacement' xargs x20-item -I{} echo pre{}post
+long_template=$(head -c 20000 /dev/zero | tr '\0' t)
+compare 'long replacement template' xargs x2 -I{} echo "$long_template{}"
+compare 'unmatched single quote' xargs xquote-single echo
+compare 'unmatched double quote' xargs xquote-double echo
+compare 'unfinished escape' xargs xescape-end echo
+compare 'child exits 126' xargs x1 sh -c 'exit 126' sh
+compare 'child exits 127' xargs x1 sh -c 'exit 127' sh
+compare 'permission denied command' xargs x1 "$work/xdenied"
+
+# A child that cannot write makes xargs return the ordinary child-failure
+# status. Compare that status without trying to capture /dev/full itself.
+if [ -e /dev/full ]; then
+        xargs echo < "$work/x1" > /dev/full 2> /dev/null
+        want_status=$?
+        "$bin/xargs" echo < "$work/x1" > /dev/full 2> /dev/null
+        got_status=$?
+
+        if [ "$want_status" = "$got_status" ]; then
+                pass=$((pass + 1))
+        else
+                fail=$((fail + 1))
+                printf '  %-8s %-30s want status %s got %s\n' \
+                        "$group" 'child write failure' "$want_status" "$got_status"
+        fi
+fi
 
 #       cmp, whose answer is often nothing at all -- so the exit status is
 #       most of what there is to compare, and compare looks at both.

@@ -1,5 +1,9 @@
 #include "../compiler_memory.c"
 
+/* Defined by text.c later in the multicall translation unit. */
+static address_any text_arena_take(positive bytes);
+static positive text_arena_used;
+
 /*
         What the file utilities share.
 
@@ -32,6 +36,7 @@
 #define ERROR_NOT_PERMITTED 1
 #define ERROR_NO_ENTRY 2
 #define ERROR_ACCESS 13
+#define ERROR_ARGUMENT_LIST 7
 #define ERROR_EXISTS 17
 #define ERROR_CROSS_DEVICE 18
 #define ERROR_NOT_DIRECTORY 20
@@ -2980,8 +2985,9 @@ static b32 file_ls()
 // Running a command ------------------------------------------------
 /* find -exec runs a child through PATH with the current exported vector. */
 
-// Replaces this process, and only ever called in a child of it.
-static fn file_exec_path(string_address address_to words)
+// Tries every PATH candidate and returns the kernel error if none replaced us.
+// This only returns in a child process.
+static bipolar file_exec_path_try(string_address address_to words)
 {
         string_address address_to environment = file_environment_all();
         string_address name = words[0];
@@ -2994,7 +3000,7 @@ static fn file_exec_path(string_address address_to words)
                 bipolar answer = system_call_3(syscall(execve), (positive)name,
                                                (positive)words, (positive)environment);
 
-                exit(answer == -ERROR_ACCESS ? 126 : 127);
+                return answer;
         }
 
         if (!path)
@@ -3028,12 +3034,26 @@ static fn file_exec_path(string_address address_to words)
                 length = (positive)(memory_copy_fast_end(
                     candidate + length, name, named) - candidate);
 
-                if (system_call_3(syscall(execve), (positive)candidate, (positive)words,
-                                  (positive)environment) == -ERROR_ACCESS)
+                bipolar answer =
+                    system_call_3(syscall(execve), (positive)candidate,
+                                  (positive)words, (positive)environment);
+
+                if (answer == -ERROR_ARGUMENT_LIST)
+                        return answer;
+
+                if (answer == -ERROR_ACCESS)
                         denied = true;
         }
 
-        exit(denied ? 126 : 127);
+        return denied ? -ERROR_ACCESS : -ERROR_NO_ENTRY;
+}
+
+// Replaces this process, and only ever called in a child of it.
+static fn file_exec_path(string_address address_to words)
+{
+        bipolar answer = file_exec_path_try(words);
+
+        exit(answer == -ERROR_ACCESS ? 126 : 127);
 }
 
 // Forks, runs, waits, and answers with what came back.
@@ -10186,25 +10206,21 @@ static b32 file_date()
 
         Running is file_run's fork and execve, which find -exec uses too.
 */
-#define XARGS_BYTES 131072
-#define XARGS_WORDS 2048
-#define XARGS_ITEM 8192
-#define XARGS_TEMPLATE 8192
-#define XARGS_BLOCK 65536
+#define XARGS_BATCH_BYTES 131072
+#define XARGS_READ_BYTES 65536
 
-static p8 xargs_bytes[XARGS_BYTES];
 static positive xargs_used;
-static string_address xargs_words[XARGS_WORDS + 1];
+static string_address address_to xargs_words;
 static positive xargs_word_count;
+static positive xargs_word_room;
 static positive xargs_prefix_bytes;
 static positive xargs_prefix_words;
-static p8 xargs_template_bytes[XARGS_TEMPLATE];
-static string_address xargs_template[XARGS_WORDS + 1];
-static positive xargs_template_used;
-static p8 xargs_item[XARGS_ITEM];
+static string_address address_to xargs_template;
+static p8 address_to xargs_item;
 static positive xargs_item_length;
+static positive xargs_item_room;
 static bool xargs_item_broken;
-static p8 xargs_buffer[XARGS_BLOCK];
+static p8 address_to xargs_buffer;
 
 static bool xargs_null;
 static bool xargs_trace;
@@ -10219,13 +10235,59 @@ static bool xargs_ended;
 static bool xargs_ran;
 static positive xargs_line_count;
 
-static bool xargs_add(string_address text, positive length)
+static bool xargs_words_room(positive extra)
 {
-        if (xargs_word_count >= XARGS_WORDS || xargs_used + length + 1 > XARGS_BYTES)
+        if (xargs_word_count == positive_max ||
+            extra > positive_max - xargs_word_count - 1)
                 return false;
 
-        memory_copy_end(xargs_bytes + xargs_used, text, length);
-        xargs_words[xargs_word_count++] = xargs_bytes + xargs_used;
+        positive need = xargs_word_count + extra + 1;
+
+        if (need <= xargs_word_room)
+                return true;
+
+        positive room = xargs_word_room ? xargs_word_room : 32;
+
+        while (room < need)
+        {
+                if (room > positive_max / 2)
+                        return false;
+
+                room *= 2;
+        }
+
+        if (room > positive_max / sizeof(string_address))
+                return false;
+
+        string_address address_to grown =
+            (string_address address_to)text_arena_take(
+                room * sizeof(string_address));
+
+        if (!grown)
+                return false;
+
+        if (xargs_word_count)
+                memory_copy_fast(grown, xargs_words,
+                                 xargs_word_count * sizeof(string_address));
+
+        xargs_words = grown;
+        xargs_word_room = room;
+        return true;
+}
+
+static bool xargs_add(string_address text, positive length)
+{
+        if (length == positive_max || xargs_used > positive_max - length - 1 ||
+            !xargs_words_room(1))
+                return false;
+
+        p8 address_to made = (p8 address_to)text_arena_take(length + 1);
+
+        if (!made)
+                return false;
+
+        memory_copy_end(made, text, length);
+        xargs_words[xargs_word_count++] = made;
         xargs_used += length + 1;
 
         return true;
@@ -10233,10 +10295,43 @@ static bool xargs_add(string_address text, positive length)
 
 static fn xargs_item_put(p8 letter)
 {
-        if (xargs_item_length < XARGS_ITEM - 1)
-                xargs_item[xargs_item_length++] = letter;
-        else
+        if (xargs_item_length > positive_max - 2)
+        {
                 xargs_item_broken = true;
+                return;
+        }
+
+        if (xargs_item_length + 2 > xargs_item_room)
+        {
+                positive room = xargs_item_room ? xargs_item_room : 256;
+
+                while (room < xargs_item_length + 2)
+                {
+                        if (room > positive_max / 2)
+                        {
+                                xargs_item_broken = true;
+                                return;
+                        }
+
+                        room *= 2;
+                }
+
+                p8 address_to grown = (p8 address_to)text_arena_take(room);
+
+                if (!grown)
+                {
+                        xargs_item_broken = true;
+                        return;
+                }
+
+                if (xargs_item_length)
+                        memory_copy_fast(grown, xargs_item, xargs_item_length);
+
+                xargs_item = grown;
+                xargs_item_room = room;
+        }
+
+        xargs_item[xargs_item_length++] = letter;
 }
 
 /*
@@ -10248,77 +10343,186 @@ static fn xargs_item_put(p8 letter)
         whether anything said permission denied, because that is a different
         number to come back with than nothing being there at all.
 */
-static fn xargs_run()
-{
-        bipolar child;
-        positive status = 0;
-        b32 code;
+#define XARGS_EXEC_SIGNAL (-4097)
+#define XARGS_EXEC_SYSTEM (-4098)
+#define XARGS_O_CLOEXEC 02000000
 
-        xargs_words[xargs_word_count] = null;
-        xargs_ran = true;
+static bipolar xargs_execute(string_address address_to words,
+                             positive word_count)
+{
+        b32 ends[2];
+        positive status = 0;
+
+        words[word_count] = null;
 
         if (xargs_trace)
         {
-                for (positive i = 0; i < xargs_word_count; i++)
+                for (positive i = 0; i < word_count; i++)
                 {
                         if (i)
                                 file_fail(" ", 1);
 
-                        file_fail(xargs_words[i], 0);
+                        file_fail(words[i], 0);
                 }
 
                 file_fail("\n", 1);
         }
 
         log_flush();
-        child = system_call_2(syscall(clone), SIGCHLD, 0);
+
+        if (system_call_2(syscall(pipe2), (positive)ends,
+                          XARGS_O_CLOEXEC) < 0)
+                return XARGS_EXEC_SYSTEM;
+
+        bipolar child = system_call_2(syscall(clone), SIGCHLD, 0);
 
         if (child == 0)
-                file_exec_path(xargs_words);
+        {
+                system_call_1(syscall(close), (positive)ends[0]);
+                bipolar answer = file_exec_path_try(words);
+
+                system_write_all((positive)ends[1], address_of answer,
+                                 sizeof(answer));
+                exit(answer == -ERROR_ACCESS ? 126 : 127);
+        }
+
+        system_call_1(syscall(close), (positive)ends[1]);
+
 
         if (child < 0)
         {
-                file_fail("xargs: cannot fork\n", 0);
-                xargs_answer = 125;
-                xargs_done = true;
-                return;
+                system_call_1(syscall(close), (positive)ends[0]);
+                return XARGS_EXEC_SYSTEM;
         }
 
+        bipolar exec_error = 0;
+        bipolar got = system_read_retry((positive)ends[0], address_of exec_error,
+                                        sizeof(exec_error));
+
+        system_call_1(syscall(close), (positive)ends[0]);
         system_wait4_retry(child, address_of status, 0, null);
 
+        if (got == sizeof(exec_error))
+                return exec_error;
+
         if (status & 0x7f)
+                return XARGS_EXEC_SIGNAL;
+
+        return (bipolar)((status >> 8) & 0xff);
+}
+
+static bool xargs_execute_range(positive first, positive count)
+{
+        if (count == positive_max ||
+            xargs_prefix_words > positive_max - count - 1)
         {
-                string_format(file_fail, "xargs: %s: terminated by a signal\n",
-                              xargs_words[0]);
-                xargs_answer = 125;
+                xargs_answer = 1;
                 xargs_done = true;
-                return;
+                return false;
         }
 
-        code = (b32)((status >> 8) & 0xff);
+        positive total = xargs_prefix_words + count;
+
+        if (total + 1 > positive_max / sizeof(string_address))
+        {
+                xargs_answer = 1;
+                xargs_done = true;
+                return false;
+        }
+
+        positive arena_mark = text_arena_used;
+        string_address address_to words =
+            (string_address address_to)text_arena_take(
+                (total + 1) * sizeof(string_address));
+
+        if (!words)
+        {
+                xargs_answer = 1;
+                xargs_done = true;
+                return false;
+        }
+
+        if (xargs_prefix_words)
+                memory_copy_fast(words, xargs_words,
+                                 xargs_prefix_words * sizeof(string_address));
+
+        for (positive i = 0; i < count; i++)
+                words[xargs_prefix_words + i] =
+                    xargs_words[xargs_prefix_words + first + i];
+
+        string_address command = words[0];
+        bipolar code = xargs_execute(words, total);
+
+        /* The argv table is per attempt; recursive E2BIG splits reuse it. */
+        text_arena_used = arena_mark;
+
+        if (code == -ERROR_ARGUMENT_LIST)
+        {
+                if (xargs_replace || count <= 1)
+                {
+                        file_fail("xargs: argument list too long\n", 0);
+                        xargs_answer = 1;
+                        xargs_done = true;
+                        return false;
+                }
+
+                positive left = count / 2;
+
+                return xargs_execute_range(first, left) &&
+                       xargs_execute_range(first + left, count - left);
+        }
+
+        if (code == XARGS_EXEC_SYSTEM)
+        {
+                file_fail("xargs: cannot fork or execute\n", 0);
+                xargs_answer = 125;
+                xargs_done = true;
+                return false;
+        }
+
+        if (code == XARGS_EXEC_SIGNAL)
+        {
+                string_format(file_fail, "xargs: %s: terminated by a signal\n",
+                              command);
+                xargs_answer = 125;
+                xargs_done = true;
+                return false;
+        }
 
         if (!code)
-                return;
+                return true;
 
-        if (code == 127 || code == 126)
+        if (code < 0)
         {
                 string_format(file_fail, "xargs: failed to run command '%s'\n",
-                              xargs_words[0]);
-                xargs_answer = (b32)code;
+                              command);
+                xargs_answer = code == -ERROR_ACCESS ? 126 : 127;
                 xargs_done = true;
-                return;
+                return false;
         }
 
         if (code == 255)
         {
                 string_format(file_fail, "xargs: %s: exited with status 255; aborting\n",
-                              xargs_words[0]);
+                              command);
                 xargs_answer = 124;
                 xargs_done = true;
-                return;
+                return false;
         }
 
         xargs_answer = 123;
+        return true;
+}
+
+static fn xargs_run()
+{
+        xargs_ran = true;
+
+        positive count = xargs_replace
+                             ? 0
+                             : xargs_word_count - xargs_prefix_words;
+
+        xargs_execute_range(0, count);
 }
 
 static fn xargs_reset()
@@ -10336,21 +10540,20 @@ static fn xargs_reset()
 */
 static bool xargs_keep_template()
 {
-        xargs_template_used = 0;
+        if (!xargs_word_count)
+                return true;
 
-        for (positive at = 0; at < xargs_word_count; at++)
-        {
-                positive length = string_length(xargs_words[at]);
+        if (xargs_word_count > positive_max / sizeof(string_address))
+                return false;
 
-                if (xargs_template_used + length + 1 > XARGS_TEMPLATE)
-                        return false;
+        xargs_template = (string_address address_to)text_arena_take(
+            xargs_word_count * sizeof(string_address));
 
-                memory_copy(xargs_template_bytes + xargs_template_used,
-                            xargs_words[at], length + 1);
-                xargs_template[at] = xargs_template_bytes + xargs_template_used;
-                xargs_template_used += length + 1;
-        }
+        if (!xargs_template)
+                return false;
 
+        memory_copy_fast(xargs_template, xargs_words,
+                         xargs_word_count * sizeof(string_address));
         return true;
 }
 
@@ -10367,29 +10570,54 @@ static bool xargs_replaced(string_address item)
         for (positive at = 0; at < xargs_prefix_words; at++)
         {
                 string_address word = xargs_template[at];
-                p8 made[XARGS_ITEM];
+                string_address scan = word;
                 positive length = 0;
 
                 for (;;)
                 {
-                        string_address hit = mark ? string_find(word, xargs_replace) : null;
-                        positive kept = hit ? (positive)(hit - word) : string_length(word);
+                        string_address hit = mark ? string_find(scan, xargs_replace) : null;
+                        positive kept = hit ? (positive)(hit - scan) : string_length(scan);
 
-                        if (length + kept >= XARGS_ITEM)
+                        if (kept > positive_max - length)
                                 return false;
 
-                        memory_copy_fast(made + length, word, kept);
                         length += kept;
 
                         if (!hit)
                                 break;
 
-                        if (length + item_length >= XARGS_ITEM)
+                        if (item_length > positive_max - length)
                                 return false;
 
-                        memory_copy_fast(made + length, item, item_length);
                         length += item_length;
-                        word = hit + mark;
+                        scan = hit + mark;
+                }
+
+                if (length == positive_max)
+                        return false;
+
+                p8 address_to made = (p8 address_to)text_arena_take(length + 1);
+
+                if (!made)
+                        return false;
+
+                scan = word;
+                positive used = 0;
+
+                for (;;)
+                {
+                        string_address hit = mark ? string_find(scan, xargs_replace) : null;
+                        positive kept = hit ? (positive)(hit - scan) : string_length(scan);
+
+                        memory_copy_fast(made + used, scan, kept);
+                        used += kept;
+
+                        if (!hit)
+                                break;
+
+                        memory_copy_fast(made + used, item, item_length);
+                        used += item_length;
+                        scan = hit + mark;
                 }
 
                 made[length] = end;
@@ -10434,7 +10662,10 @@ static fn xargs_item_done()
                 return;
         }
 
-        if (!xargs_add(xargs_item, xargs_item_length))
+        if (xargs_word_count > xargs_prefix_words &&
+            (xargs_item_length == positive_max ||
+             xargs_used > positive_max - xargs_item_length - 1 ||
+             xargs_used + xargs_item_length + 1 > XARGS_BATCH_BYTES))
         {
                 xargs_run();
 
@@ -10442,14 +10673,14 @@ static fn xargs_item_done()
                         return;
 
                 xargs_reset();
+        }
 
-                if (!xargs_add(xargs_item, xargs_item_length))
-                {
-                        file_fail("xargs: argument list too long\n", 0);
-                        xargs_answer = 1;
-                        xargs_done = true;
-                        return;
-                }
+        if (!xargs_add(xargs_item, xargs_item_length))
+        {
+                file_fail("xargs: argument list too long\n", 0);
+                xargs_answer = 1;
+                xargs_done = true;
+                return;
         }
 
         if (xargs_most && xargs_word_count - xargs_prefix_words >= xargs_most)
@@ -10459,6 +10690,18 @@ static fn xargs_item_done()
         }
 }
 
+static bool xargs_count_value(string_address value, positive address_to out)
+{
+        positive taken = 0;
+        positive made = string_digits(value, address_of taken);
+
+        if (!taken || string_get(value + taken) || !made)
+                return false;
+
+        address_to out = made;
+        return true;
+}
+
 static b32 file_xargs()
 {
         positive count = (positive)program_argument_count();
@@ -10466,7 +10709,15 @@ static b32 file_xargs()
         bool escaped = false;
         bool started = false;
         bool blank_last = false;
+        bool line_had_item = false;
 
+        text_arena_used = 0;
+        xargs_words = null;
+        xargs_word_room = 0;
+        xargs_template = null;
+        xargs_item = null;
+        xargs_item_room = 0;
+        xargs_buffer = null;
         xargs_used = 0;
         xargs_word_count = 0;
         xargs_item_length = 0;
@@ -10479,8 +10730,8 @@ static b32 file_xargs()
 
         file_taking taking = {
             .program = (string_address) "xargs",
-            .allowed = (string_address) "0EIinrt",
-            .valued = (string_address) "EIn",
+            .allowed = (string_address) "0EILinrt",
+            .valued = (string_address) "EILn",
         };
 
         if (!file_take(address_of taking))
@@ -10493,9 +10744,24 @@ static b32 file_xargs()
         xargs_needs_input = (taking.flags & FILE_FLAG('r')) != 0;
         xargs_ending = file_option_value(address_of taking, 'E');
         xargs_replace = file_option_value(address_of taking, 'I');
-        xargs_most = (taking.flags & FILE_FLAG('n'))
-                         ? string_digits(file_option_value(address_of taking, 'n'), null)
-                         : 0;
+        xargs_most = 0;
+        xargs_lines = 0;
+
+        if ((taking.flags & FILE_FLAG('n')) &&
+            !xargs_count_value(file_option_value(address_of taking, 'n'),
+                               address_of xargs_most))
+        {
+                file_fail("xargs: invalid number for -n\n", 0);
+                return 1;
+        }
+
+        if ((taking.flags & FILE_FLAG('L')) &&
+            !xargs_count_value(file_option_value(address_of taking, 'L'),
+                               address_of xargs_lines))
+        {
+                file_fail("xargs: invalid number for -L\n", 0);
+                return 1;
+        }
 
         if (!xargs_replace && (taking.flags & FILE_FLAG('i')))
                 xargs_replace = "{}";
@@ -10523,9 +10789,18 @@ static b32 file_xargs()
                 return 1;
         }
 
+        xargs_item = (p8 address_to)text_arena_take(256);
+        xargs_buffer = (p8 address_to)text_arena_take(XARGS_READ_BYTES);
+
+        if (!xargs_item || !xargs_buffer)
+                return 1;
+
+        xargs_item_room = 256;
+
         for (;;)
         {
-                bipolar got = system_read_retry(0, xargs_buffer, XARGS_BLOCK);
+                bipolar got = system_read_retry(0, xargs_buffer,
+                                                 XARGS_READ_BYTES);
 
                 if (got < 0)
                 {
@@ -10565,6 +10840,7 @@ static b32 file_xargs()
 
                                 escaped = false;
                                 started = true;
+                                blank_last = false;
                                 continue;
                         }
 
@@ -10579,6 +10855,7 @@ static b32 file_xargs()
                                 xargs_item_put(letter);
 
                                 started = true;
+                                blank_last = false;
                                 continue;
                         }
 
@@ -10586,6 +10863,7 @@ static b32 file_xargs()
                         {
                                 escaped = true;
                                 started = true;
+                                blank_last = false;
                                 continue;
                         }
 
@@ -10593,6 +10871,7 @@ static b32 file_xargs()
                         {
                                 quote = letter;
                                 started = true;
+                                blank_last = false;
                                 continue;
                         }
 
@@ -10613,6 +10892,8 @@ static b32 file_xargs()
 
                                 xargs_item[xargs_item_length] = end;
                                 xargs_item_done();
+                                line_had_item = true;
+                                blank_last = true;
                                 xargs_item_length = 0;
                                 started = false;
                                 continue;
@@ -10620,19 +10901,44 @@ static b32 file_xargs()
 
                         if (letter == '\n')
                         {
-                                if (!started)
-                                        continue;
+                                if (started)
+                                {
+                                        xargs_item[xargs_item_length] = end;
+                                        xargs_item_done();
+                                        line_had_item = true;
+                                        xargs_item_length = 0;
+                                        started = false;
+                                }
 
-                                xargs_item[xargs_item_length] = end;
-                                xargs_item_done();
-                                xargs_item_length = 0;
-                                started = false;
+                                if (xargs_replace)
+                                {
+                                        blank_last = false;
+                                        line_had_item = false;
+                                        continue;
+                                }
+                                if (line_had_item && !blank_last)
+                                {
+                                        xargs_line_count++;
+
+                                        if (xargs_lines &&
+                                            xargs_line_count >= xargs_lines &&
+                                            xargs_word_count > xargs_prefix_words)
+                                        {
+                                                xargs_run();
+                                                xargs_reset();
+                                        }
+
+                                        line_had_item = false;
+                                }
+
+                                blank_last = false;
                                 continue;
                         }
 
                         xargs_item_put(letter);
 
                         started = true;
+                        blank_last = false;
                 }
 
                 if (xargs_done || xargs_ended)
