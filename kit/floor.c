@@ -6,25 +6,30 @@
         how close it gets, and a routine already there is finished -- there is
         no faster version of it, only a faster machine.
 
-        Traffic matters and is stated rather than hidden. A copy moves its
-        payload twice across the bus and a compare reads two streams, so those
-        are reported against a floor measured the same way. Without that a copy
-        at the bus limit reads as fifty percent and looks like slack.
+        Traffic matters and is measured rather than multiplied.  Two streams
+        can overlap in the load/store machinery, and reads and writes are not
+        symmetric.  Multiplying a one-stream time by a byte count produced
+        impossible results above 100 percent.  Copy, fill and paired-read each
+        have their own assembly floor which performs the same traffic shape.
 
         The number to distrust is a small one: at four bytes a call costs more
         than the work, so the column says what the routine costs to reach, not
         how fast it runs. The large sizes are the ones that mean anything about
         the loop.
 
-            sh kit/bench floor        every architecture
+            sh kit/bench floor
+
+        A native run is hardware evidence.  A foreign run under qemu remains
+        useful for instruction-shape comparison, but is labelled as emulated
+        by the dispatcher and must not be quoted as an architectural floor.
 */
 #include "../src/compiler_memory.c"
 
 #define NOT_INLINED __attribute__((noinline))
 
-static p8 one[1 << 22];
-static p8 two[1 << 22];
-static p8 out[1 << 22];
+static p8 one[1 << 22] __attribute__((aligned(64)));
+static p8 two[1 << 22] __attribute__((aligned(64)));
+static p8 out[1 << 22] __attribute__((aligned(64)));
 
 static positive sizes[] = {64, 4096, 65536, 1048576};
 
@@ -46,16 +51,29 @@ static positive sizes[] = {64, 4096, 65536, 1048576};
 */
 __asm__(
     ".text\n"
+    ASM_FUNC(floor_ticks)
+#if X64
+    "lfence\n   rdtsc\n   shl $32, %rdx\n   or %rdx, %rax\n   lfence\n"
+#elif ARM64
+    "isb\n   mrs x0, cntvct_el0\n   isb\n"
+#else
+    "fence iorw, iorw\n   rdtime a0\n   fence iorw, iorw\n"
+#endif
+    ASM_RET
+    ASM_END(floor_ticks)
     ASM_FUNC(floor_read)
 #if X64
     "xor %eax, %eax\n   test %rsi, %rsi\n   jz 9f\n"
     "cmpb $0, cpu_has_avx2(%rip)\n   je 5f\n"
-    "vpxor %ymm0, %ymm0, %ymm0\n   vpxor %ymm1, %ymm1, %ymm1\n"
-    "vpxor %ymm2, %ymm2, %ymm2\n   vpxor %ymm3, %ymm3, %ymm3\n"
+    "cmpb $0, cpu_has_avx512(%rip)\n   jne 7f\n"
     "1:  cmp $128, %rsi\n   jb 4f\n"
-    "vpaddb (%rdi), %ymm0, %ymm0\n   vpaddb 32(%rdi), %ymm1, %ymm1\n"
-    "vpaddb 64(%rdi), %ymm2, %ymm2\n   vpaddb 96(%rdi), %ymm3, %ymm3\n"
+    "vmovdqu 0(%rdi), %ymm0\n   vmovdqu 32(%rdi), %ymm1\n"
+    "vmovdqu 64(%rdi), %ymm2\n   vmovdqu 96(%rdi), %ymm3\n"
     "add $128, %rdi\n   sub $128, %rsi\n   jmp 1b\n"
+    "7:  cmp $256, %rsi\n   jb 4f\n"
+    "vmovdqu64 0(%rdi), %zmm0\n   vmovdqu64 64(%rdi), %zmm1\n"
+    "vmovdqu64 128(%rdi), %zmm2\n   vmovdqu64 192(%rdi), %zmm3\n"
+    "add $256, %rdi\n   sub $256, %rsi\n   jmp 7b\n"
     "4:  vzeroupper\n"
     "5:  test %rsi, %rsi\n   jz 9f\n"
     "6:  add (%rdi), %rax\n   add $8, %rdi\n   sub $8, %rsi\n   cmp $8, %rsi\n   jae 6b\n"
@@ -80,6 +98,152 @@ __asm__(
 );
 
 positive floor_read(address_any block, positive size);
+positive floor_ticks(void);
+
+__asm__(
+    ".text\n"
+    ASM_FUNC(floor_read_two)
+#if X64
+    "xor %eax, %eax\n   test %rdx, %rdx\n   jz 9f\n"
+    "cmpb $0, cpu_has_avx2(%rip)\n   je 5f\n"
+    "cmpb $0, cpu_has_avx512(%rip)\n   jne 7f\n"
+    "1:  cmp $128, %rdx\n   jb 4f\n"
+    "vmovdqu 0(%rdi), %ymm0\n   vmovdqu 32(%rdi), %ymm1\n"
+    "vmovdqu 64(%rdi), %ymm2\n   vmovdqu 96(%rdi), %ymm3\n"
+    "vmovdqu 0(%rsi), %ymm4\n   vmovdqu 32(%rsi), %ymm5\n"
+    "vmovdqu 64(%rsi), %ymm6\n   vmovdqu 96(%rsi), %ymm7\n"
+    "add $128, %rdi\n   add $128, %rsi\n   sub $128, %rdx\n   jmp 1b\n"
+    "7:  cmp $256, %rdx\n   jb 4f\n"
+    "vmovdqu64 0(%rdi), %zmm0\n   vmovdqu64 64(%rdi), %zmm1\n"
+    "vmovdqu64 128(%rdi), %zmm2\n   vmovdqu64 192(%rdi), %zmm3\n"
+    "vmovdqu64 0(%rsi), %zmm4\n   vmovdqu64 64(%rsi), %zmm5\n"
+    "vmovdqu64 128(%rsi), %zmm6\n   vmovdqu64 192(%rsi), %zmm7\n"
+    "add $256, %rdi\n   add $256, %rsi\n   sub $256, %rdx\n   jmp 7b\n"
+    "4:  vzeroupper\n"
+    "5:  test %rdx, %rdx\n   jz 9f\n"
+    "6:  add (%rdi), %rax\n   add (%rsi), %rax\n"
+    "add $8, %rdi\n   add $8, %rsi\n   sub $8, %rdx\n"
+    "cmp $8, %rdx\n   jae 6b\n"
+    "9:  \n"
+#elif ARM64
+    "mov x3, #0\n   cbz x2, 9f\n"
+    "1:  cmp x2, #64\n   b.lo 5f\n"
+    "ldp q0, q1, [x0]\n   ldp q2, q3, [x0, #32]\n"
+    "ldp q4, q5, [x1]\n   ldp q6, q7, [x1, #32]\n"
+    "add x0, x0, #64\n   add x1, x1, #64\n"
+    "sub x2, x2, #64\n   b 1b\n"
+    "5:  cbz x2, 9f\n"
+    "6:  ldr x4, [x0], #8\n   ldr x5, [x1], #8\n"
+    "add x3, x3, x4\n   add x3, x3, x5\n"
+    "subs x2, x2, #8\n   b.hi 6b\n"
+    "9:  mov x0, x3\n"
+#else
+    "li a3, 0\n   beqz a2, 9f\n"
+    "1:  li a4, 32\n   bltu a2, a4, 5f\n"
+    "ld a4, 0(a0)\n   ld a5, 8(a0)\n   ld a6, 16(a0)\n   ld a7, 24(a0)\n"
+    "ld t0, 0(a1)\n   ld t1, 8(a1)\n   ld t2, 16(a1)\n   ld t3, 24(a1)\n"
+    "addi a0, a0, 32\n   addi a1, a1, 32\n   addi a2, a2, -32\n   j 1b\n"
+    "5:  beqz a2, 9f\n"
+    "6:  ld a4, 0(a0)\n   ld a5, 0(a1)\n"
+    "add a3, a3, a4\n   add a3, a3, a5\n"
+    "addi a0, a0, 8\n   addi a1, a1, 8\n   addi a2, a2, -8\n   bnez a2, 6b\n"
+    "9:  mv a0, a3\n"
+#endif
+    ASM_RET
+    ASM_END(floor_read_two)
+    ASM_FUNC(floor_copy)
+#if X64
+    "xor %eax, %eax\n   test %rdx, %rdx\n   jz 9f\n"
+    "cmpb $0, cpu_has_avx2(%rip)\n   je 5f\n"
+    "cmpb $0, cpu_has_avx512(%rip)\n   jne 7f\n"
+    "1:  cmp $128, %rdx\n   jb 4f\n"
+    "vmovdqu 0(%rsi), %ymm0\n   vmovdqu 32(%rsi), %ymm1\n"
+    "vmovdqu 64(%rsi), %ymm2\n   vmovdqu 96(%rsi), %ymm3\n"
+    "vmovdqu %ymm0, 0(%rdi)\n   vmovdqu %ymm1, 32(%rdi)\n"
+    "vmovdqu %ymm2, 64(%rdi)\n   vmovdqu %ymm3, 96(%rdi)\n"
+    "add $128, %rdi\n   add $128, %rsi\n   sub $128, %rdx\n   jmp 1b\n"
+    "7:  cmp $256, %rdx\n   jb 4f\n"
+    "vmovdqu64 0(%rsi), %zmm0\n   vmovdqu64 64(%rsi), %zmm1\n"
+    "vmovdqu64 128(%rsi), %zmm2\n   vmovdqu64 192(%rsi), %zmm3\n"
+    "vmovdqu64 %zmm0, 0(%rdi)\n   vmovdqu64 %zmm1, 64(%rdi)\n"
+    "vmovdqu64 %zmm2, 128(%rdi)\n   vmovdqu64 %zmm3, 192(%rdi)\n"
+    "add $256, %rdi\n   add $256, %rsi\n   sub $256, %rdx\n   jmp 7b\n"
+    "4:  vzeroupper\n"
+    "5:  test %rdx, %rdx\n   jz 9f\n"
+    "6:  mov (%rsi), %rax\n   mov %rax, (%rdi)\n"
+    "add $8, %rdi\n   add $8, %rsi\n   sub $8, %rdx\n"
+    "cmp $8, %rdx\n   jae 6b\n"
+    "9:  \n"
+#elif ARM64
+    "cbz x2, 9f\n"
+    "1:  cmp x2, #64\n   b.lo 5f\n"
+    "ldp q0, q1, [x1]\n   ldp q2, q3, [x1, #32]\n"
+    "stp q0, q1, [x0]\n   stp q2, q3, [x0, #32]\n"
+    "add x0, x0, #64\n   add x1, x1, #64\n"
+    "sub x2, x2, #64\n   b 1b\n"
+    "5:  cbz x2, 9f\n"
+    "6:  ldr x3, [x1], #8\n   str x3, [x0], #8\n"
+    "subs x2, x2, #8\n   b.hi 6b\n"
+    "9:  mov x0, #0\n"
+#else
+    "beqz a2, 9f\n"
+    "1:  li a3, 32\n   bltu a2, a3, 5f\n"
+    "ld a3, 0(a1)\n   ld a4, 8(a1)\n   ld a5, 16(a1)\n   ld a6, 24(a1)\n"
+    "sd a3, 0(a0)\n   sd a4, 8(a0)\n   sd a5, 16(a0)\n   sd a6, 24(a0)\n"
+    "addi a0, a0, 32\n   addi a1, a1, 32\n   addi a2, a2, -32\n   j 1b\n"
+    "5:  beqz a2, 9f\n"
+    "6:  ld a3, 0(a1)\n   sd a3, 0(a0)\n"
+    "addi a0, a0, 8\n   addi a1, a1, 8\n   addi a2, a2, -8\n   bnez a2, 6b\n"
+    "9:  li a0, 0\n"
+#endif
+    ASM_RET
+    ASM_END(floor_copy)
+    ASM_FUNC(floor_fill)
+#if X64
+    "xor %eax, %eax\n   test %rsi, %rsi\n   jz 9f\n"
+    "cmpb $0, cpu_has_avx2(%rip)\n   je 5f\n"
+    "cmpb $0, cpu_has_avx512(%rip)\n   jne 7f\n"
+    "vpxor %ymm0, %ymm0, %ymm0\n"
+    "1:  cmp $128, %rsi\n   jb 4f\n"
+    "vmovdqu %ymm0, 0(%rdi)\n   vmovdqu %ymm0, 32(%rdi)\n"
+    "vmovdqu %ymm0, 64(%rdi)\n   vmovdqu %ymm0, 96(%rdi)\n"
+    "add $128, %rdi\n   sub $128, %rsi\n   jmp 1b\n"
+    "7:  vpxord %zmm0, %zmm0, %zmm0\n"
+    "8:  cmp $256, %rsi\n   jb 4f\n"
+    "vmovdqu64 %zmm0, 0(%rdi)\n   vmovdqu64 %zmm0, 64(%rdi)\n"
+    "vmovdqu64 %zmm0, 128(%rdi)\n   vmovdqu64 %zmm0, 192(%rdi)\n"
+    "add $256, %rdi\n   sub $256, %rsi\n   jmp 8b\n"
+    "4:  vzeroupper\n"
+    "5:  test %rsi, %rsi\n   jz 9f\n"
+    "6:  mov %rax, (%rdi)\n   add $8, %rdi\n   sub $8, %rsi\n"
+    "cmp $8, %rsi\n   jae 6b\n"
+    "9:  \n"
+#elif ARM64
+    "movi v0.16b, #0\n   cbz x1, 9f\n"
+    "1:  cmp x1, #64\n   b.lo 5f\n"
+    "stp q0, q0, [x0]\n   stp q0, q0, [x0, #32]\n"
+    "add x0, x0, #64\n   sub x1, x1, #64\n   b 1b\n"
+    "5:  cbz x1, 9f\n"
+    "6:  str xzr, [x0], #8\n   subs x1, x1, #8\n   b.hi 6b\n"
+    "9:  mov x0, #0\n"
+#else
+    "beqz a1, 9f\n"
+    "1:  li a2, 32\n   bltu a1, a2, 5f\n"
+    "sd zero, 0(a0)\n   sd zero, 8(a0)\n"
+    "sd zero, 16(a0)\n   sd zero, 24(a0)\n"
+    "addi a0, a0, 32\n   addi a1, a1, -32\n   j 1b\n"
+    "5:  beqz a1, 9f\n"
+    "6:  sd zero, 0(a0)\n   addi a0, a0, 8\n"
+    "addi a1, a1, -8\n   bnez a1, 6b\n"
+    "9:  li a0, 0\n"
+#endif
+    ASM_RET
+    ASM_END(floor_fill)
+);
+
+positive floor_read_two(address_any one, address_any two, positive size);
+positive floor_copy(address_any out, address_any in, positive size);
+positive floor_fill(address_any out, positive size);
 
 static positive floor_one(p8 address_to p, positive n)
 {
@@ -88,38 +252,76 @@ static positive floor_one(p8 address_to p, positive n)
 
 static positive floor_two(p8 address_to a, p8 address_to b, positive n)
 {
-        return floor_read(a, n) + floor_read(b, n);
+        return floor_read_two(a, b, n);
 }
 
 static volatile positive sink;
 
-#define TIMED(rounds, body)                                                   \
+#define TIMED_ONCE(rounds, body)                                              \
         ({                                                                    \
-                p64 best = ~(p64)0;                                           \
-                for (b32 r = 0; r < 5; r++)                                   \
-                {                                                             \
-                        p64 s = get_cpu_time();                               \
-                        for (b32 k = 0; k < (rounds); k++) { body; }           \
-                        p64 e = get_cpu_time() - s;                           \
-                        if (e < best) best = e;                               \
-                }                                                             \
-                best;                                                         \
+                p64 s = floor_ticks();                                        \
+                for (b32 k = 0; k < (rounds); k++) { body; }                  \
+                floor_ticks() - s;                                            \
         })
 
-static fn row(string_address name, positive size, p64 ours, p64 floor,
-              positive traffic)
+static fn order(positive address_to values)
 {
-        // ticks are a free running counter, so a ratio is the only honest
-        // thing to print; the percentage is against the same traffic
-        positive pct = floor ? (positive)((floor * 100 * traffic) / (ours ? ours : 1)) : 0;
+        for (positive i = 1; i < 5; i++)
+        {
+                positive value = values[i];
+                positive at = i;
+
+                while (at && values[at - 1] > value)
+                {
+                        values[at] = values[at - 1];
+                        at--;
+                }
+
+                values[at] = value;
+        }
+}
+
+static fn row(string_address name, positive size, positive ratio)
+{
+        // State the paired median as remaining cost: zero percent over is the
+        // lower bound.  If the candidate wins, the baseline was not a floor.
+        positive over = ratio > 10000 ? ratio - 10000 : 0;
 
         string_format(log, "  %s", name);
         for (positive i = string_length(name); i < 24; i++)
                 string_format(log, " ");
         string_format(log, "%p", size);
         for (positive i = 0; i < 9; i++) string_format(log, " ");
-        string_format(log, "%p%%\n", pct);
+        if (ratio < 10000)
+                string_format(log, "unresolved: candidate beat baseline\n");
+        else
+                string_format(log, "%p.%p%% slower\n", over / 100,
+                              over % 100);
 }
+
+#define PAIRED_ROW(name, size, rounds, floor_body, candidate_body)            \
+        do {                                                                  \
+                positive ratios[5];                                           \
+                for (positive trial = 0; trial < 5; trial++)                  \
+                {                                                             \
+                        p64 floor_time;                                        \
+                        p64 candidate_time;                                    \
+                        if (trial & 1)                                         \
+                        {                                                     \
+                                candidate_time = TIMED_ONCE(rounds, candidate_body); \
+                                floor_time = TIMED_ONCE(rounds, floor_body);   \
+                        }                                                     \
+                        else                                                  \
+                        {                                                     \
+                                floor_time = TIMED_ONCE(rounds, floor_body);   \
+                                candidate_time = TIMED_ONCE(rounds, candidate_body); \
+                        }                                                     \
+                        ratios[trial] = (positive)(candidate_time * 10000 /   \
+                                                   (floor_time ? floor_time : 1)); \
+                }                                                             \
+                order(ratios);                                                \
+                row(name, size, ratios[2]);                                   \
+        } while (0)
 
 b32 main(void)
 {
@@ -131,31 +333,49 @@ b32 main(void)
 
         moonwater_cpu_detect();
 
-        string_format(log, "  routine                 size     %% of floor\n");
-        string_format(log, "  ------------------------------------------\n");
+        string_format(log, "  routine                 size     gap to traffic lower bound\n");
+        string_format(log, "  -----------------------------------------------------\n");
 
         for (positive z = 0; z < sizeof(sizes) / sizeof(sizes[0]); z++)
         {
                 positive n = sizes[z];
                 b32 rounds = (b32)((1 << 24) / n) + 1;
 
-                p64 f1 = TIMED(rounds, sink += floor_one(one, n));
-                p64 f2 = TIMED(rounds, sink += floor_two(one, two, n));
-
-                row("memory_fill", n, TIMED(rounds, memory_fill(out, 7, n)), f1, 2);
-                row("memory_copy", n, TIMED(rounds, memory_copy(out, one, n)), f1, 2);
-                row("memory_copy_apart", n, TIMED(rounds, memory_copy_apart(out, one, n)), f1, 2);
-                row("memory_count", n, TIMED(rounds, sink += memory_count(one, n, 7)), f1, 1);
-                row("memory_first_of", n, TIMED(rounds, sink += (positive)memory_first_of(one, 0, n)), f1, 1);
-                row("memory_compare", n, TIMED(rounds, sink += (positive)memory_compare(one, two, n)), f2, 1);
+                PAIRED_ROW("memory_fill", n, rounds,
+                           sink += floor_fill(out, n), memory_fill(out, 7, n));
+                PAIRED_ROW("memory_copy", n, rounds,
+                           sink += floor_copy(out, one, n),
+                           memory_copy(out, one, n));
+                PAIRED_ROW("memory_copy_apart", n, rounds,
+                           sink += floor_copy(out, one, n),
+                           memory_copy_apart(out, one, n));
+                PAIRED_ROW("memory_count", n, rounds,
+                           sink += floor_one(one, n),
+                           sink += memory_count(one, n, 7));
+                PAIRED_ROW("memory_first_of", n, rounds,
+                           sink += floor_one(one, n),
+                           sink += (positive)memory_first_of(one, 0, n));
+                PAIRED_ROW("memory_compare", n, rounds,
+                           sink += floor_two(one, two, n),
+                           sink += (positive)memory_compare(one, two, n));
 
                 one[n - 1] = 0;
-                row("string_length", n, TIMED(rounds, sink += string_length(one)), f1, 1);
-                row("string_first_of", n, TIMED(rounds, sink += (positive)string_first_of(one, 0)), f1, 1);
-                row("string_last_of_or_end", n, TIMED(rounds, sink += (positive)string_last_of_or_end(one, 3)), f1, 1);
+                PAIRED_ROW("string_length", n, rounds,
+                           sink += floor_one(one, n),
+                           sink += string_length(one));
+                PAIRED_ROW("string_first_of", n, rounds,
+                           sink += floor_one(one, n),
+                           sink += (positive)string_first_of(one, 0));
+                PAIRED_ROW("string_last_of_or_end", n, rounds,
+                           sink += floor_one(one, n),
+                           sink += (positive)string_last_of_or_end(one, 3));
                 two[n - 1] = 0;
-                row("string_compare", n, TIMED(rounds, sink += (positive)string_compare(one, two)), f2, 1);
-                row("string_copy", n, TIMED(rounds, string_copy(out, one)), f1, 3);
+                PAIRED_ROW("string_compare", n, rounds,
+                           sink += floor_two(one, two, n),
+                           sink += (positive)string_compare(one, two));
+                PAIRED_ROW("string_copy", n, rounds,
+                           sink += floor_copy(out, one, n),
+                           string_copy(out, one));
                 one[n - 1] = (p8)((n - 1) % 251 + 1);
                 two[n - 1] = one[n - 1];
 

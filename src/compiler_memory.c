@@ -121,11 +121,34 @@
 #define KNOWN_WIDE 0
 #else
 #define KNOWN_SIZE_MAX 128
-#if X64 && !defined(__AVX2__)
+/*
+        __OPTIMIZE__ is the third condition and it is not a preference.
+
+        The wide bodies name the tail offset as [back] "i"(size - 32), an
+        immediate, and the array types either side of them are sized by the
+        same token. Both are constants only after the compiler has inlined
+        the specializer into a call site whose size is a literal and folded
+        the arithmetic. At -O0 it does neither: INLINE is always_inline, so
+        the body still arrives inside the caller, but nothing after that is
+        constant, and gcc says "impossible constraint in 'asm'" from
+        copy_known inlined into asctime_r. That was the whole of why this
+        umbrella could not be built at -O0 -- not this test or that one, but
+        programs/shell.c and everything else that includes it.
+
+        Turning the wide tier off there costs nothing: -O0 folds no size at
+        all, so every call goes to the routine regardless, and the routine is
+        the thing anybody debugging at -O0 is trying to look at. Every other
+        level keeps it exactly as it was, __OPTIMIZE__ being the compiler's
+        own answer to whether it is folding anything -- -Og defines it, keeps
+        the wide tier, and builds, which is the case that would have been
+        broken by guarding on a level number instead.
+*/
+#if X64 && !defined(__AVX2__) && defined(__OPTIMIZE__)
 #define KNOWN_WIDE 1
 #else
-//      Either not this machine, or a build already allowed to emit wide moves
-//      on its own, in which case the compiler's expansion is the better one.
+//      Either not this machine, a build already allowed to emit wide moves
+//      on its own -- in which case the compiler's expansion is the better
+//      one -- or a build with no constant folding to expand against.
 #define KNOWN_WIDE 0
 #endif
 #endif
@@ -2403,15 +2426,32 @@ static inline INLINE address_any copy_until_known(address_any destination,
         writes through stream.c's byte primitive and defers to error.c's
         perror, and it detects both by their include guards.
 */
+//      declare.c is first and is prototypes only -- no bodies, no macros
+//      wearing the names, no storage. A file that emits nothing cannot
+//      collide with a file that emits something, so putting it in front
+//      costs nothing and puts every standard name in scope for all of them.
+#include "standard/declare.c"
+
 #include "standard/error.c"
+#include "standard/lock.c"
 #define STANDARD_NO_UNDERSCORE_EXIT
 #include "standard/allocator.c"
+#include "standard/numbers.c"
 #include "standard/text.c"
 #include "standard/stdlib.c"
 #include "standard/clock.c"
 #include "standard/math.c"
+#include "standard/signal.c"
+
+//      stream.c and everything after it. Its last act is to #undef stdin,
+//      stdout and stderr and redefine them from the descriptor numbers into
+//      the pointers a C program means, so anything above this line that
+//      wanted the numbers still has them and anything below gets streams.
 #include "standard/stream.c"
 #include "standard/format.c"
+#include "standard/scan.c"
+#include "standard/spool.c"
+#include "standard/process.c"
 
 /*
         Returning from main is defined by C to be a call to exit, and exit
@@ -2437,13 +2477,28 @@ static inline INLINE address_any copy_until_known(address_any destination,
         in the tree takes (void) and the startup passes no arguments, so the
         signature is the whole contract.
 
-        Deliberately NOT on the exit path. The shell calls exit inside forked
-        children at about twenty sites, and a child that flushes buffers it
-        inherited from its parent prints the parent's pending output a second
-        time. Explicit exit therefore still reaches the raw trap, which is a
-        real divergence from glibc and is written down in the commit rather
-        than papered over: printf then exit loses the bytes, printf then
-        return does not.
+        It is the exit path now, which it deliberately was not. Returning from
+        main is defined by C to be a call to exit, so this returns through
+        exit rather than beside it: the atexit handlers a program registered
+        run, the streams flush, and the log buffer flushes. That last one was
+        missing even from the flush this shim used to do, and it mattered more
+        than the one that was there -- nearly everything in this tree writes
+        through string_format(log, ...) rather than through printf, so a shim
+        that flushed streams and not the log left the commonest output path in
+        the house losing its last four kilobytes on the way out.
+
+        What made turning the C spelling of exit on possible at all is in
+        stdlib.c, above stdlib_buffers_are_ours: the flush asks whether the
+        bytes in the buffer were put there by this process before it writes
+        them, so a forked child leaving through exit drops what it inherited
+        instead of printing its parent's output a second time. That is the
+        hazard the paragraph here used to describe, and it is answered now by
+        a mechanism rather than by keeping away from the path.
+
+        stdlib_program_starting is called first because both of the things it
+        does are observable on a program's first line: environ has to point
+        somewhere before a loop over it runs, and this process's identity has
+        to be on record before anything can fork.
 */
 #if !defined(KERNEL_MODE) && !defined(STANDARD_NO_PLATFORM) && \
         defined(STANDARD_MODERN_C_STANDARD_STREAM)
@@ -2452,11 +2507,13 @@ b32 moonwater_program_main(void);
 
 b32 main(void)
 {
-        b32 code = moonwater_program_main();
+        stdlib_program_starting();
 
-        stream_flush(null);
+        stdlib_exit_flush_hook = stream_flush_at_exit;
 
-        return code;
+        stdlib_exit(moonwater_program_main());
+
+        return 0;
 }
 
 #define main moonwater_program_main

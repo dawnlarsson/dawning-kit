@@ -2934,8 +2934,10 @@ static b32 exec_list(b32 index)
 
         while (child)
         {
-                status = parse_nodes[child].flags ? exec_background(child)
-                                                  : exec_node(child);
+                bool background = parse_nodes[child].kind == NODE_ANDOR &&
+                                  parse_nodes[child].flags;
+
+                status = background ? exec_background(child) : exec_node(child);
 
                 if (exec_signal)
                         break;
@@ -2980,6 +2982,7 @@ static b32 exec_node_kind(b32 index)
         if (node->kind == NODE_SIMPLE)
         {
                 status = exec_simple(index);
+                shell_status = status;
                 exec_errexit(status);
 
                 return status;

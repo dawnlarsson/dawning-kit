@@ -81,7 +81,15 @@ run() {
                 -Wl,--no-warn-rwx-segments \
                 -o "$work/$name" "$source_file" || return 1
 
-        echo "$name:"
+        if [ "$source_file" = kit/floor.c ]; then
+                if [ -n "$runner" ]; then
+                        echo "$name (emulated instruction shape; not hardware-floor evidence):"
+                else
+                        echo "$name (native hardware):"
+                fi
+        else
+                echo "$name:"
+        fi
         if [ -z "$runner" ] && command -v taskset >/dev/null 2>&1; then
                 taskset -c 0 "$work/$name"
         else

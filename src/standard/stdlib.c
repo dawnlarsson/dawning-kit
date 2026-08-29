@@ -178,6 +178,47 @@ static string_address address_to stdlib_environment_vector = null;
 static positive stdlib_environment_count = 0;
 static positive stdlib_environment_room = 0;
 
+/*
+        environ, which is this vector under the name every program knows.
+
+        Every other C name in this tree is attached to a prose one by an alias
+        or by a wrapper, and neither is available here, because this is an
+        object rather than a routine: the name has to be the object.
+
+        It was left out until now, and the reason has just stopped being true.
+        Nothing ran before main, so nothing could point this anywhere, and a
+        program written the ordinary way -- for (walk = environ; *walk; walk++)
+        -- would have dereferenced a null on its first line. That is worse than
+        not offering the name at all, which is why it was not offered. The
+        umbrella's startup shim is the C startup that was missing, it runs
+        before main, and it publishes the kernel's own vector here, so the loop
+        above works from the first line of the first program that writes it.
+
+        Publishing is not one act. Two calls in this file install a new vector:
+        the copy stdlib_environment_own takes before anything can be changed,
+        and the growth that runs when that copy fills up. Both end by
+        publishing, so a program that reads environ, calls setenv and reads it
+        again is looking at the vector setenv is actually using rather than at
+        a pointer that went stale the first time the environment was written
+        to. unsetenv and clearenv move entries about inside a vector they were
+        already given and leave its address alone, so they publish nothing,
+        which is correct rather than an omission.
+
+        What is deliberately not followed is a program assigning to environ
+        itself. POSIX allows it, and it is how a caller replaces a whole
+        environment in one move; getenv here would go on reading the vector
+        this file owns and would not see it. Following it would put a second
+        pointer comparison in every lookup, paid for by everybody, against the
+        chance that one caller did the one thing almost nobody does. It is
+        written down instead.
+*/
+string_address address_to environ = null;
+
+static fn stdlib_environment_publish(void)
+{
+        environ = stdlib_environment_vector;
+}
+
 //      Take a private copy of the vector, once. False means the arena could
 //      not give us the room, and every caller falls back to read-only
 //      behaviour against the kernel's own vector rather than losing entries.
@@ -187,7 +228,6 @@ static bool stdlib_environment_own(void)
         string_address address_to made;
         positive count = 0;
         positive room;
-        positive index;
 
         if (!is_null(stdlib_environment_vector))
                 return true;
@@ -205,14 +245,20 @@ static bool stdlib_environment_own(void)
         if (is_null(made))
                 return false;
 
-        for (index = 0; index < count; index++)
-                made[index] = kernel[index];
+        //      The pointers and not the strings, which stay where the
+        //      kernel put them. memory_copy_apart is the non-overlapping
+        //      copy and these two are a fresh arena slice and the kernel's
+        //      own vector, which cannot be the same memory.
+        if (count > 0)
+                memory_copy_apart(made, kernel, count * sizeof(string_address));
 
         made[count] = null;
 
         stdlib_environment_vector = made;
         stdlib_environment_count = count;
         stdlib_environment_room = room;
+
+        stdlib_environment_publish();
 
         return true;
 }
@@ -243,7 +289,29 @@ static bool stdlib_environment_grow(void)
         stdlib_environment_vector = made;
         stdlib_environment_room = room;
 
+        stdlib_environment_publish();
+
         return true;
+}
+
+/*
+        Is this entry's key exactly this name?
+
+        The key ends at the first equals, so string_first_of_or_end finds the
+        end of it in one vectorised scan and memory_compare answers the rest.
+        The shape this replaced walked the two strings a byte at a time and
+        stopped at the equals itself, which is the same answer reached by the
+        only means the library asks nobody to use.
+*/
+static bool stdlib_environment_is(string_address entry, string_address name,
+                                  positive length)
+{
+        string_address equals = string_first_of_or_end(entry, '=');
+
+        if ((positive)(equals - entry) != length || equals[0] != '=')
+                return false;
+
+        return memory_compare(entry, name, length) == 0;
 }
 
 //      The index of the entry whose key is exactly this name, or -1. The key
@@ -385,19 +453,19 @@ b32 unsetenv(string_address name)
 
         while (index < stdlib_environment_count)
         {
-                string_address entry = stdlib_environment_vector[index];
-
-                if (memory_compare(entry, name, name_length) == 0 &&
-                    entry[name_length] == '=')
+                if (stdlib_environment_is(stdlib_environment_vector[index],
+                                          name, name_length))
                 {
-                        positive move = index;
-
-                        while (move < stdlib_environment_count)
-                        {
-                                stdlib_environment_vector[move] =
-                                        stdlib_environment_vector[move + 1];
-                                move++;
-                        }
+                        //      Everything above the entry moves down one
+                        //      place, the null that ends the vector included,
+                        //      which is why the count is the distance to the
+                        //      end and not one less. memory_copy is memmove
+                        //      -- library.c aliases both names onto it -- so
+                        //      the overlap is the routine's business.
+                        memory_copy(stdlib_environment_vector + index,
+                                    stdlib_environment_vector + index + 1,
+                                    (stdlib_environment_count - index) *
+                                            sizeof(string_address));
 
                         stdlib_environment_count--;
                         continue;
@@ -424,17 +492,22 @@ b32 unsetenv(string_address name)
 */
 b32 putenv(string_address entry)
 {
-        positive name_length = 0;
+        positive name_length;
+        string_address stop;
         bipolar found;
 
         if (is_null(entry))
                 return -1;
 
-        while (entry[name_length] != end && entry[name_length] != '=')
-                name_length++;
+        //      The same one scan the name check above uses. Where it stopped
+        //      is the key's length and what it stopped on says whether there
+        //      is a value at all.
+        stop = string_first_of_or_end(entry, '=');
 
-        if (entry[name_length] != '=')
+        if (stop[0] != '=')
                 return unsetenv(entry);
+
+        name_length = (positive)(stop - entry);
 
         if (name_length == 0)
                 return -1;
@@ -491,16 +564,25 @@ b32 clearenv(void)
         C's exit is a different function that happens to share the spelling --
         it runs the atexit handlers in reverse and flushes what is buffered
         before it traps. It cannot be named exit here, because the assembly
-        symbol already is, and the C name is attached by a macro instead. That
-        macro is opt-in, and the reason is measured rather than defensive: the
-        shell in this same tree includes this umbrella and calls exit inside
-        forked children, most of them after a failed execve. Those children
-        inherit the parent's four-kilobyte log buffer with whatever the parent
-        had not flushed still in it, and an exit that flushes would print the
-        parent's pending output a second time, from the child, on every failed
-        command. Defining STANDARD_EXIT_RUNS_HANDLERS before including this
-        umbrella turns the C spelling on for a program that wants it and knows
-        it does not fork behind a full buffer.
+        symbol already is, and the C name is attached by a macro instead.
+
+        That macro used to be opt-in, and what it was staying away from was
+        real. The shell in this same tree includes this umbrella and calls exit
+        inside forked children, most of them after a failed execve. A child
+        inherits the parent's four-kilobyte log buffer with whatever the parent
+        had not flushed still in it, and a child that flushed would print the
+        parent's pending output a second time, on every failed command. glibc
+        has exactly that bug and answers it with folklore -- flush before you
+        fork -- which is advice given to callers rather than a mechanism.
+
+        The mechanism is below, in stdlib_buffers_are_ours, and it costs one
+        getpid on the one path in a process's life that ends the process. With
+        it the macro is the default and the divergence is closed at both ends:
+        printf then exit prints, which is what every C program on earth
+        expects and what this library got wrong, and printf then fork then
+        exit in the child prints nothing extra, which is better than what
+        glibc does. STANDARD_EXIT_KEEPS_TRAP goes back the other way for a
+        caller that wants the bare trap under the C spelling.
 
         stdlib_exit is the function under either name and can always be called
         directly.
@@ -530,6 +612,120 @@ static positive stdlib_quick_count = 0;
 //      Set by the stream family, if there is one linked. Called after the
 //      atexit handlers and before the trap.
 fn(address_to stdlib_exit_flush_hook)(void) = null;
+
+/*
+        Whose bytes are in the buffer.
+
+        A buffer is a promise to write something later, and a fork copies the
+        promise without copying the obligation. After one there are two
+        processes each holding the same unwritten bytes, and each of them
+        leaving through a path that flushes writes those bytes once, so they
+        are written twice. That is the double print, and it is not a shell
+        problem: it is what buffered output plus fork means, here and in glibc
+        alike.
+
+        So the flush asks whose bytes these are before it writes them, and the
+        question is asked of the buffer rather than of the process. A stream
+        records whose process filled it at the moment it went from empty to
+        holding something -- the owner field in struct stream -- and the flush
+        at exit compares that against the identity below. A child of a process
+        that flushed before it forked starts with an empty buffer, stamps its
+        own writes with itself, and its output goes out at exit exactly as a
+        program with no fork in it would expect. A child that inherited bytes
+        it never wrote finds somebody else's stamp and leaves them where they
+        are; the parent is still holding the same bytes and will write them
+        itself.
+
+        The identity is one getpid, 32ns on the machine this was written on,
+        and a stream asks for it only when its buffer goes from empty to
+        holding something -- once per four kilobytes for a program writing
+        steadily. Through fwrite to a real file, in milliseconds, lower is
+        quicker:
+
+              chunk    rounds    without      with
+                 64   2000000       20.9      22.0
+               4096    200000      105.3     109.8
+
+        Four to five percent, and the four kilobyte column is exactly the two
+        hundred thousand getpids it makes. Against /dev/null the same stamp is
+        fifteen percent at sixty four bytes and thirty eight at four thousand,
+        which is worth printing because it is the shape of the cost rather
+        than the size of it: what is bought is one syscall per buffer, and it
+        only looks large standing beside the cheapest syscall Linux has.
+
+        A page mapped MADV_WIPEONFORK answers the same question with a byte
+        load and no syscall at all. It was tried, it works, and it is not here:
+        it is an mmap, an madvise, a generation counter and a fallback for the
+        kernels that refuse, to recover four percent on a path nothing in this
+        tree writes through -- the shell's output goes to the log buffer and
+        not to a stream, and every consumer that would pay the four percent is
+        hypothetical.
+
+        The log buffer in any.inc is coarser, because it has to be. It is
+        assembly, and library.c holds assembly and declarations and nothing
+        else, so there is nowhere in it to keep a stamp and no C to keep one
+        from. What is available is the identity recorded at startup, which
+        answers a weaker question -- is this the process the program started
+        as -- and that is what gates the log flush below. A forked child's
+        implicit flush therefore leaves the log buffer alone whether or not
+        the bytes in it are its own. That is exactly the behaviour every such
+        child had before this file learned to flush at all, so nothing that
+        used to arrive stops arriving, and an explicit log_flush in a child
+        still works and is what the shell in this tree does at all twenty of
+        its exit sites and before all of its clones.
+
+        The residue, named rather than hidden: a child that writes bytes of
+        its own into a stream buffer that already held its parent's loses its
+        own along with the inherited ones, because the two are in one buffer
+        with nothing between them to tell them apart. glibc writes both and
+        then writes the parent's again when the parent exits. Neither answer
+        is right; this one never writes anything twice and never invents
+        output that was already written, and the way to have both halves is
+        the one POSIX has always given -- flush before the fork, or leave
+        through _exit.
+
+        A recorded identity of zero means no shim ran -- a kernel build, or a
+        translation unit that asked for no platform under it -- and then the
+        buffers can only be ours, because nothing in such a build forked.
+*/
+static positive stdlib_process_at_start = 0;
+
+positive stdlib_process_identity(void)
+{
+        return (positive)system_call(syscall(getpid));
+}
+
+static bool stdlib_buffers_are_ours(void)
+{
+        if (stdlib_process_at_start == 0)
+                return true;
+
+        return stdlib_process_identity() == stdlib_process_at_start;
+}
+
+/*
+        What the startup shim in the umbrella calls before main, and the only
+        thing in this file whose ordering matters.
+
+        Two acts, neither of which can be a static initialiser and both of
+        which a program can observe on its very first line: the identity the
+        log flush above compares against, and the environment vector under its
+        C name.
+
+        The vector published here is the kernel's own and not a copy.
+        stdlib_environment_own has not run and cannot have -- nothing has
+        called setenv, because nothing has run -- and calling it here to be
+        tidy would make every program that includes this umbrella pay for an
+        allocation and a copy of its whole environment at startup, in order to
+        publish a pointer that reading alone never needed. The moment anything
+        does take that copy, that call publishes the copy over this one.
+*/
+fn stdlib_program_starting(void)
+{
+        stdlib_process_at_start = stdlib_process_identity();
+
+        environ = program_environment_list();
+}
 
 b32 atexit(stdlib_exit_handler handler)
 {
@@ -561,10 +757,16 @@ DEAD_END fn stdlib_exit(b32 code)
                 stdlib_exit_list[stdlib_exit_count]();
         }
 
+        //      The hook decides per stream, because a stream knows which
+        //      process filled it. It is called after the handlers rather than
+        //      before them, so that anything a handler wrote is included.
         if (!is_null(stdlib_exit_flush_hook))
                 stdlib_exit_flush_hook();
 
-        log_flush();
+        //      The log buffer cannot know, so this asks the coarser question
+        //      the block above stdlib_buffers_are_ours describes.
+        if (stdlib_buffers_are_ours())
+                log_flush();
 
         exit(code);
 
@@ -766,12 +968,41 @@ typedef b32(address_to stdlib_compare)(address_any left, address_any right);
 typedef b32(address_to stdlib_compare_context)(address_any left, address_any right,
                                                address_any context);
 
+/*
+        How one element moves, decided once for the whole sort.
+
+        This was a single flag: eight byte words when the size and the base
+        were both multiples of eight, and single bytes otherwise. The
+        otherwise is where an array of ints lands -- size four, the commonest
+        thing qsort is handed after an array of pointers -- and four bytes
+        moved with four loads, four stores and a loop around them.
+
+        So the flag is a width, and the two widths that need no loop at all
+        get a case of their own: an eight byte element is one load and one
+        store each way, and a four byte element is the same thing in a
+        narrower register. Anything that is a multiple of four and aligned for
+        it moves four bytes at a time rather than one. The test is by
+        alignment as well as by size, for the reason the old comment gave:
+        riscv64 is entitled to trap an unaligned load and a sort is not the
+        place to find out whether this one does.
+
+        Made once per sort and read once per swap, so it is a predicted
+        compare against an immediate and not an indirect call -- trading a
+        branch the predictor gets right for one it cannot would give the
+        whole win back.
+*/
+#define STDLIB_SORT_MOVE_BYTE 0
+#define STDLIB_SORT_MOVE_QUARTER 1
+#define STDLIB_SORT_MOVE_QUARTERS 2
+#define STDLIB_SORT_MOVE_WORD 3
+#define STDLIB_SORT_MOVE_WORDS 4
+
 typedef struct
 {
         stdlib_compare_context compare;
         address_any context;
         positive size;
-        bool by_word;
+        b32 move;
 } stdlib_sort_plan;
 
 static bool stdlib_sort_before(p8 address_to left, p8 address_to right,
@@ -788,7 +1019,17 @@ static fn stdlib_sort_swap(p8 address_to left, p8 address_to right,
         if (left == right)
                 return;
 
-        if (plan->by_word)
+        if (plan->move == STDLIB_SORT_MOVE_WORD)
+        {
+                p64 held = *(p64 address_to)left;
+
+                *(p64 address_to)left = *(p64 address_to)right;
+                *(p64 address_to)right = held;
+
+                return;
+        }
+
+        if (plan->move == STDLIB_SORT_MOVE_WORDS)
         {
                 p64 address_to a = (p64 address_to)left;
                 p64 address_to b = (p64 address_to)right;
@@ -803,6 +1044,36 @@ static fn stdlib_sort_swap(p8 address_to left, p8 address_to right,
                         a++;
                         b++;
                         words--;
+                }
+
+                return;
+        }
+
+        if (plan->move == STDLIB_SORT_MOVE_QUARTER)
+        {
+                p32 held = *(p32 address_to)left;
+
+                *(p32 address_to)left = *(p32 address_to)right;
+                *(p32 address_to)right = held;
+
+                return;
+        }
+
+        if (plan->move == STDLIB_SORT_MOVE_QUARTERS)
+        {
+                p32 address_to a = (p32 address_to)left;
+                p32 address_to b = (p32 address_to)right;
+                positive quarters = size / 4;
+
+                while (quarters > 0)
+                {
+                        p32 held = *a;
+
+                        *a = *b;
+                        *b = held;
+                        a++;
+                        b++;
+                        quarters--;
                 }
 
                 return;
@@ -1008,8 +1279,7 @@ fn qsort_r(address_any base, positive count, positive size,
            stdlib_compare_context compare, address_any context)
 {
         stdlib_sort_plan plan;
-        positive budget = 0;
-        positive span;
+        positive budget;
 
         if (is_null(base) || is_null(compare) || size == 0 || count < 2)
                 return;
@@ -1017,10 +1287,23 @@ fn qsort_r(address_any base, positive count, positive size,
         plan.compare = compare;
         plan.context = context;
         plan.size = size;
-        plan.by_word = (size % 8) == 0 && ((positive)base % 8) == 0;
 
-        for (span = count; span > 1; span >>= 1)
-                budget++;
+        if ((size % 8) == 0 && ((positive)base % 8) == 0)
+                plan.move = size == 8 ? STDLIB_SORT_MOVE_WORD
+                                      : STDLIB_SORT_MOVE_WORDS;
+        else if ((size % 4) == 0 && ((positive)base % 4) == 0)
+                plan.move = size == 4 ? STDLIB_SORT_MOVE_QUARTER
+                                      : STDLIB_SORT_MOVE_QUARTERS;
+        else
+                plan.move = STDLIB_SORT_MOVE_BYTE;
+
+        //      The base two logarithm of the count is the position of its
+        //      highest set bit, and bits_leading_zeros is one instruction on
+        //      all three machines -- bsr on x86_64, clz on the other two --
+        //      where the loop this replaces took one iteration per bit. The
+        //      count is at least two by the test above, so the zero input the
+        //      routine answers 64 for cannot arrive.
+        budget = 63 - (positive)bits_leading_zeros(count);
 
         stdlib_sort_range((p8 address_to)base, count, address_of plan, budget * 2);
 }
@@ -1040,9 +1323,52 @@ fn qsort_r(address_any base, positive count, positive size,
         registers and none of which make the callee responsible for the
         argument area.
 */
+/*
+        The cast this used to do was between two function pointer types of
+        different arity, and the paragraph above admits C does not guarantee
+        it -- it works because none of these three architectures makes the
+        callee responsible for an argument it was never passed. It is still
+        undefined, gcc says so under -Wcast-function-type, and the strict
+        lane that builds the terminal harness would not compile the tree
+        because of it.
+
+        A holder removes the question rather than silencing it. The
+        comparator goes into a structure, the structure's address is the
+        context the three argument engine already carries, and no function
+        pointer is converted to anything. The holder lives in this frame,
+        which outlives the sort it is passed to. What it costs is one
+        indirection per comparison, against a comparator call that was
+        already indirect, and correctness that does not depend on which way
+        the calling convention happens to fall.
+*/
+typedef struct
+{
+        stdlib_compare plain;
+} stdlib_compare_holder;
+
+static b32 stdlib_compare_forward(address_any left, address_any right,
+                                  address_any context)
+{
+        return ((stdlib_compare_holder address_to)context)->plain(left, right);
+}
+
 fn qsort(address_any base, positive count, positive size, stdlib_compare compare)
 {
-        qsort_r(base, count, size, (stdlib_compare_context)compare, null);
+        stdlib_compare_holder holder;
+
+        //      qsort_r refuses a null comparator, and passing the cast one
+        //      straight down used to be how that refusal was reached. The
+        //      forwarder is never null, so the same guard has to be here or
+        //      a null comparator becomes a call through null instead of a
+        //      sort that declines. The test that caught this passes exactly
+        //      that, together with a zero count, a zero width and a null
+        //      base, and it is the only reason this line exists.
+        if (is_null(compare))
+                return;
+
+        holder.plain = compare;
+
+        qsort_r(base, count, size, stdlib_compare_forward, address_of holder);
 }
 
 /*
@@ -1359,15 +1685,20 @@ b32 system(string_address command)
 }
 
 /*
-        The C spelling of exit, if the program asked for it.
+        The C spelling of exit.
 
-        See the block above stdlib_exit for why this is a request rather than
-        a default. It is deliberately a function-like macro, so it expands
-        only where exit is being called and leaves the assembly symbol of the
-        same name, which _start calls with main's return value, entirely
-        alone.
+        Function-like on purpose, so it expands only where exit is being
+        called: the assembly symbol of the same name keeps its address, a bare
+        exit still takes it, and every call written above this line in the
+        umbrella's include order still means the trap -- error.c's _exit and
+        _Exit, abort and quick_exit above, and the execve child inside
+        system(), each of which has to mean the trap and nothing else.
+
+        STANDARD_EXIT_KEEPS_TRAP is the way back out, for a caller who wants
+        the bare trap under this spelling. Nothing in this tree defines it;
+        the guard in stdlib_exit is what made needing it unnecessary.
 */
-#ifdef STANDARD_EXIT_RUNS_HANDLERS
+#ifndef STANDARD_EXIT_KEEPS_TRAP
 #define exit(code) stdlib_exit(code)
 #endif
 

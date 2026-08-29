@@ -43,7 +43,7 @@ TEST_TALLY="$work/tally"
 export TEST_TALLY
 : > "$TEST_TALLY"
 
-lanes="standard allocator error strings stdlib clock math format stream verify exact known socket net slurp wait writer native probe shell expand builtin awk text tools files term kit boot canvas"
+lanes="standard declare allocator error strings stdlib leaving numbers clock math format scan stream spool process signal lock verify exact known socket net slurp wait writer native probe shell expand builtin awk text tools files term kit boot canvas"
 
 describe()
 {
@@ -52,7 +52,15 @@ describe()
         verify)   echo "the assembly in library.c against the C it replaced, on three machines" ;;
         exact)    echo "every size that is known where the call is written, and both tiers" ;;
         known)    echo "the rest of what folds when the call site knows it" ;;
+        declare)  echo "the standard names, declared, compiled twice and diffed" ;;
         allocator) echo "malloc, free, calloc and realloc against glibc's" ;;
+        leaving)  echo "what a program writes on the way out, and what a child must not write twice" ;;
+        numbers)  echo "strtod and the integer conversions, in ULP against glibc" ;;
+        scan)     echo "scanf's conversions, every one against glibc" ;;
+        spool)    echo "the rest of <stdio.h> -- mkstemp, tmpfile, popen" ;;
+        process)  echo "directories, exec, sleeping, getopt and realpath" ;;
+        signal)   echo "handlers, masks, the return trampoline, and sigsetjmp" ;;
+        lock)     echo "a futex lock, two real threads, and what it costs uncontended" ;;
         error)    echo "errno, strerror and the POSIX wrappers that set it" ;;
         strings)  echo "strdup, strtok, strsep and the non-local jump" ;;
         stdlib)   echo "exit, atexit, getenv, qsort and bsearch" ;;
@@ -1786,7 +1794,15 @@ known_one()
         [ "$bad" = 0 ]
 }
 
+lane_declare()   { freestanding_checks_lane declare src/test/declare.c; }
 lane_allocator() { freestanding_checks_lane allocator src/test/allocator.c; }
+lane_leaving()   { freestanding_checks_lane leaving src/test/leaving.c; }
+lane_numbers()   { freestanding_checks_lane numbers src/test/number.c; }
+lane_scan()      { freestanding_checks_lane scan src/test/scan.c; }
+lane_spool()     { sh src/test/spool.sh; }
+lane_process()   { freestanding_checks_lane process src/test/process.c; }
+lane_signal()    { freestanding_checks_lane signal src/test/signal.c; }
+lane_lock()      { freestanding_checks_lane lock src/test/lock.c; }
 lane_error()     { freestanding_checks_lane error src/test/error.c; }
 lane_strings()   { freestanding_checks_lane strings src/test/strings.c; }
 lane_stdlib()    { freestanding_checks_lane stdlib src/test/stdlib.c; }

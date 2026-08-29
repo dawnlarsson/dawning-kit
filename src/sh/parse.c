@@ -1078,7 +1078,7 @@ static b32 parse_list_required()
         if (parse_state)
                 return 0;
 
-        if (!parse_nodes[index].left)
+        if (!index)
         {
                 parse_fail();
                 return 0;
@@ -1522,16 +1522,14 @@ command_done:
 
 static b32 parse_pipeline()
 {
-        b32 index = parse_node_new(NODE_PIPELINE);
-        b32 head = 0;
-        b32 tail = 0;
+        bool inverted = false;
 
         if (parse_state)
                 return 0;
 
         if (parse_word_is(0, "!"))
         {
-                parse_nodes[index].flags = 1;
+                inverted = true;
                 parse_position++;
 
                 // The grammar has one optional Bang, not a repeatable list.
@@ -1543,28 +1541,42 @@ static b32 parse_pipeline()
                 }
         }
 
-        while (1)
+        b32 head = parse_command();
+
+        if (parse_state)
+                return 0;
+
+        bool piped = parse_look(0)->kind == PT_OP &&
+                     parse_look(0)->op == OP_PIPE;
+
+        // The grammar level carries no information in the overwhelmingly
+        // common singleton case. Do not put a node in the executor merely to
+        // rediscover that fact on every iteration of a loop.
+        if (!inverted && !piped)
+                return head;
+
+        b32 index = parse_node_new(NODE_PIPELINE);
+        b32 tail = head;
+
+        if (parse_state)
+                return 0;
+
+        parse_nodes[index].flags = inverted;
+
+        while (piped)
         {
+                parse_position++;
+                parse_skip_newlines();
+
                 b32 child = parse_command();
 
                 if (parse_state)
                         return 0;
 
-                if (tail)
-                        parse_nodes[tail].next = child;
-                else
-                        head = child;
-
+                parse_nodes[tail].next = child;
                 tail = child;
-
-                if (parse_look(0)->kind == PT_OP && parse_look(0)->op == OP_PIPE)
-                {
-                        parse_position++;
-                        parse_skip_newlines();
-                        continue;
-                }
-
-                break;
+                piped = parse_look(0)->kind == PT_OP &&
+                        parse_look(0)->op == OP_PIPE;
         }
 
         parse_nodes[index].left = head;
@@ -1574,40 +1586,45 @@ static b32 parse_pipeline()
 
 static b32 parse_and_or()
 {
-        b32 index = parse_node_new(NODE_ANDOR);
-        b32 head = 0;
-        b32 tail = 0;
-        b32 op = 0;
+        if (parse_state)
+                return 0;
+
+        b32 head = parse_pipeline();
 
         if (parse_state)
                 return 0;
 
-        while (1)
+        bool joined = parse_look(0)->kind == PT_OP &&
+                      (parse_look(0)->op == OP_AND_IF ||
+                       parse_look(0)->op == OP_OR_IF);
+
+        if (!joined)
+                return head;
+
+        b32 index = parse_node_new(NODE_ANDOR);
+        b32 tail = head;
+
+        if (parse_state)
+                return 0;
+
+        while (joined)
         {
+                b32 op = parse_look(0)->op;
+
+                parse_position++;
+                parse_skip_newlines();
+
                 b32 child = parse_pipeline();
 
                 if (parse_state)
                         return 0;
 
                 parse_nodes[child].op = op;
-
-                if (tail)
-                        parse_nodes[tail].next = child;
-                else
-                        head = child;
-
+                parse_nodes[tail].next = child;
                 tail = child;
-
-                if (parse_look(0)->kind == PT_OP &&
-                    (parse_look(0)->op == OP_AND_IF || parse_look(0)->op == OP_OR_IF))
-                {
-                        op = parse_look(0)->op;
-                        parse_position++;
-                        parse_skip_newlines();
-                        continue;
-                }
-
-                break;
+                joined = parse_look(0)->kind == PT_OP &&
+                         (parse_look(0)->op == OP_AND_IF ||
+                          parse_look(0)->op == OP_OR_IF);
         }
 
         parse_nodes[index].left = head;
@@ -1617,7 +1634,7 @@ static b32 parse_and_or()
 
 static b32 parse_list()
 {
-        b32 index = parse_node_new(NODE_LIST);
+        b32 index = 0;
         b32 head = 0;
         b32 tail = 0;
 
@@ -1638,27 +1655,62 @@ static b32 parse_list()
         while (!parse_at_list_end())
         {
                 b32 child = parse_and_or();
+                bool separated = false;
 
                 if (parse_state)
                         return 0;
 
+                if (parse_look(0)->kind == PT_OP && parse_look(0)->op == OP_AMP)
+                {
+                        /* A direct singleton may use flags for its own node
+                           kind. Background state belongs to an and-or list,
+                           so restore that grammar node only for this case. */
+                        if (parse_nodes[child].kind != NODE_ANDOR)
+                        {
+                                b32 wrapper = parse_node_new(NODE_ANDOR);
+
+                                if (parse_state)
+                                        return 0;
+
+                                parse_nodes[wrapper].left = child;
+                                child = wrapper;
+                        }
+
+                        parse_nodes[child].flags = 1;
+                        parse_position++;
+                        separated = true;
+                }
+                else if (parse_look(0)->kind == PT_OP && parse_look(0)->op == OP_SEMI)
+                {
+                        parse_position++;
+                        separated = true;
+                }
+                else if (parse_look(0)->kind == PT_NEWLINE)
+                {
+                        parse_position++;
+                        separated = true;
+                }
+
                 if (tail)
+                {
+                        if (!index)
+                        {
+                                index = parse_node_new(NODE_LIST);
+
+                                if (parse_state)
+                                        return 0;
+
+                                parse_nodes[index].left = head;
+                        }
+
                         parse_nodes[tail].next = child;
+                }
                 else
                         head = child;
 
                 tail = child;
 
-                if (parse_look(0)->kind == PT_OP && parse_look(0)->op == OP_AMP)
-                {
-                        parse_nodes[child].flags = 1;
-                        parse_position++;
-                }
-                else if (parse_look(0)->kind == PT_OP && parse_look(0)->op == OP_SEMI)
-                        parse_position++;
-                else if (parse_look(0)->kind == PT_NEWLINE)
-                        parse_position++;
-                else
+                if (!separated)
                         break;
 
                 parse_skip_newlines();
@@ -1670,9 +1722,10 @@ static b32 parse_list()
                 }
         }
 
-        parse_nodes[index].left = head;
+        if (!head)
+                return 0;
 
-        return index;
+        return index ? index : head;
 }
 
 // Everything read so far, as one tree. Zero with parse_state set to

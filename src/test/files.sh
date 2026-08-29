@@ -1492,6 +1492,7 @@ same 'long listing'     ls -l "$odd"
 same 'long inner'       ls -l "$odd/a dir"
 near 'listed'           'cat' ls "$odd"
 near 'found'            "LC_ALL=C sort" find "$odd"
+answered 'find follows broken link' find -L "$odd/broken" -type l
 near 'measured'         "LC_ALL=C sort" du -a "$odd"
 same 'realpath of link' realpath "$odd/link to space"
 same 'realpath broken'  realpath "$odd/broken"

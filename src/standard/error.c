@@ -868,8 +868,20 @@ static string_address const error_messages[ERROR_HIGHEST + 1] = {
 //      perror's own comment.
 #define ERROR_LINE_MAX 256
 
-static const string_address error_unknown_prefix =
-        (string_address) "Unknown error ";
+/*
+        Spelled as the literal rather than as a pointer to it, so that its
+        length is a constant where it is used.
+
+        `static const string_address` is a pointer variable, and
+        string_length of a pointer is a call no amount of optimisation folds
+        away -- the compiler has to assume the bytes it points at are only
+        known at run time. sizeof of the literal, less its terminator, is
+        fourteen at compile time, and that is what lets the copy below reach
+        the known-size specializer in compiler_memory.c and become two stores
+        instead of a call into the vectorised routine.
+*/
+#define ERROR_UNKNOWN_PREFIX "Unknown error "
+#define ERROR_UNKNOWN_PREFIX_LENGTH (sizeof ERROR_UNKNOWN_PREFIX - 1)
 
 //      True when the number names a message, which is not the same as being
 //      in range: 41 and 58 are in range and name nothing.
@@ -918,28 +930,42 @@ static b32 error_message_into(string_address into, positive size, b32 number)
 
                 length = string_length(source);
 
+                //      Apart rather than memory_copy: the destination is the
+                //      caller's buffer and the source is the table, which is
+                //      static const and cannot be written through, so the
+                //      overlap test memory_copy opens with is a test whose
+                //      answer is already known. setenv in the sibling file
+                //      spells the same shape the same way.
                 if (length < size)
                 {
-                        memory_copy(into, source, length + 1);
+                        memory_copy_apart(into, source, length + 1);
                         return 0;
                 }
 
                 room = size - 1;
-                memory_copy(into, source, room);
+                memory_copy_apart(into, source, room);
                 into[room] = end;
 
                 return ERANGE;
         }
 
-        length = string_length(error_unknown_prefix);
-        memory_copy(built, error_unknown_prefix, length);
-        length += bipolar_into_string(built + length, (bipolar)number);
+        //      Both the length and the copy are constant here, so the copy
+        //      folds to straight-line stores and no scan of the prefix
+        //      happens at all.
+        memory_copy_apart(built, (string_address)ERROR_UNKNOWN_PREFIX,
+                          ERROR_UNKNOWN_PREFIX_LENGTH);
+        length = ERROR_UNKNOWN_PREFIX_LENGTH +
+                 bipolar_into_string(built + ERROR_UNKNOWN_PREFIX_LENGTH,
+                                     (bipolar)number);
 
         if (is_null(into) || size == 0)
                 return EINVAL;
 
         room = length < size ? length : size - 1;
-        memory_copy(into, built, room);
+
+        //      `built` is this function's own frame and `into` is the
+        //      caller's buffer, so these two cannot be the same memory.
+        memory_copy_apart(into, built, room);
         into[room] = end;
 
         return EINVAL;
@@ -1040,7 +1066,9 @@ static fn perror(string_address prefix)
                 if (length > ERROR_LINE_MAX - ERROR_MESSAGE_MAX - 4)
                         length = ERROR_LINE_MAX - ERROR_MESSAGE_MAX - 4;
 
-                memory_copy(line, prefix, length);
+                //      `line` is this function's own frame, so the prefix
+                //      the caller handed in cannot overlap it.
+                memory_copy_apart(line, prefix, length);
                 at = length;
                 line[at++] = ':';
                 line[at++] = ' ';

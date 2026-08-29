@@ -155,6 +155,7 @@
           memory_copy_source_first       public  yes     yes     yes
           memory_copy_until              public  yes     yes     yes
           memory_count                   public  yes     yes     yes
+          memory_count_records_with_prepared public yes  yes     yes
           memory_count_words             public  yes     yes     yes
           memory_fill                    public  yes     yes     yes
           memory_first_of                public  yes     yes     yes
@@ -2848,6 +2849,114 @@ __asm__(
     "pop %r12\n   pop %rbp\n   pop %rbx\n"
     ASM_RET
     ASM_LOCAL_END(memory_search_prepared_core)
+    //
+    //       Count delimiter-separated records containing a fixed needle.
+    //
+    //       This is the repeated-search shape shared by filters: one prepared
+    //       pair of needle anchors is tested at every possible position while
+    //       delimiter events reset the "already counted" bit.  A line with
+    //       ten matches is therefore one answer without finding its end and
+    //       starting the whole search machinery ten times.  The needle may
+    //       not contain the delimiter (then no one record can contain it), an
+    //       empty needle matches every record, and a final unterminated record
+    //       is a record exactly as grep treats it.
+    //
+    //       Seven arguments put delimiter at 8(%rsp) on entry.  The AVX2
+    //       body considers thirty-two candidate starts and thirty-two record
+    //       boundaries together.  Only the very sparse surviving candidates
+    //       take the scalar exact comparison; the traffic floor is three
+    //       vector loads per block, and no byte is copied.
+    //
+    ASM_FUNC(memory_count_records_with_prepared)
+    "movzbl 8(%rsp), %r11d\n   xor %eax, %eax\n"
+    "test %rcx, %rcx\n   jnz .Lmemory_records_x64_have_needle\n"
+    // Empty needle: every delimiter ends a record and a nonempty suffix is
+    // one more.  Keep this small case here rather than burdening the hot body.
+    "test %rsi, %rsi\n   jz .Lmemory_records_x64_return\n"
+    "push %rdi\n   push %rsi\n   push %r11\n"
+    "mov %r11d, %edx\n   call memory_count\n   pop %r11\n   pop %rsi\n   pop %rdi\n"
+    "cmpb %r11b, -1(%rdi,%rsi)\n   je .Lmemory_records_x64_return\n"
+    "inc %rax\n   jmp .Lmemory_records_x64_return\n"
+    ".Lmemory_records_x64_have_needle:\n"
+    "cmp %rcx, %rsi\n   jb .Lmemory_records_x64_zero\n"
+    // A needle containing the separator cannot occur inside one record.
+    "xor %eax, %eax\n"
+    ".Lmemory_records_x64_check_needle:\n   cmpb %r11b, (%rdx,%rax)\n"
+    "je .Lmemory_records_x64_zero\n   inc %rax\n   cmp %rcx, %rax\n"
+    "jb .Lmemory_records_x64_check_needle\n"
+    "push %rbx\n   push %rbp\n   push %r12\n   push %r13\n"
+    "push %r14\n   push %r15\n   sub $32, %rsp\n"
+    "mov %rdi, %rbx\n   mov %rdx, %rbp\n   mov %rcx, %r12\n"
+    "lea 1(%rdi,%rsi), %r13\n   sub %rcx, %r13  # exclusive end of candidate starts\n"
+    "xor %r14d, %r14d  # records found\n   xor %r15d, %r15d  # current record already counted\n"
+    "mov %r8, 0(%rsp)\n   mov %r9, 8(%rsp)\n   mov %r11, 16(%rsp)\n"
+    ASM_USERSPACE_WIDE(
+    ASM_NARROW("cpu_has_avx2", ".Lmemory_records_x64_scalar")
+    "movzbl (%rbp,%r8), %eax\n   vmovd %eax, %xmm1\n   vpbroadcastb %xmm1, %ymm1\n"
+    "movzbl (%rbp,%r9), %eax\n   vmovd %eax, %xmm2\n   vpbroadcastb %xmm2, %ymm2\n"
+    "vmovd %r11d, %xmm3\n   vpbroadcastb %xmm3, %ymm3\n"
+    ".Lmemory_records_x64_vector:\n   mov %r13, %rax\n   sub %rbx, %rax\n"
+    "cmp $32, %rax\n   jb .Lmemory_records_x64_vector_done\n"
+    "vpcmpeqb (%rbx,%r8), %ymm1, %ymm0\n"
+    "vpcmpeqb (%rbx,%r9), %ymm2, %ymm4\n   vpand %ymm4, %ymm0, %ymm0\n"
+    "vpmovmskb %ymm0, %eax\n   mov %eax, 24(%rsp)  # candidates still to prove\n"
+    "vpcmpeqb (%rbx), %ymm3, %ymm4\n   vpmovmskb %ymm4, %r10d\n"
+    "xor %r9d, %r9d  # proved candidate mask\n"
+    ".Lmemory_records_x64_prove:\n   mov 24(%rsp), %eax\n   test %eax, %eax\n"
+    "jz .Lmemory_records_x64_events\n   bsf %eax, %ecx\n"
+    "mov %eax, %edx\n   dec %edx\n   and %edx, %eax\n   mov %eax, 24(%rsp)\n"
+    "lea (%rbx,%rcx), %rdi\n   xor %edx, %edx\n"
+    "cmp $4, %r12\n   jb .Lmemory_records_x64_prove_bytes\n"
+    "mov (%rdi), %eax\n   cmp (%rbp), %eax\n   jne .Lmemory_records_x64_prove\n"
+    "mov $4, %edx\n"
+    ".Lmemory_records_x64_prove_bytes:\n   cmp %r12, %rdx\n"
+    "jae .Lmemory_records_x64_proved\n"
+    ".Lmemory_records_x64_prove_byte:\n   movzbl (%rdi,%rdx), %eax\n"
+    "cmp %al, 0(%rbp,%rdx)\n   jne .Lmemory_records_x64_prove\n"
+    "inc %rdx\n   cmp %r12, %rdx\n   jb .Lmemory_records_x64_prove_byte\n"
+    ".Lmemory_records_x64_proved:\n   bts %ecx, %r9d\n"
+    "jmp .Lmemory_records_x64_prove\n"
+    // Consume match and delimiter events in byte order.  A match increments
+    // only on the first one in its record; a delimiter clears that state.
+    ".Lmemory_records_x64_events:\n   mov %r9d, %eax\n   or %r10d, %eax\n"
+    ".Lmemory_records_x64_event:\n   test %eax, %eax\n"
+    "jz .Lmemory_records_x64_next_vector\n   bsf %eax, %ecx\n"
+    "bt %ecx, %r9d\n   jnc .Lmemory_records_x64_event_delimiter\n"
+    "test %r15d, %r15d\n   jnz .Lmemory_records_x64_event_delimiter\n"
+    "inc %r14\n   mov $1, %r15d\n"
+    ".Lmemory_records_x64_event_delimiter:\n   bt %ecx, %r10d\n"
+    "jnc .Lmemory_records_x64_event_clear\n   xor %r15d, %r15d\n"
+    ".Lmemory_records_x64_event_clear:\n   mov %eax, %edx\n   dec %edx\n"
+    "and %edx, %eax\n   jmp .Lmemory_records_x64_event\n"
+    ".Lmemory_records_x64_next_vector:\n   add $32, %rbx\n"
+    "mov 0(%rsp), %r8\n   mov 8(%rsp), %r9\n"
+    "jmp .Lmemory_records_x64_vector\n"
+    ".Lmemory_records_x64_vector_done:\n   vzeroupper\n"
+    )
+    // Baseline tail, and the entire kernel/no-AVX body.  Anchor rejection is
+    // straight line; only an anchor pair survivor walks the exact needle.
+    ".Lmemory_records_x64_scalar:\n   cmp %r13, %rbx\n"
+    "jae .Lmemory_records_x64_done\n   mov 16(%rsp), %r11\n"
+    "cmpb %r11b, (%rbx)\n   jne .Lmemory_records_x64_scalar_candidate\n"
+    "xor %r15d, %r15d\n"
+    ".Lmemory_records_x64_scalar_candidate:\n   mov 0(%rsp), %r8\n   mov 8(%rsp), %r9\n"
+    "movzbl (%rbp,%r8), %eax\n   cmp %al, (%rbx,%r8)\n"
+    "jne .Lmemory_records_x64_scalar_next\n   movzbl (%rbp,%r9), %eax\n"
+    "cmp %al, (%rbx,%r9)\n   jne .Lmemory_records_x64_scalar_next\n"
+    "xor %edx, %edx\n"
+    ".Lmemory_records_x64_scalar_compare:\n   movzbl (%rbp,%rdx), %eax\n"
+    "cmp %al, (%rbx,%rdx)\n   jne .Lmemory_records_x64_scalar_next\n"
+    "inc %rdx\n   cmp %r12, %rdx\n   jb .Lmemory_records_x64_scalar_compare\n"
+    "test %r15d, %r15d\n   jnz .Lmemory_records_x64_scalar_next\n"
+    "inc %r14\n   mov $1, %r15d\n"
+    ".Lmemory_records_x64_scalar_next:\n   inc %rbx\n"
+    "jmp .Lmemory_records_x64_scalar\n"
+    ".Lmemory_records_x64_done:\n   mov %r14, %rax\n   add $32, %rsp\n"
+    "pop %r15\n   pop %r14\n   pop %r13\n   pop %r12\n"
+    "pop %rbp\n   pop %rbx\n"
+    ".Lmemory_records_x64_return:\n" ASM_RET
+    ".Lmemory_records_x64_zero:\n   xor %eax, %eax\n" ASM_RET
+    ASM_END(memory_count_records_with_prepared)
     //
     //       string_first_of_or_end, string_first_of_max and string_last_of_or_end -- the rest of the byte hunts.
     //
@@ -12038,6 +12147,12 @@ fn moonwater_cpu_detect(void);
 //      run at the speed the memory arrives and the others cannot.
 //
 positive memory_count(address_any block, positive size, b8 value);
+positive memory_count_records_with_prepared(address_any block, positive size,
+                                            address_any needle,
+                                            positive needle_size,
+                                            positive anchor,
+                                            positive second_anchor,
+                                            b8 delimiter);
 
 // ### First occurrence of a byte in a block
 // returns: its address, or null when the block does not hold one

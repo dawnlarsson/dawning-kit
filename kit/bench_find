@@ -1,0 +1,219 @@
+#!/bin/sh
+#
+#       Measure find's walker floor separately from matching and metadata.
+#
+#           sh kit/bench_find [path-to-moonwater-multicall]
+#
+#       The generated tree has 10,101 entries. -false is the lower-bound
+#       user-space walker: no output and no predicate facts. -name and -iname
+#       add matching; -size forces the statx work that metadata cannot avoid.
+#       Linux perf adds user cycles/instructions per entry when it is usable,
+#       and qemu -strace verifies traversal syscall counts for a static build.
+#
+set -eu
+
+case ${1:-} in
+-h|--help)
+        sed -n '3,12p' "$0" | sed 's/^# *//'
+        exit 0
+        ;;
+esac
+
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT HUP INT TERM
+subject=${1:-${MOONWATER_TOOLS:-}}
+
+if [ -z "$subject" ]; then
+        subject=$work/moonwater
+        echo "building $subject" >&2
+        (cd "$root" && sh kit/build programs/shell.c "$subject")
+fi
+
+case $subject in
+/*) ;;
+*) subject=$(CDPATH= cd -- "$(dirname -- "$subject")" && pwd)/$(basename -- "$subject") ;;
+esac
+
+[ -x "$subject" ] || {
+        echo "bench_find: not executable: $subject" >&2
+        exit 1
+}
+
+command -v python3 >/dev/null 2>&1 || {
+        echo "bench_find: python3 is required" >&2
+        exit 1
+}
+
+exec python3 - "$subject" "$work" "${BENCH_RUNS:-9}" \
+        "${BENCH_SECONDS:-0.15}" <<'PY'
+import os
+import re
+import shutil
+import statistics
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+subject, work, runs_text, seconds_text = sys.argv[1:]
+runs = int(runs_text)
+target_seconds = float(seconds_text)
+if runs < 1 or target_seconds <= 0:
+    raise SystemExit("bench_find: BENCH_RUNS and BENCH_SECONDS must be positive")
+
+if hasattr(os, "sched_getaffinity") and hasattr(os, "sched_setaffinity"):
+    try:
+        os.sched_setaffinity(0, {min(os.sched_getaffinity(0))})
+    except (OSError, ValueError):
+        pass
+
+environment = os.environ.copy()
+environment["LC_ALL"] = "C"
+place = Path(work)
+tree = place / "tree"
+ours_dir = place / "ours"
+ours_dir.mkdir()
+ours = ours_dir / "find"
+ours.symlink_to(subject)
+host = shutil.which("find")
+if not host:
+    raise SystemExit("bench_find: host find is required")
+
+directories = 100
+files_each = 100
+for directory in range(directories):
+    below = tree / f"Dir{directory:03d}"
+    below.mkdir(parents=True)
+    for number in range(files_each):
+        suffix = ".Needle" if number % 10 == 0 else ".txt"
+        (below / f"File{number:03d}{suffix}").touch()
+
+entries = 1 + directories + directories * files_each
+directory_entries = directories + 1
+cases = (
+    ("walker-floor", (str(tree), "-false")),
+    ("name", (str(tree), "-name", "*.Needle")),
+    ("iname", (str(tree), "-iname", "*.needle")),
+    ("metadata", (str(tree), "-type", "f", "-size", "0c")),
+)
+
+def invoke(executable, arguments, capture=False):
+    result = subprocess.run(
+        (str(executable), *arguments), stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE if capture else subprocess.DEVNULL,
+        stderr=subprocess.PIPE, env=environment, check=False,
+    )
+    if result.returncode:
+        detail = result.stderr.decode("utf-8", "replace").strip()
+        raise RuntimeError(f"{executable} {' '.join(arguments)}: {detail}")
+    return result.stdout
+
+def elapsed(executable, arguments, count):
+    started = time.perf_counter_ns()
+    for _ in range(count):
+        invoke(executable, arguments)
+    return (time.perf_counter_ns() - started) / 1_000_000_000
+
+def measure(executable, arguments):
+    invoke(executable, arguments)
+    invoke(executable, arguments)
+    count = 1
+    while elapsed(executable, arguments, count) < target_seconds:
+        count *= 2
+    samples = [elapsed(executable, arguments, count) / count for _ in range(runs)]
+    return statistics.median(samples)
+
+def perf_counts(executable, arguments):
+    perf = shutil.which("perf")
+    if not perf:
+        return None
+    result = subprocess.run(
+        (perf, "stat", "-x,", "-r", str(runs), "-e",
+         "cycles:u,instructions:u", str(executable), *arguments),
+        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE, env=environment, check=False, text=True,
+    )
+    found = {}
+    for line in result.stderr.splitlines():
+        fields = line.split(",")
+        if len(fields) < 3:
+            continue
+        try:
+            value = float(fields[0])
+        except ValueError:
+            continue
+        event = fields[2].split(":", 1)[0]
+        if event in ("cycles", "instructions"):
+            found[event] = value
+    return found if len(found) == 2 else None
+
+def syscall_counts(arguments):
+    qemu = shutil.which("qemu-x86_64")
+    if not qemu:
+        return None
+    result = subprocess.run(
+        (qemu, "-strace", str(ours), *arguments),
+        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE, env=environment, check=False, text=True,
+    )
+    if result.returncode:
+        return None
+    counts = {}
+    for line in result.stderr.splitlines():
+        match = re.match(r"^[0-9]+ ([A-Za-z0-9_]+)\(", line)
+        if match:
+            name = match.group(1)
+            counts[name] = counts.get(name, 0) + 1
+    return counts
+
+print(f"subject: {subject}")
+print(f"tree: {entries} entries in {directory_entries} directories")
+print(f"samples: {runs}, at least {target_seconds:.2f}s each, one CPU when available")
+print("lower is better; outputs are checked against host find before timing\n")
+print(f"{'workload':<14} {'ours ms':>9} {'host ms':>9} {'ours ns/e':>11} {'host ns/e':>11} {'result':>14}")
+print(f"{'-' * 14} {'-' * 9} {'-' * 9} {'-' * 11} {'-' * 11} {'-' * 14}")
+
+results = {}
+for label, arguments in cases:
+    got = invoke(ours, arguments, True)
+    want = invoke(host, arguments, True)
+    if sorted(got.splitlines()) != sorted(want.splitlines()):
+        raise RuntimeError(f"{label}: output differs from host find")
+    our_time = measure(ours, arguments)
+    host_time = measure(host, arguments)
+    results[label] = our_time
+    change = our_time / host_time - 1
+    result = f"{abs(change) * 100:.0f}% {'slower' if change > 0 else 'faster'}"
+    print(f"{label:<14} {our_time * 1000:9.3f} {host_time * 1000:9.3f} "
+          f"{our_time * 1e9 / entries:11.1f} {host_time * 1e9 / entries:11.1f} {result:>14}")
+
+print("\nuser-space counters (subject):")
+for label in ("walker-floor", "name", "iname"):
+    arguments = dict(cases)[label]
+    counts = perf_counts(ours, arguments)
+    if counts:
+        print(f"  {label:<12} {counts['cycles'] / entries:7.1f} cycles/entry, "
+              f"{counts['instructions'] / entries:7.1f} instructions/entry")
+    else:
+        print("  perf counters unavailable")
+        break
+
+counts = syscall_counts(dict(cases)["iname"])
+if counts:
+    traversal = sum(counts.get(name, 0)
+                    for name in ("statx", "openat", "getdents64", "close"))
+    floor = 1 + 4 * directory_entries
+    print("\ntraversal syscalls (-iname):")
+    print(f"  statx {counts.get('statx', 0)}, openat {counts.get('openat', 0)}, "
+          f"getdents64 {counts.get('getdents64', 0)}, close {counts.get('close', 0)}")
+    print(f"  {traversal} total, {traversal / entries:.4f}/entry; "
+          f"modelled floor {floor} ({floor / entries:.4f}/entry)")
+
+print("\nallocation/copy model (subject):")
+print("  expression: one reusable node-table growth, zero per-entry allocations")
+print("  traversal: one hardware-floor path_join copy per entry")
+print("  -iname: one fused lowercase copy per entry; pattern folded once")
+print(f"  matcher overhead above walker floor: "
+      f"{(results['iname'] - results['walker-floor']) * 1e9 / entries:.1f} ns/entry")
+PY

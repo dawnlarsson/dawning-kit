@@ -75,6 +75,13 @@
         jumps out, and expects the mask restored will not get that, and there
         is no sigprocmask call hidden in here to make it slow either.
 
+        The mask half now exists and is next door. src/platform/signal.inc
+        holds a sigsetjmp that saves the mask into slots 26 and 27 of the
+        state below and then tail jumps into jump_mark, so the register lists
+        here are the only ones in the library and are not copied there.
+        Nothing in this file changed to make that work, and nothing here pays
+        for it: setjmp and _setjmp still make no system call.
+
         Shadow stacks are not handled. A build with x86 CET shadow stack, or
         with AArch64 guarded control stacks, needs longjmp to unwind the
         shadow stack to match, and the indirect jump at the end of the x86_64
@@ -284,10 +291,13 @@ __asm__(
         in the note at the top of this file rather than hidden behind a name
         that looks familiar.
 
-        sigsetjmp and siglongjmp are deliberately absent. sigsetjmp's second
-        argument asks for the mask to be saved, and a routine that took the
-        argument and ignored it would be a promise broken quietly, which is
-        worse than a link that fails and says the name is missing.
+        sigsetjmp and siglongjmp are not here and are not missing. They were
+        absent while there was no sigprocmask to build them out of, on the
+        grounds that a routine taking the second argument and ignoring it
+        would be a promise broken quietly. src/standard/signal.c supplies the
+        mask, and src/platform/signal.inc supplies the two names beside the
+        restorer trampoline that lives there for the same reason -- both are
+        per-architecture instructions, and one file of those is enough.
 */
 __asm__(
     ASM_ALIAS(setjmp,   jump_mark)

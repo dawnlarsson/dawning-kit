@@ -3192,6 +3192,66 @@ static string_address find_path;
 static string_address find_name;
 static file_facts address_to find_facts;
 static positive find_depth;
+static bipolar find_parent;
+static string_address find_entry;
+static bool find_facts_known;
+static bool find_facts_follow;
+
+/*
+        A directory entry already tells us its file kind on the filesystems
+        where d_type is available. Name/path predicates and printing need no
+        inode facts at all; -type needs only these bits. Keep the statx lazy
+        until a predicate asks for size, ownership, time or another fact.
+*/
+static positive find_mode_from_type(p8 type)
+{
+        if (type == DT_DIR)
+                return MODE_DIRECTORY;
+        if (type == DT_REG)
+                return MODE_FILE;
+        if (type == DT_LNK)
+                return MODE_LINK;
+        if (type == DT_FIFO)
+                return MODE_PIPE;
+        if (type == DT_SOCK)
+                return MODE_SOCKET;
+        if (type == DT_CHR)
+                return MODE_CHARACTER;
+        if (type == DT_BLK)
+                return MODE_BLOCK;
+
+        return 0;
+}
+
+static bool find_facts_ready()
+{
+        if (find_facts_known)
+                return true;
+
+        if (!file_look(find_parent, find_entry,
+                       find_facts_follow ? 0 : AT_SYMLINK_NOFOLLOW,
+                       find_facts))
+        {
+                /* -L follows links that have targets. A dangling link is
+                   still an entry and GNU find tests it as a link rather than
+                   turning the failed follow into a failed walk. */
+                if (find_facts_follow &&
+                    file_look(find_parent, find_entry, AT_SYMLINK_NOFOLLOW,
+                              find_facts))
+                {
+                        find_facts_known = true;
+                        return true;
+                }
+
+                string_format(file_fail, "find: '%s': No such file or directory\n",
+                              find_path);
+                find_status = 1;
+                return false;
+        }
+
+        find_facts_known = true;
+        return true;
+}
 
 static bool find_size_holds(find_node address_to test, file_facts address_to facts)
 {
@@ -4066,6 +4126,9 @@ static bool find_true(b32 which)
                 return shell_match(node->text, name);
 
         case 'L':
+                if (!find_facts_ready())
+                        return false;
+
                 if ((find_facts->mode & MODE_FORMAT) != MODE_LINK)
                         return false;
 
@@ -4078,12 +4141,19 @@ static bool find_true(b32 which)
                 return find_type_holds((p8)node->number, find_facts->mode);
 
         case 'z':
+                if (!find_facts_ready())
+                        return false;
                 return find_size_holds(node, find_facts);
 
         case 'y':
+                if (!find_facts_ready())
+                        return false;
                 return find_empty(find_path, find_facts);
 
         case 'm':
+                if (!find_facts_ready())
+                        return false;
+
                 if (node->comparison == '-')
                         return ((positive)find_facts->mode & (positive)node->number) ==
                                (positive)node->number;
@@ -4094,30 +4164,47 @@ static bool find_true(b32 which)
                 return (find_facts->mode & 07777) == (positive)node->number;
 
         case 'u':
+                if (!find_facts_ready())
+                        return false;
                 return find_facts->owner == (positive)node->number;
 
         case 'g':
+                if (!find_facts_ready())
+                        return false;
                 return find_facts->group == (positive)node->number;
 
         case 'U':
+                if (!find_facts_ready())
+                        return false;
                 return !file_user_name(find_facts->owner, name, FILE_NAME_MAX);
 
         case 'G':
+                if (!find_facts_ready())
+                        return false;
                 return !file_group_name(find_facts->group, name, FILE_NAME_MAX);
 
         case 'k':
+                if (!find_facts_ready())
+                        return false;
                 return find_holds_count(node->comparison, find_facts->hard_links,
                                         node->number);
 
         case 'i':
+                if (!find_facts_ready())
+                        return false;
                 return find_holds_count(node->comparison, (b64)find_facts->inode,
                                         node->number);
 
         case 'T':
+                if (!find_facts_ready())
+                        return false;
                 return find_holds_count(node->comparison,
                                         find_age(node->unit, node->extra), node->number);
 
         case 'w':
+                if (!find_facts_ready())
+                        return false;
+
                 if (find_facts->modified.seconds != node->number)
                         return find_facts->modified.seconds > node->number;
 
@@ -4170,7 +4257,8 @@ static bool find_true(b32 which)
         return false;
 }
 
-static fn find_walk(string_address path, string_address name, positive depth, bool named)
+static fn find_walk(string_address path, string_address name, positive depth, bool named,
+                    bipolar parent, string_address entry, p8 type)
 {
         file_facts facts;
         bool follow = find_follow || (find_follow_named && named);
@@ -4178,11 +4266,24 @@ static fn find_walk(string_address path, string_address name, positive depth, bo
         if (find_quit)
                 return;
 
-        if (!(follow ? file_look_at(path, address_of facts)
-                     : file_look_link(path, address_of facts)))
+        memory_fill(address_of facts, 0, sizeof(facts));
+        facts.mode = find_mode_from_type(type);
+
+        find_path = path;
+        find_name = name;
+        find_facts = address_of facts;
+        find_depth = depth;
+        find_parent = parent;
+        find_entry = entry;
+        find_facts_known = false;
+        find_facts_follow = follow;
+        find_pruned = false;
+
+        /* Roots have no dirent hint. Unknown types and followed links also
+           need the kernel's answer before descent can be decided. */
+        if ((named || !facts.mode || (follow && type == DT_LNK)) &&
+            !find_facts_ready())
         {
-                string_format(file_fail, "find: '%s': No such file or directory\n", path);
-                find_status = 1;
                 return;
         }
 
@@ -4192,26 +4293,23 @@ static fn find_walk(string_address path, string_address name, positive depth, bo
         bool directory = (facts.mode & MODE_FORMAT) == MODE_DIRECTORY;
         bool wanted = depth >= find_minimum && depth <= find_maximum;
 
-        find_path = path;
-        find_name = name;
-        find_facts = address_of facts;
-        find_depth = depth;
-        find_pruned = false;
-
         if (!find_deepest && wanted)
                 find_true(find_root);
 
         bool descend = directory && depth < find_maximum && !find_pruned && !find_quit;
 
         if (descend && find_one_system &&
-            (((p64)facts.device_major << 32) | facts.device_minor) != find_device)
+            (!find_facts_ready() ||
+             (((p64)facts.device_major << 32) | facts.device_minor) != find_device))
                 descend = false;
+
+        bool facts_known_here = find_facts_known;
 
         if (descend)
         {
                 file_walk walk;
 
-                if (!file_walk_open(address_of walk, AT_FDCWD, path))
+                if (!file_walk_open(address_of walk, parent, entry))
                 {
                         string_format(file_fail, "find: '%s': Permission denied\n", path);
                         find_status = 1;
@@ -4233,7 +4331,8 @@ static fn find_walk(string_address path, string_address name, positive depth, bo
 
                                 path_join(below, FILE_PATH_MAX, path, held);
 
-                                find_walk(below, held, depth + 1, false);
+                                find_walk(below, held, depth + 1, false,
+                                          walk.handle, held, entry->d_type);
                         }
 
                         file_walk_close(address_of walk);
@@ -4247,6 +4346,10 @@ static fn find_walk(string_address path, string_address name, positive depth, bo
                 find_name = name;
                 find_facts = address_of facts;
                 find_depth = depth;
+                find_parent = parent;
+                find_entry = entry;
+                find_facts_known = facts_known_here;
+                find_facts_follow = follow;
 
                 find_true(find_root);
         }
@@ -4355,7 +4458,8 @@ static b32 file_find()
         }
 
         if (roots_last == roots_first)
-                find_walk((string_address) ".", (string_address) ".", 0, true);
+                find_walk((string_address) ".", (string_address) ".", 0, true,
+                          AT_FDCWD, (string_address) ".", 0);
         else
                 for (positive i = roots_first; i < roots_last && !find_quit; i++)
                 {
@@ -4363,7 +4467,7 @@ static b32 file_find()
                         p8 name[FILE_PATH_MAX];
 
                         path_tail_copy(name, FILE_PATH_MAX, root);
-                        find_walk(root, name, 0, true);
+                        find_walk(root, name, 0, true, AT_FDCWD, root, 0);
                 }
 
         for (positive i = 0; i < find_batch_have; i++)

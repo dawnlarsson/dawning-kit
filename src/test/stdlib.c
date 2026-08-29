@@ -59,7 +59,7 @@ typedef struct
 #define LEAVE_ABORT_IGNORED 5
 #define LEAVE_ABORT_BLOCKED 6
 #define LEAVE_ORDER 7
-#define LEAVE_RETURN 8
+#define LEAVE_UNNAMED 8
 
 #define TEST_MARKER "buffered\n"
 #define TEST_SIGNAL_ABRT 6
@@ -100,7 +100,16 @@ DEAD_END static fn stdlib_test_child(b32 which)
 {
         //      Left in the buffer on purpose: whether it ever reaches the
         //      pipe is what separates exit from the three that do not flush.
-        log(str(TEST_MARKER));
+        //
+        //      Through a stream rather than through the log, because in a
+        //      forked child the two buffers answer differently and this is a
+        //      forked child. A stream records which process filled it and this
+        //      one filled its own, so exit writes it out; the log buffer lives
+        //      in any.inc where there is nowhere to keep that, so an implicit
+        //      flush leaves it alone in any child at all. The block above
+        //      stdlib_buffers_are_ours says why, and src/test/leaving.c has
+        //      both halves under test.
+        printf("%s", TEST_MARKER);
 
         switch (which)
         {
@@ -155,8 +164,8 @@ DEAD_END static fn stdlib_test_child(b32 which)
 
         The parent flushes its own buffer before cloning. A child inherits it,
         and a child that flushed would print the parent's pending output a
-        second time -- the same hazard that keeps the C spelling of exit
-        behind a switch.
+        second time -- the hazard the C spelling of exit used to be kept away
+        from, and is now guarded against rather than avoided.
 */
 static b32 stdlib_test_leave(b32 which, positive address_to wrote)
 {
@@ -284,22 +293,27 @@ test(abort_beats_a_blocked_signal)
 }
 
 /*
-        Returning from main is not exit, and this pins that rather than
-        pretending otherwise.
+        A way of leaving this file does not name reaches the trap.
 
-        _start calls the assembly exit with main's result, which is the trap
-        and nothing else: no handler runs and nothing buffered is written.
-        Making the C spelling reach a return would mean changing assembly
-        inside library.c's graph, which this family does not own. Until that
-        happens a program with an atexit handler has to leave through exit for
-        it to run, and this test is here so that the day it changes, something
-        says so.
+        This was called returning_from_main_is_the_bare_trap, and the block
+        here said that making the C spelling reach a return would mean
+        changing assembly inside library.c's graph, which no family owned. It
+        did not need to. The umbrella grew a startup shim, the shim calls main
+        and then exit, and returning from main now runs the handlers and
+        flushes exactly as C says it does; src/test/leaving.c proves that by
+        being it, since its verdict line is written into the log buffer and
+        never flushed by hand.
+
+        What was always actually under test here is what the name should have
+        said: a child handed a number this file has no case for falls off the
+        end of the switch, reaches the _Exit below it, and that is the trap --
+        status seventy, and nothing written.
 */
-test(returning_from_main_is_the_bare_trap)
+test(an_unnamed_way_of_leaving_reaches_the_trap)
 {
         positive wrote = 0;
 
-        fail(stdlib_test_leave(LEAVE_RETURN, address_of wrote) == 70);
+        fail(stdlib_test_leave(LEAVE_UNNAMED, address_of wrote) == 70);
         fail(wrote == 0);
 
         return true;
@@ -821,7 +835,7 @@ test_case test_cases[] = {
         case(abort_raises_sigabrt),
         case(abort_beats_an_ignored_signal),
         case(abort_beats_a_blocked_signal),
-        case(returning_from_main_is_the_bare_trap),
+        case(an_unnamed_way_of_leaving_reaches_the_trap),
         case(environment_reads_what_the_kernel_gave),
         case(environment_set_then_get),
         case(environment_refuses_a_bad_name),

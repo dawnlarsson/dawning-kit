@@ -276,33 +276,90 @@ string_address string_split_next(string_address address_to holder,
 
         memory_search_ascii_case already is this search over counted blocks,
         with the rarest-folded-byte anchor and the vector hunt, so all that is
-        left is to hand it two lengths. The haystack is measured up front,
-        which a byte at a time implementation would not do; it costs one pass
-        the search was going to make anyway and buys the bounded routine,
-        which is the one that has been tested and tuned.
+        left is to hand it lengths.
+
+        Which is the whole of the difficulty. It is a counted search and
+        wants a length, and the haystack arrives as a C string with none.
+        Measuring the whole of it first is the obvious way to supply one and
+        it is the wrong one: a needle sitting at offset zero of a megabyte
+        then costs a megabyte read to find something at the first byte. That
+        is not a small constant. Measured on x86_64, two thousand such
+        searches took 66.7 million cycles that way, and glibc, whose
+        strcasestr has no length to take, took 1.56 million.
+
+        So the haystack is measured a window at a time and searched as it is
+        measured, and the walk stops at the first window that holds the
+        needle or at the first that holds the terminator. A window that came
+        back short of its bound is the end of the string and there is nowhere
+        further to look. A window that filled its bound is followed by
+        another, starting a needle short of where this one ended so that a
+        match lying across the seam is inside exactly one of them, and each
+        window is twice the last so that a long haystack reaches its end in a
+        logarithmic number of calls rather than a linear one.
+
+        The first window is a kilobyte past the needle, which is chosen so
+        that the ordinary case pays nothing for any of this: a haystack
+        shorter than that is one string_length_max and one search, exactly
+        what the single measurement was. What it buys at the other end,
+        measured the same way: on x86_64 the early match falls from 66.7
+        million cycles to 1.42 million, and the search that runs to the end
+        of a megabyte without matching stays where it was, 150.7 million
+        cycles against 146.6.
+
+        That second figure is the one worth doubting, because the
+        overlapping windows walk the haystack about twice over, so it was
+        taken on all three rather than on the one. Wall clock against the
+        single measurement, x86_64 native and the other two under qemu: 1.03,
+        0.99 and 0.97 times -- no direction to it. The extra bytes do not
+        show because the length scan and the search are both wide and the
+        search is where the time was. glibc on that same input, on x86_64,
+        takes 6.08 thousand million cycles.
 
         An empty needle sits at the front of the haystack. That is what
         memmem answers, what strstr answers, and what memory_search_ascii_case
         answers for a zero length needle, so there is no disagreement to
-        resolve and no branch here to resolve it -- except that measuring the
-        haystack for a needle that cannot fail is work, so the empty case
-        leaves before the length is taken.
+        resolve and no branch here to resolve it -- except that measuring any
+        part of a haystack for a needle that cannot fail is work, and the
+        seam arithmetic below is written for a needle with a length in it, so
+        the empty case leaves before the walk starts rather than being
+        reasoned about inside it.
 
         The fold is ASCII and nothing else. A byte with the high bit set
         compares as itself, so this finds nothing a locale would find and
         nothing it would not; see the note on string_compare_folded for why
         the fold goes down to lower case rather than up.
 */
+#define TEXT_SEARCH_WINDOW 1024
+
 string_address string_search_folded(string_address haystack,
                                     string_address needle)
 {
         positive needle_length = string_length(needle);
+        positive window;
+        positive base = 0;
 
         if (needle_length == 0)
                 return haystack;
 
-        return (string_address)memory_search_ascii_case(
-                haystack, string_length(haystack), needle, needle_length);
+        window = needle_length + TEXT_SEARCH_WINDOW;
+
+        for (;;)
+        {
+                positive have = string_length_max(haystack + base, window);
+                address_any found = memory_search_ascii_case(
+                        haystack + base, have, needle, needle_length);
+
+                if (found)
+                        return (string_address)found;
+
+                if (have < window)
+                        return null;
+
+                base += window - (needle_length - 1);
+
+                if (window < ((positive)1 << 20))
+                        window += window;
+        }
 }
 
 /*
@@ -391,20 +448,75 @@ positive string_append_bounded(string_address destination,
         Every byte exclusive-ored with forty two. It is its own inverse, the
         key is a constant printed in the manual page, and its entire purpose
         is to make a block of text not look like text to something scanning
-        for it. It is here because it is three lines and because a program
-        ported from GNU userspace that wants it currently does not link.
+        for it. It is here because it is short and because a program ported
+        from GNU userspace that wants it currently does not link.
 
-        Written as a plain byte loop rather than borrowed from
-        memory_translate, which would do the same work through a two hundred
-        and fifty six byte table and a routine call. At the sizes anybody
-        frobs -- a password field, a line -- building the table costs more
-        than the loop, and the compiler vectorises this by itself for whatever
-        the build was allowed.
+        Not borrowed from memory_translate, which would do the same work
+        through a two hundred and fifty six byte table that would have to be
+        built first. The comment that stood here argued that at the sizes
+        anybody frobs -- a password field, a line -- building the table costs
+        more than the whole of this, and that was never measured and is not
+        measured now. What was read is the routine itself: on riscv it is a
+        byte at a time with a load from the table on top of the load from the
+        block, so on the one machine this file has anything to fix, borrowing
+        it would have fixed nothing.
+
+        x86_64 and arm64 keep the plain byte loop, and it is already the
+        floor on both. gcc turns it into a sixteen byte SSE2 body on the one
+        and a sixteen byte NEON body on the other, five instructions to the
+        block, which is what the store port will take and nothing written
+        here beats it. That was checked rather than assumed, and checked in
+        the losing direction too: writing those two as words costs x86_64 the
+        vector body outright -- two xorq to memory in place of one pxor -- and
+        313.2 million instructions became 264.0 million while 59.4 million
+        cycles became 68.7, an eleven percent loss on a four kilobyte block.
+
+        riscv64 is why there is a second arm. The comment that used to stand
+        here said the compiler vectorises this for whatever the build was
+        allowed, and left it at that. What this build allows that machine is
+        rv64imafd_zicsr_zicntr, which has no vector extension in it at all,
+        so what it was actually given was five instructions for every single
+        byte -- and nobody had looked. Eight bytes at a time in an integer
+        register is what it does have, and it is the same SWAR every riscv
+        body in library.c is written in. Measured under qemu against the byte
+        loop it replaces: 5.55x on four kilobytes, 2.25x on sixty four, 1.79x
+        on sixty one bytes from an odd address.
+
+        The head is peeled to an eight byte boundary because baseline RV64I
+        promises nothing about an unaligned load, which is the same reason
+        memory_first_of aligns down and memory_compare byte walks when the two
+        residues disagree. The word then moves through __builtin_memcpy on a
+        pointer that has been told what the peel established, which is the
+        umbrella's known_word spelling and claims no alignment that is not
+        there. The telling is not decoration: without it gcc lowers the copy
+        to eight lbu through a stack slot and the result is slower than the
+        loop it replaced, which is what the first attempt at this did.
 */
 address_any memory_frob(address_any block, positive size)
 {
         p8 address_to bytes = (p8 address_to)block;
         positive index = 0;
+
+#if !X64 && !ARM64
+        while (index < size && ((positive)(bytes + index) & 7))
+        {
+                bytes[index] ^= 42;
+                index += 1;
+        }
+
+        while (size - index >= 8)
+        {
+                p8 address_to at = (p8 address_to)__builtin_assume_aligned(
+                        bytes + index, 8);
+                p64 word;
+
+                __builtin_memcpy(address_of word, at, 8);
+                word ^= (p64)0x2a2a2a2a2a2a2a2aull;
+                __builtin_memcpy(at, address_of word, 8);
+
+                index += 8;
+        }
+#endif
 
         while (index < size)
         {
