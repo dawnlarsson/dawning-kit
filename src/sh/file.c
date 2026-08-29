@@ -6184,26 +6184,25 @@ static bool ln_option_seen(p8 letter, string_address value)
 }
 
 // realpath's, and named here because ln is written before it.
-static fn realpath_relative(string_address from, string_address path, p8 address_to into);
+static bool realpath_relative(string_address from, string_address path,
+                              p8 address_to into);
 
 // -r says where the target is from where the link will sit rather than from
 // here, which is the only spelling of a symbolic link that survives the whole
 // tree being moved somewhere else.
-static fn ln_relative_text(string_address target, string_address name,
-                           p8 address_to into)
+static bool ln_relative_text(string_address target, string_address name,
+                             p8 address_to into)
 {
         p8 there[FILE_PATH_MAX];
         p8 here[FILE_PATH_MAX];
         p8 above[FILE_PATH_MAX];
 
-        if (!file_resolve(target, there, true) || !file_resolve(name, here, false))
-        {
-                string_copy_max_end(into, target, FILE_PATH_MAX - 1);
-                return;
-        }
+        if (!file_resolve(target, there, true) ||
+            !file_resolve(name, here, false))
+                return false;
 
         path_head_copy(above, FILE_PATH_MAX, here);
-        realpath_relative(above, there, into);
+        return realpath_relative(above, there, into);
 }
 
 static bool ln_make(string_address target, string_address name)
@@ -6212,7 +6211,14 @@ static bool ln_make(string_address target, string_address name)
 
         if (ln_relative && ln_symbolic)
         {
-                ln_relative_text(target, name, relative);
+                if (!ln_relative_text(target, name, relative))
+                {
+                        string_format(file_fail,
+                                      "ln: cannot make relative target '%s': File name too long\n",
+                                      target);
+                        return false;
+                }
+
                 target = relative;
         }
 
@@ -6586,6 +6592,12 @@ static b32 file_basename()
         if (!many && index + 1 < count)
                 suffix = program_argument((b32)(index + 1));
 
+        if (!many && index + 2 < count)
+        {
+                file_fail("basename: extra operand\n", 0);
+                return 1;
+        }
+
         if (many)
         {
                 while (index < count)
@@ -6770,7 +6782,8 @@ static bool realpath_walkable(string_address path)
         dropped, one .. for every step still to climb, and a lone dot when
         the two name the same place.
 */
-static fn realpath_relative(string_address from, string_address path, p8 address_to into)
+static bool realpath_relative(string_address from, string_address path,
+                              p8 address_to into)
 {
         positive same = 0;
         positive mark = 0;
@@ -6785,14 +6798,23 @@ static fn realpath_relative(string_address from, string_address path, p8 address
 
         // A whole component or none of it: /usr/lib and /usr/libexec share
         // five letters and no directory below the first.
+        positive from_mark = mark;
+        positive path_mark = mark;
+
         if (string_is(from + same, end) &&
             (string_is(path + same, '/') || string_is(path + same, end)))
-                mark = same + (string_is(path + same, '/') ? 1 : 0);
+        {
+                from_mark = same;
+                path_mark = same + (string_is(path + same, '/') ? 1 : 0);
+        }
         else if (string_is(path + same, end) && string_is(from + same, '/'))
-                mark = same + 1;
+        {
+                from_mark = same + 1;
+                path_mark = same;
+        }
 
         positive length = 0;
-        string_address step = from + mark;
+        string_address step = from + from_mark;
 
         while (string_get(step))
         {
@@ -6805,6 +6827,11 @@ static fn realpath_relative(string_address from, string_address path, p8 address
                 while (string_get(step) && !string_is(step, '/'))
                         step++;
 
+                positive need = 2 + (length != 0);
+
+                if (length > FILE_PATH_MAX - 1 - need)
+                        return false;
+
                 if (length)
                         into[length++] = '/';
 
@@ -6812,14 +6839,19 @@ static fn realpath_relative(string_address from, string_address path, p8 address
                 into[length++] = '.';
         }
 
-        if (string_get(path + mark))
+        if (string_get(path + path_mark))
         {
+                positive rest = string_length(path + path_mark);
+                positive separator = length != 0;
+
+                if (length > FILE_PATH_MAX - 1 - separator ||
+                    rest > FILE_PATH_MAX - 1 - length - separator)
+                        return false;
+
                 if (length)
                         into[length++] = '/';
 
-                positive rest = string_length_max(path + mark, FILE_PATH_MAX - 1 - length);
-
-                memory_copy_apart(into + length, path + mark, rest);
+                memory_copy_apart(into + length, path + path_mark, rest);
                 length += rest;
         }
 
@@ -6827,6 +6859,7 @@ static fn realpath_relative(string_address from, string_address path, p8 address
                 into[length++] = '.';
 
         into[length] = end;
+        return true;
 }
 
 static b32 file_realpath()
@@ -6865,6 +6898,12 @@ static b32 file_realpath()
         p8 against_real[FILE_PATH_MAX];
         string_address base = file_option_value(address_of taking, 'B');
         string_address against = file_option_value(address_of taking, 'R');
+
+        if ((base && !string_get(base)) || (against && !string_get(against)))
+        {
+                file_fail("realpath: relative directory is empty\n", 0);
+                return 1;
+        }
 
         // Both directories are made canonical before anything is said
         // relative to them, or /tmp/./x would not look like /tmp/x.
@@ -6934,7 +6973,17 @@ static b32 file_realpath()
                 {
                         p8 relative[FILE_PATH_MAX];
 
-                        realpath_relative(against, answer, relative);
+                        if (!realpath_relative(against, answer, relative))
+                        {
+                                if (!quiet)
+                                        string_format(file_fail,
+                                                      "realpath: %s: File name too long\n",
+                                                      path);
+
+                                status = 1;
+                                continue;
+                        }
+
                         file_written(relative, zero);
                 }
                 else
@@ -8563,6 +8612,51 @@ static positive seq_width(bipolar value)
         return positive_digits(magnitude) + (value < 0);
 }
 
+// seq's native-width contract still has to distinguish an exact number from
+// a numeric prefix, and refuse overflow instead of wrapping it into a
+// plausible value. Compose the floor digit/span/compare primitives here;
+// string_bipolar deliberately wraps for arithmetic callers.
+static bool seq_number(string_address text, bipolar address_to value)
+{
+        positive at = 0;
+        bool minus = false;
+
+        if (string_is(text, '-') || string_is(text, '+'))
+        {
+                minus = string_is(text, '-');
+                at++;
+        }
+
+        string_address digits = text + at;
+        positive length = string_length(digits);
+
+        if (!length)
+                return false;
+
+        positive zeros = memory_span_byte(digits, '0', length);
+        positive significant = length - zeros;
+        string_address limit = minus ? (string_address) "9223372036854775808"
+                                     : (string_address) "9223372036854775807";
+
+        if (significant > 19 ||
+            (significant == 19 &&
+             memory_compare(digits + zeros, limit, 19) > 0))
+                return false;
+
+        positive magnitude;
+
+        if (!string_digits_exact(digits, address_of magnitude))
+                return false;
+
+        if (minus && magnitude == (positive)bipolar_max + 1)
+                address_to value = bipolar_min;
+        else
+                address_to value = minus ? -(bipolar)magnitude
+                                         : (bipolar)magnitude;
+
+        return true;
+}
+
 static const file_long seq_longs[] = {
     {(string_address) "equal-width", 'w'},
     {(string_address) "format", 'f'},
@@ -8608,23 +8702,20 @@ static b32 file_seq()
                 return 1;
         }
 
-        bipolar first = 1;
-        bipolar step = 1;
-        bipolar last;
+        bipolar number[3];
 
-        if (given == 1)
-                last = string_bipolar(program_argument((b32)index), null);
-        else if (given == 2)
-        {
-                first = string_bipolar(program_argument((b32)index), null);
-                last = string_bipolar(program_argument((b32)(index + 1)), null);
-        }
-        else
-        {
-                first = string_bipolar(program_argument((b32)index), null);
-                step = string_bipolar(program_argument((b32)(index + 1)), null);
-                last = string_bipolar(program_argument((b32)(index + 2)), null);
-        }
+        for (positive i = 0; i < given; i++)
+                if (!seq_number(program_argument((b32)(index + i)),
+                                address_of number[i]))
+                {
+                        string_format(file_fail, "seq: invalid number: %s\n",
+                                      program_argument((b32)(index + i)));
+                        return 1;
+                }
+
+        bipolar first = given == 1 ? 1 : number[0];
+        bipolar step = given == 3 ? number[1] : 1;
+        bipolar last = number[given - 1];
 
         if (step == 0)
         {
@@ -8653,6 +8744,12 @@ static b32 file_seq()
 
                 seq_write(log, value, width);
                 written = true;
+
+                if (value == last ||
+                    (step > 0 && value > bipolar_max - step) ||
+                    (step < 0 && value < bipolar_min - step))
+                        break;
+
                 value += step;
         }
 

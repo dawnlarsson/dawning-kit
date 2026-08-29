@@ -492,6 +492,41 @@ refuses_du_depth_ceiling() {
         report bad 'depth ceiling' "wanted loud refusal, got [$(head -c 50 "$work/got" | tr '\n' '|')][$got_status] $(head -1 "$work/got.err")"
 }
 
+refuses_realpath_relative_ceiling() {
+        if "$binaries/realpath" -m --relative-to="$1" "$2" \
+                > "$work/got" 2> "$work/got.err"; then
+                got_status=0
+        else
+                got_status=$?
+        fi
+
+        if [ "$got_status" -ne 0 ] && [ ! -s "$work/got" ] &&
+           grep -q 'File name too long' "$work/got.err"; then
+                report ok
+                return 0
+        fi
+
+        report bad 'relative result ceiling' \
+                "wanted loud refusal, got [$(head -c 50 "$work/got" | tr '\n' '|')][$got_status] $(head -1 "$work/got.err")"
+}
+
+refuses_ln_relative_ceiling() {
+        if "$binaries/ln" -sr "$1" "$2" > "$work/got" 2> "$work/got.err"; then
+                got_status=0
+        else
+                got_status=$?
+        fi
+
+        if [ "$got_status" -ne 0 ] && [ ! -s "$work/got" ] &&
+           grep -q 'File name too long' "$work/got.err"; then
+                report ok
+                return 0
+        fi
+
+        report bad 'relative link ceiling' \
+                "wanted loud refusal, got [$(head -c 50 "$work/got" | tr '\n' '|')][$got_status] $(head -1 "$work/got.err")"
+}
+
 # When a file was last written, or the word now.
 #
 # The two trees are built one after the other and the two tools run one after
@@ -650,6 +685,7 @@ same 'suffix joined'    basename -s.txt one.txt
 same 'zero'             basename -z /usr/bin/ls
 same 'zero and many'    basename --zero -a /a/b /c/d
 same 'not an option'    basename -x /a/b
+answered 'extra operand' basename abc b extra
 same '20K name'         basename "$long_path"
 same '20K path tail'    basename "/short/$long_path"
 same '20K suffix'       basename -s .tail "${long_path}.tail"
@@ -687,6 +723,13 @@ same 'padded long'      seq --equal-width 8 11
 same 'separator long'   seq --separator=, 1 5
 same 'separator joined' seq -s, 1 5
 same 'not an option'    seq -x 3
+answered 'malformed suffix' seq 1x
+answered 'malformed word' seq x1
+answered 'empty number' seq ''
+answered 'sign only' seq +
+answered 'dot only' seq .
+same 'signed maximum singleton' seq 9223372036854775807 1 9223372036854775807
+same 'signed minimum singleton' seq -9223372036854775808 -1 -9223372036854775808
 
 group yes
 yes_stress
@@ -731,8 +774,12 @@ same 'zero'             realpath -z "$fixture/alpha"
 same 'relative to'      realpath --relative-to="$fixture/sub" "$fixture/alpha"
 same 'relative to down' realpath --relative-to="$fixture" "$fixture/sub/inner"
 same 'relative to same' realpath --relative-to="$fixture" "$fixture"
+same 'relative to ancestor' realpath --relative-to="$fixture/sub/inner" "$fixture"
+same 'relative to parent' realpath --relative-to="$fixture/sub" "$work"
 same 'relative base'    realpath --relative-base="$fixture" "$fixture/sub/inner"
 same 'relative base out' realpath --relative-base=/usr "$fixture/alpha"
+answered 'empty relative to' realpath --relative-to= "$fixture/alpha"
+answered 'empty relative base' realpath --relative-base= "$fixture/alpha"
 same 'not an option'    realpath -x "$fixture/alpha"
 same 'logical'          realpath -L "$fixture/sub/away/.."
 same 'physical of that' realpath -P "$fixture/sub/away/.."
@@ -750,6 +797,16 @@ answered 'existing then missing' realpath -e -m "$fixture/nothing/at/all"
 answered 'logical then physical' realpath -L -P "$fixture/sub/away/.."
 answered 'physical then logical' realpath -P -L "$fixture/sub/away/.."
 answered 'overlong path' realpath "$long_path"
+relative_from=$(python3 - <<'PY'
+print("/" + "/".join(["a"] * 1300))
+PY
+)
+relative_to=$(python3 - <<'PY'
+print("/" + "/".join(["b"] * 1300))
+PY
+)
+refuses_realpath_relative_ceiling "$relative_from" "$relative_to"
+refuses_ln_relative_ceiling "$relative_to" "$relative_from/link"
 
 group id
 same 'default'          id
