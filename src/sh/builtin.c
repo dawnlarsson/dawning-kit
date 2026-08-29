@@ -500,6 +500,9 @@ fn shell_export(writer write, string_address input)
                 index++;
         }
 
+        if (index < shell_argc && word_is(shell_argv[index], "--"))
+                index++;
+
         if (listed && index >= shell_argc)
         {
                 positive at = 0;
@@ -1373,6 +1376,12 @@ fn shell_unset(writer write, string_address input)
         while (index < shell_argc && string_is(shell_argv[index], '-') &&
                string_get(shell_argv[index] + 1))
         {
+                if (word_is(shell_argv[index], "--"))
+                {
+                        index++;
+                        break;
+                }
+
                 string_address option = shell_argv[index] + 1;
 
                 while (string_get(option))
@@ -1580,6 +1589,9 @@ fn shell_readonly(writer write, string_address input)
                 listed = true;
                 index++;
         }
+
+        if (index < shell_argc && word_is(shell_argv[index], "--"))
+                index++;
 
         if (listed && index >= shell_argc)
         {
