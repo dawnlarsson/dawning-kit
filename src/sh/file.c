@@ -1735,6 +1735,156 @@ static bool file_take(file_taking address_to taking)
         return true;
 }
 
+/*
+        Utilities reached through the shell must see the shell's exported
+        vector, while the same binary reached through a farm link has only
+        the process vector. Keeping that distinction here also gives colour
+        policy, PATH lookup and temporary-directory lookup one answer.
+*/
+string_address env_get(const_string name);
+string_address address_to shell_environment();
+
+static string_address address_to file_environment_all()
+{
+        string_address address_to shell = shell_environment();
+
+        if (shell && shell[0])
+                return shell;
+
+        string_address address_to process = program_environment_list();
+
+        return process ? process : shell;
+}
+
+static string_address file_environment(string_address name)
+{
+        string_address address_to environment = file_environment_all();
+
+        return environment ? string_get_environment(environment, name) : null;
+}
+
+#define FILE_TCGETS 0x5401u
+
+enum
+{
+        FILE_COLOR_NEVER,
+        FILE_COLOR_AUTO,
+        FILE_COLOR_ALWAYS
+};
+
+typedef struct
+{
+        string_address text;
+        positive length;
+} file_color_span;
+
+static bool file_output_terminal()
+{
+        p8 settings[64];
+
+        return system_call_3(syscall(ioctl), 1, FILE_TCGETS,
+                             (positive)settings) == 0;
+}
+
+static b32 file_color_when(string_address value, b32 bare)
+{
+        if (!value)
+                return bare;
+
+        if (string_equals(value, "always") || string_equals(value, "yes") ||
+            string_equals(value, "force"))
+                return FILE_COLOR_ALWAYS;
+
+        if (string_equals(value, "never") || string_equals(value, "no") ||
+            string_equals(value, "none"))
+                return FILE_COLOR_NEVER;
+
+        if (string_equals(value, "auto") || string_equals(value, "tty") ||
+            string_equals(value, "if-tty"))
+                return FILE_COLOR_AUTO;
+
+        return -1;
+}
+
+static bool file_color_active(b32 when)
+{
+        if (when == FILE_COLOR_ALWAYS)
+                return true;
+
+        if (when != FILE_COLOR_AUTO || !file_output_terminal())
+                return false;
+
+        string_address no_color = file_environment((string_address) "NO_COLOR");
+
+        return !no_color || !string_get(no_color);
+}
+
+// A colon table such as LS_COLORS or GREP_COLORS. The last spelling wins.
+static file_color_span file_color_value(string_address table, string_address key,
+                                        string_address fallback)
+{
+        file_color_span answer = {fallback, fallback ? string_length(fallback) : 0};
+        positive wanted = string_length(key);
+
+        if (!table)
+                return answer;
+
+        for (string_address at = table; string_get(at);)
+        {
+                string_address stop = string_first_of_or_end(at, ':');
+                string_address mark = string_first_of_or_end(at, '=');
+
+                if (mark < stop && (positive)(mark - at) == wanted &&
+                    !string_compare_max(at, key, wanted))
+                {
+                        answer.text = mark + 1;
+                        answer.length = (positive)(stop - mark - 1);
+                }
+
+                at = string_get(stop) ? stop + 1 : stop;
+        }
+
+        return answer;
+}
+
+static bool file_color_has(string_address table, string_address key)
+{
+        file_color_span found = file_color_value(table, key, null);
+
+        return found.text != null;
+}
+
+static bool file_color_span_is(file_color_span span, string_address text)
+{
+        positive length = string_length(text);
+
+        return span.length == length &&
+               !string_compare_max(span.text, text, length);
+}
+
+static bool file_color_table_valid(string_address table, bool bare_flags)
+{
+        for (string_address at = table; at && string_get(at);)
+        {
+                string_address stop = string_first_of_or_end(at, ':');
+                string_address mark = string_first_of_or_end(at, '=');
+
+                if (mark >= stop && stop > at && !bare_flags)
+                        return false;
+
+                at = string_get(stop) ? stop + 1 : stop;
+        }
+
+        return true;
+}
+
+static fn file_color_sgr(writer write, file_color_span color)
+{
+        write((address_any) "\033[", 2);
+        write((address_any)color.text, color.length);
+        write((address_any) "m", 1);
+}
+
 string_address file_reason(bipolar code)
 {
         if (code < 0)
@@ -1919,6 +2069,9 @@ static bool ls_as_itself;
 static bool ls_classify;
 static bool ls_slash;
 static bool ls_headings;
+static bool ls_coloring;
+static bool ls_color_started;
+static string_address ls_colors;
 
 static b32 ls_status;
 static bool ls_written;
@@ -2087,6 +2240,172 @@ static p8 ls_mark(positive mode)
         return 0;
 }
 
+static file_color_span ls_suffix_color(string_address name)
+{
+        file_color_span answer = {null, 0};
+        positive name_length = string_length(name);
+
+        for (string_address at = ls_colors; at && string_get(at);)
+        {
+                string_address stop = string_first_of_or_end(at, ':');
+                string_address mark = string_first_of_or_end(at, '=');
+
+                if (mark < stop && string_is(at, '*'))
+                {
+                        positive suffix = (positive)(mark - at - 1);
+
+                        if (suffix <= name_length &&
+                            !string_compare_max(at + 1, name + name_length - suffix,
+                                                suffix))
+                        {
+                                answer.text = mark + 1;
+                                answer.length = (positive)(stop - mark - 1);
+                        }
+                }
+
+                at = string_get(stop) ? stop + 1 : stop;
+        }
+
+        return answer;
+}
+
+static file_color_span ls_name_color(string_address directory,
+                                     ls_entry address_to entry,
+                                     string_address name)
+{
+        positive mode = entry->mode;
+        positive kind = mode & MODE_FORMAT;
+        string_address key = (string_address) "fi";
+        string_address fallback = null;
+
+        if (kind == MODE_DIRECTORY)
+        {
+                key = (mode & 01000) && (mode & 0002) ? (string_address) "tw"
+                      : (mode & 0002)                  ? (string_address) "ow"
+                      : (mode & 01000)                 ? (string_address) "st"
+                                                       : (string_address) "di";
+                fallback = (string_address) ((mode & 01000) && (mode & 0002)
+                                                 ? "30;42"
+                                             : (mode & 0002) ? "34;42"
+                                             : (mode & 01000) ? "37;44"
+                                                               : "01;34");
+        }
+        else if (kind == MODE_LINK)
+        {
+                key = (string_address) "ln";
+                fallback = (string_address) "01;36";
+
+                p8 full[FILE_PATH_MAX];
+                file_facts through;
+
+                if (directory)
+                        path_join(full, FILE_PATH_MAX, directory, name);
+                else
+                        string_copy_max_end(full, name, FILE_PATH_MAX - 1);
+
+                if (!file_look_at(full, address_of through))
+                {
+                        file_color_span orphan = file_color_value(
+                            ls_colors, (string_address) "or", null);
+
+                        return orphan.text ? orphan
+                                           : file_color_value(ls_colors,
+                                                              (string_address) "ln",
+                                                              fallback);
+                }
+
+                file_color_span link_color = file_color_value(
+                    ls_colors, (string_address) "ln", fallback);
+
+                if (file_color_span_is(link_color, (string_address) "target"))
+                {
+                        ls_entry target = *entry;
+
+                        target.mode = through.mode;
+                        return ls_name_color(directory, address_of target, name);
+                }
+
+                return link_color;
+        }
+        else if (kind == MODE_PIPE)
+        {
+                key = (string_address) "pi";
+                fallback = (string_address) "33";
+        }
+        else if (kind == MODE_SOCKET)
+        {
+                key = (string_address) "so";
+                fallback = (string_address) "01;35";
+        }
+        else if (kind == MODE_BLOCK)
+        {
+                key = (string_address) "bd";
+                fallback = (string_address) "33;01";
+        }
+        else if (kind == MODE_CHARACTER)
+        {
+                key = (string_address) "cd";
+                fallback = (string_address) "33;01";
+        }
+        else if (mode & 04000)
+        {
+                key = (string_address) "su";
+                fallback = (string_address) "37;41";
+        }
+        else if (mode & 02000)
+        {
+                key = (string_address) "sg";
+                fallback = (string_address) "30;43";
+        }
+        else
+        {
+                file_color_span suffix = ls_suffix_color(name);
+
+                if (suffix.text)
+                        return suffix;
+
+                if (mode & 0111)
+                {
+                        key = (string_address) "ex";
+                        fallback = (string_address) "01;32";
+                }
+        }
+
+        return file_color_value(ls_colors, key, fallback);
+}
+
+static fn ls_name_say(string_address directory, ls_entry address_to entry,
+                      string_address name)
+{
+        if (!ls_coloring)
+        {
+                log(name, 0);
+                return;
+        }
+
+        file_color_span color = ls_name_color(directory, entry, name);
+
+        if (!color.text || !color.length)
+        {
+                log(name, 0);
+                return;
+        }
+
+        file_color_span reset = file_color_value(ls_colors,
+                                                  (string_address) "rs",
+                                                  (string_address) "0");
+
+        if (!ls_color_started)
+        {
+                file_color_sgr(log, reset);
+                ls_color_started = true;
+        }
+
+        file_color_sgr(log, color);
+        log(name, 0);
+        file_color_sgr(log, reset);
+}
+
 static fn ls_print(string_address directory)
 {
         positive link_width = 1;
@@ -2190,7 +2509,7 @@ static fn ls_print(string_address directory)
                         log(" ", 1);
                 }
 
-                log(name, 0);
+                ls_name_say(directory, entry, name);
 
                 bool marking = ls_classify || ls_slash;
                 bool link = (entry->mode & MODE_FORMAT) == MODE_LINK;
@@ -2377,6 +2696,11 @@ static fn ls_directory(string_address path, bool heading, positive depth)
                 ls_below(path, depth);
 }
 
+static const file_long ls_longs[] = {
+    {(string_address) "color", 'C'},
+    {null, 0},
+};
+
 static b32 file_ls()
 {
         positive count = (positive)program_argument_count();
@@ -2387,6 +2711,8 @@ static b32 file_ls()
             .program = (string_address) "ls",
             .allowed = (string_address) "laARtShr1dinFp",
             .valued = (string_address) "",
+            .optional = (string_address) "C",
+            .longs = ls_longs,
             .seen = ls_option_seen,
         };
 
@@ -2415,6 +2741,32 @@ static b32 file_ls()
         ls_as_itself = (flags & FILE_FLAG('d')) != 0;
         ls_classify = (flags & FILE_FLAG('F')) != 0;
         ls_slash = (flags & FILE_FLAG('p')) != 0;
+        ls_coloring = false;
+        ls_color_started = false;
+        ls_colors = file_environment((string_address) "LS_COLORS");
+
+        if (ls_colors && string_get(ls_colors) &&
+            !file_color_table_valid(ls_colors, false))
+        {
+                file_fail("ls: unparsable value for LS_COLORS environment variable\n", 0);
+                ls_colors = null;
+        }
+
+        if (flags & FILE_FLAG('C'))
+        {
+                b32 when = file_color_when(file_option_value(address_of taking, 'C'),
+                                           FILE_COLOR_ALWAYS);
+
+                if (when < 0)
+                {
+                        string_format(file_fail, "ls: invalid argument '%s' for --color\n",
+                                      file_option_value(address_of taking, 'C'));
+                        return 1;
+                }
+
+                ls_coloring = ls_colors && string_get(ls_colors) &&
+                              file_color_active(when);
+        }
 
         if (first >= count)
         {
@@ -2542,31 +2894,7 @@ static b32 file_ls()
 }
 
 // Running a command ------------------------------------------------
-/*
-        find -exec runs something that is neither a builtin nor a name the
-        shell can be asked about, so the PATH walk it takes is here.
-
-        Declared rather than reached for: builtin.c is included after this
-        file, and what a command gets for an environment is what the shell
-        knows.
-*/
-string_address env_get(const_string name);
-string_address address_to shell_environment();
-
-static string_address file_environment(string_address name);
-
-static string_address address_to file_environment_all()
-{
-        string_address address_to shell = shell_environment();
-
-        if (shell && shell[0])
-                return shell;
-
-        string_address address_to process = program_environment_list();
-
-        /* The initial process vector already is a terminated borrowed list. */
-        return process ? process : shell;
-}
+/* find -exec runs a child through PATH with the current exported vector. */
 
 // Replaces this process, and only ever called in a child of it.
 static fn file_exec_path(string_address address_to words)
@@ -8989,13 +9317,6 @@ static b32 file_uname()
 
 static string_address mktemp_letters =
     "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
-
-static string_address file_environment(string_address name)
-{
-        string_address address_to process = program_environment_list();
-
-        return process ? string_get_environment(process, name) : null;
-}
 
 // The kernel's randomness, and the clock when there is none to be had.
 static fn mktemp_letters_into(p8 address_to at, positive count)

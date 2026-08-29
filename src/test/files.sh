@@ -282,6 +282,34 @@ find_stress() {
         generated_answer 'three shell invocations' "$want_status" "$got_status"
 }
 
+ls_color_compare() {
+        name=$1
+        shift
+        colors='di=34:ln=36:pi=33:ex=32:fi=0:*.txt=35:rs=0'
+
+        LS_COLORS=$colors ls "$@" > "$work/want" 2>/dev/null; want_status=$?
+        LS_COLORS=$colors "$binaries/ls" "$@" > "$work/got" 2>/dev/null; got_status=$?
+        generated_answer "$name" "$want_status" "$got_status"
+}
+
+ls_color_custom() {
+        name=$1
+        colors=$2
+        shift 2
+
+        LS_COLORS=$colors ls "$@" > "$work/want" 2>&1; want_status=$?
+        LS_COLORS=$colors "$binaries/ls" "$@" > "$work/got" 2>&1; got_status=$?
+        generated_answer "$name" "$want_status" "$got_status"
+}
+
+ls_color_unset() {
+        env -u LS_COLORS ls --color=always -1 "$colored" > "$work/want" 2>/dev/null
+        want_status=$?
+        env -u LS_COLORS "$binaries/ls" --color=always -1 "$colored" > "$work/got" 2>/dev/null
+        got_status=$?
+        generated_answer 'color environment unset' "$want_status" "$got_status"
+}
+
 refuses_du_depth_ceiling() {
         if "$binaries/du" "$1" > "$work/got" 2> "$work/got.err"; then
                 got_status=0
@@ -740,7 +768,31 @@ while [ "$i" -lt 33 ]; do
         i=$((i + 1))
 done
 
+colored=$work/colored
+mkdir "$colored" "$colored/directory"
+printf 'plain\n' > "$colored/plain"
+printf 'text\n' > "$colored/note.txt"
+printf 'run\n' > "$colored/runnable"
+chmod 0755 "$colored/runnable"
+ln -s plain "$colored/link"
+ln -s directory "$colored/link-directory"
+ln -s absent "$colored/broken"
+mkfifo "$colored/pipe"
+control_name=$(printf 'control\033byte')
+printf 'control\n' > "$colored/$control_name"
+
 group ls
+ls_color_compare 'color always' --color=always -1 "$colored"
+ls_color_compare 'color bare' --color -1 "$colored"
+ls_color_compare 'color never' --color=never -1 "$colored"
+ls_color_compare 'color auto redirected' --color=auto -1 "$colored"
+ls_color_unset
+ls_color_custom 'color environment empty' '' --color=always -1 "$colored"
+ls_color_custom 'orphan color' 'ln=36:or=31:mi=35' --color=always -1 "$colored"
+ls_color_custom 'link target color' 'ln=target:di=34:or=31' --color=always -1 "$colored"
+ls_color_custom 'literal suffix pattern' '*.txt=33:*.?=32' --color=always -1 "$colored"
+ls_color_custom 'malformed colors' 'di=34:broken' --color=always -1 "$colored"
+answered 'bad color word' ls --color=sometimes -1 "$colored"
 near 'plain'            'cat' ls "$fixture"
 near 'all'              'cat' ls -a "$fixture"
 near 'almost all'       'cat' ls -A "$fixture"
