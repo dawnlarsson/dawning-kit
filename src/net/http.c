@@ -166,33 +166,8 @@ static string_address http_header(p8 address_to bytes, positive size,
                 if (stop - line <= want || bytes[line + want] != ':')
                         continue;
 
-                {
-                        positive index = 0;
-                        bool same = true;
-
-                        while (index < want)
-                        {
-                                p8 one = bytes[line + index];
-                                p8 two = (p8)name[index];
-
-                                if (one >= 'A' && one <= 'Z')
-                                        one = (p8)(one + 32);
-
-                                if (two >= 'A' && two <= 'Z')
-                                        two = (p8)(two + 32);
-
-                                if (one != two)
-                                {
-                                        same = false;
-                                        break;
-                                }
-
-                                index++;
-                        }
-
-                        if (!same)
-                                continue;
-                }
+                if (memory_compare_ascii_case(bytes + line, name, want))
+                        continue;
 
                 {
                         positive from = line + want + 1;

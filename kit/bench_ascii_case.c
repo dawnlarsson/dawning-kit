@@ -215,7 +215,14 @@ b32 main(void)
         moonwater_cpu_detect();
         string_format(log, "ASCII case compare, paired median of %p\n",
                       (positive)TRIES);
+        // HTTP field names are ordinarily four to thirty two bytes. Keep the
+        // short rows explicit: a bulk fold is not a win merely because its
+        // four-kilobyte row is.
+        row((string_address)"equal 4", 4, false);
         row((string_address)"equal 8", 8, false);
+        row((string_address)"equal 12", 12, false);
+        row((string_address)"equal 16", 16, false);
+        row((string_address)"equal 24", 24, false);
         row((string_address)"equal 32", 32, false);
         row((string_address)"equal 4K", 4096, false);
         row((string_address)"equal 1M", MAXIMUM, false);

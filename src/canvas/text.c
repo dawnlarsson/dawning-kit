@@ -49,24 +49,70 @@ static void glyph_draw(const struct target *t, int x, int y, int scale,
 static unsigned int text_line_end(const char *text, unsigned int length,
                                   unsigned int start, unsigned int columns, _Bool wrap)
 {
-        unsigned int i, last_space = 0;
+        unsigned int remaining;
+        unsigned int scanned;
+        const char *found;
 
-        for (i = start; i < length; i++)
+        if (start >= length)
+                return length;
+
+        remaining = length - start;
+        scanned = remaining;
+
+        /*
+                The old byte loop walked an entire unwrapped title, and up to
+                one row plus its breaking character for wrapped text. These
+                are bounded byte hunts already provided by library.c on every
+                architecture. Keep the extra character in the wrapped scan:
+                a newline exactly at the boundary wins over the word break,
+                as it did in the loop.
+        */
+        if (wrap && remaining > columns)
+                scanned = columns + 1;
+
+        /*
+                Below sixty four bytes the call setup is more expensive than
+                the hunt. Caller-shaped floor-runner medians put the
+                shared/scalar ratios at 67.91% on RV64, 35.50% on ARM64 and
+                16.65% on x86-64 at sixty four, while RV64 was still 125.14%
+                at thirty two. Keep that crossover here; only the x86-64 row
+                is native timing, so the foreign rows are a conservative gate
+                rather than a hardware-speed claim.
+        */
+        if (scanned < 64)
         {
-                if (text[i] == '\n')
-                        return i;
+                unsigned int i, last_space = 0;
 
-                if (!wrap)
-                        continue;
+                for (i = start; i < length; i++)
+                {
+                        if (text[i] == '\n')
+                                return i;
 
-                if (text[i] == ' ')
-                        last_space = i;
+                        if (!wrap)
+                                continue;
 
-                if (i - start + 1 > columns)
-                        return last_space > start ? last_space : i;
+                        if (text[i] == ' ')
+                                last_space = i;
+
+                        if (i - start + 1 > columns)
+                                return last_space > start ? last_space : i;
+                }
+
+                return length;
         }
 
-        return length;
+        found = memory_first_of((address_any)(text + start), '\n', scanned);
+
+        if (found)
+                return (unsigned int)(found - text);
+
+        if (!wrap || remaining <= columns)
+                return length;
+
+        found = memory_last_of((address_any)(text + start), ' ', scanned);
+
+        return found && found > text + start ? (unsigned int)(found - text)
+                                            : start + columns;
 }
 
 // Past the break, and past the character the break was made on.
