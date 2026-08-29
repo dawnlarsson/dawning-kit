@@ -339,6 +339,40 @@ static bool text_line_next()
         }
 }
 
+/*
+        A complete record already in the reader is immutable until the caller
+        asks for another refill, so line-oriented streaming tools can inspect
+        it in place. Only a record split across reads needs text_line's owned
+        storage. This preserves the ordinary line reader as the bounded edge
+        path while removing one full copy from the common path.
+*/
+static bool text_line_view(p8 address_to address_to line,
+                           positive address_to length)
+{
+        if (!text_fill())
+                return false;
+
+        p8 address_to at = text_input.buffer + text_input.position;
+        positive left = text_input.filled - text_input.position;
+        p8 address_to found = memory_first_of(at, text_delimiter, left);
+
+        if (found)
+        {
+                address_to line = at;
+                address_to length = (positive)(found - at);
+                text_input.position += address_to length + 1;
+                text_line_ended = true;
+                return true;
+        }
+
+        if (!text_line_next())
+                return false;
+
+        address_to line = text_line;
+        address_to length = text_line_length;
+        return true;
+}
+
 static fn text_put_line()
 {
         text_put(text_line, text_line_length);
@@ -4745,7 +4779,10 @@ static b32 text_uniq()
 
         for (;;)
         {
-                bool more = text_line_next();
+                p8 address_to line = null;
+                positive line_length = 0;
+                bool more = text_line_view(address_of line,
+                                           address_of line_length);
 
                 if (more)
                 {
@@ -4756,17 +4793,17 @@ static b32 text_uniq()
                         // order POSIX puts them in.
                         for (positive f = 0; f < skip_fields; f++)
                         {
-                                skip += string_span_max(text_line + skip,
-                                                        text_line_length - skip,
+                                skip += string_span_max(line + skip,
+                                                        line_length - skip,
                                                         string_set_blanks);
-                                skip += string_span_max(text_line + skip,
-                                                        text_line_length - skip, text_inside());
+                                skip += string_span_max(line + skip,
+                                                        line_length - skip, text_inside());
                         }
 
                         skip += skip_characters;
 
-                        if (skip > text_line_length)
-                                skip = text_line_length;
+                        if (skip > line_length)
+                                skip = line_length;
 
                         positive held_skip = 0;
 
@@ -4785,7 +4822,7 @@ static b32 text_uniq()
                         if (held_skip > held_length)
                                 held_skip = held_length;
 
-                        positive one = text_line_length - skip;
+                        positive one = line_length - skip;
                         positive two = held_length - held_skip;
 
                         if (bounded)
@@ -4802,9 +4839,9 @@ static b32 text_uniq()
                         if (same)
                                 same = !(fold
                                              ? memory_compare_ascii_case(
-                                                   text_line + skip,
+                                                   line + skip,
                                                    held + held_skip, one)
-                                             : memory_compare(text_line + skip,
+                                             : memory_compare(line + skip,
                                                               held + held_skip, one));
 
                         if (same)
@@ -4833,7 +4870,7 @@ static b32 text_uniq()
 
                                 if ((all_repeated && count >= 2) || grouping)
                                 {
-                                        text_put(text_line, text_line_length);
+                                        text_put(line, line_length);
                                         text_put_character(text_delimiter);
                                 }
 
@@ -4855,7 +4892,14 @@ static b32 text_uniq()
                         {
                                 if (counting)
                                 {
-                                        positive_to_padded(text_put, count, 7, ' ', 0);
+                                        // Seven is a minimum field width, not
+                                        // a digit limit. Leave room for the
+                                        // full positive value as well.
+                                        p8 field[20];
+
+                                        positive length = positive_into_padded(
+                                            field, count, 7, ' ');
+                                        text_put(field, length);
                                         text_put_character(' ');
                                 }
 
@@ -4867,8 +4911,8 @@ static b32 text_uniq()
                 if (!more)
                         break;
 
-                memory_copy(held, text_line, text_line_length);
-                held_length = text_line_length;
+                memory_copy(held, line, line_length);
+                held_length = line_length;
                 have_held = true;
                 count = 1;
 

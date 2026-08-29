@@ -62,6 +62,23 @@ printf '\n' >> "$work/cut_wide"
 head -c 65535 /dev/zero | tr '\0' x > "$work/wc_boundary"
 printf ' y\n' >> "$work/wc_boundary"
 
+# uniq's zero-copy record view has to release a buffer-backed line before the
+# next refill. Exercise a delimiter in the final byte of a read, a line one
+# byte wider than a read, duplicates on both sides, and the same shape with a
+# NUL delimiter.
+head -c 65535 /dev/zero | tr '\0' x > "$work/uniq_edge_line"
+printf '\n' >> "$work/uniq_edge_line"
+cat "$work/uniq_edge_line" "$work/uniq_edge_line" > "$work/uniq_edge"
+head -c 65536 /dev/zero | tr '\0' y > "$work/uniq_wide_line"
+printf '\n' >> "$work/uniq_wide_line"
+cat "$work/uniq_wide_line" "$work/uniq_wide_line" >> "$work/uniq_edge"
+printf 'tail\ntail' >> "$work/uniq_edge"
+
+head -c 65535 /dev/zero | tr '\0' z > "$work/uniq_zero_line"
+printf '\000' >> "$work/uniq_zero_line"
+cat "$work/uniq_zero_line" "$work/uniq_zero_line" > "$work/uniq_zero_edge"
+printf 'tail\000tail' >> "$work/uniq_zero_edge"
+
 # A single physical block with a ten-digit logical size exercises the wc width
 # chosen from stat(2) without making wc read a gigabyte.
 sparse_width=false
@@ -908,6 +925,10 @@ compare 'null data long' uniq zpairs --zero-terminated
 compare 'no newline'     uniq h
 compare 'no newline count' uniq h -c
 compare 'null no newline' uniq -  -z "$work/h"
+compare 'reader edges'    uniq uniq_edge
+compare 'reader edges count' uniq uniq_edge -c
+compare 'null reader edges' uniq uniq_zero_edge -z
+compare 'null reader edges count' uniq uniq_zero_edge -z -c
 
 case_start head
 compare 'default'        head i
