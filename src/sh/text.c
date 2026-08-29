@@ -7252,7 +7252,11 @@ static b32 text_sed()
                                                               : sed_space_length;
 
                                         text_put(sed_space, stop);
-                                        text_put_character('\n');
+
+                                        if (newline)
+                                                text_put_character('\n');
+                                        else if (sed_space_ended)
+                                                text_put_character(text_delimiter);
                                         continue;
                                 }
 
@@ -9005,6 +9009,7 @@ static b32 text_cmp()
         positive limit = TEXT_UNSET;
         bool newline = true;
         positive width = 1;
+        positive scalar_left = 0;
         b32 answer = 0;
         string_address said = file_option_value(address_of taking, 'n');
 
@@ -9112,7 +9117,8 @@ static b32 text_cmp()
                         the wide byte counter; only a block containing the
                         first difference falls back to the byte path below.
                 */
-                if (cmp_fill(address_of cmp_left) && cmp_fill(address_of cmp_right))
+                if (!scalar_left && cmp_fill(address_of cmp_left) &&
+                    cmp_fill(address_of cmp_right))
                 {
                         positive left = cmp_left.filled - cmp_left.position;
                         positive right = cmp_right.filled - cmp_right.position;
@@ -9124,14 +9130,45 @@ static b32 text_cmp()
                         p8 address_to one = cmp_left.buffer + cmp_left.position;
                         p8 address_to two = cmp_right.buffer + cmp_right.position;
 
-                        if (run && !memory_compare(one, two, run))
+                        if (run)
                         {
-                                lines += memory_count(one, run, '\n');
-                                newline = one[run - 1] == '\n';
-                                cmp_left.position += run;
-                                cmp_right.position += run;
-                                at += run;
-                                continue;
+                                bipolar order = memory_compare(one, two, run);
+
+                                if (!order)
+                                {
+                                        lines += memory_count(one, run, '\n');
+                                        newline = one[run - 1] == '\n';
+                                        cmp_left.position += run;
+                                        cmp_right.position += run;
+                                        at += run;
+                                        continue;
+                                }
+
+                                if (silent)
+                                        return text_done(1);
+
+                                if (listing)
+                                {
+                                        // Do not compare the same known-
+                                        // different suffix again per byte.
+                                        scalar_left = run;
+                                }
+                                else
+                                {
+                                        positive prefix = 0;
+
+                                        while (one[prefix] == two[prefix])
+                                                prefix++;
+
+                                        if (prefix)
+                                        {
+                                                lines += memory_count(one, prefix, '\n');
+                                                newline = one[prefix - 1] == '\n';
+                                                cmp_left.position += prefix;
+                                                cmp_right.position += prefix;
+                                                at += prefix;
+                                        }
+                                }
                         }
                 }
 
@@ -9154,6 +9191,9 @@ static b32 text_cmp()
 
                 at++;
                 newline = a == '\n';
+
+                if (scalar_left)
+                        scalar_left--;
 
                 if (a != b)
                 {
