@@ -75,8 +75,12 @@ NOT_INLINED static fn former_log(address_any data, positive length)
         if (!length)
                 length = string_length(data);
 
-        (fn)former_put(1, log_writer_buffer, CAPACITY,
-                       address_of log_writer_buffer_length, data, length, false);
+        /* The replaced logger was exactly this adapter with a tail call into
+           the already-assembly buffered core.  Keep that core on both sides
+           so this row isolates sticky-status overhead rather than comparing
+           two different buffered writers. */
+        (fn)buffered_write(1, log_writer_buffer, CAPACITY,
+                          address_of log_writer_buffer_length, data, length);
 }
 
 static p64 put_once(positive length, bool hold_equal, bool assembly,
@@ -260,7 +264,7 @@ static fn log_row(string_address name, positive length)
 
         order(ratios);
         log_writer_buffer_length = 0;
-        string_format(log, "  %s  median asm/C %p.%p%%\n", name,
+        string_format(log, "  %s  median current/former %p.%p%%\n", name,
                       ratios[TRIES / 2] / 100, ratios[TRIES / 2] % 100);
 }
 
