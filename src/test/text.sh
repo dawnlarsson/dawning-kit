@@ -525,6 +525,55 @@ refuses_long_sed_script()
                 "$(head -c 34 "$work/got" | tr '\n\t' '|>')[$got_status] $(head -1 "$work/err")"
 }
 
+# tr used to accept an expanded set past 1,024 bytes, discard its tail, and
+# then translate with the plausible but wrong prefix. Keep the bounded set
+# representation explicit until it can be replaced without putting an
+# attacker-controlled repeat count straight into mmap.
+refuses_long_tr_set()
+{
+        printf 'b\n' | "$bin/tr" '[a*1024]b' '[x*1024]y' \
+                > "$work/got" 2> "$work/err"
+        got_status=$?
+
+        if [ "$got_status" -ne 0 ] && [ ! -s "$work/got" ] &&
+           grep -q '^tr: set too large$' "$work/err"
+        then
+                pass=$((pass + 1))
+                return 0
+        fi
+
+        fail=$((fail + 1))
+        printf '  %-8s %-30s want %-24s got %s\n' \
+                "$group" 'tr set ceiling' 'loud refusal' \
+                "$(head -c 34 "$work/got" | tr '\n\t' '|>')[$got_status] $(head -1 "$work/err")"
+}
+
+refuses_many_alternatives()
+{
+        pattern=x0
+        i=1
+
+        while [ "$i" -lt 34 ]; do
+                pattern="$pattern|x$i"
+                i=$((i + 1))
+        done
+
+        "$bin/grep" -E "$pattern" "$work/one" > "$work/got" 2> "$work/err"
+        got_status=$?
+
+        if [ "$got_status" -eq 2 ] && [ ! -s "$work/got" ] &&
+           grep -q '^grep:' "$work/err"
+        then
+                pass=$((pass + 1))
+                return 0
+        fi
+
+        fail=$((fail + 1))
+        printf '  %-8s %-30s want %-24s got %s\n' \
+                "$group" 'grep alternation ceiling' 'loud refusal [2]' \
+                "$(head -c 34 "$work/got" | tr '\n\t' '|>')[$got_status] $(head -1 "$work/err")"
+}
+
 compares_many_grep_globs()
 {
         set --
@@ -593,6 +642,7 @@ compare 'combined'       grep a  -in ALPHA
 compare 'extended alt'   grep -  -E 'delta|zeta' "$work/a"
 compare 'extended plus'  grep -  -E '[0-9]+' "$work/j"
 compare 'extended group' grep -  -E '(al)+pha' "$work/a"
+compare 'ten groups whole match' grep a -Eo '(a)(l)(p)(h)(a)()()()()()'
 compare 'extended count' grep -  -E '[0-9]{3}' "$work/j"
 compare 'extended opt'   grep -  -E 'alphas?' "$work/a"
 compare 'fixed'          grep a  -F 'alpha beta'
@@ -1314,7 +1364,6 @@ compare 'octal'          tr s  '\157' O
 compare 'octal cap'      tr s  '\1570' X
 compare 'octal breaker'  tr s  '\157q' X
 compare 'repeat set'     tr s  'one' '[X*]'
-compare 'repeat clips safely' tr s 'one' '[X*2048][Y*]'
 compare 'range high bytes' tr tr_high '\376-\377' XY
 compare 'complement sub' tr s  -c 'o\n' X
 compare 'squeeze all'    tr q  -s '[:upper:]'
@@ -1494,6 +1543,8 @@ refuses_long_record 'nl record'   nl
 refuses_long_record 'fold record' fold -w 2000000
 refuses_long_pipe   'tail pipe record' tail -n1
 refuses_long_pattern
+refuses_many_alternatives
+refuses_long_tr_set
 refuses_grep_context 'grep context byte ceiling' grep_large_context -B2 hit
 refuses_grep_context 'grep context slot ceiling' one -B8193 x
 refuses_long_sed_script
@@ -1814,6 +1865,93 @@ if [ -e /dev/full ]; then
                         "$group" 'child write failure' "$want_status" "$got_status"
         fi
 fi
+
+# The shared operand index used to stop silently at 1,024 names. Exercise
+# every consumer with one small file repeated beyond that boundary, and take
+# two streaming/sorting paths to 20,000 operands. Reusing one pathname keeps
+# this a table test rather than a filesystem-capacity test. stderr is omitted
+# exactly as compare() omits it; stdout and status remain byte-exact.
+case_start operands
+python3 - "$bin" "$work" > "$work/text-many-report" <<'PY'
+import os
+import subprocess
+import sys
+
+binary, work = sys.argv[1:]
+one = os.path.join(work, "operand-one")
+missing = os.path.join(work, "operand-missing")
+with open(one, "wb") as f:
+    f.write(b"x\n")
+
+def invoke(program, args, feed=None, full=False):
+    target = open("/dev/full", "wb") if full else subprocess.PIPE
+    try:
+        return subprocess.run([program] + args, input=feed, stdout=target,
+                              stderr=subprocess.DEVNULL, timeout=120)
+    finally:
+        if full:
+            target.close()
+
+def case(name, tool, args, feed=None):
+    want = invoke(tool, args, feed)
+    got = invoke(os.path.join(binary, tool), args, feed)
+    if want.stdout == got.stdout and want.returncode == got.returncode:
+        print("PASS", name)
+    else:
+        print("FAIL", name, "status", want.returncode, got.returncode,
+              "bytes", len(want.stdout or b""), len(got.stdout or b""))
+
+two_thousand = [one] * 2000
+twenty_thousand = [one] * 20000
+case("cat-2000-operands", "cat", two_thousand)
+case("wc-2000-operands", "wc", ["-c"] + two_thousand)
+case("head-2000-operands", "head", ["-n1"] + two_thousand)
+case("tail-2000-operands", "tail", ["-n1"] + two_thousand)
+case("rev-20000-operands", "rev", twenty_thousand)
+case("nl-2000-operands", "nl", ["-ba"] + two_thousand)
+case("fold-2000-operands", "fold", ["-w2"] + two_thousand)
+case("cut-2000-operands", "cut", ["-c1"] + two_thousand)
+case("uniq-extra-operands", "uniq", two_thousand)
+case("grep-2000-operands", "grep", ["x"] + two_thousand)
+case("sed-2000-operands", "sed", ["s/x/X/"] + two_thousand)
+case("sort-20000-operands", "sort", twenty_thousand)
+
+# A failure after the old boundary must affect status and later operands must
+# still be visited in order.
+case("late-missing-operand", "head",
+     ["-n1"] + [one] * 1100 + [missing] + [one] * 10)
+
+if os.path.exists("/dev/full"):
+    args = ["-n1"] + two_thousand
+    want = invoke("head", args, full=True)
+    got = invoke(os.path.join(binary, "head"), args, full=True)
+    print("PASS" if want.returncode == got.returncode else "FAIL",
+          "many-operand-write-error", want.returncode, got.returncode)
+
+# tee owns a parallel descriptor table. Use distinct reference/output names
+# but otherwise the same 2,000 repeated destinations.
+want_name = os.path.join(work, "tee-many-want")
+got_name = os.path.join(work, "tee-many-got")
+want = invoke("tee", [want_name] * 2000, b"payload\n")
+got = invoke(os.path.join(binary, "tee"), [got_name] * 2000, b"payload\n")
+try:
+    want_file = open(want_name, "rb").read()
+    got_file = open(got_name, "rb").read()
+except OSError:
+    want_file = got_file = None
+print("PASS" if (want.stdout == got.stdout and
+                 want.returncode == got.returncode and
+                 want_file == got_file) else "FAIL", "tee-2000-operands")
+PY
+
+while read -r result name detail; do
+        if [ "$result" = PASS ]; then
+                pass=$((pass + 1))
+        else
+                fail=$((fail + 1))
+                printf '  %-8s %-30s %s\n' "$group" "$name" "$detail"
+        fi
+done < "$work/text-many-report"
 
 #       cmp, whose answer is often nothing at all -- so the exit status is
 #       most of what there is to compare, and compare looks at both.

@@ -10,11 +10,12 @@
         bytes out. Writing that shape thirteen times is how thirteen slightly
         different bugs get written down.
 
-        Every buffer here is a fixed array or a slice of one arena taken once
-        from the kernel. Nothing grows. A record longer than TEXT_LINE_MAX is
-        refused instead of being handed to a utility with its tail silently
-        missing: a bounded implementation may have a ceiling, but plausible
-        truncated output is not a valid answer.
+        Record storage is a fixed array or a slice of one arena taken once
+        from the kernel. Operand indexes grow in a separate checked mapping,
+        because a process may legally name many small files. A record longer
+        than TEXT_LINE_MAX is refused instead of being handed to a utility
+        with its tail silently missing: a bounded implementation may have a
+        ceiling, but plausible truncated output is not a valid answer.
 
         The reference is the GNU tool on the machine, not the standard: the
         widths wc pads to, the "==> name <==" head prints and the six columns
@@ -405,6 +406,8 @@ static bool text_word(p8 character)
         the walk.
 */
 static b32 text_argument_count;
+static positive text_files_count;
+static bool text_files_failed;
 
 static fn text_begin(string_address name)
 {
@@ -415,6 +418,8 @@ static fn text_begin(string_address name)
         text_status = 0;
         text_name = name;
         text_argument_count = program_argument_count();
+        text_files_count = 0;
+        text_files_failed = false;
 }
 
 /*
@@ -931,10 +936,15 @@ static b32 regex_parse_atom()
         {
                 regex_pattern_at++;
 
-                b32 group = regex_group_count < REGEX_GROUP_MAX ? ++regex_group_count : 0;
-                b32 open = regex_emit(REGEX_SAVE);
+                bool capture = regex_group_count < REGEX_GROUP_MAX;
+                b32 group = capture ? ++regex_group_count : 0;
 
-                regex_code[open].value = (p8)(group * 2);
+                if (capture)
+                {
+                        b32 open = regex_emit(REGEX_SAVE);
+                        regex_code[open].value = (p8)(group * 2);
+                }
+
                 regex_parse_alternation();
 
                 if (regex_peek() == ')')
@@ -942,9 +952,12 @@ static b32 regex_parse_atom()
                 else
                         regex_broken = true;
 
-                b32 shut = regex_emit(REGEX_SAVE);
+                if (capture)
+                {
+                        b32 shut = regex_emit(REGEX_SAVE);
+                        regex_code[shut].value = (p8)(group * 2 + 1);
+                }
 
-                regex_code[shut].value = (p8)(group * 2 + 1);
                 return start;
         }
 
@@ -963,10 +976,15 @@ static b32 regex_parse_atom()
                 {
                         regex_pattern_at += 2;
 
-                        b32 group = regex_group_count < REGEX_GROUP_MAX ? ++regex_group_count : 0;
-                        b32 open = regex_emit(REGEX_SAVE);
+                        bool capture = regex_group_count < REGEX_GROUP_MAX;
+                        b32 group = capture ? ++regex_group_count : 0;
 
-                        regex_code[open].value = (p8)(group * 2);
+                        if (capture)
+                        {
+                                b32 open = regex_emit(REGEX_SAVE);
+                                regex_code[open].value = (p8)(group * 2);
+                        }
+
                         regex_parse_alternation();
 
                         if (regex_peek() == '\\' && regex_peek_at(1) == ')')
@@ -974,9 +992,12 @@ static b32 regex_parse_atom()
                         else
                                 regex_broken = true;
 
-                        b32 shut = regex_emit(REGEX_SAVE);
+                        if (capture)
+                        {
+                                b32 shut = regex_emit(REGEX_SAVE);
+                                regex_code[shut].value = (p8)(group * 2 + 1);
+                        }
 
-                        regex_code[shut].value = (p8)(group * 2 + 1);
                         return start;
                 }
 
@@ -1326,6 +1347,8 @@ static b32 regex_parse_alternation()
 
                 if (jump_count < REGEX_JUMPS_MAX)
                         jumps[jump_count++] = skip;
+                else
+                        regex_broken = true;
 
                 regex_parse_branch();
         }
@@ -2100,18 +2123,65 @@ static bool text_regular_size(positive handle, positive address_to size)
         return true;
 }
 
-#define TEXT_FILES_MAX 1024
-
-static b32 text_files[TEXT_FILES_MAX];
-static b32 text_files_count;
+static b32 address_to text_files;
+static positive text_files_room;
 
 static fn text_file_add(b32 which)
 {
-        if (text_files_count < TEXT_FILES_MAX)
-                text_files[text_files_count++] = which;
+        if (text_files_failed)
+                return;
+
+        if (text_files_count >= text_files_room)
+        {
+                if (text_files_room > positive_max / 2)
+                {
+                        text_files_failed = true;
+                        return;
+                }
+
+                positive room = text_files_room ? text_files_room * 2 : 64;
+
+                if (room > positive_max / sizeof(b32))
+                {
+                        text_files_failed = true;
+                        return;
+                }
+
+                positive mapped = (positive)memory(room * sizeof(b32));
+
+                if (!mapped || mapped >= (positive)-4095)
+                {
+                        text_files_failed = true;
+                        return;
+                }
+
+                b32 address_to grown = (b32 address_to)mapped;
+
+                if (text_files_count)
+                        memory_copy_fast(grown, text_files,
+                                         text_files_count * sizeof(b32));
+
+                if (text_files)
+                        system_call_2(syscall(munmap), (positive)text_files,
+                                      text_files_room * sizeof(b32));
+
+                text_files = grown;
+                text_files_room = room;
+        }
+
+        text_files[text_files_count++] = which;
 }
 
-static string_address text_file_name(b32 which)
+static bool text_files_ready()
+{
+        if (!text_files_failed)
+                return true;
+
+        text_error(null, "too many operands");
+        return false;
+}
+
+static string_address text_file_name(positive which)
 {
         return text_files_count ? program_argument(text_files[which]) : null;
 }
@@ -2368,6 +2438,9 @@ static b32 text_wc()
         text_begin("wc");
 
         if (!file_take(address_of taking))
+                return text_done(1);
+
+        if (!text_files_ready())
                 return text_done(1);
 
         positive flags = taking.flags;
@@ -2713,6 +2786,9 @@ static b32 text_rev()
         if (!file_take(address_of taking))
                 return text_done(1);
 
+        if (!text_files_ready())
+                return text_done(1);
+
         if (taking.flags & FILE_FLAG('0'))
                 text_delimiter = '\0';
 
@@ -3008,6 +3084,9 @@ static b32 text_head()
         if (!file_take(address_of taking))
                 return text_done(1);
 
+        if (!text_files_ready())
+                return text_done(1);
+
         positive count = 10;
         bool by_bytes = taking.last == 'c';
         bool from_end = false;
@@ -3134,6 +3213,9 @@ static b32 text_tail()
         text_begin("tail");
 
         if (!file_take(address_of taking))
+                return text_done(1);
+
+        if (!text_files_ready())
                 return text_done(1);
 
         positive count = 10;
@@ -3277,8 +3359,8 @@ static const file_long tee_longs[] = {
 
 static b32 text_tee()
 {
-        positive handles[TEXT_FILES_MAX];
-        b32 handle_count = 0;
+        positive address_to handles = null;
+        positive handle_count = 0;
         file_taking taking = {
             .program = (string_address) "tee",
             .allowed = (string_address) "aip",
@@ -3296,9 +3378,26 @@ static b32 text_tee()
         if (!file_take(address_of taking))
                 return text_done(1);
 
+        if (!text_files_ready())
+                return text_done(1);
+
         bool append = (taking.flags & FILE_FLAG('a')) != 0;
 
-        for (b32 i = 0; i < text_files_count; i++)
+        if (text_files_count)
+        {
+                if (text_files_count > positive_max / sizeof(positive))
+                        return text_error(null, "too many operands"), text_done(1);
+
+                positive mapped =
+                    (positive)memory(text_files_count * sizeof(positive));
+
+                if (!mapped || mapped >= (positive)-4095)
+                        return text_error(null, "too many operands"), text_done(1);
+
+                handles = (positive address_to)mapped;
+        }
+
+        for (positive i = 0; i < text_files_count; i++)
         {
                 string_address name = program_argument(text_files[i]);
                 bipolar target = text_open_handle(
@@ -3315,7 +3414,13 @@ static b32 text_tee()
         }
 
         if (!text_open(null))
+        {
+                if (handles)
+                        system_call_2(syscall(munmap), (positive)handles,
+                                      text_files_count * sizeof(positive));
+
                 return text_done(1);
+        }
 
         while (text_fill())
         {
@@ -3325,16 +3430,20 @@ static b32 text_tee()
                 if (system_write_all(1, at, left) != left)
                         text_out_failed = true;
 
-                for (b32 i = 0; i < handle_count; i++)
+                for (positive i = 0; i < handle_count; i++)
                         if (system_write_all(handles[i], at, left) != left)
                                 text_status = 1;
 
                 text_input.position = text_input.filled;
         }
 
-        for (b32 i = 0; i < handle_count; i++)
+        for (positive i = 0; i < handle_count; i++)
                 if (system_call_1(syscall(close), handles[i]) < 0)
                         text_status = 1;
+
+        if (handles)
+                system_call_2(syscall(munmap), (positive)handles,
+                              text_files_count * sizeof(positive));
 
         return text_done(text_status);
 }
@@ -3395,6 +3504,9 @@ static b32 text_nl()
         text_begin("nl");
 
         if (!file_take(address_of taking))
+                return text_done(1);
+
+        if (!text_files_ready())
                 return text_done(1);
 
         positive width = 6;
@@ -3597,6 +3709,9 @@ static b32 text_fold()
         text_begin("fold");
 
         if (!file_take(address_of taking))
+                return text_done(1);
+
+        if (!text_files_ready())
                 return text_done(1);
 
         positive width = 80;
@@ -3846,6 +3961,9 @@ static b32 text_cut()
         if (!file_take(address_of taking))
                 return text_done(1);
 
+        if (!text_files_ready())
+                return text_done(1);
+
         positive flags = taking.flags;
         p8 delimiter = '\t';
         bool by_field = (flags & FILE_FLAG('f')) != 0;
@@ -4043,6 +4161,7 @@ static p8 text_set_one[TEXT_SET_MAX];
 static positive text_set_one_length;
 static p8 text_set_two[TEXT_SET_MAX];
 static positive text_set_two_length;
+static bool text_set_broken;
 
 static fn text_set_put(p8 address_to into, positive address_to have, p8 character)
 {
@@ -4051,6 +4170,8 @@ static fn text_set_put(p8 address_to into, positive address_to have, p8 characte
                 into[address_to have] = character;
                 address_to have += 1;
         }
+        else
+                text_set_broken = true;
 }
 
 static bool text_set_class(p8 address_to into, positive address_to have,
@@ -4164,7 +4285,13 @@ static fn text_set_build(string_address spec, p8 address_to into, positive addre
 
                         while (scan < length && text_digit(spec[scan]))
                         {
-                                count = count * base + (positive)(spec[scan] - '0');
+                                positive digit = (positive)(spec[scan] - '0');
+
+                                if (count > (positive_max - digit) / base)
+                                        text_set_broken = true;
+                                else
+                                        count = count * base + digit;
+
                                 digits = true;
                                 scan++;
                         }
@@ -4177,7 +4304,12 @@ static fn text_set_build(string_address spec, p8 address_to into, positive addre
                                 positive room = TEXT_SET_MAX - address_to have;
 
                                 if (count > room)
+                                {
+                                        if (digits)
+                                                text_set_broken = true;
+
                                         count = room;
+                                }
 
                                 if (count)
                                         memory_fill(into + address_to have,
@@ -4229,6 +4361,9 @@ static b32 text_tr()
         if (!file_take(address_of taking))
                 return text_done(1);
 
+        if (!text_files_ready())
+                return text_done(1);
+
         positive flags = taking.flags;
         bool remove = (flags & FILE_FLAG('d')) != 0;
         bool squeeze = (flags & FILE_FLAG('s')) != 0;
@@ -4263,10 +4398,17 @@ static b32 text_tr()
                 return text_done(1);
         }
 
+        text_set_broken = false;
         text_set_build(first, text_set_one, address_of text_set_one_length);
 
         if (second)
                 text_set_build(second, text_set_two, address_of text_set_two_length);
+
+        if (text_set_broken)
+        {
+                text_error(null, "set too large");
+                return text_done(1);
+        }
 
         p8 in_first[256];
         p8 in_second[256];
@@ -4444,6 +4586,9 @@ static b32 text_uniq()
         if (!file_take(address_of taking))
                 return text_done(1);
 
+        if (!text_files_ready())
+                return text_done(1);
+
         positive flags = taking.flags;
         bool counting = (flags & FILE_FLAG('c')) != 0;
         bool repeated_only = (flags & FILE_FLAG('d')) != 0;
@@ -4490,6 +4635,12 @@ static b32 text_uniq()
         if (grouping && (counting || repeated_only || unique_only || all_repeated))
         {
                 text_error(null, "--group is mutually exclusive with -c/-d/-D/-u");
+                return text_done(1);
+        }
+
+        if (text_files_count > 2)
+        {
+                text_error(program_argument(text_files[2]), "extra operand");
                 return text_done(1);
         }
 
@@ -5635,6 +5786,9 @@ static b32 text_grep()
         text_arena_used = 0;
 
         if (!file_take(address_of taking))
+                return text_done(2);
+
+        if (!text_files_ready())
                 return text_done(2);
 
         positive flags = taking.flags;
@@ -7422,6 +7576,9 @@ static b32 text_sed()
         if (!file_take(address_of taking))
                 return text_done(sed_option_status);
 
+        if (!text_files_ready())
+                return text_done(1);
+
         positive flags = taking.flags;
         bool have_script = sed_have_script;
 
@@ -8918,6 +9075,9 @@ static b32 text_sort()
         text_begin("sort");
 
         if (!file_take(address_of taking))
+                return text_done(2);
+
+        if (!text_files_ready())
                 return text_done(2);
 
         positive flags = taking.flags;
