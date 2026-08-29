@@ -687,14 +687,12 @@ static b32 tools_dd(void)
 
                 if (landed < 0)
                 {
-                        memory_fill(obuf, 0, obs);
-
-                        for (positive i = 0; i < seek; i++)
-                                if (dd_output(out_handle, output, obuf, obs, false) != obs)
-                                {
-                                        status = 1;
-                                        break;
-                                }
+                        text_flush();
+                        text_error_raw("dd: '");
+                        text_error_raw(output ? output
+                                              : (string_address) "standard output");
+                        text_error_raw("': cannot seek\n");
+                        status = 1;
                 }
                 else if (!(conv & DD_NOTRUNC))
                 {
@@ -816,6 +814,9 @@ static b32 tools_dd(void)
                         partial_before = 0;
                 }
 
+                // Reusable hot byte transforms: fold these two ASCII runs to
+                // the architecture library when that public ASM primitive is
+                // introduced; keeping the conversion here is temporary.
                 if (conv & DD_LCASE)
                         for (positive i = 0; i < read_bytes; i++)
                                 if (ibuf[i] >= 'A' && ibuf[i] <= 'Z')

@@ -411,6 +411,35 @@ if [ -p "$work/fullblock_pipe" ]; then
         fi
 fi
 
+#       A pipe cannot seek. The fallback writes zero bytes to reach the
+#       requested position, and a byte-unit seek must write that many bytes,
+#       not that many obs-sized blocks.
+rm -f "$work/seek_pipe"
+mkfifo "$work/seek_pipe" 2> /dev/null
+if [ -p "$work/seek_pipe" ]; then
+        cat "$work/seek_pipe" > "$work/want" &
+        reader=$!
+        dd if="$work/ten" of="$work/seek_pipe" obs=4 seek=3B status=none \
+                2> /dev/null
+        want_status=$?
+        wait "$reader" 2> /dev/null
+
+        cat "$work/seek_pipe" > "$work/got" &
+        reader=$!
+        "$bin/dd" if="$work/ten" of="$work/seek_pipe" obs=4 seek=3B status=none \
+                2> /dev/null
+        got_status=$?
+        wait "$reader" 2> /dev/null
+
+        if cmp -s "$work/want" "$work/got" &&
+                [ "$want_status" = "$got_status" ]; then
+                pass=$((pass + 1))
+        else
+                report 'pipe byte seek' \
+                        "want $(show "$work/want")[$want_status] got $(show "$work/got")[$got_status]"
+        fi
+fi
+
 #       of= and seek= write into a file rather than to standard output, so
 #       what is compared is the file each one left behind.
 for one in 'seek=2' 'seek=2 conv=notrunc' 'seek=0'; do
