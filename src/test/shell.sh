@@ -867,6 +867,8 @@ command_answer 'two hundred exported variables' \
         "$many_variables set | grep '^V[0-9][0-9][0-9]=' | wc -l"
 command_answer 'unset in a large environment is stable' \
         "$many_variables unset V100; printf '%s %s %s\n' \"\${#V099}\" \"\${V100-unset}\" \"\${#V101}\""
+command_answer 'many command assignments survive and restore' \
+        'A=1 B=2 C=3 D=4 E=5 F=6 G=7 H=8 /bin/sh -c '\''printf "%s\n" "$A$B$C$D$E$F$G$H"'\''; printf "[%s][%s]\n" "${A-unset}" "${H-unset}"'
 
 section posix
 group quoting

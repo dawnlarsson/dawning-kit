@@ -314,6 +314,8 @@ answer 'argument apart'  'set -- -a val b; getopts a: o; echo "$o $OPTARG $OPTIN
 answer 'two dashes end'  'set -- -- -a; getopts a o; echo "$? $o $OPTIND"'
 answer 'nothing left'    'set -- x; getopts ab o; echo "$? [$o] [${OPTARG-unset}] $OPTIND"'
 answer 'its own words'   'getopts ab o -a -b; echo "$o $OPTIND"'
+answer 'many own words'  'getopts ab o -a one two three four five; echo "$o $OPTIND"'
+answer 'many parameters' 'set -- -a one two three four five; getopts ab o; echo "$o $OPTIND"'
 answer 'no argument set' 'set -- -a; getopts a o; echo "[$o] [${OPTARG-unset}]"'
 
 group complaining

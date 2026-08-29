@@ -1370,8 +1370,13 @@ static b32 exec_simple(b32 index)
                         return 2;
                 }
 
-                for (at = 0; at < first; at++)
-                        assignments[at] = shell_argv[at];
+                if (first >= 4)
+                        memory_copy_apart(assignments, shell_argv,
+                                          (positive)first *
+                                              sizeof(string_address));
+                else
+                        for (at = 0; at < first; at++)
+                                assignments[at] = shell_argv[at];
 
                 {
                         bool special = exec_special_builtin(shell_argv[first]);
@@ -1426,8 +1431,15 @@ static b32 exec_simple(b32 index)
                 }
 
         if (assignments)
-                for (at = 0; at < first; at++)
-                        assignments[at] = shell_argv[at];
+        {
+                if (first >= 4)
+                        memory_copy_apart(assignments, shell_argv,
+                                          (positive)first *
+                                              sizeof(string_address));
+                else
+                        for (at = 0; at < first; at++)
+                                assignments[at] = shell_argv[at];
+        }
 
         if (assignments &&
             (!exec_special_builtin(shell_argv[first]) ||

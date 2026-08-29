@@ -325,13 +325,16 @@ static env_export address_to env_export_take(const_string name, positive length)
 
 static fn env_export_drop(positive index)
 {
+        positive left = env_export_count - index - 1;
+
         env_cell_drop(env_exports[index].name);
 
-        while (index + 1 < env_export_count)
-        {
-                env_exports[index] = env_exports[index + 1];
-                index++;
-        }
+        if (left >= 4)
+                memory_copy(env_exports + index, env_exports + index + 1,
+                            left * sizeof(env_export));
+        else
+                for (positive at = 0; at < left; at++)
+                        env_exports[index + at] = env_exports[index + at + 1];
 
         env_export_count--;
 }
@@ -1387,20 +1390,25 @@ fn env_unset(string_address name)
 
                 if (mark && (positive)(mark - entry) == length)
                 {
-                        positive at = 0;
+                        positive same = 0;
 
-                        while (at < length && string_get(entry + at) == string_get(name + at))
-                                at++;
+                        while (same < length &&
+                               string_get(entry + same) == string_get(name + same))
+                                same++;
 
-                        if (at == length)
+                        if (same == length)
                         {
                                 string_address dropped = shell_vars[index];
+                                positive left = shell_var_count - index - 1;
 
-                                while (index + 1 < shell_var_count)
-                                {
-                                        shell_vars[index] = shell_vars[index + 1];
-                                        index++;
-                                }
+                                if (left >= 4)
+                                        memory_copy(shell_vars + index,
+                                                    shell_vars + index + 1,
+                                                    left * sizeof(string_address));
+                                else
+                                        for (positive at = 0; at < left; at++)
+                                                shell_vars[index + at] =
+                                                    shell_vars[index + at + 1];
 
                                 shell_var_count--;
                                 shell_vars[shell_var_count] = null;
@@ -3547,8 +3555,17 @@ fn shell_getopts(writer write, string_address input)
                                 shell_argc - 3 + 1, sizeof(string_address)))
                         return shell_answer(2);
 
-                while (index < shell_argc)
-                        shell_getopts_list[count++] = shell_argv[index++];
+                positive listed = shell_argc - index;
+
+                if (listed >= 4)
+                {
+                        memory_copy_apart(shell_getopts_list, shell_argv + index,
+                                          listed * sizeof(string_address));
+                        count = listed;
+                }
+                else
+                        while (index < shell_argc)
+                                shell_getopts_list[count++] = shell_argv[index++];
         }
         else
         {
@@ -3557,11 +3574,19 @@ fn shell_getopts(writer write, string_address input)
                                 shell_parameter_count + 1, sizeof(string_address)))
                         return shell_answer(2);
 
-                while (count < shell_parameter_count)
+                if (shell_parameter_count >= 4)
                 {
-                        shell_getopts_list[count] = shell_parameter[count];
-                        count++;
+                        memory_copy_apart(shell_getopts_list, shell_parameter,
+                                          shell_parameter_count *
+                                              sizeof(string_address));
+                        count = shell_parameter_count;
                 }
+                else
+                        while (count < shell_parameter_count)
+                        {
+                                shell_getopts_list[count] = shell_parameter[count];
+                                count++;
+                        }
         }
 
         optind = shell_number(env_get("OPTIND"));
