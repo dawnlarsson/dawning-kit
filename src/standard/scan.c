@@ -1440,6 +1440,43 @@ static b32 scan_run(scan_source address_to source, string_address format,
                 bool literal_skips = false;
                 b32 byte;
 
+                /* A string source exposes the whole ordinary literal run.
+                   The common-prefix floor gives both the match and the exact
+                   mismatch position, so successful bytes remain consumed and
+                   the rejected byte remains untouched just as scan_get plus
+                   scan_unget would leave them.  Streams retain the byte path:
+                   their refill buffer belongs to stream.c. */
+                if (scan_is_text(source) &&
+                    string_get(at) != '%' &&
+                    !byte_is_space(string_get(at)))
+                {
+                        string_address input =
+                                source->text + source->place;
+                        positive run = string_span_without_set(
+                                at, (string_address)"% \t\n\r\v\f");
+                        positive available = string_length_max(input, run);
+                        positive matched = memory_common_prefix(
+                                (address_any)at, (address_any)input, available);
+
+                        source->place += matched;
+                        source->consumed += matched;
+                        at += matched;
+
+                        if (matched != run)
+                        {
+                                if (matched == available)
+                                {
+                                        source->ended = true;
+                                        return scan_leave(source, assigned,
+                                                          true);
+                                }
+
+                                return scan_leave(source, assigned, false);
+                        }
+
+                        continue;
+                }
+
                 if (byte_is_space(string_get(at)))
                 {
                         while (byte_is_space(string_get(at)))

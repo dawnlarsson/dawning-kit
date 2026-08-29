@@ -846,6 +846,11 @@ static fn several(void)
                      address_of used) == 0 && used == 1);
 
         used = -1;
+        check("a literal mismatch keeps its matched prefix consumed",
+              sscanf((string_address) "abX", (string_address) "ab%nY",
+                     address_of used) == 0 && used == 2);
+
+        used = -1;
         check("%n alone on an empty input is zero and not the end",
               sscanf((string_address) "", (string_address) "%n",
                      address_of used) == 0 && used == 0);
