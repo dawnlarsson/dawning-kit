@@ -2429,11 +2429,13 @@ typedef struct
 static awk_writer awk_writers[AWK_STREAMS_MAX];
 static awk_reader awk_readers[AWK_STREAMS_MAX];
 static awk_writer awk_standard_out;
+static bool awk_write_failed;
 
 static fn awk_writer_flush(awk_writer address_to which)
 {
-        buffered_flush((positive)which->handle, which->buffer,
-                       address_of which->used);
+        if (!buffered_flush((positive)which->handle, which->buffer,
+                            address_of which->used))
+                awk_write_failed = true;
 }
 
 static fn awk_writer_put(awk_writer address_to which, string_address data, positive length)
@@ -2441,13 +2443,17 @@ static fn awk_writer_put(awk_writer address_to which, string_address data, posit
         if (which->handle == 2)
         {
                 awk_writer_flush(address_of awk_standard_out);
-                system_write_all(2, (address_any)data, length);
+
+                if (system_write_all(2, (address_any)data, length) != length)
+                        awk_write_failed = true;
+
                 return;
         }
 
-        buffered_write((positive)which->handle, which->buffer,
-                       sizeof(which->buffer), address_of which->used,
-                       (address_any)data, length);
+        if (!buffered_write((positive)which->handle, which->buffer,
+                            sizeof(which->buffer), address_of which->used,
+                            (address_any)data, length))
+                awk_write_failed = true;
 }
 
 static fn awk_flush_everything()
@@ -5262,6 +5268,10 @@ static fn awk_value_done(awk_value address_to which)
 static fn awk_leave(b32 code)
 {
         awk_flush_everything();
+
+        if (awk_write_failed && !code)
+                code = 1;
+
         awk_close_everything();
         exit(code & 0xff);
 }
@@ -6936,6 +6946,7 @@ static fn awk_stack_measure()
 
 static fn awk_start()
 {
+        awk_write_failed = false;
         awk_stack_measure();
         awk_infinity = awk_from_bits((positive)0x7ff0000000000000ull);
         // The sign bit is set because that is the one the machine's own log

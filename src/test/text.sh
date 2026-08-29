@@ -121,6 +121,33 @@ compare()
                 "$(head -c 34 "$work/got" | tr '\n\t' '|>')[$got_status]"
 }
 
+# Output errors are part of a utility's result. /dev/full accepts opens and
+# rejects writes, so it reaches both direct writes and the final buffered
+# flush without depending on a pipe reader's timing.
+compare_full()
+{
+        name=$1
+        tool=$2
+        feed=$3
+        shift 3
+
+        [ -e /dev/full ] || return 0
+
+        "$tool" "$@" < "$work/$feed" > /dev/full 2> /dev/null
+        want_status=$?
+        "$bin/$tool" "$@" < "$work/$feed" > /dev/full 2> /dev/null
+        got_status=$?
+
+        if [ "$want_status" = "$got_status" ]; then
+                pass=$((pass + 1))
+                return 0
+        fi
+
+        fail=$((fail + 1))
+        printf '  %-8s %-30s want status %-8s got %s\n' \
+                "$group" "$name" "$want_status" "$got_status"
+}
+
 #       A tool that rewrites its input cannot be handed the same file twice:
 #       the second run would read what the first one wrote. Each side gets its
 #       own copy and the copies are compared afterwards, because what -i puts
@@ -1246,6 +1273,23 @@ refuses_grep_context 'grep context slot ceiling' one -B8193 x
 refuses_long_sed_script
 refuses_many_grep_globs
 compare 'sed forty appends' sed - -f "$work/sed_many_appends" "$work/one"
+
+case_start writeerr
+compare_full 'cat stdout'  cat  a
+compare_full 'grep stdout' grep a alpha
+compare_full 'sed stdout'  sed  a p
+compare_full 'cut stdout'  cut  a -c1
+compare_full 'tr stdout'   tr   a a A
+compare_full 'sort stdout' sort a
+compare_full 'uniq stdout' uniq a
+compare_full 'head stdout' head a
+compare_full 'tail stdout' tail a
+compare_full 'wc stdout'   wc   a
+compare_full 'tee stdout'  tee  a
+compare_full 'rev stdout'  rev  a
+compare_full 'nl stdout'   nl   a
+compare_full 'fold stdout' fold a
+compare_full 'awk stdout'  awk  a '{print}'
 
 case_start readerr
 compare 'cat directory'  cat  - "$work/read_dir"

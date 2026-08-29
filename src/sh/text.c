@@ -33,10 +33,13 @@ static positive text_out_used;
 static positive text_out_handle = 1;
 static string_address text_name = "text";
 static b32 text_status;
+static bool text_out_failed;
 
 static fn text_flush()
 {
-        buffered_flush(text_out_handle, text_out_buffer, address_of text_out_used);
+        if (!buffered_flush(text_out_handle, text_out_buffer,
+                            address_of text_out_used))
+                text_out_failed = true;
 }
 
 // Changing where output goes has to empty what was written for the old one.
@@ -51,15 +54,17 @@ static fn text_out_to(positive handle)
 
 static fn text_put(address_any data, positive length)
 {
-        buffered_write_deferred_equal(text_out_handle, text_out_buffer,
-                                      TEXT_OUT_MAX, address_of text_out_used,
-                                      data, length);
+        if (!buffered_write_deferred_equal(text_out_handle, text_out_buffer,
+                                           TEXT_OUT_MAX, address_of text_out_used,
+                                           data, length))
+                text_out_failed = true;
 }
 
 static fn text_put_character(p8 character)
 {
-        buffered_write_byte(text_out_handle, text_out_buffer, TEXT_OUT_MAX,
-                            address_of text_out_used, character);
+        if (!buffered_write_byte(text_out_handle, text_out_buffer, TEXT_OUT_MAX,
+                                 address_of text_out_used, character))
+                text_out_failed = true;
 }
 
 static fn text_put_string(string_address value)
@@ -93,6 +98,19 @@ static fn text_error(string_address about, string_address reason)
 static b32 text_done(b32 code)
 {
         text_flush();
+
+        if (text_out_failed)
+        {
+                if (string_equals(text_name, "grep") ||
+                    string_equals(text_name, "sort"))
+                        return 2;
+
+                if (string_equals(text_name, "sed"))
+                        return 4;
+
+                return 1;
+        }
+
         return code;
 }
 
@@ -390,6 +408,11 @@ static b32 text_argument_count;
 
 static fn text_begin(string_address name)
 {
+        /* A shell may run several built-in tools in one process. */
+        text_out_used = 0;
+        text_out_handle = 1;
+        text_out_failed = false;
+        text_status = 0;
         text_name = name;
         text_argument_count = program_argument_count();
 }
@@ -2304,9 +2327,7 @@ static b32 text_cat()
                         cat_flags ? cat_walked() : cat_plain();
 
                 text_close();
-                text_flush();
-
-                return text_status;
+                return text_done(text_status);
         }
 
         for (b32 i = first; i < text_argument_count; i++)
@@ -2318,9 +2339,7 @@ static b32 text_cat()
                 text_close();
         }
 
-        text_flush();
-
-        return text_status;
+        return text_done(text_status);
 }
 
 static const file_long wc_longs[] = {
@@ -3303,16 +3322,19 @@ static b32 text_tee()
                 p8 address_to at = text_input.buffer + text_input.position;
                 positive left = text_input.filled - text_input.position;
 
-                system_write_all(1, at, left);
+                if (system_write_all(1, at, left) != left)
+                        text_out_failed = true;
 
                 for (b32 i = 0; i < handle_count; i++)
-                        system_write_all(handles[i], at, left);
+                        if (system_write_all(handles[i], at, left) != left)
+                                text_status = 1;
 
                 text_input.position = text_input.filled;
         }
 
         for (b32 i = 0; i < handle_count; i++)
-                system_call_1(syscall(close), handles[i]);
+                if (system_call_1(syscall(close), handles[i]) < 0)
+                        text_status = 1;
 
         return text_done(text_status);
 }
@@ -6051,6 +6073,7 @@ static b32 sed_text_add(string_address from, positive length)
 */
 static b32 sed_recent = -1;
 static bool sed_failed;
+static bool sed_io_failed;
 static bool sed_replaced;
 
 static bool sed_use_regex(b32 which)
@@ -6823,12 +6846,18 @@ static fn sed_write_space(b32 which)
                 }
         }
 
-        system_write_all((positive)sed_files[which].handle, sed_space,
-                         sed_space_length);
+        if (system_write_all((positive)sed_files[which].handle, sed_space,
+                             sed_space_length) != sed_space_length)
+        {
+                sed_io_failed = true;
+                return;
+        }
 
         // A last line that came without one does not leave with one.
         if (sed_space_ended)
-                system_write_all((positive)sed_files[which].handle, address_of mark, 1);
+                if (system_write_all((positive)sed_files[which].handle,
+                                     address_of mark, 1) != 1)
+                        sed_io_failed = true;
 }
 
 // What r names, whole, wherever the cycle's output had reached. A name that
@@ -7121,6 +7150,7 @@ static b32 text_sed()
         sed_have_script = false;
         sed_option_status = 1;
         sed_broken = false;
+        sed_io_failed = false;
 
         if (!file_take(address_of taking))
                 return text_done(sed_option_status);
@@ -7503,7 +7533,7 @@ static b32 text_sed()
                                 }
                         }
 
-                        if (sed_failed)
+                        if (sed_failed || sed_io_failed)
                                 break;
 
                         if (!sed_quiet && !dropped)
@@ -7526,7 +7556,7 @@ static b32 text_sed()
                                 text_put_character('\n');
                         }
 
-                        if (leaving >= 0 || sed_failed)
+                        if (leaving >= 0 || sed_failed || sed_io_failed)
                                 break;
                 }
 
@@ -7534,9 +7564,21 @@ static b32 text_sed()
 
                 if (written >= 0)
                 {
+                        bipolar closed;
+
                         text_flush();
                         text_out_to(1);
-                        system_call_1(syscall(close), (positive)written);
+                        closed = system_call_1(syscall(close), (positive)written);
+
+                        /* Never replace the input with a partial temporary. */
+                        if (text_out_failed || closed < 0)
+                        {
+                                system_call_3(syscall(unlinkat), AT_FDCWD,
+                                              (positive)temporary, 0);
+                                text_error(name, "write error");
+                                text_status = 4;
+                                break;
+                        }
 
                         if (sed_in_place[0])
                         {
@@ -7560,13 +7602,21 @@ static b32 text_sed()
                                       (positive)name, 0);
                 }
 
-                if (sed_failed)
+                if (sed_failed || sed_io_failed)
                         break;
         }
 
         for (b32 c = 0; c < sed_file_count; c++)
                 if (sed_files[c].handle >= 0)
-                        system_call_1(syscall(close), (positive)sed_files[c].handle);
+                        if (system_call_1(syscall(close),
+                                          (positive)sed_files[c].handle) < 0)
+                                sed_io_failed = true;
+
+        if (sed_io_failed)
+        {
+                text_error(null, "write error");
+                return text_done(4);
+        }
 
         if (sed_failed)
         {
