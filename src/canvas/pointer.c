@@ -149,6 +149,17 @@ static void desktop_confine_cursor(int *x, int *y)
         *y = clamp(*y, nearest->y, nearest->y + (int)nearest->height - 1);
 }
 
+static void pointer_latency_record(u64 started)
+{
+        u64 elapsed = ktime_get_ns() - started;
+
+        pointer_latency_total += elapsed;
+        pointer_events++;
+
+        if (elapsed > pointer_latency_worst)
+                pointer_latency_worst = elapsed;
+}
+
 static void pointer_apply(void)
 {
         _Bool button = atomic_xchg(&desktop.button_changed, 0);
@@ -197,8 +208,37 @@ static void pointer_apply(void)
                         if (desktop.dragging || desktop.resizing ||
                             desktop.barring)
                         {
-                                desktop.cursor_x = x;
-                                desktop.cursor_y = y;
+                                if (desktop.dragging || desktop.resizing)
+                                {
+                                        /*
+                                                A resize repaints the window,
+                                                not the independent hardware
+                                                cursor plane. Move that plane
+                                                first so the pointer never
+                                                waits behind composition; the
+                                                integrated repaint below
+                                                carries software cursors.
+                                        */
+                                        if (cursor_move_planes(x, y) && started)
+                                        {
+                                                /*
+                                                        The independent plane
+                                                        is on screen now. Do
+                                                        not charge the window
+                                                        compose behind it to
+                                                        pointer latency.
+                                                */
+                                                pointer_latency_record(started);
+                                                started = 0;
+                                        }
+                                }
+                                else
+                                {
+                                        // Bar movement schedules a later
+                                        // frame, so both cursor paths land
+                                        // synchronously here.
+                                        cursor_move(x, y);
+                                }
 
                                 if (desktop.dragging)
                                         drag_move(x, y);
@@ -217,15 +257,7 @@ static void pointer_apply(void)
         mutex_unlock(&desktop.lock);
 
         if (started)
-        {
-                u64 elapsed = ktime_get_ns() - started;
-
-                pointer_latency_total += elapsed;
-                pointer_events++;
-
-                if (elapsed > pointer_latency_worst)
-                        pointer_latency_worst = elapsed;
-        }
+                pointer_latency_record(started);
 }
 
 static void pointer_commit(int x, int y)

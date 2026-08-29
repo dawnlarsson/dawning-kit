@@ -226,18 +226,26 @@ static void cursor_paint(struct output *output, int old_x, int old_y,
 /*
         Moves the one cursor, and changes its shape where that is what changed.
         Only the outputs it left and the outputs it arrived on are touched.
+
+        During a window drag the window repaint carries a software cursor with
+        it, but a hardware cursor is a different plane and that repaint cannot
+        move it. planes_only arms those planes immediately, before the more
+        expensive window compose, and leaves the software damage and drawn
+        coordinates for pane_reshape to finish in the same pass.
 */
-static void cursor_move(int new_x, int new_y)
+static _Bool cursor_move_core(int new_x, int new_y, _Bool planes_only)
 {
         int old_x = desktop.drawn_x;
         int old_y = desktop.drawn_y;
         unsigned int old_shape = desktop.drawn_shape;
         unsigned int old_scale = desktop.drawn_scale;
         struct output *output;
+        _Bool plane_presented = false;
+        _Bool plane_complete = true;
 
         if (old_x == new_x && old_y == new_y &&
             old_shape == desktop.cursor_shape && old_scale == desktop.cursor_scale)
-                return;
+                return false;
 
         desktop.cursor_x = new_x;
         desktop.cursor_y = new_y;
@@ -245,13 +253,14 @@ static void cursor_move(int new_x, int new_y)
         list_for_each_entry(output, &desktop.outputs, link)
         {
                 struct drm_rect was;
+                _Bool wanted = output_shows_cursor(output, new_x, new_y);
 
                 cursor_cell(&was, old_x, old_y, old_shape, old_scale);
 
                 if (!rects_overlap(was.x1, was.y1, was.x2 - was.x1, was.y2 - was.y1,
                                    output->x, output->y,
                                    (int)output->width, (int)output->height) &&
-                    !output_shows_cursor(output, new_x, new_y))
+                    !wanted)
                         continue;
 
                 if (output->cursor_plane)
@@ -262,14 +271,37 @@ static void cursor_move(int new_x, int new_y)
                         pointer_flush_total += ktime_get_ns() - started;
 
                         if (output->cursor_plane)
+                        {
+                                if (wanted)
+                                        plane_presented = true;
                                 continue;
+                        }
                 }
 
-                cursor_paint(output, old_x, old_y, old_shape, new_x, new_y);
+                if (wanted)
+                        plane_complete = false;
+
+                if (!planes_only)
+                        cursor_paint(output, old_x, old_y, old_shape, new_x, new_y);
         }
 
-        desktop.drawn_x = new_x;
-        desktop.drawn_y = new_y;
-        desktop.drawn_shape = desktop.cursor_shape;
-        desktop.drawn_scale = desktop.cursor_scale;
+        if (!planes_only)
+        {
+                desktop.drawn_x = new_x;
+                desktop.drawn_y = new_y;
+                desktop.drawn_shape = desktop.cursor_shape;
+                desktop.drawn_scale = desktop.cursor_scale;
+        }
+
+        return plane_presented && plane_complete;
+}
+
+static _Bool cursor_move_planes(int new_x, int new_y)
+{
+        return cursor_move_core(new_x, new_y, true);
+}
+
+static void cursor_move(int new_x, int new_y)
+{
+        cursor_move_core(new_x, new_y, false);
 }
