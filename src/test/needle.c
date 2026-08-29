@@ -163,6 +163,34 @@ static void judge_at_edge(const p8 address_to what, const p8 address_to want,
                      "a different answer against the map edge");
 }
 
+static void judge_case_at_edge(const p8 address_to want, positive length,
+                               positive size, positive where)
+{
+        p8 address_to hay = edge - size;
+
+        for (positive i = 0; i < size; i++)
+                hay[i] = (p8)('a' + (i % 3));
+        if (where != (positive)-1 && where + length <= size)
+                for (positive i = 0; i < length; i++)
+                        hay[where + i] = want[i];
+
+        positive2 anchors = memory_search_prepare(want, length, true);
+        address_any expected = reference_search_ascii_case(hay, size, want,
+                                                            length);
+
+        checks++;
+        if (memory_search_ascii_case((address_any)hay, size, want, length) !=
+            expected)
+                fail((const p8 address_to)"folded against edge", length, size,
+                     "a different answer against the map edge");
+        checks++;
+        if (memory_search_ascii_case_prepared((address_any)hay, size, want,
+                                              length, anchors.x) != expected)
+                fail((const p8 address_to)"prepared folded against edge",
+                     length, size,
+                     "a different answer against the map edge");
+}
+
 /*
         One literal needle length, every haystack length, every placement.
 
@@ -239,6 +267,7 @@ static void judge_at_edge(const p8 address_to what, const p8 address_to want,
                                       reference_search_ascii_case(           \
                                               FIELD, size, want, (K)),       \
                                       (K), size);                            \
+                                judge_case_at_edge(want, (K), size, where); \
                         }                                                     \
         } while (0)
 
@@ -289,6 +318,7 @@ static void sweep(void)
         CHECK_SEARCH_CASE(1, "-");
         CHECK_SEARCH_CASE(2, "bc");
         CHECK_SEARCH_CASE(3, "aBc");
+        CHECK_SEARCH_CASE(33, "aBcAbCaBcAbCaBcAbCaBcAbCaBcAbCaBc");
 
         CHECK_OVERLAP(1, "b");
         CHECK_OVERLAP(2, "ab");
