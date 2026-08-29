@@ -730,6 +730,29 @@ answered 'sign only' seq +
 answered 'dot only' seq .
 same 'signed maximum singleton' seq 9223372036854775807 1 9223372036854775807
 same 'signed minimum singleton' seq -9223372036854775808 -1 -9223372036854775808
+same 'decimal tenths exact' seq 0 .1 .3
+same 'decimal places retained' seq 1.00 .25 2.00
+same 'decimal descending' seq 1 -.25 0
+same 'decimal exponent' seq 1e0 2e-1 1.6e0
+same 'decimal negative zero' seq -0.0 .1 .2
+same 'decimal endpoint below step' seq 0 .1 .29999999999999999
+same 'decimal endpoint above step' seq 0 .1 .30000000000000001
+same 'decimal padded sign' seq -w -1 .5 1
+same 'decimal padded crossing' seq -w 9.9 .1 10.05
+same 'decimal separator' seq -s, 0 .1 .3
+same 'decimal fixed format' seq -f %.2f 0 .1 .3
+same 'decimal format zero pad' seq -f %06.2f 0 .1 .3
+same 'decimal format left' seq -f %-6.2f 0 .5 1
+same 'decimal format signed' seq -f %+06.2f 0 .5 1
+same 'decimal format literal percent' seq -f '%% %.1f' 0 .5 1
+same 'decimal format ties even' seq -f %.0f -1 .5 1
+same 'decimal format alternate' seq -f '%#.0f' 1 2
+same 'decimal format long double' seq -f %Lf 1 2
+answered 'decimal zero increment' seq 1 0.0 2
+answered 'decimal malformed exponent' seq 1e 2
+answered 'decimal repeated point' seq 1.2.3 2
+answered 'decimal format with equal width' seq -w -f %.1f 1 2
+answered 'decimal multiple formats' seq -f %f-%f 1 2
 
 group yes
 yes_stress

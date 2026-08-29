@@ -8586,9 +8586,12 @@ static b32 file_stty()
 /*
         seq LAST, seq FIRST LAST, seq FIRST INCREMENT LAST.
 
-        Whole numbers only. The rest of this tree has no way to read a decimal
-        out of a string, and a seq that printed a rounded 0.1 would be worse
-        than one that says it cannot.
+        Decimal operands stay decimal.  Keeping an integer coefficient and a
+        power-of-ten scale is both smaller than bringing a floating-point
+        parser into every utility and, more importantly, means .1 added three
+        times ends at .3 exactly.  The whole-number path below remains
+        separate: it owns the complete signed 64-bit range without making an
+        integer pay for decimal scaling.
 */
 static fn seq_write(writer write, bipolar value, positive width)
 {
@@ -8657,6 +8660,456 @@ static bool seq_number(string_address text, bipolar address_to value)
         return true;
 }
 
+typedef struct
+{
+        bipolar coefficient;
+        positive scale;
+        positive shown;
+        bool negative_zero;
+} seq_decimal;
+
+static positive seq_power_ten(positive power)
+{
+        positive answer = 1;
+
+        while (power--)
+                answer *= 10;
+
+        return answer;
+}
+
+/*
+        Read the decimal grammar accepted by seq: a sign, digits with one
+        optional point, and an optional decimal exponent.  Trailing fractional
+        zeroes are removed from the arithmetic coefficient but retained in
+        shown, because `seq 1.00 .5 2` promises two places in its output.
+
+        Eighteen fractional places keep every scale and rescale inside one
+        native register.  Inputs outside that exact range are rejected rather
+        than silently rounded through binary floating point.
+*/
+static bool seq_decimal_number(string_address text, seq_decimal address_to out)
+{
+        positive at = 0;
+        bool minus = false;
+
+        if (string_is(text, '-') || string_is(text, '+'))
+        {
+                minus = string_is(text, '-');
+                at++;
+        }
+
+        positive mantissa = at;
+        positive point = positive_max;
+        positive digits = 0;
+        positive fractional = 0;
+
+        while (text[at] && text[at] != 'e' && text[at] != 'E')
+        {
+                if (text[at] == '.')
+                {
+                        if (point != positive_max)
+                                return false;
+
+                        point = at;
+                }
+                else if (text[at] >= '0' && text[at] <= '9')
+                {
+                        digits++;
+
+                        if (point != positive_max)
+                                fractional++;
+                }
+                else
+                        return false;
+
+                at++;
+        }
+
+        if (!digits)
+                return false;
+
+        bipolar exponent = 0;
+
+        if (text[at])
+        {
+                at++;
+                bool exponent_minus = false;
+
+                if (text[at] == '-' || text[at] == '+')
+                {
+                        exponent_minus = text[at] == '-';
+                        at++;
+                }
+
+                if (text[at] < '0' || text[at] > '9')
+                        return false;
+
+                positive magnitude = 0;
+
+                while (text[at] >= '0' && text[at] <= '9')
+                {
+                        positive digit = (positive)(text[at++] - '0');
+
+                        // More than this cannot fit the exact decimal floor.
+                        if (magnitude > 100000)
+                                return false;
+
+                        magnitude = magnitude * 10 + digit;
+                }
+
+                if (text[at])
+                        return false;
+
+                exponent = exponent_minus ? -(bipolar)magnitude
+                                          : (bipolar)magnitude;
+        }
+
+        bipolar effective = (bipolar)fractional - exponent;
+        positive shown = effective > 0 ? (positive)effective : 0;
+
+        if (shown > 18)
+                return false;
+
+        // Find how many rightmost coefficient zeroes can cancel the scale.
+        // The exponent was included in at; find the mantissa end directly.
+        positive finish = mantissa;
+
+        while (text[finish] && text[finish] != 'e' && text[finish] != 'E')
+                finish++;
+
+        positive removable = effective > 0 ? (positive)effective : 0;
+        positive trim = 0;
+        positive scan = finish;
+
+        while (scan > mantissa && trim < removable)
+        {
+                scan--;
+
+                if (text[scan] == '.')
+                        continue;
+
+                if (text[scan] != '0')
+                        break;
+
+                trim++;
+        }
+
+        positive limit = minus ? (positive)bipolar_max + 1
+                               : (positive)bipolar_max;
+        positive coefficient = 0;
+        positive kept = digits - trim;
+        positive seen = 0;
+
+        for (positive i = mantissa; i < finish && seen < kept; i++)
+        {
+                if (text[i] == '.')
+                        continue;
+
+                positive digit = (positive)(text[i] - '0');
+
+                if (coefficient > (limit - digit) / 10)
+                        return false;
+
+                coefficient = coefficient * 10 + digit;
+                seen++;
+        }
+
+        effective -= (bipolar)trim;
+
+        if (effective < 0)
+        {
+                positive grow = (positive)-effective;
+
+                if (grow > 18)
+                {
+                        if (coefficient)
+                                return false;
+
+                        out->coefficient = 0;
+                        out->scale = 0;
+                        out->shown = shown;
+                        out->negative_zero = minus;
+                        return true;
+                }
+
+                positive multiplier = seq_power_ten(grow);
+
+                if (coefficient > limit / multiplier)
+                        return false;
+
+                coefficient *= multiplier;
+                effective = 0;
+        }
+
+        out->coefficient = minus
+                               ? (coefficient == (positive)bipolar_max + 1
+                                      ? bipolar_min
+                                      : -(bipolar)coefficient)
+                               : (bipolar)coefficient;
+        out->scale = (positive)effective;
+        out->shown = shown;
+        out->negative_zero = minus && coefficient == 0;
+        return true;
+}
+
+static bool seq_decimal_rescale(seq_decimal address_to number, positive scale)
+{
+        if (number->scale == scale)
+                return true;
+
+        positive multiplier = seq_power_ten(scale - number->scale);
+        positive magnitude = (positive)number->coefficient;
+        positive limit = number->coefficient < 0
+                             ? (positive)bipolar_max + 1
+                             : (positive)bipolar_max;
+
+        if (number->coefficient < 0)
+                magnitude = (positive)0 - magnitude;
+
+        if (magnitude > limit / multiplier)
+                return false;
+
+        magnitude *= multiplier;
+        number->coefficient = number->coefficient < 0
+                                  ? (magnitude == (positive)bipolar_max + 1
+                                         ? bipolar_min
+                                         : -(bipolar)magnitude)
+                                  : (bipolar)magnitude;
+        number->scale = scale;
+        return true;
+}
+
+static positive seq_decimal_width(bipolar value, positive scale,
+                                  positive precision, bool negative_zero)
+{
+        positive magnitude = (positive)value;
+
+        if (value < 0)
+                magnitude = (positive)0 - magnitude;
+
+        if (scale > precision)
+                magnitude /= seq_power_ten(scale - precision);
+
+        magnitude /= seq_power_ten(scale < precision ? scale : precision);
+
+        return positive_digits(magnitude) + (precision ? precision + 1 : 0) +
+               (value < 0 || negative_zero);
+}
+
+static fn seq_decimal_write(writer write, bipolar value, positive scale,
+                            positive precision, positive width,
+                            bool negative_zero)
+{
+        bool minus = value < 0 || negative_zero;
+        positive magnitude = (positive)value;
+
+        if (value < 0)
+                magnitude = (positive)0 - magnitude;
+
+        // Values emitted by the sequence have no significant digits below
+        // its chosen precision.  The division is therefore exact.
+        if (scale > precision)
+                magnitude /= seq_power_ten(scale - precision);
+
+        positive stored_precision = scale < precision ? scale : precision;
+        positive divisor = seq_power_ten(stored_precision);
+        positive whole = magnitude / divisor;
+        positive fraction = magnitude % divisor;
+        positive suffix = precision ? precision + 1 : 0;
+        positive whole_width = width > suffix ? width - suffix : 0;
+
+        positive_to_padded(write, whole, whole_width, '0', minus ? '-' : 0);
+
+        if (precision)
+        {
+                write(".", 1);
+
+                if (stored_precision)
+                        positive_to_padded(write, fraction, stored_precision,
+                                           '0', 0);
+
+                if (precision > stored_precision)
+                        writer_fill(write, precision - stored_precision, '0');
+        }
+}
+
+typedef struct
+{
+        string_address text;
+        positive directive;
+        positive after;
+        positive width;
+        positive precision;
+        bool left;
+        bool plus;
+        bool space;
+        bool zero;
+        bool alternate;
+} seq_format;
+
+static bool seq_format_read(string_address text, seq_format address_to format)
+{
+        bool found = false;
+
+        memory_fill(format, 0, sizeof(*format));
+        format->text = text;
+
+        for (positive at = 0; text[at]; at++)
+        {
+                if (text[at] != '%')
+                        continue;
+
+                if (text[at + 1] == '%')
+                {
+                        at++;
+                        continue;
+                }
+
+                if (found)
+                        return false;
+
+                found = true;
+                format->directive = at++;
+
+                bool flags = true;
+
+                while (flags)
+                        switch (text[at])
+                        {
+                        case '-': format->left = true; at++; break;
+                        case '+': format->plus = true; at++; break;
+                        case ' ': format->space = true; at++; break;
+                        case '0': format->zero = true; at++; break;
+                        case '#': format->alternate = true; at++; break;
+                        default: flags = false; break;
+                        }
+
+                while (text[at] >= '0' && text[at] <= '9')
+                {
+                        if (format->width > 100000)
+                                return false;
+
+                        format->width = format->width * 10 +
+                                        (positive)(text[at++] - '0');
+                }
+
+                format->precision = 6;
+
+                if (text[at] == '.')
+                {
+                        at++;
+                        format->precision = 0;
+
+                        while (text[at] >= '0' && text[at] <= '9')
+                        {
+                                if (format->precision > 100000)
+                                        return false;
+
+                                format->precision = format->precision * 10 +
+                                                    (positive)(text[at++] - '0');
+                        }
+                }
+
+                // coreutils accepts an explicit long-double length here even
+                // though seq supplies that type itself.
+                if (text[at] == 'L')
+                        at++;
+
+                if (text[at] != 'f' && text[at] != 'F')
+                        return false;
+
+                format->after = at + 1;
+        }
+
+        return found;
+}
+
+static fn seq_format_literal(writer write, string_address text, positive length)
+{
+        positive start = 0;
+
+        for (positive at = 0; at < length; at++)
+                if (text[at] == '%' && at + 1 < length && text[at + 1] == '%')
+                {
+                        write(text + start, at - start + 1);
+                        at++;
+                        start = at + 1;
+                }
+
+        if (start < length)
+                write(text + start, length - start);
+}
+
+static fn seq_format_write(writer write, seq_format address_to format,
+                           bipolar value, positive scale, bool negative_zero)
+{
+        seq_format_literal(write, format->text, format->directive);
+
+        bool minus = value < 0 || negative_zero;
+        positive magnitude = (positive)value;
+
+        if (value < 0)
+                magnitude = (positive)0 - magnitude;
+
+        positive precision = format->precision;
+        positive stored = scale;
+
+        if (stored > precision)
+        {
+                positive divisor = seq_power_ten(stored - precision);
+                positive rounded = magnitude / divisor;
+                positive remainder = magnitude % divisor;
+                positive half = divisor / 2;
+
+                if (remainder > half || (remainder == half && (rounded & 1)))
+                        rounded++;
+
+                magnitude = rounded;
+                stored = precision;
+        }
+
+        positive divisor = seq_power_ten(stored);
+        positive whole = magnitude / divisor;
+        positive fraction = magnitude % divisor;
+        positive sign = minus || format->plus || format->space;
+        positive body = positive_digits(whole) + sign +
+                        (precision || format->alternate ? precision + 1 : 0);
+        positive padding = format->width > body ? format->width - body : 0;
+
+        if (!format->left && !format->zero)
+                writer_fill(write, padding, ' ');
+
+        if (minus)
+                write("-", 1);
+        else if (format->plus)
+                write("+", 1);
+        else if (format->space)
+                write(" ", 1);
+
+        if (!format->left && format->zero)
+                writer_fill(write, padding, '0');
+
+        positive_to_string(write, whole);
+
+        if (precision || format->alternate)
+        {
+                write(".", 1);
+
+                if (stored)
+                        positive_to_padded(write, fraction, stored, '0', 0);
+
+                if (precision > stored)
+                        writer_fill(write, precision - stored, '0');
+        }
+
+        if (format->left)
+                writer_fill(write, padding, ' ');
+
+        string_address suffix = format->text + format->after;
+        seq_format_literal(write, suffix, string_length(suffix));
+}
+
 static const file_long seq_longs[] = {
     {(string_address) "equal-width", 'w'},
     {(string_address) "format", 'f'},
@@ -8677,19 +9130,11 @@ static b32 file_seq()
         if (!file_take(address_of taking))
                 return 1;
 
-        // -f is printf's format for a double. Everything here counts in whole
-        // numbers, and saying so is better than printing the right numbers in
-        // the wrong shape.
-        if (file_option_value(address_of taking, 'f'))
-        {
-                file_fail("seq: -f: this seq counts in whole numbers and has no format\n", 0);
-                return 1;
-        }
-
         positive count = (positive)program_argument_count();
         positive index = taking.first;
         bool pad = (taking.flags & FILE_FLAG('w')) != 0;
         string_address separator = file_option_value(address_of taking, 's');
+        string_address format_text = file_option_value(address_of taking, 'f');
 
         if (!separator)
                 separator = (string_address) "\n";
@@ -8700,6 +9145,128 @@ static b32 file_seq()
         {
                 file_fail("seq: needs one, two or three numbers\n", 0);
                 return 1;
+        }
+
+        if (pad && format_text)
+        {
+                file_fail("seq: a format cannot be combined with equal width\n", 0);
+                return 1;
+        }
+
+        seq_format format;
+
+        if (format_text && !seq_format_read(format_text, address_of format))
+        {
+                file_fail("seq: format needs exactly one %f conversion\n", 0);
+                return 1;
+        }
+
+        bool decimal = format_text != null;
+
+        for (positive i = 0; i < given && !decimal; i++)
+        {
+                string_address word = program_argument((b32)(index + i));
+
+                decimal = string_first_of_or_end(word, '.') != word + string_length(word) ||
+                          string_first_of_or_end(word, 'e') != word + string_length(word) ||
+                          string_first_of_or_end(word, 'E') != word + string_length(word);
+        }
+
+        if (decimal)
+        {
+                seq_decimal number[3];
+
+                for (positive i = 0; i < given; i++)
+                        if (!seq_decimal_number(program_argument((b32)(index + i)),
+                                                address_of number[i]))
+                        {
+                                string_format(file_fail, "seq: invalid number: %s\n",
+                                              program_argument((b32)(index + i)));
+                                return 1;
+                        }
+
+                seq_decimal first = given == 1
+                                        ? (seq_decimal){1, 0, 0, false}
+                                        : number[0];
+                seq_decimal step = given == 3
+                                       ? number[1]
+                                       : (seq_decimal){1, 0, 0, false};
+                seq_decimal last = number[given - 1];
+                positive precision = first.shown > step.shown
+                                         ? first.shown
+                                         : step.shown;
+                positive scale = first.scale;
+
+                if (step.scale > scale)
+                        scale = step.scale;
+
+                if (last.scale > scale)
+                        scale = last.scale;
+
+                if (!seq_decimal_rescale(address_of first, scale) ||
+                    !seq_decimal_rescale(address_of step, scale) ||
+                    !seq_decimal_rescale(address_of last, scale))
+                {
+                        file_fail("seq: decimal range is too large\n", 0);
+                        return 1;
+                }
+
+                if (step.coefficient == 0)
+                {
+                        file_fail("seq: increment must not be zero\n", 0);
+                        return 1;
+                }
+
+                positive width = 0;
+
+                if (pad)
+                {
+                        width = seq_decimal_width(first.coefficient, scale,
+                                                  precision,
+                                                  first.negative_zero);
+                        positive last_width = seq_decimal_width(
+                            last.coefficient, scale, precision,
+                            last.negative_zero);
+
+                        if (last_width > width)
+                                width = last_width;
+                }
+
+                bipolar value = first.coefficient;
+                bool written = false;
+
+                while (step.coefficient > 0 ? value <= last.coefficient
+                                            : value >= last.coefficient)
+                {
+                        if (written)
+                                log(separator, 0);
+
+                        bool negative_zero = !written && first.negative_zero;
+
+                        if (format_text)
+                                seq_format_write(log, address_of format, value,
+                                                 scale, negative_zero);
+                        else
+                                seq_decimal_write(log, value, scale, precision,
+                                                  width, negative_zero);
+
+                        written = true;
+
+                        if (value == last.coefficient ||
+                            (step.coefficient > 0 &&
+                             value > bipolar_max - step.coefficient) ||
+                            (step.coefficient < 0 &&
+                             value < bipolar_min - step.coefficient))
+                                break;
+
+                        value += step.coefficient;
+                }
+
+                if (written)
+                        log("\n", 1);
+
+                log_flush();
+                return 0;
         }
 
         bipolar number[3];
