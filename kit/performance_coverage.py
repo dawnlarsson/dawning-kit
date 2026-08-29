@@ -107,6 +107,8 @@ cover('direct_benchmark', 'kit/bench_text_hot.c', 'memory_common_prefix',
       'paired scalar/assembly timing over equal and late-difference text spans')
 cover('direct_benchmark', 'kit/bench_hash_33.c', 'memory_hash_33',
       'page-edge verifier and paired dependent-scalar/four-byte polynomial timing')
+cover('direct_benchmark', 'kit/bench_span_byte.c', 'memory_span_byte',
+      'page-edge verifier and paired scalar/vector equal-run timing')
 cover('direct_benchmark', 'kit/bench_ascii_case.c', 'memory_compare_ascii_case',
       'exhaustive byte-pair validation and paired folded comparison timing')
 cover('direct_benchmark', 'kit/bench_ascii_convert.c', '''

@@ -997,6 +997,20 @@ static b32 awk_stream_first()
         }
 }
 
+static b32 awk_stream_nonzero()
+{
+        if (awk_stream_count >= 64)
+                return (b32)memory_span_byte(awk_stream, '0',
+                                             (positive)awk_stream_count);
+
+        b32 first = 0;
+
+        while (first < awk_stream_count && awk_stream[first] == '0')
+                first++;
+
+        return first;
+}
+
 static positive awk_write_scientific(decimal value, b32 precision, p8 address_to out,
                                      bool upper, bool point_always)
 {
@@ -1023,8 +1037,7 @@ static positive awk_write_scientific(decimal value, b32 precision, p8 address_to
 
         awk_stream_round(first + precision + 1);
 
-        for (first = 0; first < awk_stream_count && awk_stream[first] == '0'; first++)
-                ;
+        first = awk_stream_nonzero();
 
         b32 exponent = awk_stream_point - 1 - first;
 
@@ -1058,8 +1071,7 @@ static positive awk_write_general(decimal value, b32 precision, p8 address_to ou
 
                 awk_stream_round(first + precision);
 
-                for (first = 0; first < awk_stream_count && awk_stream[first] == '0'; first++)
-                        ;
+                first = awk_stream_nonzero();
 
                 exponent = awk_stream_point - 1 - first;
         }

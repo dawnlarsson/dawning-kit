@@ -941,6 +941,68 @@ test(memory_hash_33) {
         return true;
 }
 
+test(memory_span_byte) {
+        p8 bytes[4128];
+        positive page_lengths[] = {255, 256, 257, 4095};
+
+        for (positive value = 0; value < 256; value++)
+                for (positive offset = 0; offset < 16; offset++)
+                        for (positive length = 0; length <= 33; length++)
+                                for (positive mismatch = 0; mismatch <= length; mismatch++)
+                                {
+                                        if (offset)
+                                                bytes[offset - 1] = 0xa5;
+                                        memory_fill(bytes + offset, (p8)value, length);
+                                        bytes[offset + length] = 0xa5;
+
+                                        if (mismatch < length)
+                                                bytes[offset + mismatch] = (p8)(value + 1);
+
+                                        positive got = memory_span_byte(
+                                            bytes + offset, (p8)value, length);
+
+                                        if (got != mismatch)
+                                                return false;
+                                        if (offset)
+                                                fail(bytes[offset - 1] == 0xa5);
+                                        fail(bytes[offset + length] == 0xa5);
+                                }
+
+        for (positive value = 0; value < 256; value++)
+                for (positive offset = 0; offset < 16; offset++)
+                        for (positive li = 0;
+                             li < sizeof(page_lengths) / sizeof(*page_lengths); li++)
+                        {
+                                positive length = page_lengths[li];
+                                positive positions[] = {0, 1, 15, 16, length / 2,
+                                                        length - 1, length};
+
+                                if (offset + length >= sizeof(bytes))
+                                        continue;
+
+                                for (positive pi = 0;
+                                     pi < sizeof(positions) / sizeof(*positions); pi++)
+                                {
+                                        positive mismatch = positions[pi];
+
+                                        if (offset)
+                                                bytes[offset - 1] = 0xa5;
+                                        memory_fill(bytes + offset, (p8)value, length);
+                                        bytes[offset + length] = 0xa5;
+                                        if (mismatch < length)
+                                                bytes[offset + mismatch] = (p8)(value + 1);
+
+                                        fail(memory_span_byte(bytes + offset, (p8)value,
+                                                              length) == mismatch);
+                                        if (offset)
+                                                fail(bytes[offset - 1] == 0xa5);
+                                        fail(bytes[offset + length] == 0xa5);
+                                }
+                        }
+
+        return true;
+}
+
 /*
         Square root, which is the hardware's own instruction.
 
@@ -1197,6 +1259,7 @@ test_case test_cases[] = {
         case(byte_case),
         case(memory_ascii_case),
         case(memory_hash_33),
+        case(memory_span_byte),
         case(absolute_whole_and_wide),
         case(square_root_is_exact),
         case(absolute_value),

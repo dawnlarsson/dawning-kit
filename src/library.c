@@ -67,7 +67,7 @@
         A .set is a second label on the same address, so there is no wrapper
         and no jump, and which names get one depends on who is linking.
 
-        175 routines (169 public, 6 local), 175 of them on all three.
+        176 routines (170 public, 6 local), 176 of them on all three.
         Raw C purity: 0 function bodies, 0 object definitions, 0 body macros, and 0 object macros (all forbidden).
 
           routine                        scope   x86_64  arm64   riscv64
@@ -144,6 +144,7 @@
           memory_reverse                 public  yes     yes     yes
           memory_search                  public  yes     yes     yes
           memory_search_ascii_case       public  yes     yes     yes
+          memory_span_byte               public  yes     yes     yes
           memory_to_lower_ascii          public  yes     yes     yes
           memory_to_upper_ascii          public  yes     yes     yes
           memory_translate               public  yes     yes     yes
@@ -3277,6 +3278,32 @@ __asm__(
     ".Lmemory_hash_33_x64_done:\n"
     ASM_RET
     ASM_END(memory_hash_33)
+
+    ASM_FUNC(memory_span_byte)
+    "xor %eax, %eax\n"
+#ifndef KERNEL_MODE
+    "cmp $16, %rdx\n   jb .Lmemory_span_byte_x64_tail\n"
+    "movzbl %sil, %ecx\n   imul $16843009, %ecx, %ecx\n"
+    "movd %ecx, %xmm1\n   pshufd $0, %xmm1, %xmm1\n"
+    ".balign 16\n.Lmemory_span_byte_x64_16:\n"
+    "movdqu (%rdi,%rax), %xmm0\n   pcmpeqb %xmm1, %xmm0\n"
+    "pmovmskb %xmm0, %ecx\n   cmp $65535, %ecx\n"
+    "jne .Lmemory_span_byte_x64_mismatch\n   add $16, %rax\n"
+    "sub $16, %rdx\n   cmp $16, %rdx\n   jae .Lmemory_span_byte_x64_16\n"
+#endif
+    ".Lmemory_span_byte_x64_tail:\n   test %rdx, %rdx\n"
+    "jz .Lmemory_span_byte_x64_done\n"
+    ".Lmemory_span_byte_x64_one:\n   cmp %sil, (%rdi,%rax)\n"
+    "jne .Lmemory_span_byte_x64_done\n   inc %rax\n   dec %rdx\n"
+    "jnz .Lmemory_span_byte_x64_one\n"
+    ".Lmemory_span_byte_x64_done:\n"
+    ASM_RET
+#ifndef KERNEL_MODE
+    ".Lmemory_span_byte_x64_mismatch:\n   xor $65535, %ecx\n"
+    "bsf %ecx, %ecx\n   add %rcx, %rax\n"
+    ASM_RET
+#endif
+    ASM_END(memory_span_byte)
 
     // A stable 256-byte table is an indexed load per byte; four independent
     // chains overlap that latency where no byte-granularity SIMD gather can.
@@ -6839,6 +6866,27 @@ __asm__(
     ASM_RET
     ASM_END(memory_hash_33)
 
+    ASM_FUNC(memory_span_byte)
+    "mov x3, #0\n   mov x4, x0\n"
+#ifndef KERNEL_MODE
+    "cmp x2, #16\n   b.lo .Lmemory_span_byte_arm64_tail\n"
+    "dup v2.16b, w1\n"
+    ".balign 16\n.Lmemory_span_byte_arm64_16:\n"
+    "ldr q0, [x4]\n   cmeq v0.16b, v0.16b, v2.16b\n"
+    "uminv b1, v0.16b\n   umov w5, v1.b[0]\n   cmp w5, #255\n"
+    "b.ne .Lmemory_span_byte_arm64_tail\n   add x4, x4, #16\n"
+    "add x3, x3, #16\n   sub x2, x2, #16\n   cmp x2, #16\n"
+    "b.hs .Lmemory_span_byte_arm64_16\n"
+#endif
+    ".Lmemory_span_byte_arm64_tail:\n   cbz x2, .Lmemory_span_byte_arm64_done\n"
+    ".Lmemory_span_byte_arm64_one:\n   ldrb w5, [x4], #1\n"
+    "cmp w5, w1\n   b.ne .Lmemory_span_byte_arm64_done\n"
+    "add x3, x3, #1\n   subs x2, x2, #1\n"
+    "b.ne .Lmemory_span_byte_arm64_one\n"
+    ".Lmemory_span_byte_arm64_done:\n   mov x0, x3\n"
+    ASM_RET
+    ASM_END(memory_span_byte)
+
     // Four independent table loads hide the dependent byte-index latency.
     ASM_FUNC(memory_translate)
     "mov x8, x0\n   cmp x1, #4\n   b.lo .Lmemory_translate_arm64_tail\n"
@@ -9733,6 +9781,25 @@ __asm__(
     ASM_RET
     ASM_END(memory_hash_33)
 
+    ASM_FUNC(memory_span_byte)
+    "mv t0, a0\n   li t1, 0\n   li t6, 4\n"
+    "bltu a2, t6, .Lmemory_span_byte_rv_tail\n"
+    ".balign 16\n.Lmemory_span_byte_rv_four:\n"
+    "lbu t2, 0(t0)\n   lbu t3, 1(t0)\n   lbu t4, 2(t0)\n   lbu t5, 3(t0)\n"
+    "xor t2, t2, a1\n   xor t3, t3, a1\n   xor t4, t4, a1\n   xor t5, t5, a1\n"
+    "or t2, t2, t3\n   or t4, t4, t5\n   or t2, t2, t4\n"
+    "bnez t2, .Lmemory_span_byte_rv_tail\n   addi t0, t0, 4\n"
+    "addi t1, t1, 4\n   addi a2, a2, -4\n"
+    "bgeu a2, t6, .Lmemory_span_byte_rv_four\n"
+    ".Lmemory_span_byte_rv_tail:\n   beqz a2, .Lmemory_span_byte_rv_done\n"
+    ".Lmemory_span_byte_rv_one:\n   lbu t2, 0(t0)\n"
+    "bne t2, a1, .Lmemory_span_byte_rv_done\n   addi t0, t0, 1\n"
+    "addi t1, t1, 1\n   addi a2, a2, -1\n"
+    "bnez a2, .Lmemory_span_byte_rv_one\n"
+    ".Lmemory_span_byte_rv_done:\n   mv a0, t1\n"
+    ASM_RET
+    ASM_END(memory_span_byte)
+
     // RV64I has no required vector gather; four base-ISA chains overlap.
     ASM_FUNC(memory_translate)
     "mv t0, a0\n   li t6, 4\n   bltu a1, t6, .Lmemory_translate_rv_tail\n"
@@ -11646,6 +11713,7 @@ positive string_lex_word(string_address source, p8 address_to into,
 address_any memory_fill(address_any destination, b8 value, positive size);
 positive memory_common_prefix(address_any one, address_any two, positive size);
 positive memory_hash_33(address_any block, positive size);
+positive memory_span_byte(address_any block, p8 value, positive size);
 b32 memory_compare_ascii_case(address_any one, address_any two, positive size);
 address_any memory_first_of_ascii_case(address_any block, b8 value, positive size);
 address_any memory_search_ascii_case(address_any block, positive size,
