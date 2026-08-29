@@ -1080,6 +1080,27 @@ bash_answer 'conditional never closed' '[[ x == x'
 bash_answer 'conditional multiline' '[[ x == x &&
    y == y ]]; echo $?'
 
+group regex-conditional
+bash_answer 'conditional regex substring' '[[ abc =~ b ]]; echo $?'
+bash_answer 'conditional regex anchors' '[[ abc =~ ^a.*c$ ]]; echo $?; [[ zabc =~ ^a ]]; echo $?'
+bash_answer 'conditional regex class' '[[ a123z =~ ^[[:alpha:]][[:digit:]]+[[:alpha:]]$ ]]; echo $?'
+bash_answer 'conditional regex groups' '[[ abcdab =~ ^(ab|cd)+$ ]]; echo $?'
+bash_answer 'conditional regex alternation' '[[ cd =~ ^(ab|cd)$ ]]; echo $?'
+bash_answer 'conditional regex quoted literal' '[[ a.c =~ "a.c" ]]; echo $?; [[ abc =~ "a.c" ]]; echo $?'
+bash_answer 'conditional regex quoted fragment' '[[ abc =~ ^"a".*c$ ]]; echo $?'
+bash_answer 'conditional regex escaped dot' '[[ a.c =~ ^a\.c$ ]]; echo $?; [[ abc =~ ^a\.c$ ]]; echo $?'
+bash_answer 'conditional regex variable' 'r="^a.*c$"; [[ abc =~ $r ]]; echo $?'
+bash_answer 'conditional regex quoted variable' 'r="^a.*c$"; [[ abc =~ "$r" ]]; echo $?'
+bash_answer 'conditional regex empty variable' 'r=; [[ abc =~ $r ]]; echo $?'
+bash_answer 'conditional regex negated' '[[ ! abc =~ ^z ]]; echo $?'
+bash_answer 'conditional regex logical' '[[ abc =~ ^a && abc =~ c$ || no =~ yes ]]; echo $?'
+bash_answer 'conditional regex skipped invalid' '[[ x == x || x =~ [ ]]; echo $?'
+bash_answer 'conditional regex invalid' '[[ x =~ [ ]]; echo "$?:after"'
+bash_answer 'conditional regex missing rhs' '[[ x =~ ]]'
+bash_answer 'conditional regex expansion skipped' 'p=/tmp/bash-regex.$$; rm -f "$p"; [[ x == x || x =~ $(touch "$p"; echo x) ]]; [ -e "$p" ]; echo $?; rm -f "$p"'
+bash_answer 'conditional regex multicall state' 'p=/tmp/bash-regex.$$; printf "alpha\nbeta\n" > "$p"; grep alpha "$p"; [[ abc =~ ^a ]]; grep beta "$p"; sed -n "1p" "$p"; [[ xyz =~ z$ ]]; sed -n "2p" "$p"; rm -f "$p"'
+bash_answer 'conditional regex repeated' 'i=0; while [ $i -lt 200 ]; do [[ abc123 =~ ^[a-z]+[0-9]+$ ]] || break; i=$((i+1)); done; echo "$i"'
+
 check 'shift left'      'echo $((1<<4))'
 check 'shift right'     'echo $((64>>3))'
 check 'bit and'         'echo $((12&10))'
@@ -2047,6 +2068,14 @@ group supported
 bash_answer 'ledger parameter replace' 'x=aba; echo "${x//a/X}"'
 bash_answer 'ledger substring' 'x=abcdef; echo "${x:1:3}"'
 bash_answer 'ledger case conversion' 'x=aBc; echo "${x^^}"'
+bash_answer 'case conversion below bulk boundary' \
+        'x=abcdefghijklmnopqrstuvwxyzABCDE; printf "<%s><%s>\n" "${x^^}" "${x,,}"'
+bash_answer 'case conversion at bulk boundary' \
+        'x=abcdefghijklmnopqrstuvwxyzABCDEF; printf "<%s><%s>\n" "${x^^}" "${x,,}"'
+bash_answer 'case conversion above bulk boundary' \
+        'x=abcdefghijklmnopqrstuvwxyzABCDEFG; printf "<%s><%s>\n" "${x^^}" "${x,,}"'
+bash_answer 'case conversion explicit pattern stays selective' \
+        'x=abcXYZabcXYZabcXYZabcXYZabcXYZabcXYZ; printf "<%s>\n" "${x^^[a-c]}"'
 bash_answer 'ledger brace expansion' 'printf "[%s]" {a,b}{1,2}; echo'
 bash_answer 'ledger here string' 'cat <<< "a b"'
 bash_answer 'ledger function keyword' 'function f { echo yes; }; f'
@@ -2057,9 +2086,10 @@ bash_answer 'ledger source alias' 'p=/tmp/bash-source.$$; printf "echo sourced\n
 bash_answer 'ledger arithmetic command' 'x=0; ((x+=2)); echo "$x"'
 bash_answer 'ledger c style for' 'for ((i=0;i<2;i++)); do echo "$i"; done'
 bash_answer 'ledger double brackets' '[[ x == x ]]'
+bash_answer 'ledger regex match' '[[ abc =~ ^a ]]'
 
 group remaining
-bash_remaining 'ledger regex match' '' 2 '[[ abc =~ ^a ]]'
+bash_remaining 'ledger regex captures' '' 2 '[[ abc =~ ^(a)(b) ]]; echo "${BASH_REMATCH[0]}:${BASH_REMATCH[1]}:${BASH_REMATCH[2]}"'
 bash_remaining 'ledger indexed arrays' '' 2 'a=(one two); echo "${a[1]}"'
 bash_remaining 'ledger associative arrays' '' 2 'declare -A a; a[k]=v; echo "${a[k]}"'
 bash_remaining 'ledger process substitution' '<>|' 0 'x=$(cat <(printf x)); printf "<%s>\n" "$x"'

@@ -4316,3 +4316,71 @@ string_address shell_expand_pattern(string_address word)
 
         return result;
 }
+
+// Quoted pieces of a [[ string =~ regex ]] right hand side are literal.
+// Translate that byte-level distinction into ERE backslashes before the
+// expander's quote marks disappear.
+static bool expand_regex_metacharacter(p8 value)
+{
+        return value == '.' || value == '^' || value == '$' || value == '*' ||
+               value == '+' || value == '?' || value == '(' || value == ')' ||
+               value == '[' || value == ']' || value == '{' || value == '}' ||
+               value == '|' || value == '\\';
+}
+
+string_address shell_expand_regex(string_address word)
+{
+        positive room = 1;
+        positive at;
+        positive used = 0;
+        p8 address_to result;
+
+        expand_word(word);
+
+        if (expand_overflow)
+        {
+                string_format(expand_complain, "Expansion too long: %s\n", word);
+                expand_fatal();
+                return (string_address) "";
+        }
+
+        for (at = 0; at < expand_length; at++)
+        {
+                if (room == positive_max)
+                        break;
+
+                room++;
+
+                if (expand_mark[at] == MARK_QUOTED &&
+                    expand_regex_metacharacter(expand_text[at]))
+                {
+                        if (room == positive_max)
+                                break;
+
+                        room++;
+                }
+        }
+
+        if (at != expand_length ||
+            !(result = shell_store_take(address_of expand_store, room)))
+        {
+                expand_overflow = true;
+                string_format(expand_complain, "Expansion too long: %s\n", word);
+                expand_fatal();
+                return (string_address) "";
+        }
+
+        for (at = 0; at < expand_length; at++)
+        {
+                p8 value = expand_text[at];
+
+                if (expand_mark[at] == MARK_QUOTED &&
+                    expand_regex_metacharacter(value))
+                        result[used++] = '\\';
+
+                result[used++] = value;
+        }
+
+        result[used] = end;
+        return result;
+}

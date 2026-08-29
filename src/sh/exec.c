@@ -1866,6 +1866,7 @@ static bool conditional_tokenize(string_address text)
         while (string_get(at))
         {
                 string_address start;
+                bool regex_operand;
 
                 while (string_is(at, ' ') || string_is(at, '\t') ||
                        string_is(at, '\n'))
@@ -1873,6 +1874,10 @@ static bool conditional_tokenize(string_address text)
 
                 if (!string_get(at))
                         break;
+
+                regex_operand = conditional_word_count &&
+                                word_is(conditional_word[conditional_word_count - 1],
+                                        "=~");
 
                 if ((string_is(at, '&') && string_is(at + 1, '&')) ||
                     (string_is(at, '|') && string_is(at + 1, '|')))
@@ -1884,7 +1889,8 @@ static bool conditional_tokenize(string_address text)
                         continue;
                 }
 
-                if (string_is(at, '(') || string_is(at, ')'))
+                if (!regex_operand &&
+                    (string_is(at, '(') || string_is(at, ')')))
                 {
                         if (!conditional_add(at, 1))
                                 return false;
@@ -1902,7 +1908,8 @@ static bool conditional_tokenize(string_address text)
 
                         if ((value == '&' && string_is(at + 1, '&')) ||
                             (value == '|' && string_is(at + 1, '|')) ||
-                            value == '(' || value == ')')
+                            (!regex_operand &&
+                             (value == '(' || value == ')')))
                                 break;
 
                         if (value == '\\' && string_get(at + 1))
@@ -2024,6 +2031,92 @@ static fn conditional_nounset_fatal()
         system_call_1(syscall(exit_group), 1);
 }
 
+static fn conditional_regex_program(regex_program address_to saved)
+{
+        saved->code = regex_code;
+        saved->sets = regex_sets;
+        saved->first = regex_first;
+        saved->last = regex_last;
+        saved->literal = regex_literal;
+        saved->literal_length = regex_literal_length;
+        saved->length = regex_length_code;
+        saved->groups = regex_group_count;
+        saved->extended = regex_extended;
+        saved->icase = regex_icase;
+        saved->first_known = regex_first_known;
+        saved->last_known = regex_last_known;
+        saved->anchored = regex_anchored;
+        saved->alternates = regex_alternates;
+        saved->slot_used = regex_slot_used;
+        saved->loop_count = regex_loop_count;
+
+        if (regex_loop_count)
+                memory_copy_fast(saved->loops, regex_loop_list,
+                                 (positive)(regex_loop_count < REGEX_LOOPS_KEPT
+                                                ? regex_loop_count
+                                                : REGEX_LOOPS_KEPT) *
+                                     sizeof(saved->loops[0]));
+}
+
+/*
+        The regex engine is shared by grep, sed, AWK, and the shell. A [[ =~ ]]
+        compile is transient: restore both the selected program and every pool
+        watermark afterward so repeated conditions cannot consume or retarget
+        another builtin's cached programs.
+*/
+static bool conditional_regex_match(string_address text, string_address pattern,
+                                    bool address_to valid)
+{
+        regex_program saved;
+        b32 code_mark = regex_pool_used;
+        b32 set_mark = regex_pool_sets;
+        b32 first_mark = regex_first_used;
+        b32 set_count = regex_set_count;
+        bool escapes = regex_escapes;
+        bool broken = regex_broken;
+        positive stop = regex_stop_wanted;
+        string_address saved_pattern = regex_pattern;
+        positive saved_pattern_length = regex_pattern_length;
+        positive saved_pattern_at = regex_pattern_at;
+        string_address saved_text = regex_text;
+        positive saved_text_length = regex_text_length;
+        positive slots[REGEX_SLOT_MAX];
+        p8 first[256];
+        p8 last[256];
+        p8 literal[REGEX_LITERAL_MAX];
+        bool matched = false;
+
+        conditional_regex_program(address_of saved);
+        memory_copy_fast(slots, regex_slots, sizeof(slots));
+        memory_copy_fast(first, saved.first, sizeof(first));
+        memory_copy_fast(last, saved.last, sizeof(last));
+        memory_copy_fast(literal, saved.literal, sizeof(literal));
+
+        address_to valid = regex_compile(pattern, true, false, false);
+
+        if (address_to valid)
+                matched = regex_search(text, string_length(text), 0);
+
+        regex_pool_used = code_mark;
+        regex_pool_sets = set_mark;
+        regex_first_used = first_mark;
+        memory_copy_fast(saved.first, first, sizeof(first));
+        memory_copy_fast(saved.last, last, sizeof(last));
+        memory_copy_fast(saved.literal, literal, sizeof(literal));
+        regex_select(address_of saved);
+        regex_set_count = set_count;
+        regex_escapes = escapes;
+        regex_broken = broken;
+        regex_stop_wanted = stop;
+        regex_pattern = saved_pattern;
+        regex_pattern_length = saved_pattern_length;
+        regex_pattern_at = saved_pattern_at;
+        regex_text = saved_text;
+        regex_text_length = saved_text_length;
+        memory_copy_fast(regex_slots, slots, sizeof(slots));
+        return matched;
+}
+
 static bool conditional_expression();
 
 static bool conditional_primary()
@@ -2105,13 +2198,39 @@ static bool conditional_primary()
 
                 if (word_is(op, "=~"))
                 {
+                        string_address left;
+                        string_address right;
+                        bool valid;
+                        bool value;
+
                         conditional_at++;
 
-                        if (conditional_at < conditional_word_count)
-                                conditional_at++;
+                        if (conditional_at >= conditional_word_count)
+                        {
+                                conditional_bad = true;
+                                return false;
+                        }
 
-                        conditional_bad = true;
-                        return false;
+                        if (!conditional_active)
+                        {
+                                conditional_at++;
+                                return false;
+                        }
+
+                        left = conditional_expand(raw, false);
+                        right = shell_expand_regex(
+                            conditional_word[conditional_at++]);
+
+                        if (expand_failed)
+                                return false;
+
+                        value = conditional_regex_match(left, right,
+                                                        address_of valid);
+
+                        if (!valid)
+                                conditional_bad = true;
+
+                        return value;
                 }
 
                 if (kind)
