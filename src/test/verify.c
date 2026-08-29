@@ -600,10 +600,13 @@ fn check_strings()
 */
 static b8 caught[512];
 static positive caught_length;
+static positive caught_calls;
 
 fn catch_writer(address_any data, positive length)
 {
         b8 address_to from = (b8 address_to)data;
+
+        caught_calls++;
 
         if (!length)
                 while (from[length])
@@ -618,7 +621,34 @@ fn catch_writer(address_any data, positive length)
 fn catch_reset()
 {
         caught_length = 0;
+        caught_calls = 0;
         caught[0] = 0;
+}
+
+fn check_shell_set_cursor()
+{
+        catch_reset();
+        shell_set_cursor(catch_writer, 0, 0);
+        same("shell_set_cursor", "zero coordinates",
+             (positive)string_compare(caught, (string_address)"\033[0;0H"), 0);
+        same("shell_set_cursor", "one atomic writer call", caught_calls, 1);
+
+        catch_reset();
+        shell_set_cursor(catch_writer, 12, 34);
+        same("shell_set_cursor", "coordinate order",
+             (positive)string_compare(caught, (string_address)"\033[34;12H"), 0);
+        same("shell_set_cursor", "ordinary one-call write", caught_calls, 1);
+
+        catch_reset();
+        shell_set_cursor(catch_writer, 18446744073709551615ull,
+                         18446744073709551615ull);
+        same("shell_set_cursor", "full-width coordinates",
+             (positive)string_compare(
+                     caught,
+                     (string_address)"\033[18446744073709551615;"
+                                     "18446744073709551615H"),
+             0);
+        same("shell_set_cursor", "full-width one-call write", caught_calls, 1);
 }
 
 /*
@@ -1297,6 +1327,94 @@ fn check_file_round_trip()
              (positive)file_valid(address_of subject), 0);
 
         system_call_3(syscall(unlinkat), AT_FDCWD, (positive)SCRATCH, 0);
+}
+
+fn check_lazy_file_and_library()
+{
+        static file subject;
+        string_address lazy_path =
+                scratch_path((string_address)"moonwater_verify_lazy");
+
+        system_call_3(syscall(unlinkat), AT_FDCWD, (positive)lazy_path, 0);
+        b32 made = system_call_4(syscall(openat), AT_FDCWD,
+                                 (positive)lazy_path,
+                                 FILE_CREATE | FILE_WRITE | FILE_TRUNCATE,
+                                 0644);
+        checks++;
+        if (made < 0)
+        {
+                report("file_new_lazy", "could not make fixture",
+                       (positive)made, 0);
+                return;
+        }
+        system_call_1(syscall(close), made);
+
+        subject.handle = (positive)-1;
+        subject.path = null;
+        subject.flags = 0;
+        subject.data = null;
+        subject.loaded = false;
+        subject.status.size = 0x1122334455667788ull;
+        file_new_lazy(address_of subject, lazy_path, FILE_READ);
+        same("file_new_lazy", "opens existing file",
+             (positive)((bipolar)subject.handle >= 0), 1);
+        same("file_new_lazy", "keeps path", (positive)subject.path,
+             (positive)lazy_path);
+        same("file_new_lazy", "keeps flags", subject.flags, FILE_READ);
+        same("file_new_lazy", "does not stat",
+             (positive)subject.status.size, 0x1122334455667788ull);
+        file_close(address_of subject);
+        system_call_3(syscall(unlinkat), AT_FDCWD, (positive)lazy_path, 0);
+
+        string_address missing =
+                scratch_path((string_address)"moonwater_verify_lazy_missing");
+        system_call_3(syscall(unlinkat), AT_FDCWD, (positive)missing, 0);
+        subject.handle = (positive)-1;
+        file_new_lazy(address_of subject, missing, FILE_READ);
+        same("file_new_lazy", "preserves open errno",
+             (positive)((bipolar)subject.handle < 0), 1);
+        same("file_new_lazy", "failed path", (positive)subject.path,
+             (positive)missing);
+        subject.handle = (positive)-1;
+
+        // Non-Windows library loading is deliberately only a thin file-open
+        // placeholder today.  Pin both sides of that small contract: a slash
+        // leaves storage untouched, while a bare name opens and stats it.
+        static string_address bare =
+                (string_address)"moonwater_verify_library";
+        system_call_3(syscall(unlinkat), AT_FDCWD, (positive)bare, 0);
+        made = system_call_4(syscall(openat), AT_FDCWD, (positive)bare,
+                             FILE_CREATE | FILE_WRITE | FILE_TRUNCATE, 0644);
+        checks++;
+        if (made < 0)
+        {
+                report("library_open", "could not make fixture",
+                       (positive)made, 0);
+                return;
+        }
+        system_call_1(syscall(close), made);
+
+        subject.handle = (positive)-1;
+        subject.path = null;
+        library_open(address_of subject, (string_address)"./moonwater_verify_library");
+        same("library_open", "slash path is left alone", subject.handle,
+             (positive)-1);
+        same("library_open", "slash path does not store a path",
+             (positive)subject.path, 0);
+
+        library_open(address_of subject, bare);
+        same("library_open", "opens a bare name",
+             (positive)((bipolar)subject.handle >= 0), 1);
+        same("library_open", "stores bare name", (positive)subject.path,
+             (positive)bare);
+        same("library_open", "uses executable-open flags", subject.flags,
+             FILE_READ | FILE_EXECUTE);
+        same("library_get", "unsupported lookup is null",
+             (positive)library_get(address_of subject,
+                                   (string_address)"symbol"), 0);
+        library_close(address_of subject);
+        file_close(address_of subject);
+        system_call_3(syscall(unlinkat), AT_FDCWD, (positive)bare, 0);
 }
 
 fn check_memory()
@@ -7961,6 +8079,7 @@ b32 main()
         check_copy_fast_end();
         check_copy_end();
         check_strings();
+        check_shell_set_cursor();
         check_string_edges();
         check_compare_edges();
         check_compare_wide();
@@ -7973,6 +8092,7 @@ b32 main()
         check_parsers_malformed();
         check_file_load();
         check_file_round_trip();
+        check_lazy_file_and_library();
         check_memory();
         check_directory();
         check_clock();

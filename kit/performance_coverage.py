@@ -175,6 +175,10 @@ string_span_max string_table_find string_to_bipolar string_to_positive
 wait_status_code_base working_directory_get working_directory_set writer_fill
 ''', 'direct correctness coverage in the assembly verifier')
 
+cover('correctness_only', 'src/test/verify.c', '''
+file_new_lazy library_close library_get library_open shell_set_cursor
+''', 'focused ABI, error-path and writer-output coverage on all three architectures')
+
 # Indirect correctness anchors and focused subsystem tests. The anchor is named
 # separately whenever the private/helper routine itself is not in the test.
 cover('correctness_only', 'src/test/verify.c', 'bipolar_into_core file_unload',
@@ -198,13 +202,6 @@ system_read_retry system_wait4_retry system_write_all wait_status_code
 cover('correctness_only', 'src/test/native/reserve.c', '''
 memory_growth memory_release memory_reserve
 ''', 'exact lifted ARM64 growth, overflow, failure and release checks')
-
-
-# No focused artifact was found. These entries are intentional gaps, not an
-# inference that the routines are wrong or slow.
-cover('unmeasured', None, '''
-file_new_lazy library_close library_get library_open shell_set_cursor
-''', 'no focused correctness test or direct performance harness located')
 
 
 def load_inventory():
