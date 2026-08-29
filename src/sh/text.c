@@ -412,6 +412,14 @@ static bool text_line_view(p8 address_to address_to line,
         return true;
 }
 
+static bool text_line_view_unheld(p8 address_to address_to line,
+                                  positive address_to length)
+{
+        p8 address_to previous = null;
+
+        return text_line_view(line, length, address_of previous, 0, null);
+}
+
 static fn text_put_line()
 {
         text_put(text_line, text_line_length);
@@ -4193,14 +4201,21 @@ static b32 text_cut()
                 if (!text_open(text_files_count ? program_argument(text_files[i]) : null))
                         continue;
 
-                while (text_line_next())
+                for (;;)
                 {
+                        p8 address_to line = null;
+                        positive line_length = 0;
+
+                        if (!text_line_view_unheld(address_of line,
+                                                   address_of line_length))
+                                break;
+
                         if (by_character)
                         {
                                 bool wrote = false;
                                 bool ran = false;
 
-                                for (positive c = 0; c < text_line_length; c++)
+                                for (positive c = 0; c < line_length; c++)
                                 {
                                         bool take = text_list_has(c + 1) != complement;
 
@@ -4214,7 +4229,7 @@ static b32 text_cut()
                                             (!ran || (!complement && text_list_begins[c + 1])))
                                                 text_put(separator, separator_length);
 
-                                        text_put_character(text_line[c]);
+                                        text_put_character(line[c]);
                                         wrote = true;
                                         ran = true;
                                 }
@@ -4225,11 +4240,84 @@ static b32 text_cut()
 
                         if (by_field)
                         {
+                                /*
+                                        Without a custom output delimiter the
+                                        result cannot be wider than the input
+                                        plus its record terminator. Reserve
+                                        that maximum once, emit selected
+                                        fields directly into it, then release
+                                        the unused tail. Learning whether the
+                                        record had a delimiter in the same
+                                        pass avoids a separate pre-scan.
+                                */
+                                if (!whitespace && !separator &&
+                                    line_length + 1 <= TEXT_OUT_MAX)
+                                {
+                                        positive reserved = line_length + 1;
+                                        p8 address_to out = text_reserve(reserved);
+
+                                        if (!out)
+                                                continue;
+
+                                        positive out_length = 0;
+                                        positive at = 0;
+                                        positive which = 1;
+                                        bool wrote = false;
+                                        bool split = false;
+
+                                        while (at <= line_length)
+                                        {
+                                                positive from = at;
+
+                                                while (at < line_length &&
+                                                       line[at] != delimiter)
+                                                        at++;
+
+                                                if (text_list_has(which) != complement)
+                                                {
+                                                        if (wrote)
+                                                                out[out_length++] = delimiter;
+
+                                                        positive take = at - from;
+                                                        memory_copy(out + out_length,
+                                                                    line + from, take);
+                                                        out_length += take;
+                                                        wrote = true;
+                                                }
+
+                                                if (at == line_length)
+                                                        break;
+
+                                                split = true;
+                                                at++;
+                                                which++;
+                                        }
+
+                                        if (!split)
+                                        {
+                                                if (only_delimited)
+                                                        out_length = 0;
+                                                else
+                                                {
+                                                        memory_copy(out, line,
+                                                                    line_length);
+                                                        out_length = line_length;
+                                                        out[out_length++] =
+                                                            text_delimiter;
+                                                }
+                                        }
+                                        else
+                                                out[out_length++] = text_delimiter;
+
+                                        text_out_used -= reserved - out_length;
+                                        continue;
+                                }
+
                                 bool split = false;
 
-                                for (positive c = 0; c < text_line_length; c++)
-                                        if (whitespace ? text_blank(text_line[c])
-                                                       : text_line[c] == delimiter)
+                                for (positive c = 0; c < line_length; c++)
+                                        if (whitespace ? text_blank(line[c])
+                                                       : line[c] == delimiter)
                                         {
                                                 split = true;
                                                 break;
@@ -4242,7 +4330,7 @@ static b32 text_cut()
                                 {
                                         if (!only_delimited)
                                         {
-                                                text_put(text_line, text_line_length);
+                                                text_put(line, line_length);
                                                 text_put_character(text_delimiter);
                                         }
 
@@ -4253,13 +4341,13 @@ static b32 text_cut()
                                 positive which = 1;
                                 bool wrote = false;
 
-                                while (at <= text_line_length)
+                                while (at <= line_length)
                                 {
                                         positive from = at;
 
-                                        while (at < text_line_length &&
-                                               (whitespace ? !text_blank(text_line[at])
-                                                           : text_line[at] != delimiter))
+                                        while (at < line_length &&
+                                               (whitespace ? !text_blank(line[at])
+                                                           : line[at] != delimiter))
                                                 at++;
 
                                         if (text_list_has(which) != complement)
@@ -4273,11 +4361,11 @@ static b32 text_cut()
                                                                 text_put_character(delimiter);
                                                 }
 
-                                                text_put(text_line + from, at - from);
+                                                text_put(line + from, at - from);
                                                 wrote = true;
                                         }
 
-                                        if (at == text_line_length)
+                                        if (at == line_length)
                                                 break;
 
                                         // A run of blanks is one delimiter,
@@ -4285,8 +4373,8 @@ static b32 text_cut()
                                         at++;
 
                                         if (whitespace)
-                                                while (at < text_line_length &&
-                                                       text_blank(text_line[at]))
+                                                while (at < line_length &&
+                                                       text_blank(line[at]))
                                                         at++;
 
                                         which++;
