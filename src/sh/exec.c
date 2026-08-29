@@ -570,6 +570,25 @@ static bool exec_redirect_apply(b32 index)
 
                         opened = exec_here_pipe(body, length);
                 }
+                else if (want->op == OP_HERESTRING)
+                {
+                        positive length = string_length(target);
+                        p8 address_to body;
+
+                        if (length > positive_max - 2)
+                                return false;
+
+                        body = shell_store_take(address_of exec_store,
+                                                length + 2);
+
+                        if (!body)
+                                return false;
+
+                        memory_copy(body, target, length);
+                        body[length++] = '\n';
+                        body[length] = end;
+                        opened = exec_here_pipe(body, length);
+                }
                 else if (want->op == OP_GREATAND || want->op == OP_LESSAND)
                 {
                         positive source;
@@ -862,29 +881,85 @@ static bool exec_is_assignment(string_address word)
         if (!length || (string_get(word) >= '0' && string_get(word) <= '9'))
                 return false;
 
-        return string_get(word + length) == '=';
+        return string_get(word + length) == '=' ||
+               (string_get(word + length) == '+' &&
+                string_get(word + length + 1) == '=');
 }
 
-static bool exec_assign(string_address word)
+static bool exec_is_append_assignment(string_address word)
 {
+        string_address equal = string_first_of_or_end(word, '=');
+
+        return string_get(equal) && equal > word && equal[-1] == '+';
+}
+
+static bool exec_assign(string_address address_to word_at)
+{
+        string_address word = address_to word_at;
         string_address mark = string_first_of_or_end(word, '=');
+        bool append;
+        string_address name_end;
+        string_address old;
+        string_address made = word;
         bool answer;
 
         if (!string_get(mark))
                 return false;
 
-        address_to mark = end;
+        append = mark > word && mark[-1] == '+';
+        name_end = append ? mark - 1 : mark;
+        address_to name_end = end;
 
         if (env_readonly(word))
         {
                 string_format(exec_error, "%s: is read only\n", word);
-                address_to mark = '=';
+                address_to name_end = append ? '+' : '=';
                 expand_fatal();
                 return false;
         }
 
-        answer = env_set(word, mark + 1);
-        address_to mark = '=';
+        old = append ? env_get(word) : null;
+
+        if (append)
+        {
+                positive name_length = (positive)(name_end - word);
+                positive old_length = old ? string_length(old) : 0;
+                positive add_length = string_length(mark + 1);
+                positive room;
+
+                if (name_length > positive_max - old_length ||
+                    name_length + old_length > positive_max - add_length ||
+                    name_length + old_length + add_length > positive_max - 2)
+                {
+                        address_to name_end = '+';
+                        return false;
+                }
+
+                room = name_length + old_length + add_length + 2;
+
+                made = shell_store_take(address_of exec_store, room);
+
+                if (!made)
+                {
+                        address_to name_end = '+';
+                        return false;
+                }
+
+                memory_copy(made, word, name_length);
+                made[name_length] = '=';
+                if (old_length)
+                        memory_copy(made + name_length + 1, old, old_length);
+                memory_copy_end(made + name_length + 1 + old_length,
+                                mark + 1, add_length);
+        }
+
+        answer = env_set(word,
+                         append ? made + (positive)(name_end - word) + 1
+                                : mark + 1);
+        address_to name_end = append ? '+' : '=';
+
+        if (answer && append)
+                address_to word_at = made;
 
         return answer;
 }
@@ -927,6 +1002,9 @@ static bool exec_keep_value(exec_kept_value address_to kept, string_address word
 {
         positive length = (positive)(string_first_of_or_end(word, '=') - word);
         string_address value;
+
+        if (length && word[length - 1] == '+')
+                length--;
 
         kept->name = shell_store_take(address_of exec_store, length + 1);
 
@@ -1219,41 +1297,61 @@ static b32 exec_simple(b32 index)
                 for (at = 0; at < first; at++)
                         assignments[at] = shell_argv[at];
 
-                if (!exec_special_builtin(shell_argv[first]))
                 {
-                        kept = (exec_kept_value address_to)shell_store_take(
-                            address_of exec_store,
-                            (positive)first * sizeof(kept[0]));
+                        bool special = exec_special_builtin(shell_argv[first]);
+                        bool save = !special;
 
-                        if (!kept)
+                        if (special)
+                                for (at = 0; at < first; at++)
+                                        if (exec_is_append_assignment(assignments[at]))
+                                        {
+                                                save = true;
+                                                break;
+                                        }
+
+                        if (save)
                         {
-                                shell_store_rewind(address_of exec_store, arena_mark);
-                                shell_status = 2;
-                                return 2;
-                        }
+                                kept = (exec_kept_value address_to)shell_store_take(
+                                    address_of exec_store,
+                                    (positive)first * sizeof(kept[0]));
 
-                        for (at = 0; at < first; at++)
-                                if (!exec_keep_value(kept + kept_count,
-                                                     assignments[at]))
+                                if (!kept)
                                 {
-                                        shell_store_rewind(address_of exec_store,
-                                                           arena_mark);
+                                        shell_store_rewind(address_of exec_store, arena_mark);
                                         shell_status = 2;
                                         return 2;
                                 }
-                                else
-                                        kept_count++;
+
+                                for (at = 0; at < first; at++)
+                                        if ((!special ||
+                                             exec_is_append_assignment(assignments[at])) &&
+                                            !exec_keep_value(kept + kept_count,
+                                                             assignments[at]))
+                                        {
+                                                shell_store_rewind(address_of exec_store,
+                                                                   arena_mark);
+                                                shell_status = 2;
+                                                return 2;
+                                        }
+                                        else if (!special ||
+                                                 exec_is_append_assignment(assignments[at]))
+                                                kept_count++;
+                        }
                 }
         }
 
         for (at = 0; at < first; at++)
-                if (!exec_assign(shell_argv[at]))
+                if (!exec_assign(shell_argv + at))
                 {
                         exec_put_back(kept, kept_count);
                         shell_store_rewind(address_of exec_store, arena_mark);
                         shell_status = 2;
                         return 2;
                 }
+
+        if (assignments)
+                for (at = 0; at < first; at++)
+                        assignments[at] = shell_argv[at];
 
         if (assignments &&
             (!exec_special_builtin(shell_argv[first]) ||

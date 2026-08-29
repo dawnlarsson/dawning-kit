@@ -820,7 +820,8 @@ static bool parse_redirect_operator(b32 op)
         return op == OP_LESS || op == OP_GREAT || op == OP_DGREAT ||
                op == OP_DLESS || op == OP_LESSAND || op == OP_GREATAND ||
                op == OP_LESSGREAT || op == OP_CLOBBER ||
-               op == OP_ANDGREAT || op == OP_ANDDGREAT;
+               op == OP_ANDGREAT || op == OP_ANDDGREAT ||
+               op == OP_HERESTRING;
 }
 
 static bool parse_at_redirect()
@@ -858,6 +859,7 @@ static bool parse_take_redirect(b32 index)
 
         if (descriptor < 0)
                 descriptor = (op == OP_LESS || op == OP_DLESS ||
+                              op == OP_HERESTRING ||
                               op == OP_LESSAND || op == OP_LESSGREAT)
                                  ? 0
                                  : 1;
@@ -1254,10 +1256,52 @@ static b32 parse_function()
         return parse_state ? 0 : index;
 }
 
+static b32 parse_function_keyword()
+{
+        b32 index = parse_node_new(NODE_FUNCTION);
+
+        if (parse_state)
+                return 0;
+
+        parse_position++;
+
+        if (parse_look(0)->kind != PT_WORD || parse_reserved(0))
+        {
+                parse_fail();
+                return 0;
+        }
+
+        parse_attach_word(index, parse_look(0)->text);
+        parse_position++;
+
+        if (parse_look(0)->kind == PT_OP && parse_look(0)->op == OP_LPAREN &&
+            parse_look(1)->kind == PT_OP && parse_look(1)->op == OP_RPAREN)
+                parse_position += 2;
+
+        parse_skip_newlines();
+
+        if (!(parse_word_is(0, "if") || parse_word_is(0, "while") ||
+              parse_word_is(0, "until") || parse_word_is(0, "for") ||
+              parse_word_is(0, "case") || parse_word_is(0, "{") ||
+              (parse_look(0)->kind == PT_OP &&
+               parse_look(0)->op == OP_LPAREN)))
+        {
+                parse_fail();
+                return 0;
+        }
+
+        parse_nodes[index].right = parse_command();
+
+        return parse_state ? 0 : index;
+}
+
 static b32 parse_command()
 {
         b32 index;
         b32 compound = true;
+
+        if (parse_word_is(0, "function"))
+                return parse_function_keyword();
 
         if (parse_look(0)->kind == PT_WORD && !parse_reserved(0) &&
             parse_look(1)->kind == PT_OP && parse_look(1)->op == OP_LPAREN &&

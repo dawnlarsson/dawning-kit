@@ -153,6 +153,31 @@ answer()
                 "want $(shown "$work/want")[$want_status]   got $(shown "$work/got")[$got_status]"
 }
 
+bash_answer()
+{
+        name=$1
+        shift
+
+        [ -x /bin/bash ] || {
+                lost "$name" "/bin/bash is required for a Bash extension case"
+                return 0
+        }
+
+        held_reference=$reference
+        reference=/bin/bash
+        run_both "$@"
+        reference=$held_reference
+
+        if cmp -s "$work/want" "$work/got" &&
+                [ "$want_status" = "$got_status" ]; then
+                won
+                return 0
+        fi
+
+        lost "$name" \
+                "bash $(shown "$work/want")[$want_status]   got $(shown "$work/got")[$got_status]"
+}
+
 # A deliberate extension has no POSIX reference answer. Check its bytes and
 # status directly so a future lexer change cannot reinterpret it as another
 # valid command while the dash-comparison lanes remain about POSIX.
@@ -865,6 +890,18 @@ group functions
 check 'define call'     'f() { echo body; }; f'
 check 'args'            'f() { echo $1; }; f arg'
 check 'return'          'f() { return 3; }; f; echo $?'
+bash_answer 'function keyword' 'function f { echo body; }; f'
+bash_answer 'function parens' 'function f() { echo "$1"; }; f arg'
+bash_answer 'function newline' 'function f
+{
+echo body
+}
+f'
+bash_answer 'function nested' 'function outer { function inner { echo "$1"; }; inner nested; }; outer'
+bash_answer 'quoted function is command' '"function" f { echo body; }'
+bash_answer 'function missing name' 'function'
+bash_answer 'function missing body' 'function f'
+bash_answer 'function simple body rejected' 'function f echo body'
 
 group redirection
 check 'out'             'echo x > /tmp/pt1; cat /tmp/pt1'
@@ -897,6 +934,15 @@ EOF'
 answer 'heredoc command' 'cat <<EOF
 $(echo sub)
 EOF'
+bash_answer 'here string' 'cat <<< word'
+bash_answer 'here string empty' 'x=; cat <<< "$x" | wc -c'
+bash_answer 'here string holds fields' 'x="a  b"; cat <<< $x'
+bash_answer 'here string expands' 'x=4; cat <<< "value=$x:$((x+1)):$(echo sub)"'
+bash_answer 'here string last wins' 'cat <<< one <<< two'
+bash_answer 'here string fd' 'cat 3<<< data <&3'
+bash_answer 'here string pipeline' 'cat <<< abc | tr a-z A-Z'
+bash_answer 'here string function' 'f() { read x; echo "[$x]"; }; f <<< "a b"'
+bash_answer 'here string missing' 'cat <<<'
 
 group builtins
 check 'xargs joins'     'printf "a\nb\nc\n" | xargs echo'
@@ -913,6 +959,17 @@ check 'eval'            'eval echo hi'
 check 'exit status'     'sh -c "exit 4" 2>/dev/null; echo $?'
 check 'true false'      'true; echo $?; false; echo $?'
 check 'printf'          'printf "%s-%s\n" a b'
+
+group append assignment
+bash_answer 'append unset' 'unset x; x+=ab; printf "[%s]\n" "$x"'
+bash_answer 'append set' 'x=ab; x+=cd; printf "[%s]\n" "$x"'
+bash_answer 'append quoted' 'x="a b"; x+=" c d"; printf "[%s]\n" "$x"'
+bash_answer 'append expands' 'x=ab; y=cd; x+=$y; printf "[%s]\n" "$x"'
+bash_answer 'append repeatedly' 'x=a; x+=b; x+=c; x+=d; printf "[%s]\n" "$x"'
+bash_answer 'append command local' 'x=old; x+=new /bin/sh -c '\''printf "[%s]\n" "$x"'\''; printf "[%s]\n" "$x"'
+bash_answer 'append special persists' 'x=old; x+=new export y=1; printf "[%s]\n" "$x"'
+bash_answer 'append function local' 'x=old; f() { printf "[%s]\n" "$x"; }; x+=new f; printf "[%s]\n" "$x"'
+bash_answer 'append long' "x=$long_word; x+=\$x; echo \${#x}"
 
 group arithmetic
 check 'shift left'      'echo $((1<<4))'
@@ -1000,33 +1057,33 @@ answer 'not a command'   'nosuchcommand12345; echo $?'
 answer 'external exit 127' '/bin/sh -c "exit 127"; echo $?'
 
 group interactive-fatal
-interactive_fatal 'unsupported uppercase' 'bad substitution' 'x=ab' \
-        'echo RAN-BAD "${x^^}"; echo SAME-LINE'
-interactive_fatal 'unsupported replace' 'bad substitution' 'x=ab' \
-        'echo RAN-BAD "${x//a/b}"; echo SAME-LINE'
+interactive_fatal 'unsupported transform' 'bad substitution' 'x=ab' \
+        'echo RAN-BAD "${x@Q}"; echo SAME-LINE'
+interactive_fatal 'unsupported indirect' 'bad substitution' 'x=ab' \
+        'echo RAN-BAD "${!x}"; echo SAME-LINE'
 interactive_fatal 'parameter required' 'x: boom' 'unset x' \
         'echo RAN-BAD "${x:?boom}"; echo SAME-LINE'
 interactive_fatal 'bad arithmetic' 'arithmetic: 1/0' ':' \
         'echo RAN-BAD "$((1/0))"; echo SAME-LINE'
 interactive_fatal 'redirect expansion' 'bad substitution' 'x=ab' \
-        'echo RAN-BAD >"${x^^}"; echo SAME-LINE'
+        'echo RAN-BAD >"${x@Q}"; echo SAME-LINE'
 interactive_fatal 'for expansion' 'bad substitution' 'x=ab' \
-        'for v in ${x^^}; do echo RAN-BAD; done; echo SAME-LINE'
+        'for v in ${x@Q}; do echo RAN-BAD; done; echo SAME-LINE'
 interactive_fatal 'case expansion' 'bad substitution' 'x=ab' \
-        'case ${x^^} in *) echo RAN-BAD;; esac; echo SAME-LINE'
+        'case ${x@Q} in *) echo RAN-BAD;; esac; echo SAME-LINE'
 interactive_fatal 'heredoc expansion' 'bad substitution' 'x=ab' \
         'cat <<EOF; echo SAME-LINE
-${x^^}
+${x@Q}
 EOF' continue
 interactive_fatal 'command substitution child' 'bad substitution' 'x=ab' \
-        'value=$(echo "${x^^}"
+        'value=$(echo "${x@Q}"
 echo RAN-BAD >&2
 )'
 interactive_fatal 'nested fatal has no assignment' 'bad substitution' \
-        'unset x; y=ab' 'echo RAN-BAD "${x:=${y^^}}"; echo SAME-LINE' \
+        'unset x; y=ab' 'echo RAN-BAD "${x:=${y@Q}}"; echo SAME-LINE' \
         abort 'echo X:${x+set}:${x-UNSET}' 'X::UNSET'
 interactive_fatal 'pipeline child expansion' 'bad substitution' 'x=ab' \
-        'echo RAN-BAD "${x^^}" | cat; echo SAME-LINE' continue
+        'echo RAN-BAD "${x@Q}" | cat; echo SAME-LINE' continue
 interactive_fatal 'pipeline child redirect' 'x: boom' 'unset x' \
         'echo RAN-BAD >"${x:?boom}" | cat; echo SAME-LINE' continue
 interactive_fatal_trap
@@ -1046,7 +1103,7 @@ echo FIRST:$?
 echo X:${x+set}:${x-UNSET}'
 expected 'nested fatal isolated' 'FIRST:2|X::UNSET|AFTER|' 0 'unset x; y=ab
 cat <<EOF
-${x:=${y^^}}
+${x:=${y@Q}}
 EOF
 echo FIRST:$?
 echo X:${x+set}:${x-UNSET}

@@ -36,6 +36,7 @@
 #define OP_RPAREN 16    // )
 #define OP_ANDGREAT 17  // &>
 #define OP_ANDDGREAT 18 // &>>
+#define OP_HERESTRING 19 // <<<
 
 
 typedef struct
@@ -188,6 +189,12 @@ static b32 lex_operator_at(string_address at, positive address_to length)
 {
         p8 a = string_get(at);
         p8 b = string_get(at + 1);
+
+        if (a == '<' && b == '<' && string_is(at + 2, '<'))
+        {
+                address_to length = 3;
+                return OP_HERESTRING;
+        }
 
         // These must be single operators. Reading '&' as a background
         // separator first silently runs a different command graph.
