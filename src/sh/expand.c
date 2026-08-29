@@ -2296,6 +2296,205 @@ static fn expand_replace(string_address name, string_address pattern_text,
         expand_push_run(source + copied, length - copied, mark);
 }
 
+// The length separator in ${name:offset:length}. A colon paired with a
+// top-level arithmetic ?: belongs to the offset; parentheses and nested
+// expansions keep all of their colons inside too.
+static string_address expand_substring_separator(string_address at)
+{
+        positive parentheses = 0;
+        positive choices = 0;
+
+        while (string_get(at))
+        {
+                p8 value = string_get(at);
+
+                if (value == '\\' && string_get(at + 1))
+                {
+                        at += 2;
+                        continue;
+                }
+
+                if (value == '$' && string_is(at + 1, '{'))
+                {
+                        string_address stop = expand_brace_end(at + 2);
+
+                        if (stop)
+                        {
+                                at = stop + 1;
+                                continue;
+                        }
+                }
+
+                if (value == '(')
+                        parentheses++;
+                else if (value == ')' && parentheses)
+                        parentheses--;
+                else if (!parentheses && value == '?')
+                        choices++;
+                else if (!parentheses && value == ':' && choices)
+                        choices--;
+                else if (!parentheses && value == ':')
+                        return at;
+
+                at++;
+        }
+
+        return null;
+}
+
+static fn expand_substring(string_address name, string_address expression,
+                           bool quoted)
+{
+        string_address separator = expand_substring_separator(expression);
+        string_address offset_text = expression;
+        string_address length_text = null;
+        string_address ready;
+        bipolar offset = 0;
+        bipolar wanted = 0;
+        bool has_length = separator != null;
+        positive expansion_start = expand_length;
+        positive length;
+        positive begin;
+        positive finish;
+
+        // ${@:...} and ${*:...} slice an array of positional parameters, not
+        // the joined byte string. Keep rejecting that distinct operation
+        // until parameter arrays have a representation of their own.
+        if ((string_is(name, '@') || string_is(name, '*')) && !string_get(name + 1))
+        {
+                string_format(expand_complain, "%s: bad substitution\n", name);
+                expand_fatal();
+                return;
+        }
+
+        if (separator)
+        {
+                separator[0] = end;
+                length_text = separator + 1;
+        }
+
+        if (string_get(offset_text))
+        {
+                ready = expand_capture(offset_text, true, EXPAND_CAPTURE_TEXT);
+
+                if (expand_failed)
+                        return;
+
+                offset = arith_evaluate(ready);
+
+                if (arith_bad)
+                {
+                        string_format(expand_complain, "arithmetic: %s\n", ready);
+                        expand_fatal();
+                        return;
+                }
+        }
+        else if (!has_length)
+        {
+                string_format(expand_complain, "%s: bad substitution\n", name);
+                expand_fatal();
+                return;
+        }
+
+        if (has_length)
+        {
+                ready = expand_capture(length_text, true, EXPAND_CAPTURE_TEXT);
+
+                if (expand_failed)
+                        return;
+
+                wanted = arith_evaluate(ready);
+
+                if (arith_bad)
+                {
+                        string_format(expand_complain, "arithmetic: %s\n", ready);
+                        expand_fatal();
+                        return;
+                }
+        }
+
+        expand_push_parameter(name, quoted);
+
+        if (expand_failed)
+                return;
+
+        length = expand_length - expansion_start;
+
+        if (offset < 0)
+                begin = offset < -(bipolar)length
+                            ? length
+                            : (positive)((bipolar)length + offset);
+        else
+                begin = (positive)offset < length ? (positive)offset : length;
+
+        finish = length;
+
+        if (has_length)
+        {
+                if (wanted >= 0)
+                        finish = (positive)wanted < length - begin
+                                     ? begin + (positive)wanted
+                                     : length;
+                else if (wanted < -(bipolar)length ||
+                         (positive)((bipolar)length + wanted) < begin)
+                {
+                        string_format(expand_complain,
+                                      "%s: substring expression < 0\n", name);
+                        expand_length = expansion_start;
+                        expand_fatal();
+                        return;
+                }
+                else
+                        finish = (positive)((bipolar)length + wanted);
+        }
+
+        memory_copy(expand_text + expansion_start,
+                    expand_text + expansion_start + begin, finish - begin);
+        memory_copy(expand_mark + expansion_start,
+                    expand_mark + expansion_start + begin, finish - begin);
+        expand_length = expansion_start + finish - begin;
+}
+
+static fn expand_case_change(string_address name, string_address pattern_text,
+                             bool quoted, bool upper, bool every)
+{
+        positive start = expand_length;
+        string_address pattern;
+        p8 one[2] = {0, 0};
+        positive count;
+
+        expand_push_parameter(name, quoted);
+
+        if (expand_failed)
+                return;
+
+        pattern = string_get(pattern_text)
+                      ? expand_capture(pattern_text, false,
+                                       EXPAND_CAPTURE_PATTERN)
+                      : (string_address) "?";
+
+        if (expand_failed || !pattern)
+                return;
+
+        count = every ? expand_length - start
+                      : (expand_length > start ? 1 : 0);
+
+        for (positive at = 0; at < count; at++)
+        {
+                p8 value = expand_text[start + at];
+
+                one[0] = value;
+
+                if (!shell_match(pattern, one))
+                        continue;
+
+                if (upper && value >= 'a' && value <= 'z')
+                        expand_text[start + at] = value - 'a' + 'A';
+                else if (!upper && value >= 'A' && value <= 'Z')
+                        expand_text[start + at] = value - 'A' + 'a';
+        }
+}
+
 /*
         ${ ... } in every form POSIX gives it.
 
@@ -2384,6 +2583,8 @@ static string_address expand_braced(string_address step, bool quoted)
                 operation = seen;
                 step++;
         }
+        else if (colon)
+                operation = ':';
         /*
                 A colon says one of those four is coming, and nothing else.
                 ${x:1:1} is a substring in ksh and in three shells after it
@@ -2409,6 +2610,17 @@ static string_address expand_braced(string_address step, bool quoted)
                 step++;
 
                 if (string_is(step, '/'))
+                {
+                        doubled = true;
+                        step++;
+                }
+        }
+        else if (!colon && (seen == '^' || seen == ','))
+        {
+                operation = seen;
+                step++;
+
+                if (string_is(step, seen))
                 {
                         doubled = true;
                         step++;
@@ -2504,6 +2716,19 @@ static string_address expand_braced(string_address step, bool quoted)
 
                 expand_replace(name, pattern, replacement, quoted, doubled);
 
+                return close + 1;
+        }
+
+        if (operation == ':')
+        {
+                expand_substring(name, word, quoted);
+                return close + 1;
+        }
+
+        if (operation == '^' || operation == ',')
+        {
+                expand_case_change(name, word, quoted, operation == '^',
+                                   doubled);
                 return close + 1;
         }
 

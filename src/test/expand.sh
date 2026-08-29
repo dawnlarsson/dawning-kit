@@ -346,18 +346,13 @@ answer 'assign'         'printf "[%s]" ${x=d} "$x" END; echo'
 answer 'colon assign'   'x=; printf "[%s]" ${x:=d} "$x" END; echo'
 answer 'complain'       'printf "[%s]" ${nosuch?} ; echo after'
 answer 'complain colon' 'x=; printf "[%s]" ${x:?gone} ; echo after'
-#       A colon says one of the four is coming and nothing else. ${x:1:1} is
-#       a substring in three shells and in no part of POSIX, and used to hand
-#       back the whole value here -- wrong against either reading.
-answer 'no substring'   'x=abc; echo "${x:1:1}"; echo after'
-answer 'no offset'      'x=abc; echo "${x:1}"; echo after'
+#       A bare colon remains invalid and positional-parameter slicing remains
+#       rejected until the shell has Bash's parameter-array representation.
 answer 'no bare colon'  'x=abc; echo "${x:}"; echo after'
 answer 'no colon trim'  'x=abc; echo "${x:%b}"; echo after'
 answer 'no at offset'   'set -- a b; echo "${@:1}"; echo after'
 # Bash-only transformations must be implemented or refused. Handing the
 # original value back says they succeeded and lets wrong data travel onward.
-answer 'no uppercase'   'x=ab; echo "${x^^}"; echo after'
-answer 'no titlecase'   'x=ab; echo "${x^}"; echo after'
 answer 'no length default' 'x=abc; echo "${#x:-}"; echo after'
 answer 'no length trim' 'x=abc; echo "${#x%}"; echo after'
 answer 'word expands'   'y=w; printf "[%s]" ${nosuch-$y} END; echo'
@@ -390,6 +385,31 @@ bash_answer 'replacement fields' 'x=a-b; printf "[%s]" ${x/-/" X Y "} END; echo'
 bash_answer 'unset is empty' 'unset x; printf "[%s]" "${x/a/b}" END; echo'
 bash_check 'nounset stays fatal' 'set -u; unset x; printf before; printf "%s" "${x/a/b}"; echo after'
 bash_answer 'long replace all' "x=$long_a; y=\${x//a/bb}; echo \${#y}"
+
+group bash substring
+bash_answer 'substring offset' 'x=abcdef; printf "[%s]" "${x:2}" END; echo'
+bash_answer 'substring length' 'x=abcdef; printf "[%s]" "${x:1:3}" END; echo'
+bash_answer 'negative offset' 'x=abcdef; printf "[%s]" "${x: -2}" END; echo'
+bash_answer 'negative length' 'x=abcdef; printf "[%s]" "${x:1:-1}" END; echo'
+bash_answer 'empty offset' 'x=abcdef; printf "[%s]" "${x::2}" END; echo'
+bash_answer 'past end' 'x=abcdef; printf "[%s]" "${x:20:3}" END; echo'
+bash_answer 'before start' 'x=abcdef; printf "[%s]" "${x: -20:3}" END; echo'
+bash_answer 'arithmetic offset' 'x=abcdef; n=2; printf "[%s]" "${x:n+1:2}" END; echo'
+bash_answer 'ternary offset' 'x=abcdef; n=0; printf "[%s]" "${x:n?1:2:3}" END; echo'
+bash_answer 'substring assigns' 'x=abcdef; n=1; printf "[%s][%s]" "${x:n+=2:2}" "$n" END; echo'
+bash_answer 'substring fields' 'x="a b c"; printf "[%s]" ${x:2:3} END; echo'
+bash_answer 'long substring' "x=$long_a; y=\${x:100:1200}; echo \${#y}"
+
+group bash case
+bash_answer 'uppercase first' 'x=abCDef; printf "[%s]" "${x^}" END; echo'
+bash_answer 'uppercase all' 'x=abCDef; printf "[%s]" "${x^^}" END; echo'
+bash_answer 'lowercase first' 'x=ABcdEF; printf "[%s]" "${x,}" END; echo'
+bash_answer 'lowercase all' 'x=ABcdEF; printf "[%s]" "${x,,}" END; echo'
+bash_answer 'uppercase pattern' 'x=abCDef; printf "[%s]" "${x^^[bd]}" END; echo'
+bash_answer 'lowercase pattern' 'x=ABcdEF; printf "[%s]" "${x,,[AEF]}" END; echo'
+bash_answer 'first must match' 'x=abcbd; printf "[%s]" "${x^[bd]}" END; echo'
+bash_answer 'expanded pattern case' 'x=abCDef; p="[bd]"; printf "[%s]" "${x^^$p}" END; echo'
+bash_answer 'long uppercase' "x=$long_a; y=\${x^^}; echo \${#y}:\${y:0:1}"
 
 group trim
 answer 'shortest head'  'x=a.b.c; printf "[%s]" ${x#*.} END; echo'
