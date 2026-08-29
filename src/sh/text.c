@@ -346,9 +346,29 @@ static bool text_line_next()
         storage. This preserves the ordinary line reader as the bounded edge
         path while removing one full copy from the common path.
 */
-static bool text_line_view(p8 address_to address_to line,
-                           positive address_to length)
+static fn text_line_preserve(p8 address_to address_to previous,
+                             positive previous_length,
+                             p8 address_to storage)
 {
+        if (address_to previous && address_to previous != storage)
+        {
+                // The terminator is part of the view contract. Keeping it
+                // with the bytes also makes later output one buffered write.
+                memory_copy(storage, address_to previous, previous_length + 1);
+                address_to previous = storage;
+        }
+}
+
+static bool text_line_view(p8 address_to address_to line,
+                           positive address_to length,
+                           p8 address_to address_to previous,
+                           positive previous_length,
+                           p8 address_to previous_storage)
+{
+        if (text_input.position >= text_input.filled)
+                text_line_preserve(previous, previous_length,
+                                   previous_storage);
+
         if (!text_fill())
                 return false;
 
@@ -365,9 +385,14 @@ static bool text_line_view(p8 address_to address_to line,
                 return true;
         }
 
+        // text_line_next refills the reader and reuses text_line. Preserve a
+        // prior view from either store before it can be overwritten.
+        text_line_preserve(previous, previous_length, previous_storage);
+
         if (!text_line_next())
                 return false;
 
+        text_line[text_line_length] = text_delimiter;
         address_to line = text_line;
         address_to length = text_line_length;
         return true;
@@ -4770,9 +4795,13 @@ static b32 text_uniq()
         // uniq puts a terminator on every line it writes, including the last
         // one when the input did not have one. Every other tool here hands
         // back what it was given; measured, this one does not.
-        static p8 held[TEXT_LINE_MAX];
-        positive held_length = 0;
-        bool have_held = false;
+        // Most adjacent records live in the same reader fill. Keep a view of
+        // the prior one and copy it here only before a refill can invalidate
+        // that view. The spare byte carries its terminator with it.
+        static p8 held[TEXT_LINE_MAX + 1];
+        p8 address_to previous = held;
+        positive previous_length = 0;
+        bool have_previous = false;
         bool shown_group = false;
         positive count = 0;
         positive gap = grouping ? group_how : all_how;
@@ -4782,7 +4811,9 @@ static b32 text_uniq()
                 p8 address_to line = null;
                 positive line_length = 0;
                 bool more = text_line_view(address_of line,
-                                           address_of line_length);
+                                           address_of line_length,
+                                           address_of previous,
+                                           previous_length, held);
 
                 if (more)
                 {
@@ -4805,25 +4836,27 @@ static b32 text_uniq()
                         if (skip > line_length)
                                 skip = line_length;
 
-                        positive held_skip = 0;
+                        positive previous_skip = 0;
 
                         for (positive f = 0; f < skip_fields; f++)
                         {
-                                held_skip += string_span_max(held + held_skip,
-                                                             held_length - held_skip,
-                                                             string_set_blanks);
-                                held_skip += string_span_max(held + held_skip,
-                                                             held_length - held_skip,
-                                                             text_inside());
+                                previous_skip += string_span_max(
+                                    previous + previous_skip,
+                                    previous_length - previous_skip,
+                                    string_set_blanks);
+                                previous_skip += string_span_max(
+                                    previous + previous_skip,
+                                    previous_length - previous_skip,
+                                    text_inside());
                         }
 
-                        held_skip += skip_characters;
+                        previous_skip += skip_characters;
 
-                        if (held_skip > held_length)
-                                held_skip = held_length;
+                        if (previous_skip > previous_length)
+                                previous_skip = previous_length;
 
                         positive one = line_length - skip;
-                        positive two = held_length - held_skip;
+                        positive two = previous_length - previous_skip;
 
                         if (bounded)
                         {
@@ -4834,15 +4867,15 @@ static b32 text_uniq()
                                         two = compare_width;
                         }
 
-                        bool same = have_held && one == two;
+                        bool same = have_previous && one == two;
 
                         if (same)
                                 same = !(fold
                                              ? memory_compare_ascii_case(
                                                    line + skip,
-                                                   held + held_skip, one)
+                                                   previous + previous_skip, one)
                                              : memory_compare(line + skip,
-                                                              held + held_skip, one));
+                                                              previous + previous_skip, one));
 
                         if (same)
                         {
@@ -4864,21 +4897,19 @@ static b32 text_uniq()
                                                 text_put_character('\n');
 
                                         shown_group = true;
-                                        text_put(held, held_length);
-                                        text_put_character(text_delimiter);
+                                        text_put(previous, previous_length + 1);
                                 }
 
                                 if ((all_repeated && count >= 2) || grouping)
                                 {
-                                        text_put(line, line_length);
-                                        text_put_character(text_delimiter);
+                                        text_put(line, line_length + 1);
                                 }
 
                                 continue;
                         }
                 }
 
-                if (have_held && !all_repeated && !grouping)
+                if (have_previous && !all_repeated && !grouping)
                 {
                         bool show = true;
 
@@ -4895,25 +4926,24 @@ static b32 text_uniq()
                                         // Seven is a minimum field width, not
                                         // a digit limit. Leave room for the
                                         // full positive value as well.
-                                        p8 field[20];
+                                        p8 field[21];
 
                                         positive length = positive_into_padded(
                                             field, count, 7, ' ');
+                                        field[length++] = ' ';
                                         text_put(field, length);
-                                        text_put_character(' ');
                                 }
 
-                                text_put(held, held_length);
-                                text_put_character(text_delimiter);
+                                text_put(previous, previous_length + 1);
                         }
                 }
 
                 if (!more)
                         break;
 
-                memory_copy(held, line, line_length);
-                held_length = line_length;
-                have_held = true;
+                previous = line;
+                previous_length = line_length;
+                have_previous = true;
                 count = 1;
 
                 if (grouping)
@@ -4924,8 +4954,7 @@ static b32 text_uniq()
                                 text_put_character('\n');
 
                         shown_group = true;
-                        text_put(held, held_length);
-                        text_put_character(text_delimiter);
+                        text_put(previous, previous_length + 1);
                 }
         }
 
