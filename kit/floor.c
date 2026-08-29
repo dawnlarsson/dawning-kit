@@ -1,10 +1,11 @@
 /*
         Every routine in library.c, against the speed of the machine.
 
-        The floor is a loop that reads the same memory and computes nothing.
-        Nothing that reads its input once can beat it, so a routine's worth is
-        how close it gets, and a routine already there is finished -- there is
-        no faster version of it, only a faster machine.
+        The lower-bound candidate is a loop that moves the unavoidable traffic
+        and computes nothing.  A semantic routine's useful question is how
+        much slower it remains.  This is an empirical bound, not a declaration:
+        when the real routine beats it, the report says the bound is unresolved
+        instead of printing an impossible efficiency or pretending victory.
 
         Traffic matters and is measured rather than multiplied.  Two streams
         can overlap in the load/store machinery, and reads and writes are not
