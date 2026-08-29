@@ -1006,6 +1006,12 @@ answer 'shift negative'  'echo $((-8>>1))'
 answer 'past thirty two' 'echo $((1<<40))'
 answer 'xor precedence'  'echo $((1^2&3)) $((1|2^3))'
 answer 'comparison run'  'echo $((1<2)) $((2<=2)) $((3>=4))'
+answer 'and skips assignment' 'x=0; echo $((0 && (x=1))) $x'
+answer 'or skips assignment' 'x=0; echo $((1 || (x=1))) $x'
+answer 'and skips division' 'echo $((0 && 1/0)); echo after'
+answer 'or skips division' 'echo $((1 || 1/0)); echo after'
+answer 'ternary takes one arm' 'x=0; echo $((1 ? (x=1) : (x=2))) $x'
+answer 'ternary skips division' 'echo $((0 ? 1/0 : 7)); echo after'
 
 group redirection
 answer 'to stderr'       'echo x 1>&2 2>/dev/null; echo done'

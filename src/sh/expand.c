@@ -917,6 +917,11 @@ static string_address arith_at;
 */
 static bool arith_bad;
 
+// Parsing always reaches the far end of a logical or conditional expression,
+// but an untaken arm is grammar only: it must not read or write variables or
+// raise evaluation errors such as division by zero.
+static bool arith_active;
+
 static fn arith_space()
 {
         while (string_is(arith_at, ' ') || string_is(arith_at, '\t') ||
@@ -930,6 +935,9 @@ static bipolar arith_choose();
 static bipolar arith_store(string_address name, bipolar value)
 {
         p8 written[32];
+
+        if (!arith_active)
+                return 0;
 
         bipolar_into_string(written, value);
         env_set(name, written);
@@ -954,7 +962,7 @@ static bipolar arith_value_of(string_address name)
         bipolar value;
         bool negative = false;
 
-        if (!present)
+        if (!arith_active || !present)
                 return 0;
 
         step += string_span(step, string_set_blanks);
@@ -994,6 +1002,9 @@ static bipolar arith_value_of(string_address name)
 */
 static bipolar arith_divide(bipolar left, bipolar right, bool remainder)
 {
+        if (!arith_active)
+                return 0;
+
         if (!right || (right == -1 && left == (bipolar)((positive)1 << 63)))
         {
                 arith_bad = true;
@@ -1006,6 +1017,9 @@ static bipolar arith_divide(bipolar left, bipolar right, bool remainder)
 // What the operator in front of the = does.
 static bipolar arith_combine(p8 op, bipolar left, bipolar right)
 {
+        if (!arith_active)
+                return 0;
+
         switch (op)
         {
         case '+': return left + right;
@@ -1382,17 +1396,21 @@ static bipolar arith_and()
         while (1)
         {
                 bipolar right;
+                bool active;
 
                 arith_space();
 
                 if (!string_is(arith_at, '&') || string_get(arith_at + 1) != '&')
                         return value;
 
-                // Both sides are read whatever the left one said: skipping the
-                // right side would leave the cursor in the middle of it.
+                // Both sides are parsed so the cursor reaches the end, but a
+                // false left side makes the right side grammar-only.
                 arith_at += 2;
+                active = arith_active;
+                arith_active = active && value;
                 right = arith_bit_or();
-                value = (value && right);
+                arith_active = active;
+                value = active ? (value && right) : 0;
         }
 }
 
@@ -1403,6 +1421,7 @@ static bipolar arith_or()
         while (1)
         {
                 bipolar right;
+                bool active;
 
                 arith_space();
 
@@ -1410,8 +1429,11 @@ static bipolar arith_or()
                         return value;
 
                 arith_at += 2;
+                active = arith_active;
+                arith_active = active && !value;
                 right = arith_and();
-                value = (value || right);
+                arith_active = active;
+                value = active ? (value || right) : 0;
         }
 }
 
@@ -1429,6 +1451,7 @@ static bipolar arith_choose()
         bipolar value = arith_or();
         bipolar taken;
         bipolar left;
+        bool active;
 
         arith_space();
 
@@ -1436,6 +1459,8 @@ static bipolar arith_choose()
                 return value;
 
         arith_at++;
+        active = arith_active;
+        arith_active = active && value;
         taken = arith_choose();
         arith_space();
 
@@ -1444,9 +1469,11 @@ static bipolar arith_choose()
         else
                 arith_bad = true;
 
+        arith_active = active && !value;
         left = arith_choose();
+        arith_active = active;
 
-        return value ? taken : left;
+        return active ? (value ? taken : left) : 0;
 }
 
 static bipolar arith_evaluate(string_address text)
@@ -1454,6 +1481,7 @@ static bipolar arith_evaluate(string_address text)
         bipolar value;
 
         arith_bad = false;
+        arith_active = true;
         arith_at = text;
         arith_space();
 
