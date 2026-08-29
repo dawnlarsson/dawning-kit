@@ -55,14 +55,14 @@ fn log_direct(address_any data, positive length);
 fn log_flush();
 fn log(address_any data, positive length);
 fn log_error(address_any data, positive length);
-fn buffered_flush(positive handle, p8 address_to buffer, positive address_to used);
-fn buffered_write(positive handle, p8 address_to buffer, positive capacity,
-                  positive address_to used, address_any data, positive length);
-fn buffered_write_deferred_equal(positive handle, p8 address_to buffer,
-                                 positive capacity, positive address_to used,
-                                 address_any data, positive length);
-fn buffered_write_byte(positive handle, p8 address_to buffer, positive capacity,
-                       positive address_to used, p8 byte);
+b32 buffered_flush(positive handle, p8 address_to buffer, positive address_to used);
+b32 buffered_write(positive handle, p8 address_to buffer, positive capacity,
+                   positive address_to used, address_any data, positive length);
+b32 buffered_write_deferred_equal(positive handle, p8 address_to buffer,
+                                  positive capacity, positive address_to used,
+                                  address_any data, positive length);
+b32 buffered_write_byte(positive handle, p8 address_to buffer, positive capacity,
+                        positive address_to used, p8 byte);
 
 #define RUNTIME_TEXT_INNER(value) #value
 #define RUNTIME_TEXT(value) RUNTIME_TEXT_INNER(value)
@@ -71,28 +71,34 @@ fn buffered_write_byte(positive handle, p8 address_to buffer, positive capacity,
         Shared buffered output at the architecture floor.  The regular entry
         writes runs at least as large as the buffer directly; the deferred-
         equal entry keeps an exact fit buffered for text's historical policy.
-        Flush always clears the count, including after a failed write.
+        Every entry returns one only when all bytes it accepted were written or
+        retained. Flush always clears the count, including after a failed
+        write, so a caller can report the failure without writing the same
+        prefix twice on a later flush.
 */
 #if X64
 __asm__(
     ASM_SECTION
     ASM_FUNC(buffered_flush)
-    "sub $8, %rsp\n   mov %rdx, (%rsp)\n   mov (%rdx), %rdx\n"
-    "test %rdx, %rdx\n   jz .Lbuffered_flush_x64_done\n"
-    "call system_write_all\n   mov (%rsp), %rdx\n   movq $0, (%rdx)\n"
-    ".Lbuffered_flush_x64_done:\n   add $8, %rsp\n"
+    "sub $24, %rsp\n   mov %rdx, 0(%rsp)\n   mov (%rdx), %rdx\n"
+    "test %rdx, %rdx\n   jz .Lbuffered_flush_x64_empty\n"
+    "mov %rdx, 8(%rsp)\n   call system_write_all\n"
+    "cmp 8(%rsp), %rax\n   sete %al\n   movzbl %al, %eax\n"
+    "mov 0(%rsp), %rdx\n   movq $0, (%rdx)\n"
+    ".Lbuffered_flush_x64_done:\n   add $24, %rsp\n"
     ASM_RET
+    ".Lbuffered_flush_x64_empty:\n   mov $1, %eax\n   jmp .Lbuffered_flush_x64_done\n"
     ASM_END(buffered_flush)
 
     ASM_FUNC(buffered_write)
     "test %r9, %r9\n   jz .Lbuffered_write_x64_empty\n"
     "xor %eax, %eax\n   jmp buffered_write_core\n"
-    ".Lbuffered_write_x64_empty:\n" ASM_RET
+    ".Lbuffered_write_x64_empty:\n   mov $1, %eax\n" ASM_RET
     ASM_END(buffered_write)
     ASM_FUNC(buffered_write_deferred_equal)
     "test %r9, %r9\n   jz .Lbuffered_write_deferred_x64_empty\n"
     "mov $1, %eax\n   jmp buffered_write_core\n"
-    ".Lbuffered_write_deferred_x64_empty:\n" ASM_RET
+    ".Lbuffered_write_deferred_x64_empty:\n   mov $1, %eax\n" ASM_RET
     ASM_END(buffered_write_deferred_equal)
     ASM_LOCAL_FUNC(buffered_write_core)
     "test %eax, %eax\n   jnz .Lbuffered_write_x64_deferred\n"
@@ -106,21 +112,25 @@ __asm__(
     "sub $24, %rsp\n   mov %rcx, 0(%rsp)\n   mov %r9, 8(%rsp)\n"
     "lea (%rsi,%r10), %rdi\n   mov %r8, %rsi\n   mov %r9, %rdx\n"
     "call memory_copy\n   mov 0(%rsp), %rcx\n   mov 8(%rsp), %r9\n"
-    "add %r9, (%rcx)\n   add $24, %rsp\n"
+    "add %r9, (%rcx)\n   mov $1, %eax\n   add $24, %rsp\n"
     ASM_RET
     ".Lbuffered_write_x64_flush_first:\n   sub $40, %rsp\n"
     "mov %rsi, 0(%rsp)\n   mov %rcx, 8(%rsp)\n"
     "mov %r8, 16(%rsp)\n   mov %r9, 24(%rsp)\n"
     "mov %rcx, %rdx\n   call buffered_flush\n"
+    "test %eax, %eax\n   jz .Lbuffered_write_x64_leave_40\n"
     "mov 0(%rsp), %rdi\n   mov 16(%rsp), %rsi\n   mov 24(%rsp), %rdx\n"
     "call memory_copy\n   mov 8(%rsp), %rcx\n   mov 24(%rsp), %r9\n"
-    "add %r9, (%rcx)\n   add $40, %rsp\n"
+    "add %r9, (%rcx)\n   mov $1, %eax\n"
+    ".Lbuffered_write_x64_leave_40:\n   add $40, %rsp\n"
     ASM_RET
     ".Lbuffered_write_x64_direct_entry:\n"
     "sub $40, %rsp\n   mov %rdi, 0(%rsp)\n   mov %r8, 8(%rsp)\n"
     "mov %r9, 16(%rsp)\n   mov %rcx, %rdx\n   call buffered_flush\n"
+    "test %eax, %eax\n   jz .Lbuffered_write_x64_leave_40\n"
     "mov 0(%rsp), %rdi\n   mov 8(%rsp), %rsi\n   mov 16(%rsp), %rdx\n"
-    "call system_write_all\n   add $40, %rsp\n"
+    "call system_write_all\n   cmp 16(%rsp), %rax\n   sete %al\n   movzbl %al, %eax\n"
+    "add $40, %rsp\n"
     ASM_RET
     ASM_LOCAL_END(buffered_write_core)
 
@@ -128,17 +138,19 @@ __asm__(
     "test %rdx, %rdx\n   jz .Lbuffered_byte_x64_direct\n"
     "mov (%rcx), %rax\n   cmp %rdx, %rax\n   jae .Lbuffered_byte_x64_flush\n"
     "mov %r8b, (%rsi,%rax)\n   incq (%rcx)\n"
-    ".Lbuffered_byte_x64_done:\n"
+    ".Lbuffered_byte_x64_success:\n   mov $1, %eax\n"
     ASM_RET
     ".Lbuffered_byte_x64_direct:\n   sub $8, %rsp\n   mov %r8b, (%rsp)\n"
     "mov %rsp, %rsi\n   mov $1, %edx\n   call system_write_all\n"
-    "add $8, %rsp\n"
+    "cmp $1, %rax\n   sete %al\n   movzbl %al, %eax\n   add $8, %rsp\n"
     ASM_RET
     ".Lbuffered_byte_x64_flush:\n   sub $40, %rsp\n"
     "mov %rsi, 0(%rsp)\n   mov %rcx, 8(%rsp)\n   mov %r8, 16(%rsp)\n"
     "mov %rcx, %rdx\n   call buffered_flush\n"
+    "test %eax, %eax\n   jz .Lbuffered_byte_x64_failed\n"
     "mov 0(%rsp), %rsi\n   mov 8(%rsp), %rcx\n   mov 16(%rsp), %r8\n"
-    "mov %r8b, (%rsi)\n   movq $1, (%rcx)\n   add $40, %rsp\n"
+    "mov %r8b, (%rsi)\n   movq $1, (%rcx)\n   mov $1, %eax\n"
+    ".Lbuffered_byte_x64_failed:\n   add $40, %rsp\n"
     ASM_RET
     ASM_END(buffered_write_byte)
 
@@ -178,23 +190,23 @@ __asm__(
 __asm__(
     ASM_SECTION
     ASM_FUNC(buffered_flush)
-    "ldr x3, [x2]\n   cbz x3, .Lbuffered_flush_arm64_done\n"
-    "stp x2, x30, [sp, #-16]!\n   mov x2, x3\n"
-    "bl system_write_all\n   ldp x3, x30, [sp], #16\n"
-    "str xzr, [x3]\n"
-    ".Lbuffered_flush_arm64_done:\n"
+    "ldr x3, [x2]\n   cbz x3, .Lbuffered_flush_arm64_empty\n"
+    "stp x2, x3, [sp, #-32]!\n   str x30, [sp, #16]\n   mov x2, x3\n"
+    "bl system_write_all\n   ldp x2, x3, [sp]\n   ldr x30, [sp, #16]\n"
+    "cmp x0, x3\n   cset w0, eq\n   str xzr, [x2]\n   add sp, sp, #32\n"
     ASM_RET
+    ".Lbuffered_flush_arm64_empty:\n   mov w0, #1\n" ASM_RET
     ASM_END(buffered_flush)
 
     ASM_FUNC(buffered_write)
     "cbz x5, .Lbuffered_write_arm64_empty\n"
     "mov w6, wzr\n   b buffered_write_core\n"
-    ".Lbuffered_write_arm64_empty:\n" ASM_RET
+    ".Lbuffered_write_arm64_empty:\n   mov w0, #1\n" ASM_RET
     ASM_END(buffered_write)
     ASM_FUNC(buffered_write_deferred_equal)
     "cbz x5, .Lbuffered_write_deferred_arm64_empty\n"
     "mov w6, #1\n   b buffered_write_core\n"
-    ".Lbuffered_write_deferred_arm64_empty:\n" ASM_RET
+    ".Lbuffered_write_deferred_arm64_empty:\n   mov w0, #1\n" ASM_RET
     ASM_END(buffered_write_deferred_equal)
     ASM_LOCAL_FUNC(buffered_write_core)
     "cbnz w6, .Lbuffered_write_arm64_deferred\n"
@@ -209,22 +221,26 @@ __asm__(
     "add x0, x1, x7\n   mov x1, x4\n   mov x2, x5\n"
     "bl memory_copy\n   ldp x3, x5, [sp]\n   ldr x30, [sp, #16]\n"
     "ldr x7, [x3]\n   add x7, x7, x5\n   str x7, [x3]\n"
-    "add sp, sp, #32\n"
+    "mov w0, #1\n   add sp, sp, #32\n"
     ASM_RET
     ".Lbuffered_write_arm64_flush_first:\n"
     "sub sp, sp, #48\n   stp x1, x3, [sp]\n"
     "stp x4, x5, [sp, #16]\n   str x30, [sp, #32]\n"
     "mov x2, x3\n   bl buffered_flush\n"
+    "cbz w0, .Lbuffered_write_arm64_leave_48\n"
     "ldp x0, x3, [sp]\n   ldp x1, x2, [sp, #16]\n"
     "bl memory_copy\n   ldr x3, [sp, #8]\n   ldr x5, [sp, #24]\n"
     "ldr x7, [x3]\n   add x7, x7, x5\n   str x7, [x3]\n"
-    "ldr x30, [sp, #32]\n   add sp, sp, #48\n"
+    "mov w0, #1\n"
+    ".Lbuffered_write_arm64_leave_48:\n   ldr x30, [sp, #32]\n   add sp, sp, #48\n"
     ASM_RET
     ".Lbuffered_write_arm64_direct_entry:\n"
     "sub sp, sp, #32\n   stp x0, x4, [sp]\n"
     "stp x5, x30, [sp, #16]\n   mov x2, x3\n"
-    "bl buffered_flush\n   ldp x0, x1, [sp]\n   ldr x2, [sp, #16]\n"
-    "bl system_write_all\n   ldr x30, [sp, #24]\n   add sp, sp, #32\n"
+    "bl buffered_flush\n   cbz w0, .Lbuffered_write_arm64_direct_failed\n"
+    "ldp x0, x1, [sp]\n   ldr x2, [sp, #16]\n"
+    "bl system_write_all\n   ldr x2, [sp, #16]\n   cmp x0, x2\n   cset w0, eq\n"
+    ".Lbuffered_write_arm64_direct_failed:\n   ldr x30, [sp, #24]\n   add sp, sp, #32\n"
     ASM_RET
     ASM_LOCAL_END(buffered_write_core)
 
@@ -232,18 +248,20 @@ __asm__(
     "cbz x2, .Lbuffered_byte_arm64_direct\n   ldr x5, [x3]\n"
     "cmp x5, x2\n   b.hs .Lbuffered_byte_arm64_flush\n"
     "strb w4, [x1, x5]\n   add x5, x5, #1\n   str x5, [x3]\n"
-    ".Lbuffered_byte_arm64_done:\n"
+    ".Lbuffered_byte_arm64_success:\n   mov w0, #1\n"
     ASM_RET
     ".Lbuffered_byte_arm64_direct:\n"
     "stp x29, x30, [sp, #-32]!\n   strb w4, [sp, #16]\n"
     "add x1, sp, #16\n   mov x2, #1\n   bl system_write_all\n"
-    "ldp x29, x30, [sp], #32\n"
+    "cmp x0, #1\n   cset w0, eq\n   ldp x29, x30, [sp], #32\n"
     ASM_RET
     ".Lbuffered_byte_arm64_flush:\n"
     "stp x1, x3, [sp, #-32]!\n   stp x4, x30, [sp, #16]\n"
     "mov x2, x3\n   bl buffered_flush\n   ldp x1, x3, [sp]\n"
+    "cbz w0, .Lbuffered_byte_arm64_failed\n"
     "ldp x4, x30, [sp, #16]\n   strb w4, [x1]\n"
-    "mov x5, #1\n   str x5, [x3]\n   add sp, sp, #32\n"
+    "mov x5, #1\n   str x5, [x3]\n   mov w0, #1\n"
+    ".Lbuffered_byte_arm64_failed:\n   ldr x30, [sp, #24]\n   add sp, sp, #32\n"
     ASM_RET
     ASM_END(buffered_write_byte)
 
@@ -294,24 +312,24 @@ __asm__(
 __asm__(
     ASM_SECTION
     ASM_FUNC(buffered_flush)
-    "ld t0, 0(a2)\n   beqz t0, .Lbuffered_flush_riscv64_done\n"
-    "addi sp, sp, -16\n   sd a2, 0(sp)\n   sd ra, 8(sp)\n"
-    "mv a2, t0\n   call system_write_all\n   ld t0, 0(sp)\n"
-    "sd zero, 0(t0)\n   ld ra, 8(sp)\n"
-    "addi sp, sp, 16\n"
-    ".Lbuffered_flush_riscv64_done:\n"
+    "ld t0, 0(a2)\n   beqz t0, .Lbuffered_flush_riscv64_empty\n"
+    "addi sp, sp, -32\n   sd a2, 0(sp)\n   sd t0, 8(sp)\n   sd ra, 24(sp)\n"
+    "mv a2, t0\n   call system_write_all\n   ld t0, 0(sp)\n   ld t1, 8(sp)\n"
+    "xor a0, a0, t1\n   seqz a0, a0\n   sd zero, 0(t0)\n   ld ra, 24(sp)\n"
+    "addi sp, sp, 32\n"
     ASM_RET
+    ".Lbuffered_flush_riscv64_empty:\n   li a0, 1\n" ASM_RET
     ASM_END(buffered_flush)
 
     ASM_FUNC(buffered_write)
     "beqz a5, .Lbuffered_write_riscv64_empty\n"
     "li t6, 0\n   tail buffered_write_core\n"
-    ".Lbuffered_write_riscv64_empty:\n" ASM_RET
+    ".Lbuffered_write_riscv64_empty:\n   li a0, 1\n" ASM_RET
     ASM_END(buffered_write)
     ASM_FUNC(buffered_write_deferred_equal)
     "beqz a5, .Lbuffered_write_deferred_riscv64_empty\n"
     "li t6, 1\n   tail buffered_write_core\n"
-    ".Lbuffered_write_deferred_riscv64_empty:\n" ASM_RET
+    ".Lbuffered_write_deferred_riscv64_empty:\n   li a0, 1\n" ASM_RET
     ASM_END(buffered_write_deferred_equal)
     ASM_LOCAL_FUNC(buffered_write_core)
     "bnez t6, .Lbuffered_write_riscv64_deferred\n"
@@ -326,23 +344,25 @@ __asm__(
     "sd ra, 24(sp)\n   add a0, a1, t1\n   mv a1, a4\n"
     "mv a2, a5\n   call memory_copy\n   ld a3, 0(sp)\n"
     "ld a5, 8(sp)\n   ld t0, 0(a3)\n   add t0, t0, a5\n"
-    "sd t0, 0(a3)\n   ld ra, 24(sp)\n   addi sp, sp, 32\n"
+    "sd t0, 0(a3)\n   li a0, 1\n   ld ra, 24(sp)\n   addi sp, sp, 32\n"
     ASM_RET
     ".Lbuffered_write_riscv64_flush_first:\n"
     "addi sp, sp, -48\n   sd a1, 0(sp)\n   sd a3, 8(sp)\n"
     "sd a4, 16(sp)\n   sd a5, 24(sp)\n   sd ra, 40(sp)\n"
-    "mv a2, a3\n   call buffered_flush\n   ld a0, 0(sp)\n"
-    "ld a1, 16(sp)\n   ld a2, 24(sp)\n   call memory_copy\n"
+    "mv a2, a3\n   call buffered_flush\n"
+    "beqz a0, .Lbuffered_write_riscv64_leave_48\n"
+    "ld a0, 0(sp)\n   ld a1, 16(sp)\n   ld a2, 24(sp)\n   call memory_copy\n"
     "ld a3, 8(sp)\n   ld a5, 24(sp)\n   ld t0, 0(a3)\n"
-    "add t0, t0, a5\n   sd t0, 0(a3)\n   ld ra, 40(sp)\n"
-    "addi sp, sp, 48\n"
+    "add t0, t0, a5\n   sd t0, 0(a3)\n   li a0, 1\n"
+    ".Lbuffered_write_riscv64_leave_48:\n   ld ra, 40(sp)\n   addi sp, sp, 48\n"
     ASM_RET
     ".Lbuffered_write_riscv64_direct_entry:\n"
     "addi sp, sp, -32\n   sd a0, 0(sp)\n   sd a4, 8(sp)\n"
     "sd a5, 16(sp)\n   sd ra, 24(sp)\n   mv a2, a3\n"
-    "call buffered_flush\n   ld a0, 0(sp)\n   ld a1, 8(sp)\n"
-    "ld a2, 16(sp)\n   call system_write_all\n   ld ra, 24(sp)\n"
-    "addi sp, sp, 32\n"
+    "call buffered_flush\n   beqz a0, .Lbuffered_write_riscv64_direct_failed\n"
+    "ld a0, 0(sp)\n   ld a1, 8(sp)\n   ld a2, 16(sp)\n   call system_write_all\n"
+    "ld t0, 16(sp)\n   xor a0, a0, t0\n   seqz a0, a0\n"
+    ".Lbuffered_write_riscv64_direct_failed:\n   ld ra, 24(sp)\n   addi sp, sp, 32\n"
     ASM_RET
     ASM_LOCAL_END(buffered_write_core)
 
@@ -350,19 +370,21 @@ __asm__(
     "beqz a2, .Lbuffered_byte_riscv64_direct\n   ld t0, 0(a3)\n"
     "bgeu t0, a2, .Lbuffered_byte_riscv64_flush\n"
     "add t1, a1, t0\n   sb a4, 0(t1)\n   addi t0, t0, 1\n   sd t0, 0(a3)\n"
-    ".Lbuffered_byte_riscv64_done:\n"
+    ".Lbuffered_byte_riscv64_success:\n   li a0, 1\n"
     ASM_RET
     ".Lbuffered_byte_riscv64_direct:\n"
     "addi sp, sp, -16\n   sd ra, 8(sp)\n   sb a4, 0(sp)\n"
     "mv a1, sp\n   li a2, 1\n   call system_write_all\n"
-    "ld ra, 8(sp)\n   addi sp, sp, 16\n"
+    "addi a0, a0, -1\n   seqz a0, a0\n   ld ra, 8(sp)\n   addi sp, sp, 16\n"
     ASM_RET
     ".Lbuffered_byte_riscv64_flush:\n"
     "addi sp, sp, -32\n   sd a1, 0(sp)\n   sd a3, 8(sp)\n"
     "sd a4, 16(sp)\n   sd ra, 24(sp)\n   mv a2, a3\n"
     "call buffered_flush\n   ld a1, 0(sp)\n   ld a3, 8(sp)\n"
+    "beqz a0, .Lbuffered_byte_riscv64_failed\n"
     "ld a4, 16(sp)\n   sb a4, 0(a1)\n   li t0, 1\n"
-    "sd t0, 0(a3)\n   ld ra, 24(sp)\n   addi sp, sp, 32\n"
+    "sd t0, 0(a3)\n   li a0, 1\n"
+    ".Lbuffered_byte_riscv64_failed:\n   ld ra, 24(sp)\n   addi sp, sp, 32\n"
     ASM_RET
     ASM_END(buffered_write_byte)
 

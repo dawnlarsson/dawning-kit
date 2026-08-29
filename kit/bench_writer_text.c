@@ -1,7 +1,10 @@
 /* Buffered output policy: former C against the shared assembly core. */
 #include "../src/compiler_memory.c"
 
-#define NOT_INLINED __attribute__((noinline))
+// Keep the former general-purpose body general. GCC otherwise clones a copy
+// for the constant capacity in each row and times that specialised copy
+// against the public assembly ABI, which is not the implementation replaced.
+#define NOT_INLINED __attribute__((noinline, noclone))
 #define TRIES 9
 #define BUFFER_ROUNDS (1u << 18)
 #define BYTE_ROUNDS (1u << 20)
@@ -13,79 +16,87 @@ static p8 payload[CAPACITY * 2];
 static positive used;
 static positive null_handle;
 static volatile positive sink;
+static volatile positive benchmark_capacity = CAPACITY;
 
-NOT_INLINED static fn former_flush(positive handle, p8 address_to buffer,
-                                   positive address_to count)
+NOT_INLINED static b32 former_flush(positive handle, p8 address_to buffer,
+                                    positive address_to count)
 {
         if (!address_to count)
-                return;
+                return true;
 
-        system_write_all(handle, buffer, address_to count);
+        positive wanted = address_to count;
+        positive written = system_write_all(handle, buffer, wanted);
         address_to count = 0;
+        return written == wanted;
 }
 
-NOT_INLINED static fn former_put(positive handle, p8 address_to buffer,
-                                 positive capacity, positive address_to count,
-                                 address_any data, positive length, bool hold_equal)
+NOT_INLINED static b32 former_put(positive handle, p8 address_to buffer,
+                                  positive capacity, positive address_to count,
+                                  address_any data, positive length, bool hold_equal)
 {
         if (!length)
-                return;
+                return true;
 
         if (length > capacity || (!hold_equal && length == capacity))
         {
-                former_flush(handle, buffer, count);
-                system_write_all(handle, data, length);
-                return;
+                if (!former_flush(handle, buffer, count))
+                        return false;
+
+                return system_write_all(handle, data, length) == length;
         }
 
-        if (length > capacity - address_to count)
-                former_flush(handle, buffer, count);
+        if (length > capacity - address_to count &&
+            !former_flush(handle, buffer, count))
+                return false;
 
         memory_copy(buffer + address_to count, data, length);
         address_to count += length;
+        return true;
 }
 
-NOT_INLINED static fn former_byte(positive handle, p8 address_to buffer,
-                                  positive capacity, positive address_to count,
-                                  p8 byte)
+NOT_INLINED static b32 former_byte(positive handle, p8 address_to buffer,
+                                   positive capacity, positive address_to count,
+                                   p8 byte)
 {
         if (!capacity)
-        {
-                system_write_all(handle, address_of byte, 1);
-                return;
-        }
+                return system_write_all(handle, address_of byte, 1) == 1;
 
-        if (address_to count >= capacity)
-                former_flush(handle, buffer, count);
+        if (address_to count >= capacity &&
+            !former_flush(handle, buffer, count))
+                return false;
 
         buffer[address_to count] = byte;
         address_to count += 1;
+        return true;
 }
 
 static p64 put_once(positive length, bool hold_equal, bool assembly,
                     positive rounds, positive pending)
 {
+        positive capacity = benchmark_capacity;
         p64 start = get_cpu_time();
 
         for (positive i = 0; i < rounds; i++)
         {
+                b32 success;
                 used = pending;
 
                 if (assembly)
                 {
                         if (hold_equal)
-                                buffered_write_deferred_equal(null_handle, output,
-                                                              CAPACITY, address_of used,
-                                                              payload, length);
+                                success = buffered_write_deferred_equal(
+                                    null_handle, output, capacity, address_of used,
+                                    payload, length);
                         else
-                                buffered_write(null_handle, output, CAPACITY,
-                                               address_of used, payload, length);
+                                success = buffered_write(null_handle, output, capacity,
+                                                         address_of used, payload, length);
                 }
                 else
-                        former_put(null_handle, output, CAPACITY, address_of used,
-                                   payload, length, hold_equal);
+                        success = former_put(null_handle, output, capacity,
+                                             address_of used, payload, length,
+                                             hold_equal);
 
-                sink += used + output[0];
+                sink += used + output[0] + (positive)success;
         }
 
         return get_cpu_time() - start;
@@ -93,20 +104,22 @@ static p64 put_once(positive length, bool hold_equal, bool assembly,
 
 static p64 byte_once(bool assembly)
 {
+        positive capacity = benchmark_capacity;
         p64 start = get_cpu_time();
 
         for (positive i = 0; i < BYTE_ROUNDS; i++)
         {
-                used = i & (CAPACITY - 1);
+                b32 success;
+                used = i & (capacity - 1);
 
                 if (assembly)
-                        buffered_write_byte(null_handle, output, CAPACITY,
-                                            address_of used, (p8)i);
+                        success = buffered_write_byte(null_handle, output, capacity,
+                                                      address_of used, (p8)i);
                 else
-                        former_byte(null_handle, output, CAPACITY,
-                                    address_of used, (p8)i);
+                        success = former_byte(null_handle, output, capacity,
+                                              address_of used, (p8)i);
 
-                sink += used + output[i & (CAPACITY - 1)];
+                sink += used + output[i & (capacity - 1)] + (positive)success;
         }
 
         return get_cpu_time() - start;
@@ -118,14 +131,15 @@ static p64 flush_once(bool assembly)
 
         for (positive i = 0; i < SYSCALL_ROUNDS; i++)
         {
+                b32 success;
                 used = CAPACITY;
 
                 if (assembly)
-                        buffered_flush(null_handle, output, address_of used);
+                        success = buffered_flush(null_handle, output, address_of used);
                 else
-                        former_flush(null_handle, output, address_of used);
+                        success = former_flush(null_handle, output, address_of used);
 
-                sink += used;
+                sink += used + (positive)success;
         }
 
         return get_cpu_time() - start;
