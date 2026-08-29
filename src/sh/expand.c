@@ -2910,7 +2910,11 @@ static string_address expand_keep_string(string_address text)
         string_address result = shell_store_take(address_of expand_store, room);
 
         if (!result)
+        {
+                expand_overflow = true;
+                expand_failed = true;
                 return (string_address) "";
+        }
 
         memory_copy(result, text, room);
 
@@ -2923,7 +2927,11 @@ static string_address expand_keep(positive at, positive stop)
         string_address result = shell_store_take(address_of expand_store, room);
 
         if (!result)
+        {
+                expand_overflow = true;
+                expand_failed = true;
                 return (string_address) "";
+        }
 
         memory_copy_end(result, expand_text + at, stop - at);
 
@@ -3048,15 +3056,34 @@ static bool expand_emit(positive at, positive stop, shell_words address_to out)
                         }
 
                         for (index = 0; index < glob_count; index++)
-                                if (!shell_words_add(out, expand_keep_string(
-                                                             glob_result[index])))
+                        {
+                                string_address kept = expand_keep_string(
+                                    glob_result[index]);
+
+                                if (expand_failed || !shell_words_add(out, kept))
+                                {
+                                        expand_overflow = true;
+                                        expand_failed = true;
                                         return false;
+                                }
+                        }
 
                         return true;
                 }
         }
 
-        return shell_words_add(out, expand_keep(at, stop));
+        {
+                string_address kept = expand_keep(at, stop);
+
+                if (expand_failed || !shell_words_add(out, kept))
+                {
+                        expand_overflow = true;
+                        expand_failed = true;
+                        return false;
+                }
+        }
+
+        return true;
 }
 
 /*
@@ -3185,6 +3212,8 @@ positive shell_expand_fields(string_address word, shell_words address_to out)
 */
 string_address shell_expand_word(string_address word)
 {
+        string_address result;
+
         expand_word(word);
 
         if (expand_overflow)
@@ -3194,7 +3223,16 @@ string_address shell_expand_word(string_address word)
                 return (string_address) "";
         }
 
-        return expand_keep(0, expand_length);
+        result = expand_keep(0, expand_length);
+
+        if (expand_overflow)
+        {
+                string_format(expand_complain, "Expansion too long: %s\n", word);
+                expand_fatal();
+                return (string_address) "";
+        }
+
+        return result;
 }
 
 /*
@@ -3237,7 +3275,12 @@ string_address shell_expand_pattern(string_address word)
         result = shell_store_take(address_of expand_store, room);
 
         if (!result)
+        {
+                expand_overflow = true;
+                string_format(expand_complain, "Expansion too long: %s\n", word);
+                expand_fatal();
                 return (string_address) "";
+        }
 
         for (at = 0; at < expand_length; at++)
         {
