@@ -39,15 +39,41 @@ typedef struct
         p8 controls[TERMINAL_CONTROLS];
 } terminal_modes;
 
+/*
+        What a write did to the queued bytes.
+
+        The pty is nonblocking, so a successful write may consume only a
+        prefix and EAGAIN may consume nothing. Keep both cases queued for the
+        next pass through the event loop. Any other result means the pty can
+        no longer make progress and lets the caller end the session instead
+        of spinning on it.
+*/
+static b32 term_sent(bipolar wrote)
+{
+        if (wrote > 0)
+        {
+                positive taken = (positive)wrote < to_shell_length
+                                     ? (positive)wrote
+                                     : to_shell_length;
+
+                memory_copy(to_shell, to_shell + taken,
+                            to_shell_length - taken);
+                to_shell_length -= taken;
+                return true;
+        }
+
+        return wrote == -EAGAIN || wrote == -EINTR;
+}
+
 // What the emulator has to say, on its way. A keystroke at a time, so a line
 // long enough to fill the buffer cannot be cut in half by the next one.
-static fn term_send(b32 master)
+static b32 term_send(b32 master)
 {
         if (!to_shell_length)
-                return;
+                return true;
 
-        system_call_3(syscall(write), master, (positive)to_shell, to_shell_length);
-        to_shell_length = 0;
+        return term_sent(system_call_3(syscall(write), master,
+                                       (positive)to_shell, to_shell_length));
 }
 
 static fn term_follow_modes(b32 master)
@@ -219,7 +245,12 @@ static b32 screen_term()
                         if (typed[i].flags & WINDOW_KEY_DOWN)
                         {
                                 term_key(typed[i].character, typed[i].code);
-                                term_send(master);
+
+                                if (!term_send(master))
+                                {
+                                        gone = true;
+                                        break;
+                                }
                         }
 
                 for (;;)
@@ -257,7 +288,8 @@ static b32 screen_term()
 
                 // A report the far end asked for, which is bytes going the
                 // way keys go.
-                term_send(master);
+                if (!gone && !term_send(master))
+                        gone = true;
 
                 // The line editor draws where the shell would have echoed, so
                 // what it touched is what says the screen changed.

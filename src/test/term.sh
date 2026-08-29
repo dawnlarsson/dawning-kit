@@ -32,6 +32,7 @@
 #           cursor        where the cursor is, as row,column
 #           attr R,C      the colours of one cell, as ink,paper
 #           sent          what would have gone up the pty, and forgets it
+#           wrote RESULT  apply a write result (count, again, intr, fatal)
 #           mode          the modes that are set
 #           resize CxR    the window is now this, through the resize path
 #           pty           what the seam in screen.c makes of a real one
@@ -418,6 +419,22 @@ b32 main()
 
                         tell("]\n");
                         to_shell_length = 0;
+                }
+                else if (string_compare(verb, (string_address) "wrote") == 0)
+                {
+                        bipolar wrote;
+
+                        if (string_compare(argument, (string_address) "again") == 0)
+                                wrote = -EAGAIN;
+                        else if (string_compare(argument, (string_address) "intr") == 0)
+                                wrote = -EINTR;
+                        else if (string_compare(argument, (string_address) "fatal") == 0)
+                                wrote = -4095;
+                        else
+                                wrote = (bipolar)number(argument);
+
+                        tell(term_sent(wrote) ? "alive\n" : "dead\n");
+                        i++;
                 }
                 /*
                         The seam the shipped program actually turns the editor
@@ -894,6 +911,18 @@ same 'control'       '[\x01\x03\x1a]'            20 3 edit off keys '^A^C^Z' sen
 #       that asked for it is reading for.
 same 'application arrows' '[\eOA\eOD]'           20 3 edit off in '\e[?1h' keys '<up><left>' sent
 same 'and back again' '[\e[A]'                   20 3 edit off in '\e[?1h\e[?1l' keys '<up>' sent
+
+group writes
+#       A nonblocking pty can accept only a prefix or none of a key burst.
+#       Only a positive prefix leaves the queue; retryable errors leave every
+#       byte, while a fatal/no-progress result tells the event loop to stop.
+same 'short keeps tail' 'alive|[cdef]'             20 3 edit off keys 'abcdef' wrote 2 sent
+same 'full consumes all' 'alive|[]'                20 3 edit off keys 'abcdef' wrote 6 sent
+same 'large count clamps' 'alive|[]'               20 3 edit off keys 'abcdef' wrote 99 sent
+same 'again keeps all' 'alive|[abcdef]'            20 3 edit off keys 'abcdef' wrote again sent
+same 'interrupt keeps all' 'alive|[abcdef]'        20 3 edit off keys 'abcdef' wrote intr sent
+same 'fatal keeps evidence' 'dead|[abcdef]'        20 3 edit off keys 'abcdef' wrote fatal sent
+same 'zero cannot spin' 'dead|[abcdef]'            20 3 edit off keys 'abcdef' wrote 0 sent
 
 #
 #       The line being typed, before it is a line.
