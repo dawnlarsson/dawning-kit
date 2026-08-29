@@ -218,10 +218,7 @@ static b32 screen_term()
                 touched_bottom = 0;
 
                 if (window->columns != COLUMNS || window->rows != ROWS)
-                {
                         regrid(master);
-                        changed = true;
-                }
 
                 term_follow_modes(master);
 

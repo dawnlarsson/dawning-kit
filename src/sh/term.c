@@ -1163,7 +1163,10 @@ static fn SPARE cursor_show()
         struct window_cell address_to cell;
         unsigned char was;
 
-        if (!cursor_visible)
+        // Showing is a state transition, not a colour toggle. In particular,
+        // a synchronous resize commit and the ordinary loop tail can both
+        // ask in one iteration; the second must not invert the cell back.
+        if (shown || !cursor_visible)
                 return;
 
         // A block sits on a cell, so there has to be one to sit on.
@@ -1298,6 +1301,50 @@ static fn line_show()
         {
                 row = ROWS - 1;
                 column = COLUMNS - 1;
+        }
+}
+
+/*
+        Take the editable line out of the old grid before putting it into a
+        new one.
+
+        Merely drawing it again after COLUMNS changed left the old cells in
+        the ring as well. Canvas then folded those old cells and the newly
+        laid-out copy appeared a second time. The prompt is everything before
+        the anchor and stays; rows occupied only by the editable line become
+        empty by shortening their lengths, which is also what keeps blank
+        folded rows from consuming the resized view.
+*/
+static fn line_hide()
+{
+        unsigned int r, c;
+        positive left;
+
+        if (!line_anchored || !line_drawn)
+                return;
+
+        r = line_anchor_row();
+        c = line_anchor_column;
+        left = line_drawn;
+
+        while (left && r < ROWS)
+        {
+                unsigned int room = COLUMNS - min(c, COLUMNS);
+                positive taken = left < room ? left : room;
+                unsigned int address_to length = row_length(r);
+
+                if (address_to length > c)
+                        address_to length = c;
+
+                touch(r);
+                left -= taken;
+                r++;
+                c = 0;
+
+                // A full last column wraps only when another character is
+                // written. There is no next row to remove in that case.
+                if (!room)
+                        break;
         }
 }
 
@@ -1767,23 +1814,30 @@ fn claim_standard_descriptors()
         lines that had scrolled off the top rather than blank ones, and the
         cursor is still on the line it was on -- that many rows further down.
 
-        What was on the screen stays on it. Lines are not folded at the new
-        width here: the compositor wraps a line longer than the window it is
-        drawn in, and doing that to a live row would move the cursor of the
-        program on the other end of the pty, which is not this program's to
-        move. So the rows are clipped, and it is the scrollback above them
-        that re-wraps.
+        What was on the screen stays on it. Lines are not moved or shortened
+        here: the compositor folds a stored line at the width it is drawn in,
+        so narrowing and then widening a window is lossless. The pty learns
+        the new grid below and future output uses it; an application that owns
+        the screen can then redraw in response to SIGWINCH.
 */
 fn regrid(b32 master)
 {
         unsigned int was_rows = ROWS;
         unsigned int columns = window->columns;
         unsigned int rows = window->rows;
+#ifndef KERNEL_MODE
+        b32 cursor_was_shown = shown;
+#endif
 
         // Undone in the geometry it was made in. cursor_show inverts a cell in
         // place, so clearing "shown" and moving on left that cell inverted for
         // good.
         cursor_hide();
+
+#ifndef KERNEL_MODE
+        if (line_editing)
+                line_hide();
+#endif
 
         // A window narrower or shorter than one cell is not a grid, and every
         // wrap and scroll below divides by these: zero rows had put wrapped
@@ -1817,22 +1871,48 @@ fn regrid(b32 master)
         region_bottom = ROWS;
 
         // The line being typed is anchored to a line of the ring, so it
-        // survives the resize; what it cannot survive is being redrawn at a
-        // width it was not written at, and the next keystroke does that.
+        // survives the resize. Redraw it now at the new width: waiting for the
+        // next keystroke left the cursor and the editable text in the old
+        // geometry even though the window had already changed underneath it.
         line_drawn = 0;
 
-        for (unsigned int r = 0; r < ROWS; r++)
-        {
-                unsigned int address_to length = row_length(r);
-
-                if (address_to length > COLUMNS)
-                        address_to length = COLUMNS;
-        }
+#ifndef KERNEL_MODE
+        if (line_editing)
+                line_show();
+#endif
 
         shown = false;
         touch_all();
 
         window_grid(window, COLUMNS, ROWS);
+
+#ifndef KERNEL_MODE
+        /*
+                A resize is one transaction, including the cursor.
+
+                Leaving it hidden here and relying on the caller's ordinary
+                end-of-loop redraw made the resize path the only state in
+                which the cursor could remain absent until some later input.
+                Publish the new grid, put the cursor into that grid, damage
+                it, and synchronously commit before returning. master is -1
+                in the pure emulator harness and in the kernel console; both
+                have an owner that paints their cells directly.
+        */
+        if (master >= 0 || cursor_was_shown)
+                cursor_show();
+
+        if (master >= 0)
+        {
+                window_damage(window, 0, ROWS);
+                window_flush(window);
+
+                // That damage was consumed by the synchronous commit. Keep
+                // later input in this same loop iteration visible, but do not
+                // manufacture a second cursor-only flush at the loop tail.
+                touched_top = ROWS;
+                touched_bottom = 0;
+        }
+#endif
 
 #ifndef KERNEL_MODE
         winsize size;

@@ -382,6 +382,8 @@ b32 main()
                         say_number(column);
                         say_byte('\n');
                 }
+                else if (string_compare(verb, (string_address) "show") == 0)
+                        cursor_show();
                 else if (string_compare(verb, (string_address) "attr") == 0)
                 {
                         positive at = 0;
@@ -1112,10 +1114,23 @@ differs 'shrunk from the top' '[]|0,5'           20 5 in 'hello' resize '20x3' r
 #       forever looking for a row to land on.
 same 'no cells at all' '0,0'                     8 3 in 'abc' resize '0x0' cursor
 same 'one cell'        '[c]'                     1 1 in 'abc' row 0
-#       Lines are clipped rather than folded: the compositor wraps a line
-#       longer than the window it is drawn in, and folding a live row here
-#       would move the cursor of the program on the other end of the pty.
-same 'clipped not folded' '[hel]'                10 3 in 'hello' resize '3x3' row 0
+#       A resize never destroys the tail of a stored line. Canvas folds that
+#       line while the window is narrow and unfolds the same cells when it is
+#       widened again; the emulator only changes where future output lands.
+same 'narrow keeps line' '[hello]'               10 3 in 'hello' resize '3x3' row 0
+same 'narrow then wide' '[hello]'                10 3 in 'hello' resize '3x3' \
+                                                 resize '10x3' row 0
+same 'editable reflows now' '[> ab]|[cde]|[]|1,3' \
+                                                 10 3 edit on in '> ' keys 'abcde' \
+                                                 resize '4x3' dump cursor
+same 'editable widens again' '[> abcde]|[]|[]|0,7' \
+                                                 10 3 edit on in '> ' keys 'abcde' \
+                                                 resize '4x3' resize '10x3' dump cursor
+same 'cursor follows repeats' '0,7|0,7|0,7|1,1' \
+                                                 10 3 edit on keys 'abc' show \
+                                                 resize '2x3' show attr '1,1' \
+                                                 resize '10x3' show attr '0,3' \
+                                                 resize '2x3' show attr '1,1' cursor
 
 section ""
 
