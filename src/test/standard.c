@@ -3201,7 +3201,7 @@ static f32 narrow_valued(p32 bits)
         return shape.value;
 }
 
-static bool narrow_is_nan(p32 bits)
+static bool narrow_pattern_is_nan(p32 bits)
 {
         return (bits & 0x7f800000u) == 0x7f800000u && (bits & 0x007fffffu) != 0;
 }
@@ -3272,9 +3272,9 @@ static bool narrow_agrees(p32 bits)
         {
                 //      A NaN argument gives a NaN answer, and which NaN is
                 //      the machine's business, not this library's.
-                if (narrow_is_nan(want[mode]) || narrow_is_nan(got[mode]))
+                if (narrow_pattern_is_nan(want[mode]) || narrow_pattern_is_nan(got[mode]))
                 {
-                        if (narrow_is_nan(want[mode]) != narrow_is_nan(got[mode]))
+                        if (narrow_pattern_is_nan(want[mode]) != narrow_pattern_is_nan(got[mode]))
                                 return false;
                         continue;
                 }
@@ -3470,8 +3470,8 @@ test(narrow_smaller_and_larger) {
         fail(narrow_pattern(narrow_larger(2.5f, not_a_number)) == narrow_pattern(2.5f));
         fail(narrow_pattern(narrow_smaller(negative_not_a_number, -2.5f)) == narrow_pattern(-2.5f));
         fail(narrow_pattern(narrow_larger(-2.5f, negative_not_a_number)) == narrow_pattern(-2.5f));
-        fail(narrow_is_nan(narrow_pattern(narrow_smaller(not_a_number, negative_not_a_number))));
-        fail(narrow_is_nan(narrow_pattern(narrow_larger(not_a_number, negative_not_a_number))));
+        fail(narrow_pattern_is_nan(narrow_pattern(narrow_smaller(not_a_number, negative_not_a_number))));
+        fail(narrow_pattern_is_nan(narrow_pattern(narrow_larger(not_a_number, negative_not_a_number))));
 
         //      Infinity is a number here and takes part in the ordering.
         f32 forever = narrow_valued(0x7f800000u);
@@ -3510,7 +3510,7 @@ test(narrow_square_root_is_exact) {
                 }
 
         //      Negative gives a NaN, and a negative zero gives itself back.
-        fail(narrow_is_nan(narrow_pattern(narrow_square_root(-1.0f))));
+        fail(narrow_pattern_is_nan(narrow_pattern(narrow_square_root(-1.0f))));
         fail(narrow_pattern(narrow_square_root(-0.0f)) == 0x80000000u);
 
         return true;

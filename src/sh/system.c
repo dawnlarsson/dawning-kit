@@ -651,7 +651,7 @@ static b32 system_edit()
                 edit_draw();
                 log_flush();
 
-                got = system_call_3(syscall(read), stdin, (positive)address_of key, 1);
+                got = system_call_3(syscall(read), standard_input_descriptor, (positive)address_of key, 1);
 
                 if (got <= 0 || key == 'q' || key == 3 || key == 4)
                         break;

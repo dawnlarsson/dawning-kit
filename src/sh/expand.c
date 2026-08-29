@@ -182,7 +182,7 @@ static fn expand_complain(address_any data, positive length)
         if (length == 0)
                 length = string_length(data);
 
-        system_call_3(syscall(write), stderr, (positive)data, length);
+        system_call_3(syscall(write), standard_error_descriptor, (positive)data, length);
 }
 
 static bool expand_name_character(p8 value)
@@ -1851,7 +1851,7 @@ static fn expand_run(string_address command, bool quoted)
                 exec_child_began();
 
                 system_call_1(syscall(close), (positive)channel[0]);
-                system_call_3(syscall(dup3), (positive)channel[1], stdout, 0);
+                system_call_3(syscall(dup3), (positive)channel[1], standard_output_descriptor, 0);
                 system_call_1(syscall(close), (positive)channel[1]);
 
                 shell_output = log;

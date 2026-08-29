@@ -771,7 +771,7 @@ fn shell_thread_instance()
         // The child owns its own descriptors, so a redirection lands here and
         // never touches the shell's own output.
         if (shell_output_file)
-                system_call_3(syscall(dup3), shell_output_file, stdout, 0);
+                system_call_3(syscall(dup3), shell_output_file, standard_output_descriptor, 0);
 
         bipolar exec_result = shell_exec_file(shell_argv[0], shell_argv,
                                               shell_argc,
@@ -893,10 +893,10 @@ fn shell_execute_command()
         */
         if (shell_output_file && spawn_device >= 0)
         {
-                saved_output = system_call_1(syscall(dup), stdout);
+                saved_output = system_call_1(syscall(dup), standard_output_descriptor);
 
                 if (saved_output >= 0)
-                        system_call_3(syscall(dup3), shell_output_file, stdout, 0);
+                        system_call_3(syscall(dup3), shell_output_file, standard_output_descriptor, 0);
         }
 
         if (spawn_device >= 0 && (!shell_output_file || saved_output >= 0))
@@ -904,7 +904,7 @@ fn shell_execute_command()
 
         if (saved_output >= 0)
         {
-                system_call_3(syscall(dup3), saved_output, stdout, 0);
+                system_call_3(syscall(dup3), saved_output, standard_output_descriptor, 0);
                 system_call_1(syscall(close), saved_output);
         }
 

@@ -8749,7 +8749,7 @@ static b32 file_yes()
 
         while (1)
         {
-                if (system_write_all(stdout, output, filled) != filled)
+                if (system_write_all(standard_output_descriptor, output, filled) != filled)
                 {
                         memory_free(line, length);
                         return 1;

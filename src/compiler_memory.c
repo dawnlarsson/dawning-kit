@@ -2381,4 +2381,86 @@ static inline INLINE address_any copy_until_known(address_any destination,
 //      Note the `<` in string_copy_end where the other three have `<=`. That is not a typo and it is not an inconsistency to tidy: copy_end_known copies length plus one, so a length of exactly KNOWN_SIZE_MAX asks copy_apart_known for 129 bytes, which is past what it is correct for.
 //      memory_copy_until guards on the size alone and never on the byte. Folding the byte buys nothing — the compare is register against an immediate or against a register, and the length is the same either way — while requiring both would halve the number of call sites the expansion reaches.
 
+/*
+        The structural half of the C library: the families that are algorithm
+        rather than instruction. An allocator has policy, a formatter has
+        state, qsort has a strategy -- none of that is a floor to hit, so none
+        of it belongs in library.c, whose rule is assembly and declarations
+        only. They live here instead, one file per family, reached the same
+        way src/net reaches its wire layers.
+
+        The order is load-bearing in four places and arbitrary everywhere else.
+        error.c first, because it defines errno, the E constants and the POSIX
+        descriptor calls that stream.c opens files with. allocator.c second,
+        because text.c's strdup and stream.c's getline call malloc, and a
+        translation unit that names malloc without one does not link at all --
+        which is not a warning about these files but about every program that
+        includes this umbrella. stream.c late, because its last act is to
+        #undef stdin, stdout and stderr and redefine them from the descriptor
+        numbers 0, 1 and 2 into the stream pointers that every C program on
+        earth means by those words; anything included after it that wanted the
+        numbers would silently get pointers. format.c last, because printf
+        writes through stream.c's byte primitive and defers to error.c's
+        perror, and it detects both by their include guards.
+*/
+#include "standard/error.c"
+#define STANDARD_NO_UNDERSCORE_EXIT
+#include "standard/allocator.c"
+#include "standard/text.c"
+#include "standard/stdlib.c"
+#include "standard/clock.c"
+#include "standard/math.c"
+#include "standard/stream.c"
+#include "standard/format.c"
+
+/*
+        Returning from main is defined by C to be a call to exit, and exit
+        flushes. This startup does neither: _start calls main and then traps
+        exit(2) directly, and the file that does it says so -- "there is no
+        C-side startup shim". Without one, a program that printf's and returns
+        writes its bytes into stdout's buffer and then exits past them, which
+        is the most visible thing a C library can get wrong.
+
+        So the shim is here, in the umbrella, rather than in the startup
+        assembly. Two reasons it does not belong there. A program is one
+        translation unit -- it includes this file and then defines main -- so a
+        weak default in linux.inc and a strong override here would be two
+        definitions of one label in a single assembly stream, which is a
+        duplicate symbol at assembly time and not an override; weak linking
+        needs separate objects. And linux.inc sits inside library.c's graph,
+        where everything must be assembly at three-architecture parity, for
+        something with no hardware content in it at all.
+
+        The rename is what makes it work. This defines main, then #defines the
+        word, so the main the program writes below its include becomes
+        moonwater_program_main and this one keeps the entry point. Every main
+        in the tree takes (void) and the startup passes no arguments, so the
+        signature is the whole contract.
+
+        Deliberately NOT on the exit path. The shell calls exit inside forked
+        children at about twenty sites, and a child that flushes buffers it
+        inherited from its parent prints the parent's pending output a second
+        time. Explicit exit therefore still reaches the raw trap, which is a
+        real divergence from glibc and is written down in the commit rather
+        than papered over: printf then exit loses the bytes, printf then
+        return does not.
+*/
+#if !defined(KERNEL_MODE) && !defined(STANDARD_NO_PLATFORM) && \
+        defined(STANDARD_MODERN_C_STANDARD_STREAM)
+
+b32 moonwater_program_main(void);
+
+b32 main(void)
+{
+        b32 code = moonwater_program_main();
+
+        stream_flush(null);
+
+        return code;
+}
+
+#define main moonwater_program_main
+
+#endif
+
 #endif // STANDARD_MODERN_C_COMPILER_MEMORY

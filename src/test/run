@@ -43,7 +43,7 @@ TEST_TALLY="$work/tally"
 export TEST_TALLY
 : > "$TEST_TALLY"
 
-lanes="standard verify exact known socket net slurp wait writer native probe shell expand builtin awk text tools files term kit boot canvas"
+lanes="standard allocator error strings stdlib clock math format stream verify exact known socket net slurp wait writer native probe shell expand builtin awk text tools files term kit boot canvas"
 
 describe()
 {
@@ -52,6 +52,14 @@ describe()
         verify)   echo "the assembly in library.c against the C it replaced, on three machines" ;;
         exact)    echo "every size that is known where the call is written, and both tiers" ;;
         known)    echo "the rest of what folds when the call site knows it" ;;
+        allocator) echo "malloc, free, calloc and realloc against glibc's" ;;
+        error)    echo "errno, strerror and the POSIX wrappers that set it" ;;
+        strings)  echo "strdup, strtok, strsep and the non-local jump" ;;
+        stdlib)   echo "exit, atexit, getenv, qsort and bsearch" ;;
+        clock)    echo "the calendar, and strftime, against glibc's" ;;
+        math)     echo "pow, exp, log and the trig, measured in ULP" ;;
+        format)   echo "printf's conversions, every one against glibc" ;;
+        stream)   echo "<stdio.h>'s FILE against glibc's, on three machines" ;;
         socket)   echo "byte order against a reference, and real sockets on three machines" ;;
         net)      echo "the netlink wire built byte by byte, and ip against the kernel" ;;
         slurp)    echo "bounded file reads and forced EINTR at open and read, on three machines" ;;
@@ -1777,6 +1785,15 @@ known_one()
 
         [ "$bad" = 0 ]
 }
+
+lane_allocator() { freestanding_checks_lane allocator src/test/allocator.c; }
+lane_error()     { freestanding_checks_lane error src/test/error.c; }
+lane_strings()   { freestanding_checks_lane strings src/test/strings.c; }
+lane_stdlib()    { freestanding_checks_lane stdlib src/test/stdlib.c; }
+lane_clock()     { freestanding_checks_lane clock src/test/clock.c; }
+lane_math()      { freestanding_checks_lane math src/test/math.c; }
+lane_format()    { freestanding_checks_lane format src/test/format.c; }
+lane_stream()    { sh src/test/stream.sh; }
 
 lane_known()
 {
