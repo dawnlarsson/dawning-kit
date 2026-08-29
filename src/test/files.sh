@@ -200,6 +200,22 @@ refuses_du_link_ceiling() {
         report bad 'hard-link ceiling' "wanted loud refusal, got [$(head -c 50 "$work/got" | tr '\n' '|')][$got_status] $(head -1 "$work/got.err")"
 }
 
+refuses_du_depth_ceiling() {
+        if "$binaries/du" "$1" > "$work/got" 2> "$work/got.err"; then
+                got_status=0
+        else
+                got_status=$?
+        fi
+
+        if [ "$got_status" -ne 0 ] && [ ! -s "$work/got" ] &&
+           grep -q '^du: tree is nested too deep$' "$work/got.err"; then
+                report ok
+                return 0
+        fi
+
+        report bad 'depth ceiling' "wanted loud refusal, got [$(head -c 50 "$work/got" | tr '\n' '|')][$got_status] $(head -1 "$work/got.err")"
+}
+
 # When a file was last written, or the word now.
 #
 # The two trees are built one after the other and the two tools run one after
@@ -401,6 +417,8 @@ spoken 'loud resolving' readlink -vf "$fixture/nothing/at/all"
 spoken 'loud existing'  readlink -ve "$fixture/nothing"
 answered 'missing then existing' readlink -m -e "$fixture/nothing/at/all"
 answered 'existing then missing' readlink -e -m "$fixture/nothing/at/all"
+answered 'no newline many' readlink -n "$fixture/sub/back" "$fixture/todir"
+answered 'zero beats no newline many' readlink -n -z "$fixture/sub/back" "$fixture/todir"
 
 group realpath
 same 'plain'            realpath "$fixture/alpha"
@@ -623,6 +641,16 @@ done
 crowded_copy=$work/crowded-copy
 cp -al "$crowded" "$crowded_copy"
 
+deep_du=$work/deep-du
+deep_step=$deep_du
+mkdir "$deep_step"
+i=0
+while [ "$i" -lt 33 ]; do
+        deep_step=$deep_step/d
+        mkdir "$deep_step"
+        i=$((i + 1))
+done
+
 group ls
 near 'plain'            'cat' ls "$fixture"
 near 'all'              'cat' ls -a "$fixture"
@@ -662,6 +690,10 @@ same 'long slashed'     ls -lp "$fixture"
 near 'classified kinds' 'cat' ls -F "$kinds"
 near 'classified kinds long' 'cat' ls -lF "$kinds"
 near 'slashed kinds'    'cat' ls -p "$kinds"
+answered 'all then almost all' ls -a -A "$fixture/empty"
+answered 'almost all then all' ls -A -a "$fixture/empty"
+answered 'time then size' ls -t -S "$fixture"
+answered 'size then time' ls -S -t "$fixture"
 refuses_ls_ceiling "$crowded"
 
 #       A file with two names in the tree is one file. Nothing above has one,
@@ -710,8 +742,18 @@ near 'one system long'  "LC_ALL=C sort" du --one-file-system "$linked"
 near 'apparent long'    "LC_ALL=C sort" du -s --apparent-size "$linked"
 same 'not an option'    du -W "$linked"
 same 'not a word'       du --excluding=two "$linked"
+answered 'bytes then megabytes' du -b -m "$fixture/alpha"
+answered 'megabytes then bytes' du -m -b "$fixture/alpha"
+answered 'kilobytes then megabytes' du -k -m "$fixture/alpha"
+answered 'megabytes then kilobytes' du -m -k "$fixture/alpha"
+answered 'summary with all' du -s -a "$fixture"
+answered 'summary with depth' du -s -d1 "$fixture"
+answered 'bad depth word' du -d nope "$fixture"
+answered 'negative depth means zero' du -d -1 "$fixture"
+answered 'positive signed depth' du -d +1 "$fixture"
 refuses_du_excludes
 refuses_du_link_ceiling "$crowded"
+refuses_du_depth_ceiling "$deep_du"
 
 group df
 # The digits are masked and their count is not: how full a filesystem is
@@ -780,6 +822,8 @@ effect 'quiet'          chown '$TOOL -f '"$(id -un)"' nothing > said 2>&1'
 effect 'reference'      chown '$TOOL --reference=tree/two tree/one'
 effect 'reference gone' chown '$TOOL --reference=nothing tree/one'
 effect 'not an option'  chown '$TOOL -W '"$(id -un)"' tree/one'
+effect 'nofollow then follow' chown 'ln -s absent broken; $TOOL -h --dereference '"$(id -un)"' broken'
+effect 'follow then nofollow' chown 'ln -s absent broken; $TOOL --dereference -h '"$(id -un)"' broken'
 
 group sleep
 timing 'fraction'       0.3

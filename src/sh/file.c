@@ -1924,6 +1924,21 @@ static b32 ls_status;
 static bool ls_written;
 static bool ls_broken;
 static b64 ls_now;
+static p8 ls_hidden_option;
+static p8 ls_order_option;
+
+static bool ls_option_seen(p8 letter, string_address value)
+{
+        (void)value;
+
+        if (letter == 'a' || letter == 'A')
+                ls_hidden_option = letter;
+
+        if (letter == 't' || letter == 'S')
+                ls_order_option = letter;
+
+        return true;
+}
 
 static fn ls_limit(string_address why)
 {
@@ -2365,10 +2380,14 @@ static fn ls_directory(string_address path, bool heading, positive depth)
 static b32 file_ls()
 {
         positive count = (positive)program_argument_count();
+        ls_hidden_option = 0;
+        ls_order_option = 0;
+
         file_taking taking = {
             .program = (string_address) "ls",
             .allowed = (string_address) "laARtShr1dinFp",
             .valued = (string_address) "",
+            .seen = ls_option_seen,
         };
 
         if (!file_take(address_of taking))
@@ -2384,11 +2403,11 @@ static b32 file_ls()
         ls_now = file_now();
 
         ls_long = (flags & FILE_FLAG('l')) != 0 || (flags & FILE_FLAG('n')) != 0;
-        ls_hidden = (flags & FILE_FLAG('a')) != 0;
-        ls_almost = (flags & FILE_FLAG('A')) != 0;
+        ls_hidden = ls_hidden_option == 'a';
+        ls_almost = ls_hidden_option == 'A';
         ls_recursive = (flags & FILE_FLAG('R')) != 0;
-        ls_by_time = (flags & FILE_FLAG('t')) != 0;
-        ls_by_size = (flags & FILE_FLAG('S')) != 0;
+        ls_by_time = ls_order_option == 't';
+        ls_by_size = ls_order_option == 'S';
         ls_human = (flags & FILE_FLAG('h')) != 0;
         ls_reversed = (flags & FILE_FLAG('r')) != 0;
         ls_inode = (flags & FILE_FLAG('i')) != 0;
@@ -4139,6 +4158,8 @@ static bool du_was_directory;
 static p64 du_seen_inode[DU_SEEN];
 static p64 du_seen_device[DU_SEEN];
 static bool du_seen_broken;
+static bool du_depth_broken;
+static p8 du_unit_option;
 
 static p64 du_where(file_facts address_to facts)
 {
@@ -4281,7 +4302,7 @@ static p64 du_walk(string_address path, positive depth, bool named, positive lev
 
                                 p64 cost = du_walk(under, depth - 1, false, level + 1);
 
-                                if (du_seen_broken)
+                                if (du_seen_broken || du_depth_broken)
                                         break;
 
                                 total += cost;
@@ -4298,8 +4319,30 @@ static p64 du_walk(string_address path, positive depth, bool named, positive lev
                         du_status = 1;
                 }
         }
+        else
+        {
+                file_walk walk;
 
-        if (du_seen_broken)
+                if (file_walk_open(address_of walk, AT_FDCWD, path))
+                {
+                        struct linux_dirent64 address_to entry;
+
+                        while ((entry = file_walk_next(address_of walk)))
+                        {
+                                if (file_is_dot(entry->d_name))
+                                        continue;
+
+                                file_fail("du: tree is nested too deep\n", 0);
+                                du_depth_broken = true;
+                                du_status = 1;
+                                break;
+                        }
+
+                        file_walk_close(address_of walk);
+                }
+        }
+
+        if (du_seen_broken || du_depth_broken)
         {
                 du_was_directory = true;
                 return 0;
@@ -4315,6 +4358,9 @@ static p64 du_walk(string_address path, positive depth, bool named, positive lev
 
 static bool du_exclude_seen(p8 letter, string_address value)
 {
+        if (letter == 'b' || letter == 'k' || letter == 'm')
+                du_unit_option = letter;
+
         if (letter != 'e' || !value)
                 return true;
 
@@ -4355,6 +4401,8 @@ static b32 file_du()
         du_maximum = FILE_MAX_DEPTH;
         du_exclude_have = 0;
         du_seen_broken = false;
+        du_depth_broken = false;
+        du_unit_option = 0;
         memory_fill(du_seen_inode, 0, sizeof(du_seen_inode));
         memory_fill(du_seen_device, 0, sizeof(du_seen_device));
 
@@ -4382,11 +4430,16 @@ static b32 file_du()
         du_count_links = (flags & FILE_FLAG('l')) != 0;
         du_follow = (flags & FILE_FLAG('L')) != 0;
 
-        if (flags & FILE_FLAG('b'))
+        if (du_unit_option == 'b')
                 du_unit = 1;
-
-        if (flags & FILE_FLAG('m'))
+        else if (du_unit_option == 'm')
                 du_unit = 1048576;
+
+        if (du_summary && (du_all || (flags & FILE_FLAG('d'))))
+        {
+                file_fail("du: summarizing conflicts with --all or --max-depth\n", 0);
+                return 1;
+        }
 
         // -s is --max-depth=0 said another way, and the two are the same
         // switch here so that giving both cannot mean two things.
@@ -4394,7 +4447,22 @@ static b32 file_du()
                 du_maximum = 0;
 
         if (flags & FILE_FLAG('d'))
-                du_maximum = string_digits(file_option_value(address_of taking, 'd'), null);
+        {
+                positive maximum;
+                string_address written = file_option_value(address_of taking, 'd');
+                bool negative = string_is(written, '-');
+
+                if (negative || string_is(written, '+'))
+                        written++;
+
+                if (!string_digits_exact(written, address_of maximum))
+                {
+                        file_fail("du: invalid maximum depth\n", 0);
+                        return 1;
+                }
+
+                du_maximum = negative ? 0 : maximum;
+        }
 
         if (first >= count)
         {
@@ -4402,12 +4470,12 @@ static b32 file_du()
         }
         else
         {
-                while (first < count && !du_seen_broken)
+                while (first < count && !du_seen_broken && !du_depth_broken)
                         du_grand += du_walk(program_argument((b32)first++),
                                             FILE_MAX_DEPTH, true, 0);
         }
 
-        if (du_total && !du_seen_broken)
+        if (du_total && !du_seen_broken && !du_depth_broken)
                 du_report(du_grand, (string_address) "total");
 
         log_flush();
@@ -5010,6 +5078,17 @@ static positive chown_flags;
 static bool chown_loud;
 static bool chown_changes;
 static bool chown_quiet;
+static p8 chown_dereference_option;
+
+static bool chown_option_seen(p8 letter, string_address value)
+{
+        (void)value;
+
+        if (letter == 'd' || letter == 'h')
+                chown_dereference_option = letter;
+
+        return true;
+}
 
 // Who a file will belong to, said the way chown says it: the user alone when
 // only a user was named, and user:group when a group was.
@@ -5056,7 +5135,7 @@ static fn chown_said(string_address shown, file_facts address_to was, bool chang
 
 static fn chown_one(bipolar directory, string_address name, string_address shown)
 {
-        positive through = (chown_flags & FILE_FLAG('h')) ? AT_SYMLINK_NOFOLLOW : 0;
+        positive through = chown_dereference_option == 'h' ? AT_SYMLINK_NOFOLLOW : 0;
         file_facts facts;
         bool known = file_look(directory, name, through, address_of facts);
 
@@ -5129,12 +5208,14 @@ static b32 file_chown()
         chown_user = -1;
         chown_group = -1;
         chown_status = 0;
+        chown_dereference_option = 'd';
 
         file_taking taking = {
             .program = (string_address) "chown",
             .allowed = (string_address) "Rcfhv",
             .valued = (string_address) "e",
             .longs = chown_longs,
+            .seen = chown_option_seen,
         };
 
         if (!file_take(address_of taking))
@@ -5516,6 +5597,9 @@ static b32 file_readlink()
         bool loud = (flags & FILE_FLAG('v')) != 0;
         bool zero = (flags & FILE_FLAG('z')) != 0;
         b32 status = 0;
+
+        if (count - first > 1)
+                no_newline = false;
 
         while (first < count)
         {
