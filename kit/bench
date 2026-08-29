@@ -31,7 +31,8 @@ text-hot) source_file=kit/bench_text_hot.c ;;
 translate) source_file=kit/bench_translate.c ;;
 ascii-case) source_file=kit/bench_ascii_case.c ;;
 last-of) source_file=kit/bench_last_of.c ;;
-*)       echo "bench: use 'sh kit/bench', 'sh kit/bench floor', 'sh kit/bench numbers', 'sh kit/bench bases', 'sh kit/bench padded', 'sh kit/bench input-bases', 'sh kit/bench fields', 'sh kit/bench human', 'sh kit/bench human-nearest', 'sh kit/bench paths', 'sh kit/bench reverse', 'sh kit/bench writer-field', 'sh kit/bench writer-text', 'sh kit/bench text-hot', 'sh kit/bench translate', 'sh kit/bench ascii-case', or 'sh kit/bench last-of'" >&2; exit 2 ;;
+words) source_file=kit/bench_words.c ;;
+*)       echo "bench: use 'sh kit/bench', 'sh kit/bench floor', 'sh kit/bench numbers', 'sh kit/bench bases', 'sh kit/bench padded', 'sh kit/bench input-bases', 'sh kit/bench fields', 'sh kit/bench human', 'sh kit/bench human-nearest', 'sh kit/bench paths', 'sh kit/bench reverse', 'sh kit/bench writer-field', 'sh kit/bench writer-text', 'sh kit/bench text-hot', 'sh kit/bench translate', 'sh kit/bench ascii-case', 'sh kit/bench last-of', or 'sh kit/bench words'" >&2; exit 2 ;;
 esac
 
 host_system=$(uname -s)

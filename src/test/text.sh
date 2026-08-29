@@ -50,6 +50,8 @@ printf 'x\n\n\n\ny\n' > "$work/blanks"
 printf 'a\tb\nlonger line here\n\rwide\n' > "$work/wide"
 printf '  ab  cd ef\nxy\tzw\nplain\n' > "$work/spaced"
 printf '\376\377\n' > "$work/tr_high"
+head -c 65535 /dev/zero | tr '\0' x > "$work/wc_boundary"
+printf ' y\n' >> "$work/wc_boundary"
 
 # A single physical block with a ten-digit logical size exercises the wc width
 # chosen from stat(2) without making wc read a gigabyte.
@@ -536,6 +538,11 @@ compare 'words'          wc a  -w
 compare 'bytes'          wc a  -c
 compare 'characters'     wc a  -m
 compare 'lines characters' wc a -lm
+compare 'word at read boundary' wc wc_boundary -w
+compare 'default at read boundary' wc wc_boundary
+compare 'lines words at boundary' wc wc_boundary -lw
+compare 'words bytes at boundary' wc wc_boundary -wc
+compare 'words chars at boundary' wc wc_boundary -wm
 compare 'named'          wc -  "$work/a"
 compare 'two files'      wc -  "$work/a" "$work/b"
 compare 'lines named'    wc -  -l "$work/a"

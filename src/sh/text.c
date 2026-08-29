@@ -2487,13 +2487,26 @@ static b32 text_wc()
                                 compiler has to write generally because it also
                                 counts words and measures the longest line.
 
-                                Reached only when nothing else was asked for.
-                                Adding -w or -L puts the general loop back,
-                                which is right: those need every byte anyway.
+                                Word counting has its own stateful assembly
+                                pass now, so every combination without -L can
+                                stay in the narrow counters. The general loop
+                                remains only where terminal column width is
+                                genuinely part of the answer.
                         */
-                        if (!want_words && !want_longest)
+                        if (!want_longest)
                         {
-                                lines += memory_count(at, left, '\n');
+                                if (want_lines)
+                                        lines += memory_count(at, left, '\n');
+
+                                if (want_words)
+                                {
+                                        positive2 counted_words =
+                                            memory_count_words(at, left, inside);
+
+                                        words += counted_words.x;
+                                        inside = (bool)counted_words.y;
+                                }
+
                                 text_input.position = text_input.filled;
                                 continue;
                         }
@@ -2502,7 +2515,7 @@ static b32 text_wc()
                         {
                                 p8 character = at[c];
 
-                                if (character == '\n')
+                                if (want_lines && character == '\n')
                                         lines++;
 
                                 /*
@@ -2534,14 +2547,17 @@ static b32 text_wc()
                                         column++;
                                 }
 
-                                if (text_space(character))
+                                if (want_words)
                                 {
-                                        inside = false;
-                                }
-                                else if (!inside)
-                                {
-                                        inside = true;
-                                        words++;
+                                        if (text_space(character))
+                                        {
+                                                inside = false;
+                                        }
+                                        else if (!inside)
+                                        {
+                                                inside = true;
+                                                words++;
+                                        }
                                 }
                         }
 

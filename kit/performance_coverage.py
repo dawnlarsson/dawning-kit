@@ -109,6 +109,8 @@ cover('direct_benchmark', 'kit/bench_ascii_case.c', 'memory_compare_ascii_case',
       'exhaustive byte-pair validation and paired folded comparison timing')
 cover('direct_benchmark', 'kit/bench_last_of.c', 'memory_last_of',
       'guarded reverse-search validation and paired scalar/assembly timing')
+cover('direct_benchmark', 'kit/bench_words.c', 'memory_count_words',
+      'state/split validation and paired word-transition timing')
 cover('direct_benchmark', 'kit/bench_translate.c', 'memory_translate',
       'paired former-C/assembly timing over byte-table translation sizes')
 
