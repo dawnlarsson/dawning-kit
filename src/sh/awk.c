@@ -1644,6 +1644,7 @@ typedef struct awk_slot
 {
         struct awk_slot address_to next;
         awk_text address_to key;
+        positive hash;
         awk_value value;
 } awk_slot;
 
@@ -1656,7 +1657,11 @@ typedef struct
 
 static positive awk_hash(string_address text, positive length)
 {
-        if (length >= 24)
+        // Four is the first length where the four-byte hardware floor beats
+        // the dependent C chain on every architecture. One-byte keys stay
+        // inline: the call is 102% on ARM64 and RV64 there, while four bytes
+        // are 82%/92%/99% on x86-64/ARM64/RV64 and the lead grows after it.
+        if (length >= 4)
                 return memory_hash_33(text, length);
 
         positive value = 5381;
@@ -1696,7 +1701,7 @@ static fn awk_array_grow(awk_array address_to which)
                 while (slot)
                 {
                         awk_slot address_to next = slot->next;
-                        positive where = awk_hash(slot->key->text, slot->key->length) & (width - 1);
+                        positive where = slot->hash & (width - 1);
 
                         slot->next = buckets[where];
                         buckets[where] = slot;
@@ -1709,23 +1714,31 @@ static fn awk_array_grow(awk_array address_to which)
         which->width = width;
 }
 
-static awk_slot address_to awk_array_find(awk_array address_to which, string_address key,
-                                          positive length)
+static awk_slot address_to awk_array_find_hash(awk_array address_to which,
+                                               string_address key,
+                                               positive length, positive hash)
 {
-        positive where = awk_hash(key, length) & (which->width - 1);
+        positive where = hash & (which->width - 1);
 
         for (awk_slot address_to slot = which->buckets[where]; slot; slot = slot->next)
-                if (slot->key->length == length &&
+                if (slot->hash == hash && slot->key->length == length &&
                     !memory_compare(slot->key->text, key, length))
                         return slot;
 
         return null;
 }
 
+static awk_slot address_to awk_array_find(awk_array address_to which,
+                                          string_address key, positive length)
+{
+        return awk_array_find_hash(which, key, length, awk_hash(key, length));
+}
+
 static awk_slot address_to awk_array_place(awk_array address_to which, string_address key,
                                            positive length)
 {
-        awk_slot address_to found = awk_array_find(which, key, length);
+        positive hash = awk_hash(key, length);
+        awk_slot address_to found = awk_array_find_hash(which, key, length, hash);
 
         if (found)
                 return found;
@@ -1733,10 +1746,11 @@ static awk_slot address_to awk_array_place(awk_array address_to which, string_ad
         if (which->count >= which->width * 2)
                 awk_array_grow(which);
 
-        positive where = awk_hash(key, length) & (which->width - 1);
+        positive where = hash & (which->width - 1);
         awk_slot address_to slot = (awk_slot address_to)awk_take(sizeof(awk_slot));
 
         slot->key = awk_text_new(key, length);
+        slot->hash = hash;
         slot->value.text = null;
         slot->value.number = 0;
         slot->value.state = AWK_UNSET;
@@ -1748,14 +1762,16 @@ static awk_slot address_to awk_array_place(awk_array address_to which, string_ad
 
 static fn awk_array_remove(awk_array address_to which, string_address key, positive length)
 {
-        positive where = awk_hash(key, length) & (which->width - 1);
+        positive hash = awk_hash(key, length);
+        positive where = hash & (which->width - 1);
         awk_slot address_to address_to link = address_of which->buckets[where];
 
         while (address_to link)
         {
                 awk_slot address_to slot = address_to link;
 
-                if (slot->key->length == length && !memory_compare(slot->key->text, key, length))
+                if (slot->hash == hash && slot->key->length == length &&
+                    !memory_compare(slot->key->text, key, length))
                 {
                         address_to link = slot->next;
                         awk_text_drop(slot->key);

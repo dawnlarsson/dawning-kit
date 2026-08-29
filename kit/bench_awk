@@ -1,0 +1,184 @@
+#!/bin/sh
+#
+#       Compare Moonwater AWK's owned hot paths with the host AWK.
+#
+#           sh kit/bench_awk [path-to-moonwater-multicall]
+#
+#       Inputs are generated once and outputs must agree before timing. The
+#       cases separate field arithmetic, repeated short-key lookup, unique
+#       long-key insertion/growth, and builtin case conversion.
+#
+set -eu
+
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT HUP INT TERM
+subject=${1:-${MOONWATER_TOOLS:-}}
+
+if [ -z "$subject" ]; then
+        subject=$work/moonwater
+        (cd "$root" && sh kit/build programs/shell.c "$subject")
+fi
+
+case $subject in
+/*) ;;
+*) subject=$(CDPATH= cd -- "$(dirname -- "$subject")" && pwd)/$(basename -- "$subject") ;;
+esac
+
+[ -x "$subject" ] || { echo "bench_awk: not executable: $subject" >&2; exit 1; }
+command -v python3 >/dev/null 2>&1 || {
+        echo "bench_awk: python3 is required" >&2
+        exit 1
+}
+
+exec python3 - "$subject" "$work" "${BENCH_RUNS:-7}" \
+        "${BENCH_SECONDS:-0.15}" <<'PY'
+import os
+import shutil
+import statistics
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+subject, work, runs_text, seconds_text = sys.argv[1:]
+runs = int(runs_text)
+target_seconds = float(seconds_text)
+if runs < 1 or target_seconds <= 0:
+    raise SystemExit("bench_awk: BENCH_RUNS and BENCH_SECONDS must be positive")
+
+if hasattr(os, "sched_getaffinity") and hasattr(os, "sched_setaffinity"):
+    try:
+        os.sched_setaffinity(0, {min(os.sched_getaffinity(0))})
+    except (OSError, ValueError):
+        pass
+
+environment = os.environ.copy()
+environment["LC_ALL"] = "C"
+work_path = Path(work)
+ours = work_path / "awk"
+ours.symlink_to(subject)
+host = shutil.which("awk")
+if not host:
+    raise SystemExit("bench_awk: host awk is required")
+baseline = os.environ.get("AWK_BASELINE")
+if baseline and not os.access(baseline, os.X_OK):
+    raise SystemExit(f"bench_awk: AWK_BASELINE is not executable: {baseline}")
+if baseline:
+    baseline_directory = work_path / "baseline"
+    baseline_directory.mkdir()
+    baseline_awk = baseline_directory / "awk"
+    baseline_awk.symlink_to(baseline)
+    baseline = str(baseline_awk)
+
+fields = work_path / "fields"
+short = work_path / "short-keys"
+long = work_path / "long-keys"
+case = work_path / "case"
+
+with fields.open("w", encoding="ascii") as out:
+    for i in range(300_000):
+        out.write(f"kind{i & 31}:{i % 1000:03d}:value\n")
+
+with short.open("w", encoding="ascii") as out:
+    for i in range(500_000):
+        out.write(f"k{i & 4095:07d}\n")
+
+with long.open("w", encoding="ascii") as out:
+    for i in range(140_000):
+        out.write(f"long-key-{i:08d}-abcdefghijklmnop\n")
+
+with case.open("w", encoding="ascii") as out:
+    for i in range(180_000):
+        out.write(f"AbCdEfGhIjKlMnOpQrStUvWxYz-{i:06d}\n")
+
+cases = (
+    ("field arithmetic", fields, "-F:", "{ s += $2 } END { print s }"),
+    ("short-key lookup", short, "{ a[$1]++ } END { for (k in a) s += a[k]; print s }"),
+    ("long-key insert", long, "{ a[$1] = NR } END { print length(a) }"),
+    ("tolower copy", case, "{ s += length(tolower($1)) } END { print s }"),
+)
+
+def command(executable, case):
+    label, path, *arguments = case
+    return (str(executable), *arguments, str(path))
+
+def execute(executable, case, capture):
+    result = subprocess.run(
+        command(executable, case), stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE if capture else subprocess.DEVNULL,
+        stderr=subprocess.PIPE, env=environment, check=False,
+    )
+    if result.returncode:
+        raise RuntimeError(
+            f"{case[0]} exited {result.returncode}: "
+            + result.stderr.decode("utf-8", "replace").strip()
+        )
+    return result.stdout if capture else b""
+
+def elapsed(executable, case, count):
+    started = time.perf_counter_ns()
+    for _ in range(count):
+        execute(executable, case, False)
+    return (time.perf_counter_ns() - started) / 1_000_000_000
+
+def measure_all(executables, case):
+    for _, executable in executables:
+        execute(executable, case, False)
+
+    count = 1
+    while min(elapsed(executable, case, count)
+              for _, executable in executables) < target_seconds:
+        count *= 2
+
+    samples = {name: [] for name, _ in executables}
+    for trial in range(runs):
+        offset = trial % len(executables)
+        ordered = executables[offset:] + executables[:offset]
+        for name, executable in ordered:
+            samples[name].append(elapsed(executable, case, count) / count)
+
+    return {name: statistics.median(values)
+            for name, values in samples.items()}
+
+print(f"subject: {subject}")
+print(f"samples: {runs}, at least {target_seconds:.2f}s each, one CPU when available")
+print("lower is better; output is verified before timing\n")
+if baseline:
+    print(f"{'workload':<20} {'ours ms':>10} {'base ms':>10}"
+          f" {'host ms':>10} {'ours/base':>11} {'ours/host':>11}")
+    print(f"{'-' * 20} {'-' * 10} {'-' * 10} {'-' * 10}"
+          f" {'-' * 11} {'-' * 11}")
+else:
+    print(f"{'workload':<20} {'ours ms':>10} {'host ms':>10} {'ours/host':>12}")
+    print(f"{'-' * 20} {'-' * 10} {'-' * 10} {'-' * 12}")
+
+try:
+    for case_spec in cases:
+        got = execute(ours, case_spec, True)
+        want = execute(host, case_spec, True)
+        if got != want:
+            raise RuntimeError(
+                f"{case_spec[0]} output differs: ours {got!r}, host {want!r}"
+            )
+        executables = [("ours", ours), ("host", host)]
+        if baseline:
+            base_output = execute(baseline, case_spec, True)
+            if base_output != want:
+                raise RuntimeError(f"{case_spec[0]} baseline output differs")
+            executables.insert(1, ("base", baseline))
+
+        measured = measure_all(executables, case_spec)
+        if baseline:
+            print(f"{case_spec[0]:<20} {measured['ours'] * 1000:10.3f}"
+                  f" {measured['base'] * 1000:10.3f}"
+                  f" {measured['host'] * 1000:10.3f}"
+                  f" {measured['ours'] / measured['base']:11.2f}x"
+                  f" {measured['ours'] / measured['host']:11.2f}x")
+        else:
+            print(f"{case_spec[0]:<20} {measured['ours'] * 1000:10.3f}"
+                  f" {measured['host'] * 1000:10.3f}"
+                  f" {measured['ours'] / measured['host']:12.2f}x")
+except RuntimeError as error:
+    raise SystemExit(f"bench_awk: {error}")
+PY

@@ -70,6 +70,7 @@ environment = os.environ.copy()
 environment["LC_ALL"] = "C"
 work_path = Path(work)
 data = work_path / "records"
+find_tree = work_path / "find-tree"
 
 with data.open("wb") as output:
     for i in range(240_000):
@@ -77,8 +78,14 @@ with data.open("wb") as output:
         mark = b"needle" if i % 17 == 0 else b"plain"
         output.write(kind + b":" + f"{i % 1000:03d}".encode() + b":" + mark + b"\n")
 
+for directory in range(80):
+    place = find_tree / f"Dir-{directory:03d}"
+    place.mkdir(parents=True)
+    for entry in range(300):
+        (place / f"Entry-{directory:03d}-{entry:03d}.TxT").touch()
+
 tool_names = ("cat", "wc", "grep", "cut", "tr", "sed", "awk",
-              "sort", "uniq", "head", "tail", "rev")
+              "sort", "uniq", "head", "tail", "rev", "find")
 ours = work_path / "ours"
 ours.mkdir()
 references = {}
@@ -103,6 +110,7 @@ cases = (
     ("head", "head", ("-n", "1000", str(data)), None),
     ("tail", "tail", ("-n", "1000", str(data)), None),
     ("rev", "rev", (str(data),), None),
+    ("find-iname", "find", (str(find_tree), "-iname", "*.TXT"), None),
 )
 
 def execute(executable, arguments, stdin_path, capture):

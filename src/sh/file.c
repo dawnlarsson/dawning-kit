@@ -3581,7 +3581,16 @@ static b32 find_parse_primary()
                 b32 node = find_make(kind);
 
                 if (node >= 0)
+                {
+                        // The expression is built once and tested for every
+                        // directory entry. Case-insensitive patterns are
+                        // invariant, so fold their private argv string here
+                        // instead of copying and folding it on every visit.
+                        if (kind == 'N' || kind == 'P')
+                                find_lowered(value, (p8 address_to)value);
+
                         find_nodes[node].text = value;
+                }
 
                 return node;
         }
@@ -4027,7 +4036,6 @@ static bool find_true(b32 which)
 
         find_node address_to node = address_of find_nodes[which];
         p8 name[FILE_PATH_MAX];
-        p8 pattern[FILE_PATH_MAX];
 
         switch (node->kind)
         {
@@ -4055,8 +4063,7 @@ static bool find_true(b32 which)
         case 'N':
         case 'P':
                 find_lowered(node->kind == 'N' ? find_name : find_path, name);
-                find_lowered(node->text, pattern);
-                return shell_match(pattern, name);
+                return shell_match(node->text, name);
 
         case 'L':
                 if ((find_facts->mode & MODE_FORMAT) != MODE_LINK)

@@ -330,6 +330,17 @@ compare 'subsep by hand' /dev/null 'BEGIN{a[1,2]=1; print ((1 SUBSEP 2) in a)}'
 compare 'counting' "$work/words" '{for(i=1;i<=NF;i++) n[$i]++} END{print length(n), n["alpha"]}'
 compare 'array length' /dev/null 'BEGIN{for(i=1;i<=10;i++) a[i]=i; print length(a)}'
 compare 'array grows intact' /dev/null 'BEGIN{for(i=1;i<=140;i++)a["k" i]=i; for(i=1;i<=140;i++)s+=a["k" i]; print length(a),s,a["k1"],a["k140"]}'
+compare 'long-key grow delete reinsert' /dev/null 'BEGIN {
+        for (i = 1; i <= 4096; i++)
+                a["long-key-" i "-abcdefghijklmnop"] = i
+        for (i = 3; i <= 4096; i += 3)
+                delete a["long-key-" i "-abcdefghijklmnop"]
+        for (i = 3; i <= 4096; i += 3)
+                a["long-key-" i "-abcdefghijklmnop"] = i * 2
+        for (k in a)
+                sum += a[k]
+        print length(a), sum
+}'
 compare 'sum over keys' /dev/null 'BEGIN{a[1]=1;a[2]=2;a[3]=3; for(k in a) s+=a[k]; print s}'
 
 #
