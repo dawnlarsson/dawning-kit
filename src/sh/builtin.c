@@ -211,6 +211,8 @@ static env_cell address_to env_free;
 static string_address address_to shell_vars;
 static positive shell_vars_room;
 static positive shell_var_count;
+static positive address_to shell_var_value_lengths;
+static positive shell_var_value_lengths_room;
 
 /*
         The pointer vector above is the form execve and the utilities need,
@@ -263,7 +265,11 @@ static bool env_table_room(positive want)
 {
         return shell_room((address_any address_to)address_of shell_vars,
                           address_of shell_vars_room, want + 1,
-                          sizeof(shell_vars[0]));
+                          sizeof(shell_vars[0])) &&
+               shell_room(
+                   (address_any address_to)address_of shell_var_value_lengths,
+                   address_of shell_var_value_lengths_room, want,
+                   sizeof(shell_var_value_lengths[0]));
 }
 
 static positive env_name_hash(const_string name, positive length)
@@ -868,31 +874,44 @@ fn shell_env_init(string_address address_to process_environment)
 */
 #define env_reading(text) ((string_address)(text))
 
-string_address env_get_span(const_string name, positive length)
+string_address env_get_hashed_span(const_string name, positive length,
+                                   positive hash,
+                                   positive address_to value_length)
 {
         positive index;
 
         if (name == null)
                 return null;
 
-        index = env_find_span(name, length);
+        index = env_find_hashed_span(name, length, hash);
 
-        return index < shell_var_count ? shell_vars[index] + length + 1 : null;
+        if (index >= shell_var_count)
+                return null;
+
+        if (value_length)
+                address_to value_length = shell_var_value_lengths[index];
+
+        return shell_vars[index] + length + 1;
+}
+
+string_address env_get_span(const_string name, positive length)
+{
+        if (name == null)
+                return null;
+
+        return env_get_hashed_span(name, length,
+                                   env_name_hash(name, length), null);
 }
 
 string_address env_get(const_string name)
 {
         positive2 answer;
-        positive index;
 
         if (!name)
                 return null;
 
         answer = string_hash_33_length(env_reading(name));
-        index = env_find_hashed_span(name, answer.y, answer.x);
-
-        return index < shell_var_count ? shell_vars[index] + answer.y + 1
-                                       : null;
+        return env_get_hashed_span(name, answer.y, answer.x, null);
 }
 
 static bool env_set_hashed_span(const_string name, positive name_len,
@@ -924,6 +943,7 @@ static bool env_set_hashed_span(const_string name, positive name_len,
                         ((p8 address_to)(cell + 1))[name_len] = '=';
                         memory_copy_end((p8 address_to)(cell + 1) + name_len + 1,
                                         env_reading(value), value_len);
+                        shell_var_value_lengths[idx] = value_len;
                         if (env_export_active_span(name, name_len))
                                 shell_envp_dirty = true;
                         return true;
@@ -945,11 +965,14 @@ static bool env_set_hashed_span(const_string name, positive name_len,
                 string_address old = shell_vars[idx];
 
                 shell_vars[idx] = (string_address)(cell + 1);
+                shell_var_value_lengths[idx] = value_len;
                 env_cell_drop(old);
         }
         else
         {
-                shell_vars[shell_var_count++] = (string_address)(cell + 1);
+                shell_vars[shell_var_count] = (string_address)(cell + 1);
+                shell_var_value_lengths[shell_var_count] = value_len;
+                shell_var_count++;
                 shell_vars[shell_var_count] = null;
 
                 if (!env_index_slots || shell_var_count > env_index_slots / 2)
@@ -1741,11 +1764,21 @@ static fn env_unset_span(string_address name, positive length)
                 env_index_remove(name, length, index);
 
                 if (left >= 4)
+                {
                         memory_copy(shell_vars + index, shell_vars + index + 1,
                                     left * sizeof(string_address));
+                        memory_copy(shell_var_value_lengths + index,
+                                    shell_var_value_lengths + index + 1,
+                                    left *
+                                        sizeof(shell_var_value_lengths[0]));
+                }
                 else
                         for (positive at = 0; at < left; at++)
+                        {
                                 shell_vars[index + at] = shell_vars[index + at + 1];
+                                shell_var_value_lengths[index + at] =
+                                    shell_var_value_lengths[index + at + 1];
+                        }
 
                 shell_var_count--;
                 shell_vars[shell_var_count] = null;

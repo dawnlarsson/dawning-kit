@@ -23,6 +23,9 @@
         side of builtin.c without the two of them needing each other first.
 */
 string_address env_get(const_string name);
+string_address env_get_hashed_span(const_string name, positive length,
+                                   positive hash,
+                                   positive address_to value_length);
 bool env_set(const_string name, const_string value);
 fn run_line(string_address line);
 fn parse_reset_all();
@@ -719,7 +722,11 @@ fn shell_parameters_shift(positive count)
 */
 static string_address expand_ifs()
 {
-        string_address value = env_get((const_string) "IFS");
+        /* djb2("IFS"). The name and its extent are invariant, so sending it
+           through the NUL-scanning hash path on every split only rediscovers
+           the same three bytes. */
+        string_address value = env_get_hashed_span(
+            (const_string) "IFS", 3, 193458887, null);
 
         return value ? value : (string_address) " \t\n";
 }
@@ -776,11 +783,14 @@ static bool expand_ifs_blank(p8 value)
         expansion buffer.
 */
 static string_address expand_value_of(string_address name, p8 address_to scratch,
-                                      bool address_to present)
+                                      bool address_to present,
+                                      positive address_to value_length)
 {
         p8 first = string_get(name);
 
         address_to present = true;
+        if (value_length)
+                address_to value_length = 0;
         scratch[0] = end;
 
         if (first >= '0' && first <= '9')
@@ -788,13 +798,22 @@ static string_address expand_value_of(string_address name, p8 address_to scratch
                 positive which = string_digits(name, null);
 
                 if (!which)
+                {
+                        if (value_length)
+                                address_to value_length =
+                                    string_length(shell_script_name);
                         return shell_script_name;
+                }
 
                 if (which > shell_parameter_count)
                 {
                         address_to present = false;
                         return null;
                 }
+
+                if (value_length)
+                        address_to value_length =
+                            string_length(shell_parameter[which - 1]);
 
                 return shell_parameter[which - 1];
         }
@@ -803,13 +822,19 @@ static string_address expand_value_of(string_address name, p8 address_to scratch
         {
                 if (first == '#')
                 {
-                        bipolar_into_string(scratch, (bipolar)shell_parameter_count);
+                        positive length = bipolar_into_string(
+                            scratch, (bipolar)shell_parameter_count);
+                        if (value_length)
+                                address_to value_length = length;
                         return scratch;
                 }
 
                 if (first == '?')
                 {
-                        bipolar_into_string(scratch, (bipolar)shell_status);
+                        positive length = bipolar_into_string(
+                            scratch, (bipolar)shell_status);
+                        if (value_length)
+                                address_to value_length = length;
                         return scratch;
                 }
 
@@ -827,7 +852,10 @@ static string_address expand_value_of(string_address name, p8 address_to scratch
                         if (!expand_shell_pid)
                                 expand_shell_pid = (positive)system_call_1(syscall(getpid), 0);
 
-                        bipolar_into_string(scratch, (bipolar)expand_shell_pid);
+                        positive length = bipolar_into_string(
+                            scratch, (bipolar)expand_shell_pid);
+                        if (value_length)
+                                address_to value_length = length;
                         return scratch;
                 }
 
@@ -837,7 +865,13 @@ static string_address expand_value_of(string_address name, p8 address_to scratch
                         return scratch;
 
                 if (first == '-')
-                        return shell_flags_current();
+                {
+                        string_address flags = shell_flags_current();
+
+                        if (value_length)
+                                address_to value_length = string_length(flags);
+                        return flags;
+                }
 
                 if (first == '@' || first == '*')
                 {
@@ -881,12 +915,16 @@ static string_address expand_value_of(string_address name, p8 address_to scratch
                         }
 
                         into[used] = end;
+                        if (value_length)
+                                address_to value_length = used;
                         return into;
                 }
         }
 
         {
-                string_address value = env_get(name);
+                positive2 answer = string_hash_33_length(name);
+                string_address value = env_get_hashed_span(
+                    name, answer.y, answer.x, value_length);
 
                 if (!value)
                 {
@@ -918,6 +956,7 @@ static bool expand_push_parameter(string_address name, bool quoted)
         p8 mark = quoted ? MARK_QUOTED : MARK_FIELD;
         p8 scratch[32];
         string_address value;
+        positive value_length;
         bool present;
         bool all = string_get(name + 1) == end &&
                    (string_is(name, '@') || string_is(name, '*'));
@@ -937,7 +976,8 @@ static bool expand_push_parameter(string_address name, bool quoted)
                 return shell_parameter_count != 0;
         }
 
-        value = expand_value_of(name, scratch, address_of present);
+        value = expand_value_of(name, scratch, address_of present,
+                                address_of value_length);
 
         if (!present)
         {
@@ -950,7 +990,7 @@ static bool expand_push_parameter(string_address name, bool quoted)
                 return false;
         }
 
-        expand_push_string(value, mark);
+        expand_push_run(value, value_length, mark);
 
         return true;
 }
@@ -1093,7 +1133,8 @@ static bipolar arith_value_of(string_address name)
         p8 scratch[32];
         bool present;
         bool valid;
-        string_address step = expand_value_of(name, scratch, address_of present);
+        string_address step = expand_value_of(name, scratch,
+                                               address_of present, null);
         string_address digits;
         positive magnitude;
         bool negative = false;
@@ -2117,6 +2158,7 @@ static string_address expand_arithmetic(string_address step, bool quoted)
 
         {
                 bipolar value = arith_evaluate(ready);
+                positive written_length;
 
                 if (arith_bad)
                 {
@@ -2127,10 +2169,10 @@ static string_address expand_arithmetic(string_address step, bool quoted)
                         return stop + 2;
                 }
 
-                bipolar_into_string(written, value);
+                written_length = bipolar_into_string(written, value);
+                expand_push_run(written, written_length,
+                                quoted ? MARK_QUOTED : MARK_FIELD);
         }
-
-        expand_push_string(written, quoted ? MARK_QUOTED : MARK_FIELD);
 
         return stop + 2;
 }
@@ -2805,17 +2847,16 @@ static string_address expand_braced(string_address step, bool quoted)
                 p8 written[32];
                 p8 scratch[32];
                 bool present;
-                string_address value = expand_value_of(name, scratch,
-                                                        address_of present);
-                positive count;
+                positive count = 0;
+                expand_value_of(name, scratch, address_of present,
+                                address_of count);
 
                 if (!present)
                         count = 0;
-                else
-                        count = string_length(value);
 
-                bipolar_into_string(written, (bipolar)count);
-                expand_push_string(written, mark);
+                expand_push_run(written,
+                                bipolar_into_string(written, (bipolar)count),
+                                mark);
 
                 return close + 1;
         }
@@ -2879,7 +2920,8 @@ static string_address expand_braced(string_address step, bool quoted)
                 p8 scratch[32];
                 bool present;
                 string_address value = expand_value_of(name, scratch,
-                                                        address_of present);
+                                                        address_of present,
+                                                        null);
                 bool blank = present && value[0] == end;
                 bool missing = !present || (colon && blank);
 
