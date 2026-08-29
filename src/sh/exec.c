@@ -499,6 +499,43 @@ static bipolar exec_here_pipe(string_address body, positive length)
         return ends[0];
 }
 
+// Open an output redirect without replacing an existing regular file when
+// noclobber is active. O_EXCL alone is too broad: POSIX still permits devices,
+// pipes and sockets, and `set -C; echo x >/dev/null` is ordinary practice.
+// The fallback opens without O_TRUNC and inspects that descriptor, so a path
+// changing between a separate stat and open cannot make us truncate the file
+// we had just decided to protect.
+static bipolar exec_output_open(string_address target, bool force)
+{
+        bipolar opened;
+
+        if (force || !shell_noclobber())
+                return system_call_4(syscall(openat), AT_FDCWD,
+                                     (positive)target, FILE_WRITE, 0666);
+
+        opened = system_call_4(syscall(openat), AT_FDCWD, (positive)target,
+                               FILE_WRITE | FILE_EXCLUSIVE, 0666);
+
+        if (opened != -ERROR_EXISTS)
+                return opened;
+
+        opened = system_call_4(syscall(openat), AT_FDCWD, (positive)target, 01, 0);
+
+        if (opened >= 0)
+        {
+                file_facts facts;
+
+                if (!file_look(opened, "", AT_EMPTY_PATH, address_of facts) ||
+                    (facts.mode & MODE_FORMAT) == MODE_FILE)
+                {
+                        system_call_1(syscall(close), opened);
+                        opened = -ERROR_EXISTS;
+                }
+        }
+
+        return opened;
+}
+
 static bool exec_redirect_apply(b32 index)
 {
         parse_node address_to node = parse_nodes + index;
@@ -618,8 +655,8 @@ static bool exec_redirect_apply(b32 index)
                                                (positive)target,
                                                FILE_READ_WRITE | FILE_CREATE, 0666);
                 else
-                        opened = system_call_4(syscall(openat), AT_FDCWD,
-                                               (positive)target, FILE_WRITE, 0666);
+                        opened = exec_output_open(target,
+                                                  want->op == OP_CLOBBER);
 
                 if (opened < 0)
                 {

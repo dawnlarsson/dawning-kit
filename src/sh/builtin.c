@@ -1506,6 +1506,7 @@ static shell_option shell_option_names[] = {
 
 #define SHELL_OPTION_NAMES \
         (sizeof(shell_option_names) / sizeof(shell_option_names[0]))
+#define SHELL_OPTION_NOCLOBBER 11
 #define SHELL_OPTION_PIPEFAIL 16
 
 static positive shell_options_named;
@@ -1561,6 +1562,12 @@ bool shell_pipefail()
 {
         return (shell_options_named &
                 ((positive)1 << SHELL_OPTION_PIPEFAIL)) != 0;
+}
+
+bool shell_noclobber()
+{
+        return (shell_options_named &
+                ((positive)1 << SHELL_OPTION_NOCLOBBER)) != 0;
 }
 
 fn shell_options_listed(writer write, bool as_commands)
@@ -1672,12 +1679,28 @@ fn shell_set(writer write, string_address input)
                                         continue;
                                 }
 
-                                if (value >= 'a' && value <= 'z')
+                                if (value == 'C')
+                                {
+                                        shell_option_told(SHELL_OPTION_NOCLOBBER,
+                                                          on);
+                                }
+                                else if (value >= 'a' && value <= 'z')
                                 {
                                         if (on)
                                                 shell_options |= SHELL_FLAG(value);
                                         else
                                                 shell_options &= ~SHELL_FLAG(value);
+                                }
+                                else
+                                {
+                                        p8 said[2] = {value, end};
+
+                                        string_format(shell_diagnostic,
+                                                      "set: Illegal option %s%s\n",
+                                                      on ? "-" : "+", said);
+                                        shell_answer(2);
+                                        expand_fatal();
+                                        return;
                                 }
 
                                 letter++;
@@ -2604,7 +2627,8 @@ static p8 printf_nothing[1];
 // was found in: everything still to be written, format and all, is dropped.
 static b32 printf_status;
 
-static p8 printf_hold[2048];
+static p8 address_to printf_hold;
+static positive printf_hold_room;
 static positive printf_held;
 
 // What printf writes without looking at it: everything but the terminator and
@@ -2628,10 +2652,17 @@ static fn printf_sets_prepare()
 
 static fn printf_holder(address_any data, positive length)
 {
-        positive room = sizeof(printf_hold) - printf_held;
+        if (length > positive_max - printf_held ||
+            !shell_room((address_any address_to)address_of printf_hold,
+                        address_of printf_hold_room, printf_held + length, 1))
+        {
+                if (!printf_cut)
+                        shell_diagnostic("printf: no room\n", 0);
 
-        if (length > room)
-                length = room;
+                printf_status = 2;
+                printf_cut = true;
+                return;
+        }
 
         memory_copy_apart(printf_hold + printf_held, data, length);
         printf_held += length;
@@ -2805,16 +2836,21 @@ fn printf_one(writer write, string_address format)
                 if (string_is(step, '*'))
                 {
                         bool good;
-                        bipolar asked = shell_signed(printf_next(), address_of good);
+                        string_address word = printf_next();
+                        bipolar asked = shell_signed(word, address_of good);
+
+                        if (!good)
+                                printf_not_a_number(word);
 
                         // A negative width is the minus flag written out long.
                         if (asked < 0)
                         {
                                 left = true;
-                                asked = -asked;
+                                width = (positive)0 - (positive)asked;
                         }
+                        else
+                                width = (positive)asked;
 
-                        width = (positive)asked;
                         step++;
                 }
                 else
@@ -2833,8 +2869,12 @@ fn printf_one(writer write, string_address format)
                         if (string_is(step, '*'))
                         {
                                 bool good;
+                                string_address word = printf_next();
 
-                                precision = shell_signed(printf_next(), address_of good);
+                                precision = shell_signed(word, address_of good);
+
+                                if (!good)
+                                        printf_not_a_number(word);
 
                                 if (precision < 0)
                                         precision = -1;
@@ -2893,6 +2933,10 @@ fn printf_one(writer write, string_address format)
                                 printf_in_b = true;
                                 printf_escaped(printf_holder, value);
                                 printf_in_b = false;
+
+                                if (printf_cut)
+                                        break;
+
                                 value = printf_hold;
                                 length = printf_held;
                         }
@@ -3008,11 +3052,25 @@ fn shell_printf(writer write, string_address input)
         comes after.
 */
 
-#define READ_LINE 4096
-
-static p8 read_line[READ_LINE];
-static p8 read_literal[READ_LINE];
+static p8 address_to read_line;
+static positive read_line_room;
+static p8 address_to read_literal;
+static positive read_literal_room;
+static p8 address_to read_ifs;
+static positive read_ifs_room;
 static positive read_length;
+
+// The bytes and their quotedness move together, but no pointer into either is
+// retained while they grow. Keep both mappings for the next call: a shell that
+// reads a long-lived stream reaches a steady state instead of allocating once
+// per line.
+static bool read_reserve(positive want)
+{
+        return shell_room((address_any address_to)address_of read_line,
+                          address_of read_line_room, want, 1) &&
+               shell_room((address_any address_to)address_of read_literal,
+                          address_of read_literal_room, want, 1);
+}
 
 // Whether a byte splits a field. The two questions are different: every byte
 // in IFS ends a field, but only the blanks among them are allowed to run
@@ -3076,10 +3134,15 @@ fn shell_read(writer write, string_address input)
         bipolar tenths = -1;
         p8 stop_at = '\n';
         string_address ifs;
-        p8 ifs_held[128];
         p8 ifs_default[] = " \t\n";
 
         read_length = 0;
+
+        if (!read_reserve(1))
+        {
+                shell_diagnostic("read: no room\n", 0);
+                return shell_answer(2);
+        }
 
         while (index < shell_argc && string_is(shell_argv[index], '-') &&
                string_not(shell_argv[index] + 1, end))
@@ -3106,8 +3169,11 @@ fn shell_read(writer write, string_address input)
 
                         if (which != 'p' && which != 'n' && which != 'd' && which != 't')
                         {
-                                letter++;
-                                continue;
+                                p8 said[2] = {which, end};
+
+                                string_format(shell_diagnostic,
+                                              "read: bad option: -%s\n", said);
+                                return shell_answer(2);
                         }
 
                         // The rest of the word if there is any, and the next
@@ -3128,19 +3194,48 @@ fn shell_read(writer write, string_address input)
                         }
 
                         if (!value)
-                                continue;
+                        {
+                                p8 said[2] = {which, end};
+
+                                string_format(shell_diagnostic,
+                                              "read: option -%s wants a value\n",
+                                              said);
+                                return shell_answer(2);
+                        }
 
                         if (which == 'p')
                                 shell_diagnostic(value, 0);
                         else if (which == 'n')
                         {
+                                bool good;
+                                bipolar asked = shell_signed(value, address_of good);
+
+                                if (!good || asked < 0)
+                                {
+                                        string_format(shell_diagnostic,
+                                                      "read: bad count: %s\n", value);
+                                        return shell_answer(1);
+                                }
+
                                 limited = true;
-                                limit = shell_number(value);
+                                limit = (positive)asked;
                         }
                         else if (which == 'd')
                                 stop_at = string_get(value);
                         else
-                                tenths = (bipolar)shell_number(value) * 10;
+                        {
+                                bool good;
+                                bipolar asked = shell_signed(value, address_of good);
+
+                                if (!good || asked < 0 || asked > bipolar_max / 10)
+                                {
+                                        string_format(shell_diagnostic,
+                                                      "read: bad timeout: %s\n", value);
+                                        return shell_answer(1);
+                                }
+
+                                tenths = asked * 10;
+                        }
                 }
 
                 index++;
@@ -3148,9 +3243,51 @@ fn shell_read(writer write, string_address input)
 
         names = index;
 
-        while (read_length < READ_LINE - 1 && !(limited && read_length >= limit))
+        // Diagnose names before consuming the record. env_set refuses a bad
+        // or readonly name too, but treating that refusal as success made a
+        // script believe input had been stored when it had only been thrown
+        // away.
+        if (names >= shell_argc)
+        {
+                if (env_readonly("REPLY"))
+                {
+                        shell_diagnostic("read: REPLY is readonly\n", 0);
+                        return shell_answer(2);
+                }
+        }
+        else
+        {
+                for (positive name = names; name < shell_argc; name++)
+                {
+                        positive length = string_length(shell_argv[name]);
+
+                        if (!shell_valid_name(shell_argv[name], length))
+                        {
+                                string_format(shell_diagnostic,
+                                              "read: bad variable name: %s\n",
+                                              shell_argv[name]);
+                                return shell_answer(2);
+                        }
+
+                        if (env_readonly(shell_argv[name]))
+                        {
+                                string_format(shell_diagnostic,
+                                              "read: %s is readonly\n",
+                                              shell_argv[name]);
+                                return shell_answer(2);
+                        }
+                }
+        }
+
+        while (!(limited && read_length >= limit))
         {
                 p8 value;
+
+                if (read_length == positive_max || !read_reserve(read_length + 2))
+                {
+                        shell_diagnostic("read: no room\n", 0);
+                        return shell_answer(2);
+                }
 
                 if (tenths >= 0 && !read_waited(tenths))
                 {
@@ -3195,7 +3332,12 @@ fn shell_read(writer write, string_address input)
 
         if (names >= shell_argc)
         {
-                env_set("REPLY", read_line);
+                if (!env_set("REPLY", read_line))
+                {
+                        shell_diagnostic("read: no room for REPLY\n", 0);
+                        return shell_answer(2);
+                }
+
                 return shell_answer(ended ? 1 : 0);
         }
 
@@ -3207,8 +3349,18 @@ fn shell_read(writer write, string_address input)
                 // it.
                 if (value)
                 {
-                        string_copy_max_end(ifs_held, value, sizeof(ifs_held) - 1);
-                        ifs = ifs_held;
+                        positive length = string_length(value);
+
+                        if (length == positive_max ||
+                            !shell_room((address_any address_to)address_of read_ifs,
+                                        address_of read_ifs_room, length + 1, 1))
+                        {
+                                shell_diagnostic("read: no room\n", 0);
+                                return shell_answer(2);
+                        }
+
+                        memory_copy(read_ifs, value, length + 1);
+                        ifs = read_ifs;
                 }
                 else
                 {
@@ -3239,7 +3391,12 @@ fn shell_read(writer write, string_address input)
                                 stop--;
 
                         read_line[stop] = end;
-                        env_set(shell_argv[names], read_line + begin);
+                        if (!env_set(shell_argv[names], read_line + begin))
+                        {
+                                shell_diagnostic("read: no room for value\n", 0);
+                                return shell_answer(2);
+                        }
+
                         at = read_length;
                         names++;
                         continue;
@@ -3272,7 +3429,12 @@ fn shell_read(writer write, string_address input)
                         at = after;
                 }
 
-                env_set(shell_argv[names], read_line + begin);
+                if (!env_set(shell_argv[names], read_line + begin))
+                {
+                        shell_diagnostic("read: no room for value\n", 0);
+                        return shell_answer(2);
+                }
+
                 names++;
         }
 

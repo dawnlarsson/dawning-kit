@@ -245,9 +245,12 @@ answer 'precision cuts'  "printf '[%.2b]' abcd; echo"
 answer 'precision zero string' "printf '[%.0s]' x; echo"
 answer 'precision zero escapes' "printf '[%5.0b]' 'a\\tb'; echo"
 answer 'precision zero held' "printf '[%.4b][%.0b]' WXYZ q; echo"
+answer 'long measured escapes' 'v=$(awk '\''BEGIN { for (i = 0; i < 5000; i++) printf "x" }'\''); printf "%.6000b" "$v" | wc -c'
 
 group status
 answer 'not a number'    "printf '%d\\n' abc; echo \$?"
+answer 'bad star width'  "printf '[%*s]\\n' nope x; echo \$?"
+answer 'bad star precision' "printf '[%.*s]\\n' nope abc; echo \$?"
 answer 'no such letter'  "printf '%y\\n' x; echo \$?"
 answer 'reuses format'   "printf '%s-' a b c; echo; echo \$?"
 answer 'runs out'        "printf '%s-%s|' a; echo; echo \$?"
@@ -274,6 +277,20 @@ answer 'no newline'      'printf "abc" | { read x; echo "$?/[$x]"; }'
 answer 'nothing at all'  ': | { read x; echo "$?/[$x]"; }'
 answer 'a whole line'    'printf "abc\n" | { read x; echo "$?/[$x]"; }'
 
+#       The command reader has no line ceiling, and neither may read itself.
+#       The old 4096-byte array returned success at its edge and left the rest
+#       of the same physical line for the next call, making one record into
+#       three plausible-looking records. IFS had an independent 128-byte copy
+#       ceiling which could silently discard a delimiter near its end.
+group growth
+answer 'ten kilobyte line once' 'awk '\''BEGIN { for (i = 0; i < 10000; i++) printf "x"; print "" }'\'' | { IFS= read -r x; a=$?; IFS= read -r y; b=$?; echo "$a ${#x} $b ${#y}"; }'
+answer 'long IFS keeps its end' 'IFS=$(awk '\''BEGIN { for (i = 0; i < 200; i++) printf "x"; print ":" }'\''); printf "a:b\n" | { read x y; echo "[$x][$y]"; }'
+
+group errors
+answer 'unknown option'  'printf "x\n" | { read -Z v 2>/dev/null; echo "[$v] $?"; }'
+answer 'invalid name'    'printf "x\n" | { read 1bad 2>/dev/null; echo $?; }'
+answer 'readonly name'   'readonly v=old; printf "new\n" | { read v 2>/dev/null; echo "[$v] $?"; }'
+
 #       -n, -d, -p and -t are not options dash has, so what they are measured
 #       against is what they are for. The wait is per byte rather than per
 #       line: a writer that stops halfway through one leaves a short field
@@ -284,6 +301,8 @@ written 'a delimiter'    '[a]|' 0 'printf "a:b\n" | { read -d : x; echo "[$x]"; 
 written 'a prompt'       '[v]|' 0 'printf "v\n" | { read -p "say: " x; echo "[$x]"; }'
 written 'a wait that ends' '1|' 0 '{ sleep 2; echo x; } | { read -t 1 y; echo $?; }'
 written 'a wait in time'  '0|[x]|' 0 'echo x | { read -t 5 y; echo $?; echo "[$y]"; }'
+written 'bad count rejected' '[] 1|' 0 'printf "x\n" | { read -n nope v 2>/dev/null; echo "[$v] $?"; }'
+written 'missing count rejected' '[] 2|' 0 'printf "x\n" | { read -n 2>/dev/null; echo "[${REPLY-}] $?"; }'
 
 section getopts
 

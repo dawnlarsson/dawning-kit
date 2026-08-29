@@ -12609,6 +12609,7 @@ typedef b64 ptrdiff_t;
 #define FILE_EXECUTE 010
 #define FILE_APPEND (01 | 0100 | 02000)
 #define FILE_CREATE 0100
+#define FILE_EXCLUSIVE 0200
 // O_TRUNC. FILE_WRITE already carries it; 0200 was O_EXCL, which
 // refused to open any file that already existed.
 #define FILE_TRUNCATE 01000

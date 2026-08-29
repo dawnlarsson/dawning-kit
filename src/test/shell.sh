@@ -968,6 +968,8 @@ bash_answer 'function simple body rejected' 'function f echo body'
 group redirection
 check 'out'             'echo x > /tmp/pt1; cat /tmp/pt1'
 check 'append'          'echo a > /tmp/pt2; echo b >> /tmp/pt2; cat /tmp/pt2'
+answer 'noclobber and override' 'p=/tmp/pt-noclobber.$$; echo old > "$p"; set -C; echo new > "$p" 2>/dev/null; a=$?; before=$(cat "$p"); echo forced >| "$p"; b=$?; after=$(cat "$p"); rm -f "$p"; echo "$a:$before $b:$after"'
+answer 'noclobber permits device' 'set -C; echo discarded > /dev/null; echo $?'
 expected 'stdout and stderr' 'out|err|' 0 '{ echo out; echo err >&2; } &> /tmp/ptboth.$$; cat /tmp/ptboth.$$; rm /tmp/ptboth.$$'
 expected 'both append' 'first|out|err|' 0 'echo first > /tmp/ptbotha.$$; { echo out; echo err >&2; } &>> /tmp/ptbotha.$$; cat /tmp/ptbotha.$$; rm /tmp/ptbotha.$$'
 expected 'numeric is an arg' '2|' 0 'echo 2&> /tmp/ptbothn.$$; cat /tmp/ptbothn.$$; rm /tmp/ptbothn.$$'
@@ -2065,6 +2067,7 @@ answer 'no field ceiling' 'cd "$(mktemp -d)"; i=0; while [ $i -lt 200 ]; do : > 
 answer 'no parameter ceiling' 'cd "$(mktemp -d)"; i=0; while [ $i -lt 200 ]; do : > f$i; i=$((i+1)); done; set -- *; n=0; for f in "$@"; do n=$((n+1)); done; echo $n'
 
 group language-errors
+answer 'set rejects unknown option' 'set -Z; echo after'
 answer 'nounset stops the shell' 'set -u; echo $nosuch; echo after'
 answer 'readonly reassignment stops the shell' 'readonly r=1; r=2; echo $?'
 answer 'readonly unset stops the shell' 'readonly r=1; unset r; echo after'
@@ -2159,7 +2162,7 @@ bash_remaining 'ledger readarray' '' 127 'printf "a\n" | readarray a'
 bash_remaining 'ledger shopt' '' 127 'shopt -s nullglob'
 bash_remaining 'ledger select' '' 2 'select x in a; do echo "$x"; break; done </dev/null'
 bash_remaining 'ledger coproc' '' 2 'coproc C { echo x; }'
-bash_remaining 'ledger noclobber' '0|' 0 'p=/tmp/bash-noclobber.$$; echo a > "$p"; set -C; echo b > "$p"; s=$?; rm -f "$p"; echo "$s"'
+bash_remaining 'ledger noclobber status' '2|' 0 'p=/tmp/bash-noclobber.$$; echo a > "$p"; set -C; echo b > "$p"; s=$?; rm -f "$p"; echo "$s"'
 bash_remaining 'ledger indirection' '' 2 'x=y; y=value; echo "${!x}"'
 
 #
