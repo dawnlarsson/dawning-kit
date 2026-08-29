@@ -2671,47 +2671,58 @@ bool test_is_unary(string_address word)
 
 positive test_is_binary(string_address word)
 {
+        p8 first;
+        p8 second;
+
         if (!word)
                 return 0;
 
-        if (word_is(word, "="))
-                return TEST_SAME;
+        first = string_get(word);
+        second = string_get(word + 1);
 
-        if (word_is(word, "!="))
+        /* Every binary operator is one or three bytes. Decode that fixed
+           grammar directly: a chain of generic NUL comparisons made the
+           overwhelmingly common -lt walk across =, !=, -eq and -ne first on
+           every loop condition. This is shell syntax, not a reusable byte
+           primitive, and its irreducible work is the operator's three bytes. */
+        if (!second)
+        {
+                if (first == '=')
+                        return TEST_SAME;
+                if (first == '<')
+                        return TEST_BEFORE;
+                if (first == '>')
+                        return TEST_AFTER;
+
+                return 0;
+        }
+
+        if (first == '!' && second == '=' && !string_get(word + 2))
                 return TEST_DIFFERENT;
 
-        if (word_is(word, "-eq"))
-                return TEST_EQUAL;
+        if (first == '-' && string_get(word + 2) && !string_get(word + 3))
+        {
+                p16 pair = ((p16)second << 8) | string_get(word + 2);
 
-        if (word_is(word, "-ne"))
-                return TEST_UNEQUAL;
-
-        if (word_is(word, "-lt"))
-                return TEST_LESS;
-
-        if (word_is(word, "-le"))
-                return TEST_LESS_EQUAL;
-
-        if (word_is(word, "-gt"))
-                return TEST_GREATER;
-
-        if (word_is(word, "-ge"))
-                return TEST_GREATER_EQUAL;
-
-        if (word_is(word, "-nt"))
-                return TEST_NEWER;
-
-        if (word_is(word, "-ot"))
-                return TEST_OLDER;
-
-        if (word_is(word, "-ef"))
-                return TEST_SAME_FILE;
-
-        if (word_is(word, "<"))
-                return TEST_BEFORE;
-
-        if (word_is(word, ">"))
-                return TEST_AFTER;
+                if (pair == ((p16)'e' << 8 | 'q'))
+                        return TEST_EQUAL;
+                if (pair == ((p16)'n' << 8 | 'e'))
+                        return TEST_UNEQUAL;
+                if (pair == ((p16)'l' << 8 | 't'))
+                        return TEST_LESS;
+                if (pair == ((p16)'l' << 8 | 'e'))
+                        return TEST_LESS_EQUAL;
+                if (pair == ((p16)'g' << 8 | 't'))
+                        return TEST_GREATER;
+                if (pair == ((p16)'g' << 8 | 'e'))
+                        return TEST_GREATER_EQUAL;
+                if (pair == ((p16)'n' << 8 | 't'))
+                        return TEST_NEWER;
+                if (pair == ((p16)'o' << 8 | 't'))
+                        return TEST_OLDER;
+                if (pair == ((p16)'e' << 8 | 'f'))
+                        return TEST_SAME_FILE;
+        }
 
         return 0;
 }
