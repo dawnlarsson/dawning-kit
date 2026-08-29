@@ -1520,10 +1520,12 @@ group status
 differs 'negative exit'  '' 255 'exit -1'
 
 group arithmetic
-differs 'empty is zero'  '0|' 0 'echo $(( ))'
-differs 'comma is not'   '1|' 0 'echo $((1,2))'
-differs 'has increment'  '1 2|' 0 'x=1; echo $((x++)) $x'
-differs 'a bad number'   '8|' 0 'echo $((08))'
+answer 'empty arithmetic rejected' 'echo $(( ))'
+answer 'comma rejected' 'echo $((1,2))'
+answer 'post increment rejected' 'x=1; echo $((x++)) $x'
+answer 'post decrement rejected' 'x=1; echo $((x--)) $x'
+answer 'bad octal rejected' 'echo $((08))'
+answer 'bad hex rejected' 'echo $((0x))'
 
 group language
 differs 'echo keeps them' 'a\b|' 0 'echo "a\b"'

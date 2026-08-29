@@ -214,11 +214,13 @@ static fn expand_copy_bounded(p8 address_to into, string_address from, positive 
         reads a literal out of the middle of an expression and a variable is
         read whole -- and both have to agree about what 010 is worth.
 */
-static bipolar expand_base_number(string_address address_to at)
+static bipolar expand_base_number(string_address address_to at, bool address_to valid)
 {
         string_address step = address_to at;
         bipolar value = 0;
         positive used;
+
+        address_to valid = true;
 
         if (string_is(step, '0') &&
             (string_is(step + 1, 'x') || string_is(step + 1, 'X')))
@@ -227,14 +229,20 @@ static bipolar expand_base_number(string_address address_to at)
                 value = (bipolar)string_digits_hexadecimal_max(
                     step, (positive)-1, address_of used);
                 step += used;
+
+                if (!used)
+                        address_to valid = false;
         }
         else if (string_is(step, '0') && string_get(step + 1) >= '0' &&
-                 string_get(step + 1) <= '7')
+                 string_get(step + 1) <= '9')
         {
                 step++;
                 value = (bipolar)string_digits_octal_max(
                     step, (positive)-1, address_of used);
                 step += used;
+
+                if (!used)
+                        address_to valid = false;
         }
         else
         {
@@ -940,6 +948,7 @@ static bipolar arith_value_of(string_address name)
 {
         p8 scratch[32];
         bool present;
+        bool valid;
         string_address step = expand_value_of(name, scratch, address_of present);
         string_address digits;
         bipolar value;
@@ -960,9 +969,9 @@ static bipolar arith_value_of(string_address name)
         }
 
         digits = step;
-        value = expand_base_number(address_of step);
+        value = expand_base_number(address_of step, address_of valid);
 
-        if (step == digits)
+        if (step == digits || !valid)
         {
                 arith_bad = true;
                 return 0;
@@ -974,16 +983,6 @@ static bipolar arith_value_of(string_address name)
                 arith_bad = true;
 
         return negative ? -value : value;
-}
-
-// x++ and x--, answering with what the name held before.
-static bipolar arith_step(string_address name, bipolar by)
-{
-        bipolar was = arith_value_of(name);
-
-        arith_store(name, was + by);
-
-        return was;
 }
 
 /*
@@ -1070,7 +1069,16 @@ static bipolar arith_primary()
         }
 
         if (string_get(arith_at) >= '0' && string_get(arith_at) <= '9')
-                return expand_base_number(address_of arith_at);
+        {
+                bool valid;
+
+                value = expand_base_number(address_of arith_at, address_of valid);
+
+                if (!valid)
+                        arith_bad = true;
+
+                return value;
+        }
 
         /*
                 A name with no dollar in front of it, which is the one place in
@@ -1096,29 +1104,18 @@ static bipolar arith_primary()
 
                 /*
                         The compound forms, which read the name as well as
-                        write it: += and its nine relatives, and ++ and --.
+                        write it: += and its nine relatives.
 
                         Longest first, or <<= is < followed by <= and x >>= 1
-                        halves nothing. The ones ending in = are all "read,
-                        combine, write" and share the tail below; ++ and --
-                        answer with the value from before they changed it,
-                        which is what a post-increment means.
+                        halves nothing. They are all "read, combine, write"
+                        and share the tail below. Postfix ++ and -- are not in
+                        the POSIX grammar; leaving them for the final cursor
+                        check rejects them instead of silently adding a
+                        non-portable side effect.
                 */
                 {
                         p8 op = 0;
                         b32 skip = 0;
-
-                        if (string_is(arith_at, '+') && string_is(arith_at + 1, '+'))
-                        {
-                                arith_at += 2;
-                                return arith_step(name, 1);
-                        }
-
-                        if (string_is(arith_at, '-') && string_is(arith_at + 1, '-'))
-                        {
-                                arith_at += 2;
-                                return arith_step(name, -1);
-                        }
 
                         if (string_is(arith_at, '<') && string_is(arith_at + 1, '<') &&
                             string_is(arith_at + 2, '='))
@@ -1454,16 +1451,29 @@ static bipolar arith_choose()
 
 static bipolar arith_evaluate(string_address text)
 {
+        bipolar value;
+
         arith_bad = false;
         arith_at = text;
         arith_space();
 
-        // Nothing between the brackets is nothing to get wrong. dash calls it
-        // a syntax error; here it is the zero it reads as everywhere else.
+        // An arithmetic expansion contains an expression, not an optional
+        // expression. Empty input used to turn into a plausible zero.
         if (!string_get(arith_at))
+        {
+                arith_bad = true;
                 return 0;
+        }
 
-        return arith_choose();
+        value = arith_choose();
+        arith_space();
+
+        // Every byte has to belong to the grammar. This catches comma and
+        // postfix increment/decrement instead of returning the left prefix.
+        if (string_get(arith_at))
+                arith_bad = true;
+
+        return value;
 }
 
 /*
