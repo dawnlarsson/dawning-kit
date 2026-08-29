@@ -230,7 +230,7 @@ static env_export address_to env_export_take(const_string name, positive length)
         if (!cell)
                 return null;
 
-        memory_copy_end((p8 address_to)(cell + 1), name, length);
+        memory_copy_end((p8 address_to)(cell + 1), (address_any)name, length);
 
         env_exports[env_export_count].name = (string_address)(cell + 1);
         env_exports[env_export_count].temporary = 0;
