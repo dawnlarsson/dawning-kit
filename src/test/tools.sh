@@ -797,6 +797,10 @@ ps -eww -o pid,args 2> /dev/null | awk -v p="$long_pid" '$1 == p' > "$work/ps_lo
 # numeric uid versus user name, aliases, and the header rules that scripts use
 # to turn ps into a data source.
 compare 'pid selection' ps -p "$long_pid" -o pid,ppid,uid,user,comm,sid,pgid,nlwp
+compare 'selected full format' ps -p "$long_pid" -f
+compare 'selected every full format' ps -ef -p "$long_pid"
+compare 'selected common columns' ps -A -p "$long_pid" \
+        -o comm,args,ppid,stat,time
 compare 'attached pid selection' ps -p"$long_pid" -o pid=,comm=
 compare 'long pid selection' ps --pid="$long_pid" -o pid=PIDX
 compare 'pid selection beats every' ps -e -p "$long_pid" -o pid=
