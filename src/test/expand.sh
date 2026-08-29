@@ -411,6 +411,27 @@ bash_answer 'first must match' 'x=abcbd; printf "[%s]" "${x^[bd]}" END; echo'
 bash_answer 'expanded pattern case' 'x=abCDef; p="[bd]"; printf "[%s]" "${x^^$p}" END; echo'
 bash_answer 'long uppercase' "x=$long_a; y=\${x^^}; echo \${#y}:\${y:0:1}"
 
+group bash braces
+bash_answer 'brace list' 'printf "[%s]" pre{a,b}post END; echo'
+bash_answer 'brace nested' 'printf "[%s]" x{a,{b,c}}y END; echo'
+bash_answer 'quoted comma element' 'printf "[%s]" {a,"b,c"} END; echo'
+bash_answer 'expanded comma element' 'x="b,c"; printf "[%s]" {a,"$x"} END; echo'
+bash_answer 'brace product' 'printf "[%s]" {a,b}{1,2} END; echo'
+bash_answer 'brace empties' 'printf "[%s]" {a,} {,b} END; echo'
+bash_answer 'numeric range' 'printf "[%s]" {2..5} END; echo'
+bash_answer 'numeric descending' 'printf "[%s]" {3..-1} END; echo'
+bash_answer 'numeric step' 'printf "[%s]" {1..8..3} END; echo'
+bash_answer 'negative step magnitude' 'printf "[%s]" {8..1..-3} END; echo'
+bash_answer 'padded range' 'printf "[%s]" {-02..2} END; echo'
+bash_answer 'character range' 'printf "[%s]" {d..a} END; echo'
+bash_answer 'quoted brace literal' 'printf "[%s]" "{a,b}" END; echo'
+bash_answer 'escaped brace literal' 'printf "[%s]" \{a,b\} END; echo'
+bash_answer 'parameter braces skipped' 'x="a,b"; printf "[%s]" "${x}" END; echo'
+bash_answer 'variable braces stay literal' 'x="{a,b}"; printf "[%s]" $x END; echo'
+bash_answer 'assignment stays one' 'x={a,b}; printf "[%s]" "$x" END; echo'
+bash_answer 'brace before parameter' 'x=Q; printf "[%s]" {$x,a} END; echo'
+bash_answer 'large brace range' 'set -- {1..1200}; printf "%s:%s:%s\n" "$#" "$1" "${1200}"'
+
 group trim
 answer 'shortest head'  'x=a.b.c; printf "[%s]" ${x#*.} END; echo'
 answer 'longest head'   'x=a.b.c; printf "[%s]" ${x##*.} END; echo'

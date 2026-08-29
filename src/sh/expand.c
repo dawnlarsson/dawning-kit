@@ -3664,6 +3664,425 @@ static positive expand_split(shell_words address_to out)
         return out->count;
 }
 
+static string_address expand_brace_close(string_address open)
+{
+        positive depth = 1;
+        string_address at = open + 1;
+
+        while (string_get(at))
+        {
+                p8 value = string_get(at);
+
+                if (value == '\\' && string_get(at + 1))
+                {
+                        at += 2;
+                        continue;
+                }
+
+                if (value == '\'' || value == '"')
+                {
+                        p8 quote = value;
+
+                        at++;
+                        while (string_get(at) && string_not(at, quote))
+                                at += quote == '"' && string_is(at, '\\') &&
+                                              string_get(at + 1)
+                                          ? 2
+                                          : 1;
+
+                        if (string_get(at))
+                                at++;
+
+                        continue;
+                }
+
+                // Parameter braces are expansion syntax, never a brace list.
+                if (value == '$' && string_is(at + 1, '{'))
+                {
+                        string_address stop = expand_brace_end(at + 2);
+
+                        if (stop)
+                        {
+                                at = stop + 1;
+                                continue;
+                        }
+                }
+
+                if (value == '{')
+                        depth++;
+                else if (value == '}' && !--depth)
+                        return at;
+
+                at++;
+        }
+
+        return null;
+}
+
+static string_address expand_brace_comma(string_address at,
+                                         string_address close)
+{
+        positive depth = 0;
+
+        while (at < close)
+        {
+                p8 value = string_get(at);
+
+                if (value == '\\' && at + 1 < close)
+                {
+                        at += 2;
+                        continue;
+                }
+
+                if (value == '\'' || value == '"')
+                {
+                        p8 quote = value;
+
+                        at++;
+                        while (at < close && string_not(at, quote))
+                                at += quote == '"' && string_is(at, '\\') &&
+                                              at + 1 < close
+                                          ? 2
+                                          : 1;
+                        if (at < close)
+                                at++;
+                        continue;
+                }
+
+                if (value == '$' && string_is(at + 1, '{'))
+                {
+                        string_address stop = expand_brace_end(at + 2);
+
+                        if (stop && stop < close)
+                        {
+                                at = stop + 1;
+                                continue;
+                        }
+                }
+
+                if (value == '{')
+                        depth++;
+                else if (value == '}' && depth)
+                        depth--;
+                else if (!depth && value == ',')
+                        return at;
+
+                at++;
+        }
+
+        return null;
+}
+
+static bool expand_brace_number(string_address text, positive length,
+                                bipolar address_to value,
+                                positive address_to width,
+                                bool address_to padded)
+{
+        positive at = 0;
+        positive magnitude = 0;
+        bool minus = false;
+        positive limit;
+
+        if (at < length && text[at] == '-')
+        {
+                minus = true;
+                at++;
+        }
+
+        if (at >= length)
+                return false;
+
+        address_to width = length;
+        address_to padded = at + 1 < length && text[at] == '0';
+        limit = minus ? (positive)bipolar_max + 1 : (positive)bipolar_max;
+
+        for (; at < length; at++)
+        {
+                positive digit = text[at] - '0';
+
+                if (text[at] < '0' || text[at] > '9' ||
+                    magnitude > (limit - digit) / 10)
+                        return false;
+
+                magnitude = magnitude * 10 + digit;
+        }
+
+        if (minus && magnitude == (positive)bipolar_max + 1)
+                address_to value = bipolar_min;
+        else
+                address_to value = minus ? -(bipolar)magnitude
+                                         : (bipolar)magnitude;
+
+        return true;
+}
+
+static positive expand_brace_number_text(p8 address_to out, bipolar value,
+                                         positive width, bool padded)
+{
+        p8 made[32];
+        positive length = bipolar_into_string(made, value);
+        positive zeros;
+        positive at = 0;
+        positive from = 0;
+
+        if (!padded || length >= width)
+        {
+                memory_copy(out, made, length);
+                return length;
+        }
+
+        if (made[0] == '-')
+        {
+                out[at++] = '-';
+                from = 1;
+        }
+
+        zeros = width - length;
+        memory_fill(out + at, '0', zeros);
+        at += zeros;
+        memory_copy(out + at, made + from, length - from);
+
+        return at + length - from;
+}
+
+static positive shell_expand_braces(string_address word,
+                                    shell_words address_to out);
+
+static positive expand_brace_made(string_address word,
+                                  string_address open,
+                                  string_address close,
+                                  string_address middle,
+                                  positive middle_length,
+                                  shell_words address_to out)
+{
+        positive prefix = (positive)(open - word);
+        positive suffix = string_length(close + 1);
+        p8 address_to made;
+
+        if (prefix > positive_max - middle_length ||
+            prefix + middle_length > positive_max - suffix - 1 ||
+            !(made = shell_store_take(address_of expand_store,
+                                      prefix + middle_length + suffix + 1)))
+        {
+                expand_overflow = true;
+                expand_failed = true;
+                return out->count;
+        }
+
+        memory_copy(made, word, prefix);
+        memory_copy(made + prefix, middle, middle_length);
+        memory_copy_end(made + prefix + middle_length, close + 1, suffix);
+
+        return shell_expand_braces(made, out);
+}
+
+static bool expand_brace_range(string_address word, string_address open,
+                               string_address close, shell_words address_to out)
+{
+        string_address first_dots = null;
+        string_address second_dots = null;
+        string_address at = open + 1;
+        positive depth = 0;
+        bipolar first_number, last_number, step_number = 0;
+        positive first_width = 0, last_width = 0;
+        bool first_padded = false, last_padded = false;
+        bool numeric;
+
+        while (at + 1 < close)
+        {
+                if (string_is(at, '{'))
+                        depth++;
+                else if (string_is(at, '}') && depth)
+                        depth--;
+                else if (!depth && string_is(at, '.') && string_is(at + 1, '.'))
+                {
+                        if (!first_dots)
+                                first_dots = at;
+                        else if (!second_dots)
+                                second_dots = at;
+                        else
+                                return false;
+
+                        at += 2;
+                        continue;
+                }
+
+                at++;
+        }
+
+        if (!first_dots || first_dots == open + 1 || first_dots + 2 == close ||
+            (second_dots && second_dots + 2 == close))
+                return false;
+
+        numeric = expand_brace_number(open + 1,
+                                      (positive)(first_dots - open - 1),
+                                      address_of first_number,
+                                      address_of first_width,
+                                      address_of first_padded) &&
+                  expand_brace_number(first_dots + 2,
+                                      (positive)((second_dots ? second_dots : close) -
+                                                 first_dots - 2),
+                                      address_of last_number,
+                                      address_of last_width,
+                                      address_of last_padded);
+
+        if (second_dots)
+        {
+                positive ignored_width;
+                bool ignored_padded;
+
+                if (!expand_brace_number(second_dots + 2,
+                                         (positive)(close - second_dots - 2),
+                                         address_of step_number,
+                                         address_of ignored_width,
+                                         address_of ignored_padded))
+                        return false;
+        }
+
+        if (numeric)
+        {
+                bipolar step;
+                bipolar current = first_number;
+                positive width = first_width > last_width ? first_width : last_width;
+                bool padded = first_padded || last_padded;
+
+                if (step_number == bipolar_min)
+                        return false;
+
+                step = step_number < 0 ? -step_number : step_number;
+                if (!step)
+                        step = 1;
+                if (first_number > last_number)
+                        step = -step;
+
+                while ((step > 0 && current <= last_number) ||
+                       (step < 0 && current >= last_number))
+                {
+                        p8 made[32];
+                        positive length = expand_brace_number_text(
+                            made, current, width, padded);
+
+                        expand_brace_made(word, open, close, made, length, out);
+
+                        if (expand_failed || current == last_number ||
+                            (step > 0 && current > bipolar_max - step) ||
+                            (step < 0 && current < bipolar_min - step))
+                                break;
+
+                        current += step;
+                }
+
+                return true;
+        }
+
+        if (!second_dots && first_dots == open + 2 && first_dots + 3 == close)
+        {
+                bipolar first = string_get(open + 1);
+                bipolar last = string_get(first_dots + 2);
+                bipolar step = first <= last ? 1 : -1;
+
+                for (bipolar current = first;
+                     step > 0 ? current <= last : current >= last;
+                     current += step)
+                {
+                        p8 made = (p8)current;
+
+                        expand_brace_made(word, open, close, address_of made, 1,
+                                          out);
+
+                        if (expand_failed || current == last)
+                                break;
+                }
+
+                return true;
+        }
+
+        return false;
+}
+
+static positive shell_expand_braces(string_address word,
+                                    shell_words address_to out)
+{
+        string_address open = word;
+
+        while (string_get(open))
+        {
+                string_address close;
+                string_address comma;
+                string_address piece;
+
+                if (string_is(open, '\\') && string_get(open + 1))
+                {
+                        open += 2;
+                        continue;
+                }
+
+                if (string_is(open, '\'') || string_is(open, '"'))
+                {
+                        p8 quote = string_get(open++);
+
+                        while (string_get(open) && string_not(open, quote))
+                                open += quote == '"' && string_is(open, '\\') &&
+                                                string_get(open + 1)
+                                            ? 2
+                                            : 1;
+                        if (string_get(open))
+                                open++;
+                        continue;
+                }
+
+                if (string_is(open, '$') && string_is(open + 1, '{'))
+                {
+                        close = expand_brace_end(open + 2);
+                        open = close ? close + 1 : open + 1;
+                        continue;
+                }
+
+                if (string_not(open, '{') || !(close = expand_brace_close(open)))
+                {
+                        open++;
+                        continue;
+                }
+
+                comma = expand_brace_comma(open + 1, close);
+
+                if (!comma)
+                {
+                        if (expand_brace_range(word, open, close, out))
+                                return out->count;
+
+                        open++;
+                        continue;
+                }
+
+                piece = open + 1;
+
+                while (piece <= close)
+                {
+                        comma = expand_brace_comma(piece, close);
+                        expand_brace_made(word, open, close, piece,
+                                          (positive)((comma ? comma : close) - piece),
+                                          out);
+                        if (expand_failed || !comma)
+                                return out->count;
+                        piece = comma + 1;
+                }
+
+                return out->count;
+        }
+
+        expand_word(word);
+
+        if (expand_overflow)
+        {
+                string_format(expand_complain, "Expansion too long: %s\n", word);
+                expand_fatal();
+                return out->count;
+        }
+
+        return expand_split(out);
+}
+
 /*
         One lexed word, expanded whole, and the fields it became written out.
 
@@ -3675,21 +4094,7 @@ static positive expand_split(shell_words address_to out)
 */
 positive shell_expand_fields(string_address word, shell_words address_to out)
 {
-        positive count;
-
-        expand_word(word);
-
-        // A word that did not fit is a word that came out shorter than it was
-        // meant to be, and a shell that says nothing about that hands the wrong
-        // file name to whatever runs next.
-        if (expand_overflow)
-        {
-                string_format(expand_complain, "Expansion too long: %s\n", word);
-                expand_fatal();
-                return out->count;
-        }
-
-        count = expand_split(out);
+        positive count = shell_expand_braces(word, out);
 
         if (expand_overflow)
         {
