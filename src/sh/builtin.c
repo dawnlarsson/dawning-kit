@@ -745,11 +745,19 @@ fn shell_clear(writer write, string_address input)
         write(str(TERM_CLEAR_SCREEN));
 }
 
+// echo and printf %b share the shell escape language. The implementation sits
+// with printf below; these two flags also let \c stop echo's remaining words
+// and final newline.
+static bool printf_cut;
+static bool printf_in_b;
+fn printf_escaped(writer write, string_address text);
 
 fn shell_echo(writer write, string_address input)
 {
         positive index = 1;
         bool newline = true;
+
+        printf_cut = false;
 
         while (index < shell_argc && word_is(shell_argv[index], "-n"))
         {
@@ -762,7 +770,15 @@ fn shell_echo(writer write, string_address input)
                 if (index != first)
                         write(" ", 1);
 
-                write(shell_argv[index], string_length(shell_argv[index]));
+                printf_in_b = true;
+                printf_escaped(write, shell_argv[index]);
+                printf_in_b = false;
+
+                if (printf_cut)
+                {
+                        newline = false;
+                        break;
+                }
         }
 
         if (newline)
@@ -835,10 +851,24 @@ fn shell_trap_exit();
 fn shell_exit(writer write, string_address input)
 {
         bipolar exit_code = shell_status_entering;
-        bool good;
+        bool good = true;
 
         if (shell_argc > 1)
-                exit_code = shell_signed(shell_argv[1], address_of good) & 0xff;
+        {
+                exit_code = shell_signed(shell_argv[1], address_of good);
+
+                // dash accepts the optional plus sign and wraps non-negative
+                // values to one byte, but a negative or non-number is an
+                // illegal operand and terminates the shell with status 2.
+                if (!good || exit_code < 0)
+                {
+                        string_format(shell_diagnostic, "exit: Illegal number: %s\n",
+                                      shell_argv[1]);
+                        exit_code = 2;
+                }
+                else
+                        exit_code &= 0xff;
+        }
 
         shell_status = (b32)exit_code;
         shell_trap_exit();
@@ -2057,8 +2087,6 @@ static p8 printf_nothing[1];
 
 // \c says stop, and it means the whole of printf and not just the argument it
 // was found in: everything still to be written, format and all, is dropped.
-static bool printf_cut;
-static bool printf_in_b;
 static b32 printf_status;
 
 static p8 printf_hold[2048];
