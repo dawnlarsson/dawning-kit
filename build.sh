@@ -181,7 +181,7 @@ sensitive filesystem, and this is $(uname). Name a machine that has them with
                 #
                 # tmp, etc and root because everything expects them to be there:
                 # a redirection into /tmp is the first thing anybody tries.
-                mkdir -p fs/sys fs/proc fs/dev fs/tmp fs/etc fs/root ||
+                mkdir -p fs/sys fs/proc fs/dev fs/tmp fs/etc fs/root fs/bin ||
                         die "filesystem setup"
 
                 make_node() {
@@ -628,10 +628,21 @@ STRNCHR:char *strnchr(const char *, __kernel_size_t, int)"
                 #
                 find fs -maxdepth 1 \( -type f -o -type l \) -delete ||
                         die "clearing the last image"
+                find fs/bin -maxdepth 1 \( -type f -o -type l \) -delete ||
+                        die "clearing the last /bin image"
 
                 # Every program in the image is spark, including the one the kernel
                 # execs as /init, so no ELF is ever loaded on the boot path.
                 sh kit/spark programs/shell fs/shell || die "building the shell"
+
+                # Scripts need a real interpreter path: /shell is the image's
+                # binary, but a #!/bin/sh shebang is resolved by the kernel
+                # before the shell gets any say. The monitor is installed in
+                # PATH as an executable workload rather than left only in the
+                # source checkout where host-side tests happen to find it.
+                ln -sf ../shell fs/bin/sh || die "linking /bin/sh"
+                cp programs/monitor.sh fs/bin/monitor.sh || die "installing monitor.sh"
+                chmod 0755 fs/bin/monitor.sh || die "making monitor.sh executable"
 
                 #
                 #       The utilities are the shell, under other names.
@@ -644,7 +655,7 @@ STRNCHR:char *strnchr(const char *, __kernel_size_t, int)"
                 #
                 for utility in cat awk dd diff ps grep sed cut tr sort uniq head tail wc tee \
                         expr cmp mktemp kill date xargs \
-                        rev nl fold ls find stat du df chmod chown ln readlink \
+                        rev nl fold ls find stat du df chmod chown chgrp ln readlink \
                         basename dirname realpath mkdir rmdir cp mv rm touch \
                         sleep seq yes env id hostname uname ip host fetch \
                         init edit term window text pointer world; do
