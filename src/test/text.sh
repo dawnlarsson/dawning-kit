@@ -321,7 +321,7 @@ refuses_long_sed_script()
                 "$(head -c 34 "$work/got" | tr '\n\t' '|>')[$got_status] $(head -1 "$work/err")"
 }
 
-refuses_many_grep_globs()
+compares_many_grep_globs()
 {
         set --
         i=0
@@ -331,20 +331,7 @@ refuses_many_grep_globs()
                 i=$((i + 1))
         done
 
-        "$bin/grep" "$@" x "$work/one" > "$work/got" 2> "$work/err"
-        got_status=$?
-
-        if [ "$got_status" -eq 2 ] && [ ! -s "$work/got" ] &&
-           grep -q '^grep: too many include patterns$' "$work/err"
-        then
-                pass=$((pass + 1))
-                return 0
-        fi
-
-        fail=$((fail + 1))
-        printf '  %-8s %-30s want %-24s got %s\n' \
-                "$group" 'grep glob ceiling' 'loud refusal [2]' \
-                "$(head -c 34 "$work/got" | tr '\n\t' '|>')[$got_status] $(head -1 "$work/err")"
+        compare 'many grep globs' grep one "$@" x "$work/one"
 }
 
 # These modes have no correct bounded implementation here yet. They must be
@@ -858,6 +845,10 @@ printf 'gamma only\n' > "$work/tree/three.txt"
 printf 'alpha inner\n' > "$work/tree/inner/deep.txt"
 printf 'alpha other\n' > "$work/tree/other/far.log"
 ln -s one.txt "$work/tree/link.txt"
+printf '*.log\nthree*\n' > "$work/grep_excludes"
+printf 'one.txt\n' > "$work/grep_excludes_two"
+printf '*.txt' > "$work/grep_excludes_nonl"
+: > "$work/grep_excludes_empty"
 
 case_start grepr
 compare 'recursive'      grep -  -r alpha "$work/tree"
@@ -883,6 +874,14 @@ compare 'include set'     grep -  -rl --include='[ot]*' alpha "$work/tree"
 compare 'include nothing' grep -  -rl --include='*.zzz' alpha "$work/tree"
 compare 'exclude suffix'  grep -  -rl --exclude='*.log' alpha "$work/tree"
 compare 'exclude all'     grep -  -r --exclude='*' alpha "$work/tree"
+compare 'exclude file'    grep -  -rl --exclude-from="$work/grep_excludes" alpha "$work/tree"
+compare 'exclude file separate' grep - -rl --exclude-from "$work/grep_excludes" alpha "$work/tree"
+compare 'exclude file twice' grep - -rl --exclude-from="$work/grep_excludes" --exclude-from="$work/grep_excludes_two" alpha "$work/tree"
+compare 'exclude file empty' grep - -rl --exclude-from="$work/grep_excludes_empty" alpha "$work/tree"
+compare 'exclude file nonl' grep - -rl --exclude-from="$work/grep_excludes_nonl" alpha "$work/tree"
+compare 'exclude file stdin' grep grep_excludes -rl --exclude-from=- alpha "$work/tree"
+compare 'exclude file missing' grep - -rl --exclude-from="$work/nosuch-excludes" alpha "$work/tree"
+compare 'exclude file directory' grep - -rl --exclude-from="$work/read_dir" alpha "$work/tree"
 compare 'exclude names'   grep -  -rl --exclude-dir=inner alpha "$work/tree"
 compare 'exclude names slash' grep - -rl --exclude-dir=inner/ alpha "$work/tree"
 compare 'exclude two dirs' grep - -rl --exclude-dir=inner --exclude-dir=other alpha "$work/tree"
@@ -1271,7 +1270,7 @@ refuses_long_pattern
 refuses_grep_context 'grep context byte ceiling' grep_large_context -B2 hit
 refuses_grep_context 'grep context slot ceiling' one -B8193 x
 refuses_long_sed_script
-refuses_many_grep_globs
+compares_many_grep_globs
 compare 'sed forty appends' sed - -f "$work/sed_many_appends" "$work/one"
 
 case_start writeerr

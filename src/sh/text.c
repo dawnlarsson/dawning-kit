@@ -4954,8 +4954,6 @@ static fn grep_head(string_address name, p8 separator, positive number, positive
         way -- opening it is how it was found at all.
 */
 #define GREP_PATHS_MAX (1 << 20)
-#define GREP_GLOBS_MAX 32
-#define GREP_GLOB_BYTES 4096
 
 static string_address address_to grep_paths;
 static positive grep_path_count;
@@ -4965,39 +4963,52 @@ static bool grep_dereference;
 static bool grep_expanded;
 static bool grep_skip_directories;
 
-static string_address grep_include[GREP_GLOBS_MAX];
-static b32 grep_include_count;
-static string_address grep_exclude[GREP_GLOBS_MAX];
-static b32 grep_exclude_count;
-static string_address grep_exclude_dir[GREP_GLOBS_MAX];
-static b32 grep_exclude_dir_count;
-static p8 grep_glob_pool[GREP_GLOB_BYTES];
-static positive grep_glob_used;
-
-// --exclude-dir=sub and --exclude-dir=sub/ name the same directory.
-static string_address grep_glob_keep(string_address value)
+typedef struct grep_glob
 {
-        positive length = string_length(value);
+        struct grep_glob address_to next;
+        string_address value;
+} grep_glob;
 
-        while (length && value[length - 1] == '/')
-                length--;
+static grep_glob address_to grep_include;
+static grep_glob address_to grep_exclude;
+static grep_glob address_to grep_exclude_dir;
 
-        if (grep_glob_used + length + 1 > GREP_GLOB_BYTES)
-                return value;
+/*
+        All three option families are the same list operation. Values from an
+        exclude file have to outlive the shared line reader, and copying the
+        argv values as well keeps that lifetime rule in one place. The text
+        arena makes the number and total width of globs an input limit rather
+        than three unrelated 32-entry/4 KiB ceilings.
 
-        p8 address_to room = grep_glob_pool + grep_glob_used;
+        --exclude-dir=sub and --exclude-dir=sub/ name the same directory.
+*/
+static bool grep_glob_add(grep_glob address_to address_to list,
+                          string_address value, positive length, bool directory)
+{
+        if (directory)
+                while (length && value[length - 1] == '/')
+                        length--;
+
+        grep_glob address_to made = (grep_glob address_to)text_arena_take(
+            sizeof(grep_glob) + length + 1);
+
+        if (!made)
+                return false;
+
+        p8 address_to room = (p8 address_to)(made + 1);
 
         memory_copy_fast_end(room, value, length);
-        grep_glob_used += length + 1;
+        made->value = (string_address)room;
+        made->next = *list;
+        *list = made;
 
-        return (string_address)room;
+        return true;
 }
 
-static bool grep_globs_have(string_address address_to list, b32 count,
-                            string_address name)
+static bool grep_globs_have(grep_glob address_to list, string_address name)
 {
-        for (b32 i = 0; i < count; i++)
-                if (shell_match(list[i], name))
+        for (; list; list = list->next)
+                if (shell_match(list->value, name))
                         return true;
 
         return false;
@@ -5007,17 +5018,15 @@ static bool grep_wanted_file(string_address path)
 {
         string_address name = file_last_component(path);
 
-        if (grep_include_count &&
-            !grep_globs_have(grep_include, grep_include_count, name))
+        if (grep_include && !grep_globs_have(grep_include, name))
                 return false;
 
-        return !grep_globs_have(grep_exclude, grep_exclude_count, name);
+        return !grep_globs_have(grep_exclude, name);
 }
 
 static bool grep_wanted_directory(string_address path)
 {
-        return !grep_globs_have(grep_exclude_dir, grep_exclude_dir_count,
-                                file_last_component(path));
+        return !grep_globs_have(grep_exclude_dir, file_last_component(path));
 }
 
 // The kernel's mode for a path, or zero when there is none to be had.
@@ -5263,6 +5272,7 @@ static const file_long grep_longs[] = {
     {(string_address) "dereference-recursive", 'R'},
     {(string_address) "include", 'Q'},
     {(string_address) "exclude", 'S'},
+    {(string_address) "exclude-from", 'X'},
     {(string_address) "exclude-dir", 'V'},
     {(string_address) "color", 'W'},
     {(string_address) "colour", 'W'},
@@ -5317,34 +5327,40 @@ static bool grep_option_seen(p8 letter, string_address value)
         }
         else if (letter == 'Q')
         {
-                if (grep_include_count >= GREP_GLOBS_MAX)
-                {
-                        text_error(null, "too many include patterns");
+                if (!grep_glob_add(address_of grep_include, value,
+                                   string_length(value), false))
                         return false;
-                }
-
-                grep_include[grep_include_count++] = value;
         }
         else if (letter == 'S')
         {
-                if (grep_exclude_count >= GREP_GLOBS_MAX)
-                {
-                        text_error(null, "too many exclude patterns");
+                if (!grep_glob_add(address_of grep_exclude, value,
+                                   string_length(value), false))
                         return false;
-                }
-
-                grep_exclude[grep_exclude_count++] = value;
         }
         else if (letter == 'V')
         {
-                if (grep_exclude_dir_count >= GREP_GLOBS_MAX)
-                {
-                        text_error(null, "too many exclude-dir patterns");
+                if (!grep_glob_add(address_of grep_exclude_dir, value,
+                                   string_length(value), true))
                         return false;
-                }
+        }
+        else if (letter == 'X')
+        {
+                if (!text_open(value))
+                        return false;
 
-                grep_exclude_dir[grep_exclude_dir_count++] =
-                    grep_glob_keep(value);
+                while (text_line_next())
+                        if (!grep_glob_add(address_of grep_exclude,
+                                           (string_address)text_line,
+                                           text_line_length, false))
+                        {
+                                text_close();
+                                return false;
+                        }
+
+                text_close();
+
+                if (text_status)
+                        return false;
         }
         else if (letter == 'f')
         {
@@ -5385,7 +5401,7 @@ static b32 text_grep()
             // about the ones that are not, and neither describes anything
             // this does.
             .allowed = (string_address) "ABCDEFGHILRTUZabcdefhilmnoqrsvwxyz",
-            .valued = (string_address) "ABCDJNOQSVdefm",
+            .valued = (string_address) "ABCDJNOQSVXdefm",
             .optional = (string_address) "W",
             .longs = grep_longs,
             .operand = grep_operand,
@@ -5401,6 +5417,15 @@ static b32 text_grep()
         grep_said_pattern = false;
         grep_pattern_from = -1;
         grep_pattern_broken = false;
+        grep_pattern_length = 0;
+        grep_pattern_any = false;
+        grep_include = null;
+        grep_exclude = null;
+        grep_exclude_dir = null;
+        grep_path_count = 0;
+        grep_expanded = false;
+        grep_skip_directories = false;
+        text_arena_used = 0;
 
         if (!file_take(address_of taking))
                 return text_done(2);
