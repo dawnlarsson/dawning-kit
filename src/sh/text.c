@@ -9045,6 +9045,8 @@ static fn sort_radix(positive from, positive to, positive depth)
                 positive next[257];
                 positive largest = 0;
                 positive largest_size = 0;
+                positive occupied = 0;
+                positive only = 0;
 
                 memory_fill(boundary, 0, sizeof(boundary));
 
@@ -9054,27 +9056,50 @@ static fn sort_radix(positive from, positive to, positive depth)
                 boundary[0] = from;
                 for (positive bucket = 0; bucket < 257; bucket++)
                 {
+                        if (boundary[bucket + 1])
+                        {
+                                occupied++;
+                                only = bucket;
+                        }
+
                         boundary[bucket + 1] += boundary[bucket];
                         next[bucket] = boundary[bucket];
                 }
 
-                for (positive bucket = 0; bucket < 257; bucket++)
-                        while (next[bucket] < boundary[bucket + 1])
-                        {
-                                positive key = sort_radix_key(
-                                    sort_order[next[bucket]], depth);
+                /* A common byte needs no partition at all. End-of-line is
+                   already fully ordered; any other byte advances the trie in
+                   this frame without moving an index twice. */
+                if (occupied == 1)
+                {
+                        if (!only)
+                                return;
 
-                                if (key == bucket)
-                                        next[bucket]++;
-                                else
-                                {
-                                        positive held = sort_order[next[key]];
+                        depth++;
+                        continue;
+                }
 
-                                        sort_order[next[key]++] =
-                                            sort_order[next[bucket]];
-                                        sort_order[next[bucket]] = held;
-                                }
-                        }
+                /*
+                        The spare index array is already paid for by every
+                        sort. Distribute into it in input order, then let the
+                        assembly copy return one contiguous span. The former
+                        in-place cycle walk chased a different bucket on each
+                        swap; on the ordinary byte sort it was the largest
+                        source of cache misses and branch work.
+
+                        This is stable within a bucket, although the default
+                        sort does not require that property. More importantly,
+                        both reads and writes are forward streams.
+                */
+                for (positive at = from; at < to; at++)
+                {
+                        positive line = sort_order[at];
+                        positive key = sort_radix_key(line, depth);
+
+                        sort_spare[next[key]++] = line;
+                }
+
+                memory_copy_apart(sort_order + from, sort_spare + from,
+                                  (to - from) * sizeof(positive));
 
                 for (positive bucket = 1; bucket < 257; bucket++)
                 {
