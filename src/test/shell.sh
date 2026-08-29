@@ -938,6 +938,9 @@ bash_answer 'function nested' 'function outer { function inner { echo "$1"; }; i
 bash_answer 'quoted function is command' '"function" f { echo body; }'
 bash_answer 'function missing name' 'function'
 bash_answer 'function missing body' 'function f'
+answer 'one hundred twenty eight functions' 'i=0; while [ "$i" -lt 128 ]; do eval "f$i() { echo $i; }"; i=$((i+1)); done; f0; f64; f127; f64() { echo new; }; f64; unset -f f65; type f65 >/dev/null 2>&1; echo $?'
+answer 'function registry churn' 'i=0; while [ "$i" -lt 1000 ]; do eval "f$i() { :; }"; eval "unset -f f$i"; i=$((i+1)); done; final() { echo final; }; final'
+answer 'long function name' 'function_name_abcdefghijklmnopqrstuvwxyz_abcdefghijklmnopqrstuvwxyz_abcdefghijklmnopqrstuvwxyz_abcdefghijklmnopqrstuvwxyz() { echo long; }; function_name_abcdefghijklmnopqrstuvwxyz_abcdefghijklmnopqrstuvwxyz_abcdefghijklmnopqrstuvwxyz_abcdefghijklmnopqrstuvwxyz; unset -f function_name_abcdefghijklmnopqrstuvwxyz_abcdefghijklmnopqrstuvwxyz_abcdefghijklmnopqrstuvwxyz_abcdefghijklmnopqrstuvwxyz; type function_name_abcdefghijklmnopqrstuvwxyz_abcdefghijklmnopqrstuvwxyz_abcdefghijklmnopqrstuvwxyz_abcdefghijklmnopqrstuvwxyz >/dev/null 2>&1; echo $?'
 bash_answer 'function simple body rejected' 'function f echo body'
 
 group redirection

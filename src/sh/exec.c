@@ -106,8 +106,6 @@ static fn exec_errexit(b32 status)
 }
 
 
-#define FUNCTION_MAX 64
-#define FUNCTION_NAME 64
 #define REDIRECT_SAVE_MAX 64
 // As deep as the table a local goes in. A call further down than that gets no
 // slot for its locals and silently keeps the caller's, which is worse than
@@ -681,7 +679,8 @@ static bool exec_redirect_apply(b32 index)
 
 typedef struct
 {
-        p8 name[FUNCTION_NAME];
+        p8 address_to name;
+        positive name_room;
         b32 body;
         // Where this body sits in the kept arenas, so that redefining it can
         // hand the space back rather than leaving it behind.
@@ -689,15 +688,16 @@ typedef struct
         parse_marks to;
 } exec_function;
 
-static exec_function exec_functions[FUNCTION_MAX];
-static b32 exec_function_count;
+static exec_function address_to exec_functions;
+static positive exec_function_room;
+static positive exec_function_count;
 
 // Whether a name is a function, which type asks and nothing else does.
 bool exec_function_here(string_address name);
 
 static b32 exec_function_find(string_address name)
 {
-        b32 index;
+        positive index;
 
         for (index = 0; index < exec_function_count; index++)
         {
@@ -715,7 +715,7 @@ bool exec_function_here(string_address name)
 
 bool exec_function_unset(string_address name)
 {
-        b32 slot;
+        positive slot;
 
         for (slot = 0; slot < exec_function_count; slot++)
         {
@@ -744,7 +744,8 @@ static b32 exec_define(b32 index)
         parse_marks after;
         bool released = false;
         b32 body;
-        b32 slot;
+        positive slot;
+        positive name_length = string_length(name);
 
         for (slot = 0; slot < exec_function_count; slot++)
         {
@@ -754,15 +755,46 @@ static b32 exec_define(b32 index)
 
         if (slot == exec_function_count)
         {
-                if (exec_function_count >= FUNCTION_MAX)
+                // An unset slot has no live tree and can carry a new name.
+                for (slot = 0; slot < exec_function_count; slot++)
+                        if (!exec_functions[slot].body)
+                                break;
+
+                if (slot == exec_function_count)
                 {
-                        string_format(exec_error, "Too many functions\n");
+                        if (exec_function_count == positive_max ||
+                            !shell_room((address_any address_to)
+                                          address_of exec_functions,
+                                        address_of exec_function_room,
+                                        exec_function_count + 1,
+                                        sizeof(exec_functions[0])))
+                        {
+                                string_format(exec_error,
+                                              "No room for function: %s\n",
+                                              name);
+                                shell_status = 1;
+                                return 1;
+                        }
+
+                        exec_functions[slot].name = null;
+                        exec_functions[slot].name_room = 0;
+                        exec_functions[slot].body = 0;
+                        exec_function_count++;
+                }
+
+                if (name_length == positive_max ||
+                    !shell_room((address_any address_to)
+                                  address_of exec_functions[slot].name,
+                                address_of exec_functions[slot].name_room,
+                                name_length + 1, 1))
+                {
+                        string_format(exec_error,
+                                      "No room for function: %s\n", name);
                         shell_status = 1;
                         return 1;
                 }
 
-                exec_functions[slot].body = 0;
-                exec_function_count++;
+                string_copy(exec_functions[slot].name, name);
         }
 
         /*
@@ -798,7 +830,6 @@ static b32 exec_define(b32 index)
 
         exec_functions[slot].from = before;
         exec_functions[slot].to = after;
-        string_copy_max_end(exec_functions[slot].name, name, FUNCTION_NAME - 1);
         exec_functions[slot].body = body;
         shell_status = 0;
 
