@@ -160,26 +160,28 @@ static shell_mark parse_text_base;
         the order the operators appeared, and the parser hands them out in the
         same order.
 */
-#define HERE_MAX 32
-// Big enough for a configuration file or a script written inside another one,
-// which is what a here-document is for. Eight kilobytes held two hundred and
-// fifty lines and dropped everything after them without saying so.
-#define HERE_TEXT 65536
+typedef struct
+{
+        positive delimiter;
+        positive body;
+        positive length;
+        b32 quoted;
+        // <<- rather than <<, which takes the leading tabs off every line of
+        // the body and off the line that ends it.
+        b32 strip;
+        b32 overflow;
+} here_document;
 
-static string_address here_delimiter[HERE_MAX];
-static b32 here_quoted[HERE_MAX];
-// <<- rather than <<, which takes the leading tabs off every line of the body
-// and off the line that ends it.
-static b32 here_strip[HERE_MAX];
-static positive here_body[HERE_MAX];
-static positive here_length[HERE_MAX];
-static b32 here_overflow[HERE_MAX];
+static here_document address_to here_documents;
+static positive here_document_room;
 static b32 here_wanted;
 static b32 here_filled;
 static b32 here_taken;
-static p8 here_text[HERE_TEXT];
+static p8 address_to here_text;
+static positive here_text_room;
 static positive here_used;
-static p8 here_names[HERE_MAX * 64];
+static p8 address_to here_names;
+static positive here_names_room;
 static positive here_names_used;
 
 /*
@@ -192,9 +194,8 @@ static positive here_names_used;
         out as a word with a quote still in it and the next line ran as a
         command of its own.
 */
-#define PARSE_PENDING 8192
-
-static p8 parse_pending[PARSE_PENDING];
+static p8 address_to parse_pending;
+static positive parse_pending_room;
 static positive parse_pending_used;
 
 // A terminal backslash removed itself and only asked for the next physical
@@ -357,13 +358,22 @@ static bool parse_here_register(string_address word, bool strip)
 {
         string_address step = word;
         positive start = here_names_used;
+        positive reserve = string_length(word) + 1;
+        here_document address_to document;
 
-        if (here_wanted >= HERE_MAX)
+        if (!shell_room((address_any address_to)address_of here_documents,
+                        address_of here_document_room,
+                        (positive)here_wanted + 1,
+                        sizeof(here_documents[0])) ||
+            !shell_room((address_any address_to)address_of here_names,
+                        address_of here_names_room,
+                        here_names_used + reserve, sizeof(here_names[0])))
                 return false;
 
-        here_quoted[here_wanted] = false;
-        here_strip[here_wanted] = strip;
-        here_overflow[here_wanted] = false;
+        document = here_documents + here_wanted;
+        memory_fill(document, 0, sizeof(*document));
+        document->delimiter = start;
+        document->strip = strip;
 
         while (string_get(step))
         {
@@ -371,16 +381,11 @@ static bool parse_here_register(string_address word, bool strip)
 
                 if (c == '\'' || c == '"')
                 {
-                        here_quoted[here_wanted] = true;
+                        document->quoted = true;
                         step++;
 
                         while (string_get(step) && string_get(step) != c)
-                        {
-                                if (here_names_used + 2 >= sizeof(here_names))
-                                        return false;
-
                                 here_names[here_names_used++] = string_get(step++);
-                        }
 
                         if (string_get(step))
                                 step++;
@@ -390,22 +395,16 @@ static bool parse_here_register(string_address word, bool strip)
 
                 if (c == '\\' && string_get(step + 1))
                 {
-                        here_quoted[here_wanted] = true;
+                        document->quoted = true;
                         step++;
                         c = string_get(step);
                 }
-
-                if (here_names_used + 2 >= sizeof(here_names))
-                        return false;
 
                 here_names[here_names_used++] = c;
                 step++;
         }
 
         here_names[here_names_used++] = end;
-        here_delimiter[here_wanted] = here_names + start;
-        here_body[here_wanted] = 0;
-        here_length[here_wanted] = 0;
         here_wanted++;
 
         return true;
@@ -420,11 +419,12 @@ string_address parse_here_open()
         if (here_filled >= here_wanted)
                 return null;
 
-        return here_delimiter[here_filled];
+        return here_names + here_documents[here_filled].delimiter;
 }
 
 bool parse_here_line(string_address line)
 {
+        here_document address_to document;
         positive length;
 
         if (here_filled >= here_wanted)
@@ -439,12 +439,14 @@ bool parse_here_line(string_address line)
                 Which of the two the line is can only be decided where what
                 would be stripped is known, which is here.
         */
-        if (here_strip[here_filled])
+        document = here_documents + here_filled;
+
+        if (document->strip)
         {
                 while (string_is(line, '\t'))
                         line++;
 
-                if (!string_compare(line, here_delimiter[here_filled]))
+                if (!string_compare(line, here_names + document->delimiter))
                 {
                         parse_here_close();
                         return true;
@@ -453,19 +455,21 @@ bool parse_here_line(string_address line)
 
         length = string_length(line);
 
-        if (!here_length[here_filled])
-                here_body[here_filled] = here_used;
+        if (!document->length)
+                document->body = here_used;
 
         // A body that does not fit is not a body with its end cut off: the
         // reader does not look at what this answers, so the complaint is made
         // here and the command it belongs to is refused when it is parsed.
-        if (here_used + length + 2 >= HERE_TEXT)
+        if (!shell_room((address_any address_to)address_of here_text,
+                        address_of here_text_room,
+                        here_used + length + 2, sizeof(here_text[0])))
         {
-                if (!here_overflow[here_filled])
+                if (!document->overflow)
                         string_format(log_error, "Here-document too long: %s\n",
-                                      here_delimiter[here_filled]);
+                                      here_names + document->delimiter);
 
-                here_overflow[here_filled] = true;
+                document->overflow = true;
 
                 return false;
         }
@@ -474,7 +478,7 @@ bool parse_here_line(string_address line)
         here_used += length;
         here_text[here_used++] = '\n';
         here_text[here_used] = end;
-        here_length[here_filled] = here_used - here_body[here_filled];
+        document->length = here_used - document->body;
 
         return true;
 }
@@ -483,16 +487,22 @@ fn parse_here_close()
 {
         if (here_filled < here_wanted)
         {
-                if (!here_length[here_filled])
-                        here_body[here_filled] = here_used;
+                here_document address_to document = here_documents + here_filled;
+
+                if (!document->length)
+                        document->body = here_used;
 
                 // Past the terminator, so the body after this one does not
                 // overwrite it and every body stands as a string.
-                if (here_used + 1 < HERE_TEXT)
+                if (shell_room((address_any address_to)address_of here_text,
+                               address_of here_text_room, here_used + 1,
+                               sizeof(here_text[0])))
                 {
                         here_text[here_used] = end;
                         here_used++;
                 }
+                else
+                        document->overflow = true;
 
                 here_filled++;
         }
@@ -504,7 +514,9 @@ static bool parse_hold(string_address line, b32 unfinished)
 
         if (line != parse_pending)
         {
-                if (length + 2 > PARSE_PENDING)
+                if (!shell_room((address_any address_to)address_of parse_pending,
+                                address_of parse_pending_room, length + 2,
+                                sizeof(parse_pending[0])))
                         return false;
 
                 memory_copy(parse_pending, line, length + 1);
@@ -545,11 +557,11 @@ bool parse_feed(string_address line)
         {
                 positive length = string_length(line);
 
-                if (parse_pending_used + length + 2 > PARSE_PENDING)
-                {
-                        parse_pending_used = 0;
+                if (!shell_room((address_any address_to)address_of parse_pending,
+                                address_of parse_pending_room,
+                                parse_pending_used + length + 2,
+                                sizeof(parse_pending[0])))
                         return false;
-                }
 
                 memory_copy(parse_pending + parse_pending_used, line, length + 1);
                 parse_pending_used += length;
@@ -902,11 +914,12 @@ static bool parse_take_redirect(b32 index)
                         return false;
                 }
 
-                parse_redirects[slot].body = here_body[here_taken];
-                parse_redirects[slot].body_length = here_length[here_taken];
-                parse_redirects[slot].raw = here_quoted[here_taken];
+                parse_redirects[slot].body = here_documents[here_taken].body;
+                parse_redirects[slot].body_length =
+                    here_documents[here_taken].length;
+                parse_redirects[slot].raw = here_documents[here_taken].quoted;
 
-                if (here_overflow[here_taken])
+                if (here_documents[here_taken].overflow)
                 {
                         parse_state = PARSE_SYNTAX;
                         return false;

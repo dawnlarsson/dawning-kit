@@ -1741,6 +1741,48 @@ answer 'no here-document ceiling' '{ echo "cat <<END"; i=0; while [ $i -lt 400 ]
 . /tmp/gh5.$$
 rm -f /tmp/gh5.$$'
 
+# Reader storage is movable and grows with the source. These cross each old
+# parser boundary independently: document count, body bytes, delimiter bytes,
+# and the pending token assembled from multiple physical lines.
+many_heredocs=$(awk 'BEGIN {
+        for (i = 0; i < 40; i++) printf "%scat <<E%d", i ? "; " : "", i
+        printf "\n"
+        for (i = 0; i < 40; i++) printf "%d\nE%d\n", i, i
+}')
+answer 'forty here-documents' "$many_heredocs"
+
+large_heredoc=$(awk 'BEGIN {
+        print "wc -c <<END"
+        for (i = 0; i < 4000; i++) print "0123456789 padding line"
+        print "END"
+}')
+answer 'here-document over sixty four KiB' "$large_heredoc"
+
+long_delimiter=$(awk 'BEGIN { for (i = 0; i < 5000; i++) printf "D" }')
+answer 'five thousand byte delimiter' "wc -c <<$long_delimiter
+payload
+$long_delimiter"
+
+continued_quote=$(awk 'BEGIN {
+        printf "printf \047%%s\047 \042"
+        for (i = 0; i < 160; i++) {
+                for (j = 0; j < 80; j++) printf "q"
+                printf "\n"
+        }
+        print "\042 | wc -c"
+}')
+answer 'continued quote over eight KiB' "$continued_quote"
+
+continued_backslash=$(awk 'BEGIN {
+        printf "printf \047%%s\047 "
+        for (i = 0; i < 160; i++) {
+                for (j = 0; j < 80; j++) printf "b"
+                printf "\\\n"
+        }
+        print "z | wc -c"
+}')
+answer 'backslash continuation over eight KiB' "$continued_backslash"
+
 # Empty physical lines must still reach the parser: inside a here-document,
 # they are data rather than ignorable command lines.
 answer 'heredoc blank' 'cat <<EOF
