@@ -90,6 +90,24 @@ static bool exec_line_aborted()
         return exec_signal == EXEC_SIGNAL_FATAL;
 }
 
+/*
+        A sourced file is a control-flow boundary of its own. Return stops at
+        that boundary; break and continue must remain set so the caller's loop
+        can consume them. Without this check shell_dot read another physical
+        line, exec_program reset the signal, and every command after the
+        control builtin ran anyway.
+*/
+static bool exec_source_stop()
+{
+        if (!exec_signal)
+                return false;
+
+        if (exec_signal == EXEC_SIGNAL_RETURN)
+                exec_signal = EXEC_SIGNAL_NONE;
+
+        return true;
+}
+
 static fn exec_errexit(b32 status)
 {
         if (exec_line_aborted() || !status || exec_tested ||
@@ -272,12 +290,14 @@ static fn exec_redirect_forget(b32 mark)
         }
 }
 
-// A failed redirect may have closed fd 2 already. Put its most recent saved
+// A failed redirect may have closed fd 2 already. Put this redirect's saved
 // value back long enough for the diagnostic; normal reverse restoration still
-// owns and closes the save afterward.
-static fn exec_redirect_diagnostic_restore()
+// owns and closes the save afterward. A save belonging to an earlier redirect
+// or an enclosing group is deliberately below mark: restoring either would
+// bypass `2>/file` or let a diagnostic leak through an outer `2>/dev/null`.
+static fn exec_redirect_diagnostic_restore(b32 mark)
 {
-        for (b32 at = exec_save_count; at > 0; at--)
+        for (b32 at = exec_save_count; at > mark; at--)
         {
                 exec_saved_fd address_to saved = exec_saves + at - 1;
 
@@ -548,6 +568,7 @@ static bool exec_redirect_apply(b32 index)
                 parse_redirect address_to want = parse_redirects + node->redirect + at;
                 string_address target = shell_expand_word(parse_words[want->word]);
                 bipolar opened = -1;
+                b32 redirect_mark = exec_save_count;
                 bool both = want->op == OP_ANDGREAT || want->op == OP_ANDDGREAT;
 
                 if (exec_line_aborted())
@@ -632,7 +653,7 @@ static bool exec_redirect_apply(b32 index)
                             source >= 0x7fffffff ||
                             exec_saved_fd_is((b32)source))
                         {
-                                exec_redirect_diagnostic_restore();
+                                exec_redirect_diagnostic_restore(redirect_mark);
                                 string_format(exec_error,
                                               "Cannot redirect descriptor: %s\n",
                                               target);
@@ -664,7 +685,7 @@ static bool exec_redirect_apply(b32 index)
                         // command reporting an ordinary false result. dash
                         // uses status two for an open/duplication failure.
                         exec_redirect_status = 2;
-                        exec_redirect_diagnostic_restore();
+                        exec_redirect_diagnostic_restore(redirect_mark);
                         string_format(exec_error, "Cannot redirect: %s\n", target);
                         return false;
                 }
@@ -705,7 +726,7 @@ static bool exec_redirect_apply(b32 index)
                         {
                                 system_call_1(syscall(close), opened);
                                 exec_redirect_status = 2;
-                                exec_redirect_diagnostic_restore();
+                                exec_redirect_diagnostic_restore(redirect_mark);
                                 string_format(exec_error,
                                               "Cannot redirect descriptor: %p\n",
                                               (positive)want->fd);
@@ -1140,6 +1161,36 @@ static fn exec_release_assignments(string_address address_to assignments,
                 env_export_release(assignments[count]);
 }
 
+/*
+        A control-flow operand that has to fit in b32 without wrapping.
+
+        string_digits_exact deliberately accepts an arbitrarily long decimal
+        spelling and wraps its accumulator; file sizes and similar callers
+        impose their own policy afterward. That is not enough here, because a
+        huge return operand wrapping to zero is silent success. Strip zeroes
+        with the floor routine, reject values wider than INT_MAX before the
+        conversion, then let the exact parser prove every remaining byte.
+*/
+static bool exec_control_number(string_address word, bool allow_zero,
+                                b32 address_to answer)
+{
+        static p8 maximum[] = "2147483647";
+        positive length = string_length(word);
+        positive zeroes = memory_span_byte(word, '0', length);
+        positive significant = length - zeroes;
+        positive parsed;
+
+        if (significant > 10 ||
+            (significant == 10 &&
+             string_compare_max(word + zeroes, maximum, 10) > 0) ||
+            !string_digits_exact(word, address_of parsed) ||
+            (!allow_zero && !parsed))
+                return false;
+
+        *answer = (b32)parsed;
+        return true;
+}
+
 static b32 exec_dispatch()
 {
         string_address name = shell_argv[0];
@@ -1155,12 +1206,18 @@ static b32 exec_dispatch()
         if ((initial == 'b' && !string_compare(name, "break")) ||
             (initial == 'c' && !string_compare(name, "continue")))
         {
-                b32 levels = shell_argc > 1
-                                 ? (b32)string_digits(shell_argv[1], null)
-                                 : 1;
+                b32 levels = 1;
 
-                if (levels < 1)
-                        levels = 1;
+                if (shell_argc > 1 &&
+                    !exec_control_number(shell_argv[1], false,
+                                         address_of levels))
+                {
+                        string_format(exec_error, "%s: Illegal number: %s\n",
+                                      name, shell_argv[1]);
+                        shell_status = 2;
+                        exec_expand_fatal();
+                        return shell_status;
+                }
 
                 if (exec_loop_depth)
                 {
@@ -1180,7 +1237,18 @@ static b32 exec_dispatch()
         if (initial == 'r' && !string_compare(name, "return"))
         {
                 if (shell_argc > 1)
-                        shell_status = (b32)string_digits(shell_argv[1], null);
+                {
+                        if (!exec_control_number(shell_argv[1], true,
+                                                 address_of shell_status))
+                        {
+                                string_format(exec_error,
+                                              "return: Illegal number: %s\n",
+                                              shell_argv[1]);
+                                shell_status = 2;
+                                exec_expand_fatal();
+                                return shell_status;
+                        }
+                }
 
                 exec_signal = EXEC_SIGNAL_RETURN;
                 return shell_status;

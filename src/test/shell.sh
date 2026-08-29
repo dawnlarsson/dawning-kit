@@ -1195,6 +1195,10 @@ check 'dot runs'        'echo echo sourced > /tmp/pd1; . /tmp/pd1'
 check 'dot sets'        'echo x=42 > /tmp/pd2; . /tmp/pd2; echo $x'
 check 'dot status'      'echo false > /tmp/pd3; . /tmp/pd3; echo $?'
 check 'dot missing'     '. /tmp/nosuchfile 2>/dev/null; echo $?'
+answer 'dot return stops source' 'p=/tmp/dot-return.$$; printf '\''echo in\nreturn 7\necho BAD\n'\'' > "$p"; . "$p"; s=$?; rm -f "$p"; echo "$s"'
+answer 'dot return stops at source' 'p=/tmp/dot-function-return.$$; printf '\''echo in\nreturn 7\necho BAD\n'\'' > "$p"; f() { . "$p"; echo function-continues; }; f; s=$?; rm -f "$p"; echo "$s"'
+answer 'dot break reaches loop' 'p=/tmp/dot-break.$$; printf '\''echo in\nbreak\necho BAD\n'\'' > "$p"; for i in a b; do . "$p"; echo LOOP-BAD; done; rm -f "$p"; echo after'
+answer 'dot continue reaches loop' 'p=/tmp/dot-continue.$$; printf '\''echo in\ncontinue\necho BAD\n'\'' > "$p"; for i in a b; do . "$p"; echo LOOP-BAD; done; rm -f "$p"; echo after'
 check 'dot path need not execute' 'p=/tmp/dot-path.$$; /bin/mkdir "$p"; printf '\''echo sourced\n'\'' > "$p/include"; /bin/chmod 600 "$p/include"; cd /; PATH=$p; . include; /bin/rm -f "$p/include"; /bin/rmdir "$p"'
 check 'dot reads one stream' '{ printf '\''x=first\n#'\''; awk '\''BEGIN { for (i = 0; i < 5000; i++) printf "a" }'\''; printf '\''\necho "$x"\n'\''; } | "$0" -c '\''. /dev/stdin'\'''
 
@@ -1501,6 +1505,12 @@ answer 'a body past a pipe' '{ echo "cat <<\"END\""; i=0; while [ $i -lt 1800 ];
 wc -l < /tmp/gh4.$$'
 answer 'order of words'  'echo x > /tmp/sr2 2>&1; cat /tmp/sr2'
 answer 'loop redirected' 'for i in 1 2; do echo $i; done > /tmp/sr3; cat /tmp/sr3'
+answer 'outer stderr contains failure' \
+        '{ echo before; echo hidden > /no/such/redirection/target; echo after; } 2>/dev/null; echo tail'
+answer 'closed stderr contains failure' \
+        'echo hidden 2>&- > /no/such/redirection/target; echo after'
+answer 'redirected stderr contains failure' \
+        'p=/tmp/sr-failure.$$; echo hidden 2>"$p" > /no/such/redirection/target; s=$?; [ -s "$p" ] && echo contained; rm -f "$p"; echo "$s"'
 
 # exec with nothing to run is there for its redirections, and those outlive
 # the command. The descriptor is three because open hands back the lowest one
@@ -2128,6 +2138,16 @@ answer 'unset function option' 'f() { echo a; }; unset -f f; f 2>/dev/null; echo
 answer 'shift past end is fatal' 'set -- a; shift 2; echo $?'
 answer 'shift rejects a word' 'set -- a; shift nope; echo after'
 answer 'shift rejects negative' 'set -- a; shift -1; echo after'
+answer 'return rejects a word' 'f() { return nope; echo BAD; }; f; echo after'
+answer 'return rejects negative' 'f() { return -1; echo BAD; }; f; echo after'
+answer 'return rejects overflow' 'f() { return 2147483648; echo BAD; }; f; echo after'
+answer 'return rejects huge number' 'f() { return 999999999999999999999999999999999999999999999999999999999999; echo BAD; }; f; echo after'
+answer 'break rejects a word' 'while true; do break nope; echo BAD; done; echo after'
+answer 'break rejects zero' 'while true; do break 0; echo BAD; done; echo after'
+answer 'break rejects huge number' 'while true; do break 999999999999999999999999999999999999999999999999999999999999; echo BAD; done; echo after'
+answer 'continue rejects a word' 'while true; do continue nope; echo BAD; done; echo after'
+answer 'continue rejects zero' 'while true; do continue 0; echo BAD; done; echo after'
+answer 'continue rejects huge number' 'while true; do continue 999999999999999999999999999999999999999999999999999999999999; echo BAD; done; echo after'
 answer 'missing input status' 'cat < /nonexistent12345; echo $?'
 answer 'closed output status' 'echo x >&- 2>/dev/null; echo $?'
 

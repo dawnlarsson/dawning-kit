@@ -35,6 +35,7 @@ fn shell_input_end();
 bool exec_function_here(string_address name);
 bool exec_function_unset(string_address name);
 static bool exec_line_aborted();
+static bool exec_source_stop();
 bool shell_builtin(string_address arguments);
 string_address shell_arguments();
 fn shell_execute_command();
@@ -5541,6 +5542,10 @@ fn shell_dot(writer write, string_address input)
 
                         source_text[stop] = end;
                         run_line(source_text + at);
+
+                        if (exec_source_stop())
+                                break;
+
                         at = stop + 1;
                 }
 
