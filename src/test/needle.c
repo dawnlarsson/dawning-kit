@@ -39,6 +39,7 @@ static positive checks;
 static positive failures;
 
 static p8 arena[GUARD + TOP + GUARD];
+static p8 record_arena[160];
 static p8 address_to edge;              // one past the last mapped byte
 
 #define FIELD (arena + GUARD)
@@ -96,6 +97,28 @@ static address_any reference_search_ascii_case(const p8 address_to hay,
                         return (address_any)(hay + at);
         }
         return null;
+}
+
+static positive reference_records(const p8 address_to hay, positive size,
+                                  const p8 address_to want, positive length,
+                                  p8 delimiter)
+{
+        positive count = 0;
+        positive at = 0;
+
+        while (at < size) {
+                positive stop = at;
+
+                while (stop < size && hay[stop] != delimiter)
+                        stop++;
+
+                if (reference_search(hay + at, stop - at, want, length))
+                        count++;
+
+                at = stop + (stop < size);
+        }
+
+        return count;
 }
 
 /*
@@ -350,6 +373,86 @@ static void every_byte(void)
 }
 
 /*
+        Record counting mixes two ordered event streams: matches and record
+        boundaries.  Exhaust every short three-symbol text to cover all their
+        relative positions, then put the same shapes across each vector edge.
+*/
+static void records(void)
+{
+        static const p8 address_to wants[] = {
+                (const p8 address_to)"", (const p8 address_to)"a",
+                (const p8 address_to)"b", (const p8 address_to)"ab",
+                (const p8 address_to)"ba", (const p8 address_to)"aa",
+                (const p8 address_to)"\n", (const p8 address_to)"a\n"
+        };
+        static const positive lengths[] = {0, 1, 1, 2, 2, 2, 1, 2};
+
+        for (positive size = 0; size <= 8; size++) {
+                positive arrangements = 1;
+                for (positive i = 0; i < size; i++)
+                        arrangements *= 3;
+
+                for (positive arrangement = 0; arrangement < arrangements;
+                     arrangement++) {
+                        positive value = arrangement;
+                        for (positive i = 0; i < size; i++) {
+                                positive digit = value % 3;
+                                record_arena[i] = digit == 0 ? 'a'
+                                                   : digit == 1 ? 'b' : '\n';
+                                value /= 3;
+                        }
+
+                        for (positive w = 0; w < sizeof(wants) / sizeof(*wants);
+                             w++) {
+                                positive2 anchors = memory_search_prepare(
+                                        wants[w], lengths[w], false);
+                                positive expected = reference_records(
+                                        record_arena, size, wants[w], lengths[w], '\n');
+                                positive got = memory_count_records_with_prepared(
+                                        record_arena, size, wants[w], lengths[w],
+                                        anchors.x, anchors.y, '\n');
+
+                                checks++;
+                                if (got != expected)
+                                        fail((const p8 address_to)"records",
+                                             lengths[w], size,
+                                             (const p8 address_to)"wrong count");
+                        }
+                }
+        }
+
+        static const positive edges[] = {15, 16, 17, 31, 32, 33, 47, 48,
+                                         63, 64, 65, 95, 96, 97, 127};
+        const p8 address_to wanted = (const p8 address_to)"needle";
+        positive2 anchors = memory_search_prepare(wanted, 6, false);
+
+        for (positive e = 0; e < sizeof(edges) / sizeof(*edges); e++) {
+                positive size = edges[e];
+
+                for (positive shift = 0; shift < 19; shift++) {
+                        for (positive i = 0; i < size; i++)
+                                record_arena[i] = (i + shift) % 13 == 12
+                                                      ? '\n' : 'x';
+                        for (positive i = shift; i + 6 <= size; i += 29)
+                                memory_copy(record_arena + i, wanted, 6);
+
+                        positive expected = reference_records(
+                                record_arena, size, wanted, 6, '\n');
+                        positive got = memory_count_records_with_prepared(
+                                record_arena, size, wanted, 6,
+                                anchors.x, anchors.y,
+                                '\n');
+
+                        checks++;
+                        if (got != expected)
+                                fail((const p8 address_to)"record edges", 6,
+                                     size,
+                                     (const p8 address_to)"wrong count");
+                }
+        }
+}
+
+/*
         Once per tier, not once.
 
         The wide bodies are chosen at run time, by a byte, and a machine that
@@ -385,6 +488,7 @@ b32 main(void)
                 positive before = failures;
                 sweep();
                 every_byte();
+                records();
 
                 string_format(log, "  %s: %p checks, %p failures\n",
                               tier ? (const p8 address_to)"narrow"

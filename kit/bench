@@ -38,6 +38,7 @@ bounded-fold) source_file=kit/bench_bounded_fold.c ;;
 ascii-convert) source_file=kit/bench_ascii_convert.c ;;
 ascii-search) source_file=kit/bench_ascii_search.c ;;
 grep-search) source_file=kit/bench_grep_search.c ;;
+grep-count) source_file=kit/bench_grep_count.c ;;
 last-of) source_file=kit/bench_last_of.c ;;
 words) source_file=kit/bench_words.c ;;
 clock) source_file=kit/bench_clock.c ;;

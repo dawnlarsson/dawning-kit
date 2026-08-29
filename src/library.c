@@ -67,7 +67,7 @@
         A .set is a second label on the same address, so there is no wrapper
         and no jump, and which names get one depends on who is linking.
 
-        229 routines (220 public, 9 local), 229 of them on all three.
+        230 routines (221 public, 9 local), 230 of them on all three.
         Raw C purity: 0 function bodies, 0 object definitions, 0 body macros, and 0 object macros (all forbidden).
 
           routine                        scope   x86_64  arm64   riscv64
@@ -155,7 +155,7 @@
           memory_copy_source_first       public  yes     yes     yes
           memory_copy_until              public  yes     yes     yes
           memory_count                   public  yes     yes     yes
-          memory_count_records_with_prepared public yes  yes     yes
+          memory_count_records_with_prepared public  yes     yes     yes
           memory_count_words             public  yes     yes     yes
           memory_fill                    public  yes     yes     yes
           memory_first_of                public  yes     yes     yes
@@ -2853,19 +2853,20 @@ __asm__(
     //       Count delimiter-separated records containing a fixed needle.
     //
     //       This is the repeated-search shape shared by filters: one prepared
-    //       pair of needle anchors is tested at every possible position while
-    //       delimiter events reset the "already counted" bit.  A line with
-    //       ten matches is therefore one answer without finding its end and
-    //       starting the whole search machinery ten times.  The needle may
+    //       pair of needle anchors stays live while candidate positions are
+    //       rejected.  The first proven match settles its record, whose
+    //       remaining suffix is scanned only for the delimiter before the
+    //       anchor hunt resumes. A line with ten matches is therefore one
+    //       answer without setting up ten searches. The needle may
     //       not contain the delimiter (then no one record can contain it), an
     //       empty needle matches every record, and a final unterminated record
     //       is a record exactly as grep treats it.
     //
-    //       Seven arguments put delimiter at 8(%rsp) on entry.  The AVX2
-    //       body considers thirty-two candidate starts and thirty-two record
-    //       boundaries together.  Only the very sparse surviving candidates
-    //       take the scalar exact comparison; the traffic floor is three
-    //       vector loads per block, and no byte is copied.
+    //       Seven arguments put delimiter at 8(%rsp) on entry. The AVX2 body
+    //       considers thirty-two candidate starts with two anchor loads.
+    //       Only the sparse survivors take the scalar exact comparison, and
+    //       delimiters are touched only after a proven match. No byte is
+    //       copied and no per-record search frame is built.
     //
     ASM_FUNC(memory_count_records_with_prepared)
     "movzbl 8(%rsp), %r11d\n   xor %eax, %eax\n"
@@ -2888,23 +2889,22 @@ __asm__(
     "push %r14\n   push %r15\n   sub $32, %rsp\n"
     "mov %rdi, %rbx\n   mov %rdx, %rbp\n   mov %rcx, %r12\n"
     "lea 1(%rdi,%rsi), %r13\n   sub %rcx, %r13  # exclusive end of candidate starts\n"
-    "xor %r14d, %r14d  # records found\n   xor %r15d, %r15d  # current record already counted\n"
+    "xor %r14d, %r14d  # records found\n"
     "mov %r8, 0(%rsp)\n   mov %r9, 8(%rsp)\n   mov %r11, 16(%rsp)\n"
+    "lea (%rdi,%rsi), %rax\n   mov %rax, 24(%rsp)  # end of the exact input span\n"
     ASM_USERSPACE_WIDE(
     ASM_NARROW("cpu_has_avx2", ".Lmemory_records_x64_scalar")
     "movzbl (%rbp,%r8), %eax\n   vmovd %eax, %xmm1\n   vpbroadcastb %xmm1, %ymm1\n"
     "movzbl (%rbp,%r9), %eax\n   vmovd %eax, %xmm2\n   vpbroadcastb %xmm2, %ymm2\n"
-    "vmovd %r11d, %xmm3\n   vpbroadcastb %xmm3, %ymm3\n"
-    ".Lmemory_records_x64_vector:\n   mov %r13, %rax\n   sub %rbx, %rax\n"
+    ".Lmemory_records_x64_vector:\n   cmp %r13, %rbx\n"
+    "jae .Lmemory_records_x64_vector_done\n   mov %r13, %rax\n   sub %rbx, %rax\n"
     "cmp $32, %rax\n   jb .Lmemory_records_x64_vector_done\n"
     "vpcmpeqb (%rbx,%r8), %ymm1, %ymm0\n"
     "vpcmpeqb (%rbx,%r9), %ymm2, %ymm4\n   vpand %ymm4, %ymm0, %ymm0\n"
-    "vpmovmskb %ymm0, %eax\n   mov %eax, 24(%rsp)  # candidates still to prove\n"
-    "vpcmpeqb (%rbx), %ymm3, %ymm4\n   vpmovmskb %ymm4, %r10d\n"
-    "xor %r9d, %r9d  # proved candidate mask\n"
-    ".Lmemory_records_x64_prove:\n   mov 24(%rsp), %eax\n   test %eax, %eax\n"
-    "jz .Lmemory_records_x64_events\n   bsf %eax, %ecx\n"
-    "mov %eax, %edx\n   dec %edx\n   and %edx, %eax\n   mov %eax, 24(%rsp)\n"
+    "vpmovmskb %ymm0, %r15d\n"
+    ".Lmemory_records_x64_prove:\n   test %r15d, %r15d\n"
+    "jz .Lmemory_records_x64_next_vector\n   bsf %r15d, %ecx\n"
+    "mov %r15d, %eax\n   dec %eax\n   and %eax, %r15d\n"
     "lea (%rbx,%rcx), %rdi\n   xor %edx, %edx\n"
     "cmp $4, %r12\n   jb .Lmemory_records_x64_prove_bytes\n"
     "mov (%rdi), %eax\n   cmp (%rbp), %eax\n   jne .Lmemory_records_x64_prove\n"
@@ -2914,32 +2914,25 @@ __asm__(
     ".Lmemory_records_x64_prove_byte:\n   movzbl (%rdi,%rdx), %eax\n"
     "cmp %al, 0(%rbp,%rdx)\n   jne .Lmemory_records_x64_prove\n"
     "inc %rdx\n   cmp %r12, %rdx\n   jb .Lmemory_records_x64_prove_byte\n"
-    ".Lmemory_records_x64_proved:\n   bts %ecx, %r9d\n"
-    "jmp .Lmemory_records_x64_prove\n"
-    // Consume match and delimiter events in byte order.  A match increments
-    // only on the first one in its record; a delimiter clears that state.
-    ".Lmemory_records_x64_events:\n   mov %r9d, %eax\n   or %r10d, %eax\n"
-    ".Lmemory_records_x64_event:\n   test %eax, %eax\n"
-    "jz .Lmemory_records_x64_next_vector\n   bsf %eax, %ecx\n"
-    "bt %ecx, %r9d\n   jnc .Lmemory_records_x64_event_delimiter\n"
-    "test %r15d, %r15d\n   jnz .Lmemory_records_x64_event_delimiter\n"
-    "inc %r14\n   mov $1, %r15d\n"
-    ".Lmemory_records_x64_event_delimiter:\n   bt %ecx, %r10d\n"
-    "jnc .Lmemory_records_x64_event_clear\n   xor %r15d, %r15d\n"
-    ".Lmemory_records_x64_event_clear:\n   mov %eax, %edx\n   dec %edx\n"
-    "and %edx, %eax\n   jmp .Lmemory_records_x64_event\n"
-    ".Lmemory_records_x64_next_vector:\n   add $32, %rbx\n"
+    ".Lmemory_records_x64_proved:\n   inc %r14\n"
+    "lea (%rdi,%r12), %rbx\n"
+    // The first match settles this record.  Scan only its remaining suffix,
+    // then resume the prepared vector hunt at the next record.
+    ".Lmemory_records_x64_to_delimiter:\n   cmp 24(%rsp), %rbx\n"
+    "jae .Lmemory_records_x64_done_wide\n   mov 16(%rsp), %r11\n"
+    "cmpb %r11b, (%rbx)\n   je .Lmemory_records_x64_after_delimiter\n"
+    "inc %rbx\n   jmp .Lmemory_records_x64_to_delimiter\n"
+    ".Lmemory_records_x64_after_delimiter:\n   inc %rbx\n"
     "mov 0(%rsp), %r8\n   mov 8(%rsp), %r9\n"
+    "jmp .Lmemory_records_x64_vector\n"
+    ".Lmemory_records_x64_next_vector:\n   add $32, %rbx\n"
     "jmp .Lmemory_records_x64_vector\n"
     ".Lmemory_records_x64_vector_done:\n   vzeroupper\n"
     )
     // Baseline tail, and the entire kernel/no-AVX body.  Anchor rejection is
     // straight line; only an anchor pair survivor walks the exact needle.
     ".Lmemory_records_x64_scalar:\n   cmp %r13, %rbx\n"
-    "jae .Lmemory_records_x64_done\n   mov 16(%rsp), %r11\n"
-    "cmpb %r11b, (%rbx)\n   jne .Lmemory_records_x64_scalar_candidate\n"
-    "xor %r15d, %r15d\n"
-    ".Lmemory_records_x64_scalar_candidate:\n   mov 0(%rsp), %r8\n   mov 8(%rsp), %r9\n"
+    "jae .Lmemory_records_x64_done\n   mov 0(%rsp), %r8\n   mov 8(%rsp), %r9\n"
     "movzbl (%rbp,%r8), %eax\n   cmp %al, (%rbx,%r8)\n"
     "jne .Lmemory_records_x64_scalar_next\n   movzbl (%rbp,%r9), %eax\n"
     "cmp %al, (%rbx,%r9)\n   jne .Lmemory_records_x64_scalar_next\n"
@@ -2947,10 +2940,16 @@ __asm__(
     ".Lmemory_records_x64_scalar_compare:\n   movzbl (%rbp,%rdx), %eax\n"
     "cmp %al, (%rbx,%rdx)\n   jne .Lmemory_records_x64_scalar_next\n"
     "inc %rdx\n   cmp %r12, %rdx\n   jb .Lmemory_records_x64_scalar_compare\n"
-    "test %r15d, %r15d\n   jnz .Lmemory_records_x64_scalar_next\n"
-    "inc %r14\n   mov $1, %r15d\n"
+    "inc %r14\n   lea (%rbx,%r12), %rbx\n"
+    ".Lmemory_records_x64_scalar_to_delimiter:\n   cmp 24(%rsp), %rbx\n"
+    "jae .Lmemory_records_x64_done\n   mov 16(%rsp), %r11\n"
+    "cmpb %r11b, (%rbx)\n   je .Lmemory_records_x64_scalar_after_delimiter\n"
+    "inc %rbx\n   jmp .Lmemory_records_x64_scalar_to_delimiter\n"
+    ".Lmemory_records_x64_scalar_after_delimiter:\n   inc %rbx\n"
+    "jmp .Lmemory_records_x64_scalar\n"
     ".Lmemory_records_x64_scalar_next:\n   inc %rbx\n"
     "jmp .Lmemory_records_x64_scalar\n"
+    ".Lmemory_records_x64_done_wide:\n   vzeroupper\n"
     ".Lmemory_records_x64_done:\n   mov %r14, %rax\n   add $32, %rsp\n"
     "pop %r15\n   pop %r14\n   pop %r13\n   pop %r12\n"
     "pop %rbp\n   pop %rbx\n"
@@ -6900,6 +6899,87 @@ __asm__(
     "ldp x29, x30, [sp], #96\n"
     ASM_RET
     ASM_LOCAL_END(memory_search_prepared_core)
+    ASM_FUNC(memory_count_records_with_prepared)
+    // Empty needle: every delimiter ends a record, plus a nonempty final
+    // suffix.  Kept scalar because it is a cold semantic edge, not the grep
+    // literal path this routine exists to floor.
+    "cbnz x3, .Lmemory_records_arm64_have_needle\n   cbz x1, .Lmemory_records_arm64_zero\n"
+    "mov x7, #0\n   mov x8, #0\n"
+    ".Lmemory_records_arm64_empty_loop:\n   ldrb w9, [x0, x8]\n"
+    "cmp w9, w6\n   cinc x7, x7, eq\n   add x8, x8, #1\n"
+    "cmp x8, x1\n   b.lo .Lmemory_records_arm64_empty_loop\n"
+    ".Lmemory_records_arm64_empty_last:\n   sub x8, x1, #1\n   ldrb w9, [x0, x8]\n"
+    "cmp w9, w6\n   cinc x7, x7, ne\n   mov x0, x7\n" ASM_RET
+    ".Lmemory_records_arm64_have_needle:\n   cmp x1, x3\n"
+    "b.lo .Lmemory_records_arm64_zero\n   mov x7, #0\n"
+    ".Lmemory_records_arm64_check_needle:\n   ldrb w8, [x2, x7]\n"
+    "cmp w8, w6\n   b.eq .Lmemory_records_arm64_zero\n"
+    "add x7, x7, #1\n   cmp x7, x3\n   b.lo .Lmemory_records_arm64_check_needle\n"
+    "stp x29, x30, [sp, #-96]!\n   mov x29, sp\n"
+    "stp x19, x20, [sp, #16]\n   stp x21, x22, [sp, #32]\n"
+    "stp x23, x24, [sp, #48]\n   stp x25, x26, [sp, #64]\n"
+    "stp x27, x28, [sp, #80]\n   mov x19, x0\n   mov x20, x2\n"
+    "mov x21, x3\n   add x25, x0, x1\n   sub x25, x25, x3\n"
+    "add x25, x25, #1  // exclusive end of candidate starts\n"
+    "add x24, x0, x1  // end of the exact input span\n"
+    "mov x26, x4\n   mov x27, x5\n   mov x28, #0\n   and w15, w6, #0xff\n"
+#ifndef KERNEL_MODE
+    "ldrb w8, [x20, x26]\n   dup v2.16b, w8\n"
+    "ldrb w8, [x20, x27]\n   dup v3.16b, w8\n"
+    ".Lmemory_records_arm64_vector:\n   cmp x19, x25\n"
+    "b.hs .Lmemory_records_arm64_scalar\n   sub x8, x25, x19\n"
+    "cmp x8, #16\n   b.lo .Lmemory_records_arm64_scalar\n"
+    "ldr q0, [x19, x26]\n   cmeq v0.16b, v0.16b, v2.16b\n"
+    "ldr q1, [x19, x27]\n   cmeq v1.16b, v1.16b, v3.16b\n"
+    "and v0.16b, v0.16b, v1.16b\n   shrn v0.8b, v0.8h, #4\n"
+    "fmov x22, d0\n"
+    ".Lmemory_records_arm64_prove:\n   cbz x22, .Lmemory_records_arm64_next_vector\n"
+    "rbit x8, x22\n   clz x8, x8\n   mov x9, #15\n   lsl x9, x9, x8\n"
+    "bic x22, x22, x9\n   lsr x10, x8, #2\n   add x11, x19, x10\n"
+    "mov x12, #0\n   cmp x21, #4\n   b.lo .Lmemory_records_arm64_prove_bytes\n"
+    "ldr w13, [x11]\n   ldr w7, [x20]\n   cmp w13, w7\n"
+    "b.ne .Lmemory_records_arm64_prove\n   mov x12, #4\n"
+    ".Lmemory_records_arm64_prove_bytes:\n   cmp x12, x21\n"
+    "b.hs .Lmemory_records_arm64_proved\n"
+    ".Lmemory_records_arm64_prove_byte:\n   ldrb w13, [x11, x12]\n"
+    "ldrb w7, [x20, x12]\n   cmp w13, w7\n"
+    "b.ne .Lmemory_records_arm64_prove\n   add x12, x12, #1\n"
+    "cmp x12, x21\n   b.lo .Lmemory_records_arm64_prove_byte\n"
+    ".Lmemory_records_arm64_proved:\n   add x28, x28, #1\n"
+    "add x19, x11, x21\n"
+    ".Lmemory_records_arm64_to_delimiter:\n   cmp x19, x24\n"
+    "b.hs .Lmemory_records_arm64_done\n   ldrb w8, [x19]\n"
+    "cmp w8, w15\n   b.eq .Lmemory_records_arm64_after_delimiter\n"
+    "add x19, x19, #1\n   b .Lmemory_records_arm64_to_delimiter\n"
+    ".Lmemory_records_arm64_after_delimiter:\n   add x19, x19, #1\n"
+    "b .Lmemory_records_arm64_vector\n"
+    ".Lmemory_records_arm64_next_vector:\n   add x19, x19, #16\n"
+    "b .Lmemory_records_arm64_vector\n"
+#endif
+    ".Lmemory_records_arm64_scalar:\n   cmp x19, x25\n"
+    "b.hs .Lmemory_records_arm64_done\n   ldrb w8, [x20, x26]\n   ldrb w9, [x19, x26]\n"
+    "cmp w8, w9\n   b.ne .Lmemory_records_arm64_scalar_next\n"
+    "ldrb w8, [x20, x27]\n   ldrb w9, [x19, x27]\n"
+    "cmp w8, w9\n   b.ne .Lmemory_records_arm64_scalar_next\n   mov x10, #0\n"
+    ".Lmemory_records_arm64_scalar_compare:\n   ldrb w8, [x20, x10]\n"
+    "ldrb w9, [x19, x10]\n   cmp w8, w9\n"
+    "b.ne .Lmemory_records_arm64_scalar_next\n   add x10, x10, #1\n"
+    "cmp x10, x21\n   b.lo .Lmemory_records_arm64_scalar_compare\n"
+    "add x28, x28, #1\n   add x19, x19, x21\n"
+    ".Lmemory_records_arm64_scalar_to_delimiter:\n   cmp x19, x24\n"
+    "b.hs .Lmemory_records_arm64_done\n   ldrb w8, [x19]\n"
+    "cmp w8, w15\n   b.eq .Lmemory_records_arm64_scalar_after_delimiter\n"
+    "add x19, x19, #1\n   b .Lmemory_records_arm64_scalar_to_delimiter\n"
+    ".Lmemory_records_arm64_scalar_after_delimiter:\n   add x19, x19, #1\n"
+    "b .Lmemory_records_arm64_scalar\n"
+    ".Lmemory_records_arm64_scalar_next:\n   add x19, x19, #1\n"
+    "b .Lmemory_records_arm64_scalar\n"
+    ".Lmemory_records_arm64_done:\n   mov x0, x28\n"
+    "ldp x19, x20, [sp, #16]\n   ldp x21, x22, [sp, #32]\n"
+    "ldp x23, x24, [sp, #48]\n   ldp x25, x26, [sp, #64]\n"
+    "ldp x27, x28, [sp, #80]\n   ldp x29, x30, [sp], #96\n" ASM_RET
+    ".Lmemory_records_arm64_zero:\n   mov x0, #0\n" ASM_RET
+    ASM_END(memory_count_records_with_prepared)
     //
     //       moonwater_cpu_detect -- nothing to ask yet.
     //
@@ -9968,6 +10048,53 @@ __asm__(
     "ld s3, 24(sp)\n   ld s4, 16(sp)\n   ld s5, 8(sp)\n   addi sp, sp, 64\n"
     ASM_RET
     ASM_LOCAL_END(memory_search_prepared_core)
+    ASM_FUNC(memory_count_records_with_prepared)
+    "bnez a3, .Lmemory_records_rv_have_needle\n"
+    "beqz a1, .Lmemory_records_rv_zero\n   li t0, 0\n   li t1, 0\n"
+    ".Lmemory_records_rv_empty_loop:\n   add t2, a0, t1\n   lbu t3, 0(t2)\n"
+    "bne t3, a6, .Lmemory_records_rv_empty_next\n   addi t0, t0, 1\n"
+    ".Lmemory_records_rv_empty_next:\n   addi t1, t1, 1\n"
+    "bltu t1, a1, .Lmemory_records_rv_empty_loop\n"
+    "addi t1, a1, -1\n   add t1, a0, t1\n   lbu t2, 0(t1)\n"
+    "beq t2, a6, .Lmemory_records_rv_empty_done\n   addi t0, t0, 1\n"
+    ".Lmemory_records_rv_empty_done:\n   mv a0, t0\n" ASM_RET
+    ".Lmemory_records_rv_have_needle:\n   bltu a1, a3, .Lmemory_records_rv_zero\n"
+    "li t0, 0\n"
+    ".Lmemory_records_rv_check_needle:\n   add t1, a2, t0\n   lbu t2, 0(t1)\n"
+    "beq t2, a6, .Lmemory_records_rv_zero\n   addi t0, t0, 1\n"
+    "bltu t0, a3, .Lmemory_records_rv_check_needle\n"
+    // RV64 has no baseline vector extension.  Its prepared search and byte
+    // hunt already use aligned word-at-a-time cores; keeping their state in
+    // one assembly loop is markedly cheaper than a scalar candidate walk.
+    "addi sp, sp, -64\n   sd ra, 56(sp)\n   sd s0, 48(sp)\n"
+    "sd s1, 40(sp)\n   sd s2, 32(sp)\n   sd s3, 24(sp)\n"
+    "sd s4, 16(sp)\n   sd s5, 8(sp)\n   sd s6, 0(sp)\n"
+    "mv s0, a0\n   add s1, a0, a1\n   mv s2, a2\n   mv s3, a3\n"
+    // The RV prepared search core hunts only its rarest anchor.  Keep that
+    // anchor here and inline the outer candidate loop, avoiding a second
+    // save/restore frame at every matching record.
+    "li s4, 0\n   mv s5, a4\n   mv s6, a6\n"
+    ".Lmemory_records_rv_search:\n   sub t0, s1, s3\n   bgtu s0, t0, .Lmemory_records_rv_done\n"
+    "sub a2, t0, s0\n   addi a2, a2, 1\n   add a0, s0, s5\n"
+    "add t1, s2, s5\n   lbu a1, 0(t1)\n   call memory_first_of\n"
+    "beqz a0, .Lmemory_records_rv_done\n   sub s0, a0, s5\n"
+    "mv a0, s0\n   mv a1, s2\n   mv a2, s3\n   call memory_compare\n"
+    "bnez a0, .Lmemory_records_rv_failed\n"
+    "addi s4, s4, 1\n   add s0, s0, s3\n"
+    // A match is normally followed by only a short record suffix. Keeping
+    // that walk in this frame avoids rebuilding memory_first_of's broadcast
+    // constants and boundary mask for every matching record.
+    ".Lmemory_records_rv_to_delimiter:\n   bgeu s0, s1, .Lmemory_records_rv_done\n"
+    "lbu t0, 0(s0)\n   addi s0, s0, 1\n"
+    "bne t0, s6, .Lmemory_records_rv_to_delimiter\n"
+    "j .Lmemory_records_rv_search\n"
+    ".Lmemory_records_rv_failed:\n   addi s0, s0, 1\n   j .Lmemory_records_rv_search\n"
+    ".Lmemory_records_rv_done:\n   mv a0, s4\n   ld s6, 0(sp)\n"
+    "ld s5, 8(sp)\n   ld s4, 16(sp)\n   ld s3, 24(sp)\n"
+    "ld s2, 32(sp)\n   ld s1, 40(sp)\n   ld s0, 48(sp)\n"
+    "ld ra, 56(sp)\n   addi sp, sp, 64\n" ASM_RET
+    ".Lmemory_records_rv_zero:\n   li a0, 0\n" ASM_RET
+    ASM_END(memory_count_records_with_prepared)
     //
     //       moonwater_cpu_detect -- nothing to ask yet. The vector extension is optional
     //       on riscv and would need asking about; nothing here uses it.

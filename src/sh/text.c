@@ -6242,6 +6242,8 @@ static b32 text_grep()
                 bool direct_counting = counting && skipping && !whole_line &&
                                        !whole_word && !listing &&
                                        !listing_without && !quiet;
+                bool fused_counting = direct_counting && !icase &&
+                                      limit == TEXT_UNSET;
 
                 for (;;)
                 {
@@ -6251,6 +6253,41 @@ static b32 text_grep()
                         // something around it, or the line was too long to
                         // arrive whole.
                         bool sure = false;
+
+                        /*
+                                The fixed, case-sensitive count is one scan,
+                                not one prepared search plus one newline hunt
+                                per matching record. Only whole records are
+                                handed to the library. The trailing partial
+                                one stays for the line reader, which carries
+                                it across a refill.
+                        */
+                        if (fused_counting && text_fill())
+                        {
+                                p8 address_to at = text_input.buffer +
+                                                   text_input.position;
+                                positive left = text_input.filled -
+                                                text_input.position;
+                                p8 address_to last = memory_last_of(
+                                    at, text_delimiter, left);
+
+                                if (last)
+                                {
+                                        positive take = (positive)(last - at) + 1;
+                                        positive got =
+                                            memory_count_records_with_prepared(
+                                                at, take, grep_literal,
+                                                grep_literal_length,
+                                                grep_literal_anchors.x,
+                                                grep_literal_anchors.y,
+                                                text_delimiter);
+
+                                        matches += got;
+                                        found_any = found_any || got;
+                                        text_input.position += take;
+                                        continue;
+                                }
+                        }
 
                         if (direct_counting && grep_skip(null, null))
                         {

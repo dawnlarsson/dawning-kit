@@ -120,6 +120,9 @@ cover('direct_benchmark', 'kit/bench_ascii_search.c', 'memory_search_ascii_case'
 cover('direct_benchmark', 'kit/bench_grep_search.c', '''
 memory_search_prepared memory_search_ascii_case_prepared
 ''', 'paired repeated-search timing over sparse, folded, false-candidate and dense matches')
+cover('direct_benchmark', 'kit/bench_grep_count.c',
+      'memory_count_records_with_prepared',
+      'bounded record verifier and traffic/repeated/fused resident-input timing')
 cover('direct_benchmark', 'kit/bench_last_of.c', 'memory_last_of',
       'guarded reverse-search validation and paired scalar/assembly timing')
 cover('direct_benchmark', 'kit/bench_words.c', 'memory_count_words',
@@ -320,14 +323,21 @@ def print_report(mode):
     for category in CATEGORY_DESCRIPTION:
         print('  %-20s %3d  %s' %
               (category, counts[category], CATEGORY_DESCRIPTION[category]))
-    print('  direct isolated timing %d/%d; no direct timing row %d/%d' %
+    print('  hardware-floor direct evidence %d/%d; performance-unproven %d/%d' %
           (direct, total, total - direct, total))
+    print('  direct evidence is a measurement candidate, not proof that its '
+          'routine reached the floor')
     print('  benchmark context only %d/%d (not counted as direct)' %
           (context, total))
 
     if mode == 'summary':
         gaps = [row.routine for row in ROWS if row.category == 'unmeasured']
-        print('  focused-evidence gaps: ' + ', '.join(sorted(gaps)))
+        if gaps:
+            print('  wholly unmeasured manifest entries: ' +
+                  ', '.join(sorted(gaps)))
+        else:
+            print('  wholly unmeasured manifest entries: none; non-direct '
+                  'categories remain performance-unproven')
         return
 
     if mode == 'gaps':
