@@ -2896,9 +2896,13 @@ __asm__(
     ASM_NARROW("cpu_has_avx2", ".Lmemory_records_x64_scalar")
     "movzbl (%rbp,%r8), %eax\n   vmovd %eax, %xmm1\n   vpbroadcastb %xmm1, %ymm1\n"
     "movzbl (%rbp,%r9), %eax\n   vmovd %eax, %xmm2\n   vpbroadcastb %xmm2, %ymm2\n"
-    ".Lmemory_records_x64_vector:\n   cmp %r13, %rbx\n"
-    "jae .Lmemory_records_x64_vector_done\n   mov %r13, %rax\n   sub %rbx, %rax\n"
-    "cmp $32, %rax\n   jb .Lmemory_records_x64_vector_done\n"
+    // One end comparison is enough: r13 is the exclusive end of candidate
+    // starts, so a thirty-two-candidate block fits exactly when rbx + 32 is
+    // no later than it. This replaces two conditions and a subtract in every
+    // no-match block, the dominant grep-count path.
+    ".Lmemory_records_x64_vector:\n   lea 32(%rbx), %rax\n"
+    "cmp %r13, %rax\n   ja .Lmemory_records_x64_vector_done\n"
+    ".Lmemory_records_x64_vector_load:\n"
     "vpcmpeqb (%rbx,%r8), %ymm1, %ymm0\n"
     "vpcmpeqb (%rbx,%r9), %ymm2, %ymm4\n   vpand %ymm4, %ymm0, %ymm0\n"
     "vpmovmskb %ymm0, %r15d\n"
@@ -2926,7 +2930,8 @@ __asm__(
     "mov 0(%rsp), %r8\n   mov 8(%rsp), %r9\n"
     "jmp .Lmemory_records_x64_vector\n"
     ".Lmemory_records_x64_next_vector:\n   add $32, %rbx\n"
-    "jmp .Lmemory_records_x64_vector\n"
+    "lea 32(%rbx), %rax\n   cmp %r13, %rax\n"
+    "jbe .Lmemory_records_x64_vector_load\n"
     ".Lmemory_records_x64_vector_done:\n   vzeroupper\n"
     )
     // Baseline tail, and the entire kernel/no-AVX body.  Anchor rejection is
@@ -6928,9 +6933,9 @@ __asm__(
 #ifndef KERNEL_MODE
     "ldrb w8, [x20, x26]\n   dup v2.16b, w8\n"
     "ldrb w8, [x20, x27]\n   dup v3.16b, w8\n"
-    ".Lmemory_records_arm64_vector:\n   cmp x19, x25\n"
-    "b.hs .Lmemory_records_arm64_scalar\n   sub x8, x25, x19\n"
-    "cmp x8, #16\n   b.lo .Lmemory_records_arm64_scalar\n"
+    ".Lmemory_records_arm64_vector:\n   add x8, x19, #16\n"
+    "cmp x8, x25\n   b.hi .Lmemory_records_arm64_scalar\n"
+    ".Lmemory_records_arm64_vector_load:\n"
     "ldr q0, [x19, x26]\n   cmeq v0.16b, v0.16b, v2.16b\n"
     "ldr q1, [x19, x27]\n   cmeq v1.16b, v1.16b, v3.16b\n"
     "and v0.16b, v0.16b, v1.16b\n   shrn v0.8b, v0.8h, #4\n"
@@ -6956,7 +6961,9 @@ __asm__(
     ".Lmemory_records_arm64_after_delimiter:\n   add x19, x19, #1\n"
     "b .Lmemory_records_arm64_vector\n"
     ".Lmemory_records_arm64_next_vector:\n   add x19, x19, #16\n"
-    "b .Lmemory_records_arm64_vector\n"
+    "add x8, x19, #16\n   cmp x8, x25\n"
+    "b.ls .Lmemory_records_arm64_vector_load\n"
+    "b .Lmemory_records_arm64_scalar\n"
 #endif
     ".Lmemory_records_arm64_scalar:\n   cmp x19, x25\n"
     "b.hs .Lmemory_records_arm64_done\n   ldrb w8, [x20, x26]\n   ldrb w9, [x19, x26]\n"
