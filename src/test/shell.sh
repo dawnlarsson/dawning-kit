@@ -1564,8 +1564,11 @@ EOF'
 # A case pattern is expanded by shell_expand_word, which hands back bytes and
 # not the marks that say which of them were quoted -- so the star that came
 # out of "$p" is a star to the matcher as much as to the eye.
-differs 'quoted pattern' 'yes|' 0 "p='a*'; case aXX in \"\$p\") echo yes;; *) echo no;; esac"
-differs 'escaped pattern' 'yes|' 0 'case aXb in a\*b) echo yes;; *) echo no;; esac'
+answer 'quoted pattern is literal' "p='a*'; case aXX in \"\$p\") echo yes;; *) echo no;; esac"
+answer 'escaped pattern is literal' 'case aXb in a\*b) echo yes;; *) echo no;; esac'
+answer 'unquoted variable pattern' "p='a*'; case aXX in \$p) echo yes;; *) echo no;; esac"
+answer 'quoted question is literal' 'case aXb in "a?b") echo yes;; *) echo no;; esac'
+answer 'escaped bracket is literal' 'case "a[b" in a\[b) echo yes;; *) echo no;; esac'
 
 # The structural ceilings that remain are explicit. A function goes as deep
 # as the table its locals sit in, which is a hundred and twenty eight calls.

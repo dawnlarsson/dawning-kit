@@ -422,11 +422,17 @@ bool shell_match(string_address pattern, string_address text)
                 }
                 else
                 {
+                        bool escaped = false;
+
                         // A [ with no ] after it is a plain [.
                         if (want == '\\' && string_get(pattern + 1))
+                        {
                                 want = string_get(++pattern);
+                                escaped = true;
+                        }
 
-                        if (want && (want == '?' || want == string_get(text)))
+                        if (want && ((!escaped && want == '?') ||
+                                     want == string_get(text)))
                         {
                                 pattern++;
                                 text++;
@@ -2869,4 +2875,58 @@ string_address shell_expand_word(string_address word)
                 string_format(expand_complain, "Expansion too long: %s\n", word);
 
         return expand_keep(0, expand_length);
+}
+
+/*
+        A case pattern, kept whole and with its quote marks translated into
+        matcher escapes before those marks disappear.
+
+        Ordinary word expansion deliberately returns only bytes. That made a
+        star from "$p" indistinguishable from an unquoted star, and made an
+        escaped star active again. The matcher already uses backslash for a
+        literal metacharacter, so preserving that distinction needs no second
+        pattern language.
+*/
+string_address shell_expand_pattern(string_address word)
+{
+        positive room = 1;
+        positive at;
+        p8 address_to result;
+        positive used = 0;
+
+        expand_word(word);
+
+        if (expand_overflow)
+                string_format(expand_complain, "Expansion too long: %s\n", word);
+
+        for (at = 0; at < expand_length; at++)
+        {
+                p8 value = expand_text[at];
+
+                room++;
+
+                if (expand_mark[at] == MARK_QUOTED &&
+                    (value == '*' || value == '?' || value == '[' || value == '\\'))
+                        room++;
+        }
+
+        result = shell_store_take(address_of expand_store, room);
+
+        if (!result)
+                return (string_address) "";
+
+        for (at = 0; at < expand_length; at++)
+        {
+                p8 value = expand_text[at];
+
+                if (expand_mark[at] == MARK_QUOTED &&
+                    (value == '*' || value == '?' || value == '[' || value == '\\'))
+                        result[used++] = '\\';
+
+                result[used++] = value;
+        }
+
+        result[used] = end;
+
+        return result;
 }

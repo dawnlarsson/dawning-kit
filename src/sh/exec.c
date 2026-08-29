@@ -1484,7 +1484,7 @@ static b32 exec_case(b32 index)
                         string_address pattern;
 
                         token_used = 0;
-                        pattern = shell_expand_word(
+                        pattern = shell_expand_pattern(
                             parse_words[parse_nodes[item].word + at]);
 
                         if (exec_line_aborted())
