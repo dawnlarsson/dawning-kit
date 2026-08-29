@@ -1064,6 +1064,30 @@ positive stream_put_bytes(stream address_to handle, address_any data,
                 return written;
         }
 
+        /*
+                The usual buffered write is already resident and fits in the
+                space left. It can complete in one copy and, for a line
+                buffer, one newline decision; entering the multi-chunk loop
+                only to leave after its first iteration adds control with no
+                semantics.
+        */
+        if (length <= handle->buffer_size - handle->write_used)
+        {
+                memory_copy(handle->buffer + handle->write_used, bytes,
+                            length);
+                handle->write_used += length;
+
+                if (handle->write_used != handle->buffer_size &&
+                    (!(handle->flags & STREAM_LINE_BUFFERED) ||
+                     memory_last_of(bytes, '\n', length) == null))
+                        return length;
+
+                if (stream_flush_output(handle) != 0)
+                        return 0;
+
+                return length;
+        }
+
         while (done < length)
         {
                 positive space = handle->buffer_size - handle->write_used;

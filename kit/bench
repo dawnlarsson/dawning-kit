@@ -48,6 +48,7 @@ allocator) source_file=kit/bench_allocator.c ;;
 compare-max) source_file=kit/bench_compare_max.c ;;
 string-copy) source_file=kit/bench_string_copy.c ;;
 stream-get) source_file=kit/bench_stream_get.c ;;
+stream-write) source_file=kit/bench_stream_write.c ;;
 *)       echo "bench: use a named benchmark lane (for this fold: ascii-search)" >&2; exit 2 ;;
 esac
 
