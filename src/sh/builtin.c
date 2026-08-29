@@ -100,8 +100,7 @@ static bool readonly_add(string_address name, positive length)
 }
 
 /*
-        The environment is both the shell's variable table and the vector
-        handed to execve.
+        Shell variables and the environment handed to execve.
 
         The vector may move: every user reaches it by index.  An entry may
         not. Expansion and command setup can hold a value pointer while they
@@ -120,15 +119,33 @@ typedef struct env_cell
 static shell_store env_store;
 static env_cell address_to env_free;
 
+// Every set shell variable. Export state is deliberately separate: an
+// exported name can exist before it has a value, and unset removes both.
+static string_address address_to shell_vars;
+static positive shell_vars_room;
+static positive shell_var_count;
+
+// Rebuilt lazily for execve and the in-process utilities that spawn children.
 string_address address_to shell_envp;
 static positive shell_envp_room;
-static positive shell_env_count;
+static bool shell_envp_dirty = true;
+
+typedef struct
+{
+        string_address name;
+        positive temporary;
+        bool permanent;
+} env_export;
+
+static env_export address_to env_exports;
+static positive env_export_room;
+static positive env_export_count;
 
 static bool env_table_room(positive want)
 {
-        return shell_room((address_any address_to)address_of shell_envp,
-                          address_of shell_envp_room, want + 1,
-                          sizeof(shell_envp[0]));
+        return shell_room((address_any address_to)address_of shell_vars,
+                          address_of shell_vars_room, want + 1,
+                          sizeof(shell_vars[0]));
 }
 
 static env_cell address_to env_cell_take(positive needed)
@@ -185,6 +202,187 @@ static fn env_cell_drop(string_address text)
         env_free = cell;
 }
 
+static bipolar env_export_find_span(const_string name, positive length)
+{
+        for (positive at = 0; at < env_export_count; at++)
+                if (string_length(env_exports[at].name) == length &&
+                    !memory_compare(env_exports[at].name, name, length))
+                        return (bipolar)at;
+
+        return -1;
+}
+
+static env_export address_to env_export_take(const_string name, positive length)
+{
+        bipolar found = env_export_find_span(name, length);
+        env_cell address_to cell;
+
+        if (found >= 0)
+                return env_exports + found;
+
+        if (!shell_room((address_any address_to)address_of env_exports,
+                        address_of env_export_room, env_export_count + 1,
+                        sizeof(env_exports[0])))
+                return null;
+
+        cell = env_cell_take(length + 1);
+
+        if (!cell)
+                return null;
+
+        memory_copy_end((p8 address_to)(cell + 1), name, length);
+
+        env_exports[env_export_count].name = (string_address)(cell + 1);
+        env_exports[env_export_count].temporary = 0;
+        env_exports[env_export_count].permanent = false;
+
+        return env_exports + env_export_count++;
+}
+
+static fn env_export_drop(positive index)
+{
+        env_cell_drop(env_exports[index].name);
+
+        while (index + 1 < env_export_count)
+        {
+                env_exports[index] = env_exports[index + 1];
+                index++;
+        }
+
+        env_export_count--;
+}
+
+static bool env_export_active_span(const_string name, positive length)
+{
+        bipolar found = env_export_find_span(name, length);
+
+        return found >= 0 && (env_exports[found].permanent ||
+                              env_exports[found].temporary);
+}
+
+bool env_exported(string_address name)
+{
+        return name && env_export_active_span(name, string_length(name));
+}
+
+static bool env_export_mark_span(const_string name, positive length)
+{
+        env_export address_to entry = env_export_take(name, length);
+
+        if (!entry)
+                return false;
+
+        entry->permanent = true;
+        shell_envp_dirty = true;
+        return true;
+}
+
+static bool env_export_mark(string_address name)
+{
+        return env_export_mark_span(name, string_length(name));
+}
+
+static fn env_export_restore(string_address name, bool exported)
+{
+        positive length = string_length(name);
+        bipolar found = env_export_find_span(name, length);
+
+        if (exported)
+        {
+                env_export address_to entry = found >= 0
+                                                  ? env_exports + found
+                                                  : env_export_take(name, length);
+
+                if (entry)
+                        entry->permanent = true;
+        }
+        else if (found >= 0)
+        {
+                env_exports[found].permanent = false;
+
+                if (!env_exports[found].temporary)
+                        env_export_drop((positive)found);
+        }
+
+        shell_envp_dirty = true;
+}
+
+static fn env_export_forget(string_address name)
+{
+        env_export_restore(name, false);
+}
+
+static bool env_export_temporary(string_address assignment)
+{
+        positive length = (positive)(string_first_of_or_end(assignment, '=') -
+                                     assignment);
+        env_export address_to entry = env_export_take(assignment, length);
+
+        if (!entry)
+                return false;
+
+        entry->temporary++;
+        shell_envp_dirty = true;
+        return true;
+}
+
+static fn env_export_release(string_address assignment)
+{
+        positive length = (positive)(string_first_of_or_end(assignment, '=') -
+                                     assignment);
+        bipolar found = env_export_find_span(assignment, length);
+
+        if (found < 0)
+                return;
+
+        if (env_exports[found].temporary)
+                env_exports[found].temporary--;
+
+        if (!env_exports[found].temporary && !env_exports[found].permanent)
+                env_export_drop((positive)found);
+
+        shell_envp_dirty = true;
+}
+
+string_address address_to shell_environment()
+{
+        static string_address empty[1];
+        positive count = 0;
+
+        if (!shell_envp_dirty)
+                return shell_envp ? shell_envp : empty;
+
+        for (positive at = 0; at < shell_var_count; at++)
+        {
+                string_address mark = string_first_of(shell_vars[at], '=');
+
+                if (mark && env_export_active_span(
+                                shell_vars[at], (positive)(mark - shell_vars[at])))
+                        count++;
+        }
+
+        if (!shell_room((address_any address_to)address_of shell_envp,
+                        address_of shell_envp_room, count + 1,
+                        sizeof(shell_envp[0])))
+                return empty;
+
+        count = 0;
+
+        for (positive at = 0; at < shell_var_count; at++)
+        {
+                string_address mark = string_first_of(shell_vars[at], '=');
+
+                if (mark && env_export_active_span(
+                                shell_vars[at], (positive)(mark - shell_vars[at])))
+                        shell_envp[count++] = shell_vars[at];
+        }
+
+        shell_envp[count] = null;
+        shell_envp_dirty = false;
+
+        return shell_envp;
+}
+
 static bool env_set_span(const_string name, positive name_len,
                          const_string value);
 string_address env_get(const_string name);
@@ -195,8 +393,8 @@ fn shell_env_init(string_address address_to process_environment)
         if (!env_table_room(4))
                 return;
 
-        shell_env_count = 0;
-        shell_envp[0] = null;
+        shell_var_count = 0;
+        shell_vars[0] = null;
 
         // A shell launched by make, system(), or another shell starts with the
         // environment it was given. PID 1 naturally receives an empty vector,
@@ -207,8 +405,9 @@ fn shell_env_init(string_address address_to process_environment)
                 string_address entry = process_environment[at];
                 string_address mark = string_first_of(entry, '=');
 
-                if (mark && mark > entry)
-                        env_set_span(entry, (positive)(mark - entry), mark + 1);
+                if (mark && mark > entry &&
+                    env_set_span(entry, (positive)(mark - entry), mark + 1))
+                        env_export_mark_span(entry, (positive)(mark - entry));
         }
 
         // Programs live at the root of the image, so it is on the path.
@@ -227,6 +426,8 @@ fn shell_env_init(string_address address_to process_environment)
                 if (!env_get(name))
                         env_set(name, mark + 1);
 
+                env_export_mark(name);
+
                 i++;
         }
 
@@ -237,6 +438,9 @@ fn shell_env_init(string_address address_to process_environment)
 
         if (!env_get("PWD"))
                 env_set("PWD", shell_directory);
+
+        env_export_mark("PWD");
+        shell_environment();
 }
 
 /*
@@ -252,8 +456,8 @@ string_address env_get(const_string name)
         if (name == null)
                 return null;
 
-        return shell_envp
-                   ? string_get_environment(shell_envp, env_reading(name))
+        return shell_vars
+                   ? string_get_environment(shell_vars, env_reading(name))
                    : null;
 }
 
@@ -273,9 +477,9 @@ static bool env_set_span(const_string name, positive name_len,
         positive idx = 0;
         env_cell address_to cell;
 
-        while (idx < shell_env_count)
+        while (idx < shell_var_count)
         {
-                string_address entry = shell_envp[idx];
+                string_address entry = shell_vars[idx];
                 string_address eq = string_first_of(entry, '=');
 
                 if (eq && (positive)(eq - entry) == name_len &&
@@ -286,12 +490,12 @@ static bool env_set_span(const_string name, positive name_len,
                 idx++;
         }
 
-        if (idx == shell_env_count && !env_table_room(shell_env_count + 1))
+        if (idx == shell_var_count && !env_table_room(shell_var_count + 1))
                 return false;
 
-        if (idx < shell_env_count)
+        if (idx < shell_var_count)
         {
-                cell = ((env_cell address_to)shell_envp[idx]) - 1;
+                cell = ((env_cell address_to)shell_vars[idx]) - 1;
 
                 if (cell->room >= needed)
                 {
@@ -299,6 +503,8 @@ static bool env_set_span(const_string name, positive name_len,
                         ((p8 address_to)(cell + 1))[name_len] = '=';
                         memory_copy_end((p8 address_to)(cell + 1) + name_len + 1,
                                         env_reading(value), value_len);
+                        if (env_export_active_span(name, name_len))
+                                shell_envp_dirty = true;
                         return true;
                 }
         }
@@ -313,19 +519,21 @@ static bool env_set_span(const_string name, positive name_len,
         memory_copy_end((p8 address_to)(cell + 1) + name_len + 1,
                         env_reading(value), value_len);
 
-        if (idx < shell_env_count)
+        if (idx < shell_var_count)
         {
-                string_address old = shell_envp[idx];
+                string_address old = shell_vars[idx];
 
-                shell_envp[idx] = (string_address)(cell + 1);
+                shell_vars[idx] = (string_address)(cell + 1);
                 env_cell_drop(old);
         }
         else
         {
-                shell_envp[shell_env_count++] = (string_address)(cell + 1);
-                shell_envp[shell_env_count] = null;
+                shell_vars[shell_var_count++] = (string_address)(cell + 1);
+                shell_vars[shell_var_count] = null;
         }
 
+        if (env_export_active_span(name, name_len))
+                shell_envp_dirty = true;
 
         return true;
 }
@@ -505,10 +713,24 @@ fn shell_export(writer write, string_address input)
 
         if (listed && index >= shell_argc)
         {
-                positive at = 0;
+                for (positive at = 0; at < env_export_count; at++)
+                {
+                        string_address value;
 
-                while (shell_envp[at])
-                        shell_named_written(write, "export", shell_envp[at++]);
+                        if (!env_exports[at].permanent)
+                                continue;
+
+                        value = env_get(env_exports[at].name);
+                        string_format(write, "export %s", env_exports[at].name);
+
+                        if (value)
+                        {
+                                write("=", 1);
+                                shell_quoted(write, value);
+                        }
+
+                        write("\n", 1);
+                }
 
                 return shell_answer(0);
         }
@@ -527,9 +749,17 @@ fn shell_export(writer write, string_address input)
                 }
 
                 // A name on its own is already exported here: every variable
-                // this shell has is in the block the environment is made of.
-                if (!mark || mark == word)
+                // assigned to it later inherits the export attribute.
+                if (!mark)
+                {
+                        if (!env_export_mark(word))
+                        {
+                                shell_diagnostic("export: no room\n", 0);
+                                return shell_answer(2);
+                        }
+
                         continue;
+                }
 
                 address_to mark = end;
 
@@ -541,7 +771,13 @@ fn shell_export(writer write, string_address input)
                         return;
                 }
 
-                env_set(word, mark + 1);
+                if (!env_set(word, mark + 1) || !env_export_mark(word))
+                {
+                        address_to mark = '=';
+                        shell_diagnostic("export: no room\n", 0);
+                        return shell_answer(2);
+                }
+
                 address_to mark = '=';
         }
 
@@ -874,7 +1110,7 @@ fn shell_exec(writer write, string_address input)
         // From argv[1] on, so the new program is named by what it was asked
         // for and not by the word "exec".
         system_call_3(syscall(execve), (positive)found,
-                      (positive)(shell_argv + 1), (positive)shell_envp);
+                      (positive)(shell_argv + 1), (positive)shell_environment());
 
         shell_answer(126);
         string_format(shell_diagnostic, "exec: %s: cannot run\n", shell_argv[1]);
@@ -1019,9 +1255,9 @@ fn env_unset(string_address name)
         positive length = string_length(env_reading(name));
         positive index = 0;
 
-        while (index < shell_env_count)
+        while (index < shell_var_count)
         {
-                string_address entry = shell_envp[index];
+                string_address entry = shell_vars[index];
                 string_address mark = string_first_of(entry, '=');
 
                 if (mark && (positive)(mark - entry) == length)
@@ -1033,16 +1269,18 @@ fn env_unset(string_address name)
 
                         if (at == length)
                         {
-                                string_address dropped = shell_envp[index];
+                                string_address dropped = shell_vars[index];
 
-                                while (index + 1 < shell_env_count)
+                                while (index + 1 < shell_var_count)
                                 {
-                                        shell_envp[index] = shell_envp[index + 1];
+                                        shell_vars[index] = shell_vars[index + 1];
                                         index++;
                                 }
 
-                                shell_env_count--;
-                                shell_envp[shell_env_count] = null;
+                                shell_var_count--;
+                                shell_vars[shell_var_count] = null;
+                                env_export_forget(name);
+                                shell_envp_dirty = true;
                                 env_cell_drop(dropped);
                                 return;
                         }
@@ -1050,6 +1288,10 @@ fn env_unset(string_address name)
 
                 index++;
         }
+
+        // `export name` is state even while name has no value, and unset
+        // removes that state too.
+        env_export_forget(name);
 }
 
 // Hangs an already built "name=value" on the environment list by copying it
@@ -1251,8 +1493,8 @@ fn shell_set(writer write, string_address input)
         {
                 positive at = 0;
 
-                while (shell_envp[at])
-                        string_format(write, "%s\n", shell_envp[at++]);
+                while (shell_vars[at])
+                        string_format(write, "%s\n", shell_vars[at++]);
 
                 return shell_answer(0);
         }
@@ -1450,6 +1692,7 @@ typedef struct
 {
         p8 name[LOCAL_NAME];
         positive value;
+        bool exported;
 } shell_local_entry;
 
 static shell_local_entry local_table[LOCAL_MAX];
@@ -1495,6 +1738,9 @@ fn shell_local_leave()
                 else
                         env_set(local_table[at].name,
                                 (string_address)local_table[at].value);
+
+                env_export_restore(local_table[at].name,
+                                   local_table[at].exported);
         }
 
         local_count = local_from[local_depth];
@@ -1518,6 +1764,7 @@ static bool local_remember(string_address name)
                 return false;
 
         value = env_get(name);
+        local_table[local_count].exported = env_exported(name);
 
         if (!value)
                 local_table[local_count].value = LOCAL_ABSENT;

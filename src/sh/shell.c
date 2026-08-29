@@ -774,7 +774,8 @@ fn shell_thread_instance()
                 system_call_3(syscall(dup3), shell_output_file, stdout, 0);
 
         bipolar exec_result = system_call_3(syscall(execve), (positive)shell_argv[0],
-                                            (positive)shell_argv, (positive)shell_envp);
+                                            (positive)shell_argv,
+                                            (positive)shell_environment());
 
         string_format(shell_output, "failed with error: %b\n", exec_result);
         log_flush();
@@ -805,12 +806,13 @@ positive spawn_envp_room;
 //      The environment, flattened into a block that is made to fit it.
 positive shell_flatten_env(positive address_to count_out)
 {
+        string_address address_to environment = shell_environment();
         positive used = 0;
         positive count = 0;
         positive index = 0;
 
-        while (shell_envp[index])
-                used += string_length(shell_envp[index++]) + 1;
+        while (environment[index])
+                used += string_length(environment[index++]) + 1;
 
         if (!shell_room((address_any address_to)address_of spawn_envp_block,
                         address_of spawn_envp_room, used + 1, 1))
@@ -821,11 +823,11 @@ positive shell_flatten_env(positive address_to count_out)
 
         used = 0;
 
-        while (shell_envp[count])
+        while (environment[count])
         {
-                positive length = string_length(shell_envp[count]) + 1;
+                positive length = string_length(environment[count]) + 1;
 
-                memory_copy(spawn_envp_block + used, shell_envp[count], length);
+                memory_copy(spawn_envp_block + used, environment[count], length);
                 used += length;
                 count++;
         }

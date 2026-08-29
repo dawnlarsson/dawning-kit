@@ -867,22 +867,26 @@ static bool exec_is_assignment(string_address word)
 
 static bool exec_assign(string_address word)
 {
-        p8 name[128];
-        positive length = (positive)(string_first_of_or_end(word, '=') - word);
+        string_address mark = string_first_of_or_end(word, '=');
+        bool answer;
 
-        if (length >= sizeof(name))
+        if (!string_get(mark))
                 return false;
 
-        string_copy_max_end(name, word, length);
+        address_to mark = end;
 
-        if (env_readonly(name))
+        if (env_readonly(word))
         {
-                string_format(exec_error, "%s: is read only\n", name);
+                string_format(exec_error, "%s: is read only\n", word);
+                address_to mark = '=';
                 expand_fatal();
                 return false;
         }
 
-        return env_set(name, word + length + 1);
+        answer = env_set(word, mark + 1);
+        address_to mark = '=';
+
+        return answer;
 }
 
 /*
@@ -916,9 +920,8 @@ typedef struct
 {
         string_address name;
         string_address value;
+        bool exported;
 } exec_kept_value;
-
-#define ASSIGN_MAX 16
 
 static bool exec_keep_value(exec_kept_value address_to kept, string_address word)
 {
@@ -934,6 +937,7 @@ static bool exec_keep_value(exec_kept_value address_to kept, string_address word
 
         value = env_get(kept->name);
         kept->value = null;
+        kept->exported = env_exported(kept->name);
 
         if (!value)
                 return true;
@@ -951,7 +955,16 @@ static fn exec_put_back(exec_kept_value address_to kept, b32 count)
                         env_set(kept[count].name, kept[count].value);
                 else
                         env_unset(kept[count].name);
+
+                env_export_restore(kept[count].name, kept[count].exported);
         }
+}
+
+static fn exec_release_assignments(string_address address_to assignments,
+                                   b32 count)
+{
+        while (count--)
+                env_export_release(assignments[count]);
 }
 
 static b32 exec_dispatch()
@@ -1103,9 +1116,11 @@ fn exec_traps()
 static b32 exec_simple(b32 index)
 {
         parse_node address_to node = parse_nodes + index;
-        exec_kept_value kept[ASSIGN_MAX];
+        exec_kept_value address_to kept = null;
+        string_address address_to assignments = null;
         shell_mark arena_mark = shell_store_mark(address_of exec_store);
         b32 kept_count = 0;
+        b32 temporary_count = 0;
         b32 mark = exec_save_count;
         b32 count = 0;
         b32 first = 0;
@@ -1188,22 +1203,46 @@ static b32 exec_simple(b32 index)
                 stays; and assignments with no command after them are the
                 command, so they stay too.
         */
-        if (first && first != count && first <= ASSIGN_MAX &&
-            !exec_special_builtin(shell_argv[first]))
+        if (first && first != count)
         {
-                for (at = 0; at < first; at++)
+                assignments = (string_address address_to)shell_store_take(
+                    address_of exec_store,
+                    (positive)first * sizeof(assignments[0]));
+
+                if (!assignments)
                 {
-                        if (exec_keep_value(kept + kept_count, shell_argv[at]))
+                        shell_store_rewind(address_of exec_store, arena_mark);
+                        shell_status = 2;
+                        return 2;
+                }
+
+                for (at = 0; at < first; at++)
+                        assignments[at] = shell_argv[at];
+
+                if (!exec_special_builtin(shell_argv[first]))
+                {
+                        kept = (exec_kept_value address_to)shell_store_take(
+                            address_of exec_store,
+                            (positive)first * sizeof(kept[0]));
+
+                        if (!kept)
                         {
-                                kept_count++;
-                                continue;
+                                shell_store_rewind(address_of exec_store, arena_mark);
+                                shell_status = 2;
+                                return 2;
                         }
 
-                        // Nowhere to remember it is a reason to leave it set,
-                        // not a reason to put half of them back.
-                        shell_store_rewind(address_of exec_store, arena_mark);
-                        kept_count = 0;
-                        break;
+                        for (at = 0; at < first; at++)
+                                if (!exec_keep_value(kept + kept_count,
+                                                     assignments[at]))
+                                {
+                                        shell_store_rewind(address_of exec_store,
+                                                           arena_mark);
+                                        shell_status = 2;
+                                        return 2;
+                                }
+                                else
+                                        kept_count++;
                 }
         }
 
@@ -1216,11 +1255,28 @@ static b32 exec_simple(b32 index)
                         return 2;
                 }
 
+        if (assignments &&
+            (!exec_special_builtin(shell_argv[first]) ||
+             word_is(shell_argv[first], "exec")))
+                for (at = 0; at < first; at++)
+                        if (!env_export_temporary(assignments[at]))
+                        {
+                                exec_release_assignments(assignments,
+                                                         temporary_count);
+                                exec_put_back(kept, kept_count);
+                                shell_store_rewind(address_of exec_store, arena_mark);
+                                shell_status = 2;
+                                return 2;
+                        }
+                        else
+                                temporary_count++;
+
         exec_trace(count);
 
         if (!exec_redirect_apply(index))
         {
                 exec_redirect_restore(mark);
+                exec_release_assignments(assignments, temporary_count);
                 exec_put_back(kept, kept_count);
                 shell_store_rewind(address_of exec_store, arena_mark);
                 shell_status = exec_line_aborted() ? 2
@@ -1267,6 +1323,7 @@ static b32 exec_simple(b32 index)
         else
                 exec_redirect_restore(mark);
 
+        exec_release_assignments(assignments, temporary_count);
         exec_put_back(kept, kept_count);
         shell_store_rewind(address_of exec_store, arena_mark);
 

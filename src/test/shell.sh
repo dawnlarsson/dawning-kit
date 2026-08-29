@@ -650,6 +650,12 @@ environment_command_answer 'custom environment' \
 environment_command_answer 'replace inherited' \
         'MW_CUSTOM=replaced; printf "%s\n" "$MW_CUSTOM"' \
         MW_CUSTOM=from-parent
+environment_command_answer 'inherited replacement stays exported' \
+        'MW_CUSTOM=replaced; /bin/sh -c '\''printf "%s\n" "$MW_CUSTOM"'\''' \
+        MW_CUSTOM=from-parent
+environment_command_answer 'unset then assignment is local' \
+        'unset MW_CUSTOM; MW_CUSTOM=local; /bin/sh -c '\''printf "%s\n" "${MW_CUSTOM-unset}"'\''' \
+        MW_CUSTOM=from-parent
 environment_command_answer 'export inherited replacement' \
         'export MW_CUSTOM=replaced; /bin/sh -c '\''printf "%s\n" "$MW_CUSTOM"'\''' \
         MW_CUSTOM=from-parent
@@ -1297,6 +1303,7 @@ answer 'errexit sub keeps going' 'set -e; echo "[$(false; echo x)]"; echo after'
 # checks both sides of it.
 
 group prefixed
+answer 'ordinary assignment is local' 'unset X; X=local; /bin/sh -c '\''echo ${X-unset}'\'''
 answer 'gone afterwards'  'x=old; x=new true; echo "[$x]"'
 answer 'never set before' 'y=new true; echo "[${y-unset}]"'
 answer 'exported stays'   'export E=keep; E=temp true; echo "[$E]"'
@@ -1313,6 +1320,56 @@ answer 'empty value back' 'v=; v=n true; echo "[$v]"'
 answer 'not found either' 'v=o; v=n nosuchcommand12345 2>/dev/null; echo "[$v]"'
 answer 'alone it stays'   'v=o; v=n; echo "[$v]"'
 answer 'in a loop'        'v=o; for i in 1 2; do v=n true; done; echo "[$v]"'
+answer 'temporary export does not stick' \
+        'unset X; X=temp /bin/sh -c '\''echo "$X"'\''; X=after; /bin/sh -c '\''echo ${X-unset}'\'''
+answer 'exported prefix restores' \
+        'export X=outer; X=temp /bin/sh -c '\''echo "$X"'\''; /bin/sh -c '\''echo "$X"'\'''
+answer 'twenty prefixed assignments' \
+        'A00=0 A01=1 A02=2 A03=3 A04=4 A05=5 A06=6 A07=7 A08=8 A09=9 A10=10 A11=11 A12=12 A13=13 A14=14 A15=15 A16=16 A17=17 A18=18 A19=19 /bin/sh -c '\''echo "$A00:$A09:$A19"'\''; echo "${A00-unset}:${A19-unset}"'
+
+group export-state
+answer 'export pending name' \
+        'unset X; export X; X=one; /bin/sh -c '\''echo "$X"'\'''
+answer 'exported empty value' \
+        'unset X; export X=; /bin/sh -c '\''echo "[${X-unset}]"'\'''
+answer 'unset clears export bit' \
+        'export X=one; unset X; X=two; /bin/sh -c '\''echo ${X-unset}'\'''
+answer 'export rebuilds repeatedly' \
+        'X=one; /bin/sh -c '\''echo ${X-unset}'\''; export X; /bin/sh -c '\''echo "$X"'\''; X=two; /bin/sh -c '\''echo "$X"'\''; unset X; /bin/sh -c '\''echo ${X-unset}'\''; X=three; /bin/sh -c '\''echo ${X-unset}'\'''
+answer 'function export is scoped with prefix' \
+        'unset X; f() { export X; }; X=one f; echo "${X-unset}"; /bin/sh -c '\''echo ${X-unset}'\'''
+answer 'local inherits export bit' \
+        'export X=outer; f() { local X=inner; /bin/sh -c '\''echo "$X"'\''; }; f; /bin/sh -c '\''echo "$X"'\'''
+answer 'local restores unexported bit' \
+        'X=outer; f() { local X=inner; export X; }; f; /bin/sh -c '\''echo ${X-unset}'\'''
+answer 'local absent stays absent' \
+        'unset X; f() { local X=inner; export X; }; f; echo "${X-unset}"; /bin/sh -c '\''echo ${X-unset}'\'''
+answer 'eval prefix is temporary export' \
+        'unset X; X=one eval '\''/bin/sh -c "echo \$X"'\''; echo "$X"; /bin/sh -c '\''echo ${X-unset}'\'''
+answer 'dot prefix is not exported' \
+        'unset X; f=/tmp/export-dot.$$; printf '\''/bin/sh -c '\''\''\''echo ${X-unset}'\''\''\''\n'\'' > "$f"; X=one . "$f"; echo "$X"; /bin/sh -c '\''echo ${X-unset}'\''; rm -f "$f"'
+answer 'exec prefix is exported' \
+        'unset X; X=one exec /bin/sh -c '\''echo "$X"'\'''
+answer 'command prefix is exported' \
+        'unset X; X=one command /bin/sh -c '\''echo "$X"'\''; echo "${X-unset}"'
+answer 'subshell export is isolated' \
+        'X=outer; (export X=inner; /bin/sh -c '\''echo "$X"'\''); /bin/sh -c '\''echo ${X-unset}'\'''
+answer 'export list excludes locals' \
+        'X=local; export Y=public; export -p | grep '\''^export [XY]='\'''
+answer 'export list keeps unset name' \
+        'unset X; export X; export -p | grep '\''^export X$'\'''
+answer 'set list includes locals' \
+        'X=local; set | grep '\''^X='\'' >/dev/null; echo $?'
+answer 'env excludes locals' \
+        'X=local; env | grep '\''^X='\''; echo $?'
+answer 'env includes exports' \
+        'export X=public; env | grep '\''^X='\'''
+answer 'env follows unset' \
+        'export X=public; unset X; env | grep '\''^X='\''; echo $?'
+answer 'env sees command prefix' \
+        'unset X; X=temp env | grep '\''^X='\''; echo "${X-unset}"'
+answer 'export registry churn' \
+        'i=0; while [ $i -lt 200 ]; do eval "export V$i=$i"; eval "unset V$i"; i=$((i+1)); done; export X=still; /bin/sh -c '\''echo "$X"'\'''
 
 # eval and . run a line from inside a line that is already running, over the
 # same arrays the outer one is standing in. What the inner line claims has to
