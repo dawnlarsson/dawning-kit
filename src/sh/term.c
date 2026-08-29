@@ -317,25 +317,48 @@ static fn put(unsigned int character)
         one function in this file that has a file descriptor sends them. The
         emulator itself still makes no system call.
 */
+#ifdef KERNEL_MODE
 #define TO_SHELL_MAX 2048
 static p8 to_shell[TO_SHELL_MAX];
-static unsigned int to_shell_length;
+#else
+static p8 address_to to_shell;
+static positive to_shell_room;
+#endif
+static positive to_shell_length;
 
 static fn emit(unsigned int byte)
 {
+#ifdef KERNEL_MODE
         if (to_shell_length < TO_SHELL_MAX)
                 to_shell[to_shell_length++] = (p8)byte;
+#else
+        if (memory_reserve((address_any address_to)address_of to_shell,
+                           address_of to_shell_room, to_shell_length,
+                           to_shell_length + 1, sizeof(*to_shell), 64))
+                to_shell[to_shell_length++] = (p8)byte;
+#endif
 }
 
 static fn emit_bytes(address_any data, positive length)
 {
+#ifdef KERNEL_MODE
         positive room = TO_SHELL_MAX - to_shell_length;
         positive take = length < room ? length : room;
 
         if (take)
                 memory_copy_fast(to_shell + to_shell_length, data, take);
 
-        to_shell_length += (unsigned int)take;
+        to_shell_length += take;
+#else
+        if (!length ||
+            !memory_reserve((address_any address_to)address_of to_shell,
+                            address_of to_shell_room, to_shell_length,
+                            to_shell_length + length, sizeof(*to_shell), 64))
+                return;
+
+        memory_copy_fast(to_shell + to_shell_length, data, length);
+        to_shell_length += length;
+#endif
 }
 
 static fn emit_string(const char address_to text)
@@ -1175,14 +1198,9 @@ static fn SPARE cursor_show()
         Nothing here is a system call either. What the shell is to be told is
         put in to_shell and sent by the loop that owns the descriptor.
 */
-#define LINE_MAX 1024
 #define LINE_HISTORY 32
 
-// How much of a prompt Ctrl-L can put back, the prompt being cells rather than
-// anything the shell ever said the text of.
-#define LINE_PROMPT_MAX 128
-
-static unsigned int line_drawn;
+static positive line_drawn;
 static b32 line_anchored;
 
 // Where on the screen the line starts, as a line of the ring rather than a
@@ -1213,18 +1231,23 @@ static fn line_forget()
 #ifndef KERNEL_MODE
 
 static b32 line_editing;
-static p8 line[LINE_MAX];
-static unsigned int line_length, line_point;
+static p8 address_to line;
+static positive line_room, line_length, line_point;
 
-
-static p8 history[LINE_HISTORY][LINE_MAX];
-static unsigned int history_length[LINE_HISTORY];
-static unsigned int history_count, history_at;
+static p8 address_to history[LINE_HISTORY];
+static positive history_room[LINE_HISTORY];
+static positive history_length[LINE_HISTORY];
+static positive history_count, history_at;
 
 // The line being typed, kept while the history is walked so that coming back
 // down off the end returns it rather than an empty line.
-static p8 history_held[LINE_MAX];
-static unsigned int history_held_length;
+static p8 address_to history_held;
+static positive history_held_room, history_held_length;
+
+// Ctrl-L keeps the cells to the left of the line anchor without imposing a
+// second, unrelated limit on the width of a prompt.
+static struct window_cell address_to line_prompt;
+static positive line_prompt_room;
 
 static unsigned int line_anchor_row()
 {
@@ -1243,7 +1266,7 @@ static unsigned int line_anchor_row()
 */
 static fn line_show()
 {
-        unsigned int at, written;
+        positive at, written;
 
         if (!line_anchored)
                 return;
@@ -1280,7 +1303,9 @@ static fn line_show()
 
 static fn line_insert(unsigned int character)
 {
-        if (line_length + 1 >= LINE_MAX)
+        if (!memory_reserve((address_any address_to)address_of line,
+                            address_of line_room, line_length,
+                            line_length + 1, sizeof(*line), 64))
                 return;
 
         memory_copy(line + line_point + 1, line + line_point,
@@ -1290,9 +1315,9 @@ static fn line_insert(unsigned int character)
         line_length++;
 }
 
-static fn line_take(unsigned int from, unsigned int to)
+static fn line_take(positive from, positive to)
 {
-        unsigned int gone = to - from;
+        positive gone = to - from;
 
         memory_copy(line + from, line + to, line_length - to);
 
@@ -1301,9 +1326,9 @@ static fn line_take(unsigned int from, unsigned int to)
 }
 
 // The word before the cursor is the run of spaces then the run that is not.
-static unsigned int line_word()
+static positive line_word()
 {
-        unsigned int at = line_point;
+        positive at = line_point;
 
         while (at && line[at - 1] == ' ')
                 at--;
@@ -1319,9 +1344,14 @@ static fn line_from_history()
         const p8 address_to from = history_at < history_count
                                        ? history[history_at % LINE_HISTORY]
                                        : history_held;
-        unsigned int length = history_at < history_count
-                                  ? history_length[history_at % LINE_HISTORY]
-                                  : history_held_length;
+        positive length = history_at < history_count
+                              ? history_length[history_at % LINE_HISTORY]
+                              : history_held_length;
+
+        if (!memory_reserve((address_any address_to)address_of line,
+                            address_of line_room, line_length, length,
+                            sizeof(*line), 64))
+                return;
 
         memory_copy_fast(line, (address_any)from, length);
 
@@ -1342,7 +1372,7 @@ static fn line_remember()
             history_length[(history_count - 1) % LINE_HISTORY] == line_length)
         {
                 const p8 address_to last = history[(history_count - 1) % LINE_HISTORY];
-                unsigned int at = 0;
+                positive at = 0;
 
                 while (at < line_length && last[at] == line[at])
                         at++;
@@ -1352,6 +1382,11 @@ static fn line_remember()
         }
 
         slot = history_count % LINE_HISTORY;
+
+        if (!memory_reserve((address_any address_to)(history + slot),
+                            history_room + slot, history_length[slot],
+                            line_length, sizeof(*history[slot]), 64))
+                return;
 
         memory_copy_fast(history[slot], line, line_length);
 
@@ -1369,16 +1404,19 @@ static fn line_remember()
 */
 static fn line_clear_screen()
 {
-        struct window_cell held[LINE_PROMPT_MAX];
-        unsigned int kept = line_anchor_column < LINE_PROMPT_MAX ? line_anchor_column
-                                                                 : LINE_PROMPT_MAX;
+        unsigned int kept = line_anchor_column;
         unsigned int r = line_anchor_row();
 
         if (line_anchored)
         {
                 struct window_cell address_to cells = row_cells(r);
 
-                memory_copy_fast(held, cells,
+                if (!memory_reserve((address_any address_to)address_of line_prompt,
+                                    address_of line_prompt_room, 0, kept,
+                                    sizeof(*line_prompt), 64))
+                        return;
+
+                memory_copy_fast(line_prompt, cells,
                                  (positive)kept *
                                      sizeof(struct window_cell));
         }
@@ -1390,7 +1428,7 @@ static fn line_clear_screen()
         for (unsigned int at = 0; at < kept; at++)
         {
                 reach(0, at + 1);
-                row_cells(0)[at] = held[at];
+                row_cells(0)[at] = line_prompt[at];
         }
 
         line_anchor = window->head - ROWS;
@@ -1484,11 +1522,23 @@ static b32 line_key(unsigned int character, unsigned int code)
                         line_take(line_point, line_point + 1);
                 return true;
         case KEY_UP:
-                if (!history_at)
+        {
+                positive first = history_count > LINE_HISTORY
+                                     ? history_count - LINE_HISTORY
+                                     : 0;
+
+                if (history_at <= first)
                         return true;
 
                 if (history_at == history_count)
                 {
+                        if (!memory_reserve(
+                                (address_any address_to)address_of history_held,
+                                address_of history_held_room,
+                                history_held_length, line_length,
+                                sizeof(*history_held), 64))
+                                return true;
+
                         memory_copy_fast(history_held, line, line_length);
 
                         history_held_length = line_length;
@@ -1497,6 +1547,7 @@ static b32 line_key(unsigned int character, unsigned int code)
                 history_at--;
                 line_from_history();
                 return true;
+        }
         case KEY_DOWN:
                 if (history_at >= history_count)
                         return true;
@@ -1676,6 +1727,8 @@ static fn SPARE term_line_editing(b32 on)
         line_editing = on;
         line_length = 0;
         line_point = 0;
+        history_at = history_count;
+        history_held_length = 0;
         line_forget();
 }
 

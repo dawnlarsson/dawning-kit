@@ -536,7 +536,8 @@ b32 main()
 HARNESS
 
 if ! $compiler -O2 -static -nostdlib -nostartfiles -fno-stack-protector \
-        -fno-builtin -w -I "$root" -T kit/spark.ld -Wl,-e,_start \
+        -fno-builtin -Wall -Wextra -Werror=unused-variable \
+        -Werror=unused-but-set-variable -I "$root" -T kit/spark.ld -Wl,-e,_start \
         -Wl,--build-id=none -Wl,--no-warn-rwx-segments \
         -o "$work/term" "$work/harness.c" 2> "$work/err"
 then
@@ -960,6 +961,16 @@ same 'cleared'       '[ $ abc]|[]|[]'            20 3 in ' $ ' edit on in 'x\r\n
 same 'cursor kept'   '0,6'                       20 3 edit on in ' $ ' keys 'abc^L' cursor
 same 'nothing sent'  '[]'                        20 3 edit on in ' $ ' keys 'abc^L' sent
 
+#       Prompt preservation follows the grid width. It used to stop at 128
+#       cells and silently move a wider prompt's line back by the missing
+#       part when Ctrl-L redrew it.
+wide_prompt=p
+while [ "${#wide_prompt}" -lt 160 ]; do
+        wide_prompt=$wide_prompt$wide_prompt
+done
+wide_prompt=$(printf '%.*s' 160 "$wide_prompt")
+same 'wide prompt kept' "[${wide_prompt}abc]"     200 3 in "$wide_prompt" edit on keys 'abc^L' row 0
+
 group history
 #       A history that lasts as long as the session, and the line being typed
 #       kept while it is walked so that coming back down returns it.
@@ -972,6 +983,39 @@ same 'the same twice is one' '[same]'            20 4 edit on keys 'same\rsame\r
 same 'runs what it found' '[one\x0atwo\x0a]|[one\x0a]' \
                                                  20 4 edit on keys 'one\rtwo\r' sent keys '<up><up>\r' sent
 same 'nothing to go back to' '[ab]'              20 4 edit on keys 'ab<up>' row 0
+
+#       Only the newest 32 entries are retained. Walking above that boundary
+#       used to circle through overwritten slots and show a newer command as
+#       though it were older than the oldest one still held.
+history_keys=
+history_ups=
+history_at=0
+while [ "$history_at" -lt 40 ]; do
+        history_keys="${history_keys}$(printf '%02d' "$history_at")\\r"
+        history_ups="${history_ups}<up>"
+        history_at=$((history_at + 1))
+done
+same 'oldest retained stops' '[08]'               20 4 edit on keys "$history_keys$history_ups" row 3
+
+#       Leaving canonical mode abandons its partial line and its position in
+#       a history walk. Re-entering it starts at the newest command.
+same 'history resets across modes' '[one\x0atwo\x0a]|[two\x0a]' \
+                                                 20 4 edit on keys 'one\rtwo\r<up>' sent \
+                                                 edit off edit on keys '<up>\r' sent
+
+group capacity
+#       The editor, its history and the pty-bound byte queue grow together.
+#       The old independent 1024 and 2048-byte arrays made a long command
+#       look complete on screen while executing only a prefix of it.
+long_line=x
+while [ "${#long_line}" -lt 4096 ]; do
+        long_line=$long_line$long_line
+done
+same 'long line sent whole' "[${long_line}\\x0a]"  256 64 edit on keys "${long_line}\r" sent
+same 'long history recalled' "[${long_line}\\x0a]|[${long_line}\\x0a]" \
+                                                 256 64 edit on keys "${long_line}\r" sent \
+                                                 keys '<up>\r' sent
+same 'long raw burst sent' "[${long_line}]"       20 3 edit off keys "$long_line" sent
 
 group unbound
 #       A key that means no character and that the editor has no use for is
