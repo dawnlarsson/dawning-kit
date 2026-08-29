@@ -1952,7 +1952,15 @@ string_address file_reason(bipolar code)
 
 // Copying, removing, making --------------------------------
 
-static p8 file_transfer[FILE_BLOCK * 8];
+/*
+        Regular-file copies spend almost all their time crossing this loop.
+        A 32 KiB transfer made a 512 MiB copy issue 16,384 read calls and the
+        same number of writes. 128 KiB is still a modest permanent buffer,
+        fits the kernel's ordinary readahead/writeback granularity well, and
+        quarters those crossings without changing the short-read contract.
+*/
+#define FILE_TRANSFER_SIZE (FILE_BLOCK * 32)
+static p8 file_transfer[FILE_TRANSFER_SIZE];
 
 bool file_copy_contents(bipolar from_directory, string_address from,
                         bipolar to_directory, string_address to, positive mode)
@@ -6503,8 +6511,26 @@ static const file_long basename_longs[] = {
 
 static fn basename_one(string_address name, string_address suffix, bool zero)
 {
-        p8 answer[FILE_PATH_MAX];
-        positive length = path_tail_copy(answer, FILE_PATH_MAX, name);
+        positive stop = string_length(name);
+
+        // Trailing separators are not part of the basename. Preserve one
+        // when the complete operand is a run of separators, because the
+        // basename of root is root.
+        while (stop > 1 && name[stop - 1] == '/')
+                stop--;
+
+        positive start = 0;
+        p8 address_to slash = memory_last_of(name, '/', stop);
+
+        if (slash)
+        {
+                start = (positive)(slash - name) + 1;
+
+                if (start == stop)
+                        start--;
+        }
+
+        positive length = stop - start;
 
         if (suffix)
         {
@@ -6514,12 +6540,13 @@ static fn basename_one(string_address name, string_address suffix, bool zero)
                 // would leave an empty line where a name was asked for.
                 if (cut > 0 && cut < length)
                 {
-                        if (!memory_compare(answer + length - cut, suffix, cut))
-                                answer[length - cut] = end;
+                        if (!memory_compare(name + start + length - cut, suffix, cut))
+                                length -= cut;
                 }
         }
 
-        file_written(answer, zero);
+        log(name + start, length);
+        log(zero ? "\0" : "\n", 1);
 }
 
 static b32 file_basename()
@@ -9487,8 +9514,6 @@ static b32 file_uname()
 */
 #define MKTEMP_ATTEMPTS 200
 #define MKTEMP_LEAST 3
-
-#define FILE_EXCLUSIVE 0200
 
 static string_address mktemp_letters =
     "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";

@@ -296,6 +296,26 @@ PY
         fi
 }
 
+large_copy_stress() {
+        dd if=/dev/zero of="$work/cp-large-source" bs=1M count=32 \
+                status=none 2>/dev/null
+        printf 'tail-marker\n' | dd of="$work/cp-large-source" bs=1 seek=33554420 \
+                conv=notrunc status=none 2>/dev/null
+
+        cp "$work/cp-large-source" "$work/cp-large-want" 2>/dev/null
+        want_status=$?
+        "$binaries/cp" "$work/cp-large-source" "$work/cp-large-got" 2>/dev/null
+        got_status=$?
+
+        if [ "$want_status" = "$got_status" ] &&
+           cmp -s "$work/cp-large-want" "$work/cp-large-got"; then
+                report ok
+        else
+                report bad '32 MiB regular file' \
+                        "status $want_status/$got_status or copied bytes differ"
+        fi
+}
+
 # Fixed-memory ceilings are permitted to refuse work, but never to emit a
 # plausible prefix and exit successfully.
 refuses_ls_ceiling() {
@@ -630,6 +650,9 @@ same 'suffix joined'    basename -s.txt one.txt
 same 'zero'             basename -z /usr/bin/ls
 same 'zero and many'    basename --zero -a /a/b /c/d
 same 'not an option'    basename -x /a/b
+same '20K name'         basename "$long_path"
+same '20K path tail'    basename "/short/$long_path"
+same '20K suffix'       basename -s .tail "${long_path}.tail"
 
 group dirname
 same 'path'             dirname /usr/bin/ls
@@ -1258,6 +1281,7 @@ effect 'broken link itself' touch 'ln -s absent broken; $TOOL -h -d @5 broken'
 effect 'not an option'  touch '$TOOL -W tree/one'
 
 group cp
+large_copy_stress
 effect 'file'           cp '$TOOL tree/one copy'
 effect 'over file'      cp '$TOOL tree/one plain'
 effect 'into directory' cp '$TOOL plain tree/'

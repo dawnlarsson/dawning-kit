@@ -3101,12 +3101,17 @@ static b32 text_head()
         if (said)
         {
                 // A count written with a minus names what to leave off the
-                // end rather than what to take from the front.
+                // end rather than what to take from the front. A plus is an
+                // explicit ordinary count for head (unlike tail, where it
+                // means a starting position), and GNU accepts it for both
+                // the line and byte forms.
                 if (said[0] == '-')
                 {
                         from_end = true;
                         said++;
                 }
+                else if (said[0] == '+')
+                        said++;
 
                 if (!string_digits_exact(said, address_of count))
                 {

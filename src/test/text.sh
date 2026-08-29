@@ -915,11 +915,14 @@ compare 'count'          head i  -n 3
 compare 'joined'         head i  -n3
 compare 'short'          head i  -3
 compare 'zero'           head i  -n 0
+compare 'explicit positive lines' head i -n +3
 compare 'bytes'          head a  -c 10
+compare 'explicit positive bytes' head a -c +10
 compare 'more than have' head a  -n 100
 compare 'two files'      head -  -n 2 "$work/a" "$work/b"
 compare 'no newline'     head h  -n 1
 compare 'long lines'     head i  --lines 3
+compare 'long positive lines' head i --lines=+3
 compare 'long bytes'     head a  --bytes 10
 compare 'long quiet'     head -  --quiet "$work/a" "$work/b"
 compare 'long silent'    head -  --silent "$work/a" "$work/b"
