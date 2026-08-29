@@ -4282,6 +4282,14 @@ static b32 text_tr()
                 p8 address_to at = text_input.buffer + text_input.position;
                 positive left = text_input.filled - text_input.position;
 
+                if (!remove && !squeeze)
+                {
+                        memory_translate(at, left, mapped);
+                        text_put(at, left);
+                        text_input.position = text_input.filled;
+                        continue;
+                }
+
                 for (positive c = 0; c < left; c++)
                 {
                         p8 character = at[c];
@@ -7230,8 +7238,8 @@ static b32 text_sed()
 
                                 if (kind == 'y')
                                 {
-                                        for (positive c = 0; c < sed_space_length; c++)
-                                                sed_space[c] = sed_maps[command->map][sed_space[c]];
+                                        memory_translate(sed_space, sed_space_length,
+                                                         sed_maps[command->map]);
 
                                         continue;
                                 }

@@ -103,6 +103,8 @@ string_to_field writer_field
 cover('direct_benchmark', 'kit/bench_writer_text.c', '''
 buffered_flush buffered_write buffered_write_byte buffered_write_deferred_equal
 ''', 'paired former-C/assembly timing over buffered and direct output shapes')
+cover('direct_benchmark', 'kit/bench_translate.c', 'memory_translate',
+      'paired former-C/assembly timing over byte-table translation sizes')
 
 
 # Private cores are present in the timed call graph, but the harness cannot

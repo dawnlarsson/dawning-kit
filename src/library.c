@@ -67,7 +67,7 @@
         A .set is a second label on the same address, so there is no wrapper
         and no jump, and which names get one depends on who is linking.
 
-        150 routines (144 public, 6 local), 150 of them on all three.
+        151 routines (145 public, 6 local), 151 of them on all three.
         Raw C purity: 0 function bodies, 0 object definitions, 0 body macros, and 0 object macros (all forbidden).
 
           routine                        scope   x86_64  arm64   riscv64
@@ -123,6 +123,7 @@
           memory_reserve                 public  yes     yes     yes
           memory_reverse                 public  yes     yes     yes
           memory_search                  public  yes     yes     yes
+          memory_translate               public  yes     yes     yes
           moonwater_cpu_detect           public  yes     yes     yes
           network_load_16                public  yes     yes     yes
           network_load_32                public  yes     yes     yes
@@ -2971,6 +2972,28 @@ __asm__(
     ".Lmemory_reverse_x86_mask:\n   .byte 15,14,13,12,11,10,9,8,7,6,5,4,3,2,1,0\n   .byte 15,14,13,12,11,10,9,8,7,6,5,4,3,2,1,0\n"
     ASM_SECTION
     ASM_END(memory_reverse)
+
+    // A stable 256-byte table is an indexed load per byte; four independent
+    // chains overlap that latency where no byte-granularity SIMD gather can.
+    ASM_FUNC(memory_translate)
+    "mov %rdi, %rax\n   cmp $4, %rsi\n   jb .Lmemory_translate_x64_tail\n"
+    ".Lmemory_translate_x64_four:\n"
+    "movzbl 0(%rdi), %ecx\n   movzbl 1(%rdi), %r8d\n"
+    "movzbl 2(%rdi), %r9d\n   movzbl 3(%rdi), %r10d\n"
+    "movzbl (%rdx,%rcx), %ecx\n   movzbl (%rdx,%r8), %r8d\n"
+    "movzbl (%rdx,%r9), %r9d\n   movzbl (%rdx,%r10), %r10d\n"
+    "mov %cl, 0(%rdi)\n   mov %r8b, 1(%rdi)\n"
+    "mov %r9b, 2(%rdi)\n   mov %r10b, 3(%rdi)\n"
+    "add $4, %rdi\n   sub $4, %rsi\n   cmp $4, %rsi\n"
+    "jae .Lmemory_translate_x64_four\n"
+    ".Lmemory_translate_x64_tail:\n   test %rsi, %rsi\n"
+    "jz .Lmemory_translate_x64_done\n"
+    ".Lmemory_translate_x64_one:\n   movzbl (%rdi), %ecx\n"
+    "movzbl (%rdx,%rcx), %ecx\n   mov %cl, (%rdi)\n"
+    "inc %rdi\n   dec %rsi\n   jnz .Lmemory_translate_x64_one\n"
+    ".Lmemory_translate_x64_done:\n"
+    ASM_RET
+    ASM_END(memory_translate)
 
     ASM_FUNC(memory_copy_fast)
     KERNEL_BULK_COPY
@@ -6268,6 +6291,26 @@ __asm__(
     ASM_RET
     ASM_END(memory_reverse)
 
+    // Four independent table loads hide the dependent byte-index latency.
+    ASM_FUNC(memory_translate)
+    "mov x8, x0\n   cmp x1, #4\n   b.lo .Lmemory_translate_arm64_tail\n"
+    ".Lmemory_translate_arm64_four:\n"
+    "ldrb w3, [x8]\n   ldrb w4, [x8, #1]\n"
+    "ldrb w5, [x8, #2]\n   ldrb w6, [x8, #3]\n"
+    "ldrb w3, [x2, x3]\n   ldrb w4, [x2, x4]\n"
+    "ldrb w5, [x2, x5]\n   ldrb w6, [x2, x6]\n"
+    "strb w3, [x8]\n   strb w4, [x8, #1]\n"
+    "strb w5, [x8, #2]\n   strb w6, [x8, #3]\n"
+    "add x8, x8, #4\n   sub x1, x1, #4\n   cmp x1, #4\n"
+    "b.hs .Lmemory_translate_arm64_four\n"
+    ".Lmemory_translate_arm64_tail:\n   cbz x1, .Lmemory_translate_arm64_done\n"
+    ".Lmemory_translate_arm64_one:\n   ldrb w3, [x8]\n"
+    "ldrb w3, [x2, x3]\n   strb w3, [x8], #1\n"
+    "subs x1, x1, #1\n   b.ne .Lmemory_translate_arm64_one\n"
+    ".Lmemory_translate_arm64_done:\n"
+    ASM_RET
+    ASM_END(memory_translate)
+
     ASM_FUNC(memory_copy_fast)
 #ifdef KERNEL_MODE
     // The fast contract excludes overlap, exactly the kernel memcpy contract.
@@ -8940,6 +8983,24 @@ __asm__(
     ASM_END(memory_reverse)
 #undef RV_REVERSE_FOUR
 
+    // RV64I has no required vector gather; four base-ISA chains overlap.
+    ASM_FUNC(memory_translate)
+    "mv t0, a0\n   li t6, 4\n   bltu a1, t6, .Lmemory_translate_rv_tail\n"
+    ".Lmemory_translate_rv_four:\n"
+    "lbu t1, 0(t0)\n   lbu t2, 1(t0)\n   lbu t3, 2(t0)\n   lbu t4, 3(t0)\n"
+    "add t1, a2, t1\n   add t2, a2, t2\n   add t3, a2, t3\n   add t4, a2, t4\n"
+    "lbu t1, 0(t1)\n   lbu t2, 0(t2)\n   lbu t3, 0(t3)\n   lbu t4, 0(t4)\n"
+    "sb t1, 0(t0)\n   sb t2, 1(t0)\n   sb t3, 2(t0)\n   sb t4, 3(t0)\n"
+    "addi t0, t0, 4\n   addi a1, a1, -4\n"
+    "bgeu a1, t6, .Lmemory_translate_rv_four\n"
+    ".Lmemory_translate_rv_tail:\n   beqz a1, .Lmemory_translate_rv_done\n"
+    ".Lmemory_translate_rv_one:\n   lbu t1, 0(t0)\n   add t1, a2, t1\n"
+    "lbu t1, 0(t1)\n   sb t1, 0(t0)\n   addi t0, t0, 1\n"
+    "addi a1, a1, -1\n   bnez a1, .Lmemory_translate_rv_one\n"
+    ".Lmemory_translate_rv_done:\n"
+    ASM_RET
+    ASM_END(memory_translate)
+
     ASM_FUNC(memory_copy_fast)
     "mv a3, a0\n   beqz a2, 9f\n   xor t0, a0, a1\n   andi t0, t0, 7\n"
     "bnez t0, 8f\n   andi t0, a0, 7\n   beqz t0, 2f\n"
@@ -10836,6 +10897,8 @@ address_any memory_fill(address_any destination, b8 value, positive size);
 // Reverse exactly size bytes in place. Returns block; sizes below two do not
 // read or write it, so a null block is valid when size is zero.
 address_any memory_reverse(address_any block, positive size);
+address_any memory_translate(address_any block, positive size,
+                             address_any table);
 address_any memory_copy_fast(address_any destination, address_any source, positive size);
 p8 address_to memory_copy_fast_end(p8 address_to destination, address_any source,
                                    positive size);

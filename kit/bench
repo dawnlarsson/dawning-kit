@@ -28,7 +28,8 @@ reverse) source_file=kit/bench_reverse.c ;;
 writer-field) source_file=kit/bench_writer_field.c ;;
 writer-text) source_file=kit/bench_writer_text.c ;;
 text-hot) source_file=kit/bench_text_hot.c ;;
-*)       echo "bench: use 'sh kit/bench', 'sh kit/bench floor', 'sh kit/bench numbers', 'sh kit/bench bases', 'sh kit/bench padded', 'sh kit/bench input-bases', 'sh kit/bench fields', 'sh kit/bench human', 'sh kit/bench human-nearest', 'sh kit/bench paths', 'sh kit/bench reverse', 'sh kit/bench writer-field', 'sh kit/bench writer-text', or 'sh kit/bench text-hot'" >&2; exit 2 ;;
+translate) source_file=kit/bench_translate.c ;;
+*)       echo "bench: use 'sh kit/bench', 'sh kit/bench floor', 'sh kit/bench numbers', 'sh kit/bench bases', 'sh kit/bench padded', 'sh kit/bench input-bases', 'sh kit/bench fields', 'sh kit/bench human', 'sh kit/bench human-nearest', 'sh kit/bench paths', 'sh kit/bench reverse', 'sh kit/bench writer-field', 'sh kit/bench writer-text', 'sh kit/bench text-hot', or 'sh kit/bench translate'" >&2; exit 2 ;;
 esac
 
 host_system=$(uname -s)
