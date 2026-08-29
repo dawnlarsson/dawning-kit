@@ -6077,6 +6077,171 @@ fn check_memory_search()
         }
 }
 
+static p8 reference_ascii_fold(p8 value)
+{
+        return value >= 'A' && value <= 'Z' ? (p8)(value + 32) : value;
+}
+
+static address_any reference_memory_first_ascii_case(address_any block, b8 value,
+                                                       positive size)
+{
+        p8 address_to bytes = block;
+        p8 wanted = reference_ascii_fold((p8)value);
+
+        for (positive i = 0; i < size; i++)
+                if (reference_ascii_fold(bytes[i]) == wanted)
+                        return bytes + i;
+
+        return null;
+}
+
+static address_any reference_memory_search_ascii_case(address_any block, positive size,
+                                                        address_any needle,
+                                                        positive needle_size)
+{
+        p8 address_to hay = block;
+        p8 address_to want = needle;
+
+        if (!needle_size)
+                return block;
+
+        if (needle_size > size)
+                return null;
+
+        for (positive at = 0; at + needle_size <= size; at++)
+        {
+                positive i = 0;
+
+                while (i < needle_size &&
+                       reference_ascii_fold(hay[at + i]) ==
+                           reference_ascii_fold(want[i]))
+                        i++;
+
+                if (i == needle_size)
+                        return hay + at;
+        }
+
+        return null;
+}
+
+/*
+        The folded byte hunt and substring search.
+
+        Every target byte crosses every short alignment and bound.  The long
+        cases cross both vector widths and put plausible matches at every
+        candidate position; high bytes beside ASCII letters prove that OR 32
+        is only used to recognize a letter and never to fold punctuation or
+        the upper half of the byte range.
+*/
+fn check_memory_search_ascii_case()
+{
+        static p8 room[320];
+        static p8 needle[80];
+
+        same("memory_first_of_ascii_case", "zero bound null block",
+             (positive)memory_first_of_ascii_case(null, 'a', 0), 0);
+        same("memory_search_ascii_case", "empty needle",
+             (positive)memory_search_ascii_case(room, 20, null, 0),
+             (positive)room);
+        same("memory_search_ascii_case", "empty both",
+             (positive)memory_search_ascii_case(room, 0, null, 0),
+             (positive)room);
+
+        for (positive target = 0; target < 256; target++)
+                for (positive offset = 0; offset < 9; offset++)
+                {
+                        for (positive i = 0; i < sizeof(room); i++)
+                                room[i] = (p8)(i * 37 + offset * 11);
+
+                        for (positive size = 0; size <= 96; size += 3)
+                                same("memory_first_of_ascii_case",
+                                     "every byte, alignment and bound",
+                                     (positive)memory_first_of_ascii_case(
+                                         room + offset, (b8)target, size),
+                                     (positive)reference_memory_first_ascii_case(
+                                         room + offset, (b8)target, size));
+                }
+
+        for (positive offset = 0; offset < 7; offset++)
+                for (positive size = 0; size <= 160; size += 5)
+                {
+                        for (positive i = 0; i < sizeof(room); i++)
+                        {
+                                static const p8 alphabet[] = {
+                                    'a', 'B', 'c', 'D', 'e', ' ', '[', '`',
+                                    '{', 0, 0x7f, 0x80, 0xa0, 0xff,
+                                };
+
+                                room[i] = alphabet[(i * 5 + offset) % sizeof(alphabet)];
+                        }
+
+                        for (positive needle_size = 0; needle_size <= 40;
+                             needle_size += 3)
+                        {
+                                for (positive i = 0; i < needle_size; i++)
+                                        needle[i] = (p8)(0xe0 + (i % 13));
+
+                                same("memory_search_ascii_case", "absent and bounded",
+                                     (positive)memory_search_ascii_case(
+                                         room + offset, size, needle, needle_size),
+                                     (positive)reference_memory_search_ascii_case(
+                                         room + offset, size, needle, needle_size));
+
+                                if (needle_size > size)
+                                        continue;
+
+                                for (positive at = 0; at + needle_size <= size;
+                                     at += 7)
+                                {
+                                        for (positive i = 0; i < needle_size; i++)
+                                        {
+                                                p8 value = room[offset + at + i];
+
+                                                if (value >= 'a' && value <= 'z' && (i & 1))
+                                                        value -= 32;
+                                                else if (value >= 'A' && value <= 'Z' &&
+                                                         !(i & 1))
+                                                        value += 32;
+
+                                                needle[i] = value;
+                                        }
+
+                                        same("memory_search_ascii_case",
+                                             "present at every candidate region",
+                                             (positive)memory_search_ascii_case(
+                                                 room + offset, size, needle,
+                                                 needle_size),
+                                             (positive)reference_memory_search_ascii_case(
+                                                 room + offset, size, needle,
+                                                 needle_size));
+                                }
+                        }
+                }
+
+        {
+                static const string_address pairs[][2] = {
+                    {"aaaB", "AaB"},
+                    {"abABaba", "aBaBa"},
+                    {"the SAME thing twice", "Same Thing"},
+                    {"[`{", "[`{"},
+                };
+
+                for (positive i = 0; i < sizeof(pairs) / sizeof(pairs[0]); i++)
+                {
+                        positive hay_size = reference_length(pairs[i][0]);
+                        positive needle_size = reference_length(pairs[i][1]);
+
+                        same("memory_search_ascii_case", "overlap and punctuation",
+                             (positive)memory_search_ascii_case(
+                                 (address_any)pairs[i][0], hay_size,
+                                 (address_any)pairs[i][1], needle_size),
+                             (positive)reference_memory_search_ascii_case(
+                                 (address_any)pairs[i][0], hay_size,
+                                 (address_any)pairs[i][1], needle_size));
+                }
+        }
+}
+
 
 /*
         string_find over a string longer than one chunk.
@@ -7764,6 +7929,7 @@ b32 main()
         check_riscv_alignment_floor();
 #endif
         check_memory_search();
+        check_memory_search_ascii_case();
         check_find_long();
 #if X64
         //      Once more down the narrow half. Every case above takes the
@@ -7782,6 +7948,7 @@ b32 main()
                 cpu_has_avx512 = 0;
                 check_memory_compare();
                 check_memory_search();
+                check_memory_search_ascii_case();
                 cpu_has_avx2 = had_avx2;
                 cpu_has_avx512 = had_avx512;
         }

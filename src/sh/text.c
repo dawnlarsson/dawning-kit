@@ -1896,54 +1896,18 @@ static fn regex_clear_state()
                 regex_loop_at[regex_loop_list[i]] = 0;
 }
 
-/*
-        Where a fixed string sits, exactly or in either case.
-
-        Exact is memory_search and nothing else. Folded has no wide routine to
-        call, so the first byte is hunted in both of its cases and only the
-        two answers race -- two passes of memory_first_of over the block
-        rather than one, which is still the width of a register against one
-        byte a step. A first byte that is not a letter has one case and takes
-        the single pass.
-*/
+// Where a fixed string sits, exactly or under ASCII case equivalence. Both
+// paths are bounded library searches; grep and sed keep only the range check
+// and the offset that belongs to their surrounding regular-expression state.
 static string_address text_literal_find(string_address text, positive length, positive from,
                                         string_address want, positive size, bool icase)
 {
         if (from > length || length - from < size)
                 return null;
 
-        if (!icase)
-                return memory_search(text + from, length - from, want, size);
-
-        p8 head = want[0];
-        p8 upper = head >= 'a' && head <= 'z' ? (p8)(head - 32) : head;
-
-        for (positive at = from; at + size <= length;)
-        {
-                positive left = length - at - size + 1;
-                string_address low = memory_first_of(text + at, head, left);
-                string_address high = upper == head
-                                          ? null
-                                          : memory_first_of(text + at, upper, left);
-                string_address hit = !low ? high : (!high || low < high ? low : high);
-
-                if (!hit)
-                        return null;
-
-                at = (positive)(hit - text);
-
-                positive i = 1;
-
-                while (i < size && text_lower(text[at + i]) == want[i])
-                        i++;
-
-                if (i == size)
-                        return text + at;
-
-                at++;
-        }
-
-        return null;
+        return icase ? memory_search_ascii_case(text + from, length - from,
+                                                want, size)
+                     : memory_search(text + from, length - from, want, size);
 }
 
 // Leftmost: the first position where the whole pattern succeeds.

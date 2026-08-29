@@ -107,6 +107,8 @@ cover('direct_benchmark', 'kit/bench_text_hot.c', 'memory_common_prefix',
       'paired scalar/assembly timing over equal and late-difference text spans')
 cover('direct_benchmark', 'kit/bench_ascii_case.c', 'memory_compare_ascii_case',
       'exhaustive byte-pair validation and paired folded comparison timing')
+cover('direct_benchmark', 'kit/bench_ascii_search.c', 'memory_search_ascii_case',
+      'bounded exhaustive verifier plus paired former-C/assembly fixed-search timing')
 cover('direct_benchmark', 'kit/bench_last_of.c', 'memory_last_of',
       'guarded reverse-search validation and paired scalar/assembly timing')
 cover('direct_benchmark', 'kit/bench_words.c', 'memory_count_words',
@@ -117,6 +119,10 @@ cover('direct_benchmark', 'kit/bench_translate.c', 'memory_translate',
 
 # Private cores are present in the timed call graph, but the harness cannot
 # assign their cost independently from their public wrappers.
+cover('benchmark_context', 'kit/bench_ascii_search.c',
+      'memory_first_of_ascii_case',
+      'bounded hunt reached by the directly timed folded search',
+      {'memory_first_of_ascii_case': 'memory_search_ascii_case'})
 cover('benchmark_context', 'kit/bench_paths.c', 'path_split_core',
       'private core reached by all three directly timed path wrappers',
       {'path_split_core': 'path_head_copy'})
