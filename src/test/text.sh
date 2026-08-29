@@ -179,6 +179,53 @@ compare_edit()
                 "$(head -c 34 "$work/edit_got" | tr '\n\t' '|>')[$got_status]"
 }
 
+# --follow-symlinks changes which inode -i replaces. Keep two identical
+# little trees so each implementation sees a link, then compare the link,
+# target, backup and status together.
+compare_follow_edit()
+{
+        name=$1
+        shift
+
+        for side in want got; do
+                mkdir -p "$work/follow_$side/sub"
+                printf 'alpha here\n' > "$work/follow_$side/sub/target"
+                ln -s sub/target "$work/follow_$side/link"
+        done
+
+        sed "$@" "$work/follow_want/link" > /dev/null 2>&1
+        want_status=$?
+        "$bin/sed" "$@" "$work/follow_got/link" > /dev/null 2>&1
+        got_status=$?
+
+        {
+                printf '%s\n' "$want_status"
+                readlink "$work/follow_want/link"
+                cat "$work/follow_want/sub/target"
+                cat "$work/follow_want/sub/target.bak" 2> /dev/null
+                [ -L "$work/follow_want/link" ] && printf 'link\n'
+        } > "$work/want"
+
+        {
+                printf '%s\n' "$got_status"
+                readlink "$work/follow_got/link"
+                cat "$work/follow_got/sub/target"
+                cat "$work/follow_got/sub/target.bak" 2> /dev/null
+                [ -L "$work/follow_got/link" ] && printf 'link\n'
+        } > "$work/got"
+
+        if cmp -s "$work/want" "$work/got"; then
+                pass=$((pass + 1))
+                return 0
+        fi
+
+        fail=$((fail + 1))
+        printf '  %-8s %-30s want %-24s got %s\n' \
+                "$group" "$name" \
+                "$(head -c 34 "$work/want" | tr '\n\t' '|>')" \
+                "$(head -c 34 "$work/got" | tr '\n\t' '|>')"
+}
+
 #       A tool that writes somewhere other than standard output has a third
 #       thing to compare. Each side names its own file, and what landed in it
 #       is compared after the run along with what came back.
@@ -533,6 +580,9 @@ compare_edit 'in place backup' sed a -i.bak 's/a/A/'
 compare_edit 'in place long' sed a --in-place 's/a/A/'
 compare_edit 'in place long backup' sed a --in-place=.bak 's/a/A/'
 compare_edit 'in place quiet' sed a -n -i '2p'
+compare_follow_edit 'follow symlink' --follow-symlinks -i.bak 's/alpha/beta/'
+compare_edit 'follow plain' sed a --follow-symlinks -i 's/a/A/'
+compare 'follow without edit' sed a --follow-symlinks 's/a/A/'
 compare 'null data'      sed zeros -z 's/a/A/'
 compare 'null data long' sed zeros --null-data 's/a/A/'
 compare 'null data number' sed zeros -z -n '='

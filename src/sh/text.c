@@ -6159,6 +6159,7 @@ static bool sed_extended;
 static bool sed_separate;
 static bool sed_null_data;
 static string_address sed_in_place;
+static bool sed_follow_symlinks;
 
 static b32 sed_compile_regex(string_address pattern, bool icase)
 {
@@ -7049,11 +7050,9 @@ static bool sed_substitute(sed_command address_to command)
         not have, so refusing them is what it already does.
 
         Not here, and deliberately: --debug, which prints the parsed program
-        and then a trace of every line through it; --null-data, which is the
-        line reader's business rather than sed's; and --follow-symlinks, which
-        only means anything with -i and would need a path resolved to keep its
-        promise -- claiming it and then replacing the link would be worse than
-        not claiming it.
+        and then a trace of every line through it. --follow-symlinks resolves
+        an in-place input before the temporary is named, so the final rename
+        replaces the target and leaves the link itself alone.
 */
 // P is a letter sed has not got, and is where the two words that take away
 // what is not here to take go.
@@ -7070,6 +7069,7 @@ static const file_long sed_longs[] = {
     {(string_address) "null-data", 'z'},
     {(string_address) "posix", 'P'},
     {(string_address) "sandbox", 'P'},
+    {(string_address) "follow-symlinks", 'F'},
     {null, 0},
 };
 
@@ -7187,6 +7187,7 @@ static b32 text_sed()
         sed_extended = (flags & (FILE_FLAG('r') | FILE_FLAG('E'))) != 0;
         sed_separate = (flags & FILE_FLAG('s')) != 0;
         sed_null_data = (flags & FILE_FLAG('z')) != 0;
+        sed_follow_symlinks = (flags & FILE_FLAG('F')) != 0;
 
         if (flags & FILE_FLAG('i'))
         {
@@ -7229,8 +7230,21 @@ static b32 text_sed()
         {
                 string_address name =
                     text_files_count ? program_argument(text_files[i]) : null;
+                p8 resolved[TEXT_PATH_MAX];
                 p8 temporary[TEXT_PATH_MAX];
                 bipolar written = -1;
+
+                if (sed_in_place && sed_follow_symlinks)
+                {
+                        if (!file_resolve(name, resolved, true))
+                        {
+                                text_error(name, "cannot follow symbolic link");
+                                text_status = 4;
+                                continue;
+                        }
+
+                        name = (string_address)resolved;
+                }
 
                 if (!text_open(name))
                 {
