@@ -110,8 +110,21 @@ python3 "$here/extract.py" "$lib" \
         string_digits_base_max \
         > "$work/input_bases.h" || exit 1
 
+#       Unaligned wire fields live in socket.inc rather than library.c itself.
+#       Lift the exact AArch64 bodies from there and cross every byte residue
+#       natively; the other two architectures are exercised by socket.c.
+python3 "$here/extract.py" "$root/src/platform/socket.inc" \
+        network_load_16 network_load_32 network_store_16 network_store_32 \
+        > "$work/network.h" || exit 1
+
+#       The allocator calls are supplied by reserve.c, leaving the exact
+#       AArch64 growth/release bodies to be tested without making Darwin
+#       understand Linux mmap flags.
+python3 "$here/extract.py" "$lib" memory_reserve memory_release \
+        > "$work/reserve.h" || exit 1
+
 status=0
-for case in byte_hunts bounded riscv_bits bulk reverse wide bases base_field human human_nearest fields input_bases; do
+for case in byte_hunts bounded riscv_bits bulk reverse wide bases base_field human human_nearest fields input_bases network reserve; do
         cc -O2 -w -I"$work" "$here/$case.c" -o "$work/$case" || { status=1; continue; }
         "$work/$case" || status=1
 done

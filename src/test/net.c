@@ -388,7 +388,8 @@ static fn fetching(void)
                 value = http_header(head, size, (string_address) "content-length",
                                     address_of length);
                 check("a header is found whatever its case", value != null);
-                check("and its value read", value && http_number(value, length) == 42);
+                check("and its value read",
+                      value && string_digits_max(value, length, null) == 42);
 
                 check("a header that is not there is not invented",
                       http_header(head, size, (string_address) "location", null) == null);
@@ -530,7 +531,7 @@ static fn leasing(void)
         check("the hardware address is in it",
               memory_compare(packet + 28, hardware, 6) == 0);
         check("the cookie says these options are dhcp's",
-              dhcp_read_32(packet + DHCP_HEAD) == DHCP_COOKIE);
+              network_load_32(packet + DHCP_HEAD) == DHCP_COOKIE);
         check("the first option is the message type",
               packet[240] == DHCP_OPTION_TYPE && packet[241] == 1 &&
               packet[242] == DHCP_DISCOVER);
@@ -541,10 +542,10 @@ static fn leasing(void)
                             0x0a00020f, 0x0a000202);
         check("a request carries what was offered",
               packet[243] == DHCP_OPTION_REQUESTED && packet[244] == 4 &&
-              dhcp_read_32(packet + 245) == 0x0a00020f);
+              network_load_32(packet + 245) == 0x0a00020f);
         check("and who offered it",
               packet[249] == DHCP_OPTION_SERVER && packet[250] == 4 &&
-              dhcp_read_32(packet + 251) == 0x0a000202);
+              network_load_32(packet + 251) == 0x0a000202);
 
         /*
                 An offer, in the shape qemu's own server sends one: the
@@ -558,24 +559,24 @@ static fn leasing(void)
                 packet[0] = 2;
                 packet[1] = 1;
                 packet[2] = 6;
-                dhcp_write_32(packet + 4, 0xdeadbeef);
-                dhcp_write_32(packet + 16, 0x0a00020f);   // yiaddr 10.0.2.15
+                network_store_32(packet + 4, 0xdeadbeef);
+                network_store_32(packet + 16, 0x0a00020f);   // yiaddr 10.0.2.15
                 memory_copy(packet + 28, hardware, 6);
-                dhcp_write_32(packet + DHCP_HEAD, DHCP_COOKIE);
+                network_store_32(packet + DHCP_HEAD, DHCP_COOKIE);
 
                 at = DHCP_HEAD + 4;
                 packet[at++] = DHCP_OPTION_TYPE;  packet[at++] = 1;
                 packet[at++] = DHCP_OFFER;
                 packet[at++] = DHCP_OPTION_SERVER; packet[at++] = 4;
-                dhcp_write_32(packet + at, 0x0a000202); at += 4;
+                network_store_32(packet + at, 0x0a000202); at += 4;
                 packet[at++] = DHCP_OPTION_MASK;  packet[at++] = 4;
-                dhcp_write_32(packet + at, 0xffffff00); at += 4;
+                network_store_32(packet + at, 0xffffff00); at += 4;
                 packet[at++] = DHCP_OPTION_ROUTER; packet[at++] = 4;
-                dhcp_write_32(packet + at, 0x0a000202); at += 4;
+                network_store_32(packet + at, 0x0a000202); at += 4;
                 packet[at++] = DHCP_OPTION_DNS;   packet[at++] = 4;
-                dhcp_write_32(packet + at, 0x0a000203); at += 4;
+                network_store_32(packet + at, 0x0a000203); at += 4;
                 packet[at++] = DHCP_OPTION_LEASE; packet[at++] = 4;
-                dhcp_write_32(packet + at, 86400); at += 4;
+                network_store_32(packet + at, 86400); at += 4;
                 packet[at++] = DHCP_OPTION_END;
 
                 memory_fill(address_of lease, 0, sizeof lease);

@@ -320,6 +320,12 @@ PYTHON
         else
                 lost 'inventory audit' "$(tail -8 "$work/inventory-test.out" | tr '\n' ' ')"
         fi
+
+        if python3 kit/performance_coverage.py > "$work/performance.out" 2>&1; then
+                won
+        else
+                lost 'performance map' "$(tail -8 "$work/performance.out" | tr '\n' ' ')"
+        fi
 else
         printf '  %-10s %s\n' compact 'no python3, skipped'
 fi

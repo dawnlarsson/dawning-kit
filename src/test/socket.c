@@ -78,6 +78,26 @@ static fn byte_order(void)
         for (p32 value = 0; value < 0x00400000u; value += 7919u)
                 check("bytes_reverse_32 is its own inverse",
                       bytes_reverse_32(bytes_reverse_32(value)) == value);
+
+        // Every offset is deliberate: packet fields routinely start unaligned.
+        for (positive offset = 0; offset < 8; offset++)
+        {
+                p8 wire[16];
+
+                memory_fill(wire, 0xa5, sizeof wire);
+                network_store_16(wire + offset, 0x81fe);
+                check("network_store_16 first byte", wire[offset] == 0x81);
+                check("network_store_16 second byte", wire[offset + 1] == 0xfe);
+                check("network_load_16", network_load_16(wire + offset) == 0x81fe);
+
+                memory_fill(wire, 0xa5, sizeof wire);
+                network_store_32(wire + offset, 0x81fe23dcu);
+                check("network_store_32 first byte", wire[offset] == 0x81);
+                check("network_store_32 second byte", wire[offset + 1] == 0xfe);
+                check("network_store_32 third byte", wire[offset + 2] == 0x23);
+                check("network_store_32 fourth byte", wire[offset + 3] == 0xdc);
+                check("network_load_32", network_load_32(wire + offset) == 0x81fe23dcu);
+        }
 }
 
 /*

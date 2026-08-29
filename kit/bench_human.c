@@ -36,19 +36,28 @@ NOT_INLINED positive former_human_buffer(p8 address_to into, positive value)
 
         positive quotient = value / divisor;
         positive remainder = value % divisor;
-        positive whole = quotient + (remainder != 0);
         positive length;
 
-        if (whole >= 10)
-                length = positive_into(into, whole);
+        if (quotient >= 10)
+                length = positive_into(into, quotient + (remainder != 0));
         else
         {
-                positive tenths = quotient * 10 +
-                    (remainder * 10 + divisor - 1) / divisor;
+                positive fraction = (remainder * 10 + divisor - 1) / divisor;
 
-                length = positive_into(into, tenths / 10);
-                into[length++] = '.';
-                length += positive_into(into + length, tenths % 10);
+                if (fraction == 10)
+                {
+                        quotient++;
+                        fraction = 0;
+                }
+
+                if (quotient >= 10)
+                        length = positive_into(into, quotient);
+                else
+                {
+                        length = positive_into(into, quotient);
+                        into[length++] = '.';
+                        length += positive_into(into + length, fraction);
+                }
         }
 
         into[length++] = units[unit];
@@ -73,21 +82,29 @@ NOT_INLINED fn former_human_writer(writer write, positive value)
 
         positive quotient = value / divisor;
         positive remainder = value % divisor;
-        positive whole = quotient + (remainder != 0);
-
-        if (whole >= 10)
+        if (quotient >= 10)
         {
-                positive_to_string(write, whole);
+                positive_to_string(write, quotient + (remainder != 0));
                 write(units + unit, 1);
                 return;
         }
 
-        positive tenths = quotient * 10 +
-            (remainder * 10 + divisor - 1) / divisor;
+        positive fraction = (remainder * 10 + divisor - 1) / divisor;
 
-        positive_to_string(write, tenths / 10);
-        write(".", 1);
-        positive_to_string(write, tenths % 10);
+        if (fraction == 10)
+        {
+                quotient++;
+                fraction = 0;
+        }
+
+        positive_to_string(write, quotient);
+
+        if (quotient < 10)
+        {
+                write(".", 1);
+                positive_to_string(write, fraction);
+        }
+
         write(units + unit, 1);
 }
 

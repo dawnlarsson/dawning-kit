@@ -60,6 +60,10 @@
 
 p32 bytes_reverse_32(p32 value);
 p16 bytes_reverse_16(p16 value);
+p16 network_load_16(p8 address_to at);
+p32 network_load_32(p8 address_to at);
+fn network_store_16(p8 address_to at, p16 value);
+fn network_store_32(p8 address_to at, p32 value);
 bipolar string_to_host(string_address input);
 positive host_into(p8 address_to into, p32 host);
 
@@ -89,6 +93,31 @@ __asm__(
     "mov %edi, %eax\n   rol $8, %ax\n"
     ASM_RET
     ASM_END(bytes_reverse_16)
+
+    //
+    //       Packet fields are not promised to be aligned. x86 tolerates that
+    //       directly, so loading or storing in host order and reversing in a
+    //       register is the whole operation.
+    //
+    ASM_FUNC(network_load_16)
+    "movzwl (%rdi), %eax\n   rol $8, %ax\n"
+    ASM_RET
+    ASM_END(network_load_16)
+
+    ASM_FUNC(network_load_32)
+    "mov (%rdi), %eax\n   bswap %eax\n"
+    ASM_RET
+    ASM_END(network_load_32)
+
+    ASM_FUNC(network_store_16)
+    "rol $8, %si\n   mov %si, (%rdi)\n"
+    ASM_RET
+    ASM_END(network_store_16)
+
+    ASM_FUNC(network_store_32)
+    "bswap %esi\n   mov %esi, (%rdi)\n"
+    ASM_RET
+    ASM_END(network_store_32)
 );
 #elif ARM64
 __asm__(
@@ -107,6 +136,27 @@ __asm__(
     "rev16 w0, w0\n"
     ASM_RET
     ASM_END(bytes_reverse_16)
+
+    // Normal-memory halfword and word accesses may be unaligned on AArch64.
+    ASM_FUNC(network_load_16)
+    "ldrh w0, [x0]\n   rev16 w0, w0\n"
+    ASM_RET
+    ASM_END(network_load_16)
+
+    ASM_FUNC(network_load_32)
+    "ldr w0, [x0]\n   rev w0, w0\n"
+    ASM_RET
+    ASM_END(network_load_32)
+
+    ASM_FUNC(network_store_16)
+    "rev16 w1, w1\n   strh w1, [x0]\n"
+    ASM_RET
+    ASM_END(network_store_16)
+
+    ASM_FUNC(network_store_32)
+    "rev w1, w1\n   str w1, [x0]\n"
+    ASM_RET
+    ASM_END(network_store_32)
 );
 #elif RISCV64
 __asm__(
@@ -133,6 +183,36 @@ __asm__(
     "or a0, t0, t1\n"
     ASM_RET
     ASM_END(bytes_reverse_16)
+
+    //
+    //       The IMAFD floor promises neither unaligned word accesses nor
+    //       Zbb's rev8, so packet fields are assembled a byte at a time. The
+    //       final addiw gives a p32 return the canonical ABI sign extension.
+    //
+    ASM_FUNC(network_load_16)
+    "lbu t0, 0(a0)\n   lbu t1, 1(a0)\n"
+    "slli a0, t0, 8\n   or a0, a0, t1\n"
+    ASM_RET
+    ASM_END(network_load_16)
+
+    ASM_FUNC(network_load_32)
+    "lbu t0, 0(a0)\n   lbu t1, 1(a0)\n   lbu t2, 2(a0)\n   lbu t3, 3(a0)\n"
+    "slli t0, t0, 24\n   slli t1, t1, 16\n   slli t2, t2, 8\n"
+    "or a0, t0, t1\n   or a0, a0, t2\n   or a0, a0, t3\n   addiw a0, a0, 0\n"
+    ASM_RET
+    ASM_END(network_load_32)
+
+    ASM_FUNC(network_store_16)
+    "srli t0, a1, 8\n   sb t0, 0(a0)\n   sb a1, 1(a0)\n"
+    ASM_RET
+    ASM_END(network_store_16)
+
+    ASM_FUNC(network_store_32)
+    "srli t0, a1, 24\n   sb t0, 0(a0)\n"
+    "srli t0, a1, 16\n   sb t0, 1(a0)\n"
+    "srli t0, a1, 8\n   sb t0, 2(a0)\n   sb a1, 3(a0)\n"
+    ASM_RET
+    ASM_END(network_store_32)
 );
 #endif
 

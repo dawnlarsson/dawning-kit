@@ -84,21 +84,6 @@ typedef struct
         p32 seconds;
 } dhcp_lease;
 
-//      Every multi-byte field in this packet is big endian, like the wire and
-//      unlike netlink.
-static fn dhcp_write_32(p8 address_to at, p32 value)
-{
-        at[0] = (p8)(value >> 24);
-        at[1] = (p8)(value >> 16);
-        at[2] = (p8)(value >> 8);
-        at[3] = (p8)value;
-}
-
-static p32 dhcp_read_32(p8 address_to at)
-{
-        return ((p32)at[0] << 24) | ((p32)at[1] << 16) | ((p32)at[2] << 8) | at[3];
-}
-
 /*
         One packet, built.
 
@@ -121,7 +106,7 @@ static positive dhcp_build(p8 address_to into, positive room, p8 kind, p32 trans
         into[2] = 6;   // whose addresses are six bytes
         into[3] = 0;   // and which no relay has forwarded
 
-        dhcp_write_32(into + 4, transaction);
+        network_store_32(into + 4, transaction);
 
         //      Ask to be answered by broadcast: there is no address yet for a
         //      unicast reply to be addressed to.
@@ -130,7 +115,7 @@ static positive dhcp_build(p8 address_to into, positive room, p8 kind, p32 trans
 
         memory_copy(into + 28, hardware, 6);
 
-        dhcp_write_32(into + DHCP_HEAD, DHCP_COOKIE);
+        network_store_32(into + DHCP_HEAD, DHCP_COOKIE);
 
         at = DHCP_HEAD + 4;
 
@@ -142,7 +127,7 @@ static positive dhcp_build(p8 address_to into, positive room, p8 kind, p32 trans
         {
                 into[at++] = DHCP_OPTION_REQUESTED;
                 into[at++] = 4;
-                dhcp_write_32(into + at, wanted);
+                network_store_32(into + at, wanted);
                 at += 4;
         }
 
@@ -150,7 +135,7 @@ static positive dhcp_build(p8 address_to into, positive room, p8 kind, p32 trans
         {
                 into[at++] = DHCP_OPTION_SERVER;
                 into[at++] = 4;
-                dhcp_write_32(into + at, server);
+                network_store_32(into + at, server);
                 at += 4;
         }
 
@@ -188,16 +173,16 @@ static bipolar dhcp_read(p8 address_to packet, positive size, p32 transaction,
         if (packet[0] != 2)  // not a reply
                 return -1;
 
-        if (dhcp_read_32(packet + 4) != transaction)
+        if (network_load_32(packet + 4) != transaction)
                 return -1;
 
         if (memory_compare(packet + 28, hardware, 6))
                 return -1;
 
-        if (dhcp_read_32(packet + DHCP_HEAD) != DHCP_COOKIE)
+        if (network_load_32(packet + DHCP_HEAD) != DHCP_COOKIE)
                 return -1;
 
-        lease->address = dhcp_read_32(packet + 16);  // yiaddr
+        lease->address = network_load_32(packet + 16);  // yiaddr
         address_to kind = 0;
 
         while (at < size)
@@ -230,23 +215,23 @@ static bipolar dhcp_read(p8 address_to packet, positive size, p32 transaction,
                         break;
                 case DHCP_OPTION_MASK:
                         if (length == 4)
-                                lease->mask = dhcp_read_32(packet + at + 2);
+                                lease->mask = network_load_32(packet + at + 2);
                         break;
                 case DHCP_OPTION_ROUTER:
                         if (length >= 4)
-                                lease->router = dhcp_read_32(packet + at + 2);
+                                lease->router = network_load_32(packet + at + 2);
                         break;
                 case DHCP_OPTION_DNS:
                         if (length >= 4)
-                                lease->nameserver = dhcp_read_32(packet + at + 2);
+                                lease->nameserver = network_load_32(packet + at + 2);
                         break;
                 case DHCP_OPTION_SERVER:
                         if (length == 4)
-                                lease->server = dhcp_read_32(packet + at + 2);
+                                lease->server = network_load_32(packet + at + 2);
                         break;
                 case DHCP_OPTION_LEASE:
                         if (length == 4)
-                                lease->seconds = dhcp_read_32(packet + at + 2);
+                                lease->seconds = network_load_32(packet + at + 2);
                         break;
                 default:
                         break;
@@ -329,7 +314,7 @@ static bipolar dhcp_ask(string_address device, p8 address_to hardware,
         where.port = network_order_16(DHCP_SERVER_PORT);
         where.host = network_order_32(HOST_BROADCAST);
 
-        for (wait = 4; wait <= 16; wait += wait)
+        for (wait = 1; wait <= 16; wait += wait)
         {
                 p8 kind = 0;
                 positive deadline = wait;

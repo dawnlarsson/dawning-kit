@@ -191,33 +191,11 @@ static address_any shell_map(positive size)
 static bool shell_room(address_any address_to held, positive address_to have,
                        positive want, positive unit)
 {
-        positive size = *have;
-        address_any fresh;
-
-        if (size >= want)
+        if (memory_reserve(held, have, *have, want, unit, 64))
                 return true;
 
-        if (!size)
-                size = 64;
-
-        while (size < want)
-                size += size;
-
-        fresh = shell_map(size * unit);
-
-        if (!fresh)
-                return false;
-
-        if (*held)
-        {
-                memory_copy(fresh, *held, *have * unit);
-                memory_free(*held, *have * unit);
-        }
-
-        *held = fresh;
-        *have = size;
-
-        return true;
+        shell_memory_failed = true;
+        return false;
 }
 
 //      Bytes that will not move for as long as the line lasts.

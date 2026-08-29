@@ -54,17 +54,20 @@ static __attribute__((noinline)) u64 former_human(u8 *into, u64 value)
 
         u64 quotient = value / divisor;
         u64 remainder = value % divisor;
-        u64 whole = quotient + (remainder != 0);
         u64 length;
 
-        if (whole >= 10)
-                length = reference_into(into, whole);
+        if (quotient >= 10)
+                length = reference_into(into, quotient + (remainder != 0));
         else {
-                u64 tenths = quotient * 10 +
-                    (remainder * 10 + divisor - 1) / divisor;
-                length = reference_into(into, tenths / 10);
-                into[length++] = '.';
-                length += reference_into(into + length, tenths % 10);
+                u64 fraction = (remainder * 10 + divisor - 1) / divisor;
+                if (fraction == 10) { quotient++; fraction = 0; }
+                if (quotient >= 10)
+                        length = reference_into(into, quotient);
+                else {
+                        length = reference_into(into, quotient);
+                        into[length++] = '.';
+                        length += reference_into(into + length, fraction);
+                }
         }
 
         into[length++] = units[unit];

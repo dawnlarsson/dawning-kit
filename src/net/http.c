@@ -50,43 +50,14 @@ typedef struct
 
 static bool http_room(http_buffer address_to buffer, positive want)
 {
-        positive size = buffer->room;
-        p8 address_to fresh;
-
-        if (size >= want)
-                return true;
-
-        if (!size)
-                size = 65536;
-
-        while (size < want)
-                size += size;
-
-        fresh = (p8 address_to)memory(size);
-
-        if (!fresh || (positive)fresh >= (positive)-4095)
-                return false;
-
-        if (buffer->bytes)
-        {
-                memory_copy(fresh, buffer->bytes, buffer->used);
-                memory_free(buffer->bytes, buffer->room);
-        }
-
-        buffer->bytes = fresh;
-        buffer->room = size;
-
-        return true;
+        return memory_reserve((address_any address_to)address_of buffer->bytes,
+                              address_of buffer->room, buffer->used, want, 1, 65536);
 }
 
 static fn http_forget(http_buffer address_to buffer)
 {
-        if (buffer->bytes)
-                memory_free(buffer->bytes, buffer->room);
-
-        buffer->bytes = null;
-        buffer->room = 0;
-        buffer->used = 0;
+        memory_release((address_any address_to)address_of buffer->bytes,
+                       address_of buffer->room, address_of buffer->used, 1);
 }
 
 /*
@@ -256,41 +227,6 @@ static positive http_add(p8 address_to into, positive used, positive room,
         return used + length;
 }
 
-static positive http_number(string_address text, positive length)
-{
-        positive value = 0;
-        positive at = 0;
-
-        while (at < length && text[at] >= '0' && text[at] <= '9')
-                value = value * 10 + (positive)(text[at++] - '0');
-
-        return value;
-}
-
-static positive http_hex(string_address text, positive length)
-{
-        positive value = 0;
-        positive at = 0;
-
-        while (at < length)
-        {
-                p8 one = (p8)text[at];
-
-                if (one >= '0' && one <= '9')
-                        value = value * 16 + (positive)(one - '0');
-                else if (one >= 'a' && one <= 'f')
-                        value = value * 16 + (positive)(one - 'a' + 10);
-                else if (one >= 'A' && one <= 'F')
-                        value = value * 16 + (positive)(one - 'A' + 10);
-                else
-                        break;
-
-                at++;
-        }
-
-        return value;
-}
-
 /*
         Chunked, unwrapped in place.
 
@@ -314,7 +250,8 @@ static bipolar http_unchunk(p8 address_to bytes, positive size)
                 if (read >= size)
                         return HTTP_MALFORMED;
 
-                length = http_hex((string_address)(bytes + line), read - line);
+                length = string_digits_hexadecimal_max(
+                    (string_address)(bytes + line), read - line, null);
                 read++;
 
                 if (!length)
@@ -434,7 +371,8 @@ static bipolar http_get(p32 host, p16 port, string_address name,
         }
 
         if (code)
-                address_to code = (b32)http_number((string_address)(whole.bytes + 9), 3);
+                address_to code = (b32)string_digits_max(
+                    (string_address)(whole.bytes + 9), 3, null);
 
         header = http_header_end(whole.bytes, whole.used);
 
@@ -470,7 +408,7 @@ static bipolar http_get(p32 host, p16 port, string_address name,
 
                 if (value)
                 {
-                        positive said = http_number(value, value_length);
+                        positive said = string_digits_max(value, value_length, null);
 
                         if (said < length)
                                 length = said;

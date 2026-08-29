@@ -67,7 +67,7 @@
         A .set is a second label on the same address, so there is no wrapper
         and no jump, and which names get one depends on who is linking.
 
-        138 routines (133 public, 5 local), 138 of them on all three.
+        144 routines (139 public, 5 local), 144 of them on all three.
         Raw C purity: 0 function bodies, 0 object definitions, 0 body macros, and 0 object macros (all forbidden).
 
           routine                        scope   x86_64  arm64   riscv64
@@ -113,9 +113,15 @@
           memory_fill                    public  yes     yes     yes
           memory_first_of                public  yes     yes     yes
           memory_free                    public  yes     yes     yes
+          memory_release                 public  yes     yes     yes
+          memory_reserve                 public  yes     yes     yes
           memory_reverse                 public  yes     yes     yes
           memory_search                  public  yes     yes     yes
           moonwater_cpu_detect           public  yes     yes     yes
+          network_load_16                public  yes     yes     yes
+          network_load_32                public  yes     yes     yes
+          network_store_16               public  yes     yes     yes
+          network_store_32               public  yes     yes     yes
           path_basename                  public  yes     yes     yes
           path_head_copy                 public  yes     yes     yes
           path_join                      public  yes     yes     yes
@@ -1120,8 +1126,8 @@ typedef union matrix4
         the mitigation made this into.
 
         That is not hypothetical. Nine routines here were written that way --
-        strchr, strnchr, memchr, strnlen, memset, memory_copy_fast, strncpy,
-        strrchr and string_cut, which is very nearly the list of what the rest
+        string_first_of, string_first_of_max, memory_first_of, string_length_max, memset, memory_copy_fast, strncpy,
+        string_last_of_or_end and string_cut, which is very nearly the list of what the rest
         of the kernel calls. It was found by building the file with ASM_RET
         defined as ud2 and disassembling: everything that went through the
         macro trapped, and those nine returned.
@@ -1465,22 +1471,14 @@ extern const p8 byte_commonness[256];
 // NATIVE_BYTE_COMMONNESS_BEGIN
 __asm__(
     ASM_RODATA_OBJECT_BEGIN(byte_commonness, 16)
-    ".byte 239,170,160,157,158,148,143,139,156,200,246,117,134,136,123,183\n"
-    ".byte 159,107,87,83,98,120,91,89,126,76,37,38,73,71,105,147\n"
-    ".byte 255,155,176,195,131,132,187,145,219,218,234,164,211,210,216,235\n"
-    ".byte 201,193,196,185,177,171,175,167,178,173,221,215,206,194,204,66\n"
-    ".byte 174,233,202,223,217,229,199,208,212,228,166,184,222,209,213,207\n"
-    ".byte 214,181,226,232,231,197,189,188,190,180,163,149,169,154,49,242\n"
-    ".byte 153,251,225,244,243,254,236,230,237,250,168,198,245,238,252,248\n"
-    ".byte 240,182,247,249,253,241,224,220,203,227,186,191,138,192,84,77\n"
-    ".byte 140,86,70,162,150,165,106,51,108,179,4,172,79,161,67,62\n"
-    ".byte 124,6,10,41,42,92,13,20,63,16,1,8,24,48,0,12\n"
-    ".byte 94,14,17,25,36,31,9,7,75,18,2,3,21,27,5,15\n"
-    ".byte 97,26,19,11,32,82,99,29,122,45,95,88,50,102,100,103\n"
-    ".byte 151,121,104,133,93,113,110,137,118,127,58,22,59,46,64,54\n"
-    ".byte 125,61,90,44,39,28,40,72,109,30,43,56,34,23,35,85\n"
-    ".byte 129,68,60,33,57,81,55,78,152,142,69,111,101,53,47,114\n"
-    ".byte 146,65,80,130,74,52,112,115,141,96,135,116,128,119,144,205\n"
+    ".byte 239,170,160,157,158,148,143,139,156,200,246,117,134,136,123,183\n   .byte 159,107,87,83,98,120,91,89,126,76,37,38,73,71,105,147\n"
+    ".byte 255,155,176,195,131,132,187,145,219,218,234,164,211,210,216,235\n   .byte 201,193,196,185,177,171,175,167,178,173,221,215,206,194,204,66\n"
+    ".byte 174,233,202,223,217,229,199,208,212,228,166,184,222,209,213,207\n   .byte 214,181,226,232,231,197,189,188,190,180,163,149,169,154,49,242\n"
+    ".byte 153,251,225,244,243,254,236,230,237,250,168,198,245,238,252,248\n   .byte 240,182,247,249,253,241,224,220,203,227,186,191,138,192,84,77\n"
+    ".byte 140,86,70,162,150,165,106,51,108,179,4,172,79,161,67,62\n   .byte 124,6,10,41,42,92,13,20,63,16,1,8,24,48,0,12\n"
+    ".byte 94,14,17,25,36,31,9,7,75,18,2,3,21,27,5,15\n   .byte 97,26,19,11,32,82,99,29,122,45,95,88,50,102,100,103\n"
+    ".byte 151,121,104,133,93,113,110,137,118,127,58,22,59,46,64,54\n   .byte 125,61,90,44,39,28,40,72,109,30,43,56,34,23,35,85\n"
+    ".byte 129,68,60,33,57,81,55,78,152,142,69,111,101,53,47,114\n   .byte 146,65,80,130,74,52,112,115,141,96,135,116,128,119,144,205\n"
     ASM_OBJECT_END(byte_commonness)
 );
 // NATIVE_BYTE_COMMONNESS_END
@@ -2022,27 +2020,26 @@ __asm__(
     //      still fit, which is the same argument the word loop makes at
     //      0xff8.
     //
-    "22: mov %edi, %ecx\n   and $0xfff, %ecx\n   cmp $0xfe0, %ecx\n   ja 24f\n"
+    "22:  mov %edi, %ecx\n   and $0xfff, %ecx\n   cmp $0xfe0, %ecx\n   ja 24f\n"
     "mov %esi, %ecx\n   and $0xfff, %ecx\n   cmp $0xfe0, %ecx\n   ja 24f\n"
-    "vmovdqu (%rdi), %ymm0\n   vpcmpeqb (%rsi), %ymm0, %ymm1\n"
-    "vpcmpeqb %ymm4, %ymm0, %ymm2\n   vpandn %ymm1, %ymm2, %ymm3\n"
-    "vpmovmskb %ymm3, %ecx\n   cmp $-1, %ecx\n   jne 23f\n"
-    "add $32, %rdi\n   add $32, %rsi\n   jmp 22b\n"
-    "23: not %ecx\n   bsf %ecx, %ecx\n   vzeroupper\n"
-    "movzbl (%rdi,%rcx), %eax\n   movzbl (%rsi,%rcx), %ecx\n   sub %ecx, %eax\n"
+    "vmovdqu (%rdi), %ymm0\n   vpcmpeqb (%rsi), %ymm0, %ymm1\n   vpcmpeqb %ymm4, %ymm0, %ymm2\n   vpandn %ymm1, %ymm2, %ymm3\n"
+    "vpmovmskb %ymm3, %ecx\n   cmp $-1, %ecx\n   jne 23f\n   add $32, %rdi\n"
+    "add $32, %rsi\n   jmp 22b\n"
+    "23:  not %ecx\n   bsf %ecx, %ecx\n   vzeroupper\n   movzbl (%rdi,%rcx), %eax\n"
+    "movzbl (%rsi,%rcx), %ecx\n   sub %ecx, %eax\n"
     ASM_RET
     //
     //      Near the end of a page, so back to the word loop for eight steps
     //      -- by then the boundary is behind us and the wide loop can have
     //      it again.
     //
-    "24: vzeroupper\n   mov $8, %edx\n   jmp 1b\n"
+    "24:  vzeroupper\n   mov $8, %edx\n   jmp 1b\n"
     )
     //
     //      No wide registers on this processor. The counter is set where it
     //      will not come round again rather than tested every step.
     //
-    "21: mov $0x7fffffff, %edx\n   jmp 1b\n"
+    "21:  mov $0x7fffffff, %edx\n   jmp 1b\n"
     //
     //      One byte, then back to the word loop. Reached when a read would
     //      cross a page and when a word differs -- in the second case it
@@ -2091,7 +2088,7 @@ __asm__(
                              AVX512_EITHER, AVX512_LEAVE, WIDE_FIRST_TAIL)
     )
     "5:  " NARROW_FIRST_OF("%sil", "%r9", "", "",
-        "movzbl (%rax), %ecx\n   cmp %sil, %cl\n   je 3f\n   xor %eax, %eax  # it was the terminator: not found\n"
+    "movzbl (%rax), %ecx\n   cmp %sil, %cl\n   je 3f\n   xor %eax, %eax  # it was the terminator: not found\n"
         "3:  ")
     ASM_END(string_first_of)
     //
@@ -2116,9 +2113,8 @@ __asm__(
         "7:\n" ASM_NARROW("cpu_has_avx2", "5f")
         WIDE_MEMORY(AVX2_WIDTH, AVX2_BROADCAST, AVX2_HUNT, AVX2_LEAVE, "jmp 5f\n", "5f")
     )
-    "5:  test %rdx, %rdx\n   jz 9f\n   movzbl %sil, %ecx\n"
-    "movabs $0x0101010101010101, %r10\n   mov %rcx, %rsi\n   imul %r10, %rsi\n   movabs $0x8080808080808080, %r11\n"
-    "lea (%rdi,%rdx), %r9  # one past the last byte we may report\n"
+    "5:  test %rdx, %rdx\n   jz 9f\n   movzbl %sil, %ecx\n   movabs $0x0101010101010101, %r10\n"
+    "mov %rcx, %rsi\n   imul %r10, %rsi\n   movabs $0x8080808080808080, %r11\n   lea (%rdi,%rdx), %r9  # one past the last byte we may report\n"
     "mov %edi, %ecx\n   and $7, %ecx\n   and $-8, %rdi\n   mov (%rdi), %rdx\n"
     "xor %rsi, %rdx\n   shl $3, %ecx\n   mov $-1, %r8\n   shl %cl, %r8\n"
     "movzbl %sil, %eax\n   inc %eax\n   movzbl %al, %eax\n   mov $1, %ecx\n"
@@ -2162,8 +2158,8 @@ __asm__(
     "bt $27, %ecx\n   jnc 9f  # OSXSAVE: nobody is managing the state\n"
     "xor %ecx, %ecx\n   xgetbv\n   and $6, %eax\n   cmp $6, %eax\n"
     "jne 9f  # the kernel does not save both halves of ymm\n"
-    "mov $7, %eax\n   xor %ecx, %ecx\n   cpuid\n"
-    "bt $5, %ebx\n   jnc 9f  # no AVX2\n"
+    "mov $7, %eax\n   xor %ecx, %ecx\n   cpuid\n   bt $5, %ebx\n"
+    "jnc 9f  # no AVX2\n"
     "movb $1, cpu_has_avx2(%rip)\n"
     //
     //       And again for the wider registers, which need more of both: the
@@ -2219,43 +2215,31 @@ __asm__(
     //       added as quadwords: adding four byte accumulators together first
     //       would overflow the very lanes the cap exists to protect.
     //
-    "1:  cmp $128, %rsi\n   jb 3f\n"
-    "mov %rsi, %r8\n   shr $7, %r8\n   mov $255, %r9\n   cmp %r9, %r8\n"
-    "cmova %r9, %r8  # never more rounds than a lane holds\n"
-    "vpxor %ymm2, %ymm2, %ymm2\n   vpxor %ymm3, %ymm3, %ymm3\n"
-    "vpxor %ymm4, %ymm4, %ymm4\n   vpxor %ymm5, %ymm5, %ymm5\n"
+    "1:  cmp $128, %rsi\n   jb 3f\n   mov %rsi, %r8\n   shr $7, %r8\n"
+    "mov $255, %r9\n   cmp %r9, %r8\n   cmova %r9, %r8  # never more rounds than a lane holds\n"
+    "vpxor %ymm2, %ymm2, %ymm2\n   vpxor %ymm3, %ymm3, %ymm3\n   vpxor %ymm4, %ymm4, %ymm4\n   vpxor %ymm5, %ymm5, %ymm5\n"
     "xor %r10, %r10\n"
-    "2:  vpcmpeqb (%rdi,%r10), %ymm1, %ymm0\n   vpsubb %ymm0, %ymm2, %ymm2\n"
-    "vpcmpeqb 32(%rdi,%r10), %ymm1, %ymm6\n   vpsubb %ymm6, %ymm3, %ymm3\n"
-    "vpcmpeqb 64(%rdi,%r10), %ymm1, %ymm7\n   vpsubb %ymm7, %ymm4, %ymm4\n"
-    "vpcmpeqb 96(%rdi,%r10), %ymm1, %ymm8\n   vpsubb %ymm8, %ymm5, %ymm5\n"
-    "add $128, %r10\n   dec %r8\n   jnz 2b\n"
-    "vpxor %ymm0, %ymm0, %ymm0\n"
-    "vpsadbw %ymm0, %ymm2, %ymm2\n   vpsadbw %ymm0, %ymm3, %ymm3\n"
-    "vpsadbw %ymm0, %ymm4, %ymm4\n   vpsadbw %ymm0, %ymm5, %ymm5\n"
-    "vpaddq %ymm3, %ymm2, %ymm2\n   vpaddq %ymm5, %ymm4, %ymm4\n"
-    "vpaddq %ymm4, %ymm2, %ymm2\n"
-    "vextracti128 $1, %ymm2, %xmm3\n   vpaddq %xmm3, %xmm2, %xmm2\n"
-    "vpextrq $0, %xmm2, %r11\n   add %r11, %rax\n"
-    "vpextrq $1, %xmm2, %r11\n   add %r11, %rax\n"
-    "add %r10, %rdi\n   sub %r10, %rsi\n   jmp 1b\n"
+    "2:  vpcmpeqb (%rdi,%r10), %ymm1, %ymm0\n   vpsubb %ymm0, %ymm2, %ymm2\n   vpcmpeqb 32(%rdi,%r10), %ymm1, %ymm6\n"
+    "vpsubb %ymm6, %ymm3, %ymm3\n   vpcmpeqb 64(%rdi,%r10), %ymm1, %ymm7\n   vpsubb %ymm7, %ymm4, %ymm4\n"
+    "vpcmpeqb 96(%rdi,%r10), %ymm1, %ymm8\n   vpsubb %ymm8, %ymm5, %ymm5\n   add $128, %r10\n   dec %r8\n"
+    "jnz 2b\n   vpxor %ymm0, %ymm0, %ymm0\n   vpsadbw %ymm0, %ymm2, %ymm2\n   vpsadbw %ymm0, %ymm3, %ymm3\n"
+    "vpsadbw %ymm0, %ymm4, %ymm4\n   vpsadbw %ymm0, %ymm5, %ymm5\n   vpaddq %ymm3, %ymm2, %ymm2\n   vpaddq %ymm5, %ymm4, %ymm4\n"
+    "vpaddq %ymm4, %ymm2, %ymm2\n   vextracti128 $1, %ymm2, %xmm3\n   vpaddq %xmm3, %xmm2, %xmm2\n   vpextrq $0, %xmm2, %r11\n"
+    "add %r11, %rax\n   vpextrq $1, %xmm2, %r11\n   add %r11, %rax\n   add %r10, %rdi\n"
+    "sub %r10, %rsi\n   jmp 1b\n"
     //       32 to 127 bytes: one chain is enough, there is no depth to hide
-    "3:  cmp $32, %rsi\n   jb 4f\n"
-    "vpxor %ymm2, %ymm2, %ymm2\n   xor %r10, %r10\n"
-    "8:  vpcmpeqb (%rdi,%r10), %ymm1, %ymm0\n"
-    "vpsubb %ymm0, %ymm2, %ymm2  # 0xff is minus one, so this adds one\n"
-    "add $32, %r10\n   mov %rsi, %r8\n   sub %r10, %r8\n   cmp $32, %r8\n   jae 8b\n"
-    "vpxor %ymm0, %ymm0, %ymm0\n   vpsadbw %ymm0, %ymm2, %ymm2\n"
-    "vextracti128 $1, %ymm2, %xmm3\n   vpaddq %xmm3, %xmm2, %xmm2\n"
-    "vpextrq $0, %xmm2, %r11\n   add %r11, %rax\n"
-    "vpextrq $1, %xmm2, %r11\n   add %r11, %rax\n"
-    "add %r10, %rdi\n   sub %r10, %rsi\n"
+    "3:  cmp $32, %rsi\n   jb 4f\n   vpxor %ymm2, %ymm2, %ymm2\n   xor %r10, %r10\n"
+    "8:  vpcmpeqb (%rdi,%r10), %ymm1, %ymm0\n   vpsubb %ymm0, %ymm2, %ymm2  # 0xff is minus one, so this adds one\n"
+    "add $32, %r10\n   mov %rsi, %r8\n   sub %r10, %r8\n   cmp $32, %r8\n"
+    "jae 8b\n   vpxor %ymm0, %ymm0, %ymm0\n   vpsadbw %ymm0, %ymm2, %ymm2\n   vextracti128 $1, %ymm2, %xmm3\n"
+    "vpaddq %xmm3, %xmm2, %xmm2\n   vpextrq $0, %xmm2, %r11\n   add %r11, %rax\n   vpextrq $1, %xmm2, %r11\n"
+    "add %r11, %rax\n   add %r10, %rdi\n   sub %r10, %rsi\n"
     "4:  vzeroupper\n"
     )
     "5:  test %rsi, %rsi\n   jz 9f\n"
     "6:  cmpb %dl, (%rdi)\n   jne 7f\n   inc %rax\n"
     "7:  inc %rdi\n   dec %rsi\n   jnz 6b\n"
-    "9:  \n"
+    "9:\n"
     ASM_RET
     ASM_END(memory_count)
     ASM_FUNC(memory_compare)
@@ -2283,19 +2267,15 @@ __asm__(
     //       common round to one branch.
     //
     "cmp $128, %rdx\n   jb 3f\n"
-    "1:  vmovdqu (%rdi), %ymm0\n   vpcmpeqb (%rsi), %ymm0, %ymm0\n"
-    "vmovdqu 32(%rdi), %ymm1\n   vpcmpeqb 32(%rsi), %ymm1, %ymm1\n"
-    "vmovdqu 64(%rdi), %ymm2\n   vpcmpeqb 64(%rsi), %ymm2, %ymm2\n"
-    "vmovdqu 96(%rdi), %ymm3\n   vpcmpeqb 96(%rsi), %ymm3, %ymm3\n"
-    "vpand %ymm1, %ymm0, %ymm0\n   vpand %ymm3, %ymm2, %ymm2\n"
-    "vpand %ymm2, %ymm0, %ymm0\n   vpmovmskb %ymm0, %ecx\n"
+    "1:  vmovdqu (%rdi), %ymm0\n   vpcmpeqb (%rsi), %ymm0, %ymm0\n   vmovdqu 32(%rdi), %ymm1\n   vpcmpeqb 32(%rsi), %ymm1, %ymm1\n"
+    "vmovdqu 64(%rdi), %ymm2\n   vpcmpeqb 64(%rsi), %ymm2, %ymm2\n   vmovdqu 96(%rdi), %ymm3\n   vpcmpeqb 96(%rsi), %ymm3, %ymm3\n"
+    "vpand %ymm1, %ymm0, %ymm0\n   vpand %ymm3, %ymm2, %ymm2\n   vpand %ymm2, %ymm0, %ymm0\n   vpmovmskb %ymm0, %ecx\n"
     "cmp $-1, %ecx\n   jne 3f  # somewhere in these four\n"
-    "add $128, %rdi\n   add $128, %rsi\n   sub $128, %rdx\n"
-    "cmp $128, %rdx\n   jae 1b\n"
-    "3:  cmp $32, %rdx\n   jb 4f\n"
-    "vmovdqu (%rdi), %ymm0\n   vpcmpeqb (%rsi), %ymm0, %ymm0\n"
-    "vpmovmskb %ymm0, %ecx\n   cmp $-1, %ecx\n   jne 8f\n"
-    "add $32, %rdi\n   add $32, %rsi\n   sub $32, %rdx\n   jmp 3b\n"
+    "add $128, %rdi\n   add $128, %rsi\n   sub $128, %rdx\n   cmp $128, %rdx\n"
+    "jae 1b\n"
+    "3:  cmp $32, %rdx\n   jb 4f\n   vmovdqu (%rdi), %ymm0\n   vpcmpeqb (%rsi), %ymm0, %ymm0\n"
+    "vpmovmskb %ymm0, %ecx\n   cmp $-1, %ecx\n   jne 8f\n   add $32, %rdi\n"
+    "add $32, %rsi\n   sub $32, %rdx\n   jmp 3b\n"
     //
     //       The last thirty two bytes, read again rather than a byte loop for
     //       the remainder. Reaching here means at least one whole block is
@@ -2303,17 +2283,16 @@ __asm__(
     //       stays inside what the caller handed over, and the bytes it looks
     //       at twice are bytes already known to be equal.
     //
-    "4:  test %rdx, %rdx\n   jz 6f\n"
-    "lea -32(%rdi,%rdx), %rdi\n   lea -32(%rsi,%rdx), %rsi\n"
-    "vmovdqu (%rdi), %ymm0\n   vpcmpeqb (%rsi), %ymm0, %ymm0\n"
-    "vpmovmskb %ymm0, %ecx\n   cmp $-1, %ecx\n   je 6f\n"
+    "4:  test %rdx, %rdx\n   jz 6f\n   lea -32(%rdi,%rdx), %rdi\n   lea -32(%rsi,%rdx), %rsi\n"
+    "vmovdqu (%rdi), %ymm0\n   vpcmpeqb (%rsi), %ymm0, %ymm0\n   vpmovmskb %ymm0, %ecx\n   cmp $-1, %ecx\n"
+    "je 6f\n"
     //
     //       A zero in the mask is a byte that differed, and the lowest is the
     //       first. The answer is the difference of those two bytes read as
     //       unsigned, which is what memcmp promises about its sign.
     //
-    "8:  not %ecx\n   bsf %ecx, %ecx\n   vzeroupper\n"
-    "movzbl (%rdi,%rcx), %eax\n   movzbl (%rsi,%rcx), %ecx\n   sub %ecx, %eax\n"
+    "8:  not %ecx\n   bsf %ecx, %ecx\n   vzeroupper\n   movzbl (%rdi,%rcx), %eax\n"
+    "movzbl (%rsi,%rcx), %ecx\n   sub %ecx, %eax\n"
     ASM_RET
     "6:  vzeroupper\n   xor %eax, %eax\n"
     ASM_RET
@@ -2324,16 +2303,16 @@ __asm__(
     //       the two agree, so the lowest set bit of the difference is inside
     //       the first byte that does not.
     //
-    "5:  cmp $8, %rdx\n   jb 7f\n"
-    "mov (%rdi), %r8\n   mov (%rsi), %r9\n   cmp %r8, %r9\n   jne 51f\n"
-    "add $8, %rdi\n   add $8, %rsi\n   sub $8, %rdx\n   jmp 5b\n"
-    "51: xor %r9, %r8\n   bsf %r8, %rcx\n   shr $3, %rcx\n"
-    "movzbl (%rdi,%rcx), %eax\n   movzbl (%rsi,%rcx), %ecx\n   sub %ecx, %eax\n"
+    "5:  cmp $8, %rdx\n   jb 7f\n   mov (%rdi), %r8\n   mov (%rsi), %r9\n"
+    "cmp %r8, %r9\n   jne 51f\n   add $8, %rdi\n   add $8, %rsi\n"
+    "sub $8, %rdx\n   jmp 5b\n"
+    "51:  xor %r9, %r8\n   bsf %r8, %rcx\n   shr $3, %rcx\n   movzbl (%rdi,%rcx), %eax\n"
+    "movzbl (%rsi,%rcx), %ecx\n   sub %ecx, %eax\n"
     ASM_RET
     "7:  test %rdx, %rdx\n   jz 9f\n"
-    "71: movzbl (%rdi), %eax\n   movzbl (%rsi), %ecx\n   sub %ecx, %eax\n   jnz 9f\n"
+    "71:  movzbl (%rdi), %eax\n   movzbl (%rsi), %ecx\n   sub %ecx, %eax\n   jnz 9f\n"
     "inc %rdi\n   inc %rsi\n   dec %rdx\n   jnz 71b\n"
-    "9:  \n"
+    "9:\n"
     ASM_RET
     ASM_END(memory_compare)
     ASM_FUNC(memory_search)
@@ -2388,13 +2367,12 @@ __asm__(
     "cmp %rcx, %rsi\n   jb 95f  # longer than the haystack: nowhere\n"
     "cmp $1, %rcx\n   jne 20f\n"
     //
-    //       One byte is memchr, which is already here and already wide.
+    //       One byte is memory_first_of, which is already here and already wide.
     //
-    "movzbl (%rdx), %ecx\n   mov %rsi, %rdx\n   mov %rcx, %rsi\n"
-    "jmp memory_first_of\n"
-    "90: mov %rdi, %rax\n"
+    "movzbl (%rdx), %ecx\n   mov %rsi, %rdx\n   mov %rcx, %rsi\n   jmp memory_first_of\n"
+    "90:  mov %rdi, %rax\n"
     ASM_RET
-    "95: xor %eax, %eax\n"
+    "95:  xor %eax, %eax\n"
     ASM_RET
     //
     //       Six saved registers and fifty six bytes, which leaves the stack
@@ -2404,9 +2382,9 @@ __asm__(
     //       block after the first failed candidate read whatever
     //       memory_compare had left there.
     //
-    "20: push %rbx\n   push %rbp\n   push %r12\n   push %r13\n   push %r14\n"
-    "push %r15\n   sub $56, %rsp\n"
-    "mov %rdi, %rbx  # the haystack\n   mov %rdx, %rbp  # the needle\n"
+    "20:  push %rbx\n   push %rbp\n   push %r12\n   push %r13\n"
+    "push %r14\n   push %r15\n   sub $56, %rsp\n   mov %rdi, %rbx  # the haystack\n"
+    "mov %rdx, %rbp  # the needle\n"
     "mov %rcx, %r12  # its length\n"
     ASM_USERSPACE_WIDE(
     ASM_NARROW("cpu_has_avx2", "6f")
@@ -2431,35 +2409,26 @@ __asm__(
     //       almost the whole needle, and the byte in the middle of a three is
     //       checked by hand below.
     //
-    "cmp $4, %r12\n   jb 22f\n"
-    "lea byte_commonness(%rip), %rdx\n"
-    "mov $256, %esi\n   mov $256, %r13d\n   xor %ecx, %ecx\n"
-    "xor %edi, %edi\n   xor %r10d, %r10d\n"
-    "21: movzbl (%rbp,%rcx), %eax\n   movzbl (%rdx,%rax), %eax\n"
-    "cmp %rsi, %rax\n   jae 23f\n"
+    "cmp $4, %r12\n   jb 22f\n   lea byte_commonness(%rip), %rdx\n   mov $256, %esi\n"
+    "mov $256, %r13d\n   xor %ecx, %ecx\n   xor %edi, %edi\n   xor %r10d, %r10d\n"
+    "21:  movzbl (%rbp,%rcx), %eax\n   movzbl (%rdx,%rax), %eax\n   cmp %rsi, %rax\n   jae 23f\n"
     "mov %rsi, %r13\n   mov %rdi, %r10\n   mov %rax, %rsi\n   mov %rcx, %rdi\n"
     "jmp 24f\n"
-    "23: cmp %r13, %rax\n   jae 24f\n   mov %rax, %r13\n   mov %rcx, %r10\n"
-    "24: inc %rcx\n   cmp %r12, %rcx\n   jb 21b\n"
-    "jmp 25f\n"
-    "22: xor %edi, %edi\n   lea -1(%r12), %r10\n"
-    "25: movzbl (%rbp,%rdi), %eax\n   vmovd %eax, %xmm1\n   vpbroadcastb %xmm1, %ymm1\n"
-    "movzbl (%rbp,%r10), %eax\n   vmovd %eax, %xmm2\n   vpbroadcastb %xmm2, %ymm2\n"
-    "lea (%rbx,%rdi), %rax\n   mov %rax, 16(%rsp)\n"
-    "lea (%rbx,%r10), %rax\n   mov %rax, 24(%rsp)\n"
-    "mov %rdi, 32(%rsp)\n   mov %r10, 40(%rsp)\n"
+    "23:  cmp %r13, %rax\n   jae 24f\n   mov %rax, %r13\n   mov %rcx, %r10\n"
+    "24:  inc %rcx\n   cmp %r12, %rcx\n   jb 21b\n   jmp 25f\n"
+    "22:  xor %edi, %edi\n   lea -1(%r12), %r10\n"
+    "25:  movzbl (%rbp,%rdi), %eax\n   vmovd %eax, %xmm1\n   vpbroadcastb %xmm1, %ymm1\n   movzbl (%rbp,%r10), %eax\n"
+    "vmovd %eax, %xmm2\n   vpbroadcastb %xmm2, %ymm2\n   lea (%rbx,%rdi), %rax\n   mov %rax, 16(%rsp)\n"
+    "lea (%rbx,%r10), %rax\n   mov %rax, 24(%rsp)\n   mov %rdi, 32(%rsp)\n   mov %r10, 40(%rsp)\n"
     //
     //      Which byte of a three byte needle neither probe covers. The three
     //      offsets are 0, 1 and 2 and two of them are taken, so the third is
     //      what is left of their sum. Nothing reads it at any other length.
     //
     "mov $3, %rax\n   sub %rdi, %rax\n   sub %r10, %rax\n   mov %rax, 48(%rsp)\n"
-    "mov 16(%rsp), %r10\n   mov 24(%rsp), %r11\n"
-    "xor %r9, %r9\n   xor %r14d, %r14d\n"
-    "1:  vpcmpeqb (%r10,%r9), %ymm1, %ymm0\n"
-    "vpcmpeqb (%r11,%r9), %ymm2, %ymm3\n"
-    "vpand %ymm3, %ymm0, %ymm0\n   vpmovmskb %ymm0, %r13d\n"
-    "test %r13d, %r13d\n   jnz 3f\n"
+    "mov 16(%rsp), %r10\n   mov 24(%rsp), %r11\n   xor %r9, %r9\n   xor %r14d, %r14d\n"
+    "1:  vpcmpeqb (%r10,%r9), %ymm1, %ymm0\n   vpcmpeqb (%r11,%r9), %ymm2, %ymm3\n   vpand %ymm3, %ymm0, %ymm0\n"
+    "vpmovmskb %ymm0, %r13d\n   test %r13d, %r13d\n   jnz 3f\n"
     //
     //       Past the end of the block loop, one block back from the last
     //       position rather than a byte loop for what is left. It looks at
@@ -2467,43 +2436,35 @@ __asm__(
     //       change the answer: everything before them was rejected, so the
     //       first match found in it is still the first match there is.
     //
-    "4:  add $32, %r9\n   cmp %r8, %r9\n   jbe 1b\n"
-    "test %r14, %r14\n   jnz 80f\n"
-    "mov %r8, %r9\n   mov $1, %r14d\n   jmp 1b\n"
+    "4:  add $32, %r9\n   cmp %r8, %r9\n   jbe 1b\n   test %r14, %r14\n"
+    "jnz 80f\n   mov %r8, %r9\n   mov $1, %r14d\n   jmp 1b\n"
     //
     //       The survivors of one block, lowest position first. Four bytes by
     //       hand before the call, because a call for a candidate that differs
     //       in its second byte costs more than the block it came from.
     //
     "3:  mov %r9, (%rsp)\n"
-    "31: mov (%rsp), %r9\n   bsf %r13d, %eax\n   lea (%rbx,%r9), %r15\n"
-    "add %rax, %r15\n"
-    "cmp $4, %r12\n   jb 33f\n"
-    "mov (%rbp), %eax\n   cmp (%r15), %eax\n   jne 32f\n"
-    "cmp $5, %r12\n   jb 70f  # the four were all of it\n"
-    "lea 4(%r15), %rdi\n   lea 4(%rbp), %rsi\n   lea -4(%r12), %rdx\n"
-    "call memory_compare\n   test %eax, %eax\n   jz 70f\n"
-    "jmp 32f\n"
+    "31:  mov (%rsp), %r9\n   bsf %r13d, %eax\n   lea (%rbx,%r9), %r15\n   add %rax, %r15\n"
+    "cmp $4, %r12\n   jb 33f\n   mov (%rbp), %eax\n   cmp (%r15), %eax\n"
+    "jne 32f\n   cmp $5, %r12\n   jb 70f  # the four were all of it\n"
+    "lea 4(%r15), %rdi\n   lea 4(%rbp), %rsi\n   lea -4(%r12), %rdx\n   call memory_compare\n"
+    "test %eax, %eax\n   jz 70f\n   jmp 32f\n"
     //
     //      Two and three bytes: both probes are ends of the needle, so a
     //      three has one byte left in the middle and a two has none.
     //
-    "33: cmp $2, %r12\n   jbe 70f\n"
-    "mov 48(%rsp), %rax\n   movzbl (%rbp,%rax), %ecx\n   cmp %cl, (%r15,%rax)\n"
-    "je 70f\n"
-    "32: mov %r13d, %eax\n   dec %eax\n   and %eax, %r13d\n   jnz 31b\n"
+    "33:  cmp $2, %r12\n   jbe 70f\n   mov 48(%rsp), %rax\n   movzbl (%rbp,%rax), %ecx\n"
+    "cmp %cl, (%r15,%rax)\n   je 70f\n"
+    "32:  mov %r13d, %eax\n   dec %eax\n   and %eax, %r13d\n   jnz 31b\n"
     //
     //      Back to the block loop. What a call may have written comes off
     //      the stack, and the two broadcasts are built again because
     //      memory_compare ends its wide path with a vzeroupper and leaves
     //      the upper halves zero.
     //
-    "mov (%rsp), %r9\n   mov 8(%rsp), %r8\n"
-    "mov 16(%rsp), %r10\n   mov 24(%rsp), %r11\n"
-    "mov 32(%rsp), %rax\n   movzbl (%rbp,%rax), %eax\n"
-    "vmovd %eax, %xmm1\n   vpbroadcastb %xmm1, %ymm1\n"
-    "mov 40(%rsp), %rax\n   movzbl (%rbp,%rax), %eax\n"
-    "vmovd %eax, %xmm2\n   vpbroadcastb %xmm2, %ymm2\n"
+    "mov (%rsp), %r9\n   mov 8(%rsp), %r8\n   mov 16(%rsp), %r10\n   mov 24(%rsp), %r11\n"
+    "mov 32(%rsp), %rax\n   movzbl (%rbp,%rax), %eax\n   vmovd %eax, %xmm1\n   vpbroadcastb %xmm1, %ymm1\n"
+    "mov 40(%rsp), %rax\n   movzbl (%rbp,%rax), %eax\n   vmovd %eax, %xmm2\n   vpbroadcastb %xmm2, %ymm2\n"
     "jmp 4b\n"
     //
     //      vzeroupper on the way out of the wide path and nowhere else: a
@@ -2511,12 +2472,12 @@ __asm__(
     //      on every instruction without it, and a machine that took the
     //      narrow path below has no such instruction to execute.
     //
-    "70: vzeroupper\n   jmp 7f\n"
-    "80: vzeroupper\n   jmp 8f\n"
+    "70:  vzeroupper\n   jmp 7f\n"
+    "80:  vzeroupper\n   jmp 8f\n"
     )
     //
     //       The narrow path: a machine without the wide registers, and every
-    //       haystack too short for one block. memchr finds where the anchor
+    //       haystack too short for one block. memory_first_of finds where the anchor
     //       byte is and memcmp says whether the rest followed, which is the
     //       naive search with both of its loops already written wide.
     //
@@ -2552,16 +2513,14 @@ __asm__(
     //
     "6:  lea (%rbx,%rsi), %r14\n   sub %r12, %r14  # the last position a match could start at\n"
     //
-    //      The needle is at least two bytes here: one was answered by memchr
+    //      The needle is at least two bytes here: one was answered by memory_first_of
     //      at the top and zero by the front of the haystack. r13 keeps the
     //      offset of the rarest byte, and nothing this calls writes r13.
     //
-    "lea byte_commonness(%rip), %rdx\n"
-    "mov $256, %r8d\n   xor %r13d, %r13d\n   xor %ecx, %ecx\n"
-    "62: movzbl (%rbp,%rcx), %eax\n   movzbl (%rdx,%rax), %eax\n"
-    "cmp %r8, %rax\n   jae 63f\n   mov %rax, %r8\n   mov %rcx, %r13\n"
-    "63: inc %rcx\n   cmp %r12, %rcx\n   jb 62b\n"
-    "mov %rbx, %r15\n"
+    "lea byte_commonness(%rip), %rdx\n   mov $256, %r8d\n   xor %r13d, %r13d\n   xor %ecx, %ecx\n"
+    "62:  movzbl (%rbp,%rcx), %eax\n   movzbl (%rdx,%rax), %eax\n   cmp %r8, %rax\n   jae 63f\n"
+    "mov %rax, %r8\n   mov %rcx, %r13\n"
+    "63:  inc %rcx\n   cmp %r12, %rcx\n   jb 62b\n   mov %rbx, %r15\n"
     //
     //      The hunt runs at the anchor's offset, so a hit is that many bytes
     //      into the candidate and the start is the hit less the offset. The
@@ -2569,17 +2528,15 @@ __asm__(
     //      there are positions left to try, and the last of them is inside
     //      the haystack because the offset is under the needle's length.
     //
-    "61: mov %r14, %rdx\n   sub %r15, %rdx\n   inc %rdx  # positions still to try\n"
-    "lea (%r15,%r13), %rdi\n   movzbl (%rbp,%r13), %esi\n   call memory_first_of\n"
-    "test %rax, %rax\n   jz 8f\n"
-    "sub %r13, %rax\n   mov %rax, %r15\n"
-    "mov %rax, %rdi\n   mov %rbp, %rsi\n   mov %r12, %rdx\n"
-    "call memory_compare\n   test %eax, %eax\n   jz 7f\n"
-    "inc %r15\n   cmp %r14, %r15\n   jbe 61b\n"
+    "61:  mov %r14, %rdx\n   sub %r15, %rdx\n   inc %rdx  # positions still to try\n"
+    "lea (%r15,%r13), %rdi\n   movzbl (%rbp,%r13), %esi\n   call memory_first_of\n   test %rax, %rax\n"
+    "jz 8f\n   sub %r13, %rax\n   mov %rax, %r15\n   mov %rax, %rdi\n"
+    "mov %rbp, %rsi\n   mov %r12, %rdx\n   call memory_compare\n   test %eax, %eax\n"
+    "jz 7f\n   inc %r15\n   cmp %r14, %r15\n   jbe 61b\n"
     "8:  xor %eax, %eax\n   jmp 9f\n"
     "7:  mov %r15, %rax\n"
-    "9:  add $56, %rsp\n   pop %r15\n   pop %r14\n   pop %r13\n   pop %r12\n"
-    "pop %rbp\n   pop %rbx\n"
+    "9:  add $56, %rsp\n   pop %r15\n   pop %r14\n   pop %r13\n"
+    "pop %r12\n   pop %rbp\n   pop %rbx\n"
     ASM_RET
     ASM_END(memory_search)
     //
@@ -2623,8 +2580,7 @@ __asm__(
     //      already harmless, and it would have had to be balanced on four more
     //      ways out.
     //
-    "xor %eax, %eax\n   test %rsi, %rsi\n   jz 9f\n"
-    "movzbl %dl, %r8d  # the byte hunted, out of the way of the broadcast\n"
+    "xor %eax, %eax\n   test %rsi, %rsi\n   jz 9f\n   movzbl %dl, %r8d  # the byte hunted, out of the way of the broadcast\n"
     "lea (%rdi,%rsi), %r9  # one past the last byte we may report\n"
     "mov %rsi, %rdx  # what is left to look at\n"
     ASM_USERSPACE_WIDE(
@@ -2644,9 +2600,9 @@ __asm__(
     "5:  " NARROW_FIRST_OF("%r8b", "%r8",
         "cmp %r9, %rdi\n   jae 8f  # the vectors took all of it\n",
         "cmp %r9, %rdi\n   jae 8f\n",
-        "cmp %r9, %rax\n   jae 8f  # beyond the count\n"
-        "movzbl (%rax), %ecx\n   cmp %sil, %cl\n   je 9f\n"
-        "8:  xor %eax, %eax\n"
+    "cmp %r9, %rax\n   jae 8f  # beyond the count\n"
+    "movzbl (%rax), %ecx\n   cmp %sil, %cl\n   je 9f\n"
+    "8:  xor %eax, %eax\n"
         "9:  ")
     ASM_END(string_first_of_max)
     //
@@ -2671,8 +2627,7 @@ __asm__(
     //      exactly the question string_first_of_or_end is already answering
     //      for a byte that never turns up. It used to be a byte walk here.
     //
-    "movzbl %sil, %ecx\n   test %cl, %cl\n   jnz 4f\n"
-    "jmp string_first_of_or_end\n"
+    "movzbl %sil, %ecx\n   test %cl, %cl\n   jnz 4f\n   jmp string_first_of_or_end\n"
     "4:\n"
     ASM_USERSPACE_WIDE(
         WIDE_PICK
@@ -2765,21 +2720,17 @@ __asm__(
     //
     ASM_USERSPACE_WIDE(
     ASM_NARROW("cpu_has_avx2", "1f")
-    "cmp $64, %rdx\n   jb 1f\n"
-    "vpxor %ymm4, %ymm4, %ymm4\n"
-    "10: vmovdqu (%rdi), %ymm0\n   vpcmpeqb (%rsi), %ymm0, %ymm1\n"
-    "vpcmpeqb %ymm4, %ymm0, %ymm2\n   vpandn %ymm1, %ymm2, %ymm3\n"
-    "vpmovmskb %ymm3, %ecx\n   cmp $-1, %ecx\n   jne 11f\n"
-    "add $32, %rdi\n   add $32, %rsi\n   sub $32, %rdx\n"
-    "cmp $32, %rdx\n   jae 10b\n"
+    "cmp $64, %rdx\n   jb 1f\n   vpxor %ymm4, %ymm4, %ymm4\n"
+    "10:  vmovdqu (%rdi), %ymm0\n   vpcmpeqb (%rsi), %ymm0, %ymm1\n   vpcmpeqb %ymm4, %ymm0, %ymm2\n   vpandn %ymm1, %ymm2, %ymm3\n"
+    "vpmovmskb %ymm3, %ecx\n   cmp $-1, %ecx\n   jne 11f\n   add $32, %rdi\n"
+    "add $32, %rsi\n   sub $32, %rdx\n   cmp $32, %rdx\n   jae 10b\n"
     "vzeroupper\n   jmp 1f\n"
-    "11: not %ecx\n   bsf %ecx, %ecx\n   vzeroupper\n"
-    "movzbl (%rdi,%rcx), %eax\n   movzbl (%rsi,%rcx), %ecx\n   sub %ecx, %eax\n"
+    "11:  not %ecx\n   bsf %ecx, %ecx\n   vzeroupper\n   movzbl (%rdi,%rcx), %eax\n"
+    "movzbl (%rsi,%rcx), %ecx\n   sub %ecx, %eax\n"
     ASM_RET
     )
-    "1:  movabs $0x0101010101010101, %r10\n"
-    "movabs $0x8080808080808080, %r11\n"
-    "12: cmp $8, %rdx\n   jb 2f\n   mov (%rdi), %r8\n   mov (%rsi), %r9\n"
+    "1:  movabs $0x0101010101010101, %r10\n   movabs $0x8080808080808080, %r11\n"
+    "12:  cmp $8, %rdx\n   jb 2f\n   mov (%rdi), %r8\n   mov (%rsi), %r9\n"
     "cmp %r8, %r9\n   jne 2f  # let the byte loop settle it\n"
     // Equal so far. If either holds a terminator the strings end here.
     "mov %r8, %rax\n   sub %r10, %rax\n   mov %r8, %rcx\n   not %rcx\n"
@@ -2790,7 +2741,7 @@ __asm__(
     "test %ecx, %ecx\n   jz 8f\n   inc %rdi\n   inc %rsi\n"
     "dec %rdx\n   jnz 3b\n"
     "8:  xor %eax, %eax\n"
-    "9:  \n"
+    "9:\n"
     ASM_RET
     ASM_END(string_compare_max)
     //
@@ -2808,8 +2759,7 @@ __asm__(
     //      word at a time body and the load of cpu_has_avx512 was measurable
     //      there.
     //
-    "xor %eax, %eax\n   test %rsi, %rsi\n   jz 9f\n"
-    "mov %rdi, %r8  # the start, whichever body runs\n"
+    "xor %eax, %eax\n   test %rsi, %rsi\n   jz 9f\n   mov %rdi, %r8  # the start, whichever body runs\n"
     "mov %rsi, %rdx  # and what is left to look at\n"
     "cmp $8, %rsi\n   jb 5f\n"
     ASM_USERSPACE_WIDE(
@@ -2819,8 +2769,7 @@ __asm__(
         "7:\n" ASM_NARROW("cpu_has_avx2", "5f")
         WIDE_LENGTH_MAX(AVX2_WIDTH, AVX2_ZEROED, AVX2_ZEROS, AVX2_LEAVE, "jmp 5f\n", "5f")
     )
-    "5:  test %rdx, %rdx\n   jz 3f\n"
-    "lea (%rdi,%rdx), %r9  # one past the last byte we may report\n"
+    "5:  test %rdx, %rdx\n   jz 3f\n   lea (%rdi,%rdx), %r9  # one past the last byte we may report\n"
     "mov %edi, %ecx\n   and $7, %ecx\n   and $-8, %rdi\n   mov (%rdi), %rdx\n"
     "shl $3, %ecx\n   mov $1, %rax\n   shl %cl, %rax\n   dec %rax\n"
     "or %rax, %rdx  # ones below where we are, so it cannot end there\n"
@@ -2882,15 +2831,11 @@ __asm__(
     // eight bytes at a time out of a plain loop is cheaper.
     ASM_FUNC(memory_fill)
     KERNEL_BULK_FILL
-    "mov %rdi, %rax\n   movzbl %sil, %ecx\n"
-    "movabs $0x0101010101010101, %r8\n   imul %r8, %rcx  # the byte, eight times over\n"
-    "cmp $16, %rdx\n   jae 6f\n"
-    "cmp $8, %rdx\n   jae 7f\n"
-    "cmp $4, %rdx\n   jae 8f\n"
-    "test %rdx, %rdx\n   jz 9f\n"
+    "mov %rdi, %rax\n   movzbl %sil, %ecx\n   movabs $0x0101010101010101, %r8\n   imul %r8, %rcx  # the byte, eight times over\n"
+    "cmp $16, %rdx\n   jae 6f\n   cmp $8, %rdx\n   jae 7f\n"
+    "cmp $4, %rdx\n   jae 8f\n   test %rdx, %rdx\n   jz 9f\n"
     // one to three: first, last, and the middle, which between them cover all three
-    "mov %cl, (%rdi)\n   mov %cl, -1(%rdi,%rdx)\n"
-    "shr $1, %rdx\n   mov %cl, (%rdi,%rdx)\n"
+    "mov %cl, (%rdi)\n   mov %cl, -1(%rdi,%rdx)\n   shr $1, %rdx\n   mov %cl, (%rdi,%rdx)\n"
     "9:  " ASM_RET
     "8:  mov %ecx, (%rdi)\n   mov %ecx, -4(%rdi,%rdx)\n"
     ASM_RET
@@ -2905,27 +2850,19 @@ __asm__(
     //       may leave, so the sixteen to thirty two byte case needs no
     //       vzeroupper. Every path that widens past that does.
     //
-    "vmovd %ecx, %xmm0\n   vpbroadcastb %xmm0, %xmm0\n"
-    "cmp $32, %rdx\n   ja 3f\n"
+    "vmovd %ecx, %xmm0\n   vpbroadcastb %xmm0, %xmm0\n   cmp $32, %rdx\n   ja 3f\n"
     "vmovdqu %xmm0, (%rdi)\n   vmovdqu %xmm0, -16(%rdi,%rdx)\n"
     ASM_RET
     "3:\n" ASM_WIDER("cpu_has_avx512", "5f")
-    "vinserti128 $1, %xmm0, %ymm0, %ymm0\n"
-    "cmp $64, %rdx\n   ja 4f\n"
-    "vmovdqu %ymm0, (%rdi)\n   vmovdqu %ymm0, -32(%rdi,%rdx)\n"
-    "vzeroupper\n"
+    "vinserti128 $1, %xmm0, %ymm0, %ymm0\n   cmp $64, %rdx\n   ja 4f\n   vmovdqu %ymm0, (%rdi)\n"
+    "vmovdqu %ymm0, -32(%rdi,%rdx)\n   vzeroupper\n"
     ASM_RET
-    "4:  cmp $128, %rdx\n   ja 1f\n"
-    "vmovdqu %ymm0, (%rdi)\n   vmovdqu %ymm0, 32(%rdi)\n"
-    "vmovdqu %ymm0, -64(%rdi,%rdx)\n   vmovdqu %ymm0, -32(%rdi,%rdx)\n"
-    "vzeroupper\n"
+    "4:  cmp $128, %rdx\n   ja 1f\n   vmovdqu %ymm0, (%rdi)\n   vmovdqu %ymm0, 32(%rdi)\n"
+    "vmovdqu %ymm0, -64(%rdi,%rdx)\n   vmovdqu %ymm0, -32(%rdi,%rdx)\n   vzeroupper\n"
     ASM_RET
-    "1:  cmp $256, %rdx\n   ja 0f\n"
-    "vmovdqu %ymm0, (%rdi)\n   vmovdqu %ymm0, 32(%rdi)\n"
-    "vmovdqu %ymm0, 64(%rdi)\n   vmovdqu %ymm0, 96(%rdi)\n"
-    "vmovdqu %ymm0, -128(%rdi,%rdx)\n   vmovdqu %ymm0, -96(%rdi,%rdx)\n"
-    "vmovdqu %ymm0, -64(%rdi,%rdx)\n   vmovdqu %ymm0, -32(%rdi,%rdx)\n"
-    "vzeroupper\n"
+    "1:  cmp $256, %rdx\n   ja 0f\n   vmovdqu %ymm0, (%rdi)\n   vmovdqu %ymm0, 32(%rdi)\n"
+    "vmovdqu %ymm0, 64(%rdi)\n   vmovdqu %ymm0, 96(%rdi)\n   vmovdqu %ymm0, -128(%rdi,%rdx)\n   vmovdqu %ymm0, -96(%rdi,%rdx)\n"
+    "vmovdqu %ymm0, -64(%rdi,%rdx)\n   vmovdqu %ymm0, -32(%rdi,%rdx)\n   vzeroupper\n"
     ASM_RET
     //
     //       Above 256: an unaligned store at the front, the destination aligned
@@ -2933,14 +2870,11 @@ __asm__(
     //       the last 128 bytes wherever they fall, which overlaps whatever the
     //       loop already wrote.
     //
-    "0:  lea (%rdi,%rdx), %r8\n   vmovdqu %ymm0, (%rdi)\n"
-    "add $32, %rdi\n   and $-32, %rdi\n   lea -128(%r8), %r10\n"
-    ".balign 16\n"
-    "1:  vmovdqa %ymm0, (%rdi)\n   vmovdqa %ymm0, 32(%rdi)\n"
-    "vmovdqa %ymm0, 64(%rdi)\n   vmovdqa %ymm0, 96(%rdi)\n"
+    "0:  lea (%rdi,%rdx), %r8\n   vmovdqu %ymm0, (%rdi)\n   add $32, %rdi\n   and $-32, %rdi\n"
+    "lea -128(%r8), %r10\n   .balign 16\n"
+    "1:  vmovdqa %ymm0, (%rdi)\n   vmovdqa %ymm0, 32(%rdi)\n   vmovdqa %ymm0, 64(%rdi)\n   vmovdqa %ymm0, 96(%rdi)\n"
     "add $128, %rdi\n   cmp %r10, %rdi\n   jbe 1b\n"
-    "1:  vmovdqu %ymm0, -128(%r8)\n   vmovdqu %ymm0, -96(%r8)\n"
-    "vmovdqu %ymm0, -64(%r8)\n   vmovdqu %ymm0, -32(%r8)\n"
+    "1:  vmovdqu %ymm0, -128(%r8)\n   vmovdqu %ymm0, -96(%r8)\n   vmovdqu %ymm0, -64(%r8)\n   vmovdqu %ymm0, -32(%r8)\n"
     "vzeroupper\n"
     ASM_RET
     //
@@ -2950,35 +2884,24 @@ __asm__(
     //       overlapping pair instead -- 257 bytes through a 256 byte loop wrote
     //       one iteration past the end before the rung was added.
     //
-    "5:  vpbroadcastb %ecx, %zmm0\n"
-    "cmp $64, %rdx\n   ja 4f\n"
-    "vmovdqu %ymm0, (%rdi)\n   vmovdqu %ymm0, -32(%rdi,%rdx)\n"
+    "5:  vpbroadcastb %ecx, %zmm0\n   cmp $64, %rdx\n   ja 4f\n   vmovdqu %ymm0, (%rdi)\n"
+    "vmovdqu %ymm0, -32(%rdi,%rdx)\n   vzeroupper\n"
+    ASM_RET
+    "4:  cmp $128, %rdx\n   ja 1f\n   vmovdqu64 %zmm0, (%rdi)\n   vmovdqu64 %zmm0, -64(%rdi,%rdx)\n"
     "vzeroupper\n"
     ASM_RET
-    "4:  cmp $128, %rdx\n   ja 1f\n"
-    "vmovdqu64 %zmm0, (%rdi)\n   vmovdqu64 %zmm0, -64(%rdi,%rdx)\n"
-    "vzeroupper\n"
+    "1:  cmp $256, %rdx\n   ja 0f\n   vmovdqu64 %zmm0, (%rdi)\n   vmovdqu64 %zmm0, 64(%rdi)\n"
+    "vmovdqu64 %zmm0, -128(%rdi,%rdx)\n   vmovdqu64 %zmm0, -64(%rdi,%rdx)\n   vzeroupper\n"
     ASM_RET
-    "1:  cmp $256, %rdx\n   ja 0f\n"
-    "vmovdqu64 %zmm0, (%rdi)\n   vmovdqu64 %zmm0, 64(%rdi)\n"
-    "vmovdqu64 %zmm0, -128(%rdi,%rdx)\n   vmovdqu64 %zmm0, -64(%rdi,%rdx)\n"
-    "vzeroupper\n"
+    "0:  cmp $512, %rdx\n   ja 0f\n   vmovdqu64 %zmm0, (%rdi)\n   vmovdqu64 %zmm0, 64(%rdi)\n"
+    "vmovdqu64 %zmm0, 128(%rdi)\n   vmovdqu64 %zmm0, 192(%rdi)\n   vmovdqu64 %zmm0, -256(%rdi,%rdx)\n   vmovdqu64 %zmm0, -192(%rdi,%rdx)\n"
+    "vmovdqu64 %zmm0, -128(%rdi,%rdx)\n   vmovdqu64 %zmm0, -64(%rdi,%rdx)\n   vzeroupper\n"
     ASM_RET
-    "0:  cmp $512, %rdx\n   ja 0f\n"
-    "vmovdqu64 %zmm0, (%rdi)\n   vmovdqu64 %zmm0, 64(%rdi)\n"
-    "vmovdqu64 %zmm0, 128(%rdi)\n   vmovdqu64 %zmm0, 192(%rdi)\n"
-    "vmovdqu64 %zmm0, -256(%rdi,%rdx)\n   vmovdqu64 %zmm0, -192(%rdi,%rdx)\n"
-    "vmovdqu64 %zmm0, -128(%rdi,%rdx)\n   vmovdqu64 %zmm0, -64(%rdi,%rdx)\n"
-    "vzeroupper\n"
-    ASM_RET
-    "0:  lea (%rdi,%rdx), %r8\n   vmovdqu64 %zmm0, (%rdi)\n"
-    "add $64, %rdi\n   and $-64, %rdi\n   lea -256(%r8), %r10\n"
-    ".balign 16\n"
-    "1:  vmovdqa64 %zmm0, (%rdi)\n   vmovdqa64 %zmm0, 64(%rdi)\n"
-    "vmovdqa64 %zmm0, 128(%rdi)\n   vmovdqa64 %zmm0, 192(%rdi)\n"
+    "0:  lea (%rdi,%rdx), %r8\n   vmovdqu64 %zmm0, (%rdi)\n   add $64, %rdi\n   and $-64, %rdi\n"
+    "lea -256(%r8), %r10\n   .balign 16\n"
+    "1:  vmovdqa64 %zmm0, (%rdi)\n   vmovdqa64 %zmm0, 64(%rdi)\n   vmovdqa64 %zmm0, 128(%rdi)\n   vmovdqa64 %zmm0, 192(%rdi)\n"
     "add $256, %rdi\n   cmp %r10, %rdi\n   jbe 1b\n"
-    "1:  vmovdqu64 %zmm0, -256(%r8)\n   vmovdqu64 %zmm0, -192(%r8)\n"
-    "vmovdqu64 %zmm0, -128(%r8)\n   vmovdqu64 %zmm0, -64(%r8)\n"
+    "1:  vmovdqu64 %zmm0, -256(%r8)\n   vmovdqu64 %zmm0, -192(%r8)\n   vmovdqu64 %zmm0, -128(%r8)\n   vmovdqu64 %zmm0, -64(%r8)\n"
     "vzeroupper\n"
     ASM_RET
     )
@@ -2987,8 +2910,7 @@ __asm__(
     //       old enough to be here it is still the widest store the part has, and
     //       because a kernel build takes this path whatever the processor is.
     //
-    "2:  cmp $256, %rdx\n   jae 0f\n"
-    "lea (%rdi,%rdx), %r9\n   mov %rcx, (%rdi)\n"
+    "2:  cmp $256, %rdx\n   jae 0f\n   lea (%rdi,%rdx), %r9\n   mov %rcx, (%rdi)\n"
     "add $8, %rdi\n   and $-8, %rdi\n   lea -8(%r9), %r10\n"
     "1:  mov %rcx, (%rdi)\n   add $8, %rdi\n   cmp %r10, %rdi\n   jbe 1b\n"
     "mov %rcx, -8(%r9)\n"
@@ -3016,23 +2938,16 @@ __asm__(
 #ifndef KERNEL_MODE
     "cmp $64, %rsi\n   jb 5f\n"
     ASM_NARROW("cpu_has_avx2", "5f")
-    "vmovdqu .Lmemory_reverse_x86_mask(%rip), %ymm2\n"
-    ".balign 16\n"
-    "1:  vmovdqu (%rdi), %ymm0\n   sub $32, %rdx\n"
-    "vmovdqu (%rdx), %ymm1\n"
-    "vpshufb %ymm2, %ymm0, %ymm0\n"
-    "vpshufb %ymm2, %ymm1, %ymm1\n"
-    "vperm2i128 $1, %ymm0, %ymm0, %ymm0\n"
-    "vperm2i128 $1, %ymm1, %ymm1, %ymm1\n"
-    "vmovdqu %ymm1, (%rdi)\n   vmovdqu %ymm0, (%rdx)\n"
-    "add $32, %rdi\n   sub $64, %rsi\n   cmp $64, %rsi\n   jae 1b\n"
-    "vzeroupper\n"
+    "vmovdqu .Lmemory_reverse_x86_mask(%rip), %ymm2\n   .balign 16\n"
+    "1:  vmovdqu (%rdi), %ymm0\n   sub $32, %rdx\n   vmovdqu (%rdx), %ymm1\n   vpshufb %ymm2, %ymm0, %ymm0\n"
+    "vpshufb %ymm2, %ymm1, %ymm1\n   vperm2i128 $1, %ymm0, %ymm0, %ymm0\n   vperm2i128 $1, %ymm1, %ymm1, %ymm1\n"
+    "vmovdqu %ymm1, (%rdi)\n   vmovdqu %ymm0, (%rdx)\n   add $32, %rdi\n   sub $64, %rsi\n"
+    "cmp $64, %rsi\n   jae 1b\n   vzeroupper\n"
 #endif
-    "5:  cmp $16, %rsi\n   jb 2f\n"
-    ".balign 16\n"
-    "1:  mov (%rdi), %r8\n   sub $8, %rdx\n   mov (%rdx), %r9\n"
-    "bswap %r8\n   bswap %r9\n   mov %r9, (%rdi)\n   mov %r8, (%rdx)\n"
-    "add $8, %rdi\n   sub $16, %rsi\n   cmp $16, %rsi\n   jae 1b\n"
+    "5:  cmp $16, %rsi\n   jb 2f\n   .balign 16\n"
+    "1:  mov (%rdi), %r8\n   sub $8, %rdx\n   mov (%rdx), %r9\n   bswap %r8\n"
+    "bswap %r9\n   mov %r9, (%rdi)\n   mov %r8, (%rdx)\n   add $8, %rdi\n"
+    "sub $16, %rsi\n   cmp $16, %rsi\n   jae 1b\n"
     // Exact sub-word spans are one load, one reversal and one store.  The
     // general pair loop remains for the odd sizes around them.
     "2:  cmp $8, %rsi\n   jne 3f\n   mov (%rdi), %r8\n"
@@ -3042,21 +2957,19 @@ __asm__(
     "4:  cmp $2, %rsi\n   jne 6f\n   movzwl (%rdi), %r8d\n"
     "rol $8, %r8w\n   mov %r8w, (%rdi)\n" ASM_RET
     "6:  cmp $2, %rsi\n   jb 9f\n"
-    "1:  movzbl (%rdi), %ecx\n   dec %rdx\n   movzbl (%rdx), %r8d\n"
-    "mov %r8b, (%rdi)\n   mov %cl, (%rdx)\n   inc %rdi\n"
-    "sub $2, %rsi\n   cmp $2, %rsi\n   jae 1b\n"
+    "1:  movzbl (%rdi), %ecx\n   dec %rdx\n   movzbl (%rdx), %r8d\n   mov %r8b, (%rdi)\n"
+    "mov %cl, (%rdx)\n   inc %rdi\n   sub $2, %rsi\n   cmp $2, %rsi\n"
+    "jae 1b\n"
     "9:  " ASM_RET
     ".section .rodata\n   .balign 32\n"
-    ".Lmemory_reverse_x86_mask:\n"
-    "        .byte 15,14,13,12,11,10,9,8,7,6,5,4,3,2,1,0\n"
-    "        .byte 15,14,13,12,11,10,9,8,7,6,5,4,3,2,1,0\n"
+    ".Lmemory_reverse_x86_mask:\n   .byte 15,14,13,12,11,10,9,8,7,6,5,4,3,2,1,0\n   .byte 15,14,13,12,11,10,9,8,7,6,5,4,3,2,1,0\n"
     ASM_SECTION
     ASM_END(memory_reverse)
 
     ASM_FUNC(memory_copy_fast)
     KERNEL_BULK_COPY
-    "mov %rdi, %rax\n   cmp $32, %rdx\n   ja 6f\n"
-    "cmp $16, %rdx\n   jb 7f\n"
+    "mov %rdi, %rax\n   cmp $32, %rdx\n   ja 6f\n   cmp $16, %rdx\n"
+    "jb 7f\n"
     //
     //       movdqu, not vmovdqu. Naming an xmm register does not make an
     //       instruction SSE: the v spelling is VEX encoded whatever width it
@@ -3086,25 +2999,20 @@ __asm__(
     //       feature byte, which is only written at module init and so is only
     //       ever read after the processor is fully set up.
     //
-    "mov (%rsi), %r9\n   mov 8(%rsi), %r10\n"
-    "mov -16(%rsi,%rdx), %r11\n   mov -8(%rsi,%rdx), %rcx\n"
-    "mov %r9, (%rdi)\n   mov %r10, 8(%rdi)\n"
-    "mov %r11, -16(%rdi,%rdx)\n   mov %rcx, -8(%rdi,%rdx)\n"
+    "mov (%rsi), %r9\n   mov 8(%rsi), %r10\n   mov -16(%rsi,%rdx), %r11\n   mov -8(%rsi,%rdx), %rcx\n"
+    "mov %r9, (%rdi)\n   mov %r10, 8(%rdi)\n   mov %r11, -16(%rdi,%rdx)\n   mov %rcx, -8(%rdi,%rdx)\n"
     ASM_RET
-    "7:  cmp $8, %rdx\n   jb 8f\n"
-    "mov (%rsi), %r9\n   mov -8(%rsi,%rdx), %r10\n"
+    "7:  cmp $8, %rdx\n   jb 8f\n   mov (%rsi), %r9\n   mov -8(%rsi,%rdx), %r10\n"
     "mov %r9, (%rdi)\n   mov %r10, -8(%rdi,%rdx)\n"
     ASM_RET
-    "8:  cmp $4, %rdx\n   jb 0f\n"
-    "mov (%rsi), %r9d\n   mov -4(%rsi,%rdx), %r10d\n"
+    "8:  cmp $4, %rdx\n   jb 0f\n   mov (%rsi), %r9d\n   mov -4(%rsi,%rdx), %r10d\n"
     "mov %r9d, (%rdi)\n   mov %r10d, -4(%rdi,%rdx)\n"
     ASM_RET
     "0:  test %rdx, %rdx\n   jz 9f\n"
     // all three read before any is written: at one or two bytes of overlap the
     // store to the first would otherwise be the load for the middle
-    "movzbl (%rsi), %r9d\n   movzbl -1(%rsi,%rdx), %r10d\n"
-    "mov %rdx, %rcx\n   shr $1, %rcx\n   movzbl (%rsi,%rcx), %r11d\n"
-    "mov %r9b, (%rdi)\n   mov %r10b, -1(%rdi,%rdx)\n   mov %r11b, (%rdi,%rcx)\n"
+    "movzbl (%rsi), %r9d\n   movzbl -1(%rsi,%rdx), %r10d\n   mov %rdx, %rcx\n   shr $1, %rcx\n"
+    "movzbl (%rsi,%rcx), %r11d\n   mov %r9b, (%rdi)\n   mov %r10b, -1(%rdi,%rdx)\n   mov %r11b, (%rdi,%rcx)\n"
     "9:  " ASM_RET
     //
     //       Sixteen to thirty two is the xmm pair above, which every x86_64 part
@@ -3114,109 +3022,71 @@ __asm__(
     ASM_USERSPACE_WIDE(
     ASM_NARROW("cpu_has_avx2", "2f")
     ASM_WIDER("cpu_has_avx512", "5f")
-    "cmp $64, %rdx\n   ja 4f\n"
-    "vmovdqu (%rsi), %ymm0\n   vmovdqu -32(%rsi,%rdx), %ymm1\n"
-    "vmovdqu %ymm0, (%rdi)\n   vmovdqu %ymm1, -32(%rdi,%rdx)\n"
-    "vzeroupper\n"
+    "cmp $64, %rdx\n   ja 4f\n   vmovdqu (%rsi), %ymm0\n   vmovdqu -32(%rsi,%rdx), %ymm1\n"
+    "vmovdqu %ymm0, (%rdi)\n   vmovdqu %ymm1, -32(%rdi,%rdx)\n   vzeroupper\n"
     ASM_RET
-    "4:  cmp $128, %rdx\n   ja 1f\n"
-    "vmovdqu (%rsi), %ymm0\n   vmovdqu 32(%rsi), %ymm1\n"
-    "vmovdqu -64(%rsi,%rdx), %ymm2\n   vmovdqu -32(%rsi,%rdx), %ymm3\n"
-    "vmovdqu %ymm0, (%rdi)\n   vmovdqu %ymm1, 32(%rdi)\n"
-    "vmovdqu %ymm2, -64(%rdi,%rdx)\n   vmovdqu %ymm3, -32(%rdi,%rdx)\n"
-    "vzeroupper\n"
+    "4:  cmp $128, %rdx\n   ja 1f\n   vmovdqu (%rsi), %ymm0\n   vmovdqu 32(%rsi), %ymm1\n"
+    "vmovdqu -64(%rsi,%rdx), %ymm2\n   vmovdqu -32(%rsi,%rdx), %ymm3\n   vmovdqu %ymm0, (%rdi)\n   vmovdqu %ymm1, 32(%rdi)\n"
+    "vmovdqu %ymm2, -64(%rdi,%rdx)\n   vmovdqu %ymm3, -32(%rdi,%rdx)\n   vzeroupper\n"
     ASM_RET
-    "1:  cmp $256, %rdx\n   ja 0f\n"
-    "vmovdqu (%rsi), %ymm0\n   vmovdqu 32(%rsi), %ymm1\n"
-    "vmovdqu 64(%rsi), %ymm2\n   vmovdqu 96(%rsi), %ymm3\n"
-    "vmovdqu -128(%rsi,%rdx), %ymm4\n   vmovdqu -96(%rsi,%rdx), %ymm5\n"
-    "vmovdqu -64(%rsi,%rdx), %ymm6\n   vmovdqu -32(%rsi,%rdx), %ymm7\n"
-    "vmovdqu %ymm0, (%rdi)\n   vmovdqu %ymm1, 32(%rdi)\n"
-    "vmovdqu %ymm2, 64(%rdi)\n   vmovdqu %ymm3, 96(%rdi)\n"
-    "vmovdqu %ymm4, -128(%rdi,%rdx)\n   vmovdqu %ymm5, -96(%rdi,%rdx)\n"
-    "vmovdqu %ymm6, -64(%rdi,%rdx)\n   vmovdqu %ymm7, -32(%rdi,%rdx)\n"
-    "vzeroupper\n"
+    "1:  cmp $256, %rdx\n   ja 0f\n   vmovdqu (%rsi), %ymm0\n   vmovdqu 32(%rsi), %ymm1\n"
+    "vmovdqu 64(%rsi), %ymm2\n   vmovdqu 96(%rsi), %ymm3\n   vmovdqu -128(%rsi,%rdx), %ymm4\n   vmovdqu -96(%rsi,%rdx), %ymm5\n"
+    "vmovdqu -64(%rsi,%rdx), %ymm6\n   vmovdqu -32(%rsi,%rdx), %ymm7\n   vmovdqu %ymm0, (%rdi)\n   vmovdqu %ymm1, 32(%rdi)\n"
+    "vmovdqu %ymm2, 64(%rdi)\n   vmovdqu %ymm3, 96(%rdi)\n   vmovdqu %ymm4, -128(%rdi,%rdx)\n   vmovdqu %ymm5, -96(%rdi,%rdx)\n"
+    "vmovdqu %ymm6, -64(%rdi,%rdx)\n   vmovdqu %ymm7, -32(%rdi,%rdx)\n   vzeroupper\n"
     ASM_RET
     //
     //       The last 128 bytes are read into ymm4-7 before the head store, so
     //       the loop may write over the source it has already passed.
     //
-    "0:  lea (%rdi,%rdx), %r8\n   lea (%rsi,%rdx), %r11\n"
-    "vmovdqu -128(%r11), %ymm4\n   vmovdqu -96(%r11), %ymm5\n"
-    "vmovdqu -64(%r11), %ymm6\n   vmovdqu -32(%r11), %ymm7\n"
-    "vmovdqu (%rsi), %ymm8  # and the first 32, for the same reason\n"
-    "mov %rdi, %r9\n   add $32, %rdi\n   and $-32, %rdi\n"
-    "sub %r9, %rdi\n   add %rdi, %rsi\n   add %r9, %rdi  # the source moves with it\n"
-    "lea -128(%r8), %r10\n"
-    ".balign 16\n"
-    "1:  vmovdqu (%rsi), %ymm0\n   vmovdqu 32(%rsi), %ymm1\n"
-    "vmovdqu 64(%rsi), %ymm2\n   vmovdqu 96(%rsi), %ymm3\n"
-    "vmovdqa %ymm0, (%rdi)\n   vmovdqa %ymm1, 32(%rdi)\n"
-    "vmovdqa %ymm2, 64(%rdi)\n   vmovdqa %ymm3, 96(%rdi)\n"
+    "0:  lea (%rdi,%rdx), %r8\n   lea (%rsi,%rdx), %r11\n   vmovdqu -128(%r11), %ymm4\n   vmovdqu -96(%r11), %ymm5\n"
+    "vmovdqu -64(%r11), %ymm6\n   vmovdqu -32(%r11), %ymm7\n   vmovdqu (%rsi), %ymm8  # and the first 32, for the same reason\n"
+    "mov %rdi, %r9\n   add $32, %rdi\n   and $-32, %rdi\n   sub %r9, %rdi\n"
+    "add %rdi, %rsi\n   add %r9, %rdi  # the source moves with it\n"
+    "lea -128(%r8), %r10\n   .balign 16\n"
+    "1:  vmovdqu (%rsi), %ymm0\n   vmovdqu 32(%rsi), %ymm1\n   vmovdqu 64(%rsi), %ymm2\n   vmovdqu 96(%rsi), %ymm3\n"
+    "vmovdqa %ymm0, (%rdi)\n   vmovdqa %ymm1, 32(%rdi)\n   vmovdqa %ymm2, 64(%rdi)\n   vmovdqa %ymm3, 96(%rdi)\n"
     "add $128, %rsi\n   add $128, %rdi\n   cmp %r10, %rdi\n   jbe 1b\n"
-    "vmovdqu %ymm4, -128(%r8)\n   vmovdqu %ymm5, -96(%r8)\n"
-    "vmovdqu %ymm6, -64(%r8)\n   vmovdqu %ymm7, -32(%r8)\n"
-    "vmovdqu %ymm8, (%rax)\n"
-    "vzeroupper\n"
+    "vmovdqu %ymm4, -128(%r8)\n   vmovdqu %ymm5, -96(%r8)\n   vmovdqu %ymm6, -64(%r8)\n   vmovdqu %ymm7, -32(%r8)\n"
+    "vmovdqu %ymm8, (%rax)\n   vzeroupper\n"
     ASM_RET
     //       The zmm ladder, one rung longer for the reason memory_fill gives.
-    "5:  cmp $64, %rdx\n   ja 4f\n"
-    "vmovdqu (%rsi), %ymm0\n   vmovdqu -32(%rsi,%rdx), %ymm1\n"
-    "vmovdqu %ymm0, (%rdi)\n   vmovdqu %ymm1, -32(%rdi,%rdx)\n"
+    "5:  cmp $64, %rdx\n   ja 4f\n   vmovdqu (%rsi), %ymm0\n   vmovdqu -32(%rsi,%rdx), %ymm1\n"
+    "vmovdqu %ymm0, (%rdi)\n   vmovdqu %ymm1, -32(%rdi,%rdx)\n   vzeroupper\n"
+    ASM_RET
+    "4:  cmp $128, %rdx\n   ja 1f\n   vmovdqu64 (%rsi), %zmm0\n   vmovdqu64 -64(%rsi,%rdx), %zmm1\n"
+    "vmovdqu64 %zmm0, (%rdi)\n   vmovdqu64 %zmm1, -64(%rdi,%rdx)\n   vzeroupper\n"
+    ASM_RET
+    "1:  cmp $256, %rdx\n   ja 0f\n   vmovdqu64 (%rsi), %zmm0\n   vmovdqu64 64(%rsi), %zmm1\n"
+    "vmovdqu64 -128(%rsi,%rdx), %zmm2\n   vmovdqu64 -64(%rsi,%rdx), %zmm3\n   vmovdqu64 %zmm0, (%rdi)\n"
+    "vmovdqu64 %zmm1, 64(%rdi)\n   vmovdqu64 %zmm2, -128(%rdi,%rdx)\n   vmovdqu64 %zmm3, -64(%rdi,%rdx)\n"
     "vzeroupper\n"
     ASM_RET
-    "4:  cmp $128, %rdx\n   ja 1f\n"
-    "vmovdqu64 (%rsi), %zmm0\n   vmovdqu64 -64(%rsi,%rdx), %zmm1\n"
-    "vmovdqu64 %zmm0, (%rdi)\n   vmovdqu64 %zmm1, -64(%rdi,%rdx)\n"
+    "0:  cmp $512, %rdx\n   ja 0f\n   vmovdqu64 (%rsi), %zmm0\n   vmovdqu64 64(%rsi), %zmm1\n"
+    "vmovdqu64 128(%rsi), %zmm2\n   vmovdqu64 192(%rsi), %zmm3\n   vmovdqu64 -256(%rsi,%rdx), %zmm4\n   vmovdqu64 -192(%rsi,%rdx), %zmm5\n"
+    "vmovdqu64 -128(%rsi,%rdx), %zmm6\n   vmovdqu64 -64(%rsi,%rdx), %zmm7\n   vmovdqu64 %zmm0, (%rdi)\n"
+    "vmovdqu64 %zmm1, 64(%rdi)\n   vmovdqu64 %zmm2, 128(%rdi)\n   vmovdqu64 %zmm3, 192(%rdi)\n   vmovdqu64 %zmm4, -256(%rdi,%rdx)\n"
+    "vmovdqu64 %zmm5, -192(%rdi,%rdx)\n   vmovdqu64 %zmm6, -128(%rdi,%rdx)\n   vmovdqu64 %zmm7, -64(%rdi,%rdx)\n"
     "vzeroupper\n"
     ASM_RET
-    "1:  cmp $256, %rdx\n   ja 0f\n"
-    "vmovdqu64 (%rsi), %zmm0\n   vmovdqu64 64(%rsi), %zmm1\n"
-    "vmovdqu64 -128(%rsi,%rdx), %zmm2\n   vmovdqu64 -64(%rsi,%rdx), %zmm3\n"
-    "vmovdqu64 %zmm0, (%rdi)\n   vmovdqu64 %zmm1, 64(%rdi)\n"
-    "vmovdqu64 %zmm2, -128(%rdi,%rdx)\n   vmovdqu64 %zmm3, -64(%rdi,%rdx)\n"
-    "vzeroupper\n"
-    ASM_RET
-    "0:  cmp $512, %rdx\n   ja 0f\n"
-    "vmovdqu64 (%rsi), %zmm0\n   vmovdqu64 64(%rsi), %zmm1\n"
-    "vmovdqu64 128(%rsi), %zmm2\n   vmovdqu64 192(%rsi), %zmm3\n"
-    "vmovdqu64 -256(%rsi,%rdx), %zmm4\n   vmovdqu64 -192(%rsi,%rdx), %zmm5\n"
-    "vmovdqu64 -128(%rsi,%rdx), %zmm6\n   vmovdqu64 -64(%rsi,%rdx), %zmm7\n"
-    "vmovdqu64 %zmm0, (%rdi)\n   vmovdqu64 %zmm1, 64(%rdi)\n"
-    "vmovdqu64 %zmm2, 128(%rdi)\n   vmovdqu64 %zmm3, 192(%rdi)\n"
-    "vmovdqu64 %zmm4, -256(%rdi,%rdx)\n   vmovdqu64 %zmm5, -192(%rdi,%rdx)\n"
-    "vmovdqu64 %zmm6, -128(%rdi,%rdx)\n   vmovdqu64 %zmm7, -64(%rdi,%rdx)\n"
-    "vzeroupper\n"
-    ASM_RET
-    "0:  lea (%rdi,%rdx), %r8\n   lea (%rsi,%rdx), %r11\n"
-    "vmovdqu64 -256(%r11), %zmm4\n   vmovdqu64 -192(%r11), %zmm5\n"
-    "vmovdqu64 -128(%r11), %zmm6\n   vmovdqu64 -64(%r11), %zmm7\n"
-    "vmovdqu64 (%rsi), %zmm8\n"
-    "mov %rdi, %r9\n   add $64, %rdi\n   and $-64, %rdi\n"
-    "sub %r9, %rdi\n   add %rdi, %rsi\n   add %r9, %rdi\n"
-    "lea -256(%r8), %r10\n"
-    ".balign 16\n"
-    "1:  vmovdqu64 (%rsi), %zmm0\n   vmovdqu64 64(%rsi), %zmm1\n"
-    "vmovdqu64 128(%rsi), %zmm2\n   vmovdqu64 192(%rsi), %zmm3\n"
-    "vmovdqa64 %zmm0, (%rdi)\n   vmovdqa64 %zmm1, 64(%rdi)\n"
-    "vmovdqa64 %zmm2, 128(%rdi)\n   vmovdqa64 %zmm3, 192(%rdi)\n"
+    "0:  lea (%rdi,%rdx), %r8\n   lea (%rsi,%rdx), %r11\n   vmovdqu64 -256(%r11), %zmm4\n   vmovdqu64 -192(%r11), %zmm5\n"
+    "vmovdqu64 -128(%r11), %zmm6\n   vmovdqu64 -64(%r11), %zmm7\n   vmovdqu64 (%rsi), %zmm8\n   mov %rdi, %r9\n"
+    "add $64, %rdi\n   and $-64, %rdi\n   sub %r9, %rdi\n   add %rdi, %rsi\n"
+    "add %r9, %rdi\n   lea -256(%r8), %r10\n   .balign 16\n"
+    "1:  vmovdqu64 (%rsi), %zmm0\n   vmovdqu64 64(%rsi), %zmm1\n   vmovdqu64 128(%rsi), %zmm2\n   vmovdqu64 192(%rsi), %zmm3\n"
+    "vmovdqa64 %zmm0, (%rdi)\n   vmovdqa64 %zmm1, 64(%rdi)\n   vmovdqa64 %zmm2, 128(%rdi)\n   vmovdqa64 %zmm3, 192(%rdi)\n"
     "add $256, %rsi\n   add $256, %rdi\n   cmp %r10, %rdi\n   jbe 1b\n"
-    "vmovdqu64 %zmm4, -256(%r8)\n   vmovdqu64 %zmm5, -192(%r8)\n"
-    "vmovdqu64 %zmm6, -128(%r8)\n   vmovdqu64 %zmm7, -64(%r8)\n"
-    "vmovdqu64 %zmm8, (%rax)\n"
-    "vzeroupper\n"
+    "vmovdqu64 %zmm4, -256(%r8)\n   vmovdqu64 %zmm5, -192(%r8)\n   vmovdqu64 %zmm6, -128(%r8)\n   vmovdqu64 %zmm7, -64(%r8)\n"
+    "vmovdqu64 %zmm8, (%rax)\n   vzeroupper\n"
     ASM_RET
     )
     //       Neither extension: eight bytes at a time, and rep movsb where it pays.
-    "2:  cmp $256, %rdx\n   jae 0f\n"
-    "lea (%rdi,%rdx), %r8\n   lea (%rsi,%rdx), %r11\n"
-    "mov -8(%r11), %r10\n   mov (%rsi), %rdx\n"
-    "mov %rdi, %r9\n   add $8, %rdi\n   and $-8, %rdi\n"
-    "sub %r9, %rdi\n   add %rdi, %rsi\n   add %r9, %rdi\n"
+    "2:  cmp $256, %rdx\n   jae 0f\n   lea (%rdi,%rdx), %r8\n   lea (%rsi,%rdx), %r11\n"
+    "mov -8(%r11), %r10\n   mov (%rsi), %rdx\n   mov %rdi, %r9\n   add $8, %rdi\n"
+    "and $-8, %rdi\n   sub %r9, %rdi\n   add %rdi, %rsi\n   add %r9, %rdi\n"
     "lea -8(%r8), %rcx\n"
-    "1:  mov (%rsi), %r9\n   mov %r9, (%rdi)\n"
-    "add $8, %rsi\n   add $8, %rdi\n   cmp %rcx, %rdi\n   jbe 1b\n"
-    "mov %r10, -8(%r8)\n   mov %rdx, (%rax)\n"
+    "1:  mov (%rsi), %r9\n   mov %r9, (%rdi)\n   add $8, %rsi\n   add $8, %rdi\n"
+    "cmp %rcx, %rdi\n   jbe 1b\n   mov %r10, -8(%r8)\n   mov %rdx, (%rax)\n"
     ASM_RET
     "0:  mov %rdx, %rcx\n   rep movsb\n"
     ASM_RET
@@ -3227,8 +3097,8 @@ __asm__(
     // shared fast-copy core. As with memory_copy_end below, a real call keeps
     // CET shadow stacks and the kernel return thunk paired truthfully.
     ASM_FUNC(memory_copy_fast_end)
-    "lea (%rdi,%rdx), %rax\n   push %rax\n   call memory_copy_fast\n"
-    "pop %rax\n   movb $0, (%rax)\n"
+    "lea (%rdi,%rdx), %rax\n   push %rax\n   call memory_copy_fast\n   pop %rax\n"
+    "movb $0, (%rax)\n"
     ASM_RET
     ASM_END(memory_copy_fast_end)
 
@@ -3242,24 +3112,16 @@ __asm__(
     "2:\n"
     ASM_USERSPACE_WIDE(
     ASM_NARROW("cpu_has_avx2", "5f") "   cmp $128, %rdx\n   jb 5f\n"
-    "vmovdqu (%rsi), %ymm4\n   vmovdqu 32(%rsi), %ymm5\n"
-    "vmovdqu 64(%rsi), %ymm6\n   vmovdqu 96(%rsi), %ymm7\n"
-    "lea (%rdi,%rdx), %r8\n   lea (%rsi,%rdx), %r11\n"
-    "vmovdqu -32(%r11), %ymm8  # and the last 32\n"
+    "vmovdqu (%rsi), %ymm4\n   vmovdqu 32(%rsi), %ymm5\n   vmovdqu 64(%rsi), %ymm6\n   vmovdqu 96(%rsi), %ymm7\n"
+    "lea (%rdi,%rdx), %r8\n   lea (%rsi,%rdx), %r11\n   vmovdqu -32(%r11), %ymm8  # and the last 32\n"
     "mov %r8, %r9\n   and $-32, %r8\n   sub %r8, %r9\n   sub %r9, %r11\n"
-    "lea 128(%rdi), %r10\n"
-    ".balign 16\n"
-    "3:  cmp %r10, %r8\n   jbe 4f\n"
-    "sub $128, %r8\n   sub $128, %r11\n"
-    "vmovdqu (%r11), %ymm0\n   vmovdqu 32(%r11), %ymm1\n"
-    "vmovdqu 64(%r11), %ymm2\n   vmovdqu 96(%r11), %ymm3\n"
-    "vmovdqa %ymm0, (%r8)\n   vmovdqa %ymm1, 32(%r8)\n"
-    "vmovdqa %ymm2, 64(%r8)\n   vmovdqa %ymm3, 96(%r8)\n"
+    "lea 128(%rdi), %r10\n   .balign 16\n"
+    "3:  cmp %r10, %r8\n   jbe 4f\n   sub $128, %r8\n   sub $128, %r11\n"
+    "vmovdqu (%r11), %ymm0\n   vmovdqu 32(%r11), %ymm1\n   vmovdqu 64(%r11), %ymm2\n   vmovdqu 96(%r11), %ymm3\n"
+    "vmovdqa %ymm0, (%r8)\n   vmovdqa %ymm1, 32(%r8)\n   vmovdqa %ymm2, 64(%r8)\n   vmovdqa %ymm3, 96(%r8)\n"
     "jmp 3b\n"
-    "4:  vmovdqu %ymm8, -32(%rdi,%rdx)\n"
-    "vmovdqu %ymm4, (%rdi)\n   vmovdqu %ymm5, 32(%rdi)\n"
-    "vmovdqu %ymm6, 64(%rdi)\n   vmovdqu %ymm7, 96(%rdi)\n"
-    "vzeroupper\n"
+    "4:  vmovdqu %ymm8, -32(%rdi,%rdx)\n   vmovdqu %ymm4, (%rdi)\n   vmovdqu %ymm5, 32(%rdi)\n   vmovdqu %ymm6, 64(%rdi)\n"
+    "vmovdqu %ymm7, 96(%rdi)\n   vzeroupper\n"
     ASM_RET
     )
     //
@@ -3267,28 +3129,24 @@ __asm__(
     //       downwards, with the first eight kept in a register so the store that
     //       ends it does not need memory the loop has already written over.
     //
-    "5:  cmp $8, %rdx\n   jb 6f\n"
-    "mov (%rsi), %r9\n   lea (%rdi,%rdx), %r8\n   lea (%rsi,%rdx), %r11\n"
-    "lea 8(%rdi), %rcx\n"
-    "7:  cmp %rcx, %r8\n   jbe 8f\n"
-    "sub $8, %r8\n   sub $8, %r11\n   mov (%r11), %r10\n   mov %r10, (%r8)\n"
-    "jmp 7b\n"
+    "5:  cmp $8, %rdx\n   jb 6f\n   mov (%rsi), %r9\n   lea (%rdi,%rdx), %r8\n"
+    "lea (%rsi,%rdx), %r11\n   lea 8(%rdi), %rcx\n"
+    "7:  cmp %rcx, %r8\n   jbe 8f\n   sub $8, %r8\n   sub $8, %r11\n"
+    "mov (%r11), %r10\n   mov %r10, (%r8)\n   jmp 7b\n"
     "8:  mov %r9, (%rdi)\n"
     ASM_RET
     //
     //       Under eight there is no direction left to get wrong: both halves are
     //       in registers before either of them is written.
     //
-    "6:  cmp $4, %rdx\n   jb 9f\n"
-    "mov (%rsi), %r9d\n   mov -4(%rsi,%rdx), %r10d\n"
+    "6:  cmp $4, %rdx\n   jb 9f\n   mov (%rsi), %r9d\n   mov -4(%rsi,%rdx), %r10d\n"
     "mov %r9d, (%rdi)\n   mov %r10d, -4(%rdi,%rdx)\n"
     ASM_RET
     "9:  test %rdx, %rdx\n   jz 0f\n"
     // all three read before any is written: at one or two bytes of overlap the
     // store to the first would otherwise be the load for the middle
-    "movzbl (%rsi), %r9d\n   movzbl -1(%rsi,%rdx), %r10d\n"
-    "mov %rdx, %rcx\n   shr $1, %rcx\n   movzbl (%rsi,%rcx), %r11d\n"
-    "mov %r9b, (%rdi)\n   mov %r10b, -1(%rdi,%rdx)\n   mov %r11b, (%rdi,%rcx)\n"
+    "movzbl (%rsi), %r9d\n   movzbl -1(%rsi,%rdx), %r10d\n   mov %rdx, %rcx\n   shr $1, %rcx\n"
+    "movzbl (%rsi,%rcx), %r11d\n   mov %r9b, (%rdi)\n   mov %r10b, -1(%rdi,%rdx)\n   mov %r11b, (%rdi,%rcx)\n"
     "0:\n"
     ASM_RET
     ASM_END(memory_copy)
@@ -3298,8 +3156,8 @@ __asm__(
     // here rather than a forged return continuation; CET shadow stacks and the
     // kernel return thunk both require call and return addresses to agree.
     ASM_FUNC(memory_copy_end)
-    "lea (%rdi,%rdx), %rax\n   push %rax\n   call memory_copy\n"
-    "pop %rax\n   movb $0, (%rax)\n"
+    "lea (%rdi,%rdx), %rax\n   push %rax\n   call memory_copy\n   pop %rax\n"
+    "movb $0, (%rax)\n"
     ASM_RET
     ASM_END(memory_copy_end)
     //
@@ -3341,27 +3199,25 @@ __asm__(
     ASM_FUNC(string_copy)
     ASM_USERSPACE_WIDE(
     ASM_NARROW("cpu_has_avx2", "5f")
-    "vpxor %xmm1, %xmm1, %xmm1\n"
-    "mov %rsi, %r8\n   and $-32, %r8  # same page as the string: cannot fault\n"
-    "mov %esi, %ecx\n   and $31, %ecx\n"
-    "vpcmpeqb (%r8), %ymm1, %ymm0\n   vpmovmskb %ymm0, %eax\n"
+    "vpxor %xmm1, %xmm1, %xmm1\n   mov %rsi, %r8\n   and $-32, %r8  # same page as the string: cannot fault\n"
+    "mov %esi, %ecx\n   and $31, %ecx\n   vpcmpeqb (%r8), %ymm1, %ymm0\n   vpmovmskb %ymm0, %eax\n"
     "shr %cl, %eax  # the bytes in front of the string are not ours\n"
     "test %eax, %eax\n   jnz 2f\n"
-    "1:  add $32, %r8\n   vpcmpeqb (%r8), %ymm1, %ymm0\n   vpmovmskb %ymm0, %eax\n"
-    "test %eax, %eax\n   jz 1b\n"
-    "bsf %eax, %eax\n   add %r8, %rax\n   sub %rsi, %rax\n   jmp 3f\n"
+    "1:  add $32, %r8\n   vpcmpeqb (%r8), %ymm1, %ymm0\n   vpmovmskb %ymm0, %eax\n   test %eax, %eax\n"
+    "jz 1b\n   bsf %eax, %eax\n   add %r8, %rax\n   sub %rsi, %rax\n"
+    "jmp 3f\n"
     "2:  bsf %eax, %eax\n"
     "3:  lea 1(%rax), %rdx  # the terminator is copied too\n"
     "vzeroupper\n   jmp memory_copy_fast\n"
     )
     //       No AVX2: the same scan eight bytes at a time, as string_length does it.
     "5:  mov %rsi, %r8\n   mov %esi, %ecx\n   and $7, %ecx\n   and $-8, %r8\n"
-    "mov (%r8), %rdx\n   shl $3, %ecx\n   mov $1, %rax\n   shl %cl, %rax\n   dec %rax\n"
-    "or %rax, %rdx  # so the bytes in front cannot look like a terminator\n"
+    "mov (%r8), %rdx\n   shl $3, %ecx\n   mov $1, %rax\n   shl %cl, %rax\n"
+    "dec %rax\n   or %rax, %rdx  # so the bytes in front cannot look like a terminator\n"
     "movabs $0x0101010101010101, %r10\n   movabs $0x8080808080808080, %r11\n"
     "1:  mov %rdx, %rax\n   sub %r10, %rax\n   mov %rdx, %r9\n   not %r9\n"
-    "and %r9, %rax\n   and %r11, %rax\n   jnz 2f\n"
-    "add $8, %r8\n   mov (%r8), %rdx\n   jmp 1b\n"
+    "and %r9, %rax\n   and %r11, %rax\n   jnz 2f\n   add $8, %r8\n"
+    "mov (%r8), %rdx\n   jmp 1b\n"
     "2:  bsf %rax, %rax\n   shr $3, %rax\n   add %r8, %rax\n   sub %rsi, %rax\n"
     "lea 1(%rax), %rdx\n   jmp memory_copy_fast\n"
     ASM_END(string_copy)
@@ -3379,10 +3235,8 @@ __asm__(
     //
     ASM_FUNC(string_append)
     "push %rbx\n   push %r12\n   sub $8, %rsp  # aligned at the calls\n"
-    "mov %rdi, %rbx\n   mov %rsi, %r12\n"
-    "call string_length  # the destination is already in rdi\n"
-    "lea (%rbx,%rax), %rdi\n   mov %r12, %rsi\n   call string_copy\n"
-    "mov %rbx, %rax  # strcat hands the destination back\n"
+    "mov %rdi, %rbx\n   mov %rsi, %r12\n   call string_length  # the destination is already in rdi\n"
+    "lea (%rbx,%rax), %rdi\n   mov %r12, %rsi\n   call string_copy\n   mov %rbx, %rax  # strcat hands the destination back\n"
     "add $8, %rsp\n   pop %r12\n   pop %rbx\n"
     ASM_RET
     ASM_END(string_append)
@@ -3397,11 +3251,10 @@ __asm__(
     ASM_USERSPACE_WIDE(
     "vpxor %xmm1, %xmm1, %xmm1\n   lea (%rsi,%rdx), %r9  # one past the last byte we may read\n"
     "mov %rsi, %r8\n   and $-32, %r8\n   mov %esi, %ecx\n   and $31, %ecx\n"
-    "vpcmpeqb (%r8), %ymm1, %ymm0\n   vpmovmskb %ymm0, %eax\n"
-    "shr %cl, %eax\n   test %eax, %eax\n   jnz 2f\n"
+    "vpcmpeqb (%r8), %ymm1, %ymm0\n   vpmovmskb %ymm0, %eax\n   shr %cl, %eax\n   test %eax, %eax\n"
+    "jnz 2f\n"
     "1:  add $32, %r8\n   cmp %r9, %r8\n   jae 4f  # the bound is behind us\n"
-    "vpcmpeqb (%r8), %ymm1, %ymm0\n   vpmovmskb %ymm0, %eax\n"
-    "test %eax, %eax\n   jz 1b\n"
+    "vpcmpeqb (%r8), %ymm1, %ymm0\n   vpmovmskb %ymm0, %eax\n   test %eax, %eax\n   jz 1b\n"
     "bsf %eax, %eax\n   add %r8, %rax\n   sub %rsi, %rax\n   jmp 3f\n"
     "2:  bsf %eax, %eax\n"
     "3:  vzeroupper\n   cmp %rdx, %rax\n   jae 8f  # the bound came first\n"
@@ -3410,14 +3263,13 @@ __asm__(
     "4:  vzeroupper\n   jmp memory_copy_fast\n"
     )
     "9:  " ASM_RET
-    "5:  lea (%rsi,%rdx), %r9\n"
-    "mov %rsi, %r8\n   mov %esi, %ecx\n   and $7, %ecx\n   and $-8, %r8\n"
-    "mov (%r8), %r10\n   shl $3, %ecx\n   mov $1, %rax\n   shl %cl, %rax\n   dec %rax\n"
-    "or %rax, %r10\n"
-    "movabs $0x0101010101010101, %rcx\n   movabs $0x8080808080808080, %r11\n"
+    "5:  lea (%rsi,%rdx), %r9\n   mov %rsi, %r8\n   mov %esi, %ecx\n   and $7, %ecx\n"
+    "and $-8, %r8\n   mov (%r8), %r10\n   shl $3, %ecx\n   mov $1, %rax\n"
+    "shl %cl, %rax\n   dec %rax\n   or %rax, %r10\n   movabs $0x0101010101010101, %rcx\n"
+    "movabs $0x8080808080808080, %r11\n"
     "1:  mov %r10, %rax\n   sub %rcx, %rax\n   not %r10\n   and %r10, %rax\n"
-    "and %r11, %rax\n   jnz 2f\n"
-    "add $8, %r8\n   cmp %r9, %r8\n   jae 4f\n   mov (%r8), %r10\n   jmp 1b\n"
+    "and %r11, %rax\n   jnz 2f\n   add $8, %r8\n   cmp %r9, %r8\n"
+    "jae 4f\n   mov (%r8), %r10\n   jmp 1b\n"
     "2:  bsf %rax, %rax\n   shr $3, %rax\n   add %r8, %rax\n   sub %rsi, %rax\n"
     "cmp %rdx, %rax\n   jae 4f\n   lea 1(%rax), %rdx\n"
     "4:  jmp memory_copy_fast\n"
@@ -3459,16 +3311,12 @@ __asm__(
     //       pushes from an entry that is eight past aligned lands back on
     //       sixteen, which is what the calls want.
     //
-    "push %rbx\n   push %r12\n   push %r13\n"
-    "mov %rdi, %rbx  # the destination\n"
+    "push %rbx\n   push %r12\n   push %r13\n   mov %rdi, %rbx  # the destination\n"
     "mov %rsi, %r12  # the source\n"
-    "mov %rsi, %rdi\n   mov %rdx, %rsi\n"
-    "call string_length_max\n"
-    "mov %rax, %r13  # how much of it there was\n"
-    "mov %rbx, %rdi\n   mov %r12, %rsi\n   mov %r13, %rdx\n"
-    "call memory_copy_fast\n"
-    "lea (%rbx,%r13), %rax\n   movb $0, (%rax)\n"
-    "pop %r13\n   pop %r12\n   pop %rbx\n"
+    "mov %rsi, %rdi\n   mov %rdx, %rsi\n   call string_length_max\n   mov %rax, %r13  # how much of it there was\n"
+    "mov %rbx, %rdi\n   mov %r12, %rsi\n   mov %r13, %rdx\n   call memory_copy_fast\n"
+    "lea (%rbx,%r13), %rax\n   movb $0, (%rax)\n   pop %r13\n   pop %r12\n"
+    "pop %rbx\n"
     ASM_RET
     ASM_END(string_copy_max_end)
     //
@@ -3496,26 +3344,20 @@ __asm__(
     ASM_NARROW("cpu_has_avx2", "5f")
     ASM_USERSPACE_WIDE(
     "vpxor %xmm1, %xmm1, %xmm1\n"
-    "1:  test $31, %dil\n   jz 2f\n"
-    "movzbl (%rdi), %eax\n   test %al, %al\n   jz 6f\n"
-    "cmp %ecx, %eax\n   jne 3f\n   mov %dl, (%rdi)\n"
+    "1:  test $31, %dil\n   jz 2f\n   movzbl (%rdi), %eax\n   test %al, %al\n"
+    "jz 6f\n   cmp %ecx, %eax\n   jne 3f\n   mov %dl, (%rdi)\n"
     "3:  inc %rdi\n   jmp 1b\n"
     //
     //       The first block is tested before the two broadcasts are built, so a
     //       string that ends inside it never pays for them: at eight bytes that
     //       was nine cycles, and the whole call is about twenty.
     //
-    "2:  vmovdqa (%rdi), %ymm0\n"
-    "vpcmpeqb %ymm1, %ymm0, %ymm4\n   vpmovmskb %ymm4, %eax\n"
-    "test %eax, %eax\n   jnz 4f\n"
-    "vmovd %ecx, %xmm2\n   vpbroadcastb %xmm2, %ymm2\n"
-    "movzbl %dl, %eax\n   vmovd %eax, %xmm3\n   vpbroadcastb %xmm3, %ymm3\n"
-    "jmp 7f\n"
-    "8:  vmovdqa (%rdi), %ymm0\n"
-    "vpcmpeqb %ymm1, %ymm0, %ymm4\n   vpmovmskb %ymm4, %eax\n"
-    "test %eax, %eax\n   jnz 4f  # the terminator is in this block\n"
-    "7:  vpcmpeqb %ymm2, %ymm0, %ymm4\n   vpmovmskb %ymm4, %eax\n"
-    "test %eax, %eax\n   jz 0f  # nothing to replace: no store at all\n"
+    "2:  vmovdqa (%rdi), %ymm0\n   vpcmpeqb %ymm1, %ymm0, %ymm4\n   vpmovmskb %ymm4, %eax\n   test %eax, %eax\n"
+    "jnz 4f\n   vmovd %ecx, %xmm2\n   vpbroadcastb %xmm2, %ymm2\n   movzbl %dl, %eax\n"
+    "vmovd %eax, %xmm3\n   vpbroadcastb %xmm3, %ymm3\n   jmp 7f\n"
+    "8:  vmovdqa (%rdi), %ymm0\n   vpcmpeqb %ymm1, %ymm0, %ymm4\n   vpmovmskb %ymm4, %eax\n   test %eax, %eax\n"
+    "jnz 4f  # the terminator is in this block\n"
+    "7:  vpcmpeqb %ymm2, %ymm0, %ymm4\n   vpmovmskb %ymm4, %eax\n   test %eax, %eax\n   jz 0f  # nothing to replace: no store at all\n"
     "vpblendvb %ymm4, %ymm3, %ymm0, %ymm0\n   vmovdqa %ymm0, (%rdi)\n"
     "0:  add $32, %rdi\n   jmp 8b\n"
     "4:  vzeroupper\n   jmp 5f\n"
@@ -3538,16 +3380,12 @@ __asm__(
     "movsbl %sil, %edx\n   test %edx, %edx\n   jle 8f  # b8 at or below zero never matches\n"
     ASM_NARROW("cpu_has_avx2", "5f")
     ASM_USERSPACE_WIDE(
-    "vmovd %edx, %xmm2\n   vpbroadcastb %xmm2, %ymm2\n   vpxor %xmm1, %xmm1, %xmm1\n"
-    "mov %rdi, %r8\n   and $-32, %r8\n   mov %edi, %ecx\n   and $31, %ecx\n"
-    "vmovdqa (%r8), %ymm0\n"
-    "vpcmpeqb %ymm1, %ymm0, %ymm3\n   vpcmpeqb %ymm2, %ymm0, %ymm4\n"
-    "vpor %ymm3, %ymm4, %ymm3\n   vpmovmskb %ymm3, %eax\n"
+    "vmovd %edx, %xmm2\n   vpbroadcastb %xmm2, %ymm2\n   vpxor %xmm1, %xmm1, %xmm1\n   mov %rdi, %r8\n"
+    "and $-32, %r8\n   mov %edi, %ecx\n   and $31, %ecx\n   vmovdqa (%r8), %ymm0\n"
+    "vpcmpeqb %ymm1, %ymm0, %ymm3\n   vpcmpeqb %ymm2, %ymm0, %ymm4\n   vpor %ymm3, %ymm4, %ymm3\n   vpmovmskb %ymm3, %eax\n"
     "shr %cl, %eax\n   test %eax, %eax\n   jnz 2f\n"
-    "1:  add $32, %r8\n   vmovdqa (%r8), %ymm0\n"
-    "vpcmpeqb %ymm1, %ymm0, %ymm3\n   vpcmpeqb %ymm2, %ymm0, %ymm4\n"
-    "vpor %ymm3, %ymm4, %ymm3\n   vpmovmskb %ymm3, %eax\n"
-    "test %eax, %eax\n   jz 1b\n"
+    "1:  add $32, %r8\n   vmovdqa (%r8), %ymm0\n   vpcmpeqb %ymm1, %ymm0, %ymm3\n   vpcmpeqb %ymm2, %ymm0, %ymm4\n"
+    "vpor %ymm3, %ymm4, %ymm3\n   vpmovmskb %ymm3, %eax\n   test %eax, %eax\n   jz 1b\n"
     "bsf %eax, %eax\n   add %r8, %rax\n   jmp 3f\n"
     "2:  bsf %eax, %eax\n   add %rdi, %rax\n"
     "3:  vzeroupper\n"
@@ -3560,8 +3398,7 @@ __asm__(
     //       No AVX2: the byte loop this replaced, rotated as described above.
     "5:  movzbl (%rdi), %eax\n   test %al, %al\n   jz 8b\n   .balign 16\n"
     "1:  cmp %edx, %eax\n   je 2f\n   inc %rdi\n   movzbl (%rdi), %eax\n"
-    "test %al, %al\n   jnz 1b\n"
-    "jmp 8b\n"
+    "test %al, %al\n   jnz 1b\n   jmp 8b\n"
     "2:  mov %rdi, %rax\n   jmp 4b\n"
     ASM_END(string_cut)
 
@@ -3574,41 +3411,37 @@ __asm__(
     //       public-to-core call and no nested frame.
     //
     ASM_LOCAL_FUNC(path_split_core)
-    "push %rbx\n   push %r12\n   push %r13\n   push %r14\n   sub $8, %rsp\n"
-    "mov %rdi, %rbx\n   mov %rsi, %r12\n   mov %r10, %r13\n   mov %rdx, %r14\n"
-    "test %r13, %r13\n   cmovz %rsi, %r14\n   mov %r14, %rdi\n"
+    "push %rbx\n   push %r12\n   push %r13\n   push %r14\n"
+    "sub $8, %rsp\n   mov %rdi, %rbx\n   mov %rsi, %r12\n   mov %r10, %r13\n"
+    "mov %rdx, %r14\n   test %r13, %r13\n   cmovz %rsi, %r14\n   mov %r14, %rdi\n"
     "call string_length\n   mov %rax, %rdx\n"
     "1:  cmp $1, %rdx\n   jbe 2f\n   cmpb $47, -1(%r14,%rdx,1)\n   jne 2f\n"
     "dec %rdx\n   jmp 1b\n"
     "2:  mov %rdx, %rcx\n"
     "3:  test %rcx, %rcx\n   jz 4f\n   cmpb $47, -1(%r14,%rcx,1)\n   je 4f\n"
     "dec %rcx\n   jmp 3b\n"
-    "4:  test %r13, %r13\n   jz .Lpath_x86_writer\n"
-    "cmp $1, %r13\n   jne .Lpath_x86_head\n"
+    "4:  test %r13, %r13\n   jz .Lpath_x86_writer\n   cmp $1, %r13\n   jne .Lpath_x86_head\n"
     // tail copy
     "cmp $1, %rdx\n   jne 5f\n   cmpb $47, (%r14)\n   jne 5f\n"
     "mov %r14, %rsi\n   mov $1, %edx\n   jmp 6f\n"
     "5:  lea (%r14,%rcx,1), %rsi\n   sub %rcx, %rdx\n"
-    "6:  lea -1(%r12), %rax\n   cmp %rax, %rdx\n   cmova %rax, %rdx\n"
-    "mov %rbx, %rdi\n   call memory_copy_fast_end\n   sub %rbx, %rax\n"
-    "jmp .Lpath_x86_return\n"
+    "6:  lea -1(%r12), %rax\n   cmp %rax, %rdx\n   cmova %rax, %rdx\n   mov %rbx, %rdi\n"
+    "call memory_copy_fast_end\n   sub %rbx, %rax\n   jmp .Lpath_x86_return\n"
     // dirname copy
-    ".Lpath_x86_head:\n   test %rcx, %rcx\n   jnz 7f\n"
-    "cmp $1, %r12\n   je 8f\n   movb $46, (%rbx)\n   movb $0, 1(%rbx)\n"
-    "mov $1, %eax\n   jmp .Lpath_x86_return\n"
+    ".Lpath_x86_head:\n   test %rcx, %rcx\n   jnz 7f\n   cmp $1, %r12\n"
+    "je 8f\n   movb $46, (%rbx)\n   movb $0, 1(%rbx)\n   mov $1, %eax\n"
+    "jmp .Lpath_x86_return\n"
     "8:  movb $0, (%rbx)\n   xor %eax, %eax\n   jmp .Lpath_x86_return\n"
     "7:  cmp $1, %rcx\n   jbe 9f\n   cmpb $47, -1(%r14,%rcx,1)\n   jne 9f\n"
     "dec %rcx\n   jmp 7b\n"
-    "9:  lea -1(%r12), %rdx\n   cmp %rdx, %rcx\n   cmova %rdx, %rcx\n"
-    "mov %r14, %rsi\n   mov %rcx, %rdx\n   mov %rbx, %rdi\n"
-    "call memory_copy_fast_end\n   sub %rbx, %rax\n"
+    "9:  lea -1(%r12), %rdx\n   cmp %rdx, %rcx\n   cmova %rdx, %rcx\n   mov %r14, %rsi\n"
+    "mov %rcx, %rdx\n   mov %rbx, %rdi\n   call memory_copy_fast_end\n   sub %rbx, %rax\n"
     ".Lpath_x86_return:\n   add $8, %rsp\n   pop %r14\n   pop %r13\n"
     "pop %r12\n   pop %rbx\n"
     ASM_RET
     // writer basename, with root retaining its slash
-    ".Lpath_x86_writer:\n   cmp $1, %rdx\n   jne 5f\n"
-    "cmpb $47, (%r14)\n   jne 5f\n   mov %r14, %rdi\n   mov $1, %esi\n"
-    "jmp 6f\n"
+    ".Lpath_x86_writer:\n   cmp $1, %rdx\n   jne 5f\n   cmpb $47, (%r14)\n"
+    "jne 5f\n   mov %r14, %rdi\n   mov $1, %esi\n   jmp 6f\n"
     "5:  lea (%r14,%rcx,1), %rdi\n   mov %rdx, %rsi\n   sub %rcx, %rsi\n"
     "6:  mov %rbx, %r11\n"
     ASM_CALL("r11")
@@ -3636,19 +3469,16 @@ __asm__(
     // preservation of leading/trailing slashes are the former C contract.
     ASM_FUNC(path_join)
     "test %rsi, %rsi\n   jz 8f\n   push %rbx\n   push %r12\n"
-    "push %r13\n   push %r14\n   push %r15\n"
-    "mov %rdi, %rbx\n   mov %rsi, %r12\n   mov %rdx, %r13\n   mov %rcx, %r14\n"
-    "mov %r13, %rdi\n   lea -1(%r12), %rsi\n   call string_length_max\n"
-    "mov %rax, %r15\n   mov %rbx, %rdi\n   mov %r13, %rsi\n"
-    "mov %r15, %rdx\n   call memory_copy_fast\n"
-    "test %r15, %r15\n   jz 2f\n   cmpb $47, -1(%rbx,%r15,1)\n   je 2f\n"
-    "lea 1(%r15), %rax\n   cmp %r12, %rax\n   jae 2f\n"
-    "movb $47, (%rbx,%r15,1)\n   mov %rax, %r15\n"
-    "2:  lea -1(%r12), %rsi\n   sub %r15, %rsi\n   mov %r14, %rdi\n"
-    "call string_length_max\n   mov %rax, %rdx\n"
-    "lea (%rbx,%r15,1), %rdi\n   mov %r14, %rsi\n"
-    "call memory_copy_fast_end\n   sub %rbx, %rax\n"
-    "pop %r15\n   pop %r14\n   pop %r13\n   pop %r12\n   pop %rbx\n"
+    "push %r13\n   push %r14\n   push %r15\n   mov %rdi, %rbx\n"
+    "mov %rsi, %r12\n   mov %rdx, %r13\n   mov %rcx, %r14\n   mov %r13, %rdi\n"
+    "lea -1(%r12), %rsi\n   call string_length_max\n   mov %rax, %r15\n   mov %rbx, %rdi\n"
+    "mov %r13, %rsi\n   mov %r15, %rdx\n   call memory_copy_fast\n   test %r15, %r15\n"
+    "jz 2f\n   cmpb $47, -1(%rbx,%r15,1)\n   je 2f\n   lea 1(%r15), %rax\n"
+    "cmp %r12, %rax\n   jae 2f\n   movb $47, (%rbx,%r15,1)\n   mov %rax, %r15\n"
+    "2:  lea -1(%r12), %rsi\n   sub %r15, %rsi\n   mov %r14, %rdi\n   call string_length_max\n"
+    "mov %rax, %rdx\n   lea (%rbx,%r15,1), %rdi\n   mov %r14, %rsi\n   call memory_copy_fast_end\n"
+    "sub %rbx, %rax\n   pop %r15\n   pop %r14\n   pop %r13\n"
+    "pop %r12\n   pop %rbx\n"
     ASM_RET
     "8:  xor %eax, %eax\n"
     ASM_RET
@@ -3835,8 +3665,7 @@ ASM_FUNC(positive_to_string)
     //       second copy.
     //
     "sub $40, %rsp  # 40, not 32: aligned at both calls\n"
-    "mov %rdi, (%rsp)\n   lea 40(%rsp), %rdi\n"
-    "call positive_digits_core\n   mov (%rsp), %r11\n"
+    "mov %rdi, (%rsp)\n   lea 40(%rsp), %rdi\n   call positive_digits_core\n   mov (%rsp), %r11\n"
     ASM_CALL("r11")
     "add $40, %rsp\n"
     ASM_RET
@@ -3848,82 +3677,62 @@ ASM_FUNC(positive_to_string)
     //       too: the table would have written it as 00 and the pointer steps
     //       past the first of them.
     //
-    "cmp $99, %rsi\n   ja 1f\n"
-    "movzwl (%r9,%rsi,2), %eax\n   mov %ax, -2(%rdi)\n"
+    "cmp $99, %rsi\n   ja 1f\n   movzwl (%r9,%rsi,2), %eax\n   mov %ax, -2(%rdi)\n"
     "xor %edx, %edx\n   cmp $10, %rsi\n   adc $0, %edx  # one digit: skip the leading zero\n"
     "lea -2(%rdi,%rdx), %rdi\n   mov $2, %esi\n   sub %rdx, %rsi\n"
     ASM_RET
     //
     //       Four characters, from a value under ten thousand.
     //
-    "1:  cmp $9999, %rsi\n   ja 2f\n"
-    "mov %esi, %eax\n"
-    "imul $5243, %eax, %edx\n   shr $19, %edx\n   imul $100, %edx, %ecx\n   sub %ecx, %eax\n"
-    "movzwl (%r9,%rdx,2), %edx\n   movzwl (%r9,%rax,2), %eax\n"
-    "mov %dx, -4(%rdi)\n   mov %ax, -2(%rdi)\n   jmp 9f\n"
+    "1:  cmp $9999, %rsi\n   ja 2f\n   mov %esi, %eax\n   imul $5243, %eax, %edx\n"
+    "shr $19, %edx\n   imul $100, %edx, %ecx\n   sub %ecx, %eax\n   movzwl (%r9,%rdx,2), %edx\n"
+    "movzwl (%r9,%rax,2), %eax\n   mov %dx, -4(%rdi)\n   mov %ax, -2(%rdi)\n   jmp 9f\n"
     //
     //       Eight characters, from a value under a hundred million. Four table
     //       reads and four halfword stores, and the four divides that feed
     //       them are two levels of a tree rather than four steps of a chain.
     //
-    "2:  cmp $99999999, %rsi\n   ja 3f\n"
-    "mov %esi, %eax\n"
-    "imul $1759218605, %rax, %rcx\n   shr $44, %rcx\n   imul $10000, %ecx, %edx\n   sub %edx, %eax\n"
-    "imul $5243, %ecx, %edx\n   shr $19, %edx\n   imul $100, %edx, %r11d\n   sub %r11d, %ecx\n"
-    "movzwl (%r9,%rdx,2), %edx\n   movzwl (%r9,%rcx,2), %ecx\n"
-    "mov %dx, -8(%rdi)\n   mov %cx, -6(%rdi)\n"
-    "imul $5243, %eax, %edx\n   shr $19, %edx\n   imul $100, %edx, %r11d\n   sub %r11d, %eax\n"
-    "movzwl (%r9,%rdx,2), %edx\n   movzwl (%r9,%rax,2), %eax\n"
-    "mov %dx, -4(%rdi)\n   mov %ax, -2(%rdi)\n   jmp 9f\n"
+    "2:  cmp $99999999, %rsi\n   ja 3f\n   mov %esi, %eax\n   imul $1759218605, %rax, %rcx\n"
+    "shr $44, %rcx\n   imul $10000, %ecx, %edx\n   sub %edx, %eax\n   imul $5243, %ecx, %edx\n"
+    "shr $19, %edx\n   imul $100, %edx, %r11d\n   sub %r11d, %ecx\n   movzwl (%r9,%rdx,2), %edx\n"
+    "movzwl (%r9,%rcx,2), %ecx\n   mov %dx, -8(%rdi)\n   mov %cx, -6(%rdi)\n   imul $5243, %eax, %edx\n"
+    "shr $19, %edx\n   imul $100, %edx, %r11d\n   sub %r11d, %eax\n   movzwl (%r9,%rdx,2), %edx\n"
+    "movzwl (%r9,%rax,2), %eax\n   mov %dx, -4(%rdi)\n   mov %ax, -2(%rdi)\n   jmp 9f\n"
     //
     //       Nine digits or more: the bottom eight, then whatever is left over
     //       through the same two shapes again. The leading chunk is written
     //       padded and the pointer is what drops its zeros.
     //
-    "3:  movabs $0xABCC77118461CEFD, %r10\n"
-    "mov %rsi, %rax\n   mul %r10\n   shr $26, %rdx  # n / 100000000\n"
-    "imul $100000000, %rdx, %rax\n   mov %rdx, %r8\n"
-    "mov %esi, %ecx\n   sub %eax, %ecx  # n % 100000000\n"
-    "mov %ecx, %eax\n"
-    "imul $1759218605, %rax, %rcx\n   shr $44, %rcx\n   imul $10000, %ecx, %edx\n   sub %edx, %eax\n"
-    "imul $5243, %ecx, %edx\n   shr $19, %edx\n   imul $100, %edx, %r11d\n   sub %r11d, %ecx\n"
-    "movzwl (%r9,%rdx,2), %edx\n   movzwl (%r9,%rcx,2), %ecx\n"
-    "mov %dx, -8(%rdi)\n   mov %cx, -6(%rdi)\n"
-    "imul $5243, %eax, %edx\n   shr $19, %edx\n   imul $100, %edx, %r11d\n   sub %r11d, %eax\n"
-    "movzwl (%r9,%rdx,2), %edx\n   movzwl (%r9,%rax,2), %eax\n"
-    "mov %dx, -4(%rdi)\n   mov %ax, -2(%rdi)\n"
-    "cmp $9999, %r8\n   ja 4f\n"
-    "mov %r8d, %eax\n"
+    "3:  movabs $0xABCC77118461CEFD, %r10\n   mov %rsi, %rax\n   mul %r10\n   shr $26, %rdx  # n / 100000000\n"
+    "imul $100000000, %rdx, %rax\n   mov %rdx, %r8\n   mov %esi, %ecx\n   sub %eax, %ecx  # n % 100000000\n"
+    "mov %ecx, %eax\n   imul $1759218605, %rax, %rcx\n   shr $44, %rcx\n   imul $10000, %ecx, %edx\n"
+    "sub %edx, %eax\n   imul $5243, %ecx, %edx\n   shr $19, %edx\n   imul $100, %edx, %r11d\n"
+    "sub %r11d, %ecx\n   movzwl (%r9,%rdx,2), %edx\n   movzwl (%r9,%rcx,2), %ecx\n   mov %dx, -8(%rdi)\n"
+    "mov %cx, -6(%rdi)\n   imul $5243, %eax, %edx\n   shr $19, %edx\n   imul $100, %edx, %r11d\n"
+    "sub %r11d, %eax\n   movzwl (%r9,%rdx,2), %edx\n   movzwl (%r9,%rax,2), %eax\n   mov %dx, -4(%rdi)\n"
+    "mov %ax, -2(%rdi)\n   cmp $9999, %r8\n   ja 4f\n   mov %r8d, %eax\n"
     "imul $5243, %eax, %edx\n   shr $19, %edx\n   imul $100, %edx, %ecx\n   sub %ecx, %eax\n"
-    "movzwl (%r9,%rdx,2), %edx\n   movzwl (%r9,%rax,2), %eax\n"
-    "mov %dx, -12(%rdi)\n   mov %ax, -10(%rdi)\n   jmp 9f\n"
-    "4:  cmp $99999999, %r8\n   ja 5f\n"
-    "mov %r8d, %eax\n"
-    "imul $1759218605, %rax, %rcx\n   shr $44, %rcx\n   imul $10000, %ecx, %edx\n   sub %edx, %eax\n"
-    "imul $5243, %ecx, %edx\n   shr $19, %edx\n   imul $100, %edx, %r11d\n   sub %r11d, %ecx\n"
-    "movzwl (%r9,%rdx,2), %edx\n   movzwl (%r9,%rcx,2), %ecx\n"
-    "mov %dx, -16(%rdi)\n   mov %cx, -14(%rdi)\n"
-    "imul $5243, %eax, %edx\n   shr $19, %edx\n   imul $100, %edx, %r11d\n   sub %r11d, %eax\n"
-    "movzwl (%r9,%rdx,2), %edx\n   movzwl (%r9,%rax,2), %eax\n"
-    "mov %dx, -12(%rdi)\n   mov %ax, -10(%rdi)\n   jmp 9f\n"
+    "movzwl (%r9,%rdx,2), %edx\n   movzwl (%r9,%rax,2), %eax\n   mov %dx, -12(%rdi)\n   mov %ax, -10(%rdi)\n"
+    "jmp 9f\n"
+    "4:  cmp $99999999, %r8\n   ja 5f\n   mov %r8d, %eax\n   imul $1759218605, %rax, %rcx\n"
+    "shr $44, %rcx\n   imul $10000, %ecx, %edx\n   sub %edx, %eax\n   imul $5243, %ecx, %edx\n"
+    "shr $19, %edx\n   imul $100, %edx, %r11d\n   sub %r11d, %ecx\n   movzwl (%r9,%rdx,2), %edx\n"
+    "movzwl (%r9,%rcx,2), %ecx\n   mov %dx, -16(%rdi)\n   mov %cx, -14(%rdi)\n   imul $5243, %eax, %edx\n"
+    "shr $19, %edx\n   imul $100, %edx, %r11d\n   sub %r11d, %eax\n   movzwl (%r9,%rdx,2), %edx\n"
+    "movzwl (%r9,%rax,2), %eax\n   mov %dx, -12(%rdi)\n   mov %ax, -10(%rdi)\n   jmp 9f\n"
     //
     //       Seventeen digits or more, which the top of the type is: the third
     //       chunk is at most 1844, so four characters cover it.
     //
-    "5:  mov %r8, %rax\n   mul %r10\n   shr $26, %rdx\n"
-    "imul $100000000, %rdx, %rax\n   sub %eax, %r8d\n   mov %rdx, %r10\n"
-    "mov %r8d, %eax\n"
-    "imul $1759218605, %rax, %rcx\n   shr $44, %rcx\n   imul $10000, %ecx, %edx\n   sub %edx, %eax\n"
-    "imul $5243, %ecx, %edx\n   shr $19, %edx\n   imul $100, %edx, %r11d\n   sub %r11d, %ecx\n"
-    "movzwl (%r9,%rdx,2), %edx\n   movzwl (%r9,%rcx,2), %ecx\n"
-    "mov %dx, -16(%rdi)\n   mov %cx, -14(%rdi)\n"
-    "imul $5243, %eax, %edx\n   shr $19, %edx\n   imul $100, %edx, %r11d\n   sub %r11d, %eax\n"
-    "movzwl (%r9,%rdx,2), %edx\n   movzwl (%r9,%rax,2), %eax\n"
-    "mov %dx, -12(%rdi)\n   mov %ax, -10(%rdi)\n"
-    "mov %r10d, %eax\n"
+    "5:  mov %r8, %rax\n   mul %r10\n   shr $26, %rdx\n   imul $100000000, %rdx, %rax\n"
+    "sub %eax, %r8d\n   mov %rdx, %r10\n   mov %r8d, %eax\n   imul $1759218605, %rax, %rcx\n"
+    "shr $44, %rcx\n   imul $10000, %ecx, %edx\n   sub %edx, %eax\n   imul $5243, %ecx, %edx\n"
+    "shr $19, %edx\n   imul $100, %edx, %r11d\n   sub %r11d, %ecx\n   movzwl (%r9,%rdx,2), %edx\n"
+    "movzwl (%r9,%rcx,2), %ecx\n   mov %dx, -16(%rdi)\n   mov %cx, -14(%rdi)\n   imul $5243, %eax, %edx\n"
+    "shr $19, %edx\n   imul $100, %edx, %r11d\n   sub %r11d, %eax\n   movzwl (%r9,%rdx,2), %edx\n"
+    "movzwl (%r9,%rax,2), %eax\n   mov %dx, -12(%rdi)\n   mov %ax, -10(%rdi)\n   mov %r10d, %eax\n"
     "imul $5243, %eax, %edx\n   shr $19, %edx\n   imul $100, %edx, %ecx\n   sub %ecx, %eax\n"
-    "movzwl (%r9,%rdx,2), %edx\n   movzwl (%r9,%rax,2), %eax\n"
-    "mov %dx, -20(%rdi)\n   mov %ax, -18(%rdi)\n"
+    "movzwl (%r9,%rdx,2), %edx\n   movzwl (%r9,%rax,2), %eax\n   mov %dx, -20(%rdi)\n   mov %ax, -18(%rdi)\n"
     //
     //       How many of those characters are the number. Everything that gets
     //       here is a hundred or more, so bsr's undefined answer at zero is
@@ -3940,17 +3749,12 @@ ASM_FUNC(positive_to_string)
     //       was there before rather than to this.
     //
     ".section .rodata\n   .balign 8\n"
-    "ten_powers:\n"
-    "        .quad 1\n                    .quad 10\n"
-    "        .quad 100\n                  .quad 1000\n"
-    "        .quad 10000\n                .quad 100000\n"
-    "        .quad 1000000\n              .quad 10000000\n"
-    "        .quad 100000000\n            .quad 1000000000\n"
-    "        .quad 10000000000\n          .quad 100000000000\n"
-    "        .quad 1000000000000\n        .quad 10000000000000\n"
-    "        .quad 100000000000000\n      .quad 1000000000000000\n"
-    "        .quad 10000000000000000\n    .quad 100000000000000000\n"
-    "        .quad 1000000000000000000\n  .quad 10000000000000000000\n"
+    "ten_powers:\n   .quad 1\n   .quad 10\n   .quad 100\n"
+    ".quad 1000\n   .quad 10000\n   .quad 100000\n   .quad 1000000\n"
+    ".quad 10000000\n   .quad 100000000\n   .quad 1000000000\n   .quad 10000000000\n"
+    ".quad 100000000000\n   .quad 1000000000000\n   .quad 10000000000000\n   .quad 100000000000000\n"
+    ".quad 1000000000000000\n   .quad 10000000000000000\n   .quad 100000000000000000\n   .quad 1000000000000000000\n"
+    ".quad 10000000000000000000\n"
     ASM_SECTION
     //
     //       positive_into -- the digits of a number, into a buffer.
@@ -4000,44 +3804,29 @@ ASM_FUNC(positive_to_string)
     "xor %r11d, %r11d\n   jmp positive_into_core\n"
     ASM_END(positive_into)
     ASM_LOCAL_FUNC(bipolar_into_core)
-    "test %rsi, %rsi\n   jns positive_into_core\n"
-    "movb $45, (%rdi)\n   inc %rdi\n   neg %rsi\n   or $1, %r11d\n"
-    "jmp positive_into_core\n"
+    "test %rsi, %rsi\n   jns positive_into_core\n   movb $45, (%rdi)\n   inc %rdi\n"
+    "neg %rsi\n   or $1, %r11d\n   jmp positive_into_core\n"
     ASM_LOCAL_END(bipolar_into_core)
     ASM_LOCAL_FUNC(positive_into_core)
-    "cmp $99, %rsi\n   ja .Lpositive_into_four\n"
-    "lea digit_pairs(%rip), %r8\n   cmp $10, %rsi\n   jae 1f\n"
-    "movzbl 1(%r8,%rsi,2), %eax\n   mov %al, (%rdi)\n   mov $1, %eax\n"
+    "cmp $99, %rsi\n   ja .Lpositive_into_four\n   lea digit_pairs(%rip), %r8\n   cmp $10, %rsi\n"
+    "jae 1f\n   movzbl 1(%r8,%rsi,2), %eax\n   mov %al, (%rdi)\n   mov $1, %eax\n"
     "jmp .Lpositive_into_done\n"
-    "1:  movzwl (%r8,%rsi,2), %eax\n   mov %ax, (%rdi)\n   mov $2, %eax\n"
+    "1:  movzwl (%r8,%rsi,2), %eax\n   mov %ax, (%rdi)\n   mov $2, %eax\n   jmp .Lpositive_into_done\n"
+    ".Lpositive_into_four:\n   cmp $9999, %rsi\n   ja .Lpositive_into_wide\n   lea digit_pairs(%rip), %r8\n"
+    "mov %esi, %eax\n   imul $5243, %eax, %edx\n   shr $19, %edx\n   imul $100, %edx, %ecx\n"
+    "sub %ecx, %eax\n   cmp $10, %edx\n   jae 2f\n   movzbl 1(%r8,%rdx,2), %ecx\n"
+    "mov %cl, (%rdi)\n   movzwl (%r8,%rax,2), %eax\n   mov %ax, 1(%rdi)\n   mov $3, %eax\n"
     "jmp .Lpositive_into_done\n"
-    ".Lpositive_into_four:\n"
-    "cmp $9999, %rsi\n   ja .Lpositive_into_wide\n"
-    "lea digit_pairs(%rip), %r8\n   mov %esi, %eax\n"
-    "imul $5243, %eax, %edx\n   shr $19, %edx\n"
-    "imul $100, %edx, %ecx\n   sub %ecx, %eax\n"
-    "cmp $10, %edx\n   jae 2f\n"
-    "movzbl 1(%r8,%rdx,2), %ecx\n   mov %cl, (%rdi)\n"
-    "movzwl (%r8,%rax,2), %eax\n   mov %ax, 1(%rdi)\n   mov $3, %eax\n"
-    "jmp .Lpositive_into_done\n"
-    "2:  movzwl (%r8,%rdx,2), %ecx\n   mov %cx, (%rdi)\n"
-    "movzwl (%r8,%rax,2), %eax\n   mov %ax, 2(%rdi)\n   mov $4, %eax\n"
-    "jmp .Lpositive_into_done\n"
-    ".Lpositive_into_wide:\n"
-    "sub $56, %rsp  # aligned calls; scratch occupies the top twenty bytes\n"
-    "mov %rdi, (%rsp)\n   mov %r11, 8(%rsp)\n"
-    "lea 56(%rsp), %rdi\n   call positive_digits_core\n"
-    "mov %rsi, 16(%rsp)\n   mov %rdi, %rsi\n   mov (%rsp), %rdi\n"
-    "mov 16(%rsp), %rdx\n   call memory_copy_fast\n"
-    "mov 16(%rsp), %rax\n   mov (%rsp), %rdi\n   mov 8(%rsp), %r11\n"
-    "test $2, %r11d\n   jz 3f\n"
-    "movb $0, (%rdi,%rax)\n"
-    "3:\n"
-    "and $1, %r11d\n   add %r11, %rax\n"
-    "add $56, %rsp\n"
+    "2:  movzwl (%r8,%rdx,2), %ecx\n   mov %cx, (%rdi)\n   movzwl (%r8,%rax,2), %eax\n   mov %ax, 2(%rdi)\n"
+    "mov $4, %eax\n   jmp .Lpositive_into_done\n"
+    ".Lpositive_into_wide:\n   sub $56, %rsp  # aligned calls; scratch occupies the top twenty bytes\n"
+    "mov %rdi, (%rsp)\n   mov %r11, 8(%rsp)\n   lea 56(%rsp), %rdi\n   call positive_digits_core\n"
+    "mov %rsi, 16(%rsp)\n   mov %rdi, %rsi\n   mov (%rsp), %rdi\n   mov 16(%rsp), %rdx\n"
+    "call memory_copy_fast\n   mov 16(%rsp), %rax\n   mov (%rsp), %rdi\n   mov 8(%rsp), %r11\n"
+    "test $2, %r11d\n   jz 3f\n   movb $0, (%rdi,%rax)\n"
+    "3:\n   and $1, %r11d\n   add %r11, %rax\n   add $56, %rsp\n"
     ASM_RET
-    ".Lpositive_into_done:\n"
-    "test $2, %r11d\n   jz 4f\n   movb $0, (%rdi,%rax)\n"
+    ".Lpositive_into_done:\n   test $2, %r11d\n   jz 4f\n   movb $0, (%rdi,%rax)\n"
     "4:  and $1, %r11d\n   add %r11, %rax\n"
     ASM_RET
     ASM_LOCAL_END(positive_into_core)
@@ -4058,42 +3847,28 @@ ASM_FUNC(positive_to_string)
     ASM_FUNC(positive_into_padded)
     // The fixed timestamp/fraction fields are the hot bounded users. Emit
     // pairs directly before paying the general adapter's call and frame.
-    "cmp $48, %cl\n   jne .Lpositive_into_padded_x86_general\n"
-    "cmp $6, %rdx\n   je .Lpositive_into_padded_x86_six_check\n"
-    "cmp $9, %rdx\n   jne .Lpositive_into_padded_x86_general\n"
-    "cmp $1000000000, %rsi\n   jae .Lpositive_into_padded_x86_general\n"
+    "cmp $48, %cl\n   jne .Lpositive_into_padded_x86_general\n   cmp $6, %rdx\n   je .Lpositive_into_padded_x86_six_check\n"
+    "cmp $9, %rdx\n   jne .Lpositive_into_padded_x86_general\n   cmp $1000000000, %rsi\n   jae .Lpositive_into_padded_x86_general\n"
     "mov $4, %r10d\n   jmp .Lpositive_into_padded_x86_fixed\n"
-    ".Lpositive_into_padded_x86_six_check:\n"
-    "cmp $1000000, %rsi\n   jae .Lpositive_into_padded_x86_general\n"
+    ".Lpositive_into_padded_x86_six_check:\n   cmp $1000000, %rsi\n   jae .Lpositive_into_padded_x86_general\n"
     "mov $3, %r10d\n"
-    ".Lpositive_into_padded_x86_fixed:\n"
-    "lea digit_pairs(%rip), %r8\n   lea (%rdi,%rdx), %r9\n"
-    ".Lpositive_into_padded_x86_pair_loop:\n"
-    "mov %esi, %eax\n   imul $1374389535, %rax, %r11\n   shr $37, %r11\n"
-    "imul $100, %r11, %rax\n   mov %esi, %ecx\n   sub %eax, %ecx\n"
-    "movzwl (%r8,%rcx,2), %eax\n   sub $2, %r9\n   mov %ax, (%r9)\n"
-    "mov %r11, %rsi\n   dec %r10d\n   jnz .Lpositive_into_padded_x86_pair_loop\n"
-    "cmp $9, %rdx\n   jne .Lpositive_into_padded_x86_fixed_done\n"
+    ".Lpositive_into_padded_x86_fixed:\n   lea digit_pairs(%rip), %r8\n   lea (%rdi,%rdx), %r9\n"
+    ".Lpositive_into_padded_x86_pair_loop:\n   mov %esi, %eax\n   imul $1374389535, %rax, %r11\n   shr $37, %r11\n"
+    "imul $100, %r11, %rax\n   mov %esi, %ecx\n   sub %eax, %ecx\n   movzwl (%r8,%rcx,2), %eax\n"
+    "sub $2, %r9\n   mov %ax, (%r9)\n   mov %r11, %rsi\n   dec %r10d\n"
+    "jnz .Lpositive_into_padded_x86_pair_loop\n   cmp $9, %rdx\n   jne .Lpositive_into_padded_x86_fixed_done\n"
     "add $48, %esi\n   mov %sil, (%rdi)\n"
     ".Lpositive_into_padded_x86_fixed_done:\n   mov %rdx, %rax\n"
     ASM_RET
-    ".Lpositive_into_padded_x86_general:\n"
-    "push %rbx\n   push %r12\n   push %r13\n"
-    "mov %rdi, %rbx\n   mov %rdx, %r12\n   mov %cl, %r13b\n"
-    "call positive_into\n"
-    "test %r13b, %r13b\n   jz .Lpositive_into_padded_x86_done\n"
-    "cmp %rax, %r12\n   jbe .Lpositive_into_padded_x86_done\n"
-    "mov %r12, %r9\n   sub %rax, %r9\n   lea (%rbx,%r9), %r10\n"
-    "mov %rax, %r8\n"
-    ".Lpositive_into_padded_x86_move:\n"
-    "dec %r8\n   movzbl (%rbx,%r8), %edx\n   mov %dl, (%r10,%r8)\n"
-    "test %r8, %r8\n   jnz .Lpositive_into_padded_x86_move\n"
-    "xor %r8d, %r8d\n"
-    ".Lpositive_into_padded_x86_fill:\n"
-    "mov %r13b, (%rbx,%r8)\n   inc %r8\n   cmp %r9, %r8\n"
+    ".Lpositive_into_padded_x86_general:\n   push %rbx\n   push %r12\n   push %r13\n"
+    "mov %rdi, %rbx\n   mov %rdx, %r12\n   mov %cl, %r13b\n   call positive_into\n"
+    "test %r13b, %r13b\n   jz .Lpositive_into_padded_x86_done\n   cmp %rax, %r12\n   jbe .Lpositive_into_padded_x86_done\n"
+    "mov %r12, %r9\n   sub %rax, %r9\n   lea (%rbx,%r9), %r10\n   mov %rax, %r8\n"
+    ".Lpositive_into_padded_x86_move:\n   dec %r8\n   movzbl (%rbx,%r8), %edx\n   mov %dl, (%r10,%r8)\n"
+    "test %r8, %r8\n   jnz .Lpositive_into_padded_x86_move\n   xor %r8d, %r8d\n"
+    ".Lpositive_into_padded_x86_fill:\n   mov %r13b, (%rbx,%r8)\n   inc %r8\n   cmp %r9, %r8\n"
     "jb .Lpositive_into_padded_x86_fill\n   mov %r12, %rax\n"
-    ".Lpositive_into_padded_x86_done:\n"
-    "pop %r13\n   pop %r12\n   pop %rbx\n"
+    ".Lpositive_into_padded_x86_done:\n   pop %r13\n   pop %r12\n   pop %rbx\n"
     ASM_RET
     ASM_END(positive_into_padded)
     //
@@ -4103,16 +3878,16 @@ ASM_FUNC(positive_to_string)
     //       bound before reaching it.
     //
     ASM_FUNC(positive_into_pair)
-    "lea digit_pairs(%rip), %rax\n"
-    "movzwl (%rax,%rsi,2), %eax\n   mov %ax, (%rdi)\n   mov $2, %eax\n"
+    "lea digit_pairs(%rip), %rax\n   movzwl (%rax,%rsi,2), %eax\n   mov %ax, (%rdi)\n   mov $2, %eax\n"
     ASM_RET
     ASM_END(positive_into_pair)
     // Call a writer once per byte. The call boundaries are intentional.
     ASM_FUNC(writer_fill)
-    "test %rsi, %rsi\n   jz 2f\n   push %rbx\n   push %r12\n   sub $24, %rsp\n"
-    "mov %rdi, %rbx\n   mov %rsi, %r12\n   mov %dl, (%rsp)\n"
+    "test %rsi, %rsi\n   jz 2f\n   push %rbx\n   push %r12\n"
+    "sub $24, %rsp\n   mov %rdi, %rbx\n   mov %rsi, %r12\n   mov %dl, (%rsp)\n"
     "1:  mov %rsp, %rdi\n   mov $1, %esi\n" ASM_CALL("rbx")
-    "dec %r12\n   jnz 1b\n   add $24, %rsp\n   pop %r12\n   pop %rbx\n"
+    "dec %r12\n   jnz 1b\n   add $24, %rsp\n   pop %r12\n"
+    "pop %rbx\n"
     "2:\n"
     ASM_RET
     ASM_END(writer_fill)
@@ -4135,54 +3910,47 @@ ASM_FUNC(positive_to_string)
             C string, so that call never happens.
     */
     ASM_LOCAL_FUNC(writer_field_core)
-    "sub $8, %rsp\n   test $256, %ebp\n   jnz .Lwriter_field_core_x86_left\n"
-    "mov %rbx, %rdi\n   mov %r14, %rsi\n   movzbl %bpl, %edx\n"
-    "call writer_fill\n   test %r13, %r13\n   jz .Lwriter_field_core_x86_done\n"
-    "mov %r12, %rdi\n   mov %r13, %rsi\n"
+    "sub $8, %rsp\n   test $256, %ebp\n   jnz .Lwriter_field_core_x86_left\n   mov %rbx, %rdi\n"
+    "mov %r14, %rsi\n   movzbl %bpl, %edx\n   call writer_fill\n   test %r13, %r13\n"
+    "jz .Lwriter_field_core_x86_done\n   mov %r12, %rdi\n   mov %r13, %rsi\n"
     ASM_CALL("rbx")
     "jmp .Lwriter_field_core_x86_done\n"
-    ".Lwriter_field_core_x86_left:\n   test %r13, %r13\n"
-    "jz .Lwriter_field_core_x86_left_fill\n   mov %r12, %rdi\n"
+    ".Lwriter_field_core_x86_left:\n   test %r13, %r13\n   jz .Lwriter_field_core_x86_left_fill\n   mov %r12, %rdi\n"
     "mov %r13, %rsi\n"
     ASM_CALL("rbx")
-    ".Lwriter_field_core_x86_left_fill:\n   mov %rbx, %rdi\n"
-    "mov %r14, %rsi\n   movzbl %bpl, %edx\n   call writer_fill\n"
+    ".Lwriter_field_core_x86_left_fill:\n   mov %rbx, %rdi\n   mov %r14, %rsi\n   movzbl %bpl, %edx\n"
+    "call writer_fill\n"
     ".Lwriter_field_core_x86_done:\n   add $8, %rsp\n"
     ASM_RET
     ASM_LOCAL_END(writer_field_core)
     ASM_FUNC(writer_field)
-    "xor %eax, %eax\n   cmp %rdx, %rcx\n   jbe .Lwriter_field_x86_counted\n"
-    "mov %rcx, %rax\n   sub %rdx, %rax\n"
-    ".Lwriter_field_x86_counted:\n   test %rax, %rax\n"
-    "jz .Lwriter_field_x86_body_only\n   test %rdx, %rdx\n"
-    "jz .Lwriter_field_x86_empty\n   push %rbx\n   push %rbp\n"
-    "push %r12\n   push %r13\n   push %r14\n   mov %rdi, %rbx\n"
-    "mov %rsi, %r12\n   mov %rdx, %r13\n   mov %rax, %r14\n"
-    "movzbl %r8b, %ebp\n   test %r9b, %r9b\n   jz 1f\n"
-    "or $256, %ebp\n   1: call writer_field_core\n"
-    "pop %r14\n   pop %r13\n   pop %r12\n   pop %rbp\n   pop %rbx\n"
+    "xor %eax, %eax\n   cmp %rdx, %rcx\n   jbe .Lwriter_field_x86_counted\n   mov %rcx, %rax\n"
+    "sub %rdx, %rax\n"
+    ".Lwriter_field_x86_counted:\n   test %rax, %rax\n   jz .Lwriter_field_x86_body_only\n   test %rdx, %rdx\n"
+    "jz .Lwriter_field_x86_empty\n   push %rbx\n   push %rbp\n   push %r12\n"
+    "push %r13\n   push %r14\n   mov %rdi, %rbx\n   mov %rsi, %r12\n"
+    "mov %rdx, %r13\n   mov %rax, %r14\n   movzbl %r8b, %ebp\n   test %r9b, %r9b\n"
+    "jz 1f\n   or $256, %ebp\n"
+    "1: call writer_field_core\n   pop %r14\n   pop %r13\n   pop %r12\n"
+    "pop %rbp\n   pop %rbx\n"
     ASM_RET
-    ".Lwriter_field_x86_body_only:\n   test %rdx, %rdx\n"
-    "jz .Lwriter_field_x86_return\n   mov %rdi, %rax\n   mov %rsi, %rdi\n"
-    "mov %rdx, %rsi\n   sub $8, %rsp\n"
+    ".Lwriter_field_x86_body_only:\n   test %rdx, %rdx\n   jz .Lwriter_field_x86_return\n   mov %rdi, %rax\n"
+    "mov %rsi, %rdi\n   mov %rdx, %rsi\n   sub $8, %rsp\n"
     ASM_CALL("rax")
     "add $8, %rsp\n"
     ".Lwriter_field_x86_return:\n"
     ASM_RET
-    ".Lwriter_field_x86_empty:\n   mov %rcx, %rsi\n   movzbl %r8b, %edx\n"
-    "jmp writer_fill\n"
+    ".Lwriter_field_x86_empty:\n   mov %rcx, %rsi\n   movzbl %r8b, %edx\n   jmp writer_fill\n"
     ASM_END(writer_field)
     ASM_FUNC(string_to_field)
-    "push %rbx\n   push %rbp\n   push %r12\n   push %r13\n   push %r14\n"
-    "mov %rdi, %rbx\n   mov %rsi, %r12\n   mov %rdx, %r13\n"
-    "movzbl %cl, %ebp\n   test %r8b, %r8b\n   jz 1f\n"
-    "or $256, %ebp\n   1: mov %rsi, %rdi\n   call string_length\n"
-    "mov %rax, %r14\n   xor %eax, %eax\n   cmp %r14, %r13\n"
-    "jbe .Lstring_to_field_x86_counted\n   mov %r13, %rax\n   sub %r14, %rax\n"
-    ".Lstring_to_field_x86_counted:\n   mov %r14, %r13\n   mov %rax, %r14\n"
-    "test %r14, %r14\n   jnz .Lstring_to_field_x86_general\n"
-    "test %r13, %r13\n   jz .Lstring_to_field_x86_done\n"
-    "mov %r12, %rdi\n   mov %r13, %rsi\n"
+    "push %rbx\n   push %rbp\n   push %r12\n   push %r13\n"
+    "push %r14\n   mov %rdi, %rbx\n   mov %rsi, %r12\n   mov %rdx, %r13\n"
+    "movzbl %cl, %ebp\n   test %r8b, %r8b\n   jz 1f\n   or $256, %ebp\n"
+    "1: mov %rsi, %rdi\n   call string_length\n   mov %rax, %r14\n   xor %eax, %eax\n"
+    "cmp %r14, %r13\n   jbe .Lstring_to_field_x86_counted\n   mov %r13, %rax\n   sub %r14, %rax\n"
+    ".Lstring_to_field_x86_counted:\n   mov %r14, %r13\n   mov %rax, %r14\n   test %r14, %r14\n"
+    "jnz .Lstring_to_field_x86_general\n   test %r13, %r13\n   jz .Lstring_to_field_x86_done\n   mov %r12, %rdi\n"
+    "mov %r13, %rsi\n"
     ASM_CALL("rbx")
     "jmp .Lstring_to_field_x86_done\n"
     ".Lstring_to_field_x86_general:\n   call writer_field_core\n"
@@ -4193,22 +3961,31 @@ ASM_FUNC(positive_to_string)
     // A complete integer base field. style packs sign in bits 0..7, two
     // prefix bytes in 8..23, prefix length in 24..25, then upper/left/zero.
     ASM_FUNC(positive_to_base_field)
-    "push %rbx\n   push %rbp\n   push %r12\n   push %r13\n   push %r14\n   push %r15\n   sub $88, %rsp\n"
-    "mov %rdi, %rbx\n   mov %rcx, %r12\n   mov %r8, %r13\n   mov %r9, %r14\n"
-    "mov %r9, %rcx\n   shr $26, %rcx\n   and $1, %ecx\n   mov %rsp, %rdi\n"
-    "call positive_into_base\n   mov %rax, %r15\n   test %rax, %rax\n   jz 9f\n"
-    "mov %r14b, 64(%rsp)\n   mov %r14, %rax\n   shr $8, %rax\n   mov %ax, 65(%rsp)\n"
-    "mov %r14, %r10\n   shr $24, %r10\n   and $3, %r10d\n   cmp $2, %r10\n   jbe 1f\n   mov $2, %r10\n"
-    "1:  mov %r10b, 67(%rsp)\n   xor %r11d, %r11d\n   test %r14b, %r14b\n   setne %r11b\n   add %r10, %r11\n"
-    "xor %ebp, %ebp\n   test %r13, %r13\n   js 2f\n   cmp %r15, %r13\n   jbe 3f\n   mov %r13, %rbp\n   sub %r15, %rbp\n   jmp 3f\n"
-    "2:  bt $28, %r14\n   jnc 3f\n   bt $27, %r14\n   jc 3f\n   lea (%r11,%r15), %rax\n   cmp %rax, %r12\n   jbe 3f\n   mov %r12, %rbp\n   sub %rax, %rbp\n"
-    "3:  lea (%r11,%r15), %rax\n   add %rbp, %rax\n   xor %r13d, %r13d\n   cmp %rax, %r12\n   jbe 4f\n   mov %r12, %r13\n   sub %rax, %r13\n"
-    "4:  bt $27, %r14\n   jc 5f\n   mov %rbx, %rdi\n   mov %r13, %rsi\n   mov $32, %edx\n   call writer_fill\n"
+    "push %rbx\n   push %rbp\n   push %r12\n   push %r13\n"
+    "push %r14\n   push %r15\n   sub $88, %rsp\n   mov %rdi, %rbx\n"
+    "mov %rcx, %r12\n   mov %r8, %r13\n   mov %r9, %r14\n   mov %r9, %rcx\n"
+    "shr $26, %rcx\n   and $1, %ecx\n   mov %rsp, %rdi\n   call positive_into_base\n"
+    "mov %rax, %r15\n   test %rax, %rax\n   jz 9f\n   mov %r14b, 64(%rsp)\n"
+    "mov %r14, %rax\n   shr $8, %rax\n   mov %ax, 65(%rsp)\n   mov %r14, %r10\n"
+    "shr $24, %r10\n   and $3, %r10d\n   cmp $2, %r10\n   jbe 1f\n"
+    "mov $2, %r10\n"
+    "1:  mov %r10b, 67(%rsp)\n   xor %r11d, %r11d\n   test %r14b, %r14b\n   setne %r11b\n"
+    "add %r10, %r11\n   xor %ebp, %ebp\n   test %r13, %r13\n   js 2f\n"
+    "cmp %r15, %r13\n   jbe 3f\n   mov %r13, %rbp\n   sub %r15, %rbp\n"
+    "jmp 3f\n"
+    "2:  bt $28, %r14\n   jnc 3f\n   bt $27, %r14\n   jc 3f\n"
+    "lea (%r11,%r15), %rax\n   cmp %rax, %r12\n   jbe 3f\n   mov %r12, %rbp\n"
+    "sub %rax, %rbp\n"
+    "3:  lea (%r11,%r15), %rax\n   add %rbp, %rax\n   xor %r13d, %r13d\n   cmp %rax, %r12\n"
+    "jbe 4f\n   mov %r12, %r13\n   sub %rax, %r13\n"
+    "4:  bt $27, %r14\n   jc 5f\n   mov %rbx, %rdi\n   mov %r13, %rsi\n"
+    "mov $32, %edx\n   call writer_fill\n"
     "5:  cmpb $0, 64(%rsp)\n   je 6f\n   lea 64(%rsp), %rdi\n   mov $1, %esi\n" ASM_CALL("rbx")
     "6:  movzbl 67(%rsp), %esi\n   test %rsi, %rsi\n   jz 7f\n   lea 65(%rsp), %rdi\n" ASM_CALL("rbx")
     "7:  mov %rbx, %rdi\n   mov %rbp, %rsi\n   mov $48, %edx\n   call writer_fill\n"
     "mov %rsp, %rdi\n   mov %r15, %rsi\n" ASM_CALL("rbx")
-    "bt $27, %r14\n   jnc 9f\n   mov %rbx, %rdi\n   mov %r13, %rsi\n   mov $32, %edx\n   call writer_fill\n"
+    "bt $27, %r14\n   jnc 9f\n   mov %rbx, %rdi\n   mov %r13, %rsi\n"
+    "mov $32, %edx\n   call writer_fill\n"
     "9:  add $88, %rsp\n   pop %r15\n   pop %r14\n   pop %r13\n   pop %r12\n   pop %rbp\n   pop %rbx\n" ASM_RET
     ASM_END(positive_to_base_field)
     //
@@ -4231,24 +4008,21 @@ ASM_FUNC(positive_to_string)
     // formatter avoids both this adapter's frame and its extra digit copy;
     // every nonzero-width field pays only one not-taken branch on entry.
     "test %rdx, %rdx\n   jz 5f\n"
-    "0:\n"
-    "push %rbx\n   push %r12\n   push %r13\n   push %r14\n"
-    "sub $40, %rsp  # four pushes and forty: aligned calls; 24-byte scratch\n"
-    "mov %rdi, %rbx\n   mov %rdx, %r12\n"
-    "mov %cl, 24(%rsp)\n   mov %r8b, 25(%rsp)\n"
-    "mov %rsp, %rdi\n   call positive_into\n   mov %rax, %r14\n"
-    "mov %rax, %r13\n   cmpb $1, 25(%rsp)\n   sbb $-1, %r13\n"
-    "cmpb $0, 24(%rsp)\n   je 2f\n"
+    "0:\n   push %rbx\n   push %r12\n   push %r13\n"
+    "push %r14\n   sub $40, %rsp  # four pushes and forty: aligned calls; 24-byte scratch\n"
+    "mov %rdi, %rbx\n   mov %rdx, %r12\n   mov %cl, 24(%rsp)\n   mov %r8b, 25(%rsp)\n"
+    "mov %rsp, %rdi\n   call positive_into\n   mov %rax, %r14\n   mov %rax, %r13\n"
+    "cmpb $1, 25(%rsp)\n   sbb $-1, %r13\n   cmpb $0, 24(%rsp)\n   je 2f\n"
     "cmp %r13, %r12\n   jbe 2f\n"
     "1:  lea 24(%rsp), %rdi\n   mov $1, %esi\n"
     ASM_CALL("rbx")
     "dec %r12\n   cmp %r13, %r12\n   ja 1b\n"
-    "2:  cmpb $0, 25(%rsp)\n   je 3f\n"
-    "lea 25(%rsp), %rdi\n   mov $1, %esi\n"
+    "2:  cmpb $0, 25(%rsp)\n   je 3f\n   lea 25(%rsp), %rdi\n   mov $1, %esi\n"
     ASM_CALL("rbx")
     "3:  mov %rsp, %rdi\n   mov %r14, %rsi\n"
     ASM_CALL("rbx")
-    "add $40, %rsp\n   pop %r14\n   pop %r13\n   pop %r12\n   pop %rbx\n"
+    "add $40, %rsp\n   pop %r14\n   pop %r13\n   pop %r12\n"
+    "pop %rbx\n"
     ASM_RET
     "5:  test %r8b, %r8b\n   jnz 0b\n   jmp positive_to_string\n"
     ASM_END(positive_to_padded)
@@ -4257,8 +4031,8 @@ ASM_FUNC(positive_to_string)
     //       positive_into_human_1024_string -- the compact binary-size spelling
     //       shared by ls, du and df. Below one kibibyte it is the bare decimal
     //       number. Above it, the unit is the greatest power of 1024 not
-    //       exceeding the value; a result below ten has one decimal place and
-    //       everything else is rounded upward to an integer. The rounding is
+    //       exceeding the value; an unrounded quotient below ten has one
+    //       decimal place and everything else is rounded upward to an integer. The rounding is
     //       deliberately upward, not nearest, and a rounded 1024 stays in the
     //       old unit: 1048575 is "1024K", while 1048576 is "1.0M".
     //
@@ -4277,45 +4051,39 @@ ASM_FUNC(positive_to_string)
     //
     ASM_FUNC(positive_into_human_1024_string)
     ".section .rodata\n   .balign 8\n"
-    "positive_human_units:\n   .ascii \"BKMGTPE\"\n"
+    "positive_human_units:\n"
+    "   .ascii \"BKMGTPE\"\n"
     ASM_SECTION
-    "cmp $1024, %rsi\n   jb .Lpositive_human_x86_plain\n"
-    "cmp $1048576, %rsi\n   jae .Lpositive_human_x86_find_unit\n"
+    "cmp $1024, %rsi\n   jb .Lpositive_human_x86_plain\n   cmp $1048576, %rsi\n   jae .Lpositive_human_x86_find_unit\n"
     "mov $1, %edx\n   mov $10, %ecx\n   jmp .Lpositive_human_x86_ready\n"
-    ".Lpositive_human_x86_find_unit:\n"
-    "bsr %rsi, %rdx\n   imul $205, %rdx, %rdx\n   shr $11, %rdx\n"
+    ".Lpositive_human_x86_find_unit:\n   bsr %rsi, %rdx\n   imul $205, %rdx, %rdx\n   shr $11, %rdx\n"
     "lea (%rdx,%rdx,4), %rcx\n   add %rcx, %rcx  # unit * 10\n"
-    ".Lpositive_human_x86_ready:\n"
-    "mov $1, %r8\n   shl %cl, %r8\n   dec %r8  # divisor - 1\n"
+    ".Lpositive_human_x86_ready:\n   mov $1, %r8\n   shl %cl, %r8\n   dec %r8  # divisor - 1\n"
     "mov %rsi, %r9\n   shr %cl, %r9  # quotient\n"
     "mov %rsi, %r10\n   and %r8, %r10  # remainder\n"
     "mov %r9, %rax\n   cmp $1, %r10\n   sbb $-1, %rax  # quotient + !!remainder\n"
-    "cmp $10, %rax\n   jae .Lpositive_human_x86_integer\n"
+    "cmp $10, %r9\n   jae .Lpositive_human_x86_integer\n"
     // The fractional ceiling is in r11. Ten carries into the one-byte whole
     // part and leaves a zero fractional byte.
-    "lea (%r10,%r10,4), %r11\n   add %r11, %r11\n   add %r8, %r11\n"
-    "shr %cl, %r11\n   cmp $10, %r11\n   jne 1f\n"
-    "inc %r9\n   xor %r11d, %r11d\n"
-    "1:  add $48, %r9b\n   mov %r9b, (%rdi)\n   movb $46, 1(%rdi)\n"
-    "add $48, %r11b\n   mov %r11b, 2(%rdi)\n"
-    "lea positive_human_units(%rip), %rax\n   movzbl (%rax,%rdx), %eax\n"
-    "mov %al, 3(%rdi)\n   movb $0, 4(%rdi)\n   mov $4, %eax\n"
+    "lea (%r10,%r10,4), %r11\n   add %r11, %r11\n   add %r8, %r11\n   shr %cl, %r11\n"
+    "cmp $10, %r11\n   jne 1f\n   inc %r9\n   xor %r11d, %r11d\n"
+    "cmp $10, %r9\n   jne 1f\n   mov %r9, %rax\n   jmp .Lpositive_human_x86_integer\n"
+    "1:  add $48, %r9b\n   mov %r9b, (%rdi)\n   movb $46, 1(%rdi)\n   add $48, %r11b\n"
+    "mov %r11b, 2(%rdi)\n   lea positive_human_units(%rip), %rax\n   movzbl (%rax,%rdx), %eax\n   mov %al, 3(%rdi)\n"
+    "movb $0, 4(%rdi)\n   mov $4, %eax\n"
     ASM_RET
     // The integer result is only 10..1024. Keeping that bounded conversion in
     // the leaf avoids a frame and a second public formatter call on the common
     // 10K..1024K path; it is the same pair table arithmetic as positive_into.
-    ".Lpositive_human_x86_integer:\n"
-    "lea positive_human_units(%rip), %rcx\n   movzbl (%rcx,%rdx), %r11d\n"
-    "lea digit_pairs(%rip), %r10\n   cmp $99, %rax\n   ja 2f\n"
-    "movzwl (%r10,%rax,2), %r8d\n   mov %r8w, (%rdi)\n   mov $2, %eax\n"
+    ".Lpositive_human_x86_integer:\n   lea positive_human_units(%rip), %rcx\n   movzbl (%rcx,%rdx), %r11d\n"
+    "lea digit_pairs(%rip), %r10\n   cmp $99, %rax\n   ja 2f\n   movzwl (%r10,%rax,2), %r8d\n"
+    "mov %r8w, (%rdi)\n   mov $2, %eax\n   jmp 4f\n"
+    "2:  mov %eax, %r8d\n   imul $5243, %r8d, %r9d\n   shr $19, %r9d\n   imul $100, %r9d, %ecx\n"
+    "sub %ecx, %r8d\n   cmp $10, %r9d\n   jae 3f\n   movzbl 1(%r10,%r9,2), %ecx\n"
+    "mov %cl, (%rdi)\n   movzwl (%r10,%r8,2), %ecx\n   mov %cx, 1(%rdi)\n   mov $3, %eax\n"
     "jmp 4f\n"
-    "2:  mov %eax, %r8d\n   imul $5243, %r8d, %r9d\n   shr $19, %r9d\n"
-    "imul $100, %r9d, %ecx\n   sub %ecx, %r8d\n   cmp $10, %r9d\n   jae 3f\n"
-    "movzbl 1(%r10,%r9,2), %ecx\n   mov %cl, (%rdi)\n"
-    "movzwl (%r10,%r8,2), %ecx\n   mov %cx, 1(%rdi)\n   mov $3, %eax\n"
-    "jmp 4f\n"
-    "3:  movzwl (%r10,%r9,2), %ecx\n   mov %cx, (%rdi)\n"
-    "movzwl (%r10,%r8,2), %ecx\n   mov %cx, 2(%rdi)\n   mov $4, %eax\n"
+    "3:  movzwl (%r10,%r9,2), %ecx\n   mov %cx, (%rdi)\n   movzwl (%r10,%r8,2), %ecx\n   mov %cx, 2(%rdi)\n"
+    "mov $4, %eax\n"
     "4:  mov %r11b, (%rdi,%rax)\n   inc %rax\n   movb $0, (%rdi,%rax)\n"
     ASM_RET
     ".Lpositive_human_x86_plain:\n   jmp positive_into_string\n"
@@ -4335,121 +4103,80 @@ ASM_FUNC(positive_to_string)
     //
     ASM_FUNC(positive_into_human_nearest_string)
     ".section .rodata\n   .balign 8\n"
-    "positive_human_nearest_units:\n   .byte 0\n   .ascii \"KMGTPEZYRQ\"\n"
+    "positive_human_nearest_units:\n   .byte 0\n"
+    "   .ascii \"KMGTPEZYRQ\"\n"
     ASM_SECTION
     // The unscaled path is common for short copies and needs neither a saved
     // register nor any rounding state.  Emit its bounded zero-through-1023
     // decimal directly, then the invariant space/B/NUL tail.
-    "test %dl, %dl\n   jnz .Lpositive_human_nearest_x86_plain_binary\n"
-    "cmp $1000, %rsi\n   jb .Lpositive_human_nearest_x86_plain\n"
+    "test %dl, %dl\n   jnz .Lpositive_human_nearest_x86_plain_binary\n   cmp $1000, %rsi\n   jb .Lpositive_human_nearest_x86_plain\n"
     "jmp .Lpositive_human_nearest_x86_setup\n"
-    ".Lpositive_human_nearest_x86_plain_binary:\n"
-    "cmp $1024, %rsi\n   jb .Lpositive_human_nearest_x86_plain\n"
-    ".Lpositive_human_nearest_x86_setup:\n"
-    "push %rbx\n   push %r12\n   mov %rdi, %rbx\n"
+    ".Lpositive_human_nearest_x86_plain_binary:\n   cmp $1024, %rsi\n   jb .Lpositive_human_nearest_x86_plain\n"
+    ".Lpositive_human_nearest_x86_setup:\n   push %rbx\n   push %r12\n   mov %rdi, %rbx\n"
     "mov $1000, %r8d\n   test %dl, %dl\n   jz 0f\n   mov $1024, %r8d\n"
-    "0:  xor %r9d, %r9d\n   xor %r10d, %r10d\n   xor %r11d, %r11d\n"
-    "mov $-1, %r12\n   cmp %r8, %rsi\n   jb .Lpositive_human_nearest_x86_scaled\n"
-    ".Lpositive_human_nearest_x86_reduce:\n"
-    "cmp $1024, %r8\n   je .Lpositive_human_nearest_x86_reduce_binary\n"
-    "mov %rsi, %rax\n   xor %edx, %edx\n   div %r8\n"
-    "lea (%rdx,%rdx,4), %rcx\n   lea (%r9,%rcx,2), %rcx\n   mov %rax, %rsi\n"
-    "mov %rcx, %rax\n   xor %edx, %edx\n   div %r8\n   mov %rax, %r9\n"
-    "jmp .Lpositive_human_nearest_x86_reduce_ready\n"
-    ".Lpositive_human_nearest_x86_reduce_binary:\n"
-    "mov %rsi, %rax\n   shr $10, %rax\n   mov %rsi, %rdx\n   and $1023, %edx\n"
-    "lea (%rdx,%rdx,4), %rcx\n   lea (%r9,%rcx,2), %rcx\n   mov %rax, %rsi\n"
+    "0:  xor %r9d, %r9d\n   xor %r10d, %r10d\n   xor %r11d, %r11d\n   mov $-1, %r12\n"
+    "cmp %r8, %rsi\n   jb .Lpositive_human_nearest_x86_scaled\n"
+    ".Lpositive_human_nearest_x86_reduce:\n   cmp $1024, %r8\n   je .Lpositive_human_nearest_x86_reduce_binary\n"
+    "mov %rsi, %rax\n   xor %edx, %edx\n   div %r8\n   lea (%rdx,%rdx,4), %rcx\n"
+    "lea (%r9,%rcx,2), %rcx\n   mov %rax, %rsi\n   mov %rcx, %rax\n   xor %edx, %edx\n"
+    "div %r8\n   mov %rax, %r9\n   jmp .Lpositive_human_nearest_x86_reduce_ready\n"
+    ".Lpositive_human_nearest_x86_reduce_binary:\n   mov %rsi, %rax\n   shr $10, %rax\n   mov %rsi, %rdx\n"
+    "and $1023, %edx\n   lea (%rdx,%rdx,4), %rcx\n   lea (%r9,%rcx,2), %rcx\n   mov %rax, %rsi\n"
     "mov %rcx, %r9\n   shr $10, %r9\n   mov %rcx, %rdx\n   and $1023, %edx\n"
-    ".Lpositive_human_nearest_x86_reduce_ready:\n"
-    "lea (%rdx,%rdx), %rcx\n   mov %r10, %rax\n   shr $1, %rax\n   add %rax, %rcx\n"
-    "mov %rcx, %rax\n   add %r10, %rax\n   cmp %r8, %rcx\n"
-    "jb .Lpositive_human_nearest_x86_round_low\n"
-    "xor %r10d, %r10d\n   cmp %rax, %r8\n   setb %r10b\n   add $2, %r10\n"
-    "jmp .Lpositive_human_nearest_x86_round_set\n"
-    ".Lpositive_human_nearest_x86_round_low:\n"
-    "xor %r10d, %r10d\n   test %rax, %rax\n   setne %r10b\n"
-    ".Lpositive_human_nearest_x86_round_set:\n"
-    "inc %r11\n   cmp $10, %r11\n   jae .Lpositive_human_nearest_x86_reduced\n"
+    ".Lpositive_human_nearest_x86_reduce_ready:\n   lea (%rdx,%rdx), %rcx\n   mov %r10, %rax\n   shr $1, %rax\n"
+    "add %rax, %rcx\n   mov %rcx, %rax\n   add %r10, %rax\n   cmp %r8, %rcx\n"
+    "jb .Lpositive_human_nearest_x86_round_low\n   xor %r10d, %r10d\n   cmp %rax, %r8\n   setb %r10b\n"
+    "add $2, %r10\n   jmp .Lpositive_human_nearest_x86_round_set\n"
+    ".Lpositive_human_nearest_x86_round_low:\n   xor %r10d, %r10d\n   test %rax, %rax\n   setne %r10b\n"
+    ".Lpositive_human_nearest_x86_round_set:\n   inc %r11\n   cmp $10, %r11\n   jae .Lpositive_human_nearest_x86_reduced\n"
     "cmp %r8, %rsi\n   jae .Lpositive_human_nearest_x86_reduce\n"
-    ".Lpositive_human_nearest_x86_reduced:\n"
-    "cmp $10, %rsi\n   jae .Lpositive_human_nearest_x86_integer_round\n"
+    ".Lpositive_human_nearest_x86_reduced:\n   cmp $10, %rsi\n   jae .Lpositive_human_nearest_x86_integer_round\n"
     "mov %r9, %rax\n   and $1, %eax\n   add %r10, %rax\n   cmp $2, %rax\n"
-    "jbe .Lpositive_human_nearest_x86_fraction_ready\n"
-    "inc %r9\n   xor %r10d, %r10d\n   cmp $10, %r9\n"
-    "jne .Lpositive_human_nearest_x86_fraction_ready\n"
-    "inc %rsi\n   xor %r9d, %r9d\n"
-    ".Lpositive_human_nearest_x86_fraction_ready:\n"
-    "cmp $10, %rsi\n   jae .Lpositive_human_nearest_x86_integer_round\n"
+    "jbe .Lpositive_human_nearest_x86_fraction_ready\n   inc %r9\n   xor %r10d, %r10d\n   cmp $10, %r9\n"
+    "jne .Lpositive_human_nearest_x86_fraction_ready\n   inc %rsi\n   xor %r9d, %r9d\n"
+    ".Lpositive_human_nearest_x86_fraction_ready:\n   cmp $10, %rsi\n   jae .Lpositive_human_nearest_x86_integer_round\n"
     "mov %r9, %r12\n   xor %r9d, %r9d\n   xor %r10d, %r10d\n"
     ".Lpositive_human_nearest_x86_scaled:\n"
-    ".Lpositive_human_nearest_x86_integer_round:\n"
-    "mov %rsi, %rax\n   and $1, %eax\n   add %r10, %rax\n   setne %dl\n"
-    "movzbl %dl, %edx\n   add %r9, %rdx\n   cmp $5, %rdx\n"
-    "jbe .Lpositive_human_nearest_x86_format\n"
-    "inc %rsi\n   cmp %r8, %rsi\n   jne .Lpositive_human_nearest_x86_format\n"
-    "cmp $10, %r11\n   jae .Lpositive_human_nearest_x86_format\n"
-    "inc %r11\n   xor %r12d, %r12d\n   mov $1, %esi\n"
-    ".Lpositive_human_nearest_x86_format:\n"
-    "lea digit_pairs(%rip), %rcx\n   cmp $9, %rsi\n"
-    "ja .Lpositive_human_nearest_x86_two\n"
-    "lea 48(%rsi), %rdx\n   mov %dl, (%rbx)\n   mov $1, %eax\n"
-    "jmp .Lpositive_human_nearest_x86_digits_done\n"
-    ".Lpositive_human_nearest_x86_two:\n"
-    "cmp $99, %rsi\n   ja .Lpositive_human_nearest_x86_three\n"
-    "movzwl (%rcx,%rsi,2), %edx\n   mov %dx, (%rbx)\n   mov $2, %eax\n"
-    "jmp .Lpositive_human_nearest_x86_digits_done\n"
-    ".Lpositive_human_nearest_x86_three:\n"
-    "mov %esi, %edx\n   imul $5243, %edx, %r9d\n   shr $19, %r9d\n"
-    "imul $100, %r9d, %r10d\n   sub %r10d, %edx\n   cmp $10, %r9d\n"
-    "jae .Lpositive_human_nearest_x86_four\n"
-    "movzbl 1(%rcx,%r9,2), %r10d\n   mov %r10b, (%rbx)\n"
-    "movzwl (%rcx,%rdx,2), %r10d\n   mov %r10w, 1(%rbx)\n   mov $3, %eax\n"
-    "jmp .Lpositive_human_nearest_x86_digits_done\n"
-    ".Lpositive_human_nearest_x86_four:\n"
-    "movzwl (%rcx,%r9,2), %r10d\n   mov %r10w, (%rbx)\n"
-    "movzwl (%rcx,%rdx,2), %r10d\n   mov %r10w, 2(%rbx)\n   mov $4, %eax\n"
-    ".Lpositive_human_nearest_x86_digits_done:\n"
-    "cmp $-1, %r12\n   je .Lpositive_human_nearest_x86_no_fraction\n"
-    "movb $46, (%rbx,%rax)\n   inc %rax\n   add $48, %r12b\n"
-    "mov %r12b, (%rbx,%rax)\n   inc %rax\n"
-    ".Lpositive_human_nearest_x86_no_fraction:\n"
-    "movb $32, (%rbx,%rax)\n   inc %rax\n   test %r11, %r11\n"
-    "jz .Lpositive_human_nearest_x86_unit_done\n"
-    "cmp $1000, %r8\n   jne .Lpositive_human_nearest_x86_upper_unit\n"
-    "cmp $1, %r11\n   jne .Lpositive_human_nearest_x86_upper_unit\n"
-    "movb $107, (%rbx,%rax)\n   inc %rax\n   jmp .Lpositive_human_nearest_x86_unit_done\n"
-    ".Lpositive_human_nearest_x86_upper_unit:\n"
-    "lea positive_human_nearest_units(%rip), %rdx\n   movzbl (%rdx,%r11), %edx\n"
+    ".Lpositive_human_nearest_x86_integer_round:\n   mov %rsi, %rax\n   and $1, %eax\n   add %r10, %rax\n"
+    "setne %dl\n   movzbl %dl, %edx\n   add %r9, %rdx\n   cmp $5, %rdx\n"
+    "jbe .Lpositive_human_nearest_x86_format\n   inc %rsi\n   cmp %r8, %rsi\n   jne .Lpositive_human_nearest_x86_format\n"
+    "cmp $10, %r11\n   jae .Lpositive_human_nearest_x86_format\n   inc %r11\n   xor %r12d, %r12d\n"
+    "mov $1, %esi\n"
+    ".Lpositive_human_nearest_x86_format:\n   lea digit_pairs(%rip), %rcx\n   cmp $9, %rsi\n   ja .Lpositive_human_nearest_x86_two\n"
+    "lea 48(%rsi), %rdx\n   mov %dl, (%rbx)\n   mov $1, %eax\n   jmp .Lpositive_human_nearest_x86_digits_done\n"
+    ".Lpositive_human_nearest_x86_two:\n   cmp $99, %rsi\n   ja .Lpositive_human_nearest_x86_three\n   movzwl (%rcx,%rsi,2), %edx\n"
+    "mov %dx, (%rbx)\n   mov $2, %eax\n   jmp .Lpositive_human_nearest_x86_digits_done\n"
+    ".Lpositive_human_nearest_x86_three:\n   mov %esi, %edx\n   imul $5243, %edx, %r9d\n   shr $19, %r9d\n"
+    "imul $100, %r9d, %r10d\n   sub %r10d, %edx\n   cmp $10, %r9d\n   jae .Lpositive_human_nearest_x86_four\n"
+    "movzbl 1(%rcx,%r9,2), %r10d\n   mov %r10b, (%rbx)\n   movzwl (%rcx,%rdx,2), %r10d\n   mov %r10w, 1(%rbx)\n"
+    "mov $3, %eax\n   jmp .Lpositive_human_nearest_x86_digits_done\n"
+    ".Lpositive_human_nearest_x86_four:\n   movzwl (%rcx,%r9,2), %r10d\n   mov %r10w, (%rbx)\n   movzwl (%rcx,%rdx,2), %r10d\n"
+    "mov %r10w, 2(%rbx)\n   mov $4, %eax\n"
+    ".Lpositive_human_nearest_x86_digits_done:\n   cmp $-1, %r12\n   je .Lpositive_human_nearest_x86_no_fraction\n"
+    "movb $46, (%rbx,%rax)\n   inc %rax\n   add $48, %r12b\n   mov %r12b, (%rbx,%rax)\n"
+    "inc %rax\n"
+    ".Lpositive_human_nearest_x86_no_fraction:\n   movb $32, (%rbx,%rax)\n   inc %rax\n   test %r11, %r11\n"
+    "jz .Lpositive_human_nearest_x86_unit_done\n   cmp $1000, %r8\n   jne .Lpositive_human_nearest_x86_upper_unit\n"
+    "cmp $1, %r11\n   jne .Lpositive_human_nearest_x86_upper_unit\n   movb $107, (%rbx,%rax)\n   inc %rax\n"
+    "jmp .Lpositive_human_nearest_x86_unit_done\n"
+    ".Lpositive_human_nearest_x86_upper_unit:\n   lea positive_human_nearest_units(%rip), %rdx\n   movzbl (%rdx,%r11), %edx\n"
     "mov %dl, (%rbx,%rax)\n   inc %rax\n"
-    ".Lpositive_human_nearest_x86_unit_done:\n"
-    "cmp $1024, %r8\n   jne .Lpositive_human_nearest_x86_byte\n"
-    "test %r11, %r11\n   jz .Lpositive_human_nearest_x86_byte\n"
-    "movb $105, (%rbx,%rax)\n   inc %rax\n"
-    ".Lpositive_human_nearest_x86_byte:\n"
-    "movb $66, (%rbx,%rax)\n   inc %rax\n   movb $0, (%rbx,%rax)\n"
+    ".Lpositive_human_nearest_x86_unit_done:\n   cmp $1024, %r8\n   jne .Lpositive_human_nearest_x86_byte\n"
+    "test %r11, %r11\n   jz .Lpositive_human_nearest_x86_byte\n   movb $105, (%rbx,%rax)\n   inc %rax\n"
+    ".Lpositive_human_nearest_x86_byte:\n   movb $66, (%rbx,%rax)\n   inc %rax\n   movb $0, (%rbx,%rax)\n"
     "pop %r12\n   pop %rbx\n"
     ASM_RET
-    ".Lpositive_human_nearest_x86_plain:\n"
-    "lea digit_pairs(%rip), %rcx\n   cmp $9, %rsi\n"
-    "ja .Lpositive_human_nearest_x86_plain_two\n"
-    "lea 48(%rsi), %rdx\n   mov %dl, (%rdi)\n   mov $1, %eax\n"
-    "jmp .Lpositive_human_nearest_x86_plain_done\n"
-    ".Lpositive_human_nearest_x86_plain_two:\n"
-    "cmp $99, %rsi\n   ja .Lpositive_human_nearest_x86_plain_three\n"
-    "movzwl (%rcx,%rsi,2), %edx\n   mov %dx, (%rdi)\n   mov $2, %eax\n"
-    "jmp .Lpositive_human_nearest_x86_plain_done\n"
-    ".Lpositive_human_nearest_x86_plain_three:\n"
-    "mov %esi, %edx\n   imul $5243, %edx, %r8d\n   shr $19, %r8d\n"
-    "imul $100, %r8d, %r9d\n   sub %r9d, %edx\n   cmp $10, %r8d\n"
-    "jae .Lpositive_human_nearest_x86_plain_four\n"
-    "movzbl 1(%rcx,%r8,2), %r9d\n   mov %r9b, (%rdi)\n"
-    "movzwl (%rcx,%rdx,2), %r9d\n   mov %r9w, 1(%rdi)\n   mov $3, %eax\n"
-    "jmp .Lpositive_human_nearest_x86_plain_done\n"
-    ".Lpositive_human_nearest_x86_plain_four:\n"
-    "movzwl (%rcx,%r8,2), %r9d\n   mov %r9w, (%rdi)\n"
-    "movzwl (%rcx,%rdx,2), %r9d\n   mov %r9w, 2(%rdi)\n   mov $4, %eax\n"
-    ".Lpositive_human_nearest_x86_plain_done:\n"
-    "movw $16928, (%rdi,%rax)\n   movb $0, 2(%rdi,%rax)\n   add $2, %rax\n"
+    ".Lpositive_human_nearest_x86_plain:\n   lea digit_pairs(%rip), %rcx\n   cmp $9, %rsi\n   ja .Lpositive_human_nearest_x86_plain_two\n"
+    "lea 48(%rsi), %rdx\n   mov %dl, (%rdi)\n   mov $1, %eax\n   jmp .Lpositive_human_nearest_x86_plain_done\n"
+    ".Lpositive_human_nearest_x86_plain_two:\n   cmp $99, %rsi\n   ja .Lpositive_human_nearest_x86_plain_three\n"
+    "movzwl (%rcx,%rsi,2), %edx\n   mov %dx, (%rdi)\n   mov $2, %eax\n   jmp .Lpositive_human_nearest_x86_plain_done\n"
+    ".Lpositive_human_nearest_x86_plain_three:\n   mov %esi, %edx\n   imul $5243, %edx, %r8d\n   shr $19, %r8d\n"
+    "imul $100, %r8d, %r9d\n   sub %r9d, %edx\n   cmp $10, %r8d\n   jae .Lpositive_human_nearest_x86_plain_four\n"
+    "movzbl 1(%rcx,%r8,2), %r9d\n   mov %r9b, (%rdi)\n   movzwl (%rcx,%rdx,2), %r9d\n   mov %r9w, 1(%rdi)\n"
+    "mov $3, %eax\n   jmp .Lpositive_human_nearest_x86_plain_done\n"
+    ".Lpositive_human_nearest_x86_plain_four:\n   movzwl (%rcx,%r8,2), %r9d\n   mov %r9w, (%rdi)\n   movzwl (%rcx,%rdx,2), %r9d\n"
+    "mov %r9w, 2(%rdi)\n   mov $4, %eax\n"
+    ".Lpositive_human_nearest_x86_plain_done:\n   movw $16928, (%rdi,%rax)\n   movb $0, 2(%rdi,%rax)\n   add $2, %rax\n"
     ASM_RET
     ASM_END(positive_into_human_nearest_string)
     /*
@@ -4467,11 +4194,11 @@ ASM_FUNC(positive_to_string)
             fall-through path.
     */
     ASM_FUNC(wait_status_code_base)
-    "mov %edi, %eax\n   and $127, %eax\n   jnz 1f\n"
-    "mov %edi, %eax\n   shr $8, %eax\n   movzbl %al, %eax\n"
+    "mov %edi, %eax\n   and $127, %eax\n   jnz 1f\n   mov %edi, %eax\n"
+    "shr $8, %eax\n   movzbl %al, %eax\n"
     ASM_RET
-    "1:  add %esi, %eax\n   and $128, %edi\n   shl $1, %edi\n"
-    "and %esi, %edi\n   add %edi, %eax\n"
+    "1:  add %esi, %eax\n   and $128, %edi\n   shl $1, %edi\n   and %esi, %edi\n"
+    "add %edi, %eax\n"
     ASM_RET
     ASM_END(wait_status_code_base)
     // The shell surface stays a two-instruction tail adapter onto the shared
@@ -4488,22 +4215,18 @@ ASM_FUNC(positive_to_string)
     //
     ASM_FUNC(positive_to_human_1024)
     "cmp $1024, %rsi\n   jae 0f\n   jmp positive_to_string\n"
-    "0:\n"
-    "push %rbx\n   sub $16, %rsp\n   mov %rdi, %rbx\n"
-    "mov %rsp, %rdi\n   call positive_into_human_1024_string\n   mov %rax, 8(%rsp)\n"
-    "cmpb $57, -1(%rsp,%rax)\n   ja .Lpositive_human_x86_scaled_write\n"
-    "mov %rsp, %rdi\n   mov %rax, %rsi\n"
+    "0:\n   push %rbx\n   sub $16, %rsp\n   mov %rdi, %rbx\n"
+    "mov %rsp, %rdi\n   call positive_into_human_1024_string\n   mov %rax, 8(%rsp)\n   cmpb $57, -1(%rsp,%rax)\n"
+    "ja .Lpositive_human_x86_scaled_write\n   mov %rsp, %rdi\n   mov %rax, %rsi\n"
     ASM_CALL("rbx")
     "jmp .Lpositive_human_x86_write_done\n"
-    ".Lpositive_human_x86_scaled_write:\n"
-    "cmpb $46, 1(%rsp)\n   je .Lpositive_human_x86_fraction_write\n"
+    ".Lpositive_human_x86_scaled_write:\n   cmpb $46, 1(%rsp)\n   je .Lpositive_human_x86_fraction_write\n"
     "dec %rax\n   mov %rax, 8(%rsp)\n   mov %rsp, %rdi\n   mov %rax, %rsi\n"
     ASM_CALL("rbx")
     "mov 8(%rsp), %rax\n   lea (%rsp,%rax), %rdi\n   mov $1, %esi\n"
     ASM_CALL("rbx")
     "jmp .Lpositive_human_x86_write_done\n"
-    ".Lpositive_human_x86_fraction_write:\n"
-    "mov %rsp, %rdi\n   mov $1, %esi\n"
+    ".Lpositive_human_x86_fraction_write:\n   mov %rsp, %rdi\n   mov $1, %esi\n"
     ASM_CALL("rbx")
     "lea 1(%rsp), %rdi\n   mov $1, %esi\n"
     ASM_CALL("rbx")
@@ -4511,8 +4234,7 @@ ASM_FUNC(positive_to_string)
     ASM_CALL("rbx")
     "lea 3(%rsp), %rdi\n   mov $1, %esi\n"
     ASM_CALL("rbx")
-    ".Lpositive_human_x86_write_done:\n"
-    "add $16, %rsp\n   pop %rbx\n"
+    ".Lpositive_human_x86_write_done:\n   add $16, %rsp\n   pop %rbx\n"
     ASM_RET
     ASM_END(positive_to_human_1024)
     //
@@ -4575,14 +4297,14 @@ ASM_FUNC(positive_to_string)
     //       us and the read cannot walk into a page in front of them.
     //
     "5:  lea -8(%rax), %rcx\n   cmp %r8, %rcx\n   jb 7f  # fewer than eight bytes left\n"
-    "mov (%rcx), %rdx\n   mov %rdx, %rdi\n   and (%r11), %rdi\n"
-    "mov %rdx, %r10\n   add 8(%r11), %r10\n   and (%r11), %r10\n   shr $4, %r10\n"
-    "or %r10, %rdi\n   cmp 16(%r11), %rdi\n   jne 7f  # one of the eight is not a digit\n"
+    "mov (%rcx), %rdx\n   mov %rdx, %rdi\n   and (%r11), %rdi\n   mov %rdx, %r10\n"
+    "add 8(%r11), %r10\n   and (%r11), %r10\n   shr $4, %r10\n   or %r10, %rdi\n"
+    "cmp 16(%r11), %rdi\n   jne 7f  # one of the eight is not a digit\n"
     "sub 24(%r11), %rdx\n   imul $2561, %rdx, %rdx\n   shr $8, %rdx\n   and 32(%r11), %rdx\n"
-    "imul $6553601, %rdx, %rdx\n   shr $16, %rdx\n   and 40(%r11), %rdx\n"
-    "imul 48(%r11), %rdx\n   shr $32, %rdx  # the eight, as a number\n"
-    "imul %rsi, %rdx\n   add %rdx, %r9\n   imul $100000000, %rsi, %rsi\n"
-    "mov %rcx, %rax\n   jmp 5b\n"
+    "imul $6553601, %rdx, %rdx\n   shr $16, %rdx\n   and 40(%r11), %rdx\n   imul 48(%r11), %rdx\n"
+    "shr $32, %rdx  # the eight, as a number\n"
+    "imul %rsi, %rdx\n   add %rdx, %r9\n   imul $100000000, %rsi, %rsi\n   mov %rcx, %rax\n"
+    "jmp 5b\n"
     "7:  dec %rax\n"
     //
     //       Unsigned compare: an empty string steps to one before the start,
@@ -4594,20 +4316,12 @@ ASM_FUNC(positive_to_string)
     "dec %rax\n   jmp 3b\n"
     "4:  mov %r9, %rax\n"
     ASM_RET
-    //
-    //       Inside the delimiters on purpose: this file is spliced together by
-    //       routine name, and a table in front of ASM_FUNC belongs to whatever
-    //       was there before rather than to this.
-    //
     ".section .rodata\n   .balign 8\n"
-    "digit_words:\n"
-    "        .quad 0xF0F0F0F0F0F0F0F0  # the high nibbles, which a digit has as three\n"
-    "        .quad 0x0606060606060606  # what pushes anything over nine into the next nibble\n"
-    "        .quad 0x3333333333333333  # what eight digits answer\n"
-    "        .quad 0x3030303030303030  # ASCII zero, eight times\n"
-    "        .quad 0x00FF00FF00FF00FF\n"
-    "        .quad 0x0000FFFF0000FFFF\n"
-    "        .quad 0x0000271000000001  # ten thousand and one, in two halves\n"
+    "digit_words:\n   .quad 0xF0F0F0F0F0F0F0F0  # the high nibbles, which a digit has as three\n"
+    ".quad 0x0606060606060606  # what pushes anything over nine into the next nibble\n"
+    ".quad 0x3333333333333333  # what eight digits answer\n"
+    ".quad 0x3030303030303030  # ASCII zero, eight times\n"
+    ".quad 0x00FF00FF00FF00FF\n   .quad 0x0000FFFF0000FFFF\n   .quad 0x0000271000000001  # ten thousand and one, in two halves\n"
     ASM_SECTION
     ASM_END(string_to_positive)
     //
@@ -4643,16 +4357,16 @@ ASM_FUNC(positive_to_string)
     //       how many bytes it may read; string_find is given a terminator and
     //       has to find out, and it cannot simply measure the whole string
     //       first -- grep hands this a megabyte and wants the match at byte
-    //       nine hundred, and a strlen of the lot before looking would be the
+    //       nine hundred, and a string_length of the lot before looking would be the
     //       slower half of the work.
     //
     //       So the readable run is discovered a page at a time. A byte that
     //       can be read means its whole page can be read, because that is the
     //       granularity a mapping has; and a page with no terminator in it
     //       means the string carries on into the next one, which therefore
-    //       can be read as well. memchr over one page at a time is that
+    //       can be read as well. memory_first_of over one page at a time is that
     //       argument written down, and it runs at the speed of the wide byte
-    //       hunt rather than of a word-at-a-time strlen: 143 GB/s against 32
+    //       hunt rather than of a word-at-a-time string_length: 143 GB/s against 32
     //       on a 9950X, which is why the terminator is not looked for with
     //       string_length_max.
     //
@@ -4685,25 +4399,21 @@ ASM_FUNC(positive_to_string)
     //       haystack and memory_search does too; the two disagree on purpose,
     //       and the alias onto strstr is the reason.
     //
-    "movzbl (%rsi), %eax\n   test %al, %al\n   jnz 2f\n"
-    "xor %eax, %eax\n"
+    "movzbl (%rsi), %eax\n   test %al, %al\n   jnz 2f\n   xor %eax, %eax\n"
     ASM_RET
     //
-    //      One byte is strchr, which is already here.
+    //      One byte is string_first_of, which is already here.
     //
-    "2:  cmpb $0, 1(%rsi)\n   jne 3f\n"
-    "movzbl (%rsi), %esi\n   jmp string_first_of\n"
-    "3:  push %rbx\n   push %rbp\n   push %r12\n   push %r13\n   push %r14\n"
-    "push %r15\n   sub $8, %rsp\n"
-    "mov %rdi, %rbx  # where to look next\n   mov %rsi, %rbp  # the needle\n"
-    "mov %rsi, %rdi\n   call string_length\n   mov %rax, %r12\n"
-    "mov $256, %r13\n   lea 0(,%r12,4), %rax\n   cmp %rax, %r13\n   jae 4f\n"
-    "mov %rax, %r13  # never a chunk a needle would not fit four times in\n"
+    "2:  cmpb $0, 1(%rsi)\n   jne 3f\n   movzbl (%rsi), %esi\n   jmp string_first_of\n"
+    "3:  push %rbx\n   push %rbp\n   push %r12\n   push %r13\n"
+    "push %r14\n   push %r15\n   sub $8, %rsp\n   mov %rdi, %rbx  # where to look next\n"
+    "mov %rsi, %rbp  # the needle\n"
+    "mov %rsi, %rdi\n   call string_length\n   mov %rax, %r12\n   mov $256, %r13\n"
+    "lea 0(,%r12,4), %rax\n   cmp %rax, %r13\n   jae 4f\n   mov %rax, %r13  # never a chunk a needle would not fit four times in\n"
     "4:  xor %r14, %r14\n   xor %r15d, %r15d\n"
-    "41: lea (%rbx,%r14), %rdi\n   mov %edi, %edx\n   and $4095, %edx\n"
-    "mov $4096, %ecx\n   sub %edx, %ecx\n   mov %rcx, %rdx  # to the end of this page\n"
-    "xor %esi, %esi\n   call memory_first_of\n"
-    "test %rax, %rax\n   jz 42f\n"
+    "41:  lea (%rbx,%r14), %rdi\n   mov %edi, %edx\n   and $4095, %edx\n   mov $4096, %ecx\n"
+    "sub %edx, %ecx\n   mov %rcx, %rdx  # to the end of this page\n"
+    "xor %esi, %esi\n   call memory_first_of\n   test %rax, %rax\n   jz 42f\n"
     "sub %rbx, %rax\n   mov %rax, %r14\n   mov $1, %r15d  # the string ends in here\n"
     "jmp 43f\n"
     //
@@ -4711,18 +4421,18 @@ ASM_FUNC(positive_to_string)
     //      Where it starts is worked out from the cursor again rather than
     //      kept, because the call just used the register it was in.
     //
-    "42: lea (%rbx,%r14), %rax\n   and $-4096, %rax\n   add $4096, %rax\n"
-    "sub %rbx, %rax\n   mov %rax, %r14\n   cmp %r13, %r14\n   jb 41b\n"
-    "43: mov %rbx, %rdi\n   mov %r14, %rsi\n   mov %rbp, %rdx\n   mov %r12, %rcx\n"
-    "call memory_search\n   test %rax, %rax\n   jnz 9f\n"
-    "test %r15d, %r15d\n   jnz 8f  # the terminator was in it: nowhere else to look\n"
+    "42:  lea (%rbx,%r14), %rax\n   and $-4096, %rax\n   add $4096, %rax\n   sub %rbx, %rax\n"
+    "mov %rax, %r14\n   cmp %r13, %r14\n   jb 41b\n"
+    "43:  mov %rbx, %rdi\n   mov %r14, %rsi\n   mov %rbp, %rdx\n   mov %r12, %rcx\n"
+    "call memory_search\n   test %rax, %rax\n   jnz 9f\n   test %r15d, %r15d\n"
+    "jnz 8f  # the terminator was in it: nowhere else to look\n"
     "mov %r14, %rax\n   sub %r12, %rax\n   inc %rax  # keep needle_size - 1 of overlap\n"
-    "add %rax, %rbx\n"
-    "add %r13, %r13\n   cmp $65536, %r13\n   jbe 45f\n   mov $65536, %r13\n"
-    "45: jmp 4b\n"
+    "add %rax, %rbx\n   add %r13, %r13\n   cmp $65536, %r13\n   jbe 45f\n"
+    "mov $65536, %r13\n"
+    "45:  jmp 4b\n"
     "8:  xor %eax, %eax\n"
-    "9:  add $8, %rsp\n   pop %r15\n   pop %r14\n   pop %r13\n   pop %r12\n"
-    "pop %rbp\n   pop %rbx\n"
+    "9:  add $8, %rsp\n   pop %r15\n   pop %r14\n   pop %r13\n"
+    "pop %r12\n   pop %rbp\n   pop %rbx\n"
     ASM_RET
     ASM_END(string_find)
     ASM_SECTION
@@ -4740,7 +4450,7 @@ ASM_FUNC(positive_to_string)
     //      Everything else is string_find's, including the reason it is not
     //      simply a length followed by memory_search: it discovers the
     //      readable run a page at a time, so a match at byte nine hundred of
-    //      a megabyte does not pay for a strlen of the megabyte first.
+    //      a megabyte does not pay for a string_length of the megabyte first.
     //
     //
     //      The needle is tried against the front of the haystack first, a
@@ -4759,9 +4469,8 @@ ASM_FUNC(positive_to_string)
     //
     ASM_FUNC(string_search)
     "xor %ecx, %ecx\n"
-    "1:  movzbl (%rsi,%rcx), %edx\n   test %dl, %dl\n   jz 2f\n"
-    "movzbl (%rdi,%rcx), %eax\n   cmp %dl, %al\n   jne string_find\n"
-    "inc %rcx\n   jmp 1b\n"
+    "1:  movzbl (%rsi,%rcx), %edx\n   test %dl, %dl\n   jz 2f\n   movzbl (%rdi,%rcx), %eax\n"
+    "cmp %dl, %al\n   jne string_find\n   inc %rcx\n   jmp 1b\n"
     "2:  mov %rdi, %rax  # the needle ran out, so it was all there\n"
     ASM_RET
     ASM_END(string_search)
@@ -4908,11 +4617,8 @@ ASM_FUNC(positive_to_string)
     //       the run by being an index into a table, so the terminator and the
     //       percent are one compare instead of two.
     //
-    "lea format_stops(%rip), %r9\n"
-    ".rept 8\n"
-    "inc %rbp\n   movzbl (%rbp), %eax\n   cmpb $0, (%r9,%rax)\n"
-    "jne .Lstring_format_stop\n"
-    ".endr\n"
+    "lea format_stops(%rip), %r9\n   .rept 8\n   inc %rbp\n   movzbl (%rbp), %eax\n"
+    "cmpb $0, (%r9,%rax)\n   jne .Lstring_format_stop\n   .endr\n"
 #ifndef KERNEL_MODE
     //
     //       Thirty two bytes at a time where the processor has it. Two
@@ -4949,18 +4655,14 @@ ASM_FUNC(positive_to_string)
     //
     ASM_NARROW("cpu_has_avx2", ".Lstring_format_word_setup")
     "mov %rbp, %r8\n   mov %ebp, %ecx\n   and $-32, %r8\n   and $31, %ecx\n"
-    "vpxor %xmm1, %xmm1, %xmm1\n   vpbroadcastb format_words+16(%rip), %ymm2\n"
-    "vmovdqa (%r8), %ymm0\n"
-    "vpcmpeqb %ymm1, %ymm0, %ymm3\n   vpcmpeqb %ymm2, %ymm0, %ymm4\n"
-    "vpor %ymm4, %ymm3, %ymm3\n   vpmovmskb %ymm3, %eax\n"
-    "mov $-1, %edx\n   shl %cl, %edx\n   and %edx, %eax\n"
-    "jnz .Lstring_format_wide_found\n"
-    ".Lstring_format_wide:\n   add $32, %r8\n   vmovdqa (%r8), %ymm0\n"
-    "vpcmpeqb %ymm1, %ymm0, %ymm3\n   vpcmpeqb %ymm2, %ymm0, %ymm4\n"
-    "vpor %ymm4, %ymm3, %ymm3\n   vpmovmskb %ymm3, %eax\n"
-    "test %eax, %eax\n   jz .Lstring_format_wide\n"
-    ".Lstring_format_wide_found:\n   bsf %eax, %eax\n   add %rax, %r8\n"
-    "mov %r8, %rbp\n   vzeroupper  # no half used ymm left for the writer\n"
+    "vpxor %xmm1, %xmm1, %xmm1\n   vpbroadcastb format_words+16(%rip), %ymm2\n   vmovdqa (%r8), %ymm0\n"
+    "vpcmpeqb %ymm1, %ymm0, %ymm3\n   vpcmpeqb %ymm2, %ymm0, %ymm4\n   vpor %ymm4, %ymm3, %ymm3\n   vpmovmskb %ymm3, %eax\n"
+    "mov $-1, %edx\n   shl %cl, %edx\n   and %edx, %eax\n   jnz .Lstring_format_wide_found\n"
+    ".Lstring_format_wide:\n   add $32, %r8\n   vmovdqa (%r8), %ymm0\n   vpcmpeqb %ymm1, %ymm0, %ymm3\n"
+    "vpcmpeqb %ymm2, %ymm0, %ymm4\n   vpor %ymm4, %ymm3, %ymm3\n   vpmovmskb %ymm3, %eax\n   test %eax, %eax\n"
+    "jz .Lstring_format_wide\n"
+    ".Lstring_format_wide_found:\n   bsf %eax, %eax\n   add %rax, %r8\n   mov %r8, %rbp\n"
+    "vzeroupper  # no half used ymm left for the writer\n"
     "movzbl (%rbp), %eax\n   jmp .Lstring_format_stop\n"
     ".Lstring_format_word_setup:\n"
 #endif
@@ -4983,12 +4685,12 @@ ASM_FUNC(positive_to_string)
     //
     "mov %rbp, %r8\n   and $-8, %r8  # align down: same page, cannot fault\n"
     "mov (%r8), %rdx\n"
-    ".Lstring_format_word:\n   mov %rdx, %rax\n   not %rax\n"
-    "mov %rdx, %rcx\n   sub format_words(%rip), %rcx\n   and %rax, %rcx  # a zero byte\n"
+    ".Lstring_format_word:\n   mov %rdx, %rax\n   not %rax\n   mov %rdx, %rcx\n"
+    "sub format_words(%rip), %rcx\n   and %rax, %rcx  # a zero byte\n"
     "mov %rdx, %rsi\n   xor format_words+16(%rip), %rsi  # a percent is a zero byte here\n"
-    "sub format_words(%rip), %rsi\n   xor format_words+16(%rip), %rax\n   and %rax, %rsi\n"
-    "or %rsi, %rcx\n   and format_words+8(%rip), %rcx\n   jnz .Lstring_format_found\n"
-    "add $8, %r8\n   mov (%r8), %rdx\n   jmp .Lstring_format_word\n"
+    "sub format_words(%rip), %rsi\n   xor format_words+16(%rip), %rax\n   and %rax, %rsi\n   or %rsi, %rcx\n"
+    "and format_words+8(%rip), %rcx\n   jnz .Lstring_format_found\n   add $8, %r8\n   mov (%r8), %rdx\n"
+    "jmp .Lstring_format_word\n"
     ".Lstring_format_found:\n   bsf %rcx, %rcx\n   shr $3, %rcx\n   add %rcx, %r8\n"
     "mov %r8, %rbp\n   movzbl (%rbp), %eax\n"
     ".Lstring_format_stop:\n   test %al, %al\n   jz .Lstring_format_tail\n"
@@ -4997,8 +4699,8 @@ ASM_FUNC(positive_to_string)
     //       counted the bytes it had stepped over; the two pointers say the
     //       same thing and cost a register less.
     //
-    ".Lstring_format_percent:\n"
-    "cmp %rdi, %rbp\n   je .Lstring_format_spec\n   mov %rbp, %rsi\n   sub %rdi, %rsi\n"
+    ".Lstring_format_percent:\n   cmp %rdi, %rbp\n   je .Lstring_format_spec\n   mov %rbp, %rsi\n"
+    "sub %rdi, %rsi\n"
     ASM_CALL("rbx")
     ".Lstring_format_spec:\n   movzbl 1(%rbp), %eax\n   inc %rbp\n   cmp $115, %al  # s\n"
     "je .Lstring_format_string\n   cmp $112, %al  # p\n"
@@ -5081,19 +4783,14 @@ ASM_FUNC(positive_to_string)
     //       was there before rather than to this.
     //
     ".section .rodata\n   .balign 8\n"
-    "format_words:\n"
-    "        .quad 0x0101010101010101\n"
-    "        .quad 0x8080808080808080\n"
-    "        .quad 0x2525252525252525  # the percent, in all eight positions\n"
+    "format_words:\n   .quad 0x0101010101010101\n   .quad 0x8080808080808080\n   .quad 0x2525252525252525  # the percent, in all eight positions\n"
     //
     //       Which bytes end a run of plain text. A byte per entry and not a
     //       bit, for the reason string_span above gives: the shift and mask a
     //       bit needs cost more than the two hundred and fifty four bytes.
     //
-    "format_stops:\n"
-    "        .byte 1\n           .zero 36\n"
-    "        .byte 1  # the percent\n"
-    "        .zero 218\n"
+    "format_stops:\n   .byte 1\n   .zero 36\n   .byte 1  # the percent\n"
+    ".zero 218\n"
     ASM_SECTION
     ASM_END(string_format)
     //
@@ -5108,9 +4805,8 @@ ASM_FUNC(positive_to_string)
     // The set is deliberately a byte per value: string_span's hot loop then
     // needs one indexed load and no shift or mask.
     ASM_FUNC(string_set_add)
-    "1:  movzbl (%rsi), %eax\n   test %al, %al\n   jz 9f\n"
-    "movb $1, (%rdi,%rax)\n   inc %rsi\n"
-    "movzbl (%rsi), %eax\n   test %al, %al\n   jz 9f\n"
+    "1:  movzbl (%rsi), %eax\n   test %al, %al\n   jz 9f\n   movb $1, (%rdi,%rax)\n"
+    "inc %rsi\n   movzbl (%rsi), %eax\n   test %al, %al\n   jz 9f\n"
     "movb $1, (%rdi,%rax)\n   inc %rsi\n   jmp 1b\n"
     "9:  " ASM_RET
     ASM_END(string_set_add)
@@ -5124,16 +4820,14 @@ ASM_FUNC(positive_to_string)
     "mov $11, %eax\n   cmp .Lbyte_class_words+88(%rip), %rdx\n   je 8f\n   jmp 9f\n"
     "1:  mov (%rdi), %ecx\n   movzbl 4(%rdi), %edx\n   shl $32, %rdx\n   or %rcx, %rdx\n"
     "lea .Lbyte_class_words(%rip), %r8\n   xor %eax, %eax\n"
-    "2:  cmp (%r8,%rax,8), %rdx\n   je 8f\n   inc %eax\n   cmp $11, %eax\n   jb 2b\n"
+    "2:  cmp (%r8,%rax,8), %rdx\n   je 8f\n   inc %eax\n   cmp $11, %eax\n"
+    "jb 2b\n"
     "9:  mov $-1, %eax\n"
     "8:  " ASM_RET
     // Packed little-endian spellings, shared by the bounded comparisons above.
     ".section .rodata\n   .balign 8\n"
-    ".Lbyte_class_words:\n"
-    "        .quad 0x6168706c61, 0x7469676964, 0x6d756e6c61\n"
-    "        .quad 0x7265707075, 0x7265776f6c, 0x6563617073\n"
-    "        .quad 0x6b6e616c62, 0x746e697270, 0x6870617267\n"
-    "        .quad 0x6c72746e63, 0x74636e7570, 0x746967696478\n"
+    ".Lbyte_class_words:\n   .quad 0x6168706c61, 0x7469676964, 0x6d756e6c61\n   .quad 0x7265707075, 0x7265776f6c, 0x6563617073\n"
+    ".quad 0x6b6e616c62, 0x746e697270, 0x6870617267\n   .quad 0x6c72746e63, 0x74636e7570, 0x746967696478\n"
     ASM_SECTION
     ASM_END(byte_class_index)
     // Whether one byte belongs to one of those classes. A balanced dispatch
@@ -5144,44 +4838,40 @@ ASM_FUNC(positive_to_string)
     "cmp $5, %edi\n   ja .Lbyte_holds_high\n   cmp $2, %edi\n   ja .Lbyte_holds_mid\n"
     "cmp $1, %edi\n   ja .Lbyte_holds_alnum\n   je .Lbyte_holds_digit\n"
     // alpha: upper or lower.
-    ".Lbyte_holds_alpha:\n   lea -65(%rsi), %ecx\n   cmp $25, %ecx\n"
-    "jbe .Lbyte_holds_true\n   lea -97(%rsi), %ecx\n   cmp $25, %ecx\n"
-    "setbe %al\n   jmp .Lbyte_holds_return\n"
-    ".Lbyte_holds_digit:\n   lea -48(%rsi), %ecx\n   cmp $9, %ecx\n"
-    "setbe %al\n   jmp .Lbyte_holds_return\n"
-    ".Lbyte_holds_alnum:\n   lea -48(%rsi), %ecx\n   cmp $9, %ecx\n"
-    "jbe .Lbyte_holds_true\n   jmp .Lbyte_holds_alpha\n"
+    ".Lbyte_holds_alpha:\n   lea -65(%rsi), %ecx\n   cmp $25, %ecx\n   jbe .Lbyte_holds_true\n"
+    "lea -97(%rsi), %ecx\n   cmp $25, %ecx\n   setbe %al\n   jmp .Lbyte_holds_return\n"
+    ".Lbyte_holds_digit:\n   lea -48(%rsi), %ecx\n   cmp $9, %ecx\n   setbe %al\n"
+    "jmp .Lbyte_holds_return\n"
+    ".Lbyte_holds_alnum:\n   lea -48(%rsi), %ecx\n   cmp $9, %ecx\n   jbe .Lbyte_holds_true\n"
+    "jmp .Lbyte_holds_alpha\n"
     // upper, lower, space.
-    ".Lbyte_holds_mid:\n   cmp $4, %edi\n   ja .Lbyte_holds_space\n"
-    "je .Lbyte_holds_lower\n"
-    ".Lbyte_holds_upper:\n   lea -65(%rsi), %ecx\n   cmp $25, %ecx\n"
-    "setbe %al\n   jmp .Lbyte_holds_return\n"
-    ".Lbyte_holds_lower:\n   lea -97(%rsi), %ecx\n   cmp $25, %ecx\n"
-    "setbe %al\n   jmp .Lbyte_holds_return\n"
-    ".Lbyte_holds_space:\n   cmp $32, %esi\n   je .Lbyte_holds_true\n"
-    "lea -9(%rsi), %ecx\n   cmp $4, %ecx\n   setbe %al\n   jmp .Lbyte_holds_return\n"
+    ".Lbyte_holds_mid:\n   cmp $4, %edi\n   ja .Lbyte_holds_space\n   je .Lbyte_holds_lower\n"
+    ".Lbyte_holds_upper:\n   lea -65(%rsi), %ecx\n   cmp $25, %ecx\n   setbe %al\n"
+    "jmp .Lbyte_holds_return\n"
+    ".Lbyte_holds_lower:\n   lea -97(%rsi), %ecx\n   cmp $25, %ecx\n   setbe %al\n"
+    "jmp .Lbyte_holds_return\n"
+    ".Lbyte_holds_space:\n   cmp $32, %esi\n   je .Lbyte_holds_true\n   lea -9(%rsi), %ecx\n"
+    "cmp $4, %ecx\n   setbe %al\n   jmp .Lbyte_holds_return\n"
     // blank, print, graph.
-    ".Lbyte_holds_high:\n   cmp $8, %edi\n   ja .Lbyte_holds_last\n"
-    "cmp $7, %edi\n   ja .Lbyte_holds_graph\n   je .Lbyte_holds_print\n"
-    ".Lbyte_holds_blank:\n   cmp $32, %esi\n   je .Lbyte_holds_true\n"
-    "cmp $9, %esi\n   sete %al\n   jmp .Lbyte_holds_return\n"
-    ".Lbyte_holds_print:\n   lea -32(%rsi), %ecx\n   cmp $94, %ecx\n"
-    "setbe %al\n   jmp .Lbyte_holds_return\n"
-    ".Lbyte_holds_graph:\n   lea -33(%rsi), %ecx\n   cmp $93, %ecx\n"
-    "setbe %al\n   jmp .Lbyte_holds_return\n"
+    ".Lbyte_holds_high:\n   cmp $8, %edi\n   ja .Lbyte_holds_last\n   cmp $7, %edi\n"
+    "ja .Lbyte_holds_graph\n   je .Lbyte_holds_print\n"
+    ".Lbyte_holds_blank:\n   cmp $32, %esi\n   je .Lbyte_holds_true\n   cmp $9, %esi\n"
+    "sete %al\n   jmp .Lbyte_holds_return\n"
+    ".Lbyte_holds_print:\n   lea -32(%rsi), %ecx\n   cmp $94, %ecx\n   setbe %al\n"
+    "jmp .Lbyte_holds_return\n"
+    ".Lbyte_holds_graph:\n   lea -33(%rsi), %ecx\n   cmp $93, %ecx\n   setbe %al\n"
+    "jmp .Lbyte_holds_return\n"
     // cntrl, punct, xdigit.
-    ".Lbyte_holds_last:\n   cmp $10, %edi\n   ja .Lbyte_holds_xdigit\n"
-    "je .Lbyte_holds_punct\n"
-    ".Lbyte_holds_cntrl:\n   cmp $31, %esi\n   jbe .Lbyte_holds_true\n"
-    "cmp $127, %esi\n   sete %al\n   jmp .Lbyte_holds_return\n"
-    ".Lbyte_holds_punct:\n   lea -33(%rsi), %ecx\n   cmp $93, %ecx\n"
-    "ja .Lbyte_holds_return\n   lea -48(%rsi), %ecx\n   cmp $9, %ecx\n"
-    "jbe .Lbyte_holds_return\n   lea -65(%rsi), %ecx\n   cmp $25, %ecx\n"
-    "jbe .Lbyte_holds_return\n   lea -97(%rsi), %ecx\n   cmp $25, %ecx\n"
+    ".Lbyte_holds_last:\n   cmp $10, %edi\n   ja .Lbyte_holds_xdigit\n   je .Lbyte_holds_punct\n"
+    ".Lbyte_holds_cntrl:\n   cmp $31, %esi\n   jbe .Lbyte_holds_true\n   cmp $127, %esi\n"
+    "sete %al\n   jmp .Lbyte_holds_return\n"
+    ".Lbyte_holds_punct:\n   lea -33(%rsi), %ecx\n   cmp $93, %ecx\n   ja .Lbyte_holds_return\n"
+    "lea -48(%rsi), %ecx\n   cmp $9, %ecx\n   jbe .Lbyte_holds_return\n   lea -65(%rsi), %ecx\n"
+    "cmp $25, %ecx\n   jbe .Lbyte_holds_return\n   lea -97(%rsi), %ecx\n   cmp $25, %ecx\n"
     "jbe .Lbyte_holds_return\n   jmp .Lbyte_holds_true\n"
-    ".Lbyte_holds_xdigit:\n   lea -48(%rsi), %ecx\n   cmp $9, %ecx\n"
-    "jbe .Lbyte_holds_true\n   mov %esi, %ecx\n   or $32, %ecx\n"
-    "sub $97, %ecx\n   cmp $5, %ecx\n   setbe %al\n   jmp .Lbyte_holds_return\n"
+    ".Lbyte_holds_xdigit:\n   lea -48(%rsi), %ecx\n   cmp $9, %ecx\n   jbe .Lbyte_holds_true\n"
+    "mov %esi, %ecx\n   or $32, %ecx\n   sub $97, %ecx\n   cmp $5, %ecx\n"
+    "setbe %al\n   jmp .Lbyte_holds_return\n"
     ".Lbyte_holds_true:\n   mov $1, %eax\n"
     ".Lbyte_holds_return:\n"
     ASM_RET
@@ -5229,14 +4919,13 @@ ASM_FUNC(positive_to_string)
     //       tail of a long one are the same three instructions.
     //
     "sub $4, %rsi\n   jb 5f\n"
-    "1:  movzbl (%rdi,%rax), %ecx\n   cmpb $0, (%rdx,%rcx)\n   je 9f\n"
-    "movzbl 1(%rdi,%rax), %ecx\n   cmpb $0, (%rdx,%rcx)\n   je 8f\n"
-    "movzbl 2(%rdi,%rax), %ecx\n   cmpb $0, (%rdx,%rcx)\n   je 7f\n"
-    "movzbl 3(%rdi,%rax), %ecx\n   cmpb $0, (%rdx,%rcx)\n   je 6f\n"
+    "1:  movzbl (%rdi,%rax), %ecx\n   cmpb $0, (%rdx,%rcx)\n   je 9f\n   movzbl 1(%rdi,%rax), %ecx\n"
+    "cmpb $0, (%rdx,%rcx)\n   je 8f\n   movzbl 2(%rdi,%rax), %ecx\n   cmpb $0, (%rdx,%rcx)\n"
+    "je 7f\n   movzbl 3(%rdi,%rax), %ecx\n   cmpb $0, (%rdx,%rcx)\n   je 6f\n"
     "add $4, %rax\n   cmp %rsi, %rax\n   jbe 1b\n"
     "5:  add $4, %rsi  # the bound again\n"
-    "2:  cmp %rsi, %rax\n   jae 9f\n   movzbl (%rdi,%rax), %ecx\n"
-    "cmpb $0, (%rdx,%rcx)\n   je 9f\n   inc %rax\n   jmp 2b\n"
+    "2:  cmp %rsi, %rax\n   jae 9f\n   movzbl (%rdi,%rax), %ecx\n   cmpb $0, (%rdx,%rcx)\n"
+    "je 9f\n   inc %rax\n   jmp 2b\n"
     //
     //       Three exits that fall through each other: a stop at the fourth byte
     //       of the group is three past where the group began, and each label
@@ -5274,14 +4963,12 @@ ASM_FUNC(positive_to_string)
     ASM_FUNC(string_digits_max)
     "xor %eax, %eax  # the number so far\n"
     "xor %r8d, %r8d  # how many bytes it took\n"
-    "1:  cmp %rsi, %r8\n   jae 2f\n"
-    "movzbl (%rdi,%r8), %ecx\n   sub $48, %ecx\n"
+    "1:  cmp %rsi, %r8\n   jae 2f\n   movzbl (%rdi,%r8), %ecx\n   sub $48, %ecx\n"
     //
     //       One compare for both ends: a byte under the zero wraps beneath a
     //       thirty two bit subtract and lands well above nine.
     //
-    "cmp $9, %ecx\n   ja 2f\n"
-    "lea (%rax,%rax,4), %rax\n   lea (%rcx,%rax,2), %rax  # ten times it, plus the digit\n"
+    "cmp $9, %ecx\n   ja 2f\n   lea (%rax,%rax,4), %rax\n   lea (%rcx,%rax,2), %rax  # ten times it, plus the digit\n"
     "inc %r8\n   jmp 1b\n"
     //
     //       The count is written through a pointer the caller may not have
@@ -5323,12 +5010,11 @@ ASM_FUNC(positive_to_string)
 
     ASM_FUNC(string_digits_hexadecimal_escape_max)
     "xor %eax, %eax\n   xor %ecx, %ecx\n   test %rsi, %rsi\n   je 4f\n"
-    "1:  movzbl (%rdi,%rcx), %r8d\n   mov %r8d, %r9d\n"
-    "sub $48, %r9d\n   cmp $9, %r9d\n   jbe 2f\n"
-    "or $32, %r8d\n   sub $97, %r8d\n   cmp $5, %r8d\n   ja 4f\n"
-    "lea 10(%r8), %r9d\n"
-    "2:  shl $4, %rax\n   add %r9, %rax\n   inc %rcx\n"
-    "cmp %rsi, %rcx\n   jne 1b\n"
+    "1:  movzbl (%rdi,%rcx), %r8d\n   mov %r8d, %r9d\n   sub $48, %r9d\n   cmp $9, %r9d\n"
+    "jbe 2f\n   or $32, %r8d\n   sub $97, %r8d\n   cmp $5, %r8d\n"
+    "ja 4f\n   lea 10(%r8), %r9d\n"
+    "2:  shl $4, %rax\n   add %r9, %rax\n   inc %rcx\n   cmp %rsi, %rcx\n"
+    "jne 1b\n"
     "4:  test %rdx, %rdx\n   je 5f\n   mov %rcx, (%rdx)\n"
     "5:\n"
     ASM_RET
@@ -5340,15 +5026,14 @@ ASM_FUNC(positive_to_string)
     "mov %rdi, %r8\n   mov %rdx, %r9\n   xor %ecx, %ecx\n   xor %eax, %eax\n"
     "test %rsi, %rsi\n   jne 3f\n   jmp 6f\n   .p2align 6\n"
     "1:  sub $48, %edx\n"
-    "2:  shl $4, %rax\n   inc %rcx\n   add %rdx, %rax\n"
-    "cmp %rcx, %rsi\n   je 6f\n"
-    "3:  movzbl (%r8,%rcx), %edx\n   lea -48(%rdx), %edi\n"
-    "cmp $9, %dil\n   jbe 1b\n   lea -97(%rdx), %edi\n"
-    "cmp $5, %dil\n   ja 4f\n   sub $87, %edx\n"
-    "shl $4, %rax\n   inc %rcx\n   add %rdx, %rax\n"
-    "cmp %rcx, %rsi\n   jne 3b\n   jmp 6f\n"
-    "4:  lea -65(%rdx), %edi\n   cmp $5, %dil\n   ja 5f\n"
-    "sub $55, %edx\n   jmp 2b\n"
+    "2:  shl $4, %rax\n   inc %rcx\n   add %rdx, %rax\n   cmp %rcx, %rsi\n"
+    "je 6f\n"
+    "3:  movzbl (%r8,%rcx), %edx\n   lea -48(%rdx), %edi\n   cmp $9, %dil\n   jbe 1b\n"
+    "lea -97(%rdx), %edi\n   cmp $5, %dil\n   ja 4f\n   sub $87, %edx\n"
+    "shl $4, %rax\n   inc %rcx\n   add %rdx, %rax\n   cmp %rcx, %rsi\n"
+    "jne 3b\n   jmp 6f\n"
+    "4:  lea -65(%rdx), %edi\n   cmp $5, %dil\n   ja 5f\n   sub $55, %edx\n"
+    "jmp 2b\n"
     "5:  mov %rcx, %rsi\n"
     "6:  test %r9, %r9\n   je 7f\n   mov %rsi, (%r9)\n"
     "7:\n"
@@ -5372,17 +5057,17 @@ ASM_FUNC(positive_to_string)
     "cmp $10, %rdx\n   jne 1f\n   mov %rcx, %rdx\n   jmp string_digits_max\n"
     "1:  cmp $8, %rdx\n   jne 2f\n   mov %rcx, %rdx\n   jmp string_digits_octal_max\n"
     "2:  cmp $16, %rdx\n   jne 3f\n   mov %rcx, %rdx\n   jmp string_digits_hexadecimal_max\n"
-    "3:  xor %eax, %eax  # the number so far\n   xor %r8d, %r8d  # bytes taken\n"
+    "3:  xor %eax, %eax  # the number so far\n"
+    "xor %r8d, %r8d  # bytes taken\n"
     "lea -2(%rdx), %r9\n   cmp $34, %r9\n   ja 9f  # not a base from 2 through 36\n"
     // The generic classifier. A byte below '0' wraps above the small base in
     // either subtraction; folding ASCII case with OR keeps the two alphabets
     // on one path.
-    "6:  cmp %rsi, %r8\n   jae 9f\n   movzbl (%rdi,%r8), %r9d\n"
-    "mov %r9d, %r10d\n   sub $48, %r10d\n   cmp $9, %r10d\n   jbe 7f\n"
-    "or $32, %r9d\n   sub $97, %r9d\n   cmp $25, %r9d\n   ja 9f\n"
-    "lea 10(%r9), %r10d\n"
-    "7:  cmp %rdx, %r10\n   jae 9f\n"
-    "imul %rdx, %rax\n   add %r10, %rax\n   inc %r8\n   jmp 6b\n"
+    "6:  cmp %rsi, %r8\n   jae 9f\n   movzbl (%rdi,%r8), %r9d\n   mov %r9d, %r10d\n"
+    "sub $48, %r10d\n   cmp $9, %r10d\n   jbe 7f\n   or $32, %r9d\n"
+    "sub $97, %r9d\n   cmp $25, %r9d\n   ja 9f\n   lea 10(%r9), %r10d\n"
+    "7:  cmp %rdx, %r10\n   jae 9f\n   imul %rdx, %rax\n   add %r10, %rax\n"
+    "inc %r8\n   jmp 6b\n"
     "9:  test %rcx, %rcx\n   je 8f\n   mov %r8, (%rcx)\n"
     "8:\n"
     ASM_RET
@@ -5412,12 +5097,12 @@ ASM_FUNC(positive_to_string)
     //
     ASM_FUNC(string_bipolar)
     "xor %eax, %eax\n   xor %r8d, %r8d\n   xor %r9d, %r9d\n   xor %r10d, %r10d\n"
-    "test %rdi, %rdi\n   je 4f\n   movzbl (%rdi), %ecx\n"
-    "cmp $45, %ecx\n   jne 1f\n   mov $1, %r9d\n   inc %r8\n   jmp 2f\n"
+    "test %rdi, %rdi\n   je 4f\n   movzbl (%rdi), %ecx\n   cmp $45, %ecx\n"
+    "jne 1f\n   mov $1, %r9d\n   inc %r8\n   jmp 2f\n"
     "1:  cmp $43, %ecx\n   jne 2f\n   inc %r8\n"
     "2:  movzbl (%rdi,%r8), %ecx\n   sub $48, %ecx\n   cmp $9, %ecx\n   ja 3f\n"
-    "lea (%rax,%rax,4), %rax\n   lea (%rcx,%rax,2), %rax\n"
-    "inc %r8\n   inc %r10\n   jmp 2b\n"
+    "lea (%rax,%rax,4), %rax\n   lea (%rcx,%rax,2), %rax\n   inc %r8\n   inc %r10\n"
+    "jmp 2b\n"
     "3:  test %r10, %r10\n   jne 5f\n   xor %r8d, %r8d\n   jmp 4f\n"
     "5:  test %r9d, %r9d\n   je 4f\n   neg %rax\n"
     "4:  test %rsi, %rsi\n   je 6f\n   mov %r8, (%rsi)\n"
@@ -5454,7 +5139,8 @@ ASM_FUNC(positive_to_string)
     //
     ASM_FUNC(string_digits_exact)
     "test %rdi, %rdi\n   jz 3f  # null is not a decimal word\n"
-    "xor %r8d, %r8d  # the number so far\n   xor %ecx, %ecx  # how many digits\n"
+    "xor %r8d, %r8d  # the number so far\n"
+    "xor %ecx, %ecx  # how many digits\n"
     "1:  movzbl (%rdi,%rcx), %edx\n   sub $48, %edx\n   cmp $9, %edx\n   ja 2f\n"
     "lea (%r8,%r8,4), %r8\n   lea (%rdx,%r8,2), %r8\n   inc %rcx\n   jmp 1b\n"
     "2:  test %rcx, %rcx\n   jz 3f  # empty, or a non-digit first byte\n"
@@ -5518,9 +5204,8 @@ ASM_FUNC(positive_to_string)
     // string starts in. What is past the terminator is masked off rather than
     // trusted.
     ASM_FUNC(string_table_find)
-    "push %rbx\n   push %rbp\n   push %r12\n"
-    "mov %edi, %eax\n   and $0xfff, %eax\n   cmp $0xff8, %eax\n   ja 20f\n"
-    "mov (%rdi), %r11\n"
+    "push %rbx\n   push %rbp\n   push %r12\n   mov %edi, %eax\n"
+    "and $0xfff, %eax\n   cmp $0xff8, %eax\n   ja 20f\n   mov (%rdi), %r11\n"
     //
     //       Whether the name runs past the first eight bytes, which the mask
     //       cannot say on its own: a name of exactly seven characters ends on
@@ -5543,8 +5228,7 @@ ASM_FUNC(positive_to_string)
     "5:  cmp %rcx, %rax\n   jae 9f\n   mov (%r8), %r9\n   test %r9, %r9\n"
     "jz 9f\n   mov %r9d, %ebx\n   and $0xfff, %ebx\n   cmp $0xff8, %ebx\n"
     "ja 10f  # this entry ends too near a page to read eight of\n"
-    "mov (%r9), %r10\n   xor %r11, %r10\n   test %rbp, %r10\n"
-    "jnz 8f\n"
+    "mov (%r9), %r10\n   xor %r11, %r10\n   test %rbp, %r10\n   jnz 8f\n"
     // The first eight agree as far as they matter. If the name ended inside
     // them that is the whole answer.
     "test %r12d, %r12d\n   jz 7f\n   mov %rdi, %rbx\n   add $8, %rbx\n"
@@ -5554,18 +5238,20 @@ ASM_FUNC(positive_to_string)
     "jmp 6b\n"
     "8:  add %rdx, %r8\n   inc %rax\n   jmp 5b\n"
     // One entry, a byte at a time, because eight of it could not be read.
-    "10: mov %rdi, %rbx\n"
-    "11: movzbl (%rbx), %r10d\n   movzbl (%r9), %esi\n   cmp %r10d, %esi\n   jne 8b\n"
-    "test %r10d, %r10d\n   jz 7f\n   inc %rbx\n   inc %r9\n   jmp 11b\n"
+    "10:  mov %rdi, %rbx\n"
+    "11:  movzbl (%rbx), %r10d\n   movzbl (%r9), %esi\n   cmp %r10d, %esi\n   jne 8b\n"
+    "test %r10d, %r10d\n   jz 7f\n   inc %rbx\n   inc %r9\n"
+    "jmp 11b\n"
     // The wanted name itself is too near the end of a page, so nothing here
     // may read a word at all. Rare enough to be its own plain loop rather
     // than a branch in the one above.
-    "20: xor %eax, %eax\n   mov %rsi, %r8\n"
-    "21: cmp %rcx, %rax\n   jae 9f\n   mov (%r8), %r9\n   test %r9, %r9\n   jz 9f\n"
-    "mov %rdi, %rbx\n"
-    "22: movzbl (%rbx), %r10d\n   movzbl (%r9), %esi\n   cmp %r10d, %esi\n   jne 23f\n"
-    "test %r10d, %r10d\n   jz 7f\n   inc %rbx\n   inc %r9\n   jmp 22b\n"
-    "23: add %rdx, %r8\n   inc %rax\n   jmp 21b\n"
+    "20:  xor %eax, %eax\n   mov %rsi, %r8\n"
+    "21:  cmp %rcx, %rax\n   jae 9f\n   mov (%r8), %r9\n   test %r9, %r9\n"
+    "jz 9f\n   mov %rdi, %rbx\n"
+    "22:  movzbl (%rbx), %r10d\n   movzbl (%r9), %esi\n   cmp %r10d, %esi\n   jne 23f\n"
+    "test %r10d, %r10d\n   jz 7f\n   inc %rbx\n   inc %r9\n"
+    "jmp 22b\n"
+    "23:  add %rdx, %r8\n   inc %rax\n   jmp 21b\n"
     "9:  mov %rcx, %rax\n"
     "7:  pop %r12\n   pop %rbp\n   pop %rbx\n"
     ASM_RET
@@ -5590,74 +5276,54 @@ ASM_FUNC(positive_to_string)
     //
     ASM_FUNC(positive_into_base)
     ".section .rodata\n   .balign 16\n"
-    "positive_base_lower:\n   .ascii \"0123456789abcdefghijklmnopqrstuvwxyz\"\n"
-    "positive_base_upper:\n   .ascii \"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ\"\n"
+    "positive_base_lower:\n"
+    "   .ascii \"0123456789abcdefghijklmnopqrstuvwxyz\"\n"
+    "positive_base_upper:\n"
+    "   .ascii \"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ\"\n"
     ASM_SECTION
-    "lea -2(%rdx), %rax\n   cmp $34, %rax\n"
-    "ja .Lpositive_base_x86_invalid\n"
-    "cmp $10, %rdx\n   je .Lpositive_base_x86_decimal\n"
-    "test %rsi, %rsi\n   jz .Lpositive_base_x86_zero\n"
+    "lea -2(%rdx), %rax\n   cmp $34, %rax\n   ja .Lpositive_base_x86_invalid\n   cmp $10, %rdx\n"
+    "je .Lpositive_base_x86_decimal\n   test %rsi, %rsi\n   jz .Lpositive_base_x86_zero\n"
     // A generic call now pays one power test rather than five base compares.
-    "lea -1(%rdx), %r8\n   test %rdx, %r8\n"
-    "jnz .Lpositive_base_x86_generic\n"
-    "cmp $16, %rdx\n   je .Lpositive_base_x86_hex\n"
-    "cmp $8, %rdx\n   je .Lpositive_base_x86_octal\n"
-    "cmp $32, %rdx\n   je .Lpositive_base_x86_base32\n"
-    "cmp $4, %rdx\n   je .Lpositive_base_x86_quaternary\n"
+    "lea -1(%rdx), %r8\n   test %rdx, %r8\n   jnz .Lpositive_base_x86_generic\n   cmp $16, %rdx\n"
+    "je .Lpositive_base_x86_hex\n   cmp $8, %rdx\n   je .Lpositive_base_x86_octal\n   cmp $32, %rdx\n"
+    "je .Lpositive_base_x86_base32\n   cmp $4, %rdx\n   je .Lpositive_base_x86_quaternary\n"
     // The valid power bases leave only two.
     "jmp .Lpositive_base_x86_binary\n"
     // Generic bases 2..36. r8 keeps the divisor because div consumes rdx.
-    ".Lpositive_base_x86_generic:\n"
-    "mov %rdx, %r8\n   mov %rdi, %r9\n   mov $87, %r10d\n"
+    ".Lpositive_base_x86_generic:\n   mov %rdx, %r8\n   mov %rdi, %r9\n   mov $87, %r10d\n"
     "test %cl, %cl\n   jz .Lpositive_base_x86_generic_loop\n   mov $55, %r10d\n"
-    ".Lpositive_base_x86_generic_loop:\n"
-    "mov %rsi, %rax\n   xor %edx, %edx\n   div %r8\n"
-    "cmp $10, %edx\n   jb .Lpositive_base_x86_generic_number\n"
-    "add %r10d, %edx\n   jmp .Lpositive_base_x86_generic_store\n"
+    ".Lpositive_base_x86_generic_loop:\n   mov %rsi, %rax\n   xor %edx, %edx\n   div %r8\n"
+    "cmp $10, %edx\n   jb .Lpositive_base_x86_generic_number\n   add %r10d, %edx\n   jmp .Lpositive_base_x86_generic_store\n"
     ".Lpositive_base_x86_generic_number:\n   add $48, %edx\n"
-    ".Lpositive_base_x86_generic_store:\n"
-    "mov %dl, (%r9)\n   inc %r9\n   mov %rax, %rsi\n   test %rsi, %rsi\n"
-    "jnz .Lpositive_base_x86_generic_loop\n"
+    ".Lpositive_base_x86_generic_store:\n   mov %dl, (%r9)\n   inc %r9\n   mov %rax, %rsi\n"
+    "test %rsi, %rsi\n   jnz .Lpositive_base_x86_generic_loop\n"
     // The result length survives the swaps in rax.
     "mov %r9, %rax\n   sub %rdi, %rax\n   dec %r9\n   mov %rdi, %r8\n"
-    ".Lpositive_base_x86_reverse:\n"
-    "cmp %r9, %r8\n   jae .Lpositive_base_x86_done\n"
-    "movzbl (%r8), %edx\n   movzbl (%r9), %esi\n"
-    "mov %sil, (%r8)\n   mov %dl, (%r9)\n   inc %r8\n   dec %r9\n"
-    "jmp .Lpositive_base_x86_reverse\n"
-    ".Lpositive_base_x86_hex:\n"
-    "bsr %rsi, %r8\n   shr $2, %r8\n   inc %r8\n"
+    ".Lpositive_base_x86_reverse:\n   cmp %r9, %r8\n   jae .Lpositive_base_x86_done\n   movzbl (%r8), %edx\n"
+    "movzbl (%r9), %esi\n   mov %sil, (%r8)\n   mov %dl, (%r9)\n   inc %r8\n"
+    "dec %r9\n   jmp .Lpositive_base_x86_reverse\n"
+    ".Lpositive_base_x86_hex:\n   bsr %rsi, %r8\n   shr $2, %r8\n   inc %r8\n"
     "mov $15, %r11d\n   mov $4, %eax\n   jmp .Lpositive_base_x86_alphabet\n"
-    ".Lpositive_base_x86_base32:\n"
-    "bsr %rsi, %r8\n   imul $26, %r8, %r8\n   shr $7, %r8\n   inc %r8\n"
-    "mov $31, %r11d\n   mov $5, %eax\n"
-    ".Lpositive_base_x86_alphabet:\n"
-    "lea positive_base_lower(%rip), %r10\n   lea positive_base_upper(%rip), %rdx\n"
-    "test %cl, %cl\n   cmovne %rdx, %r10\n   mov %eax, %ecx\n"
-    "lea (%rdi,%r8), %r9\n"
-    ".Lpositive_base_x86_alphabet_loop:\n"
-    "mov %rsi, %rdx\n   and %r11, %rdx\n   movzbl (%r10,%rdx), %edx\n"
-    "dec %r9\n   mov %dl, (%r9)\n   shr %cl, %rsi\n"
-    "jnz .Lpositive_base_x86_alphabet_loop\n   mov %r8, %rax\n"
+    ".Lpositive_base_x86_base32:\n   bsr %rsi, %r8\n   imul $26, %r8, %r8\n   shr $7, %r8\n"
+    "inc %r8\n   mov $31, %r11d\n   mov $5, %eax\n"
+    ".Lpositive_base_x86_alphabet:\n   lea positive_base_lower(%rip), %r10\n   lea positive_base_upper(%rip), %rdx\n"
+    "test %cl, %cl\n   cmovne %rdx, %r10\n   mov %eax, %ecx\n   lea (%rdi,%r8), %r9\n"
+    ".Lpositive_base_x86_alphabet_loop:\n   mov %rsi, %rdx\n   and %r11, %rdx\n   movzbl (%r10,%rdx), %edx\n"
+    "dec %r9\n   mov %dl, (%r9)\n   shr %cl, %rsi\n   jnz .Lpositive_base_x86_alphabet_loop\n"
+    "mov %r8, %rax\n"
     ASM_RET
-    ".Lpositive_base_x86_octal:\n"
-    "bsr %rsi, %r8\n   imul $43, %r8, %r8\n   shr $7, %r8\n   inc %r8\n"
-    "mov $7, %r11d\n   mov $3, %ecx\n   jmp .Lpositive_base_x86_number_power\n"
-    ".Lpositive_base_x86_binary:\n"
-    "bsr %rsi, %r8\n   inc %r8\n   mov $1, %r11d\n   mov $1, %ecx\n"
-    "jmp .Lpositive_base_x86_number_power\n"
-    ".Lpositive_base_x86_quaternary:\n"
-    "bsr %rsi, %r8\n   shr $1, %r8\n   inc %r8\n"
+    ".Lpositive_base_x86_octal:\n   bsr %rsi, %r8\n   imul $43, %r8, %r8\n   shr $7, %r8\n"
+    "inc %r8\n   mov $7, %r11d\n   mov $3, %ecx\n   jmp .Lpositive_base_x86_number_power\n"
+    ".Lpositive_base_x86_binary:\n   bsr %rsi, %r8\n   inc %r8\n   mov $1, %r11d\n"
+    "mov $1, %ecx\n   jmp .Lpositive_base_x86_number_power\n"
+    ".Lpositive_base_x86_quaternary:\n   bsr %rsi, %r8\n   shr $1, %r8\n   inc %r8\n"
     "mov $3, %r11d\n   mov $2, %ecx\n"
-    ".Lpositive_base_x86_number_power:\n"
-    "lea (%rdi,%r8), %r9\n"
-    ".Lpositive_base_x86_number_power_loop:\n"
-    "mov %rsi, %rdx\n   and %r11, %rdx\n   add $48, %edx\n"
-    "dec %r9\n   mov %dl, (%r9)\n   shr %cl, %rsi\n"
-    "jnz .Lpositive_base_x86_number_power_loop\n   mov %r8, %rax\n"
+    ".Lpositive_base_x86_number_power:\n   lea (%rdi,%r8), %r9\n"
+    ".Lpositive_base_x86_number_power_loop:\n   mov %rsi, %rdx\n   and %r11, %rdx\n   add $48, %edx\n"
+    "dec %r9\n   mov %dl, (%r9)\n   shr %cl, %rsi\n   jnz .Lpositive_base_x86_number_power_loop\n"
+    "mov %r8, %rax\n"
     ASM_RET
-    ".Lpositive_base_x86_zero:\n"
-    "movb $48, (%rdi)\n   mov $1, %eax\n"
+    ".Lpositive_base_x86_zero:\n   movb $48, (%rdi)\n   mov $1, %eax\n"
     ASM_RET
     ".Lpositive_base_x86_decimal:\n   jmp positive_into\n"
     ".Lpositive_base_x86_invalid:\n   xor %eax, %eax\n"
@@ -5839,9 +5505,11 @@ __asm__(
 #ifdef KERNEL_MODE
     // Keep walking the integer body. A kernel cannot enter the NEON block
     // below without first saving SIMD state.
-    "subs w11, w11, #1\n   b.eq 24f\n"
+    "subs w11, w11, #1\n"
+    "b.eq 24f\n"
 #else
-    "subs w11, w11, #1\n   b.eq 20f\n"
+    "subs w11, w11, #1\n"
+    "b.eq 20f\n"
 #endif
     "b 1b\n"
     //
@@ -5856,23 +5524,22 @@ __asm__(
     //      which is what that case wants anyway.
     //
 #ifndef KERNEL_MODE
-    "20: and x9, x0, #0xfff\n   cmp x9, #0xff0  // sixteen bytes still fit\n"
-    "b.hi 24f\n   and x9, x1, #0xfff\n   cmp x9, #0xff0\n   b.hi 24f\n"
-    "ldr q0, [x0]\n   ldr q1, [x1]\n"
-    "cmeq v2.16b, v0.16b, v1.16b\n   cmeq v3.16b, v0.16b, #0\n"
-    "bic v2.16b, v2.16b, v3.16b\n"
-    "uminv b4, v2.16b\n   umov w9, v4.b[0]\n   cmp w9, #0xff\n   b.ne 23f\n"
-    "add x0, x0, #16\n   add x1, x1, #16\n   b 20b\n"
-    "23: mvn v2.16b, v2.16b\n   shrn v2.8b, v2.8h, #4\n   fmov x9, d2\n"
-    "rbit x9, x9\n   clz x9, x9\n   lsr x9, x9, #2\n"
+    "20:  and x9, x0, #0xfff\n"
+    "cmp x9, #0xff0  // sixteen bytes still fit\n"
+    "b.hi 24f\n   and x9, x1, #0xfff\n"
+    "cmp x9, #0xff0\n"
+    "b.hi 24f\n   ldr q0, [x0]\n   ldr q1, [x1]\n   cmeq v2.16b, v0.16b, v1.16b\n"
+    "cmeq v3.16b, v0.16b, #0\n"
+    "bic v2.16b, v2.16b, v3.16b\n   uminv b4, v2.16b\n   umov w9, v4.b[0]\n   cmp w9, #0xff\n"
+    "b.ne 23f\n   add x0, x0, #16\n"
+    "add x1, x1, #16\n"
+    "b 20b\n"
+    "23:  mvn v2.16b, v2.16b\n   shrn v2.8b, v2.8h, #4\n"
+    "fmov x9, d2\n   rbit x9, x9\n   clz x9, x9\n   lsr x9, x9, #2\n"
     "ldrb w6, [x0, x9]\n   ldrb w7, [x1, x9]\n   sub w9, w6, w7\n   b 4f\n"
 #endif
-    //
-    //      Near the end of a page, so back to the word loop for eight steps
-    //      -- by then the boundary is behind us and the wide loop can have
-    //      it again.
-    //
-    "24: mov w11, #8\n   b 1b\n"
+    "24:  mov w11, #8\n"
+    "b 1b\n"
     "2:  ldrb w6, [x0]\n   ldrb w7, [x1]\n   subs w9, w6, w7\n   b.ne 4f\n"
     "cbz w7, 3f\n   add x0, x0, #1\n"
     "add x1, x1, #1\n"
@@ -5938,11 +5605,13 @@ __asm__(
     //
     ASM_FUNC(string_first_of)
 #ifdef KERNEL_MODE
-    // As with strlen, the name selects architecture assembly normally and
+    // As with string_length, the name selects architecture assembly normally and
     // checked generic C in the two software KASAN modes.
-    "and w1, w1, #0xff\n   b strchr\n"
+    "and w1, w1, #0xff\n"
+    "b strchr\n"
 #else
-    "and w1, w1, #0xff\n   dup v1.16b, w1  // the byte, in all sixteen lanes\n"
+    "and w1, w1, #0xff\n"
+    "dup v1.16b, w1  // the byte, in all sixteen lanes\n"
     NEON_SCAN(NEON_EITHER)
     "ldrb w4, [x5]\n   cmp w4, w1\n   csel x0, x5, xzr, eq  // the terminator instead means not found\n"
     ASM_RET
@@ -5969,38 +5638,45 @@ __asm__(
     //       string_first_of_or_end: the x86_64 block carries the reasoning.
     ASM_FUNC(string_first_of_or_end)
 #ifdef KERNEL_MODE
-    // strchrnul is an alias onto this symbol in a kernel build, so forwarding
+    // string_first_of_or_end is an alias onto this symbol in a kernel build, so forwarding
     // to that name would recurse.
 #if defined(CONFIG_KASAN_GENERIC) || defined(CONFIG_KASAN_SW_TAGS)
-    // Use the checked KASAN string functions: strchr supplies a hit (including
-    // c==0), and on a miss strlen locates the end without raw ASM reads.
+    // Use the checked KASAN string functions: string_first_of supplies a hit (including
+    // c==0), and on a miss string_length locates the end without raw ASM reads.
     "and w1, w1, #0xff\n"
-    "stp x19, x30, [sp, #-16]!\n   mov x19, x0\n   bl strchr\n"
-    "cbnz x0, 2f\n   mov x0, x19\n   bl strlen\n   add x0, x19, x0\n"
+    "stp x19, x30, [sp,  #-16]!\n"
+    "mov x19, x0\n   bl strchr\n   cbnz x0, 2f\n   mov x0, x19\n"
+    "bl strlen\n   add x0, x19, x0\n"
     "2:  ldp x19, x30, [sp], #16\n"
     ASM_RET
 #else
     // This is the former scalar ARM word body.
     "and w1, w1, #0xff\n"
-    "mov x10, #0x0101\n   movk x10, #0x0101, lsl #16\n"
-    "movk x10, #0x0101, lsl #32\n   movk x10, #0x0101, lsl #48\n"
-    "lsl x11, x10, #7\n   mul x3, x1, x10\n"
-    "and x4, x0, #7\n   bic x5, x0, #7\n"
-    "ldr x6, [x5]\n   lsl x4, x4, #3\n   mov x7, #-1\n"
+    "mov x10, #0x0101\n"
+    "movk x10, #0x0101, lsl #16\n"
+    "movk x10, #0x0101, lsl #32\n"
+    "movk x10, #0x0101, lsl #48\n"
+    "lsl x11, x10, #7\n"
+    "mul x3, x1, x10\n   and x4, x0, #7\n"
+    "bic x5, x0, #7\n"
+    "ldr x6, [x5]\n   lsl x4, x4, #3\n"
+    "mov x7,  #-1\n"
     "lsl x7, x7, x4\n   cmp w1, #0xff\n"
-    "mov w14, #0xff\n   mov w15, #1\n   csel w14, w15, w14, eq\n"
-    "mul x14, x14, x10\n   bic x14, x14, x7\n"
-    "and x6, x6, x7\n   orr x6, x6, x14\n"
-    "1:  eor x8, x6, x3\n   sub x9, x8, x10\n   bic x9, x9, x8\n"
-    "and x9, x9, x11\n   sub x12, x6, x10\n   bic x12, x12, x6\n"
-    "and x12, x12, x11\n   orr x9, x9, x12\n   cbnz x9, 2f\n"
-    "add x5, x5, #8\n   ldr x6, [x5]\n   b 1b\n"
+    "mov w14, #0xff\n"
+    "mov w15, #1\n"
+    "csel w14, w15, w14, eq\n   mul x14, x14, x10\n   bic x14, x14, x7\n   and x6, x6, x7\n"
+    "orr x6, x6, x14\n"
+    "1:  eor x8, x6, x3\n   sub x9, x8, x10\n   bic x9, x9, x8\n   and x9, x9, x11\n"
+    "sub x12, x6, x10\n   bic x12, x12, x6\n   and x12, x12, x11\n   orr x9, x9, x12\n"
+    "cbnz x9, 2f\n   add x5, x5, #8\n"
+    "ldr x6, [x5]\n   b 1b\n"
     "2:  rbit x9, x9\n   clz x9, x9\n   lsr x9, x9, #3\n"
     "add x0, x5, x9\n"
     ASM_RET
 #endif
 #else
-    "and w1, w1, #0xff\n   dup v1.16b, w1\n"
+    "and w1, w1, #0xff\n"
+    "dup v1.16b, w1\n"
     NEON_SCAN(NEON_EITHER)
     "mov x0, x5\n"
     ASM_RET
@@ -6012,15 +5688,13 @@ __asm__(
     "cbz x1, 7f\n   and w2, w2, #0xff\n"
     "mov x5, x0\n   mov x6, x1\n"
 #else
-    "cbz x1, 7f\n   and w2, w2, #0xff\n   dup v1.16b, w2\n"
-    "mov x5, x0\n   mov x6, x1\n"
+    "cbz x1, 7f\n   and w2, w2, #0xff\n"
+    "dup v1.16b, w2\n   mov x5, x0\n   mov x6, x1\n"
     NEON_SCAN_MAX(NEON_EITHER)
-    "ldrb w4, [x5]\n   cmp w4, w2\n"
-    "csel x0, x5, xzr, eq  // the terminator instead means not found\n"
+    "ldrb w4, [x5]\n   cmp w4, w2\n   csel x0, x5, xzr, eq  // the terminator instead means not found\n"
     "ret\n"
 #endif
-    "5:  mov x0, x5\n   mov x1, x6\n   cbz x1, 7f\n"
-    "mov x10, #0x0101\n"
+    "5:  mov x0, x5\n   mov x1, x6\n   cbz x1, 7f\n   mov x10, #0x0101\n"
     "movk x10, #0x0101, lsl #16\n"
     "movk x10, #0x0101, lsl #32\n"
     "movk x10, #0x0101, lsl #48\n"
@@ -6070,8 +5744,9 @@ __asm__(
     //
     ASM_FUNC(string_last_of_or_end)
 #ifdef KERNEL_MODE
-    "and w1, w1, #0xff\n   cbz w1, 8f\n"
-    // The architecture strrchr is scalar assembly in ordinary builds and the
+    "and w1, w1, #0xff\n"
+    "cbz w1, 8f\n"
+    // The architecture string_last_of_or_end is scalar assembly in ordinary builds and the
     // checked generic implementation in software-KASAN builds. The ARM
     // assembly does not report the terminator for c==0, hence the split.
     "b strrchr\n"
@@ -6083,8 +5758,8 @@ __asm__(
     //      exactly the question string_first_of_or_end already answers for a
     //      byte that never turns up. It used to be a byte walk here.
     //
-    "and w1, w1, #0xff\n   cbnz w1, 1f\n"
-    "b string_first_of_or_end\n"
+    "and w1, w1, #0xff\n"
+    "cbnz w1, 1f\n   b string_first_of_or_end\n"
     //
     //      Sixteen bytes a turn and not sixty four, which the hunts above
     //      take. Those stop at the first flag and can ask "did any of these
@@ -6094,29 +5769,29 @@ __asm__(
     //      sixteen. Four blocks of that is more work than one test saves.
     //
     "1:  dup v1.16b, w1\n   mov x14, #0  // the best so far: none\n"
-    "and x4, x0, #15\n   bic x5, x0, #15  // align down: same page, cannot fault\n"
-    "mov x7, #-1\n   lsl x4, x4, #2  // four mask bits a byte\n"
+    "and x4, x0, #15\n"
+    "bic x5, x0, #15  // align down: same page, cannot fault\n"
+    "mov x7,  #-1\n"
+    "lsl x4, x4, #2  // four mask bits a byte\n"
     "lsl x7, x7, x4  // which bytes of this vector are ours\n"
-    "2:  ld1 {v4.16b}, [x5]\n"
-    "cmeq v5.16b, v4.16b, #0\n   cmeq v4.16b, v4.16b, v1.16b\n"
-    "shrn v4.8b, v4.8h, #4\n   fmov x3, d4  // where the byte is\n"
-    "shrn v5.8b, v5.8h, #4\n   fmov x9, d5  // where the string ends\n"
-    "and x3, x3, x7\n   and x9, x9, x7\n   mov x7, #-1\n"
+    "2:  ld1 {v4.16b}, [x5]\n   cmeq v5.16b, v4.16b, #0\n"
+    "cmeq v4.16b, v4.16b, v1.16b\n   shrn v4.8b, v4.8h, #4\n"
+    "fmov x3, d4  // where the byte is\n"
+    "shrn v5.8b, v5.8h, #4\n"
+    "fmov x9, d5  // where the string ends\n"
+    "and x3, x3, x7\n   and x9, x9, x7\n   mov x7,  #-1\n"
     "cbnz x9, 4f  // the string ends in these sixteen\n"
-    "cbz x3, 3f\n"
-    "clz x10, x3\n"
-    "mov x11, #63\n"
+    "cbz x3, 3f\n   clz x10, x3\n   mov x11, #63\n"
     "sub x10, x11, x10  // the highest flag, and clz counts from the other end\n"
     "add x14, x5, x10, lsr #2  // a later match than any before\n"
-    "3:  add x5, x5, #16\n   b 2b\n"
+    "3:  add x5, x5, #16\n"
+    "b 2b\n"
     //
     //      Only matches below the terminator count: isolate its lowest flag
     //      and keep what is under it.
     //
     "4:  neg x10, x9\n   and x10, x10, x9\n   sub x10, x10, #1\n"
-    "and x3, x3, x10\n   cbz x3, 5f\n"
-    "clz x10, x3\n"
-    "mov x11, #63\n"
+    "and x3, x3, x10\n   cbz x3, 5f\n   clz x10, x3\n   mov x11, #63\n"
     "sub x10, x11, x10\n   add x14, x5, x10, lsr #2\n"
     "5:  mov x0, x14\n"
     ASM_RET
@@ -6138,18 +5813,20 @@ __asm__(
     //      is the whole difference between this and string_compare above;
     //      the mask is the one that block explains.
     //
-    "cmp x2, #32\n   b.lo 10f\n"
-    "5:  ldr q0, [x0]\n   ldr q1, [x1]\n"
-    "cmeq v2.16b, v0.16b, v1.16b\n   cmeq v3.16b, v0.16b, #0\n"
-    "bic v2.16b, v2.16b, v3.16b\n"
-    "uminv b4, v2.16b\n   umov w9, v4.b[0]\n   cmp w9, #0xff\n   b.ne 6f\n"
-    "add x0, x0, #16\n   add x1, x1, #16\n   sub x2, x2, #16\n"
-    "cmp x2, #16\n   b.hs 5b\n   b 10f\n"
-    "6:  mvn v2.16b, v2.16b\n   shrn v2.8b, v2.8h, #4\n   fmov x9, d2\n"
-    "rbit x9, x9\n   clz x9, x9\n   lsr x9, x9, #2\n"
+    "cmp x2, #32\n"
+    "b.lo 10f\n"
+    "5:  ldr q0, [x0]\n   ldr q1, [x1]\n   cmeq v2.16b, v0.16b, v1.16b\n   cmeq v3.16b, v0.16b, #0\n"
+    "bic v2.16b, v2.16b, v3.16b\n   uminv b4, v2.16b\n   umov w9, v4.b[0]\n   cmp w9, #0xff\n"
+    "b.ne 6f\n   add x0, x0, #16\n"
+    "add x1, x1, #16\n"
+    "sub x2, x2, #16\n"
+    "cmp x2, #16\n"
+    "b.hs 5b\n   b 10f\n"
+    "6:  mvn v2.16b, v2.16b\n   shrn v2.8b, v2.8h, #4\n"
+    "fmov x9, d2\n   rbit x9, x9\n   clz x9, x9\n   lsr x9, x9, #2\n"
     "ldrb w6, [x0, x9]\n   ldrb w7, [x1, x9]\n   sub w9, w6, w7\n   b 4f\n"
 #endif
-    "10: mov x10, #0x0101010101010101\n"
+    "10:  mov x10, #0x0101010101010101\n"
     "1:  cmp x2, #8\n"
     "b.lo 2f\n   ldr x6, [x0]\n   ldr x7, [x1]\n   cmp x6, x7\n"
     "b.ne 2f  // differ: let the byte step find where\n"
@@ -6174,17 +5851,16 @@ __asm__(
     //       back to n -- which is what the answer is when there is none inside.
     //
     ASM_FUNC(string_length_max)
-    "cbz x1, 7f\n"
-    "mov x11, x0  // the start, whichever body runs\n"
+    "cbz x1, 7f\n   mov x11, x0  // the start, whichever body runs\n"
     "mov x12, x1  // and the bound, to clamp against\n"
     "mov x5, x0\n   mov x6, x1\n"
 #ifndef KERNEL_MODE
     NEON_SCAN_MAX(NEON_ZERO)
     "sub x0, x5, x11\n   ret\n"
 #endif
-    "5:  cbz x6, 8f\n"
-    "add x13, x5, x6  // one past the last byte we may report\n"
-    "and x4, x5, #7\n   bic x5, x5, #7\n"
+    "5:  cbz x6, 8f\n   add x13, x5, x6  // one past the last byte we may report\n"
+    "and x4, x5, #7\n"
+    "bic x5, x5, #7\n"
     "ldr x6, [x5]\n   mov x10, #0x0101010101010101\n"
     "cbz x4, 1f\n   lsl x4, x4, #3\n"
     "mov x9,  #-1\n"
@@ -6211,15 +5887,15 @@ __asm__(
 #ifdef KERNEL_MODE
     "cbz x2, 7f\n   and w1, w1, #0xff\n"
 #else
-    "cbz x2, 7f\n   and w1, w1, #0xff\n   dup v1.16b, w1  // the byte, in all sixteen lanes\n"
+    "cbz x2, 7f\n   and w1, w1, #0xff\n"
+    "dup v1.16b, w1  // the byte, in all sixteen lanes\n"
 #endif
     "mov x5, x0\n   mov x6, x2\n"
 #ifndef KERNEL_MODE
     NEON_SCAN_MAX(NEON_BYTE)
     "mov x0, x5\n   ret\n"
 #endif
-    "5:  mov x0, x5\n   mov x2, x6\n   cbz x2, 7f\n"
-    "mov x10, #0x0101010101010101\n"
+    "5:  mov x0, x5\n   mov x2, x6\n   cbz x2, 7f\n   mov x10, #0x0101010101010101\n"
     "mul x3, x1, x10  // the byte, in all eight positions\n"
     "add x13, x0, x2  // one past the last byte we may report\n"
     "and x4, x0, #7\n"
@@ -6259,34 +5935,41 @@ __asm__(
     //       one halfword, which is why the round count is capped at 255.
     //
     ASM_FUNC(memory_count)
-    "mov x3, #0\n   cbz x1, 9f\n"
+    "mov x3, #0\n"
+    "cbz x1, 9f\n"
 #ifndef KERNEL_MODE
     "dup v1.16b, w2\n"
-    "1:  cmp x1, #64\n   b.lo 5f\n"
-    "mov x4, x1\n   lsr x4, x4, #6\n   mov x5, #63\n   cmp x4, x5\n   csel x4, x5, x4, hi\n"
-    "movi v2.16b, #0\n   movi v3.16b, #0\n   movi v4.16b, #0\n   movi v5.16b, #0\n"
+    "1:  cmp x1, #64\n"
+    "b.lo 5f\n   mov x4, x1\n   lsr x4, x4, #6\n"
+    "mov x5, #63\n"
+    "cmp x4, x5\n   csel x4, x5, x4, hi\n   movi v2.16b, #0\n"
+    "movi v3.16b, #0\n"
+    "movi v4.16b, #0\n"
+    "movi v5.16b, #0\n"
     "mov x6, x4\n"
     "2:  ld1 {v16.16b, v17.16b, v18.16b, v19.16b}, [x0], #64\n"
-    "cmeq v16.16b, v16.16b, v1.16b\n   cmeq v17.16b, v17.16b, v1.16b\n"
-    "cmeq v18.16b, v18.16b, v1.16b\n   cmeq v19.16b, v19.16b, v1.16b\n"
-    "sub v2.16b, v2.16b, v16.16b\n   sub v3.16b, v3.16b, v17.16b\n"
-    "sub v4.16b, v4.16b, v18.16b\n   sub v5.16b, v5.16b, v19.16b\n"
-    "subs x6, x6, #1\n   b.ne 2b\n"
-    "uaddlv h2, v2.16b\n   uaddlv h3, v3.16b\n   uaddlv h4, v4.16b\n   uaddlv h5, v5.16b\n"
-    "umov w7, v2.h[0]\n   add x3, x3, x7\n   umov w7, v3.h[0]\n   add x3, x3, x7\n"
-    "umov w7, v4.h[0]\n   add x3, x3, x7\n   umov w7, v5.h[0]\n   add x3, x3, x7\n"
-    "lsl x7, x4, #6\n   sub x1, x1, x7\n   b 1b\n"
+    "cmeq v16.16b, v16.16b, v1.16b\n   cmeq v17.16b, v17.16b, v1.16b\n   cmeq v18.16b, v18.16b, v1.16b\n"
+    "cmeq v19.16b, v19.16b, v1.16b\n   sub v2.16b, v2.16b, v16.16b\n   sub v3.16b, v3.16b, v17.16b\n   sub v4.16b, v4.16b, v18.16b\n"
+    "sub v5.16b, v5.16b, v19.16b\n   subs x6, x6, #1\n"
+    "b.ne 2b\n   uaddlv h2, v2.16b\n   uaddlv h3, v3.16b\n   uaddlv h4, v4.16b\n"
+    "uaddlv h5, v5.16b\n   umov w7, v2.h[0]\n   add x3, x3, x7\n   umov w7, v3.h[0]\n"
+    "add x3, x3, x7\n   umov w7, v4.h[0]\n   add x3, x3, x7\n   umov w7, v5.h[0]\n"
+    "add x3, x3, x7\n   lsl x7, x4, #6\n"
+    "sub x1, x1, x7\n   b 1b\n"
 #endif
     "5:  cbz x1, 9f\n"
-    "6:  ldrb w4, [x0], #1\n   cmp w4, w2\n   cinc x3, x3, eq\n"
-    "subs x1, x1, #1\n   b.ne 6b\n"
+    "6:  ldrb w4, [x0], #1\n"
+    "cmp w4, w2\n   cinc x3, x3, eq\n   subs x1, x1, #1\n"
+    "b.ne 6b\n"
     "9:  mov x0, x3\n"
     ASM_RET
     ASM_END(memory_count)
     ASM_FUNC(memory_compare)
-    "mov w9, #0\n   cbz x2, 9f\n"
+    "mov w9, #0\n"
+    "cbz x2, 9f\n"
 #ifndef KERNEL_MODE
-    "cmp x2, #32\n   b.lo 5f\n"
+    "cmp x2, #32\n"
+    "b.lo 5f\n"
     //
     //      Thirty two bytes a round. cmeq leaves 0xff where the two agree, so
     //      the minimum across all thirty two lanes is 0xff exactly when
@@ -6294,44 +5977,54 @@ __asm__(
     //      mask. Where it differs, the word loop below is entered on the same
     //      pointers and walks the few bytes to it, which happens once a call.
     //
-    "1:  ldp q0, q1, [x0]\n   ldp q2, q3, [x1]\n"
-    "cmeq v0.16b, v0.16b, v2.16b\n   cmeq v1.16b, v1.16b, v3.16b\n"
-    "and v4.16b, v0.16b, v1.16b\n   uminv b4, v4.16b\n   umov w3, v4.b[0]\n"
-    "cmp w3, #0xff\n   b.ne 5f\n"
-    "add x0, x0, #32\n   add x1, x1, #32\n   sub x2, x2, #32\n"
-    "cmp x2, #32\n   b.hs 1b\n"
+    "1:  ldp q0, q1, [x0]\n   ldp q2, q3, [x1]\n   cmeq v0.16b, v0.16b, v2.16b\n   cmeq v1.16b, v1.16b, v3.16b\n"
+    "and v4.16b, v0.16b, v1.16b\n   uminv b4, v4.16b\n   umov w3, v4.b[0]\n   cmp w3, #0xff\n"
+    "b.ne 5f\n   add x0, x0, #32\n"
+    "add x1, x1, #32\n"
+    "sub x2, x2, #32\n"
+    "cmp x2, #32\n"
+    "b.hs 1b\n"
 #endif
     //
     //      Eight at a time. Exclusive-or leaves zero bytes where the two
     //      agree, so the lowest set bit of it is inside the first byte that
     //      does not, and rbit and clz find it.
     //
-    "5:  cmp x2, #8\n   b.lo 7f\n"
-    "ldr x3, [x0]\n   ldr x4, [x1]\n   cmp x3, x4\n   b.ne 51f\n"
-    "add x0, x0, #8\n   add x1, x1, #8\n   sub x2, x2, #8\n   b 5b\n"
-    "51: eor x3, x3, x4\n   rbit x5, x3\n   clz x5, x5\n   lsr x5, x5, #3\n"
+    "5:  cmp x2, #8\n"
+    "b.lo 7f\n   ldr x3, [x0]\n   ldr x4, [x1]\n   cmp x3, x4\n"
+    "b.ne 51f\n   add x0, x0, #8\n"
+    "add x1, x1, #8\n"
+    "sub x2, x2, #8\n"
+    "b 5b\n"
+    "51:  eor x3, x3, x4\n   rbit x5, x3\n   clz x5, x5\n   lsr x5, x5, #3\n"
     "ldrb w6, [x0, x5]\n   ldrb w7, [x1, x5]\n   sub w9, w6, w7\n   b 9f\n"
     "7:  cbz x2, 9f\n"
-    "71: ldrb w6, [x0]\n   ldrb w7, [x1]\n   subs w9, w6, w7\n   b.ne 9f\n"
-    "add x0, x0, #1\n   add x1, x1, #1\n   sub x2, x2, #1\n   cbnz x2, 71b\n"
+    "71:  ldrb w6, [x0]\n   ldrb w7, [x1]\n   subs w9, w6, w7\n   b.ne 9f\n"
+    "add x0, x0, #1\n"
+    "add x1, x1, #1\n"
+    "sub x2, x2, #1\n"
+    "cbnz x2, 71b\n"
     "9:  mov w0, w9\n"
     ASM_RET
     ASM_END(memory_compare)
     ASM_FUNC(memory_search)
     "cbz x3, 90f  // an empty needle is at the front\n"
     "cmp x1, x3\n   b.lo 95f  // longer than the haystack: nowhere\n"
-    "cmp x3, #1\n   b.ne 20f\n"
-    "ldrb w4, [x2]\n   mov x2, x1\n   mov x1, x4\n"
+    "cmp x3, #1\n"
+    "b.ne 20f\n   ldrb w4, [x2]\n   mov x2, x1\n   mov x1, x4\n"
     "b memory_first_of  // one byte is memchr\n"
     "90:\n"
     ASM_RET
-    "95: mov x0, #0\n"
+    "95:  mov x0, #0\n"
     ASM_RET
-    "20: stp x29, x30, [sp, #-96]!\n   mov x29, sp\n"
-    "stp x19, x20, [sp, #16]\n   stp x21, x22, [sp, #32]\n"
-    "stp x23, x24, [sp, #48]\n   stp x25, x26, [sp, #64]\n"
+    "20:  stp x29, x30, [sp,  #-96]!\n"
+    "mov x29, sp\n   stp x19, x20, [sp, #16]\n"
+    "stp x21, x22, [sp, #32]\n"
+    "stp x23, x24, [sp, #48]\n"
+    "stp x25, x26, [sp, #64]\n"
     "stp x27, x28, [sp, #80]\n"
-    "mov x19, x0  // the haystack\n   mov x20, x2  // the needle\n"
+    "mov x19, x0  // the haystack\n"
+    "mov x20, x2  // the needle\n"
     "mov x21, x3  // its length\n"
 #ifndef KERNEL_MODE
     //
@@ -6341,31 +6034,33 @@ __asm__(
     //      subtraction is in that order because hay_size - needle_size - 15
     //      on a short haystack is a very large number and not a small one.
     //
-    "sub x25, x1, x21\n   cmp x25, #15\n   b.lo 6f\n"
-    "sub x25, x25, #15\n"
+    "sub x25, x1, x21\n   cmp x25, #15\n"
+    "b.lo 6f\n   sub x25, x25, #15\n"
     //
     //      The two rarest bytes of the needle, as offsets into it. One pass
     //      keeping the best and the second best, which is what makes the two
     //      offsets distinct even when the bytes at them are equal.
     //
-    "mov x26, #0\n   sub x27, x21, #1\n"
-    "cmp x21, #4\n   b.lo 25f\n"
-    "adrp x6, byte_commonness\n   add x6, x6, :lo12:byte_commonness\n"
-    "mov x7, #256\n   mov x8, #256\n   mov x9, #0\n"
-    "mov x26, #0\n   mov x27, #0\n"
-    "21: ldrb w10, [x20, x9]\n   ldrb w10, [x6, x10]\n"
-    "cmp x10, x7\n   b.hs 23f\n"
-    "mov x8, x7\n   mov x27, x26\n   mov x7, x10\n   mov x26, x9\n   b 24f\n"
-    "23: cmp x10, x8\n   b.hs 24f\n   mov x8, x10\n   mov x27, x9\n"
-    "24: add x9, x9, #1\n   cmp x9, x21\n   b.lo 21b\n"
-    "25: ldrb w10, [x20, x26]\n   dup v2.16b, w10\n"
-    "ldrb w10, [x20, x27]\n   dup v3.16b, w10\n"
-    "mov x24, #0\n   mov x23, #0\n"
-    "1:  add x6, x19, x24\n"
-    "ldr q0, [x6, x26]\n   cmeq v0.16b, v0.16b, v2.16b\n"
-    "ldr q1, [x6, x27]\n   cmeq v1.16b, v1.16b, v3.16b\n"
-    "and v0.16b, v0.16b, v1.16b\n   shrn v0.8b, v0.8h, #4\n   fmov x22, d0\n"
-    "cbnz x22, 3f\n"
+    "mov x26, #0\n"
+    "sub x27, x21, #1\n"
+    "cmp x21, #4\n"
+    "b.lo 25f\n   adrp x6, byte_commonness\n   add x6, x6, :lo12:byte_commonness\n   mov x7, #256\n"
+    "mov x8, #256\n"
+    "mov x9, #0\n"
+    "mov x26, #0\n"
+    "mov x27, #0\n"
+    "21:  ldrb w10, [x20, x9]\n   ldrb w10, [x6, x10]\n   cmp x10, x7\n   b.hs 23f\n"
+    "mov x8, x7\n   mov x27, x26\n   mov x7, x10\n   mov x26, x9\n"
+    "b 24f\n"
+    "23:  cmp x10, x8\n   b.hs 24f\n   mov x8, x10\n   mov x27, x9\n"
+    "24:  add x9, x9, #1\n"
+    "cmp x9, x21\n   b.lo 21b\n"
+    "25:  ldrb w10, [x20, x26]\n   dup v2.16b, w10\n   ldrb w10, [x20, x27]\n   dup v3.16b, w10\n"
+    "mov x24, #0\n"
+    "mov x23, #0\n"
+    "1:  add x6, x19, x24\n   ldr q0, [x6, x26]\n   cmeq v0.16b, v0.16b, v2.16b\n   ldr q1, [x6, x27]\n"
+    "cmeq v1.16b, v1.16b, v3.16b\n   and v0.16b, v0.16b, v1.16b\n   shrn v0.8b, v0.8h, #4\n"
+    "fmov x22, d0\n   cbnz x22, 3f\n"
     //
     //      Past the end, one block back from the last position rather than a
     //      byte loop for what is left. It looks at positions already looked
@@ -6373,20 +6068,24 @@ __asm__(
     //      rejected, so the first match found in it is still the first there
     //      is.
     //
-    "4:  add x24, x24, #16\n   cmp x24, x25\n   b.ls 1b\n"
-    "cbnz x23, 8f\n   mov x24, x25\n   mov x23, #1\n   b 1b\n"
+    "4:  add x24, x24, #16\n"
+    "cmp x24, x25\n   b.ls 1b\n   cbnz x23, 8f\n   mov x24, x25\n"
+    "mov x23, #1\n"
+    "b 1b\n"
     //
     //      The survivors of one block, lowest position first. shrn left four
     //      bits per lane, all four set or none, so the whole nibble is
     //      cleared to move on rather than the one bit rbit found.
     //
-    "3:  rbit x4, x22\n   clz x4, x4\n"
-    "mov x5, #15\n   lsl x5, x5, x4\n   bic x22, x22, x5\n"
-    "lsr x4, x4, #2\n   add x28, x19, x24\n   add x28, x28, x4\n"
-    "cmp x21, #4\n   b.lo 33f\n"
-    "ldr w5, [x28]\n   ldr w6, [x20]\n   cmp w5, w6\n   b.ne 32f\n"
-    "cmp x21, #5\n   b.lo 7f  // the four were all of it\n"
-    "add x0, x28, #4\n   add x1, x20, #4\n   sub x2, x21, #4\n"
+    "3:  rbit x4, x22\n   clz x4, x4\n   mov x5, #15\n"
+    "lsl x5, x5, x4\n   bic x22, x22, x5\n   lsr x4, x4, #2\n"
+    "add x28, x19, x24\n   add x28, x28, x4\n   cmp x21, #4\n"
+    "b.lo 33f\n   ldr w5, [x28]\n   ldr w6, [x20]\n   cmp w5, w6\n"
+    "b.ne 32f\n   cmp x21, #5\n"
+    "b.lo 7f  // the four were all of it\n"
+    "add x0, x28, #4\n"
+    "add x1, x20, #4\n"
+    "sub x2, x21, #4\n"
     "bl memory_compare\n   cbz w0, 7f\n   b 32f\n"
     //
     //      Two and three bytes: both probes are ends of the needle, so a
@@ -6394,21 +6093,21 @@ __asm__(
     //      three offsets are 0, 1 and 2 and two of them are taken, so the
     //      third is what is left of their sum.
     //
-    "33: cmp x21, #2\n   b.ls 7f\n"
-    "mov x6, #3\n   sub x6, x6, x26\n   sub x6, x6, x27\n"
-    "ldrb w5, [x20, x6]\n   ldrb w7, [x28, x6]\n   cmp w5, w7\n   b.eq 7f\n"
-    "32: cbnz x22, 3b\n"
+    "33:  cmp x21, #2\n"
+    "b.ls 7f\n   mov x6, #3\n"
+    "sub x6, x6, x26\n   sub x6, x6, x27\n   ldrb w5, [x20, x6]\n   ldrb w7, [x28, x6]\n"
+    "cmp w5, w7\n   b.eq 7f\n"
+    "32:  cbnz x22, 3b\n"
     //
     //      The two broadcasts again, because a call may write v2 and v3: only
     //      the low halves of v8 to v15 are saved across one and these are
     //      whole sixteen byte lanes.
     //
-    "ldrb w10, [x20, x26]\n   dup v2.16b, w10\n"
-    "ldrb w10, [x20, x27]\n   dup v3.16b, w10\n"
+    "ldrb w10, [x20, x26]\n   dup v2.16b, w10\n   ldrb w10, [x20, x27]\n   dup v3.16b, w10\n"
     "b 4b\n"
 #endif
     //
-    //       The narrow path: every haystack too short for one block. memchr
+    //       The narrow path: every haystack too short for one block. memory_first_of
     //       finds where the first byte is and memcmp says whether the rest
     //       followed, which is the naive search with both of its loops
     //       already written wide. The first byte rather than the rarest,
@@ -6421,16 +6120,20 @@ __asm__(
     //
     "6:  add x27, x19, x1\n   sub x27, x27, x21  // the last position a match could start at\n"
     "mov x26, x19\n"
-    "61: sub x2, x27, x26\n   add x2, x2, #1  // positions still to try\n"
+    "61:  sub x2, x27, x26\n   add x2, x2, #1  // positions still to try\n"
     "mov x0, x26\n   ldrb w1, [x20]\n   bl memory_first_of\n   cbz x0, 8f\n"
     "mov x28, x0\n   mov x26, x0\n   mov x1, x20\n   mov x2, x21\n"
-    "bl memory_compare\n   cbz w0, 7f\n"
-    "add x26, x26, #1\n   cmp x26, x27\n   b.ls 61b\n"
-    "8:  mov x0, #0\n   b 9f\n"
+    "bl memory_compare\n   cbz w0, 7f\n   add x26, x26, #1\n"
+    "cmp x26, x27\n   b.ls 61b\n"
+    "8:  mov x0, #0\n"
+    "b 9f\n"
     "7:  mov x0, x28\n"
-    "9:  ldp x19, x20, [sp, #16]\n   ldp x21, x22, [sp, #32]\n"
-    "ldp x23, x24, [sp, #48]\n   ldp x25, x26, [sp, #64]\n"
-    "ldp x27, x28, [sp, #80]\n   ldp x29, x30, [sp], #96\n"
+    "9:  ldp x19, x20, [sp, #16]\n"
+    "ldp x21, x22, [sp, #32]\n"
+    "ldp x23, x24, [sp, #48]\n"
+    "ldp x25, x26, [sp, #64]\n"
+    "ldp x27, x28, [sp, #80]\n"
+    "ldp x29, x30, [sp], #96\n"
     ASM_RET
     ASM_END(memory_search)
     //
@@ -6459,38 +6162,56 @@ __asm__(
     // configuration; this name is not one of the aliases claimed below.
     "b memset\n"
 #else
-    "mov x3, x0\n   and w1, w1, #0xff\n   dup v0.16b, w1\n   add x4, x0, x2\n"
-    "cmp x2, #16\n   b.hs 6f\n"
-    "orr w1, w1, w1, lsl #8\n   orr w1, w1, w1, lsl #16\n   orr x1, x1, x1, lsl #32\n"
-    "cmp x2, #8\n   b.hs 7f\n"
-    "cmp x2, #4\n   b.hs 8f\n"
-    "cbz x2, 9f\n"
+    "mov x3, x0\n   and w1, w1, #0xff\n"
+    "dup v0.16b, w1\n   add x4, x0, x2\n   cmp x2, #16\n"
+    "b.hs 6f\n   orr w1, w1, w1, lsl #8\n"
+    "orr w1, w1, w1, lsl #16\n"
+    "orr x1, x1, x1, lsl #32\n"
+    "cmp x2, #8\n"
+    "b.hs 7f\n   cmp x2, #4\n"
+    "b.hs 8f\n   cbz x2, 9f\n"
     // one to three: first, last, and the middle, which between them cover all three
-    "strb w1, [x0]\n   sturb w1, [x4, #-1]\n   lsr x5, x2, #1\n   strb w1, [x0, x5]\n"
+    "strb w1, [x0]\n   sturb w1, [x4,  #-1]\n"
+    "lsr x5, x2, #1\n"
+    "strb w1, [x0, x5]\n"
     "9:  mov x0, x3\n   ret\n"
-    "8:  str w1, [x0]\n   stur w1, [x4, #-4]\n   mov x0, x3\n   ret\n"
-    "7:  str x1, [x0]\n   stur x1, [x4, #-8]\n   mov x0, x3\n   ret\n"
-    "6:  cmp x2, #32\n   b.hi 3f\n"
-    "str q0, [x0]\n   stur q0, [x4, #-16]\n   mov x0, x3\n   ret\n"
-    "3:  cmp x2, #64\n   b.hi 4f\n"
-    "stp q0, q0, [x0]\n   stp q0, q0, [x4, #-32]\n   mov x0, x3\n   ret\n"
-    "4:  cmp x2, #128\n   b.hi 2f\n"
-    "stp q0, q0, [x0]\n   stp q0, q0, [x0, #32]\n"
-    "stp q0, q0, [x4, #-64]\n   stp q0, q0, [x4, #-32]\n   mov x0, x3\n   ret\n"
-    "2:  cmp x2, #256\n   b.hi 5f\n"
-    "stp q0, q0, [x0]\n   stp q0, q0, [x0, #32]\n"
-    "stp q0, q0, [x0, #64]\n   stp q0, q0, [x0, #96]\n"
-    "stp q0, q0, [x4, #-128]\n   stp q0, q0, [x4, #-96]\n"
-    "stp q0, q0, [x4, #-64]\n   stp q0, q0, [x4, #-32]\n   mov x0, x3\n   ret\n"
+    "8:  str w1, [x0]\n   stur w1, [x4,  #-4]\n"
+    "mov x0, x3\n   ret\n"
+    "7:  str x1, [x0]\n   stur x1, [x4,  #-8]\n"
+    "mov x0, x3\n   ret\n"
+    "6:  cmp x2, #32\n"
+    "b.hi 3f\n   str q0, [x0]\n   stur q0, [x4,  #-16]\n"
+    "mov x0, x3\n   ret\n"
+    "3:  cmp x2, #64\n"
+    "b.hi 4f\n   stp q0, q0, [x0]\n   stp q0, q0, [x4,  #-32]\n"
+    "mov x0, x3\n   ret\n"
+    "4:  cmp x2, #128\n"
+    "b.hi 2f\n   stp q0, q0, [x0]\n   stp q0, q0, [x0, #32]\n"
+    "stp q0, q0, [x4,  #-64]\n"
+    "stp q0, q0, [x4,  #-32]\n"
+    "mov x0, x3\n   ret\n"
+    "2:  cmp x2, #256\n"
+    "b.hi 5f\n   stp q0, q0, [x0]\n   stp q0, q0, [x0, #32]\n"
+    "stp q0, q0, [x0, #64]\n"
+    "stp q0, q0, [x0, #96]\n"
+    "stp q0, q0, [x4,  #-128]\n"
+    "stp q0, q0, [x4,  #-96]\n"
+    "stp q0, q0, [x4,  #-64]\n"
+    "stp q0, q0, [x4,  #-32]\n"
+    "mov x0, x3\n   ret\n"
     //
     //       Above 128: the first 64 bytes unaligned, the destination aligned up
     //       past them, then 64 an iteration, and the last 64 wherever they fall.
     //
     "5:  stp q0, q0, [x0]\n   stp q0, q0, [x0, #32]\n"
-    "add x5, x0, #64\n   bic x5, x5, #63\n   sub x6, x4, #64\n"
-    "1:  stp q0, q0, [x5]\n   stp q0, q0, [x5, #32]\n   add x5, x5, #64\n"
-    "cmp x5, x6\n   b.ls 1b\n"
-    "stp q0, q0, [x4, #-64]\n   stp q0, q0, [x4, #-32]\n   mov x0, x3\n"
+    "add x5, x0, #64\n"
+    "bic x5, x5, #63\n"
+    "sub x6, x4, #64\n"
+    "1:  stp q0, q0, [x5]\n   stp q0, q0, [x5, #32]\n"
+    "add x5, x5, #64\n"
+    "cmp x5, x6\n   b.ls 1b\n   stp q0, q0, [x4,  #-64]\n"
+    "stp q0, q0, [x4,  #-32]\n"
+    "mov x0, x3\n"
     ASM_RET
 #endif
     ASM_END(memory_fill)
@@ -6503,30 +6224,40 @@ __asm__(
     ASM_FUNC(memory_reverse)
     "mov x3, x0\n   add x4, x0, x1\n"
 #ifndef KERNEL_MODE
-    "cmp x1, #32\n   b.lo 5f\n"
-    ".balign 16\n"
-    "1:  ldr q0, [x0]\n   sub x4, x4, #16\n   ldr q1, [x4]\n"
-    "rev64 v0.16b, v0.16b\n   rev64 v1.16b, v1.16b\n"
-    "ext v0.16b, v0.16b, v0.16b, #8\n"
+    "cmp x1, #32\n"
+    "b.lo 5f\n   .balign 16\n"
+    "1:  ldr q0, [x0]\n   sub x4, x4, #16\n"
+    "ldr q1, [x4]\n   rev64 v0.16b, v0.16b\n   rev64 v1.16b, v1.16b\n   ext v0.16b, v0.16b, v0.16b, #8\n"
     "ext v1.16b, v1.16b, v1.16b, #8\n"
     "str q1, [x0]\n   str q0, [x4]\n   add x0, x0, #16\n"
-    "sub x1, x1, #32\n   cmp x1, #32\n   b.hs 1b\n"
+    "sub x1, x1, #32\n"
+    "cmp x1, #32\n"
+    "b.hs 1b\n"
 #endif
-    "5:  cmp x1, #16\n   b.lo 2f\n"
-    ".balign 16\n"
-    "1:  ldr x5, [x0]\n   sub x4, x4, #8\n   ldr x6, [x4]\n"
-    "rev x5, x5\n   rev x6, x6\n   str x6, [x0]\n   str x5, [x4]\n"
-    "add x0, x0, #8\n   sub x1, x1, #16\n   cmp x1, #16\n   b.hs 1b\n"
-    "2:  cmp x1, #8\n   b.ne 3f\n   ldr x5, [x0]\n"
-    "rev x5, x5\n   str x5, [x0]\n   b 9f\n"
-    "3:  cmp x1, #4\n   b.ne 4f\n   ldr w5, [x0]\n"
-    "rev w5, w5\n   str w5, [x0]\n   b 9f\n"
-    "4:  cmp x1, #2\n   b.ne 6f\n   ldrh w5, [x0]\n"
-    "rev16 w5, w5\n   strh w5, [x0]\n   b 9f\n"
-    "6:  cmp x1, #2\n   b.lo 9f\n"
-    "1:  ldrb w5, [x0]\n   sub x4, x4, #1\n   ldrb w6, [x4]\n"
-    "strb w6, [x0], #1\n   strb w5, [x4]\n"
-    "sub x1, x1, #2\n   cmp x1, #2\n   b.hs 1b\n"
+    "5:  cmp x1, #16\n"
+    "b.lo 2f\n   .balign 16\n"
+    "1:  ldr x5, [x0]\n   sub x4, x4, #8\n"
+    "ldr x6, [x4]\n   rev x5, x5\n   rev x6, x6\n   str x6, [x0]\n"
+    "str x5, [x4]\n   add x0, x0, #8\n"
+    "sub x1, x1, #16\n"
+    "cmp x1, #16\n"
+    "b.hs 1b\n"
+    "2:  cmp x1, #8\n"
+    "b.ne 3f\n   ldr x5, [x0]\n   rev x5, x5\n   str x5, [x0]\n"
+    "b 9f\n"
+    "3:  cmp x1, #4\n"
+    "b.ne 4f\n   ldr w5, [x0]\n   rev w5, w5\n   str w5, [x0]\n"
+    "b 9f\n"
+    "4:  cmp x1, #2\n"
+    "b.ne 6f\n   ldrh w5, [x0]\n   rev16 w5, w5\n   strh w5, [x0]\n"
+    "b 9f\n"
+    "6:  cmp x1, #2\n"
+    "b.lo 9f\n"
+    "1:  ldrb w5, [x0]\n   sub x4, x4, #1\n"
+    "ldrb w6, [x4]\n   strb w6, [x0], #1\n"
+    "strb w5, [x4]\n   sub x1, x1, #2\n"
+    "cmp x1, #2\n"
+    "b.hs 1b\n"
     "9:  mov x0, x3\n"
     ASM_RET
     ASM_END(memory_reverse)
@@ -6536,47 +6267,66 @@ __asm__(
     // The fast contract excludes overlap, exactly the kernel memcpy contract.
     "b memcpy\n"
 #else
-    "mov x3, x0\n   add x4, x0, x2\n   add x5, x1, x2\n"
-    "cmp x2, #32\n   b.hi 6f\n"
-    "cmp x2, #16\n   b.lo 7f\n"
-    "ldr q0, [x1]\n   ldur q1, [x5, #-16]\n"
-    "str q0, [x0]\n   stur q1, [x4, #-16]\n   mov x0, x3\n   ret\n"
-    "7:  cmp x2, #8\n   b.lo 8f\n"
-    "ldr x6, [x1]\n   ldur x7, [x5, #-8]\n"
-    "str x6, [x0]\n   stur x7, [x4, #-8]\n   mov x0, x3\n   ret\n"
-    "8:  cmp x2, #4\n   b.lo 0f\n"
-    "ldr w6, [x1]\n   ldur w7, [x5, #-4]\n"
-    "str w6, [x0]\n   stur w7, [x4, #-4]\n   mov x0, x3\n   ret\n"
+    "mov x3, x0\n   add x4, x0, x2\n   add x5, x1, x2\n   cmp x2, #32\n"
+    "b.hi 6f\n   cmp x2, #16\n"
+    "b.lo 7f\n   ldr q0, [x1]\n   ldur q1, [x5,  #-16]\n"
+    "str q0, [x0]\n   stur q1, [x4,  #-16]\n"
+    "mov x0, x3\n   ret\n"
+    "7:  cmp x2, #8\n"
+    "b.lo 8f\n   ldr x6, [x1]\n   ldur x7, [x5,  #-8]\n"
+    "str x6, [x0]\n   stur x7, [x4,  #-8]\n"
+    "mov x0, x3\n   ret\n"
+    "8:  cmp x2, #4\n"
+    "b.lo 0f\n   ldr w6, [x1]\n   ldur w7, [x5,  #-4]\n"
+    "str w6, [x0]\n   stur w7, [x4,  #-4]\n"
+    "mov x0, x3\n   ret\n"
     "0:  cbz x2, 9f\n   lsr x8, x2, #1\n"
-    "ldrb w6, [x1]\n   ldurb w7, [x5, #-1]\n   ldrb w9, [x1, x8]\n"
-    "strb w6, [x0]\n   sturb w7, [x4, #-1]\n   strb w9, [x0, x8]\n"
+    "ldrb w6, [x1]\n   ldurb w7, [x5,  #-1]\n"
+    "ldrb w9, [x1, x8]\n   strb w6, [x0]\n   sturb w7, [x4,  #-1]\n"
+    "strb w9, [x0, x8]\n"
     "9:  mov x0, x3\n   ret\n"
-    "6:  cmp x2, #64\n   b.hi 4f\n"
-    "ldp q0, q1, [x1]\n   ldp q2, q3, [x5, #-32]\n"
-    "stp q0, q1, [x0]\n   stp q2, q3, [x4, #-32]\n   mov x0, x3\n   ret\n"
-    "4:  cmp x2, #128\n   b.hi 2f\n"
-    "ldp q0, q1, [x1]\n   ldp q2, q3, [x1, #32]\n"
-    "ldp q4, q5, [x5, #-64]\n   ldp q6, q7, [x5, #-32]\n"
+    "6:  cmp x2, #64\n"
+    "b.hi 4f\n   ldp q0, q1, [x1]\n   ldp q2, q3, [x5,  #-32]\n"
+    "stp q0, q1, [x0]\n   stp q2, q3, [x4,  #-32]\n"
+    "mov x0, x3\n   ret\n"
+    "4:  cmp x2, #128\n"
+    "b.hi 2f\n   ldp q0, q1, [x1]\n   ldp q2, q3, [x1, #32]\n"
+    "ldp q4, q5, [x5,  #-64]\n"
+    "ldp q6, q7, [x5,  #-32]\n"
     "stp q0, q1, [x0]\n   stp q2, q3, [x0, #32]\n"
-    "stp q4, q5, [x4, #-64]\n   stp q6, q7, [x4, #-32]\n   mov x0, x3\n   ret\n"
-    "2:  cmp x2, #256\n   b.hi 5f\n"
-    "ldp q0, q1, [x1]\n   ldp q2, q3, [x1, #32]\n"
-    "ldp q4, q5, [x1, #64]\n   ldp q6, q7, [x1, #96]\n"
-    "ldp q16, q17, [x5, #-128]\n   ldp q18, q19, [x5, #-96]\n"
-    "ldp q20, q21, [x5, #-64]\n   ldp q22, q23, [x5, #-32]\n"
+    "stp q4, q5, [x4,  #-64]\n"
+    "stp q6, q7, [x4,  #-32]\n"
+    "mov x0, x3\n   ret\n"
+    "2:  cmp x2, #256\n"
+    "b.hi 5f\n   ldp q0, q1, [x1]\n   ldp q2, q3, [x1, #32]\n"
+    "ldp q4, q5, [x1, #64]\n"
+    "ldp q6, q7, [x1, #96]\n"
+    "ldp q16, q17, [x5,  #-128]\n"
+    "ldp q18, q19, [x5,  #-96]\n"
+    "ldp q20, q21, [x5,  #-64]\n"
+    "ldp q22, q23, [x5,  #-32]\n"
     "stp q0, q1, [x0]\n   stp q2, q3, [x0, #32]\n"
-    "stp q4, q5, [x0, #64]\n   stp q6, q7, [x0, #96]\n"
-    "stp q16, q17, [x4, #-128]\n   stp q18, q19, [x4, #-96]\n"
-    "stp q20, q21, [x4, #-64]\n   stp q22, q23, [x4, #-32]\n   mov x0, x3\n   ret\n"
+    "stp q4, q5, [x0, #64]\n"
+    "stp q6, q7, [x0, #96]\n"
+    "stp q16, q17, [x4,  #-128]\n"
+    "stp q18, q19, [x4,  #-96]\n"
+    "stp q20, q21, [x4,  #-64]\n"
+    "stp q22, q23, [x4,  #-32]\n"
+    "mov x0, x3\n   ret\n"
     "5:  ldp q4, q5, [x1]\n   ldp q6, q7, [x1, #32]\n"
-    "ldp q16, q17, [x5, #-64]\n   ldp q18, q19, [x5, #-32]\n"
-    "add x6, x0, #64\n   bic x6, x6, #63\n   sub x7, x6, x0\n   add x8, x1, x7\n"
-    "sub x9, x4, #64\n"
+    "ldp q16, q17, [x5,  #-64]\n"
+    "ldp q18, q19, [x5,  #-32]\n"
+    "add x6, x0, #64\n"
+    "bic x6, x6, #63\n"
+    "sub x7, x6, x0\n   add x8, x1, x7\n   sub x9, x4, #64\n"
     "1:  ldp q0, q1, [x8]\n   ldp q2, q3, [x8, #32]\n"
     "stp q0, q1, [x6]\n   stp q2, q3, [x6, #32]\n"
-    "add x6, x6, #64\n   add x8, x8, #64\n   cmp x6, x9\n   b.ls 1b\n"
-    "stp q16, q17, [x4, #-64]\n   stp q18, q19, [x4, #-32]\n"
-    "stp q4, q5, [x0]\n   stp q6, q7, [x0, #32]\n   mov x0, x3\n"
+    "add x6, x6, #64\n"
+    "add x8, x8, #64\n"
+    "cmp x6, x9\n   b.ls 1b\n   stp q16, q17, [x4,  #-64]\n"
+    "stp q18, q19, [x4,  #-32]\n"
+    "stp q4, q5, [x0]\n   stp q6, q7, [x0, #32]\n"
+    "mov x0, x3\n"
     ASM_RET
 #endif
     ASM_END(memory_copy_fast)
@@ -6584,8 +6334,9 @@ __asm__(
     // memory_copy_fast_end: exact non-overlapping copy, one terminator, and
     // dst+n. The x86_64 block carries the full contract.
     ASM_FUNC(memory_copy_fast_end)
-    "add x3, x0, x2\n   stp x3, x30, [sp, #-16]!\n"
-    "bl memory_copy_fast\n   ldp x0, x30, [sp], #16\n   strb wzr, [x0]\n"
+    "add x3, x0, x2\n   stp x3, x30, [sp,  #-16]!\n"
+    "bl memory_copy_fast\n   ldp x0, x30, [sp], #16\n"
+    "strb wzr, [x0]\n"
     ASM_RET
     ASM_END(memory_copy_fast_end)
 
@@ -6594,41 +6345,48 @@ __asm__(
     // This public contract permits overlap, so only memmove is equivalent.
     "b memmove\n"
 #else
-    "cmp x0, x1\n   b.ls 1f\n   add x4, x1, x2\n   cmp x0, x4\n   b.lo 2f\n"
+    "cmp x0, x1\n   b.ls 1f\n   add x4, x1, x2\n   cmp x0, x4\n"
+    "b.lo 2f\n"
     "1:  b memory_copy_fast\n"
-    "2:  mov x3, x0\n   cmp x2, #128\n   b.lo 5f\n"
-    "ldp q4, q5, [x1]\n   ldp q6, q7, [x1, #32]\n"
-    "add x4, x0, x2\n   add x5, x1, x2\n"
-    "ldp q16, q17, [x5, #-64]\n   ldp q18, q19, [x5, #-32]\n"
-    "mov x6, x4\n   bic x6, x6, #63\n   sub x7, x4, x6\n   sub x8, x5, x7\n"
-    "add x9, x0, #64\n"
-    "1:  cmp x6, x9\n   b.ls 3f\n"
-    "sub x6, x6, #64\n   sub x8, x8, #64\n"
+    "2:  mov x3, x0\n   cmp x2, #128\n"
+    "b.lo 5f\n   ldp q4, q5, [x1]\n   ldp q6, q7, [x1, #32]\n"
+    "add x4, x0, x2\n   add x5, x1, x2\n   ldp q16, q17, [x5,  #-64]\n"
+    "ldp q18, q19, [x5,  #-32]\n"
+    "mov x6, x4\n   bic x6, x6, #63\n"
+    "sub x7, x4, x6\n   sub x8, x5, x7\n   add x9, x0, #64\n"
+    "1:  cmp x6, x9\n   b.ls 3f\n   sub x6, x6, #64\n"
+    "sub x8, x8, #64\n"
     "ldp q0, q1, [x8]\n   ldp q2, q3, [x8, #32]\n"
     "stp q0, q1, [x6]\n   stp q2, q3, [x6, #32]\n"
     "b 1b\n"
-    "3:  stp q16, q17, [x4, #-64]\n   stp q18, q19, [x4, #-32]\n"
-    "stp q4, q5, [x0]\n   stp q6, q7, [x0, #32]\n   mov x0, x3\n   ret\n"
+    "3:  stp q16, q17, [x4,  #-64]\n"
+    "stp q18, q19, [x4,  #-32]\n"
+    "stp q4, q5, [x0]\n   stp q6, q7, [x0, #32]\n"
+    "mov x0, x3\n   ret\n"
     //
     //       Under 128 bytes: eight at a time downwards, with the first eight
     //       kept in a register so the store that ends it does not read memory
     //       the loop has already written over.
     //
-    "5:  cmp x2, #8\n   b.lo 6f\n"
-    "ldr x6, [x1]\n   add x4, x0, x2\n   add x5, x1, x2\n   add x7, x0, #8\n"
-    "1:  cmp x4, x7\n   b.ls 3f\n"
-    "ldr x8, [x5, #-8]!\n   str x8, [x4, #-8]!\n   b 1b\n"
+    "5:  cmp x2, #8\n"
+    "b.lo 6f\n   ldr x6, [x1]\n   add x4, x0, x2\n   add x5, x1, x2\n"
+    "add x7, x0, #8\n"
+    "1:  cmp x4, x7\n   b.ls 3f\n   ldr x8, [x5,  #-8]!\n"
+    "str x8, [x4,  #-8]!\n"
+    "b 1b\n"
     "3:  str x6, [x0]\n   mov x0, x3\n   ret\n"
     //
     //       Under eight there is no direction left to get wrong: everything is
     //       in registers before any of it is written.
     //
-    "6:  add x4, x0, x2\n   add x5, x1, x2\n   cmp x2, #4\n   b.lo 7f\n"
-    "ldr w6, [x1]\n   ldur w7, [x5, #-4]\n"
-    "str w6, [x0]\n   stur w7, [x4, #-4]\n   mov x0, x3\n   ret\n"
+    "6:  add x4, x0, x2\n   add x5, x1, x2\n   cmp x2, #4\n"
+    "b.lo 7f\n   ldr w6, [x1]\n   ldur w7, [x5,  #-4]\n"
+    "str w6, [x0]\n   stur w7, [x4,  #-4]\n"
+    "mov x0, x3\n   ret\n"
     "7:  cbz x2, 9f\n   lsr x8, x2, #1\n"
-    "ldrb w6, [x1]\n   ldurb w7, [x5, #-1]\n   ldrb w9, [x1, x8]\n"
-    "strb w6, [x0]\n   sturb w7, [x4, #-1]\n   strb w9, [x0, x8]\n"
+    "ldrb w6, [x1]\n   ldurb w7, [x5,  #-1]\n"
+    "ldrb w9, [x1, x8]\n   strb w6, [x0]\n   sturb w7, [x4,  #-1]\n"
+    "strb w9, [x0, x8]\n"
     "9:  mov x0, x3\n"
     ASM_RET
 #endif
@@ -6637,8 +6395,9 @@ __asm__(
     // The x86_64 block carries the contract; a normal bl is both smaller and
     // friendlier to the return predictor than manufacturing a replacement LR.
     ASM_FUNC(memory_copy_end)
-    "add x3, x0, x2\n   stp x3, x30, [sp, #-16]!\n"
-    "bl memory_copy\n   ldp x0, x30, [sp], #16\n   strb wzr, [x0]\n"
+    "add x3, x0, x2\n   stp x3, x30, [sp,  #-16]!\n"
+    "bl memory_copy\n   ldp x0, x30, [sp], #16\n"
+    "strb wzr, [x0]\n"
     ASM_RET
     ASM_END(memory_copy_end)
     //
@@ -6660,21 +6419,25 @@ __asm__(
     ASM_FUNC(string_copy)
 #ifdef KERNEL_MODE
     // One pass, including the terminator. The kernel has no arm64 strcpy
-    // primitive to borrow, and strlen plus memcpy would scan twice.
+    // primitive to borrow, and string_length plus memcpy would scan twice.
     "mov x2, x0\n"
-    "1:  ldrb w3, [x1], #1\n   strb w3, [x0], #1\n"
+    "1:  ldrb w3, [x1], #1\n"
+    "strb w3, [x0], #1\n"
     "cbnz w3, 1b\n   mov x0, x2\n"
     ASM_RET
 #else
     "and x4, x1, #15  // how far into the block it begins\n"
     "bic x5, x1, #15  // align down: same page, cannot fault\n"
     "ldr q0, [x5]\n   cmeq v2.16b, v0.16b, #0\n"
-    "shrn v2.8b, v2.8h, #4\n   fmov x9, d2\n"
-    "lsl x6, x4, #2\n   lsr x9, x9, x6  // the bytes in front are not ours\n"
+    "shrn v2.8b, v2.8h, #4\n"
+    "fmov x9, d2\n   lsl x6, x4, #2\n"
+    "lsr x9, x9, x6  // the bytes in front are not ours\n"
     "cbnz x9, 2f\n"
-    "1:  ldr q0, [x5, #16]!\n   cmeq v2.16b, v0.16b, #0\n"
-    "shrn v2.8b, v2.8h, #4\n   fmov x9, d2\n   cbz x9, 1b\n"
-    "rbit x9, x9\n   clz x9, x9\n   lsr x9, x9, #2\n"
+    "1:  ldr q0, [x5, #16]!\n"
+    "cmeq v2.16b, v0.16b, #0\n"
+    "shrn v2.8b, v2.8h, #4\n"
+    "fmov x9, d2\n   cbz x9, 1b\n   rbit x9, x9\n   clz x9, x9\n"
+    "lsr x9, x9, #2\n"
     "add x9, x5, x9\n   sub x2, x9, x1\n   b 3f\n"
     "2:  rbit x9, x9\n   clz x9, x9\n   lsr x2, x9, #2\n"
     "3:  add x2, x2, #1  // the terminator is copied too\n"
@@ -6682,24 +6445,13 @@ __asm__(
 #endif
     ASM_END(string_copy)
     ASM_SECTION
-    //
-    //      strcat: the source onto the end of the destination.
-    //
-    //      Two routines that are already here, and lib/string.c does both of
-    //      them a byte at a time -- the walk to the end of the destination
-    //      and the copy after it -- so the saving compounds. 427 call sites.
-    //
-    //      No bound and no check, which is what the name means and is why
-    //      the kernel would rather callers did not use it. Ours is not more
-    //      dangerous than the one it replaces; it is the same contract.
-    //
+    //       string_append: the x86_64 block carries the reasoning.
     ASM_FUNC(string_append)
-    "stp x29, x30, [sp, #-32]!\n   stp x19, x20, [sp, #16]\n"
-    "mov x19, x0\n   mov x20, x1\n"
-    "bl string_length\n"
-    "add x0, x19, x0\n   mov x1, x20\n   bl string_copy\n"
-    "mov x0, x19\n"
-    "ldp x19, x20, [sp, #16]\n   ldp x29, x30, [sp], #32\n"
+    "stp x29, x30, [sp,  #-32]!\n"
+    "stp x19, x20, [sp, #16]\n"
+    "mov x19, x0\n   mov x20, x1\n   bl string_length\n   add x0, x19, x0\n"
+    "mov x1, x20\n   bl string_copy\n   mov x0, x19\n   ldp x19, x20, [sp, #16]\n"
+    "ldp x29, x30, [sp], #32\n"
     ASM_RET
     ASM_END(string_append)
     //
@@ -6712,7 +6464,8 @@ __asm__(
     // itself ends the copy.
     "mov x3, x0\n   cbz x2, 3f\n"
     "1:  ldrb w4, [x1]\n   cbz w4, 2f\n   strb w4, [x0], #1\n"
-    "add x1, x1, #1\n   sub x2, x2, #1\n"
+    "add x1, x1, #1\n"
+    "sub x2, x2, #1\n"
     "cbnz x2, 1b\n   b 3f\n"
     "2:  strb wzr, [x0]\n"
     "3:  mov x0, x3\n"
@@ -6720,17 +6473,22 @@ __asm__(
 #else
     "mov x3, x0\n   cbz x2, 9f  // not even a terminator\n"
     "add x7, x1, x2  // one past the last byte we may read\n"
-    "and x4, x1, #15\n   bic x5, x1, #15\n"
+    "and x4, x1, #15\n"
+    "bic x5, x1, #15\n"
     "ldr q0, [x5]\n   cmeq v2.16b, v0.16b, #0\n"
-    "shrn v2.8b, v2.8h, #4\n   fmov x9, d2\n"
-    "lsl x6, x4, #2\n   lsr x9, x9, x6\n   cbnz x9, 2f\n"
-    "1:  add x5, x5, #16\n   cmp x5, x7\n   b.hs 4f  // the bound is behind us\n"
+    "shrn v2.8b, v2.8h, #4\n"
+    "fmov x9, d2\n   lsl x6, x4, #2\n"
+    "lsr x9, x9, x6\n   cbnz x9, 2f\n"
+    "1:  add x5, x5, #16\n"
+    "cmp x5, x7\n   b.hs 4f  // the bound is behind us\n"
     "ldr q0, [x5]\n   cmeq v2.16b, v0.16b, #0\n"
-    "shrn v2.8b, v2.8h, #4\n   fmov x9, d2\n   cbz x9, 1b\n"
-    "rbit x9, x9\n   clz x9, x9\n   lsr x9, x9, #2\n"
+    "shrn v2.8b, v2.8h, #4\n"
+    "fmov x9, d2\n   cbz x9, 1b\n   rbit x9, x9\n   clz x9, x9\n"
+    "lsr x9, x9, #2\n"
     "add x9, x5, x9\n   sub x8, x9, x1\n   b 3f\n"
     "2:  rbit x9, x9\n   clz x9, x9\n   lsr x8, x9, #2\n"
-    "3:  cmp x8, x2\n   b.hs 4f  // the bound came first\n   add x2, x8, #1\n"
+    "3:  cmp x8, x2\n   b.hs 4f  // the bound came first\n"
+    "add x2, x8, #1\n"
     "4:  b memory_copy_fast\n"
     "9:  mov x0, x3\n"
     ASM_RET
@@ -6741,17 +6499,15 @@ __asm__(
     //       and why it is two passes.
     //
     ASM_FUNC(string_copy_max_end)
-    "stp x29, x30, [sp, #-48]!\n   mov x29, sp\n"
-    "stp x19, x20, [sp, #16]\n   str x21, [sp, #32]\n"
+    "stp x29, x30, [sp,  #-48]!\n"
+    "mov x29, sp\n   stp x19, x20, [sp, #16]\n"
+    "str x21, [sp, #32]\n"
     "mov x19, x0  // the destination\n"
     "mov x20, x1  // the source\n"
-    "mov x0, x1\n   mov x1, x2\n"
-    "bl string_length_max\n"
-    "mov x21, x0  // how much of it there was\n"
-    "mov x0, x19\n   mov x1, x20\n   mov x2, x21\n"
-    "bl memory_copy_fast\n"
-    "add x0, x19, x21\n   strb wzr, [x0]\n"
-    "ldr x21, [sp, #32]\n   ldp x19, x20, [sp, #16]\n"
+    "mov x0, x1\n   mov x1, x2\n   bl string_length_max\n   mov x21, x0  // how much of it there was\n"
+    "mov x0, x19\n   mov x1, x20\n   mov x2, x21\n   bl memory_copy_fast\n"
+    "add x0, x19, x21\n   strb wzr, [x0]\n   ldr x21, [sp, #32]\n"
+    "ldp x19, x20, [sp, #16]\n"
     "ldp x29, x30, [sp], #48\n"
     ASM_RET
     ASM_END(string_copy_max_end)
@@ -6760,7 +6516,8 @@ __asm__(
     //       what keeps this from being strrchr.
     //
     ASM_FUNC(string_last_of)
-    "ands w1, w1, #0xff\n   b.eq 9f  // nothing, for the terminator\n"
+    "ands w1, w1, #0xff\n"
+    "b.eq 9f  // nothing, for the terminator\n"
     "b string_last_of_or_end\n"
     "9:  mov x0, #0\n"
     ASM_RET
@@ -6776,24 +6533,31 @@ __asm__(
     "sxtb w1, w1\n   cmp w1, #0\n"
     "b.le 9f  // b8 at or below zero never matches\n"
 #ifdef KERNEL_MODE
-    "1:  ands x4, x0, #15\n   b.eq 5f\n"
+    "1:  ands x4, x0, #15\n"
+    "b.eq 5f\n"
 #else
-    "1:  ands x4, x0, #15\n   b.eq 2f\n"
+    "1:  ands x4, x0, #15\n"
+    "b.eq 2f\n"
 #endif
-    "ldrb w3, [x0]\n   cbz w3, 9f\n   cmp w3, w1\n   b.ne 3f\n   strb w2, [x0]\n"
-    "3:  add x0, x0, #1\n   b 1b\n"
+    "ldrb w3, [x0]\n   cbz w3, 9f\n   cmp w3, w1\n   b.ne 3f\n"
+    "strb w2, [x0]\n"
+    "3:  add x0, x0, #1\n"
+    "b 1b\n"
 #ifndef KERNEL_MODE
     "2:  dup v1.16b, w1\n   dup v3.16b, w2\n"
     "4:  ldr q0, [x0]\n   cmeq v2.16b, v0.16b, #0\n"
-    "shrn v4.8b, v2.8h, #4\n   fmov x9, d4\n"
-    "cbnz x9, 5f  // the terminator is in this block\n"
-    "cmeq v2.16b, v0.16b, v1.16b\n   shrn v4.8b, v2.8h, #4\n   fmov x9, d4\n"
-    "cbz x9, 6f  // nothing to replace: no store at all\n"
+    "shrn v4.8b, v2.8h, #4\n"
+    "fmov x9, d4\n   cbnz x9, 5f  // the terminator is in this block\n"
+    "cmeq v2.16b, v0.16b, v1.16b\n   shrn v4.8b, v2.8h, #4\n"
+    "fmov x9, d4\n   cbz x9, 6f  // nothing to replace: no store at all\n"
     "bit v0.16b, v3.16b, v2.16b\n   str q0, [x0]\n"
-    "6:  add x0, x0, #16\n   b 4b\n"
+    "6:  add x0, x0, #16\n"
+    "b 4b\n"
 #endif
-    "5:  ldrb w3, [x0]\n   cbz w3, 9f\n   cmp w3, w1\n   b.ne 7f\n   strb w2, [x0]\n"
-    "7:  add x0, x0, #1\n   b 5b\n"
+    "5:  ldrb w3, [x0]\n   cbz w3, 9f\n   cmp w3, w1\n   b.ne 7f\n"
+    "strb w2, [x0]\n"
+    "7:  add x0, x0, #1\n"
+    "b 5b\n"
     "9:\n"
     ASM_RET
     ASM_END(string_replace_all)
@@ -6815,19 +6579,24 @@ __asm__(
     "ldrb w3, [x0]\n   cbz w3, 4b\n"
     ASM_RET
 #else
-    "sxtb w1, w1\n   cmp w1, #0\n   b.le 8f\n"
-    "dup v1.16b, w1\n"
-    "and x4, x0, #15\n   bic x5, x0, #15\n"
-    "ldr q0, [x5]\n   cmeq v2.16b, v0.16b, #0\n   cmeq v3.16b, v0.16b, v1.16b\n"
-    "orr v2.16b, v2.16b, v3.16b\n   shrn v2.8b, v2.8h, #4\n   fmov x9, d2\n"
-    "lsl x6, x4, #2\n   lsr x9, x9, x6\n   cbnz x9, 2f\n"
-    "1:  ldr q0, [x5, #16]!\n   cmeq v2.16b, v0.16b, #0\n   cmeq v3.16b, v0.16b, v1.16b\n"
-    "orr v2.16b, v2.16b, v3.16b\n   shrn v2.8b, v2.8h, #4\n   fmov x9, d2\n   cbz x9, 1b\n"
-    "rbit x9, x9\n   clz x9, x9\n   lsr x9, x9, #2\n   add x0, x5, x9\n   b 3f\n"
-    "2:  rbit x9, x9\n   clz x9, x9\n   lsr x9, x9, #2\n   add x0, x0, x9\n"
+    "sxtb w1, w1\n   cmp w1, #0\n"
+    "b.le 8f\n   dup v1.16b, w1\n   and x4, x0, #15\n"
+    "bic x5, x0, #15\n"
+    "ldr q0, [x5]\n   cmeq v2.16b, v0.16b, #0\n"
+    "cmeq v3.16b, v0.16b, v1.16b\n   orr v2.16b, v2.16b, v3.16b\n   shrn v2.8b, v2.8h, #4\n"
+    "fmov x9, d2\n   lsl x6, x4, #2\n"
+    "lsr x9, x9, x6\n   cbnz x9, 2f\n"
+    "1:  ldr q0, [x5, #16]!\n"
+    "cmeq v2.16b, v0.16b, #0\n"
+    "cmeq v3.16b, v0.16b, v1.16b\n   orr v2.16b, v2.16b, v3.16b\n   shrn v2.8b, v2.8h, #4\n"
+    "fmov x9, d2\n   cbz x9, 1b\n   rbit x9, x9\n   clz x9, x9\n"
+    "lsr x9, x9, #2\n"
+    "add x0, x5, x9\n   b 3f\n"
+    "2:  rbit x9, x9\n   clz x9, x9\n   lsr x9, x9, #2\n"
+    "add x0, x0, x9\n"
     "3:  ldrb w3, [x0]\n   cbz w3, 8f  // the terminator came first: no cut\n"
-    "strb wzr, [x0]\n   add x0, x0, #1\n   ldrb w3, [x0]\n   cbz w3, 8f\n"
-    "ret\n"
+    "strb wzr, [x0]\n   add x0, x0, #1\n"
+    "ldrb w3, [x0]\n   cbz w3, 8f\n   ret\n"
     "8:  mov x0, #0\n"
     ASM_RET
 #endif
@@ -6837,80 +6606,101 @@ __asm__(
     // writer/tail/head until the core has saved it; x19-x22 keep the public
     // arguments live across the optimized length and copy calls.
     ASM_LOCAL_FUNC(path_split_core)
-    "stp x29, x30, [sp, #-48]!\n   stp x19, x20, [sp, #16]\n"
-    "stp x21, x22, [sp, #32]\n   mov x19, x0\n   mov x20, x1\n"
-    "mov x21, x9\n   mov x22, x2\n   cbnz x21, 1f\n   mov x22, x1\n"
+    "stp x29, x30, [sp,  #-48]!\n"
+    "stp x19, x20, [sp, #16]\n"
+    "stp x21, x22, [sp, #32]\n"
+    "mov x19, x0\n   mov x20, x1\n   mov x21, x9\n   mov x22, x2\n"
+    "cbnz x21, 1f\n   mov x22, x1\n"
     "1:  mov x0, x22\n   bl string_length\n   mov x1, x0\n"
-    "2:  cmp x1, #1\n   b.ls 3f\n   sub x3, x1, #1\n"
-    "ldrb w4, [x22, x3]\n   cmp w4, #47\n   b.ne 3f\n"
-    "mov x1, x3\n   b 2b\n"
+    "2:  cmp x1, #1\n"
+    "b.ls 3f\n   sub x3, x1, #1\n"
+    "ldrb w4, [x22, x3]\n   cmp w4, #47\n"
+    "b.ne 3f\n   mov x1, x3\n   b 2b\n"
     "3:  mov x2, x1\n"
-    "4:  cbz x2, 5f\n   sub x3, x2, #1\n   ldrb w4, [x22, x3]\n"
-    "cmp w4, #47\n   b.eq 5f\n   mov x2, x3\n   b 4b\n"
+    "4:  cbz x2, 5f\n   sub x3, x2, #1\n"
+    "ldrb w4, [x22, x3]\n   cmp w4, #47\n"
+    "b.eq 5f\n   mov x2, x3\n   b 4b\n"
     "5:  cbz x21, .Lpath_arm_writer\n   cmp x21, #1\n"
     "b.ne .Lpath_arm_head\n"
     // tail copy
-    "cmp x1, #1\n   b.ne 6f\n   ldrb w3, [x22]\n   cmp w3, #47\n"
-    "b.ne 6f\n   mov x2, #1\n   mov x1, x22\n   b 7f\n"
+    "cmp x1, #1\n"
+    "b.ne 6f\n   ldrb w3, [x22]\n   cmp w3, #47\n"
+    "b.ne 6f\n   mov x2, #1\n"
+    "mov x1, x22\n   b 7f\n"
     "6:  add x3, x22, x2\n   sub x2, x1, x2\n   mov x1, x3\n"
-    "7:  sub x3, x20, #1\n   cmp x2, x3\n   csel x2, x2, x3, ls\n"
-    "mov x0, x19\n   bl memory_copy_fast_end\n   sub x0, x0, x19\n"
-    "b .Lpath_arm_return\n"
+    "7:  sub x3, x20, #1\n"
+    "cmp x2, x3\n   csel x2, x2, x3, ls\n   mov x0, x19\n   bl memory_copy_fast_end\n"
+    "sub x0, x0, x19\n   b .Lpath_arm_return\n"
     // dirname copy
-    ".Lpath_arm_head:\n   cbnz x2, 8f\n   cmp x20, #1\n   b.eq 9f\n"
-    "mov w3, #46\n   strb w3, [x19]\n   strb wzr, [x19, #1]\n"
-    "mov x0, #1\n   b .Lpath_arm_return\n"
-    "9:  strb wzr, [x19]\n   mov x0, #0\n   b .Lpath_arm_return\n"
-    "8:  cmp x2, #1\n   b.ls 7f\n   sub x3, x2, #1\n"
-    "ldrb w4, [x22, x3]\n   cmp w4, #47\n   b.ne 7f\n"
-    "mov x2, x3\n   b 8b\n"
-    "7:  sub x3, x20, #1\n   cmp x2, x3\n   csel x2, x2, x3, ls\n"
-    "mov x0, x19\n   mov x1, x22\n   bl memory_copy_fast_end\n"
-    "sub x0, x0, x19\n"
+    ".Lpath_arm_head:\n   cbnz x2, 8f\n   cmp x20, #1\n"
+    "b.eq 9f\n   mov w3, #46\n"
+    "strb w3, [x19]\n   strb wzr, [x19, #1]\n"
+    "mov x0, #1\n"
+    "b .Lpath_arm_return\n"
+    "9:  strb wzr, [x19]\n   mov x0, #0\n"
+    "b .Lpath_arm_return\n"
+    "8:  cmp x2, #1\n"
+    "b.ls 7f\n   sub x3, x2, #1\n"
+    "ldrb w4, [x22, x3]\n   cmp w4, #47\n"
+    "b.ne 7f\n   mov x2, x3\n   b 8b\n"
+    "7:  sub x3, x20, #1\n"
+    "cmp x2, x3\n   csel x2, x2, x3, ls\n   mov x0, x19\n   mov x1, x22\n"
+    "bl memory_copy_fast_end\n   sub x0, x0, x19\n"
     ".Lpath_arm_return:\n   ldp x21, x22, [sp, #32]\n"
-    "ldp x19, x20, [sp, #16]\n   ldp x29, x30, [sp], #48\n"
+    "ldp x19, x20, [sp, #16]\n"
+    "ldp x29, x30, [sp], #48\n"
     ASM_RET
     // writer basename, with root retaining its slash
-    ".Lpath_arm_writer:\n   cmp x1, #1\n   b.ne 6f\n"
-    "ldrb w3, [x22]\n   cmp w3, #47\n   b.ne 6f\n"
-    "mov x0, x22\n   mov x1, #1\n   b 7f\n"
+    ".Lpath_arm_writer:\n   cmp x1, #1\n"
+    "b.ne 6f\n   ldrb w3, [x22]\n   cmp w3, #47\n"
+    "b.ne 6f\n   mov x0, x22\n   mov x1, #1\n"
+    "b 7f\n"
     "6:  add x0, x22, x2\n   sub x1, x1, x2\n"
     "7:  mov x16, x19\n   ldp x21, x22, [sp, #32]\n"
-    "ldp x19, x20, [sp, #16]\n   ldp x29, x30, [sp], #48\n   br x16\n"
+    "ldp x19, x20, [sp, #16]\n"
+    "ldp x29, x30, [sp], #48\n"
+    "br x16\n"
     ASM_LOCAL_END(path_split_core)
 
     ASM_FUNC(path_basename)
-    "mov x9, #0\n   b path_split_core\n"
+    "mov x9, #0\n"
+    "b path_split_core\n"
     ASM_END(path_basename)
 
     ASM_FUNC(path_tail_copy)
-    "cbz x1, 1f\n   mov x9, #1\n   b path_split_core\n"
+    "cbz x1, 1f\n   mov x9, #1\n"
+    "b path_split_core\n"
     "1:  mov x0, #0\n"
     ASM_RET
     ASM_END(path_tail_copy)
 
     ASM_FUNC(path_head_copy)
-    "cbz x1, 1f\n   mov x9, #2\n   b path_split_core\n"
+    "cbz x1, 1f\n   mov x9, #2\n"
+    "b path_split_core\n"
     "1:  mov x0, #0\n"
     ASM_RET
     ASM_END(path_head_copy)
 
     ASM_FUNC(path_join)
-    "cbz x1, 8f\n   stp x29, x30, [sp, #-64]!\n"
-    "stp x19, x20, [sp, #16]\n   stp x21, x22, [sp, #32]\n"
-    "str x23, [sp, #48]\n   mov x19, x0\n   mov x20, x1\n"
-    "mov x21, x2\n   mov x22, x3\n"
-    "mov x0, x21\n   sub x1, x20, #1\n   bl string_length_max\n"
-    "mov x23, x0\n   mov x0, x19\n   mov x1, x21\n   mov x2, x23\n"
-    "bl memory_copy_fast\n   cbz x23, 2f\n"
-    "sub x4, x23, #1\n   ldrb w5, [x19, x4]\n   cmp w5, #47\n"
-    "b.eq 2f\n   add x4, x23, #1\n   cmp x4, x20\n   b.hs 2f\n"
-    "mov w5, #47\n   strb w5, [x19, x23]\n   mov x23, x4\n"
-    "2:  sub x1, x20, #1\n   sub x1, x1, x23\n   mov x0, x22\n"
-    "bl string_length_max\n   mov x2, x0\n   add x0, x19, x23\n"
-    "mov x1, x22\n   bl memory_copy_fast_end\n   sub x0, x0, x19\n"
-    "ldr x23, [sp, #48]\n   ldp x21, x22, [sp, #32]\n"
-    "ldp x19, x20, [sp, #16]\n   ldp x29, x30, [sp], #64\n"
+    "cbz x1, 8f\n   stp x29, x30, [sp,  #-64]!\n"
+    "stp x19, x20, [sp, #16]\n"
+    "stp x21, x22, [sp, #32]\n"
+    "str x23, [sp, #48]\n"
+    "mov x19, x0\n   mov x20, x1\n   mov x21, x2\n   mov x22, x3\n"
+    "mov x0, x21\n   sub x1, x20, #1\n"
+    "bl string_length_max\n   mov x23, x0\n   mov x0, x19\n   mov x1, x21\n"
+    "mov x2, x23\n   bl memory_copy_fast\n   cbz x23, 2f\n   sub x4, x23, #1\n"
+    "ldrb w5, [x19, x4]\n   cmp w5, #47\n"
+    "b.eq 2f\n   add x4, x23, #1\n"
+    "cmp x4, x20\n   b.hs 2f\n   mov w5, #47\n"
+    "strb w5, [x19, x23]\n   mov x23, x4\n"
+    "2:  sub x1, x20, #1\n"
+    "sub x1, x1, x23\n   mov x0, x22\n   bl string_length_max\n   mov x2, x0\n"
+    "add x0, x19, x23\n   mov x1, x22\n   bl memory_copy_fast_end\n   sub x0, x0, x19\n"
+    "ldr x23, [sp, #48]\n"
+    "ldp x21, x22, [sp, #32]\n"
+    "ldp x19, x20, [sp, #16]\n"
+    "ldp x29, x30, [sp], #64\n"
     ASM_RET
     "8:  mov x0, #0\n"
     ASM_RET
@@ -6994,94 +6784,109 @@ __asm__(
     "        .ascii \"00010203040506070809101112131415161718192021222324252627282930313233343536373839404142434445464748495051525354555657585960616263646566676869707172737475767778798081828384858687888990919293949596979899\"\n"
     ASM_SECTION
 ASM_FUNC(positive_to_string)
-    "stp x29, x30, [sp,  #-48]!\n   mov x29, sp\n   str x0, [sp, #16]\n"
-    "add x0, sp, #48\n   bl positive_digits_core\n"
-    "ldr x9, [sp, #16]\n   blr x9\n"
-    "ldp x29, x30, [sp], #48\n"
+    "stp x29, x30, [sp,  #-48]!\n"
+    "mov x29, sp\n   str x0, [sp, #16]\n"
+    "add x0, sp, #48\n"
+    "bl positive_digits_core\n   ldr x9, [sp, #16]\n"
+    "blr x9\n   ldp x29, x30, [sp], #48\n"
     ASM_RET
     ASM_END(positive_to_string)
     ASM_LOCAL_FUNC(positive_digits_core)
-    "adrp x8, digit_pairs\n   add x8, x8, :lo12:digit_pairs\n"
-    //
-    //       One pair covers everything under a hundred, and zero arrives here
-    //       too: the table would have written it as 00 and the pointer steps
-    //       past the first of them.
-    //
-    "cmp x1, #99\n   b.hi 1f\n"
-    "ldrh w2, [x8, x1, lsl #1]\n   sturh w2, [x0, #-2]\n"
-    "cmp x1, #10\n   cset x3, lo\n"
-    "sub x0, x0, #2\n   add x0, x0, x3\n   mov x1, #2\n   sub x1, x1, x3\n"
+    "adrp x8, digit_pairs\n   add x8, x8, :lo12:digit_pairs\n   cmp x1, #99\n"
+    "b.hi 1f\n   ldrh w2, [x8, x1, lsl #1]\n"
+    "sturh w2, [x0,  #-2]\n"
+    "cmp x1, #10\n"
+    "cset x3, lo\n   sub x0, x0, #2\n"
+    "add x0, x0, x3\n   mov x1, #2\n"
+    "sub x1, x1, x3\n"
     ASM_RET
-    "1:  adrp x6, number_constants\n   add x6, x6, :lo12:number_constants\n"
-    "ldp x10, x11, [x6]  // 5243 and 100, one instruction for the pair\n"
-    "ldr x3, [x6, #48]\n   cmp x1, x3\n   b.hi 2f\n"
-    "mov w2, w1\n"
-    "umull x3, w2, w10\n   lsr x3, x3, #19\n   msub w4, w3, w11, w2\n"
-    "ldrh w3, [x8, x3, lsl #1]\n   ldrh w4, [x8, x4, lsl #1]\n"
-    "sturh w3, [x0, #-4]\n   sturh w4, [x0, #-2]\n"
+    "1:  adrp x6, number_constants\n   add x6, x6, :lo12:number_constants\n   ldp x10, x11, [x6]  // 5243 and 100, one instruction for the pair\n"
+    "ldr x3, [x6, #48]\n"
+    "cmp x1, x3\n   b.hi 2f\n   mov w2, w1\n   umull x3, w2, w10\n"
+    "lsr x3, x3, #19\n"
+    "msub w4, w3, w11, w2\n   ldrh w3, [x8, x3, lsl #1]\n"
+    "ldrh w4, [x8, x4, lsl #1]\n"
+    "sturh w3, [x0,  #-4]\n"
+    "sturh w4, [x0,  #-2]\n"
     "b 9f\n"
     "2:  ldp x12, x13, [x6, #16]\n"
-    "ldr x3, [x6, #56]\n   cmp x1, x3\n   b.hi 3f\n"
-    "mov w2, w1\n"
-    "umull x3, w2, w12\n   lsr x3, x3, #44\n   msub w4, w3, w13, w2\n"
-    "umull x5, w3, w10\n   lsr x5, x5, #19\n   msub w3, w5, w11, w3\n"
-    "ldrh w5, [x8, x5, lsl #1]\n   ldrh w3, [x8, x3, lsl #1]\n"
-    "sturh w5, [x0, #-8]\n   sturh w3, [x0, #-6]\n"
-    "umull x5, w4, w10\n   lsr x5, x5, #19\n   msub w4, w5, w11, w4\n"
-    "ldrh w5, [x8, x5, lsl #1]\n   ldrh w4, [x8, x4, lsl #1]\n"
-    "sturh w5, [x0, #-4]\n   sturh w4, [x0, #-2]\n"
+    "ldr x3, [x6, #56]\n"
+    "cmp x1, x3\n   b.hi 3f\n   mov w2, w1\n   umull x3, w2, w12\n"
+    "lsr x3, x3, #44\n"
+    "msub w4, w3, w13, w2\n   umull x5, w3, w10\n   lsr x5, x5, #19\n"
+    "msub w3, w5, w11, w3\n   ldrh w5, [x8, x5, lsl #1]\n"
+    "ldrh w3, [x8, x3, lsl #1]\n"
+    "sturh w5, [x0,  #-8]\n"
+    "sturh w3, [x0,  #-6]\n"
+    "umull x5, w4, w10\n   lsr x5, x5, #19\n"
+    "msub w4, w5, w11, w4\n   ldrh w5, [x8, x5, lsl #1]\n"
+    "ldrh w4, [x8, x4, lsl #1]\n"
+    "sturh w5, [x0,  #-4]\n"
+    "sturh w4, [x0,  #-2]\n"
     "b 9f\n"
     "3:  ldp x14, x7, [x6, #32]  // the reciprocal, and a hundred million\n"
     "umulh x15, x1, x14\n   lsr x15, x15, #26  // n / 100000000\n"
     "msub w2, w15, w7, w1  // n % 100000000\n"
-    "umull x3, w2, w12\n   lsr x3, x3, #44\n   msub w4, w3, w13, w2\n"
-    "umull x5, w3, w10\n   lsr x5, x5, #19\n   msub w3, w5, w11, w3\n"
-    "ldrh w5, [x8, x5, lsl #1]\n   ldrh w3, [x8, x3, lsl #1]\n"
-    "sturh w5, [x0, #-8]\n   sturh w3, [x0, #-6]\n"
-    "umull x5, w4, w10\n   lsr x5, x5, #19\n   msub w4, w5, w11, w4\n"
-    "ldrh w5, [x8, x5, lsl #1]\n   ldrh w4, [x8, x4, lsl #1]\n"
-    "sturh w5, [x0, #-4]\n   sturh w4, [x0, #-2]\n"
-    "ldr x3, [x6, #48]\n   cmp x15, x3\n   b.hi 4f\n"
-    "mov w2, w15\n"
-    "umull x3, w2, w10\n   lsr x3, x3, #19\n   msub w4, w3, w11, w2\n"
-    "ldrh w3, [x8, x3, lsl #1]\n   ldrh w4, [x8, x4, lsl #1]\n"
-    "sturh w3, [x0, #-12]\n   sturh w4, [x0, #-10]\n"
+    "umull x3, w2, w12\n   lsr x3, x3, #44\n"
+    "msub w4, w3, w13, w2\n   umull x5, w3, w10\n   lsr x5, x5, #19\n"
+    "msub w3, w5, w11, w3\n   ldrh w5, [x8, x5, lsl #1]\n"
+    "ldrh w3, [x8, x3, lsl #1]\n"
+    "sturh w5, [x0,  #-8]\n"
+    "sturh w3, [x0,  #-6]\n"
+    "umull x5, w4, w10\n   lsr x5, x5, #19\n"
+    "msub w4, w5, w11, w4\n   ldrh w5, [x8, x5, lsl #1]\n"
+    "ldrh w4, [x8, x4, lsl #1]\n"
+    "sturh w5, [x0,  #-4]\n"
+    "sturh w4, [x0,  #-2]\n"
+    "ldr x3, [x6, #48]\n"
+    "cmp x15, x3\n   b.hi 4f\n   mov w2, w15\n   umull x3, w2, w10\n"
+    "lsr x3, x3, #19\n"
+    "msub w4, w3, w11, w2\n   ldrh w3, [x8, x3, lsl #1]\n"
+    "ldrh w4, [x8, x4, lsl #1]\n"
+    "sturh w3, [x0,  #-12]\n"
+    "sturh w4, [x0,  #-10]\n"
     "b 9f\n"
-    "4:  ldr x3, [x6, #56]\n   cmp x15, x3\n   b.hi 5f\n"
-    "mov w2, w15\n"
-    "umull x3, w2, w12\n   lsr x3, x3, #44\n   msub w4, w3, w13, w2\n"
-    "umull x5, w3, w10\n   lsr x5, x5, #19\n   msub w3, w5, w11, w3\n"
-    "ldrh w5, [x8, x5, lsl #1]\n   ldrh w3, [x8, x3, lsl #1]\n"
-    "sturh w5, [x0, #-16]\n   sturh w3, [x0, #-14]\n"
-    "umull x5, w4, w10\n   lsr x5, x5, #19\n   msub w4, w5, w11, w4\n"
-    "ldrh w5, [x8, x5, lsl #1]\n   ldrh w4, [x8, x4, lsl #1]\n"
-    "sturh w5, [x0, #-12]\n   sturh w4, [x0, #-10]\n"
+    "4:  ldr x3, [x6, #56]\n"
+    "cmp x15, x3\n   b.hi 5f\n   mov w2, w15\n   umull x3, w2, w12\n"
+    "lsr x3, x3, #44\n"
+    "msub w4, w3, w13, w2\n   umull x5, w3, w10\n   lsr x5, x5, #19\n"
+    "msub w3, w5, w11, w3\n   ldrh w5, [x8, x5, lsl #1]\n"
+    "ldrh w3, [x8, x3, lsl #1]\n"
+    "sturh w5, [x0,  #-16]\n"
+    "sturh w3, [x0,  #-14]\n"
+    "umull x5, w4, w10\n   lsr x5, x5, #19\n"
+    "msub w4, w5, w11, w4\n   ldrh w5, [x8, x5, lsl #1]\n"
+    "ldrh w4, [x8, x4, lsl #1]\n"
+    "sturh w5, [x0,  #-12]\n"
+    "sturh w4, [x0,  #-10]\n"
     "b 9f\n"
-    //
-    //       Seventeen digits or more, which the top of the type is: the third
-    //       chunk is at most 1844, so four characters cover it.
-    //
-    "5:  umulh x3, x15, x14\n   lsr x3, x3, #26\n   msub w2, w3, w7, w15\n"
-    "mov x15, x3\n"
-    "umull x3, w2, w12\n   lsr x3, x3, #44\n   msub w4, w3, w13, w2\n"
-    "umull x5, w3, w10\n   lsr x5, x5, #19\n   msub w3, w5, w11, w3\n"
-    "ldrh w5, [x8, x5, lsl #1]\n   ldrh w3, [x8, x3, lsl #1]\n"
-    "sturh w5, [x0, #-16]\n   sturh w3, [x0, #-14]\n"
-    "umull x5, w4, w10\n   lsr x5, x5, #19\n   msub w4, w5, w11, w4\n"
-    "ldrh w5, [x8, x5, lsl #1]\n   ldrh w4, [x8, x4, lsl #1]\n"
-    "sturh w5, [x0, #-12]\n   sturh w4, [x0, #-10]\n"
-    "mov w2, w15\n"
-    "umull x3, w2, w10\n   lsr x3, x3, #19\n   msub w4, w3, w11, w2\n"
-    "ldrh w3, [x8, x3, lsl #1]\n   ldrh w4, [x8, x4, lsl #1]\n"
-    "sturh w3, [x0, #-20]\n   sturh w4, [x0, #-18]\n"
+    "5:  umulh x3, x15, x14\n   lsr x3, x3, #26\n"
+    "msub w2, w3, w7, w15\n   mov x15, x3\n   umull x3, w2, w12\n   lsr x3, x3, #44\n"
+    "msub w4, w3, w13, w2\n   umull x5, w3, w10\n   lsr x5, x5, #19\n"
+    "msub w3, w5, w11, w3\n   ldrh w5, [x8, x5, lsl #1]\n"
+    "ldrh w3, [x8, x3, lsl #1]\n"
+    "sturh w5, [x0,  #-16]\n"
+    "sturh w3, [x0,  #-14]\n"
+    "umull x5, w4, w10\n   lsr x5, x5, #19\n"
+    "msub w4, w5, w11, w4\n   ldrh w5, [x8, x5, lsl #1]\n"
+    "ldrh w4, [x8, x4, lsl #1]\n"
+    "sturh w5, [x0,  #-12]\n"
+    "sturh w4, [x0,  #-10]\n"
+    "mov w2, w15\n   umull x3, w2, w10\n   lsr x3, x3, #19\n"
+    "msub w4, w3, w11, w2\n   ldrh w3, [x8, x3, lsl #1]\n"
+    "ldrh w4, [x8, x4, lsl #1]\n"
+    "sturh w3, [x0,  #-20]\n"
+    "sturh w4, [x0,  #-18]\n"
     //
     //       How many of those characters are the number. Everything that gets
     //       here is a hundred or more.
     //
-    "9:  clz x3, x1\n   mov w4, #64\n   sub w3, w4, w3\n"
-    "mov w4, #1233\n   mul w3, w3, w4\n   lsr w3, w3, #12\n"
+    "9:  clz x3, x1\n   mov w4, #64\n"
+    "sub w3, w4, w3\n   mov w4, #1233\n"
+    "mul w3, w3, w4\n   lsr w3, w3, #12\n"
     "add x4, x6, #64  // the powers of ten sit in the same pool\n"
-    "ldr x5, [x4, x3, lsl #3]\n   cmp x1, x5\n   cinc w3, w3, hs  // one over, or not\n"
+    "ldr x5, [x4, x3, lsl #3]\n"
+    "cmp x1, x5\n   cinc w3, w3, hs  // one over, or not\n"
     "mov x1, x3\n   sub x0, x0, x1\n"
     ASM_RET
     ASM_LOCAL_END(positive_digits_core)
@@ -7097,22 +6902,15 @@ ASM_FUNC(positive_to_string)
     //       CMP takes twelve bits.
     //
     ".section .rodata\n   .balign 8\n"
-    "number_constants:\n"
-    "        .quad 5243\n                 .quad 100\n"
-    "        .quad 1759218605\n           .quad 10000\n"
-    "        .quad 0xABCC77118461CEFD\n   .quad 100000000\n"
-    "        .quad 9999\n                 .quad 99999999\n"
-    "ten_powers:\n"
-    "        .quad 1\n                    .quad 10\n"
-    "        .quad 100\n                  .quad 1000\n"
-    "        .quad 10000\n                .quad 100000\n"
-    "        .quad 1000000\n              .quad 10000000\n"
-    "        .quad 100000000\n            .quad 1000000000\n"
-    "        .quad 10000000000\n          .quad 100000000000\n"
-    "        .quad 1000000000000\n        .quad 10000000000000\n"
-    "        .quad 100000000000000\n      .quad 1000000000000000\n"
-    "        .quad 10000000000000000\n    .quad 100000000000000000\n"
-    "        .quad 1000000000000000000\n  .quad 10000000000000000000\n"
+    "number_constants:\n   .quad 5243\n   .quad 100\n   .quad 1759218605\n"
+    ".quad 10000\n   .quad 0xABCC77118461CEFD\n   .quad 100000000\n   .quad 9999\n"
+    ".quad 99999999\n"
+    "ten_powers:\n   .quad 1\n   .quad 10\n   .quad 100\n"
+    ".quad 1000\n   .quad 10000\n   .quad 100000\n   .quad 1000000\n"
+    ".quad 10000000\n   .quad 100000000\n   .quad 1000000000\n   .quad 10000000000\n"
+    ".quad 100000000000\n   .quad 1000000000000\n   .quad 10000000000000\n   .quad 100000000000000\n"
+    ".quad 1000000000000000\n   .quad 10000000000000000\n   .quad 100000000000000000\n   .quad 1000000000000000000\n"
+    ".quad 10000000000000000000\n"
     ASM_SECTION
     //
     //       positive_into: the x86_64 block carries the shared-core reasoning.
@@ -7122,153 +6920,165 @@ ASM_FUNC(positive_to_string)
     //       the chunk/copy path.
     //
     ASM_FUNC(positive_into_string)
-    "mov x11, #2\n   b positive_into_core\n"
+    "mov x11, #2\n"
+    "b positive_into_core\n"
     ASM_END(positive_into_string)
     ASM_FUNC(bipolar_into)
     "mov x11, xzr\n   b bipolar_into_core\n"
     ASM_END(bipolar_into)
     ASM_FUNC(bipolar_into_string)
-    "mov x11, #2\n   b bipolar_into_core\n"
+    "mov x11, #2\n"
+    "b bipolar_into_core\n"
     ASM_END(bipolar_into_string)
     ASM_FUNC(positive_into)
     "mov x11, xzr\n   b positive_into_core\n"
     ASM_END(positive_into)
     ASM_LOCAL_FUNC(bipolar_into_core)
-    "tbnz x1, #63, 1f\n   b positive_into_core\n"
-    "1:\n"
-    "mov w12, #45\n   strb w12, [x0], #1\n   neg x1, x1\n"
-    "orr x11, x11, #1\n   b positive_into_core\n"
+    "tbnz x1, #63, 1f\n"
+    "b positive_into_core\n"
+    "1:\n   mov w12, #45\n"
+    "strb w12, [x0], #1\n"
+    "neg x1, x1\n   orr x11, x11, #1\n"
+    "b positive_into_core\n"
     ASM_LOCAL_END(bipolar_into_core)
     ASM_LOCAL_FUNC(positive_into_core)
-    "cmp x1, #99\n   b.hi .Lpositive_into_four\n"
-    "adrp x8, digit_pairs\n   add x8, x8, :lo12:digit_pairs\n"
-    "add x2, x8, x1, lsl #1\n   cmp x1, #10\n   b.hs 1f\n"
-    "ldrb w3, [x2, #1]\n   strb w3, [x0]\n   mov x8, #1\n"
+    "cmp x1, #99\n"
+    "b.hi .Lpositive_into_four\n   adrp x8, digit_pairs\n   add x8, x8, :lo12:digit_pairs\n   add x2, x8, x1, lsl #1\n"
+    "cmp x1, #10\n"
+    "b.hs 1f\n   ldrb w3, [x2, #1]\n"
+    "strb w3, [x0]\n   mov x8, #1\n"
     "b .Lpositive_into_done\n"
     "1:  ldrh w3, [x2]\n   strh w3, [x0]\n   mov x8, #2\n"
     "b .Lpositive_into_done\n"
-    ".Lpositive_into_four:\n"
-    "mov w2, #9999\n   cmp x1, x2\n   b.hi .Lpositive_into_wide\n"
-    "adrp x8, digit_pairs\n   add x8, x8, :lo12:digit_pairs\n"
-    "mov w2, w1\n   mov w3, #5243\n   umull x3, w2, w3\n"
-    "lsr x3, x3, #19\n   mov w5, #100\n   msub w4, w3, w5, w2\n"
-    "add x5, x8, x3, lsl #1\n   add x6, x8, x4, lsl #1\n"
-    "cmp x3, #10\n   b.hs 2f\n"
-    "ldrb w7, [x5, #1]\n   strb w7, [x0]\n"
-    "ldrh w7, [x6]\n   sturh w7, [x0, #1]\n   mov x8, #3\n"
+    ".Lpositive_into_four:\n   mov w2, #9999\n"
+    "cmp x1, x2\n   b.hi .Lpositive_into_wide\n   adrp x8, digit_pairs\n   add x8, x8, :lo12:digit_pairs\n"
+    "mov w2, w1\n   mov w3, #5243\n"
+    "umull x3, w2, w3\n   lsr x3, x3, #19\n"
+    "mov w5, #100\n"
+    "msub w4, w3, w5, w2\n   add x5, x8, x3, lsl #1\n"
+    "add x6, x8, x4, lsl #1\n"
+    "cmp x3, #10\n"
+    "b.hs 2f\n   ldrb w7, [x5, #1]\n"
+    "strb w7, [x0]\n   ldrh w7, [x6]\n   sturh w7, [x0, #1]\n"
+    "mov x8, #3\n"
     "b .Lpositive_into_done\n"
-    "2:  ldrh w7, [x5]\n   strh w7, [x0]\n"
-    "ldrh w7, [x6]\n   strh w7, [x0, #2]\n   mov x8, #4\n"
+    "2:  ldrh w7, [x5]\n   strh w7, [x0]\n   ldrh w7, [x6]\n   strh w7, [x0, #2]\n"
+    "mov x8, #4\n"
     "b .Lpositive_into_done\n"
-    ".Lpositive_into_wide:\n"
-    "stp x29, x30, [sp, #-64]!\n   mov x29, sp\n"
-    "str x0, [sp, #16]\n   str x11, [sp, #24]\n"
-    "add x0, sp, #64\n   bl positive_digits_core\n"
-    "str x1, [sp, #32]\n   mov x1, x0\n   ldr x0, [sp, #16]\n"
-    "ldr x2, [sp, #32]\n   bl memory_copy_fast\n"
-    "ldr x8, [sp, #32]\n   ldr x11, [sp, #24]\n"
-    "tbz x11, #1, 3f\n   strb wzr, [x0, x8]\n"
-    "3:  and x11, x11, #1\n   add x0, x8, x11\n"
-    "ldp x29, x30, [sp], #64\n"
+    ".Lpositive_into_wide:\n   stp x29, x30, [sp,  #-64]!\n"
+    "mov x29, sp\n   str x0, [sp, #16]\n"
+    "str x11, [sp, #24]\n"
+    "add x0, sp, #64\n"
+    "bl positive_digits_core\n   str x1, [sp, #32]\n"
+    "mov x1, x0\n   ldr x0, [sp, #16]\n"
+    "ldr x2, [sp, #32]\n"
+    "bl memory_copy_fast\n   ldr x8, [sp, #32]\n"
+    "ldr x11, [sp, #24]\n"
+    "tbz x11, #1, 3f\n"
+    "strb wzr, [x0, x8]\n"
+    "3:  and x11, x11, #1\n"
+    "add x0, x8, x11\n   ldp x29, x30, [sp], #64\n"
     ASM_RET
-    ".Lpositive_into_done:\n"
-    "tbz x11, #1, 4f\n   strb wzr, [x0, x8]\n"
-    "4:  and x11, x11, #1\n   add x0, x8, x11\n"
+    ".Lpositive_into_done:\n   tbz x11, #1, 4f\n"
+    "strb wzr, [x0, x8]\n"
+    "4:  and x11, x11, #1\n"
+    "add x0, x8, x11\n"
     ASM_RET
     ASM_LOCAL_END(positive_into_core)
     //
     //       positive_into_padded: the x86_64 block carries the contract.
     //
     ASM_FUNC(positive_into_padded)
-    "cmp w3, #48\n   b.ne .Lpositive_into_padded_arm_general\n"
-    "cmp x2, #6\n   b.eq .Lpositive_into_padded_arm_six_check\n"
-    "cmp x2, #9\n   b.ne .Lpositive_into_padded_arm_general\n"
-    "mov w4, #0xca00\n   movk w4, #0x3b9a, lsl #16\n"
-    "cmp x1, x4\n   b.hs .Lpositive_into_padded_arm_general\n"
-    "mov w6, #4\n   b .Lpositive_into_padded_arm_fixed\n"
-    ".Lpositive_into_padded_arm_six_check:\n"
-    "mov w4, #0x4240\n   movk w4, #0xf, lsl #16\n"
-    "cmp x1, x4\n   b.hs .Lpositive_into_padded_arm_general\n"
-    "mov w6, #3\n"
-    ".Lpositive_into_padded_arm_fixed:\n"
-    "adrp x4, digit_pairs\n   add x4, x4, :lo12:digit_pairs\n"
-    "add x5, x0, x2\n   mov w7, #0x851f\n   movk w7, #0x51eb, lsl #16\n"
+    "cmp w3, #48\n"
+    "b.ne .Lpositive_into_padded_arm_general\n   cmp x2, #6\n"
+    "b.eq .Lpositive_into_padded_arm_six_check\n   cmp x2, #9\n"
+    "b.ne .Lpositive_into_padded_arm_general\n   mov w4, #0xca00\n"
+    "movk w4, #0x3b9a, lsl #16\n"
+    "cmp x1, x4\n   b.hs .Lpositive_into_padded_arm_general\n   mov w6, #4\n"
+    "b .Lpositive_into_padded_arm_fixed\n"
+    ".Lpositive_into_padded_arm_six_check:\n   mov w4, #0x4240\n"
+    "movk w4, #0xf, lsl #16\n"
+    "cmp x1, x4\n   b.hs .Lpositive_into_padded_arm_general\n   mov w6, #3\n"
+    ".Lpositive_into_padded_arm_fixed:\n   adrp x4, digit_pairs\n   add x4, x4, :lo12:digit_pairs\n   add x5, x0, x2\n"
+    "mov w7, #0x851f\n"
+    "movk w7, #0x51eb, lsl #16\n"
     "mov w9, #100\n"
-    ".Lpositive_into_padded_arm_pair_loop:\n"
-    "umull x8, w1, w7\n   lsr x8, x8, #37\n   msub w10, w8, w9, w1\n"
-    "ldrh w10, [x4, x10, lsl #1]\n   sub x5, x5, #2\n   strh w10, [x5]\n"
-    "mov w1, w8\n   subs w6, w6, #1\n   b.ne .Lpositive_into_padded_arm_pair_loop\n"
-    "cmp x2, #9\n   b.ne .Lpositive_into_padded_arm_fixed_done\n"
-    "add w1, w1, #48\n   strb w1, [x0]\n"
+    ".Lpositive_into_padded_arm_pair_loop:\n   umull x8, w1, w7\n   lsr x8, x8, #37\n"
+    "msub w10, w8, w9, w1\n   ldrh w10, [x4, x10, lsl #1]\n"
+    "sub x5, x5, #2\n"
+    "strh w10, [x5]\n   mov w1, w8\n   subs w6, w6, #1\n"
+    "b.ne .Lpositive_into_padded_arm_pair_loop\n   cmp x2, #9\n"
+    "b.ne .Lpositive_into_padded_arm_fixed_done\n   add w1, w1, #48\n"
+    "strb w1, [x0]\n"
     ".Lpositive_into_padded_arm_fixed_done:\n   mov x0, x2\n"
     ASM_RET
-    ".Lpositive_into_padded_arm_general:\n"
-    "stp x29, x30, [sp, #-64]!\n   mov x29, sp\n"
-    "stp x19, x20, [sp, #16]\n   stp x21, x22, [sp, #32]\n"
+    ".Lpositive_into_padded_arm_general:\n   stp x29, x30, [sp,  #-64]!\n"
+    "mov x29, sp\n   stp x19, x20, [sp, #16]\n"
+    "stp x21, x22, [sp, #32]\n"
     "mov x19, x0\n   mov x20, x2\n   and w21, w3, #255\n"
-    "bl positive_into\n"
-    "cbz w21, .Lpositive_into_padded_arm_done\n"
-    "cmp x20, x0\n   b.ls .Lpositive_into_padded_arm_done\n"
+    "bl positive_into\n   cbz w21, .Lpositive_into_padded_arm_done\n   cmp x20, x0\n   b.ls .Lpositive_into_padded_arm_done\n"
     "sub x9, x20, x0\n   add x11, x19, x9\n   mov x10, x0\n"
-    ".Lpositive_into_padded_arm_move:\n"
-    "sub x10, x10, #1\n   ldrb w12, [x19, x10]\n   strb w12, [x11, x10]\n"
-    "cbnz x10, .Lpositive_into_padded_arm_move\n"
-    "mov x10, xzr\n"
-    ".Lpositive_into_padded_arm_fill:\n"
-    "strb w21, [x19, x10]\n   add x10, x10, #1\n   cmp x10, x9\n"
-    "b.lo .Lpositive_into_padded_arm_fill\n   mov x0, x20\n"
-    ".Lpositive_into_padded_arm_done:\n"
-    "ldp x21, x22, [sp, #32]\n   ldp x19, x20, [sp, #16]\n"
+    ".Lpositive_into_padded_arm_move:\n   sub x10, x10, #1\n"
+    "ldrb w12, [x19, x10]\n   strb w12, [x11, x10]\n   cbnz x10, .Lpositive_into_padded_arm_move\n   mov x10, xzr\n"
+    ".Lpositive_into_padded_arm_fill:\n   strb w21, [x19, x10]\n   add x10, x10, #1\n"
+    "cmp x10, x9\n   b.lo .Lpositive_into_padded_arm_fill\n   mov x0, x20\n"
+    ".Lpositive_into_padded_arm_done:\n   ldp x21, x22, [sp, #32]\n"
+    "ldp x19, x20, [sp, #16]\n"
     "ldp x29, x30, [sp], #64\n"
     ASM_RET
     ASM_END(positive_into_padded)
     //
     //       positive_into_pair: the x86_64 block carries the contract.
     ASM_FUNC(positive_into_pair)
-    "adrp x2, digit_pairs\n   add x2, x2, :lo12:digit_pairs\n"
-    "ldrh w3, [x2, x1, lsl #1]\n   strh w3, [x0]\n   mov x0, #2\n"
+    "adrp x2, digit_pairs\n   add x2, x2, :lo12:digit_pairs\n   ldrh w3, [x2, x1, lsl #1]\n"
+    "strh w3, [x0]\n   mov x0, #2\n"
     ASM_RET
     ASM_END(positive_into_pair)
     ASM_FUNC(writer_fill)
-    "cbz x1, 2f\n   stp x29, x30, [sp, #-48]!\n   mov x29, sp\n   stp x19, x20, [sp, #16]\n"
+    "cbz x1, 2f\n   stp x29, x30, [sp,  #-48]!\n"
+    "mov x29, sp\n   stp x19, x20, [sp, #16]\n"
     "mov x19, x0\n   mov x20, x1\n   strb w2, [sp, #32]\n"
-    "1: add x0, sp, #32\n   mov x1, #1\n"
+    "1:  add x0, sp, #32\n"
+    "mov x1, #1\n"
     ASM_CALL("x19")
-    "subs x20, x20, #1\n   b.ne 1b\n   ldp x19, x20, [sp, #16]\n   ldp x29, x30, [sp], #48\n"
+    "subs x20, x20, #1\n"
+    "b.ne 1b\n   ldp x19, x20, [sp, #16]\n"
+    "ldp x29, x30, [sp], #48\n"
     "2:\n"
     ASM_RET
     ASM_END(writer_fill)
     // The x86_64 block documents the shared private convention.
     ASM_LOCAL_FUNC(writer_field_core)
-    "stp x29, x30, [sp, #-16]!\n   mov x29, sp\n"
-    "tbnz w23, #8, .Lwriter_field_core_arm_left\n"
+    "stp x29, x30, [sp,  #-16]!\n"
+    "mov x29, sp\n   tbnz w23, #8, .Lwriter_field_core_arm_left\n"
     "mov x0, x19\n   mov x1, x22\n   and w2, w23, #255\n"
-    "bl writer_fill\n   cbz x21, .Lwriter_field_core_arm_done\n"
-    "mov x0, x20\n   mov x1, x21\n"
+    "bl writer_fill\n   cbz x21, .Lwriter_field_core_arm_done\n   mov x0, x20\n   mov x1, x21\n"
     ASM_CALL("x19")
     "b .Lwriter_field_core_arm_done\n"
-    ".Lwriter_field_core_arm_left:\n   cbz x21, .Lwriter_field_core_arm_left_fill\n"
-    "mov x0, x20\n   mov x1, x21\n"
+    ".Lwriter_field_core_arm_left:\n   cbz x21, .Lwriter_field_core_arm_left_fill\n   mov x0, x20\n   mov x1, x21\n"
     ASM_CALL("x19")
-    ".Lwriter_field_core_arm_left_fill:\n   mov x0, x19\n   mov x1, x22\n"
-    "and w2, w23, #255\n   bl writer_fill\n"
+    ".Lwriter_field_core_arm_left_fill:\n   mov x0, x19\n   mov x1, x22\n   and w2, w23, #255\n"
+    "bl writer_fill\n"
     ".Lwriter_field_core_arm_done:\n   ldp x29, x30, [sp], #16\n"
     ASM_RET
     ASM_LOCAL_END(writer_field_core)
     ASM_FUNC(writer_field)
-    "subs x6, x3, x2\n   csel x6, x6, xzr, hi\n"
-    "cbz x6, .Lwriter_field_arm_body_only\n   cbz x2, .Lwriter_field_arm_empty\n"
-    "stp x29, x30, [sp, #-64]!\n   mov x29, sp\n"
-    "stp x19, x20, [sp, #16]\n   stp x21, x22, [sp, #32]\n"
-    "stp x23, x24, [sp, #48]\n   mov x19, x0\n   mov x20, x1\n"
-    "mov x21, x2\n   mov x22, x6\n   and w23, w4, #255\n"
-    "tst w5, #255\n   b.eq 1f\n   orr w23, w23, #256\n   1: bl writer_field_core\n"
-    "ldp x23, x24, [sp, #48]\n   ldp x21, x22, [sp, #32]\n"
-    "ldp x19, x20, [sp, #16]\n   ldp x29, x30, [sp], #64\n"
+    "subs x6, x3, x2\n   csel x6, x6, xzr, hi\n   cbz x6, .Lwriter_field_arm_body_only\n   cbz x2, .Lwriter_field_arm_empty\n"
+    "stp x29, x30, [sp,  #-64]!\n"
+    "mov x29, sp\n   stp x19, x20, [sp, #16]\n"
+    "stp x21, x22, [sp, #32]\n"
+    "stp x23, x24, [sp, #48]\n"
+    "mov x19, x0\n   mov x20, x1\n   mov x21, x2\n   mov x22, x6\n"
+    "and w23, w4, #255\n"
+    "tst w5, #255\n"
+    "b.eq 1f\n   orr w23, w23, #256\n"
+    "1: bl writer_field_core\n   ldp x23, x24, [sp, #48]\n"
+    "ldp x21, x22, [sp, #32]\n"
+    "ldp x19, x20, [sp, #16]\n"
+    "ldp x29, x30, [sp], #64\n"
     ASM_RET
-    ".Lwriter_field_arm_body_only:\n   cbz x2, .Lwriter_field_arm_return\n"
-    "stp x29, x30, [sp, #-16]!\n   mov x29, sp\n   mov x6, x0\n"
-    "mov x0, x1\n   mov x1, x2\n"
+    ".Lwriter_field_arm_body_only:\n   cbz x2, .Lwriter_field_arm_return\n   stp x29, x30, [sp,  #-16]!\n"
+    "mov x29, sp\n   mov x6, x0\n   mov x0, x1\n   mov x1, x2\n"
     ASM_CALL("x6")
     "ldp x29, x30, [sp], #16\n"
     ".Lwriter_field_arm_return:\n"
@@ -7277,38 +7087,72 @@ ASM_FUNC(positive_to_string)
     "b writer_fill\n"
     ASM_END(writer_field)
     ASM_FUNC(string_to_field)
-    "stp x29, x30, [sp, #-64]!\n   mov x29, sp\n"
-    "stp x19, x20, [sp, #16]\n   stp x21, x22, [sp, #32]\n"
-    "stp x23, x24, [sp, #48]\n   mov x19, x0\n   mov x20, x1\n"
-    "mov x21, x2\n   and w23, w3, #255\n   tst w4, #255\n   b.eq 1f\n"
-    "orr w23, w23, #256\n   1: mov x0, x20\n   bl string_length\n"
-    "mov x22, x21\n   mov x21, x0\n   subs x22, x22, x21\n"
-    "csel x22, x22, xzr, hi\n   cbnz x22, .Lstring_to_field_arm_general\n"
-    "cbz x21, .Lstring_to_field_arm_done\n   mov x0, x20\n   mov x1, x21\n"
+    "stp x29, x30, [sp,  #-64]!\n"
+    "mov x29, sp\n   stp x19, x20, [sp, #16]\n"
+    "stp x21, x22, [sp, #32]\n"
+    "stp x23, x24, [sp, #48]\n"
+    "mov x19, x0\n   mov x20, x1\n   mov x21, x2\n   and w23, w3, #255\n"
+    "tst w4, #255\n"
+    "b.eq 1f\n   orr w23, w23, #256\n"
+    "1: mov x0, x20\n   bl string_length\n   mov x22, x21\n   mov x21, x0\n"
+    "subs x22, x22, x21\n   csel x22, x22, xzr, hi\n   cbnz x22, .Lstring_to_field_arm_general\n   cbz x21, .Lstring_to_field_arm_done\n"
+    "mov x0, x20\n   mov x1, x21\n"
     ASM_CALL("x19")
     "b .Lstring_to_field_arm_done\n"
     ".Lstring_to_field_arm_general:\n   bl writer_field_core\n"
     ".Lstring_to_field_arm_done:\n   ldp x23, x24, [sp, #48]\n"
-    "ldp x21, x22, [sp, #32]\n   ldp x19, x20, [sp, #16]\n"
+    "ldp x21, x22, [sp, #32]\n"
+    "ldp x19, x20, [sp, #16]\n"
     "ldp x29, x30, [sp], #64\n"
     ASM_RET
     ASM_END(string_to_field)
     ASM_FUNC(positive_to_base_field)
-    "stp x29, x30, [sp, #-192]!\n   mov x29, sp\n   stp x19, x20, [sp, #16]\n   stp x21, x22, [sp, #32]\n   stp x23, x24, [sp, #48]\n   stp x25, x26, [sp, #64]\n   stp x27, x28, [sp, #80]\n"
-    "mov x19,x0\n mov x20,x3\n mov x21,x4\n mov x22,x5\n add x0,sp,#112\n ubfx x3,x22,#26,#1\n bl positive_into_base\n mov x23,x0\n cbz x23,9f\n"
-    "strb w22,[sp,#176]\n lsr x8,x22,#8\n strh w8,[sp,#177]\n ubfx x26,x22,#24,#2\n cmp x26,#2\n b.ls 1f\n mov x26,#2\n"
-    "1: tst w22,#0xff\n cset x27,ne\n add x27,x27,x26\n mov x24,xzr\n tbnz x21,#63,2f\n cmp x21,x23\n b.ls 3f\n sub x24,x21,x23\n b 3f\n"
-    "2: tbz x22,#28,3f\n tbnz x22,#27,3f\n add x8,x27,x23\n cmp x20,x8\n b.ls 3f\n sub x24,x20,x8\n"
-    "3: add x8,x27,x23\n add x8,x8,x24\n mov x25,xzr\n cmp x20,x8\n b.ls 4f\n sub x25,x20,x8\n"
-    "4: tbnz x22,#27,5f\n mov x0,x19\n mov x1,x25\n mov w2,#32\n bl writer_fill\n"
-    "5: ldrb w8,[sp,#176]\n cbz w8,6f\n add x0,sp,#176\n mov x1,#1\n"
+    "stp x29, x30, [sp,  #-192]!\n"
+    "mov x29, sp\n   stp x19, x20, [sp, #16]\n"
+    "stp x21, x22, [sp, #32]\n"
+    "stp x23, x24, [sp, #48]\n"
+    "stp x25, x26, [sp, #64]\n"
+    "stp x27, x28, [sp, #80]\n"
+    "mov x19,x0\n   mov x20,x3\n   mov x21,x4\n   mov x22,x5\n"
+    "add x0,sp,#112\n"
+    "ubfx x3,x22,#26,#1\n"
+    "bl positive_into_base\n   mov x23,x0\n   cbz x23,9f\n   strb w22,[sp,#176]\n"
+    "lsr x8,x22,#8\n"
+    "strh w8,[sp,#177]\n"
+    "ubfx x26,x22,#24,#2\n"
+    "cmp x26,#2\n"
+    "b.ls 1f\n   mov x26,#2\n"
+    "1:  tst w22,#0xff\n"
+    "cset x27,ne\n   add x27,x27,x26\n   mov x24,xzr\n   tbnz x21,#63,2f\n"
+    "cmp x21,x23\n   b.ls 3f\n   sub x24,x21,x23\n   b 3f\n"
+    "2:  tbz x22,#28,3f\n"
+    "tbnz x22,#27,3f\n"
+    "add x8,x27,x23\n   cmp x20,x8\n   b.ls 3f\n   sub x24,x20,x8\n"
+    "3:  add x8,x27,x23\n   add x8,x8,x24\n   mov x25,xzr\n   cmp x20,x8\n"
+    "b.ls 4f\n   sub x25,x20,x8\n"
+    "4:  tbnz x22,#27,5f\n"
+    "mov x0,x19\n   mov x1,x25\n   mov w2,#32\n"
+    "bl writer_fill\n"
+    "5:  ldrb w8,[sp,#176]\n"
+    "cbz w8,6f\n   add x0,sp,#176\n"
+    "mov x1,#1\n"
     ASM_CALL("x19")
-    "6: cbz x26,7f\n add x0,sp,#177\n mov x1,x26\n"
+    "6:  cbz x26,7f\n   add x0,sp,#177\n"
+    "mov x1,x26\n"
     ASM_CALL("x19")
-    "7: mov x0,x19\n mov x1,x24\n mov w2,#48\n bl writer_fill\n add x0,sp,#112\n mov x1,x23\n"
+    "7:  mov x0,x19\n   mov x1,x24\n   mov w2,#48\n"
+    "bl writer_fill\n   add x0,sp,#112\n"
+    "mov x1,x23\n"
     ASM_CALL("x19")
-    "tbz x22,#27,9f\n mov x0,x19\n mov x1,x25\n mov w2,#32\n bl writer_fill\n"
-    "9: ldp x27,x28,[sp,#80]\n ldp x25,x26,[sp,#64]\n ldp x23,x24,[sp,#48]\n ldp x21,x22,[sp,#32]\n ldp x19,x20,[sp,#16]\n ldp x29,x30,[sp],#192\n"
+    "tbz x22,#27,9f\n"
+    "mov x0,x19\n   mov x1,x25\n   mov w2,#32\n"
+    "bl writer_fill\n"
+    "9:  ldp x27,x28,[sp,#80]\n"
+    "ldp x25,x26,[sp,#64]\n"
+    "ldp x23,x24,[sp,#48]\n"
+    "ldp x21,x22,[sp,#32]\n"
+    "ldp x19,x20,[sp,#16]\n"
+    "ldp x29,x30,[sp],#192\n"
     ASM_RET
     ASM_END(positive_to_base_field)
     //
@@ -7317,24 +7161,32 @@ ASM_FUNC(positive_to_string)
     //
     ASM_FUNC(positive_to_padded)
     "cbz x2, 5f\n"
-    "0:\n"
-    "stp x29, x30, [sp, #-80]!\n   mov x29, sp\n"
-    "stp x19, x20, [sp, #16]\n   stp x21, x22, [sp, #32]\n"
-    "mov x19, x0\n   mov x20, x2\n"
-    "strb w3, [sp, #72]\n   strb w4, [sp, #73]\n"
-    "add x0, sp, #48\n   bl positive_into\n   mov x21, x0\n"
-    "ldrb w9, [sp, #73]\n   cmp w9, #0\n   cinc x22, x21, ne\n"
-    "ldrb w9, [sp, #72]\n   cbz w9, 2f\n"
-    "cmp x20, x22\n   b.ls 2f\n"
-    "1:  add x0, sp, #72\n   mov x1, #1\n   mov x16, x19\n"
+    "0:\n   stp x29, x30, [sp,  #-80]!\n"
+    "mov x29, sp\n   stp x19, x20, [sp, #16]\n"
+    "stp x21, x22, [sp, #32]\n"
+    "mov x19, x0\n   mov x20, x2\n   strb w3, [sp, #72]\n"
+    "strb w4, [sp, #73]\n"
+    "add x0, sp, #48\n"
+    "bl positive_into\n   mov x21, x0\n   ldrb w9, [sp, #73]\n"
+    "cmp w9, #0\n"
+    "cinc x22, x21, ne\n   ldrb w9, [sp, #72]\n"
+    "cbz w9, 2f\n   cmp x20, x22\n   b.ls 2f\n"
+    "1:  add x0, sp, #72\n"
+    "mov x1, #1\n"
+    "mov x16, x19\n"
     ASM_CALL("x16")
-    "sub x20, x20, #1\n   cmp x20, x22\n   b.hi 1b\n"
-    "2:  ldrb w9, [sp, #73]\n   cbz w9, 3f\n"
-    "add x0, sp, #73\n   mov x1, #1\n   mov x16, x19\n"
+    "sub x20, x20, #1\n"
+    "cmp x20, x22\n   b.hi 1b\n"
+    "2:  ldrb w9, [sp, #73]\n"
+    "cbz w9, 3f\n   add x0, sp, #73\n"
+    "mov x1, #1\n"
+    "mov x16, x19\n"
     ASM_CALL("x16")
-    "3:  add x0, sp, #48\n   mov x1, x21\n   mov x16, x19\n"
+    "3:  add x0, sp, #48\n"
+    "mov x1, x21\n   mov x16, x19\n"
     ASM_CALL("x16")
-    "ldp x21, x22, [sp, #32]\n   ldp x19, x20, [sp, #16]\n"
+    "ldp x21, x22, [sp, #32]\n"
+    "ldp x19, x20, [sp, #16]\n"
     "ldp x29, x30, [sp], #80\n"
     ASM_RET
     "5:  cbnz w4, 0b\n   b positive_to_string\n"
@@ -7346,42 +7198,57 @@ ASM_FUNC(positive_to_string)
     //       by ten is exact over that zero-through-sixty-three input.
     ASM_FUNC(positive_into_human_1024_string)
     ".section .rodata\n   .balign 8\n"
-    "positive_human_units:\n   .ascii \"BKMGTPE\"\n"
+    "positive_human_units:\n"
+    "   .ascii \"BKMGTPE\"\n"
     ASM_SECTION
-    "cmp x1, #1024\n   b.lo .Lpositive_human_arm_plain\n"
-    "cmp x1, #256, lsl #12\n   b.hs .Lpositive_human_arm_find_unit\n"
-    "mov x2, #1\n   mov x3, #10\n   b .Lpositive_human_arm_ready\n"
-    ".Lpositive_human_arm_find_unit:\n"
-    "clz x2, x1\n   mov x3, #63\n   sub x2, x3, x2\n"
-    "mov x3, #205\n   mul x2, x2, x3\n   lsr x2, x2, #11\n"
-    "mov x3, #10\n   mul x3, x2, x3\n"
-    ".Lpositive_human_arm_ready:\n"
-    "mov x5, #1\n   lsl x5, x5, x3\n   sub x5, x5, #1\n"
-    "lsr x4, x1, x3\n   and x6, x1, x5\n"
-    "cmp x6, #0\n   cinc x7, x4, ne\n   cmp x7, #10\n"
-    "b.hs .Lpositive_human_arm_integer\n"
-    "add x8, x6, x6, lsl #2\n   lsl x8, x8, #1\n   add x8, x8, x5\n"
-    "lsr x8, x8, x3\n   cmp x8, #10\n   b.ne 1f\n"
-    "add x4, x4, #1\n   mov x8, xzr\n"
-    "1:  add w4, w4, #48\n   strb w4, [x0]\n   mov w9, #46\n   strb w9, [x0, #1]\n"
-    "add w8, w8, #48\n   strb w8, [x0, #2]\n"
-    "adrp x9, positive_human_units\n   add x9, x9, :lo12:positive_human_units\n"
-    "ldrb w9, [x9, x2]\n   strb w9, [x0, #3]\n   strb wzr, [x0, #4]\n"
+    "cmp x1, #1024\n"
+    "b.lo .Lpositive_human_arm_plain\n   cmp x1, #256, lsl #12\n"
+    "b.hs .Lpositive_human_arm_find_unit\n   mov x2, #1\n"
+    "mov x3, #10\n"
+    "b .Lpositive_human_arm_ready\n"
+    ".Lpositive_human_arm_find_unit:\n   clz x2, x1\n   mov x3, #63\n"
+    "sub x2, x3, x2\n   mov x3, #205\n"
+    "mul x2, x2, x3\n   lsr x2, x2, #11\n"
+    "mov x3, #10\n"
+    "mul x3, x2, x3\n"
+    ".Lpositive_human_arm_ready:\n   mov x5, #1\n"
+    "lsl x5, x5, x3\n   sub x5, x5, #1\n"
+    "lsr x4, x1, x3\n   and x6, x1, x5\n   cmp x6, #0\n"
+    "cinc x7, x4, ne\n   cmp x4, #10\n"
+    "b.hs .Lpositive_human_arm_integer\n   add x8, x6, x6, lsl #2\n"
+    "lsl x8, x8, #1\n"
+    "add x8, x8, x5\n   lsr x8, x8, x3\n   cmp x8, #10\n"
+    "b.ne 1f\n   add x4, x4, #1\n"
+    "mov x8, xzr\n   cmp x4, #10\n   b.lo 1f\n   mov x7, x4\n"
+    "b .Lpositive_human_arm_integer\n"
+    "1:  add w4, w4, #48\n"
+    "strb w4, [x0]\n   mov w9, #46\n"
+    "strb w9, [x0, #1]\n"
+    "add w8, w8, #48\n"
+    "strb w8, [x0, #2]\n"
+    "adrp x9, positive_human_units\n   add x9, x9, :lo12:positive_human_units\n   ldrb w9, [x9, x2]\n   strb w9, [x0, #3]\n"
+    "strb wzr, [x0, #4]\n"
     "mov x0, #4\n"
     ASM_RET
-    ".Lpositive_human_arm_integer:\n"
-    "adrp x10, positive_human_units\n   add x10, x10, :lo12:positive_human_units\n"
-    "ldrb w12, [x10, x2]\n   adrp x10, digit_pairs\n   add x10, x10, :lo12:digit_pairs\n"
-    "cmp x7, #99\n   b.hi 2f\n   add x11, x10, x7, lsl #1\n"
-    "ldrh w9, [x11]\n   strh w9, [x0]\n   mov x14, #2\n   b 4f\n"
-    "2:  mov w8, w7\n   mov w9, #5243\n   umull x9, w8, w9\n   lsr x9, x9, #19\n"
-    "mov w11, #100\n   msub w8, w9, w11, w8\n"
-    "add x11, x10, x9, lsl #1\n   add x13, x10, x8, lsl #1\n"
-    "cmp x9, #10\n   b.hs 3f\n   ldrb w15, [x11, #1]\n   strb w15, [x0]\n"
-    "ldrh w15, [x13]\n   sturh w15, [x0, #1]\n   mov x14, #3\n   b 4f\n"
-    "3:  ldrh w15, [x11]\n   strh w15, [x0]\n"
-    "ldrh w15, [x13]\n   strh w15, [x0, #2]\n   mov x14, #4\n"
-    "4:  strb w12, [x0, x14]\n   add x14, x14, #1\n   strb wzr, [x0, x14]\n   mov x0, x14\n"
+    ".Lpositive_human_arm_integer:\n   adrp x10, positive_human_units\n   add x10, x10, :lo12:positive_human_units\n"
+    "ldrb w12, [x10, x2]\n   adrp x10, digit_pairs\n   add x10, x10, :lo12:digit_pairs\n   cmp x7, #99\n"
+    "b.hi 2f\n   add x11, x10, x7, lsl #1\n"
+    "ldrh w9, [x11]\n   strh w9, [x0]\n   mov x14, #2\n"
+    "b 4f\n"
+    "2:  mov w8, w7\n   mov w9, #5243\n"
+    "umull x9, w8, w9\n   lsr x9, x9, #19\n"
+    "mov w11, #100\n"
+    "msub w8, w9, w11, w8\n   add x11, x10, x9, lsl #1\n"
+    "add x13, x10, x8, lsl #1\n"
+    "cmp x9, #10\n"
+    "b.hs 3f\n   ldrb w15, [x11, #1]\n"
+    "strb w15, [x0]\n   ldrh w15, [x13]\n   sturh w15, [x0, #1]\n"
+    "mov x14, #3\n"
+    "b 4f\n"
+    "3:  ldrh w15, [x11]\n   strh w15, [x0]\n   ldrh w15, [x13]\n   strh w15, [x0, #2]\n"
+    "mov x14, #4\n"
+    "4:  strb w12, [x0, x14]\n   add x14, x14, #1\n"
+    "strb wzr, [x0, x14]\n   mov x0, x14\n"
     ASM_RET
     ".Lpositive_human_arm_plain:\n   b positive_into_string\n"
     ASM_END(positive_into_human_1024_string)
@@ -7391,88 +7258,91 @@ ASM_FUNC(positive_to_string)
     //       the Armv8.0 floor.
     ASM_FUNC(positive_into_human_nearest_string)
     ".section .rodata\n   .balign 8\n"
-    "positive_human_nearest_units:\n   .byte 0\n   .ascii \"KMGTPEZYRQ\"\n"
+    "positive_human_nearest_units:\n   .byte 0\n"
+    "   .ascii \"KMGTPEZYRQ\"\n"
     ASM_SECTION
-    "cmp w2, #0\n   mov x2, x0\n   mov x3, #1000\n   mov x8, #1024\n"
+    "cmp w2, #0\n"
+    "mov x2, x0\n   mov x3, #1000\n"
+    "mov x8, #1024\n"
     "csel x3, x8, x3, ne\n   mov x4, xzr\n   mov x5, xzr\n   mov x6, xzr\n"
-    "mov x7, #-1\n   cmp x1, x3\n   b.lo .Lpositive_human_nearest_arm_scaled\n"
-    ".Lpositive_human_nearest_arm_reduce:\n"
-    "cmp x3, #1024\n   b.eq .Lpositive_human_nearest_arm_reduce_binary\n"
-    "udiv x8, x1, x3\n   msub x9, x8, x3, x1\n   mov x1, x8\n"
-    "mov x10, #10\n   madd x10, x9, x10, x4\n"
-    "udiv x4, x10, x3\n   msub x9, x4, x3, x10\n"
-    "b .Lpositive_human_nearest_arm_reduce_ready\n"
-    ".Lpositive_human_nearest_arm_reduce_binary:\n"
-    "lsr x8, x1, #10\n   and x9, x1, #0x3ff\n   mov x1, x8\n"
-    "mov x10, #10\n   madd x10, x9, x10, x4\n"
-    "lsr x4, x10, #10\n   and x9, x10, #0x3ff\n"
-    ".Lpositive_human_nearest_arm_reduce_ready:\n"
-    "add x10, x9, x9\n   add x10, x10, x5, lsr #1\n   add x11, x10, x5\n"
-    "cmp x10, x3\n   b.lo .Lpositive_human_nearest_arm_round_low\n"
-    "cmp x3, x11\n   cset x5, lo\n   add x5, x5, #2\n"
+    "mov x7,  #-1\n"
+    "cmp x1, x3\n   b.lo .Lpositive_human_nearest_arm_scaled\n"
+    ".Lpositive_human_nearest_arm_reduce:\n   cmp x3, #1024\n"
+    "b.eq .Lpositive_human_nearest_arm_reduce_binary\n   udiv x8, x1, x3\n   msub x9, x8, x3, x1\n   mov x1, x8\n"
+    "mov x10, #10\n"
+    "madd x10, x9, x10, x4\n   udiv x4, x10, x3\n   msub x9, x4, x3, x10\n   b .Lpositive_human_nearest_arm_reduce_ready\n"
+    ".Lpositive_human_nearest_arm_reduce_binary:\n   lsr x8, x1, #10\n"
+    "and x9, x1, #0x3ff\n"
+    "mov x1, x8\n   mov x10, #10\n"
+    "madd x10, x9, x10, x4\n   lsr x4, x10, #10\n"
+    "and x9, x10, #0x3ff\n"
+    ".Lpositive_human_nearest_arm_reduce_ready:\n   add x10, x9, x9\n   add x10, x10, x5, lsr #1\n"
+    "add x11, x10, x5\n   cmp x10, x3\n   b.lo .Lpositive_human_nearest_arm_round_low\n   cmp x3, x11\n"
+    "cset x5, lo\n   add x5, x5, #2\n"
     "b .Lpositive_human_nearest_arm_round_set\n"
-    ".Lpositive_human_nearest_arm_round_low:\n"
-    "cmp x11, #0\n   cset x5, ne\n"
-    ".Lpositive_human_nearest_arm_round_set:\n"
-    "add x6, x6, #1\n   cmp x6, #10\n   b.hs .Lpositive_human_nearest_arm_reduced\n"
-    "cmp x1, x3\n   b.hs .Lpositive_human_nearest_arm_reduce\n"
-    ".Lpositive_human_nearest_arm_reduced:\n"
-    "cmp x1, #10\n   b.hs .Lpositive_human_nearest_arm_integer_round\n"
-    "and x8, x4, #1\n   add x8, x8, x5\n   cmp x8, #2\n"
-    "b.ls .Lpositive_human_nearest_arm_fraction_ready\n"
-    "add x4, x4, #1\n   mov x5, xzr\n   cmp x4, #10\n"
-    "b.ne .Lpositive_human_nearest_arm_fraction_ready\n"
-    "add x1, x1, #1\n   mov x4, xzr\n"
-    ".Lpositive_human_nearest_arm_fraction_ready:\n"
-    "cmp x1, #10\n   b.hs .Lpositive_human_nearest_arm_integer_round\n"
-    "mov x7, x4\n   mov x4, xzr\n   mov x5, xzr\n"
+    ".Lpositive_human_nearest_arm_round_low:\n   cmp x11, #0\n"
+    "cset x5, ne\n"
+    ".Lpositive_human_nearest_arm_round_set:\n   add x6, x6, #1\n"
+    "cmp x6, #10\n"
+    "b.hs .Lpositive_human_nearest_arm_reduced\n   cmp x1, x3\n   b.hs .Lpositive_human_nearest_arm_reduce\n"
+    ".Lpositive_human_nearest_arm_reduced:\n   cmp x1, #10\n"
+    "b.hs .Lpositive_human_nearest_arm_integer_round\n   and x8, x4, #1\n"
+    "add x8, x8, x5\n   cmp x8, #2\n"
+    "b.ls .Lpositive_human_nearest_arm_fraction_ready\n   add x4, x4, #1\n"
+    "mov x5, xzr\n   cmp x4, #10\n"
+    "b.ne .Lpositive_human_nearest_arm_fraction_ready\n   add x1, x1, #1\n"
+    "mov x4, xzr\n"
+    ".Lpositive_human_nearest_arm_fraction_ready:\n   cmp x1, #10\n"
+    "b.hs .Lpositive_human_nearest_arm_integer_round\n   mov x7, x4\n   mov x4, xzr\n   mov x5, xzr\n"
     ".Lpositive_human_nearest_arm_scaled:\n"
-    ".Lpositive_human_nearest_arm_integer_round:\n"
-    "and x8, x1, #1\n   add x8, x8, x5\n   cmp x8, #0\n   cset x8, ne\n"
-    "add x8, x8, x4\n   cmp x8, #5\n   b.ls .Lpositive_human_nearest_arm_format\n"
-    "add x1, x1, #1\n   cmp x1, x3\n   b.ne .Lpositive_human_nearest_arm_format\n"
-    "cmp x6, #10\n   b.hs .Lpositive_human_nearest_arm_format\n"
-    "add x6, x6, #1\n   mov x7, xzr\n   mov x1, #1\n"
-    ".Lpositive_human_nearest_arm_format:\n"
-    "adrp x9, digit_pairs\n   add x9, x9, :lo12:digit_pairs\n   cmp x1, #9\n"
-    "b.hi .Lpositive_human_nearest_arm_two\n"
-    "add w10, w1, #48\n   strb w10, [x2]\n   mov x8, #1\n"
+    ".Lpositive_human_nearest_arm_integer_round:\n   and x8, x1, #1\n"
+    "add x8, x8, x5\n   cmp x8, #0\n"
+    "cset x8, ne\n   add x8, x8, x4\n   cmp x8, #5\n"
+    "b.ls .Lpositive_human_nearest_arm_format\n   add x1, x1, #1\n"
+    "cmp x1, x3\n   b.ne .Lpositive_human_nearest_arm_format\n   cmp x6, #10\n"
+    "b.hs .Lpositive_human_nearest_arm_format\n   add x6, x6, #1\n"
+    "mov x7, xzr\n   mov x1, #1\n"
+    ".Lpositive_human_nearest_arm_format:\n   adrp x9, digit_pairs\n   add x9, x9, :lo12:digit_pairs\n   cmp x1, #9\n"
+    "b.hi .Lpositive_human_nearest_arm_two\n   add w10, w1, #48\n"
+    "strb w10, [x2]\n   mov x8, #1\n"
     "b .Lpositive_human_nearest_arm_digits_done\n"
-    ".Lpositive_human_nearest_arm_two:\n"
-    "cmp x1, #99\n   b.hi .Lpositive_human_nearest_arm_three\n"
-    "add x10, x9, x1, lsl #1\n   ldrh w10, [x10]\n   strh w10, [x2]\n"
-    "mov x8, #2\n   b .Lpositive_human_nearest_arm_digits_done\n"
-    ".Lpositive_human_nearest_arm_three:\n"
-    "mov w10, w1\n   mov w11, #5243\n   umull x11, w10, w11\n   lsr x11, x11, #19\n"
-    "mov w12, #100\n   msub w10, w11, w12, w10\n   cmp x11, #10\n"
-    "b.hs .Lpositive_human_nearest_arm_four\n"
-    "add x12, x9, x11, lsl #1\n   ldrb w12, [x12, #1]\n   strb w12, [x2]\n"
-    "add x12, x9, x10, lsl #1\n   ldrh w12, [x12]\n   sturh w12, [x2, #1]\n"
-    "mov x8, #3\n   b .Lpositive_human_nearest_arm_digits_done\n"
-    ".Lpositive_human_nearest_arm_four:\n"
-    "add x12, x9, x11, lsl #1\n   ldrh w12, [x12]\n   strh w12, [x2]\n"
-    "add x12, x9, x10, lsl #1\n   ldrh w12, [x12]\n   strh w12, [x2, #2]\n"
+    ".Lpositive_human_nearest_arm_two:\n   cmp x1, #99\n"
+    "b.hi .Lpositive_human_nearest_arm_three\n   add x10, x9, x1, lsl #1\n"
+    "ldrh w10, [x10]\n   strh w10, [x2]\n   mov x8, #2\n"
+    "b .Lpositive_human_nearest_arm_digits_done\n"
+    ".Lpositive_human_nearest_arm_three:\n   mov w10, w1\n   mov w11, #5243\n"
+    "umull x11, w10, w11\n   lsr x11, x11, #19\n"
+    "mov w12, #100\n"
+    "msub w10, w11, w12, w10\n   cmp x11, #10\n"
+    "b.hs .Lpositive_human_nearest_arm_four\n   add x12, x9, x11, lsl #1\n"
+    "ldrb w12, [x12, #1]\n"
+    "strb w12, [x2]\n   add x12, x9, x10, lsl #1\n"
+    "ldrh w12, [x12]\n   sturh w12, [x2, #1]\n"
+    "mov x8, #3\n"
+    "b .Lpositive_human_nearest_arm_digits_done\n"
+    ".Lpositive_human_nearest_arm_four:\n   add x12, x9, x11, lsl #1\n"
+    "ldrh w12, [x12]\n   strh w12, [x2]\n   add x12, x9, x10, lsl #1\n"
+    "ldrh w12, [x12]\n   strh w12, [x2, #2]\n"
     "mov x8, #4\n"
-    ".Lpositive_human_nearest_arm_digits_done:\n"
-    "cmn x7, #1\n   b.eq .Lpositive_human_nearest_arm_no_fraction\n"
-    "mov w9, #46\n   strb w9, [x2, x8]\n   add x8, x8, #1\n"
-    "add w9, w7, #48\n   strb w9, [x2, x8]\n   add x8, x8, #1\n"
-    ".Lpositive_human_nearest_arm_no_fraction:\n"
-    "mov w9, #32\n   strb w9, [x2, x8]\n   add x8, x8, #1\n   cbz x6, .Lpositive_human_nearest_arm_unit_done\n"
-    "cmp x3, #1000\n   b.ne .Lpositive_human_nearest_arm_upper_unit\n"
-    "cmp x6, #1\n   b.ne .Lpositive_human_nearest_arm_upper_unit\n"
-    "mov w9, #107\n   strb w9, [x2, x8]\n   add x8, x8, #1\n"
-    "b .Lpositive_human_nearest_arm_unit_done\n"
-    ".Lpositive_human_nearest_arm_upper_unit:\n"
-    "adrp x9, positive_human_nearest_units\n"
-    "add x9, x9, :lo12:positive_human_nearest_units\n   ldrb w9, [x9, x6]\n"
+    ".Lpositive_human_nearest_arm_digits_done:\n   cmn x7, #1\n"
+    "b.eq .Lpositive_human_nearest_arm_no_fraction\n   mov w9, #46\n"
     "strb w9, [x2, x8]\n   add x8, x8, #1\n"
-    ".Lpositive_human_nearest_arm_unit_done:\n"
-    "cmp x3, #1024\n   b.ne .Lpositive_human_nearest_arm_byte\n"
-    "cbz x6, .Lpositive_human_nearest_arm_byte\n"
-    "mov w9, #105\n   strb w9, [x2, x8]\n   add x8, x8, #1\n"
-    ".Lpositive_human_nearest_arm_byte:\n"
-    "mov w9, #66\n   strb w9, [x2, x8]\n   add x8, x8, #1\n"
+    "add w9, w7, #48\n"
+    "strb w9, [x2, x8]\n   add x8, x8, #1\n"
+    ".Lpositive_human_nearest_arm_no_fraction:\n   mov w9, #32\n"
+    "strb w9, [x2, x8]\n   add x8, x8, #1\n"
+    "cbz x6, .Lpositive_human_nearest_arm_unit_done\n   cmp x3, #1000\n"
+    "b.ne .Lpositive_human_nearest_arm_upper_unit\n   cmp x6, #1\n"
+    "b.ne .Lpositive_human_nearest_arm_upper_unit\n   mov w9, #107\n"
+    "strb w9, [x2, x8]\n   add x8, x8, #1\n"
+    "b .Lpositive_human_nearest_arm_unit_done\n"
+    ".Lpositive_human_nearest_arm_upper_unit:\n   adrp x9, positive_human_nearest_units\n   add x9, x9, :lo12:positive_human_nearest_units\n"
+    "ldrb w9, [x9, x6]\n   strb w9, [x2, x8]\n   add x8, x8, #1\n"
+    ".Lpositive_human_nearest_arm_unit_done:\n   cmp x3, #1024\n"
+    "b.ne .Lpositive_human_nearest_arm_byte\n   cbz x6, .Lpositive_human_nearest_arm_byte\n   mov w9, #105\n"
+    "strb w9, [x2, x8]\n   add x8, x8, #1\n"
+    ".Lpositive_human_nearest_arm_byte:\n   mov w9, #66\n"
+    "strb w9, [x2, x8]\n   add x8, x8, #1\n"
     "strb wzr, [x2, x8]\n   mov x0, x8\n"
     ASM_RET
     ASM_END(positive_into_human_nearest_string)
@@ -7480,47 +7350,65 @@ ASM_FUNC(positive_to_string)
     //       wait4/base/core contract. w2 is the signal and w3 becomes 0 or
     //       256, then the base's bit 256 decides whether it contributes.
     ASM_FUNC(wait_status_code_base)
-    "and w2, w0, #0x7f\n   and w3, w0, #0x80\n"
-    "ubfx w0, w0, #8, #8\n   cbz w2, 1f\n"
-    "add w0, w2, w1\n   lsl w3, w3, #1\n   and w3, w3, w1\n"
-    "add w0, w0, w3\n"
+    "and w2, w0, #0x7f\n"
+    "and w3, w0, #0x80\n"
+    "ubfx w0, w0, #8, #8\n"
+    "cbz w2, 1f\n   add w0, w2, w1\n   lsl w3, w3, #1\n"
+    "and w3, w3, w1\n   add w0, w0, w3\n"
     "1:\n"
     ASM_RET
     ASM_END(wait_status_code_base)
     ASM_FUNC(wait_status_code)
-    "mov w1, #128\n   b wait_status_code_base\n"
+    "mov w1, #128\n"
+    "b wait_status_code_base\n"
     ASM_END(wait_status_code)
     //       positive_to_human_1024: the x86_64 block carries the callback
     //       contract. The six-byte scratch starts at sp+24; its length has a
     //       separate aligned slot because every writer may clobber x0-x18.
     ASM_FUNC(positive_to_human_1024)
-    "cmp x1, #1024\n   b.hs 0f\n   b positive_to_string\n"
-    "0:\n"
-    "stp x29, x30, [sp, #-48]!\n   mov x29, sp\n   str x19, [sp, #16]\n"
-    "mov x19, x0\n   add x0, sp, #24\n   bl positive_into_human_1024_string\n"
-    "str x0, [sp, #32]\n   sub x2, x0, #1\n   add x3, sp, #24\n"
-    "ldrb w4, [x3, x2]\n   cmp w4, #57\n   b.hi .Lpositive_human_arm_scaled_write\n"
-    "mov x1, x0\n   mov x0, x3\n   mov x16, x19\n"
+    "cmp x1, #1024\n"
+    "b.hs 0f\n   b positive_to_string\n"
+    "0:\n   stp x29, x30, [sp,  #-48]!\n"
+    "mov x29, sp\n   str x19, [sp, #16]\n"
+    "mov x19, x0\n   add x0, sp, #24\n"
+    "bl positive_into_human_1024_string\n   str x0, [sp, #32]\n"
+    "sub x2, x0, #1\n"
+    "add x3, sp, #24\n"
+    "ldrb w4, [x3, x2]\n   cmp w4, #57\n"
+    "b.hi .Lpositive_human_arm_scaled_write\n   mov x1, x0\n   mov x0, x3\n   mov x16, x19\n"
     ASM_CALL("x16")
     "b .Lpositive_human_arm_write_done\n"
-    ".Lpositive_human_arm_scaled_write:\n"
-    "ldrb w4, [sp, #25]\n   cmp w4, #46\n   b.eq .Lpositive_human_arm_fraction_write\n"
-    "sub x1, x0, #1\n   str x1, [sp, #32]\n   add x0, sp, #24\n   mov x16, x19\n"
+    ".Lpositive_human_arm_scaled_write:\n   ldrb w4, [sp, #25]\n"
+    "cmp w4, #46\n"
+    "b.eq .Lpositive_human_arm_fraction_write\n   sub x1, x0, #1\n"
+    "str x1, [sp, #32]\n"
+    "add x0, sp, #24\n"
+    "mov x16, x19\n"
     ASM_CALL("x16")
-    "ldr x2, [sp, #32]\n   add x0, sp, #24\n   add x0, x0, x2\n   mov x1, #1\n   mov x16, x19\n"
+    "ldr x2, [sp, #32]\n"
+    "add x0, sp, #24\n"
+    "add x0, x0, x2\n   mov x1, #1\n"
+    "mov x16, x19\n"
     ASM_CALL("x16")
     "b .Lpositive_human_arm_write_done\n"
-    ".Lpositive_human_arm_fraction_write:\n"
-    "add x0, sp, #24\n   mov x1, #1\n   mov x16, x19\n"
+    ".Lpositive_human_arm_fraction_write:\n   add x0, sp, #24\n"
+    "mov x1, #1\n"
+    "mov x16, x19\n"
     ASM_CALL("x16")
-    "add x0, sp, #25\n   mov x1, #1\n   mov x16, x19\n"
+    "add x0, sp, #25\n"
+    "mov x1, #1\n"
+    "mov x16, x19\n"
     ASM_CALL("x16")
-    "add x0, sp, #26\n   mov x1, #1\n   mov x16, x19\n"
+    "add x0, sp, #26\n"
+    "mov x1, #1\n"
+    "mov x16, x19\n"
     ASM_CALL("x16")
-    "add x0, sp, #27\n   mov x1, #1\n   mov x16, x19\n"
+    "add x0, sp, #27\n"
+    "mov x1, #1\n"
+    "mov x16, x19\n"
     ASM_CALL("x16")
-    ".Lpositive_human_arm_write_done:\n"
-    "ldr x19, [sp, #16]\n   ldp x29, x30, [sp], #48\n"
+    ".Lpositive_human_arm_write_done:\n   ldr x19, [sp, #16]\n"
+    "ldp x29, x30, [sp], #48\n"
     ASM_RET
     ASM_END(positive_to_human_1024)
     //
@@ -7561,28 +7449,36 @@ ASM_FUNC(positive_to_string)
     "mov x2, xzr  // the number so far\n"
     "mov x3, #1  // what the next digit is worth\n"
     "mov x4, #10\n"
-    "sub x11, x0, #8\n   cmp x11, x8\n   b.lo 7f  // fewer than eight bytes of string\n"
-    "orr x14, xzr, #0x0101010101010101\n   add x14, x14, x14, lsl #1\n"
+    "sub x11, x0, #8\n"
+    "cmp x11, x8\n   b.lo 7f  // fewer than eight bytes of string\n"
+    "orr x14, xzr, #0x0101010101010101\n"
+    "add x14, x14, x14, lsl #1\n"
     "add x14, x14, x14  // 0x0606060606060606\n"
     "mov w5, #2561\n"
-    "mov w6, #1\n   movk w6, #0x0064, lsl #16  // 6553601\n"
-    "mov x7, #1\n   movk x7, #0x2710, lsl #32  // ten thousand and one, in two halves\n"
-    "mov w10, #0xE100\n   movk w10, #0x05F5, lsl #16  // a hundred million\n"
-    "5:  ldr x12, [x11]\n"
-    "and x13, x12, #0xF0F0F0F0F0F0F0F0\n"
-    "add x9, x12, x14\n   and x9, x9, #0xF0F0F0F0F0F0F0F0\n   orr x13, x13, x9, lsr #4\n"
-    "eor x13, x13, #0x3333333333333333\n   cbnz x13, 7f  // one of the eight is not a digit\n"
+    "mov w6, #1\n"
+    "movk w6, #0x0064, lsl #16  // 6553601\n"
+    "mov x7, #1\n"
+    "movk x7, #0x2710, lsl #32  // ten thousand and one, in two halves\n"
+    "mov w10, #0xE100\n"
+    "movk w10, #0x05F5, lsl #16  // a hundred million\n"
+    "5:  ldr x12, [x11]\n   and x13, x12, #0xF0F0F0F0F0F0F0F0\n"
+    "add x9, x12, x14\n   and x9, x9, #0xF0F0F0F0F0F0F0F0\n"
+    "orr x13, x13, x9, lsr #4\n"
+    "eor x13, x13, #0x3333333333333333\n"
+    "cbnz x13, 7f  // one of the eight is not a digit\n"
     //
     //       An exclusive or and not a subtract: every byte has been shown to
     //       be 0x3 in the top nibble and nine or less in the bottom, so the
     //       two are the same answer and this one cannot borrow.
     //
     "eor x12, x12, #0x3030303030303030\n"
-    "mul x12, x12, x5\n   lsr x12, x12, #8\n   and x12, x12, #0x00FF00FF00FF00FF\n"
-    "mul x12, x12, x6\n   lsr x12, x12, #16\n   and x12, x12, #0x0000FFFF0000FFFF\n"
+    "mul x12, x12, x5\n   lsr x12, x12, #8\n"
+    "and x12, x12, #0x00FF00FF00FF00FF\n"
+    "mul x12, x12, x6\n   lsr x12, x12, #16\n"
+    "and x12, x12, #0x0000FFFF0000FFFF\n"
     "mul x12, x12, x7\n   lsr x12, x12, #32  // the eight, as a number\n"
-    "madd x2, x12, x3, x2\n   mul x3, x3, x10\n"
-    "mov x0, x11\n   sub x11, x0, #8\n   cmp x11, x8\n   b.hs 5b\n"
+    "madd x2, x12, x3, x2\n   mul x3, x3, x10\n   mov x0, x11\n   sub x11, x0, #8\n"
+    "cmp x11, x8\n   b.hs 5b\n"
     "7:  sub x0, x0, #1\n"
     //
     //       Unsigned compare: an empty string steps to one before the start.
@@ -7622,72 +7518,49 @@ ASM_FUNC(positive_to_string)
     ASM_FUNC(string_find)
     "ldrb w2, [x1]\n   cbnz w2, 2f\n   mov x0, #0\n"
     ASM_RET
-    "2:  ldrb w2, [x1, #1]\n   cbnz w2, 3f\n"
-    "ldrb w1, [x1]\n   b string_first_of  // one byte is strchr\n"
-    "3:  stp x29, x30, [sp, #-64]!\n   mov x29, sp\n"
-    "stp x19, x20, [sp, #16]\n   stp x21, x22, [sp, #32]\n"
+    "2:  ldrb w2, [x1, #1]\n"
+    "cbnz w2, 3f\n   ldrb w1, [x1]\n   b string_first_of  // one byte is strchr\n"
+    "3:  stp x29, x30, [sp,  #-64]!\n"
+    "mov x29, sp\n   stp x19, x20, [sp, #16]\n"
+    "stp x21, x22, [sp, #32]\n"
     "stp x23, x24, [sp, #48]\n"
-    "mov x19, x0  // where to look next\n   mov x20, x1  // the needle\n"
-    "mov x0, x1\n   bl string_length\n   mov x21, x0\n"
-    "mov x22, #256\n   lsl x4, x21, #2\n   cmp x22, x4\n   b.hs 4f\n"
-    "mov x22, x4  // never a chunk a needle would not fit four times in\n"
-    "4:  mov x23, #0\n   mov x24, #0\n"
-    "41: add x0, x19, x23\n   and x4, x0, #4095\n   mov x5, #4096\n"
+    "mov x19, x0  // where to look next\n"
+    "mov x20, x1  // the needle\n"
+    "mov x0, x1\n   bl string_length\n   mov x21, x0\n   mov x22, #256\n"
+    "lsl x4, x21, #2\n"
+    "cmp x22, x4\n   b.hs 4f\n   mov x22, x4  // never a chunk a needle would not fit four times in\n"
+    "4:  mov x23, #0\n"
+    "mov x24, #0\n"
+    "41:  add x0, x19, x23\n   and x4, x0, #4095\n"
+    "mov x5, #4096\n"
     "sub x2, x5, x4  // to the end of this page\n"
-    "mov x1, #0\n   bl memory_first_of\n   cbz x0, 42f\n"
-    "sub x23, x0, x19\n   mov x24, #1  // the string ends in here\n   b 43f\n"
-    "42: add x4, x19, x23\n   and x4, x4, #-4096\n   add x4, x4, #4096\n"
+    "mov x1, #0\n"
+    "bl memory_first_of\n   cbz x0, 42f\n   sub x23, x0, x19\n   mov x24, #1  // the string ends in here\n"
+    "b 43f\n"
+    "42:  add x4, x19, x23\n   and x4, x4,  #-4096\n"
+    "add x4, x4, #4096\n"
     "sub x23, x4, x19\n   cmp x23, x22\n   b.lo 41b\n"
-    "43: mov x0, x19\n   mov x1, x23\n   mov x2, x20\n   mov x3, x21\n"
-    "bl memory_search\n   cbnz x0, 9f\n"
-    "cbnz x24, 8f  // the terminator was in it: nowhere else to look\n"
+    "43:  mov x0, x19\n   mov x1, x23\n   mov x2, x20\n   mov x3, x21\n"
+    "bl memory_search\n   cbnz x0, 9f\n   cbnz x24, 8f  // the terminator was in it: nowhere else to look\n"
     "sub x4, x23, x21\n   add x4, x4, #1  // keep needle_size - 1 of overlap\n"
-    "add x19, x19, x4\n"
-    "lsl x22, x22, #1\n   mov x4, #65536\n   cmp x22, x4\n   csel x22, x4, x22, hi\n"
-    "b 4b\n"
+    "add x19, x19, x4\n   lsl x22, x22, #1\n"
+    "mov x4, #65536\n"
+    "cmp x22, x4\n   csel x22, x4, x22, hi\n   b 4b\n"
     "8:  mov x0, #0\n"
-    "9:  ldp x19, x20, [sp, #16]\n   ldp x21, x22, [sp, #32]\n"
-    "ldp x23, x24, [sp, #48]\n   ldp x29, x30, [sp], #64\n"
+    "9:  ldp x19, x20, [sp, #16]\n"
+    "ldp x21, x22, [sp, #32]\n"
+    "ldp x23, x24, [sp, #48]\n"
+    "ldp x29, x30, [sp], #64\n"
     ASM_RET
     ASM_END(string_find)
     ASM_SECTION
-    //
-    //      strstr, which is string_find and one byte of disagreement.
-    //
-    //      The two differ on an empty needle and only there: strstr answers
-    //      the front of the haystack, string_find answers nothing, and the
-    //      note on string_find above says so and says it is on purpose.
-    //      Callers in this tree were written against the second and the
-    //      kernel is written against the first, so the name the kernel links
-    //      gets its own four instructions rather than either of them being
-    //      changed into the other.
-    //
-    //      Everything else is string_find's, including the reason it is not
-    //      simply a length followed by memory_search: it discovers the
-    //      readable run a page at a time, so a match at byte nine hundred of
-    //      a megabyte does not pay for a strlen of the megabyte first.
-    //
-    //
-    //      The needle is tried against the front of the haystack first, a
-    //      byte at a time, and that one loop answers three things. An empty
-    //      needle stops it at once and the front is the answer, which is the
-    //      disagreement this routine exists for. A needle that is there at
-    //      the front is answered without setting up anything -- string_find
-    //      pushes six registers and walks a page for the terminator before it
-    //      looks, which is nothing against four kilobytes and is most of the
-    //      work when the answer is at byte zero, and measured 0.8x the naive
-    //      loop in lib/string.c for exactly that reason. Anything else leaves
-    //      on the first byte that differs, which is one compare.
-    //
-    //      It cannot read past the haystack's terminator: reaching it with
-    //      needle left over is a byte that differs, and that leaves.
-    //
+    //       string_search: the x86_64 block carries the reasoning.
     ASM_FUNC(string_search)
     //      b rather than b.ne to leave, which only reaches a megabyte.
     "mov x2, xzr\n"
-    "1:  ldrb w3, [x1, x2]\n   cbz w3, 2f\n"
-    "ldrb w4, [x0, x2]\n   cmp w3, w4\n   b.ne 3f\n"
-    "add x2, x2, #1\n   b 1b\n"
+    "1:  ldrb w3, [x1, x2]\n   cbz w3, 2f\n   ldrb w4, [x0, x2]\n   cmp w3, w4\n"
+    "b.ne 3f\n   add x2, x2, #1\n"
+    "b 1b\n"
     "3:  b string_find\n"
     "2:  // the needle ran out, and x0 is already the answer\n"
     ASM_RET
@@ -7781,11 +7654,10 @@ ASM_FUNC(positive_to_string)
     //       positive_to_string's own change.
     //
     ".Lstring_format_test:\n   cbz w9, .Lstring_format_tail\n   cmp w9, #37\n"
-    "b.eq .Lstring_format_percent\n"
-    ".rept 8\n"
-    "ldrb w9, [x20, #1]\n   add x20, x20, #1\n   cbz w9, .Lstring_format_tail\n"
-    "cmp w9, #37\n   b.eq .Lstring_format_percent\n"
-    ".endr\n"
+    "b.eq .Lstring_format_percent\n   .rept 8\n   ldrb w9, [x20, #1]\n"
+    "add x20, x20, #1\n"
+    "cbz w9, .Lstring_format_tail\n   cmp w9, #37\n"
+    "b.eq .Lstring_format_percent\n   .endr\n"
     //
     //       Nothing masks the bytes in front of the run: nine of them have
     //       just been shown not to stop it and an aligned word reaches seven
@@ -7793,17 +7665,17 @@ ASM_FUNC(positive_to_string)
     //       x86_64 block says how that was found out, and why the eight in the
     //       .rept above cannot be shortened.
     //
-    "and x10, x20, #-8  // align down: same page, cannot fault\n"
-    "ldr x12, [x10]\n"
-    "orr x14, xzr, #0x0101010101010101\n   orr x15, xzr, #0x8080808080808080\n"
-    "mov w3, #0x25\n   mul x3, x14, x3  // the percent, in all eight positions\n"
-    ".Lstring_format_word:\n"
-    "sub x1, x12, x14\n   bic x1, x1, x12  // a zero byte\n"
+    "and x10, x20,  #-8  // align down: same page, cannot fault\n"
+    "ldr x12, [x10]\n   orr x14, xzr, #0x0101010101010101\n"
+    "orr x15, xzr, #0x8080808080808080\n"
+    "mov w3, #0x25\n"
+    "mul x3, x14, x3  // the percent, in all eight positions\n"
+    ".Lstring_format_word:\n   sub x1, x12, x14\n   bic x1, x1, x12  // a zero byte\n"
     "eor x13, x12, x3\n   sub x11, x13, x14\n   bic x11, x11, x13  // a percent is one here\n"
-    "orr x1, x1, x11\n   ands x1, x1, x15\n   b.ne .Lstring_format_found\n"
-    "ldr x12, [x10, #8]!\n   b .Lstring_format_word\n"
-    ".Lstring_format_found:\n   rbit x1, x1\n   clz x1, x1\n"
-    "add x20, x10, x1, lsr #3\n   ldrb w9, [x20]\n   cbz w9, .Lstring_format_tail\n"
+    "orr x1, x1, x11\n   ands x1, x1, x15\n   b.ne .Lstring_format_found\n   ldr x12, [x10, #8]!\n"
+    "b .Lstring_format_word\n"
+    ".Lstring_format_found:\n   rbit x1, x1\n   clz x1, x1\n   add x20, x10, x1, lsr #3\n"
+    "ldrb w9, [x20]\n   cbz w9, .Lstring_format_tail\n"
     ".Lstring_format_percent:\n   cmp x20, x0\n   b.eq .Lstring_format_spec\n   sub x1, x20, x0\n"
     ASM_CALL("x19")
     ".Lstring_format_spec:\n   ldrb w9, [x20, #1]\n"
@@ -7863,70 +7735,95 @@ ASM_FUNC(positive_to_string)
     // contracts and the reasoning; these are the same leaf paths in AAPCS64.
     ASM_FUNC(string_set_add)
     "mov w3, #1\n"
-    "1:  ldrb w2, [x1], #1\n   cbz w2, 9f\n   strb w3, [x0, x2]\n"
-    "ldrb w2, [x1], #1\n   cbz w2, 9f\n   strb w3, [x0, x2]\n   b 1b\n"
+    "1:  ldrb w2, [x1], #1\n"
+    "cbz w2, 9f\n   strb w3, [x0, x2]\n   ldrb w2, [x1], #1\n"
+    "cbz w2, 9f\n   strb w3, [x0, x2]\n   b 1b\n"
     "9:  " ASM_RET
     ASM_END(string_set_add)
     ASM_FUNC(byte_class_index)
-    "cmp x1, #5\n   b.eq 1f\n   cmp x1, #6\n   b.ne 9f\n"
-    "ldr w2, [x0]\n   ldrh w3, [x0, #4]\n   orr x2, x2, x3, lsl #32\n"
-    "adrp x4, .Lbyte_class_words\n   add x4, x4, :lo12:.Lbyte_class_words\n"
-    "mov w0, #11\n   ldr x5, [x4, #88]\n   cmp x2, x5\n   b.eq 8f\n   b 9f\n"
-    "1:  ldr w2, [x0]\n   ldrb w3, [x0, #4]\n   orr x2, x2, x3, lsl #32\n"
-    "adrp x4, .Lbyte_class_words\n   add x4, x4, :lo12:.Lbyte_class_words\n"
-    "mov w0, wzr\n"
-    "2:  ldr x5, [x4, x0, lsl #3]\n   cmp x2, x5\n   b.eq 8f\n"
-    "add w0, w0, #1\n   cmp w0, #11\n   b.lo 2b\n"
-    "9:  mov w0, #-1\n"
+    "cmp x1, #5\n"
+    "b.eq 1f\n   cmp x1, #6\n"
+    "b.ne 9f\n   ldr w2, [x0]\n   ldrh w3, [x0, #4]\n"
+    "orr x2, x2, x3, lsl #32\n"
+    "adrp x4, .Lbyte_class_words\n   add x4, x4, :lo12:.Lbyte_class_words\n   mov w0, #11\n"
+    "ldr x5, [x4, #88]\n"
+    "cmp x2, x5\n   b.eq 8f\n   b 9f\n"
+    "1:  ldr w2, [x0]\n   ldrb w3, [x0, #4]\n"
+    "orr x2, x2, x3, lsl #32\n"
+    "adrp x4, .Lbyte_class_words\n   add x4, x4, :lo12:.Lbyte_class_words\n   mov w0, wzr\n"
+    "2:  ldr x5, [x4, x0, lsl #3]\n"
+    "cmp x2, x5\n   b.eq 8f\n   add w0, w0, #1\n"
+    "cmp w0, #11\n"
+    "b.lo 2b\n"
+    "9:  mov w0,  #-1\n"
     "8:  " ASM_RET
     ".section .rodata\n   .balign 8\n"
-    ".Lbyte_class_words:\n"
-    "        .quad 0x6168706c61, 0x7469676964, 0x6d756e6c61\n"
-    "        .quad 0x7265707075, 0x7265776f6c, 0x6563617073\n"
-    "        .quad 0x6b6e616c62, 0x746e697270, 0x6870617267\n"
-    "        .quad 0x6c72746e63, 0x74636e7570, 0x746967696478\n"
+    ".Lbyte_class_words:\n   .quad 0x6168706c61, 0x7469676964, 0x6d756e6c61\n   .quad 0x7265707075, 0x7265776f6c, 0x6563617073\n"
+    ".quad 0x6b6e616c62, 0x746e697270, 0x6870617267\n   .quad 0x6c72746e63, 0x74636e7570, 0x746967696478\n"
     ASM_SECTION
     ASM_END(byte_class_index)
     ASM_FUNC(byte_class_holds)
-    "and w1, w1, #0xff\n   mov w2, w0\n   mov w0, wzr\n"
-    "cmp w2, #11\n   b.hi .Lbyte_holds_return\n"
-    "cmp w2, #5\n   b.hi .Lbyte_holds_high\n   cmp w2, #2\n   b.hi .Lbyte_holds_mid\n"
-    "cmp w2, #1\n   b.hi .Lbyte_holds_alnum\n   b.eq .Lbyte_holds_digit\n"
-    ".Lbyte_holds_alpha:\n   sub w3, w1, #65\n   cmp w3, #25\n"
-    "b.ls .Lbyte_holds_true\n   sub w3, w1, #97\n   cmp w3, #25\n"
+    "and w1, w1, #0xff\n"
+    "mov w2, w0\n   mov w0, wzr\n   cmp w2, #11\n"
+    "b.hi .Lbyte_holds_return\n   cmp w2, #5\n"
+    "b.hi .Lbyte_holds_high\n   cmp w2, #2\n"
+    "b.hi .Lbyte_holds_mid\n   cmp w2, #1\n"
+    "b.hi .Lbyte_holds_alnum\n   b.eq .Lbyte_holds_digit\n"
+    ".Lbyte_holds_alpha:\n   sub w3, w1, #65\n"
+    "cmp w3, #25\n"
+    "b.ls .Lbyte_holds_true\n   sub w3, w1, #97\n"
+    "cmp w3, #25\n"
     "cset w0, ls\n   b .Lbyte_holds_return\n"
-    ".Lbyte_holds_digit:\n   sub w3, w1, #48\n   cmp w3, #9\n"
+    ".Lbyte_holds_digit:\n   sub w3, w1, #48\n"
+    "cmp w3, #9\n"
     "cset w0, ls\n   b .Lbyte_holds_return\n"
-    ".Lbyte_holds_alnum:\n   sub w3, w1, #48\n   cmp w3, #9\n"
+    ".Lbyte_holds_alnum:\n   sub w3, w1, #48\n"
+    "cmp w3, #9\n"
     "b.ls .Lbyte_holds_true\n   b .Lbyte_holds_alpha\n"
-    ".Lbyte_holds_mid:\n   cmp w2, #4\n   b.hi .Lbyte_holds_space\n"
-    "b.eq .Lbyte_holds_lower\n"
-    ".Lbyte_holds_upper:\n   sub w3, w1, #65\n   cmp w3, #25\n"
+    ".Lbyte_holds_mid:\n   cmp w2, #4\n"
+    "b.hi .Lbyte_holds_space\n   b.eq .Lbyte_holds_lower\n"
+    ".Lbyte_holds_upper:\n   sub w3, w1, #65\n"
+    "cmp w3, #25\n"
     "cset w0, ls\n   b .Lbyte_holds_return\n"
-    ".Lbyte_holds_lower:\n   sub w3, w1, #97\n   cmp w3, #25\n"
+    ".Lbyte_holds_lower:\n   sub w3, w1, #97\n"
+    "cmp w3, #25\n"
     "cset w0, ls\n   b .Lbyte_holds_return\n"
-    ".Lbyte_holds_space:\n   cmp w1, #32\n   b.eq .Lbyte_holds_true\n"
-    "sub w3, w1, #9\n   cmp w3, #4\n   cset w0, ls\n   b .Lbyte_holds_return\n"
-    ".Lbyte_holds_high:\n   cmp w2, #8\n   b.hi .Lbyte_holds_last\n"
-    "cmp w2, #7\n   b.hi .Lbyte_holds_graph\n   b.eq .Lbyte_holds_print\n"
-    ".Lbyte_holds_blank:\n   cmp w1, #32\n   b.eq .Lbyte_holds_true\n"
-    "cmp w1, #9\n   cset w0, eq\n   b .Lbyte_holds_return\n"
-    ".Lbyte_holds_print:\n   sub w3, w1, #32\n   cmp w3, #94\n"
+    ".Lbyte_holds_space:\n   cmp w1, #32\n"
+    "b.eq .Lbyte_holds_true\n   sub w3, w1, #9\n"
+    "cmp w3, #4\n"
     "cset w0, ls\n   b .Lbyte_holds_return\n"
-    ".Lbyte_holds_graph:\n   sub w3, w1, #33\n   cmp w3, #93\n"
+    ".Lbyte_holds_high:\n   cmp w2, #8\n"
+    "b.hi .Lbyte_holds_last\n   cmp w2, #7\n"
+    "b.hi .Lbyte_holds_graph\n   b.eq .Lbyte_holds_print\n"
+    ".Lbyte_holds_blank:\n   cmp w1, #32\n"
+    "b.eq .Lbyte_holds_true\n   cmp w1, #9\n"
+    "cset w0, eq\n   b .Lbyte_holds_return\n"
+    ".Lbyte_holds_print:\n   sub w3, w1, #32\n"
+    "cmp w3, #94\n"
     "cset w0, ls\n   b .Lbyte_holds_return\n"
-    ".Lbyte_holds_last:\n   cmp w2, #10\n   b.hi .Lbyte_holds_xdigit\n"
-    "b.eq .Lbyte_holds_punct\n"
-    ".Lbyte_holds_cntrl:\n   cmp w1, #31\n   b.ls .Lbyte_holds_true\n"
-    "cmp w1, #127\n   cset w0, eq\n   b .Lbyte_holds_return\n"
-    ".Lbyte_holds_punct:\n   sub w3, w1, #33\n   cmp w3, #93\n"
-    "b.hi .Lbyte_holds_return\n   sub w3, w1, #48\n   cmp w3, #9\n"
-    "b.ls .Lbyte_holds_return\n   sub w3, w1, #65\n   cmp w3, #25\n"
-    "b.ls .Lbyte_holds_return\n   sub w3, w1, #97\n   cmp w3, #25\n"
+    ".Lbyte_holds_graph:\n   sub w3, w1, #33\n"
+    "cmp w3, #93\n"
+    "cset w0, ls\n   b .Lbyte_holds_return\n"
+    ".Lbyte_holds_last:\n   cmp w2, #10\n"
+    "b.hi .Lbyte_holds_xdigit\n   b.eq .Lbyte_holds_punct\n"
+    ".Lbyte_holds_cntrl:\n   cmp w1, #31\n"
+    "b.ls .Lbyte_holds_true\n   cmp w1, #127\n"
+    "cset w0, eq\n   b .Lbyte_holds_return\n"
+    ".Lbyte_holds_punct:\n   sub w3, w1, #33\n"
+    "cmp w3, #93\n"
+    "b.hi .Lbyte_holds_return\n   sub w3, w1, #48\n"
+    "cmp w3, #9\n"
+    "b.ls .Lbyte_holds_return\n   sub w3, w1, #65\n"
+    "cmp w3, #25\n"
+    "b.ls .Lbyte_holds_return\n   sub w3, w1, #97\n"
+    "cmp w3, #25\n"
     "b.ls .Lbyte_holds_return\n   b .Lbyte_holds_true\n"
-    ".Lbyte_holds_xdigit:\n   sub w3, w1, #48\n   cmp w3, #9\n"
-    "b.ls .Lbyte_holds_true\n   orr w3, w1, #32\n   sub w3, w3, #97\n"
-    "cmp w3, #5\n   cset w0, ls\n   b .Lbyte_holds_return\n"
+    ".Lbyte_holds_xdigit:\n   sub w3, w1, #48\n"
+    "cmp w3, #9\n"
+    "b.ls .Lbyte_holds_true\n   orr w3, w1, #32\n"
+    "sub w3, w3, #97\n"
+    "cmp w3, #5\n"
+    "cset w0, ls\n   b .Lbyte_holds_return\n"
     ".Lbyte_holds_true:\n   mov w0, #1\n"
     ".Lbyte_holds_return:\n"
     ASM_RET
@@ -7950,7 +7847,8 @@ ASM_FUNC(positive_to_string)
     "1:  cmp x3, x1\n   b.hs 9f\n   ldrb w4, [x0, x3]\n   ldrb w5, [x2, x4]\n"
     "cbz w5, 9f\n   add x3, x3, #1\n"
     "cmp x3, x1\n   b.hs 9f\n   ldrb w4, [x0, x3]\n   ldrb w5, [x2, x4]\n"
-    "cbz w5, 9f\n   add x3, x3, #1\n   b 1b\n"
+    "cbz w5, 9f\n   add x3, x3, #1\n"
+    "b 1b\n"
     "9:  mov x0, x3\n"
     ASM_RET
     ASM_END(string_span_max)
@@ -7969,9 +7867,10 @@ ASM_FUNC(positive_to_string)
     "mov x4, xzr  // how many bytes it took\n"
     "mov w7, #10\n"
     "1:  cmp x4, x1\n   b.hs 2f\n   ldrb w5, [x0, x4]\n   sub w5, w5, #48\n"
-    "cmp w5, #9\n   b.hi 2f\n"
-    "madd x3, x3, x7, x5  // ten times it, plus the digit\n"
-    "add x4, x4, #1\n   b 1b\n"
+    "cmp w5, #9\n"
+    "b.hi 2f\n   madd x3, x3, x7, x5  // ten times it, plus the digit\n"
+    "add x4, x4, #1\n"
+    "b 1b\n"
     "2:  cbz x2, 3f\n   str x4, [x2]\n"
     "3:  mov x0, x3\n"
     ASM_RET
@@ -7983,19 +7882,22 @@ ASM_FUNC(positive_to_string)
     ASM_FUNC(string_digits_octal_escape_max)
     "mov x3, xzr\n   mov x4, xzr\n   cbz x1, 2f\n"
     "1:  ldrb w5, [x0, x4]\n   sub w5, w5, #48\n"
-    "cmp w5, #7\n   b.hi 2f\n   add x3, x5, x3, lsl #3\n"
-    "add x4, x4, #1\n   cmp x4, x1\n   b.ne 1b\n"
+    "cmp w5, #7\n"
+    "b.hi 2f\n   add x3, x5, x3, lsl #3\n"
+    "add x4, x4, #1\n"
+    "cmp x4, x1\n   b.ne 1b\n"
     "2:  cbz x2, 3f\n   str x4, [x2]\n"
     "3:  mov x0, x3\n"
     ASM_RET
     ASM_END(string_digits_octal_escape_max)
 
     ASM_FUNC(string_digits_octal_max)
-    "mov x3, xzr\n   mov x4, xzr\n"
-    "cbz x1, 2f\n"
+    "mov x3, xzr\n   mov x4, xzr\n   cbz x1, 2f\n"
     "1:  ldrb w5, [x0, x4]\n   sub w5, w5, #48\n"
-    "cmp w5, #7\n   b.hi 2f\n   add x3, x5, x3, lsl #3\n"
-    "add x4, x4, #1\n   cmp x4, x1\n   b.ne 1b\n"
+    "cmp w5, #7\n"
+    "b.hi 2f\n   add x3, x5, x3, lsl #3\n"
+    "add x4, x4, #1\n"
+    "cmp x4, x1\n   b.ne 1b\n"
     "2:  cbz x2, 3f\n   str x4, [x2]\n"
     "3:  mov x0, x3\n"
     ASM_RET
@@ -8003,11 +7905,15 @@ ASM_FUNC(positive_to_string)
 
     ASM_FUNC(string_digits_hexadecimal_escape_max)
     "mov x3, xzr\n   mov x4, xzr\n   cbz x1, 4f\n"
-    "1:  ldrb w5, [x0, x4]\n"
-    "sub w6, w5, #48\n   cmp w6, #9\n   b.ls 2f\n"
-    "orr w5, w5, #0x20\n   sub w5, w5, #97\n   cmp w5, #5\n   b.hi 4f\n"
-    "add w6, w5, #10\n"
-    "2:  add x3, x6, x3, lsl #4\n   add x4, x4, #1\n   cmp x4, x1\n   b.ne 1b\n"
+    "1:  ldrb w5, [x0, x4]\n   sub w6, w5, #48\n"
+    "cmp w6, #9\n"
+    "b.ls 2f\n   orr w5, w5, #0x20\n"
+    "sub w5, w5, #97\n"
+    "cmp w5, #5\n"
+    "b.hi 4f\n   add w6, w5, #10\n"
+    "2:  add x3, x6, x3, lsl #4\n"
+    "add x4, x4, #1\n"
+    "cmp x4, x1\n   b.ne 1b\n"
     "4:  cbz x2, 5f\n   str x4, [x2]\n"
     "5:  mov x0, x3\n"
     ASM_RET
@@ -8020,14 +7926,19 @@ ASM_FUNC(positive_to_string)
     // bound on its completion edge, removing that redundant move as well.
     "cbz x1, 6f\n   mov x8, x0\n   mov x0, xzr\n   mov x9, xzr\n"
     "b 3f\n"
-    "1:  mov w12, #-48\n"
+    "1:  mov w12,  #-48\n"
     "2:  add w11, w12, w11\n   add x0, x11, x0, lsl #4\n"
-    "add x9, x9, #1\n   cmp x1, x9\n   b.eq 4f\n"
+    "add x9, x9, #1\n"
+    "cmp x1, x9\n   b.eq 4f\n"
     "3:  ldrb w11, [x8, x9]\n   sub w12, w11, #48\n"
-    "cmp w12, #10\n   b.lo 1b\n   sub w13, w11, #97\n"
-    "mov w12, #-87\n   cmp w13, #6\n   b.lo 2b\n"
-    "sub w12, w11, #65\n   cmp w12, #5\n   b.hi 5f\n"
-    "mov w12, #-55\n   b 2b\n"
+    "cmp w12, #10\n"
+    "b.lo 1b\n   sub w13, w11, #97\n"
+    "mov w12,  #-87\n"
+    "cmp w13, #6\n"
+    "b.lo 2b\n   sub w12, w11, #65\n"
+    "cmp w12, #5\n"
+    "b.hi 5f\n   mov w12,  #-55\n"
+    "b 2b\n"
     "4:\n"
     "5:  cbz x2, 7f\n   str x9, [x2]\n"
     "7:\n"
@@ -8040,16 +7951,23 @@ ASM_FUNC(positive_to_string)
     //       every other register here is caller-saved scratch.
     //
     ASM_FUNC(string_digits_base_max)
-    "cmp x2, #10\n   b.ne 1f\n   mov x2, x3\n   b string_digits_max\n"
-    "1:  cmp x2, #8\n   b.ne 2f\n   mov x2, x3\n   b string_digits_octal_max\n"
-    "2:  cmp x2, #16\n   b.ne 3f\n   mov x2, x3\n   b string_digits_hexadecimal_max\n"
-    "3:  mov x4, xzr\n   mov x5, xzr\n   sub x6, x2, #2\n   cmp x6, #34\n   b.hi 9f\n"
-    "6:  cmp x5, x1\n   b.hs 9f\n   ldrb w6, [x0, x5]\n"
-    "sub w7, w6, #48\n   cmp w7, #9\n   b.ls 7f\n"
-    "orr w6, w6, #0x20\n   sub w6, w6, #97\n   cmp w6, #25\n   b.hi 9f\n"
-    "add w7, w6, #10\n"
-    "7:  cmp x7, x2\n   b.hs 9f\n   madd x4, x4, x2, x7\n"
-    "add x5, x5, #1\n   b 6b\n"
+    "cmp x2, #10\n"
+    "b.ne 1f\n   mov x2, x3\n   b string_digits_max\n"
+    "1:  cmp x2, #8\n"
+    "b.ne 2f\n   mov x2, x3\n   b string_digits_octal_max\n"
+    "2:  cmp x2, #16\n"
+    "b.ne 3f\n   mov x2, x3\n   b string_digits_hexadecimal_max\n"
+    "3:  mov x4, xzr\n   mov x5, xzr\n   sub x6, x2, #2\n"
+    "cmp x6, #34\n"
+    "b.hi 9f\n"
+    "6:  cmp x5, x1\n   b.hs 9f\n   ldrb w6, [x0, x5]\n   sub w7, w6, #48\n"
+    "cmp w7, #9\n"
+    "b.ls 7f\n   orr w6, w6, #0x20\n"
+    "sub w6, w6, #97\n"
+    "cmp w6, #25\n"
+    "b.hi 9f\n   add w7, w6, #10\n"
+    "7:  cmp x7, x2\n   b.hs 9f\n   madd x4, x4, x2, x7\n   add x5, x5, #1\n"
+    "b 6b\n"
     "9:  cbz x3, 8f\n   str x5, [x3]\n"
     "8:  mov x0, x4\n"
     ASM_RET
@@ -8060,20 +7978,29 @@ ASM_FUNC(positive_to_string)
     //
     ASM_FUNC(string_digits)
     "mov x2, xzr\n   mov x3, xzr\n   mov w7, #10\n"
-    "1:  ldrb w5, [x0, x3]\n   sub w5, w5, #48\n   cmp w5, #9\n   b.hi 2f\n"
-    "madd x2, x2, x7, x5\n   add x3, x3, #1\n   b 1b\n"
+    "1:  ldrb w5, [x0, x3]\n   sub w5, w5, #48\n"
+    "cmp w5, #9\n"
+    "b.hi 2f\n   madd x2, x2, x7, x5\n   add x3, x3, #1\n"
+    "b 1b\n"
     "2:  cbz x1, 3f\n   str x3, [x1]\n"
     "3:  mov x0, x2\n"
     ASM_RET
     ASM_END(string_digits)
     // See the x86_64 entry for the contract.
     ASM_FUNC(string_bipolar)
-    "mov x2, xzr\n   mov x3, xzr\n   mov x4, xzr\n   mov x5, xzr\n   mov w7, #10\n"
-    "cbz x0, 4f\n   ldrb w6, [x0]\n   cmp w6, #45\n   b.ne 1f\n"
-    "mov x4, #1\n   add x3, x3, #1\n   b 2f\n"
-    "1:  cmp w6, #43\n   b.ne 2f\n   add x3, x3, #1\n"
-    "2:  ldrb w6, [x0, x3]\n   sub w6, w6, #48\n   cmp w6, #9\n   b.hi 3f\n"
-    "madd x2, x2, x7, x6\n   add x3, x3, #1\n   add x5, x5, #1\n   b 2b\n"
+    "mov x2, xzr\n   mov x3, xzr\n   mov x4, xzr\n   mov x5, xzr\n"
+    "mov w7, #10\n"
+    "cbz x0, 4f\n   ldrb w6, [x0]\n   cmp w6, #45\n"
+    "b.ne 1f\n   mov x4, #1\n"
+    "add x3, x3, #1\n"
+    "b 2f\n"
+    "1:  cmp w6, #43\n"
+    "b.ne 2f\n   add x3, x3, #1\n"
+    "2:  ldrb w6, [x0, x3]\n   sub w6, w6, #48\n"
+    "cmp w6, #9\n"
+    "b.hi 3f\n   madd x2, x2, x7, x6\n   add x3, x3, #1\n"
+    "add x5, x5, #1\n"
+    "b 2b\n"
     "3:  cbnz x5, 5f\n   mov x3, xzr\n   b 4f\n"
     "5:  cbz x4, 4f\n   neg x2, x2\n"
     "4:  cbz x1, 6f\n   str x3, [x1]\n"
@@ -8084,10 +8011,12 @@ ASM_FUNC(positive_to_string)
     ASM_FUNC(positive_digits)
     "cbnz x0, 1f\n   mov x0, #1\n"
     ASM_RET
-    "1:  clz x1, x0\n   mov w2, #64\n   sub w1, w2, w1\n"
-    "mov w2, #1233\n   mul w1, w1, w2\n   lsr w1, w1, #12\n"
+    "1:  clz x1, x0\n   mov w2, #64\n"
+    "sub w1, w2, w1\n   mov w2, #1233\n"
+    "mul w1, w1, w2\n   lsr w1, w1, #12\n"
     "adrp x2, number_constants\n   add x2, x2, :lo12:number_constants\n   add x2, x2, #64\n"
-    "ldr x3, [x2, x1, lsl #3]\n   cmp x0, x3\n   cinc w0, w1, hs\n"
+    "ldr x3, [x2, x1, lsl #3]\n"
+    "cmp x0, x3\n   cinc w0, w1, hs\n"
     ASM_RET
     ASM_END(positive_digits)
     //
@@ -8097,12 +8026,14 @@ ASM_FUNC(positive_to_string)
     //       form, so the exact-terminator test costs no reload.
     //
     ASM_FUNC(string_digits_exact)
-    "cbz x0, 3f\n"
-    "mov x2, xzr  // the number so far\n   mov x3, xzr  // how many digits\n   mov w7, #10\n"
-    "1:  ldrb w4, [x0, x3]\n   sub w5, w4, #48\n   cmp w5, #9\n   b.hi 2f\n"
-    "madd x2, x2, x7, x5\n   add x3, x3, #1\n   b 1b\n"
-    "2:  cbz x3, 3f\n   cbnz w4, 3f\n"
-    "cbz x1, 4f\n   str x2, [x1]\n"
+    "cbz x0, 3f\n   mov x2, xzr  // the number so far\n"
+    "mov x3, xzr  // how many digits\n"
+    "mov w7, #10\n"
+    "1:  ldrb w4, [x0, x3]\n   sub w5, w4, #48\n"
+    "cmp w5, #9\n"
+    "b.hi 2f\n   madd x2, x2, x7, x5\n   add x3, x3, #1\n"
+    "b 1b\n"
+    "2:  cbz x3, 3f\n   cbnz w4, 3f\n   cbz x1, 4f\n   str x2, [x1]\n"
     "4:  mov w0, #1\n"
     ASM_RET
     "3:  mov w0, wzr\n"
@@ -8169,36 +8100,43 @@ ASM_FUNC(positive_to_string)
     // and one masked comparison. Neither eight-byte read is allowed to cross
     // a page; those rare strings use the byte loop below instead.
     ASM_FUNC(string_table_find)
-    "and x4, x0, #0xfff\n   cmp x4, #0xff8\n   b.hi 20f\n"
-    "ldr x6, [x0]\n   mov x8, xzr\n"
-    "mov x15, #0x0101010101010101\n"
-    "sub x7, x6, x15\n   bic x7, x7, x6\n"
-    "and x7, x7, #0x8080808080808080\n"
-    "cbz x7, 3f\n   neg x15, x7\n   and x15, x7, x15\n"
-    "sub x7, x15, #1\n   orr x7, x7, x15\n   b 4f\n"
+    "and x4, x0, #0xfff\n"
+    "cmp x4, #0xff8\n"
+    "b.hi 20f\n   ldr x6, [x0]\n   mov x8, xzr\n   mov x15, #0x0101010101010101\n"
+    "sub x7, x6, x15\n   bic x7, x7, x6\n   and x7, x7, #0x8080808080808080\n"
+    "cbz x7, 3f\n   neg x15, x7\n   and x15, x7, x15\n   sub x7, x15, #1\n"
+    "orr x7, x7, x15\n   b 4f\n"
     // No terminator in the first eight: all eight bytes matter, then the
     // comparison continues one byte at a time.
-    "3:  mov x7, #-1\n   mov x8, #1\n"
+    "3:  mov x7,  #-1\n"
+    "mov x8, #1\n"
     "4:  mov x4, xzr\n   mov x5, x1\n"
     "5:  cmp x4, x3\n   b.hs 9f\n   ldr x9, [x5]\n   cbz x9, 9f\n"
-    "and x10, x9, #0xfff\n   cmp x10, #0xff8\n   b.hi 10f\n"
-    "ldr x10, [x9]\n   eor x10, x10, x6\n   tst x10, x7\n   b.ne 8f\n"
-    "cbz x8, 7f\n   add x11, x0, #8\n   add x12, x9, #8\n"
-    "6:  ldrb w13, [x11], #1\n   ldrb w14, [x12], #1\n"
+    "and x10, x9, #0xfff\n"
+    "cmp x10, #0xff8\n"
+    "b.hi 10f\n   ldr x10, [x9]\n   eor x10, x10, x6\n   tst x10, x7\n"
+    "b.ne 8f\n   cbz x8, 7f\n   add x11, x0, #8\n"
+    "add x12, x9, #8\n"
+    "6:  ldrb w13, [x11], #1\n"
+    "ldrb w14, [x12], #1\n"
     "cmp w13, w14\n   b.ne 8f\n   cbz w13, 7f\n   b 6b\n"
-    "8:  add x5, x5, x2\n   add x4, x4, #1\n   b 5b\n"
+    "8:  add x5, x5, x2\n   add x4, x4, #1\n"
+    "b 5b\n"
     // This entry begins too near a page end for its first word.
-    "10: mov x11, x0\n   mov x12, x9\n"
-    "11: ldrb w13, [x11], #1\n   ldrb w14, [x12], #1\n"
+    "10:  mov x11, x0\n   mov x12, x9\n"
+    "11:  ldrb w13, [x11], #1\n"
+    "ldrb w14, [x12], #1\n"
     "cmp w13, w14\n   b.ne 8b\n   cbz w13, 7f\n   b 11b\n"
     // The wanted name itself begins too near a page end, so the complete walk
     // stays bytewise rather than carrying a page branch through the hot loop.
-    "20: mov x4, xzr\n   mov x5, x1\n"
-    "21: cmp x4, x3\n   b.hs 9f\n   ldr x9, [x5]\n   cbz x9, 9f\n"
+    "20:  mov x4, xzr\n   mov x5, x1\n"
+    "21:  cmp x4, x3\n   b.hs 9f\n   ldr x9, [x5]\n   cbz x9, 9f\n"
     "mov x11, x0\n   mov x12, x9\n"
-    "22: ldrb w13, [x11], #1\n   ldrb w14, [x12], #1\n"
+    "22:  ldrb w13, [x11], #1\n"
+    "ldrb w14, [x12], #1\n"
     "cmp w13, w14\n   b.ne 23f\n   cbz w13, 7f\n   b 22b\n"
-    "23: add x5, x5, x2\n   add x4, x4, #1\n   b 21b\n"
+    "23:  add x5, x5, x2\n   add x4, x4, #1\n"
+    "b 21b\n"
     "9:  mov x0, x3\n"
     ASM_RET
     "7:  mov x0, x4\n"
@@ -8211,77 +8149,77 @@ ASM_FUNC(positive_to_string)
     // dividing twice.
     ASM_FUNC(positive_into_base)
     ".section .rodata\n   .balign 16\n"
-    "positive_base_lower:\n   .ascii \"0123456789abcdefghijklmnopqrstuvwxyz\"\n"
-    "positive_base_upper:\n   .ascii \"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ\"\n"
+    "positive_base_lower:\n"
+    "   .ascii \"0123456789abcdefghijklmnopqrstuvwxyz\"\n"
+    "positive_base_upper:\n"
+    "   .ascii \"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ\"\n"
     ASM_SECTION
-    "sub x4, x2, #2\n   cmp x4, #34\n"
-    "b.hi .Lpositive_base_arm_invalid\n"
-    "cmp x2, #10\n   b.eq .Lpositive_base_arm_decimal\n"
-    "cbz x1, .Lpositive_base_arm_zero\n"
-    "sub x4, x2, #1\n   tst x2, x4\n"
-    "b.ne .Lpositive_base_arm_generic\n"
-    "cmp x2, #16\n   b.eq .Lpositive_base_arm_hex\n"
-    "cmp x2, #8\n   b.eq .Lpositive_base_arm_octal\n"
-    "cmp x2, #32\n   b.eq .Lpositive_base_arm_base32\n"
-    "cmp x2, #4\n   b.eq .Lpositive_base_arm_quaternary\n"
-    "b .Lpositive_base_arm_binary\n"
+    "sub x4, x2, #2\n"
+    "cmp x4, #34\n"
+    "b.hi .Lpositive_base_arm_invalid\n   cmp x2, #10\n"
+    "b.eq .Lpositive_base_arm_decimal\n   cbz x1, .Lpositive_base_arm_zero\n   sub x4, x2, #1\n"
+    "tst x2, x4\n   b.ne .Lpositive_base_arm_generic\n   cmp x2, #16\n"
+    "b.eq .Lpositive_base_arm_hex\n   cmp x2, #8\n"
+    "b.eq .Lpositive_base_arm_octal\n   cmp x2, #32\n"
+    "b.eq .Lpositive_base_arm_base32\n   cmp x2, #4\n"
+    "b.eq .Lpositive_base_arm_quaternary\n   b .Lpositive_base_arm_binary\n"
     // Generic bases 2..36, written backwards first and reversed in place.
-    ".Lpositive_base_arm_generic:\n"
-    "mov x4, x0\n   mov x5, x0\n   mov w6, #87\n"
+    ".Lpositive_base_arm_generic:\n   mov x4, x0\n   mov x5, x0\n   mov w6, #87\n"
     "cbz w3, .Lpositive_base_arm_generic_loop\n   mov w6, #55\n"
-    ".Lpositive_base_arm_generic_loop:\n"
-    "udiv x7, x1, x2\n   msub x8, x7, x2, x1\n"
-    "cmp x8, #10\n   b.lo .Lpositive_base_arm_generic_number\n"
-    "add w8, w8, w6\n   b .Lpositive_base_arm_generic_store\n"
+    ".Lpositive_base_arm_generic_loop:\n   udiv x7, x1, x2\n   msub x8, x7, x2, x1\n   cmp x8, #10\n"
+    "b.lo .Lpositive_base_arm_generic_number\n   add w8, w8, w6\n   b .Lpositive_base_arm_generic_store\n"
     ".Lpositive_base_arm_generic_number:\n   add w8, w8, #48\n"
-    ".Lpositive_base_arm_generic_store:\n"
-    "strb w8, [x5], #1\n   mov x1, x7\n   cbnz x1, .Lpositive_base_arm_generic_loop\n"
-    "sub x9, x5, x4\n   sub x5, x5, #1\n   mov x7, x4\n"
-    ".Lpositive_base_arm_reverse:\n"
-    "cmp x7, x5\n   b.hs .Lpositive_base_arm_done\n"
-    "ldrb w10, [x7]\n   ldrb w11, [x5]\n   strb w11, [x7], #1\n"
-    "strb w10, [x5], #-1\n   b .Lpositive_base_arm_reverse\n"
-    ".Lpositive_base_arm_hex:\n"
-    "clz x4, x1\n   mov x5, #64\n   sub x4, x5, x4\n"
-    "add x4, x4, #3\n   lsr x4, x4, #2\n   add x5, x0, x4\n"
-    "adrp x7, positive_base_lower\n   add x7, x7, :lo12:positive_base_lower\n"
-    "cbz w3, .Lpositive_base_arm_hex_loop\n   add x7, x7, #36\n"
-    ".Lpositive_base_arm_hex_loop:\n"
-    "and x6, x1, #15\n   ldrb w6, [x7, x6]\n"
-    "strb w6, [x5, #-1]!\n   lsr x1, x1, #4\n"
+    ".Lpositive_base_arm_generic_store:\n   strb w8, [x5], #1\n"
+    "mov x1, x7\n   cbnz x1, .Lpositive_base_arm_generic_loop\n   sub x9, x5, x4\n   sub x5, x5, #1\n"
+    "mov x7, x4\n"
+    ".Lpositive_base_arm_reverse:\n   cmp x7, x5\n   b.hs .Lpositive_base_arm_done\n   ldrb w10, [x7]\n"
+    "ldrb w11, [x5]\n   strb w11, [x7], #1\n"
+    "strb w10, [x5],  #-1\n"
+    "b .Lpositive_base_arm_reverse\n"
+    ".Lpositive_base_arm_hex:\n   clz x4, x1\n   mov x5, #64\n"
+    "sub x4, x5, x4\n   add x4, x4, #3\n"
+    "lsr x4, x4, #2\n"
+    "add x5, x0, x4\n   adrp x7, positive_base_lower\n   add x7, x7, :lo12:positive_base_lower\n   cbz w3, .Lpositive_base_arm_hex_loop\n"
+    "add x7, x7, #36\n"
+    ".Lpositive_base_arm_hex_loop:\n   and x6, x1, #15\n"
+    "ldrb w6, [x7, x6]\n   strb w6, [x5,  #-1]!\n"
+    "lsr x1, x1, #4\n"
     "cbnz x1, .Lpositive_base_arm_hex_loop\n   mov x0, x4\n"
     ASM_RET
-    ".Lpositive_base_arm_base32:\n"
-    "clz x4, x1\n   mov x5, #63\n   sub x4, x5, x4\n"
-    "mov x5, #26\n   mul x4, x4, x5\n   lsr x4, x4, #7\n   add x4, x4, #1\n"
-    "add x5, x0, x4\n"
-    "adrp x7, positive_base_lower\n   add x7, x7, :lo12:positive_base_lower\n"
-    "cbz w3, .Lpositive_base_arm_base32_loop\n   add x7, x7, #36\n"
-    ".Lpositive_base_arm_base32_loop:\n"
-    "and x6, x1, #31\n   ldrb w6, [x7, x6]\n"
-    "strb w6, [x5, #-1]!\n   lsr x1, x1, #5\n"
+    ".Lpositive_base_arm_base32:\n   clz x4, x1\n   mov x5, #63\n"
+    "sub x4, x5, x4\n   mov x5, #26\n"
+    "mul x4, x4, x5\n   lsr x4, x4, #7\n"
+    "add x4, x4, #1\n"
+    "add x5, x0, x4\n   adrp x7, positive_base_lower\n   add x7, x7, :lo12:positive_base_lower\n   cbz w3, .Lpositive_base_arm_base32_loop\n"
+    "add x7, x7, #36\n"
+    ".Lpositive_base_arm_base32_loop:\n   and x6, x1, #31\n"
+    "ldrb w6, [x7, x6]\n   strb w6, [x5,  #-1]!\n"
+    "lsr x1, x1, #5\n"
     "cbnz x1, .Lpositive_base_arm_base32_loop\n   mov x0, x4\n"
     ASM_RET
-    ".Lpositive_base_arm_octal:\n"
-    "clz x4, x1\n   mov x5, #64\n   sub x4, x5, x4\n"
-    "add x4, x4, #2\n   mov x5, #43\n   mul x4, x4, x5\n   lsr x4, x4, #7\n"
-    "mov x6, #7\n   mov x8, #3\n   b .Lpositive_base_arm_number_power\n"
-    ".Lpositive_base_arm_binary:\n"
-    "clz x4, x1\n   mov x5, #64\n   sub x4, x5, x4\n"
-    "mov x6, #1\n   mov x8, #1\n   b .Lpositive_base_arm_number_power\n"
-    ".Lpositive_base_arm_quaternary:\n"
-    "clz x4, x1\n   mov x5, #64\n   sub x4, x5, x4\n"
-    "add x4, x4, #1\n   lsr x4, x4, #1\n"
-    "mov x6, #3\n   mov x8, #2\n"
-    ".Lpositive_base_arm_number_power:\n"
-    "add x5, x0, x4\n"
-    ".Lpositive_base_arm_number_power_loop:\n"
-    "and w7, w1, w6\n   add w7, w7, #48\n   strb w7, [x5, #-1]!\n"
-    "lsr x1, x1, x8\n   cbnz x1, .Lpositive_base_arm_number_power_loop\n"
-    "mov x0, x4\n"
+    ".Lpositive_base_arm_octal:\n   clz x4, x1\n   mov x5, #64\n"
+    "sub x4, x5, x4\n   add x4, x4, #2\n"
+    "mov x5, #43\n"
+    "mul x4, x4, x5\n   lsr x4, x4, #7\n"
+    "mov x6, #7\n"
+    "mov x8, #3\n"
+    "b .Lpositive_base_arm_number_power\n"
+    ".Lpositive_base_arm_binary:\n   clz x4, x1\n   mov x5, #64\n"
+    "sub x4, x5, x4\n   mov x6, #1\n"
+    "mov x8, #1\n"
+    "b .Lpositive_base_arm_number_power\n"
+    ".Lpositive_base_arm_quaternary:\n   clz x4, x1\n   mov x5, #64\n"
+    "sub x4, x5, x4\n   add x4, x4, #1\n"
+    "lsr x4, x4, #1\n"
+    "mov x6, #3\n"
+    "mov x8, #2\n"
+    ".Lpositive_base_arm_number_power:\n   add x5, x0, x4\n"
+    ".Lpositive_base_arm_number_power_loop:\n   and w7, w1, w6\n   add w7, w7, #48\n"
+    "strb w7, [x5,  #-1]!\n"
+    "lsr x1, x1, x8\n   cbnz x1, .Lpositive_base_arm_number_power_loop\n   mov x0, x4\n"
     ASM_RET
-    ".Lpositive_base_arm_zero:\n"
-    "mov w4, #48\n   strb w4, [x0]\n   mov x0, #1\n"
+    ".Lpositive_base_arm_zero:\n   mov w4, #48\n"
+    "strb w4, [x0]\n   mov x0, #1\n"
     ASM_RET
     ".Lpositive_base_arm_decimal:\n   b positive_into\n"
     ".Lpositive_base_arm_invalid:\n   mov x0, xzr\n"
@@ -8435,14 +8373,13 @@ __asm__(
     "lbu a4, 0(a0)\n   lbu a5, 0(a1)\n   bne a4, a5, 4f\n   beqz a5, 3f\n"
     "xor a6, a0, a1\n   andi a6, a6, 7\n   bnez a6, 7f  # unequal residues never align together\n"
     "andi a6, a0, 7\n   beqz a6, 5f\n"
-    "6:  addi a0, a0, 1\n   addi a1, a1, 1\n"
-    "andi a6, a0, 7\n   beqz a6, 5f\n"
-    "lbu a4, 0(a0)\n   lbu a5, 0(a1)\n   bne a4, a5, 4f\n   beqz a5, 3f\n   j 6b\n"
+    "6:  addi a0, a0, 1\n   addi a1, a1, 1\n   andi a6, a0, 7\n   beqz a6, 5f\n"
+    "lbu a4, 0(a0)\n   lbu a5, 0(a1)\n   bne a4, a5, 4f\n   beqz a5, 3f\n"
+    "j 6b\n"
     "5:  lui t0, 0x1010\n   addi t0, t0, 257  # 0x01010101\n"
     "slli t1, t0, 32\n   add t0, t0, t1  # 0x0101010101010101\n"
     "slli t1, t0, 7  # 0x8080808080808080\n"
-    "1:  ld a4, 0(a0)\n   ld a5, 0(a1)\n"
-    "bne a4, a5, 2f  # differ: let the byte step find where\n"
+    "1:  ld a4, 0(a0)\n   ld a5, 0(a1)\n   bne a4, a5, 2f  # differ: let the byte step find where\n"
     "sub a6, a4, t0\n   not a7, a4\n   and a6, a6, a7\n   and a6, a6, t1\n"
     "bnez a6, 3f\n   addi a0, a0, 8\n   addi a1, a1, 8\n   j 1b\n"
     "2:  lbu a4, 0(a0)\n   lbu a5, 0(a1)\n   bne a4, a5, 4f\n   beqz a5, 3f\n"
@@ -8588,7 +8525,9 @@ __asm__(
     //      way out. The alternative was a floor that cannot be tested.
     //
     ASM_FUNC(string_first_of_or_end)
-    "andi a1, a1, 0xff\n   lui t0, 0x1010\n   addi t0, t0, 257\n   slli t1, t0, 32\n   add t0, t0, t1  # 0x0101010101010101\n   slli t1, t0, 7  # 0x8080808080808080\n"
+    "andi a1, a1, 0xff\n   lui t0, 0x1010\n   addi t0, t0, 257\n   slli t1, t0, 32\n"
+    "add t0, t0, t1  # 0x0101010101010101\n"
+    "slli t1, t0, 7  # 0x8080808080808080\n"
     "mul a3, a1, t0  # the byte, in all eight positions\n"
     "andi a4, a0, 7  # how far into the word it begins\n"
     "andi a5, a0, -8  # align down: same page, cannot fault\n"
@@ -8616,8 +8555,9 @@ __asm__(
     //
     //      The same count-the-bytes-below sequence as string_first_of_or_end above.
     ASM_FUNC(string_first_of_max)
-    "beqz a1, 8f\n   andi a2, a2, 0xff\n   lui t0, 0x1010\n   addi t0, t0, 257\n   slli t1, t0, 32\n   add t0, t0, t1  # 0x0101010101010101\n   slli t1, t0, 7\n"
-    "mul a3, a2, t0\n   add a4, a0, a1  # one past the last byte we may report\n"
+    "beqz a1, 8f\n   andi a2, a2, 0xff\n   lui t0, 0x1010\n   addi t0, t0, 257\n"
+    "slli t1, t0, 32\n   add t0, t0, t1  # 0x0101010101010101\n"
+    "slli t1, t0, 7\n   mul a3, a2, t0\n   add a4, a0, a1  # one past the last byte we may report\n"
     "andi t2, a0, 7\n   andi a5, a0, -8\n   ld a6, 0(a5)\n   slli t2, t2, 3\n"
     "li a7, -1\n   sll a7, a7, t2\n   addi a1, a2, 1\n   andi a1, a1, 0xff\n"
     "seqz t2, a1\n   add a1, a1, t2  # never zero, never it\n"
@@ -8643,7 +8583,7 @@ __asm__(
     //       These four used to be absent here, under a comment saying riscv
     //       ships its own in the kernel and freestanding code can fall back to
     //       the generic C. Once the libc names became aliases onto ours, that
-    //       stopped being true in a way the linker noticed: strnlen pointed at
+    //       stopped being true in a way the linker noticed: string_length_max pointed at
     //       a string_length_max this block did not have, and any freestanding
     //       riscv64 link failed on four undefined symbols.
     //
@@ -8672,16 +8612,9 @@ __asm__(
     //       already answers for a byte that never turns up.
     //
     ASM_FUNC(string_last_of_or_end)
-    //
-    //      Hunting the terminator itself is the one case where the answer is
-    //      the end of the string rather than a match inside it, and that is
-    //      exactly the question string_first_of_or_end already answers for a
-    //      byte that never turns up. It used to be a byte walk here.
-    //
-    "andi a1, a1, 0xff\n   bnez a1, 1f\n"
-    "tail string_first_of_or_end\n"
-    "1:  lui t0, 0x1010\n   addi t0, t0, 257\n   slli t1, t0, 32\n   add t0, t0, t1  # 0x0101010101010101\n   li t1, 0x7f7f7f7f7f7f7f7f\n"
-    "mul a3, a1, t0  # the byte, in all eight positions\n"
+    "andi a1, a1, 0xff\n   bnez a1, 1f\n   tail string_first_of_or_end\n"
+    "1:  lui t0, 0x1010\n   addi t0, t0, 257\n   slli t1, t0, 32\n   add t0, t0, t1  # 0x0101010101010101\n"
+    "li t1, 0x7f7f7f7f7f7f7f7f\n   mul a3, a1, t0  # the byte, in all eight positions\n"
     "li a4, 0  # best so far: none\n"
     "andi t2, a0, 7\n   andi a5, a0, -8  # align down: same page, cannot fault\n"
     "ld a6, 0(a5)\n   slli t2, t2, 3\n   li a7, -1\n   sll a7, a7, t2\n"
@@ -8694,22 +8627,19 @@ __asm__(
     "not t4, t4  # matches, exactly, with nothing borrowed\n"
     "and t5, a6, t1\n   add t5, t5, t1\n   or t5, t5, a6\n   or t5, t5, t1\n"
     "not t5, t5  # and the terminator, the same way\n"
-    "beqz t5, 4f\n"
-    "sub t6, zero, t5\n   and t5, t5, t6  # the lowest terminator flag\n"
+    "beqz t5, 4f\n   sub t6, zero, t5\n   and t5, t5, t6  # the lowest terminator flag\n"
     "addi t5, t5, -1\n   and t4, t4, t5  # only matches under it count\n"
     "li t2, 1  # and this is the last word\n"
     "j 5f\n"
     "4:  li t2, 0\n"
-    "5:  beqz t4, 7f\n"
-    "srli t6, t4, 1\n   or t4, t4, t6\n   srli t6, t4, 2\n   or t4, t4, t6\n"
-    "srli t6, t4, 4\n   or t4, t4, t6\n   srli t6, t4, 8\n   or t4, t4, t6\n"
-    "srli t6, t4, 16\n   or t4, t4, t6\n   srli t6, t4, 32\n   or t4, t4, t6\n"
-    "srli t6, t4, 1\n   addi t6, t6, 1  # the highest flag, alone\n"
+    "5:  beqz t4, 7f\n   srli t6, t4, 1\n   or t4, t4, t6\n   srli t6, t4, 2\n"
+    "or t4, t4, t6\n   srli t6, t4, 4\n   or t4, t4, t6\n   srli t6, t4, 8\n"
+    "or t4, t4, t6\n   srli t6, t4, 16\n   or t4, t4, t6\n   srli t6, t4, 32\n"
+    "or t4, t4, t6\n   srli t6, t4, 1\n   addi t6, t6, 1  # the highest flag, alone\n"
     "addi t6, t6, -1\n   and t6, t6, t0\n   mul t6, t6, t0\n   srli t6, t6, 56\n"
     "addi t6, t6, -1  # its byte within the word\n"
     "add a4, a5, t6  # a later match than any before\n"
-    "7:  bnez t2, 8f\n"
-    "addi a5, a5, 8\n   ld a6, 0(a5)\n   j 2b\n"
+    "7:  bnez t2, 8f\n   addi a5, a5, 8\n   ld a6, 0(a5)\n   j 2b\n"
     "8:  mv a0, a4\n"
     ASM_RET
     ASM_END(string_last_of_or_end)
@@ -8720,44 +8650,35 @@ __asm__(
     //       unaligned ld part of the RV64I portability floor.
     //
     ASM_FUNC(string_compare_max)
-    "li a3, 0\n   beqz a2, 4f\n"
-    "xor t2, a0, a1\n   andi t2, t2, 7\n   bnez t2, 2f\n"
-    "andi t2, a0, 7\n   beqz t2, 5f\n"
-    "6:  lbu t3, 0(a0)\n   lbu t4, 0(a1)\n   sub a3, t3, t4\n"
-    "bnez a3, 4f\n   beqz t4, 3f\n"
-    "addi a0, a0, 1\n   addi a1, a1, 1\n   addi a2, a2, -1\n"
+    "li a3, 0\n   beqz a2, 4f\n   xor t2, a0, a1\n   andi t2, t2, 7\n"
+    "bnez t2, 2f\n   andi t2, a0, 7\n   beqz t2, 5f\n"
+    "6:  lbu t3, 0(a0)\n   lbu t4, 0(a1)\n   sub a3, t3, t4\n   bnez a3, 4f\n"
+    "beqz t4, 3f\n   addi a0, a0, 1\n   addi a1, a1, 1\n   addi a2, a2, -1\n"
     "beqz a2, 3f\n   andi t2, a0, 7\n   bnez t2, 6b\n"
-    "5:  lui t0, 0x1010\n   addi t0, t0, 257\n   slli t1, t0, 32\n   add t0, t0, t1  # 0x0101010101010101\n   slli t1, t0, 7\n"
-    "li t2, 8\n   bltu a2, t2, 2f\n"
-    "1:\n"
-    "ld t3, 0(a0)\n   ld t4, 0(a1)\n"
-    "bne t3, t4, 2f  # differ: let the byte step find where\n"
+    "5:  lui t0, 0x1010\n   addi t0, t0, 257\n   slli t1, t0, 32\n   add t0, t0, t1  # 0x0101010101010101\n"
+    "slli t1, t0, 7\n   li t2, 8\n   bltu a2, t2, 2f\n"
+    "1:\n   ld t3, 0(a0)\n   ld t4, 0(a1)\n   bne t3, t4, 2f  # differ: let the byte step find where\n"
     "sub t5, t3, t0\n   not t6, t3\n   and t5, t5, t6\n   and t5, t5, t1\n"
     "bnez t5, 3f  # a terminator in them: equal, and the strings end\n"
-    "addi a0, a0, 8\n   addi a1, a1, 8\n   addi a2, a2, -8\n"
-    "bgeu a2, t2, 1b\n   j 2f\n"
+    "addi a0, a0, 8\n   addi a1, a1, 8\n   addi a2, a2, -8\n   bgeu a2, t2, 1b\n"
+    "j 2f\n"
     "2:  beqz a2, 3f\n   lbu t3, 0(a0)\n   lbu t4, 0(a1)\n   sub a3, t3, t4\n"
-    "bnez a3, 4f\n   beqz t4, 3f\n"
-    "addi a0, a0, 1\n   addi a1, a1, 1\n   addi a2, a2, -1\n   j 2b\n"
+    "bnez a3, 4f\n   beqz t4, 3f\n   addi a0, a0, 1\n   addi a1, a1, 1\n"
+    "addi a2, a2, -1\n   j 2b\n"
     "3:  li a3, 0\n"
     "4:  sext.w a0, a3  # an int return is sign extended in a0\n"
     ASM_RET
     ASM_END(string_compare_max)
-    //
-    //       string_length with a fence: the same align-down scan, stopped when
-    //       the walk reaches the bound, and a terminator found past it clamped
-    //       back to n -- which is what the answer is when there is none inside.
-    //
+    //       string_length_max: the arm64 block carries the reasoning.
     ASM_FUNC(string_length_max)
-    "beqz a1, 9f\n   lui t0, 0x1010\n   addi t0, t0, 257\n   slli t1, t0, 32\n   add t0, t0, t1  # 0x0101010101010101\n   slli t1, t0, 7\n"
-    "add a4, a0, a1  # one past the last byte we may report\n"
+    "beqz a1, 9f\n   lui t0, 0x1010\n   addi t0, t0, 257\n   slli t1, t0, 32\n"
+    "add t0, t0, t1  # 0x0101010101010101\n"
+    "slli t1, t0, 7\n   add a4, a0, a1  # one past the last byte we may report\n"
     "andi a3, a0, 7\n   andi a5, a0, -8  # align down: same page, cannot fault\n"
-    "ld a6, 0(a5)\n   beqz a3, 1f\n"
-    "slli a3, a3, 3\n   li a7, 1\n   sll a7, a7, a3\n   addi a7, a7, -1\n"
-    "or a6, a6, a7  # ones below the string, so it cannot end there\n"
+    "ld a6, 0(a5)\n   beqz a3, 1f\n   slli a3, a3, 3\n   li a7, 1\n"
+    "sll a7, a7, a3\n   addi a7, a7, -1\n   or a6, a6, a7  # ones below the string, so it cannot end there\n"
     "1:  sub t2, a6, t0\n   not t3, a6\n   and t2, t2, t3\n   and t2, t2, t1\n"
-    "bnez t2, 2f\n   addi a5, a5, 8\n"
-    "bgeu a5, a4, 8f  # nothing within the bound\n"
+    "bnez t2, 2f\n   addi a5, a5, 8\n   bgeu a5, a4, 8f  # nothing within the bound\n"
     "ld a6, 0(a5)\n   j 1b\n"
     "2:  sub t3, zero, t2\n   and t2, t2, t3  # lowest set high bit\n"
     "addi t2, t2, -1\n   and t2, t2, t0\n   mul t2, t2, t0\n   srli t2, t2, 56\n"
@@ -8770,16 +8691,11 @@ __asm__(
     "9:  li a0, 0\n"
     ASM_RET
     ASM_END(string_length_max)
-    //
-    //       The byte hunt with a fence instead of a terminator, so there is one
-    //       hunt here and not two. A match in the word that reaches past the
-    //       bound is thrown away by comparing its address, which costs less
-    //       than stopping the scan short would.
-    //
+    //       memory_first_of: the arm64 block carries the reasoning.
     ASM_FUNC(memory_first_of)
-    "beqz a2, 8f\n   andi a1, a1, 0xff\n"
-    "lui t0, 0x1010\n   addi t0, t0, 257\n   slli t1, t0, 32\n   add t0, t0, t1  # 0x0101010101010101\n   slli t1, t0, 7\n"
-    "mul a3, a1, t0  # the byte, in all eight positions\n"
+    "beqz a2, 8f\n   andi a1, a1, 0xff\n   lui t0, 0x1010\n   addi t0, t0, 257\n"
+    "slli t1, t0, 32\n   add t0, t0, t1  # 0x0101010101010101\n"
+    "slli t1, t0, 7\n   mul a3, a1, t0  # the byte, in all eight positions\n"
     "add a4, a0, a2  # one past the last byte we may report\n"
     "andi t2, a0, 7\n   andi a5, a0, -8  # align down: same page, cannot fault\n"
     "ld a6, 0(a5)\n   slli t2, t2, 3\n   li a7, -1\n   sll a7, a7, t2\n"
@@ -8788,13 +8704,12 @@ __asm__(
     "j 2f\n"
     "1:  xor t3, a6, a3\n"
     "2:  sub t4, t3, t0\n   not t5, t3\n   and t4, t4, t5\n   and t4, t4, t1\n"
-    "bnez t4, 3f\n   addi a5, a5, 8\n"
-    "bgeu a5, a4, 8f\n   ld a6, 0(a5)\n   j 1b\n"
+    "bnez t4, 3f\n   addi a5, a5, 8\n   bgeu a5, a4, 8f\n   ld a6, 0(a5)\n"
+    "j 1b\n"
     "3:  sub t5, zero, t4\n   and t4, t4, t5  # lowest set high bit\n"
     "addi t4, t4, -1\n   and t4, t4, t0\n   mul t4, t4, t0\n   srli t4, t4, 56\n"
     "addi t4, t4, -1  # its byte within the word\n"
-    "add t4, a5, t4\n"
-    "bgeu t4, a4, 8f  # the word reached past the bound\n"
+    "add t4, a5, t4\n   bgeu t4, a4, 8f  # the word reached past the bound\n"
     "mv a0, t4\n   ret\n"
     "8:  li a0, 0\n"
     ASM_RET
@@ -8819,21 +8734,19 @@ __asm__(
     //       unaligned integer load will complete in hardware, or at all.
     //
     ASM_FUNC(memory_count)
-    "li a3, 0\n   beqz a1, 9f\n   andi a2, a2, 0xff\n"
-    "andi t3, a0, 7\n   beqz t3, 4f\n"
+    "li a3, 0\n   beqz a1, 9f\n   andi a2, a2, 0xff\n   andi t3, a0, 7\n"
+    "beqz t3, 4f\n"
     "2:  lbu t4, 0(a0)\n   bne t4, a2, 3f\n   addi a3, a3, 1\n"
-    "3:  addi a0, a0, 1\n   addi a1, a1, -1\n   beqz a1, 9f\n"
-    "andi t3, a0, 7\n   bnez t3, 2b\n"
-    "4:  lui t0, 0x1010\n   addi t0, t0, 257\n   slli t1, t0, 32\n   add t0, t0, t1  # 0x0101010101010101\n   li t1, 0x7f7f7f7f7f7f7f7f\n"
-    "mul t2, a2, t0  # the byte, eight times over\n"
+    "3:  addi a0, a0, 1\n   addi a1, a1, -1\n   beqz a1, 9f\n   andi t3, a0, 7\n"
+    "bnez t3, 2b\n"
+    "4:  lui t0, 0x1010\n   addi t0, t0, 257\n   slli t1, t0, 32\n   add t0, t0, t1  # 0x0101010101010101\n"
+    "li t1, 0x7f7f7f7f7f7f7f7f\n   mul t2, a2, t0  # the byte, eight times over\n"
     "li t3, 8\n   bltu a1, t3, 5f\n"
-    "1:\n"
-    "ld t4, 0(a0)\n   xor t4, t4, t2  # a match is now a zero byte\n"
+    "1:\n   ld t4, 0(a0)\n   xor t4, t4, t2  # a match is now a zero byte\n"
     "and t5, t4, t1\n   add t5, t5, t1\n   or t5, t5, t4\n   or t5, t5, t1\n"
     "not t5, t5  # bit seven set for each byte that was zero\n"
     "srli t5, t5, 7\n   mul t5, t5, t0\n   srli t5, t5, 56  # how many of them\n"
-    "add a3, a3, t5\n   addi a0, a0, 8\n   addi a1, a1, -8\n"
-    "bgeu a1, t3, 1b\n"
+    "add a3, a3, t5\n   addi a0, a0, 8\n   addi a1, a1, -8\n   bgeu a1, t3, 1b\n"
     "5:  beqz a1, 9f\n"
     "6:  lbu t4, 0(a0)\n   bne t4, a2, 7f\n   addi a3, a3, 1\n"
     "7:  addi a0, a0, 1\n   addi a1, a1, -1\n   bnez a1, 6b\n"
@@ -8841,17 +8754,15 @@ __asm__(
     ASM_RET
     ASM_END(memory_count)
     ASM_FUNC(memory_compare)
-    "li a3, 0\n   beqz a2, 9f\n"
-    "xor t0, a0, a1\n   andi t0, t0, 7\n   bnez t0, 7f\n"
-    "andi t0, a0, 7\n   beqz t0, 6f\n"
-    "5:  lbu t1, 0(a0)\n   lbu t2, 0(a1)\n   sub a3, t1, t2\n"
-    "bnez a3, 9f\n   addi a0, a0, 1\n   addi a1, a1, 1\n"
-    "addi a2, a2, -1\n   beqz a2, 9f\n   andi t0, a0, 7\n   bnez t0, 5b\n"
+    "li a3, 0\n   beqz a2, 9f\n   xor t0, a0, a1\n   andi t0, t0, 7\n"
+    "bnez t0, 7f\n   andi t0, a0, 7\n   beqz t0, 6f\n"
+    "5:  lbu t1, 0(a0)\n   lbu t2, 0(a1)\n   sub a3, t1, t2\n   bnez a3, 9f\n"
+    "addi a0, a0, 1\n   addi a1, a1, 1\n   addi a2, a2, -1\n   beqz a2, 9f\n"
+    "andi t0, a0, 7\n   bnez t0, 5b\n"
     "6:  li t0, 8\n   bltu a2, t0, 7f\n"
-    "1:\n"
-    "ld t1, 0(a0)\n   ld t2, 0(a1)\n   bne t1, t2, 51f\n"
-    "addi a0, a0, 8\n   addi a1, a1, 8\n   addi a2, a2, -8\n"
-    "bgeu a2, t0, 1b\n   j 7f\n"
+    "1:\n   ld t1, 0(a0)\n   ld t2, 0(a1)\n   bne t1, t2, 51f\n"
+    "addi a0, a0, 8\n   addi a1, a1, 8\n   addi a2, a2, -8\n   bgeu a2, t0, 1b\n"
+    "j 7f\n"
     //
     //      Exclusive-or leaves zero bytes where the two agree, so the first
     //      byte that differs is the one holding the lowest set bit of it.
@@ -8864,13 +8775,14 @@ __asm__(
     //      obvious version without it is right only when the bit is at the
     //      bottom of its byte.
     //
-    "51: xor t1, t1, t2\n   sub t2, zero, t1\n   and t1, t1, t2\n   addi t1, t1, -1\n"
-    "srli t1, t1, 7\n   lui t3, 0x1010\n   addi t3, t3, 257\n   slli t2, t3, 32\n   add t3, t3, t2  # 0x0101010101010101\n   and t1, t1, t3\n"
-    "mul t1, t1, t3\n   srli t1, t1, 56\n"
-    "add t2, a0, t1\n   lbu t4, 0(t2)\n   add t2, a1, t1\n   lbu t5, 0(t2)\n"
-    "sub a3, t4, t5\n   j 9f\n"
+    "51:  xor t1, t1, t2\n   sub t2, zero, t1\n   and t1, t1, t2\n   addi t1, t1, -1\n"
+    "srli t1, t1, 7\n   lui t3, 0x1010\n   addi t3, t3, 257\n   slli t2, t3, 32\n"
+    "add t3, t3, t2  # 0x0101010101010101\n"
+    "and t1, t1, t3\n   mul t1, t1, t3\n   srli t1, t1, 56\n   add t2, a0, t1\n"
+    "lbu t4, 0(t2)\n   add t2, a1, t1\n   lbu t5, 0(t2)\n   sub a3, t4, t5\n"
+    "j 9f\n"
     "7:  beqz a2, 9f\n"
-    "71: lbu t1, 0(a0)\n   lbu t2, 0(a1)\n   sub a3, t1, t2\n   bnez a3, 9f\n"
+    "71:  lbu t1, 0(a0)\n   lbu t2, 0(a1)\n   sub a3, t1, t2\n   bnez a3, 9f\n"
     "addi a0, a0, 1\n   addi a1, a1, 1\n   addi a2, a2, -1\n   bnez a2, 71b\n"
     "9:  mv a0, a3\n"
     ASM_RET
@@ -8880,7 +8792,7 @@ __asm__(
     //       One byte hunted rather than two, and no block at all: the
     //       and-ing of two masks that the other two blocks are built on wants
     //       a vector register, and there is not one to want here. What is
-    //       left is memchr for where a match could begin and memcmp for
+    //       left is memory_first_of for where a match could begin and memcmp for
     //       whether it did, which is the naive search with both of its loops
     //       already written eight bytes at a time.
     //
@@ -8897,40 +8809,39 @@ __asm__(
     //
     "beqz a3, 90f  # an empty needle is at the front\n"
     "bltu a1, a3, 95f  # longer than the haystack: nowhere\n"
-    "li t0, 1\n   bne a3, t0, 20f\n"
-    "lbu t1, 0(a2)\n   mv a2, a1\n   mv a1, t1\n"
-    "j memory_first_of  # one byte is memchr\n"
+    "li t0, 1\n   bne a3, t0, 20f\n   lbu t1, 0(a2)\n   mv a2, a1\n"
+    "mv a1, t1\n   j memory_first_of  # one byte is memchr\n"
     "90:\n"
     ASM_RET
-    "95: li a0, 0\n"
+    "95:  li a0, 0\n"
     ASM_RET
-    "20: addi sp, sp, -64\n   sd ra, 56(sp)\n   sd s0, 48(sp)\n   sd s1, 40(sp)\n"
+    "20:  addi sp, sp, -64\n   sd ra, 56(sp)\n   sd s0, 48(sp)\n   sd s1, 40(sp)\n"
     "sd s2, 32(sp)\n   sd s3, 24(sp)\n   sd s4, 16(sp)\n   sd s5, 8(sp)\n"
-    "mv s0, a0  # the haystack\n   mv s1, a2  # the needle\n   mv s2, a3  # its length\n"
+    "mv s0, a0  # the haystack\n"
+    "mv s1, a2  # the needle\n"
+    "mv s2, a3  # its length\n"
     "add s3, a0, a1\n   sub s3, s3, s2  # the last position a match could start at\n"
     "mv s4, a0  # where the next hunt begins\n"
     //
     //      Which byte of the needle to hunt, as an offset into it.
     //
     "li s5, 0  # the offset\n"
-    "li t1, 64\n   bltu a1, t1, 26f\n"
-    "li t2, 4\n   bltu s2, t2, 26f\n"
+    "li t1, 64\n   bltu a1, t1, 26f\n   li t2, 4\n   bltu s2, t2, 26f\n"
     "la t3, byte_commonness\n   li t4, 256\n   li t5, 0\n"
-    "21: add t6, s1, t5\n   lbu t6, 0(t6)\n   add t6, t3, t6\n   lbu t6, 0(t6)\n"
+    "21:  add t6, s1, t5\n   lbu t6, 0(t6)\n   add t6, t3, t6\n   lbu t6, 0(t6)\n"
     "bgeu t6, t4, 22f\n   mv t4, t6\n   mv s5, t5\n"
-    "22: addi t5, t5, 1\n   bltu t5, s2, 21b\n"
+    "22:  addi t5, t5, 1\n   bltu t5, s2, 21b\n"
     "26:\n"
     //
     //      The hunt runs from the offset, and a hit is a candidate that many
     //      bytes earlier. The last position a match could start at bounds it,
     //      so nothing past the end of the haystack is ever read.
     //
-    "61: sub a2, s3, s4\n   addi a2, a2, 1  # positions still to try\n"
-    "add a0, s4, s5\n   add t1, s1, s5\n   lbu a1, 0(t1)\n"
-    "call memory_first_of\n   beqz a0, 8f\n"
-    "sub a0, a0, s5  # back to where the match would start\n"
-    "mv s4, a0\n   mv a1, s1\n   mv a2, s2\n"
-    "call memory_compare\n   beqz a0, 7f\n"
+    "61:  sub a2, s3, s4\n   addi a2, a2, 1  # positions still to try\n"
+    "add a0, s4, s5\n   add t1, s1, s5\n   lbu a1, 0(t1)\n   call memory_first_of\n"
+    "beqz a0, 8f\n   sub a0, a0, s5  # back to where the match would start\n"
+    "mv s4, a0\n   mv a1, s1\n   mv a2, s2\n   call memory_compare\n"
+    "beqz a0, 7f\n"
     //
     //      A failed candidate is left one byte, not needle_size: "aab" is in
     //      "aaab", and a scan that resumes past what it matched cannot see
@@ -8950,23 +8861,6 @@ __asm__(
     ASM_FUNC(moonwater_cpu_detect)
     ASM_RET
     ASM_END(moonwater_cpu_detect)
-    //
-    //       get_cpu_time -- the machine's own free running counter.
-    //
-    //       One instruction on every architecture that has it, and no architecture
-    //       spells it the same way, which is the smallest honest example of what
-    //       .asm files here are for. There is no portable instruction to reach for
-    //       and no C that compiles to this, so the choice is a block per machine
-    //       or nothing.
-    //
-    //       What it returns is a hardware tick, not a nanosecond and not a cycle:
-    //       a monotonic count at a rate the platform picks, useful for measuring
-    //       one span against another and nothing else. The kernel's own
-    //       ktime_get() is the right answer for anything that needs a unit; this
-    //       is for the places already too hot to call it.
-    //
-    //       Declared in core.c, beside the code that calls it.
-    //
     ASM_SECTION
     ASM_FUNC(get_cpu_time)
     //
@@ -8984,25 +8878,23 @@ __asm__(
     // two addresses have different residues.  No wide instruction below is
     // issued at an address whose low bits have not been proved zero.
     ASM_FUNC(memory_fill)
-    "mv a3, a0\n   andi a1, a1, 0xff\n   beqz a2, 9f\n"
-    "andi t0, a0, 7\n   beqz t0, 2f\n"
-    "1:  sb a1, 0(a0)\n   addi a0, a0, 1\n   addi a2, a2, -1\n"
-    "beqz a2, 9f\n   andi t0, a0, 7\n   bnez t0, 1b\n"
-    "2:  li t0, 4\n   bltu a2, t0, 8f\n"
-    "slli t0, a1, 8\n   or a1, a1, t0\n"
+    "mv a3, a0\n   andi a1, a1, 0xff\n   beqz a2, 9f\n   andi t0, a0, 7\n"
+    "beqz t0, 2f\n"
+    "1:  sb a1, 0(a0)\n   addi a0, a0, 1\n   addi a2, a2, -1\n   beqz a2, 9f\n"
+    "andi t0, a0, 7\n   bnez t0, 1b\n"
+    "2:  li t0, 4\n   bltu a2, t0, 8f\n   slli t0, a1, 8\n   or a1, a1, t0\n"
     "slli t0, a1, 16\n   or a1, a1, t0\n   slli t0, a1, 32\n   or a1, a1, t0\n"
     "li t1, 32\n   bltu a2, t1, 4f\n"
-    "3:\n"
-    "sd a1, 0(a0)\n   sd a1, 8(a0)\n   sd a1, 16(a0)\n   sd a1, 24(a0)\n"
-    "addi a0, a0, 32\n   addi a2, a2, -32\n   bgeu a2, t1, 3b\n"
-    "4:  li t1, 16\n   bltu a2, t1, 5f\n"
-    "sd a1, 0(a0)\n   sd a1, 8(a0)\n   addi a0, a0, 16\n   addi a2, a2, -16\n"
-    "5:  li t1, 8\n   bltu a2, t1, 6f\n   sd a1, 0(a0)\n"
-    "addi a0, a0, 8\n   addi a2, a2, -8\n"
-    "6:  li t1, 4\n   bltu a2, t1, 8f\n   sw a1, 0(a0)\n"
-    "addi a0, a0, 4\n   addi a2, a2, -4\n"
-    "8:  beqz a2, 9f\n   sb a1, 0(a0)\n   addi a0, a0, 1\n"
-    "addi a2, a2, -1\n   j 8b\n"
+    "3:\n   sd a1, 0(a0)\n   sd a1, 8(a0)\n   sd a1, 16(a0)\n"
+    "sd a1, 24(a0)\n   addi a0, a0, 32\n   addi a2, a2, -32\n   bgeu a2, t1, 3b\n"
+    "4:  li t1, 16\n   bltu a2, t1, 5f\n   sd a1, 0(a0)\n   sd a1, 8(a0)\n"
+    "addi a0, a0, 16\n   addi a2, a2, -16\n"
+    "5:  li t1, 8\n   bltu a2, t1, 6f\n   sd a1, 0(a0)\n   addi a0, a0, 8\n"
+    "addi a2, a2, -8\n"
+    "6:  li t1, 4\n   bltu a2, t1, 8f\n   sw a1, 0(a0)\n   addi a0, a0, 4\n"
+    "addi a2, a2, -4\n"
+    "8:  beqz a2, 9f\n   sb a1, 0(a0)\n   addi a0, a0, 1\n   addi a2, a2, -1\n"
+    "j 8b\n"
     "9:  mv a0, a3\n"
     ASM_RET
     ASM_END(memory_fill)
@@ -9030,41 +8922,37 @@ __asm__(
     "1:  " RV_REVERSE_FOUR
     "addi a0, a0, 4\n   addi a3, a3, -4\n"
     RV_REVERSE_FOUR
-    "addi a0, a0, 4\n   addi a3, a3, -4\n   addi a1, a1, -16\n"
-    "bgeu a1, a5, 1b\n"
+    "addi a0, a0, 4\n   addi a3, a3, -4\n   addi a1, a1, -16\n   bgeu a1, a5, 1b\n"
     "3:  li a5, 8\n   bltu a1, a5, 2f\n"
     RV_REVERSE_FOUR
     "addi a0, a0, 4\n   addi a3, a3, -4\n   addi a1, a1, -8\n"
     "2:  li a5, 2\n   bltu a1, a5, 9f\n"
-    "1:  lbu t0, 0(a0)\n   addi a3, a3, -1\n   lbu t1, 0(a3)\n"
-    "sb t1, 0(a0)\n   sb t0, 0(a3)\n   addi a0, a0, 1\n"
-    "addi a1, a1, -2\n   bgeu a1, a5, 1b\n"
+    "1:  lbu t0, 0(a0)\n   addi a3, a3, -1\n   lbu t1, 0(a3)\n   sb t1, 0(a0)\n"
+    "sb t0, 0(a3)\n   addi a0, a0, 1\n   addi a1, a1, -2\n   bgeu a1, a5, 1b\n"
     "9:  mv a0, a2\n"
     ASM_RET
     ASM_END(memory_reverse)
 #undef RV_REVERSE_FOUR
 
     ASM_FUNC(memory_copy_fast)
-    "mv a3, a0\n   beqz a2, 9f\n"
-    "xor t0, a0, a1\n   andi t0, t0, 7\n   bnez t0, 8f\n"
-    "andi t0, a0, 7\n   beqz t0, 2f\n"
-    "1:  lbu t1, 0(a1)\n   sb t1, 0(a0)\n"
-    "addi a0, a0, 1\n   addi a1, a1, 1\n   addi a2, a2, -1\n"
-    "beqz a2, 9f\n   andi t0, a0, 7\n   bnez t0, 1b\n"
+    "mv a3, a0\n   beqz a2, 9f\n   xor t0, a0, a1\n   andi t0, t0, 7\n"
+    "bnez t0, 8f\n   andi t0, a0, 7\n   beqz t0, 2f\n"
+    "1:  lbu t1, 0(a1)\n   sb t1, 0(a0)\n   addi a0, a0, 1\n   addi a1, a1, 1\n"
+    "addi a2, a2, -1\n   beqz a2, 9f\n   andi t0, a0, 7\n   bnez t0, 1b\n"
     "2:  li t4, 32\n   bltu a2, t4, 4f\n"
-    "3:\n"
-    "ld t0, 0(a1)\n   ld t1, 8(a1)\n   ld t2, 16(a1)\n   ld t3, 24(a1)\n"
-    "sd t0, 0(a0)\n   sd t1, 8(a0)\n   sd t2, 16(a0)\n   sd t3, 24(a0)\n"
-    "addi a0, a0, 32\n   addi a1, a1, 32\n   addi a2, a2, -32\n   bgeu a2, t4, 3b\n"
-    "4:  li t4, 16\n   bltu a2, t4, 5f\n"
-    "ld t0, 0(a1)\n   ld t1, 8(a1)\n   sd t0, 0(a0)\n   sd t1, 8(a0)\n"
-    "addi a0, a0, 16\n   addi a1, a1, 16\n   addi a2, a2, -16\n"
+    "3:\n   ld t0, 0(a1)\n   ld t1, 8(a1)\n   ld t2, 16(a1)\n"
+    "ld t3, 24(a1)\n   sd t0, 0(a0)\n   sd t1, 8(a0)\n   sd t2, 16(a0)\n"
+    "sd t3, 24(a0)\n   addi a0, a0, 32\n   addi a1, a1, 32\n   addi a2, a2, -32\n"
+    "bgeu a2, t4, 3b\n"
+    "4:  li t4, 16\n   bltu a2, t4, 5f\n   ld t0, 0(a1)\n   ld t1, 8(a1)\n"
+    "sd t0, 0(a0)\n   sd t1, 8(a0)\n   addi a0, a0, 16\n   addi a1, a1, 16\n"
+    "addi a2, a2, -16\n"
     "5:  li t4, 8\n   bltu a2, t4, 6f\n   ld t0, 0(a1)\n   sd t0, 0(a0)\n"
     "addi a0, a0, 8\n   addi a1, a1, 8\n   addi a2, a2, -8\n"
     "6:  li t4, 4\n   bltu a2, t4, 8f\n   lw t0, 0(a1)\n   sw t0, 0(a0)\n"
     "addi a0, a0, 4\n   addi a1, a1, 4\n   addi a2, a2, -4\n"
-    "8:  beqz a2, 9f\n   lbu t0, 0(a1)\n   sb t0, 0(a0)\n"
-    "addi a0, a0, 1\n   addi a1, a1, 1\n   addi a2, a2, -1\n   j 8b\n"
+    "8:  beqz a2, 9f\n   lbu t0, 0(a1)\n   sb t0, 0(a0)\n   addi a0, a0, 1\n"
+    "addi a1, a1, 1\n   addi a2, a2, -1\n   j 8b\n"
     "9:  mv a0, a3\n"
     ASM_RET
     ASM_END(memory_copy_fast)
@@ -9081,27 +8969,24 @@ __asm__(
     ASM_FUNC(memory_copy)
     "bleu a0, a1, 1f\n   sub t0, a0, a1\n   bgeu t0, a2, 1f\n   j 2f\n"
     "1:  tail memory_copy_fast\n"
-    "2:  mv a3, a0\n   add a4, a0, a2\n   add a5, a1, a2\n"
-    "beqz a2, 9f\n   xor t0, a4, a5\n   andi t0, t0, 7\n   bnez t0, 8f\n"
-    "andi t0, a4, 7\n   beqz t0, 3f\n"
-    "6:  addi a4, a4, -1\n   addi a5, a5, -1\n"
-    "lbu t1, 0(a5)\n   sb t1, 0(a4)\n   addi a2, a2, -1\n"
-    "beqz a2, 9f\n   andi t0, a4, 7\n   bnez t0, 6b\n"
+    "2:  mv a3, a0\n   add a4, a0, a2\n   add a5, a1, a2\n   beqz a2, 9f\n"
+    "xor t0, a4, a5\n   andi t0, t0, 7\n   bnez t0, 8f\n   andi t0, a4, 7\n"
+    "beqz t0, 3f\n"
+    "6:  addi a4, a4, -1\n   addi a5, a5, -1\n   lbu t1, 0(a5)\n   sb t1, 0(a4)\n"
+    "addi a2, a2, -1\n   beqz a2, 9f\n   andi t0, a4, 7\n   bnez t0, 6b\n"
     "3:  li t6, 32\n   bltu a2, t6, 5f\n"
-    "4:  addi a4, a4, -32\n   addi a5, a5, -32\n"
-    "ld t0, 0(a5)\n   ld t1, 8(a5)\n   ld t2, 16(a5)\n   ld t3, 24(a5)\n"
-    "sd t0, 0(a4)\n   sd t1, 8(a4)\n   sd t2, 16(a4)\n   sd t3, 24(a4)\n"
-    "addi a2, a2, -32\n   bgeu a2, t6, 4b\n"
-    "5:  li t6, 16\n   bltu a2, t6, 7f\n"
-    "addi a4, a4, -16\n   addi a5, a5, -16\n"
+    "4:  addi a4, a4, -32\n   addi a5, a5, -32\n   ld t0, 0(a5)\n   ld t1, 8(a5)\n"
+    "ld t2, 16(a5)\n   ld t3, 24(a5)\n   sd t0, 0(a4)\n   sd t1, 8(a4)\n"
+    "sd t2, 16(a4)\n   sd t3, 24(a4)\n   addi a2, a2, -32\n   bgeu a2, t6, 4b\n"
+    "5:  li t6, 16\n   bltu a2, t6, 7f\n   addi a4, a4, -16\n   addi a5, a5, -16\n"
     "ld t0, 0(a5)\n   ld t1, 8(a5)\n   sd t0, 0(a4)\n   sd t1, 8(a4)\n"
     "addi a2, a2, -16\n"
     "7:  li t6, 8\n   bltu a2, t6, 0f\n   addi a4, a4, -8\n   addi a5, a5, -8\n"
     "ld t0, 0(a5)\n   sd t0, 0(a4)\n   addi a2, a2, -8\n"
     "0:  li t6, 4\n   bltu a2, t6, 8f\n   addi a4, a4, -4\n   addi a5, a5, -4\n"
     "lw t0, 0(a5)\n   sw t0, 0(a4)\n   addi a2, a2, -4\n"
-    "8:  beqz a2, 9f\n   addi a4, a4, -1\n   addi a5, a5, -1\n"
-    "lbu t0, 0(a5)\n   sb t0, 0(a4)\n   addi a2, a2, -1\n   j 8b\n"
+    "8:  beqz a2, 9f\n   addi a4, a4, -1\n   addi a5, a5, -1\n   lbu t0, 0(a5)\n"
+    "sb t0, 0(a4)\n   addi a2, a2, -1\n   j 8b\n"
     "9:  mv a0, a3\n"
     ASM_RET
     ASM_END(memory_copy)
@@ -9137,9 +9022,8 @@ __asm__(
     "slli t1, t0, 7  # 0x8080808080808080\n"
     "andi a4, a1, 7  # how far into the word it begins\n"
     "andi a5, a1, -8  # align down: same page, cannot fault\n"
-    "ld a6, 0(a5)\n   beqz a4, 1f\n"
-    "slli a4, a4, 3\n   li a7, 1\n   sll a7, a7, a4\n   addi a7, a7, -1\n"
-    "or a6, a6, a7  # so the bytes in front cannot look like a terminator\n"
+    "ld a6, 0(a5)\n   beqz a4, 1f\n   slli a4, a4, 3\n   li a7, 1\n"
+    "sll a7, a7, a4\n   addi a7, a7, -1\n   or a6, a6, a7  # so the bytes in front cannot look like a terminator\n"
     "1:  sub t2, a6, t0\n   not t3, a6\n   and t2, t2, t3\n   and t2, t2, t1\n"
     "bnez t2, 2f\n   addi a5, a5, 8\n   ld a6, 0(a5)\n   j 1b\n"
     "2:  sub t3, zero, t2\n   and t2, t2, t3  # lowest set high bit\n"
@@ -9149,24 +9033,12 @@ __asm__(
     "tail memory_copy_fast\n"
     ASM_END(string_copy)
     ASM_SECTION
-    //
-    //      strcat: the source onto the end of the destination.
-    //
-    //      Two routines that are already here, and lib/string.c does both of
-    //      them a byte at a time -- the walk to the end of the destination
-    //      and the copy after it -- so the saving compounds. 427 call sites.
-    //
-    //      No bound and no check, which is what the name means and is why
-    //      the kernel would rather callers did not use it. Ours is not more
-    //      dangerous than the one it replaces; it is the same contract.
-    //
+    //       string_append: the x86_64 block carries the reasoning.
     ASM_FUNC(string_append)
     "addi sp, sp, -32\n   sd ra, 24(sp)\n   sd s0, 16(sp)\n   sd s1, 8(sp)\n"
-    "mv s0, a0\n   mv s1, a1\n"
-    "call string_length\n"
-    "add a0, s0, a0\n   mv a1, s1\n   call string_copy\n"
-    "mv a0, s0\n"
-    "ld ra, 24(sp)\n   ld s0, 16(sp)\n   ld s1, 8(sp)\n   addi sp, sp, 32\n"
+    "mv s0, a0\n   mv s1, a1\n   call string_length\n   add a0, s0, a0\n"
+    "mv a1, s1\n   call string_copy\n   mv a0, s0\n   ld ra, 24(sp)\n"
+    "ld s0, 16(sp)\n   ld s1, 8(sp)\n   addi sp, sp, 32\n"
     ASM_RET
     ASM_END(string_append)
     //       string_copy_max: the arm64 block carries the reasoning.
@@ -9174,16 +9046,17 @@ __asm__(
     "mv a3, a0\n   beqz a2, 9f  # not even a terminator\n"
     "add a7, a1, a2  # one past the last byte we may read\n"
     "lui t0, 0x1010\n   addi t0, t0, 257\n   slli t1, t0, 32\n   add t0, t0, t1\n"
-    "slli t1, t0, 7\n"
-    "andi a4, a1, 7\n   andi a5, a1, -8\n   ld a6, 0(a5)\n   beqz a4, 1f\n"
-    "slli a4, a4, 3\n   li t4, 1\n   sll t4, t4, a4\n   addi t4, t4, -1\n   or a6, a6, t4\n"
+    "slli t1, t0, 7\n   andi a4, a1, 7\n   andi a5, a1, -8\n   ld a6, 0(a5)\n"
+    "beqz a4, 1f\n   slli a4, a4, 3\n   li t4, 1\n   sll t4, t4, a4\n"
+    "addi t4, t4, -1\n   or a6, a6, t4\n"
     "1:  sub t2, a6, t0\n   not t3, a6\n   and t2, t2, t3\n   and t2, t2, t1\n"
     "bnez t2, 2f\n   addi a5, a5, 8\n   bgeu a5, a7, 4f  # the bound is behind us\n"
     "ld a6, 0(a5)\n   j 1b\n"
     "2:  sub t3, zero, t2\n   and t2, t2, t3\n   addi t2, t2, -1\n   and t2, t2, t0\n"
-    "mul t2, t2, t0\n   srli t2, t2, 56\n   addi t2, t2, -1\n"
-    "add t2, a5, t2\n   sub t2, t2, a1  # the length\n"
-    "bgeu t2, a2, 4f  # the bound came first\n   addi a2, t2, 1\n"
+    "mul t2, t2, t0\n   srli t2, t2, 56\n   addi t2, t2, -1\n   add t2, a5, t2\n"
+    "sub t2, t2, a1  # the length\n"
+    "bgeu t2, a2, 4f  # the bound came first\n"
+    "addi a2, t2, 1\n"
     "4:  tail memory_copy_fast\n"
     "9:  mv a0, a3\n"
     ASM_RET
@@ -9192,18 +9065,13 @@ __asm__(
     //       string_copy_max_end. The x86_64 block above says what it is for.
     //
     ASM_FUNC(string_copy_max_end)
-    "addi sp, sp, -48\n   sd ra, 40(sp)\n   sd s0, 32(sp)\n"
-    "sd s1, 24(sp)\n   sd s2, 16(sp)\n"
-    "mv s0, a0  # the destination\n"
+    "addi sp, sp, -48\n   sd ra, 40(sp)\n   sd s0, 32(sp)\n   sd s1, 24(sp)\n"
+    "sd s2, 16(sp)\n   mv s0, a0  # the destination\n"
     "mv s1, a1  # the source\n"
-    "mv a0, a1\n   mv a1, a2\n"
-    "call string_length_max\n"
-    "mv s2, a0  # how much of it there was\n"
-    "mv a0, s0\n   mv a1, s1\n   mv a2, s2\n"
-    "call memory_copy_fast\n"
-    "add a0, s0, s2\n   sb zero, 0(a0)\n"
-    "ld ra, 40(sp)\n   ld s0, 32(sp)\n   ld s1, 24(sp)\n   ld s2, 16(sp)\n"
-    "addi sp, sp, 48\n"
+    "mv a0, a1\n   mv a1, a2\n   call string_length_max\n   mv s2, a0  # how much of it there was\n"
+    "mv a0, s0\n   mv a1, s1\n   mv a2, s2\n   call memory_copy_fast\n"
+    "add a0, s0, s2\n   sb zero, 0(a0)\n   ld ra, 40(sp)\n   ld s0, 32(sp)\n"
+    "ld s1, 24(sp)\n   ld s2, 16(sp)\n   addi sp, sp, 48\n"
     ASM_RET
     ASM_END(string_copy_max_end)
     //       string_last_of: the arm64 block carries the reasoning. There is no
@@ -9222,14 +9090,13 @@ __asm__(
     "blez a1, 9f  # at or below zero never matches\n"
     "lui t0, 0x1010\n   addi t0, t0, 257\n   slli t1, t0, 32\n   add t0, t0, t1\n"
     "slli t1, t0, 7\n   mul a3, a1, t0  # the symbol, in all eight positions\n"
-    "andi a4, a2, 0xff\n   mul a4, a4, t0  # and the replacement\n   li a7, 255\n"
-    "not t6, t1  # 0x7f7f7f7f7f7f7f7f\n"
-    "1:  andi t2, a0, 7\n   beqz t2, 2f\n"
-    "lbu t2, 0(a0)\n   beqz t2, 9f\n   bne t2, a1, 3f\n   sb a2, 0(a0)\n"
+    "andi a4, a2, 0xff\n   mul a4, a4, t0  # and the replacement\n"
+    "li a7, 255\n   not t6, t1  # 0x7f7f7f7f7f7f7f7f\n"
+    "1:  andi t2, a0, 7\n   beqz t2, 2f\n   lbu t2, 0(a0)\n   beqz t2, 9f\n"
+    "bne t2, a1, 3f\n   sb a2, 0(a0)\n"
     "3:  addi a0, a0, 1\n   j 1b\n"
-    "2:  ld a6, 0(a0)\n"
-    "sub t3, a6, t0\n   not t4, a6\n   and t3, t3, t4\n   and t3, t3, t1\n"
-    "bnez t3, 5f  # the terminator is in this word\n"
+    "2:  ld a6, 0(a0)\n   sub t3, a6, t0\n   not t4, a6\n   and t3, t3, t4\n"
+    "and t3, t3, t1\n   bnez t3, 5f  # the terminator is in this word\n"
     //
     //       Not the (v - 0x01..) & ~v & 0x80.. test used everywhere else in this
     //       file. That one answers "is any byte zero" exactly and points at the
@@ -9250,9 +9117,8 @@ __asm__(
     //       seven makes that 0x01, and multiplying by 255 widens each to 0xff
     //       without carrying into its neighbour.
     //
-    "srli t3, t3, 7\n   mul t3, t3, a7\n"
-    "not t4, t3\n   and a6, a6, t4\n   and t5, a4, t3\n   or a6, a6, t5\n"
-    "sd a6, 0(a0)\n"
+    "srli t3, t3, 7\n   mul t3, t3, a7\n   not t4, t3\n   and a6, a6, t4\n"
+    "and t5, a4, t3\n   or a6, a6, t5\n   sd a6, 0(a0)\n"
     "6:  addi a0, a0, 8\n   j 2b\n"
     "5:  lbu t2, 0(a0)\n   beqz t2, 9f\n   bne t2, a1, 8f\n   sb a2, 0(a0)\n"
     "8:  addi a0, a0, 1\n   j 5b\n"
@@ -9261,22 +9127,19 @@ __asm__(
     ASM_END(string_replace_all)
     //       string_cut: the arm64 block carries the reasoning.
     ASM_FUNC(string_cut)
-    "slli a1, a1, 56\n   srai a1, a1, 56\n   blez a1, 8f\n"
-    "lui t0, 0x1010\n   addi t0, t0, 257\n   slli t1, t0, 32\n   add t0, t0, t1\n"
-    "slli t1, t0, 7\n   mul a3, a1, t0  # the symbol, in all eight positions\n"
+    "slli a1, a1, 56\n   srai a1, a1, 56\n   blez a1, 8f\n   lui t0, 0x1010\n"
+    "addi t0, t0, 257\n   slli t1, t0, 32\n   add t0, t0, t1\n   slli t1, t0, 7\n"
+    "mul a3, a1, t0  # the symbol, in all eight positions\n"
     "andi a4, a0, 7\n   andi a5, a0, -8\n   ld a6, 0(a5)\n   beqz a4, 1f\n"
-    "li a7, -1\n   slli a4, a4, 3\n   sll a7, a7, a4\n"
-    "addi a2, a1, 1  # neither zero nor it: the symbol is 1 to 127 here\n"
+    "li a7, -1\n   slli a4, a4, 3\n   sll a7, a7, a4\n   addi a2, a1, 1  # neither zero nor it: the symbol is 1 to 127 here\n"
     "mul a2, a2, t0\n   not t2, a7\n   and a2, a2, t2  # only in front of the string\n"
     "and a6, a6, a7\n   or a6, a6, a2\n"
     "1:  xor t2, a6, a3  # the byte that matched is now zero\n"
-    "sub t3, t2, t0\n   not t4, t2\n   and t3, t3, t4\n"
-    "sub t5, a6, t0  # and the terminator, the same way\n"
+    "sub t3, t2, t0\n   not t4, t2\n   and t3, t3, t4\n   sub t5, a6, t0  # and the terminator, the same way\n"
     "not t6, a6\n   and t5, t5, t6\n   or t3, t3, t5\n   and t3, t3, t1\n"
     "bnez t3, 2f\n   addi a5, a5, 8\n   ld a6, 0(a5)\n   j 1b\n"
     "2:  sub t5, zero, t3\n   and t3, t3, t5\n   addi t3, t3, -1\n   and t3, t3, t0\n"
-    "mul t3, t3, t0\n   srli t3, t3, 56\n   addi t3, t3, -1\n"
-    "add a0, a5, t3\n"
+    "mul t3, t3, t0\n   srli t3, t3, 56\n   addi t3, t3, -1\n   add a0, a5, t3\n"
     "3:  lbu t4, 0(a0)\n   beqz t4, 8f  # the terminator came first: no cut\n"
     "sb zero, 0(a0)\n   addi a0, a0, 1\n   lbu t4, 0(a0)\n   beqz t4, 8f\n"
     "ret\n"
@@ -9287,57 +9150,46 @@ __asm__(
     // The public entries tail-dispatch with t6 selecting writer/tail/head.
     // One core frame owns the length, split walk, and requested finish.
     ASM_LOCAL_FUNC(path_split_core)
-    "addi sp, sp, -48\n   sd ra, 40(sp)\n   sd s0, 32(sp)\n"
-    "sd s1, 24(sp)\n   sd s2, 16(sp)\n   sd s3, 8(sp)\n"
-    "mv s0, a0\n   mv s1, a1\n   mv s2, t6\n   mv s3, a2\n"
-    "bnez s2, .Lpath_rv_have_path\n   mv s3, a1\n"
-    ".Lpath_rv_have_path:\n   mv a0, s3\n   call string_length\n"
-    "mv a1, a0\n   li t3, 47\n"
-    ".Lpath_rv_trim:\n   li t0, 2\n   bltu a1, t0, .Lpath_rv_component\n"
-    "add t1, s3, a1\n   lbu t2, -1(t1)\n   bne t2, t3, .Lpath_rv_component\n"
-    "addi a1, a1, -1\n   j .Lpath_rv_trim\n"
+    "addi sp, sp, -48\n   sd ra, 40(sp)\n   sd s0, 32(sp)\n   sd s1, 24(sp)\n"
+    "sd s2, 16(sp)\n   sd s3, 8(sp)\n   mv s0, a0\n   mv s1, a1\n"
+    "mv s2, t6\n   mv s3, a2\n   bnez s2, .Lpath_rv_have_path\n   mv s3, a1\n"
+    ".Lpath_rv_have_path:\n   mv a0, s3\n   call string_length\n   mv a1, a0\n"
+    "li t3, 47\n"
+    ".Lpath_rv_trim:\n   li t0, 2\n   bltu a1, t0, .Lpath_rv_component\n   add t1, s3, a1\n"
+    "lbu t2, -1(t1)\n   bne t2, t3, .Lpath_rv_component\n   addi a1, a1, -1\n   j .Lpath_rv_trim\n"
     ".Lpath_rv_component:\n   mv a2, a1\n"
-    ".Lpath_rv_component_loop:\n   beqz a2, .Lpath_rv_found\n"
-    "add t1, s3, a2\n   lbu t2, -1(t1)\n   beq t2, t3, .Lpath_rv_found\n"
-    "addi a2, a2, -1\n   j .Lpath_rv_component_loop\n"
-    ".Lpath_rv_found:\n   beqz s2, .Lpath_rv_writer\n"
-    "li t0, 1\n   bne s2, t0, .Lpath_rv_head\n"
+    ".Lpath_rv_component_loop:\n   beqz a2, .Lpath_rv_found\n   add t1, s3, a2\n   lbu t2, -1(t1)\n"
+    "beq t2, t3, .Lpath_rv_found\n   addi a2, a2, -1\n   j .Lpath_rv_component_loop\n"
+    ".Lpath_rv_found:\n   beqz s2, .Lpath_rv_writer\n   li t0, 1\n   bne s2, t0, .Lpath_rv_head\n"
     // tail copy
-    "li t0, 1\n   bne a1, t0, .Lpath_rv_tail_normal\n"
-    "lbu t1, 0(s3)\n   li t2, 47\n   bne t1, t2, .Lpath_rv_tail_normal\n"
-    "li a2, 1\n   mv a1, s3\n   j .Lpath_rv_tail_copy\n"
+    "li t0, 1\n   bne a1, t0, .Lpath_rv_tail_normal\n   lbu t1, 0(s3)\n   li t2, 47\n"
+    "bne t1, t2, .Lpath_rv_tail_normal\n   li a2, 1\n   mv a1, s3\n   j .Lpath_rv_tail_copy\n"
     ".Lpath_rv_tail_normal:\n   add t0, s3, a2\n   sub a2, a1, a2\n   mv a1, t0\n"
-    ".Lpath_rv_tail_copy:\n   addi t0, s1, -1\n"
-    "bleu a2, t0, .Lpath_rv_tail_bounded\n   mv a2, t0\n"
-    ".Lpath_rv_tail_bounded:\n   mv a0, s0\n   call memory_copy_fast_end\n"
-    "sub a0, a0, s0\n   j .Lpath_rv_return\n"
+    ".Lpath_rv_tail_copy:\n   addi t0, s1, -1\n   bleu a2, t0, .Lpath_rv_tail_bounded\n   mv a2, t0\n"
+    ".Lpath_rv_tail_bounded:\n   mv a0, s0\n   call memory_copy_fast_end\n   sub a0, a0, s0\n"
+    "j .Lpath_rv_return\n"
     // dirname copy
-    ".Lpath_rv_head:\n   bnez a2, .Lpath_rv_head_trim\n"
-    "li t0, 1\n   beq s1, t0, .Lpath_rv_head_cap1\n"
+    ".Lpath_rv_head:\n   bnez a2, .Lpath_rv_head_trim\n   li t0, 1\n   beq s1, t0, .Lpath_rv_head_cap1\n"
     "li t1, 46\n   sb t1, 0(s0)\n   sb zero, 1(s0)\n   li a0, 1\n"
     "j .Lpath_rv_return\n"
-    ".Lpath_rv_head_cap1:\n   sb zero, 0(s0)\n   li a0, 0\n"
-    "j .Lpath_rv_return\n"
-    ".Lpath_rv_head_trim:\n   li t0, 2\n"
-    "bltu a2, t0, .Lpath_rv_head_copy\n   add t1, s3, a2\n"
-    "lbu t2, -1(t1)\n   li t3, 47\n   bne t2, t3, .Lpath_rv_head_copy\n"
-    "addi a2, a2, -1\n   j .Lpath_rv_head_trim\n"
-    ".Lpath_rv_head_copy:\n   addi t0, s1, -1\n"
-    "bleu a2, t0, .Lpath_rv_head_bounded\n   mv a2, t0\n"
-    ".Lpath_rv_head_bounded:\n   mv a0, s0\n   mv a1, s3\n"
-    "call memory_copy_fast_end\n   sub a0, a0, s0\n"
-    ".Lpath_rv_return:\n   ld ra, 40(sp)\n   ld s0, 32(sp)\n"
-    "ld s1, 24(sp)\n   ld s2, 16(sp)\n   ld s3, 8(sp)\n"
-    "addi sp, sp, 48\n"
+    ".Lpath_rv_head_cap1:\n   sb zero, 0(s0)\n   li a0, 0\n   j .Lpath_rv_return\n"
+    ".Lpath_rv_head_trim:\n   li t0, 2\n   bltu a2, t0, .Lpath_rv_head_copy\n   add t1, s3, a2\n"
+    "lbu t2, -1(t1)\n   li t3, 47\n   bne t2, t3, .Lpath_rv_head_copy\n   addi a2, a2, -1\n"
+    "j .Lpath_rv_head_trim\n"
+    ".Lpath_rv_head_copy:\n   addi t0, s1, -1\n   bleu a2, t0, .Lpath_rv_head_bounded\n   mv a2, t0\n"
+    ".Lpath_rv_head_bounded:\n   mv a0, s0\n   mv a1, s3\n   call memory_copy_fast_end\n"
+    "sub a0, a0, s0\n"
+    ".Lpath_rv_return:\n   ld ra, 40(sp)\n   ld s0, 32(sp)\n   ld s1, 24(sp)\n"
+    "ld s2, 16(sp)\n   ld s3, 8(sp)\n   addi sp, sp, 48\n"
     ASM_RET
     // writer basename, with root retaining its slash
-    ".Lpath_rv_writer:\n   li t0, 1\n   bne a1, t0, .Lpath_rv_writer_normal\n"
-    "lbu t1, 0(s3)\n   li t2, 47\n   bne t1, t2, .Lpath_rv_writer_normal\n"
-    "mv a0, s3\n   li a1, 1\n   j .Lpath_rv_writer_call\n"
+    ".Lpath_rv_writer:\n   li t0, 1\n   bne a1, t0, .Lpath_rv_writer_normal\n   lbu t1, 0(s3)\n"
+    "li t2, 47\n   bne t1, t2, .Lpath_rv_writer_normal\n   mv a0, s3\n   li a1, 1\n"
+    "j .Lpath_rv_writer_call\n"
     ".Lpath_rv_writer_normal:\n   add a0, s3, a2\n   sub a1, a1, a2\n"
     ".Lpath_rv_writer_call:\n   mv t5, s0\n   ld ra, 40(sp)\n   ld s0, 32(sp)\n"
-    "ld s1, 24(sp)\n   ld s2, 16(sp)\n   ld s3, 8(sp)\n"
-    "addi sp, sp, 48\n   jr t5\n"
+    "ld s1, 24(sp)\n   ld s2, 16(sp)\n   ld s3, 8(sp)\n   addi sp, sp, 48\n"
+    "jr t5\n"
     ASM_LOCAL_END(path_split_core)
 
     ASM_FUNC(path_basename)
@@ -9357,21 +9209,18 @@ __asm__(
     ASM_END(path_head_copy)
 
     ASM_FUNC(path_join)
-    "beqz a1, 8f\n   addi sp, sp, -48\n   sd ra, 40(sp)\n"
-    "sd s0, 32(sp)\n   sd s1, 24(sp)\n   sd s2, 16(sp)\n"
-    "sd s3, 8(sp)\n   sd s4, 0(sp)\n   mv s0, a0\n   mv s1, a1\n"
-    "mv s2, a2\n   mv s3, a3\n   mv a0, s2\n   addi a1, s1, -1\n"
-    "call string_length_max\n   mv s4, a0\n   mv a0, s0\n   mv a1, s2\n"
-    "mv a2, s4\n   call memory_copy_fast\n   beqz s4, 2f\n"
-    "add t0, s0, s4\n   lbu t1, -1(t0)\n   li t2, 47\n   beq t1, t2, 2f\n"
-    "addi t0, s4, 1\n   bgeu t0, s1, 2f\n   add t1, s0, s4\n"
+    "beqz a1, 8f\n   addi sp, sp, -48\n   sd ra, 40(sp)\n   sd s0, 32(sp)\n"
+    "sd s1, 24(sp)\n   sd s2, 16(sp)\n   sd s3, 8(sp)\n   sd s4, 0(sp)\n"
+    "mv s0, a0\n   mv s1, a1\n   mv s2, a2\n   mv s3, a3\n"
+    "mv a0, s2\n   addi a1, s1, -1\n   call string_length_max\n   mv s4, a0\n"
+    "mv a0, s0\n   mv a1, s2\n   mv a2, s4\n   call memory_copy_fast\n"
+    "beqz s4, 2f\n   add t0, s0, s4\n   lbu t1, -1(t0)\n   li t2, 47\n"
+    "beq t1, t2, 2f\n   addi t0, s4, 1\n   bgeu t0, s1, 2f\n   add t1, s0, s4\n"
     "sb t2, 0(t1)\n   mv s4, t0\n"
-    "2:  addi a1, s1, -1\n   sub a1, a1, s4\n   mv a0, s3\n"
-    "call string_length_max\n   mv a2, a0\n   add a0, s0, s4\n   mv a1, s3\n"
-    "call memory_copy_fast_end\n   sub a0, a0, s0\n"
-    "ld ra, 40(sp)\n   ld s0, 32(sp)\n   ld s1, 24(sp)\n"
-    "ld s2, 16(sp)\n   ld s3, 8(sp)\n   ld s4, 0(sp)\n"
-    "addi sp, sp, 48\n"
+    "2:  addi a1, s1, -1\n   sub a1, a1, s4\n   mv a0, s3\n   call string_length_max\n"
+    "mv a2, a0\n   add a0, s0, s4\n   mv a1, s3\n   call memory_copy_fast_end\n"
+    "sub a0, a0, s0\n   ld ra, 40(sp)\n   ld s0, 32(sp)\n   ld s1, 24(sp)\n"
+    "ld s2, 16(sp)\n   ld s3, 8(sp)\n   ld s4, 0(sp)\n   addi sp, sp, 48\n"
     ASM_RET
     "8:  li a0, 0\n"
     ASM_RET
@@ -9432,10 +9281,9 @@ __asm__(
     "        .ascii \"00010203040506070809101112131415161718192021222324252627282930313233343536373839404142434445464748495051525354555657585960616263646566676869707172737475767778798081828384858687888990919293949596979899\"\n"
     ASM_SECTION
 ASM_FUNC(positive_to_string)
-    "addi sp, sp, -48\n   sd ra, 40(sp)\n   sd a0, 0(sp)\n"
-    "addi a0, sp, 40\n   call positive_digits_core\n"
-    "ld t6, 0(sp)\n   jalr t6\n"
-    "ld ra, 40(sp)\n   addi sp, sp, 48\n"
+    "addi sp, sp, -48\n   sd ra, 40(sp)\n   sd a0, 0(sp)\n   addi a0, sp, 40\n"
+    "call positive_digits_core\n   ld t6, 0(sp)\n   jalr t6\n   ld ra, 40(sp)\n"
+    "addi sp, sp, 48\n"
     ASM_RET
     ASM_END(positive_to_string)
     ASM_LOCAL_FUNC(positive_digits_core)
@@ -9445,28 +9293,21 @@ ASM_FUNC(positive_to_string)
     //       table writes exactly the pair instead of writing 00 and stepping
     //       over its first byte as the old common path did.
     //
-    "li a3, 99\n   bltu a3, a1, 1f\n"
-    "sltiu a4, a1, 10\n   bnez a4, .Lpositive_digits_riscv64_one\n"
-    "lla t3, digit_pairs\n"
-    "slli a2, a1, 1\n   add a2, t3, a2\n   lhu a2, 0(a2)\n   sh a2, -2(t6)\n"
-    "addi a0, t6, -2\n   li a1, 2\n"
+    "li a3, 99\n   bltu a3, a1, 1f\n   sltiu a4, a1, 10\n   bnez a4, .Lpositive_digits_riscv64_one\n"
+    "lla t3, digit_pairs\n   slli a2, a1, 1\n   add a2, t3, a2\n   lhu a2, 0(a2)\n"
+    "sh a2, -2(t6)\n   addi a0, t6, -2\n   li a1, 2\n"
     ASM_RET
-    ".Lpositive_digits_riscv64_one:\n"
-    "addi a2, a1, 48\n   sb a2, -1(t6)\n"
-    "addi a0, t6, -1\n   li a1, 1\n"
+    ".Lpositive_digits_riscv64_one:\n   addi a2, a1, 48\n   sb a2, -1(t6)\n   addi a0, t6, -1\n"
+    "li a1, 1\n"
     ASM_RET
-    "1:  lla t3, digit_pairs\n"
-    "li t1, 5243\n   li t4, 100\n   li t0, 0\n   mv a7, a1\n"
-    "li a3, 9999\n   bltu a3, a1, 2f\n"
-    "mv a2, a1\n"
+    "1:  lla t3, digit_pairs\n   li t1, 5243\n   li t4, 100\n   li t0, 0\n"
+    "mv a7, a1\n   li a3, 9999\n   bltu a3, a1, 2f\n   mv a2, a1\n"
     "mul a3, a2, t1\n   srli a3, a3, 19\n   mul a4, a3, t4\n   sub a4, a2, a4\n"
     "slli a2, a3, 1\n   add a2, t3, a2\n   lhu a2, 0(a2)\n   sh a2, -4(t6)\n"
     "slli a2, a4, 1\n   add a2, t3, a2\n   lhu a2, 0(a2)\n   sh a2, -2(t6)\n"
     "j .Lpositive_digits_riscv64_four_done\n"
-    "2:  li t2, 1759218605\n   li t5, 10000\n"
-    "li a3, 99999999\n   bltu a3, a1, 3f\n"
-    "mv a2, a1\n"
-    "mul a3, a2, t2\n   srli a3, a3, 44  # the chunk / 10000\n"
+    "2:  li t2, 1759218605\n   li t5, 10000\n   li a3, 99999999\n   bltu a3, a1, 3f\n"
+    "mv a2, a1\n   mul a3, a2, t2\n   srli a3, a3, 44  # the chunk / 10000\n"
     "mul a4, a3, t5\n   sub a4, a2, a4  # the chunk % 10000\n"
     "mul a5, a3, t1\n   srli a5, a5, 19\n   mul a2, a5, t4\n   sub a3, a3, a2\n"
     "slli a2, a5, 1\n   add a2, t3, a2\n   lhu a2, 0(a2)\n   sh a2, -8(t6)\n"
@@ -9487,15 +9328,13 @@ ASM_FUNC(positive_to_string)
     "mul a5, a4, t1\n   srli a5, a5, 19\n   mul a2, a5, t4\n   sub a4, a4, a2\n"
     "slli a2, a5, 1\n   add a2, t3, a2\n   lhu a2, 0(a2)\n   sh a2, -4(t6)\n"
     "slli a2, a4, 1\n   add a2, t3, a2\n   lhu a2, 0(a2)\n   sh a2, -2(t6)\n"
-    "li a3, 9999\n   bltu a3, a0, 4f\n"
-    "mv a2, a0\n   mv a7, a0\n   li t0, 8\n"
-    "mul a3, a2, t1\n   srli a3, a3, 19\n   mul a4, a3, t4\n   sub a4, a2, a4\n"
-    "slli a2, a3, 1\n   add a2, t3, a2\n   lhu a2, 0(a2)\n   sh a2, -12(t6)\n"
-    "slli a2, a4, 1\n   add a2, t3, a2\n   lhu a2, 0(a2)\n   sh a2, -10(t6)\n"
-    "j 9f\n"
-    "4:  li a3, 99999999\n   bltu a3, a0, 5f\n"
-    "mv a2, a0\n   mv a7, a0\n   li t0, 8\n"
-    "mul a3, a2, t2\n   srli a3, a3, 44  # the chunk / 10000\n"
+    "li a3, 9999\n   bltu a3, a0, 4f\n   mv a2, a0\n   mv a7, a0\n"
+    "li t0, 8\n   mul a3, a2, t1\n   srli a3, a3, 19\n   mul a4, a3, t4\n"
+    "sub a4, a2, a4\n   slli a2, a3, 1\n   add a2, t3, a2\n   lhu a2, 0(a2)\n"
+    "sh a2, -12(t6)\n   slli a2, a4, 1\n   add a2, t3, a2\n   lhu a2, 0(a2)\n"
+    "sh a2, -10(t6)\n   j 9f\n"
+    "4:  li a3, 99999999\n   bltu a3, a0, 5f\n   mv a2, a0\n   mv a7, a0\n"
+    "li t0, 8\n   mul a3, a2, t2\n   srli a3, a3, 44  # the chunk / 10000\n"
     "mul a4, a3, t5\n   sub a4, a2, a4  # the chunk % 10000\n"
     "mul a5, a3, t1\n   srli a5, a5, 19\n   mul a2, a5, t4\n   sub a3, a3, a2\n"
     "slli a2, a5, 1\n   add a2, t3, a2\n   lhu a2, 0(a2)\n   sh a2, -16(t6)\n"
@@ -9504,15 +9343,10 @@ ASM_FUNC(positive_to_string)
     "slli a2, a5, 1\n   add a2, t3, a2\n   lhu a2, 0(a2)\n   sh a2, -12(t6)\n"
     "slli a2, a4, 1\n   add a2, t3, a2\n   lhu a2, 0(a2)\n   sh a2, -10(t6)\n"
     "j 7f\n"
-    //
-    //       Seventeen digits or more, which the top of the type is: the third
-    //       chunk is at most 1844, so four characters cover it.
-    //
     "5:  lla a5, ten_powers\n   ld a6, 160(a5)  # the block above had the temporaries\n"
-    "mulhu a3, a0, a6\n   srli a3, a3, 26\n"
-    "ld a6, 64(a5)\n   mul a4, a3, a6\n   sub a2, a0, a4  # the middle eight\n"
-    "mv a0, a3\n"
-    "mul a3, a2, t2\n   srli a3, a3, 44  # the chunk / 10000\n"
+    "mulhu a3, a0, a6\n   srli a3, a3, 26\n   ld a6, 64(a5)\n   mul a4, a3, a6\n"
+    "sub a2, a0, a4  # the middle eight\n"
+    "mv a0, a3\n   mul a3, a2, t2\n   srli a3, a3, 44  # the chunk / 10000\n"
     "mul a4, a3, t5\n   sub a4, a2, a4  # the chunk % 10000\n"
     "mul a5, a3, t1\n   srli a5, a5, 19\n   mul a2, a5, t4\n   sub a3, a3, a2\n"
     "slli a2, a5, 1\n   add a2, t3, a2\n   lhu a2, 0(a2)\n   sh a2, -16(t6)\n"
@@ -9520,51 +9354,35 @@ ASM_FUNC(positive_to_string)
     "mul a5, a4, t1\n   srli a5, a5, 19\n   mul a2, a5, t4\n   sub a4, a4, a2\n"
     "slli a2, a5, 1\n   add a2, t3, a2\n   lhu a2, 0(a2)\n   sh a2, -12(t6)\n"
     "slli a2, a4, 1\n   add a2, t3, a2\n   lhu a2, 0(a2)\n   sh a2, -10(t6)\n"
-    "mv a2, a0\n   mv a7, a0\n   li t0, 16\n"
-    "mul a3, a2, t1\n   srli a3, a3, 19\n   mul a4, a3, t4\n   sub a4, a2, a4\n"
-    "slli a2, a3, 1\n   add a2, t3, a2\n   lhu a2, 0(a2)\n   sh a2, -20(t6)\n"
-    "slli a2, a4, 1\n   add a2, t3, a2\n   lhu a2, 0(a2)\n   sh a2, -18(t6)\n"
+    "mv a2, a0\n   mv a7, a0\n   li t0, 16\n   mul a3, a2, t1\n"
+    "srli a3, a3, 19\n   mul a4, a3, t4\n   sub a4, a2, a4\n   slli a2, a3, 1\n"
+    "add a2, t3, a2\n   lhu a2, 0(a2)\n   sh a2, -20(t6)\n   slli a2, a4, 1\n"
+    "add a2, t3, a2\n   lhu a2, 0(a2)\n   sh a2, -18(t6)\n"
     //
     //       The digit count. a7 is the leading chunk and t0 how many digits
     //       sit under it; the small tail is for a chunk of four digits or
     //       fewer, where the bounds are twelve bit immediates, and the wide
     //       one for a chunk of five to eight, where they are not.
     //
-    "9:  li a3, 4\n"
-    "sltiu a4, a7, 10\n     sub a3, a3, a4\n"
-    "sltiu a4, a7, 100\n    sub a3, a3, a4\n"
-    "sltiu a4, a7, 1000\n   sub a3, a3, a4\n"
-    "add a3, a3, t0\n   j 8f\n"
-    "7:  li a3, 8\n   lla a5, ten_powers\n"
-    "ld a4, 40(a5)\n   sltu a4, a7, a4\n   sub a3, a3, a4\n"
-    "ld a4, 48(a5)\n   sltu a4, a7, a4\n   sub a3, a3, a4\n"
-    "ld a4, 56(a5)\n   sltu a4, a7, a4\n   sub a3, a3, a4\n"
-    "add a3, a3, t0\n"
+    "9:  li a3, 4\n   sltiu a4, a7, 10\n   sub a3, a3, a4\n   sltiu a4, a7, 100\n"
+    "sub a3, a3, a4\n   sltiu a4, a7, 1000\n   sub a3, a3, a4\n   add a3, a3, t0\n"
+    "j 8f\n"
+    "7:  li a3, 8\n   lla a5, ten_powers\n   ld a4, 40(a5)\n   sltu a4, a7, a4\n"
+    "sub a3, a3, a4\n   ld a4, 48(a5)\n   sltu a4, a7, a4\n   sub a3, a3, a4\n"
+    "ld a4, 56(a5)\n   sltu a4, a7, a4\n   sub a3, a3, a4\n   add a3, a3, t0\n"
     "8:  sub a0, t6, a3\n   mv a1, a3\n"
     ASM_RET
-    ".Lpositive_digits_riscv64_four_done:\n"
-    "sltiu a4, a3, 10\n   li a1, 4\n   sub a1, a1, a4\n"
+    ".Lpositive_digits_riscv64_four_done:\n   sltiu a4, a3, 10\n   li a1, 4\n   sub a1, a1, a4\n"
     "sub a0, t6, a1\n"
     ASM_RET
     ASM_LOCAL_END(positive_digits_core)
-    //
-    //       Inside the delimiters on purpose: this file is spliced together by
-    //       routine name, and a table in front of ASM_FUNC belongs to whatever
-    //       was there before rather than to this.
-    //
     ".section .rodata\n   .balign 8\n"
-    "ten_powers:\n"
-    "        .quad 1\n                    .quad 10\n"
-    "        .quad 100\n                  .quad 1000\n"
-    "        .quad 10000\n                .quad 100000\n"
-    "        .quad 1000000\n              .quad 10000000\n"
-    "        .quad 100000000\n            .quad 1000000000\n"
-    "        .quad 10000000000\n          .quad 100000000000\n"
-    "        .quad 1000000000000\n        .quad 10000000000000\n"
-    "        .quad 100000000000000\n      .quad 1000000000000000\n"
-    "        .quad 10000000000000000\n    .quad 100000000000000000\n"
-    "        .quad 1000000000000000000\n  .quad 10000000000000000000\n"
-    "        .quad 0xABCC77118461CEFD  # what dividing by a hundred million is\n"
+    "ten_powers:\n   .quad 1\n   .quad 10\n   .quad 100\n"
+    ".quad 1000\n   .quad 10000\n   .quad 100000\n   .quad 1000000\n"
+    ".quad 10000000\n   .quad 100000000\n   .quad 1000000000\n   .quad 10000000000\n"
+    ".quad 100000000000\n   .quad 1000000000000\n   .quad 10000000000000\n   .quad 100000000000000\n"
+    ".quad 1000000000000000\n   .quad 10000000000000000\n   .quad 100000000000000000\n   .quad 1000000000000000000\n"
+    ".quad 10000000000000000000\n   .quad 0xABCC77118461CEFD  # what dividing by a hundred million is\n"
     ASM_SECTION
     //
     //       positive_into: the x86_64 block carries the shared-core reasoning.
@@ -9589,215 +9407,177 @@ ASM_FUNC(positive_to_string)
     "li a4, 0\n   j positive_into_core\n"
     ASM_END(positive_into)
     ASM_LOCAL_FUNC(bipolar_into_core)
-    "bgez a1, positive_into_core\n"
-    "li a5, 45\n   sb a5, 0(a0)\n   addi a0, a0, 1\n"
+    "bgez a1, positive_into_core\n   li a5, 45\n   sb a5, 0(a0)\n   addi a0, a0, 1\n"
     "neg a1, a1\n   ori a4, a4, 1\n   j positive_into_core\n"
     ASM_LOCAL_END(bipolar_into_core)
     ASM_LOCAL_FUNC(positive_into_core)
-    "li a5, 99\n   bltu a5, a1, .Lpositive_into_four\n"
-    "lla t0, digit_pairs\n   slli a2, a1, 1\n   add a2, t0, a2\n"
-    "li a5, 10\n   bgeu a1, a5, 1f\n"
-    "lbu a3, 1(a2)\n   sb a3, 0(a0)\n   li t5, 1\n"
+    "li a5, 99\n   bltu a5, a1, .Lpositive_into_four\n   lla t0, digit_pairs\n   slli a2, a1, 1\n"
+    "add a2, t0, a2\n   li a5, 10\n   bgeu a1, a5, 1f\n   lbu a3, 1(a2)\n"
+    "sb a3, 0(a0)\n   li t5, 1\n   j .Lpositive_into_done\n"
+    "1:  lbu a3, 0(a2)\n   sb a3, 0(a0)\n   lbu a3, 1(a2)\n   sb a3, 1(a0)\n"
+    "li t5, 2\n   j .Lpositive_into_done\n"
+    ".Lpositive_into_four:\n   li a5, 9999\n   bltu a5, a1, .Lpositive_into_wide\n   lla t0, digit_pairs\n"
+    "mv a2, a1\n   li a3, 5243\n   mul a3, a2, a3\n   srli a3, a3, 19\n"
+    "li a5, 100\n   mul a6, a3, a5\n   sub a6, a2, a6\n   slli t1, a3, 1\n"
+    "add t1, t0, t1\n   slli t2, a6, 1\n   add t2, t0, t2\n   li a5, 10\n"
+    "bgeu a3, a5, 2f\n   lbu a7, 1(t1)\n   sb a7, 0(a0)\n   lbu a7, 0(t2)\n"
+    "sb a7, 1(a0)\n   lbu a7, 1(t2)\n   sb a7, 2(a0)\n   li t5, 3\n"
     "j .Lpositive_into_done\n"
-    "1:  lbu a3, 0(a2)\n   sb a3, 0(a0)\n"
-    "lbu a3, 1(a2)\n   sb a3, 1(a0)\n   li t5, 2\n"
-    "j .Lpositive_into_done\n"
-    ".Lpositive_into_four:\n"
-    "li a5, 9999\n   bltu a5, a1, .Lpositive_into_wide\n"
-    "lla t0, digit_pairs\n   mv a2, a1\n   li a3, 5243\n"
-    "mul a3, a2, a3\n   srli a3, a3, 19\n"
-    "li a5, 100\n   mul a6, a3, a5\n   sub a6, a2, a6\n"
-    "slli t1, a3, 1\n   add t1, t0, t1\n"
-    "slli t2, a6, 1\n   add t2, t0, t2\n"
-    "li a5, 10\n   bgeu a3, a5, 2f\n"
-    "lbu a7, 1(t1)\n   sb a7, 0(a0)\n"
-    "lbu a7, 0(t2)\n   sb a7, 1(a0)\n"
-    "lbu a7, 1(t2)\n   sb a7, 2(a0)\n   li t5, 3\n"
-    "j .Lpositive_into_done\n"
-    "2:  lbu a7, 0(t1)\n   sb a7, 0(a0)\n"
-    "lbu a7, 1(t1)\n   sb a7, 1(a0)\n"
-    "lbu a7, 0(t2)\n   sb a7, 2(a0)\n"
-    "lbu a7, 1(t2)\n   sb a7, 3(a0)\n   li t5, 4\n"
+    "2:  lbu a7, 0(t1)\n   sb a7, 0(a0)\n   lbu a7, 1(t1)\n   sb a7, 1(a0)\n"
+    "lbu a7, 0(t2)\n   sb a7, 2(a0)\n   lbu a7, 1(t2)\n   sb a7, 3(a0)\n"
+    "li t5, 4\n"
     // Keep the hot one-through-four-digit finish in front of the much larger
     // wide body. Besides its shorter branch, this keeps the common path in the
     // same instruction-cache neighbourhood as its emitters.
-    ".Lpositive_into_done:\n"
-    "andi a5, a4, 2\n   beqz a5, 4f\n"
-    "add a5, a0, t5\n   sb zero, 0(a5)\n"
+    ".Lpositive_into_done:\n   andi a5, a4, 2\n   beqz a5, 4f\n   add a5, a0, t5\n"
+    "sb zero, 0(a5)\n"
     "4:  andi a4, a4, 1\n   add a0, t5, a4\n"
     ASM_RET
-    ".Lpositive_into_wide:\n"
-    "addi sp, sp, -64\n   sd ra, 56(sp)\n"
-    "sd a0, 0(sp)\n   sd a4, 8(sp)\n"
-    "addi a0, sp, 56\n   call positive_digits_core\n"
-    "sd a1, 16(sp)\n   mv t0, a0\n   ld t1, 0(sp)\n   mv t2, a1\n"
+    ".Lpositive_into_wide:\n   addi sp, sp, -64\n   sd ra, 56(sp)\n   sd a0, 0(sp)\n"
+    "sd a4, 8(sp)\n   addi a0, sp, 56\n   call positive_digits_core\n   sd a1, 16(sp)\n"
+    "mv t0, a0\n   ld t1, 0(sp)\n   mv t2, a1\n"
     // Five through seven are the only initial short lengths that reach this
     // path. Copying their known prefix without pointer/count maintenance
     // removes four loop instructions per byte and never writes past the
     // caller's exact-sized destination.
-    "li a6, 8\n   bgeu t2, a6, .Lpositive_into_copy_eight\n"
-    "lbu t3, 0(t0)\n   sb t3, 0(t1)\n"
-    "lbu t3, 1(t0)\n   sb t3, 1(t1)\n"
-    "lbu t3, 2(t0)\n   sb t3, 2(t1)\n"
-    "lbu t3, 3(t0)\n   sb t3, 3(t1)\n"
-    "lbu t3, 4(t0)\n   sb t3, 4(t1)\n"
-    "addi t4, t2, -5\n   beqz t4, .Lpositive_into_copy_done\n"
-    "lbu t3, 5(t0)\n   sb t3, 5(t1)\n"
-    "addi t4, t4, -1\n   beqz t4, .Lpositive_into_copy_done\n"
-    "lbu t3, 6(t0)\n   sb t3, 6(t1)\n"
+    "li a6, 8\n   bgeu t2, a6, .Lpositive_into_copy_eight\n   lbu t3, 0(t0)\n   sb t3, 0(t1)\n"
+    "lbu t3, 1(t0)\n   sb t3, 1(t1)\n   lbu t3, 2(t0)\n   sb t3, 2(t1)\n"
+    "lbu t3, 3(t0)\n   sb t3, 3(t1)\n   lbu t3, 4(t0)\n   sb t3, 4(t1)\n"
+    "addi t4, t2, -5\n   beqz t4, .Lpositive_into_copy_done\n   lbu t3, 5(t0)\n   sb t3, 5(t1)\n"
+    "addi t4, t4, -1\n   beqz t4, .Lpositive_into_copy_done\n   lbu t3, 6(t0)\n   sb t3, 6(t1)\n"
     "j .Lpositive_into_copy_done\n"
-    ".Lpositive_into_copy_eight:\n"
-    "lbu t3, 0(t0)\n   lbu t4, 1(t0)\n   lbu t5, 2(t0)\n   lbu t6, 3(t0)\n"
-    "lbu a2, 4(t0)\n   lbu a3, 5(t0)\n   lbu a4, 6(t0)\n   lbu a5, 7(t0)\n"
-    "sb t3, 0(t1)\n   sb t4, 1(t1)\n   sb t5, 2(t1)\n   sb t6, 3(t1)\n"
-    "sb a2, 4(t1)\n   sb a3, 5(t1)\n   sb a4, 6(t1)\n   sb a5, 7(t1)\n"
-    "addi t0, t0, 8\n   addi t1, t1, 8\n   addi t2, t2, -8\n"
+    ".Lpositive_into_copy_eight:\n   lbu t3, 0(t0)\n   lbu t4, 1(t0)\n   lbu t5, 2(t0)\n"
+    "lbu t6, 3(t0)\n   lbu a2, 4(t0)\n   lbu a3, 5(t0)\n   lbu a4, 6(t0)\n"
+    "lbu a5, 7(t0)\n   sb t3, 0(t1)\n   sb t4, 1(t1)\n   sb t5, 2(t1)\n"
+    "sb t6, 3(t1)\n   sb a2, 4(t1)\n   sb a3, 5(t1)\n   sb a4, 6(t1)\n"
+    "sb a5, 7(t1)\n   addi t0, t0, 8\n   addi t1, t1, 8\n   addi t2, t2, -8\n"
     "bgeu t2, a6, .Lpositive_into_copy_eight\n"
-    ".Lpositive_into_copy_tail:\n"
-    "beqz t2, .Lpositive_into_copy_done\n"
-    ".Lpositive_into_copy_byte:\n"
-    "lbu t3, 0(t0)\n   sb t3, 0(t1)\n   addi t0, t0, 1\n"
+    ".Lpositive_into_copy_tail:\n   beqz t2, .Lpositive_into_copy_done\n"
+    ".Lpositive_into_copy_byte:\n   lbu t3, 0(t0)\n   sb t3, 0(t1)\n   addi t0, t0, 1\n"
     "addi t1, t1, 1\n   addi t2, t2, -1\n   bnez t2, .Lpositive_into_copy_byte\n"
-    ".Lpositive_into_copy_done:\n"
-    "ld a0, 0(sp)\n   ld t5, 16(sp)\n   ld a4, 8(sp)\n"
-    "andi a5, a4, 2\n   beqz a5, 3f\n"
-    "add a5, a0, t5\n   sb zero, 0(a5)\n"
-    "3:\n"
-    "andi a4, a4, 1\n   add a0, t5, a4\n"
-    "ld ra, 56(sp)\n   addi sp, sp, 64\n"
+    ".Lpositive_into_copy_done:\n   ld a0, 0(sp)\n   ld t5, 16(sp)\n   ld a4, 8(sp)\n"
+    "andi a5, a4, 2\n   beqz a5, 3f\n   add a5, a0, t5\n   sb zero, 0(a5)\n"
+    "3:\n   andi a4, a4, 1\n   add a0, t5, a4\n   ld ra, 56(sp)\n"
+    "addi sp, sp, 64\n"
     ASM_RET
     ASM_LOCAL_END(positive_into_core)
     //       positive_into_padded: the x86_64 block carries the contract. Its
     //       byte moves make no unaligned-access assumption on baseline RV64.
     ASM_FUNC(positive_into_padded)
-    "li t0, 48\n   bne a3, t0, .Lpositive_into_padded_rv_general\n"
-    "li t0, 6\n   beq a2, t0, .Lpositive_into_padded_rv_six_check\n"
-    "li t0, 9\n   bne a2, t0, .Lpositive_into_padded_rv_general\n"
-    "li t0, 1000000000\n   bgeu a1, t0, .Lpositive_into_padded_rv_general\n"
+    "li t0, 48\n   bne a3, t0, .Lpositive_into_padded_rv_general\n   li t0, 6\n   beq a2, t0, .Lpositive_into_padded_rv_six_check\n"
+    "li t0, 9\n   bne a2, t0, .Lpositive_into_padded_rv_general\n   li t0, 1000000000\n   bgeu a1, t0, .Lpositive_into_padded_rv_general\n"
     "li t2, 4\n   j .Lpositive_into_padded_rv_fixed\n"
-    ".Lpositive_into_padded_rv_six_check:\n"
-    "li t0, 1000000\n   bgeu a1, t0, .Lpositive_into_padded_rv_general\n"
+    ".Lpositive_into_padded_rv_six_check:\n   li t0, 1000000\n   bgeu a1, t0, .Lpositive_into_padded_rv_general\n"
     "li t2, 3\n"
-    ".Lpositive_into_padded_rv_fixed:\n"
-    "lla t0, digit_pairs\n   add t1, a0, a2\n"
-    "li t3, 1374389535\n   li t4, 100\n"
-    ".Lpositive_into_padded_rv_pair_loop:\n"
-    "mul t5, a1, t3\n   srli t5, t5, 37\n   mul t6, t5, t4\n   sub t6, a1, t6\n"
-    "slli a4, t6, 1\n   add a4, t0, a4\n"
-    "lbu a5, 0(a4)\n   lbu a6, 1(a4)\n   addi t1, t1, -2\n"
-    "sb a5, 0(t1)\n   sb a6, 1(t1)\n   mv a1, t5\n"
-    "addi t2, t2, -1\n   bnez t2, .Lpositive_into_padded_rv_pair_loop\n"
-    "li t0, 9\n   bne a2, t0, .Lpositive_into_padded_rv_fixed_done\n"
-    "addi a1, a1, 48\n   sb a1, 0(a0)\n"
+    ".Lpositive_into_padded_rv_fixed:\n   lla t0, digit_pairs\n   add t1, a0, a2\n   li t3, 1374389535\n"
+    "li t4, 100\n"
+    ".Lpositive_into_padded_rv_pair_loop:\n   mul t5, a1, t3\n   srli t5, t5, 37\n   mul t6, t5, t4\n"
+    "sub t6, a1, t6\n   slli a4, t6, 1\n   add a4, t0, a4\n   lbu a5, 0(a4)\n"
+    "lbu a6, 1(a4)\n   addi t1, t1, -2\n   sb a5, 0(t1)\n   sb a6, 1(t1)\n"
+    "mv a1, t5\n   addi t2, t2, -1\n   bnez t2, .Lpositive_into_padded_rv_pair_loop\n   li t0, 9\n"
+    "bne a2, t0, .Lpositive_into_padded_rv_fixed_done\n   addi a1, a1, 48\n   sb a1, 0(a0)\n"
     ".Lpositive_into_padded_rv_fixed_done:\n   mv a0, a2\n"
     ASM_RET
-    ".Lpositive_into_padded_rv_general:\n"
-    "addi sp, sp, -48\n   sd ra, 40(sp)\n   sd s0, 32(sp)\n"
-    "sd s1, 24(sp)\n   sd s2, 16(sp)\n"
-    "mv s0, a0\n   mv s1, a2\n   andi s2, a3, 255\n"
-    "call positive_into\n"
-    "beqz s2, .Lpositive_into_padded_rv_done\n"
-    "bgeu a0, s1, .Lpositive_into_padded_rv_done\n"
+    ".Lpositive_into_padded_rv_general:\n   addi sp, sp, -48\n   sd ra, 40(sp)\n   sd s0, 32(sp)\n"
+    "sd s1, 24(sp)\n   sd s2, 16(sp)\n   mv s0, a0\n   mv s1, a2\n"
+    "andi s2, a3, 255\n   call positive_into\n   beqz s2, .Lpositive_into_padded_rv_done\n   bgeu a0, s1, .Lpositive_into_padded_rv_done\n"
     "sub t0, s1, a0\n   add t2, s0, t0\n   mv t1, a0\n"
-    ".Lpositive_into_padded_rv_move:\n"
-    "addi t1, t1, -1\n   add t3, s0, t1\n   lbu t4, 0(t3)\n"
-    "add t3, t2, t1\n   sb t4, 0(t3)\n"
-    "bnez t1, .Lpositive_into_padded_rv_move\n"
-    "li t1, 0\n"
-    ".Lpositive_into_padded_rv_fill:\n"
-    "add t2, s0, t1\n   sb s2, 0(t2)\n   addi t1, t1, 1\n"
+    ".Lpositive_into_padded_rv_move:\n   addi t1, t1, -1\n   add t3, s0, t1\n   lbu t4, 0(t3)\n"
+    "add t3, t2, t1\n   sb t4, 0(t3)\n   bnez t1, .Lpositive_into_padded_rv_move\n   li t1, 0\n"
+    ".Lpositive_into_padded_rv_fill:\n   add t2, s0, t1\n   sb s2, 0(t2)\n   addi t1, t1, 1\n"
     "bltu t1, t0, .Lpositive_into_padded_rv_fill\n   mv a0, s1\n"
-    ".Lpositive_into_padded_rv_done:\n"
-    "ld s2, 16(sp)\n   ld s1, 24(sp)\n   ld s0, 32(sp)\n"
+    ".Lpositive_into_padded_rv_done:\n   ld s2, 16(sp)\n   ld s1, 24(sp)\n   ld s0, 32(sp)\n"
     "ld ra, 40(sp)\n   addi sp, sp, 48\n"
     ASM_RET
     ASM_END(positive_into_padded)
     //       positive_into_pair: the x86_64 block carries the contract. The
     //       two byte stores avoid an alignment promise RV64 does not make.
     ASM_FUNC(positive_into_pair)
-    "lla t0, digit_pairs\n   slli t1, a1, 1\n   add t0, t0, t1\n"
-    "lbu t1, 0(t0)\n   lbu t2, 1(t0)\n"
-    "sb t1, 0(a0)\n   sb t2, 1(a0)\n   li a0, 2\n"
+    "lla t0, digit_pairs\n   slli t1, a1, 1\n   add t0, t0, t1\n   lbu t1, 0(t0)\n"
+    "lbu t2, 1(t0)\n   sb t1, 0(a0)\n   sb t2, 1(a0)\n   li a0, 2\n"
     ASM_RET
     ASM_END(positive_into_pair)
     ASM_FUNC(writer_fill)
-    "beqz a1,2f\n addi sp,sp,-32\n sd ra,24(sp)\n sd s0,16(sp)\n sd s1,8(sp)\n mv s0,a0\n mv s1,a1\n sb a2,0(sp)\n"
+    "beqz a1,2f\n   addi sp,sp,-32\n   sd ra,24(sp)\n   sd s0,16(sp)\n"
+    "sd s1,8(sp)\n   mv s0,a0\n   mv s1,a1\n   sb a2,0(sp)\n"
     "1: mv a0,sp\n li a1,1\n" ASM_CALL("s0")
-    "addi s1,s1,-1\n bnez s1,1b\n ld s1,8(sp)\n ld s0,16(sp)\n ld ra,24(sp)\n addi sp,sp,32\n"
+    "addi s1,s1,-1\n   bnez s1,1b\n   ld s1,8(sp)\n   ld s0,16(sp)\n"
+    "ld ra,24(sp)\n   addi sp,sp,32\n"
     "2:\n" ASM_RET
     ASM_END(writer_fill)
     // The x86_64 block documents the shared private convention. Baseline
     // integer instructions and byte accesses only.
     ASM_LOCAL_FUNC(writer_field_core)
-    "addi sp, sp, -16\n   sd ra, 8(sp)\n"
-    "andi t0, s4, 256\n   bnez t0, .Lwriter_field_core_rv_left\n"
-    "mv a0, s0\n   mv a1, s3\n   andi a2, s4, 255\n"
-    "call writer_fill\n   beqz s2, .Lwriter_field_core_rv_done\n"
-    "mv a0, s1\n   mv a1, s2\n   mv t0, s0\n"
+    "addi sp, sp, -16\n   sd ra, 8(sp)\n   andi t0, s4, 256\n   bnez t0, .Lwriter_field_core_rv_left\n"
+    "mv a0, s0\n   mv a1, s3\n   andi a2, s4, 255\n   call writer_fill\n"
+    "beqz s2, .Lwriter_field_core_rv_done\n   mv a0, s1\n   mv a1, s2\n   mv t0, s0\n"
     ASM_CALL("t0")
     "j .Lwriter_field_core_rv_done\n"
-    ".Lwriter_field_core_rv_left:\n   beqz s2, .Lwriter_field_core_rv_left_fill\n"
-    "mv a0, s1\n   mv a1, s2\n   mv t0, s0\n"
+    ".Lwriter_field_core_rv_left:\n   beqz s2, .Lwriter_field_core_rv_left_fill\n   mv a0, s1\n   mv a1, s2\n"
+    "mv t0, s0\n"
     ASM_CALL("t0")
-    ".Lwriter_field_core_rv_left_fill:\n   mv a0, s0\n   mv a1, s3\n"
-    "andi a2, s4, 255\n   call writer_fill\n"
+    ".Lwriter_field_core_rv_left_fill:\n   mv a0, s0\n   mv a1, s3\n   andi a2, s4, 255\n"
+    "call writer_fill\n"
     ".Lwriter_field_core_rv_done:\n   ld ra, 8(sp)\n   addi sp, sp, 16\n"
     ASM_RET
     ASM_LOCAL_END(writer_field_core)
     ASM_FUNC(writer_field)
-    "li t0, 0\n   bgeu a2, a3, .Lwriter_field_rv_counted\n"
-    "sub t0, a3, a2\n   .Lwriter_field_rv_counted:\n"
-    "beqz t0, .Lwriter_field_rv_body_only\n   beqz a2, .Lwriter_field_rv_empty\n"
-    "addi sp, sp, -64\n   sd ra, 56(sp)\n   sd s0, 48(sp)\n"
-    "sd s1, 40(sp)\n   sd s2, 32(sp)\n   sd s3, 24(sp)\n"
-    "sd s4, 16(sp)\n   mv s0, a0\n   mv s1, a1\n   mv s2, a2\n"
-    "mv s3, t0\n   andi s4, a4, 255\n   andi t1, a5, 255\n   beqz t1, 1f\n"
-    "ori s4, s4, 256\n   1: call writer_field_core\n"
-    "ld s4, 16(sp)\n   ld s3, 24(sp)\n   ld s2, 32(sp)\n"
-    "ld s1, 40(sp)\n   ld s0, 48(sp)\n   ld ra, 56(sp)\n"
-    "addi sp, sp, 64\n"
+    "li t0, 0\n   bgeu a2, a3, .Lwriter_field_rv_counted\n   sub t0, a3, a2\n"
+    ".Lwriter_field_rv_counted:\n   beqz t0, .Lwriter_field_rv_body_only\n   beqz a2, .Lwriter_field_rv_empty\n"
+    "addi sp, sp, -64\n   sd ra, 56(sp)\n   sd s0, 48(sp)\n   sd s1, 40(sp)\n"
+    "sd s2, 32(sp)\n   sd s3, 24(sp)\n   sd s4, 16(sp)\n   mv s0, a0\n"
+    "mv s1, a1\n   mv s2, a2\n   mv s3, t0\n   andi s4, a4, 255\n"
+    "andi t1, a5, 255\n   beqz t1, 1f\n   ori s4, s4, 256\n"
+    "1: call writer_field_core\n   ld s4, 16(sp)\n   ld s3, 24(sp)\n   ld s2, 32(sp)\n"
+    "ld s1, 40(sp)\n   ld s0, 48(sp)\n   ld ra, 56(sp)\n   addi sp, sp, 64\n"
     ASM_RET
-    ".Lwriter_field_rv_body_only:\n   beqz a2, .Lwriter_field_rv_return\n"
-    "addi sp, sp, -16\n   sd ra, 8(sp)\n   mv t0, a0\n"
-    "mv a0, a1\n   mv a1, a2\n"
+    ".Lwriter_field_rv_body_only:\n   beqz a2, .Lwriter_field_rv_return\n   addi sp, sp, -16\n   sd ra, 8(sp)\n"
+    "mv t0, a0\n   mv a0, a1\n   mv a1, a2\n"
     ASM_CALL("t0")
     "ld ra, 8(sp)\n   addi sp, sp, 16\n"
     ".Lwriter_field_rv_return:\n"
     ASM_RET
-    ".Lwriter_field_rv_empty:\n   mv a1, a3\n   andi a2, a4, 255\n"
-    "tail writer_fill\n"
+    ".Lwriter_field_rv_empty:\n   mv a1, a3\n   andi a2, a4, 255\n   tail writer_fill\n"
     ASM_END(writer_field)
     ASM_FUNC(string_to_field)
-    "addi sp, sp, -64\n   sd ra, 56(sp)\n   sd s0, 48(sp)\n"
-    "sd s1, 40(sp)\n   sd s2, 32(sp)\n   sd s3, 24(sp)\n"
-    "sd s4, 16(sp)\n   mv s0, a0\n   mv s1, a1\n   mv s2, a2\n"
-    "andi s4, a3, 255\n   andi t0, a4, 255\n   beqz t0, 1f\n   ori s4, s4, 256\n"
-    "1: mv a0, s1\n   call string_length\n   mv t0, s2\n   mv s2, a0\n"
-    "mv s3, zero\n   bgeu s2, t0, .Lstring_to_field_rv_counted\n"
-    "sub s3, t0, s2\n"
-    ".Lstring_to_field_rv_counted:\n   bnez s3, .Lstring_to_field_rv_general\n"
-    "beqz s2, .Lstring_to_field_rv_done\n   mv a0, s1\n   mv a1, s2\n"
-    "mv t0, s0\n"
+    "addi sp, sp, -64\n   sd ra, 56(sp)\n   sd s0, 48(sp)\n   sd s1, 40(sp)\n"
+    "sd s2, 32(sp)\n   sd s3, 24(sp)\n   sd s4, 16(sp)\n   mv s0, a0\n"
+    "mv s1, a1\n   mv s2, a2\n   andi s4, a3, 255\n   andi t0, a4, 255\n"
+    "beqz t0, 1f\n   ori s4, s4, 256\n"
+    "1:  mv a0, s1\n   call string_length\n   mv t0, s2\n   mv s2, a0\n"
+    "mv s3, zero\n   bgeu s2, t0, .Lstring_to_field_rv_counted\n   sub s3, t0, s2\n"
+    ".Lstring_to_field_rv_counted:\n   bnez s3, .Lstring_to_field_rv_general\n   beqz s2, .Lstring_to_field_rv_done\n"
+    "mv a0, s1\n   mv a1, s2\n   mv t0, s0\n"
     ASM_CALL("t0")
     "j .Lstring_to_field_rv_done\n"
     ".Lstring_to_field_rv_general:\n   call writer_field_core\n"
-    ".Lstring_to_field_rv_done:\n   ld s4, 16(sp)\n   ld s3, 24(sp)\n"
-    "ld s2, 32(sp)\n   ld s1, 40(sp)\n   ld s0, 48(sp)\n"
-    "ld ra, 56(sp)\n   addi sp, sp, 64\n"
+    ".Lstring_to_field_rv_done:\n   ld s4, 16(sp)\n   ld s3, 24(sp)\n   ld s2, 32(sp)\n"
+    "ld s1, 40(sp)\n   ld s0, 48(sp)\n   ld ra, 56(sp)\n   addi sp, sp, 64\n"
     ASM_RET
     ASM_END(string_to_field)
     ASM_FUNC(positive_to_base_field)
-    "addi sp,sp,-192\n sd ra,184(sp)\n sd s0,176(sp)\n sd s1,168(sp)\n sd s2,160(sp)\n sd s3,152(sp)\n sd s4,144(sp)\n sd s5,136(sp)\n sd s6,128(sp)\n sd s7,120(sp)\n sd s8,112(sp)\n"
-    "mv s0,a0\n mv s1,a3\n mv s2,a4\n mv s3,a5\n addi a0,sp,32\n srli a3,s3,26\n andi a3,a3,1\n call positive_into_base\n mv s4,a0\n beqz s4,9f\n"
-    "sb s3,96(sp)\n srli t0,s3,8\n sb t0,97(sp)\n srli t0,t0,8\n sb t0,98(sp)\n srli s7,s3,24\n andi s7,s7,3\n li t0,2\n bgeu t0,s7,1f\n li s7,2\n"
-    "1: andi t0,s3,255\n snez s8,t0\n add s8,s8,s7\n li s5,0\n bgez s2,2f\n srli t0,s3,28\n andi t0,t0,1\n beqz t0,3f\n srli t0,s3,27\n andi t0,t0,1\n bnez t0,3f\n add t0,s8,s4\n bgeu t0,s1,3f\n sub s5,s1,t0\n j 3f\n"
-    "2: bgeu s4,s2,3f\n sub s5,s2,s4\n"
-    "3: add t0,s8,s4\n add t0,t0,s5\n li s6,0\n bgeu t0,s1,4f\n sub s6,s1,t0\n"
-    "4: srli t0,s3,27\n andi t0,t0,1\n bnez t0,5f\n mv a0,s0\n mv a1,s6\n li a2,32\n call writer_fill\n"
+    "addi sp,sp,-192\n   sd ra,184(sp)\n   sd s0,176(sp)\n   sd s1,168(sp)\n"
+    "sd s2,160(sp)\n   sd s3,152(sp)\n   sd s4,144(sp)\n   sd s5,136(sp)\n"
+    "sd s6,128(sp)\n   sd s7,120(sp)\n   sd s8,112(sp)\n   mv s0,a0\n"
+    "mv s1,a3\n   mv s2,a4\n   mv s3,a5\n   addi a0,sp,32\n"
+    "srli a3,s3,26\n   andi a3,a3,1\n   call positive_into_base\n   mv s4,a0\n"
+    "beqz s4,9f\n   sb s3,96(sp)\n   srli t0,s3,8\n   sb t0,97(sp)\n"
+    "srli t0,t0,8\n   sb t0,98(sp)\n   srli s7,s3,24\n   andi s7,s7,3\n"
+    "li t0,2\n   bgeu t0,s7,1f\n   li s7,2\n"
+    "1:  andi t0,s3,255\n   snez s8,t0\n   add s8,s8,s7\n   li s5,0\n"
+    "bgez s2,2f\n   srli t0,s3,28\n   andi t0,t0,1\n   beqz t0,3f\n"
+    "srli t0,s3,27\n   andi t0,t0,1\n   bnez t0,3f\n   add t0,s8,s4\n"
+    "bgeu t0,s1,3f\n   sub s5,s1,t0\n   j 3f\n"
+    "2:  bgeu s4,s2,3f\n   sub s5,s2,s4\n"
+    "3:  add t0,s8,s4\n   add t0,t0,s5\n   li s6,0\n   bgeu t0,s1,4f\n"
+    "sub s6,s1,t0\n"
+    "4:  srli t0,s3,27\n   andi t0,t0,1\n   bnez t0,5f\n   mv a0,s0\n"
+    "mv a1,s6\n   li a2,32\n   call writer_fill\n"
     "5: lbu t0,96(sp)\n beqz t0,6f\n addi a0,sp,96\n li a1,1\n" ASM_CALL("s0")
     "6: beqz s7,7f\n addi a0,sp,97\n mv a1,s7\n" ASM_CALL("s0")
     "7: mv a0,s0\n mv a1,s5\n li a2,48\n call writer_fill\n addi a0,sp,32\n mv a1,s4\n" ASM_CALL("s0")
-    "srli t0,s3,27\n andi t0,t0,1\n beqz t0,9f\n mv a0,s0\n mv a1,s6\n li a2,32\n call writer_fill\n"
+    "srli t0,s3,27\n   andi t0,t0,1\n   beqz t0,9f\n   mv a0,s0\n"
+    "mv a1,s6\n   li a2,32\n   call writer_fill\n"
     "9: ld s8,112(sp)\n ld s7,120(sp)\n ld s6,128(sp)\n ld s5,136(sp)\n ld s4,144(sp)\n ld s3,152(sp)\n ld s2,160(sp)\n ld s1,168(sp)\n ld s0,176(sp)\n ld ra,184(sp)\n addi sp,sp,192\n" ASM_RET
     ASM_END(positive_to_base_field)
     //       positive_to_padded: the x86_64 block carries the contract. This
@@ -9805,23 +9585,22 @@ ASM_FUNC(positive_to_string)
     //       make no unaligned word-access promise.
     ASM_FUNC(positive_to_padded)
     "beqz a2, 5f\n"
-    "0:\n"
-    "addi sp, sp, -80\n   sd ra, 72(sp)\n   sd s0, 56(sp)\n"
-    "sd s1, 48(sp)\n   sd s2, 40(sp)\n   sd s3, 32(sp)\n"
-    "mv s0, a0\n   mv s1, a2\n   sb a3, 24(sp)\n   sb a4, 25(sp)\n"
-    "mv a0, sp\n   call positive_into\n   mv s3, a0\n   mv s2, a0\n"
-    "lbu t0, 25(sp)\n   snez t0, t0\n   add s2, s2, t0\n"
-    "lbu t0, 24(sp)\n   beqz t0, 2f\n   bgeu s2, s1, 2f\n"
+    "0:\n   addi sp, sp, -80\n   sd ra, 72(sp)\n   sd s0, 56(sp)\n"
+    "sd s1, 48(sp)\n   sd s2, 40(sp)\n   sd s3, 32(sp)\n   mv s0, a0\n"
+    "mv s1, a2\n   sb a3, 24(sp)\n   sb a4, 25(sp)\n   mv a0, sp\n"
+    "call positive_into\n   mv s3, a0\n   mv s2, a0\n   lbu t0, 25(sp)\n"
+    "snez t0, t0\n   add s2, s2, t0\n   lbu t0, 24(sp)\n   beqz t0, 2f\n"
+    "bgeu s2, s1, 2f\n"
     "1:  addi a0, sp, 24\n   li a1, 1\n   mv t0, s0\n"
     ASM_CALL("t0")
     "addi s1, s1, -1\n   bltu s2, s1, 1b\n"
-    "2:  lbu t0, 25(sp)\n   beqz t0, 3f\n"
-    "addi a0, sp, 25\n   li a1, 1\n   mv t0, s0\n"
+    "2:  lbu t0, 25(sp)\n   beqz t0, 3f\n   addi a0, sp, 25\n   li a1, 1\n"
+    "mv t0, s0\n"
     ASM_CALL("t0")
     "3:  mv a0, sp\n   mv a1, s3\n   mv t0, s0\n"
     ASM_CALL("t0")
-    "ld s3, 32(sp)\n   ld s2, 40(sp)\n   ld s1, 48(sp)\n"
-    "ld s0, 56(sp)\n   ld ra, 72(sp)\n   addi sp, sp, 80\n"
+    "ld s3, 32(sp)\n   ld s2, 40(sp)\n   ld s1, 48(sp)\n   ld s0, 56(sp)\n"
+    "ld ra, 72(sp)\n   addi sp, sp, 80\n"
     ASM_RET
     "5:  bnez a4, 0b\n   tail positive_to_string\n"
     ASM_END(positive_to_padded)
@@ -9830,48 +9609,43 @@ ASM_FUNC(positive_to_string)
     //       of-1024 decision tree without division or a non-floor extension.
     ASM_FUNC(positive_into_human_1024_string)
     ".section .rodata\n   .balign 8\n"
-    "positive_human_units:\n   .ascii \"BKMGTPE\"\n"
+    "positive_human_units:\n"
+    "   .ascii \"BKMGTPE\"\n"
     ASM_SECTION
-    "li t0, 1024\n   bltu a1, t0, .Lpositive_human_rv_plain\n"
-    "srli t0, a1, 20\n   beqz t0, .Lpositive_human_rv_unit1\n"
-    "srli t0, a1, 40\n   beqz t0, .Lpositive_human_rv_low\n"
-    "srli t0, a1, 60\n   bnez t0, .Lpositive_human_rv_unit6\n"
-    "srli t0, a1, 50\n   bnez t0, .Lpositive_human_rv_unit5\n"
-    "li a2, 4\n   li a3, 40\n   j .Lpositive_human_rv_ready\n"
+    "li t0, 1024\n   bltu a1, t0, .Lpositive_human_rv_plain\n   srli t0, a1, 20\n   beqz t0, .Lpositive_human_rv_unit1\n"
+    "srli t0, a1, 40\n   beqz t0, .Lpositive_human_rv_low\n   srli t0, a1, 60\n   bnez t0, .Lpositive_human_rv_unit6\n"
+    "srli t0, a1, 50\n   bnez t0, .Lpositive_human_rv_unit5\n   li a2, 4\n   li a3, 40\n"
+    "j .Lpositive_human_rv_ready\n"
     ".Lpositive_human_rv_unit6:\n   li a2, 6\n   li a3, 60\n   j .Lpositive_human_rv_ready\n"
     ".Lpositive_human_rv_unit5:\n   li a2, 5\n   li a3, 50\n   j .Lpositive_human_rv_ready\n"
-    ".Lpositive_human_rv_low:\n"
-    "srli t0, a1, 30\n   bnez t0, .Lpositive_human_rv_unit3\n"
-    "li a2, 2\n   li a3, 20\n   j .Lpositive_human_rv_ready\n"
+    ".Lpositive_human_rv_low:\n   srli t0, a1, 30\n   bnez t0, .Lpositive_human_rv_unit3\n   li a2, 2\n"
+    "li a3, 20\n   j .Lpositive_human_rv_ready\n"
     ".Lpositive_human_rv_unit1:\n   li a2, 1\n   li a3, 10\n   j .Lpositive_human_rv_ready\n"
     ".Lpositive_human_rv_unit3:\n   li a2, 3\n   li a3, 30\n"
-    ".Lpositive_human_rv_ready:\n"
-    "li a5, 1\n   sll a5, a5, a3\n   addi a5, a5, -1\n"
+    ".Lpositive_human_rv_ready:\n   li a5, 1\n   sll a5, a5, a3\n   addi a5, a5, -1\n"
     "srl a4, a1, a3\n   and a6, a1, a5\n   snez a7, a6\n   add a7, a7, a4\n"
-    "li t0, 10\n   bgeu a7, t0, .Lpositive_human_rv_integer\n"
-    "slli t0, a6, 3\n   slli t1, a6, 1\n   add t0, t0, t1\n"
-    "add t0, t0, a5\n   srl t0, t0, a3\n   li t1, 10\n   bne t0, t1, 1f\n"
-    "addi a4, a4, 1\n   li t0, 0\n"
+    "li t0, 10\n   bgeu a4, t0, .Lpositive_human_rv_integer\n   slli t0, a6, 3\n   slli t1, a6, 1\n"
+    "add t0, t0, t1\n   add t0, t0, a5\n   srl t0, t0, a3\n   li t1, 10\n"
+    "bne t0, t1, 1f\n   addi a4, a4, 1\n   li t0, 0\n"
+    "li t1, 10\n   bltu a4, t1, 1f\n   mv a7, a4\n   j .Lpositive_human_rv_integer\n"
     "1:  addi a4, a4, 48\n   sb a4, 0(a0)\n   li t1, 46\n   sb t1, 1(a0)\n"
-    "addi t0, t0, 48\n   sb t0, 2(a0)\n"
-    "lla t1, positive_human_units\n   add t1, t1, a2\n   lbu t1, 0(t1)\n"
-    "sb t1, 3(a0)\n   sb zero, 4(a0)\n   li a0, 4\n"
+    "addi t0, t0, 48\n   sb t0, 2(a0)\n   lla t1, positive_human_units\n   add t1, t1, a2\n"
+    "lbu t1, 0(t1)\n   sb t1, 3(a0)\n   sb zero, 4(a0)\n   li a0, 4\n"
     ASM_RET
-    ".Lpositive_human_rv_integer:\n"
-    "lla t0, digit_pairs\n   li t1, 99\n   bltu t1, a7, 2f\n"
+    ".Lpositive_human_rv_integer:\n   lla t0, digit_pairs\n   li t1, 99\n   bltu t1, a7, 2f\n"
     "slli t2, a7, 1\n   add t2, t0, t2\n   lbu t3, 0(t2)\n   lbu t4, 1(t2)\n"
     "sb t3, 0(a0)\n   sb t4, 1(a0)\n   li t6, 2\n   j 4f\n"
-    "2:  li t1, 5243\n   mul t2, a7, t1\n   srli t2, t2, 19\n"
-    "li t1, 100\n   mul t3, t2, t1\n   sub t3, a7, t3\n"
-    "slli t4, t2, 1\n   add t4, t0, t4\n   slli t5, t3, 1\n   add t5, t0, t5\n"
-    "li t1, 10\n   bgeu t2, t1, 3f\n   lbu t1, 1(t4)\n   sb t1, 0(a0)\n"
-    "lbu t1, 0(t5)\n   lbu t2, 1(t5)\n   sb t1, 1(a0)\n   sb t2, 2(a0)\n"
-    "li t6, 3\n   j 4f\n"
+    "2:  li t1, 5243\n   mul t2, a7, t1\n   srli t2, t2, 19\n   li t1, 100\n"
+    "mul t3, t2, t1\n   sub t3, a7, t3\n   slli t4, t2, 1\n   add t4, t0, t4\n"
+    "slli t5, t3, 1\n   add t5, t0, t5\n   li t1, 10\n   bgeu t2, t1, 3f\n"
+    "lbu t1, 1(t4)\n   sb t1, 0(a0)\n   lbu t1, 0(t5)\n   lbu t2, 1(t5)\n"
+    "sb t1, 1(a0)\n   sb t2, 2(a0)\n   li t6, 3\n   j 4f\n"
     "3:  lbu t1, 0(t4)\n   lbu t2, 1(t4)\n   sb t1, 0(a0)\n   sb t2, 1(a0)\n"
-    "lbu t1, 0(t5)\n   lbu t2, 1(t5)\n   sb t1, 2(a0)\n   sb t2, 3(a0)\n   li t6, 4\n"
-    "4:  lla t0, positive_human_units\n   add t0, t0, a2\n   lbu t0, 0(t0)\n"
-    "add t1, a0, t6\n   sb t0, 0(t1)\n   addi t6, t6, 1\n"
-    "add t1, a0, t6\n   sb zero, 0(t1)\n   mv a0, t6\n"
+    "lbu t1, 0(t5)\n   lbu t2, 1(t5)\n   sb t1, 2(a0)\n   sb t2, 3(a0)\n"
+    "li t6, 4\n"
+    "4:  lla t0, positive_human_units\n   add t0, t0, a2\n   lbu t0, 0(t0)\n   add t1, a0, t6\n"
+    "sb t0, 0(t1)\n   addi t6, t6, 1\n   add t1, a0, t6\n   sb zero, 0(t1)\n"
+    "mv a0, t6\n"
     ASM_RET
     ".Lpositive_human_rv_plain:\n   tail positive_into_string\n"
     ASM_END(positive_into_human_1024_string)
@@ -9881,99 +9655,73 @@ ASM_FUNC(positive_to_string)
     //       access is a byte so the destination has no alignment precondition.
     ASM_FUNC(positive_into_human_nearest_string)
     ".section .rodata\n   .balign 8\n"
-    "positive_human_nearest_units:\n   .byte 0\n   .ascii \"KMGTPEZYRQ\"\n"
+    "positive_human_nearest_units:\n   .byte 0\n"
+    "   .ascii \"KMGTPEZYRQ\"\n"
     ASM_SECTION
     "mv a3, a0\n   li a4, 1000\n   beqz a2, 0f\n   li a4, 1024\n"
     "0:  li a5, 0\n   li a6, 0\n   li a7, 0\n   li t0, -1\n"
     "bltu a1, a4, .Lpositive_human_nearest_rv_scaled\n"
-    ".Lpositive_human_nearest_rv_reduce:\n"
-    "li t1, 1024\n   beq a4, t1, .Lpositive_human_nearest_rv_reduce_binary\n"
+    ".Lpositive_human_nearest_rv_reduce:\n   li t1, 1024\n   beq a4, t1, .Lpositive_human_nearest_rv_reduce_binary\n"
     "divu t1, a1, a4\n   mul t2, t1, a4\n   sub t2, a1, t2\n   mv a1, t1\n"
-    "li t3, 10\n   mul t2, t2, t3\n   add t2, t2, a5\n"
-    "divu a5, t2, a4\n   mul t3, a5, a4\n   sub t2, t2, t3\n"
-    "j .Lpositive_human_nearest_rv_reduce_ready\n"
-    ".Lpositive_human_nearest_rv_reduce_binary:\n"
-    "srli t1, a1, 10\n   andi t2, a1, 1023\n   mv a1, t1\n"
-    "li t3, 10\n   mul t2, t2, t3\n   add t2, t2, a5\n"
-    "srli a5, t2, 10\n   andi t2, t2, 1023\n"
-    ".Lpositive_human_nearest_rv_reduce_ready:\n"
-    "slli t3, t2, 1\n   srli t4, a6, 1\n   add t3, t3, t4\n   add t4, t3, a6\n"
-    "bltu t3, a4, .Lpositive_human_nearest_rv_round_low\n"
-    "sltu a6, a4, t4\n   addi a6, a6, 2\n   j .Lpositive_human_nearest_rv_round_set\n"
-    ".Lpositive_human_nearest_rv_round_low:\n"
-    "snez a6, t4\n"
-    ".Lpositive_human_nearest_rv_round_set:\n"
-    "addi a7, a7, 1\n   li t1, 10\n   bgeu a7, t1, .Lpositive_human_nearest_rv_reduced\n"
+    "li t3, 10\n   mul t2, t2, t3\n   add t2, t2, a5\n   divu a5, t2, a4\n"
+    "mul t3, a5, a4\n   sub t2, t2, t3\n   j .Lpositive_human_nearest_rv_reduce_ready\n"
+    ".Lpositive_human_nearest_rv_reduce_binary:\n   srli t1, a1, 10\n   andi t2, a1, 1023\n   mv a1, t1\n"
+    "li t3, 10\n   mul t2, t2, t3\n   add t2, t2, a5\n   srli a5, t2, 10\n"
+    "andi t2, t2, 1023\n"
+    ".Lpositive_human_nearest_rv_reduce_ready:\n   slli t3, t2, 1\n   srli t4, a6, 1\n   add t3, t3, t4\n"
+    "add t4, t3, a6\n   bltu t3, a4, .Lpositive_human_nearest_rv_round_low\n   sltu a6, a4, t4\n   addi a6, a6, 2\n"
+    "j .Lpositive_human_nearest_rv_round_set\n"
+    ".Lpositive_human_nearest_rv_round_low:\n   snez a6, t4\n"
+    ".Lpositive_human_nearest_rv_round_set:\n   addi a7, a7, 1\n   li t1, 10\n   bgeu a7, t1, .Lpositive_human_nearest_rv_reduced\n"
     "bgeu a1, a4, .Lpositive_human_nearest_rv_reduce\n"
-    ".Lpositive_human_nearest_rv_reduced:\n"
-    "li t1, 10\n   bgeu a1, t1, .Lpositive_human_nearest_rv_integer_round\n"
-    "andi t1, a5, 1\n   add t1, t1, a6\n   li t2, 2\n"
-    "bgeu t2, t1, .Lpositive_human_nearest_rv_fraction_ready\n"
-    "addi a5, a5, 1\n   li a6, 0\n   li t1, 10\n"
-    "bne a5, t1, .Lpositive_human_nearest_rv_fraction_ready\n"
+    ".Lpositive_human_nearest_rv_reduced:\n   li t1, 10\n   bgeu a1, t1, .Lpositive_human_nearest_rv_integer_round\n"
+    "andi t1, a5, 1\n   add t1, t1, a6\n   li t2, 2\n   bgeu t2, t1, .Lpositive_human_nearest_rv_fraction_ready\n"
+    "addi a5, a5, 1\n   li a6, 0\n   li t1, 10\n   bne a5, t1, .Lpositive_human_nearest_rv_fraction_ready\n"
     "addi a1, a1, 1\n   li a5, 0\n"
-    ".Lpositive_human_nearest_rv_fraction_ready:\n"
-    "li t1, 10\n   bgeu a1, t1, .Lpositive_human_nearest_rv_integer_round\n"
+    ".Lpositive_human_nearest_rv_fraction_ready:\n   li t1, 10\n   bgeu a1, t1, .Lpositive_human_nearest_rv_integer_round\n"
     "mv t0, a5\n   li a5, 0\n   li a6, 0\n"
     ".Lpositive_human_nearest_rv_scaled:\n"
-    ".Lpositive_human_nearest_rv_integer_round:\n"
-    "andi t1, a1, 1\n   add t1, t1, a6\n   snez t1, t1\n   add t1, t1, a5\n"
-    "li t2, 5\n   bgeu t2, t1, .Lpositive_human_nearest_rv_format\n"
-    "addi a1, a1, 1\n   bne a1, a4, .Lpositive_human_nearest_rv_format\n"
-    "li t1, 10\n   bgeu a7, t1, .Lpositive_human_nearest_rv_format\n"
+    ".Lpositive_human_nearest_rv_integer_round:\n   andi t1, a1, 1\n   add t1, t1, a6\n   snez t1, t1\n"
+    "add t1, t1, a5\n   li t2, 5\n   bgeu t2, t1, .Lpositive_human_nearest_rv_format\n   addi a1, a1, 1\n"
+    "bne a1, a4, .Lpositive_human_nearest_rv_format\n   li t1, 10\n   bgeu a7, t1, .Lpositive_human_nearest_rv_format\n"
     "addi a7, a7, 1\n   li t0, 0\n   li a1, 1\n"
-    ".Lpositive_human_nearest_rv_format:\n"
-    "lla t2, digit_pairs\n   li t3, 9\n   bltu t3, a1, .Lpositive_human_nearest_rv_two\n"
-    "addi t3, a1, 48\n   sb t3, 0(a3)\n   li t1, 1\n"
-    "j .Lpositive_human_nearest_rv_digits_done\n"
-    ".Lpositive_human_nearest_rv_two:\n"
-    "li t3, 99\n   bltu t3, a1, .Lpositive_human_nearest_rv_three\n"
+    ".Lpositive_human_nearest_rv_format:\n   lla t2, digit_pairs\n   li t3, 9\n   bltu t3, a1, .Lpositive_human_nearest_rv_two\n"
+    "addi t3, a1, 48\n   sb t3, 0(a3)\n   li t1, 1\n   j .Lpositive_human_nearest_rv_digits_done\n"
+    ".Lpositive_human_nearest_rv_two:\n   li t3, 99\n   bltu t3, a1, .Lpositive_human_nearest_rv_three\n"
     "slli t3, a1, 1\n   add t3, t2, t3\n   lbu t4, 0(t3)\n   lbu t5, 1(t3)\n"
-    "sb t4, 0(a3)\n   sb t5, 1(a3)\n   li t1, 2\n"
-    "j .Lpositive_human_nearest_rv_digits_done\n"
-    ".Lpositive_human_nearest_rv_three:\n"
-    "li t3, 5243\n   mul t3, a1, t3\n   srli t3, t3, 19\n"
+    "sb t4, 0(a3)\n   sb t5, 1(a3)\n   li t1, 2\n   j .Lpositive_human_nearest_rv_digits_done\n"
+    ".Lpositive_human_nearest_rv_three:\n   li t3, 5243\n   mul t3, a1, t3\n   srli t3, t3, 19\n"
     "li t4, 100\n   mul t4, t3, t4\n   sub t4, a1, t4\n   li t5, 10\n"
-    "bgeu t3, t5, .Lpositive_human_nearest_rv_four\n"
-    "slli t5, t3, 1\n   add t5, t2, t5\n   lbu t5, 1(t5)\n   sb t5, 0(a3)\n"
-    "slli t5, t4, 1\n   add t5, t2, t5\n   lbu t6, 0(t5)\n   lbu t5, 1(t5)\n"
-    "sb t6, 1(a3)\n   sb t5, 2(a3)\n   li t1, 3\n"
+    "bgeu t3, t5, .Lpositive_human_nearest_rv_four\n   slli t5, t3, 1\n   add t5, t2, t5\n   lbu t5, 1(t5)\n"
+    "sb t5, 0(a3)\n   slli t5, t4, 1\n   add t5, t2, t5\n   lbu t6, 0(t5)\n"
+    "lbu t5, 1(t5)\n   sb t6, 1(a3)\n   sb t5, 2(a3)\n   li t1, 3\n"
     "j .Lpositive_human_nearest_rv_digits_done\n"
-    ".Lpositive_human_nearest_rv_four:\n"
-    "slli t5, t3, 1\n   add t5, t2, t5\n   lbu t6, 0(t5)\n   lbu t5, 1(t5)\n"
-    "sb t6, 0(a3)\n   sb t5, 1(a3)\n"
-    "slli t5, t4, 1\n   add t5, t2, t5\n   lbu t6, 0(t5)\n   lbu t5, 1(t5)\n"
-    "sb t6, 2(a3)\n   sb t5, 3(a3)\n   li t1, 4\n"
-    ".Lpositive_human_nearest_rv_digits_done:\n"
-    "li t2, -1\n   beq t0, t2, .Lpositive_human_nearest_rv_no_fraction\n"
+    ".Lpositive_human_nearest_rv_four:\n   slli t5, t3, 1\n   add t5, t2, t5\n   lbu t6, 0(t5)\n"
+    "lbu t5, 1(t5)\n   sb t6, 0(a3)\n   sb t5, 1(a3)\n   slli t5, t4, 1\n"
+    "add t5, t2, t5\n   lbu t6, 0(t5)\n   lbu t5, 1(t5)\n   sb t6, 2(a3)\n"
+    "sb t5, 3(a3)\n   li t1, 4\n"
+    ".Lpositive_human_nearest_rv_digits_done:\n   li t2, -1\n   beq t0, t2, .Lpositive_human_nearest_rv_no_fraction\n"
     "add t2, a3, t1\n   li t3, 46\n   sb t3, 0(t2)\n   addi t1, t1, 1\n"
     "add t2, a3, t1\n   addi t3, t0, 48\n   sb t3, 0(t2)\n   addi t1, t1, 1\n"
-    ".Lpositive_human_nearest_rv_no_fraction:\n"
-    "add t2, a3, t1\n   li t3, 32\n   sb t3, 0(t2)\n   addi t1, t1, 1\n"
-    "beqz a7, .Lpositive_human_nearest_rv_unit_done\n"
-    "li t2, 1000\n   bne a4, t2, .Lpositive_human_nearest_rv_upper_unit\n"
-    "li t2, 1\n   bne a7, t2, .Lpositive_human_nearest_rv_upper_unit\n"
-    "add t2, a3, t1\n   li t3, 107\n   sb t3, 0(t2)\n   addi t1, t1, 1\n"
-    "j .Lpositive_human_nearest_rv_unit_done\n"
-    ".Lpositive_human_nearest_rv_upper_unit:\n"
-    "lla t2, positive_human_nearest_units\n   add t2, t2, a7\n   lbu t3, 0(t2)\n"
-    "add t2, a3, t1\n   sb t3, 0(t2)\n   addi t1, t1, 1\n"
-    ".Lpositive_human_nearest_rv_unit_done:\n"
-    "li t2, 1024\n   bne a4, t2, .Lpositive_human_nearest_rv_byte\n"
-    "beqz a7, .Lpositive_human_nearest_rv_byte\n"
-    "add t2, a3, t1\n   li t3, 105\n   sb t3, 0(t2)\n   addi t1, t1, 1\n"
-    ".Lpositive_human_nearest_rv_byte:\n"
-    "add t2, a3, t1\n   li t3, 66\n   sb t3, 0(t2)\n   addi t1, t1, 1\n"
-    "add t2, a3, t1\n   sb zero, 0(t2)\n   mv a0, t1\n"
+    ".Lpositive_human_nearest_rv_no_fraction:\n   add t2, a3, t1\n   li t3, 32\n   sb t3, 0(t2)\n"
+    "addi t1, t1, 1\n   beqz a7, .Lpositive_human_nearest_rv_unit_done\n   li t2, 1000\n   bne a4, t2, .Lpositive_human_nearest_rv_upper_unit\n"
+    "li t2, 1\n   bne a7, t2, .Lpositive_human_nearest_rv_upper_unit\n   add t2, a3, t1\n   li t3, 107\n"
+    "sb t3, 0(t2)\n   addi t1, t1, 1\n   j .Lpositive_human_nearest_rv_unit_done\n"
+    ".Lpositive_human_nearest_rv_upper_unit:\n   lla t2, positive_human_nearest_units\n   add t2, t2, a7\n"
+    "lbu t3, 0(t2)\n   add t2, a3, t1\n   sb t3, 0(t2)\n   addi t1, t1, 1\n"
+    ".Lpositive_human_nearest_rv_unit_done:\n   li t2, 1024\n   bne a4, t2, .Lpositive_human_nearest_rv_byte\n"
+    "beqz a7, .Lpositive_human_nearest_rv_byte\n   add t2, a3, t1\n   li t3, 105\n   sb t3, 0(t2)\n"
+    "addi t1, t1, 1\n"
+    ".Lpositive_human_nearest_rv_byte:\n   add t2, a3, t1\n   li t3, 66\n   sb t3, 0(t2)\n"
+    "addi t1, t1, 1\n   add t2, a3, t1\n   sb zero, 0(t2)\n   mv a0, t1\n"
     ASM_RET
     ASM_END(positive_into_human_nearest_string)
     //       wait_status_code_base: the x86_64 block carries the complete
     //       wait4/base/core contract. Only baseline integer instructions.
     ASM_FUNC(wait_status_code_base)
-    "andi t0, a0, 127\n   andi t1, a0, 128\n"
-    "srli a0, a0, 8\n   andi a0, a0, 255\n"
-    "beqz t0, 1f\n   add a0, t0, a1\n   slli t1, t1, 1\n"
-    "and t1, t1, a1\n   add a0, a0, t1\n"
+    "andi t0, a0, 127\n   andi t1, a0, 128\n   srli a0, a0, 8\n   andi a0, a0, 255\n"
+    "beqz t0, 1f\n   add a0, t0, a1\n   slli t1, t1, 1\n   and t1, t1, a1\n"
+    "add a0, a0, t1\n"
     "1:\n"
     ASM_RET
     ASM_END(wait_status_code_base)
@@ -9984,23 +9732,20 @@ ASM_FUNC(positive_to_string)
     //       contract. All callback-live values are in the frame or s0.
     ASM_FUNC(positive_to_human_1024)
     "li t0, 1024\n   bgeu a1, t0, 0f\n   tail positive_to_string\n"
-    "0:\n"
-    "addi sp, sp, -48\n   sd ra, 40(sp)\n   sd s0, 32(sp)\n   mv s0, a0\n"
-    "addi a0, sp, 16\n   call positive_into_human_1024_string\n   sd a0, 24(sp)\n"
-    "addi t0, a0, -1\n   add t1, sp, t0\n   lbu t1, 16(t1)\n"
-    "li t0, 57\n   bltu t0, t1, .Lpositive_human_rv_scaled_write\n"
-    "mv a1, a0\n   addi a0, sp, 16\n   mv t0, s0\n"
+    "0:\n   addi sp, sp, -48\n   sd ra, 40(sp)\n   sd s0, 32(sp)\n"
+    "mv s0, a0\n   addi a0, sp, 16\n   call positive_into_human_1024_string\n   sd a0, 24(sp)\n"
+    "addi t0, a0, -1\n   add t1, sp, t0\n   lbu t1, 16(t1)\n   li t0, 57\n"
+    "bltu t0, t1, .Lpositive_human_rv_scaled_write\n   mv a1, a0\n   addi a0, sp, 16\n   mv t0, s0\n"
     ASM_CALL("t0")
     "j .Lpositive_human_rv_write_done\n"
-    ".Lpositive_human_rv_scaled_write:\n"
-    "lbu t0, 17(sp)\n   li t1, 46\n   beq t0, t1, .Lpositive_human_rv_fraction_write\n"
+    ".Lpositive_human_rv_scaled_write:\n   lbu t0, 17(sp)\n   li t1, 46\n   beq t0, t1, .Lpositive_human_rv_fraction_write\n"
     "addi a1, a0, -1\n   sd a1, 24(sp)\n   addi a0, sp, 16\n   mv t0, s0\n"
     ASM_CALL("t0")
-    "ld t1, 24(sp)\n   addi a0, sp, 16\n   add a0, a0, t1\n   li a1, 1\n   mv t0, s0\n"
+    "ld t1, 24(sp)\n   addi a0, sp, 16\n   add a0, a0, t1\n   li a1, 1\n"
+    "mv t0, s0\n"
     ASM_CALL("t0")
     "j .Lpositive_human_rv_write_done\n"
-    ".Lpositive_human_rv_fraction_write:\n"
-    "addi a0, sp, 16\n   li a1, 1\n   mv t0, s0\n"
+    ".Lpositive_human_rv_fraction_write:\n   addi a0, sp, 16\n   li a1, 1\n   mv t0, s0\n"
     ASM_CALL("t0")
     "addi a0, sp, 17\n   li a1, 1\n   mv t0, s0\n"
     ASM_CALL("t0")
@@ -10008,8 +9753,7 @@ ASM_FUNC(positive_to_string)
     ASM_CALL("t0")
     "addi a0, sp, 19\n   li a1, 1\n   mv t0, s0\n"
     ASM_CALL("t0")
-    ".Lpositive_human_rv_write_done:\n"
-    "ld s0, 32(sp)\n   ld ra, 40(sp)\n   addi sp, sp, 48\n"
+    ".Lpositive_human_rv_write_done:\n   ld s0, 32(sp)\n   ld ra, 40(sp)\n   addi sp, sp, 48\n"
     ASM_RET
     ASM_END(positive_to_human_1024)
     //       bipolar_to_string: the arm64 block carries the reasoning.
@@ -10044,10 +9788,9 @@ ASM_FUNC(positive_to_string)
     "li a1, 0  # the number so far\n"
     "li a2, 1  # what the next digit is worth\n"
     "li a3, 10\n   li a4, 9\n"
-    "4:  beq a0, t0, 3f\n   andi t3, a0, 7\n   beqz t3, 6f\n"
-    "addi a0, a0, -1\n   lbu t1, 0(a0)\n   addi t1, t1, -48\n"
-    "bltu a4, t1, 3f\n   mul t2, t1, a2\n   add a1, a1, t2\n"
-    "mul a2, a2, a3\n   j 4b\n"
+    "4:  beq a0, t0, 3f\n   andi t3, a0, 7\n   beqz t3, 6f\n   addi a0, a0, -1\n"
+    "lbu t1, 0(a0)\n   addi t1, t1, -48\n   bltu a4, t1, 3f\n   mul t2, t1, a2\n"
+    "add a1, a1, t2\n   mul a2, a2, a3\n   j 4b\n"
     "6:  addi t3, a0, -8\n   bltu t3, t0, 7f  # fewer than eight bytes remain\n"
     "lla t6, digit_words\n   ld a5, 0(t6)\n   ld a6, 8(t6)\n   ld a7, 16(t6)\n"
     "5:  ld t4, 0(t3)  # the peeled exclusive end keeps every block aligned\n"
@@ -10057,14 +9800,11 @@ ASM_FUNC(positive_to_string)
     //       An exclusive or and not a subtract: every byte has been shown to
     //       be 0x3 in the top nibble and nine or less in the bottom.
     //
-    "ld t1, 24(t6)\n   xor t4, t4, t1\n"
-    "ld t1, 32(t6)\n   mul t4, t4, t1\n   srli t4, t4, 8\n"
-    "ld t1, 40(t6)\n   and t4, t4, t1\n"
-    "ld t1, 48(t6)\n   mul t4, t4, t1\n   srli t4, t4, 16\n"
-    "ld t1, 56(t6)\n   and t4, t4, t1\n"
+    "ld t1, 24(t6)\n   xor t4, t4, t1\n   ld t1, 32(t6)\n   mul t4, t4, t1\n"
+    "srli t4, t4, 8\n   ld t1, 40(t6)\n   and t4, t4, t1\n   ld t1, 48(t6)\n"
+    "mul t4, t4, t1\n   srli t4, t4, 16\n   ld t1, 56(t6)\n   and t4, t4, t1\n"
     "ld t1, 64(t6)\n   mul t4, t4, t1\n   srli t4, t4, 32  # the eight, as a number\n"
-    "mul t4, t4, a2\n   add a1, a1, t4\n"
-    "ld t1, 72(t6)\n   mul a2, a2, t1  # a hundred million further along\n"
+    "mul t4, t4, a2\n   add a1, a1, t4\n   ld t1, 72(t6)\n   mul a2, a2, t1  # a hundred million further along\n"
     "mv a0, t3\n   addi t3, a0, -8\n   bgeu t3, t0, 5b\n"
     "7:  addi a0, a0, -1\n"
     "2:  bltu a0, t0, 3f\n   lbu t1, 0(a0)\n   addi t1, t1, -48\n   bltu a4, t1, 3f  # one compare, both ends\n"
@@ -10072,23 +9812,14 @@ ASM_FUNC(positive_to_string)
     "j 2b\n"
     "3:  mv a0, a1\n"
     ASM_RET
-    //
-    //       Inside the delimiters on purpose: this file is spliced together by
-    //       routine name, and a table in front of ASM_FUNC belongs to whatever
-    //       was there before rather than to this.
-    //
     ".section .rodata\n   .balign 8\n"
-    "digit_words:\n"
-    "        .quad 0xF0F0F0F0F0F0F0F0  # the high nibbles, which a digit has as three\n"
-    "        .quad 0x0606060606060606  # what pushes anything over nine into the next nibble\n"
-    "        .quad 0x3333333333333333  # what eight digits answer\n"
-    "        .quad 0x3030303030303030  # ASCII zero, eight times\n"
-    "        .quad 2561\n"
-    "        .quad 0x00FF00FF00FF00FF\n"
-    "        .quad 6553601\n"
-    "        .quad 0x0000FFFF0000FFFF\n"
-    "        .quad 0x0000271000000001  # ten thousand and one, in two halves\n"
-    "        .quad 100000000\n"
+    "digit_words:\n   .quad 0xF0F0F0F0F0F0F0F0  # the high nibbles, which a digit has as three\n"
+    ".quad 0x0606060606060606  # what pushes anything over nine into the next nibble\n"
+    ".quad 0x3333333333333333  # what eight digits answer\n"
+    ".quad 0x3030303030303030  # ASCII zero, eight times\n"
+    ".quad 2561\n   .quad 0x00FF00FF00FF00FF\n   .quad 6553601\n   .quad 0x0000FFFF0000FFFF\n"
+    ".quad 0x0000271000000001  # ten thousand and one, in two halves\n"
+    ".quad 100000000\n"
     ASM_SECTION
     ASM_END(string_to_positive)
     //       string_to_bipolar: the x86_64 block carries the reasoning.
@@ -10102,28 +9833,27 @@ ASM_FUNC(positive_to_string)
     ASM_FUNC(string_find)
     "lbu t0, 0(a1)\n   bnez t0, 2f\n   li a0, 0\n"
     ASM_RET
-    "2:  lbu t0, 1(a1)\n   bnez t0, 3f\n"
-    "lbu a1, 0(a1)\n   j string_first_of  # one byte is strchr\n"
+    "2:  lbu t0, 1(a1)\n   bnez t0, 3f\n   lbu a1, 0(a1)\n   j string_first_of  # one byte is strchr\n"
     "3:  addi sp, sp, -64\n   sd ra, 56(sp)\n   sd s0, 48(sp)\n   sd s1, 40(sp)\n"
     "sd s2, 32(sp)\n   sd s3, 24(sp)\n   sd s4, 16(sp)\n   sd s5, 8(sp)\n"
-    "mv s0, a0  # where to look next\n   mv s1, a1  # the needle\n"
+    "mv s0, a0  # where to look next\n"
+    "mv s1, a1  # the needle\n"
     "mv a0, a1\n   call string_length\n   mv s2, a0  # its length\n"
-    "li s3, 256\n   slli t0, s2, 2\n   bgeu s3, t0, 4f\n"
-    "mv s3, t0  # never a chunk a needle would not fit four times in\n"
-    "4:  li s4, 0  # the readable run so far\n   li s5, 0  # the terminator is in it\n"
-    "41: add a0, s0, s4\n   li t1, 4095\n   and t0, a0, t1\n"
-    "li t1, 4096\n   sub a2, t1, t0  # to the end of this page\n"
-    "li a1, 0\n   call memory_first_of\n   beqz a0, 42f\n"
-    "sub s4, a0, s0\n   li s5, 1\n   j 43f\n"
-    "42: add t0, s0, s4\n   li t1, 4096\n   add t0, t0, t1\n"
-    "li t1, -4096\n   and t0, t0, t1  # the start of the next page\n"
+    "li s3, 256\n   slli t0, s2, 2\n   bgeu s3, t0, 4f\n   mv s3, t0  # never a chunk a needle would not fit four times in\n"
+    "4:  li s4, 0  # the readable run so far\n"
+    "li s5, 0  # the terminator is in it\n"
+    "41:  add a0, s0, s4\n   li t1, 4095\n   and t0, a0, t1\n   li t1, 4096\n"
+    "sub a2, t1, t0  # to the end of this page\n"
+    "li a1, 0\n   call memory_first_of\n   beqz a0, 42f\n   sub s4, a0, s0\n"
+    "li s5, 1\n   j 43f\n"
+    "42:  add t0, s0, s4\n   li t1, 4096\n   add t0, t0, t1\n   li t1, -4096\n"
+    "and t0, t0, t1  # the start of the next page\n"
     "sub s4, t0, s0\n   bltu s4, s3, 41b\n"
-    "43: mv a0, s0\n   mv a1, s4\n   mv a2, s1\n   mv a3, s2\n"
-    "call memory_search\n   bnez a0, 9f\n"
-    "bnez s5, 8f  # the terminator was in it: nowhere else to look\n"
+    "43:  mv a0, s0\n   mv a1, s4\n   mv a2, s1\n   mv a3, s2\n"
+    "call memory_search\n   bnez a0, 9f\n   bnez s5, 8f  # the terminator was in it: nowhere else to look\n"
     "sub t0, s4, s2\n   addi t0, t0, 1  # keep needle_size - 1 of overlap\n"
-    "add s0, s0, t0\n"
-    "slli s3, s3, 1\n   li t0, 65536\n   bgeu t0, s3, 44f\n   mv s3, t0\n"
+    "add s0, s0, t0\n   slli s3, s3, 1\n   li t0, 65536\n   bgeu t0, s3, 44f\n"
+    "mv s3, t0\n"
     "44:  j 4b\n"
     "8:  li a0, 0\n"
     "9:  ld ra, 56(sp)\n   ld s0, 48(sp)\n   ld s1, 40(sp)\n   ld s2, 32(sp)\n"
@@ -10131,42 +9861,11 @@ ASM_FUNC(positive_to_string)
     ASM_RET
     ASM_END(string_find)
     ASM_SECTION
-    //
-    //      strstr, which is string_find and one byte of disagreement.
-    //
-    //      The two differ on an empty needle and only there: strstr answers
-    //      the front of the haystack, string_find answers nothing, and the
-    //      note on string_find above says so and says it is on purpose.
-    //      Callers in this tree were written against the second and the
-    //      kernel is written against the first, so the name the kernel links
-    //      gets its own four instructions rather than either of them being
-    //      changed into the other.
-    //
-    //      Everything else is string_find's, including the reason it is not
-    //      simply a length followed by memory_search: it discovers the
-    //      readable run a page at a time, so a match at byte nine hundred of
-    //      a megabyte does not pay for a strlen of the megabyte first.
-    //
-    //
-    //      The needle is tried against the front of the haystack first, a
-    //      byte at a time, and that one loop answers three things. An empty
-    //      needle stops it at once and the front is the answer, which is the
-    //      disagreement this routine exists for. A needle that is there at
-    //      the front is answered without setting up anything -- string_find
-    //      pushes six registers and walks a page for the terminator before it
-    //      looks, which is nothing against four kilobytes and is most of the
-    //      work when the answer is at byte zero, and measured 0.8x the naive
-    //      loop in lib/string.c for exactly that reason. Anything else leaves
-    //      on the first byte that differs, which is one compare.
-    //
-    //      It cannot read past the haystack's terminator: reaching it with
-    //      needle left over is a byte that differs, and that leaves.
-    //
+    //       string_search: the x86_64 block carries the reasoning.
     ASM_FUNC(string_search)
     "li t1, 0\n"
-    "1:  add t2, a1, t1\n   lbu t3, 0(t2)\n   beqz t3, 2f\n"
-    "add t2, a0, t1\n   lbu t4, 0(t2)\n   bne t3, t4, 3f\n"
-    "addi t1, t1, 1\n   j 1b\n"
+    "1:  add t2, a1, t1\n   lbu t3, 0(t2)\n   beqz t3, 2f\n   add t2, a0, t1\n"
+    "lbu t4, 0(t2)\n   bne t3, t4, 3f\n   addi t1, t1, 1\n   j 1b\n"
     "3:  tail string_find\n"
     "2:  # the needle ran out, and a0 is already the answer\n"
     ASM_RET
@@ -10276,79 +9975,64 @@ ASM_FUNC(positive_to_string)
     // contracts and reasoning; these are the same leaf paths in RV64IM.
     ASM_FUNC(string_set_add)
     "li t2, 1\n"
-    "1:  lbu t0, 0(a1)\n   beqz t0, 9f\n   addi a1, a1, 1\n"
-    "add t1, a0, t0\n   sb t2, 0(t1)\n"
-    "lbu t0, 0(a1)\n   beqz t0, 9f\n   addi a1, a1, 1\n"
+    "1:  lbu t0, 0(a1)\n   beqz t0, 9f\n   addi a1, a1, 1\n   add t1, a0, t0\n"
+    "sb t2, 0(t1)\n   lbu t0, 0(a1)\n   beqz t0, 9f\n   addi a1, a1, 1\n"
     "add t1, a0, t0\n   sb t2, 0(t1)\n   j 1b\n"
     "9:  " ASM_RET
     ASM_END(string_set_add)
     ASM_FUNC(byte_class_index)
-    "li t4, 0\n   li t2, 5\n   beq a1, t2, 1f\n"
-    "li t2, 6\n   bne a1, t2, 9f\n   li t4, 11\n"
+    "li t4, 0\n   li t2, 5\n   beq a1, t2, 1f\n   li t2, 6\n"
+    "bne a1, t2, 9f\n   li t4, 11\n"
     // Assemble exactly five bytes; a sixth is added only on the xdigit path.
     "1:  lbu t0, 0(a0)\n   lbu t1, 1(a0)\n   slli t1, t1, 8\n   or t0, t0, t1\n"
-    "lbu t1, 2(a0)\n   slli t1, t1, 16\n   or t0, t0, t1\n"
-    "lbu t1, 3(a0)\n   slli t1, t1, 24\n   or t0, t0, t1\n"
-    "lbu t1, 4(a0)\n   slli t1, t1, 32\n   or t0, t0, t1\n"
-    "bnez t4, 6f\n   lla t2, .Lbyte_class_words\n   li a0, 0\n"
-    "2:  ld t3, 0(t2)\n   beq t0, t3, 8f\n   addi a0, a0, 1\n"
-    "addi t2, t2, 8\n   li t3, 11\n   bltu a0, t3, 2b\n   j 9f\n"
-    "6:  lbu t1, 5(a0)\n   slli t1, t1, 40\n   or t0, t0, t1\n"
-    "lla t2, .Lbyte_class_words\n   ld t3, 88(t2)\n   li a0, 11\n"
-    "beq t0, t3, 8f\n"
+    "lbu t1, 2(a0)\n   slli t1, t1, 16\n   or t0, t0, t1\n   lbu t1, 3(a0)\n"
+    "slli t1, t1, 24\n   or t0, t0, t1\n   lbu t1, 4(a0)\n   slli t1, t1, 32\n"
+    "or t0, t0, t1\n   bnez t4, 6f\n   lla t2, .Lbyte_class_words\n   li a0, 0\n"
+    "2:  ld t3, 0(t2)\n   beq t0, t3, 8f\n   addi a0, a0, 1\n   addi t2, t2, 8\n"
+    "li t3, 11\n   bltu a0, t3, 2b\n   j 9f\n"
+    "6:  lbu t1, 5(a0)\n   slli t1, t1, 40\n   or t0, t0, t1\n   lla t2, .Lbyte_class_words\n"
+    "ld t3, 88(t2)\n   li a0, 11\n   beq t0, t3, 8f\n"
     "9:  li a0, -1\n"
     "8:  " ASM_RET
     ".section .rodata\n   .balign 8\n"
-    ".Lbyte_class_words:\n"
-    "        .quad 0x6168706c61, 0x7469676964, 0x6d756e6c61\n"
-    "        .quad 0x7265707075, 0x7265776f6c, 0x6563617073\n"
-    "        .quad 0x6b6e616c62, 0x746e697270, 0x6870617267\n"
-    "        .quad 0x6c72746e63, 0x74636e7570, 0x746967696478\n"
+    ".Lbyte_class_words:\n   .quad 0x6168706c61, 0x7469676964, 0x6d756e6c61\n   .quad 0x7265707075, 0x7265776f6c, 0x6563617073\n"
+    ".quad 0x6b6e616c62, 0x746e697270, 0x6870617267\n   .quad 0x6c72746e63, 0x74636e7570, 0x746967696478\n"
     ASM_SECTION
     ASM_END(byte_class_index)
     ASM_FUNC(byte_class_holds)
-    "andi a1, a1, 255\n   li t0, 11\n   bltu t0, a0, .Lbyte_holds_false\n"
-    "li t0, 5\n   bltu t0, a0, .Lbyte_holds_high\n"
-    "li t0, 2\n   bltu t0, a0, .Lbyte_holds_mid\n"
-    "li t0, 1\n   bltu t0, a0, .Lbyte_holds_alnum\n"
-    "beq a0, t0, .Lbyte_holds_digit\n"
-    ".Lbyte_holds_alpha:\n   addi t0, a1, -65\n   li t1, 25\n"
-    "bgeu t1, t0, .Lbyte_holds_true\n   addi t0, a1, -97\n"
-    "bgeu t1, t0, .Lbyte_holds_true\n   j .Lbyte_holds_false\n"
-    ".Lbyte_holds_digit:\n   addi t0, a1, -48\n   li t1, 9\n"
-    "bgeu t1, t0, .Lbyte_holds_true\n   j .Lbyte_holds_false\n"
-    ".Lbyte_holds_alnum:\n   addi t0, a1, -48\n   li t1, 9\n"
-    "bgeu t1, t0, .Lbyte_holds_true\n   j .Lbyte_holds_alpha\n"
-    ".Lbyte_holds_mid:\n   li t0, 4\n   bltu t0, a0, .Lbyte_holds_space\n"
-    "beq a0, t0, .Lbyte_holds_lower\n"
-    ".Lbyte_holds_upper:\n   addi t0, a1, -65\n   li t1, 25\n"
-    "bgeu t1, t0, .Lbyte_holds_true\n   j .Lbyte_holds_false\n"
-    ".Lbyte_holds_lower:\n   addi t0, a1, -97\n   li t1, 25\n"
-    "bgeu t1, t0, .Lbyte_holds_true\n   j .Lbyte_holds_false\n"
-    ".Lbyte_holds_space:\n   li t0, 32\n   beq a1, t0, .Lbyte_holds_true\n"
-    "addi t0, a1, -9\n   li t1, 4\n   bgeu t1, t0, .Lbyte_holds_true\n"
+    "andi a1, a1, 255\n   li t0, 11\n   bltu t0, a0, .Lbyte_holds_false\n   li t0, 5\n"
+    "bltu t0, a0, .Lbyte_holds_high\n   li t0, 2\n   bltu t0, a0, .Lbyte_holds_mid\n   li t0, 1\n"
+    "bltu t0, a0, .Lbyte_holds_alnum\n   beq a0, t0, .Lbyte_holds_digit\n"
+    ".Lbyte_holds_alpha:\n   addi t0, a1, -65\n   li t1, 25\n   bgeu t1, t0, .Lbyte_holds_true\n"
+    "addi t0, a1, -97\n   bgeu t1, t0, .Lbyte_holds_true\n   j .Lbyte_holds_false\n"
+    ".Lbyte_holds_digit:\n   addi t0, a1, -48\n   li t1, 9\n   bgeu t1, t0, .Lbyte_holds_true\n"
     "j .Lbyte_holds_false\n"
-    ".Lbyte_holds_high:\n   li t0, 8\n   bltu t0, a0, .Lbyte_holds_last\n"
-    "li t0, 7\n   bltu t0, a0, .Lbyte_holds_graph\n"
-    "beq a0, t0, .Lbyte_holds_print\n"
-    ".Lbyte_holds_blank:\n   li t0, 32\n   beq a1, t0, .Lbyte_holds_true\n"
-    "li t0, 9\n   beq a1, t0, .Lbyte_holds_true\n   j .Lbyte_holds_false\n"
-    ".Lbyte_holds_print:\n   addi t0, a1, -32\n   li t1, 94\n"
-    "bgeu t1, t0, .Lbyte_holds_true\n   j .Lbyte_holds_false\n"
-    ".Lbyte_holds_graph:\n   addi t0, a1, -33\n   li t1, 93\n"
-    "bgeu t1, t0, .Lbyte_holds_true\n   j .Lbyte_holds_false\n"
-    ".Lbyte_holds_last:\n   li t0, 10\n   bltu t0, a0, .Lbyte_holds_xdigit\n"
-    "beq a0, t0, .Lbyte_holds_punct\n"
-    ".Lbyte_holds_cntrl:\n   li t0, 31\n   bgeu t0, a1, .Lbyte_holds_true\n"
-    "li t0, 127\n   beq a1, t0, .Lbyte_holds_true\n   j .Lbyte_holds_false\n"
-    ".Lbyte_holds_punct:\n   addi t0, a1, -33\n   li t1, 93\n"
-    "bltu t1, t0, .Lbyte_holds_false\n   addi t0, a1, -48\n   li t1, 9\n"
-    "bgeu t1, t0, .Lbyte_holds_false\n   addi t0, a1, -65\n   li t1, 25\n"
-    "bgeu t1, t0, .Lbyte_holds_false\n   addi t0, a1, -97\n"
-    "bgeu t1, t0, .Lbyte_holds_false\n   j .Lbyte_holds_true\n"
-    ".Lbyte_holds_xdigit:\n   addi t0, a1, -48\n   li t1, 9\n"
-    "bgeu t1, t0, .Lbyte_holds_true\n   ori t0, a1, 32\n   addi t0, t0, -97\n"
-    "li t1, 5\n   bgeu t1, t0, .Lbyte_holds_true\n"
+    ".Lbyte_holds_alnum:\n   addi t0, a1, -48\n   li t1, 9\n   bgeu t1, t0, .Lbyte_holds_true\n"
+    "j .Lbyte_holds_alpha\n"
+    ".Lbyte_holds_mid:\n   li t0, 4\n   bltu t0, a0, .Lbyte_holds_space\n   beq a0, t0, .Lbyte_holds_lower\n"
+    ".Lbyte_holds_upper:\n   addi t0, a1, -65\n   li t1, 25\n   bgeu t1, t0, .Lbyte_holds_true\n"
+    "j .Lbyte_holds_false\n"
+    ".Lbyte_holds_lower:\n   addi t0, a1, -97\n   li t1, 25\n   bgeu t1, t0, .Lbyte_holds_true\n"
+    "j .Lbyte_holds_false\n"
+    ".Lbyte_holds_space:\n   li t0, 32\n   beq a1, t0, .Lbyte_holds_true\n   addi t0, a1, -9\n"
+    "li t1, 4\n   bgeu t1, t0, .Lbyte_holds_true\n   j .Lbyte_holds_false\n"
+    ".Lbyte_holds_high:\n   li t0, 8\n   bltu t0, a0, .Lbyte_holds_last\n   li t0, 7\n"
+    "bltu t0, a0, .Lbyte_holds_graph\n   beq a0, t0, .Lbyte_holds_print\n"
+    ".Lbyte_holds_blank:\n   li t0, 32\n   beq a1, t0, .Lbyte_holds_true\n   li t0, 9\n"
+    "beq a1, t0, .Lbyte_holds_true\n   j .Lbyte_holds_false\n"
+    ".Lbyte_holds_print:\n   addi t0, a1, -32\n   li t1, 94\n   bgeu t1, t0, .Lbyte_holds_true\n"
+    "j .Lbyte_holds_false\n"
+    ".Lbyte_holds_graph:\n   addi t0, a1, -33\n   li t1, 93\n   bgeu t1, t0, .Lbyte_holds_true\n"
+    "j .Lbyte_holds_false\n"
+    ".Lbyte_holds_last:\n   li t0, 10\n   bltu t0, a0, .Lbyte_holds_xdigit\n   beq a0, t0, .Lbyte_holds_punct\n"
+    ".Lbyte_holds_cntrl:\n   li t0, 31\n   bgeu t0, a1, .Lbyte_holds_true\n   li t0, 127\n"
+    "beq a1, t0, .Lbyte_holds_true\n   j .Lbyte_holds_false\n"
+    ".Lbyte_holds_punct:\n   addi t0, a1, -33\n   li t1, 93\n   bltu t1, t0, .Lbyte_holds_false\n"
+    "addi t0, a1, -48\n   li t1, 9\n   bgeu t1, t0, .Lbyte_holds_false\n   addi t0, a1, -65\n"
+    "li t1, 25\n   bgeu t1, t0, .Lbyte_holds_false\n   addi t0, a1, -97\n   bgeu t1, t0, .Lbyte_holds_false\n"
+    "j .Lbyte_holds_true\n"
+    ".Lbyte_holds_xdigit:\n   addi t0, a1, -48\n   li t1, 9\n   bgeu t1, t0, .Lbyte_holds_true\n"
+    "ori t0, a1, 32\n   addi t0, t0, -97\n   li t1, 5\n   bgeu t1, t0, .Lbyte_holds_true\n"
     ".Lbyte_holds_false:\n   li a0, 0\n   j .Lbyte_holds_return\n"
     ".Lbyte_holds_true:\n   li a0, 1\n"
     ".Lbyte_holds_return:\n"
@@ -10369,9 +10053,9 @@ ASM_FUNC(positive_to_string)
     ASM_FUNC(string_span_max)
     "mv a3, zero\n"
     "1:  bgeu a3, a1, 9f\n   add t0, a0, a3\n   lbu t1, 0(t0)\n   add t2, a2, t1\n"
-    "lbu t3, 0(t2)\n   beqz t3, 9f\n   addi a3, a3, 1\n"
-    "bgeu a3, a1, 9f\n   add t0, a0, a3\n   lbu t1, 0(t0)\n   add t2, a2, t1\n"
-    "lbu t3, 0(t2)\n   beqz t3, 9f\n   addi a3, a3, 1\n   j 1b\n"
+    "lbu t3, 0(t2)\n   beqz t3, 9f\n   addi a3, a3, 1\n   bgeu a3, a1, 9f\n"
+    "add t0, a0, a3\n   lbu t1, 0(t0)\n   add t2, a2, t1\n   lbu t3, 0(t2)\n"
+    "beqz t3, 9f\n   addi a3, a3, 1\n   j 1b\n"
     "9:  mv a0, a3\n"
     ASM_RET
     ASM_END(string_span_max)
@@ -10390,33 +10074,26 @@ ASM_FUNC(positive_to_string)
     "mv a4, zero  # how many bytes it took\n"
     "li a5, 10\n   li a6, 9\n"
     "1:  bgeu a4, a1, 2f\n   add t0, a0, a4\n   lbu t1, 0(t0)\n   addi t1, t1, -48\n"
-    "bltu a6, t1, 2f\n"
-    "mul a3, a3, a5\n   add a3, a3, t1  # ten times it, plus the digit\n"
+    "bltu a6, t1, 2f\n   mul a3, a3, a5\n   add a3, a3, t1  # ten times it, plus the digit\n"
     "addi a4, a4, 1\n   j 1b\n"
     "2:  beqz a2, 3f\n   sd a4, 0(a2)\n"
     "3:  mv a0, a3\n"
     ASM_RET
     ASM_END(string_digits_max)
-    //
-    //       Fixed octal and hexadecimal bounded runs. The x86_64 block above
-    //       carries their contract and the reason for separate public leaves.
-    //
+    //       string_digits_octal_escape_max: the arm64 block carries the reasoning.
     ASM_FUNC(string_digits_octal_escape_max)
     "mv a3, zero\n   mv a4, zero\n   li t2, 7\n   beqz a1, 2f\n"
-    "1:  add t0, a0, a4\n   lbu t1, 0(t0)\n   addi t1, t1, -48\n"
-    "bltu t2, t1, 2f\n   slli a3, a3, 3\n   add a3, a3, t1\n"
-    "addi a4, a4, 1\n   bne a4, a1, 1b\n"
+    "1:  add t0, a0, a4\n   lbu t1, 0(t0)\n   addi t1, t1, -48\n   bltu t2, t1, 2f\n"
+    "slli a3, a3, 3\n   add a3, a3, t1\n   addi a4, a4, 1\n   bne a4, a1, 1b\n"
     "2:  beqz a2, 3f\n   sd a4, 0(a2)\n"
     "3:  mv a0, a3\n"
     ASM_RET
     ASM_END(string_digits_octal_escape_max)
 
     ASM_FUNC(string_digits_octal_max)
-    "mv a3, zero\n   mv a4, zero\n   li t2, 7\n"
-    "beqz a1, 2f\n"
-    "1:  add t0, a0, a4\n   lbu t1, 0(t0)\n   addi t1, t1, -48\n"
-    "bltu t2, t1, 2f\n   slli a3, a3, 3\n   add a3, a3, t1\n"
-    "addi a4, a4, 1\n   bne a4, a1, 1b\n"
+    "mv a3, zero\n   mv a4, zero\n   li t2, 7\n   beqz a1, 2f\n"
+    "1:  add t0, a0, a4\n   lbu t1, 0(t0)\n   addi t1, t1, -48\n   bltu t2, t1, 2f\n"
+    "slli a3, a3, 3\n   add a3, a3, t1\n   addi a4, a4, 1\n   bne a4, a1, 1b\n"
     "2:  beqz a2, 3f\n   sd a4, 0(a2)\n"
     "3:  mv a0, a3\n"
     ASM_RET
@@ -10424,26 +10101,21 @@ ASM_FUNC(positive_to_string)
 
     ASM_FUNC(string_digits_hexadecimal_escape_max)
     "mv a3, zero\n   mv a4, zero\n   beqz a1, 4f\n"
-    "1:  add t0, a0, a4\n   lbu t0, 0(t0)\n"
-    "addi t1, t0, -48\n   li t2, 9\n   bgeu t2, t1, 2f\n"
-    "ori t0, t0, 32\n   addi t0, t0, -97\n   li t2, 5\n   bltu t2, t0, 4f\n"
-    "addi t1, t0, 10\n"
-    "2:  slli a3, a3, 4\n   add a3, a3, t1\n   addi a4, a4, 1\n"
-    "bne a4, a1, 1b\n"
+    "1:  add t0, a0, a4\n   lbu t0, 0(t0)\n   addi t1, t0, -48\n   li t2, 9\n"
+    "bgeu t2, t1, 2f\n   ori t0, t0, 32\n   addi t0, t0, -97\n   li t2, 5\n"
+    "bltu t2, t0, 4f\n   addi t1, t0, 10\n"
+    "2:  slli a3, a3, 4\n   add a3, a3, t1\n   addi a4, a4, 1\n   bne a4, a1, 1b\n"
     "4:  beqz a2, 5f\n   sd a4, 0(a2)\n"
     "5:  mv a0, a3\n"
     ASM_RET
     ASM_END(string_digits_hexadecimal_escape_max)
 
     ASM_FUNC(string_digits_hexadecimal_max)
-    "mv a3, zero\n   mv a4, zero\n"
-    "beqz a1, 4f\n"
-    "1:  add t0, a0, a4\n   lbu t0, 0(t0)\n"
-    "addi t1, t0, -48\n   li t2, 9\n   bgeu t2, t1, 2f\n"
-    "ori t0, t0, 32\n   addi t0, t0, -97\n   li t2, 5\n   bltu t2, t0, 4f\n"
-    "addi t1, t0, 10\n"
-    "2:  slli a3, a3, 4\n   add a3, a3, t1\n   addi a4, a4, 1\n"
-    "bne a4, a1, 1b\n"
+    "mv a3, zero\n   mv a4, zero\n   beqz a1, 4f\n"
+    "1:  add t0, a0, a4\n   lbu t0, 0(t0)\n   addi t1, t0, -48\n   li t2, 9\n"
+    "bgeu t2, t1, 2f\n   ori t0, t0, 32\n   addi t0, t0, -97\n   li t2, 5\n"
+    "bltu t2, t0, 4f\n   addi t1, t0, 10\n"
+    "2:  slli a3, a3, 4\n   add a3, a3, t1\n   addi a4, a4, 1\n   bne a4, a1, 1b\n"
     "4:  beqz a2, 5f\n   sd a4, 0(a2)\n"
     "5:  mv a0, a3\n"
     ASM_RET
@@ -10459,24 +10131,19 @@ ASM_FUNC(positive_to_string)
     "2:  li t0, 16\n   bne a2, t0, 3f\n   mv a2, a3\n   j string_digits_hexadecimal_max\n"
     "3:  mv a4, zero\n   mv a5, zero\n   addi t0, a2, -2\n   li t1, 34\n"
     "bltu t1, t0, 9f\n"
-    "6:  bgeu a5, a1, 9f\n   add t0, a0, a5\n   lbu t0, 0(t0)\n"
-    "addi t1, t0, -48\n   li t2, 9\n   bgeu t2, t1, 7f\n"
-    "ori t0, t0, 32\n   addi t0, t0, -97\n   li t2, 25\n   bltu t2, t0, 9f\n"
-    "addi t1, t0, 10\n"
-    "7:  bgeu t1, a2, 9f\n   mul a4, a4, a2\n   add a4, a4, t1\n"
-    "addi a5, a5, 1\n   j 6b\n"
+    "6:  bgeu a5, a1, 9f\n   add t0, a0, a5\n   lbu t0, 0(t0)\n   addi t1, t0, -48\n"
+    "li t2, 9\n   bgeu t2, t1, 7f\n   ori t0, t0, 32\n   addi t0, t0, -97\n"
+    "li t2, 25\n   bltu t2, t0, 9f\n   addi t1, t0, 10\n"
+    "7:  bgeu t1, a2, 9f\n   mul a4, a4, a2\n   add a4, a4, t1\n   addi a5, a5, 1\n"
+    "j 6b\n"
     "9:  beqz a3, 8f\n   sd a5, 0(a3)\n"
     "8:  mv a0, a4\n"
     ASM_RET
     ASM_END(string_digits_base_max)
-    //
-    //       Written out again rather than forwarded; the x86_64 block above
-    //       says what the fence costs when nothing can reach it.
-    //
+    //       string_digits: the arm64 block carries the reasoning.
     ASM_FUNC(string_digits)
     "mv a2, zero\n   mv a3, zero\n   li a5, 10\n   li a6, 9\n"
-    "1:  add t0, a0, a3\n   lbu t1, 0(t0)\n   addi t1, t1, -48\n"
-    "bltu a6, t1, 2f\n"
+    "1:  add t0, a0, a3\n   lbu t1, 0(t0)\n   addi t1, t1, -48\n   bltu a6, t1, 2f\n"
     "mul a2, a2, a5\n   add a2, a2, t1\n   addi a3, a3, 1\n   j 1b\n"
     "2:  beqz a1, 3f\n   sd a3, 0(a1)\n"
     "3:  mv a0, a2\n"
@@ -10488,9 +10155,9 @@ ASM_FUNC(positive_to_string)
     "beqz a0, 4f\n   lbu a6, 0(a0)\n   li a7, 45\n   bne a6, a7, 1f\n"
     "li a4, 1\n   addi a3, a3, 1\n   j 2f\n"
     "1:  li a7, 43\n   bne a6, a7, 2f\n   addi a3, a3, 1\n"
-    "2:  add a6, a0, a3\n   lbu a6, 0(a6)\n   addi a6, a6, -48\n"
-    "li a7, 9\n   bltu a7, a6, 3f\n   li a7, 10\n   mul a2, a2, a7\n"
-    "add a2, a2, a6\n   addi a3, a3, 1\n   addi a5, a5, 1\n   j 2b\n"
+    "2:  add a6, a0, a3\n   lbu a6, 0(a6)\n   addi a6, a6, -48\n   li a7, 9\n"
+    "bltu a7, a6, 3f\n   li a7, 10\n   mul a2, a2, a7\n   add a2, a2, a6\n"
+    "addi a3, a3, 1\n   addi a5, a5, 1\n   j 2b\n"
     "3:  bnez a5, 5f\n   mv a3, zero\n   j 4f\n"
     "5:  beqz a4, 4f\n   neg a2, a2\n"
     "4:  beqz a1, 6f\n   sd a3, 0(a1)\n"
@@ -10501,25 +10168,24 @@ ASM_FUNC(positive_to_string)
     // exact four-level power-of-ten decision tree beats division or a scratch
     // conversion while staying valid on the baseline ISA.
     ASM_FUNC(positive_digits)
-    "li t0, 10000000000\n   bgeu a0, t0, 10f\n"
-    "li t0, 100000\n   bgeu a0, t0, 5f\n"
+    "li t0, 10000000000\n   bgeu a0, t0, 10f\n   li t0, 100000\n   bgeu a0, t0, 5f\n"
     "li t0, 10\n   bltu a0, t0, 1f\n   li t0, 100\n   bltu a0, t0, 2f\n"
     "li t0, 1000\n   bltu a0, t0, 3f\n   li t0, 10000\n   bltu a0, t0, 4f\n"
     "li a0, 5\n" ASM_RET
     "1: li a0, 1\n" ASM_RET "2: li a0, 2\n" ASM_RET
     "3: li a0, 3\n" ASM_RET "4: li a0, 4\n" ASM_RET
-    "5: li t0, 1000000\n   bltu a0, t0, 6f\n   li t0, 10000000\n   bltu a0, t0, 7f\n"
+    "5:  li t0, 1000000\n   bltu a0, t0, 6f\n   li t0, 10000000\n   bltu a0, t0, 7f\n"
     "li t0, 100000000\n   bltu a0, t0, 8f\n   li t0, 1000000000\n   bltu a0, t0, 9f\n"
     "li a0, 10\n" ASM_RET
     "6: li a0, 6\n" ASM_RET "7: li a0, 7\n" ASM_RET
     "8: li a0, 8\n" ASM_RET "9: li a0, 9\n" ASM_RET
-    "10: li t0, 1000000000000000\n   bgeu a0, t0, 15f\n"
-    "li t0, 100000000000\n   bltu a0, t0, 11f\n   li t0, 1000000000000\n   bltu a0, t0, 12f\n"
-    "li t0, 10000000000000\n   bltu a0, t0, 13f\n   li t0, 100000000000000\n   bltu a0, t0, 14f\n"
+    "10:  li t0, 1000000000000000\n   bgeu a0, t0, 15f\n   li t0, 100000000000\n   bltu a0, t0, 11f\n"
+    "li t0, 1000000000000\n   bltu a0, t0, 12f\n   li t0, 10000000000000\n   bltu a0, t0, 13f\n"
+    "li t0, 100000000000000\n   bltu a0, t0, 14f\n"
     "li a0, 15\n" ASM_RET
     "11: li a0, 11\n" ASM_RET "12: li a0, 12\n" ASM_RET
     "13: li a0, 13\n" ASM_RET "14: li a0, 14\n" ASM_RET
-    "15: li t0, 10000000000000000\n   bltu a0, t0, 16f\n   li t0, 100000000000000000\n   bltu a0, t0, 17f\n"
+    "15:  li t0, 10000000000000000\n   bltu a0, t0, 16f\n   li t0, 100000000000000000\n   bltu a0, t0, 17f\n"
     "li t0, 1000000000000000000\n   bltu a0, t0, 18f\n   li t0, 10000000000000000000\n   bltu a0, t0, 19f\n"
     "li a0, 20\n" ASM_RET
     "16: li a0, 16\n" ASM_RET "17: li a0, 17\n" ASM_RET
@@ -10532,14 +10198,12 @@ ASM_FUNC(positive_to_string)
     //       caller-saved on the RV64 ABI.
     //
     ASM_FUNC(string_digits_exact)
-    "beqz a0, 3f\n"
-    "mv t0, zero  # the number so far\n   mv t1, zero  # how many digits\n"
+    "beqz a0, 3f\n   mv t0, zero  # the number so far\n"
+    "mv t1, zero  # how many digits\n"
     "li t5, 10\n   li t6, 9\n"
-    "1:  add t2, a0, t1\n   lbu t3, 0(t2)\n   addi t4, t3, -48\n"
-    "bltu t6, t4, 2f\n"
+    "1:  add t2, a0, t1\n   lbu t3, 0(t2)\n   addi t4, t3, -48\n   bltu t6, t4, 2f\n"
     "mul t0, t0, t5\n   add t0, t0, t4\n   addi t1, t1, 1\n   j 1b\n"
-    "2:  beqz t1, 3f\n   bnez t3, 3f\n"
-    "beqz a1, 4f\n   sd t0, 0(a1)\n"
+    "2:  beqz t1, 3f\n   bnez t3, 3f\n   beqz a1, 4f\n   sd t0, 0(a1)\n"
     "4:  li a0, 1\n"
     ASM_RET
     "3:  li a0, 0\n"
@@ -10595,46 +10259,42 @@ ASM_FUNC(positive_to_string)
     // with shifts. The page guard still matters: it guarantees both aligned
     // words are in the page containing the eight bytes being compared.
     ASM_FUNC(string_table_find)
-    "slli t0, a0, 52\n   srli t0, t0, 52\n   li a7, 4088\n"
-    "bltu a7, t0, 20f\n"
+    "slli t0, a0, 52\n   srli t0, t0, 52\n   li a7, 4088\n   bltu a7, t0, 20f\n"
     // Load the wanted first word without relying on misaligned-load support.
-    "andi t0, a0, 7\n   andi t1, a0, -8\n   ld t2, 0(t1)\n"
-    "beqz t0, 24f\n   ld t6, 8(t1)\n   slli t0, t0, 3\n"
-    "srl t2, t2, t0\n   li t1, 64\n   sub t1, t1, t0\n"
-    "sll t6, t6, t1\n   or t2, t2, t6\n"
-    "24: lui a4, 0x1010\n   addi a4, a4, 257\n"
-    "slli a5, a4, 32\n   add a4, a4, a5\n   slli a5, a4, 7\n"
-    "sub t3, t2, a4\n   not t6, t2\n   and t3, t3, t6\n   and t3, t3, a5\n"
-    "li t4, 0\n   beqz t3, 3f\n   neg t6, t3\n   and t6, t3, t6\n"
-    "addi t3, t6, -1\n   or t3, t3, t6\n   j 4f\n"
+    "andi t0, a0, 7\n   andi t1, a0, -8\n   ld t2, 0(t1)\n   beqz t0, 24f\n"
+    "ld t6, 8(t1)\n   slli t0, t0, 3\n   srl t2, t2, t0\n   li t1, 64\n"
+    "sub t1, t1, t0\n   sll t6, t6, t1\n   or t2, t2, t6\n"
+    "24:  lui a4, 0x1010\n   addi a4, a4, 257\n   slli a5, a4, 32\n   add a4, a4, a5\n"
+    "slli a5, a4, 7\n   sub t3, t2, a4\n   not t6, t2\n   and t3, t3, t6\n"
+    "and t3, t3, a5\n   li t4, 0\n   beqz t3, 3f\n   neg t6, t3\n"
+    "and t6, t3, t6\n   addi t3, t6, -1\n   or t3, t3, t6\n   j 4f\n"
     // No terminator in the first eight: all eight bytes matter, then the
     // comparison continues one byte at a time.
     "3:  li t3, -1\n   li t4, 1\n"
     "4:  li t0, 0\n   mv t1, a1\n"
-    "5:  bgeu t0, a3, 9f\n   ld t5, 0(t1)\n   beqz t5, 9f\n"
-    "slli a4, t5, 52\n   srli a4, a4, 52\n   bltu a7, a4, 10f\n"
+    "5:  bgeu t0, a3, 9f\n   ld t5, 0(t1)\n   beqz t5, 9f\n   slli a4, t5, 52\n"
+    "srli a4, a4, 52\n   bltu a7, a4, 10f\n"
     // The same aligned two-word join for this table entry.
-    "andi a4, t5, 7\n   andi a5, t5, -8\n   ld t6, 0(a5)\n"
-    "beqz a4, 25f\n   ld a6, 8(a5)\n   slli a4, a4, 3\n"
-    "srl t6, t6, a4\n   li a5, 64\n   sub a5, a5, a4\n"
-    "sll a6, a6, a5\n   or t6, t6, a6\n"
-    "25: xor t6, t6, t2\n   and t6, t6, t3\n   bnez t6, 8f\n"
-    "beqz t4, 7f\n   addi a4, a0, 8\n   addi a5, t5, 8\n"
-    "6:  lbu a6, 0(a4)\n   lbu t6, 0(a5)\n   bne a6, t6, 8f\n"
-    "beqz a6, 7f\n   addi a4, a4, 1\n   addi a5, a5, 1\n   j 6b\n"
+    "andi a4, t5, 7\n   andi a5, t5, -8\n   ld t6, 0(a5)\n   beqz a4, 25f\n"
+    "ld a6, 8(a5)\n   slli a4, a4, 3\n   srl t6, t6, a4\n   li a5, 64\n"
+    "sub a5, a5, a4\n   sll a6, a6, a5\n   or t6, t6, a6\n"
+    "25:  xor t6, t6, t2\n   and t6, t6, t3\n   bnez t6, 8f\n   beqz t4, 7f\n"
+    "addi a4, a0, 8\n   addi a5, t5, 8\n"
+    "6:  lbu a6, 0(a4)\n   lbu t6, 0(a5)\n   bne a6, t6, 8f\n   beqz a6, 7f\n"
+    "addi a4, a4, 1\n   addi a5, a5, 1\n   j 6b\n"
     "8:  add t1, t1, a2\n   addi t0, t0, 1\n   j 5b\n"
     // This entry begins too near a page end for its first word.
-    "10: mv a4, a0\n   mv a5, t5\n"
-    "11: lbu a6, 0(a4)\n   lbu t6, 0(a5)\n   bne a6, t6, 8b\n"
-    "beqz a6, 7f\n   addi a4, a4, 1\n   addi a5, a5, 1\n   j 11b\n"
+    "10:  mv a4, a0\n   mv a5, t5\n"
+    "11:  lbu a6, 0(a4)\n   lbu t6, 0(a5)\n   bne a6, t6, 8b\n   beqz a6, 7f\n"
+    "addi a4, a4, 1\n   addi a5, a5, 1\n   j 11b\n"
     // The wanted name itself begins too near a page end, so the complete walk
     // stays bytewise rather than carrying a page branch through the hot loop.
-    "20: li t0, 0\n   mv t1, a1\n"
-    "21: bgeu t0, a3, 9f\n   ld t5, 0(t1)\n   beqz t5, 9f\n"
-    "mv a4, a0\n   mv a5, t5\n"
-    "22: lbu a6, 0(a4)\n   lbu t6, 0(a5)\n   bne a6, t6, 23f\n"
-    "beqz a6, 7f\n   addi a4, a4, 1\n   addi a5, a5, 1\n   j 22b\n"
-    "23: add t1, t1, a2\n   addi t0, t0, 1\n   j 21b\n"
+    "20:  li t0, 0\n   mv t1, a1\n"
+    "21:  bgeu t0, a3, 9f\n   ld t5, 0(t1)\n   beqz t5, 9f\n   mv a4, a0\n"
+    "mv a5, t5\n"
+    "22:  lbu a6, 0(a4)\n   lbu t6, 0(a5)\n   bne a6, t6, 23f\n   beqz a6, 7f\n"
+    "addi a4, a4, 1\n   addi a5, a5, 1\n   j 22b\n"
+    "23:  add t1, t1, a2\n   addi t0, t0, 1\n   j 21b\n"
     "9:  mv a0, a3\n"
     ASM_RET
     "7:  mv a0, t0\n"
@@ -10646,77 +10306,55 @@ ASM_FUNC(positive_to_string)
     // lane uses divu once and reconstructs the remainder with mul/sub.
     ASM_FUNC(positive_into_base)
     ".section .rodata\n   .balign 16\n"
-    "positive_base_lower:\n   .ascii \"0123456789abcdefghijklmnopqrstuvwxyz\"\n"
-    "positive_base_upper:\n   .ascii \"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ\"\n"
+    "positive_base_lower:\n"
+    "   .ascii \"0123456789abcdefghijklmnopqrstuvwxyz\"\n"
+    "positive_base_upper:\n"
+    "   .ascii \"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ\"\n"
     ASM_SECTION
-    "addi t0, a2, -2\n   li t1, 34\n"
-    "bltu t1, t0, .Lpositive_base_rv_invalid\n"
-    "li t0, 10\n   beq a2, t0, .Lpositive_base_rv_decimal\n"
-    "beqz a1, .Lpositive_base_rv_zero\n"
-    "addi t0, a2, -1\n   and t0, t0, a2\n"
-    "bnez t0, .Lpositive_base_rv_generic\n"
-    "li t0, 16\n   beq a2, t0, .Lpositive_base_rv_hex\n"
-    "li t0, 8\n   beq a2, t0, .Lpositive_base_rv_octal\n"
-    "li t0, 32\n   beq a2, t0, .Lpositive_base_rv_base32\n"
-    "li t0, 4\n   beq a2, t0, .Lpositive_base_rv_quaternary\n"
-    "j .Lpositive_base_rv_binary\n"
+    "addi t0, a2, -2\n   li t1, 34\n   bltu t1, t0, .Lpositive_base_rv_invalid\n   li t0, 10\n"
+    "beq a2, t0, .Lpositive_base_rv_decimal\n   beqz a1, .Lpositive_base_rv_zero\n   addi t0, a2, -1\n   and t0, t0, a2\n"
+    "bnez t0, .Lpositive_base_rv_generic\n   li t0, 16\n   beq a2, t0, .Lpositive_base_rv_hex\n   li t0, 8\n"
+    "beq a2, t0, .Lpositive_base_rv_octal\n   li t0, 32\n   beq a2, t0, .Lpositive_base_rv_base32\n   li t0, 4\n"
+    "beq a2, t0, .Lpositive_base_rv_quaternary\n   j .Lpositive_base_rv_binary\n"
     // Generic bases 2..36, written backwards first and reversed in place.
-    ".Lpositive_base_rv_generic:\n"
-    "mv t0, a0\n   mv t1, a0\n   li t2, 87\n"
+    ".Lpositive_base_rv_generic:\n   mv t0, a0\n   mv t1, a0\n   li t2, 87\n"
     "beqz a3, .Lpositive_base_rv_generic_loop\n   li t2, 55\n"
-    ".Lpositive_base_rv_generic_loop:\n"
-    "divu t3, a1, a2\n   mul t4, t3, a2\n   sub t4, a1, t4\n"
-    "li t5, 10\n   bltu t4, t5, .Lpositive_base_rv_generic_number\n"
-    "add t4, t4, t2\n   j .Lpositive_base_rv_generic_store\n"
+    ".Lpositive_base_rv_generic_loop:\n   divu t3, a1, a2\n   mul t4, t3, a2\n   sub t4, a1, t4\n"
+    "li t5, 10\n   bltu t4, t5, .Lpositive_base_rv_generic_number\n   add t4, t4, t2\n   j .Lpositive_base_rv_generic_store\n"
     ".Lpositive_base_rv_generic_number:\n   addi t4, t4, 48\n"
-    ".Lpositive_base_rv_generic_store:\n"
-    "sb t4, 0(t1)\n   addi t1, t1, 1\n   mv a1, t3\n"
-    "bnez a1, .Lpositive_base_rv_generic_loop\n"
-    "sub t5, t1, t0\n   addi t1, t1, -1\n   mv t2, t0\n"
-    ".Lpositive_base_rv_reverse:\n"
-    "bgeu t2, t1, .Lpositive_base_rv_done\n"
-    "lbu t3, 0(t2)\n   lbu t4, 0(t1)\n   sb t4, 0(t2)\n   sb t3, 0(t1)\n"
-    "addi t2, t2, 1\n   addi t1, t1, -1\n   j .Lpositive_base_rv_reverse\n"
+    ".Lpositive_base_rv_generic_store:\n   sb t4, 0(t1)\n   addi t1, t1, 1\n   mv a1, t3\n"
+    "bnez a1, .Lpositive_base_rv_generic_loop\n   sub t5, t1, t0\n   addi t1, t1, -1\n   mv t2, t0\n"
+    ".Lpositive_base_rv_reverse:\n   bgeu t2, t1, .Lpositive_base_rv_done\n   lbu t3, 0(t2)\n   lbu t4, 0(t1)\n"
+    "sb t4, 0(t2)\n   sb t3, 0(t1)\n   addi t2, t2, 1\n   addi t1, t1, -1\n"
+    "j .Lpositive_base_rv_reverse\n"
     // Prepare the digit mask, shift and alphabet, then share the floor bit
     // length search and right-to-left writer.
-    ".Lpositive_base_rv_hex:\n"
-    "li t6, 4\n   li t3, 15\n   li t5, 32\n   lla t4, positive_base_lower\n"
-    "beqz a3, .Lpositive_base_rv_power_length\n   addi t4, t4, 36\n"
-    "j .Lpositive_base_rv_power_length\n"
-    ".Lpositive_base_rv_octal:\n"
-    "li t6, 3\n   li t3, 7\n   li t5, 43\n   li t4, 0\n"
-    "j .Lpositive_base_rv_power_length\n"
-    ".Lpositive_base_rv_binary:\n"
-    "li t6, 1\n   li t3, 1\n   li t5, 128\n   li t4, 0\n"
-    "j .Lpositive_base_rv_power_length\n"
-    ".Lpositive_base_rv_quaternary:\n"
-    "li t6, 2\n   li t3, 3\n   li t5, 64\n   li t4, 0\n"
-    "j .Lpositive_base_rv_power_length\n"
-    ".Lpositive_base_rv_base32:\n"
-    "li t6, 5\n   li t3, 31\n   li t5, 26\n   lla t4, positive_base_lower\n"
-    "beqz a3, .Lpositive_base_rv_power_length\n   addi t4, t4, 36\n"
-    ".Lpositive_base_rv_power_length:\n"
-    "mv t0, a1\n   li t1, 1\n   srli t2, t0, 32\n"
+    ".Lpositive_base_rv_hex:\n   li t6, 4\n   li t3, 15\n   li t5, 32\n"
+    "lla t4, positive_base_lower\n   beqz a3, .Lpositive_base_rv_power_length\n   addi t4, t4, 36\n   j .Lpositive_base_rv_power_length\n"
+    ".Lpositive_base_rv_octal:\n   li t6, 3\n   li t3, 7\n   li t5, 43\n"
+    "li t4, 0\n   j .Lpositive_base_rv_power_length\n"
+    ".Lpositive_base_rv_binary:\n   li t6, 1\n   li t3, 1\n   li t5, 128\n"
+    "li t4, 0\n   j .Lpositive_base_rv_power_length\n"
+    ".Lpositive_base_rv_quaternary:\n   li t6, 2\n   li t3, 3\n   li t5, 64\n"
+    "li t4, 0\n   j .Lpositive_base_rv_power_length\n"
+    ".Lpositive_base_rv_base32:\n   li t6, 5\n   li t3, 31\n   li t5, 26\n"
+    "lla t4, positive_base_lower\n   beqz a3, .Lpositive_base_rv_power_length\n   addi t4, t4, 36\n"
+    ".Lpositive_base_rv_power_length:\n   mv t0, a1\n   li t1, 1\n   srli t2, t0, 32\n"
     "beqz t2, 1f\n   mv t0, t2\n   addi t1, t1, 32\n"
     "1:  srli t2, t0, 16\n   beqz t2, 2f\n   mv t0, t2\n   addi t1, t1, 16\n"
     "2:  srli t2, t0, 8\n   beqz t2, 3f\n   mv t0, t2\n   addi t1, t1, 8\n"
     "3:  srli t2, t0, 4\n   beqz t2, 4f\n   mv t0, t2\n   addi t1, t1, 4\n"
     "4:  srli t2, t0, 2\n   beqz t2, 5f\n   mv t0, t2\n   addi t1, t1, 2\n"
     "5:  srli t2, t0, 1\n   beqz t2, 6f\n   addi t1, t1, 1\n"
-    "6:  addi t1, t1, -1\n   mul t1, t1, t5\n   srli t1, t1, 7\n"
-    "addi t1, t1, 1\n"
-    ".Lpositive_base_rv_power_write:\n"
-    "add t2, a0, t1\n   mv t5, t1\n"
-    ".Lpositive_base_rv_power_loop:\n"
-    "and t0, a1, t3\n   beqz t4, .Lpositive_base_rv_power_number\n"
-    "add a4, t4, t0\n   lbu t0, 0(a4)\n   j .Lpositive_base_rv_power_store\n"
+    "6:  addi t1, t1, -1\n   mul t1, t1, t5\n   srli t1, t1, 7\n   addi t1, t1, 1\n"
+    ".Lpositive_base_rv_power_write:\n   add t2, a0, t1\n   mv t5, t1\n"
+    ".Lpositive_base_rv_power_loop:\n   and t0, a1, t3\n   beqz t4, .Lpositive_base_rv_power_number\n   add a4, t4, t0\n"
+    "lbu t0, 0(a4)\n   j .Lpositive_base_rv_power_store\n"
     ".Lpositive_base_rv_power_number:\n   addi t0, t0, 48\n"
-    ".Lpositive_base_rv_power_store:\n"
-    "addi t2, t2, -1\n   sb t0, 0(t2)\n   srl a1, a1, t6\n"
+    ".Lpositive_base_rv_power_store:\n   addi t2, t2, -1\n   sb t0, 0(t2)\n   srl a1, a1, t6\n"
     "bnez a1, .Lpositive_base_rv_power_loop\n   mv a0, t5\n"
     ASM_RET
-    ".Lpositive_base_rv_zero:\n"
-    "li t0, 48\n   sb t0, 0(a0)\n   li a0, 1\n"
+    ".Lpositive_base_rv_zero:\n   li t0, 48\n   sb t0, 0(a0)\n   li a0, 1\n"
     ASM_RET
     ".Lpositive_base_rv_decimal:\n   tail positive_into\n"
     ".Lpositive_base_rv_invalid:\n   li a0, 0\n"
@@ -11231,7 +10869,7 @@ positive memory_count(address_any block, positive size, b8 value);
 
 // ### First occurrence of a byte in a block
 // returns: its address, or null when the block does not hold one
-// traditional: memchr
+// traditional: memory_first_of
 address_any memory_first_of(address_any block, b8 value, positive size);
 
 /*
@@ -11239,7 +10877,7 @@ address_any memory_first_of(address_any block, b8 value, positive size);
 
         Each is assembly on all three machines and each is in the inventory,
         and C could not call any of them: the alias block gives them libc
-        names, so anything reaching for strnlen or strchrnul got there, and
+        names, so anything reaching for string_length_max or string_first_of_or_end got there, and
         anything reaching for the library's own name got an implicit
         declaration and a wrong return type on a 64 bit pointer. A routine
         the file lists and the file's own language cannot name is not a
@@ -11297,10 +10935,7 @@ extern const b8 string_set_blanks[STRING_SET_BYTES];
 
 __asm__(
     ASM_RODATA_OBJECT_BEGIN(string_set_blanks, 16)
-    ".zero 9\n"
-    ".byte 1\n"
-    ".zero 22\n"
-    ".byte 1\n"
+    ".zero 9\n   .byte 1\n   .zero 22\n   .byte 1\n"
     ".zero 223\n"
     ASM_OBJECT_END(string_set_blanks)
 );
@@ -11464,7 +11099,6 @@ __asm__(
 //      An empty string to begin with, because STOCK_STRINGS can take every
 //      line below it away and __asm__() with nothing in it is not a thing
 //      the compiler will accept.
-    ""
 //      These two are outside the group below because every architecture is
 //      missing them, not just x86. They still have to go when the kernel is
 //      keeping its own, or lib/string.c defines them as well.
@@ -11626,19 +11260,23 @@ __asm__(
     ASM_RET
     ASM_END(system_call_2)
     ASM_FUNC(system_call_3)
-    "mov %rdi, %rax\n   mov %rsi, %rdi\n   mov %rdx, %rsi\n   mov %rcx, %rdx\n   syscall\n"
+    "mov %rdi, %rax\n   mov %rsi, %rdi\n   mov %rdx, %rsi\n   mov %rcx, %rdx\n"
+    "syscall\n"
     ASM_RET
     ASM_END(system_call_3)
     ASM_FUNC(system_call_4)
-    "mov %rdi, %rax\n   mov %rsi, %rdi\n   mov %rdx, %rsi\n   mov %rcx, %rdx\n   mov %r8, %r10\n   syscall\n"
+    "mov %rdi, %rax\n   mov %rsi, %rdi\n   mov %rdx, %rsi\n   mov %rcx, %rdx\n"
+    "mov %r8, %r10\n   syscall\n"
     ASM_RET
     ASM_END(system_call_4)
     ASM_FUNC(system_call_5)
-    "mov %rdi, %rax\n   mov %rsi, %rdi\n   mov %rdx, %rsi\n   mov %rcx, %rdx\n   mov %r8, %r10\n   mov %r9, %r8\n   syscall\n"
+    "mov %rdi, %rax\n   mov %rsi, %rdi\n   mov %rdx, %rsi\n   mov %rcx, %rdx\n"
+    "mov %r8, %r10\n   mov %r9, %r8\n   syscall\n"
     ASM_RET
     ASM_END(system_call_5)
     ASM_FUNC(system_call_6)
-    "mov %rdi, %rax\n   mov %rsi, %rdi\n   mov %rdx, %rsi\n   mov %rcx, %rdx\n   mov %r8, %r10\n   mov %r9, %r8\n   mov 8(%rsp), %r9\n   syscall\n"
+    "mov %rdi, %rax\n   mov %rsi, %rdi\n   mov %rdx, %rsi\n   mov %rcx, %rdx\n"
+    "mov %r8, %r10\n   mov %r9, %r8\n   mov 8(%rsp), %r9\n   syscall\n"
     ASM_RET
     ASM_END(system_call_6)
 );
@@ -11662,19 +11300,23 @@ __asm__(
     ASM_RET
     ASM_END(system_call_2)
     ASM_FUNC(system_call_3)
-    "mv a7, a0\n   mv a0, a1\n   mv a1, a2\n   mv a2, a3\n   ecall\n"
+    "mv a7, a0\n   mv a0, a1\n   mv a1, a2\n   mv a2, a3\n"
+    "ecall\n"
     ASM_RET
     ASM_END(system_call_3)
     ASM_FUNC(system_call_4)
-    "mv a7, a0\n   mv a0, a1\n   mv a1, a2\n   mv a2, a3\n   mv a3, a4\n   ecall\n"
+    "mv a7, a0\n   mv a0, a1\n   mv a1, a2\n   mv a2, a3\n"
+    "mv a3, a4\n   ecall\n"
     ASM_RET
     ASM_END(system_call_4)
     ASM_FUNC(system_call_5)
-    "mv a7, a0\n   mv a0, a1\n   mv a1, a2\n   mv a2, a3\n   mv a3, a4\n   mv a4, a5\n   ecall\n"
+    "mv a7, a0\n   mv a0, a1\n   mv a1, a2\n   mv a2, a3\n"
+    "mv a3, a4\n   mv a4, a5\n   ecall\n"
     ASM_RET
     ASM_END(system_call_5)
     ASM_FUNC(system_call_6)
-    "mv a7, a0\n   mv a0, a1\n   mv a1, a2\n   mv a2, a3\n   mv a3, a4\n   mv a4, a5\n   mv a5, a6\n   ecall\n"
+    "mv a7, a0\n   mv a0, a1\n   mv a1, a2\n   mv a2, a3\n"
+    "mv a3, a4\n   mv a4, a5\n   mv a5, a6\n   ecall\n"
     ASM_RET
     ASM_END(system_call_6)
 );
@@ -11774,31 +11416,28 @@ __asm__(
     ASM_RET
     ASM_END(program_arguments_own)
     ASM_FUNC(program_argument_count)
-    "cmpq $0, program_words(%rip)\n   je 1f\n"
-    "mov program_words_count(%rip), %eax\n"
+    "cmpq $0, program_words(%rip)\n   je 1f\n   mov program_words_count(%rip), %eax\n"
     ASM_RET
-    "1:  mov program_stack_base(%rip), %rax\n   test %rax, %rax\n   jz 2f\n"
-    "mov (%rax), %eax\n"
+    "1:  mov program_stack_base(%rip), %rax\n   test %rax, %rax\n   jz 2f\n   mov (%rax), %eax\n"
     ASM_RET
     "2:  xor %eax, %eax\n"
     ASM_RET
     ASM_END(program_argument_count)
     ASM_FUNC(program_argument)
-    "test %edi, %edi\n   js 9f\n   mov program_words(%rip), %rax\n"
-    "test %rax, %rax\n   jz 1f\n   cmp program_words_count(%rip), %edi\n"
-    "jge 9f\n   movslq %edi, %rdi\n   mov (%rax,%rdi,8), %rax\n"
+    "test %edi, %edi\n   js 9f\n   mov program_words(%rip), %rax\n   test %rax, %rax\n"
+    "jz 1f\n   cmp program_words_count(%rip), %edi\n   jge 9f\n   movslq %edi, %rdi\n"
+    "mov (%rax,%rdi,8), %rax\n"
     ASM_RET
-    "1:  mov program_stack_base(%rip), %rax\n   test %rax, %rax\n   jz 9f\n"
-    "cmp (%rax), %edi\n   jge 9f\n   movslq %edi, %rdi\n"
-    "mov 8(%rax,%rdi,8), %rax\n"
+    "1:  mov program_stack_base(%rip), %rax\n   test %rax, %rax\n   jz 9f\n   cmp (%rax), %edi\n"
+    "jge 9f\n   movslq %edi, %rdi\n   mov 8(%rax,%rdi,8), %rax\n"
     ASM_RET
     "9:  xor %eax, %eax\n"
     ASM_RET
     ASM_END(program_argument)
     ASM_FUNC(program_environment)
-    "test %edi, %edi\n   js 9f\n   mov program_stack_base(%rip), %rdx\n"
-    "test %rdx, %rdx\n   jz 9f\n   cmpq $0, program_words(%rip)\n   je 1f\n"
-    "movslq program_words_count(%rip), %rcx\n   jmp 2f\n"
+    "test %edi, %edi\n   js 9f\n   mov program_stack_base(%rip), %rdx\n   test %rdx, %rdx\n"
+    "jz 9f\n   cmpq $0, program_words(%rip)\n   je 1f\n   movslq program_words_count(%rip), %rcx\n"
+    "jmp 2f\n"
     "1:  movslq (%rdx), %rcx\n"
     "2:  movslq %edi, %rdi\n   add %rdi, %rcx\n   mov 16(%rdx,%rcx,8), %rax\n"
     ASM_RET
@@ -11806,9 +11445,8 @@ __asm__(
     ASM_RET
     ASM_END(program_environment)
     ASM_FUNC(program_environment_list)
-    "mov program_stack_base(%rip), %rax\n   test %rax, %rax\n   jz 9f\n"
-    "cmpq $0, program_words(%rip)\n   je 1f\n"
-    "movslq program_words_count(%rip), %rcx\n   jmp 2f\n"
+    "mov program_stack_base(%rip), %rax\n   test %rax, %rax\n   jz 9f\n   cmpq $0, program_words(%rip)\n"
+    "je 1f\n   movslq program_words_count(%rip), %rcx\n   jmp 2f\n"
     "1:  movslq (%rax), %rcx\n"
     "2:  lea 16(%rax,%rcx,8), %rax\n"
     ASM_RET
@@ -11820,44 +11458,40 @@ __asm__(
 __asm__(
     ASM_SECTION
     ASM_FUNC(program_arguments_use)
-    "adrp x2, program_words\n   add x2, x2, :lo12:program_words\n"
-    "str x0, [x2]\n   adrp x2, program_words_count\n"
+    "adrp x2, program_words\n   add x2, x2, :lo12:program_words\n   str x0, [x2]\n   adrp x2, program_words_count\n"
     "str w1, [x2, :lo12:program_words_count]\n"
     ASM_RET
     ASM_END(program_arguments_use)
     ASM_FUNC(program_arguments_own)
-    "adrp x0, program_words\n   str xzr, [x0, :lo12:program_words]\n"
-    "adrp x0, program_words_count\n   str wzr, [x0, :lo12:program_words_count]\n"
+    "adrp x0, program_words\n   str xzr, [x0, :lo12:program_words]\n   adrp x0, program_words_count\n   str wzr, [x0, :lo12:program_words_count]\n"
     ASM_RET
     ASM_END(program_arguments_own)
     ASM_FUNC(program_argument_count)
-    "adrp x1, program_words\n   ldr x1, [x1, :lo12:program_words]\n   cbz x1, 1f\n"
-    "adrp x1, program_words_count\n   ldr w0, [x1, :lo12:program_words_count]\n"
+    "adrp x1, program_words\n   ldr x1, [x1, :lo12:program_words]\n   cbz x1, 1f\n   adrp x1, program_words_count\n"
+    "ldr w0, [x1, :lo12:program_words_count]\n"
     ASM_RET
-    "1:  adrp x1, program_stack_base\n   ldr x1, [x1, :lo12:program_stack_base]\n"
-    "cbz x1, 2f\n   ldr w0, [x1]\n"
+    "1:  adrp x1, program_stack_base\n   ldr x1, [x1, :lo12:program_stack_base]\n   cbz x1, 2f\n   ldr w0, [x1]\n"
     ASM_RET
     "2:  mov w0, wzr\n"
     ASM_RET
     ASM_END(program_argument_count)
     ASM_FUNC(program_argument)
-    "tbnz w0, #31, 9f\n   adrp x1, program_words\n"
-    "ldr x1, [x1, :lo12:program_words]\n   cbz x1, 1f\n"
-    "adrp x2, program_words_count\n   ldr w2, [x2, :lo12:program_words_count]\n"
-    "cmp w0, w2\n   b.ge 9f\n   sxtw x2, w0\n   ldr x0, [x1, x2, lsl #3]\n"
+    "tbnz w0, #31, 9f\n"
+    "adrp x1, program_words\n   ldr x1, [x1, :lo12:program_words]\n   cbz x1, 1f\n   adrp x2, program_words_count\n"
+    "ldr w2, [x2, :lo12:program_words_count]\n   cmp w0, w2\n   b.ge 9f\n   sxtw x2, w0\n"
+    "ldr x0, [x1, x2, lsl #3]\n"
     ASM_RET
-    "1:  adrp x1, program_stack_base\n   ldr x1, [x1, :lo12:program_stack_base]\n"
-    "cbz x1, 9f\n   ldr w2, [x1]\n   cmp w0, w2\n   b.ge 9f\n"
-    "sxtw x2, w0\n   add x1, x1, #8\n   ldr x0, [x1, x2, lsl #3]\n"
+    "1:  adrp x1, program_stack_base\n   ldr x1, [x1, :lo12:program_stack_base]\n   cbz x1, 9f\n   ldr w2, [x1]\n"
+    "cmp w0, w2\n   b.ge 9f\n   sxtw x2, w0\n   add x1, x1, #8\n"
+    "ldr x0, [x1, x2, lsl #3]\n"
     ASM_RET
     "9:  mov x0, xzr\n"
     ASM_RET
     ASM_END(program_argument)
     ASM_FUNC(program_environment)
-    "tbnz w0, #31, 9f\n   adrp x1, program_stack_base\n"
-    "ldr x1, [x1, :lo12:program_stack_base]\n   cbz x1, 9f\n"
-    "adrp x2, program_words\n   ldr x2, [x2, :lo12:program_words]\n   cbz x2, 1f\n"
-    "adrp x2, program_words_count\n   ldrsw x2, [x2, :lo12:program_words_count]\n"
+    "tbnz w0, #31, 9f\n"
+    "adrp x1, program_stack_base\n   ldr x1, [x1, :lo12:program_stack_base]\n   cbz x1, 9f\n   adrp x2, program_words\n"
+    "ldr x2, [x2, :lo12:program_words]\n   cbz x2, 1f\n   adrp x2, program_words_count\n   ldrsw x2, [x2, :lo12:program_words_count]\n"
     "b 2f\n"
     "1:  ldrsw x2, [x1]\n"
     "2:  sxtw x0, w0\n   add x2, x2, x0\n   add x2, x2, #2\n"
@@ -11867,13 +11501,12 @@ __asm__(
     ASM_RET
     ASM_END(program_environment)
     ASM_FUNC(program_environment_list)
-    "adrp x0, program_stack_base\n   ldr x0, [x0, :lo12:program_stack_base]\n"
-    "cbz x0, 9f\n   adrp x1, program_words\n"
-    "ldr x1, [x1, :lo12:program_words]\n   cbz x1, 1f\n"
-    "adrp x1, program_words_count\n   ldrsw x1, [x1, :lo12:program_words_count]\n"
+    "adrp x0, program_stack_base\n   ldr x0, [x0, :lo12:program_stack_base]\n   cbz x0, 9f\n   adrp x1, program_words\n"
+    "ldr x1, [x1, :lo12:program_words]\n   cbz x1, 1f\n   adrp x1, program_words_count\n   ldrsw x1, [x1, :lo12:program_words_count]\n"
     "b 2f\n"
     "1:  ldrsw x1, [x0]\n"
-    "2:  add x0, x0, x1, lsl #3\n   add x0, x0, #16\n"
+    "2:  add x0, x0, x1, lsl #3\n"
+    "add x0, x0, #16\n"
     ASM_RET
     "9:  mov x0, xzr\n"
     ASM_RET
@@ -11883,53 +11516,48 @@ __asm__(
 __asm__(
     ASM_SECTION
     ASM_FUNC(program_arguments_use)
-    "lla t0, program_words\n   sd a0, 0(t0)\n   lla t0, program_words_count\n"
-    "sw a1, 0(t0)\n"
+    "lla t0, program_words\n   sd a0, 0(t0)\n   lla t0, program_words_count\n   sw a1, 0(t0)\n"
     ASM_RET
     ASM_END(program_arguments_use)
     ASM_FUNC(program_arguments_own)
-    "lla t0, program_words\n   sd zero, 0(t0)\n   lla t0, program_words_count\n"
-    "sw zero, 0(t0)\n"
+    "lla t0, program_words\n   sd zero, 0(t0)\n   lla t0, program_words_count\n   sw zero, 0(t0)\n"
     ASM_RET
     ASM_END(program_arguments_own)
     ASM_FUNC(program_argument_count)
-    "lla t0, program_words\n   ld t0, 0(t0)\n   beqz t0, 1f\n"
-    "lla t0, program_words_count\n   lw a0, 0(t0)\n"
-    ASM_RET
-    "1:  lla t0, program_stack_base\n   ld t0, 0(t0)\n   beqz t0, 2f\n"
+    "lla t0, program_words\n   ld t0, 0(t0)\n   beqz t0, 1f\n   lla t0, program_words_count\n"
     "lw a0, 0(t0)\n"
+    ASM_RET
+    "1:  lla t0, program_stack_base\n   ld t0, 0(t0)\n   beqz t0, 2f\n   lw a0, 0(t0)\n"
     ASM_RET
     "2:  li a0, 0\n"
     ASM_RET
     ASM_END(program_argument_count)
     ASM_FUNC(program_argument)
     "sext.w a0, a0\n   bltz a0, 9f\n   lla t0, program_words\n   ld t0, 0(t0)\n"
-    "beqz t0, 1f\n   lla t1, program_words_count\n   lw t1, 0(t1)\n"
-    "bge a0, t1, 9f\n   slli t1, a0, 3\n   add t0, t0, t1\n   ld a0, 0(t0)\n"
+    "beqz t0, 1f\n   lla t1, program_words_count\n   lw t1, 0(t1)\n   bge a0, t1, 9f\n"
+    "slli t1, a0, 3\n   add t0, t0, t1\n   ld a0, 0(t0)\n"
     ASM_RET
-    "1:  lla t0, program_stack_base\n   ld t0, 0(t0)\n   beqz t0, 9f\n"
-    "lw t1, 0(t0)\n   bge a0, t1, 9f\n   slli t1, a0, 3\n"
-    "add t0, t0, t1\n   ld a0, 8(t0)\n"
+    "1:  lla t0, program_stack_base\n   ld t0, 0(t0)\n   beqz t0, 9f\n   lw t1, 0(t0)\n"
+    "bge a0, t1, 9f\n   slli t1, a0, 3\n   add t0, t0, t1\n   ld a0, 8(t0)\n"
     ASM_RET
     "9:  li a0, 0\n"
     ASM_RET
     ASM_END(program_argument)
     ASM_FUNC(program_environment)
-    "sext.w a0, a0\n   bltz a0, 9f\n   lla t0, program_stack_base\n"
-    "ld t0, 0(t0)\n   beqz t0, 9f\n   lla t1, program_words\n"
-    "ld t1, 0(t1)\n   beqz t1, 1f\n   lla t1, program_words_count\n"
-    "lw t1, 0(t1)\n   j 2f\n"
+    "sext.w a0, a0\n   bltz a0, 9f\n   lla t0, program_stack_base\n   ld t0, 0(t0)\n"
+    "beqz t0, 9f\n   lla t1, program_words\n   ld t1, 0(t1)\n   beqz t1, 1f\n"
+    "lla t1, program_words_count\n   lw t1, 0(t1)\n   j 2f\n"
     "1:  lw t1, 0(t0)\n"
-    "2:  add t1, t1, a0\n   addi t1, t1, 2\n   slli t1, t1, 3\n"
-    "add t0, t0, t1\n   ld a0, 0(t0)\n"
+    "2:  add t1, t1, a0\n   addi t1, t1, 2\n   slli t1, t1, 3\n   add t0, t0, t1\n"
+    "ld a0, 0(t0)\n"
     ASM_RET
     "9:  li a0, 0\n"
     ASM_RET
     ASM_END(program_environment)
     ASM_FUNC(program_environment_list)
-    "lla t0, program_stack_base\n   ld a0, 0(t0)\n   beqz a0, 9f\n"
-    "lla t0, program_words\n   ld t0, 0(t0)\n   beqz t0, 1f\n"
-    "lla t0, program_words_count\n   lw t0, 0(t0)\n   j 2f\n"
+    "lla t0, program_stack_base\n   ld a0, 0(t0)\n   beqz a0, 9f\n   lla t0, program_words\n"
+    "ld t0, 0(t0)\n   beqz t0, 1f\n   lla t0, program_words_count\n   lw t0, 0(t0)\n"
+    "j 2f\n"
     "1:  lw t0, 0(a0)\n"
     "2:  addi t0, t0, 2\n   slli t0, t0, 3\n   add a0, a0, t0\n"
     ASM_RET
@@ -13062,6 +12690,10 @@ __asm__(
 
 address_any memory(positive size);
 fn memory_free(address_any address, positive size);
+bool memory_reserve(address_any address_to held, positive address_to have,
+                    positive used, positive want, positive unit, positive first);
+fn memory_release(address_any address_to held, positive address_to have,
+                  positive address_to used, positive unit);
 
 #if X64
 __asm__(
@@ -13106,6 +12738,40 @@ __asm__(
     "1:\n"
     ASM_RET
     ASM_END(memory_free)
+
+    //
+    //       A movable store grows geometrically. Counts are elements and unit
+    //       says how wide one is, so the same leaf serves bytes, pointers and
+    //       structures. Allocation is cold; the floor here is one allocation,
+    //       one copy and one release, with overflow refused before any of them.
+    //
+    ASM_FUNC(memory_reserve)
+    "push %rbp\n   push %rbx\n   push %r12\n   push %r13\n   push %r14\n   push %r15\n   sub $8, %rsp\n"
+    "mov %rdi, %rbx\n   mov %rsi, %r12\n   mov %rdx, %r13\n   mov %r8, %r14\n"
+    "mov (%r12), %r15\n   cmp %rcx, %r15\n   jae 8f\n"
+    "test %r15, %r15\n   cmovz %r9, %r15\n   test %r15, %r15\n   jz 9f\n"
+    "1:  cmp %rcx, %r15\n   jae 2f\n   add %r15, %r15\n   jc 9f\n   jmp 1b\n"
+    "2:  test %r14, %r14\n   jz 9f\n   mov %r15, %rax\n   mul %r14\n   test %rdx, %rdx\n   jnz 9f\n"
+    "mov %rax, %rdi\n   call memory\n   mov %rax, %rbp\n"
+    "test %rbp, %rbp\n   jz 9f\n   cmp $-4095, %rbp\n   jae 9f\n"
+    "mov (%rbx), %rsi\n   test %rsi, %rsi\n   jz 3f\n"
+    "mov %r13, %rdx\n   imul %r14, %rdx\n   mov %rbp, %rdi\n   call memory_copy\n"
+    "mov (%rbx), %rdi\n   mov (%r12), %rsi\n   imul %r14, %rsi\n   call memory_free\n"
+    "3:  mov %rbp, (%rbx)\n   mov %r15, (%r12)\n"
+    "8:  mov $1, %eax\n   jmp 7f\n"
+    "9:  xor %eax, %eax\n"
+    "7:  add $8, %rsp\n   pop %r15\n   pop %r14\n   pop %r13\n   pop %r12\n   pop %rbx\n   pop %rbp\n"
+    ASM_RET
+    ASM_END(memory_reserve)
+
+    ASM_FUNC(memory_release)
+    "push %rbx\n   push %r12\n   push %r13\n"
+    "mov %rdi, %rbx\n   mov %rsi, %r12\n   mov %rdx, %r13\n"
+    "mov (%rbx), %rdi\n   mov (%r12), %rsi\n   imul %rcx, %rsi\n   call memory_free\n"
+    "movq $0, (%rbx)\n   movq $0, (%r12)\n   movq $0, (%r13)\n"
+    "pop %r13\n   pop %r12\n   pop %rbx\n"
+    ASM_RET
+    ASM_END(memory_release)
 );
 #elif ARM64
 __asm__(
@@ -13127,6 +12793,36 @@ __asm__(
     "1:\n"
     ASM_RET
     ASM_END(memory_free)
+
+    ASM_FUNC(memory_reserve)
+    "stp x19, x20, [sp, #-64]!\n   stp x21, x22, [sp, #16]\n"
+    "stp x23, x24, [sp, #32]\n   stp x25, x30, [sp, #48]\n"
+    "mov x19, x0\n   mov x20, x1\n   mov x21, x2\n   mov x22, x4\n"
+    "ldr x23, [x20]\n   cmp x23, x3\n   b.hs 8f\n"
+    "cbnz x23, 1f\n   mov x23, x5\n   cbz x23, 9f\n"
+    "1:  cmp x23, x3\n   b.hs 2f\n   adds x23, x23, x23\n   b.cs 9f\n   b 1b\n"
+    "2:  cbz x22, 9f\n   umulh x6, x23, x22\n   cbnz x6, 9f\n"
+    "mul x25, x23, x22\n   mov x0, x25\n   bl memory\n   mov x24, x0\n"
+    "cbz x24, 9f\n   mov x6, #-4095\n   cmp x24, x6\n   b.hs 9f\n"
+    "ldr x1, [x19]\n   cbz x1, 3f\n"
+    "mov x0, x24\n   mul x2, x21, x22\n   bl memory_copy\n"
+    "ldr x0, [x19]\n   ldr x1, [x20]\n   mul x1, x1, x22\n   bl memory_free\n"
+    "3:  str x24, [x19]\n   str x23, [x20]\n"
+    "8:  mov w0, #1\n   b 7f\n"
+    "9:  mov w0, #0\n"
+    "7:  ldp x25, x30, [sp, #48]\n   ldp x23, x24, [sp, #32]\n"
+    "ldp x21, x22, [sp, #16]\n   ldp x19, x20, [sp], #64\n"
+    ASM_RET
+    ASM_END(memory_reserve)
+
+    ASM_FUNC(memory_release)
+    "stp x19, x20, [sp, #-48]!\n   stp x21, x22, [sp, #16]\n   str x30, [sp, #32]\n"
+    "mov x19, x0\n   mov x20, x1\n   mov x21, x2\n   mov x22, x3\n"
+    "ldr x0, [x19]\n   ldr x1, [x20]\n   mul x1, x1, x22\n   bl memory_free\n"
+    "str xzr, [x19]\n   str xzr, [x20]\n   str xzr, [x21]\n"
+    "ldr x30, [sp, #32]\n   ldp x21, x22, [sp, #16]\n   ldp x19, x20, [sp], #48\n"
+    ASM_RET
+    ASM_END(memory_release)
 );
 #elif RISCV64
 __asm__(
@@ -13147,6 +12843,36 @@ __asm__(
     "1:\n"
     ASM_RET
     ASM_END(memory_free)
+
+    ASM_FUNC(memory_reserve)
+    "addi sp, sp, -64\n   sd s0, 0(sp)\n   sd s1, 8(sp)\n   sd s2, 16(sp)\n   sd s3, 24(sp)\n"
+    "sd s4, 32(sp)\n   sd s5, 40(sp)\n   sd ra, 56(sp)\n"
+    "mv s0, a0\n   mv s1, a1\n   mv s2, a2\n   mv s3, a4\n"
+    "ld s4, 0(s1)\n   bgeu s4, a3, 8f\n"
+    "bnez s4, 1f\n   mv s4, a5\n   beqz s4, 9f\n"
+    "1:  bgeu s4, a3, 2f\n   slli t0, s4, 1\n   bltu t0, s4, 9f\n   mv s4, t0\n   j 1b\n"
+    "2:  beqz s3, 9f\n   mulhu t0, s4, s3\n   bnez t0, 9f\n"
+    "mul a0, s4, s3\n   call memory\n   mv s5, a0\n"
+    "beqz s5, 9f\n   li t0, -4095\n   bgeu s5, t0, 9f\n"
+    "ld a1, 0(s0)\n   beqz a1, 3f\n"
+    "mv a0, s5\n   mul a2, s2, s3\n   call memory_copy\n"
+    "ld a0, 0(s0)\n   ld a1, 0(s1)\n   mul a1, a1, s3\n   call memory_free\n"
+    "3:  sd s5, 0(s0)\n   sd s4, 0(s1)\n"
+    "8:  li a0, 1\n   j 7f\n"
+    "9:  li a0, 0\n"
+    "7:  ld s0, 0(sp)\n   ld s1, 8(sp)\n   ld s2, 16(sp)\n   ld s3, 24(sp)\n"
+    "ld s4, 32(sp)\n   ld s5, 40(sp)\n   ld ra, 56(sp)\n   addi sp, sp, 64\n"
+    ASM_RET
+    ASM_END(memory_reserve)
+
+    ASM_FUNC(memory_release)
+    "addi sp, sp, -48\n   sd s0, 0(sp)\n   sd s1, 8(sp)\n   sd s2, 16(sp)\n   sd s3, 24(sp)\n   sd ra, 40(sp)\n"
+    "mv s0, a0\n   mv s1, a1\n   mv s2, a2\n   mv s3, a3\n"
+    "ld a0, 0(s0)\n   ld a1, 0(s1)\n   mul a1, a1, s3\n   call memory_free\n"
+    "sd zero, 0(s0)\n   sd zero, 0(s1)\n   sd zero, 0(s2)\n"
+    "ld s0, 0(sp)\n   ld s1, 8(sp)\n   ld s2, 16(sp)\n   ld s3, 24(sp)\n   ld ra, 40(sp)\n   addi sp, sp, 48\n"
+    ASM_RET
+    ASM_END(memory_release)
 );
 #endif
 

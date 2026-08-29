@@ -3487,19 +3487,28 @@ positive reference_into_human_1024(p8 address_to into, positive value)
 
         positive quotient = value / divisor;
         positive remainder = value % divisor;
-        positive whole = quotient + (remainder != 0);
         positive length;
 
-        if (whole >= 10)
-                length = reference_into(into, whole);
+        if (quotient >= 10)
+                length = reference_into(into, quotient + (remainder != 0));
         else
         {
                 positive fraction = (remainder * 10 + divisor - 1) / divisor;
-                positive tenths = quotient * 10 + fraction;
 
-                length = reference_into(into, tenths / 10);
-                into[length++] = '.';
-                length += reference_into(into + length, tenths % 10);
+                if (fraction == 10)
+                {
+                        quotient++;
+                        fraction = 0;
+                }
+
+                if (quotient >= 10)
+                        length = reference_into(into, quotient);
+                else
+                {
+                        length = reference_into(into, quotient);
+                        into[length++] = '.';
+                        length += reference_into(into + length, fraction);
+                }
         }
 
         into[length++] = units[unit];

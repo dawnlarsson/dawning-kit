@@ -71,17 +71,6 @@
 #define DNS_NO_ADDRESS (-5)
 #define DNS_REFUSED (-6)
 
-static p16 dns_read_16(p8 address_to at)
-{
-        return (p16)(((p16)at[0] << 8) | at[1]);
-}
-
-static fn dns_write_16(p8 address_to at, p16 value)
-{
-        at[0] = (p8)(value >> 8);
-        at[1] = (p8)value;
-}
-
 /*
         The name, as labels.
 
@@ -310,15 +299,15 @@ static bipolar dns_resolve(p32 server, string_address name, p32 address_to found
         if (written < 0)
                 return DNS_MALFORMED;
 
-        dns_write_16(request, id);
-        dns_write_16(request + 2, DNS_FLAG_RECURSE);
-        dns_write_16(request + 4, 1);
-        dns_write_16(request + 6, 0);
-        dns_write_16(request + 8, 0);
-        dns_write_16(request + 10, 0);
+        network_store_16(request, id);
+        network_store_16(request + 2, DNS_FLAG_RECURSE);
+        network_store_16(request + 4, 1);
+        network_store_16(request + 6, 0);
+        network_store_16(request + 8, 0);
+        network_store_16(request + 10, 0);
 
-        dns_write_16(request + DNS_HEADER + written, DNS_TYPE_A);
-        dns_write_16(request + DNS_HEADER + written + 2, DNS_CLASS_IN);
+        network_store_16(request + DNS_HEADER + written, DNS_TYPE_A);
+        network_store_16(request + DNS_HEADER + written + 2, DNS_CLASS_IN);
 
         question_length = (positive)written + 4;
 
@@ -390,13 +379,13 @@ static bipolar dns_resolve(p32 server, string_address name, p32 address_to found
         if ((positive)got > sizeof(reply))
                 return DNS_MALFORMED;
 
-        if (dns_read_16(reply) != id)
+        if (network_load_16(reply) != id)
                 return DNS_MALFORMED;
 
-        if (!(dns_read_16(reply + 2) & DNS_FLAG_RESPONSE))
+        if (!(network_load_16(reply + 2) & DNS_FLAG_RESPONSE))
                 return DNS_MALFORMED;
 
-        if (dns_read_16(reply + 4) != 1)
+        if (network_load_16(reply + 4) != 1)
                 return DNS_MALFORMED;
 
         //      The question, byte for byte as it was asked.
@@ -404,7 +393,7 @@ static bipolar dns_resolve(p32 server, string_address name, p32 address_to found
             memory_compare(reply + DNS_HEADER, request + DNS_HEADER, question_length))
                 return DNS_MALFORMED;
 
-        switch (dns_read_16(reply + 2) & DNS_CODE_MASK)
+        switch (network_load_16(reply + 2) & DNS_CODE_MASK)
         {
         case 0:
                 break;
@@ -414,7 +403,7 @@ static bipolar dns_resolve(p32 server, string_address name, p32 address_to found
                 return DNS_REFUSED;
         }
 
-        answers = dns_read_16(reply + 6);
+        answers = network_load_16(reply + 6);
         at = DNS_HEADER + question_length;
 
         while (answers--)
@@ -432,9 +421,9 @@ static bipolar dns_resolve(p32 server, string_address name, p32 address_to found
                 if (at + 10 > (positive)got)
                         return DNS_MALFORMED;
 
-                kind = dns_read_16(reply + at);
-                class = dns_read_16(reply + at + 2);
-                size = dns_read_16(reply + at + 8);
+                kind = network_load_16(reply + at);
+                class = network_load_16(reply + at + 2);
+                size = network_load_16(reply + at + 8);
                 at += 10;
 
                 if (at + size > (positive)got)
