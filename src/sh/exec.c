@@ -106,7 +106,6 @@ static fn exec_errexit(b32 status)
 }
 
 
-#define PIPELINE_MAX 64
 #define FUNCTION_MAX 64
 #define FUNCTION_NAME 64
 #define REDIRECT_SAVE_MAX 64
@@ -2506,14 +2505,25 @@ static b32 exec_subshell(b32 index)
         here is an end of file the reader never sees, and the whole shell
         stops.
 */
-static b32 exec_pipe(b32 first, b32 count)
+static b32 exec_pipe(b32 first, positive count)
 {
-        bipolar children[PIPELINE_MAX];
+        bipolar address_to children = null;
+        positive children_room = 0;
         bipolar upstream = -1;
         b32 child = first;
-        b32 started = 0;
+        positive started = 0;
         b32 status = 0;
-        b32 at;
+        positive at;
+        bool spawn_failed = false;
+
+        if (count > positive_max / sizeof(children[0]) ||
+            !shell_room((address_any address_to)address_of children,
+                        address_of children_room, count,
+                        sizeof(children[0])))
+        {
+                string_format(exec_error, "No room for pipeline\n");
+                return 2;
+        }
 
         while (child && started < count)
         {
@@ -2525,7 +2535,10 @@ static b32 exec_pipe(b32 first, b32 count)
                 ends[1] = -1;
 
                 if (!last && system_call_2(syscall(pipe2), (positive)ends, 0) < 0)
+                {
+                        spawn_failed = true;
                         break;
+                }
 
                 log_flush();
                 made = system_call_2(syscall(clone), SIGCHLD, 0);
@@ -2553,6 +2566,22 @@ static b32 exec_pipe(b32 first, b32 count)
                         status = exec_node(child);
                         log_flush();
                         exit(status);
+                }
+
+                if (made < 0)
+                {
+                        if (upstream >= 0)
+                                system_call_1(syscall(close), upstream);
+
+                        if (!last)
+                        {
+                                system_call_1(syscall(close), ends[0]);
+                                system_call_1(syscall(close), ends[1]);
+                        }
+
+                        upstream = -1;
+                        spawn_failed = true;
+                        break;
                 }
 
                 if (upstream >= 0)
@@ -2598,6 +2627,14 @@ static b32 exec_pipe(b32 first, b32 count)
         if (rightmost_failure && shell_pipefail())
                 status = rightmost_failure;
 
+        if (spawn_failed)
+        {
+                string_format(exec_error, "Cannot start pipeline\n");
+                status = 2;
+        }
+
+        memory_free(children, children_room * sizeof(children[0]));
+
         return status;
 }
 
@@ -2605,22 +2642,20 @@ static b32 exec_pipeline(b32 index)
 {
         parse_node address_to node = parse_nodes + index;
         bool tested = exec_tested;
-        b32 count = 0;
+        positive count = 0;
         b32 child;
         b32 status;
 
         for (child = node->left; child; child = parse_nodes[child].next)
-                count++;
-
-        // Cutting the pipeline short is not running a shorter pipeline: the
-        // stage that became the last one writes where the next one should
-        // have read, and the answer is wrong rather than missing.
-        if (count > PIPELINE_MAX)
         {
-                string_format(exec_error, "Pipeline too long\n");
-                shell_status = 2;
+                if (count == positive_max)
+                {
+                        string_format(exec_error, "Pipeline too long\n");
+                        shell_status = 2;
+                        return 2;
+                }
 
-                return 2;
+                count++;
         }
 
         if (node->flags)
