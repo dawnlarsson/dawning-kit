@@ -3975,11 +3975,21 @@ static bool expand_brace_range(string_address word, string_address open,
                 return true;
         }
 
-        if (!second_dots && first_dots == open + 2 && first_dots + 3 == close)
+        if (first_dots == open + 2 &&
+            first_dots + 3 == (second_dots ? second_dots : close))
         {
                 bipolar first = string_get(open + 1);
                 bipolar last = string_get(first_dots + 2);
-                bipolar step = first <= last ? 1 : -1;
+                bipolar magnitude;
+                bipolar step;
+
+                if (step_number == bipolar_min)
+                        return false;
+
+                magnitude = step_number < 0 ? -step_number : step_number;
+                if (!magnitude)
+                        magnitude = 1;
+                step = first <= last ? magnitude : -magnitude;
 
                 for (bipolar current = first;
                      step > 0 ? current <= last : current >= last;
