@@ -213,7 +213,8 @@ if counts:
 print("\nallocation/copy model (subject):")
 print("  expression: one reusable node-table growth, zero per-entry allocations")
 print("  traversal: one hardware-floor path_join copy per entry")
-print("  -iname: one fused lowercase copy per entry; pattern folded once")
+print("  -iname simple: zero scratch copies; complex glob: one fused lowercase copy per entry")
+print("  -iname pattern folded once")
 print(f"  matcher overhead above walker floor: "
       f"{(results['iname'] - results['walker-floor']) * 1e9 / entries:.1f} ns/entry")
 PY

@@ -3416,6 +3416,84 @@ static fn find_lowered(string_address text, p8 address_to into)
         into[i] = end;
 }
 
+/*
+        The overwhelmingly common find patterns are literals, *.suffix and
+        prefix.*. Their shape is invariant across the whole walk, so record
+        it once and let the hardware-floor bounded compare answer directly.
+        Escapes, sets, questions and interior stars retain the full shell
+        matcher; this is a strict fast subset, not another glob language.
+*/
+static fn find_pattern_prepare(find_node address_to node)
+{
+        string_address pattern = node->text;
+        positive length = string_length(pattern);
+        positive stars = 0;
+        positive star = 0;
+
+        for (positive at = 0; at < length; at++)
+        {
+                p8 character = string_get(pattern + at);
+
+                if (character == '\\' || character == '?' || character == '[')
+                        return;
+
+                if (character == '*')
+                {
+                        stars++;
+                        star = at;
+                }
+        }
+
+        if (!stars)
+        {
+                node->comparison = '=';
+                node->number = (b64)length;
+        }
+        else if (stars == 1 && star == 0)
+        {
+                node->comparison = '$';
+                node->number = (b64)(length - 1);
+        }
+        else if (stars == 1 && star + 1 == length)
+        {
+                node->comparison = '^';
+                node->number = (b64)(length - 1);
+        }
+}
+
+static bool find_pattern_holds(find_node address_to node, string_address text,
+                               bool insensitive)
+{
+        positive wanted = (positive)node->number;
+        positive length;
+        string_address pattern = node->text;
+
+        if (!node->comparison)
+                return false;
+
+        length = string_length(text);
+
+        if (node->comparison == '=')
+        {
+                if (length != wanted)
+                        return false;
+        }
+        else
+        {
+                if (length < wanted)
+                        return false;
+
+                if (node->comparison == '$')
+                {
+                        pattern++;
+                        text += length - wanted;
+                }
+        }
+
+        return insensitive ? memory_compare_ascii_case(pattern, text, wanted) == 0
+                           : memory_compare(pattern, text, wanted) == 0;
+}
+
 static b32 find_parse_or();
 
 // A time in whole units, the way find counts one: the fraction is dropped, so
@@ -3650,6 +3728,7 @@ static b32 find_parse_primary()
                                 find_lowered(value, (p8 address_to)value);
 
                         find_nodes[node].text = value;
+                        find_pattern_prepare(address_of find_nodes[node]);
                 }
 
                 return node;
@@ -4115,13 +4194,23 @@ static bool find_true(b32 which)
                 return false;
 
         case 'n':
+                if (node->comparison)
+                        return find_pattern_holds(node, find_name, false);
                 return shell_match(node->text, find_name);
 
         case 'p':
+                if (node->comparison)
+                        return find_pattern_holds(node, find_path, false);
                 return shell_match(node->text, find_path);
 
         case 'N':
         case 'P':
+                if (node->comparison)
+                        return find_pattern_holds(node,
+                                                  node->kind == 'N' ? find_name
+                                                                    : find_path,
+                                                  true);
+
                 find_lowered(node->kind == 'N' ? find_name : find_path, name);
                 return shell_match(node->text, name);
 
