@@ -656,6 +656,15 @@ environment_command_answer 'export inherited replacement' \
 environment_command_answer 'unset inherited' \
         'unset MW_CUSTOM; /bin/sh -c '\''printf "%s\n" "${MW_CUSTOM-unset}"'\''' \
         MW_CUSTOM=from-parent
+environment_command_answer 'inherited becomes readonly' \
+        'readonly MW_CUSTOM; MW_CUSTOM=replaced; echo after' \
+        MW_CUSTOM=from-parent
+environment_command_answer 'cannot unset inherited readonly' \
+        'readonly MW_CUSTOM; unset MW_CUSTOM; echo after' \
+        MW_CUSTOM=from-parent
+environment_command_answer 'cannot export over inherited readonly' \
+        'readonly MW_CUSTOM; export MW_CUSTOM=replaced; echo after' \
+        MW_CUSTOM=from-parent
 environment_command_expected 'empty environment defaults' \
         'path|shell|1|pwd|unset
 ' 0 \
@@ -1455,6 +1464,11 @@ answer 'signal too high' 'kill -l 65 2>/dev/null; echo $?'
 answer 'a name is not a status' 'kill -l TERM 2>/dev/null; echo $?'
 answer 'group not signal' 'kill -0 -999999 2>/dev/null; echo $?'
 answer 'unknown signal'  'kill -s NOPE 1 2>/dev/null; echo $?'
+expected 'SIG prefix option' '1|' 0 'kill -SIGTERM 999999 2>/dev/null; echo $?'
+expected 'SIG prefix with s' '1|' 0 'kill -s SIGTERM 999999 2>/dev/null; echo $?'
+expected 'SIG prefix invalid' '2|' 0 'kill -SIGNOPE 999999 2>/dev/null; echo $?'
+expected 'SIG option resets' '1 1|' 0 \
+        'kill -SIGTERM 999999 2>/dev/null; first=$?; kill -0 999999 2>/dev/null; echo "$first $?"'
 
 #       local, whose reference is dash again -- it is not POSIX, and dash is
 #       what every script that uses it was written against.
@@ -1616,7 +1630,6 @@ answer 'echo newline escape' 'echo "a\nb"'
 answer 'echo unknown escape' 'echo "a\q"'
 answer 'echo cut escape' 'echo "a\cdiscard"; echo kept'
 answer 'local outside function is fatal' 'local v=1 2>/dev/null; echo $?; echo after'
-differs 'kill takes sig' '1|' 0 'kill -SIGTERM 999999 2>/dev/null; echo $?'
 differs 'expr is sixty four' '-9223372036854775808|' 0 'expr 9223372036854775807 + 1'
 
 # The expanded form of a here-document body is built in the storage a command
@@ -1670,6 +1683,8 @@ answer 'no parameter ceiling' 'cd "$(mktemp -d)"; i=0; while [ $i -lt 200 ]; do 
 group language-errors
 answer 'nounset stops the shell' 'set -u; echo $nosuch; echo after'
 answer 'readonly reassignment stops the shell' 'readonly r=1; r=2; echo $?'
+answer 'readonly unset stops the shell' 'readonly r=1; unset r; echo after'
+answer 'readonly export assignment stops' 'readonly r=1; export r=2; echo after'
 answer 'unset function option' 'f() { echo a; }; unset -f f; f 2>/dev/null; echo $?'
 answer 'shift past end is fatal' 'set -- a; shift 2; echo $?'
 answer 'missing input status' 'cat < /nonexistent12345; echo $?'

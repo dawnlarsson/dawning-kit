@@ -500,6 +500,15 @@ fn shell_export(writer write, string_address input)
                         continue;
 
                 address_to mark = end;
+
+                if (env_readonly(word))
+                {
+                        string_format(shell_diagnostic, "%s: is read only\n", word);
+                        address_to mark = '=';
+                        expand_fatal();
+                        return;
+                }
+
                 env_set(word, mark + 1);
                 address_to mark = '=';
         }
@@ -1344,7 +1353,11 @@ fn shell_unset(writer write, string_address input)
                 string_address word = shell_argv[index];
 
                 if (!functions && env_readonly(word))
-                        return shell_answer(1);
+                {
+                        string_format(shell_diagnostic, "%s: is read only\n", word);
+                        expand_fatal();
+                        return;
+                }
 
                 if (functions)
                         exec_function_unset(word);
