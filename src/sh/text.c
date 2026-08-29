@@ -2810,7 +2810,6 @@ static positive text_tail_start(positive handle, positive size, positive count)
         p8 window[TEXT_READ_MAX];
         positive at = size;
         positive found = 0;
-        bool skipped = false;
 
         if (!count)
                 return size;
@@ -2824,21 +2823,36 @@ static positive text_tail_start(positive handle, positive size, positive count)
                 if (!text_read_at(handle, at, window, take))
                         return 0;
 
-                for (positive i = take; i > 0; i--)
+                positive usable = take;
+
+                if (at + take == size && usable &&
+                    window[usable - 1] == text_delimiter)
+                        usable--;
+
+                positive have = memory_count(window, usable, text_delimiter);
+
+                if (found + have < count)
                 {
-                        if (window[i - 1] != text_delimiter)
-                                continue;
+                        found += have;
+                        continue;
+                }
 
-                        if (!skipped && at + i == size)
-                        {
-                                skipped = true;
-                                continue;
-                        }
+                positive need = count - found;
+                positive limit = usable;
 
-                        found++;
+                while (need)
+                {
+                        p8 address_to hit =
+                            memory_last_of(window, (b8)text_delimiter, limit);
 
-                        if (found == count)
-                                return at + i;
+                        if (!hit)
+                                break;
+
+                        limit = (positive)(hit - window);
+                        need--;
+
+                        if (!need)
+                                return at + limit + 1;
                 }
         }
 

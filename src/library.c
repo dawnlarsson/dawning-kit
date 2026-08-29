@@ -67,7 +67,7 @@
         A .set is a second label on the same address, so there is no wrapper
         and no jump, and which names get one depends on who is linking.
 
-        153 routines (147 public, 6 local), 153 of them on all three.
+        154 routines (148 public, 6 local), 154 of them on all three.
         Raw C purity: 0 function bodies, 0 object definitions, 0 body macros, and 0 object macros (all forbidden).
 
           routine                        scope   x86_64  arm64   riscv64
@@ -121,6 +121,7 @@
           memory_first_of                public  yes     yes     yes
           memory_free                    public  yes     yes     yes
           memory_growth                  public  yes     yes     yes
+          memory_last_of                 public  yes     yes     yes
           memory_release                 public  yes     yes     yes
           memory_reserve                 public  yes     yes     yes
           memory_reverse                 public  yes     yes     yes
@@ -2139,6 +2140,39 @@ __asm__(
     "8:  xor %eax, %eax\n"
     "9:  " ASM_RET
     ASM_END(memory_first_of)
+    // Greatest-address match in one exact bounded span, or null. Vector and
+    // word loads subtract from the exclusive end before they read.
+    ASM_FUNC(memory_last_of)
+    "test %rdx, %rdx\n   jz .Lmemory_last_x64_none\n"
+    "lea (%rdi,%rdx), %rax\n"
+    ASM_USERSPACE_WIDE(
+    ASM_NARROW("cpu_has_avx2", ".Lmemory_last_x64_words")
+    "cmp $32, %rdx\n   jb .Lmemory_last_x64_words\n"
+    "movzbl %sil, %ecx\n   vmovd %ecx, %xmm1\n   vpbroadcastb %xmm1, %ymm1\n"
+    ".Lmemory_last_x64_vector:\n   sub $32, %rax\n   sub $32, %rdx\n"
+    "vpcmpeqb (%rax), %ymm1, %ymm0\n   vpmovmskb %ymm0, %ecx\n"
+    "test %ecx, %ecx\n   jnz .Lmemory_last_x64_vector_hit\n"
+    "cmp $32, %rdx\n   jae .Lmemory_last_x64_vector\n"
+    "vzeroupper\n   jmp .Lmemory_last_x64_words\n"
+    ".Lmemory_last_x64_vector_hit:\n   bsr %ecx, %ecx\n   add %rcx, %rax\n"
+    "vzeroupper\n" ASM_RET
+    )
+    ".Lmemory_last_x64_words:\n   movzbl %sil, %r8d\n"
+    "movabs $0x0101010101010101, %r10\n   imul %r10, %r8\n"
+    "movabs $0x8080808080808080, %r11\n"
+    ".Lmemory_last_x64_word_loop:\n   cmp $8, %rdx\n   jb .Lmemory_last_x64_tail\n"
+    "sub $8, %rax\n   sub $8, %rdx\n   mov (%rax), %rcx\n   xor %r8, %rcx\n"
+    "mov %rcx, %r9\n   sub %r10, %r9\n   not %rcx\n   and %rcx, %r9\n"
+    "and %r11, %r9\n   jz .Lmemory_last_x64_word_loop\n"
+    "lea 8(%rax), %rcx\n"
+    ".Lmemory_last_x64_refine:\n   dec %rcx\n   cmpb %sil, (%rcx)\n"
+    "jne .Lmemory_last_x64_refine\n   mov %rcx, %rax\n" ASM_RET
+    ".Lmemory_last_x64_tail:\n   test %rdx, %rdx\n   jz .Lmemory_last_x64_none\n"
+    ".Lmemory_last_x64_byte:\n   dec %rax\n   cmpb %sil, (%rax)\n"
+    "je .Lmemory_last_x64_done\n   dec %rdx\n   jnz .Lmemory_last_x64_byte\n"
+    ".Lmemory_last_x64_none:\n   xor %eax, %eax\n"
+    ".Lmemory_last_x64_done:\n" ASM_RET
+    ASM_END(memory_last_of)
     //
     //       moonwater_cpu_detect -- what this processor has, asked once.
     //
@@ -6008,6 +6042,28 @@ __asm__(
     "7:  mov x0, #0\n"
     ASM_RET
     ASM_END(memory_first_of)
+    ASM_FUNC(memory_last_of)
+    "and w1, w1, #0xff\n   cbz x2, .Lmemory_last_arm64_none\n"
+    "add x3, x0, x2\n"
+#ifndef KERNEL_MODE
+    "cmp x2, #16\n   b.lo .Lmemory_last_arm64_tail\n   dup v0.16b, w1\n"
+    ".Lmemory_last_arm64_vector:\n   sub x3, x3, #16\n   sub x2, x2, #16\n"
+    "ldr q1, [x3]\n   cmeq v1.16b, v1.16b, v0.16b\n"
+    "umaxv b2, v1.16b\n   umov w4, v2.b[0]\n   cbnz w4, .Lmemory_last_arm64_refine16\n"
+    "cmp x2, #16\n   b.hs .Lmemory_last_arm64_vector\n"
+    "b .Lmemory_last_arm64_tail\n"
+    ".Lmemory_last_arm64_refine16:\n   mov x4, #16\n"
+    ".Lmemory_last_arm64_refine16_byte:\n   sub x4, x4, #1\n   ldrb w5, [x3, x4]\n"
+    "cmp w5, w1\n   b.ne .Lmemory_last_arm64_refine16_byte\n"
+    "add x0, x3, x4\n" ASM_RET
+#endif
+    ".Lmemory_last_arm64_tail:\n   cbz x2, .Lmemory_last_arm64_none\n"
+    ".Lmemory_last_arm64_byte:\n   sub x3, x3, #1\n   ldrb w4, [x3]\n"
+    "cmp w4, w1\n   b.eq .Lmemory_last_arm64_found\n   subs x2, x2, #1\n"
+    "b.ne .Lmemory_last_arm64_byte\n"
+    ".Lmemory_last_arm64_none:\n   mov x0, #0\n" ASM_RET
+    ".Lmemory_last_arm64_found:\n   mov x0, x3\n" ASM_RET
+    ASM_END(memory_last_of)
     //
     //       memory_count -- how many times a byte appears.
     //
@@ -8880,6 +8936,30 @@ __asm__(
     "8:  li a0, 0\n"
     ASM_RET
     ASM_END(memory_first_of)
+    ASM_FUNC(memory_last_of)
+    "andi a1, a1, 0xff\n   beqz a2, .Lmemory_last_rv_none\n"
+    "add a3, a0, a2\n"
+    "andi t0, a3, 7\n   beqz t0, .Lmemory_last_rv_words_setup\n"
+    ".Lmemory_last_rv_peel:\n   addi a3, a3, -1\n   lbu t1, 0(a3)\n"
+    "beq t1, a1, .Lmemory_last_rv_found\n   addi a2, a2, -1\n"
+    "beqz a2, .Lmemory_last_rv_none\n   andi t0, a3, 7\n"
+    "bnez t0, .Lmemory_last_rv_peel\n"
+    ".Lmemory_last_rv_words_setup:\n"
+    "lui t0, 0x1010\n   addi t0, t0, 257\n   slli t1, t0, 32\n   add t0, t0, t1\n"
+    "mul t2, a1, t0\n   li t1, 0x8080808080808080\n"
+    ".Lmemory_last_rv_word_loop:\n   li t6, 8\n   bltu a2, t6, .Lmemory_last_rv_tail\n"
+    "addi a3, a3, -8\n   addi a2, a2, -8\n   ld t3, 0(a3)\n   xor t3, t3, t2\n"
+    "sub t4, t3, t0\n   not t5, t3\n   and t4, t4, t5\n   and t4, t4, t1\n"
+    "beqz t4, .Lmemory_last_rv_word_loop\n   addi t4, a3, 8\n"
+    ".Lmemory_last_rv_refine:\n   addi t4, t4, -1\n   lbu t5, 0(t4)\n"
+    "bne t5, a1, .Lmemory_last_rv_refine\n   mv a0, t4\n" ASM_RET
+    ".Lmemory_last_rv_tail:\n   beqz a2, .Lmemory_last_rv_none\n"
+    ".Lmemory_last_rv_byte:\n   addi a3, a3, -1\n   lbu t3, 0(a3)\n"
+    "beq t3, a1, .Lmemory_last_rv_found\n   addi a2, a2, -1\n"
+    "bnez a2, .Lmemory_last_rv_byte\n"
+    ".Lmemory_last_rv_none:\n   li a0, 0\n" ASM_RET
+    ".Lmemory_last_rv_found:\n   mv a0, a3\n" ASM_RET
+    ASM_END(memory_last_of)
     //
     //       memory_count -- how many times a byte appears.
     //
@@ -11052,6 +11132,7 @@ positive string_lex_word(string_address source, p8 address_to into,
 address_any memory_fill(address_any destination, b8 value, positive size);
 positive memory_common_prefix(address_any one, address_any two, positive size);
 b32 memory_compare_ascii_case(address_any one, address_any two, positive size);
+address_any memory_last_of(address_any block, b8 value, positive size);
 // Reverse exactly size bytes in place. Returns block; sizes below two do not
 // read or write it, so a null block is valid when size is zero.
 address_any memory_reverse(address_any block, positive size);
