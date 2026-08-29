@@ -531,6 +531,62 @@ command_answer()
                 "want $(shown "$work/want")[$want_status]   got $(shown "$work/got")[$got_status]"
 }
 
+# The process environment is part of the entry contract and needs launch-time
+# control, which a fragment fed on stdin cannot provide.
+environment_command_answer()
+{
+        name=$1
+        command=$2
+        shift 2
+
+        if timeout 5 env "$@" "$reference" -c "$command" > "$work/want" 2>/dev/null; then
+                want_status=0
+        else
+                want_status=$?
+        fi
+
+        if timeout 5 env "$@" "$subject" -c "$command" > "$work/got" 2>/dev/null; then
+                got_status=0
+        else
+                got_status=$?
+        fi
+
+        if cmp -s "$work/want" "$work/got" &&
+                [ "$want_status" = "$got_status" ]; then
+                won
+                return 0
+        fi
+
+        lost "$name" \
+                "want $(shown "$work/want")[$want_status]   got $(shown "$work/got")[$got_status]"
+}
+
+environment_command_expected()
+{
+        name=$1
+        expected_output=$2
+        expected_status=$3
+        command=$4
+        shift 4
+
+        printf '%s' "$expected_output" > "$work/want"
+
+        if timeout 5 env "$@" "$subject" -c "$command" > "$work/got" 2>/dev/null; then
+                got_status=0
+        else
+                got_status=$?
+        fi
+
+        if cmp -s "$work/want" "$work/got" &&
+                [ "$expected_status" = "$got_status" ]; then
+                won
+                return 0
+        fi
+
+        lost "$name" \
+                "want $(shown "$work/want")[$expected_status]   got $(shown "$work/got")[$got_status]"
+}
+
 group script
 script_answer 'script starts with a comment' '# only a comment
 echo after'
@@ -586,6 +642,25 @@ echo three'
 command_answer 'command empty'    ''
 command_answer 'command trailing newline' 'echo one
 '
+
+group environment
+environment_command_answer 'custom environment' \
+        'printf "%s|%s|%s\n" "$MW_CUSTOM" "$HOME" "$PATH"' \
+        MW_CUSTOM=from-parent HOME=/inherited-home PATH=/inherited-path
+environment_command_answer 'replace inherited' \
+        'MW_CUSTOM=replaced; printf "%s\n" "$MW_CUSTOM"' \
+        MW_CUSTOM=from-parent
+environment_command_answer 'export inherited replacement' \
+        'export MW_CUSTOM=replaced; /bin/sh -c '\''printf "%s\n" "$MW_CUSTOM"'\''' \
+        MW_CUSTOM=from-parent
+environment_command_answer 'unset inherited' \
+        'unset MW_CUSTOM; /bin/sh -c '\''printf "%s\n" "${MW_CUSTOM-unset}"'\''' \
+        MW_CUSTOM=from-parent
+environment_command_expected 'empty environment defaults' \
+        'path|shell|1|pwd|unset
+' 0 \
+        'printf "%s|%s|%s|%s|%s\n" "${PATH:+path}" "${SHELL:+shell}" "$OPTIND" "${PWD:+pwd}" "${HOME-unset}"' \
+        -i
 
 # A literal word far past what the lexer and parser used to hold -- eight
 # kilobytes of token text, sixteen of parsed text -- so this is the line
@@ -1603,10 +1678,10 @@ answer 'closed output status' 'echo x >&- 2>/dev/null; echo $?'
 many_readonly=$(awk 'BEGIN { for (i = 0; i < 40; i++) printf "readonly R%02d=%d;", i, i }')
 answer 'forty readonly names' "$many_readonly readonly -p | grep '^readonly R' | wc -l"
 
-# The shell builds its own environment rather than inheriting one, because in
-# the image it is what starts first and there is nobody above it to inherit
-# from. Everything but PATH and SHELL therefore begins unset.
-differs 'no environment' 'unset|' 0 '[ -n "$HOME" ] && echo set || echo unset'
+# PID 1 may receive an empty environment, but an ordinary shell must keep the
+# one its caller supplied. HOME is a representative variable that make,
+# system(), and login shells routinely depend on.
+answer 'inherits environment' '[ -n "$HOME" ] && echo set || echo unset'
 
 # A line ending in the middle of a quote waits for more physical input. EOF
 # finalizes the reader and turns any still-open construct into a syntax error.

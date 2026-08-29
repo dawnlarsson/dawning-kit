@@ -33,7 +33,7 @@ b32 main()
         shell_ignore(SIGNAL_INTERRUPT);
         shell_ignore(SIGNAL_QUIT);
 
-        shell_env_init();
+        shell_env_init(program_environment_list());
         expand_shell_pid = (positive)system_call_1(syscall(getpid), 0);
 
         /*

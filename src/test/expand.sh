@@ -449,6 +449,10 @@ answer 'missing left'   'echo $(( * 3 )); echo after'
 answer 'no such power'  'echo $((2 ** 3)); echo after'
 answer 'a word is not'  'x=bar; echo $((x + 1)); echo after'
 answer 'half a word'    'x=12ab; echo $((x)); echo after'
+answer 'empty expression' 'echo $(( ))'
+answer 'comma operator' 'echo $((1,2))'
+answer 'bad octal'      'echo $((08))'
+answer 'post increment' 'x=1; echo $((x++)) $x'
 #       The smallest number there is has no positive opposite, and the
 #       machine faults rather than saying so: this used to kill the shell.
 answer 'the least over minus one' \
@@ -559,21 +563,9 @@ answer 'not after slash' 'printf "[%s]" /~ END; echo'
 section diverges
 
 group arithmetic
-#       Nothing between the brackets is nothing to get wrong, and zero is
-#       what an empty value reads as everywhere else here. dash calls it a
-#       syntax error instead.
-differs 'empty is zero' '0|' 0 'echo $(( ))'
-#       There is no comma operator, so the cursor stops after the first
-#       expression and what follows it is never read.
-differs 'comma is not'  '1|' 0 'echo $((1,2))'
-#       A leading zero says octal, and an eight is not an octal digit -- so
-#       this is read as decimal rather than refused.
-differs 'a bad number'  '8|' 0 'echo $((08))'
 #       Arithmetic is a machine word here. A hexadecimal spelling one past
 #       signed positive wraps to minus one; dash clamps it to signed positive.
 differs 'hex wraps'      '-1|' 0 'echo $((0xffffffffffffffff))'
-#       ++ and -- are here, which is one more than POSIX asks for.
-differs 'has increment' '1 2|' 0 'x=1; echo $((x++)) $x'
 
 group trim
 #       ${*%pat} and ${@%pat} take the parameters joined and cut the join, so

@@ -185,13 +185,31 @@ static fn env_cell_drop(string_address text)
         env_free = cell;
 }
 
-fn shell_env_init()
+static bool env_set_span(const_string name, positive name_len,
+                         const_string value);
+string_address env_get(const_string name);
+bool env_set(const_string name, const_string value);
+
+fn shell_env_init(string_address address_to process_environment)
 {
         if (!env_table_room(4))
                 return;
 
         shell_env_count = 0;
         shell_envp[0] = null;
+
+        // A shell launched by make, system(), or another shell starts with the
+        // environment it was given. PID 1 naturally receives an empty vector,
+        // so the same path still gives the image its defaults below.
+        for (positive at = 0;
+             process_environment && process_environment[at]; at++)
+        {
+                string_address entry = process_environment[at];
+                string_address mark = string_first_of(entry, '=');
+
+                if (mark && mark > entry)
+                        env_set_span(entry, (positive)(mark - entry), mark + 1);
+        }
 
         // Programs live at the root of the image, so it is on the path.
         string_address defaults[] = {"PATH=/bin:/usr/bin:/", "SHELL=/bin/sh",
@@ -205,7 +223,10 @@ fn shell_env_init()
                 p8 name[16];
 
                 string_copy_max_end(name, defaults[i], (positive)(mark - defaults[i]));
-                env_set(name, mark + 1);
+
+                if (!env_get(name))
+                        env_set(name, mark + 1);
+
                 i++;
         }
 
@@ -213,7 +234,9 @@ fn shell_env_init()
         // without a first answer, PWD is empty until the first cd and a script
         // that names a file relative to it names nothing.
         shell_here(shell_directory, sizeof(shell_directory));
-        env_set("PWD", shell_directory);
+
+        if (!env_get("PWD"))
+                env_set("PWD", shell_directory);
 }
 
 /*
@@ -234,19 +257,16 @@ string_address env_get(const_string name)
                    : null;
 }
 
-bool env_set(const_string name, const_string value)
+static bool env_set_span(const_string name, positive name_len,
+                         const_string value)
 {
         if (!name || !value)
                 return false;
 
-        if (env_readonly(name))
-                return false;
-
         // Every path remembered was an answer about the old PATH.
-        if (!string_compare(env_reading(name), "PATH"))
+        if (name_len == 4 && !memory_compare(name, "PATH", 4))
                 hash_forget();
 
-        positive name_len = string_length(env_reading(name));
         positive value_len = string_length(env_reading(value));
         positive needed = name_len + 1 + value_len + 1;
 
@@ -308,6 +328,14 @@ bool env_set(const_string name, const_string value)
 
 
         return true;
+}
+
+bool env_set(const_string name, const_string value)
+{
+        if (!name || !value || env_readonly(name))
+                return false;
+
+        return env_set_span(name, string_length(env_reading(name)), value);
 }
 
 #define ERROR_NOT_PERMITTED 1
