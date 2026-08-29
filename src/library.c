@@ -67,7 +67,7 @@
         A .set is a second label on the same address, so there is no wrapper
         and no jump, and which names get one depends on who is linking.
 
-        144 routines (139 public, 5 local), 144 of them on all three.
+        145 routines (140 public, 5 local), 145 of them on all three.
         Raw C purity: 0 function bodies, 0 object definitions, 0 body macros, and 0 object macros (all forbidden).
 
           routine                        scope   x86_64  arm64   riscv64
@@ -113,6 +113,7 @@
           memory_fill                    public  yes     yes     yes
           memory_first_of                public  yes     yes     yes
           memory_free                    public  yes     yes     yes
+          memory_growth                  public  yes     yes     yes
           memory_release                 public  yes     yes     yes
           memory_reserve                 public  yes     yes     yes
           memory_reverse                 public  yes     yes     yes
@@ -12690,6 +12691,7 @@ __asm__(
 
 address_any memory(positive size);
 fn memory_free(address_any address, positive size);
+positive memory_growth(positive have, positive want, positive first);
 bool memory_reserve(address_any address_to held, positive address_to have,
                     positive used, positive want, positive unit, positive first);
 fn memory_release(address_any address_to held, positive address_to have,
@@ -12739,6 +12741,15 @@ __asm__(
     ASM_RET
     ASM_END(memory_free)
 
+    ASM_FUNC(memory_growth)
+    "mov %rdi, %rax\n   cmp %rsi, %rax\n   jae 2f\n"
+    "test %rax, %rax\n   cmovz %rdx, %rax\n   test %rax, %rax\n   jz 3f\n"
+    "1:  cmp %rsi, %rax\n   jae 2f\n   add %rax, %rax\n   jnc 1b\n"
+    "3:  xor %eax, %eax\n"
+    "2:\n"
+    ASM_RET
+    ASM_END(memory_growth)
+
     //
     //       A movable store grows geometrically. Counts are elements and unit
     //       says how wide one is, so the same leaf serves bytes, pointers and
@@ -12749,9 +12760,10 @@ __asm__(
     "push %rbp\n   push %rbx\n   push %r12\n   push %r13\n   push %r14\n   push %r15\n   sub $8, %rsp\n"
     "mov %rdi, %rbx\n   mov %rsi, %r12\n   mov %rdx, %r13\n   mov %r8, %r14\n"
     "mov (%r12), %r15\n   cmp %rcx, %r15\n   jae 8f\n"
-    "test %r15, %r15\n   cmovz %r9, %r15\n   test %r15, %r15\n   jz 9f\n"
-    "1:  cmp %rcx, %r15\n   jae 2f\n   add %r15, %r15\n   jc 9f\n   jmp 1b\n"
-    "2:  test %r14, %r14\n   jz 9f\n   mov %r15, %rax\n   mul %r14\n   test %rdx, %rdx\n   jnz 9f\n"
+    "mov %r15, %rdi\n   mov %rcx, %rsi\n   mov %r9, %rdx\n"
+    "call memory_growth\n   mov %rax, %r15\n   test %r15, %r15\n   jz 9f\n"
+    "test %r14, %r14\n   jz 9f\n   mov %r15, %rax\n   mul %r14\n"
+    "test %rdx, %rdx\n   jnz 9f\n"
     "mov %rax, %rdi\n   call memory\n   mov %rax, %rbp\n"
     "test %rbp, %rbp\n   jz 9f\n   cmp $-4095, %rbp\n   jae 9f\n"
     "mov (%rbx), %rsi\n   test %rsi, %rsi\n   jz 3f\n"
@@ -12794,14 +12806,24 @@ __asm__(
     ASM_RET
     ASM_END(memory_free)
 
+    ASM_FUNC(memory_growth)
+    "cmp x0, x1\n   b.hs 2f\n   cbnz x0, 1f\n"
+    "mov x0, x2\n   cbz x0, 3f\n"
+    "1:  cmp x0, x1\n   b.hs 2f\n   adds x0, x0, x0\n"
+    "b.cc 1b\n"
+    "3:  mov x0, xzr\n"
+    "2:\n"
+    ASM_RET
+    ASM_END(memory_growth)
+
     ASM_FUNC(memory_reserve)
     "stp x19, x20, [sp, #-64]!\n   stp x21, x22, [sp, #16]\n"
     "stp x23, x24, [sp, #32]\n   stp x25, x30, [sp, #48]\n"
     "mov x19, x0\n   mov x20, x1\n   mov x21, x2\n   mov x22, x4\n"
     "ldr x23, [x20]\n   cmp x23, x3\n   b.hs 8f\n"
-    "cbnz x23, 1f\n   mov x23, x5\n   cbz x23, 9f\n"
-    "1:  cmp x23, x3\n   b.hs 2f\n   adds x23, x23, x23\n   b.cs 9f\n   b 1b\n"
-    "2:  cbz x22, 9f\n   umulh x6, x23, x22\n   cbnz x6, 9f\n"
+    "mov x0, x23\n   mov x1, x3\n   mov x2, x5\n   bl memory_growth\n"
+    "mov x23, x0\n   cbz x23, 9f\n"
+    "cbz x22, 9f\n   umulh x6, x23, x22\n   cbnz x6, 9f\n"
     "mul x25, x23, x22\n   mov x0, x25\n   bl memory\n   mov x24, x0\n"
     "cbz x24, 9f\n   mov x6, #-4095\n   cmp x24, x6\n   b.hs 9f\n"
     "ldr x1, [x19]\n   cbz x1, 3f\n"
@@ -12844,14 +12866,23 @@ __asm__(
     ASM_RET
     ASM_END(memory_free)
 
+    ASM_FUNC(memory_growth)
+    "bgeu a0, a1, 2f\n   bnez a0, 1f\n   mv a0, a2\n   beqz a0, 3f\n"
+    "1:  bgeu a0, a1, 2f\n   slli t0, a0, 1\n   bltu t0, a0, 3f\n"
+    "mv a0, t0\n   j 1b\n"
+    "3:  li a0, 0\n"
+    "2:\n"
+    ASM_RET
+    ASM_END(memory_growth)
+
     ASM_FUNC(memory_reserve)
     "addi sp, sp, -64\n   sd s0, 0(sp)\n   sd s1, 8(sp)\n   sd s2, 16(sp)\n   sd s3, 24(sp)\n"
     "sd s4, 32(sp)\n   sd s5, 40(sp)\n   sd ra, 56(sp)\n"
     "mv s0, a0\n   mv s1, a1\n   mv s2, a2\n   mv s3, a4\n"
     "ld s4, 0(s1)\n   bgeu s4, a3, 8f\n"
-    "bnez s4, 1f\n   mv s4, a5\n   beqz s4, 9f\n"
-    "1:  bgeu s4, a3, 2f\n   slli t0, s4, 1\n   bltu t0, s4, 9f\n   mv s4, t0\n   j 1b\n"
-    "2:  beqz s3, 9f\n   mulhu t0, s4, s3\n   bnez t0, 9f\n"
+    "mv a0, s4\n   mv a1, a3\n   mv a2, a5\n   call memory_growth\n"
+    "mv s4, a0\n   beqz s4, 9f\n"
+    "beqz s3, 9f\n   mulhu t0, s4, s3\n   bnez t0, 9f\n"
     "mul a0, s4, s3\n   call memory\n   mv s5, a0\n"
     "beqz s5, 9f\n   li t0, -4095\n   bgeu s5, t0, 9f\n"
     "ld a1, 0(s0)\n   beqz a1, 3f\n"

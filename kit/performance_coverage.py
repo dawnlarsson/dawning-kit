@@ -173,7 +173,7 @@ cover('correctness_only', 'src/test/wait_retry.c', '''
 system_read_retry system_wait4_retry system_write_all wait_status_code
 ''', 'focused retry/status correctness and signal-interruption checks')
 cover('correctness_only', 'src/test/native/reserve.c', '''
-memory_release memory_reserve
+memory_growth memory_release memory_reserve
 ''', 'exact lifted ARM64 growth, overflow, failure and release checks')
 
 

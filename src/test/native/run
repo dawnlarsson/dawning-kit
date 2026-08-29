@@ -120,7 +120,7 @@ python3 "$here/extract.py" "$root/src/platform/socket.inc" \
 #       The allocator calls are supplied by reserve.c, leaving the exact
 #       AArch64 growth/release bodies to be tested without making Darwin
 #       understand Linux mmap flags.
-python3 "$here/extract.py" "$lib" memory_reserve memory_release \
+python3 "$here/extract.py" "$lib" memory_growth memory_reserve memory_release \
         > "$work/reserve.h" || exit 1
 
 status=0

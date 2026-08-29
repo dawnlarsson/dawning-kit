@@ -223,10 +223,13 @@ static p8 address_to shell_store_take(shell_store address_to store, positive roo
                 return (p8 address_to)(store->here + 1);
         }
 
-        size = SHELL_BLOCK;
+        size = memory_growth(0, room, SHELL_BLOCK);
 
-        while (size < room)
-                size += size;
+        if (!size)
+        {
+                shell_memory_failed = true;
+                return null;
+        }
 
         block = (shell_block address_to)shell_map(size + sizeof(shell_block));
 

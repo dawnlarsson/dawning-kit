@@ -2029,10 +2029,10 @@ static fn awk_pieces_room(positive want)
         if (want <= awk_piece_room)
                 return;
 
-        positive room = awk_piece_room ? awk_piece_room : 64;
+        positive room = memory_growth(awk_piece_room, want, 64);
 
-        while (room < want)
-                room *= 2;
+        if (!room)
+                awk_out_of_memory();
 
         positive address_to starts = (positive address_to)awk_take(room * sizeof(positive));
         positive address_to lengths = (positive address_to)awk_take(room * sizeof(positive));
@@ -2207,10 +2207,11 @@ static fn awk_fields_reserve(positive want)
         if (want < awk_fields_room)
                 return;
 
-        positive room = awk_fields_room ? awk_fields_room : 64;
+        positive need = want + 1;
+        positive room = need ? memory_growth(awk_fields_room, need, 64) : 0;
 
-        while (room <= want)
-                room *= 2;
+        if (!room)
+                awk_out_of_memory();
 
         awk_value address_to made = (awk_value address_to)awk_take(room * sizeof(awk_value));
 
@@ -2614,10 +2615,10 @@ static fn awk_reader_room(awk_reader address_to which, positive want)
         if (want <= which->room)
                 return;
 
-        positive room = which->room ? which->room : AWK_READ_CHUNK * 2;
+        positive room = memory_growth(which->room, want, AWK_READ_CHUNK * 2);
 
-        while (room < want)
-                room *= 2;
+        if (!room)
+                awk_out_of_memory();
 
         p8 address_to made = (p8 address_to)awk_take(room);
 
@@ -2970,10 +2971,10 @@ static fn awk_builder_room(awk_builder address_to build, positive want)
         if (want <= build->room)
                 return;
 
-        positive room = build->room * 2;
+        positive room = memory_growth(build->room, want, sizeof(build->fixed));
 
-        while (room < want)
-                room *= 2;
+        if (!room)
+                awk_out_of_memory();
 
         p8 address_to made = (p8 address_to)awk_take(room);
 

@@ -35,6 +35,7 @@ void *memory_copy(void *to, const void *from, u64 size)
 
 int memory_reserve(void **, u64 *, u64, u64, u64, u64);
 void memory_release(void **, u64 *, u64 *, u64);
+u64 memory_growth(u64, u64, u64);
 
 #define CHECK(condition) do { checks++; if (!(condition)) bad++; } while (0)
 
@@ -43,6 +44,12 @@ int main(void)
         void *held = 0;
         u64 have = 0, used = 0;
         u64 checks = 0, bad = 0;
+
+        CHECK(memory_growth(64, 64, 16) == 64);
+        CHECK(memory_growth(0, 1, 64) == 64);
+        CHECK(memory_growth(64, 65, 16) == 128);
+        CHECK(memory_growth(0, 1, 0) == 0);
+        CHECK(memory_growth(1ul << 63, ~0ul, 1) == 0);
 
         CHECK(memory_reserve(&held, &have, used, 1, sizeof(u64), 64));
         CHECK(held != 0);
