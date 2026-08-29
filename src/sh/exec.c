@@ -1596,22 +1596,18 @@ static b32 exec_simple(b32 index)
 
         shell_argc = count - first;
 
-        shell_output_attempted = false;
         shell_output_failed = false;
         log_failure_reset();
 
-        {
-                bool stdout_closed =
-                    system_call_3(syscall(fcntl), 1, 1 /* F_GETFD */, 0) ==
-                    -ERROR_BAD_DESCRIPTOR;
+        status = exec_dispatch();
+        log_flush();
 
-                status = exec_dispatch();
-                log_flush();
-
-                if ((log_failed() || shell_output_failed ||
-                     (stdout_closed && shell_output_attempted)) && !status)
-                        status = shell_status = 1;
-        }
+        /* A write to a closed descriptor reaches the buffered writer at
+           flush and leaves its sticky failure bit set. Asking the kernel
+           whether stdout was closed before every command duplicated that
+           answer and put an fcntl syscall in otherwise kernel-free loops. */
+        if ((log_failed() || shell_output_failed) && !status)
+                status = shell_status = 1;
 
         // exec with nothing to run is there for its redirections, and those
         // belong to the shell from here on.

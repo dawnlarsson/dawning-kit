@@ -365,12 +365,10 @@ static fn shell_words_bind(shell_words address_to list,
 p8 address_to shell_buffer;
 positive shell_buffer_room;
 
-bool shell_output_attempted;
 bool shell_output_failed;
 
 static fn shell_write(address_any data, positive length)
 {
-        shell_output_attempted = true;
         log(data, length);
 }
 
@@ -380,8 +378,6 @@ positive shell_output_file;
 fn redirect_writer(address_any data, positive length)
 {
         positive wrote;
-
-        shell_output_attempted = true;
 
         if (!shell_output_file)
         {
