@@ -178,6 +178,43 @@ bash_answer()
                 "bash $(shown "$work/want")[$want_status]   got $(shown "$work/got")[$got_status]"
 }
 
+# One row in the explicit Bash parity ledger. It records the unsupported
+# answer exactly and also requires Bash to answer differently; implementing a
+# row therefore fails with an instruction to move it into bash_answer.
+bash_remaining()
+{
+        name=$1
+        recorded=$2
+        recorded_status=$3
+        shift 3
+
+        [ -x /bin/bash ] || {
+                lost "$name" "/bin/bash is required for the Bash parity ledger"
+                return 0
+        }
+
+        held_reference=$reference
+        reference=/bin/bash
+        run_both "$@"
+        reference=$held_reference
+        got_ours=$(shown "$work/got")
+
+        if [ "$got_ours" != "$recorded" ] ||
+                [ "$got_status" != "$recorded_status" ]; then
+                lost "$name" \
+                        "remaining ${recorded}[$recorded_status], now ${got_ours}[$got_status]"
+                return 0
+        fi
+
+        if cmp -s "$work/want" "$work/got" &&
+                [ "$want_status" = "$got_status" ]; then
+                lost "$name" "agrees with Bash now -- move it to supported"
+                return 0
+        fi
+
+        won
+}
+
 # A deliberate extension has no POSIX reference answer. Check its bytes and
 # status directly so a future lexer change cannot reinterpret it as another
 # valid command while the dash-comparison lanes remain about POSIX.
@@ -1922,6 +1959,51 @@ answer 'dot unfinished' 'f=/tmp/syntax-dot.$$
 printf '\''echo "unclosed\n'\'' > "$f"
 . "$f"
 echo second'
+
+#
+#       Bash parity ledger.
+#
+#       Every named family is either compared directly with Bash as supported
+#       or pinned to its exact current unsupported result. This is deliberately
+#       redundant with deeper cases above: it is the machine-readable summary
+#       that prevents a command-not-found, syntax error, or plausible unchanged
+#       value from being mistaken for broad Bash compatibility.
+#
+
+section bash-ledger
+
+group supported
+bash_answer 'ledger parameter replace' 'x=aba; echo "${x//a/X}"'
+bash_answer 'ledger substring' 'x=abcdef; echo "${x:1:3}"'
+bash_answer 'ledger case conversion' 'x=aBc; echo "${x^^}"'
+bash_answer 'ledger brace expansion' 'printf "[%s]" {a,b}{1,2}; echo'
+bash_answer 'ledger here string' 'cat <<< "a b"'
+bash_answer 'ledger function keyword' 'function f { echo yes; }; f'
+bash_answer 'ledger append assignment' 'x=a; x+=b; echo "$x"'
+bash_answer 'ledger pipefail' 'set -o pipefail; false | true; echo $?'
+bash_answer 'ledger both append' 'p=/tmp/bash-ledger.$$; echo a > "$p"; { echo b; echo c >&2; } &>> "$p"; cat "$p"; rm "$p"'
+bash_answer 'ledger source alias' 'p=/tmp/bash-source.$$; printf "echo sourced\n" > "$p"; source "$p"; rm "$p"'
+
+group remaining
+bash_remaining 'ledger double brackets' '' 127 '[[ x == x ]]'
+bash_remaining 'ledger regex match' '' 127 '[[ abc =~ ^a ]]'
+bash_remaining 'ledger arithmetic command' '0|' 0 'x=0; ((x+=2)); echo "$x"'
+bash_remaining 'ledger c style for' '' 2 'for ((i=0;i<2;i++)); do echo "$i"; done'
+bash_remaining 'ledger indexed arrays' '' 2 'a=(one two); echo "${a[1]}"'
+bash_remaining 'ledger associative arrays' '' 2 'declare -A a; a[k]=v; echo "${a[k]}"'
+bash_remaining 'ledger process substitution' '<>|' 0 'x=$(cat <(printf x)); printf "<%s>\n" "$x"'
+bash_remaining 'ledger extglob' '' 2 'shopt -s extglob; eval '\''case aa in +(a)) echo yes;; esac'\'''
+bash_remaining 'ledger globstar' '' 127 'shopt -s globstar'
+bash_remaining 'ledger declare' '' 127 'declare x=1'
+bash_remaining 'ledger typeset' '' 127 'typeset x=1'
+bash_remaining 'ledger let' '0|' 0 'x=0; let x+=2; echo "$x"'
+bash_remaining 'ledger mapfile' '' 127 'printf "a\n" | mapfile a'
+bash_remaining 'ledger readarray' '' 127 'printf "a\n" | readarray a'
+bash_remaining 'ledger shopt' '' 127 'shopt -s nullglob'
+bash_remaining 'ledger select' '' 2 'select x in a; do echo "$x"; break; done </dev/null'
+bash_remaining 'ledger coproc' '' 2 'coproc C { echo x; }'
+bash_remaining 'ledger noclobber' '0|' 0 'p=/tmp/bash-noclobber.$$; echo a > "$p"; set -C; echo b > "$p"; s=$?; rm -f "$p"; echo "$s"'
+bash_remaining 'ledger indirection' '' 2 'x=y; y=value; echo "${!x}"'
 
 #
 #       What the shell has no answer for at all.
