@@ -183,7 +183,7 @@ static p16 dns_transaction(void)
         p16 value = 0;
 
         if (system_call_3(syscall(getrandom), (positive)address_of value,
-                          sizeof value, 0) == sizeof value)
+                          sizeof value, 1) == sizeof value)
                 return value;
 
         return (p16)(get_cpu_time() ^ (get_cpu_time() >> 17));

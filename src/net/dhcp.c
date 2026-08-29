@@ -272,9 +272,28 @@ static p8 dhcp_prefix_of(p32 mask)
 
         A server that is slow, or a link that has only just come up and whose
         switch port is still learning, is the ordinary case at boot rather
-        than the exception. So the wait doubles: four seconds, then eight,
-        then sixteen. Giving up after one silent second is what makes a
-        machine that would have worked look like one that cannot.
+        than the exception. A link brought up a moment ago has not finished
+        negotiating, the first DISCOVERs go into that gap and are simply lost,
+        and what decides when a machine is on the network is how soon after
+        carrier the next one goes out. So it asks four times a second for the
+        first three seconds and backs off after that.
+
+        A note on where the time went, because it was not where it looked.
+
+        A boot reached carrier at three seconds and had no address until
+        fifteen. Counting showed the whole exchange was one send, one poll,
+        one offer and one poll for the acknowledgement -- perhaps two seconds
+        of work -- inside fourteen seconds of wall clock, and a direct test
+        showed ppoll honouring its timeout to the millisecond.
+
+        It was getrandom. With no flags it waits for the kernel's entropy pool
+        to be initialised, and early in boot it is not. Twelve seconds of a
+        boot were spent there, before a single packet moved, asking for a
+        number to put in a header. GRND_NONBLOCK asks not to wait, and the
+        clock answers instead when the pool will not.
+
+        Three seconds to carrier, four to an address. The second of those is
+        qemu, not this.
 */
 static bipolar dhcp_ask(string_address device, p8 address_to hardware,
                         dhcp_lease address_to lease)
@@ -291,44 +310,57 @@ static bipolar dhcp_ask(string_address device, p8 address_to hardware,
         memory_fill(lease, 0, sizeof(dhcp_lease));
 
         if (system_call_3(syscall(getrandom), (positive)address_of transaction,
-                          sizeof transaction, 0) != sizeof transaction)
+                          sizeof transaction, 1) != sizeof transaction)
                 transaction = (p32)get_cpu_time();
-
-        handle = socket_new(AF_INET, SOCK_DGRAM, 0);
-
-        if (handle < 0)
-                return DHCP_NO_SOCKET;
-
-        socket_option_set((b32)handle, SOL_SOCKET, SO_BROADCAST, address_of one,
-                          sizeof one);
-        socket_option_set((b32)handle, SOL_SOCKET, SO_REUSEADDR, address_of one,
-                          sizeof one);
-
-        //      Without this the send has no route and fails: there is no
-        //      address yet, so nothing in the routing table can carry it.
-        socket_option_set((b32)handle, SOL_SOCKET, SO_BINDTODEVICE, device,
-                          string_length(device) + 1);
-
-        memory_fill(address_of where, 0, sizeof where);
-        where.family = AF_INET;
-        where.port = network_order_16(DHCP_CLIENT_PORT);
-        where.host = network_order_32(HOST_ANY);
-
-        if (socket_bind((b32)handle, address_of where, sizeof where) < 0)
-        {
-                socket_close((b32)handle);
-                return DHCP_NO_SOCKET;
-        }
 
         memory_fill(address_of where, 0, sizeof where);
         where.family = AF_INET;
         where.port = network_order_16(DHCP_SERVER_PORT);
         where.host = network_order_32(HOST_BROADCAST);
 
-        for (attempt = 0; attempt < 12; attempt++)
+        for (attempt = 0; attempt < 20; attempt++)
         {
                 p8 kind = 0;
                 positive deadline;
+                socket_address_internet mine;
+
+                /*
+                        A socket per attempt, not one for the whole exchange.
+
+                        This was added on a wrong diagnosis -- that a socket
+                        bound to a device with no carrier stayed stale once
+                        the carrier arrived -- and measuring it showed no
+                        difference at all. It is kept because it costs two
+                        syscalls a quarter second for a few seconds and means
+                        no state from before the link was live is carried into
+                        an attempt after it. The real delay was getrandom.
+                */
+                handle = socket_new(AF_INET, SOCK_DGRAM, 0);
+
+                if (handle < 0)
+                        return DHCP_NO_SOCKET;
+
+                socket_option_set((b32)handle, SOL_SOCKET, SO_BROADCAST,
+                                  address_of one, sizeof one);
+                socket_option_set((b32)handle, SOL_SOCKET, SO_REUSEADDR,
+                                  address_of one, sizeof one);
+
+                //      Without this the send has no route and fails: there is
+                //      no address yet, so nothing in the routing table can
+                //      carry it.
+                socket_option_set((b32)handle, SOL_SOCKET, SO_BINDTODEVICE, device,
+                                  string_length(device) + 1);
+
+                memory_fill(address_of mine, 0, sizeof mine);
+                mine.family = AF_INET;
+                mine.port = network_order_16(DHCP_CLIENT_PORT);
+                mine.host = network_order_32(HOST_ANY);
+
+                if (socket_bind((b32)handle, address_of mine, sizeof mine) < 0)
+                {
+                        socket_close((b32)handle);
+                        return DHCP_NO_SOCKET;
+                }
 
                 /*
                         A second apart for the first eight, then backing off.
@@ -344,7 +376,21 @@ static bipolar dhcp_ask(string_address device, p8 address_to hardware,
                         The backoff still exists, because a network with no
                         server on it should not be broadcast at forever.
                 */
-                wait = attempt < 8 ? 1 : (attempt - 7) * 4;
+                /*
+                        A quarter second apart while it matters.
+
+                        The link comes up about three seconds into a boot and
+                        the DISCOVERs before that are lost, so what decides
+                        when a machine is on the network is how soon after
+                        carrier the next one goes out. At one second that was
+                        the whole of the remaining delay; at a quarter it is
+                        within noise of the card itself.
+
+                        Twelve quick tries covers three seconds of that, and
+                        the backoff after it is for a network with no server
+                        on it, which should not be broadcast at forever.
+                */
+                wait = attempt < 12 ? 1 : (attempt - 11) * 8;
                 deadline = wait;
 
                 length = dhcp_build(packet, sizeof packet, DHCP_DISCOVER, transaction,
@@ -353,8 +399,11 @@ static bipolar dhcp_ask(string_address device, p8 address_to hardware,
                 if (socket_send((b32)handle, packet, length, 0, address_of where,
                                 sizeof where) < 0)
                 {
+                        //      No route yet, most likely. Close this one and
+                        //      try again with a fresh one rather than giving
+                        //      up on the whole exchange.
                         socket_close((b32)handle);
-                        return DHCP_NO_SOCKET;
+                        continue;
                 }
 
                 while (deadline--)
@@ -368,8 +417,8 @@ static bipolar dhcp_ask(string_address device, p8 address_to hardware,
                         address_to((p16 address_to)(waited + 4)) = 1;
                         address_to((p16 address_to)(waited + 6)) = 0;
 
-                        limit.tv_sec = 1;
-                        limit.tv_nsec = 0;
+                        limit.tv_sec = 0;
+                        limit.tv_nsec = 250000000;
 
                         ready = system_call_5(syscall(ppoll), (positive)waited, 1,
                                               (positive)address_of limit, 0, 8);
@@ -402,8 +451,8 @@ static bipolar dhcp_ask(string_address device, p8 address_to hardware,
 
                         while (deadline--)
                         {
-                                limit.tv_sec = 1;
-                                limit.tv_nsec = 0;
+                                limit.tv_sec = 0;
+                                limit.tv_nsec = 250000000;
 
                                 address_to((b32 address_to)waited) = (b32)handle;
                                 address_to((p16 address_to)(waited + 4)) = 1;
@@ -437,9 +486,9 @@ static bipolar dhcp_ask(string_address device, p8 address_to hardware,
 
                         break;
                 }
-        }
 
-        socket_close((b32)handle);
+                socket_close((b32)handle);
+        }
 
         return DHCP_NO_OFFER;
 }
@@ -484,7 +533,7 @@ static bipolar dhcp_renew(string_address device, p8 address_to hardware,
                 return DHCP_NO_OFFER;
 
         if (system_call_3(syscall(getrandom), (positive)address_of transaction,
-                          sizeof transaction, 0) != sizeof transaction)
+                          sizeof transaction, 1) != sizeof transaction)
                 transaction = (p32)get_cpu_time();
 
         handle = socket_new(AF_INET, SOCK_DGRAM, 0);

@@ -2496,7 +2496,7 @@ static b32 text_wc()
                                 Adding -w or -L puts the general loop back,
                                 which is right: those need every byte anyway.
                         */
-                        if (!want_words && !want_chars && !want_longest)
+                        if (!want_words && !want_longest)
                         {
                                 lines += memory_count(at, left, '\n');
                                 text_input.position = text_input.filled;
@@ -7244,10 +7244,12 @@ static b32 text_sed()
 
                                 if (kind == 'P')
                                 {
-                                        positive stop = 0;
-
-                                        while (stop < sed_space_length && sed_space[stop] != '\n')
-                                                stop++;
+                                        p8 address_to newline =
+                                            memory_first_of(sed_space, '\n',
+                                                            sed_space_length);
+                                        positive stop = newline
+                                                              ? (positive)(newline - sed_space)
+                                                              : sed_space_length;
 
                                         text_put(sed_space, stop);
                                         text_put_character('\n');
@@ -7269,10 +7271,12 @@ static b32 text_sed()
 
                                 if (kind == 'D')
                                 {
-                                        positive stop = 0;
-
-                                        while (stop < sed_space_length && sed_space[stop] != '\n')
-                                                stop++;
+                                        p8 address_to newline =
+                                            memory_first_of(sed_space, '\n',
+                                                            sed_space_length);
+                                        positive stop = newline
+                                                              ? (positive)(newline - sed_space)
+                                                              : sed_space_length;
 
                                         if (stop >= sed_space_length)
                                         {
@@ -7802,6 +7806,17 @@ static bool sort_looked_at(p8 character, positive how)
 static bipolar sort_compare_bytes(p8 address_to a, positive la, p8 address_to b, positive lb,
                                   positive how)
 {
+        if (!how)
+        {
+                positive length = min(la, lb);
+                bipolar order = memory_compare(a, b, length);
+
+                if (order)
+                        return order < 0 ? -1 : 1;
+
+                return la == lb ? 0 : la < lb ? -1 : 1;
+        }
+
         positive i = 0;
         positive j = 0;
 
@@ -8777,26 +8792,34 @@ static bool cmp_open(cmp_side address_to side, string_address path)
         return true;
 }
 
-static bipolar cmp_byte(cmp_side address_to side)
+static bool cmp_fill(cmp_side address_to side)
 {
         if (side->position == side->filled)
         {
                 bipolar got;
 
                 if (side->finished)
-                        return -1;
+                        return false;
 
                 got = system_read_retry(side->handle, side->buffer, CMP_BLOCK);
 
                 if (got <= 0)
                 {
                         side->finished = true;
-                        return -1;
+                        return false;
                 }
 
                 side->filled = (positive)got;
                 side->position = 0;
         }
+
+        return true;
+}
+
+static bipolar cmp_byte(cmp_side address_to side)
+{
+        if (!cmp_fill(side))
+                return -1;
 
         return side->buffer[side->position++];
 }
@@ -9082,6 +9105,35 @@ static b32 text_cmp()
         {
                 if (limit != TEXT_UNSET && at >= limit)
                         break;
+
+                /*
+                        Equal blocks are cmp's common case.  Prove the whole
+                        run in the wide library compare and count its lines in
+                        the wide byte counter; only a block containing the
+                        first difference falls back to the byte path below.
+                */
+                if (cmp_fill(address_of cmp_left) && cmp_fill(address_of cmp_right))
+                {
+                        positive left = cmp_left.filled - cmp_left.position;
+                        positive right = cmp_right.filled - cmp_right.position;
+                        positive run = min(left, right);
+
+                        if (limit != TEXT_UNSET && run > limit - at)
+                                run = limit - at;
+
+                        p8 address_to one = cmp_left.buffer + cmp_left.position;
+                        p8 address_to two = cmp_right.buffer + cmp_right.position;
+
+                        if (run && !memory_compare(one, two, run))
+                        {
+                                lines += memory_count(one, run, '\n');
+                                newline = one[run - 1] == '\n';
+                                cmp_left.position += run;
+                                cmp_right.position += run;
+                                at += run;
+                                continue;
+                        }
+                }
 
                 bipolar a = cmp_byte(address_of cmp_left);
                 bipolar b = cmp_byte(address_of cmp_right);

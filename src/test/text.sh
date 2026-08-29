@@ -535,6 +535,7 @@ compare 'lines'          wc a  -l
 compare 'words'          wc a  -w
 compare 'bytes'          wc a  -c
 compare 'characters'     wc a  -m
+compare 'lines characters' wc a -lm
 compare 'named'          wc -  "$work/a"
 compare 'two files'      wc -  "$work/a" "$work/b"
 compare 'lines named'    wc -  -l "$work/a"
@@ -745,6 +746,10 @@ compare 'global anchor'  sed u  's/a/A/g'
 compare 'no match keep'  sed s  's/zzz/X/'
 compare 'print doubles'  sed s  'p'
 compare 'N join'         sed s  'N;s/\n/+/'
+compare 'P first of space' sed a -n 'N;P'
+compare 'P without joined line' sed h -n 'P'
+compare 'D restarts space' sed a -n 'N;P;D'
+compare 'D without joined line' sed h -n 'D'
 compare 'multiple files' sed -  -n '$p' "$work/s" "$work/m"
 compare 'char class rep' sed n  's/[[:blank:]]\+/ /g'
 compare 'leading blanks' sed n  's/^[ \t]*//'
@@ -1303,9 +1308,19 @@ head -c 250 "$work/cl1" > "$work/cl3"
 cp "$work/a" "$work/a2"
 sed 's/gamma/gammX/' "$work/a" > "$work/a3"
 head -c 12 "$work/a" > "$work/a4"
+i=0
+while [ $i -lt 700 ]; do printf '0123456789\n'; i=$((i + 1)); done > "$work/cmp_block1"
+cp "$work/cmp_block1" "$work/cmp_block2"
+sed '500s/5/X/' "$work/cmp_block1" > "$work/cmp_block3"
+head -c 4096 "$work/cmp_block1" > "$work/cmp_block4"
 
 case_start cmp
 compare 'same'           cmp -  "$work/a" "$work/a2"
+compare 'same across blocks' cmp - "$work/cmp_block1" "$work/cmp_block2"
+compare 'late block difference' cmp - "$work/cmp_block1" "$work/cmp_block3"
+compare 'prefix at block edge' cmp - "$work/cmp_block1" "$work/cmp_block4"
+compare 'listed across blocks' cmp - -l "$work/cmp_block1" "$work/cmp_block3"
+compare 'limit inside equal block' cmp - -n 5000 "$work/cmp_block1" "$work/cmp_block3"
 compare 'differ'         cmp -  "$work/a" "$work/a3"
 compare 'differ other way' cmp - "$work/a3" "$work/a"
 compare 'prefix'         cmp -  "$work/a" "$work/a4"
