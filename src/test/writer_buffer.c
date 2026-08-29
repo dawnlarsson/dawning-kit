@@ -49,6 +49,12 @@ b32 main(void)
         p8 exact[16] = "0123456789abcdef";
         p8 large[17] = "ABCDEFGHIJKLMNOPQ";
         positive used = 0;
+        bipolar saved_output;
+        bool deferred_not_failed;
+        bool flush_failed;
+        bool direct_failed;
+        bool large_failed;
+        bool failure_stuck;
 
         check("pipe made", system_call_2(syscall(pipe2), (positive)ends, 0) == 0);
         memory_fill(guarded, 0xa5, sizeof guarded);
@@ -154,6 +160,47 @@ b32 main(void)
                                    address_of used, 'x'));
         check("failed full buffer is discarded", used == 0);
         check("final guards survive", guarded[0] == 0xa5 && guarded[17] == 0xa5);
+
+        /*
+                The process logger has a void writer ABI.  Its separate
+                sticky bit carries an output error across that ABI until a
+                command boundary consumes it.  A pipe's read end is a
+                deterministic unwritable stdout on every Linux architecture.
+        */
+        log_flush();
+        saved_output = system_call_1(syscall(dup), 1);
+        check("stdout saved for logger failure checks", saved_output >= 0);
+        check("unwritable stdout installed",
+              system_call_3(syscall(dup3), (positive)ends[0], 1, 0) == 1);
+
+        log_failure_reset();
+        log("x", 1);
+        deferred_not_failed = !log_failed();
+        log_flush();
+        flush_failed = log_failed() && log_writer_buffer_length == 0;
+
+        log_failure_reset();
+        log_direct("x", 1);
+        direct_failed = log_failed();
+
+        log_failure_reset();
+        log(log_writer_buffer, MAX_INPUT);
+        large_failed = log_failed() && log_writer_buffer_length == 0;
+        failure_stuck = log_failed() && log_failed();
+
+        if (saved_output >= 0)
+                system_call_3(syscall(dup3), (positive)saved_output, 1, 0);
+        log_failure_reset();
+
+        check("buffered logger defers failure until flush", deferred_not_failed);
+        check("logger flush records failure and clears pending bytes", flush_failed);
+        check("direct logger records failure", direct_failed);
+        check("capacity-sized logger write records immediate failure", large_failed);
+        check("logger failure is sticky until reset", failure_stuck);
+        check("logger reset clears failure", !log_failed());
+
+        if (saved_output >= 0)
+                system_call_1(syscall(close), (positive)saved_output);
 
         system_call_1(syscall(close), (positive)ends[0]);
         system_call_1(syscall(close), (positive)ends[1]);

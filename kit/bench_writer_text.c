@@ -70,6 +70,15 @@ NOT_INLINED static b32 former_byte(positive handle, p8 address_to buffer,
         return true;
 }
 
+NOT_INLINED static fn former_log(address_any data, positive length)
+{
+        if (!length)
+                length = string_length(data);
+
+        (fn)former_put(1, log_writer_buffer, CAPACITY,
+                       address_of log_writer_buffer_length, data, length, false);
+}
+
 static p64 put_once(positive length, bool hold_equal, bool assembly,
                     positive rounds, positive pending)
 {
@@ -145,6 +154,25 @@ static p64 flush_once(bool assembly)
         return get_cpu_time() - start;
 }
 
+static p64 log_once(positive length, bool assembly)
+{
+        p64 start = get_cpu_time();
+
+        for (positive i = 0; i < BUFFER_ROUNDS; i++)
+        {
+                log_writer_buffer_length = 0;
+
+                if (assembly)
+                        log(payload, length);
+                else
+                        former_log(payload, length);
+
+                sink += log_writer_buffer_length + log_writer_buffer[0];
+        }
+
+        return get_cpu_time() - start;
+}
+
 static fn order(positive address_to ratios)
 {
         for (positive i = 1; i < TRIES; i++)
@@ -203,6 +231,39 @@ static fn row(string_address name, positive length, bool hold_equal,
                       ratios[TRIES / 2] / 100, ratios[TRIES / 2] % 100);
 }
 
+static fn log_row(string_address name, positive length)
+{
+        positive ratios[TRIES];
+
+        /* Preserve the report accumulated by the non-logger rows before the
+           benchmark deliberately reuses the process log buffer as scratch. */
+        log_flush();
+
+        for (positive t = 0; t < TRIES; t++)
+        {
+                p64 former;
+                p64 assembly;
+
+                if (t & 1)
+                {
+                        assembly = log_once(length, true);
+                        former = log_once(length, false);
+                }
+                else
+                {
+                        former = log_once(length, false);
+                        assembly = log_once(length, true);
+                }
+
+                ratios[t] = (positive)(assembly * 10000 / (former ? former : 1));
+        }
+
+        order(ratios);
+        log_writer_buffer_length = 0;
+        string_format(log, "  %s  median asm/C %p.%p%%\n", name,
+                      ratios[TRIES / 2] / 100, ratios[TRIES / 2] % 100);
+}
+
 b32 main(void)
 {
         for (positive i = 0; i < sizeof(payload); i++)
@@ -223,6 +284,8 @@ b32 main(void)
         row((string_address)"hold exact", CAPACITY, true, SYSCALL_ROUNDS,
             0, false, false);
         row((string_address)"flush", 0, false, 0, 0, false, true);
+        log_row((string_address)"log buffer 8", 8);
+        log_row((string_address)"log buffer 64", 64);
 
         system_call_1(syscall(close), null_handle);
         log_flush();

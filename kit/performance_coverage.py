@@ -101,7 +101,7 @@ cover('direct_benchmark', 'kit/bench_writer_field.c', '''
 string_to_field writer_field
 ''', 'paired former-C/assembly timing over exact and padded fields')
 cover('direct_benchmark', 'kit/bench_writer_text.c', '''
-buffered_flush buffered_write buffered_write_byte buffered_write_deferred_equal
+buffered_flush buffered_write buffered_write_byte buffered_write_deferred_equal log
 ''', 'paired former-C/assembly timing over buffered and direct output shapes')
 cover('direct_benchmark', 'kit/bench_text_hot.c', 'memory_common_prefix',
       'paired scalar/assembly timing over equal and late-difference text spans')
@@ -184,8 +184,9 @@ cover('correctness_only', 'src/test/slurp.c', 'file_slurp',
       'focused file-slurp correctness and error-path test')
 cover('correctness_only', 'src/test/socket.c', 'host_into string_to_host',
       'focused socket conversion correctness test')
-cover('correctness_only', 'src/test/standard.c', 'log log_direct log_flush',
-      'exercised by standard output checks; no isolated timing')
+cover('correctness_only', 'src/test/writer_buffer.c', '''
+log_direct log_failed log_failure_reset log_flush
+''', 'focused deferred, flush, direct, sticky and reset failure checks')
 cover('correctness_only', 'src/test/probe.c', '''
 log_error program_argument program_argument_count term_size
 ''', 'focused runtime/probe behavior checks; no isolated timing')

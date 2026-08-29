@@ -1244,6 +1244,8 @@ static b32 exec_simple(b32 index)
         shell_argc = count - first;
 
         shell_output_attempted = false;
+        shell_output_failed = false;
+        log_failure_reset();
 
         {
                 bool stdout_closed =
@@ -1251,8 +1253,10 @@ static b32 exec_simple(b32 index)
                     -ERROR_BAD_DESCRIPTOR;
 
                 status = exec_dispatch();
+                log_flush();
 
-                if (stdout_closed && shell_output_attempted && !status)
+                if ((log_failed() || shell_output_failed ||
+                     (stdout_closed && shell_output_attempted)) && !status)
                         status = shell_status = 1;
         }
 

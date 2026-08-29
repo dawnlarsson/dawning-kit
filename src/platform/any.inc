@@ -41,6 +41,7 @@
 
 extern p8 log_writer_buffer[MAX_INPUT];
 extern positive log_writer_buffer_length;
+extern p8 log_writer_failed;
 
 __asm__(
     ASM_BSS_OBJECT_BEGIN(log_writer_buffer, 64)
@@ -49,12 +50,17 @@ __asm__(
     ASM_BSS_OBJECT_BEGIN(log_writer_buffer_length, 8)
     ".zero 8\n"
     ASM_OBJECT_END(log_writer_buffer_length)
+    ASM_BSS_OBJECT_BEGIN(log_writer_failed, 1)
+    ".zero 1\n"
+    ASM_OBJECT_END(log_writer_failed)
 );
 
 fn log_direct(address_any data, positive length);
 fn log_flush();
 fn log(address_any data, positive length);
 fn log_error(address_any data, positive length);
+fn log_failure_reset();
+bool log_failed();
 b32 buffered_flush(positive handle, p8 address_to buffer, positive address_to used);
 b32 buffered_write(positive handle, p8 address_to buffer, positive capacity,
                    positive address_to used, address_any data, positive length);
@@ -155,15 +161,30 @@ __asm__(
     ASM_END(buffered_write_byte)
 
     ASM_FUNC(log_direct)
+    "sub $24, %rsp\n   mov %rsi, 0(%rsp)\n"
     "mov %rsi, %rdx\n   mov %rdi, %rsi\n   mov $1, %edi\n"
-    "mov $" RUNTIME_TEXT(syscall(write)) ", %eax\n   syscall\n"
+    "call system_write_all\n   cmp 0(%rsp), %rax\n"
+    "je .Llog_direct_x64_done\n   movb $1, log_writer_failed(%rip)\n"
+    ".Llog_direct_x64_done:\n   add $24, %rsp\n"
     ASM_RET
     ASM_END(log_direct)
 
     ASM_FUNC(log_flush)
+    "sub $8, %rsp\n"
     "mov $1, %edi\n   lea log_writer_buffer(%rip), %rsi\n"
-    "lea log_writer_buffer_length(%rip), %rdx\n   jmp buffered_flush\n"
+    "lea log_writer_buffer_length(%rip), %rdx\n   call buffered_flush\n"
+    "test %eax, %eax\n   jnz .Llog_flush_x64_done\n"
+    "movb $1, log_writer_failed(%rip)\n"
+    ".Llog_flush_x64_done:\n   add $8, %rsp\n" ASM_RET
     ASM_END(log_flush)
+
+    ASM_FUNC(log_failure_reset)
+    "movb $0, log_writer_failed(%rip)\n" ASM_RET
+    ASM_END(log_failure_reset)
+
+    ASM_FUNC(log_failed)
+    "movzbl log_writer_failed(%rip), %eax\n" ASM_RET
+    ASM_END(log_failed)
 
     ASM_FUNC(log_error)
     "push %r12\n   push %r13\n   sub $8, %rsp\n"
@@ -183,7 +204,10 @@ __asm__(
     ".Llog_x64_have_length:\n   mov %rsi, %r9\n   mov %rdi, %r8\n"
     "lea log_writer_buffer_length(%rip), %rcx\n   mov $4096, %edx\n"
     "lea log_writer_buffer(%rip), %rsi\n   mov $1, %edi\n"
-    "jmp buffered_write\n"
+    "sub $8, %rsp\n   call buffered_write\n"
+    "test %eax, %eax\n   jnz .Llog_x64_done\n"
+    "movb $1, log_writer_failed(%rip)\n"
+    ".Llog_x64_done:\n   add $8, %rsp\n" ASM_RET
     ASM_END(log)
 );
 #elif ARM64
@@ -266,20 +290,36 @@ __asm__(
     ASM_END(buffered_write_byte)
 
     ASM_FUNC(log_direct)
+    "stp x1, x30, [sp, #-16]!\n"
     "mov x2, x1\n   mov x1, x0\n   mov x0, #1\n"
-    "movz " SYSCALL_NUMBER_REGISTER ", #((" RUNTIME_TEXT(syscall(write)) ") & 0xffff)\n"
-    "movk " SYSCALL_NUMBER_REGISTER ", #(((" RUNTIME_TEXT(syscall(write)) ") >> 16) & 0xffff), lsl #16\n"
-    SYSCALL_INSTRUCTION "\n"
+    "bl system_write_all\n   ldr x1, [sp]\n   cmp x0, x1\n"
+    "b.eq .Llog_direct_arm64_done\n   adrp x2, log_writer_failed\n"
+    "add x2, x2, :lo12:log_writer_failed\n   mov w1, #1\n   strb w1, [x2]\n"
+    ".Llog_direct_arm64_done:\n   ldr x30, [sp, #8]\n   add sp, sp, #16\n"
     ASM_RET
     ASM_END(log_direct)
 
     ASM_FUNC(log_flush)
+    "str x30, [sp, #-16]!\n"
     "mov x0, #1\n   adrp x1, log_writer_buffer\n"
     "add x1, x1, :lo12:log_writer_buffer\n"
     "adrp x2, log_writer_buffer_length\n"
     "add x2, x2, :lo12:log_writer_buffer_length\n"
-    "b buffered_flush\n"
+    "bl buffered_flush\n   cbnz w0, .Llog_flush_arm64_done\n"
+    "adrp x1, log_writer_failed\n   add x1, x1, :lo12:log_writer_failed\n"
+    "mov w2, #1\n   strb w2, [x1]\n"
+    ".Llog_flush_arm64_done:\n   ldr x30, [sp], #16\n" ASM_RET
     ASM_END(log_flush)
+
+    ASM_FUNC(log_failure_reset)
+    "adrp x0, log_writer_failed\n   add x0, x0, :lo12:log_writer_failed\n"
+    "strb wzr, [x0]\n" ASM_RET
+    ASM_END(log_failure_reset)
+
+    ASM_FUNC(log_failed)
+    "adrp x0, log_writer_failed\n   add x0, x0, :lo12:log_writer_failed\n"
+    "ldrb w0, [x0]\n" ASM_RET
+    ASM_END(log_failed)
 
     ASM_FUNC(log_error)
     "stp x19, x20, [sp, #-32]!\n   str x30, [sp, #16]\n"
@@ -305,7 +345,10 @@ __asm__(
     "add x3, x3, :lo12:log_writer_buffer_length\n"
     "mov x2, #4096\n   adrp x1, log_writer_buffer\n"
     "add x1, x1, :lo12:log_writer_buffer\n   mov x0, #1\n"
-    "b buffered_write\n"
+    "str x30, [sp, #-16]!\n   bl buffered_write\n"
+    "cbnz w0, .Llog_arm64_done\n   adrp x1, log_writer_failed\n"
+    "add x1, x1, :lo12:log_writer_failed\n   mov w2, #1\n   strb w2, [x1]\n"
+    ".Llog_arm64_done:\n   ldr x30, [sp], #16\n" ASM_RET
     ASM_END(log)
 );
 #elif RISCV64
@@ -389,15 +432,30 @@ __asm__(
     ASM_END(buffered_write_byte)
 
     ASM_FUNC(log_direct)
+    "addi sp, sp, -16\n   sd a1, 0(sp)\n   sd ra, 8(sp)\n"
     "mv a2, a1\n   mv a1, a0\n   li a0, 1\n"
-    "li a7, " RUNTIME_TEXT(syscall(write)) "\n   ecall\n"
+    "call system_write_all\n   ld t0, 0(sp)\n   beq a0, t0, .Llog_direct_riscv64_done\n"
+    "lla t1, log_writer_failed\n   li t0, 1\n   sb t0, 0(t1)\n"
+    ".Llog_direct_riscv64_done:\n   ld ra, 8(sp)\n   addi sp, sp, 16\n"
     ASM_RET
     ASM_END(log_direct)
 
     ASM_FUNC(log_flush)
+    "addi sp, sp, -16\n   sd ra, 8(sp)\n"
     "li a0, 1\n   lla a1, log_writer_buffer\n"
-    "lla a2, log_writer_buffer_length\n   tail buffered_flush\n"
+    "lla a2, log_writer_buffer_length\n   call buffered_flush\n"
+    "bnez a0, .Llog_flush_riscv64_done\n   lla t0, log_writer_failed\n"
+    "li t1, 1\n   sb t1, 0(t0)\n"
+    ".Llog_flush_riscv64_done:\n   ld ra, 8(sp)\n   addi sp, sp, 16\n" ASM_RET
     ASM_END(log_flush)
+
+    ASM_FUNC(log_failure_reset)
+    "lla a0, log_writer_failed\n   sb zero, 0(a0)\n" ASM_RET
+    ASM_END(log_failure_reset)
+
+    ASM_FUNC(log_failed)
+    "lla a0, log_writer_failed\n   lbu a0, 0(a0)\n" ASM_RET
+    ASM_END(log_failed)
 
     ASM_FUNC(log_error)
     "addi sp, sp, -32\n   sd ra, 24(sp)\n   sd s0, 16(sp)\n"
@@ -419,7 +477,11 @@ __asm__(
     "ld s0, 0(sp)\n   ld ra, 8(sp)\n   addi sp, sp, 16\n"
     ".Llog_riscv64_have_length:\n   mv a5, a1\n   mv a4, a0\n"
     "lla a3, log_writer_buffer_length\n   li a2, 4096\n"
-    "lla a1, log_writer_buffer\n   li a0, 1\n   tail buffered_write\n"
+    "lla a1, log_writer_buffer\n   li a0, 1\n"
+    "addi sp, sp, -16\n   sd ra, 8(sp)\n   call buffered_write\n"
+    "bnez a0, .Llog_riscv64_done\n   lla t0, log_writer_failed\n"
+    "li t1, 1\n   sb t1, 0(t0)\n"
+    ".Llog_riscv64_done:\n   ld ra, 8(sp)\n   addi sp, sp, 16\n" ASM_RET
     ASM_END(log)
 );
 #else
