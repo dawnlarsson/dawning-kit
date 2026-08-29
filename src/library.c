@@ -12391,12 +12391,13 @@ positive file_read(file_address source, address_any buffer, positive size, posit
 __asm__(
     ASM_SECTION
     //
-    //       A handle is what openat returned, so every negative errno is a
-    //       handle that is not -1. The C compares against -1 alone and this
-    //       keeps that: it is a check for "never opened", not for "failed".
+    //       A handle is the raw openat result. Linux reports failure as any
+    //       negative errno, not only -1, so validity is a signed nonnegative
+    //       test. Treating ENOENT (-2) as a descriptor made a failed open look
+    //       usable to every operation which follows this guard.
     //
     ASM_FUNC(file_valid)
-    "cmpq $-1, (%rdi)\n   setne %al\n   movzbl %al, %eax\n"
+    "cmpq $0, (%rdi)\n   setge %al\n   movzbl %al, %eax\n"
     ASM_RET
     ASM_END(file_valid)
 
@@ -12504,8 +12505,8 @@ __asm__(
 __asm__(
     ASM_SECTION
     ASM_FUNC(file_valid)
-    "ldr x1, [x0]\n   cmn x1, #1  // zero only when the handle is -1\n"
-    "cset w0, ne\n"
+    "ldr x1, [x0]\n   cmp x1, #0  // raw syscalls return negative errno\n"
+    "cset w0, ge\n"
     ASM_RET
     ASM_END(file_valid)
 
@@ -12607,8 +12608,8 @@ __asm__(
 __asm__(
     ASM_SECTION
     ASM_FUNC(file_valid)
-    "ld a1, 0(a0)\n   li a2, -1\n   xor a1, a1, a2  # zero only when the handle is -1\n"
-    "snez a0, a1\n"
+    "ld a1, 0(a0)\n   not a1, a1  # nonnegative iff the inverted sign bit is set\n"
+    "srli a0, a1, 63\n"
     ASM_RET
     ASM_END(file_valid)
 

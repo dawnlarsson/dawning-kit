@@ -1373,6 +1373,8 @@ fn check_lazy_file_and_library()
         file_new_lazy(address_of subject, missing, FILE_READ);
         same("file_new_lazy", "preserves open errno",
              (positive)((bipolar)subject.handle < 0), 1);
+        same("file_valid", "rejects every negative errno",
+             (positive)file_valid(address_of subject), 0);
         same("file_new_lazy", "failed path", (positive)subject.path,
              (positive)missing);
         subject.handle = (positive)-1;
