@@ -264,7 +264,7 @@ static bool dd_size(string_address text, positive address_to out)
 
                 total *= piece;
 
-                if (string_get(at) != 'x' && string_get(at) != '*')
+                if (string_get(at) != 'x')
                         break;
 
                 at++;
@@ -396,6 +396,7 @@ static b32 tools_dd(void)
         positive iflags = 0;
         positive oflags = 0;
         bool bs_set = false;
+        bool count_set = false;
         bool count_bytes = false;
         bool skip_bytes = false;
         bool seek_bytes = false;
@@ -450,6 +451,8 @@ static b32 tools_dd(void)
                         if (!dd_quantity(value, address_of count,
                                          address_of count_bytes))
                                 return text_error(argument, "invalid number"), 1;
+
+                        count_set = true;
                 }
                 else if (dd_operand(argument, "skip", address_of value) ||
                          dd_operand(argument, "iseek", address_of value))
@@ -570,8 +573,9 @@ static b32 tools_dd(void)
                 return 1;
         }
 
-        if ((!skip_bytes && skip && skip > positive_max / ibs) ||
-            (!seek_bytes && seek && seek > positive_max / obs))
+        if ((count_set && count > (positive)bipolar_max) ||
+            (skip && skip > (positive)bipolar_max / (skip_bytes ? 1 : ibs)) ||
+            (seek && seek > (positive)bipolar_max / (seek_bytes ? 1 : obs)))
         {
                 text_error(null, "offset too large");
                 return 1;
@@ -2809,6 +2813,29 @@ static b32 diff_walk(string_address left, string_address right, positive depth)
         bool right_here = file_exists(AT_FDCWD, right);
         bool left_directory = left_here && file_is_directory_through(left);
         bool right_directory = right_here && file_is_directory_through(right);
+
+        /*
+                Two names for the same regular inode cannot differ. Avoiding
+                the pair of complete reads is especially important here:
+                diff keeps both inputs for its line algorithm, so an otherwise
+                trivial same-file comparison could consume the entire arena.
+        */
+        if (left_here && right_here && !left_directory && !right_directory)
+        {
+                file_facts left_facts;
+                file_facts right_facts;
+
+                if (file_look_at(left, address_of left_facts) &&
+                    file_look_at(right, address_of right_facts) &&
+                    (left_facts.mode & MODE_FORMAT) == MODE_FILE &&
+                    (right_facts.mode & MODE_FORMAT) == MODE_FILE &&
+                    file_same_identity(address_of left_facts,
+                                       address_of right_facts))
+                {
+                        diff_identical_output(left, right);
+                        return 0;
+                }
+        }
 
         bool absent_directory_is_empty =
             !(left_here && right_here) &&

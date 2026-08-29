@@ -350,8 +350,12 @@ compare_dd_full 'write full regrouped' "$work/ten" ibs=3 obs=7 status=none
 compare_dd_full 'write full final partial' "$work/ten" ibs=8 obs=64 status=none
 compare_dd_reject 'size digit overflow' bs=18446744073709551616 status=none
 compare_dd_reject 'size product overflow' bs=18446744073709551615x2 status=none
+compare_dd_reject 'asterisk is not a product' bs=2\*3 status=none
+compare_dd_reject 'count signed overflow' count=9223372036854775808 status=none
 compare_dd_reject 'skip offset overflow' ibs=2 skip=9223372036854775808 status=none
+compare_dd_reject 'skip byte offset overflow' skip=9223372036854775808B status=none
 compare_dd_reject 'seek offset overflow' obs=2 seek=9223372036854775808 status=none
+compare_dd_reject 'seek byte offset overflow' seek=9223372036854775808B status=none
 compare_dd_reject 'invalid cbs' cbs=not-a-number status=none
 compare_dd_reject 'invalid input flag' iflag=not-a-flag status=none
 compare_dd_reject 'invalid output flag' oflag=not-a-flag status=none
@@ -604,6 +608,11 @@ compare_diff 'normal long'     --normal "$work/a" "$work/b"
 compare_diff 'report same'     -s "$work/a" "$work/a2"
 compare_diff 'report binary same' -s "$work/bin1" "$work/bin1copy"
 compare_diff 'brief report same' -qs "$work/a" "$work/a2"
+dd if=/dev/zero of="$work/same-large" bs=1 count=1 seek=268435455 \
+        status=none 2>/dev/null
+ln "$work/same-large" "$work/same-large-link"
+compare_diff 'large same inode' "$work/same-large" "$work/same-large"
+compare_diff 'large hard link' -s "$work/same-large" "$work/same-large-link"
 
 compare_diff 'unified'         -u "$work/a" "$work/b"
 compare_diff 'unified long'    -u "$work/long1" "$work/long2"
