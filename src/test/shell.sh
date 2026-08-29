@@ -547,6 +547,28 @@ entry_input='payload
 script_answer 'script keeps stdin' 'IFS= read -r value; printf "%s\n" "$value"'
 entry_input=""
 
+# The monitor is the shell's real integration workload: a ten-kilobyte script
+# beginning with a shebang, then nested functions, locals, substitutions,
+# pipelines and external tools. A fragment suite did not catch the parser's
+# zero-token first-line crash, so one complete frame is permanent coverage.
+if [ "$(uname -s)" = Linux ]; then
+        if timeout 20 "$subject" programs/monitor.sh 0 1 \
+                > "$work/monitor.out" 2> "$work/monitor.err"
+        then
+                monitor_status=0
+        else
+                monitor_status=$?
+        fi
+
+        if [ "$monitor_status" = 0 ] && [ -s "$work/monitor.out" ] &&
+                [ ! -s "$work/monitor.err" ]; then
+                won
+        else
+                lost 'monitor one frame' \
+                        "status $monitor_status, stdout $(wc -c < "$work/monitor.out"), stderr $(wc -c < "$work/monitor.err")"
+        fi
+fi
+
 group command
 command_answer 'command plain'    'echo hello'
 command_answer 'command status'   'exit 7'
@@ -1505,7 +1527,6 @@ differs 'a bad number'   '8|' 0 'echo $((08))'
 
 group language
 differs 'echo keeps them' 'a\b|' 0 'echo "a\b"'
-differs 'closed fd'      '0|' 0 'echo x >&- 2>/dev/null; echo $?'
 differs 'local goes on'  '2|after|' 0 'local v=1 2>/dev/null; echo $?; echo after'
 differs 'kill takes sig' '1|' 0 'kill -SIGTERM 999999 2>/dev/null; echo $?'
 differs 'expr is sixty four' '-9223372036854775808|' 0 'expr 9223372036854775807 + 1'
@@ -1565,6 +1586,7 @@ answer 'readonly reassignment stops the shell' 'readonly r=1; r=2; echo $?'
 answer 'unset function option' 'f() { echo a; }; unset -f f; f 2>/dev/null; echo $?'
 answer 'shift past end is fatal' 'set -- a; shift 2; echo $?'
 answer 'missing input status' 'cat < /nonexistent12345; echo $?'
+answer 'closed output status' 'echo x >&- 2>/dev/null; echo $?'
 
 many_readonly=$(awk 'BEGIN { for (i = 0; i < 40; i++) printf "readonly R%02d=%d;", i, i }')
 answer 'forty readonly names' "$many_readonly readonly -p | grep '^readonly R' | wc -l"

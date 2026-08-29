@@ -1243,7 +1243,18 @@ static b32 exec_simple(b32 index)
 
         shell_argc = count - first;
 
-        status = exec_dispatch();
+        shell_output_attempted = false;
+
+        {
+                bool stdout_closed =
+                    system_call_3(syscall(fcntl), 1, 1 /* F_GETFD */, 0) ==
+                    -ERROR_BAD_DESCRIPTOR;
+
+                status = exec_dispatch();
+
+                if (stdout_closed && shell_output_attempted && !status)
+                        status = shell_status = 1;
+        }
 
         // exec with nothing to run is there for its redirections, and those
         // belong to the shell from here on.
