@@ -43,7 +43,8 @@ static _Bool canvas_is_virtual(struct drm_device *dev)
                 return false;
 
         for (i = 0; guests[i]; i++)
-                if (!strcmp(dev->driver->name, guests[i]))
+                if (!string_compare((string_address)dev->driver->name,
+                                    (string_address)guests[i]))
                         return true;
 
         return false;

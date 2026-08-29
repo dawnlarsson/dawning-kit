@@ -568,11 +568,11 @@ static void desktop_fill(const struct target *t, int x1, int y1, int x2, int y2)
                                 continue;
                         }
 
-                        memcpy(&spare[kept], part, n * sizeof(*part));
+                        memory_copy_apart(&spare[kept], part, n * sizeof(*part));
                         kept += n;
                 }
 
-                memcpy(piece, spare, kept * sizeof(*piece));
+                memory_copy_apart(piece, spare, kept * sizeof(*piece));
                 count = kept;
         }
 

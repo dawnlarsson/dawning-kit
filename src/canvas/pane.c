@@ -647,9 +647,10 @@ static void pane_refresh(struct pane *pane)
                 it draws a titlebar, and the program can be rewriting the page
                 underneath at any instant.
         */
-        memcpy(pane->title, shared->title, WINDOW_TITLE_MAX);
+        memory_copy_apart(pane->title, shared->title, WINDOW_TITLE_MAX);
         pane->title[WINDOW_TITLE_MAX - 1] = 0;
-        pane->title_length = strnlen(pane->title, WINDOW_TITLE_MAX);
+        pane->title_length = (unsigned int)string_length_max(
+            pane->title, WINDOW_TITLE_MAX);
 
         pane_size(pane);
         pane_regrid(pane);

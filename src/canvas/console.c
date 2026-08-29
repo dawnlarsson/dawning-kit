@@ -151,8 +151,8 @@ static void console_start(void)
 
         // Set here rather than read from a shared page, because an owned
         // pane has no program behind it to have named itself.
-        strscpy(pane->title, "kernel log", WINDOW_TITLE_MAX);
-        pane->title_length = strlen(pane->title);
+        memory_copy_apart(pane->title, "kernel log", sizeof("kernel log"));
+        pane->title_length = sizeof("kernel log") - 1;
 
         WRITE_ONCE(console_pane, pane);
 

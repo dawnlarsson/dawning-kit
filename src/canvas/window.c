@@ -371,6 +371,32 @@ static inline unsigned int *window_pixels(struct window *window)
 #define WINDOW_SYS_MUNMAP 11
 #define WINDOW_SYS_IOCTL 16
 #define WINDOW_SYS_CLOSE 3
+#else
+// arm64 and riscv share the asm-generic numbering.
+#define WINDOW_SYS_OPENAT 56
+#define WINDOW_SYS_MMAP 222
+#define WINDOW_SYS_MUNMAP 215
+#define WINDOW_SYS_IOCTL 29
+#define WINDOW_SYS_CLOSE 57
+#endif
+
+/*
+        A shell image already carries library.c's hardware-floor syscall
+        entry on every supported architecture. Use it directly instead of
+        emitting a second syscall body in every program that includes this
+        client. window.c remains genuinely standalone: without the library's
+        include guard it retains the small per-architecture fallback below.
+
+        positive and long are both one register wide here. Casting a negative
+        AT_FDCWD through positive preserves its bits, and the raw negative
+        kernel answer becomes long again at the call site.
+*/
+#ifdef STANDARD_MODERN_C
+#define window_call(number, a, b, c, d, e, f)                                \
+        ((long)system_call_6((positive)(number), (positive)(a),              \
+                             (positive)(b), (positive)(c), (positive)(d),    \
+                             (positive)(e), (positive)(f)))
+#elif defined(__x86_64__)
 
 static long window_call(long number, long a, long b, long c, long d, long e, long f)
 {
@@ -386,13 +412,6 @@ static long window_call(long number, long a, long b, long c, long d, long e, lon
         return result;
 }
 #else
-// arm64 and riscv share the asm-generic numbering.
-#define WINDOW_SYS_OPENAT 56
-#define WINDOW_SYS_MMAP 222
-#define WINDOW_SYS_MUNMAP 215
-#define WINDOW_SYS_IOCTL 29
-#define WINDOW_SYS_CLOSE 57
-
 #if defined(__aarch64__)
 static long window_call(long number, long a, long b, long c, long d, long e, long f)
 {
