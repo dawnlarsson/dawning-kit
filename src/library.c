@@ -2949,7 +2949,9 @@ __asm__(
     "jmp .Lmemory_records_x64_scalar\n"
     ".Lmemory_records_x64_scalar_next:\n   inc %rbx\n"
     "jmp .Lmemory_records_x64_scalar\n"
+    ASM_USERSPACE_WIDE(
     ".Lmemory_records_x64_done_wide:\n   vzeroupper\n"
+    )
     ".Lmemory_records_x64_done:\n   mov %r14, %rax\n   add $32, %rsp\n"
     "pop %r15\n   pop %r14\n   pop %r13\n   pop %r12\n"
     "pop %rbp\n   pop %rbx\n"
