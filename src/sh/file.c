@@ -8597,8 +8597,9 @@ static fn seq_write(writer write, bipolar value, positive width)
 {
         if (value < 0)
         {
+                write("-", 1);
                 positive_to_padded(write, (positive)0 - (positive)value,
-                                   width, '0', '-');
+                                   width ? width - 1 : 0, '0', 0);
                 return;
         }
 
@@ -8919,7 +8920,15 @@ static fn seq_decimal_write(writer write, bipolar value, positive scale,
         positive suffix = precision ? precision + 1 : 0;
         positive whole_width = width > suffix ? width - suffix : 0;
 
-        positive_to_padded(write, whole, whole_width, '0', minus ? '-' : 0);
+        if (minus)
+        {
+                write("-", 1);
+
+                if (whole_width)
+                        whole_width--;
+        }
+
+        positive_to_padded(write, whole, whole_width, '0', 0);
 
         if (precision)
         {

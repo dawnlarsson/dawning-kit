@@ -1064,6 +1064,10 @@ compare 'long spaces'    fold a  --spaces --width 8
 compare 'long unknown'   fold a  --nosuchflag
 compare 'characters'     fold a  -c -w 8
 compare 'long characters' fold a --characters --width 8
+compare 'characters keep tab columns' fold g -c -w 3
+compare 'width plus'     fold a  -w +8
+compare 'width zero'     fold a  -w 0
+compare 'width malformed' fold a -w nope
 
 case_start tee
 compare 'passthrough'    tee a  "$work/tee1"
@@ -2043,6 +2047,11 @@ compare 'long silent'    cmp -  --silent "$work/cl1" "$work/cl2"
 compare 'long verbose'   cmp -  --verbose "$work/cl1" "$work/cl2"
 compare 'skip and silent' cmp - -s -i 5 "$work/cl1" "$work/cl2"
 compare 'skip prefix'    cmp -  -i 3 "$work/h" "$work/a"
+compare 'same standard input twice' cmp a - -
+compare 'overflowing limit' cmp - -n 18446744073709551616 "$work/a" "$work/a3"
+compare 'limit with plus' cmp - -n +1 "$work/a" "$work/a3"
+compare 'limit IEC suffix' cmp - -n 1KiB "$work/a" "$work/a3"
+compare 'read directory' cmp - "$work/read_dir" "$work/a"
 
 #       expr, whose answer is on standard output and whose verdict is the exit
 #       status, so both halves of compare matter here.
@@ -2105,6 +2114,14 @@ compare 'unclosed'       expr -  '(' 1
 compare 'trailing word'  expr -  1 1
 compare 'no arguments'   expr -
 compare 'end of options' expr -  -- 1
+compare 'quote keyword'  expr -  + length
+compare 'quote operator' expr -  + +
+compare 'quote missing'  expr -  +
+
+# Generated expression values used to live in an 8192-byte fixed array.
+# A perfectly ordinary large substring then failed despite fitting in argv.
+expr_long=$(head -c 20000 /dev/zero | tr '\0' x)
+compare 'long substring' expr - substr "$expr_long" 1 20000
 
 #       Sixty four bits where GNU has as many as it likes, written down here
 #       so the wrap is a decision and not a surprise: what is asserted is that

@@ -391,6 +391,56 @@ static bool text_space(p8 character)
                character == '\v' || character == '\f' || character == '\r';
 }
 
+/*
+        Coreutils' numeric options accept leading white space and a plus, but
+        not trailing bytes. string_digits_exact is the floor for the common
+        plain spelling; this cold option parser adds the range contract it
+        deliberately does not carry. A saturating caller is useful for cmp:
+        a count larger than the address space means through the end, never
+        zero bytes after an unsigned wrap.
+*/
+static bool text_unsigned_option(string_address source, bool saturate,
+                                 positive address_to value)
+{
+        positive at = 0;
+        positive made = 0;
+        positive ceiling = (positive)-1;
+        bool overflow = false;
+        positive digits = 0;
+
+        if (!source)
+                return false;
+
+        while (text_space(source[at]))
+                at++;
+
+        if (source[at] == '+')
+                at++;
+        else if (source[at] == '-')
+                return false;
+
+        while (text_digit(source[at]))
+        {
+                positive digit = source[at++] - '0';
+
+                digits++;
+
+                if (made > (ceiling - digit) / 10)
+                {
+                        overflow = true;
+                        made = ceiling;
+                }
+                else if (!overflow)
+                        made = made * 10 + digit;
+        }
+
+        if (!digits || source[at] || (overflow && !saturate))
+                return false;
+
+        address_to value = made;
+        return true;
+}
+
 static bool text_word(p8 character)
 {
         return (character >= 'a' && character <= 'z') ||
@@ -3733,16 +3783,20 @@ static b32 text_fold()
 
         positive width = 80;
         bool spaces = (taking.flags & FILE_FLAG('s')) != 0;
-        // -c counts characters where -b counts bytes, and every character
-        // here is one byte.
-        bool bytes = (taking.flags & (FILE_FLAG('b') | FILE_FLAG('c'))) != 0;
+        // -c counts characters but retains the terminal-column rules for
+        // tabs, backspaces and carriage returns. Only -b makes each byte a
+        // column; treating -c as its alias was observably wrong for controls.
+        bool bytes = (taking.flags & FILE_FLAG('b')) != 0;
 
-        if (taking.flags & FILE_FLAG('w'))
-                string_digits_exact(file_option_value(address_of taking, 'w'),
-                                    address_of width);
-
-        if (!width)
-                width = 1;
+        if ((taking.flags & FILE_FLAG('w')) &&
+            (!text_unsigned_option(file_option_value(address_of taking, 'w'), false,
+                                   address_of width) ||
+             !width || width == (positive)-1))
+        {
+                text_error(file_option_value(address_of taking, 'w'),
+                           "invalid number of columns");
+                return text_done(1);
+        }
 
         b32 inputs = text_files_count ? text_files_count : 1;
 
@@ -9600,6 +9654,7 @@ typedef struct
         positive filled;
         positive position;
         bool finished;
+        bool failed;
         bool opened;
         string_address name;
         p8 buffer[CMP_BLOCK];
@@ -9615,6 +9670,7 @@ static bool cmp_open(cmp_side address_to side, string_address path)
         side->filled = 0;
         side->position = 0;
         side->finished = false;
+        side->failed = false;
         side->opened = false;
         side->name = path;
 
@@ -9652,6 +9708,13 @@ static bool cmp_fill(cmp_side address_to side)
                 if (got <= 0)
                 {
                         side->finished = true;
+
+                        if (got < 0)
+                        {
+                                side->failed = true;
+                                text_error(side->name, "Read error");
+                        }
+
                         return false;
                 }
 
@@ -9660,6 +9723,14 @@ static bool cmp_fill(cmp_side address_to side)
         }
 
         return true;
+}
+
+static fn cmp_close(cmp_side address_to side)
+{
+        if (side->opened)
+                system_call_1(syscall(close), side->handle);
+
+        side->opened = false;
 }
 
 static bipolar cmp_byte(cmp_side address_to side)
@@ -9768,16 +9839,34 @@ static positive cmp_shown(p8 address_to into, positive value)
 static bool cmp_count_of(string_address value, positive address_to result)
 {
         string_address letters = (string_address) "KMGTPEZY";
-        positive at;
+        positive at = 0;
         positive power = 0;
         positive by = 1024;
+        positive total;
 
         if (!value)
                 return false;
 
-        positive total = string_digits(value, address_of at);
+        while (text_space(value[at]))
+                at++;
 
-        if (!at)
+        if (value[at] == '+')
+                at++;
+
+        positive start = at;
+        total = 0;
+
+        while (text_digit(value[at]))
+        {
+                positive digit = value[at++] - '0';
+
+                if (total > ((positive)-1 - digit) / 10)
+                        total = (positive)-1;
+                else if (total != (positive)-1)
+                        total = total * 10 + digit;
+        }
+
+        if (at == start)
                 return false;
 
         if (!value[at])
@@ -9799,13 +9888,18 @@ static bool cmp_count_of(string_address value, positive address_to result)
         if (!power)
                 return false;
 
-        if (value[at + 1] == 'B' && !value[at + 2])
+        if (value[at + 1] == 'i' && value[at + 2] == 'B' && !value[at + 3])
+                by = 1024;
+        else if (value[at + 1] == 'B' && !value[at + 2])
                 by = 1000;
         else if (value[at + 1])
                 return false;
 
         for (positive step = 0; step < power; step++)
-                total *= by;
+                if (total > (positive)-1 / by)
+                        total = (positive)-1;
+                else
+                        total *= by;
 
         address_to result = total;
         return true;
@@ -9927,14 +10021,38 @@ static b32 text_cmp()
 
         // A second name that was not given is standard input, which is how
         // "cmp saved" reads a pipe against a file.
-        if (!cmp_open(address_of cmp_left, program_argument(index)) ||
-            !cmp_open(address_of cmp_right,
-                      operands > 1 ? program_argument(index + 1)
-                                   : (string_address) "-"))
+        string_address left_name = program_argument(index);
+        string_address right_name = operands > 1 ? program_argument(index + 1)
+                                                 : (string_address) "-";
+
+        if (!cmp_open(address_of cmp_left, left_name))
                 return text_done(2);
+
+        if (!cmp_open(address_of cmp_right, right_name))
+        {
+                cmp_close(address_of cmp_left);
+                return text_done(2);
+        }
+
+        /* One stream cannot be read at two independent positions. GNU cmp
+           treats two identical path spellings -- including "-" -- as the
+           same object and answers equal without consuming it. */
+        if (string_equals(left_name, right_name))
+        {
+                cmp_close(address_of cmp_left);
+                cmp_close(address_of cmp_right);
+                return text_done(0);
+        }
 
         cmp_pass(address_of cmp_left, skip_left);
         cmp_pass(address_of cmp_right, skip_right);
+
+        if (cmp_left.failed || cmp_right.failed)
+        {
+                cmp_close(address_of cmp_left);
+                cmp_close(address_of cmp_right);
+                return text_done(2);
+        }
 
         if (listing)
         {
@@ -9987,7 +10105,11 @@ static b32 text_cmp()
                                 }
 
                                 if (silent)
+                                {
+                                        cmp_close(address_of cmp_left);
+                                        cmp_close(address_of cmp_right);
                                         return text_done(1);
+                                }
 
                                 if (listing)
                                 {
@@ -10015,6 +10137,12 @@ static b32 text_cmp()
                 bipolar a = cmp_byte(address_of cmp_left);
                 bipolar b = cmp_byte(address_of cmp_right);
 
+                if (cmp_left.failed || cmp_right.failed)
+                {
+                        answer = 2;
+                        break;
+                }
+
                 if (a < 0 && b < 0)
                         break;
 
@@ -10038,7 +10166,11 @@ static b32 text_cmp()
                 if (a != b)
                 {
                         if (silent)
+                        {
+                                cmp_close(address_of cmp_left);
+                                cmp_close(address_of cmp_right);
                                 return text_done(1);
+                        }
 
                         answer = 1;
 
@@ -10110,6 +10242,8 @@ static b32 text_cmp()
                         lines++;
         }
 
+        cmp_close(address_of cmp_left);
+        cmp_close(address_of cmp_right);
         return text_done(answer);
 }
 
@@ -10126,8 +10260,6 @@ static b32 text_cmp()
         Status is not the usual one. Zero means the value is neither empty nor
         zero, one means it is, and two means the expression was not one.
 */
-#define EXPR_ARENA 8192
-
 typedef struct
 {
         string_address text;
@@ -10136,8 +10268,21 @@ typedef struct
 
 static string_address expr_empty = (string_address) "";
 
+#define EXPR_ARENA 8192
+
+typedef struct expr_block expr_block;
+
+struct expr_block
+{
+        expr_block address_to next;
+        positive size;
+        positive used;
+};
+
 static p8 expr_arena[EXPR_ARENA];
 static positive expr_arena_used;
+static expr_block address_to expr_blocks;
+static expr_block address_to expr_here;
 static b32 expr_at;
 static b32 expr_count;
 static b32 expr_fault;
@@ -10159,16 +10304,58 @@ static string_address expr_keep(string_address from, positive length)
 {
         p8 address_to made;
 
-        if (expr_arena_used + length + 1 > EXPR_ARENA)
+        if (length == (positive)-1)
         {
                 expr_stop("expression too long");
                 return expr_empty;
         }
 
-        made = expr_arena + expr_arena_used;
+        positive room = length + 1;
+
+        if (room <= EXPR_ARENA - expr_arena_used)
+        {
+                made = expr_arena + expr_arena_used;
+                expr_arena_used += room;
+        }
+        else
+        {
+                while (expr_here && room > expr_here->size - expr_here->used)
+                        expr_here = expr_here->next;
+
+                if (!expr_here)
+                {
+                        positive size = room > EXPR_ARENA ? room : EXPR_ARENA;
+                        positive got = (positive)memory(sizeof(expr_block) + size);
+
+                        if (!got || got >= (positive)-4095)
+                        {
+                                expr_stop("expression too long");
+                                return expr_empty;
+                        }
+
+                        expr_here = (expr_block address_to)got;
+                        expr_here->next = null;
+                        expr_here->size = size;
+                        expr_here->used = 0;
+
+                        if (!expr_blocks)
+                                expr_blocks = expr_here;
+                        else
+                        {
+                                expr_block address_to tail = expr_blocks;
+
+                                while (tail->next)
+                                        tail = tail->next;
+
+                                tail->next = expr_here;
+                        }
+                }
+
+                made = (p8 address_to)(expr_here + 1) + expr_here->used;
+                expr_here->used += room;
+        }
 
         memory_copy_end(made, from, length);
-        expr_arena_used += length + 1;
 
         return made;
 }
@@ -10303,6 +10490,24 @@ static expr_value expr_primary()
         if (!word)
         {
                 expr_stop("syntax error");
+                return made;
+        }
+
+        /* A leading plus quotes one otherwise-special operand. This is how
+           GNU expr makes `expr + length` mean the literal word "length". */
+        if (!string_compare(word, "+"))
+        {
+                expr_at++;
+                word = expr_word();
+
+                if (!word)
+                {
+                        expr_stop("syntax error");
+                        return made;
+                }
+
+                expr_at++;
+                made.text = word;
                 return made;
         }
 
@@ -10641,6 +10846,11 @@ static b32 text_expr()
         expr_at = 1;
         expr_count = text_argument_count;
         expr_arena_used = 0;
+        expr_here = expr_blocks;
+
+        for (expr_block address_to block = expr_blocks; block; block = block->next)
+                block->used = 0;
+
         expr_fault = 0;
         expr_dead = 0;
 

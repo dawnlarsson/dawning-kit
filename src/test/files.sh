@@ -717,6 +717,7 @@ same 'negative'         seq -4 4
 same 'descending'       seq 10 -2 1
 same 'empty'            seq 9 2
 same 'padded'           seq -w 8 11
+same 'padded negative'  seq -w -16 -18 -70
 same 'separator'        seq -s , 1 5
 same 'one'              seq 1 1
 same 'padded long'      seq --equal-width 8 11
@@ -738,6 +739,7 @@ same 'decimal negative zero' seq -0.0 .1 .2
 same 'decimal endpoint below step' seq 0 .1 .29999999999999999
 same 'decimal endpoint above step' seq 0 .1 .30000000000000001
 same 'decimal padded sign' seq -w -1 .5 1
+same 'decimal padded negative range' seq -w -2.53 -.52 -15.19
 same 'decimal padded crossing' seq -w 9.9 .1 10.05
 same 'decimal separator' seq -s, 0 .1 .3
 same 'decimal fixed format' seq -f %.2f 0 .1 .3
