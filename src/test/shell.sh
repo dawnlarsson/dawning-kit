@@ -572,15 +572,32 @@ command_answer 'command trailing newline' 'echo one
 long_word=$(awk 'BEGIN { s = ""; for (i = 0; i < 5000; i++) s = s "0123456789"; print s }')
 command_answer 'a literal word of fifty thousand' "printf '%s\n' $long_word | wc -c"
 
-# The line is unbounded now, but what a variable may hold is not: a value is
-# cut at the expansion buffer, and a very long one is lost entirely rather
-# than cut. Recorded so it is a known difference rather than a surprise, and
-# so that fixing it says "agrees with dash now" instead of going unnoticed.
+# Variable values use the same unbounded stable storage as the line.  These
+# cross both ceilings that used to exist: 1023 bytes while expanding and 8192
+# bytes for the entire environment.
 middling_value=$(awk 'BEGIN { s = ""; for (i = 0; i < 2000; i++) s = s "x"; print s }')
-differs 'a long value is cut at the expansion buffer' '1023|' 0 \
+command_answer 'a two thousand byte variable' \
         "x=$middling_value; printf '%s\n' \"\${#x}\""
-differs 'a very long value is lost' '0|' 0 \
+command_answer 'a fifty thousand byte variable' \
         "x=$long_word; printf '%s\n' \"\${#x}\""
+command_answer 'a long exported value reaches a child' \
+        "x=$long_word; export x; sh -c 'printf \"%s\\n\" \"\${#x}\"'"
+command_answer 'a long value survives unset beside it' \
+        "before=$middling_value; gone=$long_word; after=$middling_value; unset gone; printf '%s %s %s\n' \"\${#before}\" \"\${gone-unset}\" \"\${#after}\""
+command_answer 'a long value survives a subshell' \
+        "x=$long_word; (printf '%s ' \"\${#x}\"); printf '%s\n' \"\${#x}\""
+command_answer 'eval sees a long value' \
+        "x=$long_word; eval 'printf \"%s\\n\" \"\${#x}\"'"
+command_answer 'dot sees a long value' \
+        "x=$long_word; f=\$(mktemp); echo 'printf \"%s\\n\" \"\${#x}\"' >\"\$f\"; . \"\$f\"; rm -f \"\$f\""
+command_answer 'local restores a long value' \
+        "x=$long_word; f() { local x=short; printf '%s ' \"\$x\"; }; f; printf '%s\n' \"\${#x}\""
+
+many_variables=$(awk 'BEGIN { for (i = 0; i < 200; i++) { printf "export V%03d=", i; for (j = 0; j < 80; j++) printf "%d", i % 10; printf ";" } }')
+command_answer 'two hundred exported variables' \
+        "$many_variables set | grep '^V[0-9][0-9][0-9]=' | wc -l"
+command_answer 'unset in a large environment is stable' \
+        "$many_variables unset V100; printf '%s %s %s\n' \"\${#V099}\" \"\${V100-unset}\" \"\${#V101}\""
 
 section posix
 group quoting

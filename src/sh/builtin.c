@@ -77,36 +77,115 @@ bool env_readonly(const_string name)
                                  sizeof(readonly_name[0]), readonly_count) < readonly_count;
 }
 
-#define ENV_MAX_ENTRIES 64
-#define ENV_STORAGE_SIZE 8192
+/*
+        The environment is both the shell's variable table and the vector
+        handed to execve.
 
-static p8 env_storage[ENV_STORAGE_SIZE];
-static positive env_used = 0;
+        The vector may move: every user reaches it by index.  An entry may
+        not. Expansion and command setup can hold a value pointer while they
+        allocate another variable, so compacting one flat byte array would
+        invalidate a live pointer. Entries therefore live in stable cells
+        carved from a block store. Replaced and unset cells are kept on a
+        free list, so a local variable in a loop reaches a steady state
+        instead of consuming memory forever.
+*/
+typedef struct env_cell
+{
+        struct env_cell address_to next;
+        positive room;
+} env_cell;
 
-string_address shell_envp[ENV_MAX_ENTRIES + 1];
+static shell_store env_store;
+static env_cell address_to env_free;
+
+string_address address_to shell_envp;
+static positive shell_envp_room;
+static positive shell_env_count;
+
+static bool env_table_room(positive want)
+{
+        return shell_room((address_any address_to)address_of shell_envp,
+                          address_of shell_envp_room, want + 1,
+                          sizeof(shell_envp[0]));
+}
+
+static env_cell address_to env_cell_take(positive needed)
+{
+        env_cell address_to cell = env_free;
+        env_cell address_to before = null;
+
+        while (cell && cell->room < needed)
+        {
+                before = cell;
+                cell = cell->next;
+        }
+
+        if (cell)
+        {
+                if (before)
+                        before->next = cell->next;
+                else
+                        env_free = cell->next;
+
+                return cell;
+        }
+
+        {
+                positive room = needed < 64 ? 64 : (needed + 63) & (positive)-64;
+                positive total;
+                p8 address_to raw;
+
+                if (room < needed || room > (positive)-1 - sizeof(env_cell) - 7)
+                        return null;
+
+                total = sizeof(env_cell) + room + 7;
+                raw = shell_store_take(address_of env_store, total);
+
+                if (!raw)
+                        return null;
+
+                cell = (env_cell address_to)(((positive)raw + 7) & (positive)-8);
+                cell->room = room;
+        }
+
+        return cell;
+}
+
+static fn env_cell_drop(string_address text)
+{
+        env_cell address_to cell;
+
+        if (!text)
+                return;
+
+        cell = ((env_cell address_to)text) - 1;
+        cell->next = env_free;
+        env_free = cell;
+}
 
 fn shell_env_init()
 {
-        memory_fill(env_storage, 0, ENV_STORAGE_SIZE);
-        env_used = 0;
+        if (!env_table_room(4))
+                return;
+
+        shell_env_count = 0;
+        shell_envp[0] = null;
 
         // Programs live at the root of the image, so it is on the path.
         string_address defaults[] = {"PATH=/bin:/usr/bin:/", "SHELL=/bin/sh",
                                      "OPTIND=1", null};
 
-        positive idx = 0;
         positive i = 0;
 
-        while (defaults[i] && idx < ENV_MAX_ENTRIES)
+        while (defaults[i])
         {
-                string_address dest = env_storage + env_used;
-                string_copy(dest, defaults[i]);
-                shell_envp[idx++] = dest;
-                env_used += string_length(dest) + 1;
+                string_address mark = string_first_of(defaults[i], '=');
+                p8 name[16];
+
+                string_copy_max_end(name, defaults[i], (positive)(mark - defaults[i]));
+                env_set(name, mark + 1);
                 i++;
         }
-
-        shell_envp[idx] = null;
 
         // Where the shell is, before anything asks. cd keeps it from here on;
         // without a first answer, PWD is empty until the first cd and a script
@@ -128,49 +207,9 @@ string_address env_get(const_string name)
         if (name == null)
                 return null;
 
-        return string_get_environment(shell_envp, env_reading(name));
-}
-
-/*
-        The block put back end to end, dropping what nothing points at.
-
-        Entries are laid down one after another and a value that outgrows its
-        place is written after them all, so a name that keeps changing length
-        eats the block a copy at a time. Nothing ever gave any of it back,
-        which is the difference between a function using local four hundred
-        times and one that can use it for as long as the script runs.
-
-        Only what lives in the block is moved. The positional parameters are
-        hung on the list by pointer from storage of their own and are left
-        exactly where they are.
-*/
-static p8 env_spare[ENV_STORAGE_SIZE];
-static p8 env_staging[ENV_STORAGE_SIZE];
-
-static fn env_compact()
-{
-        positive used = 0;
-        positive index = 0;
-
-        while (shell_envp[index])
-        {
-                string_address entry = shell_envp[index];
-
-                if (entry >= (string_address)env_storage &&
-                    entry < (string_address)env_storage + ENV_STORAGE_SIZE)
-                {
-                        positive length = string_length(entry) + 1;
-
-                        memory_copy(env_spare + used, entry, length);
-                        shell_envp[index] = env_storage + used;
-                        used += length;
-                }
-
-                index++;
-        }
-
-        memory_copy(env_storage, env_spare, used);
-        env_used = used;
+        return shell_envp
+                   ? string_get_environment(shell_envp, env_reading(name))
+                   : null;
 }
 
 bool env_set(const_string name, const_string value)
@@ -190,22 +229,9 @@ bool env_set(const_string name, const_string value)
         positive needed = name_len + 1 + value_len + 1;
 
         positive idx = 0;
-        bool replacing = false;
+        env_cell address_to cell;
 
-        // Either of them can be inside the block that is about to move, so
-        // both are stood aside first, somewhere the move will not reach.
-        if (env_used + needed > ENV_STORAGE_SIZE && needed <= ENV_STORAGE_SIZE)
-        {
-                memory_copy(env_staging, env_reading(name), name_len + 1);
-                memory_copy(env_staging + name_len + 1, env_reading(value), value_len + 1);
-
-                name = env_staging;
-                value = env_staging + name_len + 1;
-
-                env_compact();
-        }
-
-        while (shell_envp[idx])
+        while (idx < shell_env_count)
         {
                 string_address entry = shell_envp[idx];
                 string_address eq = string_first_of(entry, '=');
@@ -213,38 +239,51 @@ bool env_set(const_string name, const_string value)
                 if (eq && (positive)(eq - entry) == name_len &&
                     !memory_compare(entry, name, name_len))
                 {
-                        // Only where it fits. The entries sit end to end in one
-                        // block, so a longer value written in place runs over
-                        // the name of whatever comes next.
-                        if (value_len <= string_length(eq + 1))
-                        {
-                                string_copy(eq + 1, env_reading(value));
-                                return true;
-                        }
-
-                        replacing = true;
                         break;
                 }
                 idx++;
         }
 
-        if ((!replacing && idx >= ENV_MAX_ENTRIES) ||
-            env_used + needed > ENV_STORAGE_SIZE)
+        if (idx == shell_env_count && !env_table_room(shell_env_count + 1))
                 return false;
 
-        string_address dest = env_storage + env_used;
-        string_copy(dest, env_reading(name));
-        string_copy(dest + name_len, "=");
-        string_copy(dest + name_len + 1, env_reading(value));
+        if (idx < shell_env_count)
+        {
+                cell = ((env_cell address_to)shell_envp[idx]) - 1;
 
-        shell_envp[idx] = dest;
+                if (cell->room >= needed)
+                {
+                        memory_copy((p8 address_to)(cell + 1), env_reading(name), name_len);
+                        ((p8 address_to)(cell + 1))[name_len] = '=';
+                        memory_copy_end((p8 address_to)(cell + 1) + name_len + 1,
+                                        env_reading(value), value_len);
+                        return true;
+                }
+        }
 
-        // Replacing an entry keeps the list the length it was; the terminator
-        // is already past it.
-        if (!replacing)
-                shell_envp[idx + 1] = null;
+        cell = env_cell_take(needed);
 
-        env_used += needed;
+        if (!cell)
+                return false;
+
+        memory_copy((p8 address_to)(cell + 1), env_reading(name), name_len);
+        ((p8 address_to)(cell + 1))[name_len] = '=';
+        memory_copy_end((p8 address_to)(cell + 1) + name_len + 1,
+                        env_reading(value), value_len);
+
+        if (idx < shell_env_count)
+        {
+                string_address old = shell_envp[idx];
+
+                shell_envp[idx] = (string_address)(cell + 1);
+                env_cell_drop(old);
+        }
+        else
+        {
+                shell_envp[shell_env_count++] = (string_address)(cell + 1);
+                shell_envp[shell_env_count] = null;
+        }
+
 
         return true;
 }
@@ -847,7 +886,7 @@ fn env_unset(string_address name)
         positive length = string_length(env_reading(name));
         positive index = 0;
 
-        while (shell_envp[index])
+        while (index < shell_env_count)
         {
                 string_address entry = shell_envp[index];
                 string_address mark = string_first_of(entry, '=');
@@ -861,13 +900,17 @@ fn env_unset(string_address name)
 
                         if (at == length)
                         {
-                                while (shell_envp[index + 1])
+                                string_address dropped = shell_envp[index];
+
+                                while (index + 1 < shell_env_count)
                                 {
                                         shell_envp[index] = shell_envp[index + 1];
                                         index++;
                                 }
 
-                                shell_envp[index] = null;
+                                shell_env_count--;
+                                shell_envp[shell_env_count] = null;
+                                env_cell_drop(dropped);
                                 return;
                         }
                 }
@@ -876,54 +919,22 @@ fn env_unset(string_address name)
         }
 }
 
-/*
-        Hangs an already built "name=value" on the environment list.
-
-        env_set copies into its own block, which is the wrong shape for the
-        positional parameters: those are rewritten wholesale every time and
-        would eat the block one copy at a time. These keep their own storage
-        and only the pointer is handed over.
-*/
+// Hangs an already built "name=value" on the environment list by copying it
+// into a stable cell. No caller may leave an argv pointer in envp: argv is
+// rebuilt on the next command.
 bool env_place(string_address entry)
 {
         string_address mark = string_first_of(entry, '=');
-        positive length;
-        positive index = 0;
+        bool answer;
 
         if (!mark)
                 return false;
 
-        length = mark - entry;
+        address_to mark = end;
+        answer = env_set(entry, mark + 1);
+        address_to mark = '=';
 
-        while (shell_envp[index])
-        {
-                string_address other = shell_envp[index];
-                string_address at_other = string_first_of(other, '=');
-
-                if (at_other && (positive)(at_other - other) == length)
-                {
-                        positive at = 0;
-
-                        while (at < length && string_get(other + at) == string_get(entry + at))
-                                at++;
-
-                        if (at == length)
-                        {
-                                shell_envp[index] = entry;
-                                return true;
-                        }
-                }
-
-                index++;
-        }
-
-        if (index >= ENV_MAX_ENTRIES)
-                return false;
-
-        shell_envp[index] = entry;
-        shell_envp[index + 1] = null;
-
-        return true;
+        return answer;
 }
 
 fn env_set_number(string_address name, positive value)
@@ -1246,7 +1257,6 @@ fn shell_unset(writer write, string_address input)
         too, and it is the difference between marking a name and clearing it.
 */
 #define LOCAL_MAX 128
-#define LOCAL_STORAGE 8192
 #define LOCAL_NAME 64
 #define LOCAL_DEPTH 128
 #define LOCAL_ABSENT ((positive)-1)
@@ -1259,10 +1269,9 @@ typedef struct
 
 static shell_local_entry local_table[LOCAL_MAX];
 static positive local_count;
-static p8 local_storage[LOCAL_STORAGE];
-static positive local_used;
+static shell_store local_storage;
 static positive local_from[LOCAL_DEPTH];
-static positive local_held[LOCAL_DEPTH];
+static shell_mark local_held[LOCAL_DEPTH];
 static positive local_depth;
 
 fn shell_local_enter()
@@ -1270,7 +1279,7 @@ fn shell_local_enter()
         if (local_depth < LOCAL_DEPTH)
         {
                 local_from[local_depth] = local_count;
-                local_held[local_depth] = local_used;
+                local_held[local_depth] = shell_store_mark(address_of local_storage);
         }
 
         local_depth++;
@@ -1299,11 +1308,12 @@ fn shell_local_leave()
                 if (local_table[at].value == LOCAL_ABSENT)
                         env_unset(local_table[at].name);
                 else
-                        env_set(local_table[at].name, local_storage + local_table[at].value);
+                        env_set(local_table[at].name,
+                                (string_address)local_table[at].value);
         }
 
         local_count = local_from[local_depth];
-        local_used = local_held[local_depth];
+        shell_store_rewind(address_of local_storage, local_held[local_depth]);
 }
 
 static bool local_remember(string_address name)
@@ -1329,13 +1339,14 @@ static bool local_remember(string_address name)
         else
         {
                 positive length = string_length(env_reading(value));
+                p8 address_to kept = shell_store_take(address_of local_storage,
+                                                       length + 1);
 
-                if (local_used + length + 1 > LOCAL_STORAGE)
+                if (!kept)
                         return false;
 
-                memory_copy(local_storage + local_used, value, length + 1);
-                local_table[local_count].value = local_used;
-                local_used += length + 1;
+                memory_copy(kept, value, length + 1);
+                local_table[local_count].value = (positive)kept;
         }
 
         string_copy(local_table[local_count].name, name);

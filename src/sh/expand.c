@@ -654,42 +654,52 @@ static bool expand_ifs_blank(p8 value)
         return expand_ifs_blank_set[value] != 0;
 }
 
-// What a parameter stands for, and whether it stands for anything at all.
-static bool expand_value_of(string_address name, p8 address_to into, positive limit)
+/*
+        What a parameter stands for, and whether it stands for anything at
+        all. Ordinary variables and positional parameters already live at
+        stable addresses and are returned directly. Only the numeric special
+        parameters need scratch space.
+
+        $* and unquoted $@ need one joined string. It comes from the line's
+        stable store, sized from the parameters rather than from a fixed
+        expansion buffer.
+*/
+static string_address expand_value_of(string_address name, p8 address_to scratch,
+                                      bool address_to present)
 {
         p8 first = string_get(name);
 
-        into[0] = end;
+        address_to present = true;
+        scratch[0] = end;
 
         if (first >= '0' && first <= '9')
         {
                 positive which = string_digits(name, null);
 
                 if (!which)
-                {
-                        expand_copy_bounded(into, shell_script_name, limit);
-                        return true;
-                }
+                        return shell_script_name;
 
                 if (which > shell_parameter_count)
-                        return false;
+                {
+                        address_to present = false;
+                        return null;
+                }
 
-                expand_copy_bounded(into, shell_parameter[which - 1], limit);
-                return true;
+                return shell_parameter[which - 1];
         }
 
         if (string_get(name + 1) == end)
         {
                 if (first == '#')
                 {
-                        bipolar_into_string(into, (bipolar)shell_parameter_count);
-                        return true;
+                        bipolar_into_string(scratch, (bipolar)shell_parameter_count);
+                        return scratch;
                 }
 
                 if (first == '?')
                 {
-                        bipolar_into_string(into, (bipolar)shell_status);
-                        return true;
+                        bipolar_into_string(scratch, (bipolar)shell_status);
+                        return scratch;
                 }
 
                 if (first == '$')
@@ -706,43 +716,61 @@ static bool expand_value_of(string_address name, p8 address_to into, positive li
                         if (!expand_shell_pid)
                                 expand_shell_pid = (positive)system_call_1(syscall(getpid), 0);
 
-                        bipolar_into_string(into, (bipolar)expand_shell_pid);
-                        return true;
+                        bipolar_into_string(scratch, (bipolar)expand_shell_pid);
+                        return scratch;
                 }
 
                 // No job control here, so the last background job is nothing
                 // rather than a number that would be a lie.
                 if (first == '!')
-                        return true;
+                        return scratch;
 
                 if (first == '-')
-                {
-                        expand_copy_bounded(into, shell_option_flags, limit);
-                        return true;
-                }
+                        return shell_option_flags;
 
                 if (first == '@' || first == '*')
                 {
                         string_address ifs = expand_ifs();
                         p8 between = string_get(ifs);
+                        positive room = 1;
                         positive used = 0;
                         positive at;
+                        p8 address_to into;
 
                         for (at = 0; at < shell_parameter_count; at++)
                         {
-                                string_address from = shell_parameter[at];
-                                positive run;
+                                positive run = string_length(shell_parameter[at]);
 
-                                if (at && between && used + 1 < limit)
+                                if (room > (positive)-1 - run - (at && between ? 1 : 0))
+                                {
+                                        address_to present = false;
+                                        return null;
+                                }
+
+                                room += run + (at && between ? 1 : 0);
+                        }
+
+                        into = shell_store_take(address_of expand_store, room);
+
+                        if (!into)
+                        {
+                                address_to present = false;
+                                return null;
+                        }
+
+                        for (at = 0; at < shell_parameter_count; at++)
+                        {
+                                positive run = string_length(shell_parameter[at]);
+
+                                if (at && between)
                                         into[used++] = between;
 
-                                run = string_length_max(from, limit - 1 - used);
-                                memory_copy_fast(into + used, from, run);
+                                memory_copy_fast(into + used, shell_parameter[at], run);
                                 used += run;
                         }
 
                         into[used] = end;
-                        return true;
+                        return into;
                 }
         }
 
@@ -750,10 +778,12 @@ static bool expand_value_of(string_address name, p8 address_to into, positive li
                 string_address value = env_get(name);
 
                 if (!value)
-                        return false;
+                {
+                        address_to present = false;
+                        return null;
+                }
 
-                expand_copy_bounded(into, value, limit);
-                return true;
+                return value;
         }
 }
 
@@ -773,7 +803,9 @@ static bool expand_value_of(string_address name, p8 address_to into, positive li
 static bool expand_push_parameter(string_address name, bool quoted)
 {
         p8 mark = quoted ? MARK_QUOTED : MARK_FIELD;
-        p8 value[EXPAND_VALUE];
+        p8 scratch[32];
+        string_address value;
+        bool present;
         bool all = string_get(name + 1) == end &&
                    (string_is(name, '@') || string_is(name, '*'));
 
@@ -792,7 +824,9 @@ static bool expand_push_parameter(string_address name, bool quoted)
                 return shell_parameter_count != 0;
         }
 
-        if (!expand_value_of(name, value, sizeof(value)))
+        value = expand_value_of(name, scratch, address_of present);
+
+        if (!present)
                 return false;
 
         expand_push_string(value, mark);
@@ -894,13 +928,14 @@ static bipolar arith_store(string_address name, bipolar value)
 */
 static bipolar arith_value_of(string_address name)
 {
-        p8 held[EXPAND_VALUE];
-        string_address step = held;
+        p8 scratch[32];
+        bool present;
+        string_address step = expand_value_of(name, scratch, address_of present);
         string_address digits;
         bipolar value;
         bool negative = false;
 
-        if (!expand_value_of(name, held, sizeof(held)))
+        if (!present)
                 return 0;
 
         step += string_span(step, string_set_blanks);
@@ -1834,7 +1869,6 @@ static string_address expand_braced(string_address step, bool quoted)
 {
         p8 name[EXPAND_NAME];
         p8 word[EXPAND_VALUE];
-        p8 value[EXPAND_VALUE];
         p8 mark = quoted ? MARK_QUOTED : MARK_FIELD;
         positive length = 0;
         bool want_length = false;
@@ -1951,9 +1985,13 @@ static string_address expand_braced(string_address step, bool quoted)
         if (want_length)
         {
                 p8 written[32];
+                p8 scratch[32];
+                bool present;
+                string_address value = expand_value_of(name, scratch,
+                                                        address_of present);
                 positive count;
 
-                if (!expand_value_of(name, value, sizeof(value)))
+                if (!present)
                         count = 0;
                 else
                         count = string_length(value);
@@ -1990,7 +2028,10 @@ static string_address expand_braced(string_address step, bool quoted)
         }
 
         {
-                bool present = expand_value_of(name, value, sizeof(value));
+                p8 scratch[32];
+                bool present;
+                string_address value = expand_value_of(name, scratch,
+                                                        address_of present);
                 bool blank = present && value[0] == end;
                 bool missing = !present || (colon && blank);
 

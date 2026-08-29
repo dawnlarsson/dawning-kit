@@ -2467,7 +2467,7 @@ static b32 file_ls()
         knows.
 */
 string_address env_get(const_string name);
-extern string_address shell_envp[];
+extern string_address address_to shell_envp;
 
 #define FILE_ENVIRONMENT 512
 
@@ -2478,7 +2478,7 @@ static string_address address_to file_environment_all()
 {
         positive count = 0;
 
-        if (shell_envp[0])
+        if (shell_envp && shell_envp[0])
                 return shell_envp;
 
         string_address address_to process = program_environment_list();
