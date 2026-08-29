@@ -3556,13 +3556,24 @@ fn shell_eval(writer write, string_address input)
 
         */
         {
-                lex_token kept_tokens[LEX_TOKENS];
-                p8 kept_text[LEX_TEXT];
+                //      The state is set aside rather than copied out and back.
+                //      The nested line gets empty tables of its own and this
+                //      one's are put back afterwards, so an outer word's text
+                //      is still at the address it was at -- not because it was
+                //      restored there, but because it never moved.
+                lex_token address_to kept_tokens = lex_tokens;
+                positive kept_token_room = lex_token_room;
+                p8 address_to kept_text = lex_text;
+                positive kept_text_room = lex_text_room;
                 positive kept_used = lex_used;
                 b32 kept_count = lex_count;
 
-                memory_copy(kept_tokens, lex_tokens, sizeof(kept_tokens));
-                memory_copy(kept_text, lex_text, sizeof(kept_text));
+                lex_tokens = null;
+                lex_token_room = 0;
+                lex_text = null;
+                lex_text_room = 0;
+                lex_used = 0;
+                lex_count = 0;
 
                 parse_nest_enter();
 
@@ -3572,9 +3583,17 @@ fn shell_eval(writer write, string_address input)
 
                 parse_nest_leave();
 
-                memory_copy(lex_tokens, kept_tokens, sizeof(kept_tokens));
-                memory_copy(lex_text, kept_text, sizeof(kept_text));
+                if (lex_tokens)
+                        memory_free(lex_tokens,
+                                    lex_token_room * sizeof(lex_token));
 
+                if (lex_text)
+                        memory_free(lex_text, lex_text_room);
+
+                lex_tokens = kept_tokens;
+                lex_token_room = kept_token_room;
+                lex_text = kept_text;
+                lex_text_room = kept_text_room;
                 lex_used = kept_used;
                 lex_count = kept_count;
         }
@@ -3921,13 +3940,20 @@ fn shell_dot(writer write, string_address input)
         filled = (positive)got;
 
         {
-                lex_token kept_tokens[LEX_TOKENS];
-                p8 kept_text[LEX_TEXT];
+                //      Set aside, not copied: see shell_eval above.
+                lex_token address_to kept_tokens = lex_tokens;
+                positive kept_token_room = lex_token_room;
+                p8 address_to kept_text = lex_text;
+                positive kept_text_room = lex_text_room;
                 positive kept_used = lex_used;
                 b32 kept_count = lex_count;
 
-                memory_copy(kept_tokens, lex_tokens, sizeof(kept_tokens));
-                memory_copy(kept_text, lex_text, sizeof(kept_text));
+                lex_tokens = null;
+                lex_token_room = 0;
+                lex_text = null;
+                lex_text_room = 0;
+                lex_used = 0;
+                lex_count = 0;
 
                 parse_nest_enter();
                 source_depth++;
@@ -3946,9 +3972,17 @@ fn shell_dot(writer write, string_address input)
                 source_depth--;
                 parse_nest_leave();
 
-                memory_copy(lex_tokens, kept_tokens, sizeof(kept_tokens));
-                memory_copy(lex_text, kept_text, sizeof(kept_text));
+                if (lex_tokens)
+                        memory_free(lex_tokens,
+                                    lex_token_room * sizeof(lex_token));
 
+                if (lex_text)
+                        memory_free(lex_text, lex_text_room);
+
+                lex_tokens = kept_tokens;
+                lex_token_room = kept_token_room;
+                lex_text = kept_text;
+                lex_text_room = kept_text_room;
                 lex_used = kept_used;
                 lex_count = kept_count;
         }

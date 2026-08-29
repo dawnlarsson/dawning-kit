@@ -22,8 +22,6 @@
 #define PT_OP 2
 #define PT_NEWLINE 3
 
-#define PARSE_TOKENS 512
-#define PARSE_TEXT 16384
 
 typedef struct
 {
@@ -35,10 +33,25 @@ typedef struct
         string_address text;
 } parse_token;
 
-static parse_token parse_tokens[PARSE_TOKENS];
+/*
+        The words of a line, and the bytes they are made of.
+
+        The table may move -- nothing keeps an address inside it -- so it
+        grows by taking a bigger mapping. The bytes may not: every token holds
+        a pointer at them and so does everything downstream, so those come out
+        of a block store that never moves what it has handed out. The parser
+        already saved and restored a position in that arena to unwind a nested
+        construct, and a mark in the store is the same idea.
+
+        Both used to be fixed, which a line of any length met: sixteen
+        kilobytes of token text is one long argument, and 512 tokens is a
+        generated command list.
+*/
+static parse_token address_to parse_tokens;
+static positive parse_token_room;
 static positive parse_token_count;
-static p8 parse_token_text[PARSE_TEXT];
-static positive parse_token_text_used;
+static shell_store parse_store;
+static shell_mark parse_text_at;
 static parse_token parse_no_token;
 
 #define NODE_SIMPLE 1
@@ -136,7 +149,7 @@ static b32 parse_node_base = 1;
 static b32 parse_word_base;
 static b32 parse_redirect_base;
 static positive parse_token_base;
-static positive parse_token_text_base;
+static shell_mark parse_text_base;
 
 /*
         Here-documents, which arrive after the line that asked for them.
@@ -188,7 +201,7 @@ fn parse_reset()
 {
         parse_pending_used = 0;
         parse_token_count = parse_token_base;
-        parse_token_text_used = parse_token_text_base;
+        shell_store_rewind(address_of parse_store, parse_text_base);
         here_wanted = 0;
         here_filled = 0;
         here_taken = 0;
@@ -209,7 +222,8 @@ fn parse_reset()
 typedef struct
 {
         b32 node, word, redirect, position, state;
-        positive token, token_text;
+        positive token;
+        shell_mark token_text;
         b32 wanted, filled, taken;
         positive used, names_used;
 } parse_frame;
@@ -230,7 +244,7 @@ fn parse_nest_enter()
         frame->word = parse_word_base;
         frame->redirect = parse_redirect_base;
         frame->token = parse_token_base;
-        frame->token_text = parse_token_text_base;
+        frame->token_text = parse_text_base;
         frame->position = parse_position;
         frame->state = parse_state;
         frame->wanted = here_wanted;
@@ -243,7 +257,7 @@ fn parse_nest_enter()
         parse_word_base = parse_word_used;
         parse_redirect_base = parse_redirect_used;
         parse_token_base = parse_token_count;
-        parse_token_text_base = parse_token_text_used;
+        parse_text_base = shell_store_mark(address_of parse_store);
 }
 
 fn parse_nest_leave()
@@ -271,13 +285,13 @@ fn parse_nest_leave()
         parse_word_used = parse_word_base;
         parse_redirect_used = parse_redirect_base;
         parse_token_count = parse_token_base;
-        parse_token_text_used = parse_token_text_base;
+        shell_store_rewind(address_of parse_store, parse_text_base);
 
         parse_node_base = frame->node;
         parse_word_base = frame->word;
         parse_redirect_base = frame->redirect;
         parse_token_base = frame->token;
-        parse_token_text_base = frame->token_text;
+        parse_text_base = frame->token_text;
         parse_position = frame->position;
         parse_state = frame->state;
         here_wanted = frame->wanted;
@@ -301,7 +315,10 @@ fn parse_reset_all()
         parse_word_base = 0;
         parse_redirect_base = 0;
         parse_token_base = 0;
-        parse_token_text_base = 0;
+        //      Back to the beginning of the store, which is what a
+        //      mark taken before anything was put in it means.
+        shell_store_reset(address_of parse_store);
+        parse_text_base = shell_store_mark(address_of parse_store);
         parse_reset();
 }
 
@@ -547,7 +564,11 @@ bool parse_feed(string_address line)
                 lex_token address_to source = lex_tokens + index;
                 parse_token address_to into;
 
-                if (parse_token_count + 2 >= PARSE_TOKENS)
+                //      Room taken before any address into the table is,
+                //      because taking room is what may move it.
+                if (!shell_room((address_any address_to)address_of parse_tokens,
+                                address_of parse_token_room, parse_token_count + 2,
+                                sizeof(parse_token)))
                         return false;
 
                 into = parse_tokens + parse_token_count;
@@ -562,13 +583,14 @@ bool parse_feed(string_address line)
                 {
                         positive length = source->length;
 
-                        if (parse_token_text_used + length + 1 > PARSE_TEXT)
+                        p8 address_to kept = shell_store_take(address_of parse_store,
+                                                             length + 1);
+
+                        if (!kept)
                                 return false;
 
-                        memory_copy_end(parse_token_text + parse_token_text_used,
-                                        source->text, length);
-                        into->text = parse_token_text + parse_token_text_used;
-                        parse_token_text_used += length + 1;
+                        memory_copy_end(kept, source->text, length);
+                        into->text = kept;
                 }
 
                 parse_token_count++;

@@ -352,8 +352,18 @@ static fn shell_words_bind(shell_words address_to list,
 
 #define PROMPT TERM_RESET TERM_BOLD " $ " TERM_RESET
 
-#define MAX_INPUT 4096
-p8 shell_buffer[MAX_INPUT];
+/*
+        The line being read, which grows to hold whatever arrives.
+
+        This was four kilobytes, and a line longer than that was run truncated
+        -- not refused, run -- which is the same silent wrongness the word
+        lists had. A generated script with one very long line is the ordinary
+        way to meet it.
+*/
+#define MAX_INPUT_STEP 4096
+
+p8 address_to shell_buffer;
+positive shell_buffer_room;
 
 writer shell_output = log;
 positive shell_output_file;
@@ -758,30 +768,51 @@ fn shell_thread_instance()
 // Negative means the kernel has no spark device and we fall back to forking.
 b32 spawn_device = -1;
 
-// argv and envp go across as flat blocks of NUL terminated strings.
-p8 spawn_argv_block[MAX_INPUT];
-p8 spawn_envp_block[MAX_INPUT];
+/*
+        argv and envp go across as flat blocks of NUL terminated strings.
 
-positive shell_flatten_env(p8 address_to block, positive limit, positive address_to count_out)
+        Both grow to hold what is being run. They used to be four kilobytes
+        each and a command whose words came to more than that was refused --
+        which the caller answers by forking instead, so nothing broke, but a
+        long command line quietly stopped taking the fast path. What made it
+        visible was the line reader growing first: a twenty thousand byte
+        echo went from being cut in half to being refused here.
+*/
+p8 address_to spawn_argv_block;
+positive spawn_argv_room;
+p8 address_to spawn_envp_block;
+positive spawn_envp_room;
+
+//      The environment, flattened into a block that is made to fit it.
+positive shell_flatten_env(positive address_to count_out)
 {
         positive used = 0;
         positive count = 0;
         positive index = 0;
 
         while (shell_envp[index])
+                used += string_length(shell_envp[index++]) + 1;
+
+        if (!shell_room((address_any address_to)address_of spawn_envp_block,
+                        address_of spawn_envp_room, used + 1, 1))
         {
-                positive length = string_length(shell_envp[index]) + 1;
+                address_to count_out = 0;
+                return 0;
+        }
 
-                if (used + length > limit)
-                        break;
+        used = 0;
 
-                memory_copy(block + used, shell_envp[index], length);
+        while (shell_envp[count])
+        {
+                positive length = string_length(shell_envp[count]) + 1;
+
+                memory_copy(spawn_envp_block + used, shell_envp[count], length);
                 used += length;
                 count++;
-                index++;
         }
 
         address_to count_out = count;
+
         return used;
 }
 
@@ -793,19 +824,22 @@ bipolar shell_spawn_via_device()
         positive index = 0;
         positive envc = 0;
 
+        //      How much the words come to, before any of them is copied.
         while (index < shell_argc)
+                used += string_length(shell_argv[index++]) + 1;
+
+        if (!shell_room((address_any address_to)address_of spawn_argv_block,
+                        address_of spawn_argv_room, used + 1, 1))
+                return -1;
+
+        used = 0;
+
+        for (index = 0; index < shell_argc; index++)
         {
                 positive length = string_length(shell_argv[index]) + 1;
 
-                // A word that does not fit is not a word that can be dropped:
-                // refuse, and the caller forks instead, where there is no
-                // single block to run out of.
-                if (used + length > sizeof(spawn_argv_block))
-                        return -1;
-
                 memory_copy(spawn_argv_block + used, shell_argv[index], length);
                 used += length;
-                index++;
         }
 
         request.path = (unsigned long)shell_argv[0];
@@ -813,7 +847,8 @@ bipolar shell_spawn_via_device()
         request.argv_bytes = used;
         request.argv_count = shell_argc;
         request.envp = (unsigned long)spawn_envp_block;
-        request.envp_bytes = shell_flatten_env(spawn_envp_block, sizeof(spawn_envp_block), address_of envc);
+        request.envp_bytes = shell_flatten_env(address_of envc);
+        request.envp = (unsigned long)spawn_envp_block;
         request.envp_count = envc;
 
         return system_call_3(syscall(ioctl), spawn_device, SPARK_IOCTL_SPAWN,

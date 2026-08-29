@@ -37,8 +37,6 @@
 #define OP_ANDGREAT 17  // &>
 #define OP_ANDDGREAT 18 // &>>
 
-#define LEX_TOKENS 256
-#define LEX_TEXT 8192
 
 typedef struct
 {
@@ -51,10 +49,50 @@ typedef struct
         positive at;
 } lex_token;
 
-static lex_token lex_tokens[LEX_TOKENS];
-static p8 lex_text[LEX_TEXT];
+/*
+        The tokens of one line, and the bytes they were cut from.
+
+        Both grow. The table may move freely; the bytes may not, because every
+        token already handed out holds an address inside them -- so when the
+        bytes do move, those addresses are moved with them by the same delta.
+        That is cheap and exact: they all point into the one block, so one
+        subtraction rebases the lot.
+
+        Eight kilobytes of text and 256 tokens used to be the ceiling, and a
+        line past it was refused, which a generated command list or one very
+        long argument reaches without trying.
+*/
+static lex_token address_to lex_tokens;
+static positive lex_token_room;
+static p8 address_to lex_text;
+static positive lex_text_room;
 static positive lex_used;
 static b32 lex_count;
+
+//      Room for want bytes of token text, moving what is already handed out
+//      if the block itself has to move.
+static bool lex_room(positive want)
+{
+        p8 address_to before = lex_text;
+        b32 index;
+
+        if (lex_text_room >= want)
+                return true;
+
+        if (!shell_room((address_any address_to)address_of lex_text,
+                        address_of lex_text_room, want, 1))
+                return false;
+
+        if (lex_text == before || !before)
+                return true;
+
+        for (index = 0; index < lex_count; index++)
+                if (lex_tokens[index].text)
+                        lex_tokens[index].text =
+                            lex_text + (lex_tokens[index].text - before);
+
+        return true;
+}
 
 /*
         The byte sets, built once.
@@ -211,7 +249,9 @@ static positive lex_at;
 
 static b32 lex_add(b32 kind, b32 op, string_address text, positive length)
 {
-        if (lex_count >= LEX_TOKENS)
+        if (!shell_room((address_any address_to)address_of lex_tokens,
+                        address_of lex_token_room, (positive)lex_count + 2,
+                        sizeof(lex_token)))
                 return false;
 
         lex_tokens[lex_count].at = lex_at;
@@ -483,7 +523,7 @@ static b32 lex_word(string_address address_to at)
 
                 if (run)
                 {
-                        if (lex_used + run >= LEX_TEXT)
+                        if (!lex_room(lex_used + run + 1))
                                 return false;
 
                         memory_copy(lex_text + lex_used, step, run);
@@ -497,7 +537,7 @@ static b32 lex_word(string_address address_to at)
                 if (!c || lex_blank[c] || lex_operator[c] || c == '\n')
                         break;
 
-                if (lex_used + 2 >= LEX_TEXT)
+                if (!lex_room(lex_used + 3))
                         return false;
 
                 lex_text[lex_used++] = c;
@@ -513,7 +553,7 @@ static b32 lex_word(string_address address_to at)
 
                         run = (positive)(stop - step) + (string_get(stop) ? 1 : 0);
 
-                        if (lex_used + run + 2 >= LEX_TEXT)
+                        if (!lex_room(lex_used + run + 3))
                                 return false;
 
                         memory_copy_fast(lex_text + lex_used, step, run);
@@ -544,7 +584,7 @@ static b32 lex_word(string_address address_to at)
                         {
                                 positive run = (positive)(stop - step);
 
-                                if (lex_used + run + 1 >= LEX_TEXT)
+                                if (!lex_room(lex_used + run + 2))
                                         return false;
 
                                 memory_copy(lex_text + lex_used, step, run);

@@ -67,7 +67,7 @@
         A .set is a second label on the same address, so there is no wrapper
         and no jump, and which names get one depends on who is linking.
 
-        154 routines (148 public, 6 local), 154 of them on all three.
+        155 routines (149 public, 6 local), 155 of them on all three.
         Raw C purity: 0 function bodies, 0 object definitions, 0 body macros, and 0 object macros (all forbidden).
 
           routine                        scope   x86_64  arm64   riscv64
@@ -117,6 +117,7 @@
           memory_copy_fast               public  yes     yes     yes
           memory_copy_fast_end           public  yes     yes     yes
           memory_count                   public  yes     yes     yes
+          memory_count_words             public  yes     yes     yes
           memory_fill                    public  yes     yes     yes
           memory_first_of                public  yes     yes     yes
           memory_free                    public  yes     yes     yes
@@ -2285,6 +2286,20 @@ __asm__(
     "9:\n"
     ASM_RET
     ASM_END(memory_count)
+    // Count transitions from ASCII whitespace into non-whitespace, carrying
+    // the incoming word state in a register and returning count/state in the
+    // ABI's ordinary two-register aggregate.
+    ASM_FUNC(memory_count_words)
+    "xor %eax, %eax\n   and $1, %edx\n   test %rsi, %rsi\n"
+    "jz .Lmemory_words_x64_done\n"
+    ".Lmemory_words_x64_loop:\n   movzbl (%rdi), %ecx\n"
+    "cmp $0x20, %cl\n   sete %r8b\n   sub $9, %ecx\n"
+    "cmp $4, %ecx\n   setbe %r9b\n   or %r9b, %r8b\n   xor $1, %r8b\n"
+    "movzbl %r8b, %ecx\n   xor $1, %edx\n   and %ecx, %edx\n"
+    "add %rdx, %rax\n   mov %ecx, %edx\n   inc %rdi\n   dec %rsi\n"
+    "jnz .Lmemory_words_x64_loop\n"
+    ".Lmemory_words_x64_done:\n" ASM_RET
+    ASM_END(memory_count_words)
     ASM_FUNC(memory_compare)
     //
     //       Three widths, and which one runs is decided by the length rather
@@ -6113,6 +6128,15 @@ __asm__(
     "9:  mov x0, x3\n"
     ASM_RET
     ASM_END(memory_count)
+    ASM_FUNC(memory_count_words)
+    "mov x3, #0\n   and w2, w2, #1\n   cbz x1, .Lmemory_words_arm64_done\n"
+    ".Lmemory_words_arm64_loop:\n   ldrb w4, [x0], #1\n"
+    "cmp w4, #0x20\n   cset w5, eq\n   sub w4, w4, #9\n"
+    "cmp w4, #4\n   cset w4, ls\n   orr w4, w4, w5\n   eor w4, w4, #1\n"
+    "eor w5, w2, #1\n   and w5, w5, w4\n   add x3, x3, x5\n"
+    "mov w2, w4\n   subs x1, x1, #1\n   b.ne .Lmemory_words_arm64_loop\n"
+    ".Lmemory_words_arm64_done:\n   mov x0, x3\n   mov x1, x2\n" ASM_RET
+    ASM_END(memory_count_words)
     ASM_FUNC(memory_compare)
     "mov w9, #0\n"
     "cbz x2, 9f\n"
@@ -8999,6 +9023,15 @@ __asm__(
     "9:  mv a0, a3\n"
     ASM_RET
     ASM_END(memory_count)
+    ASM_FUNC(memory_count_words)
+    "li a3, 0\n   andi a2, a2, 1\n   beqz a1, .Lmemory_words_rv_done\n"
+    ".Lmemory_words_rv_loop:\n   lbu t0, 0(a0)\n   addi t1, t0, -32\n"
+    "seqz t1, t1\n   addi t0, t0, -9\n   sltiu t0, t0, 5\n"
+    "or t0, t0, t1\n   xori t0, t0, 1\n   xori t1, a2, 1\n"
+    "and t1, t1, t0\n   add a3, a3, t1\n   mv a2, t0\n"
+    "addi a0, a0, 1\n   addi a1, a1, -1\n   bnez a1, .Lmemory_words_rv_loop\n"
+    ".Lmemory_words_rv_done:\n   mv a0, a3\n   mv a1, a2\n" ASM_RET
+    ASM_END(memory_count_words)
     ASM_FUNC(memory_compare)
     "li a3, 0\n   beqz a2, 9f\n   xor t0, a0, a1\n   andi t0, t0, 7\n"
     "bnez t0, 7f\n   andi t0, a0, 7\n   beqz t0, 6f\n"
@@ -11133,6 +11166,7 @@ address_any memory_fill(address_any destination, b8 value, positive size);
 positive memory_common_prefix(address_any one, address_any two, positive size);
 b32 memory_compare_ascii_case(address_any one, address_any two, positive size);
 address_any memory_last_of(address_any block, b8 value, positive size);
+positive2 memory_count_words(address_any block, positive size, bool inside);
 // Reverse exactly size bytes in place. Returns block; sizes below two do not
 // read or write it, so a null block is valid when size is zero.
 address_any memory_reverse(address_any block, positive size);

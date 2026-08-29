@@ -7,6 +7,7 @@ b32 main()
         b32 interactive;
         bipolar input = 0;
         bool script_file = false;
+        string_address command = null;
         positive process_arguments;
 
         /*
@@ -51,7 +52,62 @@ b32 main()
         */
         process_arguments = (positive)program_argument_count();
 
-        if (process_arguments > 1)
+        /*
+                sh -c COMMAND [name [word ...]]
+
+                The one spelling nearly everything else uses. system(), the
+                shell a Makefile runs a recipe with, find -exec sh -c and
+                xargs sh -c all arrive this way, and without it this is not a
+                shell anything can call -- it read "-c" as a file name and
+                said it could not open it.
+
+                POSIX puts the command string in the first operand and, if
+                there is another, makes it $0 and the rest the positional
+                parameters. So `sh -c 'echo $0 $1' name one` prints "name one"
+                rather than treating either as a word of the command.
+        */
+        if (process_arguments > 1 && string_equals(program_argument(1), "-c"))
+        {
+                positive count = process_arguments > 3 ? process_arguments - 4 : 0;
+                positive at;
+
+                if (process_arguments < 3)
+                {
+                        log_error("sh: -c wants a command\n", 0);
+                        return 2;
+                }
+
+                command = program_argument(2);
+
+                if (!shell_room((address_any address_to)address_of shell_argv,
+                                address_of shell_argv_room, count + 1,
+                                sizeof(shell_argv[0])))
+                {
+                        log_error("sh: no room for arguments\n", 0);
+                        return 1;
+                }
+
+                for (at = 0; at < count; at++)
+                        shell_argv[at] = program_argument((b32)(at + 4));
+
+                shell_argv[count] = null;
+
+                if (!shell_parameters_set(shell_argv, count))
+                {
+                        log_error("sh: no room for arguments\n", 0);
+                        return 1;
+                }
+
+                //      With no name operand $0 is unspecified, and what
+                //      dash does is use the path it was invoked as. That is
+                //      more use than the word "sh" when a message has to say
+                //      where it came from.
+                shell_script_name = process_arguments > 3 ? program_argument(3)
+                                                          : program_argument(0);
+                shell_option_flags = (string_address) "c";
+                script_file = true;
+        }
+        else if (process_arguments > 1)
         {
                 string_address script = program_argument(1);
                 positive count = process_arguments - 2;
@@ -108,6 +164,56 @@ b32 main()
                 command in half at every boundary -- a forty thousand line
                 script came out with a hundred and forty three lines too many.
         */
+        /*
+                A command string is not read from anywhere, so it is run and
+                that is the whole of it.
+
+                It is copied first because the lines are ended in place, and
+                what came in is the process's own argument block. The copy is
+                as long as the string, so a -c of any size works -- there is no
+                buffer here to be longer than.
+        */
+        if (command)
+        {
+                positive length = string_length(command);
+                p8 address_to held_command = (p8 address_to)memory(length + 1);
+
+                if (!held_command || (positive)held_command >= (positive)-4095)
+                {
+                        log_error("sh: no room for the command\n", 0);
+                        return 1;
+                }
+
+                memory_copy(held_command, command, length + 1);
+
+                {
+                        p8 address_to at = held_command;
+
+                        while (string_get(at))
+                        {
+                                p8 address_to stop = string_first_of(at, '\n');
+
+                                if (stop)
+                                        address_to stop = end;
+
+                                if (string_get(at))
+                                        run_line(at);
+
+                                if (!stop)
+                                        break;
+
+                                at = stop + 1;
+                        }
+                }
+
+                memory_free(held_command, length + 1);
+
+                shell_trap_exit();
+                log_flush();
+
+                return shell_status;
+        }
+
         positive held = 0;
 
         while (1)
@@ -118,9 +224,19 @@ b32 main()
                 if (interactive)
                         log_direct(str(TERM_MAIN_BUFFER TERM_RESET TERM_SHOW_CURSOR PROMPT));
 
+                //      Room for another read on top of whatever is being
+                //      held back, so a line has no length it cannot reach.
+                if (!shell_room((address_any address_to)address_of shell_buffer,
+                                address_of shell_buffer_room,
+                                held + MAX_INPUT_STEP + 1, 1))
+                {
+                        log_error("sh: no room to read\n", 0);
+                        return 1;
+                }
+
                 got = system_call_3(syscall(read), (positive)input,
                                     (positive)(shell_buffer + held),
-                                    MAX_INPUT - 1 - held);
+                                    shell_buffer_room - 1 - held);
 
                 if (got <= 0)
                         break;
@@ -150,18 +266,12 @@ b32 main()
 
                 held = total - at;
 
-                // A line longer than the buffer has nowhere left to grow, so
-                // it is run as it stands rather than silently dropped.
-                if (held >= MAX_INPUT - 1)
-                {
-                        shell_buffer[MAX_INPUT - 1] = end;
-                        run_line(shell_buffer + at);
-                        held = 0;
-                }
-                else if (held)
-                {
+                //      What is held back is a line that has not ended yet, so
+                //      it moves to the front and the next read lands after
+                //      it. The buffer grows above rather than the line being
+                //      cut, so there is no length at which this stops working.
+                if (held)
                         memory_copy(shell_buffer, shell_buffer + at, held);
-                }
         }
 
         // Whatever was still in hand when the input ended.

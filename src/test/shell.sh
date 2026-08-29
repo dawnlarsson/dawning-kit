@@ -490,6 +490,47 @@ script_answer()
 }
 
 section entry
+
+# -c is the entry path everything that is not a person uses: system(), the
+# shell a Makefile runs a recipe with, find -exec sh -c, xargs sh -c. It is a
+# third path through the argument handling, distinct from a named script and
+# from standard input, and it used to read "-c" as a file name.
+run_command_entry()
+{
+        interpreter=$1
+        output=$2
+        shift 2
+
+        timeout 5 "$interpreter" -c "$@" > "$output" 2>/dev/null
+}
+
+command_answer()
+{
+        name=$1
+        shift
+
+        if run_command_entry "$reference" "$work/want" "$@"; then
+                want_status=0
+        else
+                want_status=$?
+        fi
+
+        if run_command_entry "$subject" "$work/got" "$@"; then
+                got_status=0
+        else
+                got_status=$?
+        fi
+
+        if cmp -s "$work/want" "$work/got" &&
+                [ "$want_status" = "$got_status" ]; then
+                won
+                return 0
+        fi
+
+        lost "$name" \
+                "want $(shown "$work/want")[$want_status]   got $(shown "$work/got")[$got_status]"
+}
+
 group script
 script_answer 'script name'  'printf "%s\n" "$0"'
 script_answer 'script count' 'printf "%s\n" "$#"' one two
@@ -501,6 +542,41 @@ entry_input='payload
 '
 script_answer 'script keeps stdin' 'IFS= read -r value; printf "%s\n" "$value"'
 entry_input=""
+
+group command
+command_answer 'command plain'    'echo hello'
+command_answer 'command status'   'exit 7'
+command_answer 'command name'     'printf "%s\n" "$0"' myname
+command_answer 'command count'    'printf "%s\n" "$#"' myname one two
+command_answer 'command first'    'printf "%s\n" "$1"' myname alpha beta
+# With no name operand $0 is unspecified and every shell fills it with its own
+# path, so the two can only agree that there is one.
+command_answer 'command default name is set' '[ -n "$0" ] && echo yes || echo no'
+command_answer 'command pipeline' 'echo abc | rev'
+command_answer 'command arithmetic' 'x=5; printf "%s\n" "$((x * 3))"'
+command_answer 'command several lines' 'echo one
+echo two
+echo three'
+command_answer 'command empty'    ''
+command_answer 'command trailing newline' 'echo one
+'
+
+# A literal word far past what the lexer and parser used to hold -- eight
+# kilobytes of token text, sixteen of parsed text -- so this is the line
+# length itself being tested rather than an expansion that happens to be long.
+# It used to be truncated silently and then, once the reader grew, refused.
+long_word=$(awk 'BEGIN { s = ""; for (i = 0; i < 5000; i++) s = s "0123456789"; print s }')
+command_answer 'a literal word of fifty thousand' "printf '%s\n' $long_word | wc -c"
+
+# The line is unbounded now, but what a variable may hold is not: a value is
+# cut at the expansion buffer, and a very long one is lost entirely rather
+# than cut. Recorded so it is a known difference rather than a surprise, and
+# so that fixing it says "agrees with dash now" instead of going unnoticed.
+middling_value=$(awk 'BEGIN { s = ""; for (i = 0; i < 2000; i++) s = s "x"; print s }')
+differs 'a long value is cut at the expansion buffer' '1023|' 0 \
+        "x=$middling_value; printf '%s\n' \"\${#x}\""
+differs 'a very long value is lost' '0|' 0 \
+        "x=$long_word; printf '%s\n' \"\${#x}\""
 
 section posix
 group quoting
