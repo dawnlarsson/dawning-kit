@@ -126,7 +126,7 @@ freestanding()
 #       below run $farm/grep and $farm/ls, which is how the image is laid out
 #       and so the only shape worth testing.
 utilities="cat awk dd diff ps grep sed cut tr sort uniq head tail wc tee rev nl fold expr cmp mktemp kill date xargs ls find
-stat du df chmod chown ln readlink basename dirname realpath mkdir rmdir cp mv
+stat du df chgrp chmod chown ln readlink basename dirname realpath mkdir rmdir cp mv
 rm touch sleep seq yes env id hostname uname ip host fetch"
 
 shell_binary=""

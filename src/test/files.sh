@@ -902,6 +902,22 @@ effect 'not an option'  chown '$TOOL -W '"$(id -un)"' tree/one'
 effect 'nofollow then follow' chown 'ln -s absent broken; $TOOL -h --dereference '"$(id -un)"' broken'
 effect 'follow then nofollow' chown 'ln -s absent broken; $TOOL --dereference -h '"$(id -un)"' broken'
 
+group chgrp
+effect 'named group'     chgrp '$TOOL '"$(id -gn)"' tree/one'
+effect 'numeric group'   chgrp '$TOOL '"$(id -g)"' tree/one'
+effect 'recursive'       chgrp '$TOOL -R '"$(id -gn)"' tree'
+effect 'unknown group'   chgrp '$TOOL nosuchgroup tree/one'
+effect 'through link'    chgrp '$TOOL '"$(id -gn)"' link'
+effect 'not the link'    chgrp '$TOOL -h '"$(id -gn)"' link'
+effect 'verbose'         chgrp '$TOOL -v '"$(id -gn)"' tree/one > said'
+effect 'changes'         chgrp '$TOOL -c '"$(id -gn)"' tree/one > said'
+effect 'quiet'           chgrp '$TOOL -f '"$(id -gn)"' nothing > said 2>&1'
+effect 'reference'       chgrp '$TOOL --reference=tree/two tree/one'
+effect 'reference gone'  chgrp '$TOOL --reference=nothing tree/one'
+effect 'not an option'   chgrp '$TOOL -W '"$(id -gn)"' tree/one'
+effect 'nofollow then follow' chgrp 'ln -s absent broken; $TOOL -h --dereference '"$(id -gn)"' broken'
+effect 'follow then nofollow' chgrp 'ln -s absent broken; $TOOL --dereference -h '"$(id -gn)"' broken'
+
 group sleep
 timing 'fraction'       0.3
 timing 'seconds'        1

@@ -4122,6 +4122,7 @@ static shell_tool shell_tools[] = {
     {"wc", text_wc},
 
     {"basename", file_basename},
+    {"chgrp", file_chgrp},
     {"chmod", file_chmod},
     {"chown", file_chown},
     {"cp", file_cp},

@@ -5221,9 +5221,10 @@ static b32 file_chmod()
         return chmod_status;
 }
 
-// chown ------------------------------------------------------------
-// chown [-R] [-h] USER[:GROUP] FILE..., and the same program answers to a
-// USER of nothing at all so that ":group" changes only the group.
+// chown and chgrp --------------------------------------------------
+// Both names use the same ownership walker.  chown accepts USER[:GROUP]
+// (and a USER of nothing so that ":group" changes only the group); chgrp's
+// first operand names only a group.
 static bipolar chown_user = -1;
 static bipolar chown_group = -1;
 static b32 chown_status;
@@ -5232,6 +5233,8 @@ static bool chown_loud;
 static bool chown_changes;
 static bool chown_quiet;
 static p8 chown_dereference_option;
+static string_address chown_program;
+static bool chown_groups_only;
 
 static bool chown_option_seen(p8 letter, string_address value)
 {
@@ -5248,6 +5251,14 @@ static bool chown_option_seen(p8 letter, string_address value)
 static fn chown_who(positive user, positive group, p8 address_to into)
 {
         positive length = 0;
+
+        if (chown_groups_only)
+        {
+                if (!file_group_name(group, into, FILE_NAME_MAX))
+                        positive_into_string(into, group);
+
+                return;
+        }
 
         if (!file_user_name(user, into, FILE_NAME_MAX))
                 length = positive_into_string(into, user);
@@ -5273,7 +5284,9 @@ static fn chown_said(string_address shown, file_facts address_to was, bool chang
         if (!changed)
         {
                 chown_who(was->owner, was->group, who);
-                string_format(log, "ownership of '%s' retained as %s\n", shown, who);
+                string_format(log, chown_groups_only ? "group of '%s' retained as %s\n"
+                                                     : "ownership of '%s' retained as %s\n",
+                              shown, who);
                 return;
         }
 
@@ -5283,7 +5296,9 @@ static fn chown_said(string_address shown, file_facts address_to was, bool chang
         chown_who(chown_user < 0 ? was->owner : (positive)chown_user,
                   chown_group < 0 ? was->group : (positive)chown_group, who);
 
-        string_format(log, "changed ownership of '%s' from %s to %s\n", shown, before, who);
+        string_format(log, chown_groups_only ? "changed group of '%s' from %s to %s\n"
+                                             : "changed ownership of '%s' from %s to %s\n",
+                      shown, before, who);
 }
 
 static fn chown_one(bipolar directory, string_address name, string_address shown)
@@ -5298,8 +5313,8 @@ static fn chown_one(bipolar directory, string_address name, string_address shown
         if (done < 0)
         {
                 if (!chown_quiet)
-                        string_format(file_fail, "chown: changing ownership of '%s': %s\n",
-                                      shown, file_reason(done));
+                        string_format(file_fail, "%s: changing ownership of '%s': %s\n",
+                                      chown_program, shown, file_reason(done));
 
                 chown_status = 1;
                 return;
@@ -5355,16 +5370,33 @@ static const file_long chown_longs[] = {
     {null, 0},
 };
 
-static b32 file_chown()
+static fn chown_paths(positive first, positive count)
+{
+        while (first < count)
+        {
+                string_address path = program_argument((b32)first++);
+
+                if (chown_flags & FILE_FLAG('R'))
+                        chown_walk(AT_FDCWD, path, path, FILE_MAX_DEPTH);
+                else
+                        chown_one(AT_FDCWD, path, path);
+        }
+
+        log_flush();
+}
+
+static b32 file_chown_common(string_address program, bool groups_only)
 {
         positive count = (positive)program_argument_count();
         chown_user = -1;
         chown_group = -1;
         chown_status = 0;
         chown_dereference_option = 'd';
+        chown_program = program;
+        chown_groups_only = groups_only;
 
         file_taking taking = {
-            .program = (string_address) "chown",
+            .program = program,
             .allowed = (string_address) "Rcfhv",
             .valued = (string_address) "e",
             .longs = chown_longs,
@@ -5390,39 +5422,51 @@ static b32 file_chown()
                 if (!file_look_at(like, address_of facts))
                 {
                         string_format(file_fail,
-                                      "chown: cannot access '%s': No such file or directory\n",
-                                      like);
+                                      "%s: cannot access '%s': No such file or directory\n",
+                                      program, like);
                         return 1;
                 }
 
-                chown_user = (bipolar)facts.owner;
+                if (!groups_only)
+                        chown_user = (bipolar)facts.owner;
+
                 chown_group = (bipolar)facts.group;
         }
 
         if (first >= count || (!like && first + 1 >= count))
         {
-                file_fail("chown: missing operand\n", 0);
+                string_format(file_fail, "%s: missing operand\n", program);
                 return 1;
         }
 
         if (like)
         {
-                while (first < count)
-                {
-                        string_address path = program_argument((b32)first++);
-
-                        if (chown_flags & FILE_FLAG('R'))
-                                chown_walk(AT_FDCWD, path, path, FILE_MAX_DEPTH);
-                        else
-                                chown_one(AT_FDCWD, path, path);
-                }
-
-                log_flush();
+                chown_paths(first, count);
 
                 return chown_status;
         }
 
         string_address who = program_argument((b32)first++);
+
+        if (groups_only)
+        {
+                positive number;
+
+                chown_group = string_digits_exact(who, address_of number)
+                                  ? (bipolar)number
+                                  : file_group_id(who);
+
+                if (chown_group < 0)
+                {
+                        string_format(file_fail, "%s: invalid group: %s\n", program, who);
+                        return 1;
+                }
+
+                chown_paths(first, count);
+
+                return chown_status;
+        }
+
         p8 user[FILE_NAME_MAX];
         positive length = 0;
 
@@ -5450,7 +5494,7 @@ static b32 file_chown()
 
                 if (chown_user < 0)
                 {
-                        string_format(file_fail, "chown: invalid user: %s\n", who);
+                        string_format(file_fail, "%s: invalid user: %s\n", program, who);
                         return 1;
                 }
         }
@@ -5465,24 +5509,24 @@ static b32 file_chown()
 
                 if (chown_group < 0)
                 {
-                        string_format(file_fail, "chown: invalid group: %s\n", who);
+                        string_format(file_fail, "%s: invalid group: %s\n", program, who);
                         return 1;
                 }
         }
 
-        while (first < count)
-        {
-                string_address path = program_argument((b32)first++);
-
-                if (chown_flags & FILE_FLAG('R'))
-                        chown_walk(AT_FDCWD, path, path, FILE_MAX_DEPTH);
-                else
-                        chown_one(AT_FDCWD, path, path);
-        }
-
-        log_flush();
+        chown_paths(first, count);
 
         return chown_status;
+}
+
+static b32 file_chown()
+{
+        return file_chown_common((string_address) "chown", false);
+}
+
+static b32 file_chgrp()
+{
+        return file_chown_common((string_address) "chgrp", true);
 }
 
 // ln ------------------------------------------------------------
