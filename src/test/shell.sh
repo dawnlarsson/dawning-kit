@@ -587,6 +587,47 @@ environment_command_expected()
                 "want $(shown "$work/want")[$expected_status]   got $(shown "$work/got")[$got_status]"
 }
 
+environment_many_answer()
+{
+        name=$1
+        amount=$2
+        command=$3
+        interpreter=$reference
+
+        for output in want got; do
+                set -- -i
+                at=0
+
+                while [ "$at" -lt "$amount" ]; do
+                        set -- "$@" "MW_MANY_$at=value"
+                        at=$((at + 1))
+                done
+
+                if timeout 5 env "$@" "$interpreter" -c "$command" \
+                        > "$work/$output" 2>/dev/null; then
+                        status=0
+                else
+                        status=$?
+                fi
+
+                if [ "$output" = want ]; then
+                        want_status=$status
+                        interpreter=$subject
+                else
+                        got_status=$status
+                fi
+        done
+
+        if cmp -s "$work/want" "$work/got" &&
+                [ "$want_status" = "$got_status" ]; then
+                won
+                return 0
+        fi
+
+        lost "$name" \
+                "want $(shown "$work/want")[$want_status]   got $(shown "$work/got")[$got_status]"
+}
+
 group script
 script_answer 'script starts with a comment' '# only a comment
 echo after'
@@ -676,6 +717,8 @@ environment_command_expected 'empty environment defaults' \
 ' 0 \
         'printf "%s|%s|%s|%s|%s\n" "${PATH:+path}" "${SHELL:+shell}" "$OPTIND" "${PWD:+pwd}" "${HOME-unset}"' \
         -i
+environment_many_answer 'six hundred inherited variables' 600 \
+        'set | grep '\''^MW_MANY_[0-9][0-9]*='\'' | wc -l'
 
 # A literal word far past what the lexer and parser used to hold -- eight
 # kilobytes of token text, sixteen of parsed text -- so this is the line
