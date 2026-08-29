@@ -55,7 +55,7 @@ def cover(category, evidence, names, note, anchors=None):
 # dedicated floor row, rather than merely helping the harness print or count.
 cover('direct_benchmark', 'kit/floor.c', '''
 memory_compare memory_copy memory_copy_apart memory_count memory_fill
-memory_first_of string_compare string_copy string_first_of
+memory_first_of string_compare string_first_of
 string_last_of_or_end string_length
 ''', 'floor-relative rows over multiple sizes')
 
@@ -107,6 +107,8 @@ cover('direct_benchmark', 'kit/bench_text_hot.c', 'memory_common_prefix',
       'paired scalar/assembly timing over equal and late-difference text spans')
 cover('direct_benchmark', 'kit/bench_compare_max.c', 'string_compare_max',
       'dynamic-bound first-mismatch semantic floor and equal/late traffic proxies')
+cover('direct_benchmark', 'kit/bench_string_copy.c', 'string_copy',
+      'caller-shaped sizes against copy-only traffic and exact scalar semantic proxies')
 cover('direct_benchmark', 'kit/bench_hash_33.c',
       'memory_hash_33 string_hash_33_length',
       'bounded/string verifier and paired scalar/four-byte or one-pass/two-pass timing')
