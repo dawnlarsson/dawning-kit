@@ -891,18 +891,15 @@ fn shell_execute_command()
 
 bool shell_builtin(string_address arguments)
 {
-        shell_command address_to command = shell_commands;
+        shell_command address_to command;
 
         if (shell_tool_run(shell_argv[0]))
                 return true;
 
-        while (command->name)
+        command = shell_command_named(shell_argv[0]);
+
+        if (command)
         {
-                if (string_compare(command->name, shell_argv[0]))
-                {
-                        command++;
-                        continue;
-                }
 
                 /*
                         A builtin that finishes without an opinion succeeded.

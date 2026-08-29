@@ -136,11 +136,6 @@ typedef struct
         Everything here writes with a length of zero and lets the writer
         measure, which is what a literal of unknown length needs anyway.
 */
-fn file_say(string_address text)
-{
-        log(text, 0);
-}
-
 #define file_fail log_error
 
 fn file_line(string_address text)
@@ -8558,7 +8553,13 @@ static bipolar kill_number(string_address word)
         if (string_is(word, 'S') && string_is(word + 1, 'I') && string_is(word + 2, 'G'))
                 word += 3;
 
-        for (positive i = 1; i <= KILL_MOST; i++)
+        positive found = string_table_find(word, kill_names + 1,
+                                           sizeof(kill_names[0]), KILL_NAMED - 1);
+
+        if (found != KILL_NAMED - 1)
+                return (bipolar)(found + 1);
+
+        for (positive i = KILL_LEAST_REAL; i <= KILL_MOST; i++)
         {
                 kill_name(i, name);
 

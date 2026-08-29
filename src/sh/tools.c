@@ -2603,62 +2603,14 @@ static fn ps_pass(string_address address_to at, positive fields)
 
 // The name behind a numeric user id, from the file the system keeps it in.
 static p8 ps_password[1 << 18];
-static positive ps_password_size;
 
 static fn ps_name_of(positive uid, p8 address_to into, positive limit)
 {
         if (!limit)
                 return;
 
-        positive at = 0;
-
-        while (at < ps_password_size)
-        {
-                positive line = at;
-                positive stop = (positive)(string_first_of_or_end(ps_password + at, '\n') -
-                                           ps_password);
-
-                positive fields = 0;
-                positive start = line;
-                positive found = 0;
-                positive name_end = 0;
-
-                for (positive i = line; i <= stop; i++)
-                        if (i == stop || ps_password[i] == ':')
-                        {
-                                if (fields == 0)
-                                {
-                                        found = start;
-                                        name_end = i;
-                                }
-
-                                if (fields == 2)
-                                {
-                                        positive value = string_digits_max(
-                                            ps_password + start, i - start, null);
-
-                                        if (value == uid)
-                                        {
-                                                positive length = name_end - found;
-
-                                                if (length >= limit)
-                                                        length = limit - 1;
-
-                                                memory_copy_end(into, ps_password + found,
-                                                                length);
-
-                                                return;
-                                        }
-
-                                        break;
-                                }
-
-                                fields++;
-                                start = i + 1;
-                        }
-
-                at = stop + 1;
-        }
+        if (file_account_name(ps_password, uid, 2, into, limit))
+                return;
 
         p8 digits[24];
         positive have = positive_into(digits, uid);
@@ -2673,7 +2625,8 @@ static bool ps_gather()
         file_walk walk;
 
         ps_count = 0;
-        ps_password_size = ps_read_file("/etc/passwd", ps_password, sizeof(ps_password));
+        if (!ps_read_file("/etc/passwd", ps_password, sizeof(ps_password)))
+                ps_password[0] = end;
 
         string_set_add(ps_blank_bytes, " \t");
         memory_fill(ps_field_bytes, 1, sizeof(ps_field_bytes));
@@ -2705,10 +2658,7 @@ static bool ps_gather()
 
                 p8 path[64];
 
-                string_copy(path, "/proc/");
-                string_copy(path + string_length(path), entry->d_name);
-
-                positive base = string_length(path);
+                positive base = path_join(path, sizeof(path), "/proc", entry->d_name);
 
                 string_copy(path + base, "/stat");
 
@@ -3148,16 +3098,11 @@ static b32 tools_ps(void)
                         while (string_get(at) == ',' || string_get(at) == ' ')
                                 at++;
 
-                        positive which = TEXT_UNSET;
+                        positive which = string_table_find(name, ps_columns,
+                                                           sizeof(ps_columns[0]),
+                                                           PS_FIELD_COUNT);
 
-                        for (positive f = 0; f < PS_FIELD_COUNT; f++)
-                                if (string_equals(name, ps_columns[f].name))
-                                {
-                                        which = f;
-                                        break;
-                                }
-
-                        if (which == TEXT_UNSET)
+                        if (which == PS_FIELD_COUNT)
                         {
                                 text_error(name, "unknown user-defined format specifier");
                                 return text_done(1);

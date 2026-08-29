@@ -903,8 +903,7 @@ static bipolar arith_value_of(string_address name)
         if (!expand_value_of(name, held, sizeof(held)))
                 return 0;
 
-        while (string_is(step, ' ') || string_is(step, '\t'))
-                step++;
+        step += string_span(step, string_set_blanks);
 
         if (!string_get(step))
                 return 0;
@@ -924,8 +923,7 @@ static bipolar arith_value_of(string_address name)
                 return 0;
         }
 
-        while (string_is(step, ' ') || string_is(step, '\t'))
-                step++;
+        step += string_span(step, string_set_blanks);
 
         if (string_get(step))
                 arith_bad = true;
@@ -1547,10 +1545,7 @@ static fn expand_run(string_address command, bool quoted)
 
                         while (string_get(at))
                         {
-                                string_address stop = at;
-
-                                while (string_get(stop) && string_not(stop, '\n'))
-                                        stop++;
+                                string_address stop = string_first_of_or_end(at, '\n');
 
                                 if (string_get(stop))
                                 {

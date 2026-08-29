@@ -51,6 +51,87 @@
         not because anything here parses it back.
 */
 
+
+/*
+        Where this says what it did.
+
+        Typed at a prompt, ip writes to the terminal like any other command.
+        Started by init, it is a service, and a service that writes to the
+        console is writing into whatever else is using it -- which is a real
+        problem rather than an untidy one: the boot test reads that console
+        back, and an asynchronous DHCP exchange lands wherever it lands.
+
+        So the watcher writes to /dev/kmsg instead. printk serialises whole
+        records, so a line from here can never appear in the middle of a line
+        from somewhere else, and it ends up in dmesg where a system message
+        belongs while still reaching the console. If /dev/kmsg will not open
+        -- an older image without the node -- this falls back to writing the
+        same words the ordinary way, which is worse but not silent.
+
+        A record is one write, so the bytes are gathered until a newline
+        rather than passed through as string_format produces them.
+*/
+static b32 net_kmsg_handle = -1;
+static p8 net_kmsg_line[512];
+static positive net_kmsg_used;
+
+/*
+        Every record says what level it is, and says 6.
+
+        A write to /dev/kmsg with no level on the front is given the default
+        one, which this kernel sets to 7. The console prints what is BELOW its
+        own loglevel, also 7, so a message at 7 goes into the log and never
+        appears -- which is exactly what happened: the machine configured
+        itself perfectly and said nothing about it. 6 is KERN_INFO, which is
+        what this is.
+*/
+#define NET_KMSG_LEVEL "<6>"
+#define NET_KMSG_LEVEL_BYTES 3
+
+static fn net_kmsg_begin(void)
+{
+        memory_copy(net_kmsg_line, NET_KMSG_LEVEL, NET_KMSG_LEVEL_BYTES);
+        net_kmsg_used = NET_KMSG_LEVEL_BYTES;
+}
+
+static fn net_kmsg(address_any data, positive length)
+{
+        p8 address_to bytes = (p8 address_to)data;
+        positive at;
+
+        if (!length)
+                length = string_length(bytes);
+
+        if (net_kmsg_used < NET_KMSG_LEVEL_BYTES)
+                net_kmsg_begin();
+
+        for (at = 0; at < length; at++)
+        {
+                if (bytes[at] == '\n' || net_kmsg_used + 2 >= sizeof net_kmsg_line)
+                {
+                        if (net_kmsg_used > NET_KMSG_LEVEL_BYTES)
+                                system_write_all((positive)net_kmsg_handle,
+                                                 net_kmsg_line, net_kmsg_used);
+
+                        net_kmsg_begin();
+
+                        if (bytes[at] == '\n')
+                                continue;
+                }
+
+                net_kmsg_line[net_kmsg_used++] = bytes[at];
+        }
+}
+
+//      The terminal by default; the kernel log once init owns this.
+static writer net_out = log;
+
+static fn net_flush(void)
+{
+        if (net_out == log)
+                log_flush();
+}
+
 static bool net_word_is(string_address word, const char *full, positive least)
 {
         positive at = 0;
@@ -71,25 +152,25 @@ static bool net_word_is(string_address word, const char *full, positive least)
 
 static fn net_complain(string_address message)
 {
-        string_format(log, "ip: %s\n", message);
-        log_flush();
+        string_format(net_out, "ip: %s\n", message);
+        net_flush();
 }
 
 //      The errno the kernel gave, said as plainly as this can say it.
 static b32 net_refused(string_address doing, bipolar status)
 {
         if (status == -1)
-                string_format(log, "ip: %s: not permitted\n", doing);
+                string_format(net_out, "ip: %s: not permitted\n", doing);
         else if (status == -19)
-                string_format(log, "ip: %s: no such device\n", doing);
+                string_format(net_out, "ip: %s: no such device\n", doing);
         else if (status == -101)
-                string_format(log, "ip: %s: network is unreachable\n", doing);
+                string_format(net_out, "ip: %s: network is unreachable\n", doing);
         else if (status == -13)
-                string_format(log, "ip: %s: permission denied\n", doing);
+                string_format(net_out, "ip: %s: permission denied\n", doing);
         else
-                string_format(log, "ip: %s: failed (%p)\n", doing, (positive)(-status));
+                string_format(net_out, "ip: %s: failed (%p)\n", doing, (positive)(-status));
 
-        log_flush();
+        net_flush();
 
         return 1;
 }
@@ -148,30 +229,30 @@ static fn net_say_flags(p32 flags)
 {
         string_address between = (string_address) "";
 
-        string_format(log, "<");
+        string_format(net_out, "<");
 
         if (flags & IFF_UP)
         {
-                string_format(log, "%sUP", between);
+                string_format(net_out, "%sUP", between);
                 between = (string_address) ",";
         }
 
         if (flags & IFF_BROADCAST)
         {
-                string_format(log, "%sBROADCAST", between);
+                string_format(net_out, "%sBROADCAST", between);
                 between = (string_address) ",";
         }
 
         if (flags & IFF_LOOPBACK)
         {
-                string_format(log, "%sLOOPBACK", between);
+                string_format(net_out, "%sLOOPBACK", between);
                 between = (string_address) ",";
         }
 
         if (flags & IFF_RUNNING)
-                string_format(log, "%sLOWER_UP", between);
+                string_format(net_out, "%sLOWER_UP", between);
 
-        string_format(log, ">");
+        string_format(net_out, ">");
 }
 
 /*
@@ -251,9 +332,9 @@ static bool net_link_line(netlink_header address_to header, address_any context)
         if (!name)
                 return true;
 
-        string_format(log, "%p: %s: ", (positive)link->index, name);
+        string_format(net_out, "%p: %s: ", (positive)link->index, name);
         net_say_flags(link->flags);
-        string_format(log, " state %s\n",
+        string_format(net_out, " state %s\n",
                       (link->flags & IFF_UP) ? (string_address) "UP"
                                              : (string_address) "DOWN");
 
@@ -291,7 +372,7 @@ static bool net_address_line(netlink_header address_to header, address_any conte
         length = host_into(written, host);
         written[length] = end;
 
-        string_format(log, "%p: %s    inet %s/%p\n", (positive)body->index,
+        string_format(net_out, "%p: %s    inet %s/%p\n", (positive)body->index,
                       label ? label : (string_address) "?", written,
                       (positive)body->prefix);
 
@@ -322,11 +403,11 @@ static bool net_route_line(netlink_header address_to header, address_any context
                 length = host_into(written,
                                    network_order_32(address_to((p32 address_to)destination)));
                 written[length] = end;
-                string_format(log, "%s/%p", written, (positive)body->destination_bits);
+                string_format(net_out, "%s/%p", written, (positive)body->destination_bits);
         }
         else
         {
-                string_format(log, "default");
+                string_format(net_out, "default");
         }
 
         if (gateway)
@@ -334,7 +415,7 @@ static bool net_route_line(netlink_header address_to header, address_any context
                 length = host_into(written,
                                    network_order_32(address_to((p32 address_to)gateway)));
                 written[length] = end;
-                string_format(log, " via %s", written);
+                string_format(net_out, " via %s", written);
         }
 
         if (out)
@@ -343,12 +424,12 @@ static bool net_route_line(netlink_header address_to header, address_any context
                 string_address name = net_name_of(index);
 
                 if (name)
-                        string_format(log, " dev %s", name);
+                        string_format(net_out, " dev %s", name);
                 else
-                        string_format(log, " dev %p", (positive)index);
+                        string_format(net_out, " dev %p", (positive)index);
         }
 
-        string_format(log, "\n");
+        string_format(net_out, "\n");
 
         return true;
 }
@@ -397,8 +478,8 @@ static b32 net_host(void)
 
         if (net_words() < 2)
         {
-                string_format(log, "usage: host NAME [SERVER]\n");
-                log_flush();
+                string_format(net_out, "usage: host NAME [SERVER]\n");
+                net_flush();
                 return 1;
         }
 
@@ -408,8 +489,8 @@ static b32 net_host(void)
 
                 if (server < 0)
                 {
-                        string_format(log, "host: %s is not an address\n", net_word(2));
-                        log_flush();
+                        string_format(net_out, "host: %s is not an address\n", net_word(2));
+                        net_flush();
                         return 1;
                 }
 
@@ -426,34 +507,34 @@ static b32 net_host(void)
         case DNS_OK:
                 length = host_into(written, found);
                 written[length] = end;
-                string_format(log, "%s has address %s\n", net_word(1), written);
+                string_format(net_out, "%s has address %s\n", net_word(1), written);
                 break;
         case DNS_NO_SUCH_NAME:
-                string_format(log, "host: %s: no such name\n", net_word(1));
+                string_format(net_out, "host: %s: no such name\n", net_word(1));
                 break;
         case DNS_NO_ADDRESS:
-                string_format(log, "host: %s exists but has no address\n", net_word(1));
+                string_format(net_out, "host: %s exists but has no address\n", net_word(1));
                 break;
         case DNS_NO_REPLY:
-                string_format(log, "host: no reply from the nameserver\n");
+                string_format(net_out, "host: no reply from the nameserver\n");
                 break;
         case DNS_NO_SERVER:
                 //      Not a bad answer -- no way to ask at all. Before an
                 //      address exists there is no route to a nameserver, and
                 //      saying the reply made no sense would send somebody
                 //      looking at the wrong end of it.
-                string_format(log, "host: cannot reach a nameserver; "
+                string_format(net_out, "host: cannot reach a nameserver; "
                                    "is the network up? try: ip auto\n");
                 break;
         case DNS_REFUSED:
-                string_format(log, "host: the nameserver refused the question\n");
+                string_format(net_out, "host: the nameserver refused the question\n");
                 break;
         default:
-                string_format(log, "host: the reply made no sense\n");
+                string_format(net_out, "host: the reply made no sense\n");
                 break;
         }
 
-        log_flush();
+        net_flush();
 
         return status == DNS_OK ? 0 : 1;
 }
@@ -480,8 +561,8 @@ static b32 net_fetch(void)
 
         if (net_words() < 2)
         {
-                string_format(log, "usage: fetch http://host[:port]/path\n");
-                log_flush();
+                string_format(net_out, "usage: fetch http://host[:port]/path\n");
+                net_flush();
                 return 1;
         }
 
@@ -490,17 +571,17 @@ static b32 net_fetch(void)
 
         if (status == HTTP_NOT_PLAIN)
         {
-                string_format(log, "fetch: https is not implemented; this speaks "
+                string_format(net_out, "fetch: https is not implemented; this speaks "
                                    "http only\n");
-                log_flush();
+                net_flush();
                 return 1;
         }
 
         if (status < 0)
         {
-                string_format(log, "fetch: %s is not a url this understands\n",
+                string_format(net_out, "fetch: %s is not a url this understands\n",
                               net_word(1));
-                log_flush();
+                net_flush();
                 return 1;
         }
 
@@ -518,8 +599,8 @@ static b32 net_fetch(void)
                 if (dns_resolve_any((string_address) "/etc/resolv.conf", name,
                                     address_of host, 3) != DNS_OK)
                 {
-                        string_format(log, "fetch: cannot resolve %s\n", name);
-                        log_flush();
+                        string_format(net_out, "fetch: cannot resolve %s\n", name);
+                        net_flush();
                         return 1;
                 }
         }
@@ -529,30 +610,30 @@ static b32 net_fetch(void)
         if (status < 0)
         {
                 if (status == HTTP_NO_ROUTE)
-                        string_format(log, "fetch: cannot reach %s\n", name);
+                        string_format(net_out, "fetch: cannot reach %s\n", name);
                 else if (status == HTTP_NO_REPLY)
-                        string_format(log, "fetch: no reply from %s\n", name);
+                        string_format(net_out, "fetch: no reply from %s\n", name);
                 else
-                        string_format(log, "fetch: the reply made no sense\n");
+                        string_format(net_out, "fetch: the reply made no sense\n");
 
-                log_flush();
+                net_flush();
                 http_forget(address_of body);
                 return 1;
         }
 
         if (code >= 300 && code < 400)
         {
-                string_format(log, "fetch: %p, which is a redirect this does not "
+                string_format(net_out, "fetch: %p, which is a redirect this does not "
                                    "follow\n", (positive)code);
-                log_flush();
+                net_flush();
                 http_forget(address_of body);
                 return 1;
         }
 
         if (code >= 400)
         {
-                string_format(log, "fetch: the server answered %p\n", (positive)code);
-                log_flush();
+                string_format(net_out, "fetch: the server answered %p\n", (positive)code);
+                net_flush();
                 http_forget(address_of body);
                 return 1;
         }
@@ -642,19 +723,19 @@ static b32 net_auto(b32 handle, p32 address_to chosen)
 
         if (netlink_link_find(handle, address_of search) < 0)
         {
-                string_format(log, "ip: no interface to configure\n");
-                log_flush();
+                string_format(net_out, "ip: no interface to configure\n");
+                net_flush();
                 return 1;
         }
 
         if (!search.has_hardware)
         {
-                string_format(log, "ip: %s has no hardware address\n", search.name);
-                log_flush();
+                string_format(net_out, "ip: %s has no hardware address\n", search.name);
+                net_flush();
                 return 1;
         }
 
-        string_format(log, "ip: using %s\n", search.name);
+        string_format(net_out, "ip: using %s\n", search.name);
 
         if (!(search.flags & IFF_UP))
         {
@@ -664,27 +745,27 @@ static b32 net_auto(b32 handle, p32 address_to chosen)
                         return net_refused((string_address) "link up", status);
         }
 
-        string_format(log, "ip: asking for a lease\n");
-        log_flush();
+        string_format(net_out, "ip: asking for a lease\n");
+        net_flush();
 
         status = dhcp_ask(search.name, search.hardware, address_of lease);
 
         if (status != DHCP_OK)
         {
                 if (status == DHCP_REFUSED)
-                        string_format(log, "ip: the server refused the request\n");
+                        string_format(net_out, "ip: the server refused the request\n");
                 else if (status == DHCP_NO_OFFER)
-                        string_format(log, "ip: nobody offered a lease\n");
+                        string_format(net_out, "ip: nobody offered a lease\n");
                 else
-                        string_format(log, "ip: could not ask for a lease\n");
+                        string_format(net_out, "ip: could not ask for a lease\n");
 
-                log_flush();
+                net_flush();
                 return 1;
         }
 
         length = host_into(written, lease.address);
         written[length] = end;
-        string_format(log, "ip: %s/%p on %s\n", written,
+        string_format(net_out, "ip: %s/%p on %s\n", written,
                       (positive)dhcp_prefix_of(lease.mask), search.name);
 
         status = netlink_address_add(handle, search.index, lease.address,
@@ -702,28 +783,28 @@ static b32 net_auto(b32 handle, p32 address_to chosen)
 
                 length = host_into(written, lease.router);
                 written[length] = end;
-                string_format(log, "ip: default via %s\n", written);
+                string_format(net_out, "ip: default via %s\n", written);
         }
 
         net_write_resolv(lease.nameserver);
 
         length = host_into(written, DNS_FALLBACK);
         written[length] = end;
-        string_format(log, "ip: nameserver %s", written);
+        string_format(net_out, "ip: nameserver %s", written);
 
         if (lease.nameserver && lease.nameserver != DNS_FALLBACK)
         {
                 length = host_into(written, lease.nameserver);
                 written[length] = end;
-                string_format(log, ", then %s", written);
+                string_format(net_out, ", then %s", written);
         }
 
-        string_format(log, "\n");
+        string_format(net_out, "\n");
 
         if (chosen)
                 address_to chosen = search.index;
 
-        log_flush();
+        net_flush();
 
         return 0;
 }
@@ -812,6 +893,17 @@ static b32 net_watch(void)
         bipolar events;
         bipolar handle;
         p32 configured = 0;
+
+        //      O_WRONLY. A failure leaves the handle at -1 and net_out at
+        //      log, which is exactly the old behaviour.
+        net_kmsg_handle = (b32)system_call_4(syscall(openat), (positive)-100,
+                                             (positive) "/dev/kmsg", 1, 0);
+
+        if (net_kmsg_handle >= 0)
+        {
+                net_kmsg_begin();
+                net_out = net_kmsg;
+        }
 
         events = netlink_open_groups(RTNLGRP_LINK_MASK);
 

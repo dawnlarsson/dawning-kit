@@ -195,6 +195,11 @@ sensitive filesystem, and this is $(uname). Name a machine that has them with
                 make_node fs/dev/zero    c 1 5
                 make_node fs/dev/random  c 1 8
                 make_node fs/dev/urandom c 1 9
+                #       Where a system service says what it did. printk
+                #       serialises whole records, so a daemon writing
+                #       here can never land in the middle of a line
+                #       somebody else is writing to the console.
+                make_node fs/dev/kmsg    c 1 11
 
                 # /dev/spark is how userspace asks the kernel to spawn a
                 # program without forking first. The minor has to match

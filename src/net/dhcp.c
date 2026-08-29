@@ -275,6 +275,7 @@ static bipolar dhcp_ask(string_address device, p8 address_to hardware,
         bipolar handle;
         positive length;
         b32 one = 1;
+        positive attempt;
         positive wait;
 
         memory_fill(lease, 0, sizeof(dhcp_lease));
@@ -314,10 +315,27 @@ static bipolar dhcp_ask(string_address device, p8 address_to hardware,
         where.port = network_order_16(DHCP_SERVER_PORT);
         where.host = network_order_32(HOST_BROADCAST);
 
-        for (wait = 1; wait <= 16; wait += wait)
+        for (attempt = 0; attempt < 12; attempt++)
         {
                 p8 kind = 0;
-                positive deadline = wait;
+                positive deadline;
+
+                /*
+                        A second apart for the first eight, then backing off.
+
+                        Doubling from the start reads well and behaves badly
+                        at boot. Carrier arrives about three seconds in, and
+                        attempts at one, three and seven seconds all straddle
+                        it -- measured, the lease landed at thirteen seconds
+                        on a machine that was ready at three. A fixed second
+                        between the early tries means the first DISCOVER after
+                        the cable comes alive is at most a second behind it.
+
+                        The backoff still exists, because a network with no
+                        server on it should not be broadcast at forever.
+                */
+                wait = attempt < 8 ? 1 : (attempt - 7) * 4;
+                deadline = wait;
 
                 length = dhcp_build(packet, sizeof packet, DHCP_DISCOVER, transaction,
                                     hardware, 0, 0);

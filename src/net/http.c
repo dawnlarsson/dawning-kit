@@ -153,15 +153,11 @@ static string_address http_header(p8 address_to bytes, positive size,
         while (at < size)
         {
                 positive line = at;
-                positive stop;
+                p8 address_to newline = (p8 address_to)memory_first_of(
+                    bytes + at, '\n', size - at);
+                positive stop = newline ? (positive)(newline - bytes) : size;
 
-                while (at < size && bytes[at] != '\n')
-                        at++;
-
-                stop = at;
-
-                if (at < size)
-                        at++;
+                at = newline ? stop + 1 : stop;
 
                 if (stop > line && bytes[stop - 1] == '\r')
                         stop--;
@@ -200,8 +196,8 @@ static string_address http_header(p8 address_to bytes, positive size,
                 {
                         positive from = line + want + 1;
 
-                        while (from < stop && (bytes[from] == ' ' || bytes[from] == '\t'))
-                                from++;
+                        from += string_span_max((string_address)(bytes + from), stop - from,
+                                                string_set_blanks);
 
                         if (length)
                                 address_to length = stop - from;
@@ -243,12 +239,13 @@ static bipolar http_unchunk(p8 address_to bytes, positive size)
         {
                 positive line = read;
                 positive length;
+                p8 address_to newline = (p8 address_to)memory_first_of(
+                    bytes + read, '\n', size - read);
 
-                while (read < size && bytes[read] != '\n')
-                        read++;
-
-                if (read >= size)
+                if (!newline)
                         return HTTP_MALFORMED;
+
+                read = (positive)(newline - bytes);
 
                 length = string_digits_hexadecimal_max(
                     (string_address)(bytes + line), read - line, null);

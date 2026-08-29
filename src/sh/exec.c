@@ -862,14 +862,14 @@ static fn exec_assign(string_address word)
 */
 static bool exec_special_builtin(string_address name)
 {
-        return word_is(name, ":") || word_is(name, ".") ||
-               word_is(name, "break") || word_is(name, "continue") ||
-               word_is(name, "eval") || word_is(name, "exec") ||
-               word_is(name, "exit") || word_is(name, "export") ||
-               word_is(name, "readonly") || word_is(name, "return") ||
-               word_is(name, "set") || word_is(name, "shift") ||
-               word_is(name, "times") || word_is(name, "trap") ||
-               word_is(name, "unset");
+        static string_address names[] = {
+            ":", ".", "break", "continue", "eval", "exec", "exit", "export",
+            "readonly", "return", "set", "shift", "times", "trap", "unset",
+        };
+
+        return string_table_find(name, names, sizeof(names[0]),
+                                 sizeof(names) / sizeof(names[0])) <
+               sizeof(names) / sizeof(names[0]);
 }
 
 /*

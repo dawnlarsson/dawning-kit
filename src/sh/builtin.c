@@ -73,17 +73,8 @@ static positive readonly_count;
 
 bool env_readonly(const_string name)
 {
-        positive index = 0;
-
-        while (index < readonly_count)
-        {
-                if (!string_compare(readonly_name[index], (string_address)name))
-                        return true;
-
-                index++;
-        }
-
-        return false;
+        return string_table_find((string_address)name, readonly_name,
+                                 sizeof(readonly_name[0]), readonly_count) < readonly_count;
 }
 
 #define ENV_MAX_ENTRIES 64
@@ -952,8 +943,7 @@ bipolar shell_signed(string_address input, bool address_to good)
         if (!input)
                 return 0;
 
-        while (string_is(input, ' ') || string_is(input, '\t'))
-                input++;
+        input += string_span(input, string_set_blanks);
 
         positive used;
         bipolar value = string_bipolar(input, address_of used);
@@ -3462,22 +3452,13 @@ fn shell_alias(writer write, string_address input)
                 }
 
                 {
-                        positive at = 0;
-                        bool shown = false;
+                        positive at = string_table_find(word, alias_table,
+                                                        sizeof(alias_table[0]),
+                                                        alias_count);
 
-                        while (at < alias_count)
-                        {
-                                if (word_is(alias_table[at].name, word))
-                                {
-                                        alias_written(write, at);
-                                        shown = true;
-                                        break;
-                                }
-
-                                at++;
-                        }
-
-                        if (!shown)
+                        if (at < alias_count)
+                                alias_written(write, at);
+                        else
                                 answer = 1;
                 }
 
@@ -3890,8 +3871,8 @@ fn shell_dot(writer write, string_address input)
 {
         p8 found[768];
         string_address path;
-        bipolar handle;
-        positive filled = 0;
+        bipolar got;
+        positive filled;
         positive at = 0;
 
         if (shell_argc < 2 || !run_line)
@@ -3910,9 +3891,9 @@ fn shell_dot(writer write, string_address input)
         if (!string_first_of(path, '/') && shell_find_in_path(path, found, sizeof(found)))
                 path = found;
 
-        handle = system_call_3(syscall(openat), AT_FDCWD, (positive)path, FILE_READ);
+        got = file_slurp(path, source_text, sizeof(source_text));
 
-        if (handle < 0)
+        if (got < 0)
         {
                 string_format(shell_diagnostic, "%s: %s: cannot open\n",
                               shell_argv[0], shell_argv[1]);
@@ -3937,20 +3918,7 @@ fn shell_dot(writer write, string_address input)
                 return;
         }
 
-        while (filled < SOURCE_MAX - 1)
-        {
-                bipolar got = system_read_retry((positive)handle,
-                                                source_text + filled,
-                                                SOURCE_MAX - 1 - filled);
-
-                if (got <= 0)
-                        break;
-
-                filled += (positive)got;
-        }
-
-        system_call_1(syscall(close), (positive)handle);
-        source_text[filled] = end;
+        filled = (positive)got;
 
         {
                 lex_token kept_tokens[LEX_TOKENS];
@@ -3966,10 +3934,9 @@ fn shell_dot(writer write, string_address input)
 
                 while (at < filled)
                 {
-                        positive stop = at;
-
-                        while (stop < filled && source_text[stop] != '\n')
-                                stop++;
+                        p8 address_to newline = (p8 address_to)memory_first_of(
+                            source_text + at, '\n', filled - at);
+                        positive stop = newline ? (positive)(newline - source_text) : filled;
 
                         source_text[stop] = end;
                         run_line(source_text + at);
@@ -4079,6 +4046,17 @@ shell_command shell_commands[] = {
     {"export", shell_export},
     {null, null},
 };
+
+#define SHELL_COMMAND_COUNT ((sizeof(shell_commands) / sizeof(shell_commands[0])) - 1)
+
+static shell_command address_to shell_command_named(string_address name)
+{
+        positive which = string_table_find(name, shell_commands,
+                                           sizeof(shell_commands[0]),
+                                           SHELL_COMMAND_COUNT);
+
+        return which < SHELL_COMMAND_COUNT ? shell_commands + which : null;
+}
 
 /*
         Where a name was found last time.
@@ -4268,24 +4246,14 @@ fn shell_type(writer write, string_address input)
         while (index < shell_argc)
         {
                 string_address name = shell_argv[index++];
-                shell_command address_to command = shell_commands;
+                shell_command address_to command = shell_command_named(name);
                 p8 found[768];
-                bool said = false;
 
-                while (command->name)
+                if (command)
                 {
-                        if (!string_compare(command->name, name))
-                        {
-                                string_format(write, "%s is a shell builtin\n", name);
-                                said = true;
-                                break;
-                        }
-
-                        command++;
-                }
-
-                if (said)
+                        string_format(write, "%s is a shell builtin\n", name);
                         continue;
+                }
 
                 if (shell_tool_here(name))
                 {
@@ -4362,21 +4330,15 @@ fn shell_command_builtin(writer write, string_address input)
         if (only_say)
         {
                 string_address name = shell_argv[index];
-                shell_command address_to command = shell_commands;
+                shell_command address_to command = shell_command_named(name);
                 p8 found[768];
 
-                while (command->name)
+                if (command)
                 {
-                        if (!string_compare(command->name, name))
-                        {
-                                string_format(write, at_length
-                                                             ? "%s is a shell builtin\n"
-                                                             : "%s\n",
-                                              name);
-                                return shell_answer(0);
-                        }
-
-                        command++;
+                        string_format(write, at_length ? "%s is a shell builtin\n"
+                                                       : "%s\n",
+                                      name);
+                        return shell_answer(0);
                 }
 
                 if (shell_tool_here(name))
@@ -4433,15 +4395,8 @@ fn shell_which(writer write, string_address input)
         if (input == null)
                 return shell_diagnostic(str("which: missing operand\n"));
 
-        shell_command address_to command = shell_commands;
-
-        while (command->name)
-        {
-                if (!string_compare(command->name, input))
-                        return string_format(write, "%s: shell builtin\n", input);
-
-                command++;
-        }
+        if (shell_command_named(input))
+                return string_format(write, "%s: shell builtin\n", input);
 
         // Before the path, because that is the order the shell runs them in:
         // a grep on the path is not the grep that would run.
