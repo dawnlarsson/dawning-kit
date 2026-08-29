@@ -2135,12 +2135,6 @@ static inline INLINE address_any copy_until_known(address_any destination,
                  ? copy_apart_known((destination), (source), (size))           \
                  : memory_copy_apart((destination), (source), (size)))
 
-#define memory_fill(destination, value, size)                                 \
-        (__builtin_constant_p(size) && (positive)(size) <= KNOWN_SIZE_MAX     \
-                 ? fill_known((destination), (value), (size))                 \
-                 : memory_fill((destination), (value), (size)))
-
-
 //      set-literal
 /*
         A macro names itself in its own replacement, which the preprocessor
