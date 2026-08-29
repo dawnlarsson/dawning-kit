@@ -580,6 +580,11 @@ pub address_any memory_take(positive bytes)
         and everything else goes onto the free list of the shelf it has said
         it belongs to since it was cut.
 
+        The shelf comparison is deliberately first. It is the only path in a
+        warmed malloc/free loop, while shifted and mapped blocks are the rare
+        cases. Putting their two equality tests first cost that loop two
+        branches and four retired instructions per pair.
+
         A tag in the freed band means this block is already on a list, so the
         second free of it does nothing. A tag that is none of the above means
         the pointer did not come from here at all, or points into the middle
@@ -596,6 +601,14 @@ pub fn memory_give(address_any block)
 
         positive tag = address_to allocator_tag(block);
 
+        if (tag < ALLOCATOR_CLASSES)
+        {
+                address_to allocator_tag(block) = ALLOCATOR_FREED + tag;
+                address_to allocator_link(block) = allocator_free_list[tag];
+                allocator_free_list[tag] = block;
+                return;
+        }
+
         if (tag == ALLOCATOR_SHIFTED)
         {
                 memory_give((address_any)address_to allocator_extra(block));
@@ -610,12 +623,7 @@ pub fn memory_give(address_any block)
                 return;
         }
 
-        if (tag >= ALLOCATOR_CLASSES)
-                return;
-
-        address_to allocator_tag(block) = ALLOCATOR_FREED + tag;
-        address_to allocator_link(block) = allocator_free_list[tag];
-        allocator_free_list[tag] = block;
+        //      A tag in the freed band, or one this allocator did not write.
 }
 
 /*
@@ -631,6 +639,10 @@ pub fn memory_give(address_any block)
         An over-aligned block reports what is left of the allocation
         underneath it after the padding that got it onto its boundary, which
         is the only figure a caller can safely write into.
+
+        As in free, the ordinary shelf is recognized first: asking the usable
+        size of a live malloc block is the common call, and needs only the one
+        range check before the table lookup.
 */
 pub positive memory_usable_size(address_any block)
 {
@@ -638,6 +650,9 @@ pub positive memory_usable_size(address_any block)
                 return 0;
 
         positive tag = address_to allocator_tag(block);
+
+        if (tag < ALLOCATOR_CLASSES)
+                return allocator_class_size[tag] - ALLOCATOR_HEADER;
 
         if (tag == ALLOCATOR_SHIFTED)
         {
@@ -651,10 +666,7 @@ pub positive memory_usable_size(address_any block)
         if (tag == ALLOCATOR_MAPPED)
                 return address_to allocator_extra(block) - ALLOCATOR_HEADER_WIDE;
 
-        if (tag >= ALLOCATOR_CLASSES)
-                return 0;
-
-        return allocator_class_size[tag] - ALLOCATOR_HEADER;
+        return 0;
 }
 
 /*
