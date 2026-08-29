@@ -84,8 +84,15 @@ def load(name):
         i = j
     return vals[0], vals[1], d[i + 1:]
 
+processor = ["-cpu", "Nehalem"]
+if os.access("/dev/kvm", os.R_OK | os.W_OK):
+    # The floor is covered by boot.sh.  Here the widest host path matters:
+    # compositor copies to a trapped device mapping have failed only when a
+    # real processor selected the AVX-512 body that KVM then had to emulate.
+    processor = ["-cpu", "host", "-enable-kvm"]
+
 guest = subprocess.Popen([
-    "qemu-system-x86_64", "-m", "2G", "-smp", "2", "-cpu", "Nehalem",
+    "qemu-system-x86_64", "-m", "2G", "-smp", "2"] + processor + [
     "-kernel", image, "-vga", "none", "-device", "virtio-gpu-pci",
     "-device", "qemu-xhci", "-device", "usb-tablet", "-device", "usb-kbd",
     "-no-reboot", "-display", "none", "-serial", "file:" + work + "/serial",
@@ -128,6 +135,21 @@ time.sleep(0.5)
 
 def send(events):
     qcmd({"execute": "input-send-event", "arguments": {"events": events}})
+
+def key(code):
+    # A real keyboard event, not bytes slipped into the serial console.  The
+    # window server, terminal, pty and interactive shell all have to carry it.
+    send([{"type": "key", "data": {"down": True,
+                                      "key": {"type": "qcode", "data": code}}},
+          {"type": "key", "data": {"down": False,
+                                      "key": {"type": "qcode", "data": code}}}])
+    time.sleep(0.02)
+
+def type_text(value):
+    names = {" ": "spc", ".": "dot", "/": "slash", "-": "minus",
+             "\n": "ret"}
+    for character in value:
+        key(names.get(character, character))
 
 def moveto(x, y):
     send([{"type": "abs", "data": {"axis": "x", "value": int(x * 32767 / W)}},
@@ -215,6 +237,64 @@ if len(runs) >= 2:
 
     out.append(("focus follows a click", "moved" if after != before else "same",
                 "moved"))
+
+    # The log window is anchored near the left edge.  The graphical terminal
+    # asks to be centred and is therefore the second run.  Exercise the route
+    # a person on the machine actually uses: USB keyboard -> compositor ->
+    # terminal -> pty -> shell.  The monitor redraws eight times, long enough
+    # to catch faults tied to a refresh rather than merely to startup.
+    b_top = next((y for y in range(h2)
+                  if at((b_left + b_right) // 2, y) != bg), 0)
+    b_bottom = next((y for y in range(h2 - 1, b_top, -1)
+                     if at((b_left + b_right) // 2, y) != bg), h2 - 1)
+
+    moveto((b_left + b_right) // 2, b_top + 6)
+    send([{"type": "btn", "data": {"down": True, "button": "left"}}])
+    time.sleep(0.2)
+    send([{"type": "btn", "data": {"down": False, "button": "left"}}])
+    time.sleep(0.5)
+
+    shot("shell-before-monitor")
+    before_w, before_h, before_monitor = load("shell-before-monitor")
+    type_text("/mointor.sh 1 8\n")
+
+    time.sleep(2.5)
+    shot("monitor-first")
+    first_w, first_h, first_monitor = load("monitor-first")
+    time.sleep(2.0)
+    shot("monitor-second")
+    second_w, second_h, second_monitor = load("monitor-second")
+
+    def changed(a, b):
+        different = 0
+        top = min(b_top + 20, second_h)
+        bottom = min(b_bottom, second_h - 1)
+        for y in range(top, bottom + 1):
+            for x in range(b_left, min(b_right + 1, second_w)):
+                offset = (y * second_w + x) * 3
+                if a[offset:offset + 3] != b[offset:offset + 3]:
+                    different += 1
+        return different
+
+    appeared = changed(before_monitor, first_monitor)
+    redrawn = changed(first_monitor, second_monitor)
+    out.append(("monitor reached screen", "yes" if appeared > 200 else
+                "%d pixels" % appeared, "yes"))
+    out.append(("monitor redraws", "yes" if redrawn > 32 else
+                "%d pixels" % redrawn, "yes"))
+
+    # Let all eight updates complete before looking for the fault report.
+    time.sleep(5)
+
+try:
+    serial = open(work + "/serial", "rb").read().lower()
+except OSError:
+    serial = b""
+
+for name, marker in (("no protection fault", b"general protection fault"),
+                     ("no oops", b"oops:"),
+                     ("no kernel panic", b"kernel panic")):
+    out.append((name, "present" if marker in serial else "absent", "absent"))
 
 hf.write(b"quit\n")
 hf.flush()
