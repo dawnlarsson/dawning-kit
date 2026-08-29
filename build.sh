@@ -330,7 +330,26 @@ wgcVXSeiHcXa9SSFDvKn0L1q5nSLQGHp38qUi1ZPf/1uQSuB3ME=
                 # was asked for, in that order, so the last two win the choices the
                 # earlier ones happen to touch.
                 if [ -z "$extra" ]; then
-                        profiles="any general gpu guests latency prod arch/x64 debug_none limbo desktop"
+                        #
+                        #       serial is last on purpose, and it is not
+                        #       optional.
+                        #
+                        #       src/test/boot.sh drives the image over a
+                        #       serial line and reads its answers back, so a
+                        #       default image without CONFIG_SERIAL_8250 has
+                        #       no way to be tested at all: the kernel comes
+                        #       up, runs /init, and says nothing, because
+                        #       there is no ttyS0 for /dev/console to be. The
+                        #       lane had been passing on a configuration
+                        #       carried over from an earlier build rather than
+                        #       on one these profiles produce, and the first
+                        #       regeneration of it turned the boot silent.
+                        #
+                        #       Last, because it also asks for the loglevel
+                        #       and the timestamps that make the transcript
+                        #       readable, and debug_none quietens both.
+                        #
+                        profiles="any general gpu guests latency prod arch/x64 debug_none limbo desktop serial"
                 else
                         # shellcheck disable=SC2086
                         profiles="any general gpu guests latency prod $extra"
