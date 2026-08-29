@@ -200,23 +200,13 @@ static p16 dns_transaction(void)
 static bipolar dns_server_at(string_address path, positive wanted)
 {
         p8 text[4096];
-        b32 handle;
         bipolar got;
         positive at = 0;
 
-        handle = (b32)system_call_4(syscall(openat), (positive)-100, (positive)path, 0, 0);
-
-        if (handle < 0)
-                return DNS_NO_SERVER;
-
-        got = system_call_3(syscall(read), (positive)handle, (positive)text,
-                            sizeof(text) - 1);
-        system_call_1(syscall(close), (positive)handle);
+        got = file_slurp(path, text, sizeof text);
 
         if (got <= 0)
                 return DNS_NO_SERVER;
-
-        text[got] = end;
 
         while (at < (positive)got)
         {

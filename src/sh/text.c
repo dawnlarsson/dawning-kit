@@ -249,8 +249,8 @@ static bool text_fill()
         if (text_input.finished)
                 return false;
 
-        bipolar got = system_call_3(syscall(read), text_input.handle,
-                                    (positive)text_input.buffer, TEXT_READ_MAX);
+        bipolar got = system_read_retry(text_input.handle, text_input.buffer,
+                                        TEXT_READ_MAX);
 
         if (got <= 0)
         {
@@ -2802,8 +2802,7 @@ static bool text_read_at(positive handle, positive offset, p8 address_to into, p
 
         while (have < want)
         {
-                bipolar got = system_call_3(syscall(read), handle,
-                                            (positive)(into + have), want - have);
+                bipolar got = system_read_retry(handle, into + have, want - have);
 
                 if (got <= 0)
                         return false;
@@ -6779,8 +6778,8 @@ static fn sed_put_file(string_address name)
 
         for (;;)
         {
-                bipolar got = system_call_3(syscall(read), (positive)handle,
-                                            (positive)window, sizeof(window));
+                bipolar got = system_read_retry((positive)handle, window,
+                                                sizeof(window));
 
                 if (got <= 0)
                         break;
@@ -8802,8 +8801,7 @@ static bipolar cmp_byte(cmp_side address_to side)
                 if (side->finished)
                         return -1;
 
-                got = system_call_3(syscall(read), side->handle,
-                                    (positive)side->buffer, CMP_BLOCK);
+                got = system_read_retry(side->handle, side->buffer, CMP_BLOCK);
 
                 if (got <= 0)
                 {
