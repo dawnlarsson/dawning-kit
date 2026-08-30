@@ -26,15 +26,18 @@ static __attribute__((noinline, noclone)) fn startup_cpu_floor_call(void)
                 "mov $1, %%eax\n\t"
                 "xor %%ecx, %%ecx\n\t"
                 "cpuid\n\t"
+                "bt $27, %%ecx\n\t"
+                "jnc 1f\n\t"
                 "xor %%ecx, %%ecx\n\t"
                 "xgetbv\n\t"
                 "mov $7, %%eax\n\t"
                 "xor %%ecx, %%ecx\n\t"
                 "cpuid\n\t"
+                "1:\n\t"
                 "pop %%rbx"
                 :
                 :
-                : "rax", "rcx", "rdx", "memory");
+                : "rax", "rcx", "rdx", "cc", "memory");
 #endif
 }
 

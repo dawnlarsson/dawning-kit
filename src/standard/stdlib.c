@@ -579,9 +579,10 @@ b32 clearenv(void)
         has exactly that bug and answers it with folklore -- flush before you
         fork -- which is advice given to callers rather than a mechanism.
 
-        The mechanism is below, in stdlib_buffers_are_ours, and it costs one
-        getpid on the one path in a process's life that ends the process. With
-        it the macro is the default and the divergence is closed at both ends:
+        The mechanism is below, in stdlib_buffers_are_ours, and when output is
+        pending it costs one getpid on the one path in a process's life that
+        ends the process. With it the macro is the default and the divergence
+        is closed at both ends:
         printf then exit prints, which is what every C program on earth
         expects and what this library got wrong, and printf then fork then
         exit in the child prints nothing extra, which is better than what
