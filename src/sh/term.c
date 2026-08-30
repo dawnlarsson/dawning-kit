@@ -1843,9 +1843,12 @@ static string_address key_sequence(unsigned int code)
         is drawn; without it, it is the byte or the sequence going straight
         out, which is all this ever did.
 */
-static fn SPARE term_key(unsigned int character, unsigned int code)
+static fn SPARE term_key_modified(unsigned int character, unsigned int code,
+                                  unsigned int modifiers)
 {
         string_address sequence;
+        unsigned int held = modifiers &
+            (WINDOW_KEY_SHIFT | WINDOW_KEY_ALT | WINDOW_KEY_CONTROL);
 
         if (line_editing && line_key(character, code))
         {
@@ -1861,9 +1864,62 @@ static fn SPARE term_key(unsigned int character, unsigned int code)
 
         sequence = key_sequence(code);
 
-        if (sequence)
-                emit_bytes((address_any)sequence,
-                           string_length((string_address)sequence));
+        if (!sequence)
+                return;
+
+        /*
+                The same sequence, with what was held written into it.
+
+                ECMA-48 leaves this to the terminal and xterm settled it: the
+                second parameter is one plus the sum of shift, alt and control,
+                so Shift+Right is CSI 1;2C and Ctrl+Right is CSI 1;5C. A
+                sequence that ends in a tilde takes the parameter before the
+                tilde instead, which is why the two are built separately.
+
+                Without this a program on the far end cannot tell Shift+Right
+                from Right, because nothing in the bytes says. The compositor
+                has known which modifiers were down since keys.c read them; it
+                is only this last step that threw the answer away.
+        */
+        if (held)
+        {
+                unsigned int value =
+                    1 + ((held & WINDOW_KEY_SHIFT) ? 1 : 0) +
+                    ((held & WINDOW_KEY_ALT) ? 2 : 0) +
+                    ((held & WINDOW_KEY_CONTROL) ? 4 : 0);
+                positive length = string_length((string_address)sequence);
+
+                if (length > 2 && sequence[1] == '[' &&
+                    sequence[length - 1] == '~')
+                {
+                        emit_bytes((address_any)sequence, length - 1);
+                        emit(';');
+                        emit('0' + value);
+                        emit('~');
+                        return;
+                }
+
+                if (length == 3 && (sequence[1] == '[' || sequence[1] == 'O'))
+                {
+                        emit(27);
+                        emit('[');
+                        emit('1');
+                        emit(';');
+                        emit('0' + value);
+                        emit(sequence[2]);
+                        return;
+                }
+        }
+
+        emit_bytes((address_any)sequence,
+                   string_length((string_address)sequence));
+}
+
+//      The two argument spelling every existing caller uses, which is every
+//      caller that has no modifiers to hand.
+static fn SPARE term_key(unsigned int character, unsigned int code)
+{
+        term_key_modified(character, code, 0);
 }
 
 /*

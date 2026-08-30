@@ -241,7 +241,9 @@ static b32 screen_term()
                 for (unsigned int i = 0; i < keys; i++)
                         if (typed[i].flags & WINDOW_KEY_DOWN)
                         {
-                                term_key(typed[i].character, typed[i].code);
+                                term_key_modified(typed[i].character,
+                                                  typed[i].code,
+                                                  typed[i].flags);
 
                                 if (!term_send(master))
                                 {

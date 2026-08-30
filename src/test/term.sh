@@ -220,14 +220,28 @@ static fn feed_keys(string_address text)
                 if (text[at] == '<')
                 {
                         positive stop = at + 1;
+                        positive begin = at + 1;
+                        unsigned int modifiers = WINDOW_KEY_DOWN;
 
                         while (text[stop] && text[stop] != '>')
                                 stop++;
 
+                        while (begin + 1 < stop && text[begin + 1] == '-')
+                        {
+                                if (text[begin] == 's')
+                                        modifiers |= WINDOW_KEY_SHIFT;
+                                else if (text[begin] == 'a')
+                                        modifiers |= WINDOW_KEY_ALT;
+                                else if (text[begin] == 'c')
+                                        modifiers |= WINDOW_KEY_CONTROL;
+
+                                begin += 2;
+                        }
+
                         for (positive i = 0; i < sizeof(named_keys) / sizeof(named_keys[0]); i++)
                         {
                                 const char *name = named_keys[i].name;
-                                positive c = at + 1;
+                                positive c = begin;
 
                                 while (*name && text[c] == (p8)*name)
                                 {
@@ -237,7 +251,8 @@ static fn feed_keys(string_address text)
 
                                 if (!*name && c == stop)
                                 {
-                                        term_key(0, named_keys[i].code);
+                                        term_key_modified(0, named_keys[i].code,
+                                                          modifiers);
                                         break;
                                 }
                         }
@@ -1091,6 +1106,8 @@ group off
 #       ICANON off is a program that wants its own keys, and handing it a
 #       line at a time would be handing it nothing at all until Enter.
 same 'passes through' '[a\e[D]'                  20 3 edit off keys 'a<left>' sent
+same 'shift is encoded' '[\e[1;2D]'              20 3 edit off keys '<s-left>' sent
+same 'control tilde encoded' '[\e[5;5~]'         20 3 edit off keys '<c-pgup>' sent
 same 'and back on'    '[a]|[]'                   20 3 edit off keys 'a' sent edit on keys 'b' sent
 same 'the line goes with it' '[ab ]|[x]'         20 3 edit on keys 'abc\x7f' row 0 edit off keys 'x' sent
 

@@ -381,6 +381,7 @@ static fn shell_words_bind(shell_words address_to list,
 #include "../canvas/window.c"
 #include "term.c"
 #include "screen.c"
+#include "edit.c"
 #include "system.c"
 #include "builtin.c"
 

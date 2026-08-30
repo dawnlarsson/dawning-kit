@@ -43,7 +43,7 @@ TEST_TALLY="$work/tally"
 export TEST_TALLY
 : > "$TEST_TALLY"
 
-lanes="standard declare allocator error strings stdlib leaving numbers clock math format scan stream spool process signal lock verify exact known socket net slurp wait writer native probe shell expand builtin awk text tools files term kit boot canvas"
+lanes="standard declare allocator error strings stdlib leaving numbers clock math format scan stream spool process signal lock verify exact known socket net slurp wait writer native probe shell expand builtin awk text tools files term edit kit boot canvas"
 
 describe()
 {
@@ -83,6 +83,7 @@ describe()
         awk)      echo "awk against the one on the machine, listed and generated" ;;
         tools)    echo "dd, diff and ps against the system's own" ;;
         term)     echo "the emulator driven a byte at a time, and the line being edited" ;;
+        edit)     echo "the full-screen editor, its key protocol, buffer, undo and redraws" ;;
         kit)      echo "the byte and document kits the build scripts are made of" ;;
         boot)     echo "the image boots, init starts, and the shell answers" ;;
         canvas)   echo "what is actually on the screen, read back a pixel at a time" ;;
@@ -2195,6 +2196,11 @@ lane_term()
         need_shell || return 1
 
         sh src/test/term.sh "$farm"
+}
+
+lane_edit()
+{
+        sh src/test/edit.sh
 }
 
 lane_kit()
