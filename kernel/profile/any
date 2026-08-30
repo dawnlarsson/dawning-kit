@@ -26,6 +26,25 @@ CONFIG_RD_GZIP=y
 #
 CONFIG_HAVE_KERNEL_GZIP=y
 CONFIG_HAVE_KERNEL_ZSTD=y
+# Measured, because "compression is slow" is the kind of thing that sounds
+# true. The boot decompressor was instrumented with rdtsc either side of
+# decompress_kernel: 85,368,635 cycles at 4291.6 MHz, which is 19.9 ms to
+# turn 8.5 MB back into 34 MB. That is 5.8% of a 341 ms boot.
+#
+# There is no headroom in it worth taking. The same payload through upstream's
+# own libzstd, in memory with no file work, best of seven: 19.1 ms. The
+# kernel's in-tree decoder is within four percent of the tuned reference
+# library, so a hand-written replacement is competing with something already
+# at the floor, for a ceiling of eight tenths of a millisecond.
+#
+# LZ4 was tried and is worse here for a reason that has nothing to do with
+# decode speed. It decompresses the same payload in about the same time, and
+# the image it makes is 13.3 MB against zstd's 9.8 -- 36% more to read. On a
+# USB stick at 30 MB/s those 3.5 MB cost about 117 ms of reading to save ten
+# of decoding. The compression ratio is the thing that matters on real boot
+# media, which is what this image is for.
+#
+# The lever for the 19.9 ms is a smaller vmlinux, not a faster decoder.
 CONFIG_KERNEL_ZSTD=y
 
 CONFIG_UNIX=y
