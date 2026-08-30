@@ -14,13 +14,8 @@
 
 #define CLOCK_MONOTONIC 1
 
-// vfork semantics: the child borrows the parent's mm and the parent blocks
-// until it execs. That skips the page table copy fork does purely so exec can
-// throw it away, which is the cost worth knowing about.
 #define AT_EMPTY_PATH 0x1000
 
-#define CLONE_VM 0x00000100
-#define CLONE_VFORK 0x00004000
 #define ROUNDS 400
 
 timespec started;
@@ -40,6 +35,7 @@ positive run_many_flags(string_address path, positive flags)
 {
         string_address argv[] = {path, null};
         positive start = now_ns();
+        bool failed = false;
 
         for (positive i = 0; i < ROUNDS; i++)
         {
@@ -48,25 +44,35 @@ positive run_many_flags(string_address path, positive flags)
                 if (child == 0)
                 {
                         if (path)
+                        {
                                 system_call_3(syscall(execve), (positive)path, (positive)argv, 0);
+                                // A successful exec never returns.  Keep a missing or
+                                // rejected fixture from looking like an exceptionally
+                                // fast child.
+                                system_call_1(syscall(exit), 127);
+                        }
                         system_call_1(syscall(exit), 0);
+                }
+
+                if (child < 0)
+                {
+                        failed = true;
+                        continue;
                 }
 
                 positive status = 0;
                 system_call_4(syscall(wait4), child, (positive)address_of status, 0, 0);
+
+                if (status)
+                        failed = true;
         }
 
-        return now_ns() - start;
+        return failed ? 0 : now_ns() - start;
 }
 
 positive run_many(string_address path)
 {
         return run_many_flags(path, SIGCHLD);
-}
-
-positive run_many_vfork(string_address path)
-{
-        return run_many_flags(path, CLONE_VM | CLONE_VFORK | SIGCHLD);
 }
 
 // Repeats a measurement and keeps the fastest, which is the one least
@@ -111,6 +117,7 @@ positive bench_spawn_device(string_address path)
         request.envp_count = 0;
 
         positive start = now_ns();
+        bool failed = false;
 
         for (positive i = 0; i < ROUNDS; i++)
         {
@@ -127,9 +134,12 @@ positive bench_spawn_device(string_address path)
 
                 positive status = 0;
                 system_call_4(syscall(wait4), child, (positive)address_of status, 0, 0);
+
+                if (status)
+                        failed = true;
         }
 
-        return now_ns() - start;
+        return failed ? 0 : now_ns() - start;
 }
 
 // execveat on an already open descriptor skips pathname resolution entirely.
@@ -144,6 +154,7 @@ positive bench_execveat(string_address path)
                 return 0;
 
         positive start = now_ns();
+        bool failed = false;
 
         for (positive i = 0; i < ROUNDS; i++)
         {
@@ -158,11 +169,14 @@ positive bench_execveat(string_address path)
 
                 positive status = 0;
                 system_call_4(syscall(wait4), child, (positive)address_of status, 0, 0);
+
+                if (status)
+                        failed = true;
         }
 
         positive elapsed = now_ns() - start;
         system_call_1(syscall(close), image);
-        return elapsed;
+        return failed ? 0 : elapsed;
 }
 
 // Spawns without waiting, reaping afterwards outside the timed section, so the
@@ -193,16 +207,23 @@ positive bench_spawn_nowait(string_address path)
                                                 (positive)address_of request);
 
         positive elapsed = now_ns() - start;
+        bool failed = false;
 
         for (positive i = 0; i < ROUNDS; i++)
         {
                 positive status = 0;
                 if (spawned_pids[i] > 0)
+                {
                         system_call_4(syscall(wait4), spawned_pids[i],
                                       (positive)address_of status, 0, 0);
+                        if (status)
+                                failed = true;
+                }
+                else
+                        failed = true;
         }
 
-        return elapsed;
+        return failed ? 0 : elapsed;
 }
 
 fn report(string_address label, positive total)
@@ -212,19 +233,54 @@ fn report(string_address label, positive total)
         log_flush();
 }
 
+fn report_difference(string_address label, positive baseline, positive candidate)
+{
+        positive difference;
+        positive tenths;
+
+        if (!baseline || !candidate)
+                return;
+
+        if (candidate <= baseline)
+        {
+                difference = baseline - candidate;
+                tenths = difference * 1000 / baseline;
+                string_format(log, "%s  %p ns/exec faster  (%p.%p percent)\n",
+                              label, difference / ROUNDS,
+                              tenths / 10, tenths % 10);
+        }
+        else
+        {
+                difference = candidate - baseline;
+                tenths = difference * 1000 / baseline;
+                string_format(log, "%s  %p ns/exec slower  (%p.%p percent)\n",
+                              label, difference / ROUNDS,
+                              tenths / 10, tenths % 10);
+        }
+
+        log_flush();
+}
+
 b32 main()
 {
+        struct stats stats_before = {0};
+        struct stats stats_after = {0};
+
+        log_direct((string_address) "spark process floor\n", 20);
+
         // warm the page cache for both images first
         run_many("/tiny.elf");
         run_many("/tiny.spark");
 
-        positive vfl = CLONE_VM | CLONE_VFORK | SIGCHLD;
-
         positive floor = best_of(null, 5);
         positive elf = best_of("/tiny.elf", 5);
         positive spark = best_of("/tiny.spark", 5);
-        positive vspark = best_of_flags("/tiny.spark", vfl, 5);
-        positive velf = best_of_flags("/tiny.elf", vfl, 5);
+
+        if (!floor || !elf || !spark)
+        {
+                log_error("benchmark child could not execute\n", 0);
+                return 1;
+        }
 
         device = system_call_4(syscall(openat), AT_FDCWD,
                                      (positive)SPARK_DEVICE, FILE_READ_WRITE, 0);
@@ -232,11 +288,23 @@ b32 main()
         positive dev = 0;
         if (device >= 0)
         {
+                if (system_call_3(syscall(ioctl), device, SPARK_IOCTL_STATS,
+                                  (positive)address_of stats_before))
+                {
+                        log_error("could not read initial Spark counters\n", 0);
+                        return 1;
+                }
                 bench_spawn_device("/tiny.spark");
                 dev = bench_spawn_device("/tiny.spark");
                 positive again = bench_spawn_device("/tiny.spark");
                 if (again && again < dev)
                         dev = again;
+                if (system_call_3(syscall(ioctl), device, SPARK_IOCTL_STATS,
+                                  (positive)address_of stats_after))
+                {
+                        log_error("could not read final Spark counters\n", 0);
+                        return 1;
+                }
         }
         else
         {
@@ -244,8 +312,7 @@ b32 main()
                 log_flush();
         }
 
-        positive at_fd = best_of(null, 1);
-        at_fd = bench_execveat("/tiny.spark");
+        positive at_fd = bench_execveat("/tiny.spark");
         positive at2 = bench_execveat("/tiny.spark");
         if (at2 && at2 < at_fd)
                 at_fd = at2;
@@ -260,11 +327,18 @@ b32 main()
                         nowait = nw2;
         }
 
+        if (!at_fd || (device >= 0 && (!dev || !nowait)) ||
+            (device >= 0 && stats_after.loads - stats_before.loads != 3 * ROUNDS))
+        {
+                log_error("benchmark launch path did not complete its work\n", 0);
+                return 1;
+        }
+
+        log_direct((string_address) "results\n", 8);
+
         report("fork+wait only ", floor);
         report("fork  + elf    ", elf);
         report("fork  + spark  ", spark);
-        report("vfork + elf    ", velf);
-        report("vfork + spark  ", vspark);
         if (at_fd)
                 report("fork + execveat ", at_fd);
         if (dev)
@@ -272,23 +346,35 @@ b32 main()
         if (nowait)
                 report("/dev/spark nowait", nowait);
 
-        struct stats stats;
-        if (device >= 0 &&
-            system_call_3(syscall(ioctl), device, SPARK_IOCTL_STATS,
-                          (positive)address_of stats) == 0 && stats.spawns)
+        string_format(log, "\nclear comparisons (lower is faster):\n");
+        report_difference("  Spark image versus ELF ", elf, spark);
+        if (dev)
+                report_difference("  fresh-mm versus fork  ", spark, dev);
+
+        if (stats_after.spawns > stats_before.spawns)
         {
-                string_format(log, "\nkernel side, averaged over %p spawns:\n", stats.spawns);
-                string_format(log, "  creating the task  %p ns\n", stats.task_ns / stats.spawns);
-                string_format(log, "  loading the image  %p ns\n", stats.exec_ns / stats.spawns);
-                if (stats.loads)
+                positive spawns = stats_after.spawns - stats_before.spawns;
+                positive loads = stats_after.loads - stats_before.loads;
+                positive task = stats_after.task_ns - stats_before.task_ns;
+                positive exec = stats_after.exec_ns - stats_before.exec_ns;
+                positive loader = stats_after.loader_ns - stats_before.loader_ns;
+                positive mapped = stats_after.map_ns - stats_before.map_ns;
+
+                string_format(log, "\nkernel side, averaged over %p sequential spawns:\n",
+                              spawns);
+                string_format(log, "  completed image loads %p\n", loads);
+                string_format(log, "  creating the task  %p ns\n", task / spawns);
+                string_format(log, "  loading the image  %p ns\n", exec / spawns);
+                if (loads)
                 {
-                        positive loader = stats.loader_ns / stats.loads;
-                        positive exec = stats.exec_ns / stats.spawns;
+                        loader /= loads;
+                        mapped /= loads;
+                        exec /= spawns;
                         string_format(log, "    spark binfmt     %p ns\n", loader);
                         string_format(log, "      exec commit    %p ns\n",
-                                      loader - stats.map_ns / stats.loads);
+                                      loader > mapped ? loader - mapped : 0);
                         string_format(log, "      mapping regions %p ns\n",
-                                      stats.map_ns / stats.loads);
+                                      mapped);
                         string_format(log, "    generic prologue %p ns\n",
                                       exec > loader ? exec - loader : 0);
                 }
@@ -296,9 +382,8 @@ b32 main()
         }
 
         string_format(log, "load cost:  elf %p ns   spark %p ns\n",
-                      (elf - floor) / ROUNDS, (spark - floor) / ROUNDS);
-        string_format(log, "fork tax:   elf %p ns   spark %p ns\n",
-                      (elf - velf) / ROUNDS, (spark - vspark) / ROUNDS);
+                      elf > floor ? (elf - floor) / ROUNDS : 0,
+                      spark > floor ? (spark - floor) / ROUNDS : 0);
         log_flush();
 
         return 0;
