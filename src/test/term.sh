@@ -551,6 +551,11 @@ b32 main()
                         say_number(region_bottom);
                         say_byte('\n');
                 }
+                else if (string_compare(verb, (string_address) "sync") == 0)
+                {
+                        say_number(synchronized_output != 0);
+                        say_byte('\n');
+                }
                 else if (string_compare(verb, (string_address) "resize") == 0)
                 {
                         positive at = 0;
@@ -815,6 +820,16 @@ same 'hidden'        'wrap=1 insert=0 alternate=0 cursor=0 region=0,3' \
                                                  20 3 in '\e[?25l' mode
 same 'shown again'   'wrap=1 insert=0 alternate=0 cursor=1 region=0,3' \
                                                  20 3 in '\e[?25l\e[?25h' mode
+
+group synchronized
+#       DEC mode 2026 changes publication, not parsing or cell writes. Its
+#       state is exposed here so the pure emulator catches private/non-private
+#       confusion even though it has no compositor to observe a flush through.
+same 'begins'        '1'                         20 3 in '\e[?2026h' sync
+same 'ends'          '0'                         20 3 in '\e[?2026h\e[?2026l' sync
+same 'must be private' '0'                       20 3 in '\e[2026h' sync
+same 'reset ends it' '0'                         20 3 in '\e[?2026h\ec' sync
+same 'resize ends it' '0'                        20 3 in '\e[?2026h' resize '30x4' sync
 
 group alternate
 #       A program is given a screen, scribbles on it and hands it back with

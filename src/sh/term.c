@@ -68,6 +68,10 @@ static b32 autowrap = true;
 static b32 insert_mode;
 static b32 cursor_visible = true;
 static b32 application_keys;
+/* DEC private mode 2026: programs may update a complete frame without the
+   compositor presenting the intermediate rows. The cells are still written
+   immediately; only publication is held by screen.c until the mode ends. */
+static b32 synchronized_output;
 
 // Where the block cursor was put, so it can be taken back off.
 static unsigned int shown_row, shown_column;
@@ -631,6 +635,9 @@ static fn mode_set(b32 on)
                         else
                                 alternate_leave();
                         break;
+                case 2026:
+                        synchronized_output = on;
+                        break;
                 }
         }
 }
@@ -648,6 +655,7 @@ static fn full_reset()
         insert_mode = false;
         cursor_visible = true;
         application_keys = false;
+        synchronized_output = false;
         alternate_leave();
         tabs_reset();
         erase(0, 0, ROWS - 1, COLUMNS - 1);
@@ -1994,6 +2002,11 @@ fn regrid(b32 master)
 #ifndef KERNEL_MODE
         b32 cursor_was_shown = shown;
 #endif
+
+        /* A resize is itself a synchronous publication in the new geometry.
+           End any program-held frame first; SIGWINCH will ask a full-screen
+           program to begin and draw another transaction at the new size. */
+        synchronized_output = false;
 
         // Undone in the geometry it was made in. cursor_show inverts a cell in
         // place, so clearing "shown" and moving on left that cell inverted for

@@ -50,7 +50,8 @@ old_time=$scratch/time.old
 
 #       Put the terminal back the way it was found, whichever way we leave.
 finish() {
-        printf '\033[?25h\033[0m\033[?1049l'
+        # End a frame transaction first in case a signal arrived during draw.
+        printf '\033[?2026l\033[?25h\033[0m\033[?1049l'
         rm -rf "$scratch" 2>/dev/null
         exit 0
 }
@@ -395,7 +396,12 @@ while :; do
         process_rows=$(( available_rows - cpu_rows ))
         [ "$process_rows" -lt 1 ] && process_rows=1
 
+        # DEC synchronized output is a transaction at the terminal/compositor
+        # floor. All the ordinary shell writes above may arrive separately,
+        # but no partially filled list is presented between these two modes.
+        printf '\033[?2026h'
         draw
+        printf '\033[?2026l'
         cp "$now_cpu" "$old_cpu" 2>/dev/null
         cp "$now_net" "$old_net" 2>/dev/null
         cp "$now_pid" "$old_pid" 2>/dev/null

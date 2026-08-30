@@ -203,6 +203,7 @@ static b32 screen_term()
         p8 from_shell[1024];
         struct window_key typed[WINDOW_KEYS];
         timespec nap = {0, 4000000};
+        unsigned int synchronized_wait = 0;
 
         cursor_show();
         window_damage(window, 0, ROWS);
@@ -214,8 +215,14 @@ static b32 screen_term()
                 b32 gone = false;
                 unsigned int keys = 0;
 
-                touched_top = ROWS;
-                touched_bottom = 0;
+                /* Damage survives loop boundaries while mode 2026 holds a
+                   frame. Without this, suppressing a flush also forgot the
+                   rows that the eventual atomic flush had to publish. */
+                if (!synchronized_output)
+                {
+                        touched_top = ROWS;
+                        touched_bottom = 0;
+                }
 
                 if (window->columns != COLUMNS || window->rows != ROWS)
                         regrid(master);
@@ -304,11 +311,34 @@ static b32 screen_term()
                         whole screen recomposed two hundred and fifty times a
                         second for nothing.
                 */
-                if (changed)
+                /* A broken or killed client must not freeze its last complete
+                   screen forever. Counting the existing 4 ms loop is cheaper
+                   than adding a clock syscall; fifty turns are a 200 ms
+                   safety ceiling and ordinary dashboard frames finish in
+                   roughly one twentieth of it. */
+                if (synchronized_output)
+                {
+                        synchronized_wait++;
+
+                        if (gone || synchronized_wait >= 50)
+                        {
+                                synchronized_output = false;
+                                changed = touched_bottom > touched_top;
+                        }
+                }
+                else
+                        synchronized_wait = 0;
+
+                if (changed && !synchronized_output)
                 {
                         cursor_show();
-                        window_damage(window, touched_top, touched_bottom - touched_top);
-                        window_flush(window);
+
+                        if (touched_bottom > touched_top)
+                        {
+                                window_damage(window, touched_top,
+                                              touched_bottom - touched_top);
+                                window_flush(window);
+                        }
                 }
 
                 if (gone)
