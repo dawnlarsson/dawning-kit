@@ -1663,16 +1663,43 @@ __asm__(
     "8:  rbit x3, x3\n   clz x3, x3\n   add x5, x5, x3, lsr #2\n"
 
 //
+//      An exact memory span has a stronger contract than a bounded string:
+//      every byte up to the count belongs to the caller, even when there is
+//      no match. Whole vectors that fit in that count are consequently safe
+//      without the align-down/page machinery above. Keep this path separate
+//      so memory_first_of pays only for its own contract while the string
+//      scans remain safe when a terminator is the last mapped byte.
+//
+#define NEON_SPAN_SCAN_MAX(FLAG)                                              \
+    "cmp x6, #64\n   b.lo 4f\n"                                               \
+    "2:  " NEON_FOUR(FLAG)                                                    \
+    "cbnz x3, 3f\n"                                                           \
+    "add x5, x5, #64\n   sub x6, x6, #64\n   cmp x6, #64\n   b.hs 2b\n"       \
+    "4:  cmp x6, #16\n   b.lo 5f\n"                                           \
+    "1:  " NEON_ONE(FLAG)                                                     \
+    "cbnz x3, 8f\n"                                                           \
+    "add x5, x5, #16\n   sub x6, x6, #16\n   cmp x6, #16\n   b.hs 1b\n"       \
+    "b 5f\n"                                                                  \
+    "3:  " NEON_WHICH                                                         \
+    "8:  rbit x3, x3\n   clz x3, x3\n   add x5, x5, x3, lsr #2\n"
+
+//
 //      A bounded string scan still cannot read beyond an earlier terminator.
-//      Start with a sixteen-byte load aligned down inside the current page and
-//      mask its prefix. Peel aligned vectors until x5 is sixty-four aligned;
-//      every four-vector block is then page-contained as well. x6 tracks the
-//      bytes not yet examined, including the part masked from the first load.
-//      Under sixteen bytes it leaves both inputs untouched for label 5.
+//      When its whole bound fits in the current page, the exact-span loop is
+//      already safe and is the floor. Otherwise start with a sixteen-byte
+//      load aligned down inside the current page and mask its prefix. Peel
+//      aligned vectors until x5 is sixty-four aligned; every four-vector
+//      block is then page-contained as well. x6 tracks the bytes not yet
+//      examined, including the part masked from the first load. Under sixteen
+//      bytes it leaves both inputs untouched for label 5.
 //
 #define NEON_SCAN_MAX(FLAG)                                                   \
     "cmp x6, #16\n   b.lo 5f\n"                                           \
-    "and x4, x5, #15\n   bic x5, x5, #15\n"                              \
+    "mov x4, #4096\n   and x7, x5, #0xfff\n   sub x4, x4, x7\n"             \
+    "cmp x6, x4\n   b.hi 9f\n"                                               \
+    NEON_SPAN_SCAN_MAX(FLAG)                                                  \
+    "b 0f\n"                                                                  \
+    "9:  and x4, x5, #15\n   bic x5, x5, #15\n"                          \
     "mov x7, #-1\n   lsl x4, x4, #2\n   lsl x7, x7, x4\n"                  \
     NEON_ONE(FLAG)                                                            \
     "ands x3, x3, x7\n   b.ne 8f\n"                                         \
@@ -1689,7 +1716,8 @@ __asm__(
     "cbnz x3, 8f\n   add x5, x5, #16\n   sub x6, x6, #16\n"                \
     "cmp x6, #16\n   b.hs 1b\n   b 5f\n"                                       \
     "3:  " NEON_WHICH                                                         \
-    "8:  rbit x3, x3\n   clz x3, x3\n   add x5, x5, x3, lsr #2\n"
+    "8:  rbit x3, x3\n   clz x3, x3\n   add x5, x5, x3, lsr #2\n" \
+    "0:\n"
 #endif
 
 #if X64
@@ -1880,9 +1908,16 @@ __asm__(
 //
 #define WIDE_LENGTH_MAX(W, ZEROED, ZEROS, LEAVE, NEXT, SHORT)                        \
     "cmp $" W ", %rdx\n   jb " SHORT "\n"                                     \
+    ZEROED                                                                    \
+    "mov $4096, %r10\n   mov %edi, %ecx\n   and $0xfff, %ecx\n"              \
+    "sub %rcx, %r10\n   cmp %r10, %rdx\n   ja 6f\n"                           \
+    "8:  " ZEROS                                                             \
+    "test %rax, %rax\n   jnz 2f\n"                                            \
+    "add $" W ", %rdi\n   sub $" W ", %rdx\n   cmp $" W ", %rdx\n   jae 8b\n" \
+    LEAVE NEXT                                                                \
+    "6:  "                                                                    \
     "mov %edi, %ecx\n   and $" W "-1, %ecx\n   and $-" W ", %rdi\n"           \
     "mov $-1, %r9\n   shl %cl, %r9  # only bytes at and after the string\n"     \
-    ZEROED                                                                    \
     ZEROS                                                                     \
     "and %r9, %rax\n   jnz 2f\n"                                           \
     "add $" W ", %rdi\n   sub $" W ", %rdx\n   add %rcx, %rdx\n"          \
@@ -1901,6 +1936,13 @@ __asm__(
     "movzbl %r8b, %ecx\n"                                                     \
     BROADCAST                                                                 \
     ZEROED                                                                    \
+    "mov $4096, %r10\n   mov %edi, %ecx\n   and $0xfff, %ecx\n"              \
+    "sub %rcx, %r10\n   cmp %r10, %rdx\n   ja 6f\n"                           \
+    "8:  " EITHER                                                            \
+    "test %rax, %rax\n   jnz 2f\n"                                            \
+    "add $" W ", %rdi\n   sub $" W ", %rdx\n   cmp $" W ", %rdx\n   jae 8b\n" \
+    LEAVE NEXT                                                                \
+    "6:  "                                                                    \
     "mov %edi, %ecx\n   and $" W "-1, %ecx\n   and $-" W ", %rdi\n"           \
     "mov $-1, %r10\n   shl %cl, %r10  # only bytes at and after the string\n"   \
     EITHER                                                                    \
@@ -3226,16 +3268,20 @@ __asm__(
     // Work out the whole page-contained run once.  Checking both pointers on
     // every vector cost twelve instructions per turn; this cost is once per
     // page and the loop itself stays at its traffic floor.
-    "mov $4096, %r10\n   mov %edi, %ecx\n   and $0xfff, %ecx\n   sub %rcx, %r10\n"
+    "21:  mov $4096, %r10\n   mov %edi, %ecx\n   and $0xfff, %ecx\n   sub %rcx, %r10\n"
     "mov $4096, %r11\n   mov %esi, %ecx\n   and $0xfff, %ecx\n   sub %rcx, %r11\n"
     "cmp %r11, %r10\n   cmova %r11, %r10\n   cmp %rdx, %r10\n   cmova %rdx, %r10\n"
     "cmp $32, %r10\n   jb 13f\n"
+    // Turn the run length into its exclusive vector end. The hot loop then
+    // needs one cursor comparison rather than decrementing a second count and
+    // testing both it and the caller's count every vector.
+    "lea (%rdi,%r10), %r11\n   and $-32, %r10\n   add %rdi, %r10\n"
     "10:  vmovdqu (%rdi), %ymm0\n   vpcmpeqb (%rsi), %ymm0, %ymm1\n   vpcmpeqb %ymm4, %ymm0, %ymm2\n   vpandn %ymm1, %ymm2, %ymm3\n"
     "vpmovmskb %ymm3, %ecx\n   cmp $-1, %ecx\n   jne 11f\n   add $32, %rdi\n"
-    "add $32, %rsi\n   sub $32, %rdx\n   sub $32, %r10\n"
-    "cmp $32, %rdx\n   jb 14f\n   cmp $32, %r10\n   jae 10b\n"
+    "add $32, %rsi\n   sub $32, %rdx\n   cmp %r10, %rdi\n   jb 10b\n"
+    "test %rdx, %rdx\n   jz 13f\n   cmp %r11, %rdi\n   jne 13f\n"
+    "cmp $64, %rdx\n   jae 21b\n   vzeroupper\n   jmp 1f\n"
     "13:  vzeroupper\n   jmp 2f\n"
-    "14:  vzeroupper\n   jmp 1f\n"
     "11:  not %ecx\n   bsf %ecx, %ecx\n   vzeroupper\n   movzbl (%rdi,%rcx), %eax\n"
     "movzbl (%rsi,%rcx), %ecx\n   sub %ecx, %eax\n"
     ASM_RET
@@ -6579,6 +6625,10 @@ __asm__(
     "mov x15, #4096\n   and x16, x1, #0xfff\n   sub x15, x15, x16\n"
     "cmp x14, x15\n   csel x14, x14, x15, lo\n"
     "cmp x14, x2\n   csel x14, x14, x2, lo\n   cmp x14, #32\n   b.lo 2f\n"
+    // Keep both the exact run end (for the optional sixteen-byte tail) and
+    // the exclusive paired-vector end. The paired hot loop then performs a
+    // single cursor comparison and no page-count maintenance.
+    "add x17, x0, x14\n   bic x14, x14, #31\n   add x14, x0, x14\n"
     "12:  ldp q0, q1, [x0]\n   ldp q4, q5, [x1]\n"
     "cmeq v2.16b, v0.16b, v4.16b\n   cmeq v3.16b, v1.16b, v5.16b\n"
     "cmeq v6.16b, v0.16b, #0\n   cmeq v7.16b, v1.16b, #0\n"
@@ -6587,9 +6637,10 @@ __asm__(
     "cmp w9, #0xff\n   b.ne 5f\n   add x0, x0, #32\n"
     "add x1, x1, #32\n"
     "sub x2, x2, #32\n"
-    "sub x14, x14, #32\n   cmp x2, #32\n   b.lo 7f\n"
-    "cmp x14, #32\n   b.hs 12b\n   b 2f\n"
-    "7:  cmp x2, #16\n   b.lo 10f\n   cmp x14, #16\n   b.lo 2f\n"
+    "cmp x0, x14\n   b.lo 12b\n"
+    "7:  cbz x2, 10f\n   cmp x0, x17\n   b.ne 8f\n"
+    "cmp x2, #32\n   b.hs 11b\n   b 10f\n"
+    "8:  cmp x2, #16\n   b.lo 10f\n   sub x15, x17, x0\n   cmp x15, #16\n   b.lo 2f\n"
     //
     //      Sixteen bytes for the tail the pair could not take, and the body
     //      a step that found something falls into rather than working out
@@ -6601,7 +6652,7 @@ __asm__(
     "b.ne 6f\n   add x0, x0, #16\n"
     "add x1, x1, #16\n"
     "sub x2, x2, #16\n"
-    "cmp x2, #16\n"
+    "cmp x2, #16\n   b.lo 10f\n   sub x15, x17, x0\n   cmp x15, #16\n"
     "b.hs 5b\n   b 10f\n"
     "6:  mvn v2.16b, v2.16b\n   shrn v2.8b, v2.8h, #4\n"
     "fmov x9, d2\n   rbit x9, x9\n   clz x9, x9\n   lsr x9, x9, #2\n"
@@ -6674,7 +6725,7 @@ __asm__(
 #endif
     "mov x5, x0\n   mov x6, x2\n"
 #ifndef KERNEL_MODE
-    NEON_SCAN_MAX(NEON_BYTE)
+    NEON_SPAN_SCAN_MAX(NEON_BYTE)
     "mov x0, x5\n   ret\n"
 #endif
     "5:  mov x0, x5\n   mov x2, x6\n   cbz x2, 7f\n   mov x10, #0x0101010101010101\n"
