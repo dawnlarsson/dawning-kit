@@ -579,10 +579,22 @@ static positive shell_parameter_staging_room;
 */
 bool shell_parameters_set(string_address address_to words, positive count)
 {
+        static string_address empty[1];
         positive used = 0;
         positive index = 0;
         positive at;
         positive need = 0;
+
+        /* Entry with no operands is already the complete empty state. Keep
+           the three growable stores untouched until set/function arguments
+           actually need them. Once allocated, an empty `set --` retains its
+           reusable table rather than rebinding it to static storage. */
+        if (!count && !shell_parameter_room)
+        {
+                shell_parameter = empty;
+                shell_parameter_count = 0;
+                return true;
+        }
 
         for (at = 0; at < count; at++)
         {
@@ -745,6 +757,21 @@ static string_address expand_ifs()
 // Read at startup, from where nothing has forked yet.
 positive expand_shell_pid;
 
+fn shell_pid_ensure()
+{
+        if (!expand_shell_pid)
+                expand_shell_pid =
+                    (positive)system_call_1(syscall(getpid), 0);
+}
+
+/* A child may perform its first $$ expansion after the clone. Capture the
+   shell's identity on the parent side while leaving no-fork startup lazy. */
+bipolar shell_clone()
+{
+        shell_pid_ensure();
+        return system_call_2(syscall(clone), SIGCHLD, 0);
+}
+
 static b8 expand_ifs_set[256];
 static b8 expand_ifs_blank_set[256];
 
@@ -853,8 +880,7 @@ static string_address expand_value_of(string_address name, p8 address_to scratch
                                 which is the opposite of what POSIX says $$
                                 is. Read once, before anything can fork.
                         */
-                        if (!expand_shell_pid)
-                                expand_shell_pid = (positive)system_call_1(syscall(getpid), 0);
+                        shell_pid_ensure();
 
                         positive length = bipolar_into_string(
                             scratch, (bipolar)expand_shell_pid);
@@ -2050,7 +2076,7 @@ static fn expand_run(string_address command, bool quoted)
         if (system_call_2(syscall(pipe2), (positive)address_of channel, 0) < 0)
                 return;
 
-        child = system_call_2(syscall(clone), SIGCHLD, 0);
+        child = shell_clone();
 
         if (child == 0)
         {

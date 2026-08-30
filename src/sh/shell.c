@@ -80,14 +80,30 @@ static bool shell_signal_was_ignored(b32 number)
 
 #define shell_was_ignored(n) shell_signal_was_ignored((b32)(n))
 
-fn shell_signals_inherit()
+fn shell_signals_start()
 {
-        /* These two are changed immediately below entry, so remember what
-           the parent supplied before the shell installs its own ignores.
-           Every other signal is still untouched when trap first asks and is
-           queried lazily there. */
-        shell_signal_was_ignored(SIGNAL_INTERRUPT);
-        shell_signal_was_ignored(SIGNAL_QUIT);
+        positive ignored[4] = {SIGNAL_IGNORE, 0, 0, 0};
+        b32 numbers[2] = {SIGNAL_INTERRUPT, SIGNAL_QUIT};
+
+        /* Installing SIG_IGN can return the inherited action in the same
+           call. These are the only two dispositions changed at entry; every
+           other signal remains queryable when trap first touches it. */
+        for (positive at = 0; at < 2; at++)
+        {
+                positive old[4] = {0, 0, 0, 0};
+                b32 number = numbers[at];
+                positive mask = (positive)1 << number;
+
+                if (system_call_4(syscall(rt_sigaction), number,
+                                  (positive)address_of ignored,
+                                  (positive)address_of old, 8) >= 0)
+                {
+                        shell_signals_known |= mask;
+
+                        if (old[0] == SIGNAL_IGNORE)
+                                shell_signals_ignored |= mask;
+                }
+        }
 }
 
 // Set where the signal landed, read where a command ends. A handler that ran

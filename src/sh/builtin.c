@@ -923,7 +923,6 @@ fn shell_env_init(string_address address_to process_environment)
         }
 
         env_export_mark("PWD");
-        shell_environment();
 }
 
 /*
@@ -5231,6 +5230,19 @@ b32 shell_tool_as_called()
         positive which;
 
         if (!name)
+                return -1;
+
+        /* Installed shell entry names are overwhelmingly more common than a
+           multicall utility entry. Reject their exact short spellings before
+           walking the one-shot tool table; utility lookup remains unchanged. */
+        if ((string_is(name, 's') && string_is(name + 1, 'h') &&
+             !string_get(name + 2)) ||
+            (string_is(name, 's') && string_is(name + 1, 'h') &&
+             string_is(name + 2, 'e') && string_is(name + 3, 'l') &&
+             string_is(name + 4, 'l') && !string_get(name + 5)) ||
+            (string_is(name, 'b') && string_is(name + 1, 'a') &&
+             string_is(name + 2, 's') && string_is(name + 3, 'h') &&
+             !string_get(name + 4)))
                 return -1;
 
         /* One lookup in a process is cheaper than constructing the reusable

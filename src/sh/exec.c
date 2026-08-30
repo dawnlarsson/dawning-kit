@@ -394,7 +394,7 @@ static bool exec_here_expand_isolated(string_address body, positive length,
                 return false;
 
         log_flush();
-        child = system_call_2(syscall(clone), SIGCHLD, 0);
+        child = shell_clone();
 
         if (child == 0)
         {
@@ -496,7 +496,7 @@ static bipolar exec_here_pipe(string_address body, positive length)
         }
 
         log_flush();
-        child = system_call_2(syscall(clone), SIGCHLD, 0);
+        child = shell_clone();
 
         if (child == 0)
         {
@@ -2662,7 +2662,7 @@ static b32 exec_subshell(b32 index)
         bipolar child;
 
         log_flush();
-        child = system_call_2(syscall(clone), SIGCHLD, 0);
+        child = shell_clone();
 
         if (child == 0)
         {
@@ -2726,7 +2726,7 @@ static b32 exec_pipe(b32 first, positive count)
                 }
 
                 log_flush();
-                made = system_call_2(syscall(clone), SIGCHLD, 0);
+                made = shell_clone();
 
                 if (made == 0)
                 {
@@ -2902,7 +2902,7 @@ static b32 exec_background(b32 index)
         bipolar child;
 
         log_flush();
-        child = system_call_2(syscall(clone), SIGCHLD, 0);
+        child = shell_clone();
 
         if (child == 0)
         {

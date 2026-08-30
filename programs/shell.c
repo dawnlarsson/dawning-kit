@@ -28,10 +28,7 @@ b32 main()
                 }
         }
 
-        shell_signals_inherit();
-
-        shell_ignore(SIGNAL_INTERRUPT);
-        shell_ignore(SIGNAL_QUIT);
+        shell_signals_start();
 
         shell_env_init(program_environment_list());
 

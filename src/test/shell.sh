@@ -1934,6 +1934,7 @@ answer 'entry through a child' 'trap "" INT; ( kill -INT $$; echo sub ); echo af
 entry_ignored=""
 answer 'exit trap as well' 'trap "echo bye" EXIT; trap "echo hit" USR1; kill -USR1 $$; echo after'
 answer 'one pid in a fork' 'a=$$; b=$( echo $$ ); c=$( ( echo $$ ) ); [ "$a" = "$b" ] && [ "$a" = "$c" ] && echo same || echo differs'
+answer 'one pid first in a fork' 'a=$( ( echo $$ ) ); b=$$; [ "$a" = "$b" ] && echo same || echo differs'
 
 #
 #       One binary, forty six names.
