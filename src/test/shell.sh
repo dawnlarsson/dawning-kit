@@ -851,6 +851,18 @@ environment_command_expected 'empty environment defaults' \
 ' 0 \
         'printf "%s|%s|%s|%s|%s\n" "${PATH:+path}" "${SHELL:+shell}" "$OPTIND" "${PWD:+pwd}" "${HOME-unset}"' \
         -i
+environment_command_answer 'synthesized pwd reaches a child' \
+        'printf "[%s] " "$PWD"; /bin/sh -c '\''printf "[%s]\n" "$PWD"'\''' \
+        -i
+environment_command_answer 'synthesized pwd copy on write' \
+        'PWD=x; printf "%s " "$PWD"; PWD=abcdefghijklmnopqrstuvwxyz; printf "%s\n" "$PWD"' \
+        -i
+environment_command_answer 'synthesized pwd local restores' \
+        'f() { local PWD=/tmp; printf "%s " "$PWD"; }; before=$PWD; f; printf "%s|%s\n" "$before" "$PWD"' \
+        -i
+environment_command_answer 'synthesized pwd follows cd' \
+        'cd /tmp; printf "%s " "$PWD"; /bin/sh -c '\''printf "%s\n" "$PWD"'\''' \
+        -i
 environment_many_answer 'six hundred inherited variables' 600 \
         'set | grep '\''^MW_MANY_[0-9][0-9]*='\'' | wc -l'
 

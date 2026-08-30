@@ -118,7 +118,7 @@ bipolar shell_exec_file(string_address path,
 
 #define SHELL_DIRECTORY_MAX 4096
 
-extern p8 shell_directory[SHELL_DIRECTORY_MAX];
+extern p8 address_to shell_directory;
 
 bipolar shell_find_in_path_alloc(string_address name,
                                  p8 address_to address_to into,
@@ -838,15 +838,14 @@ fn shell_env_init(string_address address_to process_environment)
                 if (inherited_directory)
                         string_copy_max_end(shell_directory,
                                             inherited_directory,
-                                            sizeof(shell_directory) - 1);
+                                            SHELL_DIRECTORY_MAX - 1);
                 else
                 {
-                        shell_here(shell_directory, sizeof(shell_directory));
-                        env_set("PWD", shell_directory);
+                        memory_copy(shell_directory - 4, "PWD=", 4);
+                        shell_here(shell_directory, SHELL_DIRECTORY_MAX);
+                        env_borrow_assignment(shell_directory - 4, false);
                 }
         }
-
-        env_export_mark("PWD");
 }
 
 /*
@@ -1250,7 +1249,12 @@ fn shell_export(writer write, string_address input)
         at. That is the -L rule, it is the default, and it needs the path
         remembered rather than asked for -- getcwd has already forgotten it.
 */
-p8 shell_directory[SHELL_DIRECTORY_MAX];
+/* Four bytes immediately before the logical directory spell its assignment
+   name. An empty-environment shell can therefore publish the getcwd result as
+   `PWD=value` without a second buffer or allocation. On the first cd or PWD
+   assignment the ordinary borrowed-record COW path takes ownership. */
+static p8 shell_directory_assignment[SHELL_DIRECTORY_MAX + 4];
+p8 address_to shell_directory = shell_directory_assignment + 4;
 static p8 shell_directory_was[SHELL_DIRECTORY_MAX];
 
 fn shell_here(p8 address_to into, positive room)
@@ -1352,7 +1356,7 @@ fn shell_directory_moved(string_address logical)
         string_copy_max_end(shell_directory_was, shell_directory,
                             sizeof(shell_directory_was) - 1);
 
-        string_copy_max_end(shell_directory, logical, sizeof(shell_directory) - 1);
+        string_copy_max_end(shell_directory, logical, SHELL_DIRECTORY_MAX - 1);
 
         env_set("OLDPWD", shell_directory_was);
         env_set("PWD", shell_directory);
@@ -1445,7 +1449,7 @@ fn shell_cd(writer write, string_address input)
 
         if (!shell_directory_holds())
         {
-                shell_here(shell_directory, sizeof(shell_directory));
+                shell_here(shell_directory, SHELL_DIRECTORY_MAX);
                 env_set("PWD", shell_directory);
         }
 
