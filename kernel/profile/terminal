@@ -1,0 +1,24 @@
+#
+# Moonwater compositor present, ordinary terminal first
+#
+# Canvas remains compiled and its window/Spark ABI remains available, but it
+# does not probe or claim a DRM device during boot. PID 1's supervised shell
+# therefore stays directly on /dev/console. This is useful when programs need
+# the Canvas/window ABI but the machine must boot console-first, and for
+# separating compositor startup from the rest of the base-system boot.
+#
+# Compose this after gpu so these last requests win:
+#
+#   sh build.sh arch/x64 debug_none limbo desktop serial terminal
+#
+CONFIG_MOONWATER_CANVAS=y
+CONFIG_MOONWATER_CANVAS_AUTOSTART=n
+
+# gpu's built-in command line suppresses the DRM fbdev client specifically so
+# Canvas can own the display. With Canvas dormant, let fbcon attach normally.
+CONFIG_DRM_FBDEV_EMULATION=y
+CONFIG_FB=y
+CONFIG_FRAMEBUFFER_CONSOLE=y
+CONFIG_VT=y
+CONFIG_VT_CONSOLE=y
+CONFIG_CMDLINE=""

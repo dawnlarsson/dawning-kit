@@ -15,7 +15,25 @@ menu "Moonwater"
           Own the display from kernel space: Canvas draws the desktop,
           windows and cursor itself through the in-kernel DRM client API
           rather than handing a device node to a userspace display
-          server. Its source is src/canvas/.
+          server. Its source is src/canvas/. Disable this option to omit the
+          compositor C and architecture-specific renderer assembly entirely;
+          Moonwater core, Spark programs and the ordinary kernel consoles
+          remain available.
+
+    config MOONWATER_CANVAS_AUTOSTART
+        bool "Start Canvas automatically during boot"
+        depends on MOONWATER_CANVAS
+        default y
+        help
+          Probe DRM devices and start the Canvas desktop and its terminal as
+          soon as display drivers appear.
+
+          Disable this while keeping MOONWATER_CANVAS enabled to retain the
+          compositor in the image without claiming a display at boot. The
+          ordinary framebuffer, virtual or serial console then owns /dev/console
+          and PID 1 starts the shell directly on it. Ensure the kernel command
+          line does not contain drm_client_lib.active=, which intentionally
+          suppresses the framebuffer console for a Canvas-first desktop.
 
     config MOONWATER_CANVAS_SCALE
         int "How many device pixels one drawn pixel is"

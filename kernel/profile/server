@@ -1,0 +1,23 @@
+#
+# Console/server image with no Canvas code
+#
+# This is the hard build boundary: compositor C, fill/glyph assembly, window
+# ioctls, input stack and DRM probing are absent from Moonwater core. Spark,
+# the shell/coreutils image, PID 1 supervision, DHCP/link watching and ordinary
+# serial/virtual/framebuffer consoles remain.
+#
+# Compose this last:
+#
+#   sh build.sh arch/x64 debug_none limbo desktop serial server
+#
+CONFIG_MOONWATER_CANVAS=n
+
+# The gpu profile's Canvas-first command line must not leave a local server
+# console blank. A bootloader may still choose serial, netconsole or another
+# console explicitly.
+CONFIG_DRM_FBDEV_EMULATION=y
+CONFIG_FB=y
+CONFIG_FRAMEBUFFER_CONSOLE=y
+CONFIG_VT=y
+CONFIG_VT_CONSOLE=y
+CONFIG_CMDLINE=""

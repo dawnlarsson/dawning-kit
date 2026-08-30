@@ -298,7 +298,7 @@ static void canvas_probe(struct work_struct *work)
         schedule_delayed_work(&canvas_probe_work, msecs_to_jiffies(CANVAS_RETRY_MS));
 }
 
-static void canvas_start_probing(void)
+static void __maybe_unused canvas_start_probing(void)
 {
         INIT_DELAYED_WORK(&canvas_probe_work, canvas_probe);
         schedule_delayed_work(&canvas_probe_work, 0);

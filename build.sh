@@ -11,6 +11,10 @@
 #           sh build.sh --usb                 build, then write a USB stick
 #           sh build.sh --clean                remove what a build produced
 #           sh build.sh --host box            build on another machine over ssh
+#           sh build.sh arch/x64 debug_none limbo desktop serial terminal
+#                                               boot to a console; keep Canvas built
+#           sh build.sh arch/x64 debug_none limbo desktop serial server
+#                                               omit Canvas from the kernel
 #
 #       The build happens here by default. Building a kernel wants a Linux
 #       toolchain and a case sensitive filesystem, so on anything else -- a Mac,
@@ -360,14 +364,15 @@ wgcVXSeiHcXa9SSFDvKn0L1q5nSLQGHp38qUi1ZPf/1uQSuB3ME=
                         profiles="any general gpu guests latency prod $extra"
                 fi
 
-                # Regenerated whenever profiles were named, and otherwise
-                # only when there is nothing to reuse. This used to be two
-                # conditionals that between them ran config twice on any build
-                # with arguments.
-                if [ -n "$extra" ] || ! is_file artifacts/.config; then
-                        # shellcheck disable=SC2086
-                        sudo sh kit/config $profiles || die "configuration"
-                fi
+                # Always compose the selected profiles. Reusing artifacts/.config
+                # made a plain default build inherit whichever special profile
+                # had run before it -- notably leaving Canvas disabled after a
+                # server build even though `sh build.sh` promises the defaults.
+                # kit/config preserves incremental builds when the result is
+                # unchanged, so deterministic selection costs no rebuild by
+                # itself.
+                # shellcheck disable=SC2086
+                sudo sh kit/config $profiles || die "configuration"
 
                 make_flags=$(key make_flags)
 

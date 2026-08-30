@@ -45,8 +45,10 @@ asm-arch-$(CONFIG_X86_64) := x86_64
 asm-arch-$(CONFIG_ARM64) := arm64
 asm-arch-$(CONFIG_ARCH_RV64I) := riscv64
 
-asm-sources := $(notdir $(wildcard $(src)/*.asm)) \
+asm-sources := $(notdir $(wildcard $(src)/*.asm))
+canvas-asm-sources-$(CONFIG_MOONWATER_CANVAS) := \
                $(patsubst $(src)/%,%,$(wildcard $(src)/canvas/*.asm))
+asm-sources += $(canvas-asm-sources-y)
 
 moonwater-y += $(asm-sources:.asm=.o)
 targets += $(asm-sources:.asm=.S)

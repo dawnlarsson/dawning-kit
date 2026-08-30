@@ -43,9 +43,11 @@
 #include "compiler_memory.c"
 #include "spark.c"
 
-// Defined below, next to the rest of the spawning, and called by the
+// Defined below, next to the rest of the spawning, and called only by the
 // compositor when it has a screen to put something on.
+#ifdef CONFIG_MOONWATER_CANVAS
 static int spawn_program(const char *path);
+#endif
 
 struct spawn_strings
 {
@@ -491,6 +493,7 @@ static void spawn_free(struct spawn_work *work)
 */
 static int spawn_enter(void *data);
 
+#ifdef CONFIG_MOONWATER_CANVAS
 static int spawn_program(const char *path)
 {
         struct spawn_work *work = kzalloc(sizeof(*work), GFP_KERNEL);
@@ -522,6 +525,7 @@ static int spawn_program(const char *path)
 
         return 0;
 }
+#endif
 
 /*
         A program starts able to be interrupted.
@@ -1025,7 +1029,8 @@ static b32 __init start()
         if (misc_register(&device))
                 log_k("could not register /dev/spark\n");
 
-#ifdef CONFIG_MOONWATER_CANVAS
+#if defined(CONFIG_MOONWATER_CANVAS) && \
+    defined(CONFIG_MOONWATER_CANVAS_AUTOSTART)
         canvas_start_probing();
 #endif
 
@@ -1034,9 +1039,11 @@ static b32 __init start()
 
 static void __exit exit_module(void)
 {
+#ifdef CONFIG_MOONWATER_CANVAS
         // Before anything else: printk must stop being pointed at cells that
         // are about to be freed.
         console_stop();
+#endif
 
         misc_deregister(&device);
         unregister_binfmt(&format);

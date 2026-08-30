@@ -26,6 +26,10 @@
 #
 CONFIG_MOONWATER_CANVAS=n
 
+# `server` is the same hard Canvas boundary under the name intended for normal
+# headless/console deployments. This profile remains the documented graphical
+# recovery spelling.
+
 # With no compositor to keep it away, the fbdev client is wanted after all.
 CONFIG_DRM_FBDEV_EMULATION=y
 CONFIG_FB=y
