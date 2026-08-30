@@ -276,7 +276,7 @@ __asm__(
     ASM_FUNC(_start)
     "mov x29, #0\n   mov x30, #0\n   mov x0, sp\n"
     "adrp x1, program_stack_base\n   str x0, [x1, :lo12:program_stack_base]\n"
-    "and sp, x0, #-16\n   bl moonwater_cpu_detect\n   bl main\n"
+    "and sp, x0, #-16\n   bl main\n"
     "bl exit\n   brk #0\n"
     ASM_END(_start)
 );
@@ -388,7 +388,7 @@ __asm__(
     ".option pop\n"
     "li s0, 0\n   li ra, 0\n   mv a0, sp\n"
     "lla t0, program_stack_base\n   sd a0, 0(t0)\n"
-    "andi sp, sp, -16\n   call moonwater_cpu_detect\n   call main\n"
+    "andi sp, sp, -16\n   call main\n"
     "call exit\n   ebreak\n"
     ASM_END(_start)
 );

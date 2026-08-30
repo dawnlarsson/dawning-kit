@@ -2291,7 +2291,7 @@ __asm__(
 #else
     "push %rbx\n   mov $1, %eax\n   xor %ecx, %ecx\n   cpuid\n"
     "bt $27, %ecx\n   jnc 9f  # OSXSAVE: nobody is managing the state\n"
-    "xor %ecx, %ecx\n   xgetbv\n   and $6, %eax\n   cmp $6, %eax\n"
+    "xor %ecx, %ecx\n   xgetbv\n   mov %eax, %r8d\n   and $6, %eax\n   cmp $6, %eax\n"
     "jne 9f  # the kernel does not save both halves of ymm\n"
     "mov $7, %eax\n   xor %ecx, %ecx\n   cpuid\n   bt $5, %ebx\n"
     "jnc 9f  # no AVX2\n"
@@ -2307,7 +2307,7 @@ __asm__(
     "bt $16, %ebx\n   jnc 9f  # AVX512F\n"
     "bt $30, %ebx\n   jnc 9f  # AVX512BW\n"
     "bt $31, %ebx\n   jnc 9f  # AVX512VL\n"
-    "xor %ecx, %ecx\n   xgetbv\n   and $0xe6, %eax\n   cmp $0xe6, %eax\n"
+    "and $0xe6, %r8d\n   cmp $0xe6, %r8d\n"
     "jne 9f  # the kernel does not save the wide state\n"
     "movb $1, cpu_has_avx512(%rip)\n"
     "9:  pop %rbx\n"

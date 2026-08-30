@@ -277,6 +277,53 @@ static positive env_name_hash(const_string name, positive length)
         return memory_hash_33((address_any)name, length);
 }
 
+/*
+        Size and clear a name index without rebuilding entries into it.
+
+        Environment import knows its upper bound before it reads the first
+        name. Reserving both indexes once lets that one pass insert directly;
+        growing from 64 halfway through startup used to hash every name again
+        at each rebuild.
+*/
+static bool name_index_prepare(name_index_slot address_to address_to table,
+                               positive address_to room,
+                               positive address_to slot_count,
+                               positive address_to tombstones,
+                               positive count)
+{
+        positive slots = 64;
+
+        if (count > positive_max / 2)
+        {
+                address_to slot_count = 0;
+                return false;
+        }
+
+        while (slots < count * 2)
+        {
+                if (slots > positive_max / 2)
+                {
+                        address_to slot_count = 0;
+                        return false;
+                }
+
+                slots *= 2;
+        }
+
+        if (!shell_room((address_any address_to)table, room, slots,
+                        sizeof((address_to table)[0])))
+        {
+                address_to slot_count = 0;
+                return false;
+        }
+
+        memory_fill(address_to table, 0,
+                    slots * sizeof((address_to table)[0]));
+        address_to tombstones = 0;
+        address_to slot_count = slots;
+        return true;
+}
+
 static fn name_index_put(name_index_slot address_to table, positive slots,
                          positive hash, positive length, positive index,
                          positive address_to tombstones)
@@ -338,35 +385,11 @@ static fn name_index_remove(name_index_slot address_to table, positive slots,
 
 static bool env_index_rebuild(positive count)
 {
-        positive slots = 64;
-
-        if (count > positive_max / 2)
-        {
-                env_index_slots = 0;
+        if (!name_index_prepare(address_of env_index,
+                                address_of env_index_room,
+                                address_of env_index_slots,
+                                address_of env_index_tombstones, count))
                 return false;
-        }
-
-        while (slots < count * 2)
-        {
-                if (slots > positive_max / 2)
-                {
-                        env_index_slots = 0;
-                        return false;
-                }
-
-                slots *= 2;
-        }
-
-        if (!shell_room((address_any address_to)address_of env_index,
-                        address_of env_index_room, slots,
-                        sizeof(env_index[0])))
-        {
-                env_index_slots = 0;
-                return false;
-        }
-
-        memory_fill(env_index, 0, slots * sizeof(env_index[0]));
-        env_index_tombstones = 0;
 
         for (positive index = 0; index < count; index++)
         {
@@ -374,12 +397,11 @@ static bool env_index_rebuild(positive count)
                 string_address equal = string_first_of(entry, '=');
                 positive length = equal ? (positive)(equal - entry) : 0;
 
-                name_index_put(env_index, slots,
+                name_index_put(env_index, env_index_slots,
                                env_name_hash(entry, length), length, index,
                                address_of env_index_tombstones);
         }
 
-        env_index_slots = slots;
         return true;
 }
 
@@ -500,59 +522,30 @@ static fn env_cell_drop(string_address text)
 
 static bool env_export_index_rebuild(positive count)
 {
-        positive slots = 64;
-
-        if (count > positive_max / 2)
-        {
-                env_export_index_slots = 0;
+        if (!name_index_prepare(address_of env_export_index,
+                                address_of env_export_index_room,
+                                address_of env_export_index_slots,
+                                address_of env_export_index_tombstones,
+                                count))
                 return false;
-        }
-
-        while (slots < count * 2)
-        {
-                if (slots > positive_max / 2)
-                {
-                        env_export_index_slots = 0;
-                        return false;
-                }
-                slots *= 2;
-        }
-
-        if (!shell_room(
-                (address_any address_to)address_of env_export_index,
-                address_of env_export_index_room, slots,
-                sizeof(env_export_index[0])))
-        {
-                env_export_index_slots = 0;
-                return false;
-        }
-
-        memory_fill(env_export_index, 0,
-                    slots * sizeof(env_export_index[0]));
-        env_export_index_tombstones = 0;
 
         for (positive index = 0; index < count; index++)
-                name_index_put(env_export_index, slots,
+                name_index_put(env_export_index, env_export_index_slots,
                                env_name_hash(env_exports[index].name,
                                              env_exports[index].length),
                                env_exports[index].length, index,
                                address_of env_export_index_tombstones);
-
-        env_export_index_slots = slots;
         return true;
 }
 
-static bipolar env_export_find_span(const_string name, positive length)
+static bipolar env_export_find_hashed_span(const_string name, positive length,
+                                           positive hash)
 {
-        positive hash;
-
         if (env_export_recent >= 0 &&
             (positive)env_export_recent < env_export_count &&
             env_exports[env_export_recent].length == length &&
             !memory_compare(env_exports[env_export_recent].name, name, length))
                 return env_export_recent;
-
-        hash = env_name_hash(name, length);
 
         if (env_export_index_slots)
         {
@@ -599,9 +592,17 @@ static bipolar env_export_find_span(const_string name, positive length)
         return -1;
 }
 
-static env_export address_to env_export_take(const_string name, positive length)
+static bipolar env_export_find_span(const_string name, positive length)
 {
-        bipolar found = env_export_find_span(name, length);
+        return env_export_find_hashed_span(name, length,
+                                           env_name_hash(name, length));
+}
+
+static env_export address_to env_export_take_hashed(const_string name,
+                                                     positive length,
+                                                     positive hash)
+{
+        bipolar found = env_export_find_hashed_span(name, length, hash);
         env_cell address_to cell;
 
         if (found >= 0)
@@ -629,12 +630,18 @@ static env_export address_to env_export_take(const_string name, positive length)
                 env_export_index_rebuild(env_export_count + 1);
         else
                 name_index_put(env_export_index, env_export_index_slots,
-                               env_name_hash(name, length), length,
+                               hash, length,
                                env_export_count,
                                address_of env_export_index_tombstones);
 
         env_export_recent = (bipolar)env_export_count;
         return env_exports + env_export_count++;
+}
+
+static env_export address_to env_export_take(const_string name, positive length)
+{
+        return env_export_take_hashed(name, length,
+                                      env_name_hash(name, length));
 }
 
 static fn env_export_drop(positive index)
@@ -686,6 +693,20 @@ bool env_exported(string_address name)
 static bool env_export_mark_span(const_string name, positive length)
 {
         env_export address_to entry = env_export_take(name, length);
+
+        if (!entry)
+                return false;
+
+        entry->permanent = true;
+        shell_envp_dirty = true;
+        return true;
+}
+
+static bool env_export_mark_hashed_span(const_string name, positive length,
+                                        positive hash)
+{
+        env_export address_to entry =
+            env_export_take_hashed(name, length, hash);
 
         if (!entry)
                 return false;
@@ -803,12 +824,19 @@ string_address address_to shell_environment()
 
 static bool env_set_span(const_string name, positive name_len,
                          const_string value);
+static bool env_set_hashed_span(const_string name, positive name_len,
+                                positive hash, const_string value);
 string_address env_get(const_string name);
 bool env_set(const_string name, const_string value);
 
 fn shell_env_init(string_address address_to process_environment)
 {
-        if (!env_table_room(4))
+        positive inherited = 0;
+
+        while (process_environment && process_environment[inherited])
+                inherited++;
+
+        if (!env_table_room(inherited + 4))
                 return;
 
         shell_var_count = 0;
@@ -819,6 +847,23 @@ fn shell_env_init(string_address address_to process_environment)
         env_export_index_tombstones = 0;
         env_export_recent = -1;
 
+        // The inherited entries and four defaults are the upper bound for
+        // both indexes. Allocation failure retains the existing linear
+        // fallback, but the ordinary path now grows and clears each table
+        // exactly once.
+        name_index_prepare(address_of env_index, address_of env_index_room,
+                           address_of env_index_slots,
+                           address_of env_index_tombstones, inherited + 4);
+        name_index_prepare(address_of env_export_index,
+                           address_of env_export_index_room,
+                           address_of env_export_index_slots,
+                           address_of env_export_index_tombstones,
+                           inherited + 4);
+
+        shell_room((address_any address_to)address_of env_exports,
+                   address_of env_export_room, inherited + 4,
+                   sizeof(env_exports[0]));
+
         // A shell launched by make, system(), or another shell starts with the
         // environment it was given. PID 1 naturally receives an empty vector,
         // so the same path still gives the image its defaults below.
@@ -827,10 +872,12 @@ fn shell_env_init(string_address address_to process_environment)
         {
                 string_address entry = process_environment[at];
                 string_address mark = string_first_of(entry, '=');
+                positive length = mark ? (positive)(mark - entry) : 0;
+                positive hash = length ? env_name_hash(entry, length) : 0;
 
                 if (mark && mark > entry &&
-                    env_set_span(entry, (positive)(mark - entry), mark + 1))
-                        env_export_mark_span(entry, (positive)(mark - entry));
+                    env_set_hashed_span(entry, length, hash, mark + 1))
+                        env_export_mark_hashed_span(entry, length, hash);
         }
 
         // Programs live at the root of the image, so it is on the path.
@@ -854,13 +901,26 @@ fn shell_env_init(string_address address_to process_environment)
                 i++;
         }
 
-        // Where the shell is, before anything asks. cd keeps it from here on;
-        // without a first answer, PWD is empty until the first cd and a script
-        // that names a file relative to it names nothing.
-        shell_here(shell_directory, sizeof(shell_directory));
+        /*
+                Preserve the logical directory inherited through a symlink
+                without paying getcwd only to throw its answer away. cd and
+                pwd already validate this name against "." before trusting
+                it; a stale, relative or truncated PWD is repaired there.
+                An empty environment still needs the kernel's first answer.
+        */
+        {
+                string_address inherited_directory = env_get("PWD");
 
-        if (!env_get("PWD"))
-                env_set("PWD", shell_directory);
+                if (inherited_directory)
+                        string_copy_max_end(shell_directory,
+                                            inherited_directory,
+                                            sizeof(shell_directory) - 1);
+                else
+                {
+                        shell_here(shell_directory, sizeof(shell_directory));
+                        env_set("PWD", shell_directory);
+                }
+        }
 
         env_export_mark("PWD");
         shell_environment();
@@ -944,7 +1004,8 @@ static bool env_set_hashed_span(const_string name, positive name_len,
                         memory_copy_end((p8 address_to)(cell + 1) + name_len + 1,
                                         env_reading(value), value_len);
                         shell_var_value_lengths[idx] = value_len;
-                        if (env_export_active_span(name, name_len))
+                        if (!shell_envp_dirty &&
+                            env_export_active_span(name, name_len))
                                 shell_envp_dirty = true;
                         return true;
                 }
@@ -983,7 +1044,7 @@ static bool env_set_hashed_span(const_string name, positive name_len,
                                        address_of env_index_tombstones);
         }
 
-        if (env_export_active_span(name, name_len))
+        if (!shell_envp_dirty && env_export_active_span(name, name_len))
                 shell_envp_dirty = true;
 
         return true;

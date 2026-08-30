@@ -34,7 +34,6 @@ b32 main()
         shell_ignore(SIGNAL_QUIT);
 
         shell_env_init(program_environment_list());
-        expand_shell_pid = (positive)system_call_1(syscall(getpid), 0);
 
         /*
                 sh file [word ...]
@@ -151,9 +150,6 @@ b32 main()
         interactive = shell_is_interactive = !script_file && shell_interactive();
         shell_options_started(interactive);
 
-        spawn_device = system_call_4(syscall(openat), AT_FDCWD,
-                                     (positive)SPARK_DEVICE, FILE_READ_WRITE, 0);
-
         /*
                 Whatever arrived, split into lines, with the last one held back
                 if it has no newline yet.
@@ -176,38 +172,53 @@ b32 main()
         */
         if (command)
         {
-                positive length = string_length(command);
-                p8 address_to held_command = (p8 address_to)memory(length + 1);
+                string_address first_newline = string_first_of(command, '\n');
 
-                if (!held_command || (positive)held_command >= (positive)-4095)
+                /* The lexer and parser copy tokens and never write the source.
+                   A single command can therefore stay in the process argument
+                   block; only multi-line input needs a writable copy whose
+                   newlines are ended in place. */
+                if (!first_newline)
+                        run_line(command);
+                else
                 {
-                        log_error("sh: no room for the command\n", 0);
-                        return 1;
-                }
+                        positive length = string_length(command);
+                        p8 address_to held_command =
+                            (p8 address_to)memory(length + 1);
 
-                memory_copy(held_command, command, length + 1);
-
-                {
-                        p8 address_to at = held_command;
-
-                        while (string_get(at))
+                        if (!held_command ||
+                            (positive)held_command >= (positive)-4095)
                         {
-                                p8 address_to stop = string_first_of(at, '\n');
-
-                                if (stop)
-                                        address_to stop = end;
-
-                                run_line(at);
-
-                                if (!stop)
-                                        break;
-
-                                at = stop + 1;
+                                log_error("sh: no room for the command\n", 0);
+                                return 1;
                         }
+
+                        memory_copy(held_command, command, length + 1);
+
+                        {
+                                p8 address_to at = held_command;
+
+                                while (string_get(at))
+                                {
+                                        p8 address_to stop =
+                                            string_first_of(at, '\n');
+
+                                        if (stop)
+                                                address_to stop = end;
+
+                                        run_line(at);
+
+                                        if (!stop)
+                                                break;
+
+                                        at = stop + 1;
+                                }
+                        }
+
+                        memory_free(held_command, length + 1);
                 }
 
                 shell_input_end();
-                memory_free(held_command, length + 1);
 
                 shell_trap_exit();
                 log_flush();

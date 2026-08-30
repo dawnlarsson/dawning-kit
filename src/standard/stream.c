@@ -951,9 +951,19 @@ b32 stream_flush(stream address_to handle)
         the open list while stream_close unlinks entries from it would be a
         second correctness problem bought for no visible difference.
 */
-static fn stream_flush_at_exit_one(stream address_to handle, positive here)
+static fn stream_flush_at_exit_one(stream address_to handle,
+                                   positive address_to here)
 {
-        if (handle->write_used != 0 && handle->owner != here)
+        if (handle->write_used == 0)
+                return;
+
+        //      A silent process reaches no identity syscall at exit. Delay
+        //      the one shared answer until the first stream that actually
+        //      holds bytes, then reuse it for every remaining stream.
+        if (address_to here == 0)
+                address_to here = stdlib_process_identity();
+
+        if (handle->owner != address_to here)
                 return;
 
         stream_flush_output(handle);
@@ -961,14 +971,16 @@ static fn stream_flush_at_exit_one(stream address_to handle, positive here)
 
 static fn stream_flush_at_exit(void)
 {
-        positive here = stdlib_process_identity();
+        positive here = 0;
         stream address_to walk;
 
-        stream_flush_at_exit_one(address_of stream_standard_output, here);
-        stream_flush_at_exit_one(address_of stream_standard_error, here);
+        stream_flush_at_exit_one(address_of stream_standard_output,
+                                 address_of here);
+        stream_flush_at_exit_one(address_of stream_standard_error,
+                                 address_of here);
 
         for (walk = stream_open_list; walk != null; walk = walk->next)
-                stream_flush_at_exit_one(walk, here);
+                stream_flush_at_exit_one(walk, address_of here);
 }
 
 /*

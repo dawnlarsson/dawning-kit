@@ -52,24 +52,42 @@ fn shell_signal(b32 number, positive disposition)
         than about what we just did.
 */
 positive shell_signals_ignored;
+static positive shell_signals_known;
 
-#define shell_was_ignored(n) ((shell_signals_ignored >> (n)) & 1)
-
-fn shell_signals_inherit()
+static bool shell_signal_was_ignored(b32 number)
 {
-        b32 number = 1;
+        positive mask;
 
-        while (number < 32)
+        if (number <= 0 || number >= (b32)positive_bits)
+                return false;
+
+        mask = (positive)1 << number;
+
+        if (!(shell_signals_known & mask))
         {
                 positive action[4] = {0, 0, 0, 0};
 
                 if (system_call_4(syscall(rt_sigaction), number, 0,
                                   (positive)address_of action, 8) >= 0 &&
                     action[0] == SIGNAL_IGNORE)
-                        shell_signals_ignored |= (positive)1 << number;
+                        shell_signals_ignored |= mask;
 
-                number++;
+                shell_signals_known |= mask;
         }
+
+        return (shell_signals_ignored & mask) != 0;
+}
+
+#define shell_was_ignored(n) shell_signal_was_ignored((b32)(n))
+
+fn shell_signals_inherit()
+{
+        /* These two are changed immediately below entry, so remember what
+           the parent supplied before the shell installs its own ignores.
+           Every other signal is still untouched when trap first asks and is
+           queried lazily there. */
+        shell_signal_was_ignored(SIGNAL_INTERRUPT);
+        shell_signal_was_ignored(SIGNAL_QUIT);
 }
 
 // Set where the signal landed, read where a command ends. A handler that ran
@@ -816,6 +834,7 @@ fn shell_thread_instance()
 // space copy execve would only throw away: about 3us per command here.
 // Negative means the kernel has no spark device and we fall back to forking.
 b32 spawn_device = -1;
+static bool spawn_device_opened;
 
 /*
         argv and envp go across as flat blocks of NUL terminated strings.
@@ -910,6 +929,14 @@ fn shell_execute_command()
 {
         bipolar child = -1;
         bipolar saved_output = -1;
+
+        if (!spawn_device_opened)
+        {
+                spawn_device = system_call_4(syscall(openat), AT_FDCWD,
+                                             (positive)SPARK_DEVICE,
+                                             FILE_READ_WRITE, 0);
+                spawn_device_opened = true;
+        }
 
         log_flush();
 

@@ -51,6 +51,7 @@ compare-max) source_file=kit/bench_compare_max.c ;;
 string-copy) source_file=kit/bench_string_copy.c ;;
 stream-get) source_file=kit/bench_stream_get.c ;;
 stream-write) source_file=kit/bench_stream_write.c ;;
+startup) source_file=kit/bench_startup.c ;;
 *)       echo "bench: unknown lane; use floor, baseline, or another named benchmark" >&2; exit 2 ;;
 esac
 

@@ -767,9 +767,12 @@ DEAD_END fn stdlib_exit(b32 code)
         if (!is_null(stdlib_exit_flush_hook))
                 stdlib_exit_flush_hook();
 
-        //      The log buffer cannot know, so this asks the coarser question
-        //      the block above stdlib_buffers_are_ours describes.
-        if (stdlib_buffers_are_ours())
+        //      An empty log has neither bytes nor an owner to decide. Test
+        //      that published state before asking the kernel whose process
+        //      this is, so a silent program does not pay a getpid syscall on
+        //      its way out. A nonempty log keeps the fork-safe ownership
+        //      decision described above unchanged.
+        if (log_writer_buffer_length != 0 && stdlib_buffers_are_ours())
                 log_flush();
 
         exit(code);

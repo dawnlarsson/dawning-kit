@@ -172,6 +172,14 @@ static struct canvas *canvas_take_over(struct drm_device *dev)
 
 // Rounds to keep looking after the first card, so a sibling that probes late
 // is found too.
+//
+// A hundred rounds at CANVAS_RETRY_MS is half a second of polling after the
+// screen is already up, which reads like an obvious thing to cut. It is not:
+// measured at 10 rounds against 100, moonwater starts, the canvas is drawn
+// and the shell runs at the same times to within the noise of five boots
+// each. The poll is a delayed work item that sleeps between rounds, so what
+// it costs the boot is not the half second it spans. Cutting it would buy
+// nothing and lose the late sibling it is here for.
 #define CANVAS_SETTLE 100
 
 static struct delayed_work canvas_probe_work;
