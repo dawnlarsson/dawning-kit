@@ -3567,7 +3567,7 @@ static fn awk_syntax(string_address reason)
         p8 where[64];
 
         memory_copy(where, "line ", 5);
-        positive at = 5 + positive_into_string(where + 5, (positive)awk_line_number);
+        positive_into_string(where + 5, (positive)awk_line_number);
         awk_flush_everything();
         text_error(where, reason);
         awk_leave(1);

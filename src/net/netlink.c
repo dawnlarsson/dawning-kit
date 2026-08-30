@@ -356,64 +356,12 @@ static bipolar netlink_receive(b32 handle, netlink_buffer address_to buffer)
         return got;
 }
 
-/*
-        A request sent, and the acknowledgement read back.
+typedef bool (address_to netlink_visitor)(netlink_header address_to header,
+                                          address_any context);
 
-        An ack is an NLMSG_ERROR whose error field is zero, which reads oddly
-        until you notice it means the kernel answers success and failure the
-        same shape. Anything else arriving in reply to a request that asked
-        for an ack is not this request's business, and is skipped rather than
-        treated as an answer -- a socket that also asked for a dump can have
-        one in flight.
-
-        The errno comes back negative, the way every other call in this
-        project reports one.
-*/
-static bipolar netlink_talk(b32 handle, netlink_buffer address_to request,
-                            p32 sequence, netlink_buffer address_to reply)
-{
-        netlink_header address_to header;
-        positive at;
-        bipolar sent;
-
-        if (request->failed)
-                return -1;
-
-        sent = socket_send(handle, request->bytes, request->used, 0, 0, 0);
-
-        if (sent < 0)
-                return sent;
-
-        for (;;)
-        {
-                bipolar got = netlink_receive(handle, reply);
-
-                if (got < 0)
-                        return got;
-
-                at = 0;
-
-                while (at + NETLINK_HEADER <= reply->used)
-                {
-                        header = (netlink_header address_to)(reply->bytes + at);
-
-                        if (header->length < NETLINK_HEADER ||
-                            at + header->length > reply->used)
-                                return -1;
-
-                        if (header->sequence == sequence &&
-                            header->type == NLMSG_IS_ERROR)
-                        {
-                                b32 code = address_to(
-                                    (b32 address_to)(reply->bytes + at + NETLINK_HEADER));
-
-                                return code;
-                        }
-
-                        at += netlink_align(header->length);
-                }
-        }
-}
+static bipolar netlink_walk(b32 handle, netlink_buffer address_to request,
+                            p32 sequence, netlink_buffer address_to reply,
+                            netlink_visitor visit, address_any context);
 
 /*
         The tail every acknowledged request shares: sent, answered, and both
@@ -422,7 +370,8 @@ static bipolar netlink_talk(b32 handle, netlink_buffer address_to request,
 static bipolar netlink_transact(b32 handle, netlink_buffer address_to request,
                                 p32 sequence, netlink_buffer address_to reply)
 {
-        bipolar status = netlink_talk(handle, request, sequence, reply);
+        bipolar status = netlink_walk(handle, request, sequence, reply,
+                                      null, null);
 
         netlink_forget(request);
         netlink_forget(reply);
@@ -451,9 +400,6 @@ static bipolar netlink_transact(b32 handle, netlink_buffer address_to request,
         problem. So the remaining messages are drawn and dropped, and the
         socket is handed back clean.
 */
-typedef bool (address_to netlink_visitor)(netlink_header address_to header,
-                                          address_any context);
-
 static bipolar netlink_walk(b32 handle, netlink_buffer address_to request,
                             p32 sequence, netlink_buffer address_to reply,
                             netlink_visitor visit, address_any context)
@@ -488,14 +434,14 @@ static bipolar netlink_walk(b32 handle, netlink_buffer address_to request,
                             at + header->length > reply->used)
                                 return -1;
 
-                        if (header->flags & NLM_DUMP_INTERRUPTED)
-                                return -1;
-
                         if (header->sequence != sequence)
                         {
                                 at += netlink_align(header->length);
                                 continue;
                         }
+
+                        if (header->flags & NLM_DUMP_INTERRUPTED)
+                                return -1;
 
                         if (header->type == NLMSG_IS_DONE)
                                 return 0;

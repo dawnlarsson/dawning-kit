@@ -164,6 +164,22 @@ bipolar start_shell(b32 device)
                              init_argv, 1);
 }
 
+static bipolar start_shell_until_ready(b32 device, positive address_to started)
+{
+        bipolar shell;
+
+        while ((shell = start_shell(device)) < 0)
+        {
+                string_format(log, init_label "could not start %s: %b\n",
+                              init_program, shell);
+                log_flush();
+                pause_for(RESTART_BACKOFF_MAX_NS);
+                address_to started = now_ns();
+        }
+
+        return shell;
+}
+
 // Reading a wait status as an exit code alone reports a crash as a clean exit
 // of zero -- which is the one thing this line exists to make visible.
 fn report_exit(positive status)
@@ -232,21 +248,10 @@ static b32 system_init()
         positive network_started = now_ns();
         positive network_failures = 0;
 
-        bipolar shell = start_shell(device);
-
         // Returning from PID 1 panics the kernel, which on a machine with no
         // serial console says nothing at all. Retrying at a bounded rate keeps
         // the reason on screen instead.
-        while (shell < 0)
-        {
-                string_format(log, init_label "could not start %s: %b\n",
-                              init_program, shell);
-                log_flush();
-                pause_for(RESTART_BACKOFF_MAX_NS);
-
-                started = now_ns();
-                shell = start_shell(device);
-        }
+        bipolar shell = start_shell_until_ready(device, address_of started);
 
         while (1)
         {
@@ -337,21 +342,10 @@ static b32 system_init()
                 }
 
                 started = now_ns();
-                shell = start_shell(device);
-
                 // Retried here rather than by falling back into wait4,
                 // which would have no children to wait for and would report
                 // the shell as having died when it never started.
-                while (shell < 0)
-                {
-                        string_format(log, init_label "could not start %s: %b\n",
-                                      init_program, shell);
-                        log_flush();
-                        pause_for(RESTART_BACKOFF_MAX_NS);
-
-                        started = now_ns();
-                        shell = start_shell(device);
-                }
+                shell = start_shell_until_ready(device, address_of started);
         }
 }
 

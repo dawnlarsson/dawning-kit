@@ -1020,27 +1020,6 @@ bool env_set(const_string name, const_string value)
         return env_set_hashed_span(name, answer.y, answer.x, value);
 }
 
-#define ERROR_NOT_PERMITTED 1
-#define ERROR_NO_ENTRY 2
-#define ERROR_NOT_DIRECTORY 20
-#define ERROR_IS_DIRECTORY 21
-
-#define AT_SYMLINK_NOFOLLOW 0x100
-#define AT_REMOVEDIR 0x200
-
-#define ACCESS_EXECUTE 1
-
-#define STATX_BASIC 0x7ff
-
-#define MODE_FORMAT 0170000
-#define MODE_SOCKET 0140000
-#define MODE_LINK 0120000
-#define MODE_FILE 0100000
-#define MODE_BLOCK 0060000
-#define MODE_DIRECTORY 0040000
-#define MODE_CHARACTER 0020000
-#define MODE_PIPE 0010000
-
 #define SHELL_FLAG(letter) ((positive)1 << ((letter) - 'a'))
 
 // string_to_positive scans backwards from the end of the string, so it reads
@@ -1714,6 +1693,7 @@ fn shell_poweroff(writer write, string_address input)
 
 #define ACCESS_READ 4
 #define ACCESS_WRITE 2
+#define ACCESS_EXECUTE 1
 
 // The shell's own ioctl, spelled here because shell.c names it after this file
 // has already been read.

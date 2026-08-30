@@ -487,7 +487,7 @@ static fn text_line_preserve(p8 address_to address_to previous,
                              positive previous_length,
                              p8 address_to storage)
 {
-        if (address_to previous && address_to previous != storage)
+        if (previous && address_to previous && address_to previous != storage)
         {
                 // The terminator is part of the view contract. Keeping it
                 // with the bytes also makes later output one buffered write.
@@ -533,14 +533,6 @@ static bool text_line_view(p8 address_to address_to line,
         address_to line = text_line;
         address_to length = text_line_length;
         return true;
-}
-
-static bool text_line_view_unheld(p8 address_to address_to line,
-                                  positive address_to length)
-{
-        p8 address_to previous = null;
-
-        return text_line_view(line, length, address_of previous, 0, null);
 }
 
 static fn text_put_line()
@@ -1163,6 +1155,32 @@ static bool regex_at_branch_stop(positive at)
                (regex_pattern[at + 2] == ')' || regex_pattern[at + 2] == '|');
 }
 
+static fn regex_parse_group(bool escaped)
+{
+        bool capture = regex_group_count < REGEX_GROUP_MAX;
+        b32 group = capture ? ++regex_group_count : 0;
+
+        if (capture)
+        {
+                b32 open = regex_emit(REGEX_SAVE);
+                regex_code[open].value = (p8)(group * 2);
+        }
+
+        regex_parse_alternation();
+
+        if (escaped ? regex_peek() == '\\' && regex_peek_at(1) == ')'
+                    : regex_peek() == ')')
+                regex_pattern_at += escaped ? 2 : 1;
+        else
+                regex_broken = true;
+
+        if (capture)
+        {
+                b32 shut = regex_emit(REGEX_SAVE);
+                regex_code[shut].value = (p8)(group * 2 + 1);
+        }
+}
+
 static b32 regex_parse_atom()
 {
         b32 start = regex_length_code;
@@ -1203,28 +1221,7 @@ static b32 regex_parse_atom()
         if (regex_extended && character == '(')
         {
                 regex_pattern_at++;
-
-                bool capture = regex_group_count < REGEX_GROUP_MAX;
-                b32 group = capture ? ++regex_group_count : 0;
-
-                if (capture)
-                {
-                        b32 open = regex_emit(REGEX_SAVE);
-                        regex_code[open].value = (p8)(group * 2);
-                }
-
-                regex_parse_alternation();
-
-                if (regex_peek() == ')')
-                        regex_pattern_at++;
-                else
-                        regex_broken = true;
-
-                if (capture)
-                {
-                        b32 shut = regex_emit(REGEX_SAVE);
-                        regex_code[shut].value = (p8)(group * 2 + 1);
-                }
+                regex_parse_group(false);
 
                 return start;
         }
@@ -1243,28 +1240,7 @@ static b32 regex_parse_atom()
                 if (!regex_extended && next == '(')
                 {
                         regex_pattern_at += 2;
-
-                        bool capture = regex_group_count < REGEX_GROUP_MAX;
-                        b32 group = capture ? ++regex_group_count : 0;
-
-                        if (capture)
-                        {
-                                b32 open = regex_emit(REGEX_SAVE);
-                                regex_code[open].value = (p8)(group * 2);
-                        }
-
-                        regex_parse_alternation();
-
-                        if (regex_peek() == '\\' && regex_peek_at(1) == ')')
-                                regex_pattern_at += 2;
-                        else
-                                regex_broken = true;
-
-                        if (capture)
-                        {
-                                b32 shut = regex_emit(REGEX_SAVE);
-                                regex_code[shut].value = (p8)(group * 2 + 1);
-                        }
+                        regex_parse_group(true);
 
                         return start;
                 }
@@ -2517,16 +2493,6 @@ static positive cat_line_number;
 static bool cat_blank_before;
 static bool cat_at_line_start;
 
-// A byte as -v spells it: control characters as ^X, the high half as M- and
-// then the same rule again. Tab and newline are only touched by -T and by
-// nothing, which is why they are not here.
-static fn cat_visible(p8 value)
-{
-        p8 visible[TEXT_VISIBLE_MAX];
-
-        text_put(visible, text_visible(visible, value));
-}
-
 static fn cat_number()
 {
         // Six wide and right aligned, then a tab, which is what GNU does and
@@ -2548,8 +2514,12 @@ static fn cat_number()
         cat_line_number++;
 }
 
+// A byte as -v spells it: control characters as ^X, the high half as M- and
+// then the same rule again. Tab and newline are touched separately by -T.
 static fn cat_walked()
 {
+        p8 visible[TEXT_VISIBLE_MAX];
+
         while (text_fill())
         {
                 while (text_input.position < text_input.filled)
@@ -2597,7 +2567,7 @@ static fn cat_walked()
 
                         if (cat_flags & CAT_SHOW)
                         {
-                                cat_visible(value);
+                                text_put(visible, text_visible(visible, value));
                                 continue;
                         }
 
@@ -3198,26 +3168,8 @@ static positive text_tail_start(positive handle, positive size, positive count)
         return 0;
 }
 
-static fn text_stream_from(positive start)
+static fn text_stream_count(positive left)
 {
-        system_call_3(syscall(lseek), text_input.handle, start, FILE_SEEK_SET);
-        text_input.filled = 0;
-        text_input.position = 0;
-        text_input.finished = false;
-        text_put_rest();
-}
-
-// Everything from start up to but not including stop, which is where head
-// stops when the count it was given was counted from the end.
-static fn text_stream_span(positive start, positive stop)
-{
-        system_call_3(syscall(lseek), text_input.handle, start, FILE_SEEK_SET);
-        text_input.filled = 0;
-        text_input.position = 0;
-        text_input.finished = false;
-
-        positive left = stop > start ? stop - start : 0;
-
         while (left && text_fill())
         {
                 positive have = text_input.filled - text_input.position;
@@ -3227,6 +3179,28 @@ static fn text_stream_span(positive start, positive stop)
                 text_input.position += take;
                 left -= take;
         }
+}
+
+static fn text_stream_seek(positive start)
+{
+        system_call_3(syscall(lseek), text_input.handle, start, FILE_SEEK_SET);
+        text_input.filled = 0;
+        text_input.position = 0;
+        text_input.finished = false;
+}
+
+static fn text_stream_from(positive start)
+{
+        text_stream_seek(start);
+        text_put_rest();
+}
+
+// Everything from start up to but not including stop, which is where head
+// stops when the count it was given was counted from the end.
+static fn text_stream_span(positive start, positive stop)
+{
+        text_stream_seek(start);
+        text_stream_count(stop > start ? stop - start : 0);
 }
 
 static const file_long head_longs[] = {
@@ -3388,19 +3362,7 @@ static b32 text_head()
                 }
 
                 if (by_bytes)
-                {
-                        positive left = count;
-
-                        while (left && text_fill())
-                        {
-                                positive have = text_input.filled - text_input.position;
-                                positive take = have < left ? have : left;
-
-                                text_put(text_input.buffer + text_input.position, take);
-                                text_input.position += take;
-                                left -= take;
-                        }
-                }
+                        text_stream_count(count);
                 else
                 {
                         positive done = 0;
@@ -4275,8 +4237,9 @@ static b32 text_cut()
                         p8 address_to line = null;
                         positive line_length = 0;
 
-                        if (!text_line_view_unheld(address_of line,
-                                                   address_of line_length))
+                        if (!text_line_view(address_of line,
+                                            address_of line_length,
+                                            null, 0, null))
                                 break;
 
                         if (by_character)
@@ -5466,34 +5429,11 @@ static file_color_span grep_color_value(string_address key,
 {
         // GREP_COLORS is the current GNU interface. The deprecated singular
         // GREP_COLOR variable is deliberately not another precedence layer.
-        file_color_span answer = {fallback, fallback ? string_length(fallback) : 0};
-        positive wanted = string_length(key);
         bool match_alias = string_equals(key, "ms") || string_equals(key, "mc");
 
-        for (string_address at = grep_colors; at && string_get(at);)
-        {
-                string_address stop = string_first_of_or_end(at, ':');
-                string_address mark = string_first_of_or_end(at, '=');
-
-                if (mark < stop)
-                {
-                        positive length = (positive)(mark - at);
-                        bool same = length == wanted &&
-                                    !string_compare_max(at, key, wanted);
-                        bool alias = match_alias && length == 2 &&
-                                     string_is(at, 'm') && string_is(at + 1, 't');
-
-                        if (same || alias)
-                        {
-                                answer.text = mark + 1;
-                                answer.length = (positive)(stop - mark - 1);
-                        }
-                }
-
-                at = string_get(stop) ? stop + 1 : stop;
-        }
-
-        return answer;
+        return file_color_value_aliased(
+            grep_colors, key,
+            match_alias ? (string_address) "mt" : null, fallback);
 }
 
 static fn grep_color_start(file_color_span color)
@@ -9412,6 +9352,44 @@ static fn sort_run(positive count)
         sort_order = source;
 }
 
+static positive sort_key_flags(sort_key address_to key, string_address spec,
+                               positive at, p8 address_to kind, bool second)
+{
+        while (spec[at] && (second || spec[at] != ','))
+        {
+                p8 option = spec[at++];
+
+                if (option == 'n' || option == 'h' ||
+                    option == 'M' || option == 'V')
+                {
+                        if (address_to kind && address_to kind != option)
+                                return positive_max;
+
+                        address_to kind = option;
+                        key->kind = option;
+                }
+                else if (option == 'r')
+                        key->reverse = true;
+                else if (option == 'f')
+                        key->how |= SORT_FOLD;
+                else if (option == 'd')
+                        key->how |= SORT_DICTIONARY;
+                else if (option == 'i')
+                        key->how |= SORT_PRINTABLE;
+                else if (option == 'b')
+                {
+                        if (second)
+                                key->skip_blanks_second = true;
+                        else
+                                key->skip_blanks_first = true;
+                }
+                else
+                        return positive_max;
+        }
+
+        return at;
+}
+
 static bool sort_parse_key(string_address spec)
 {
         if (sort_key_count >= SORT_KEYS_MAX)
@@ -9449,32 +9427,10 @@ static bool sort_parse_key(string_address spec)
                 at += taken;
         }
 
-        while (spec[at] && spec[at] != ',')
-        {
-                if (spec[at] == 'n' || spec[at] == 'h' ||
-                    spec[at] == 'M' || spec[at] == 'V')
-                {
-                        if (local_kind && local_kind != spec[at])
-                                return false;
+        at = sort_key_flags(key, spec, at, address_of local_kind, false);
 
-                        local_kind = spec[at];
-                        key->kind = spec[at];
-                }
-                else if (spec[at] == 'r')
-                        key->reverse = true;
-                else if (spec[at] == 'f')
-                        key->how |= SORT_FOLD;
-                else if (spec[at] == 'd')
-                        key->how |= SORT_DICTIONARY;
-                else if (spec[at] == 'i')
-                        key->how |= SORT_PRINTABLE;
-                else if (spec[at] == 'b')
-                        key->skip_blanks_first = true;
-                else
-                        return false;
-
-                at++;
-        }
+        if (at == positive_max)
+                return false;
 
         if (spec[at] == ',')
         {
@@ -9497,32 +9453,9 @@ static bool sort_parse_key(string_address spec)
                         at += taken;
                 }
 
-                while (spec[at])
-                {
-                        if (spec[at] == 'n' || spec[at] == 'h' ||
-                            spec[at] == 'M' || spec[at] == 'V')
-                        {
-                                if (local_kind && local_kind != spec[at])
-                                        return false;
-
-                                local_kind = spec[at];
-                                key->kind = spec[at];
-                        }
-                        else if (spec[at] == 'r')
-                                key->reverse = true;
-                        else if (spec[at] == 'f')
-                                key->how |= SORT_FOLD;
-                        else if (spec[at] == 'd')
-                                key->how |= SORT_DICTIONARY;
-                        else if (spec[at] == 'i')
-                                key->how |= SORT_PRINTABLE;
-                        else if (spec[at] == 'b')
-                                key->skip_blanks_second = true;
-                        else
-                                return false;
-
-                        at++;
-                }
+                if (sort_key_flags(key, spec, at, address_of local_kind,
+                                   true) == positive_max)
+                        return false;
         }
 
         sort_key_count++;

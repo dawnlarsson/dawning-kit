@@ -1417,6 +1417,17 @@ static fn storage_device_number(writer output, positive major, positive minor)
         output((address_any)"\n", 1);
 }
 
+static fn storage_mountpoint_error(writer diagnostic, bool quiet,
+                                   string_address path,
+                                   string_address reason)
+{
+        if (quiet)
+                return;
+
+        storage_write_two(diagnostic, (string_address) "mountpoint: ", path);
+        storage_write_text(diagnostic, reason);
+}
+
 b32 storage_mountpoint(positive argc, string_address address_to argv,
                        writer output, writer diagnostic)
 {
@@ -1505,27 +1516,17 @@ b32 storage_mountpoint(positive argc, string_address address_to argv,
                                nofollow ? AT_SYMLINK_NOFOLLOW : 0,
                                address_of facts))
                 {
-                        if (!quiet)
-                        {
-                                storage_write_two(diagnostic,
-                                                  (string_address) "mountpoint: ",
-                                                  path);
-                                storage_write_text(diagnostic,
-                                    (string_address) ": cannot inspect\n");
-                        }
+                        storage_mountpoint_error(
+                            diagnostic, quiet, path,
+                            (string_address) ": cannot inspect\n");
                         return 1;
                 }
 
                 if ((facts.mode & MODE_FORMAT) != MODE_BLOCK)
                 {
-                        if (!quiet)
-                        {
-                                storage_write_two(diagnostic,
-                                                  (string_address) "mountpoint: ",
-                                                  path);
-                                storage_write_text(diagnostic,
-                                    (string_address) ": not a block device\n");
-                        }
+                        storage_mountpoint_error(
+                            diagnostic, quiet, path,
+                            (string_address) ": not a block device\n");
                         return 32;
                 }
 
@@ -1546,14 +1547,9 @@ b32 storage_mountpoint(positive argc, string_address address_to argv,
 
         if (handle < 0)
         {
-                if (!quiet)
-                {
-                        storage_write_two(diagnostic,
-                                          (string_address) "mountpoint: ", path);
-                        storage_write_text(diagnostic,
-                                           (string_address) ": cannot inspect\n");
-                }
-
+                storage_mountpoint_error(
+                    diagnostic, quiet, path,
+                    (string_address) ": cannot inspect\n");
                 return 1;
         }
 
@@ -1602,14 +1598,9 @@ b32 storage_mountpoint(positive argc, string_address address_to argv,
 
         if (!inspected)
         {
-                if (!quiet)
-                {
-                        storage_write_two(diagnostic,
-                                          (string_address) "mountpoint: ", path);
-                        storage_write_text(diagnostic,
-                                           (string_address) ": cannot inspect\n");
-                }
-
+                storage_mountpoint_error(
+                    diagnostic, quiet, path,
+                    (string_address) ": cannot inspect\n");
                 return 1;
         }
 

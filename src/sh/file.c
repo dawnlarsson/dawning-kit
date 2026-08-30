@@ -1951,11 +1951,14 @@ static bool file_color_active(b32 when)
 // Values here are SGR fragments. GNU dircolors' escaped lc/rc/ec envelope
 // language and escaped colons are deliberately outside this bounded parser;
 // the default ESC[ ... m envelope stays fixed and reset-safe instead.
-static file_color_span file_color_value(string_address table, string_address key,
-                                        string_address fallback)
+static file_color_span file_color_value_aliased(string_address table,
+                                                string_address key,
+                                                string_address alias,
+                                                string_address fallback)
 {
         file_color_span answer = {fallback, fallback ? string_length(fallback) : 0};
         positive wanted = string_length(key);
+        positive alias_length = alias ? string_length(alias) : 0;
 
         if (!table)
                 return answer;
@@ -1965,8 +1968,13 @@ static file_color_span file_color_value(string_address table, string_address key
                 string_address stop = string_first_of_or_end(at, ':');
                 string_address mark = string_first_of_or_end(at, '=');
 
-                if (mark < stop && (positive)(mark - at) == wanted &&
-                    !string_compare_max(at, key, wanted))
+                positive length = mark < stop ? (positive)(mark - at) : 0;
+
+                if (mark < stop &&
+                    ((length == wanted &&
+                      !string_compare_max(at, key, wanted)) ||
+                     (alias && length == alias_length &&
+                      !string_compare_max(at, alias, alias_length))))
                 {
                         answer.text = mark + 1;
                         answer.length = (positive)(stop - mark - 1);
@@ -1976,6 +1984,12 @@ static file_color_span file_color_value(string_address table, string_address key
         }
 
         return answer;
+}
+
+static file_color_span file_color_value(string_address table, string_address key,
+                                        string_address fallback)
+{
+        return file_color_value_aliased(table, key, null, fallback);
 }
 
 static bool file_color_has(string_address table, string_address key)

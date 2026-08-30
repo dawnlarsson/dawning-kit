@@ -2299,6 +2299,25 @@ static bool conditional_regex_match(string_address text, string_address pattern,
 
 static bool conditional_expression();
 
+static bool conditional_binary_ready()
+{
+        conditional_at++;
+
+        if (conditional_at >= conditional_word_count)
+        {
+                conditional_bad = true;
+                return false;
+        }
+
+        if (!conditional_active)
+        {
+                conditional_at++;
+                return false;
+        }
+
+        return true;
+}
+
 static bool conditional_primary()
 {
         string_address raw;
@@ -2383,19 +2402,8 @@ static bool conditional_primary()
                         bool valid;
                         bool value;
 
-                        conditional_at++;
-
-                        if (conditional_at >= conditional_word_count)
-                        {
-                                conditional_bad = true;
+                        if (!conditional_binary_ready())
                                 return false;
-                        }
-
-                        if (!conditional_active)
-                        {
-                                conditional_at++;
-                                return false;
-                        }
 
                         left = conditional_expand(raw, false);
                         right = shell_expand_regex(
@@ -2419,19 +2427,8 @@ static bool conditional_primary()
                         string_address right;
                         bool value;
 
-                        conditional_at++;
-
-                        if (conditional_at >= conditional_word_count)
-                        {
-                                conditional_bad = true;
+                        if (!conditional_binary_ready())
                                 return false;
-                        }
-
-                        if (!conditional_active)
-                        {
-                                conditional_at++;
-                                return false;
-                        }
 
                         left = conditional_expand(raw, false);
                         right = conditional_expand(
