@@ -116,6 +116,8 @@ cover('direct_benchmark', 'kit/bench_span_byte.c', 'memory_span_byte',
       'page-edge verifier and paired scalar/vector equal-run timing')
 cover('direct_benchmark', 'kit/bench_fill_u32.c', 'memory_fill_u32',
       '32-bit span fill against scalar and bulk-store traffic floors')
+cover('direct_benchmark', 'kit/bench_fill_u64.c', 'memory_fill_u64_aligned',
+      'aligned 64-bit pattern fill against scalar and bulk-store traffic floors')
 cover('direct_benchmark', 'kit/bench_ascii_case.c', 'memory_compare_ascii_case',
       'exhaustive byte-pair validation and paired folded comparison timing')
 cover('direct_benchmark', 'kit/bench_ascii_convert.c', '''

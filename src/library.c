@@ -67,7 +67,7 @@
         A .set is a second label on the same address, so there is no wrapper
         and no jump, and which names get one depends on who is linking.
 
-        232 routines (223 public, 9 local), 232 of them on all three.
+        233 routines (224 public, 9 local), 233 of them on all three.
         Raw C purity: 0 function bodies, 0 object definitions, 0 body macros, and 0 object macros (all forbidden).
 
           routine                        scope   x86_64  arm64   riscv64
@@ -160,6 +160,7 @@
           memory_count_words             public  yes     yes     yes
           memory_fill                    public  yes     yes     yes
           memory_fill_u32                public  yes     yes     yes
+          memory_fill_u64_aligned        public  yes     yes     yes
           memory_first_of                public  yes     yes     yes
           memory_first_of_ascii_case     public  yes     yes     yes
           memory_free                    public  yes     yes     yes
@@ -3426,6 +3427,32 @@ __asm__(
     "test $1, %sil\n   jz 6f\n   mov %eax, (%rdi)\n"
     "6:  " ASM_RET
     ASM_END(memory_fill_u32)
+
+    /*
+            Fill naturally aligned 64-bit elements with one value.  The
+            alignment is part of the contract: it lets RV64 use sd on every
+            implementation rather than depending on optional misaligned
+            handling, and matches arrays of cells, pointers and counters.
+    */
+    ASM_FUNC(memory_fill_u64_aligned)
+    "cmp $4, %rsi\n   jae 3f\n   test %rsi, %rsi\n   jz 9f\n"
+    "mov %rdx, (%rdi)\n   mov %rdx, -8(%rdi,%rsi,8)\n"
+    "cmp $3, %rsi\n   jb 9f\n   mov %rdx, 8(%rdi)\n"
+    "9:  " ASM_RET
+    /* Native Zen 5 paired medians leave REP 12.1% behind at 96 words on
+       one cache-line position and 7.3% behind at 100; both positions reach
+       parity at 104. */
+    "3:  cmp $104, %rsi\n   jae 5f\n   sub $4, %rsi\n   jb 2f\n"
+    "1:  mov %rdx, (%rdi)\n   mov %rdx, 8(%rdi)\n"
+    "mov %rdx, 16(%rdi)\n   mov %rdx, 24(%rdi)\n"
+    "add $32, %rdi\n   sub $4, %rsi\n   jae 1b\n"
+    "2:  add $4, %rsi\n   jz 8f\n   test $2, %sil\n   jz 4f\n"
+    "mov %rdx, (%rdi)\n   mov %rdx, 8(%rdi)\n   add $16, %rdi\n"
+    "4:  test $1, %sil\n   jz 8f\n   mov %rdx, (%rdi)\n"
+    "8:  " ASM_RET
+    "5:  mov %rdx, %rax\n   mov %rsi, %rcx\n   rep stosq\n"
+    ASM_RET
+    ASM_END(memory_fill_u64_aligned)
 
     /*
             Reverse an exact byte span in place and hand its original address
@@ -7239,6 +7266,15 @@ __asm__(
     "4:  " ASM_RET
     ASM_END(memory_fill_u32)
 
+    ASM_FUNC(memory_fill_u64_aligned)
+    "cmp x1, #4\n   b.lo 2f\n"
+    "1:  stp x2, x2, [x0], #16\n   stp x2, x2, [x0], #16\n"
+    "sub x1, x1, #4\n   cmp x1, #4\n   b.hs 1b\n"
+    "2:  tbz x1, #1, 3f\n   stp x2, x2, [x0], #16\n"
+    "3:  tbz x1, #0, 4f\n   str x2, [x0]\n"
+    "4:  " ASM_RET
+    ASM_END(memory_fill_u64_aligned)
+
     // Same exact in-place contract as x86_64.  Userspace has baseline NEON:
     // rev64 reverses each eight-byte lane and ext exchanges the lanes, so a
     // pair of q registers retires thirty two bytes per turn.  A kernel build
@@ -10365,6 +10401,17 @@ __asm__(
     "3:  " ASM_RET
     ASM_END(memory_fill_u32)
 
+    ASM_FUNC(memory_fill_u64_aligned)
+    "li t0, 4\n   blt a1, t0, 2f\n"
+    "1:  sd a2, 0(a0)\n   sd a2, 8(a0)\n   sd a2, 16(a0)\n"
+    "sd a2, 24(a0)\n   addi a0, a0, 32\n   addi a1, a1, -4\n"
+    "bge a1, t0, 1b\n"
+    "2:  andi t0, a1, 2\n   beqz t0, 3f\n"
+    "sd a2, 0(a0)\n   sd a2, 8(a0)\n   addi a0, a0, 16\n"
+    "3:  andi t0, a1, 1\n   beqz t0, 4f\n   sd a2, 0(a0)\n"
+    "4:  " ASM_RET
+    ASM_END(memory_fill_u64_aligned)
+
 #define RV_REVERSE_FOUR                                                       \
     "lbu t0, 0(a0)\n   lbu t1, 1(a0)\n   lbu t2, 2(a0)\n"                \
     "lbu t3, 3(a0)\n   lbu t4, -1(a3)\n   lbu t5, -2(a3)\n"             \
@@ -12458,6 +12505,8 @@ positive string_lex_word(string_address source, p8 address_to into,
                             const b8 address_to class);
 address_any memory_fill(address_any destination, b8 value, positive size);
 fn memory_fill_u32(address_any destination, positive count, unsigned int value);
+fn memory_fill_u64_aligned(address_any destination, positive count,
+                           positive value);
 positive memory_common_prefix(address_any one, address_any two, positive size);
 positive memory_hash_33(address_any block, positive size);
 positive2 string_hash_33_length(string_address source);

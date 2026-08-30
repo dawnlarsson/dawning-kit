@@ -117,6 +117,30 @@ static unsigned int address_to row_length(unsigned int r)
 }
 
 /*
+        A cell is eight bytes and the ring begins 4096 bytes into its
+        page-aligned mapping.  Every row therefore satisfies the aligned-u64
+        fill contract, including on RV64 implementations that trap unaligned
+        doubleword stores.
+*/
+static positive blank_cell_word()
+{
+        positive clear_ink = reverse ? paper : ink;
+        positive clear_paper = reverse ? ink : paper;
+
+        return (positive)' ' | (clear_ink << 32) | (clear_paper << 40);
+}
+
+static fn cells_clear(unsigned int r, unsigned int first, unsigned int count)
+{
+        if (!count)
+                return;
+
+        memory_fill_u64_aligned(row_cells(r) + first, count,
+                                blank_cell_word());
+        touch(r);
+}
+
+/*
         Blanked in the colours in force, not in the ones it started in.
 
         An erase takes the current background, which is what lets a program
@@ -125,12 +149,7 @@ static unsigned int address_to row_length(unsigned int r)
 */
 static fn cell_clear(unsigned int r, unsigned int c)
 {
-        struct window_cell address_to cell = row_cells(r) + c;
-
-        cell->character = ' ';
-        cell->ink = reverse ? paper : ink;
-        cell->paper = reverse ? ink : paper;
-        touch(r);
+        cells_clear(r, c, 1);
 }
 
 /*
@@ -229,10 +248,10 @@ static fn reach(unsigned int r, unsigned int to)
 {
         unsigned int address_to length = row_length(r);
 
-        while (address_to length < to)
+        if (address_to length < to)
         {
-                cell_clear(r, address_to length);
-                address_to length = address_to length + 1;
+                cells_clear(r, address_to length, to - address_to length);
+                address_to length = to;
         }
 }
 
@@ -265,8 +284,7 @@ static fn open_gap(unsigned int at, unsigned int count)
                     (positive)(last - at - count) *
                         sizeof(struct window_cell));
 
-        for (unsigned int c = at; c < at + count && c < last; c++)
-                cell_clear(row, c);
+        cells_clear(row, at, min(count, last - at));
 
         touch(row);
 }
@@ -378,7 +396,7 @@ static b32 string_escape;
 static fn erase(unsigned int from_row, unsigned int from_column,
                 unsigned int to_row, unsigned int to_column)
 {
-        unsigned int r, c;
+        unsigned int r;
 
         for (r = from_row; r <= to_row && r < ROWS; r++)
         {
@@ -386,8 +404,13 @@ static fn erase(unsigned int from_row, unsigned int from_column,
                 unsigned int last = r == to_row ? to_column : COLUMNS - 1;
                 unsigned int address_to length = row_length(r);
 
-                for (c = first; c <= last && c < COLUMNS; c++)
-                        cell_clear(r, c);
+                if (first < COLUMNS)
+                {
+                        unsigned int past = min(last + 1, COLUMNS);
+
+                        if (past > first)
+                                cells_clear(r, first, past - first);
+                }
 
                 // An erase that reaches the end of a line is the line getting
                 // shorter, which is cheaper than the cells it would have
@@ -645,7 +668,6 @@ static fn csi_final(unsigned int final)
 {
         unsigned int a = parameter_count > 0 && parameters[0] ? parameters[0] : 1;
         unsigned int b = parameter_count > 1 && parameters[1] ? parameters[1] : 1;
-        unsigned int i;
 
         switch (final)
         {
@@ -742,8 +764,7 @@ static fn csi_final(unsigned int final)
         case 'X':
                 reach(row, column);
 
-                for (i = column; i < column + a && i < COLUMNS; i++)
-                        cell_clear(row, i);
+                cells_clear(row, column, min(a, COLUMNS - column));
                 break;
         case 'S':
                 scroll_up(a);
@@ -1418,8 +1439,7 @@ static fn line_erase(b32 shorten)
                 if (shorten && address_to length > c)
                         address_to length = c;
                 else if (!shorten)
-                        for (positive at = 0; at < taken; at++)
-                                cell_clear(r, c + (unsigned int)at);
+                        cells_clear(r, c, (unsigned int)taken);
 
                 touch(r);
                 left -= taken;

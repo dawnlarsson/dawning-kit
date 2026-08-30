@@ -377,6 +377,8 @@ static u64 canvas_text_ns;
         byte stores an iteration.
 */
 void memory_fill_u32(void *at, unsigned long long count, unsigned int value);
+void memory_fill_u64_aligned(void *at, unsigned long long count,
+                             unsigned long long value);
 void canvas_rect_fill(u32 *at, unsigned long pitch, unsigned long width,
                       unsigned long height, u32 colour);
 void canvas_glyph(u32 *at, unsigned long pitch, const u8 *bits,
