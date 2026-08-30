@@ -187,6 +187,54 @@ static string_address subject(positive bound, positive terminator)
         return source;
 }
 
+/*
+        A string may end before its maximum length, and no byte beyond that
+        terminator has to be mapped.  The literal-bound sweep above puts its
+        subjects exactly K bytes before a page edge; at K=64 that accidentally
+        aligns the AVX-512 load and cannot catch an unaligned vector crossing
+        the dead page.  Put every possible short suffix at the edge while
+        keeping a deliberately larger runtime bound.  A page-safe scan finds
+        the final NUL; an unaligned wide load faults before it can report it.
+*/
+static fn length_guard_edge(void)
+{
+        positive bound = 128;
+
+        for (positive suffix = 1; suffix <= 64; suffix++)
+        {
+                string_address source = source_edge - suffix;
+
+                for (positive i = 0; i < suffix; i++)
+                        source[i] = (p8)('a' + (i * 7 + suffix) % 23);
+
+                source[suffix - 1] = 0;
+                judge((string_address)"string_length_max page edge", bound,
+                      suffix, (string_length_max)(source, bound), suffix - 1);
+
+                string_address found = null;
+
+                if (suffix > 1)
+                {
+                        source[suffix - 2] = (p8)'z';
+                        found = source + suffix - 2;
+                }
+
+                judge((string_address)"string_first_of_max page edge", bound,
+                      suffix,
+                      (positive)(string_first_of_max)(source, bound, (p8)'z'),
+                      (positive)found);
+
+                string_address twin = twin_edge - suffix;
+
+                for (positive i = 0; i < suffix; i++)
+                        twin[i] = source[i];
+
+                judge((string_address)"string_compare_max page edge", bound,
+                      suffix,
+                      (positive)(string_compare_max)(source, twin, bound), 0);
+        }
+}
+
 static string_address mirror(string_address source, positive bound,
                              positive differ, p8 by)
 {
@@ -440,6 +488,7 @@ b32 main(void)
         EVERY_BOUND(END_CASE);
         EVERY_BOUND(PTR_CASE);
         EVERY_BOUND(APPEND_CASE);
+        length_guard_edge();
 
         string_format(log, "bounded: %p checks, %p failures\n", checks, failures);
         log_flush();

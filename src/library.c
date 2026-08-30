@@ -1663,22 +1663,31 @@ __asm__(
     "8:  rbit x3, x3\n   clz x3, x3\n   add x5, x5, x3, lsr #2\n"
 
 //
-//      A bounded scan reads only whole vectors that fit inside what is left,
-//      so every byte it touches is one the caller handed over and there is no
-//      page argument to make at all. x5 is the cursor and x6 what is left of
-//      the count; under sixteen bytes it leaves both where they are and drops
-//      through to label 5, which is the word at a time body.
+//      A bounded string scan still cannot read beyond an earlier terminator.
+//      Start with a sixteen-byte load aligned down inside the current page and
+//      mask its prefix. Peel aligned vectors until x5 is sixty-four aligned;
+//      every four-vector block is then page-contained as well. x6 tracks the
+//      bytes not yet examined, including the part masked from the first load.
+//      Under sixteen bytes it leaves both inputs untouched for label 5.
 //
 #define NEON_SCAN_MAX(FLAG)                                                   \
-    "cmp x6, #64\n   b.lo 4f\n"                                               \
+    "cmp x6, #16\n   b.lo 5f\n"                                           \
+    "and x4, x5, #15\n   bic x5, x5, #15\n"                              \
+    "mov x7, #-1\n   lsl x4, x4, #2\n   lsl x7, x7, x4\n"                  \
+    NEON_ONE(FLAG)                                                            \
+    "ands x3, x3, x7\n   b.ne 8f\n"                                         \
+    "add x5, x5, #16\n   sub x6, x6, #16\n   add x6, x6, x4, lsr #2\n"  \
+    "1:  tst x5, #63\n   b.eq 4f\n   cmp x6, #16\n   b.lo 5f\n"              \
+    NEON_ONE(FLAG)                                                            \
+    "cbnz x3, 8f\n   add x5, x5, #16\n   sub x6, x6, #16\n   b 1b\n"        \
+    "4:  cmp x6, #64\n   b.lo 6f\n"                                           \
     "2:  " NEON_FOUR(FLAG)                                                    \
-    "cbnz x3, 3f\n"                                                           \
-    "add x5, x5, #64\n   sub x6, x6, #64\n   cmp x6, #64\n   b.hs 2b\n"       \
-    "4:  cmp x6, #16\n   b.lo 5f\n"                                           \
+    "cbnz x3, 3f\n   add x5, x5, #64\n   sub x6, x6, #64\n"                \
+    "cmp x6, #64\n   b.hs 2b\n"                                               \
+    "6:  cmp x6, #16\n   b.lo 5f\n"                                           \
     "1:  " NEON_ONE(FLAG)                                                     \
-    "cbnz x3, 8f\n"                                                           \
-    "add x5, x5, #16\n   sub x6, x6, #16\n   cmp x6, #16\n   b.hs 1b\n"       \
-    "b 5f\n"                                                                  \
+    "cbnz x3, 8f\n   add x5, x5, #16\n   sub x6, x6, #16\n"                \
+    "cmp x6, #16\n   b.hs 1b\n   b 5f\n"                                       \
     "3:  " NEON_WHICH                                                         \
     "8:  rbit x3, x3\n   clz x3, x3\n   add x5, x5, x3, lsr #2\n"
 #endif
@@ -1849,9 +1858,12 @@ __asm__(
 #define WIDE_OR_END_TAIL ""
 
 //
-//      A bounded hunt reads only whole vectors that fit inside the count, so
-//      it needs no page argument at all and no mask over the first one: every
-//      byte it touches is a byte the caller handed over.
+//      A bounded string still has to stop before it reads past its terminator.
+//      A count says how far the answer may run; it does not make bytes beyond
+//      an earlier terminator mapped.  Align the first vector down, as the
+//      unbounded hunt does, and mask its prefix.  Every vector after that is
+//      naturally aligned, so none can straddle a page boundary.  The first
+//      vector consumes W minus the prefix rather than W bytes from the count.
 //
 //      NEXT and SHORT are both where it goes when there is not a whole vector
 //      left, and the sixty four byte body hands down to the thirty two byte
@@ -1868,11 +1880,17 @@ __asm__(
 //
 #define WIDE_LENGTH_MAX(W, ZEROED, ZEROS, LEAVE, NEXT, SHORT)                        \
     "cmp $" W ", %rdx\n   jb " SHORT "\n"                                     \
+    "mov %edi, %ecx\n   and $" W "-1, %ecx\n   and $-" W ", %rdi\n"           \
+    "mov $-1, %r9\n   shl %cl, %r9  # only bytes at and after the string\n"     \
     ZEROED                                                                    \
+    ZEROS                                                                     \
+    "and %r9, %rax\n   jnz 2f\n"                                           \
+    "add $" W ", %rdi\n   sub $" W ", %rdx\n   add %rcx, %rdx\n"          \
+    "cmp $" W ", %rdx\n   jb 3f\n"                                          \
     "1:  " ZEROS                                                              \
     "test %rax, %rax\n   jnz 2f\n"                                            \
     "add $" W ", %rdi\n   sub $" W ", %rdx\n   cmp $" W ", %rdx\n   jae 1b\n" \
-    LEAVE NEXT                                                                 \
+    "3:  " LEAVE NEXT                                                         \
     "2:  bsf %rax, %rax\n   add %rdi, %rax\n   sub %r8, %rax\n"               \
     LEAVE ASM_RET
 
@@ -1883,10 +1901,16 @@ __asm__(
     "movzbl %r8b, %ecx\n"                                                     \
     BROADCAST                                                                 \
     ZEROED                                                                    \
+    "mov %edi, %ecx\n   and $" W "-1, %ecx\n   and $-" W ", %rdi\n"           \
+    "mov $-1, %r10\n   shl %cl, %r10  # only bytes at and after the string\n"   \
+    EITHER                                                                    \
+    "and %r10, %rax\n   jnz 2f\n"                                          \
+    "add $" W ", %rdi\n   sub $" W ", %rdx\n   add %rcx, %rdx\n"          \
+    "cmp $" W ", %rdx\n   jb 4f\n"                                          \
     "1:  " EITHER                                                             \
     "test %rax, %rax\n   jnz 2f\n"                                            \
     "add $" W ", %rdi\n   sub $" W ", %rdx\n   cmp $" W ", %rdx\n   jae 1b\n" \
-    LEAVE NEXT                                                                 \
+    "4:  " LEAVE NEXT                                                         \
     "2:  bsf %rax, %rax\n   add %rdi, %rax\n"                                 \
     "movzbl (%rax), %ecx\n   cmp %r8b, %cl\n   je 3f\n"                       \
     "xor %eax, %eax  # it was the terminator: not found\n"                    \
@@ -3184,10 +3208,11 @@ __asm__(
     "xor %eax, %eax\n   test %rdx, %rdx\n   jz 9f\n"
     //
     //      Thirty two bytes a step while there are sixty four left to do.
-    //      The bound makes every read here legal without a page argument,
-    //      which is the whole difference between this and string_compare
-    //      above -- and the mask is the one that block explains: agree and
-    //      not the end, so all ones means keep going.
+    //      Like unbounded string_compare, each stream is checked against its
+    //      page edge before an unaligned load.  A bound limits the answer but
+    //      does not map bytes beyond an earlier terminator.  At an edge the
+    //      byte body peels one byte and re-enters here as soon as both vectors
+    //      fit again.
     //
     //      Sixty four rather than thirty two to enter, because a vzeroupper
     //      on the way out costs more than the word loop does over a short
@@ -3195,18 +3220,31 @@ __asm__(
     //      way, 63.0 this way, against a two stream floor of 71.
     //
     ASM_USERSPACE_WIDE(
+    "20:  "
     ASM_NARROW("cpu_has_avx2", "1f")
     "cmp $64, %rdx\n   jb 1f\n   vpxor %ymm4, %ymm4, %ymm4\n"
+    // Work out the whole page-contained run once.  Checking both pointers on
+    // every vector cost twelve instructions per turn; this cost is once per
+    // page and the loop itself stays at its traffic floor.
+    "mov $4096, %r10\n   mov %edi, %ecx\n   and $0xfff, %ecx\n   sub %rcx, %r10\n"
+    "mov $4096, %r11\n   mov %esi, %ecx\n   and $0xfff, %ecx\n   sub %rcx, %r11\n"
+    "cmp %r11, %r10\n   cmova %r11, %r10\n   cmp %rdx, %r10\n   cmova %rdx, %r10\n"
+    "cmp $32, %r10\n   jb 13f\n"
     "10:  vmovdqu (%rdi), %ymm0\n   vpcmpeqb (%rsi), %ymm0, %ymm1\n   vpcmpeqb %ymm4, %ymm0, %ymm2\n   vpandn %ymm1, %ymm2, %ymm3\n"
     "vpmovmskb %ymm3, %ecx\n   cmp $-1, %ecx\n   jne 11f\n   add $32, %rdi\n"
-    "add $32, %rsi\n   sub $32, %rdx\n   cmp $32, %rdx\n   jae 10b\n"
-    "vzeroupper\n   jmp 1f\n"
+    "add $32, %rsi\n   sub $32, %rdx\n   sub $32, %r10\n"
+    "cmp $32, %rdx\n   jb 14f\n   cmp $32, %r10\n   jae 10b\n"
+    "13:  vzeroupper\n   jmp 2f\n"
+    "14:  vzeroupper\n   jmp 1f\n"
     "11:  not %ecx\n   bsf %ecx, %ecx\n   vzeroupper\n   movzbl (%rdi,%rcx), %eax\n"
     "movzbl (%rsi,%rcx), %ecx\n   sub %ecx, %eax\n"
     ASM_RET
     )
     "1:  movabs $0x0101010101010101, %r10\n   movabs $0x8080808080808080, %r11\n"
-    "12:  cmp $8, %rdx\n   jb 2f\n   mov (%rdi), %r8\n   mov (%rsi), %r9\n"
+    "12:  cmp $8, %rdx\n   jb 2f\n"
+    "mov %edi, %ecx\n   and $0xfff, %ecx\n   cmp $0xff8, %ecx\n   ja 2f\n"
+    "mov %esi, %ecx\n   and $0xfff, %ecx\n   cmp $0xff8, %ecx\n   ja 2f\n"
+    "mov (%rdi), %r8\n   mov (%rsi), %r9\n"
     "cmp %r8, %r9\n   jne 2f  # let the byte loop settle it\n"
     // Equal so far. If either holds a terminator the strings end here.
     "mov %r8, %rax\n   sub %r10, %rax\n   mov %r8, %rcx\n   not %rcx\n"
@@ -3215,7 +3253,11 @@ __asm__(
     "2:  test %rdx, %rdx\n   jz 8f\n"
     "3:  movzbl (%rdi), %eax\n   movzbl (%rsi), %ecx\n   sub %ecx, %eax\n   jnz 9f\n"
     "test %ecx, %ecx\n   jz 8f\n   inc %rdi\n   inc %rsi\n"
-    "dec %rdx\n   jnz 3b\n"
+    "dec %rdx\n   jz 8f\n"
+    ASM_USERSPACE_WIDE(
+    "cmp $64, %rdx\n   jae 20b\n"
+    )
+    "jmp 3b\n"
     "8:  xor %eax, %eax\n"
     "9:\n"
     ASM_RET
@@ -6526,12 +6568,17 @@ __asm__(
     //      because what makes that block wait is the vzeroupper it owes on
     //      the way out, and there is no such toll here.
     //
-    //      The bound makes every read legal without a page argument, which
-    //      is the whole difference between this and string_compare above;
-    //      the mask is the one that block explains.
+    //      The count limits the result, but an earlier terminator still limits
+    //      what is mapped. Compute the shorter page-contained run once and
+    //      keep the paired-load loop free of per-vector boundary checks.
     //
     "cmp x2, #32\n"
     "b.lo 10f\n"
+    "11:  "
+    "mov x14, #4096\n   and x15, x0, #0xfff\n   sub x14, x14, x15\n"
+    "mov x15, #4096\n   and x16, x1, #0xfff\n   sub x15, x15, x16\n"
+    "cmp x14, x15\n   csel x14, x14, x15, lo\n"
+    "cmp x14, x2\n   csel x14, x14, x2, lo\n   cmp x14, #32\n   b.lo 2f\n"
     "12:  ldp q0, q1, [x0]\n   ldp q4, q5, [x1]\n"
     "cmeq v2.16b, v0.16b, v4.16b\n   cmeq v3.16b, v1.16b, v5.16b\n"
     "cmeq v6.16b, v0.16b, #0\n   cmeq v7.16b, v1.16b, #0\n"
@@ -6540,10 +6587,9 @@ __asm__(
     "cmp w9, #0xff\n   b.ne 5f\n   add x0, x0, #32\n"
     "add x1, x1, #32\n"
     "sub x2, x2, #32\n"
-    "cmp x2, #32\n"
-    "b.hs 12b\n"
-    "cmp x2, #16\n"
-    "b.lo 10f\n"
+    "sub x14, x14, #32\n   cmp x2, #32\n   b.lo 7f\n"
+    "cmp x14, #32\n   b.hs 12b\n   b 2f\n"
+    "7:  cmp x2, #16\n   b.lo 10f\n   cmp x14, #16\n   b.lo 2f\n"
     //
     //      Sixteen bytes for the tail the pair could not take, and the body
     //      a step that found something falls into rather than working out
@@ -6562,8 +6608,10 @@ __asm__(
     "ldrb w6, [x0, x9]\n   ldrb w7, [x1, x9]\n   sub w9, w6, w7\n   b 4f\n"
 #endif
     "10:  mov x10, #0x0101010101010101\n"
-    "1:  cmp x2, #8\n"
-    "b.lo 2f\n   ldr x6, [x0]\n   ldr x7, [x1]\n   cmp x6, x7\n"
+    "1:  cmp x2, #8\n   b.lo 2f\n"
+    "and x14, x0, #0xfff\n   cmp x14, #0xff8\n   b.hi 2f\n"
+    "and x14, x1, #0xfff\n   cmp x14, #0xff8\n   b.hi 2f\n"
+    "ldr x6, [x0]\n   ldr x7, [x1]\n   cmp x6, x7\n"
     "b.ne 2f  // differ: let the byte step find where\n"
     "sub x9, x6, x10\n   bic x9, x9, x6\n   and x9, x9, #0x8080808080808080\n"
     "cbnz x9, 3f  // a terminator in them: equal, and the strings end\n"
@@ -6574,8 +6622,7 @@ __asm__(
     "2:  cbz x2, 3f\n   ldrb w6, [x0]\n   ldrb w7, [x1]\n   subs w9, w6, w7\n"
     "b.ne 4f\n   cbz w7, 3f\n   add x0, x0, #1\n"
     "add x1, x1, #1\n"
-    "sub x2, x2, #1\n"
-    "b 2b\n"
+    "sub x2, x2, #1\n   cmp x2, #32\n   b.hs 11b\n   b 2b\n"
     "3:  mov w9, #0\n"
     "4:  mov w0, w9\n"
     ASM_RET
