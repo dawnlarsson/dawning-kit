@@ -244,6 +244,10 @@ log_direct log_failed log_failure_reset log_flush
 cover('correctness_only', 'src/test/probe.c', '''
 log_error program_argument program_argument_count term_size
 ''', 'focused runtime/probe behavior checks; no isolated timing')
+cover('correctness_only', 'src/test/leaving.c', 'program_initial_identity',
+      'the identity a process records at its first line, which the exit flush '
+      'compares against so a forked child does not write its parent\'s buffer; '
+      'exercised by the fork cases there and by nothing that could time it')
 cover('correctness_only', 'src/test/exact.c', 'moonwater_cpu_detect',
       'feature dispatch exercised by exact-size correctness tiers')
 cover('correctness_only', 'src/test/wait_retry.c', '''

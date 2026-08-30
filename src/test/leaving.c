@@ -373,6 +373,34 @@ test(an_atexit_handler_writes_before_the_flush)
         is precisely what glibc does and what the folklore answer -- flush
         before you fork -- is folklore about.
 */
+/*
+        The identity the whole fork-ownership mechanism rests on.
+
+        program_initial_identity is read once, at the program's first line,
+        and every later decision about whose bytes are in a buffer compares
+        against it. The cases below prove the CONSEQUENCE -- that a child
+        does not reprint its parent's output -- which is the behaviour worth
+        having. This one proves the PREMISE, because a routine that quietly
+        returned zero, or read the identity afresh on each call, would let
+        every case below pass while the mechanism did nothing: a child whose
+        recorded identity is re-read after the fork matches itself, and
+        decides the buffer is its own.
+
+        So: it agrees with the kernel, it does not change when asked twice,
+        and it is not zero.
+*/
+test(the_initial_identity_is_this_process_and_stays_put)
+{
+        positive first = program_initial_identity();
+        positive again = program_initial_identity();
+
+        fail(first != 0);
+        fail(first == again);
+        fail(first == (positive)system_call(syscall(getpid)));
+
+        return true;
+}
+
 test(a_forked_child_leaving_does_not_print_the_parents_bytes_again)
 {
         return leaving_says(LEAVE_FORK_STREAM, text(LEAVING_FIRST));
@@ -680,6 +708,7 @@ static test_case test_cases[] = {
         case(printf_then_capital_exit_prints_nothing),
         case(printf_then_quick_exit_prints_nothing),
         case(an_atexit_handler_writes_before_the_flush),
+        case(the_initial_identity_is_this_process_and_stays_put),
         case(a_forked_child_leaving_does_not_print_the_parents_bytes_again),
         case(two_forked_children_leaving_still_print_it_once),
         case(a_forked_child_with_a_clean_buffer_prints_its_own),
