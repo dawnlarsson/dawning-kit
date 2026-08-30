@@ -9,9 +9,7 @@
 #pragma GCC diagnostic ignored "-Woverflow"
 #endif
 
-#define test(test_name) bool test_##test_name()
-#define case(test_name) {#test_name, test_##test_name}
-#define fail(condition) if(!(condition)) return false
+#include "named_cases.inc"
 
 #define fail_equals(a, b) if((a) == (b)) return false
 
@@ -21,15 +19,6 @@
                 (positive)(b), (positive)(a)); \
         return false; \
     }
-
-typedef bool(address_to test_function)();
-
-typedef struct
-{
-        string_address name;
-        test_function function;
-        bool result;
-} test_case;
 
 p32 address_to p32_nulled = ((address_any)0);
 
@@ -4098,32 +4087,14 @@ fn generate_report(writer write)
 
 b32 main()
 {
-        test_case address_to test = test_cases;
-        positive passed = 0;
-        positive failed = 0;
-
         log_direct(str("C library tests\n\n"));
 
-        while (test->name)
-        {
-                log_direct(test->name, string_length(test->name));
+        test_cases_walk(test_cases);
 
-                bool result = test->function();
-
-                test->result = result;
-
-                if (!result) {
-                        log_direct(str(" ----- FAILED\n"));
-                        failed++;
-                }
-                else {
-                        log_direct(str(" PASSED\n"));
-                        passed++;
-                }
-                test++;
-        }
-
-        string_format(log, "\n%p passed, %p failed\n", passed, failed);
+        //      The one suite that says passed and failed where the others say
+        //      checks and failures, which is why this line is not test_report.
+        string_format(log, "\n%p passed, %p failed\n", checks - failures,
+                      failures);
 
         log_flush();
 
@@ -4131,5 +4102,5 @@ b32 main()
         generate_report(report_writer);
         #endif
 
-        return failed > 0 ? 1 : 0;
+        return failures > 0 ? 1 : 0;
 }

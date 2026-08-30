@@ -21,17 +21,7 @@
         fails here rather than the first time a route is added.
 */
 
-static positive checks = 0;
-static positive failures = 0;
-
-#define check(name, condition)                                          \
-        do {                                                            \
-                checks++;                                               \
-                if (!(condition)) {                                     \
-                        failures++;                                     \
-                        string_format(log, "  FAIL " name "\n");        \
-                }                                                       \
-        } while (0)
+#include "counted.inc"
 
 //      Independent of every reversal path: index the bytes, rebuild reversed.
 static p32 reference_32(p32 value)
@@ -339,7 +329,5 @@ b32 main(void)
 #ifdef LINUX
         sockets();
 #endif
-        string_format(log, "%p checks, %p failures\n", checks, failures);
-        log_flush();
-        return failures ? 1 : 0;
+        return test_report(null);
 }

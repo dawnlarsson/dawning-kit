@@ -32,18 +32,7 @@
 #pragma GCC diagnostic ignored "-Woverflow"
 #endif
 
-#define test(test_name) bool test_##test_name()
-#define case(test_name) {#test_name, test_##test_name}
-#define fail(condition) if (!(condition)) return false
-
-typedef bool(address_to test_function)();
-
-typedef struct
-{
-        string_address name;
-        test_function function;
-        bool result;
-} test_case;
+#include "named_cases.inc"
 
 typedef union
 {
@@ -1211,33 +1200,9 @@ static test_case test_cases[] = {
 
 b32 main()
 {
-        test_case address_to entry = test_cases;
-        positive passed = 0;
-        positive failed = 0;
-
         log_direct(str("math tests\n\n"));
 
-        while (entry->name)
-        {
-                log_direct(entry->name, string_length(entry->name));
+        test_cases_walk(test_cases);
 
-                entry->result = entry->function();
-
-                if (!entry->result)
-                {
-                        log_direct(str(" ----- FAILED\n"));
-                        failed++;
-                }
-                else
-                {
-                        log_direct(str(" PASSED\n"));
-                        passed++;
-                }
-                entry++;
-        }
-
-        string_format(log, "\n%p checks, %p failures\n", passed + failed, failed);
-        log_flush();
-
-        return failed > 0 ? 1 : 0;
+        return test_report((string_address) "\n");
 }

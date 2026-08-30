@@ -19,17 +19,7 @@
         diff is noise.
 */
 
-static positive checks;
-static positive failures;
-
-#define check(name, condition)                                          \
-        do {                                                            \
-                checks++;                                               \
-                if (!(condition)) {                                     \
-                        failures++;                                     \
-                        string_format(log, "  FAIL " name "\n");        \
-                }                                                       \
-        } while (0)
+#include "counted.inc"
 
 #define ERROR_TEST_DIRECTORY "/tmp/dawning-error-test"
 #define ERROR_TEST_FILE "/tmp/dawning-error-test/one"
@@ -985,8 +975,5 @@ b32 main(void)
         error_test_more();
         error_test_contract();
 
-        string_format(log, "%p checks, %p failures\n", checks, failures);
-        log_flush();
-
-        return failures ? 1 : 0;
+        return test_report(null);
 }

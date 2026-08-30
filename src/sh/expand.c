@@ -191,6 +191,27 @@ static fn expand_sets_prepare()
 }
 
 /*
+        Start an expansion with nothing carried over from the last one.
+
+        Three entry points begin here -- a word, an arithmetic body, and the
+        dollar in a here-document -- and each of them cleared the same six
+        pieces of state in the same order. A seventh piece added to two of the
+        three is the bug that shape invites: the third then sees whatever the
+        second left behind, which is a wrong answer that depends on what ran
+        before it.
+*/
+static fn expand_begin()
+{
+        expand_sets_prepare();
+
+        expand_length = 0;
+        expand_overflow = false;
+        expand_quoted_seen = false;
+        expand_failed = false;
+        expand_depth = 0;
+}
+
+/*
         Whether expansion is provably the identity operation.
 
         The lexer has already made blanks and operators token boundaries. If
@@ -1986,14 +2007,35 @@ static bipolar arith_evaluate(string_address text)
 */
 static string_address shell_expand_arithmetic_text(string_address text)
 {
-        expand_sets_prepare();
-        expand_length = 0;
-        expand_overflow = false;
-        expand_quoted_seen = false;
-        expand_failed = false;
-        expand_depth = 0;
+        expand_begin();
 
         return expand_capture(text, true, EXPAND_CAPTURE_TEXT);
+}
+
+/*
+        Where the quoted run that opens here ends, one byte past its close.
+
+        A single quoted run ends at the next quote and a backslash inside it is
+        an ordinary byte; a double quoted run lets a backslash carry the byte
+        behind it, so \" does not close one. A run that is never closed ends at
+        the terminating null, and every caller's loop ends there too.
+
+        Three scanners below walk a word looking for one byte that is theirs --
+        the bracket that closes an expansion, the / that separates a
+        replacement, the } that closes a brace list -- and none of them may
+        find it inside quotes. Written out three times, the three had to be
+        kept level by hand.
+*/
+static string_address expand_quoted_run(string_address at, p8 quote)
+{
+        at++;
+
+        while (string_get(at) && string_not(at, quote))
+                at += quote == '"' && string_is(at, '\\') && string_get(at + 1)
+                          ? 2
+                          : 1;
+
+        return string_get(at) ? at + 1 : at;
 }
 
 /*
@@ -2017,19 +2059,7 @@ static string_address expand_bracket_end(string_address at, p8 open, p8 close)
 
                 if (value == '\'' || value == '"')
                 {
-                        at++;
-
-                        if (value == '\'')
-                                at = string_first_of_or_end(at, '\'');
-                        else
-                                while (string_get(at) && string_not(at, '"'))
-                                        at += string_is(at, '\\') && string_get(at + 1)
-                                                  ? 2
-                                                  : 1;
-
-                        if (string_get(at))
-                                at++;
-
+                        at = expand_quoted_run(at, value);
                         continue;
                 }
 
@@ -2291,6 +2321,20 @@ static fn expand_fatal()
         system_call_1(syscall(exit_group), 2);
 }
 
+/*
+        The word did not fit, so nothing that depends on it can go on.
+
+        Eight places at the bottom of this file notice a full store, and every
+        one of them said this sentence and then called that fatal, in that
+        order. Both halves matter: the sentence names the word, and the fatal
+        is what stops a script rather than letting it act on a truncated one.
+*/
+static fn expand_too_long(string_address word)
+{
+        string_format(expand_complain, "Expansion too long: %s\n", word);
+        expand_fatal();
+}
+
 static string_address expand_arithmetic(string_address step, bool quoted)
 {
         string_address inner = step + 3;
@@ -2420,18 +2464,7 @@ static string_address expand_replace_separator(string_address at)
 
                 if (value == '\'' || value == '"')
                 {
-                        p8 quote = value;
-
-                        at++;
-                        while (string_get(at) && string_not(at, quote))
-                                at += quote == '"' && string_is(at, '\\') &&
-                                              string_get(at + 1)
-                                          ? 2
-                                          : 1;
-
-                        if (string_get(at))
-                                at++;
-
+                        at = expand_quoted_run(at, value);
                         continue;
                 }
 
@@ -2842,10 +2875,8 @@ static fn expand_case_change(string_address name, string_address pattern_text,
                 if (!shell_match(pattern, one))
                         continue;
 
-                if (upper && value >= 'a' && value <= 'z')
-                        expand_text[start + at] = value - 'a' + 'A';
-                else if (!upper && value >= 'A' && value <= 'Z')
-                        expand_text[start + at] = value - 'A' + 'a';
+                expand_text[start + at] =
+                    upper ? byte_to_upper(value) : byte_to_lower(value);
         }
 }
 
@@ -3267,12 +3298,7 @@ string_address shell_expand_here_dollar(string_address step,
 {
         string_address result;
 
-        expand_sets_prepare();
-        expand_length = 0;
-        expand_overflow = false;
-        expand_quoted_seen = false;
-        expand_failed = false;
-        expand_depth = 0;
+        expand_begin();
 
         result = expand_dollar(step, true);
 
@@ -3445,13 +3471,7 @@ static fn expand_word(string_address word)
 {
         string_address step = word;
 
-        expand_sets_prepare();
-
-        expand_length = 0;
-        expand_overflow = false;
-        expand_quoted_seen = false;
-        expand_failed = false;
-        expand_depth = 0;
+        expand_begin();
 
         if (string_is(word, '~'))
                 step = expand_tilde(word);
@@ -4046,18 +4066,7 @@ static string_address expand_brace_close(string_address open)
 
                 if (value == '\'' || value == '"')
                 {
-                        p8 quote = value;
-
-                        at++;
-                        while (string_get(at) && string_not(at, quote))
-                                at += quote == '"' && string_is(at, '\\') &&
-                                              string_get(at + 1)
-                                          ? 2
-                                          : 1;
-
-                        if (string_get(at))
-                                at++;
-
+                        at = expand_quoted_run(at, value);
                         continue;
                 }
 
@@ -4450,8 +4459,7 @@ static positive shell_expand_braces(string_address word,
 
         if (expand_overflow)
         {
-                string_format(expand_complain, "Expansion too long: %s\n", word);
-                expand_fatal();
+                expand_too_long(word);
                 return out->count;
         }
 
@@ -4473,8 +4481,7 @@ positive shell_expand_fields(string_address word, shell_words address_to out)
 
         if (expand_overflow)
         {
-                string_format(expand_complain, "Expansion too long: %s\n", word);
-                expand_fatal();
+                expand_too_long(word);
         }
 
         return count;
@@ -4495,8 +4502,7 @@ string_address shell_expand_word(string_address word)
 
         if (expand_overflow)
         {
-                string_format(expand_complain, "Expansion too long: %s\n", word);
-                expand_fatal();
+                expand_too_long(word);
                 return (string_address) "";
         }
 
@@ -4504,8 +4510,7 @@ string_address shell_expand_word(string_address word)
 
         if (expand_overflow)
         {
-                string_format(expand_complain, "Expansion too long: %s\n", word);
-                expand_fatal();
+                expand_too_long(word);
                 return (string_address) "";
         }
 
@@ -4533,8 +4538,7 @@ string_address shell_expand_pattern(string_address word)
 
         if (expand_overflow)
         {
-                string_format(expand_complain, "Expansion too long: %s\n", word);
-                expand_fatal();
+                expand_too_long(word);
                 return (string_address) "";
         }
 
@@ -4554,8 +4558,7 @@ string_address shell_expand_pattern(string_address word)
         if (!result)
         {
                 expand_overflow = true;
-                string_format(expand_complain, "Expansion too long: %s\n", word);
-                expand_fatal();
+                expand_too_long(word);
                 return (string_address) "";
         }
 
@@ -4597,8 +4600,7 @@ string_address shell_expand_regex(string_address word)
 
         if (expand_overflow)
         {
-                string_format(expand_complain, "Expansion too long: %s\n", word);
-                expand_fatal();
+                expand_too_long(word);
                 return (string_address) "";
         }
 
@@ -4623,8 +4625,7 @@ string_address shell_expand_regex(string_address word)
             !(result = shell_store_take(address_of expand_store, room)))
         {
                 expand_overflow = true;
-                string_format(expand_complain, "Expansion too long: %s\n", word);
-                expand_fatal();
+                expand_too_long(word);
                 return (string_address) "";
         }
 

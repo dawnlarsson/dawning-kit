@@ -41,8 +41,7 @@
 #define GUARD 32
 #define PREFIX 7
 
-static positive checks;
-static positive failures;
+#include "counted.inc"
 
 static p8 address_to source_edge;
 static p8 address_to twin_edge;
@@ -490,8 +489,5 @@ b32 main(void)
         EVERY_BOUND(APPEND_CASE);
         length_guard_edge();
 
-        string_format(log, "bounded: %p checks, %p failures\n", checks, failures);
-        log_flush();
-
-        return failures ? 1 : 0;
+        return test_report((string_address) "bounded: ");
 }

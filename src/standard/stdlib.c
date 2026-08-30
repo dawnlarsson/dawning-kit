@@ -318,20 +318,21 @@ static bool stdlib_environment_is(string_address entry, string_address name,
         return memory_compare(entry, name, length) == 0;
 }
 
-//      The index of the entry whose key is exactly this name, or -1. The key
-//      of an entry ends at its first equals, which is why a name containing
-//      one can never be found and is refused by setenv before it gets here.
+//      The index of the entry whose key is exactly this name, or -1. It is
+//      the question above asked of every entry in turn, and it asks it
+//      through the same routine: the older spelling here compared first and
+//      looked for the equals afterwards, which answers differently for a name
+//      that carries an equals of its own -- the very case this comment says
+//      can never be found -- and which reads `length` bytes of an entry whose
+//      key is shorter than that before deciding it does not match.
 static bipolar stdlib_environment_find(string_address name, positive length)
 {
         positive index;
 
         for (index = 0; index < stdlib_environment_count; index++)
-        {
-                string_address entry = stdlib_environment_vector[index];
-
-                if (memory_compare(entry, name, length) == 0 && entry[length] == '=')
+                if (stdlib_environment_is(stdlib_environment_vector[index],
+                                          name, length))
                         return (bipolar)index;
-        }
 
         return -1;
 }

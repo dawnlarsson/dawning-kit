@@ -19,19 +19,10 @@
 #error "system_wait4_retry is a Linux userspace primitive"
 #endif
 
-static positive checks;
-static positive failures;
+#include "counted.inc"
+
 static volatile positive signals_caught;
 static bipolar wait_retry_signal_report = -1;
-
-#define check(name, condition)                                          \
-        do {                                                            \
-                checks++;                                               \
-                if (!(condition)) {                                     \
-                        failures++;                                     \
-                        string_format(log, "  FAIL " name "\n");        \
-                }                                                       \
-        } while (0)
 
 #define WAIT_RETRY_SIGNAL 10
 #define WAIT_RETRY_RESTORER 0x04000000
@@ -330,9 +321,7 @@ b32 main(void)
         wait_retry_interrupted();
         wait_retry_nohang();
 
-        string_format(log, "%p checks, %p failures\n", checks, failures);
-        log_flush();
-        return failures ? 1 : 0;
+        return test_report(null);
 }
 
 #undef WAIT_RETRY_TEXT

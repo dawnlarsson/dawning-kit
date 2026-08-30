@@ -72,16 +72,7 @@ typedef char text_byte;
 
 int main(void)
 {
-        text_case_duplicate();
-        text_case_duplicate_max();
-        text_case_token_next();
-        text_case_token();
-        text_case_split();
-        text_case_search_folded();
-        text_case_copy_bounded();
-        text_case_append_bounded();
-        text_case_frob();
-        text_case_jump();
+        text_case_all();
 
         /*
                 One check to stand where the freestanding build asks strtok_r

@@ -176,6 +176,22 @@ static b32 net_refused(string_address doing, bipolar status)
 }
 
 /*
+        One address written into the caller's bytes as text it can hand to %s.
+
+        host_into answers with a length and not with a string, because it also
+        fills a field in the middle of a longer line. Eight places here wanted
+        the other thing, and every one of them wrote the terminator itself --
+        eight chances to write it one byte early or one byte late, in a buffer
+        whose length only the call site knows.
+*/
+static string_address net_host_text(p8 address_to into, p32 host)
+{
+        into[host_into(into, host)] = end;
+
+        return (string_address)into;
+}
+
+/*
         A.B.C.D/N split into the two halves it is written as.
 
         A missing prefix is /32 for an address, which is what iproute2 does
@@ -362,19 +378,16 @@ static bool net_address_line(netlink_header address_to header, address_any conte
         string_address label = (string_address)netlink_find(header, sizeof(netlink_address),
                                                             IFA_LABEL, null);
         p8 written[32];
-        positive length;
         p32 host;
 
         if (!held || size != 4 || body->family != AF_INET)
                 return true;
 
         host = network_order_32(address_to((p32 address_to)held));
-        length = host_into(written, host);
-        written[length] = end;
 
         string_format(net_out, "%p: %s    inet %s/%p\n", (positive)body->index,
-                      label ? label : (string_address) "?", written,
-                      (positive)body->prefix);
+                      label ? label : (string_address) "?",
+                      net_host_text(written, host), (positive)body->prefix);
 
         (void)naming;
 
@@ -392,31 +405,23 @@ static bool net_route_line(netlink_header address_to header, address_any context
         p8 address_to out = (p8 address_to)netlink_find(header, sizeof(netlink_route),
                                                         RTA_OIF, null);
         p8 written[32];
-        positive length;
         (void)context;
 
         if (body->family != AF_INET || body->table != RT_TABLE_MAIN)
                 return true;
 
         if (destination)
-        {
-                length = host_into(written,
-                                   network_order_32(address_to((p32 address_to)destination)));
-                written[length] = end;
-                string_format(net_out, "%s/%p", written, (positive)body->destination_bits);
-        }
+                string_format(net_out, "%s/%p",
+                              net_host_text(written, network_order_32(
+                                  address_to((p32 address_to)destination))),
+                              (positive)body->destination_bits);
         else
-        {
                 string_format(net_out, "default");
-        }
 
         if (gateway)
-        {
-                length = host_into(written,
-                                   network_order_32(address_to((p32 address_to)gateway)));
-                written[length] = end;
-                string_format(net_out, " via %s", written);
-        }
+                string_format(net_out, " via %s",
+                              net_host_text(written, network_order_32(
+                                  address_to((p32 address_to)gateway))));
 
         if (out)
         {
@@ -472,7 +477,6 @@ static b32 net_host(void)
 {
         p32 found = 0;
         p8 written[32];
-        positive length;
         bipolar server;
         bipolar status;
 
@@ -505,9 +509,8 @@ static b32 net_host(void)
         switch (status)
         {
         case DNS_OK:
-                length = host_into(written, found);
-                written[length] = end;
-                string_format(net_out, "%s has address %s\n", net_word(1), written);
+                string_format(net_out, "%s has address %s\n", net_word(1),
+                              net_host_text(written, found));
                 break;
         case DNS_NO_SUCH_NAME:
                 string_format(net_out, "host: %s: no such name\n", net_word(1));
@@ -748,7 +751,6 @@ static b32 net_auto(b32 handle, net_holding address_to held)
         netlink_search search;
         dhcp_lease lease;
         p8 written[32];
-        positive length;
         bipolar status;
 
         memory_fill(address_of search, 0, sizeof search);
@@ -796,9 +798,8 @@ static b32 net_auto(b32 handle, net_holding address_to held)
                 return 1;
         }
 
-        length = host_into(written, lease.address);
-        written[length] = end;
-        string_format(net_out, "ip: %s/%p on %s\n", written,
+        string_format(net_out, "ip: %s/%p on %s\n",
+                      net_host_text(written, lease.address),
                       (positive)dhcp_prefix_of(lease.mask), search.name);
 
         status = netlink_address_add(handle, search.index, lease.address,
@@ -814,22 +815,19 @@ static b32 net_auto(b32 handle, net_holding address_to held)
                 if (status < 0)
                         return net_refused((string_address) "route add", status);
 
-                length = host_into(written, lease.router);
-                written[length] = end;
-                string_format(net_out, "ip: default via %s\n", written);
+                string_format(net_out, "ip: default via %s\n",
+                              net_host_text(written, lease.router));
         }
 
         net_write_resolv(lease.nameserver);
 
-        length = host_into(written, DNS_FALLBACK);
-        written[length] = end;
-        string_format(net_out, "ip: nameserver %s", written);
+        string_format(net_out, "ip: nameserver %s",
+                      net_host_text(written, DNS_FALLBACK));
 
         if (lease.nameserver && lease.nameserver != DNS_FALLBACK)
         {
-                length = host_into(written, lease.nameserver);
-                written[length] = end;
-                string_format(net_out, ", then %s", written);
+                string_format(net_out, ", then %s",
+                              net_host_text(written, lease.nameserver));
         }
 
         string_format(net_out, "\n");

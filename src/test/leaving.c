@@ -43,23 +43,7 @@
 //      A literal where a string_address is wanted.
 #define text(literal) ((string_address)(literal))
 
-#define test(test_name) bool test_##test_name(void)
-#define case(test_name)                        \
-        {                                      \
-                (string_address)#test_name,    \
-                test_##test_name               \
-        }
-#define fail(condition)   \
-        if (!(condition)) \
-        return false
-
-typedef bool(address_to test_function)(void);
-
-typedef struct
-{
-        string_address name;
-        test_function function;
-} test_case;
+#include "named_cases.inc"
 
 /*
         The bytes a child writes, and never more than one buffer's worth of
@@ -728,37 +712,13 @@ static test_case test_cases[] = {
 
 b32 main(void)
 {
-        test_case address_to walk = test_cases;
-        positive passed = 0;
-        positive failed = 0;
-
         //      Read before anything else in the program can call getenv,
         //      because the first getenv replaces what the shim published.
         leaving_environ_at_start = environ;
 
         log_direct(str("leaving tests\n\n"));
 
-        while (walk->name)
-        {
-                bool result;
-
-                log_direct(walk->name, string_length(walk->name));
-
-                result = walk->function();
-
-                if (result)
-                {
-                        log_direct(str(" PASSED\n"));
-                        passed++;
-                }
-                else
-                {
-                        log_direct(str(" ----- FAILED\n"));
-                        failed++;
-                }
-
-                walk++;
-        }
+        test_cases_walk(test_cases);
 
         /*
                 Written into the log buffer and deliberately not flushed.
@@ -771,7 +731,7 @@ b32 main(void)
                 only way this particular claim can be checked from inside the
                 process making it.
         */
-        string_format(log, "\n%p checks, %p failures\n", passed + failed, failed);
+        string_format(log, "\n%p checks, %p failures\n", checks, failures);
 
-        return failed > 0 ? 1 : 0;
+        return failures > 0 ? 1 : 0;
 }

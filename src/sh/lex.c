@@ -293,6 +293,67 @@ static string_address lex_nested_at(string_address at);
 static string_address lex_nesting(string_address at);
 static string_address lex_quote_end(string_address at, p8 quote);
 
+/*
+        Step over whatever begins here that a scanner is not allowed to look
+        inside, and say whether anything was stepped over.
+
+        Three scanners walk a word for one thing of their own -- the )) that
+        closes an arithmetic command, the ]] that closes a Bash condition, the
+        ; that separates the three parts of a C-style for -- and all three
+        have to agree about which bytes cannot be it. A backslash carries the
+        byte behind it; a quoted run holds everything up to its partner; and
+        $( ), ${ } and a backtick pair hold a whole command or name. Written
+        out three times, those three lists had to be kept level by hand.
+
+        at is advanced past the run when there was one. An unclosed quote is
+        its own answer rather than a plain miss, because it means the word
+        never ended: two of the three callers report that as no answer at all
+        and the third as the end, and at is left on the terminating null so
+        the third can simply hand it back.
+*/
+#define LEX_SKIP_NOTHING 0
+#define LEX_SKIP_STEPPED 1
+#define LEX_SKIP_UNCLOSED 2
+
+static b32 lex_skip_held(string_address address_to at)
+{
+        string_address step = address_to at;
+        p8 value = string_get(step);
+
+        if (value == '\\' && string_get(step + 1))
+        {
+                address_to at = step + 2;
+                return LEX_SKIP_STEPPED;
+        }
+
+        if (value == '\'' || value == '"')
+        {
+                string_address stop = lex_quote_end(step + 1, value);
+
+                if (!string_get(stop))
+                {
+                        address_to at = stop;
+                        return LEX_SKIP_UNCLOSED;
+                }
+
+                address_to at = stop + 1;
+                return LEX_SKIP_STEPPED;
+        }
+
+        {
+                string_address inner = lex_nested_at(step);
+                string_address stop = inner ? lex_nesting(inner) : null;
+
+                if (stop && stop > inner)
+                {
+                        address_to at = stop;
+                        return LEX_SKIP_STEPPED;
+                }
+        }
+
+        return LEX_SKIP_NOTHING;
+}
+
 // One Bash arithmetic command token. Keeping its interior whole prevents the
 // shell operators inside ((...)) -- notably ;, &&, < and > -- from becoming
 // command-language tokens before the arithmetic parser sees them.
@@ -303,34 +364,13 @@ static string_address lex_arithmetic_end(string_address start)
 
         while (string_get(at))
         {
-                if (string_is(at, '\\') && string_get(at + 1))
-                {
-                        at += 2;
+                b32 skipped = lex_skip_held(address_of at);
+
+                if (skipped == LEX_SKIP_UNCLOSED)
+                        return null;
+
+                if (skipped)
                         continue;
-                }
-
-                if (string_is(at, '\'') || string_is(at, '"'))
-                {
-                        string_address stop =
-                            lex_quote_end(at + 1, string_get(at));
-
-                        if (!string_get(stop))
-                                return null;
-
-                        at = stop + 1;
-                        continue;
-                }
-
-                {
-                        string_address inner = lex_nested_at(at);
-                        string_address stop = inner ? lex_nesting(inner) : null;
-
-                        if (stop && stop > inner)
-                        {
-                                at = stop;
-                                continue;
-                        }
-                }
 
                 if (string_is(at, '('))
                         depth++;
@@ -357,35 +397,17 @@ static string_address lex_conditional_end(string_address start)
 
         while (string_get(at))
         {
+                //      value is read before the step, because the ]] test
+                //      below is about the byte the scanner is standing on and
+                //      not about wherever a skipped run has left it.
                 p8 value = string_get(at);
+                b32 skipped = lex_skip_held(address_of at);
 
-                if (value == '\\' && string_get(at + 1))
-                {
-                        at += 2;
+                if (skipped == LEX_SKIP_UNCLOSED)
+                        return null;
+
+                if (skipped)
                         continue;
-                }
-
-                if (value == '\'' || value == '"')
-                {
-                        string_address stop = lex_quote_end(at + 1, value);
-
-                        if (!string_get(stop))
-                                return null;
-
-                        at = stop + 1;
-                        continue;
-                }
-
-                {
-                        string_address inner = lex_nested_at(at);
-                        string_address stop = inner ? lex_nesting(inner) : null;
-
-                        if (stop && stop > inner)
-                        {
-                                at = stop;
-                                continue;
-                        }
-                }
 
                 if (value == ']' && string_is(at + 1, ']') &&
                     at > start + 2 &&

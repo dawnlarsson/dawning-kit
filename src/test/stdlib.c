@@ -32,23 +32,7 @@
 //      takes one argument.
 #define text(literal) ((string_address)(literal))
 
-#define test(test_name) bool test_##test_name(void)
-#define case(test_name)                        \
-        {                                      \
-                (string_address)#test_name,    \
-                test_##test_name               \
-        }
-#define fail(condition)   \
-        if (!(condition)) \
-        return false
-
-typedef bool(address_to test_function)(void);
-
-typedef struct
-{
-        string_address name;
-        test_function function;
-} test_case;
+#include "named_cases.inc"
 
 //      What a cloned child is being asked to do. The child never returns from
 //      any of these; the number it leaves with is the answer.
@@ -871,40 +855,13 @@ test_case test_cases[] = {
 
 b32 main(void)
 {
-        test_case address_to walk = test_cases;
-        positive passed = 0;
-        positive failed = 0;
-
         log_direct(str("stdlib tests\n\n"));
 
-        while (walk->name)
-        {
-                bool result;
-
-                log_direct(walk->name, string_length(walk->name));
-
-                result = walk->function();
-
-                if (result)
-                {
-                        log_direct(str(" PASSED\n"));
-                        passed++;
-                }
-                else
-                {
-                        log_direct(str(" ----- FAILED\n"));
-                        failed++;
-                }
-
-                walk++;
-        }
-
-        string_format(log, "\n%p checks, %p failures\n", passed + failed, failed);
-        log_flush();
+        test_cases_walk(test_cases);
 
         //      Deliberately through exit rather than a return, because this
         //      is the family that knows the difference.
-        stdlib_exit(failed > 0 ? 1 : 0);
+        stdlib_exit(test_report((string_address) "\n"));
 
         return 1;
 }

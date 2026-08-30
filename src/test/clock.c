@@ -77,8 +77,7 @@
             date in it from the day this file was written.
 */
 
-static positive failures;
-static positive checks;
+#include "counted.inc"
 
 static fn same(string_address name, positive got, positive want)
 {
@@ -1487,8 +1486,5 @@ b32 main(void)
         same((string_address) "asctime", clock_test_asctime(),
              CLOCK_HASH_ASCTIME);
 
-        string_format(log, "%p checks, %p failures\n", checks, failures);
-        log_flush();
-
-        return failures ? 1 : 0;
+        return test_report(null);
 }

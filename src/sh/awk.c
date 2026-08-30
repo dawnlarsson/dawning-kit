@@ -19,14 +19,6 @@
         than the arena has says so.
 */
 
-#define AWK_CHUNK (4u << 20)
-#define AWK_CLASSES 22
-#define AWK_MIN_CLASS 4
-
-static p8 address_to awk_free_list[AWK_CLASSES];
-static p8 address_to awk_bump;
-static positive awk_bump_left;
-
 static fn awk_leave(b32 code);
 
 static fn awk_out_of_memory()
@@ -36,84 +28,22 @@ static fn awk_out_of_memory()
 }
 
 /*
-        One allocator, because awk makes garbage.
+        One point of failure, because awk makes garbage.
 
-        Every string here is counted rather than collected, so a size class
-        list and a bump pointer are the whole of it: what a block was is
-        remembered in the eight bytes before it and freeing pushes it back on
-        the list its size came from.
+        The size class allocator that used to live here was promoted into
+        src/standard/allocator.c and is linked into this same binary, so
+        taking is memory_take and giving back is memory_give. What awk adds
+        is only the contract on failure: a value that cannot be made is a
+        refusal with a message, never a crash.
 */
 static address_any awk_take(positive bytes)
 {
-        positive want = bytes + 8;
-        b32 class = AWK_MIN_CLASS;
+        address_any made = memory_take(bytes);
 
-        while (((positive)1 << class) < want && class < AWK_CLASSES - 1)
-                class++;
+        if (!made)
+                awk_out_of_memory();
 
-        positive size = (positive)1 << class;
-
-        if (want > size)
-        {
-                // Bigger than the largest class: its own mapping, and the
-                // class recorded as one past the end so it is never reused.
-                positive whole = (want + 4095) & ~(positive)4095;
-                positive got = (positive)memory(whole);
-
-                if (!got || got >= (positive)-4095)
-                        awk_out_of_memory();
-
-                address_to(p32 address_to)(positive)got = AWK_CLASSES;
-                address_to((p32 address_to)(got + 4)) = (p32)(whole >> 12);
-                return (address_any)(got + 8);
-        }
-
-        if (awk_free_list[class])
-        {
-                p8 address_to block = awk_free_list[class];
-
-                awk_free_list[class] = address_to(p8 address_to address_to)block;
-                address_to(p32 address_to)block = (p32)class;
-                return block + 8;
-        }
-
-        if (awk_bump_left < size)
-        {
-                positive got = (positive)memory(AWK_CHUNK);
-
-                if (!got || got >= (positive)-4095)
-                        awk_out_of_memory();
-
-                awk_bump = (p8 address_to)got;
-                awk_bump_left = AWK_CHUNK;
-        }
-
-        p8 address_to block = awk_bump;
-
-        awk_bump += size;
-        awk_bump_left -= size;
-        address_to(p32 address_to)block = (p32)class;
-        return block + 8;
-}
-
-static fn awk_give(address_any block)
-{
-        if (!block)
-                return;
-
-        p8 address_to base = (p8 address_to)block - 8;
-        b32 class = (b32)address_to(p32 address_to)base;
-
-        if (class >= AWK_CLASSES)
-        {
-                positive pages = address_to((p32 address_to)(base + 4));
-
-                memory_free(base, pages << 12);
-                return;
-        }
-
-        address_to(p8 address_to address_to)base = awk_free_list[class];
-        awk_free_list[class] = base;
+        return made;
 }
 
 /*
@@ -172,7 +102,7 @@ static fn awk_text_drop(awk_text address_to which)
         if (--which->refs > 0)
                 return;
 
-        awk_give(which);
+        memory_give(which);
 }
 
 /*
@@ -1709,7 +1639,7 @@ static fn awk_array_grow(awk_array address_to which)
                 }
         }
 
-        awk_give(which->buckets);
+        memory_give(which->buckets);
         which->buckets = buckets;
         which->width = width;
 }
@@ -1776,7 +1706,7 @@ static fn awk_array_remove(awk_array address_to which, string_address key, posit
                         address_to link = slot->next;
                         awk_text_drop(slot->key);
                         awk_text_drop(slot->value.text);
-                        awk_give(slot);
+                        memory_give(slot);
                         which->count--;
                         return;
                 }
@@ -1797,7 +1727,7 @@ static fn awk_array_empty(awk_array address_to which)
 
                         awk_text_drop(slot->key);
                         awk_text_drop(slot->value.text);
-                        awk_give(slot);
+                        memory_give(slot);
                         slot = next;
                 }
 
@@ -2073,8 +2003,8 @@ static fn awk_pieces_room(positive want)
         memory_copy_apart(lengths, awk_piece_length,
                          awk_piece_count * sizeof(positive));
 
-        awk_give(awk_piece_start);
-        awk_give(awk_piece_length);
+        memory_give(awk_piece_start);
+        memory_give(awk_piece_length);
         awk_piece_start = starts;
         awk_piece_length = lengths;
         awk_piece_room = room;
@@ -2256,7 +2186,7 @@ static fn awk_fields_reserve(positive want)
         memory_copy_apart(made, awk_fields,
                          awk_fields_room * sizeof(awk_value));
 
-        awk_give(awk_fields);
+        memory_give(awk_fields);
         awk_fields = made;
         awk_fields_room = room;
 }
@@ -2653,7 +2583,7 @@ static fn awk_reader_room(awk_reader address_to which, positive want)
 
         which->filled -= which->at;
         which->at = 0;
-        awk_give(which->data);
+        memory_give(which->data);
         which->data = made;
         which->room = room;
 }
@@ -3007,7 +2937,7 @@ static fn awk_builder_room(awk_builder address_to build, positive want)
         memory_copy_apart(made, build->data, build->used);
 
         if (build->heap)
-                awk_give(build->data);
+                memory_give(build->data);
 
         build->data = made;
         build->room = room;
@@ -3042,7 +2972,7 @@ static awk_text address_to awk_builder_text(awk_builder address_to build)
         awk_text address_to made = awk_text_new(build->data, build->used);
 
         if (build->heap)
-                awk_give(build->data);
+                memory_give(build->data);
 
         return made;
 }
@@ -5847,8 +5777,8 @@ static fn awk_call(awk_node address_to node, awk_value address_to out)
                 if (cell->owned && cell->array)
                 {
                         awk_array_empty(cell->array);
-                        awk_give(cell->array->buckets);
-                        awk_give(cell->array);
+                        memory_give(cell->array->buckets);
+                        memory_give(cell->array);
                 }
 
                 cell->array = null;
@@ -6185,7 +6115,7 @@ static fn awk_builtin(awk_node address_to node, awk_value address_to out)
                         awk_value_done(address_of room[i]);
 
                 if (room != few)
-                        awk_give(room);
+                        memory_give(room);
 
                 awk_text_drop(format);
                 return;
@@ -6408,7 +6338,7 @@ static fn awk_do_print(awk_node address_to node)
         awk_writer_put(where, build.data, build.used);
 
         if (build.heap)
-                awk_give(build.data);
+                memory_give(build.data);
 }
 
 static fn awk_do_printf(awk_node address_to node)
@@ -6439,7 +6369,7 @@ static fn awk_do_printf(awk_node address_to node)
                 awk_value_done(address_of room[i]);
 
         if (room != few)
-                awk_give(room);
+                memory_give(room);
 
         where = awk_output_of(node);
         awk_writer_put(where, made->text, made->length);
@@ -6612,7 +6542,7 @@ static b32 awk_run(awk_node address_to node)
                         for (positive i = 0; i < have; i++)
                                 awk_text_drop(keys[i]);
 
-                        awk_give(keys);
+                        memory_give(keys);
 
                         if (answer != RUN_ON)
                                 return answer;

@@ -31,8 +31,7 @@
         have to break the machine to provoke.
 */
 
-static positive checks;
-static positive failures;
+#include "counted.inc"
 
 static fn same(string_address name, bipolar got, bipolar want)
 {
@@ -1016,8 +1015,5 @@ b32 main(void)
         test_assert();
         test_sweep_away();
 
-        string_format(log, "%p checks, %p failures\n", checks, failures);
-        log_flush();
-
-        return failures ? 1 : 0;
+        return test_report(null);
 }

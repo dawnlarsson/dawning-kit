@@ -38,17 +38,7 @@
 #include "../standard/signal.c"
 #endif
 
-static positive checks;
-static positive failures;
-
-#define check(name, condition)                                          \
-        do {                                                            \
-                checks++;                                               \
-                if (!(condition)) {                                     \
-                        failures++;                                     \
-                        string_format(log, "  FAIL " name "\n");        \
-                }                                                       \
-        } while (0)
+#include "counted.inc"
 
 /*
         What the cases are written against.
@@ -237,8 +227,5 @@ b32 main(void)
         }
 #endif // STANDARD_SIGNAL_NO_DECLARATIONS
 
-        string_format(log, "%p checks, %p failures\n", checks, failures);
-        log_flush();
-
-        return failures ? 1 : 0;
+        return test_report(null);
 }

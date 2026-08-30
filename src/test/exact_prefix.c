@@ -10,8 +10,7 @@
 
 static p8 address_to one_room;
 static p8 address_to two_room;
-static positive checks;
-static positive failures;
+#include "counted.inc"
 
 static positive model(const p8 address_to one, const p8 address_to two,
                       positive size)
@@ -108,8 +107,5 @@ b32 main(void)
         CHECK(31); CHECK(32); CHECK(33); CHECK(40); CHECK(48); CHECK(64);
         CHECK(80); CHECK(96); CHECK(127); CHECK(128); CHECK(160);
 
-        string_format(log, "common-prefix literals: %p checks, %p failures\n",
-                      checks, failures);
-        log_flush();
-        return failures != 0;
+        return test_report((string_address) "common-prefix literals: ");
 }

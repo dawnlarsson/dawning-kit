@@ -118,32 +118,13 @@
 #define TIMER_ABSTIME 1
 #endif
 
-/*
-        How many names mkstemp is allowed to try, and it is not an arbitrary
-        number: six template characters over a sixty-two character alphabet is
-        62^6 possible names, and glibc gives up after 62^3 of them. Matching
-        that keeps a program that loops until failure looping for the same
-        length of time here as it does there.
-*/
-#ifndef TMP_MAX
-#define TMP_MAX 238328
-#endif
-
-//      L_tmpnam is what glibc says: "/tmp/" plus six characters plus the
-//      terminator is twelve, and glibc rounds it to twenty.
-#ifndef L_tmpnam
-#define L_tmpnam 20
-#endif
-
-#ifndef P_tmpdir
-#define P_tmpdir "/tmp"
-#endif
-
-//      The directory that holds a temporary file when TMPDIR says nothing,
-//      and the six characters a template must end in.
-#define PROCESS_TEMPORARY_DIRECTORY "/tmp"
-#define PROCESS_TEMPORARY_NAME "/tmp/file"
-#define PROCESS_TEMPLATE_TAIL 6
+//      TMP_MAX, L_tmpnam and P_tmpdir went the way the six temporary-file
+//      entries above them went: spool.c defines all three, with the same
+//      values and with the arithmetic behind them written out, and the
+//      umbrella includes spool.c before this file, so every one of these
+//      #ifndef guards was already satisfied by the time it was read.
+//      PROCESS_TEMPORARY_DIRECTORY, PROCESS_TEMPORARY_NAME and
+//      PROCESS_TEMPLATE_TAIL were this file's own and nothing named them.
 
 /*
         How deep a chain of symbolic links realpath will follow before it
@@ -1286,137 +1267,6 @@ static b32 usleep(p32 microseconds)
         and is reported as it stands.
 */
 
-/*
-        Where the six characters of a template come from.
-
-        getrandom is asked first, because a temporary name that an attacker
-        can predict is the whole of the classic /tmp race and a clock is
-        predictable. It is not fatal if the call is refused -- an old kernel,
-        a seccomp filter -- so the fallback mixes the monotonic clock with the
-        process id, which is not secret but is at least not the same on two
-        runs.
-
-        The value is turned into characters by division rather than by
-        positive_into_base, because base 62 with this alphabet is not what
-        that routine writes: it stops at 36 and uses a different case
-        convention. The loop is six iterations of a shift and a mask and is
-        the third of the four hand-written loops in this file.
-*/
-static const p8 process_template_alphabet[] =
-        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-
-#define PROCESS_TEMPLATE_ALPHABET 62
-
-static positive process_template_seed(void)
-{
-        positive value = 0;
-        timespec now;
-
-        if (system_call_3(syscall(getrandom), (positive)address_of value,
-                          sizeof(value), 0) == sizeof(value))
-                return value;
-
-        now.tv_sec = 0;
-        now.tv_nsec = 0;
-        system_call_2(syscall(clock_gettime), CLOCK_MONOTONIC,
-                      (positive)address_of now);
-
-        return now.tv_nsec * 1000003u + now.tv_sec * 1000000007u +
-               (positive)(p32)getpid();
-}
-
-static fn process_template_fill(p8 address_to where, positive value)
-{
-        positive at;
-
-        for (at = 0; at < PROCESS_TEMPLATE_TAIL; at++)
-        {
-                where[at] = process_template_alphabet[value %
-                                                      PROCESS_TEMPLATE_ALPHABET];
-                value /= PROCESS_TEMPLATE_ALPHABET;
-        }
-}
-
-/*
-        The one attempt loop mkstemp, mkstemps and mkdtemp all share.
-
-        The template's last six characters before the suffix must be X, which
-        is checked rather than assumed -- a caller that passes a string
-        literal would otherwise be writing into read-only memory, and a caller
-        that passes a name with no XXXXXX would get a name it did not ask for.
-
-        On a collision the seed is advanced by a large odd number rather than
-        redrawn, which is what glibc does: redrawing costs a syscall per
-        attempt and this walks the whole alphabet just as well.
-*/
-#define PROCESS_TEMPLATE_STEP 7777
-
-static b32 process_template_use(string_address pattern, positive suffix,
-                                b32 flags, bool directory)
-{
-        positive length;
-        p8 address_to where;
-        positive value;
-        positive attempt;
-        b32 answer;
-
-        if (is_null(pattern))
-        {
-                errno = EINVAL;
-                return -1;
-        }
-
-        length = string_length(pattern);
-
-        if (length < PROCESS_TEMPLATE_TAIL + suffix)
-        {
-                errno = EINVAL;
-                return -1;
-        }
-
-        where = pattern + length - suffix - PROCESS_TEMPLATE_TAIL;
-
-        //      memory_span_byte takes the byte before the size, and it
-        //      counts the leading run that matches -- six here means all six
-        //      of the template's last characters are X.
-        if (memory_span_byte(where, 'X', PROCESS_TEMPLATE_TAIL) !=
-            PROCESS_TEMPLATE_TAIL)
-        {
-                errno = EINVAL;
-                return -1;
-        }
-
-        value = process_template_seed();
-
-        for (attempt = 0; attempt < TMP_MAX; attempt++)
-        {
-                process_template_fill(where, value);
-
-                if (directory)
-                {
-                        if (mkdir(pattern, 0700) == 0)
-                                return 0;
-                }
-                else
-                {
-                        answer = open(pattern,
-                                      O_RDWR | O_CREAT | O_EXCL | flags, 0600);
-
-                        if (answer >= 0)
-                                return answer;
-                }
-
-                if (errno != EEXIST)
-                        return -1;
-
-                value += PROCESS_TEMPLATE_STEP;
-        }
-
-        errno = EEXIST;
-
-        return -1;
-}
-
 
 //      The GNU spelling that lets a template keep an extension: the six X are
 //      the six characters before the last `suffix` bytes.
@@ -2057,8 +1907,6 @@ static b32 getopt(b32 count, string_address address_to words,
         a statement in a comma expression, and a do/while would not compile
         where one is used as an expression.
 */
-#define PROCESS_ASSERT_LINE 512
-
 pub DEAD_END fn __assert_fail(string_address claim, string_address file,
                           p32 line, string_address function)
 {

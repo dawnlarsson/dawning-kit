@@ -505,14 +505,6 @@ fn token_push_string(string_address text)
                 token_push_bytes(text, string_length(text));
 }
 
-bool shell_name_character(p8 value)
-{
-        return (value >= 'a' && value <= 'z') ||
-               (value >= 'A' && value <= 'Z') ||
-               (value >= '0' && value <= '9') ||
-               value == '_';
-}
-
 /* Assignment syntax is a property of the parsed word, not of an execution.
    Return one for NAME= and two for NAME+=, together with the stable name
    length so the executor can reuse its hash metadata. */
@@ -521,7 +513,7 @@ static p8 shell_assignment_kind(string_address word,
 {
         positive length = 0;
 
-        while (shell_name_character(string_get(word + length)))
+        while (expand_name_character(string_get(word + length)))
                 length++;
 
         if (name_length)
@@ -558,7 +550,7 @@ string_address shell_expand(string_address step)
         if (braced)
                 step++;
 
-        while (shell_name_character(string_get(step)) && length < sizeof(name) - 1)
+        while (expand_name_character(string_get(step)) && length < sizeof(name) - 1)
                 name[length++] = string_get(step++);
 
         name[length] = end;

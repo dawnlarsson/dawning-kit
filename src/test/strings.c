@@ -18,17 +18,7 @@
 #include "../standard/text.c"
 #endif
 
-static positive checks;
-static positive failures;
-
-#define check(name, condition)                                          \
-        do {                                                            \
-                checks++;                                               \
-                if (!(condition)) {                                     \
-                        failures++;                                     \
-                        string_format(log, "  FAIL " name "\n");        \
-                }                                                       \
-        } while (0)
+#include "counted.inc"
 
 /*
         The allocator strdup needs, until there is a real one.
@@ -103,16 +93,7 @@ typedef p8 text_byte;
 
 b32 main(void)
 {
-        text_case_duplicate();
-        text_case_duplicate_max();
-        text_case_token_next();
-        text_case_token();
-        text_case_split();
-        text_case_search_folded();
-        text_case_copy_bounded();
-        text_case_append_bounded();
-        text_case_frob();
-        text_case_jump();
+        text_case_all();
 
         /*
                 The one question glibc cannot be asked.
@@ -129,8 +110,5 @@ b32 main(void)
                       string_token_next(null, TX(","), &place) == null);
         }
 
-        string_format(log, "%p checks, %p failures\n", checks, failures);
-        log_flush();
-
-        return failures ? 1 : 0;
+        return test_report(null);
 }

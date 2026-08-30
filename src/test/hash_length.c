@@ -11,8 +11,7 @@
 #define PAGE 4096
 #define PROT_NONE 0
 
-static positive checks;
-static positive failures;
+#include "counted.inc"
 
 static positive model_hash(const p8 address_to text, positive length)
 {
@@ -70,8 +69,5 @@ b32 main(void)
                 }
         }
 
-        string_format(log, "hash+length page edge: %p checks, %p failures\n",
-                      checks, failures);
-        log_flush();
-        return failures != 0;
+        return test_report((string_address) "hash+length page edge: ");
 }

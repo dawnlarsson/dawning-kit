@@ -1899,34 +1899,15 @@ static string_address exec_cfor_separator(string_address at)
         while (string_get(at))
         {
                 p8 value = string_get(at);
+                b32 skipped = lex_skip_held(address_of at);
 
-                if (value == '\\' && string_get(at + 1))
-                {
-                        at += 2;
+                //      An unclosed quote leaves at on the terminating null,
+                //      which is where running out of separators ends too.
+                if (skipped == LEX_SKIP_UNCLOSED)
+                        return at;
+
+                if (skipped)
                         continue;
-                }
-
-                if (value == '\'' || value == '"')
-                {
-                        string_address stop = lex_quote_end(at + 1, value);
-
-                        if (!string_get(stop))
-                                return stop;
-
-                        at = stop + 1;
-                        continue;
-                }
-
-                {
-                        string_address inner = lex_nested_at(at);
-                        string_address stop = inner ? lex_nesting(inner) : null;
-
-                        if (stop && stop > inner)
-                        {
-                                at = stop;
-                                continue;
-                        }
-                }
 
                 if (value == '(')
                         depth++;
@@ -2210,22 +2191,7 @@ static bool conditional_integer(positive kind, string_address left,
                 return false;
         }
 
-        if (kind == TEST_EQUAL)
-                return first == second;
-
-        if (kind == TEST_UNEQUAL)
-                return first != second;
-
-        if (kind == TEST_LESS)
-                return first < second;
-
-        if (kind == TEST_LESS_EQUAL)
-                return first <= second;
-
-        if (kind == TEST_GREATER)
-                return first > second;
-
-        return first >= second;
+        return test_ordered(kind, first, second);
 }
 
 static fn conditional_nounset_fatal()

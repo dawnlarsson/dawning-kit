@@ -19,6 +19,25 @@ fn shell_answer(b32 value)
 }
 
 /*
+        A builtin that could not do what it was told stops a script.
+
+        Seven places in this file end the same way: complain, set the status,
+        and then leave the process entirely -- unless somebody is watching. At
+        a terminal the shell stays, or a mistyped exec would close the session,
+        and the builtin returns to the prompt instead. Whatever is buffered is
+        written out first, because leaving from here does not go back through
+        the writer that would have flushed it.
+*/
+static fn shell_stop_when_scripted(b32 status)
+{
+        if (shell_is_interactive)
+                return;
+
+        log_flush();
+        exit(status);
+}
+
+/*
         The words as the shell tokenised them.
 
         A builtin used to be handed the rest of the line joined back into one
@@ -1583,12 +1602,7 @@ fn shell_exec(writer write, string_address input)
 
                 shell_answer(2);
                 string_format(shell_diagnostic, "exec: no room\n");
-
-                if (!shell_is_interactive)
-                {
-                        log_flush();
-                        exit(2);
-                }
+                shell_stop_when_scripted(2);
 
                 return;
         }
@@ -1601,12 +1615,7 @@ fn shell_exec(writer write, string_address input)
                 shell_answer(127);
                 string_format(shell_diagnostic, "exec: %s: not found\n",
                               shell_argv[1]);
-
-                if (!shell_is_interactive)
-                {
-                        log_flush();
-                        exit(127);
-                }
+                shell_stop_when_scripted(127);
 
                 return;
         }
@@ -1617,12 +1626,7 @@ fn shell_exec(writer write, string_address input)
                 memory_free(found, found_room);
                 shell_answer(2);
                 string_format(shell_diagnostic, "exec: no room for environment\n");
-
-                if (!shell_is_interactive)
-                {
-                        log_flush();
-                        exit(2);
-                }
+                shell_stop_when_scripted(2);
 
                 return;
         }
@@ -1636,12 +1640,7 @@ fn shell_exec(writer write, string_address input)
         memory_free(found, found_room);
         shell_answer(126);
         string_format(shell_diagnostic, "exec: %s: cannot run\n", shell_argv[1]);
-
-        if (!shell_is_interactive)
-        {
-                log_flush();
-                exit(126);
-        }
+        shell_stop_when_scripted(126);
 }
 
 
@@ -1820,24 +1819,6 @@ static fn env_unset_span(string_address name, positive length)
 fn env_unset(string_address name)
 {
         env_unset_span(name, string_length(env_reading(name)));
-}
-
-// Hangs an already built "name=value" on the environment list by copying it
-// into a stable cell. No caller may leave an argv pointer in envp: argv is
-// rebuilt on the next command.
-bool env_place(string_address entry)
-{
-        string_address mark = string_first_of(entry, '=');
-        bool answer;
-
-        if (!mark)
-                return false;
-
-        address_to mark = end;
-        answer = env_set(entry, mark + 1);
-        address_to mark = '=';
-
-        return answer;
 }
 
 fn env_set_number(string_address name, positive value)
@@ -2750,6 +2731,36 @@ positive test_is_binary(string_address word)
         return 0;
 }
 
+/*
+        The six numeric comparisons, asked in one place.
+
+        Two callers arrive here with a pair of numbers they found different
+        ways: test reads two words as signed decimals, and [[ ]] evaluates two
+        arithmetic expressions. What they then want of the pair is the same six
+        questions, and those six were written out in both -- six chances for
+        one list to answer a shade differently from the other, in the one kind
+        of code where nobody would think to look.
+*/
+bool test_ordered(positive kind, bipolar first, bipolar second)
+{
+        if (kind == TEST_EQUAL)
+                return first == second;
+
+        if (kind == TEST_UNEQUAL)
+                return first != second;
+
+        if (kind == TEST_LESS)
+                return first < second;
+
+        if (kind == TEST_LESS_EQUAL)
+                return first <= second;
+
+        if (kind == TEST_GREATER)
+                return first > second;
+
+        return first >= second;
+}
+
 bool test_compare(positive kind, string_address left, string_address right)
 {
         bipolar first;
@@ -2824,22 +2835,7 @@ bool test_compare(positive kind, string_address left, string_address right)
                 return false;
         }
 
-        if (kind == TEST_EQUAL)
-                return first == second;
-
-        if (kind == TEST_UNEQUAL)
-                return first != second;
-
-        if (kind == TEST_LESS)
-                return first < second;
-
-        if (kind == TEST_LESS_EQUAL)
-                return first <= second;
-
-        if (kind == TEST_GREATER)
-                return first > second;
-
-        return first >= second;
+        return test_ordered(kind, first, second);
 }
 
 bool test_expression();
@@ -4879,12 +4875,7 @@ fn shell_eval(writer write, string_address input)
 
                 string_format(shell_diagnostic, "eval: no room\n");
                 shell_answer(2);
-
-                if (!shell_is_interactive)
-                {
-                        log_flush();
-                        exit(2);
-                }
+                shell_stop_when_scripted(2);
 
                 return;
         }
@@ -5609,12 +5600,7 @@ fn shell_dot(writer write, string_address input)
 
                 string_format(shell_diagnostic, "%s: no room\n", shell_argv[0]);
                 shell_answer(2);
-
-                if (!shell_is_interactive)
-                {
-                        log_flush();
-                        exit(2);
-                }
+                shell_stop_when_scripted(2);
 
                 return;
         }
@@ -5636,11 +5622,7 @@ fn shell_dot(writer write, string_address input)
                         was in it. Only when nobody is watching; at a terminal
                         the shell stays, or a typo would close the session.
                 */
-                if (!shell_is_interactive)
-                {
-                        log_flush();
-                        exit(1);
-                }
+                shell_stop_when_scripted(1);
 
                 return;
         }

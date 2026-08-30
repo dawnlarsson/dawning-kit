@@ -293,16 +293,13 @@ static bool dd_quantity(string_address text, positive address_to out,
 static bool dd_operand(string_address argument, string_address name,
                        string_address address_to value)
 {
-        positive i = 0;
+        positive length = string_length(name);
 
-        for (; name[i]; i++)
-                if (argument[i] != name[i])
-                        return false;
-
-        if (argument[i] != '=')
+        if (string_compare_max(argument, name, length) ||
+            argument[length] != '=')
                 return false;
 
-        address_to value = argument + i + 1;
+        address_to value = argument + length + 1;
 
         return true;
 }
@@ -346,6 +343,22 @@ static positive dd_output(positive handle, string_address name,
         }
 
         return wrote;
+}
+
+// Five failure paths say the same sentence: dd, what went wrong, which
+// file, and the kernel's reason. One writer keeps their shapes from
+// drifting apart.
+static fn dd_complain(string_address verb, string_address name,
+                      string_address fallback, bipolar code)
+{
+        text_flush();
+        text_error_raw("dd: ");
+        text_error_raw(verb);
+        text_error_raw(" '");
+        text_error_raw(name ? name : fallback);
+        text_error_raw("': ");
+        text_error_raw(file_reason(code));
+        text_error_raw("\n");
 }
 
 // swab is one conversion over the byte stream, not one conversion per read.
@@ -590,12 +603,8 @@ static b32 tools_dd(void)
 
                 if (opened < 0)
                 {
-                        text_flush();
-                        text_error_raw("dd: failed to open '");
-                        text_error_raw(input);
-                        text_error_raw("': ");
-                        text_error_raw(file_reason(opened));
-                        text_error_raw("\n");
+                        dd_complain("failed to open", input,
+                                    "standard input", opened);
                         return 1;
                 }
 
@@ -622,12 +631,8 @@ static b32 tools_dd(void)
 
                 if (opened < 0)
                 {
-                        text_flush();
-                        text_error_raw("dd: failed to open '");
-                        text_error_raw(output);
-                        text_error_raw("': ");
-                        text_error_raw(file_reason(opened));
-                        text_error_raw("\n");
+                        dd_complain("failed to open", output,
+                                    "standard output", opened);
                         return 1;
                 }
 
@@ -787,12 +792,8 @@ static b32 tools_dd(void)
 
                 if (got < 0)
                 {
-                        text_flush();
-                        text_error_raw("dd: error reading '");
-                        text_error_raw(input ? input : (string_address) "standard input");
-                        text_error_raw("': ");
-                        text_error_raw(file_reason(got));
-                        text_error_raw("\n");
+                        dd_complain("error reading", input, "standard input",
+                                    got);
 
                         if (!(conv & DD_NOERROR))
                         {
@@ -832,24 +833,10 @@ static b32 tools_dd(void)
                 }
 
                 if (conv & DD_LCASE)
-                {
-                        if (read_bytes >= 32)
-                                memory_to_lower_ascii(ibuf, read_bytes);
-                        else
-                                for (positive i = 0; i < read_bytes; i++)
-                                        if (ibuf[i] >= 'A' && ibuf[i] <= 'Z')
-                                                ibuf[i] += 'a' - 'A';
-                }
+                        memory_to_lower_ascii(ibuf, read_bytes);
 
                 if (conv & DD_UCASE)
-                {
-                        if (read_bytes >= 32)
-                                memory_to_upper_ascii(ibuf, read_bytes);
-                        else
-                                for (positive i = 0; i < read_bytes; i++)
-                                        if (ibuf[i] >= 'a' && ibuf[i] <= 'z')
-                                                ibuf[i] -= 'a' - 'A';
-                }
+                        memory_to_upper_ascii(ibuf, read_bytes);
 
                 p8 address_to output_bytes = ibuf;
 
@@ -950,14 +937,8 @@ static b32 tools_dd(void)
                 }
                 else if (done < 0)
                 {
-                        text_flush();
-                        text_error_raw("dd: fdatasync failed for '");
-                        text_error_raw(output ? output
-                                              : (string_address) "standard output");
-                        text_error_raw("': ");
-                        text_error_raw(file_reason(done));
-                        text_error_raw("\n");
-
+                        dd_complain("fdatasync failed for", output,
+                                    "standard output", done);
                         result = 1;
                 }
         }
@@ -968,14 +949,8 @@ static b32 tools_dd(void)
 
                 if (done < 0)
                 {
-                        text_flush();
-                        text_error_raw("dd: fsync failed for '");
-                        text_error_raw(output ? output
-                                              : (string_address) "standard output");
-                        text_error_raw("': ");
-                        text_error_raw(file_reason(done));
-                        text_error_raw("\n");
-
+                        dd_complain("fsync failed for", output,
+                                    "standard output", done);
                         result = 1;
                 }
         }
@@ -1229,12 +1204,6 @@ static p8 diff_fold(p8 value)
         return value;
 }
 
-static bool diff_white(p8 value)
-{
-        return value == ' ' || value == '\t' || value == '\n' || value == '\v' ||
-               value == '\f' || value == '\r';
-}
-
 /*
         One line's worth of bytes, in the shape the ignore flags leave it.
 
@@ -1257,7 +1226,7 @@ static fn diff_scan_open(diff_scan address_to scan, p8 address_to line)
         scan->stop = (p8 address_to)string_first_of_or_end(line, '\n');
 
         if (diff_trailing)
-                while (scan->stop > line && diff_white(scan->stop[-1]))
+                while (scan->stop > line && byte_is_space(scan->stop[-1]))
                         scan->stop--;
 
         scan->done = false;
@@ -1280,7 +1249,7 @@ static bool diff_scan_next(diff_scan address_to scan, p8 address_to out)
 
         if (diff_space == DIFF_SPACE_ALL)
         {
-                while (scan->at < scan->stop && diff_white(address_to scan->at))
+                while (scan->at < scan->stop && byte_is_space(address_to scan->at))
                         scan->at++;
 
                 if (scan->at == scan->stop)
@@ -1303,9 +1272,9 @@ static bool diff_scan_next(diff_scan address_to scan, p8 address_to out)
                         return false;
                 }
 
-                if (diff_white(address_to scan->at))
+                if (byte_is_space(address_to scan->at))
                 {
-                        while (scan->at < scan->stop && diff_white(address_to scan->at))
+                        while (scan->at < scan->stop && byte_is_space(address_to scan->at))
                                 scan->at++;
 
                         if (scan->at == scan->stop)
@@ -1499,17 +1468,11 @@ static bool diff_classify(diff_side address_to side, b32 which)
 
 // Discarding ------------------------------------------------
 
+// The loop this used to be is one count of leading zeros; the or with one
+// keeps a zero from asking about a word with nothing set.
 static positive diff_floor_log2(positive value)
 {
-        positive bits = 0;
-
-        while (value > 1)
-        {
-                value >>= 1;
-                bits++;
-        }
-
-        return bits;
+        return positive_bits - 1 - bits_leading_zeros(value | 1);
 }
 
 /*
@@ -2293,17 +2256,23 @@ static fn diff_unified_output(string_address left, string_address right)
         }
 }
 
-static fn diff_identical_output(string_address left, string_address right)
+// Every one-line verdict diff gives is the same sentence around " and ",
+// with a different head and tail.
+static fn diff_announce(string_address head, string_address left,
+                        string_address right, string_address tail)
 {
-        if (!diff_identical)
-                return;
-
-        text_put_string("Files ");
+        text_put_string(head);
         text_put_string(left);
         text_put_string(" and ");
         text_put_string(right);
-        text_put_string(" are identical\n");
+        text_put_string(tail);
         text_flush();
+}
+
+static fn diff_identical_output(string_address left, string_address right)
+{
+        if (diff_identical)
+                diff_announce("Files ", left, right, " are identical\n");
 }
 
 // One pair of files -----------------------------------------
@@ -2328,12 +2297,8 @@ static b32 diff_pair(string_address left, string_address right)
                         return 0;
                 }
 
-                text_put_string(diff_brief ? "Files " : "Binary files ");
-                text_put_string(left);
-                text_put_string(" and ");
-                text_put_string(right);
-                text_put_string(" differ\n");
-                text_flush();
+                diff_announce(diff_brief ? "Files " : "Binary files ", left,
+                              right, " differ\n");
 
                 return 1;
         }
@@ -2495,12 +2460,7 @@ static b32 diff_pair(string_address left, string_address right)
 
         if (diff_brief)
         {
-                text_put_string("Files ");
-                text_put_string(left);
-                text_put_string(" and ");
-                text_put_string(right);
-                text_put_string(" differ\n");
-                text_flush();
+                diff_announce("Files ", left, right, " differ\n");
 
                 return 1;
         }
@@ -2536,28 +2496,52 @@ typedef struct
         positive room;
 } diff_names;
 
+/*
+        Every growing table in this file doubles the same way, out of the
+        text arena. The arena cannot take a block back, so growth allocates
+        the doubled room, copies what is used, and abandons the old block;
+        the abandoned halves sum to less than the final table. One grower
+        keeps six tables from writing that walk out by hand.
+*/
+static bool tools_grow(address_any table, positive address_to room,
+                       positive used, positive need, positive unit,
+                       positive first)
+{
+        if (need <= address_to room)
+                return true;
+
+        positive larger = address_to room ? address_to room : first;
+
+        while (larger < need)
+        {
+                if (larger > positive_max / 2 ||
+                    larger * 2 > positive_max / unit)
+                        return false;
+
+                larger *= 2;
+        }
+
+        address_any grown = text_arena_take(larger * unit);
+
+        if (!grown)
+                return false;
+
+        if (used)
+                memory_copy_apart(grown,
+                                  address_to(address_any address_to)table,
+                                  used * unit);
+
+        address_to(address_any address_to)table = grown;
+        address_to room = larger;
+        return true;
+}
+
 static bool diff_name_add(diff_names address_to names, string_address value)
 {
-        if (names->count >= names->room)
-        {
-                if (names->room > positive_max / 2)
-                        return false;
-
-                positive room = names->room ? names->room * 2 : 32;
-                string_address address_to grown =
-                    (string_address address_to)text_arena_take(
-                        room * sizeof(string_address));
-
-                if (!grown)
-                        return false;
-
-                if (names->count)
-                        memory_copy_apart(grown, names->at,
-                                         names->count * sizeof(string_address));
-
-                names->at = grown;
-                names->room = room;
-        }
+        if (!tools_grow(address_of names->at, address_of names->room,
+                        names->count, names->count + 1,
+                        sizeof(string_address), 32))
+                return false;
 
         names->at[names->count++] = value;
         return true;
@@ -2691,6 +2675,42 @@ static bool diff_gather(string_address path, diff_names address_to names,
 
 static b32 diff_walk(string_address left, string_address right, positive depth);
 
+/*
+        A name present in one directory only. With the new-file flags it is
+        compared against the nothing on the other side; otherwise it is
+        announced. A path that could not be made says so through failed,
+        because that must stop the walk while an ordinary difference must
+        not.
+*/
+static b32 diff_one_sided(string_address left, string_address right,
+                          string_address inside, string_address name,
+                          bool compare, positive depth,
+                          bool address_to failed)
+{
+        if (compare)
+        {
+                string_address only_left = diff_path(left, name);
+                string_address only_right = diff_path(right, name);
+
+                if (!only_left || !only_right)
+                {
+                        address_to failed = true;
+                        return 2;
+                }
+
+                return diff_walk(only_left, only_right, depth + 1);
+        }
+
+        text_put_string("Only in ");
+        text_put_string(inside);
+        text_put_string(": ");
+        text_put_string(name);
+        text_put_character('\n');
+        text_flush();
+
+        return 1;
+}
+
 static b32 diff_directories(string_address left, string_address right, positive depth)
 {
         if (depth >= FILE_MAX_DEPTH)
@@ -2720,75 +2740,34 @@ static b32 diff_directories(string_address left, string_address right, positive 
                                       : (b32)string_compare(names[0].at[i],
                                                             names[1].at[j]);
 
-                if (order < 0)
+                if (order)
                 {
-                        if (diff_new_file)
-                        {
-                                string_address only_left = diff_path(left,
-                                                                    names[0].at[i]);
-                                string_address only_right = diff_path(right,
-                                                                     names[0].at[i]);
+                        bool failed = false;
+                        b32 one = order < 0
+                                      ? diff_one_sided(left, right, left,
+                                                       names[0].at[i],
+                                                       diff_new_file, depth,
+                                                       address_of failed)
+                                      : diff_one_sided(left, right, right,
+                                                       names[1].at[j],
+                                                       diff_new_file ||
+                                                           diff_new_file_left,
+                                                       depth,
+                                                       address_of failed);
 
-                                if (!only_left || !only_right)
-                                        return 2;
+                        if (failed)
+                                return 2;
 
-                                b32 one = diff_walk(only_left, only_right, depth + 1);
+                        if (worst < one)
+                                worst = one;
 
-                                if (worst < one)
-                                        worst = one;
+                        text_arena_used = child_mark;
 
-                                text_arena_used = child_mark;
-                        }
+                        if (order < 0)
+                                i++;
                         else
-                        {
-                                text_put_string("Only in ");
-                                text_put_string(left);
-                                text_put_string(": ");
-                                text_put_string(names[0].at[i]);
-                                text_put_character('\n');
-                                text_flush();
+                                j++;
 
-                                if (worst < 1)
-                                        worst = 1;
-                        }
-
-                        i++;
-                        continue;
-                }
-
-                if (order > 0)
-                {
-                        if (diff_new_file || diff_new_file_left)
-                        {
-                                string_address only_left = diff_path(left,
-                                                                    names[1].at[j]);
-                                string_address only_right = diff_path(right,
-                                                                     names[1].at[j]);
-
-                                if (!only_left || !only_right)
-                                        return 2;
-
-                                b32 one = diff_walk(only_left, only_right, depth + 1);
-
-                                if (worst < one)
-                                        worst = one;
-
-                                text_arena_used = child_mark;
-                        }
-                        else
-                        {
-                                text_put_string("Only in ");
-                                text_put_string(right);
-                                text_put_string(": ");
-                                text_put_string(names[1].at[j]);
-                                text_put_character('\n');
-                                text_flush();
-
-                                if (worst < 1)
-                                        worst = 1;
-                        }
-
-                        j++;
                         continue;
                 }
 
@@ -2803,12 +2782,8 @@ static b32 diff_directories(string_address left, string_address right, positive 
 
                 if (left_directory && right_directory && !diff_recursive)
                 {
-                        text_put_string("Common subdirectories: ");
-                        text_put_string(one_left);
-                        text_put_string(" and ");
-                        text_put_string(one_right);
-                        text_put_character('\n');
-                        text_flush();
+                        diff_announce("Common subdirectories: ", one_left,
+                                      one_right, "\n");
                 }
                 else
                 {
@@ -3265,28 +3240,9 @@ static p8 address_to ps_read_growing(string_address path, positive first,
 
 static ps_process address_to ps_process_add()
 {
-        if (ps_count >= ps_room_processes)
-        {
-                if (ps_room_processes > positive_max / 2 ||
-                    (ps_room_processes &&
-                     ps_room_processes * 2 > positive_max / sizeof(ps_process)))
-                        return null;
-
-                positive room = ps_room_processes ? ps_room_processes * 2 : 128;
-                ps_process address_to grown =
-                    (ps_process address_to)text_arena_take(
-                        room * sizeof(ps_process));
-
-                if (!grown)
-                        return null;
-
-                if (ps_count)
-                        memory_copy_apart(grown, ps_list,
-                                         ps_count * sizeof(ps_process));
-
-                ps_list = grown;
-                ps_room_processes = room;
-        }
+        if (!tools_grow(address_of ps_list, address_of ps_room_processes,
+                        ps_count, ps_count + 1, sizeof(ps_process), 128))
+                return null;
 
         ps_process address_to made = ps_list + ps_count;
 
@@ -3332,72 +3288,25 @@ static fn ps_pass(string_address address_to at, positive fields)
         address_to at = here;
 }
 
-// The name behind a numeric user id, from the file the system keeps it in.
-static p8 address_to ps_password;
-
+// The name behind a numeric user id. file.c already reads /etc/passwd and
+// remembers the last answer, so ps only keeps a copy that lives as long as
+// the arena; the fallback for an unknown id is the number spelled out.
 static string_address ps_name_of(positive uid)
 {
-        positive at = 0;
+        p8 name[FILE_NAME_MAX];
+        positive length;
 
-        while (ps_password && ps_password[at])
-        {
-                positive line = at;
-                positive stop = (positive)(string_first_of_or_end(
-                                                ps_password + at, '\n') -
-                                            (string_address)ps_password);
-                positive name_stop = line;
+        if (file_user_name(uid, name, FILE_NAME_MAX))
+                length = string_length(name);
+        else
+                length = positive_into(name, uid);
 
-                while (name_stop < stop && ps_password[name_stop] != ':')
-                        name_stop++;
-
-                positive field = 0;
-                positive step = name_stop;
-
-                while (step < stop && field < 2)
-                {
-                        step++;
-                        field++;
-
-                        positive from = step;
-
-                        while (step < stop && ps_password[step] != ':')
-                                step++;
-
-                        if (field == 2)
-                        {
-                                positive taken = 0;
-                                positive value = string_digits(
-                                    (string_address)ps_password + from,
-                                    address_of taken);
-
-                                if (taken == step - from && value == uid)
-                                {
-                                        positive length = name_stop - line;
-                                        p8 address_to made =
-                                            (p8 address_to)text_arena_take(length + 1);
-
-                                        if (!made)
-                                                return null;
-
-                                        memory_copy_apart_end(made,
-                                                             ps_password + line,
-                                                             length);
-                                        return (string_address)made;
-                                }
-                        }
-                }
-
-                at = stop + (ps_password[stop] != end);
-        }
-
-        p8 digits[24];
-        positive have = positive_into(digits, uid);
-        p8 address_to made = (p8 address_to)text_arena_take(have + 1);
+        p8 address_to made = (p8 address_to)text_arena_take(length + 1);
 
         if (!made)
                 return null;
 
-        memory_copy_apart_end(made, digits, have);
+        memory_copy_apart_end(made, name, length);
         return (string_address)made;
 }
 
@@ -3409,11 +3318,6 @@ static bool ps_gather()
         ps_count = 0;
         ps_room_processes = 0;
         ps_page_kb = 4;
-
-        positive password_length = 0;
-
-        ps_password = ps_read_growing("/etc/passwd", 4096,
-                                      address_of password_length);
 
         /*
                 rss in /proc/PID/stat is counted in native pages, not in the
@@ -3726,43 +3630,14 @@ static bool ps_failed;
 static bool ps_room_add(positive extra)
 {
         if (ps_room_used == positive_max ||
-            extra > positive_max - ps_room_used - 1)
+            extra > positive_max - ps_room_used - 1 ||
+            !tools_grow(address_of ps_room, address_of ps_room_size,
+                        ps_room_used, ps_room_used + extra + 1, 1, 64))
         {
                 ps_failed = true;
                 return false;
         }
 
-        positive need = ps_room_used + extra + 1;
-
-        if (need <= ps_room_size)
-                return true;
-
-        positive room = ps_room_size ? ps_room_size : 64;
-
-        while (room < need)
-        {
-                if (room > positive_max / 2)
-                {
-                        ps_failed = true;
-                        return false;
-                }
-
-                room *= 2;
-        }
-
-        p8 address_to grown = (p8 address_to)text_arena_take(room);
-
-        if (!grown)
-        {
-                ps_failed = true;
-                return false;
-        }
-
-        if (ps_room_used)
-                memory_copy_apart(grown, ps_room, ps_room_used);
-
-        ps_room = grown;
-        ps_room_size = room;
         return true;
 }
 
@@ -3987,30 +3862,9 @@ static bool ps_field_add(ps_selected address_to address_to fields,
                          positive value, string_address header,
                          bool custom_header)
 {
-        if (address_to count >= address_to room)
-        {
-                if (address_to room > positive_max / 2)
-                        return false;
-
-                positive larger = address_to room ? address_to room * 2 : 16;
-
-                if (larger > positive_max / sizeof(ps_selected))
-                        return false;
-
-                ps_selected address_to grown =
-                    (ps_selected address_to)text_arena_take(
-                        larger * sizeof(ps_selected));
-
-                if (!grown)
-                        return false;
-
-                if (address_to count)
-                        memory_copy_apart(grown, address_to fields,
-                                         address_to count * sizeof(ps_selected));
-
-                address_to fields = grown;
-                address_to room = larger;
-        }
+        if (!tools_grow(fields, room, address_to count, address_to count + 1,
+                        sizeof(ps_selected), 16))
+                return false;
 
         (address_to fields)[address_to count].field = value;
         (address_to fields)[address_to count].header = header;
@@ -4023,30 +3877,9 @@ static bool ps_value_add(positive address_to address_to values,
                          positive address_to count, positive address_to room,
                          positive value)
 {
-        if (address_to count >= address_to room)
-        {
-                if (address_to room > positive_max / 2)
-                        return false;
-
-                positive larger = address_to room ? address_to room * 2 : 16;
-
-                if (larger > positive_max / sizeof(positive))
-                        return false;
-
-                positive address_to grown =
-                    (positive address_to)text_arena_take(
-                        larger * sizeof(positive));
-
-                if (!grown)
-                        return false;
-
-                if (address_to count)
-                        memory_copy_apart(grown, address_to values,
-                                         address_to count * sizeof(positive));
-
-                address_to values = grown;
-                address_to room = larger;
-        }
+        if (!tools_grow(values, room, address_to count, address_to count + 1,
+                        sizeof(positive), 16))
+                return false;
 
         (address_to values)[address_to count] = value;
         address_to count += 1;
@@ -4121,31 +3954,9 @@ static bool ps_string_add(string_address address_to address_to values,
                     !string_compare_max((address_to values)[i], from, length))
                         return true;
 
-        if (address_to count >= address_to room)
-        {
-                if (address_to room > positive_max / 2)
-                        return false;
-
-                positive larger = address_to room ? address_to room * 2 : 16;
-
-                if (larger > positive_max / sizeof(string_address))
-                        return false;
-
-                string_address address_to grown =
-                    (string_address address_to)text_arena_take(
-                        larger * sizeof(string_address));
-
-                if (!grown)
-                        return false;
-
-                if (address_to count)
-                        memory_copy_apart(grown, address_to values,
-                                         address_to count *
-                                             sizeof(string_address));
-
-                address_to values = grown;
-                address_to room = larger;
-        }
+        if (!tools_grow(values, room, address_to count, address_to count + 1,
+                        sizeof(string_address), 16))
+                return false;
 
         p8 address_to made = (p8 address_to)text_arena_take(length + 1);
 
@@ -4366,6 +4177,33 @@ static bool ps_format_list(string_address list,
         return any;
 }
 
+/*
+        The long selections arrive both as --name value and --name=value.
+        One reader answers whether the word is this option, and hands back
+        the value: null when the word that should have held it is missing,
+        which each caller's validator already refuses.
+*/
+static bool ps_long_value(string_address argument, string_address name,
+                          b32 address_to at, string_address address_to value)
+{
+        positive length = string_length(name);
+
+        if (string_compare_max(argument, name, length))
+                return false;
+
+        if (argument[length] == '=')
+        {
+                address_to value = argument + length + 1;
+                return true;
+        }
+
+        if (argument[length])
+                return false;
+
+        address_to value = program_argument(++(address_to at));
+        return true;
+}
+
 static b32 tools_ps(void)
 {
         ps_selected address_to fields = null;
@@ -4403,6 +4241,7 @@ static b32 tools_ps(void)
         for (b32 i = 1; i < text_argument_count; i++)
         {
                 string_address argument = program_argument(i);
+                string_address value;
 
                 if (string_equals(argument, "--no-headers"))
                 {
@@ -4416,46 +4255,26 @@ static b32 tools_ps(void)
                         no_headers = false;
                         continue;
                 }
-                else if (string_equals(argument, "--format"))
+                else if (ps_long_value(argument, "--format", address_of i,
+                                       address_of value))
                 {
-                        argument = program_argument(++i);
-
-                        if (!argument)
+                        if (!value)
                         {
                                 text_error(null, "option requires an argument -- format");
                                 return text_done(1);
                         }
-                }
-                else if (!string_compare_max(argument,
-                                             (string_address)"--format=", 9))
-                {
-                        argument += 9;
-                }
-                else if (string_equals(argument, "--pid"))
-                {
-                        argument = program_argument(++i);
 
-                        if (!argument ||
-                            !ps_pid_list(argument, address_of selected_pids,
+                        argument = value;
+                }
+                else if (ps_long_value(argument, "--pid", address_of i,
+                                       address_of value))
+                {
+                        if (!value ||
+                            !ps_pid_list(value, address_of selected_pids,
                                          address_of selected_count,
                                          address_of selected_room, true))
                         {
-                                text_error(argument, "invalid process id list");
-                                return text_done(1);
-                        }
-
-                        continue;
-                }
-                else if (!string_compare_max(argument,
-                                             (string_address)"--pid=", 6))
-                {
-                        argument += 6;
-
-                        if (!ps_pid_list(argument, address_of selected_pids,
-                                         address_of selected_count,
-                                         address_of selected_room, true))
-                        {
-                                text_error(argument, "invalid process id list");
+                                text_error(value, "invalid process id list");
                                 return text_done(1);
                         }
 
@@ -4491,31 +4310,15 @@ static b32 tools_ps(void)
 
                         continue;
                 }
-                else if (string_equals(argument, "--ppid"))
+                else if (ps_long_value(argument, "--ppid", address_of i,
+                                       address_of value))
                 {
-                        argument = program_argument(++i);
-
-                        if (!argument ||
-                            !ps_pid_list(argument, address_of selected_ppids,
+                        if (!value ||
+                            !ps_pid_list(value, address_of selected_ppids,
                                          address_of ppid_count,
                                          address_of ppid_room, false))
                         {
-                                text_error(argument, "invalid parent process id list");
-                                return text_done(1);
-                        }
-
-                        continue;
-                }
-                else if (!string_compare_max(argument,
-                                             (string_address)"--ppid=", 7))
-                {
-                        argument += 7;
-
-                        if (!ps_pid_list(argument, address_of selected_ppids,
-                                         address_of ppid_count,
-                                         address_of ppid_room, false))
-                        {
-                                text_error(argument, "invalid parent process id list");
+                                text_error(value, "invalid parent process id list");
                                 return text_done(1);
                         }
 
@@ -4540,27 +4343,12 @@ static b32 tools_ps(void)
 
                         continue;
                 }
-                else if (string_equals(argument, "--sort"))
+                else if (ps_long_value(argument, "--sort", address_of i,
+                                       address_of value))
                 {
-                        argument = program_argument(++i);
-
-                        if (!argument || !ps_sort_pid(argument,
-                                                      address_of reverse))
+                        if (!value || !ps_sort_pid(value, address_of reverse))
                         {
-                                text_error(argument, "unsupported sort key");
-                                return text_done(1);
-                        }
-
-                        continue;
-                }
-                else if (!string_compare_max(argument,
-                                             (string_address)"--sort=", 7))
-                {
-                        argument += 7;
-
-                        if (!ps_sort_pid(argument, address_of reverse))
-                        {
-                                text_error(argument, "unsupported sort key");
+                                text_error(value, "unsupported sort key");
                                 return text_done(1);
                         }
 
@@ -4664,57 +4452,34 @@ static b32 tools_ps(void)
         */
         if (!field_count)
         {
+                // The two listings ps prints with no -o, in the shape -o
+                // carries: field, header, and whether the header overrides
+                // the column table's.
+                static const ps_selected ps_full_preset[] = {
+                    {PS_FIELD_USER, "UID", true},  {PS_FIELD_PID, null, false},
+                    {PS_FIELD_PPID, null, false},  {PS_FIELD_CPU, null, false},
+                    {PS_FIELD_STIME, null, false}, {PS_FIELD_TTY, null, false},
+                    {PS_FIELD_TIME, null, false},  {PS_FIELD_ARGS, "CMD", true},
+                };
+                static const ps_selected ps_plain_preset[] = {
+                    {PS_FIELD_PID, null, false},   {PS_FIELD_TTY, null, false},
+                    {PS_FIELD_TIME, null, false},  {PS_FIELD_COMM, "CMD", true},
+                };
+                const ps_selected address_to preset = full ? ps_full_preset
+                                                           : ps_plain_preset;
+                positive presets = full ? 8 : 4;
+
                 ps_columns[PS_FIELD_TTY].header = "TTY";
                 ps_columns[PS_FIELD_TTY].width = 8;
+                ps_columns[full ? PS_FIELD_ARGS : PS_FIELD_COMM].header = "CMD";
 
-                if (full)
-                {
-                        ps_columns[PS_FIELD_ARGS].header = "CMD";
-
-                        if (!ps_field_add(address_of fields, address_of field_count,
-                                          address_of field_room, PS_FIELD_USER,
-                                          "UID", true) ||
-                            !ps_field_add(address_of fields, address_of field_count,
-                                          address_of field_room, PS_FIELD_PID,
-                                          null, false) ||
-                            !ps_field_add(address_of fields, address_of field_count,
-                                          address_of field_room, PS_FIELD_PPID,
-                                          null, false) ||
-                            !ps_field_add(address_of fields, address_of field_count,
-                                          address_of field_room, PS_FIELD_CPU,
-                                          null, false) ||
-                            !ps_field_add(address_of fields, address_of field_count,
-                                          address_of field_room, PS_FIELD_STIME,
-                                          null, false) ||
-                            !ps_field_add(address_of fields, address_of field_count,
-                                          address_of field_room, PS_FIELD_TTY,
-                                          null, false) ||
-                            !ps_field_add(address_of fields, address_of field_count,
-                                          address_of field_room, PS_FIELD_TIME,
-                                          null, false) ||
-                            !ps_field_add(address_of fields, address_of field_count,
-                                          address_of field_room, PS_FIELD_ARGS,
-                                          "CMD", true))
+                for (positive f = 0; f < presets; f++)
+                        if (!ps_field_add(address_of fields,
+                                          address_of field_count,
+                                          address_of field_room,
+                                          preset[f].field, preset[f].header,
+                                          preset[f].custom_header))
                                 return text_done(1);
-                }
-                else
-                {
-                        ps_columns[PS_FIELD_COMM].header = "CMD";
-
-                        if (!ps_field_add(address_of fields, address_of field_count,
-                                          address_of field_room, PS_FIELD_PID,
-                                          null, false) ||
-                            !ps_field_add(address_of fields, address_of field_count,
-                                          address_of field_room, PS_FIELD_TTY,
-                                          null, false) ||
-                            !ps_field_add(address_of fields, address_of field_count,
-                                          address_of field_room, PS_FIELD_TIME,
-                                          null, false) ||
-                            !ps_field_add(address_of fields, address_of field_count,
-                                          address_of field_room, PS_FIELD_COMM,
-                                          "CMD", true))
-                                return text_done(1);
-                }
         }
 
         bool show_headers = force_headers;

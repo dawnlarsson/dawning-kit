@@ -16,18 +16,9 @@
 #error "file_slurp is a Linux userspace primitive"
 #endif
 
-static positive checks;
-static positive failures;
-static volatile positive signals_caught;
+#include "counted.inc"
 
-#define check(name, condition)                                          \
-        do {                                                            \
-                checks++;                                               \
-                if (!(condition)) {                                     \
-                        failures++;                                     \
-                        string_format(log, "  FAIL " name "\n");        \
-                }                                                       \
-        } while (0)
+static volatile positive signals_caught;
 
 #define SLURP_TEST_SIGNAL 10
 #define SLURP_TEST_RESTORER 0x04000000
@@ -370,9 +361,7 @@ b32 main(void)
         slurp_test_fifo(open_fifo, true);
         slurp_test_fifo(read_fifo, false);
 
-        string_format(log, "%p checks, %p failures\n", checks, failures);
-        log_flush();
-        return failures ? 1 : 0;
+        return test_report(null);
 }
 
 #undef SLURP_TEST_TEXT

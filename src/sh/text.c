@@ -87,6 +87,48 @@ static fn text_put_string(string_address value)
         text_put(value, string_length(value));
 }
 
+/*
+        A byte written so a terminal can show it, in the spelling cat -v
+        settled and cmp -b copied: the high half as M- and then the same rule
+        again on what is left, 127 as ^?, a control character as ^ and the
+        letter sixty four above it, and anything else as itself.
+
+        Into a caller's array rather than straight out, because cmp needs the
+        two bytes it is comparing side by side in a line it has not finished
+        building. Terminated as well as measured, since cmp prints the result
+        as a string. Four bytes is the widest answer -- M-^? -- so five is
+        room enough for any of them.
+*/
+#define TEXT_VISIBLE_MAX 5
+
+static positive text_visible(p8 address_to into, p8 value)
+{
+        positive have = 0;
+
+        if (value >= 128)
+        {
+                into[have++] = 'M';
+                into[have++] = '-';
+                value -= 128;
+        }
+
+        if (value == 127)
+        {
+                into[have++] = '^';
+                into[have++] = '?';
+        }
+        else if (value < 32)
+        {
+                into[have++] = '^';
+                into[have++] = (p8)(value + 64);
+        }
+        else
+                into[have++] = value;
+
+        into[have] = end;
+        return have;
+}
+
 static fn text_error_raw(string_address text)
 {
         system_write_all(2, text, string_length(text));
@@ -127,6 +169,23 @@ static b32 text_done(b32 code)
         }
 
         return code;
+}
+
+/*
+        A complaint and the status that goes with it, which is how nearly
+        every refusal in this file ends.
+
+        The status is the caller's because the tools do not agree on one:
+        most answer 1, grep and sort answer 2, and sed answers 4. Saying both
+        halves in one line is also what keeps them together -- a refusal that
+        prints and then falls through to the ordinary exit is the bug this
+        shape cannot have.
+*/
+static b32 text_refuse(string_address about, string_address reason, b32 code)
+{
+        text_error(about, reason);
+
+        return text_done(code);
 }
 
 /*
@@ -217,6 +276,10 @@ typedef struct
         positive position;
         bool finished;
         bool opened;
+        // Whether the reader stopped because the input failed rather than
+        // because it ended. The line tools turn this into an exit status the
+        // moment it happens; cmp keeps its own answer and asks later.
+        bool failed;
         string_address name;
         p8 buffer[TEXT_READ_MAX];
 } text_reader;
@@ -239,17 +302,26 @@ static bool text_line_ended;
 */
 static p8 text_delimiter = '\n';
 
-static bool text_open(string_address path)
+/*
+        Opening one, which every tool here does the same way: no name at all
+        or a bare - is standard input, which is left open afterwards because
+        the process did not open it. Anything else is a path.
+
+        The reader is emptied before the open is attempted, so a failure
+        cannot leave the bytes of the last file sitting behind it.
+*/
+static bool text_reader_open(text_reader address_to reader, string_address path)
 {
-        text_input.filled = 0;
-        text_input.position = 0;
-        text_input.finished = false;
-        text_input.opened = false;
-        text_input.name = path;
+        reader->filled = 0;
+        reader->position = 0;
+        reader->finished = false;
+        reader->failed = false;
+        reader->opened = false;
+        reader->name = path;
 
         if (!path || (path[0] == '-' && path[1] == '\0'))
         {
-                text_input.handle = 0;
+                reader->handle = 0;
                 return true;
         }
 
@@ -258,50 +330,89 @@ static bool text_open(string_address path)
         if (handle < 0)
         {
                 text_error(path, "No such file or directory");
-                text_status = text_status ? text_status : 1;
+                reader->failed = true;
                 return false;
         }
 
-        text_input.handle = (positive)handle;
-        text_input.opened = true;
+        reader->handle = (positive)handle;
+        reader->opened = true;
         return true;
 }
 
-static fn text_close()
+static fn text_reader_close(text_reader address_to reader)
 {
-        if (text_input.opened)
-                system_call_1(syscall(close), text_input.handle);
+        if (reader->opened)
+                system_call_1(syscall(close), reader->handle);
 
-        text_input.opened = false;
+        reader->opened = false;
 }
 
-static bool text_fill()
+/*
+        More bytes, or false at the end of the input and false again when the
+        read itself failed. The two are told apart by `failed` rather than by
+        the answer, because a tool that is only moving bytes does not need to
+        know which of them happened.
+*/
+static bool text_reader_fill(text_reader address_to reader)
 {
-        if (text_input.position < text_input.filled)
+        if (reader->position < reader->filled)
                 return true;
 
-        if (text_input.finished)
+        if (reader->finished)
                 return false;
 
-        bipolar got = system_read_retry(text_input.handle, text_input.buffer,
+        bipolar got = system_read_retry(reader->handle, reader->buffer,
                                         TEXT_READ_MAX);
 
         if (got <= 0)
         {
-                text_input.finished = true;
+                reader->finished = true;
 
                 if (got < 0)
                 {
-                        text_error(text_input.name, "Read error");
-                        text_status = text_status ? text_status : 1;
+                        text_error(reader->name, "Read error");
+                        reader->failed = true;
                 }
 
                 return false;
         }
 
-        text_input.filled = (positive)got;
-        text_input.position = 0;
+        reader->filled = (positive)got;
+        reader->position = 0;
         return true;
+}
+
+/*
+        The one input the line tools share, and the exit status a failure on
+        it leaves behind. cmp reads its two sides through the reader above
+        and keeps its own answer, which is why the status lives here and not
+        in the reader.
+*/
+static bool text_open(string_address path)
+{
+        if (text_reader_open(address_of text_input, path))
+                return true;
+
+        text_status = text_status ? text_status : 1;
+        return false;
+}
+
+static fn text_close()
+{
+        text_reader_close(address_of text_input);
+}
+
+static bool text_fill()
+{
+        if (text_reader_fill(address_of text_input))
+                return true;
+
+        // Set on every later call as well as the one that failed, which
+        // cannot change it: the first failure already made it one.
+        if (text_input.failed)
+                text_status = text_status ? text_status : 1;
+
+        return false;
 }
 
 // A line without its newline, and whether it had one. A file whose last line
@@ -438,6 +549,19 @@ static fn text_put_line()
 
         if (text_line_ended)
                 text_put_character(text_delimiter);
+}
+
+// Whatever is left of the input, straight out, without looking at any of it.
+// This is what cat is doing nearly every time it is run, and what head and
+// tail do once they have seeked to where their answer starts.
+static fn text_put_rest()
+{
+        while (text_fill())
+        {
+                text_put(text_input.buffer + text_input.position,
+                         text_input.filled - text_input.position);
+                text_input.position = text_input.filled;
+        }
 }
 
 static p8 text_lower(p8 character)
@@ -2341,6 +2465,15 @@ static string_address text_file_name(positive which)
         return text_files_count ? program_argument(text_files[which]) : null;
 }
 
+// How many inputs a tool walks: the operands it was handed, or the one
+// standard input it reads when it was handed none. text_file_name answers
+// null for that one, which is what text_open reads as standard input, so the
+// no-operand case needs no second loop anywhere.
+static b32 text_input_count()
+{
+        return text_files_count ? (b32)text_files_count : 1;
+}
+
 static fn text_banner(b32 which, bool first)
 {
         string_address name = text_file_name(which);
@@ -2590,6 +2723,58 @@ static const file_long wc_longs[] = {
     {(string_address) "debug", 'D'},
     {null, 0},
 };
+
+/*
+        One row of wc's counts.
+
+        wc prints the same row twice under two names -- once for each input,
+        once for the total across them -- and the rule is the same both
+        times: the columns that were asked for, in the fixed order GNU writes
+        them, one space between, each padded to a width settled before
+        anything was printed. Written out twice, that rule is two places for
+        the total row to come out spaced differently from the rows above it.
+
+        The name is the file the counts came from, "total" for the last row,
+        or nothing at all when the counts came from standard input.
+
+        -m and -c are two columns holding the same number: this file counts
+        bytes for both, so a character is a byte here and the two flags
+        differ only in whether their column appears.
+*/
+static bool wc_want_lines;
+static bool wc_want_words;
+static bool wc_want_bytes;
+static bool wc_want_chars;
+static bool wc_want_longest;
+
+static fn wc_row(positive lines, positive words, positive bytes,
+                 positive longest, positive width, string_address name)
+{
+        positive counted[5] = {lines, words, bytes, bytes, longest};
+        bool wanted[5] = {wc_want_lines, wc_want_words, wc_want_chars,
+                          wc_want_bytes, wc_want_longest};
+        bool leading = true;
+
+        for (b32 column = 0; column < 5; column++)
+        {
+                if (!wanted[column])
+                        continue;
+
+                if (!leading)
+                        text_put_character(' ');
+
+                positive_to_padded(text_put, counted[column], width, ' ', 0);
+                leading = false;
+        }
+
+        if (name)
+        {
+                text_put_character(' ');
+                text_put_string(name);
+        }
+
+        text_put_character('\n');
+}
 
 static b32 text_wc()
 {
@@ -3231,6 +3416,40 @@ static fn text_head_short(positive count, bool by_bytes)
 
         for (positive c = 0; c < stop; c++)
                 text_put_slice(text_lines + c);
+}
+
+/*
+        The count head and tail were given, and whether it carried the sign
+        that means something other than a plain count.
+
+        Both tools accept either sign and let one of the two change what the
+        count means: head -n -5 leaves five off the end, tail -n +5 starts at
+        the fifth line rather than ending at it. The other sign is decoration
+        and is stepped over. Which of the two is the meaningful one is the
+        whole difference between the two tools here, so it arrives as an
+        argument rather than as a second copy of the parser.
+
+        No option at all leaves the caller's default standing.
+*/
+static bool text_count_option(string_address said, p8 marked,
+                              bool address_to special, positive address_to count)
+{
+        if (!said)
+                return true;
+
+        if (said[0] == marked)
+        {
+                address_to special = true;
+                said++;
+        }
+        else if (said[0] == '+' || said[0] == '-')
+                said++;
+
+        if (string_digits_exact(said, count))
+                return true;
+
+        text_error(null, "invalid number of lines");
+        return false;
 }
 
 static b32 text_head()
@@ -4825,6 +5044,37 @@ static bool uniq_number_of(file_taking address_to taking, p8 letter,
         return false;
 }
 
+/*
+        Where the compared part of a line begins.
+
+        -f skips whole fields and -s skips characters after them, in that
+        order, which is the order POSIX puts them in. A field is the blanks
+        leading it together with the run that follows, so skipping one takes
+        two spans and not one. A skip past the end of the line leaves nothing
+        to compare rather than reading past it.
+
+        uniq asks this of the line it just read and again of the line before
+        it, which is why it is here and not written out twice inside the
+        loop.
+*/
+static positive uniq_skipped(p8 address_to line, positive length,
+                             positive fields, positive characters)
+{
+        positive skip = 0;
+
+        for (positive f = 0; f < fields; f++)
+        {
+                skip += string_span_max(line + skip, length - skip,
+                                        string_set_blanks);
+                skip += string_span_max(line + skip, length - skip,
+                                        text_inside());
+        }
+
+        skip += characters;
+
+        return skip > length ? length : skip;
+}
+
 static b32 text_uniq()
 {
         file_taking taking = {
@@ -5507,6 +5757,32 @@ static fn grep_color_separator(p8 separator)
 {
         grep_color_field(address_of separator, 1, (string_address) "se",
                          (string_address) "36");
+}
+
+/*
+        The "--" that stands between two runs of context lines.
+
+        It goes in when the run about to be printed is not the one that
+        followed the last line printed: either something has been skipped
+        since -- a new file, a jump the -A and -B windows did not cover -- or
+        the line numbers have a gap in them. Two runs that touch get nothing
+        between them.
+
+        Saying it also ends the pending gap, so the flag is cleared here
+        rather than at each of the three places that print a run.
+*/
+static fn grep_group_gap(bool grouped, string_address separator,
+                         bool address_to split, positive shown, positive number)
+{
+        if (grouped && separator &&
+            (address_to split || (shown && number > shown + 1)))
+        {
+                grep_color_field(separator, string_length(separator),
+                                 (string_address) "se", (string_address) "36");
+                text_put_character('\n');
+        }
+
+        address_to split = false;
 }
 
 static fn grep_head(string_address name, p8 separator, positive number, positive offset)
@@ -10020,6 +10296,17 @@ static fn cmp_close(cmp_side address_to side)
                 system_call_1(syscall(close), side->handle);
 
         side->opened = false;
+}
+
+// Both sides shut and the answer handed back, which is how every exit from
+// the comparison below leaves. A shell runs cmp as a builtin and goes on
+// living, so a descriptor left open here is a descriptor leaked for good.
+static b32 cmp_ends(b32 code)
+{
+        cmp_close(address_of cmp_left);
+        cmp_close(address_of cmp_right);
+
+        return text_done(code);
 }
 
 static bipolar cmp_byte(cmp_side address_to side)

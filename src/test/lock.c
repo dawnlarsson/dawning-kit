@@ -62,18 +62,7 @@
 #error "the lock is a Linux userspace primitive"
 #endif
 
-static positive checks;
-static positive failures;
-
-#define check(name, condition)                                   \
-        do {                                                     \
-                checks++;                                        \
-                if (!(condition))                                \
-                {                                                \
-                        failures++;                              \
-                        string_format(log, "  FAIL " name "\n"); \
-                }                                                \
-        } while (0)
+#include "counted.inc"
 
 #define LOCK_TEXT_INNER(value) #value
 #define LOCK_TEXT(value) LOCK_TEXT_INNER(value)
@@ -724,8 +713,5 @@ b32 main(void)
         //
         lock_measure();
 
-        string_format(log, "\n%p checks, %p failures\n", checks, failures);
-        log_flush();
-
-        return failures != 0;
+        return test_report((string_address) "\n");
 }

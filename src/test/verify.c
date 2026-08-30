@@ -19,8 +19,7 @@
         second attempt at the same idea.
 */
 
-static positive failures;
-static positive checks;
+#include "counted.inc"
 
 fn report(string_address name, string_address detail, positive got, positive want)
 {
@@ -8058,12 +8057,18 @@ fn check_paths()
                        "sources around page edges");
 }
 
-b32 main()
+/*
+        The shared numeric core, in one list.
+
+        It runs twice: on its own, for the small cross-machine lane that a
+        formatter change should not have to wait on unrelated platform tests
+        for, and again as part of the full pass. Written out in both places it
+        was two lists kept the same by hand, and a routine added to the full
+        pass alone would quietly stop being checked on the machines that only
+        have the small lane.
+*/
+fn check_formatters()
 {
-#if defined(VERIFY_FORMATTERS_ONLY)
-        // A small cross-machine lane for the shared numeric core. It avoids
-        // making a formatter change wait on unrelated platform tests when a
-        // target is available only through a minimal linker and qemu-user.
         check_into();
         check_padded();
         check_writer_fields();
@@ -8075,6 +8080,15 @@ b32 main()
         check_human_nearest();
         check_wait_status_code();
         check_wait_status_code_base();
+}
+
+b32 main()
+{
+#if defined(VERIFY_FORMATTERS_ONLY)
+        // A small cross-machine lane for the shared numeric core. It avoids
+        // making a formatter change wait on unrelated platform tests when a
+        // target is available only through a minimal linker and qemu-user.
+        check_formatters();
 #else
         check_fill();
         check_count();
@@ -8177,17 +8191,7 @@ b32 main()
         check_signed_digits_and_width();
         check_digits_base();
         check_digits_exact();
-        check_into();
-        check_padded();
-        check_writer_fields();
-        check_base_field();
-        check_into_padded();
-        check_into_pair();
-        check_into_base();
-        check_human_1024();
-        check_human_nearest();
-        check_wait_status_code();
-        check_wait_status_code_base();
+        check_formatters();
         check_copy_max_end();
         check_bulk_alignments();
         check_bulk_moves();
@@ -8198,8 +8202,5 @@ b32 main()
                 string_format(log, "  %p routine(s) under neither name here\n",
                               absent_count);
 
-        string_format(log, "%p checks, %p failures\n", checks, failures);
-        log_flush();
-
-        return failures ? 1 : 0;
+        return test_report(null);
 }

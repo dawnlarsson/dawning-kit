@@ -1427,6 +1427,66 @@ bool file_is_dot(string_address name)
         return string_is(name + 1, '.') && string_is(name + 2, end);
 }
 
+/*
+        A tool that changes something about a name, and under -R about
+        everything beneath it. chmod, chown and chgrp are this one walk with a
+        different visit at the leaf, so the visit is what comes in and the
+        walk is written once.
+
+        is_directory here asks about the link itself, so a link to a directory
+        is changed and not walked into; the depth is what a directory that
+        links into itself runs out of before the stack does.
+*/
+typedef fn(address_to file_visit)(bipolar directory, string_address name,
+                                  string_address shown);
+
+static fn file_change_walk(bipolar directory, string_address name, string_address shown,
+                           positive depth, file_visit visit)
+{
+        visit(directory, name, shown);
+
+        if (depth == 0 || !file_is_directory(directory, name))
+                return;
+
+        file_walk walk;
+
+        if (!file_walk_open(address_of walk, directory, name))
+                return;
+
+        struct linux_dirent64 address_to entry;
+
+        while ((entry = file_walk_next(address_of walk)))
+        {
+                if (file_is_dot(entry->d_name))
+                        continue;
+
+                p8 below[FILE_PATH_MAX];
+
+                path_join(below, FILE_PATH_MAX, shown, entry->d_name);
+                file_change_walk(walk.handle, entry->d_name, below, depth - 1, visit);
+        }
+
+        file_walk_close(address_of walk);
+}
+
+// The operand list those three read, which is the same list every time: each
+// name is visited, and under -R so is everything under it.
+static fn file_change_paths(positive first, positive count, bool recursive,
+                            file_visit visit)
+{
+        while (first < count)
+        {
+                string_address path = program_argument((b32)first++);
+
+                if (recursive)
+                        file_change_walk(AT_FDCWD, path, path, FILE_MAX_DEPTH, visit);
+                else
+                        visit(AT_FDCWD, path, path);
+        }
+
+        log_flush();
+}
+
 // Arguments -------------------------------------------------
 
 positive file_letter_bit(p8 letter)
@@ -1495,6 +1555,24 @@ typedef struct
         p8 letter;
 } file_long;
 
+/*
+        The options that supersede one another.
+
+        -i and -n both say what to do about a collision and the last one
+        written is the one that means it; -H, -L and -P all say how far a link
+        is followed and likewise. One bit per letter cannot say which came
+        last, so each row names a set of letters and the place the last of
+        them seen is kept, and the tool reads that place instead of the bits.
+
+        This is the flagless twin of `last` below, which answers the same
+        question for the options that carry a value.
+*/
+typedef struct
+{
+        string_address letters;
+        p8 address_to into;
+} file_supersede;
+
 // file_letter_bit answers 62 for anything that is not a letter or a digit.
 #define FILE_LETTERS 63
 
@@ -1551,6 +1629,11 @@ typedef struct
         // told about each option as the option is read.
         bool(address_to seen)(p8 letter, string_address value);
 
+        // Sets of options that supersede one another, each remembered in the
+        // place its row names. Filled in as the option is read, before the
+        // tool's own `seen` hook is told about it.
+        const file_supersede address_to supersedes;
+
         /*
                 The last letter that carried a value.
 
@@ -1575,6 +1658,14 @@ static string_address file_option_value(file_taking address_to taking, p8 letter
 static bool file_option_among(string_address set, p8 letter)
 {
         return set && string_first_of(set, letter);
+}
+
+// The last letter of each superseding set, remembered where its row says.
+static fn file_option_supersede(file_taking address_to taking, p8 letter)
+{
+        for (positive i = 0; taking->supersedes && taking->supersedes[i].letters; i++)
+                if (file_option_among(taking->supersedes[i].letters, letter))
+                        address_to taking->supersedes[i].into = letter;
 }
 
 static bool file_option_needs(file_taking address_to taking, string_address word)
@@ -1689,6 +1780,8 @@ static bool file_take(file_taking address_to taking)
                                         return file_option_needs(taking, word);
                         }
 
+                        file_option_supersede(taking, letter);
+
                         if (taking->seen && !taking->seen(letter, taking->value[bit]))
                                 return false;
 
@@ -1709,6 +1802,8 @@ static bool file_take(file_taking address_to taking)
                         taking->flags |= (positive)1 << bit;
 
                         bool spare = file_option_among(taking->optional, string_get(letter));
+
+                        file_option_supersede(taking, string_get(letter));
 
                         if (!spare && !string_first_of(taking->valued, string_get(letter)))
                         {
@@ -2058,6 +2153,89 @@ bool file_make_parents(string_address path, positive mode)
 }
 
 /*
+        SOURCE... DESTINATION, read the way cp and mv both read it.
+
+        -t names the directory to put things in instead of the last operand,
+        and -T says the last operand is the thing itself, so the two of them
+        cannot both be given; with neither, a lone pair whose right hand is
+        not a directory is a rename rather than a move into a directory.
+
+        What is done with each source and destination pair is the whole of
+        what cp and mv differ by here, so that is what comes in. False means
+        an operand was refused and the caller exits 1; true means the pairs
+        were handed over, and the caller's own status says how they went.
+
+        ln is not a third caller: it has a one operand form, its -n makes the
+        directory test ask about a link rather than about what the link points
+        at, and it says "target is not a directory" where these two say "extra
+        operand".
+*/
+static bool file_source_destination(string_address program, positive first,
+                                    positive count, string_address into, bool alone,
+                                    fn(address_to pair)(string_address source,
+                                                        string_address destination))
+{
+        if (into && alone)
+        {
+                string_format(
+                    file_fail,
+                    "%s: cannot combine --target-directory and --no-target-directory\n",
+                    program);
+                return false;
+        }
+
+        if (first >= count || (!into && first + 1 >= count))
+        {
+                string_format(file_fail, "%s: missing operand\n", program);
+                return false;
+        }
+
+        string_address last = into ? into : program_argument((b32)(count - 1));
+        positive after = into ? count : count - 1;
+
+        // -T says the destination is the thing itself however many names it
+        // has and whatever is already there, which is the one case where a
+        // directory on the right is not a directory to put things into.
+        if (alone || (!into && count - first == 2 && !file_is_directory_through(last)))
+        {
+                if (after - first != 1)
+                {
+                        string_format(file_fail, "%s: extra operand '%s'\n", program,
+                                      program_argument((b32)(first + 1)));
+                        return false;
+                }
+
+                pair(program_argument((b32)first), last);
+                log_flush();
+
+                return true;
+        }
+
+        if (!file_is_directory_through(last))
+        {
+                string_format(file_fail, "%s: target '%s' is not a directory\n", program,
+                              last);
+                return false;
+        }
+
+        while (first < after)
+        {
+                string_address source = program_argument((b32)first++);
+                p8 tail[FILE_PATH_MAX];
+                p8 destination[FILE_PATH_MAX];
+
+                path_tail_copy(tail, FILE_PATH_MAX, source);
+                path_join(destination, FILE_PATH_MAX, last, tail);
+
+                pair(source, destination);
+        }
+
+        log_flush();
+
+        return true;
+}
+
+/*
         The utilities themselves.
 
         Each was its own program, with only the layer above shared. They are
@@ -2135,18 +2313,11 @@ static b64 ls_now;
 static p8 ls_hidden_option;
 static p8 ls_order_option;
 
-static bool ls_option_seen(p8 letter, string_address value)
-{
-        (void)value;
-
-        if (letter == 'a' || letter == 'A')
-                ls_hidden_option = letter;
-
-        if (letter == 't' || letter == 'S')
-                ls_order_option = letter;
-
-        return true;
-}
+static const file_supersede ls_supersedes[] = {
+    {(string_address) "aA", address_of ls_hidden_option},
+    {(string_address) "tS", address_of ls_order_option},
+    {null, null},
+};
 
 static fn ls_limit(string_address why)
 {
@@ -2858,7 +3029,7 @@ static b32 file_ls()
             .valued = (string_address) "",
             .optional = (string_address) "C",
             .longs = ls_longs,
-            .seen = ls_option_seen,
+            .supersedes = ls_supersedes,
         };
 
         if (!file_take(address_of taking))
@@ -3536,6 +3707,44 @@ static bool find_pattern_holds(find_node address_to node, string_address text,
                            : memory_compare(pattern, text, wanted) == 0;
 }
 
+/*
+        The predicates that take no value: the word, the node kind it makes,
+        and which of the walk's switches it throws on the way past. find_is is
+        an exact compare, so no row shadows another and the order here is the
+        order they were written in.
+
+        A switch is thrown where the word stands rather than where the
+        expression holds, which is how find has always let -depth and -xdev be
+        written in the middle of one.
+*/
+#define FIND_SETS_DEEPEST 1
+#define FIND_SETS_ONE_SYSTEM 2
+#define FIND_SETS_FOLLOW 4
+#define FIND_SETS_ACTION 8
+
+static const struct
+{
+        string_address name;
+        p8 kind;
+        p8 sets;
+} find_plain[] = {
+    {(string_address) "-depth", 'v', FIND_SETS_DEEPEST},
+    {(string_address) "-xdev", 'v', FIND_SETS_ONE_SYSTEM},
+    {(string_address) "-mount", 'v', FIND_SETS_ONE_SYSTEM},
+    {(string_address) "-follow", 'v', FIND_SETS_FOLLOW},
+    {(string_address) "-true", 'v', 0},
+    {(string_address) "-false", 'f', 0},
+    {(string_address) "-print", 'd', FIND_SETS_ACTION},
+    {(string_address) "-print0", '0', FIND_SETS_ACTION},
+    {(string_address) "-delete", 'D', FIND_SETS_ACTION | FIND_SETS_DEEPEST},
+    {(string_address) "-prune", 'r', 0},
+    {(string_address) "-quit", 'q', 0},
+    {(string_address) "-empty", 'y', 0},
+    {(string_address) "-nouser", 'U', 0},
+    {(string_address) "-nogroup", 'G', 0},
+    {null, 0, 0},
+};
+
 static b32 find_parse_or();
 
 // A time in whole units, the way find counts one: the fraction is dropped, so
@@ -3616,64 +3825,25 @@ static b32 find_parse_primary()
                 return find_make('v');
         }
 
-        if (find_is(word, (string_address) "-depth"))
+        for (positive i = 0; find_plain[i].name; i++)
         {
-                find_deepest = true;
-                return find_make('v');
+                if (!find_is(word, find_plain[i].name))
+                        continue;
+
+                if (find_plain[i].sets & FIND_SETS_DEEPEST)
+                        find_deepest = true;
+
+                if (find_plain[i].sets & FIND_SETS_ONE_SYSTEM)
+                        find_one_system = true;
+
+                if (find_plain[i].sets & FIND_SETS_FOLLOW)
+                        find_follow = true;
+
+                if (find_plain[i].sets & FIND_SETS_ACTION)
+                        find_has_action = true;
+
+                return find_make(find_plain[i].kind);
         }
-
-        if (find_is(word, (string_address) "-xdev") ||
-            find_is(word, (string_address) "-mount"))
-        {
-                find_one_system = true;
-                return find_make('v');
-        }
-
-        if (find_is(word, (string_address) "-follow"))
-        {
-                find_follow = true;
-                return find_make('v');
-        }
-
-        if (find_is(word, (string_address) "-true"))
-                return find_make('v');
-
-        if (find_is(word, (string_address) "-false"))
-                return find_make('f');
-
-        if (find_is(word, (string_address) "-print"))
-        {
-                find_has_action = true;
-                return find_make('d');
-        }
-
-        if (find_is(word, (string_address) "-print0"))
-        {
-                find_has_action = true;
-                return find_make('0');
-        }
-
-        if (find_is(word, (string_address) "-delete"))
-        {
-                find_has_action = true;
-                find_deepest = true;
-                return find_make('D');
-        }
-
-        if (find_is(word, (string_address) "-prune"))
-                return find_make('r');
-
-        if (find_is(word, (string_address) "-quit"))
-                return find_make('q');
-
-        if (find_is(word, (string_address) "-empty"))
-                return find_make('y');
-
-        if (find_is(word, (string_address) "-nouser"))
-                return find_make('U');
-
-        if (find_is(word, (string_address) "-nogroup"))
-                return find_make('G');
 
         if (find_is(word, (string_address) "-exec"))
         {
@@ -4651,9 +4821,48 @@ static p64 statfs_identity(file_mount_facts address_to facts)
         return ((p64)(p32)facts->identity[0] << 32) | (p32)facts->identity[1];
 }
 
-static fn statfs_one_specifier(p8 letter, string_address path,
-                               file_mount_facts address_to facts)
+/*
+        A stat format, walked once: everything up to the next % goes out as it
+        stands and the letter after it is handed to the tool's own specifier.
+        stat and stat -f differ only in what a letter means and in what they
+        read it from, so both of those come in and neither walker is written
+        twice.
+*/
+static fn stat_percent_walk(string_address format, string_address path,
+                            address_any facts,
+                            fn(address_to one)(p8 letter, string_address path,
+                                               address_any facts))
 {
+        string_address step = format;
+
+        while (string_get(step))
+        {
+                string_address mark = string_first_of_or_end(step, '%');
+
+                if (mark != step)
+                        log(step, (positive)(mark - step));
+
+                if (!string_get(mark))
+                        break;
+
+                if (string_get(mark + 1))
+                {
+                        one(string_get(mark + 1), path, facts);
+                        step = mark + 2;
+                        continue;
+                }
+
+                log("%", 1);
+                break;
+        }
+
+        log("\n", 1);
+}
+
+static fn statfs_one_specifier(p8 letter, string_address path, address_any given)
+{
+        file_mount_facts address_to facts = given;
+
         switch (letter)
         {
         case 'n':
@@ -4686,35 +4895,6 @@ static fn statfs_one_specifier(p8 letter, string_address path,
         }
 
         log("?", 1);
-}
-
-static fn statfs_formatted(string_address format, string_address path,
-                           file_mount_facts address_to facts)
-{
-        string_address step = format;
-
-        while (string_get(step))
-        {
-                string_address mark = string_first_of_or_end(step, '%');
-
-                if (mark != step)
-                        log(step, (positive)(mark - step));
-
-                if (!string_get(mark))
-                        break;
-
-                if (string_get(mark + 1))
-                {
-                        statfs_one_specifier(string_get(mark + 1), path, facts);
-                        step = mark + 2;
-                        continue;
-                }
-
-                log("%", 1);
-                break;
-        }
-
-        log("\n", 1);
 }
 
 static fn statfs_readable(string_address path, file_mount_facts address_to facts)
@@ -4755,8 +4935,9 @@ static fn statfs_readable(string_address path, file_mount_facts address_to facts
         log("\n", 1);
 }
 
-static fn stat_one_specifier(p8 letter, string_address path, file_facts address_to facts)
+static fn stat_one_specifier(p8 letter, string_address path, address_any given)
 {
+        file_facts address_to facts = given;
         p8 text[FILE_PATH_MAX];
 
         switch (letter)
@@ -4883,35 +5064,6 @@ static fn stat_one_specifier(p8 letter, string_address path, file_facts address_
         escapes only under --printf, and a format that said \t would print
         those two characters. So does this one.
 */
-static fn stat_formatted(string_address format, string_address path,
-                         file_facts address_to facts)
-{
-        string_address step = format;
-
-        while (string_get(step))
-        {
-                string_address mark = string_first_of_or_end(step, '%');
-
-                if (mark != step)
-                        log(step, (positive)(mark - step));
-
-                if (!string_get(mark))
-                        break;
-
-                if (string_get(mark + 1))
-                {
-                        stat_one_specifier(string_get(mark + 1), path, facts);
-                        step = mark + 2;
-                        continue;
-                }
-
-                log("%", 1);
-                break;
-        }
-
-        log("\n", 1);
-}
-
 static fn stat_readable(string_address path, file_facts address_to facts)
 {
         p8 text[FILE_PATH_MAX];
@@ -5041,7 +5193,8 @@ static b32 file_stat()
                         }
 
                         if (format)
-                                statfs_formatted(format, path, address_of facts);
+                                stat_percent_walk(format, path, address_of facts,
+                                                  statfs_one_specifier);
                         else
                                 statfs_readable(path, address_of facts);
 
@@ -5061,7 +5214,8 @@ static b32 file_stat()
                 }
 
                 if (format)
-                        stat_formatted(format, path, address_of facts);
+                        stat_percent_walk(format, path, address_of facts,
+                                          stat_one_specifier);
                 else
                         stat_readable(path, address_of facts);
         }
@@ -5294,67 +5448,56 @@ static p64 du_walk(string_address path, positive depth, bool named, positive lev
 
         p64 total = mine;
         p64 below = 0;
+        file_walk walk;
 
-        if (depth > 0)
+        if (file_walk_open(address_of walk, AT_FDCWD, path))
         {
-                file_walk walk;
+                struct linux_dirent64 address_to entry;
 
-                if (file_walk_open(address_of walk, AT_FDCWD, path))
+                while ((entry = file_walk_next(address_of walk)))
                 {
-                        struct linux_dirent64 address_to entry;
+                        if (file_is_dot(entry->d_name))
+                                continue;
 
-                        while ((entry = file_walk_next(address_of walk)))
+                        // Out of depth is answered by the first entry there
+                        // is, before an exclusion could hide it: a tree this
+                        // deep has not been measured and saying so is the
+                        // whole of what is left to do here.
+                        if (depth == 0)
                         {
-                                if (file_is_dot(entry->d_name))
-                                        continue;
-
-                                p8 under[FILE_PATH_MAX];
-
-                                path_join(under, FILE_PATH_MAX, path, entry->d_name);
-
-                                if (du_excluded(under))
-                                        continue;
-
-                                p64 cost = du_walk(under, depth - 1, false, level + 1);
-
-                                if (du_seen_broken || du_depth_broken)
-                                        break;
-
-                                total += cost;
-
-                                if (du_was_directory)
-                                        below += cost;
-                        }
-
-                        file_walk_close(address_of walk);
-                }
-                else
-                {
-                        string_format(file_fail, "du: cannot read directory '%s'\n", path);
-                        du_status = 1;
-                }
-        }
-        else
-        {
-                file_walk walk;
-
-                if (file_walk_open(address_of walk, AT_FDCWD, path))
-                {
-                        struct linux_dirent64 address_to entry;
-
-                        while ((entry = file_walk_next(address_of walk)))
-                        {
-                                if (file_is_dot(entry->d_name))
-                                        continue;
-
                                 file_fail("du: tree is nested too deep\n", 0);
                                 du_depth_broken = true;
                                 du_status = 1;
                                 break;
                         }
 
-                        file_walk_close(address_of walk);
+                        p8 under[FILE_PATH_MAX];
+
+                        path_join(under, FILE_PATH_MAX, path, entry->d_name);
+
+                        if (du_excluded(under))
+                                continue;
+
+                        p64 cost = du_walk(under, depth - 1, false, level + 1);
+
+                        if (du_seen_broken || du_depth_broken)
+                                break;
+
+                        total += cost;
+
+                        if (du_was_directory)
+                                below += cost;
                 }
+
+                file_walk_close(address_of walk);
+        }
+        else if (depth > 0)
+        {
+                // A directory that will not open at the bottom of the walk is
+                // not complained about, because nothing was going to be read
+                // out of it either way.
+                string_format(file_fail, "du: cannot read directory '%s'\n", path);
+                du_status = 1;
         }
 
         if (du_seen_broken || du_depth_broken)
@@ -5371,11 +5514,13 @@ static p64 du_walk(string_address path, positive depth, bool named, positive lev
         return total;
 }
 
+static const file_supersede du_supersedes[] = {
+    {(string_address) "bkm", address_of du_unit_option},
+    {null, null},
+};
+
 static bool du_exclude_seen(p8 letter, string_address value)
 {
-        if (letter == 'b' || letter == 'k' || letter == 'm')
-                du_unit_option = letter;
-
         if (letter != 'e' || !value)
                 return true;
 
@@ -5430,6 +5575,7 @@ static b32 file_du()
             .valued = (string_address) "de",
             .longs = du_longs,
             .seen = du_exclude_seen,
+            .supersedes = du_supersedes,
         };
 
         if (!file_take(address_of taking))
@@ -5931,7 +6077,7 @@ static fn chmod_said(string_address shown, positive was, positive now)
         log("\n", 1);
 }
 
-static bool chmod_one(bipolar directory, string_address name, string_address shown)
+static fn chmod_one(bipolar directory, string_address name, string_address shown)
 {
         file_facts facts;
 
@@ -5945,7 +6091,7 @@ static bool chmod_one(bipolar directory, string_address name, string_address sho
                                       shown);
 
                 chmod_status = 1;
-                return false;
+                return;
         }
 
         positive wanted = chmod_reference_mode & 07777;
@@ -5959,7 +6105,7 @@ static bool chmod_one(bipolar directory, string_address name, string_address sho
                                       chmod_specification);
 
                 chmod_status = 1;
-                return false;
+                return;
         }
 
         bipolar done = system_call_4(syscall(fchmodat), directory, (positive)name, wanted, 0);
@@ -5971,43 +6117,10 @@ static bool chmod_one(bipolar directory, string_address name, string_address sho
                                       shown, file_reason(done));
 
                 chmod_status = 1;
-                return false;
+                return;
         }
 
         chmod_said(shown, facts.mode, wanted | (facts.mode & MODE_FORMAT));
-
-        return true;
-}
-
-static fn chmod_walk(bipolar directory, string_address name, string_address shown,
-                     positive depth)
-{
-        chmod_one(directory, name, shown);
-
-        // is_directory here asks about the link itself, so a link to a
-        // directory is changed and not walked into.
-        if (depth == 0 || !file_is_directory(directory, name))
-                return;
-
-        file_walk walk;
-
-        if (!file_walk_open(address_of walk, directory, name))
-                return;
-
-        struct linux_dirent64 address_to entry;
-
-        while ((entry = file_walk_next(address_of walk)))
-        {
-                if (file_is_dot(entry->d_name))
-                        continue;
-
-                p8 below[FILE_PATH_MAX];
-
-                path_join(below, FILE_PATH_MAX, shown, entry->d_name);
-                chmod_walk(walk.handle, entry->d_name, below, depth - 1);
-        }
-
-        file_walk_close(address_of walk);
 }
 
 static const file_long chmod_longs[] = {
@@ -6071,17 +6184,7 @@ static b32 file_chmod()
         if (!chmod_referenced)
                 chmod_specification = program_argument((b32)first++);
 
-        while (first < count)
-        {
-                string_address path = program_argument((b32)first++);
-
-                if (taking.flags & FILE_FLAG('R'))
-                        chmod_walk(AT_FDCWD, path, path, FILE_MAX_DEPTH);
-                else
-                        chmod_one(AT_FDCWD, path, path);
-        }
-
-        log_flush();
+        file_change_paths(first, count, (taking.flags & FILE_FLAG('R')) != 0, chmod_one);
 
         return chmod_status;
 }
@@ -6101,15 +6204,10 @@ static p8 chown_dereference_option;
 static string_address chown_program;
 static bool chown_groups_only;
 
-static bool chown_option_seen(p8 letter, string_address value)
-{
-        (void)value;
-
-        if (letter == 'd' || letter == 'h')
-                chown_dereference_option = letter;
-
-        return true;
-}
+static const file_supersede chown_supersedes[] = {
+    {(string_address) "dh", address_of chown_dereference_option},
+    {null, null},
+};
 
 // Who a file will belong to, said the way chown says it: the user alone when
 // only a user was named, and user:group when a group was.
@@ -6194,35 +6292,6 @@ static fn chown_one(bipolar directory, string_address name, string_address shown
         chown_said(shown, address_of facts, changed);
 }
 
-static fn chown_walk(bipolar directory, string_address name, string_address shown,
-                     positive depth)
-{
-        chown_one(directory, name, shown);
-
-        if (depth == 0 || !file_is_directory(directory, name))
-                return;
-
-        file_walk walk;
-
-        if (!file_walk_open(address_of walk, directory, name))
-                return;
-
-        struct linux_dirent64 address_to entry;
-
-        while ((entry = file_walk_next(address_of walk)))
-        {
-                if (file_is_dot(entry->d_name))
-                        continue;
-
-                p8 below[FILE_PATH_MAX];
-
-                path_join(below, FILE_PATH_MAX, shown, entry->d_name);
-                chown_walk(walk.handle, entry->d_name, below, depth - 1);
-        }
-
-        file_walk_close(address_of walk);
-}
-
 static const file_long chown_longs[] = {
     {(string_address) "changes", 'c'},
     {(string_address) "dereference", 'd'},
@@ -6237,17 +6306,7 @@ static const file_long chown_longs[] = {
 
 static fn chown_paths(positive first, positive count)
 {
-        while (first < count)
-        {
-                string_address path = program_argument((b32)first++);
-
-                if (chown_flags & FILE_FLAG('R'))
-                        chown_walk(AT_FDCWD, path, path, FILE_MAX_DEPTH);
-                else
-                        chown_one(AT_FDCWD, path, path);
-        }
-
-        log_flush();
+        file_change_paths(first, count, (chown_flags & FILE_FLAG('R')) != 0, chown_one);
 }
 
 static b32 file_chown_common(string_address program, bool groups_only)
@@ -6265,7 +6324,7 @@ static b32 file_chown_common(string_address program, bool groups_only)
             .allowed = (string_address) "Rcfhv",
             .valued = (string_address) "e",
             .longs = chown_longs,
-            .seen = chown_option_seen,
+            .supersedes = chown_supersedes,
         };
 
         if (!file_take(address_of taking))
@@ -6405,18 +6464,11 @@ static bool ln_through;
 static p8 ln_collision_option;
 static p8 ln_dereference_option;
 
-static bool ln_option_seen(p8 letter, string_address value)
-{
-        (void)value;
-
-        if (letter == 'f' || letter == 'i')
-                ln_collision_option = letter;
-
-        if (letter == 'L' || letter == 'P')
-                ln_dereference_option = letter;
-
-        return true;
-}
+static const file_supersede ln_supersedes[] = {
+    {(string_address) "fi", address_of ln_collision_option},
+    {(string_address) "LP", address_of ln_dereference_option},
+    {null, null},
+};
 
 // realpath's, and named here because ln is written before it.
 static bool realpath_relative(string_address from, string_address path,
@@ -6514,7 +6566,7 @@ static b32 file_ln()
             .allowed = (string_address) "fiLnPrstTv",
             .valued = (string_address) "t",
             .longs = ln_longs,
-            .seen = ln_option_seen,
+            .supersedes = ln_supersedes,
         };
 
         if (!file_take(address_of taking))
@@ -6623,15 +6675,10 @@ static const file_long readlink_longs[] = {
 
 static p8 readlink_canonical_option;
 
-static bool readlink_option_seen(p8 letter, string_address value)
-{
-        (void)value;
-
-        if (letter == 'f' || letter == 'e' || letter == 'm')
-                readlink_canonical_option = letter;
-
-        return true;
-}
+static const file_supersede readlink_supersedes[] = {
+    {(string_address) "fem", address_of readlink_canonical_option},
+    {null, null},
+};
 
 static b32 file_readlink()
 {
@@ -6642,7 +6689,7 @@ static b32 file_readlink()
             .allowed = (string_address) "fneqsvmz",
             .valued = (string_address) "",
             .longs = readlink_longs,
-            .seen = readlink_option_seen,
+            .supersedes = readlink_supersedes,
         };
 
         if (!file_take(address_of taking))
@@ -6957,18 +7004,11 @@ static const file_long realpath_longs[] = {
 static p8 realpath_missing_option;
 static p8 realpath_walk_option;
 
-static bool realpath_option_seen(p8 letter, string_address value)
-{
-        (void)value;
-
-        if (letter == 'E' || letter == 'e' || letter == 'm')
-                realpath_missing_option = letter;
-
-        if (letter == 'L' || letter == 'P')
-                realpath_walk_option = letter;
-
-        return true;
-}
+static const file_supersede realpath_supersedes[] = {
+    {(string_address) "Eem", address_of realpath_missing_option},
+    {(string_address) "LP", address_of realpath_walk_option},
+    {null, null},
+};
 
 // Whether one canonical path is the other or lies under it. Whole components
 // only: /usr/lib is not under /usr/li.
@@ -7107,7 +7147,7 @@ static b32 file_realpath()
             .allowed = (string_address) "EeLmPqsz",
             .valued = (string_address) "RB",
             .longs = realpath_longs,
-            .seen = realpath_option_seen,
+            .supersedes = realpath_supersedes,
         };
 
         if (!file_take(address_of taking))
@@ -7403,20 +7443,12 @@ static b32 cp_status;
 static p8 cp_collision_option;
 static p8 cp_dereference_option;
 
-static bool cp_option_seen(p8 letter, string_address value)
-{
-        (void)value;
-
-        /* -f is independent; only -i and -n supersede one another. */
-        if (letter == 'i' || letter == 'n')
-                cp_collision_option = letter;
-
-        if (letter == 'H' || letter == 'L' || letter == 'P' || letter == 'd' ||
-            letter == 'a')
-                cp_dereference_option = letter;
-
-        return true;
-}
+/* -f is independent; only -i and -n supersede one another. */
+static const file_supersede cp_supersedes[] = {
+    {(string_address) "in", address_of cp_collision_option},
+    {(string_address) "HLPda", address_of cp_dereference_option},
+    {null, null},
+};
 
 // 0 copies a symbolic link as itself, 1 copies what it points at, 2 does
 // that only for the links named on the command line.
@@ -7710,6 +7742,14 @@ static bool cp_one(string_address source, string_address destination, positive d
         return complete;
 }
 
+// cp_one carries the walk depth and whether the name was written on the
+// command line; the pair walker cp shares with mv carries neither, and every
+// pair it hands over is a named one at full depth.
+static fn cp_pair(string_address source, string_address destination)
+{
+        cp_one(source, destination, FILE_MAX_DEPTH, true);
+}
+
 static const file_long cp_longs[] = {
     {(string_address) "archive", 'a'},
     {(string_address) "dereference", 'L'},
@@ -7740,7 +7780,7 @@ static b32 file_cp()
             .allowed = (string_address) "aHLPRdfilnprstTuv",
             .valued = (string_address) "t",
             .longs = cp_longs,
-            .seen = cp_option_seen,
+            .supersedes = cp_supersedes,
         };
 
         if (!file_take(address_of taking))
@@ -7772,59 +7812,10 @@ static b32 file_cp()
                 cp_dereference = 0;
 
         string_address into = file_option_value(address_of taking, 't');
-        bool alone = (flags & FILE_FLAG('T')) != 0;
 
-        if (into && alone)
-        {
-                file_fail("cp: cannot combine --target-directory and --no-target-directory\n", 0);
+        if (!file_source_destination((string_address) "cp", first, count, into,
+                                     (flags & FILE_FLAG('T')) != 0, cp_pair))
                 return 1;
-        }
-
-        if (first >= count || (!into && first + 1 >= count))
-        {
-                file_fail("cp: missing operand\n", 0);
-                return 1;
-        }
-
-        string_address last = into ? into : program_argument((b32)(count - 1));
-        positive after = into ? count : count - 1;
-
-        // -T says the destination is the copy itself however many names it
-        // has and whatever is already there, which is the one case where a
-        // directory on the right is not a directory to copy into.
-        if (alone || (!into && count - first == 2 && !file_is_directory_through(last)))
-        {
-                if (after - first != 1)
-                {
-                        string_format(file_fail, "cp: extra operand '%s'\n",
-                                      program_argument((b32)(first + 1)));
-                        return 1;
-                }
-
-                cp_one(program_argument((b32)first), last, FILE_MAX_DEPTH, true);
-                log_flush();
-                return cp_status;
-        }
-
-        if (!file_is_directory_through(last))
-        {
-                string_format(file_fail, "cp: target '%s' is not a directory\n", last);
-                return 1;
-        }
-
-        while (first < after)
-        {
-                string_address source = program_argument((b32)first++);
-                p8 tail[FILE_PATH_MAX];
-                p8 destination[FILE_PATH_MAX];
-
-                path_tail_copy(tail, FILE_PATH_MAX, source);
-                path_join(destination, FILE_PATH_MAX, last, tail);
-
-                cp_one(source, destination, FILE_MAX_DEPTH, true);
-        }
-
-        log_flush();
 
         return cp_status;
 }
@@ -7842,15 +7833,10 @@ static bool mv_never_clobber;
 static bool mv_loud;
 static p8 mv_collision_option;
 
-static bool mv_option_seen(p8 letter, string_address value)
-{
-        (void)value;
-
-        if (letter == 'f' || letter == 'i' || letter == 'n')
-                mv_collision_option = letter;
-
-        return true;
-}
+static const file_supersede mv_supersedes[] = {
+    {(string_address) "fin", address_of mv_collision_option},
+    {null, null},
+};
 
 static bool mv_across(string_address source, string_address destination, positive depth);
 
@@ -8026,7 +8012,7 @@ static b32 file_mv()
             .allowed = (string_address) "finTtv",
             .valued = (string_address) "t",
             .longs = mv_longs,
-            .seen = mv_option_seen,
+            .supersedes = mv_supersedes,
         };
 
         if (!file_take(address_of taking))
@@ -8039,56 +8025,10 @@ static b32 file_mv()
         mv_loud = (taking.flags & FILE_FLAG('v')) != 0;
 
         string_address into = file_option_value(address_of taking, 't');
-        bool alone = (taking.flags & FILE_FLAG('T')) != 0;
 
-        if (into && alone)
-        {
-                file_fail("mv: cannot combine --target-directory and --no-target-directory\n", 0);
+        if (!file_source_destination((string_address) "mv", first, count, into,
+                                     (taking.flags & FILE_FLAG('T')) != 0, mv_one))
                 return 1;
-        }
-
-        if (first >= count || (!into && first + 1 >= count))
-        {
-                file_fail("mv: missing operand\n", 0);
-                return 1;
-        }
-
-        string_address last = into ? into : program_argument((b32)(count - 1));
-        positive after = into ? count : count - 1;
-
-        if (alone || (!into && count - first == 2 && !file_is_directory_through(last)))
-        {
-                if (after - first != 1)
-                {
-                        string_format(file_fail, "mv: extra operand '%s'\n",
-                                      program_argument((b32)(first + 1)));
-                        return 1;
-                }
-
-                mv_one(program_argument((b32)first), last);
-                log_flush();
-                return mv_status;
-        }
-
-        if (!file_is_directory_through(last))
-        {
-                string_format(file_fail, "mv: target '%s' is not a directory\n", last);
-                return 1;
-        }
-
-        while (first < after)
-        {
-                string_address source = program_argument((b32)first++);
-                p8 tail[FILE_PATH_MAX];
-                p8 destination[FILE_PATH_MAX];
-
-                path_tail_copy(tail, FILE_PATH_MAX, source);
-                path_join(destination, FILE_PATH_MAX, last, tail);
-
-                mv_one(source, destination);
-        }
-
-        log_flush();
 
         return mv_status;
 }
@@ -8113,15 +8053,10 @@ static p32 rm_device_minor;
 static b32 rm_status;
 static p8 rm_collision_option;
 
-static bool rm_option_seen(p8 letter, string_address value)
-{
-        (void)value;
-
-        if (letter == 'f' || letter == 'i')
-                rm_collision_option = letter;
-
-        return true;
-}
+static const file_supersede rm_supersedes[] = {
+    {(string_address) "fi", address_of rm_collision_option},
+    {null, null},
+};
 
 static bool rm_tree(bipolar directory, string_address name, string_address shown,
                     positive depth);
@@ -8348,7 +8283,7 @@ static b32 file_rm()
             .allowed = (string_address) "dfirRv",
             .valued = (string_address) "",
             .longs = rm_longs,
-            .seen = rm_option_seen,
+            .supersedes = rm_supersedes,
         };
 
         if (!file_take(address_of taking))
@@ -10377,73 +10312,56 @@ static b32 file_uname()
                 return 1;
         }
 
+        /*
+                Every field uname answers with, in the order -a writes them.
+
+                part_of_all is the five the kernel actually keeps, which is
+                what -a takes. beside_all says whether asking for a field by
+                its own letter still writes it when -a was given too: -p and
+                -i are not fields the kernel keeps, so on their own they
+                answer unknown and beside -a they are left out, which is what
+                -a means by "except omit -p and -i if unknown" and is why -a
+                is not simply all the others.
+        */
+        struct
+        {
+                p8 letter;
+                string_address text;
+                bool part_of_all;
+                bool beside_all;
+        } fields[] = {
+            {'s', facts.system, true, true},
+            {'n', facts.node, true, true},
+            {'r', facts.release, true, true},
+            {'v', facts.version, true, true},
+            {'m', facts.machine, true, true},
+            {'p', (string_address) "unknown", false, false},
+            {'i', (string_address) "unknown", false, false},
+            {'o', (string_address) "Moonwater", false, true},
+        };
+
         bool all = (flags & FILE_FLAG('a')) != 0;
-        bool any = flags != 0;
         positive written = 0;
 
-        if (all || (flags & FILE_FLAG('s')) || !any)
-        {
-                log(facts.system, 0);
-                written++;
-        }
+        // Nothing asked for at all is the kernel name, which is the first
+        // field and the only one that answers to having been asked nothing.
+        if (!flags)
+                flags = FILE_FLAG('s');
 
-        if (all || (flags & FILE_FLAG('n')))
+        for (positive i = 0; i < sizeof(fields) / sizeof(fields[0]); i++)
         {
+                bool asked = (flags & FILE_FLAG(fields[i].letter)) != 0;
+                bool wanted = all ? fields[i].part_of_all ||
+                                        (asked && fields[i].beside_all)
+                                  : asked;
+
+                if (!wanted)
+                        continue;
+
                 if (written++)
                         log(" ", 1);
 
-                log(facts.node, 0);
-        }
-
-        if (all || (flags & FILE_FLAG('r')))
-        {
-                if (written++)
-                        log(" ", 1);
-
-                log(facts.release, 0);
-        }
-
-        if (all || (flags & FILE_FLAG('v')))
-        {
-                if (written++)
-                        log(" ", 1);
-
-                log(facts.version, 0);
-        }
-
-        if (all || (flags & FILE_FLAG('m')))
-        {
-                if (written++)
-                        log(" ", 1);
-
-                log(facts.machine, 0);
-        }
-
-        // Asked for on their own they answer unknown; asked for as part of
-        // -a they are left out, which is what -a means by "except omit -p and
-        // -i if unknown" and is why -a is not simply all the others.
-        if ((flags & FILE_FLAG('p')) && !all)
-        {
-                if (written++)
-                        log(" ", 1);
-
-                log("unknown", 0);
-        }
-
-        if ((flags & FILE_FLAG('i')) && !all)
-        {
-                if (written++)
-                        log(" ", 1);
-
-                log("unknown", 0);
-        }
-
-        if (flags & FILE_FLAG('o'))
-        {
-                if (written++)
-                        log(" ", 1);
-
-                log("Moonwater", 0);
+                log(fields[i].text, 0);
         }
 
         log("\n", 1);

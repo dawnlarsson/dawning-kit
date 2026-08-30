@@ -41,8 +41,7 @@ static p8 known_arena[GUARD + ROOM + GUARD];
 #define ROUTINE_FIELD (routine_arena + GUARD)
 #define KNOWN_FIELD (known_arena + GUARD)
 
-static positive checks;
-static positive failures;
+#include "counted.inc"
 
 //      The base the routine is handed. Volatile so that the macro above
 //      cannot fold it and the general path is what answers.
@@ -250,8 +249,5 @@ b32 main(void)
                 into_sweep(seed >> (which & 63), (bool)(which & 1));
         }
 
-        string_format(log, "%p checks, %p failures\n", checks, failures);
-        log_flush();
-
-        return failures ? 1 : 0;
+        return test_report(null);
 }

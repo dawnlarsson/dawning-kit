@@ -35,8 +35,7 @@
 #define SLAB (256u * 1024u)
 #define PAGE (64u * 1024u)
 
-static positive checks;
-static positive failures;
+#include "counted.inc"
 
 static p8 arena[GUARD + TOP + GUARD];
 static p8 record_arena[160];
@@ -499,8 +498,5 @@ b32 main(void)
         cpu_has_avx2 = found_avx2;
         cpu_has_avx512 = found_avx512;
 
-        string_format(log, "%p checks, %p failures\n", checks, failures);
-        log_flush();
-
-        return failures ? 1 : 0;
+        return test_report(null);
 }

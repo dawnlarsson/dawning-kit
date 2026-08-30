@@ -569,6 +569,29 @@ static void text_case_jump(void)
               text_case_register_probe() == 0);
 }
 
+/*
+        The list, so that the two builds cannot run different ones.
+
+        Both hosts used to write this out for themselves, which is the one
+        place in the arrangement where they could drift: a case added here and
+        called from only one main would be checked against one library and
+        silently not the other, and the two verdict lines would still look
+        comparable, because both are the number of cases that ran.
+*/
+static void text_case_all(void)
+{
+        text_case_duplicate();
+        text_case_duplicate_max();
+        text_case_token_next();
+        text_case_token();
+        text_case_split();
+        text_case_search_folded();
+        text_case_copy_bounded();
+        text_case_append_bounded();
+        text_case_frob();
+        text_case_jump();
+}
+
 
 /*
         The two assembly helpers, and why a C test cannot be either of them.

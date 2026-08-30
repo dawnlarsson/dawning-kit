@@ -37,21 +37,10 @@
         the second arrangement, which is why the count differs by two.
 */
 
-static positive checks = 0;
-static positive failures = 0;
+#include "counted.inc"
+
 static p8 room[8192];
 static p8 second[8192];
-
-static fn check(string_address name, bool condition)
-{
-        checks++;
-
-        if (!condition)
-        {
-                failures++;
-                string_format(log, "  FAIL %s\n", name);
-        }
-}
 
 /*
         One pinned case: the bytes have to match and the answer has to be the
@@ -1291,8 +1280,5 @@ b32 main(void)
         reasons();
         streams();
 
-        string_format(log, "%p checks, %p failures\n", checks, failures);
-        log_flush();
-
-        return failures ? 1 : 0;
+        return test_report(null);
 }

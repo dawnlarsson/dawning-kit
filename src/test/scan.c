@@ -54,19 +54,7 @@
         corner worth naming.
 */
 
-static positive checks = 0;
-static positive failures = 0;
-
-static fn check(string_address name, bool condition)
-{
-        checks++;
-
-        if (!condition)
-        {
-                failures++;
-                string_format(log, "  FAIL %s\n", name);
-        }
-}
+#include "counted.inc"
 
 /*
         THE THREE SHAPES EVERY GENERATED CASE IS ONE OF
@@ -1151,8 +1139,5 @@ b32 main(void)
         reasons();
         entries();
 
-        string_format(log, "%p checks, %p failures\n", checks, failures);
-        log_flush();
-
-        return failures != 0;
+        return test_report(null);
 }

@@ -13,8 +13,7 @@
 
 static p8 address_to one_edge;
 static p8 address_to two_edge;
-static positive checks;
-static positive failures;
+#include "counted.inc"
 
 static p8 model_upper(p8 value)
 {
@@ -119,8 +118,5 @@ b32 main(void)
         CHECK(0); CHECK(1); CHECK(2); CHECK(3); CHECK(4); CHECK(5); CHECK(6);
         CHECK(7); CHECK(8); CHECK(9); CHECK(10); CHECK(11); CHECK(12);
 
-        string_format(log, "ASCII-case literal sizes: %p checks, %p failures\n",
-                      checks, failures);
-        log_flush();
-        return failures != 0;
+        return test_report((string_address) "ASCII-case literal sizes: ");
 }

@@ -25,17 +25,7 @@
         looks.
 */
 
-static positive checks = 0;
-static positive failures = 0;
-
-#define check(name, condition)                                          \
-        do {                                                            \
-                checks++;                                               \
-                if (!(condition)) {                                     \
-                        failures++;                                     \
-                        string_format(log, "  FAIL " name "\n");        \
-                }                                                       \
-        } while (0)
+#include "counted.inc"
 
 static fn arithmetic(void)
 {
@@ -678,8 +668,5 @@ b32 main(void)
         fetching_for_real();
         leasing();
 
-        string_format(log, "%p checks, %p failures\n", checks, failures);
-        log_flush();
-
-        return failures ? 1 : 0;
+        return test_report(null);
 }

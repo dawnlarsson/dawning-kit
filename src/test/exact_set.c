@@ -34,8 +34,7 @@ static p8 arena[GUARD + ROOM + GUARD];
 
 #define FIELD (arena + GUARD)
 
-static positive checks;
-static positive failures;
+#include "counted.inc"
 
 //      The pattern the guards carry. It differs at every index so a store
 //      that lands one byte off is visible.
@@ -345,8 +344,5 @@ b32 main(void)
         unknown_sets();
         named_sets();
 
-        string_format(log, "%p checks, %p failures\n", checks, failures);
-        log_flush();
-
-        return failures ? 1 : 0;
+        return test_report(null);
 }
