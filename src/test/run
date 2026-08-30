@@ -2142,7 +2142,10 @@ lane_shell()
 {
         need_shell || return 1
 
-        sh src/test/shell.sh "$shell_binary" "$farm"
+        freestanding src/test/env_duplicate.c "$work/env-duplicate" || return 1
+
+        MW_ENV_DUPLICATE_LAUNCHER="$work/env-duplicate" \
+                sh src/test/shell.sh "$shell_binary" "$farm"
 }
 
 lane_text()

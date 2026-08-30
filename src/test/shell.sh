@@ -817,6 +817,18 @@ environment_command_answer 'export inherited replacement' \
 environment_command_answer 'unset inherited' \
         'unset MW_CUSTOM; /bin/sh -c '\''printf "%s\n" "${MW_CUSTOM-unset}"'\''' \
         MW_CUSTOM=from-parent
+environment_command_answer 'borrowed replacement shorter and longer' \
+        'MW_CUSTOM=x; printf "%s " "$MW_CUSTOM"; MW_CUSTOM=abcdefghijklmnopqrstuvwxyz; printf "%s\n" "$MW_CUSTOM"' \
+        MW_CUSTOM=from-parent
+environment_command_answer 'temporary inherited export restores' \
+        'MW_CUSTOM=temporary true; printf "%s\n" "$MW_CUSTOM"; /bin/sh -c '\''printf "%s\n" "$MW_CUSTOM"'\''' \
+        MW_CUSTOM=from-parent
+environment_command_answer 'local shadows borrowed and restores export' \
+        'f() { local MW_CUSTOM=inside; /bin/sh -c '\''printf "%s\n" "$MW_CUSTOM"'\''; }; f; /bin/sh -c '\''printf "%s\n" "$MW_CUSTOM"'\''' \
+        MW_CUSTOM=from-parent
+environment_command_answer 'subshell borrowed mutation is isolated' \
+        '(MW_CUSTOM=inside; unset MW_CUSTOM; printf "%s\n" "${MW_CUSTOM-unset}"); printf "%s\n" "$MW_CUSTOM"' \
+        MW_CUSTOM=from-parent
 environment_command_answer 'inherited becomes readonly' \
         'readonly MW_CUSTOM; MW_CUSTOM=replaced; echo after' \
         MW_CUSTOM=from-parent
@@ -834,12 +846,33 @@ environment_command_expected 'empty environment defaults' \
 environment_many_answer 'six hundred inherited variables' 600 \
         'set | grep '\''^MW_MANY_[0-9][0-9]*='\'' | wc -l'
 
+if [ -n "${MW_ENV_DUPLICATE_LAUNCHER:-}" ]; then
+        printf 'last\nowned\n' > "$work/want"
+
+        if timeout 5 "$MW_ENV_DUPLICATE_LAUNCHER" "$subject" \
+                > "$work/got" 2>/dev/null; then
+                got_status=0
+        else
+                got_status=$?
+        fi
+
+        if [ "$got_status" = 0 ] && cmp -s "$work/want" "$work/got"; then
+                won
+        else
+                lost 'duplicate inherited name' \
+                        "want $(shown "$work/want")[0]   got $(shown "$work/got")[$got_status]"
+        fi
+fi
+
 # A literal word far past what the lexer and parser used to hold -- eight
 # kilobytes of token text, sixteen of parsed text -- so this is the line
 # length itself being tested rather than an expansion that happens to be long.
 # It used to be truncated silently and then, once the reader grew, refused.
 long_word=$(awk 'BEGIN { s = ""; for (i = 0; i < 5000; i++) s = s "0123456789"; print s }')
 command_answer 'a literal word of fifty thousand' "printf '%s\n' $long_word | wc -c"
+environment_command_answer 'a fifty thousand byte inherited value is borrowed' \
+        'printf "%s\n" "${#MW_LONG}"; MW_LONG=short; printf "%s\n" "$MW_LONG"' \
+        MW_LONG="$long_word"
 
 # Variable values use the same unbounded stable storage as the line.  These
 # cross both ceilings that used to exist: 1023 bytes while expanding and 8192
