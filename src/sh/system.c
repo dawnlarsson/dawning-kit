@@ -63,19 +63,77 @@ string_address network_argv[] = {(string_address)network_program,
 #define NETWORK_SETTLED_NS 1000000000
 #define NETWORK_GIVE_UP 3
 
-static bipolar start_network(void)
+/*
+        Start one boot service in a fresh address space.
+
+        fork copies PID 1's complete page tables and COW state only for exec
+        to throw them away. The Spark device creates the ordinary waitable
+        child with no mm, copies this bounded argv and empty environment, and
+        loads the image directly. Both boot services have the same signal,
+        descriptor, credential, root and working-directory contract; the
+        portable fork+exec path remains the exact fallback.
+*/
+static bipolar start_service(b32 device, string_address path,
+                             string_address address_to arguments,
+                             positive count)
 {
-        bipolar child = system_call_2(syscall(clone), SIGCHLD, 0);
-
-        if (child == 0)
+        if (device >= 0)
         {
-                system_call_3(syscall(execve), (positive)network_program,
-                              (positive)network_argv, (positive)init_envp);
+                struct spawn request;
+                p8 argv_block[64];
+                positive used = 0;
 
-                system_call_1(syscall(exit), 127);
+                for (positive at = 0; at < count; at++)
+                {
+                        positive length = string_length(arguments[at]) + 1;
+
+                        if (length > sizeof(argv_block) - used)
+                                goto portable;
+
+                        memory_copy(argv_block + used, arguments[at], length);
+                        used += length;
+                }
+
+                request.path = (unsigned long)path;
+                request.argv = (unsigned long)argv_block;
+                request.argv_bytes = used;
+                request.argv_count = count;
+                request.envp = 0;
+                request.envp_bytes = 0;
+                request.envp_count = 0;
+
+                {
+                        bipolar spawned =
+                            system_call_3(syscall(ioctl), device,
+                                          SPARK_IOCTL_SPAWN,
+                                          (positive)address_of request);
+
+                        if (spawned > 0)
+                                return spawned;
+                }
         }
 
-        return child;
+portable:
+        {
+                bipolar child = system_call_2(syscall(clone), SIGCHLD, 0);
+
+                if (child == 0)
+                {
+                        system_call_3(syscall(execve), (positive)path,
+                                      (positive)arguments,
+                                      (positive)init_envp);
+
+                        system_call_1(syscall(exit), 127);
+                }
+
+                return child;
+        }
+}
+
+static bipolar start_network(b32 device)
+{
+        return start_service(device, (string_address)network_program,
+                             network_argv, 2);
 }
 
 positive now_ns()
@@ -101,45 +159,8 @@ fn pause_for(positive nanoseconds)
 
 bipolar start_shell(b32 device)
 {
-        if (device >= 0)
-        {
-                struct spawn request;
-                p8 argv_block[64];
-                positive length = string_length(init_program) + 1;
-
-                memory_copy(argv_block, init_program, length);
-
-                request.path = (unsigned long)init_program;
-                request.argv = (unsigned long)argv_block;
-                request.argv_bytes = length;
-                request.argv_count = 1;
-                request.envp = 0;
-                request.envp_bytes = 0;
-                request.envp_count = 0;
-
-                bipolar spawned = system_call_3(syscall(ioctl), device,
-                                                SPARK_IOCTL_SPAWN,
-                                                (positive)address_of request);
-
-                if (spawned > 0)
-                        return spawned;
-        }
-
-        // No spark device, or it refused: fall back to the portable path.
-        // clone takes (flags, child_stack); passing neither leaves both as
-        // whatever happened to be in those registers.
-        bipolar child = system_call_2(syscall(clone), SIGCHLD, 0);
-
-        if (child == 0)
-        {
-                system_call_3(syscall(execve), (positive)init_program,
-                              (positive)init_argv, (positive)init_envp);
-
-                // Only reached if exec failed.
-                system_call_1(syscall(exit), 127);
-        }
-
-        return child;
+        return start_service(device, (string_address)init_program,
+                             init_argv, 1);
 }
 
 // Reading a wait status as an exit code alone reports a crash as a clean exit
@@ -206,7 +227,7 @@ static b32 system_init()
         positive started = now_ns();
         bipolar wait_error = 0;
 
-        bipolar network = start_network();
+        bipolar network = start_network(device);
         positive network_started = now_ns();
         positive network_failures = 0;
 
@@ -276,7 +297,7 @@ static b32 system_init()
                                 }
 
                                 network_started = now_ns();
-                                network = start_network();
+                                network = start_network(device);
                                 continue;
                         }
 
