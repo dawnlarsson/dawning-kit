@@ -795,7 +795,14 @@ command_answer 'command several lines' 'echo one
 echo two
 echo three'
 command_answer 'command empty'    ''
+command_answer 'command whitespace no-op' '   	'
+command_answer 'command comment no-op' '# nothing to execute'
+command_answer 'command newline no-op' '
+'
 command_answer 'command exact no-op' ':'
+command_answer 'command decorated no-op' '  :  # still nothing
+'
+command_answer 'colon begins a word' ':#not-a-comment'
 command_answer 'command trailing newline' 'echo one
 '
 

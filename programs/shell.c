@@ -2,6 +2,52 @@
 #include "../src/spark.c"
 #include "../src/sh/shell.c"
 
+/*
+        A complete -c program which cannot create shell state or observe it.
+
+        Comments are only recognised after blanks/newlines because reaching
+        this routine already means no word has begun.  `:#text` is therefore
+        a command name and is deliberately rejected, while `: # text` is the
+        no-op followed by a comment.  Only one colon command is accepted;
+        separators and further commands belong to the real parser even when
+        their eventual combined status would also be zero.
+*/
+static bool shell_command_is_no_op(string_address command)
+{
+        bool colon = false;
+        string_address step = command;
+
+        if (!step)
+                return false;
+
+        while (true)
+        {
+                while (*step == ' ' || *step == '\t' || *step == '\n')
+                        step++;
+
+                if (*step == '#')
+                {
+                        while (*step && *step != '\n')
+                                step++;
+                        continue;
+                }
+
+                if (!*step)
+                        return true;
+
+                if (!colon && *step == ':' &&
+                    (!step[1] || step[1] == ' ' || step[1] == '\t' ||
+                     step[1] == '\n'))
+                {
+                        colon = true;
+                        step++;
+                        continue;
+                }
+
+                return false;
+        }
+}
+
 b32 main()
 {
         b32 interactive;
@@ -30,33 +76,23 @@ b32 main()
 
         process_arguments = (positive)program_argument_count();
 
-        /*
-                The semantic floor for the process-control no-op.
-
-                `sh -c :` is how a caller measures or probes the shell itself:
-                the command has no expansions, assignments, redirections,
-                traps or output and its only answer is status zero.  Before a
-                command has run there cannot be a shell-installed EXIT/DEBUG
-                trap either.  Initialising signal policy, importing the
-                environment, allocating lexer/parser stores and dispatching
-                the colon builtin therefore cannot make an observable
-                difference for this exact two-byte command.
-
-                Keep this spelling deliberately exact. A blank, separator,
-                comment, redirection, assignment or second command belongs to
-                the parser, even when it eventually executes `:` too.
-        */
+        /* Find the -c command without publishing any shell state yet. */
         if (process_arguments >= 3)
         {
                 string_address option = program_argument(1);
-                string_address no_op = program_argument(2);
 
                 if (option && option[0] == '-' && option[1] == 'c' &&
-                    !option[2] && no_op && no_op[0] == ':' && !no_op[1])
-                        return 0;
+                    !option[2])
+                        command = program_argument(2);
         }
 
+        /* Signal policy is observable even while an otherwise empty shell is
+           alive, so it remains on the semantic floor rather than being
+           treated as parser setup. */
         shell_signals_start();
+
+        if (shell_command_is_no_op(command))
+                return 0;
 
         /* environ is the live process environment. Ordinarily it is the
            kernel vector published by the startup shim; clone-and-reentry can
@@ -101,8 +137,6 @@ b32 main()
                         log_error("sh: -c wants a command\n", 0);
                         return 2;
                 }
-
-                command = program_argument(2);
 
                 if (!shell_room((address_any address_to)address_of shell_argv,
                                 address_of shell_argv_room, count + 1,
