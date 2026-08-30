@@ -157,6 +157,8 @@ compare 'continuation' /dev/null 'BEGIN { x = 1 + \
         2; print x }'
 compare 'empty program' "$work/letters" ''
 compare 'only a comment' "$work/letters" '# nothing'
+compare 'keyword at exact end' "$work/letters" 'length'
+compare 'name at exact end' "$work/letters" 'ordinary_name'
 compare 'regex pattern' "$work/words" '/al/'
 compare 'negated regex' "$work/words" '!/al/'
 compare 'range' "$work/letters" '/b/,/d/'

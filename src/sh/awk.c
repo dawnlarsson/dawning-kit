@@ -3580,6 +3580,8 @@ static awk_word awk_words[] = {
     {"fflush", T_BUILTIN, B_FFLUSH},
     {null, 0, 0}};
 
+#define AWK_WORD_COUNT (sizeof(awk_words) / sizeof(awk_words[0]) - 1)
+
 /*
         How many arguments each of them takes.
 
@@ -3780,14 +3782,28 @@ static fn awk_next_token()
 
                 positive length = awk_source_at - start;
 
-                for (b32 i = 0; awk_words[i].name; i++)
-                        if (string_length(awk_words[i].name) == length &&
-                            !memory_compare(awk_words[i].name, awk_source + start, length))
-                        {
-                                awk_token = awk_words[i].token;
-                                awk_token_value = awk_words[i].value;
-                                return;
-                        }
+                /*
+                        The source builder always owns one spare byte. Make
+                        this bounded name a string for the assembly table
+                        lookup, then put its delimiter back. That lookup
+                        prepares the wanted word once; the old loop measured
+                        every table entry before it could reject it.
+                */
+                p8 delimiter = awk_source[awk_source_at];
+
+                awk_source[awk_source_at] = end;
+                positive word = string_table_find(awk_source + start,
+                                                  awk_words,
+                                                  sizeof(awk_words[0]),
+                                                  AWK_WORD_COUNT);
+                awk_source[awk_source_at] = delimiter;
+
+                if (word < AWK_WORD_COUNT)
+                {
+                        awk_token = awk_words[word].token;
+                        awk_token_value = awk_words[word].value;
+                        return;
+                }
 
                 awk_text_drop(awk_token_text);
                 awk_token_text = awk_text_new(awk_source + start, length);
