@@ -179,11 +179,10 @@ positive bench_execveat(string_address path)
         return failed ? 0 : elapsed;
 }
 
-// Spawns without waiting, reaping afterwards outside the timed section, so the
-// figure is the cost of starting a program rather than of the round trip.
-b32 spawned_pids[ROUNDS];
-
-positive bench_spawn_nowait(string_address path)
+/* Time only the ioctl which creates the child, then reap that child outside
+   its timed interval.  Launching all 400 at once made this a scheduler-contention
+   benchmark and moved the answer by nearly two to one between identical boots. */
+positive bench_spawn_submission(string_address path)
 {
         struct spawn request;
         p8 argv_block[128];
@@ -199,22 +198,21 @@ positive bench_spawn_nowait(string_address path)
         request.envp_bytes = 0;
         request.envp_count = 0;
 
-        positive start = now_ns();
-
-        for (positive i = 0; i < ROUNDS; i++)
-                spawned_pids[i] = system_call_3(syscall(ioctl), device,
-                                                SPARK_IOCTL_SPAWN,
-                                                (positive)address_of request);
-
-        positive elapsed = now_ns() - start;
+        positive elapsed = 0;
         bool failed = false;
 
         for (positive i = 0; i < ROUNDS; i++)
         {
+                positive start = now_ns();
+                bipolar child = system_call_3(syscall(ioctl), device,
+                                              SPARK_IOCTL_SPAWN,
+                                              (positive)address_of request);
+                elapsed += now_ns() - start;
+
                 positive status = 0;
-                if (spawned_pids[i] > 0)
+                if (child > 0)
                 {
-                        system_call_4(syscall(wait4), spawned_pids[i],
+                        system_call_4(syscall(wait4), child,
                                       (positive)address_of status, 0, 0);
                         if (status)
                                 failed = true;
@@ -320,9 +318,9 @@ b32 main()
         positive nowait = 0;
         if (device >= 0)
         {
-                bench_spawn_nowait("/tiny.spark");
-                nowait = bench_spawn_nowait("/tiny.spark");
-                positive nw2 = bench_spawn_nowait("/tiny.spark");
+                bench_spawn_submission("/tiny.spark");
+                nowait = bench_spawn_submission("/tiny.spark");
+                positive nw2 = bench_spawn_submission("/tiny.spark");
                 if (nw2 && nw2 < nowait)
                         nowait = nw2;
         }
@@ -344,7 +342,7 @@ b32 main()
         if (dev)
                 report("/dev/spark     ", dev);
         if (nowait)
-                report("/dev/spark nowait", nowait);
+                report("/dev/spark submit", nowait);
 
         string_format(log, "\nclear comparisons (lower is faster):\n");
         report_difference("  Spark image versus ELF ", elf, spark);
