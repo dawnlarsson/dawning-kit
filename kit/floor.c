@@ -25,6 +25,7 @@
         by the dispatcher and must not be quoted as an architectural floor.
 */
 #include "../src/compiler_memory.c"
+#include "bench_measure.c"
 
 #define NOT_INLINED __attribute__((noinline))
 
@@ -265,23 +266,6 @@ static volatile positive sink;
                 floor_ticks() - s;                                            \
         })
 
-static fn order(positive address_to values)
-{
-        for (positive i = 1; i < 5; i++)
-        {
-                positive value = values[i];
-                positive at = i;
-
-                while (at && values[at - 1] > value)
-                {
-                        values[at] = values[at - 1];
-                        at--;
-                }
-
-                values[at] = value;
-        }
-}
-
 static fn row(string_address name, positive size, positive ratio)
 {
         // State the paired median as remaining cost: zero percent over is the
@@ -320,7 +304,7 @@ static fn row(string_address name, positive size, positive ratio)
                         ratios[trial] = (positive)(candidate_time * 10000 /   \
                                                    (floor_time ? floor_time : 1)); \
                 }                                                             \
-                order(ratios);                                                \
+                order(ratios, 5);                                             \
                 row(name, size, ratios[2]);                                   \
         } while (0)
 

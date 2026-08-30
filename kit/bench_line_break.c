@@ -1,5 +1,6 @@
 /* Canvas line breaking: the former byte walk against shared bounded hunts. */
 #include "../src/compiler_memory.c"
+#include "bench_measure.c"
 
 #define NOT_INLINED __attribute__((noinline))
 #define TRIES 9
@@ -121,22 +122,6 @@ static p64 run(bool shared, positive length, positive columns, bool wrap,
         return get_cpu_time() - start;
 }
 
-static void order(positive address_to values)
-{
-        for (positive i = 1; i < TRIES; i++)
-        {
-                positive value = values[i];
-                positive at = i;
-
-                while (at && values[at - 1] > value)
-                {
-                        values[at] = values[at - 1];
-                        at--;
-                }
-                values[at] = value;
-        }
-}
-
 static void row(string_address name, positive length, positive columns, bool wrap,
                 positive space)
 {
@@ -166,7 +151,7 @@ static void row(string_address name, positive length, positive columns, bool wra
                 ratios[trial] = (positive)(shared * 10000 / (former ? former : 1));
         }
 
-        order(ratios);
+        order(ratios, TRIES);
         string_format(log, "  %s  shared/C %p.%p%%\n", name,
                       ratios[TRIES / 2] / 100, ratios[TRIES / 2] % 100);
 }

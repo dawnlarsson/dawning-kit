@@ -3,6 +3,7 @@
         asking memory_search to choose its anchors again after every match.
 */
 #include "../src/compiler_memory.c"
+#include "bench_measure.c"
 
 #define NOT_INLINED __attribute__((noinline))
 #define TRIES 9
@@ -86,23 +87,6 @@ static p64 run(bool prepared, positive length,
         return get_cpu_time() - started;
 }
 
-static fn order(positive address_to values)
-{
-        for (positive i = 1; i < TRIES; i++)
-        {
-                positive value = values[i];
-                positive at = i;
-
-                while (at && values[at - 1] > value)
-                {
-                        values[at] = values[at - 1];
-                        at--;
-                }
-
-                values[at] = value;
-        }
-}
-
 static fn row(string_address name, string_address wanted, bool icase,
               positive traffic)
 {
@@ -141,7 +125,7 @@ static fn row(string_address name, string_address wanted, bool icase,
                                             (current ? current : 1));
         }
 
-        order(ratios);
+        order(ratios, TRIES);
         string_format(log, "  %s  prepared/current %p.%p%%\n", name,
                       ratios[TRIES / 2] / 100, ratios[TRIES / 2] % 100);
 }

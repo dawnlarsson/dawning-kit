@@ -270,19 +270,9 @@ static _Bool cursor_move_core(int new_x, int new_y, _Bool planes_only)
 
         list_for_each_entry(output, &desktop.outputs, link)
         {
-                _Bool wanted = rects_overlap(
-                    damage[1].x1, damage[1].y1,
-                    damage[1].x2 - damage[1].x1,
-                    damage[1].y2 - damage[1].y1,
-                    output->x, output->y,
-                    (int)output->width, (int)output->height);
+                _Bool wanted = output_touched(output, &damage[1], 1);
 
-                if (!rects_overlap(damage[0].x1, damage[0].y1,
-                                   damage[0].x2 - damage[0].x1,
-                                   damage[0].y2 - damage[0].y1,
-                                   output->x, output->y,
-                                   (int)output->width, (int)output->height) &&
-                    !wanted)
+                if (!output_touched(output, &damage[0], 1) && !wanted)
                         continue;
 
                 if (output->cursor_plane)

@@ -697,6 +697,26 @@ static _Bool pane_focusable(struct pane *pane, _Bool include_minimized)
 }
 
 /*
+        The highest z that can take focus, skipping one on its way out.
+
+        Closing and minimizing both hand focus to the window underneath the
+        one leaving, and Alt-Tab starts from the top of the whole stack; this
+        walk was written once per caller before it was written here.
+*/
+static struct pane *pane_topmost(struct pane *except, _Bool include_minimized)
+{
+        struct pane *pane;
+        struct pane *top = NULL;
+
+        list_for_each_entry(pane, &desktop.windows, link)
+                if (pane != except && pane_focusable(pane, include_minimized) &&
+                    (!top || pane->z > top->z))
+                        top = pane;
+
+        return top;
+}
+
+/*
         One Alt-Tab step, without changing z yet.
 
         Focus is allowed to preview a minimized pane; releasing Alt restores
@@ -708,19 +728,10 @@ static _Bool pane_focusable(struct pane *pane, _Bool include_minimized)
 static void pane_focus_step(void)
 {
         struct pane *pane;
-        struct pane *top = NULL;
+        struct pane *top = pane_topmost(NULL, true);
         struct pane *focused = desktop.focused;
         struct pane *next = NULL;
         int below;
-
-        list_for_each_entry(pane, &desktop.windows, link)
-        {
-                if (!pane_focusable(pane, true))
-                        continue;
-
-                if (!top || pane->z > top->z)
-                        top = pane;
-        }
 
         /*
                 Start behind the active top window. If focus is not top -- it
@@ -772,8 +783,6 @@ static void pane_focus_commit(void)
 static void pane_minimize_focused(void)
 {
         struct pane *pane = desktop.focused;
-        struct pane *other;
-        struct pane *next = NULL;
 
         if (!pane || !pane_focusable(pane, false))
                 return;
@@ -781,12 +790,7 @@ static void pane_minimize_focused(void)
         pane->style |= WINDOW_MINIMIZED;
         WRITE_ONCE(pane->shared->style, pane->style);
 
-        list_for_each_entry(other, &desktop.windows, link)
-                if (other != pane && pane_focusable(other, false) &&
-                    (!next || other->z > next->z))
-                        next = other;
-
-        pane_focus(next);
+        pane_focus(pane_topmost(pane, false));
         desktop_redraw();
 }
 
@@ -833,6 +837,17 @@ static void desktop_damage(int x, int y, int w, int h)
         }
 
         rect_set(&desktop.damage[desktop.damage_count++], x, y, w, h);
+}
+
+// The rectangle a run of changed cell rows covers, in desktop coordinates.
+// Owned panes and shared ones both report damage this way, and the titlebar
+// offset was the same arithmetic written in each.
+static void pane_damage_rows(struct pane *pane, unsigned int row, unsigned int count)
+{
+        desktop_damage(pane->x,
+                       pane->y + (pane->style & WINDOW_FRAME ? canvas_title : 0) +
+                           (int)row * canvas_cell_h,
+                       pane->width, (int)count * canvas_cell_h);
 }
 
 /*
@@ -882,12 +897,7 @@ static void desktop_refresh_panes(void)
                                                          pane->grid_rows - row);
 
                                 if (count)
-                                        desktop_damage(pane->x,
-                                                       pane->y +
-                                                           (pane->style & WINDOW_FRAME ? canvas_title : 0) +
-                                                           (int)row * canvas_cell_h,
-                                                       pane->width,
-                                                       (int)count * canvas_cell_h);
+                                        pane_damage_rows(pane, row, count);
 
                                 pane->damage_row = 0;
                                 pane->damage_rows = 0;
@@ -906,23 +916,24 @@ static void desktop_refresh_panes(void)
                         continue;
                 }
 
+                _Bool reshaped = pane->x != was_x || pane->y != was_y ||
+                                 pane->width != was_w || pane->height != was_h ||
+                                 (unsigned int)pane->z != was_z ||
+                                 pane->style != was_style;
+
                 /*
                         Nothing that reaches the screen changed. A view that
                         has been scrolled away from counts as nothing however
                         much the program drew, because what it drew is not
                         what is being shown.
                 */
-                if (pane->x == was_x && pane->y == was_y && pane->width == was_w &&
-                    pane->height == was_h && (unsigned int)pane->z == was_z &&
-                    pane->style == was_style &&
+                if (!reshaped &&
                     (pane->sequence == was_sequence || pane->view != PANE_LIVE))
                         continue;
 
                 // Anything but text changing in place is easier to repaint
                 // whole than to reason about.
-                if (pane->x != was_x || pane->y != was_y || pane->width != was_w ||
-                    pane->height != was_h || (unsigned int)pane->z != was_z ||
-                    pane->style != was_style || !pane->cells || !pane->damage_rows)
+                if (reshaped || !pane->cells || !pane->damage_rows)
                 {
                         desktop_damage(fx, fy, fw, fh);
                         pane_frame(pane, &fx, &fy, &fw, &fh);
@@ -930,10 +941,7 @@ static void desktop_refresh_panes(void)
                         continue;
                 }
 
-                desktop_damage(pane->x,
-                               pane->y + (pane->style & WINDOW_FRAME ? canvas_title : 0) +
-                                   (int)pane->damage_row * canvas_cell_h,
-                               pane->width, (int)pane->damage_rows * canvas_cell_h);
+                pane_damage_rows(pane, pane->damage_row, pane->damage_rows);
         }
 
         list_sort(NULL, &desktop.windows, pane_by_z);
@@ -1022,8 +1030,6 @@ static void window_release(struct file *file)
 {
         struct device_context *context = file->private_data;
         struct pane *pane = context->pane;
-        struct pane *next = NULL;
-        struct pane *other;
         _Bool refocus;
 
         if (!pane)
@@ -1052,14 +1058,7 @@ static void window_release(struct file *file)
         // Closing the active window hands focus to what is now on top,
         // instead of leaving a live desktop with nowhere for keys to go.
         if (refocus)
-        {
-                list_for_each_entry(other, &desktop.windows, link)
-                        if (pane_focusable(other, false) &&
-                            (!next || other->z > next->z))
-                                next = other;
-
-                pane_focus(next);
-        }
+                pane_focus(pane_topmost(NULL, false));
 
         if (!list_empty(&desktop.outputs))
                 desktop_redraw();

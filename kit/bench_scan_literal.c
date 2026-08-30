@@ -1,10 +1,9 @@
 /* sscanf literal matching against its control and semantic traffic floors. */
 #include "../src/compiler_memory.c"
+#include "bench_measure.c"
 
 #define SCAN_LITERAL_ROUNDS (1u << 20)
 #define SCAN_LITERAL_TRIES 5
-
-typedef fn (*scan_literal_work)();
 
 static const char address_to scan_literal_format =
         "header.alpha-0123456789/body.beta-abcdefghijklmnopqrstuvwxyz/"
@@ -49,40 +48,14 @@ static fn scan_literal_subject()
                         (string_address)scan_literal_format);
 }
 
-static p64 scan_literal_best(scan_literal_work work)
-{
-        p64 best = 0;
-
-        for (positive which = 0; which < SCAN_LITERAL_TRIES; which++)
-        {
-                p64 started = get_cpu_time();
-                p64 elapsed;
-
-                work();
-                elapsed = get_cpu_time() - started;
-
-                if (!best || elapsed < best)
-                        best = elapsed;
-        }
-
-        return best;
-}
-
-static fn scan_literal_report(string_address name, scan_literal_work work,
+static fn scan_literal_report(string_address name, bench_work work,
                               positive units, string_address unit)
 {
-        p64 ticks = scan_literal_best(work);
-        positive scaled =
-                (positive)(ticks * 100 / (SCAN_LITERAL_ROUNDS * units));
-        p8 fraction[3];
-
-        positive_into_padded(fraction, scaled % 100, 2, '0');
-        fraction[2] = end;
-        string_format(log, "  %s  %p.%s ticks/%s\n", name, scaled / 100,
-                      fraction, unit);
+        bench_report(name, work, SCAN_LITERAL_TRIES,
+                     SCAN_LITERAL_ROUNDS * units, unit);
 }
 
-static scan_literal_work scan_literal_named(string_address name)
+static bench_work scan_literal_named(string_address name)
 {
         if (string_compare(name, (string_address)"control") == 0)
                 return scan_literal_control;
@@ -103,7 +76,7 @@ b32 main(void)
 
         if (program_argument_count() > 1)
         {
-                scan_literal_work work =
+                bench_work work =
                         scan_literal_named(program_argument(1));
 
                 if (is_null(work))

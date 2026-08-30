@@ -1,10 +1,10 @@
 /* Runtime startup components: CPU selection, identity, and stack publication. */
 #include "../src/compiler_memory.c"
+#include "bench_measure.c"
 
 #define STARTUP_ROUNDS (1u << 16)
 #define STARTUP_TRIES 7
 
-typedef fn (*startup_work)();
 typedef fn (*startup_void_call)(void);
 typedef positive (*startup_identity_call)(void);
 typedef string_address address_to (*startup_environment_call)(void);
@@ -91,38 +91,13 @@ static fn startup_begin_work()
         }
 }
 
-static p64 startup_best(startup_work work)
+static fn startup_report(string_address name, bench_work work)
 {
-        p64 best = 0;
-
-        for (positive which = 0; which < STARTUP_TRIES; which++)
-        {
-                p64 started = get_cpu_time();
-                p64 elapsed;
-
-                work();
-                elapsed = get_cpu_time() - started;
-
-                if (!best || elapsed < best)
-                        best = elapsed;
-        }
-
-        return best;
+        bench_report(name, work, STARTUP_TRIES,
+                     STARTUP_ROUNDS, (string_address)"call");
 }
 
-static fn startup_report(string_address name, startup_work work)
-{
-        p64 ticks = startup_best(work);
-        positive scaled = (positive)(ticks * 100 / STARTUP_ROUNDS);
-        p8 fraction[3];
-
-        positive_into_padded(fraction, scaled % 100, 2, '0');
-        fraction[2] = end;
-        string_format(log, "  %s  %p.%s ticks/call\n", name, scaled / 100,
-                      fraction);
-}
-
-static startup_work startup_named(string_address name)
+static bench_work startup_named(string_address name)
 {
         if (string_compare(name, (string_address)"cpu") == 0)
                 return startup_cpu_work;
@@ -143,7 +118,7 @@ b32 main(void)
 {
         if (program_argument_count() > 1)
         {
-                startup_work work = startup_named(program_argument(1));
+                bench_work work = startup_named(program_argument(1));
 
                 if (is_null(work))
                         return 2;

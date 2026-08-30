@@ -41,18 +41,16 @@ routine's declaration fails it too.
     python3 kit/specialization_coverage.py --all
 """
 
-import argparse
-import importlib.util
 import pathlib
 import re
 import sys
 from collections import Counter, namedtuple
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent / 'compact'))
+import manifest
 
-ROOT = pathlib.Path(__file__).resolve().parents[1]
-LIBRARY = ROOT / 'src/library.c'
+ROOT = manifest.ROOT
 COMPILER_MEMORY = ROOT / 'src/compiler_memory.c'
-INVENTORY_TOOL = ROOT / 'kit/compact/inventory.py'
 
 #       Where a declaration may live. library.c holds most of them; the
 #       platform includes hold the rest, and a parameter named in a row has to
@@ -485,23 +483,6 @@ memory_search_prepared_core memory_search_ascii_case_prepared_core
      'site can hand it a literal; its wrappers carry the classification')
 
 
-def load_inventory():
-    spec = importlib.util.spec_from_file_location(
-        'moonwater_inventory_for_specialization_coverage', INVENTORY_TOOL)
-    if spec is None or spec.loader is None:
-        raise RuntimeError('could not load %s' % INVENTORY_TOOL)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    _, _, _, sources = module.included_audit(str(LIBRARY), 'linux')
-    _, order, _, _, _, _, _ = module.graph_assembly_inventory(sources)
-    return set(order)
-
-
-def token_present(text, name):
-    return re.search(r'(?<![A-Za-z0-9_])' + re.escape(name) +
-                     r'(?![A-Za-z0-9_])', text) is not None
-
-
 def load_declarations():
     """Every routine's C declaration, so a named parameter can be checked.
 
@@ -537,19 +518,7 @@ def load_declarations():
 
 def validate():
     errors = []
-    inventory = load_inventory()
-    counts = Counter(row.routine for row in ROWS)
-    duplicates = sorted(name for name, count in counts.items() if count != 1)
-    manifested = set(counts)
-
-    if duplicates:
-        errors.append('duplicate manifest rows: ' + ', '.join(duplicates))
-    if inventory - manifested:
-        errors.append('unclassified inventory routines: ' +
-                      ', '.join(sorted(inventory - manifested)))
-    if manifested - inventory:
-        errors.append('stale manifest routines: ' +
-                      ', '.join(sorted(manifested - inventory)))
+    inventory = manifest.reconcile(ROWS, errors)
 
     declarations = load_declarations()
     specializers = COMPILER_MEMORY.read_text(encoding='utf-8', errors='replace')
@@ -597,7 +566,8 @@ def validate():
             errors.append('%s: %s row names parameter %s but the routine has '
                           'no C declaration' %
                           (row.routine, row.category, row.parameter))
-        elif not token_present(declarations[row.routine], row.parameter):
+        elif not manifest.token_present(declarations[row.routine],
+                                        row.parameter):
             errors.append('%s: parameter %s is not in its declaration -- %s' %
                           (row.routine, row.parameter, declarations[row.routine]))
 
@@ -615,7 +585,7 @@ def validate():
             errors.append('%s: %s row names no expansion' %
                           (row.routine, row.category))
         elif row.category == 'specialized' and \
-                not token_present(specializers, row.expansion):
+                not manifest.token_present(specializers, row.expansion):
             errors.append('%s: specializer %s is absent from '
                           'src/compiler_memory.c' % (row.routine, row.expansion))
 
@@ -625,17 +595,7 @@ def validate():
 
         if row.evidence is None:
             continue
-        evidence_path = ROOT / row.evidence
-        if not evidence_path.is_file():
-            errors.append('%s: missing evidence file %s' %
-                          (row.routine, row.evidence))
-            continue
-        if row.evidence not in cache:
-            cache[row.evidence] = evidence_path.read_text(
-                encoding='utf-8', errors='replace')
-        if not token_present(cache[row.evidence], row.anchor):
-            errors.append('%s: anchor %s absent from %s' %
-                          (row.routine, row.anchor, row.evidence))
+        manifest.anchor(row, cache, errors)
     return errors
 
 
@@ -670,30 +630,8 @@ def print_report(mode):
               (row.routine, row.category, parameter, evidence, row.note))
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description='check every assembly routine for a specialization decision')
-    output = parser.add_mutually_exclusive_group()
-    output.add_argument('--gaps', action='store_true',
-                        help='list every worth_it row')
-    output.add_argument('--all', action='store_true',
-                        help='list every manifest row')
-    arguments = parser.parse_args()
-
-    try:
-        errors = validate()
-    except Exception as error:  # keep CI diagnostics short and actionable
-        sys.stderr.write('specialization coverage: %s\n' % error)
-        return 1
-    if errors:
-        for error in errors:
-            sys.stderr.write('specialization coverage: %s\n' % error)
-        return 1
-
-    mode = 'all' if arguments.all else ('gaps' if arguments.gaps else 'summary')
-    print_report(mode)
-    return 0
-
-
 if __name__ == '__main__':
-    sys.exit(main())
+    sys.exit(manifest.run(
+        'specialization coverage',
+        'check every assembly routine for a specialization decision',
+        'list every worth_it row', validate, print_report))

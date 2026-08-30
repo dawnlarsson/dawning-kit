@@ -1,5 +1,6 @@
 /* Naturally aligned 64-bit pattern fill against scalar and bulk-store floors. */
 #include "../src/compiler_memory.c"
+#include "bench_measure.c"
 
 #define TRIES 9
 #define TARGET_BYTES (1u << 26)
@@ -90,22 +91,6 @@ static p64 run(unsigned int which, positive count, positive rounds,
         return get_cpu_time() - started;
 }
 
-static fn order(positive *values)
-{
-        for (positive i = 1; i < TRIES; i++)
-        {
-                positive value = values[i], at = i;
-
-                while (at && values[at - 1] > value)
-                {
-                        values[at] = values[at - 1];
-                        at--;
-                }
-
-                values[at] = value;
-        }
-}
-
 static fn row(positive count, positive offset)
 {
         positive scalar[TRIES], bulk[TRIES];
@@ -145,8 +130,8 @@ static fn row(positive count, positive offset)
                 bulk[trial] = (positive)(ours * 10000 / max(floor, 1ull));
         }
 
-        order(scalar);
-        order(bulk);
+        order(scalar, TRIES);
+        order(bulk, TRIES);
         string_format(log,
                       "  %p words +%p  current/scalar %p.%p%%  current/bulk %p.%p%%\n",
                       count, offset, scalar[TRIES / 2] / 100,

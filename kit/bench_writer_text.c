@@ -1,5 +1,6 @@
 /* Buffered output policy: former C against the shared assembly core. */
 #include "../src/compiler_memory.c"
+#include "bench_measure.c"
 
 // Keep the former general-purpose body general. GCC otherwise clones a copy
 // for the constant capacity in each row and times that specialised copy
@@ -236,23 +237,6 @@ static p64 log_once(positive length, bool assembly)
         return get_cpu_time() - start;
 }
 
-static fn order(positive address_to ratios)
-{
-        for (positive i = 1; i < TRIES; i++)
-        {
-                positive value = ratios[i];
-                positive at = i;
-
-                while (at && ratios[at - 1] > value)
-                {
-                        ratios[at] = ratios[at - 1];
-                        at--;
-                }
-
-                ratios[at] = value;
-        }
-}
-
 static fn row(string_address name, positive length, bool hold_equal,
               positive rounds, positive pending, bool byte, bool flush)
 {
@@ -358,8 +342,8 @@ static fn reserve_row()
         }
 
         order(ratios);
-        order(assembly_each);
-        order(floor_each);
+        order(assembly_each, TRIES);
+        order(floor_each, TRIES);
         string_format(log, "  reserve 16  median asm/C %p.%p%%\n",
                       ratios[TRIES / 2] / 100, ratios[TRIES / 2] % 100);
         positive assembly = assembly_each[TRIES / 2];

@@ -1,5 +1,6 @@
 /* Fixed ASCII-insensitive search against the literal C loop it replaces. */
 #include "../src/compiler_memory.c"
+#include "bench_measure.c"
 
 #define NOT_INLINED __attribute__((noinline))
 #define TRIES 9
@@ -63,23 +64,6 @@ static p64 run(bool assembly, positive length, positive size, positive rounds)
         return get_cpu_time() - start;
 }
 
-static fn order(positive address_to values)
-{
-        for (positive i = 1; i < TRIES; i++)
-        {
-                positive value = values[i];
-                positive at = i;
-
-                while (at && values[at - 1] > value)
-                {
-                        values[at] = values[at - 1];
-                        at--;
-                }
-
-                values[at] = value;
-        }
-}
-
 static fn row(string_address name, positive length, string_address wanted,
               bool late, positive traffic)
 {
@@ -123,7 +107,7 @@ static fn row(string_address name, positive length, string_address wanted,
                                              (former ? former : 1));
         }
 
-        order(ratios);
+        order(ratios, TRIES);
         string_format(log, "  %s  median asm/former %p.%p%%\n", name,
                       ratios[TRIES / 2] / 100, ratios[TRIES / 2] % 100);
 }

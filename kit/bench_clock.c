@@ -1,12 +1,11 @@
 /* Calendar text traffic and directive-parser costs. */
 #include "../src/compiler_memory.c"
+#include "bench_measure.c"
 
 #define CLOCK_BENCH_ROUNDS (1u << 20)
 #define CLOCK_BENCH_TRIES 5
 #define CLOCK_FORMAT_DIRECTIVES 10
 #define CLOCK_SCAN_DIRECTIVES 9
-
-typedef fn (*clock_bench_work)();
 
 static p8 clock_bench_output[256];
 static p8 clock_bench_input[256];
@@ -126,41 +125,14 @@ static fn clock_bench_asctime_work()
                         address_of clock_bench_broken, clock_bench_output);
 }
 
-static p64 clock_bench_best(clock_bench_work work)
-{
-        p64 best = 0;
-
-        for (positive which = 0; which < CLOCK_BENCH_TRIES; which++)
-        {
-                p64 started = get_cpu_time();
-                p64 elapsed;
-
-                work();
-                elapsed = get_cpu_time() - started;
-
-                if (!best || elapsed < best)
-                        best = elapsed;
-        }
-
-        return best;
-}
-
-static fn clock_bench_report(string_address name, clock_bench_work work,
+static fn clock_bench_report(string_address name, bench_work work,
                              positive units, string_address unit)
 {
-        p64 ticks = clock_bench_best(work);
-        positive scaled =
-                (positive)(ticks * 100 / (CLOCK_BENCH_ROUNDS * units));
-        p8 fraction[3];
-
-        positive_into_padded(fraction, scaled % 100, 2, '0');
-        fraction[2] = end;
-
-        string_format(log, "  %s  %p.%s ticks/%s\n", name, scaled / 100,
-                      fraction, unit);
+        bench_report(name, work, CLOCK_BENCH_TRIES,
+                     CLOCK_BENCH_ROUNDS * units, unit);
 }
 
-static clock_bench_work clock_bench_named(string_address name)
+static bench_work clock_bench_named(string_address name)
 {
         if (string_compare(name, (string_address)"copy-floor") == 0)
                 return clock_bench_copy;
@@ -203,7 +175,7 @@ b32 main(void)
 
         if (program_argument_count() > 1)
         {
-                clock_bench_work work =
+                bench_work work =
                         clock_bench_named(program_argument(1));
 
                 if (is_null(work))

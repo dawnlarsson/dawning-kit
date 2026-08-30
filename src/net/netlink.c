@@ -213,6 +213,25 @@ static address_any netlink_body(netlink_buffer address_to buffer)
 }
 
 /*
+        Begun, or given back and said so.
+
+        Every request below starts with the same bail-out -- a begin that
+        could not take room has nothing to send, and the buffer it may have
+        half-taken still has to go back. Written once here so the cleanup on
+        the failed path cannot be the line one of five copies forgot.
+*/
+static bool netlink_start(netlink_buffer address_to request, p16 type, p16 flags,
+                          p32 sequence, positive body)
+{
+        if (netlink_begin(request, type, flags, sequence, body))
+                return true;
+
+        netlink_forget(request);
+
+        return false;
+}
+
+/*
         One attribute appended.
 
         The length written into the attribute is the true length, header
@@ -394,6 +413,21 @@ static bipolar netlink_talk(b32 handle, netlink_buffer address_to request,
                         at += netlink_align(header->length);
                 }
         }
+}
+
+/*
+        The tail every acknowledged request shares: sent, answered, and both
+        buffers given back whatever the answer was.
+*/
+static bipolar netlink_transact(b32 handle, netlink_buffer address_to request,
+                                p32 sequence, netlink_buffer address_to reply)
+{
+        bipolar status = netlink_talk(handle, request, sequence, reply);
+
+        netlink_forget(request);
+        netlink_forget(reply);
+
+        return status;
 }
 
 /*
@@ -638,12 +672,9 @@ static bipolar netlink_link_find(b32 handle, netlink_search address_to search)
 
         search->found = false;
 
-        if (!netlink_begin(address_of request, RTM_GETLINK, NLM_REQUEST | NLM_DUMP,
+        if (!netlink_start(address_of request, RTM_GETLINK, NLM_REQUEST | NLM_DUMP,
                            sequence, sizeof(netlink_link)))
-        {
-                netlink_forget(address_of request);
                 return -1;
-        }
 
         body = (netlink_link address_to)netlink_body(address_of request);
         body->family = AF_UNSPEC;
@@ -667,14 +698,10 @@ static bipolar netlink_link_up(b32 handle, p32 index)
         netlink_buffer reply = {0};
         netlink_link address_to body;
         p32 sequence = netlink_sequence_next++;
-        bipolar status;
 
-        if (!netlink_begin(address_of request, RTM_NEWLINK,
+        if (!netlink_start(address_of request, RTM_NEWLINK,
                            NLM_REQUEST | NLM_ACK, sequence, sizeof(netlink_link)))
-        {
-                netlink_forget(address_of request);
                 return -1;
-        }
 
         body = (netlink_link address_to)netlink_body(address_of request);
         body->family = AF_UNSPEC;
@@ -682,12 +709,8 @@ static bipolar netlink_link_up(b32 handle, p32 index)
         body->flags = IFF_UP;
         body->change = IFF_UP;
 
-        status = netlink_talk(handle, address_of request, sequence, address_of reply);
-
-        netlink_forget(address_of request);
-        netlink_forget(address_of reply);
-
-        return status;
+        return netlink_transact(handle, address_of request, sequence,
+                                address_of reply);
 }
 
 /*
@@ -704,15 +727,11 @@ static bipolar netlink_address_add(b32 handle, p32 index, p32 host, p8 prefix)
         netlink_address address_to body;
         p32 sequence = netlink_sequence_next++;
         p32 wire = network_order_32(host);
-        bipolar status;
 
-        if (!netlink_begin(address_of request, RTM_NEWADDR,
+        if (!netlink_start(address_of request, RTM_NEWADDR,
                            NLM_REQUEST | NLM_ACK | NLM_CREATE | NLM_REPLACE,
                            sequence, sizeof(netlink_address)))
-        {
-                netlink_forget(address_of request);
                 return -1;
-        }
 
         body = (netlink_address address_to)netlink_body(address_of request);
         body->family = AF_INET;
@@ -723,12 +742,8 @@ static bipolar netlink_address_add(b32 handle, p32 index, p32 host, p8 prefix)
         netlink_attribute_add(address_of request, IFA_LOCAL, address_of wire, 4);
         netlink_attribute_add(address_of request, IFA_ADDRESS, address_of wire, 4);
 
-        status = netlink_talk(handle, address_of request, sequence, address_of reply);
-
-        netlink_forget(address_of request);
-        netlink_forget(address_of reply);
-
-        return status;
+        return netlink_transact(handle, address_of request, sequence,
+                                address_of reply);
 }
 
 /*
@@ -748,19 +763,15 @@ static bipolar netlink_route_add(b32 handle, p32 destination, p8 bits, p32 gatew
         p32 sequence = netlink_sequence_next++;
         p32 wire_gateway = network_order_32(gateway);
         p32 wire_destination = network_order_32(destination);
-        bipolar status;
 
         //      REPLACE alongside CREATE, for the same reason the address
         //      add has it: adding the route a second time is what happens
         //      when a link comes back, and it should be the same as having
         //      added it once rather than EEXIST.
-        if (!netlink_begin(address_of request, RTM_NEWROUTE,
+        if (!netlink_start(address_of request, RTM_NEWROUTE,
                            NLM_REQUEST | NLM_ACK | NLM_CREATE | NLM_REPLACE,
                            sequence, sizeof(netlink_route)))
-        {
-                netlink_forget(address_of request);
                 return -1;
-        }
 
         body = (netlink_route address_to)netlink_body(address_of request);
         body->family = AF_INET;
@@ -781,12 +792,8 @@ static bipolar netlink_route_add(b32 handle, p32 destination, p8 bits, p32 gatew
         if (index)
                 netlink_attribute_add_32(address_of request, RTA_OIF, index);
 
-        status = netlink_talk(handle, address_of request, sequence, address_of reply);
-
-        netlink_forget(address_of request);
-        netlink_forget(address_of reply);
-
-        return status;
+        return netlink_transact(handle, address_of request, sequence,
+                                address_of reply);
 }
 
 /*
@@ -805,12 +812,9 @@ static bipolar netlink_dump(b32 handle, p16 type, positive body, p8 family,
         p32 sequence = netlink_sequence_next++;
         bipolar status;
 
-        if (!netlink_begin(address_of request, type, NLM_REQUEST | NLM_DUMP,
+        if (!netlink_start(address_of request, type, NLM_REQUEST | NLM_DUMP,
                            sequence, body))
-        {
-                netlink_forget(address_of request);
                 return -1;
-        }
 
         address_to(p8 address_to) netlink_body(address_of request) = family;
 

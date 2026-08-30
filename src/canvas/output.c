@@ -271,7 +271,6 @@ static struct output *output_add(struct canvas *canvas, struct drm_mode_set *mod
         output->mode_set = mode_set;
         output->width = width;
         output->height = height;
-        output->format = format;
         output->opaque = format == DRM_FORMAT_ARGB8888 ? 0xff000000 : 0;
         canvas_palette(output->palette, format);
         mode_set->fb = output->buffer->fb;

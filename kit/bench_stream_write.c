@@ -1,12 +1,12 @@
 /* Resident buffered writes against their unavoidable copy/state floor. */
 #include "../src/compiler_memory.c"
+#include "bench_measure.c"
 
 #define STREAM_WRITE_ROUNDS (1u << 22)
 #define STREAM_WRITE_BUFFER 4096
 #define STREAM_WRITE_TRIES 7
 #define STREAM_WRITE_LENGTH 23
 
-typedef fn (*stream_write_work)();
 typedef sized (*stream_write_call)(address_any, sized, sized,
                                    stream address_to);
 typedef positive (*stream_put_bytes_call)(stream address_to, address_any,
@@ -89,39 +89,13 @@ static fn stream_put_bytes_line()
         }
 }
 
-static p64 stream_write_best(stream_write_work work)
+static fn stream_write_report(string_address name, bench_work work)
 {
-        p64 best = 0;
-
-        for (positive which = 0; which < STREAM_WRITE_TRIES; which++)
-        {
-                p64 started;
-                p64 elapsed;
-
-                started = get_cpu_time();
-                work();
-                elapsed = get_cpu_time() - started;
-
-                if (!best || elapsed < best)
-                        best = elapsed;
-        }
-
-        return best;
+        bench_report(name, work, STREAM_WRITE_TRIES,
+                     STREAM_WRITE_ROUNDS, (string_address)"call");
 }
 
-static fn stream_write_report(string_address name, stream_write_work work)
-{
-        p64 ticks = stream_write_best(work);
-        positive scaled = (positive)(ticks * 100 / STREAM_WRITE_ROUNDS);
-        p8 fraction[3];
-
-        positive_into_padded(fraction, scaled % 100, 2, '0');
-        fraction[2] = end;
-        string_format(log, "  %s  %p.%s ticks/call\n", name, scaled / 100,
-                      fraction);
-}
-
-static stream_write_work stream_write_named(string_address name)
+static bench_work stream_write_named(string_address name)
 {
         if (string_compare(name, (string_address)"floor-resident") == 0)
                 return stream_write_floor_work;
@@ -149,7 +123,7 @@ b32 main(void)
 
         if (program_argument_count() > 1)
         {
-                stream_write_work work =
+                bench_work work =
                         stream_write_named(program_argument(1));
                 if (is_null(work))
                         return 2;

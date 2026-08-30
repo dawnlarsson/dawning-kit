@@ -1,5 +1,6 @@
 /* ASCII case conversion: inlined former loops against reusable assembly. */
 #include "../src/compiler_memory.c"
+#include "bench_measure.c"
 
 #define NOT_INLINED __attribute__((noinline))
 #define TRIES 7
@@ -193,23 +194,6 @@ static p64 run(enum case_method method, enum case_operation operation,
         return get_cpu_time() - start;
 }
 
-static fn order(positive address_to values)
-{
-        for (positive i = 1; i < TRIES; i++)
-        {
-                positive value = values[i];
-                positive at = i;
-
-                while (at && values[at - 1] > value)
-                {
-                        values[at] = values[at - 1];
-                        at--;
-                }
-
-                values[at] = value;
-        }
-}
-
 static fn row(enum case_operation operation, positive length)
 {
         positive scalar_ratios[TRIES];
@@ -268,10 +252,10 @@ static fn row(enum case_operation operation, positive length)
                                                   (former ? former : 1));
         }
 
-        order(scalar_ratios);
-        order(bulk_ratios);
-        order(fixed_ratios);
-        order(table_ratios);
+        order(scalar_ratios, TRIES);
+        order(bulk_ratios, TRIES);
+        order(fixed_ratios, TRIES);
+        order(table_ratios, TRIES);
         string_format(log,
                       "  %p bytes  scalar/dispatch %p.%p%%  bulk/dispatch %p.%p%%  bulk/fixed %p.%p%%  table/dispatch %p.%p%%\n",
                       length, scalar_ratios[TRIES / 2] / 100,

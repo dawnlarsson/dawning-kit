@@ -12,6 +12,7 @@
         against a deliberately obvious record-by-record reference first.
 */
 #include "../src/compiler_memory.c"
+#include "bench_measure.c"
 
 #define NOT_INLINED __attribute__((noinline))
 #define TRIES 9
@@ -153,23 +154,6 @@ static p64 run(positive which)
         return grep_floor_ticks() - started;
 }
 
-static fn order(positive address_to values)
-{
-        for (positive i = 1; i < TRIES; i++)
-        {
-                positive value = values[i];
-                positive at = i;
-
-                while (at && values[at - 1] > value)
-                {
-                        values[at] = values[at - 1];
-                        at--;
-                }
-
-                values[at] = value;
-        }
-}
-
 static fn row(string_address name, positive which)
 {
         positive samples[TRIES];
@@ -177,7 +161,7 @@ static fn row(string_address name, positive which)
         for (positive trial = 0; trial < TRIES; trial++)
                 samples[trial] = (positive)run(which);
 
-        order(samples);
+        order(samples, TRIES);
         positive ticks = samples[TRIES / 2];
         positive thousandths = ticks * 1024 * 1000 /
                                ((positive)ROOM * ROUNDS);
@@ -210,7 +194,7 @@ static fn gap(void)
                                             (floor_time ? floor_time : 1));
         }
 
-        order(ratios);
+        order(ratios, TRIES);
         positive ratio = ratios[TRIES / 2];
 
         if (ratio < 10000)

@@ -34,15 +34,31 @@ static void cursor_cell(struct drm_rect *rect, int x, int y,
                  CURSOR_W * (int)scale, CURSOR_H * (int)scale);
 }
 
+// Whether any of these desktop rectangles reaches this output. Early, because
+// it is the one overlap question everything from cursor cells to damage asks.
+static _Bool output_touched(struct output *output, const struct drm_rect *damage,
+                            unsigned int count)
+{
+        unsigned int i;
+
+        for (i = 0; i < count; i++)
+                if (rects_overlap(damage[i].x1, damage[i].y1,
+                                  damage[i].x2 - damage[i].x1,
+                                  damage[i].y2 - damage[i].y1,
+                                  output->x, output->y,
+                                  (int)output->width, (int)output->height))
+                        return true;
+
+        return false;
+}
+
 static _Bool output_shows_cursor(struct output *output, int x, int y)
 {
         struct drm_rect cell;
 
         cursor_cell(&cell, x, y, desktop.cursor_shape, desktop.cursor_scale);
 
-        return rects_overlap(cell.x1, cell.y1, cell.x2 - cell.x1, cell.y2 - cell.y1,
-                             output->x, output->y,
-                             (int)output->width, (int)output->height);
+        return output_touched(output, &cell, 1);
 }
 
 struct shape
@@ -789,22 +805,6 @@ static _Bool output_describe(struct output *output)
 
         drm_client_buffer_vunmap_local(output->buffer);
         return true;
-}
-
-static _Bool output_touched(struct output *output, const struct drm_rect *damage,
-                            unsigned int count)
-{
-        unsigned int i;
-
-        for (i = 0; i < count; i++)
-                if (rects_overlap(damage[i].x1, damage[i].y1,
-                                  damage[i].x2 - damage[i].x1,
-                                  damage[i].y2 - damage[i].y1,
-                                  output->x, output->y,
-                                  (int)output->width, (int)output->height))
-                        return true;
-
-        return false;
 }
 
 /*

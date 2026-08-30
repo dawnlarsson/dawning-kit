@@ -1,5 +1,6 @@
 /* In-place byte-table translation: former scalar C against library assembly. */
 #include "../src/compiler_memory.c"
+#include "bench_measure.c"
 
 #define NOT_INLINED __attribute__((noinline))
 #define TRIES 9
@@ -61,23 +62,6 @@ static p64 run(bool assembly, positive length, positive rounds)
         return get_cpu_time() - start;
 }
 
-static fn order(positive address_to ratios)
-{
-        for (positive i = 1; i < TRIES; i++)
-        {
-                positive value = ratios[i];
-                positive at = i;
-
-                while (at && ratios[at - 1] > value)
-                {
-                        ratios[at] = ratios[at - 1];
-                        at--;
-                }
-
-                ratios[at] = value;
-        }
-}
-
 static bool row(positive length)
 {
         positive rounds = rounds_for(length);
@@ -108,7 +92,7 @@ static bool row(positive length)
                                             (former ? former : 1));
         }
 
-        order(ratios);
+        order(ratios, TRIES);
         string_format(log, "  %p bytes  median asm/C %p.%p%%\n", length,
                       ratios[TRIES / 2] / 100, ratios[TRIES / 2] % 100);
         return true;

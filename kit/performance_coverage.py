@@ -19,17 +19,14 @@ names an evidence anchor that actually exists.
     python3 kit/performance_coverage.py --all
 """
 
-import argparse
-import importlib.util
 import pathlib
-import re
 import sys
 from collections import Counter, namedtuple
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent / 'compact'))
+import manifest
 
-ROOT = pathlib.Path(__file__).resolve().parents[1]
-LIBRARY = ROOT / 'src/library.c'
-INVENTORY_TOOL = ROOT / 'kit/compact/inventory.py'
+ROOT = manifest.ROOT
 
 Coverage = namedtuple('Coverage', 'routine category evidence anchor note')
 ROWS = []
@@ -217,7 +214,8 @@ bipolar_into bipolar_into_string bipolar_to_string byte_class_holds
 byte_class_index decimal_to_string fast_sin file_close file_get_status
 file_load file_new file_read file_valid file_write memory memory_copy_end
 memory_copy_apart_end memory_free memory_search path_basename positive_digits
-positive_into_string positive_to_base_field program_arguments_own
+positive_into_string positive_to_base_field program_argument_list
+program_arguments_own
 program_arguments_use program_environment
 string_append string_bipolar string_copy_max
 string_copy_max_end string_cut string_digits string_digits_exact
@@ -258,38 +256,9 @@ memory_growth memory_release memory_reserve
 ''', 'exact lifted ARM64 growth, overflow, failure and release checks')
 
 
-def load_inventory():
-    spec = importlib.util.spec_from_file_location(
-        'moonwater_inventory_for_performance_coverage', INVENTORY_TOOL)
-    if spec is None or spec.loader is None:
-        raise RuntimeError('could not load %s' % INVENTORY_TOOL)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    _, _, _, sources = module.included_audit(str(LIBRARY), 'linux')
-    _, order, _, _, _, _, _ = module.graph_assembly_inventory(sources)
-    return set(order)
-
-
-def token_present(text, name):
-    return re.search(r'(?<![A-Za-z0-9_])' + re.escape(name) +
-                     r'(?![A-Za-z0-9_])', text) is not None
-
-
 def validate():
     errors = []
-    inventory = load_inventory()
-    counts = Counter(row.routine for row in ROWS)
-    duplicates = sorted(name for name, count in counts.items() if count != 1)
-    manifested = set(counts)
-
-    if duplicates:
-        errors.append('duplicate manifest rows: ' + ', '.join(duplicates))
-    if inventory - manifested:
-        errors.append('unclassified inventory routines: ' +
-                      ', '.join(sorted(inventory - manifested)))
-    if manifested - inventory:
-        errors.append('stale manifest routines: ' +
-                      ', '.join(sorted(manifested - inventory)))
+    manifest.reconcile(ROWS, errors)
 
     cache = {}
     benchmark_dispatch = (ROOT / 'kit/bench').read_text(encoding='utf-8')
@@ -306,20 +275,10 @@ def validate():
             errors.append('%s: %s row lacks evidence' %
                           (row.routine, row.category))
             continue
-        evidence_path = ROOT / row.evidence
-        if not evidence_path.is_file():
-            errors.append('%s: missing evidence file %s' %
-                          (row.routine, row.evidence))
+        if not manifest.anchor(row, cache, errors):
             continue
-        if row.evidence not in cache:
-            cache[row.evidence] = evidence_path.read_text(
-                encoding='utf-8', errors='replace')
-        if not token_present(cache[row.evidence], row.anchor):
-            errors.append('%s: anchor %s absent from %s' %
-                          (row.routine, row.anchor, row.evidence))
         if row.category in ('direct_benchmark', 'benchmark_context'):
-            basename = evidence_path.name
-            if basename not in benchmark_dispatch:
+            if (ROOT / row.evidence).name not in benchmark_dispatch:
                 errors.append('%s: benchmark %s is not dispatched by kit/bench' %
                               (row.routine, row.evidence))
     return errors
@@ -363,30 +322,9 @@ def print_report(mode):
               (row.routine, row.category, evidence, anchor, row.note))
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description='check all assembly routines for explicit performance evidence')
-    output = parser.add_mutually_exclusive_group()
-    output.add_argument('--gaps', action='store_true',
-                        help='list every routine without a direct benchmark row')
-    output.add_argument('--all', action='store_true',
-                        help='list every manifest row')
-    arguments = parser.parse_args()
-
-    try:
-        errors = validate()
-    except Exception as error:  # keep CI diagnostics short and actionable
-        sys.stderr.write('performance coverage: %s\n' % error)
-        return 1
-    if errors:
-        for error in errors:
-            sys.stderr.write('performance coverage: %s\n' % error)
-        return 1
-
-    mode = 'all' if arguments.all else ('gaps' if arguments.gaps else 'summary')
-    print_report(mode)
-    return 0
-
-
 if __name__ == '__main__':
-    sys.exit(main())
+    sys.exit(manifest.run(
+        'performance coverage',
+        'check all assembly routines for explicit performance evidence',
+        'list every routine without a direct benchmark row',
+        validate, print_report))

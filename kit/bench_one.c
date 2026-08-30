@@ -10,44 +10,7 @@
 #define WHICH 0
 #endif
 
-#define NOT_INLINED __attribute__((noinline))
-
-NOT_INLINED positive reference_length(string_address source)
-{
-        string_address step = source;
-
-        while (string_get(step))
-                step++;
-
-        return step - source;
-}
-
-NOT_INLINED b32 reference_compare(string_address source, string_address input)
-{
-        while (string_get(source) && string_get(input))
-        {
-                if string_not (source, address_to input)
-                        break;
-
-                source++;
-                input++;
-        }
-
-        return string_get(source) - string_get(input);
-}
-
-NOT_INLINED string_address reference_first_of(string_address source, p8 character)
-{
-        while (string_get(source))
-        {
-                if string_is (source, character)
-                        return source;
-
-                source++;
-        }
-
-        return character ? null : source;
-}
+#include "bench_reference.c"
 
 static p8 subject[8192];
 static p8 mirror[8192];

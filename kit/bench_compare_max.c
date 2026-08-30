@@ -1,12 +1,12 @@
 /* Dynamic-bound string_compare_max against semantic and traffic floors. */
 #include "../src/compiler_memory.c"
+#include "bench_measure.c"
 
 #define COMPARE_MAX_ROUNDS (1u << 22)
 #define COMPARE_MAX_TRIES 7
 #define COMPARE_MAX_SHORT 23
 #define COMPARE_MAX_LONG 256
 
-typedef fn (*compare_max_work)();
 typedef b32 (*compare_max_call)(string_address, string_address, positive);
 typedef b32 (*compare_max_traffic)(const address_any, const address_any,
                                    positive);
@@ -107,38 +107,13 @@ static fn compare_max_floor_late()
                         compare_max_left, compare_max_right, COMPARE_MAX_LONG);
 }
 
-static p64 compare_max_best(compare_max_work work)
+static fn compare_max_report(string_address name, bench_work work)
 {
-        p64 best = 0;
-
-        for (positive which = 0; which < COMPARE_MAX_TRIES; which++)
-        {
-                p64 started = get_cpu_time();
-                p64 elapsed;
-
-                work();
-                elapsed = get_cpu_time() - started;
-
-                if (!best || elapsed < best)
-                        best = elapsed;
-        }
-
-        return best;
+        bench_report(name, work, COMPARE_MAX_TRIES,
+                     COMPARE_MAX_ROUNDS, (string_address)"call");
 }
 
-static fn compare_max_report(string_address name, compare_max_work work)
-{
-        p64 ticks = compare_max_best(work);
-        positive scaled = (positive)(ticks * 100 / COMPARE_MAX_ROUNDS);
-        p8 fraction[3];
-
-        positive_into_padded(fraction, scaled % 100, 2, '0');
-        fraction[2] = end;
-        string_format(log, "  %s  %p.%s ticks/call\n", name, scaled / 100,
-                      fraction);
-}
-
-static compare_max_work compare_max_named(string_address name)
+static bench_work compare_max_named(string_address name)
 {
         if (string_compare(name, (string_address)"control-first") == 0)
                 return compare_max_control_first;
@@ -172,7 +147,7 @@ b32 main(void)
 
         if (program_argument_count() > 1)
         {
-                compare_max_work work = compare_max_named(program_argument(1));
+                bench_work work = compare_max_named(program_argument(1));
                 if (is_null(work))
                         return 2;
 

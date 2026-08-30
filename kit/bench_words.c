@@ -1,5 +1,6 @@
 /* Stateful ASCII word counting: scalar reference against library assembly. */
 #include "../src/compiler_memory.c"
+#include "bench_measure.c"
 
 #define NOT_INLINED __attribute__((noinline))
 #define TRIES 9
@@ -134,21 +135,6 @@ static p64 run(bool assembly, positive length, positive rounds)
         return get_cpu_time() - start;
 }
 
-static fn order(positive address_to ratios)
-{
-        for (positive i = 1; i < TRIES; i++)
-        {
-                positive value = ratios[i];
-                positive at = i;
-                while (at && ratios[at - 1] > value)
-                {
-                        ratios[at] = ratios[at - 1];
-                        at--;
-                }
-                ratios[at] = value;
-        }
-}
-
 static fn row(string_address name, positive length, positive shape)
 {
         positive ratios[TRIES];
@@ -174,7 +160,7 @@ static fn row(string_address name, positive length, positive shape)
                                             (former ? former : 1));
         }
 
-        order(ratios);
+        order(ratios, TRIES);
         string_format(log, "  %s  median asm/C %p.%p%%\n", name,
                       ratios[TRIES / 2] / 100, ratios[TRIES / 2] % 100);
 }

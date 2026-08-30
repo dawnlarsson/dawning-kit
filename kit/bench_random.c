@@ -1,11 +1,10 @@
 /* random() draw cost against call/control and additive-ring floors. */
 #include "../src/compiler_memory.c"
+#include "bench_measure.c"
 
 #define RANDOM_BENCH_ROUNDS (1u << 22)
 #define RANDOM_BENCH_TRIES 7
 #define RANDOM_BENCH_DEGREE 31
-
-typedef fn (*random_bench_work)();
 
 static volatile positive random_bench_sink;
 static p32 random_bench_state[RANDOM_BENCH_DEGREE];
@@ -58,39 +57,13 @@ static fn random_bench_subject()
                 random_bench_sink += (positive)random_bench_call();
 }
 
-static p64 random_bench_best(random_bench_work work)
+static fn random_bench_report(string_address name, bench_work work)
 {
-        p64 best = 0;
-
-        for (positive which = 0; which < RANDOM_BENCH_TRIES; which++)
-        {
-                p64 started = get_cpu_time();
-                p64 elapsed;
-
-                work();
-                elapsed = get_cpu_time() - started;
-
-                if (!best || elapsed < best)
-                        best = elapsed;
-        }
-
-        return best;
+        bench_report(name, work, RANDOM_BENCH_TRIES,
+                     RANDOM_BENCH_ROUNDS, (string_address)"draw");
 }
 
-static fn random_bench_report(string_address name, random_bench_work work)
-{
-        p64 ticks = random_bench_best(work);
-        positive scaled =
-                (positive)(ticks * 100 / RANDOM_BENCH_ROUNDS);
-        p8 fraction[3];
-
-        positive_into_padded(fraction, scaled % 100, 2, '0');
-        fraction[2] = end;
-        string_format(log, "  %s  %p.%s ticks/draw\n", name, scaled / 100,
-                      fraction);
-}
-
-static random_bench_work random_bench_named(string_address name)
+static bench_work random_bench_named(string_address name)
 {
         if (string_compare(name, (string_address)"control") == 0)
                 return random_bench_control;
@@ -111,7 +84,7 @@ b32 main(void)
 
         if (program_argument_count() > 1)
         {
-                random_bench_work work = random_bench_named(program_argument(1));
+                bench_work work = random_bench_named(program_argument(1));
 
                 if (is_null(work))
                         return 2;

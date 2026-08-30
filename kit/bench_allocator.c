@@ -1,11 +1,11 @@
 /* malloc/free class fast path against its call and free-list traffic floors. */
 #include "../src/compiler_memory.c"
+#include "bench_measure.c"
 
 #define ALLOCATOR_BENCH_ROUNDS (1u << 22)
 #define ALLOCATOR_BENCH_TRIES 7
 #define ALLOCATOR_BENCH_SIZE 64
 
-typedef fn (*allocator_bench_work)();
 typedef address_any (*allocator_bench_take_call)(positive);
 typedef fn (*allocator_bench_give_call)(address_any);
 
@@ -97,39 +97,13 @@ static fn allocator_bench_subject()
         }
 }
 
-static p64 allocator_bench_best(allocator_bench_work work)
+static fn allocator_bench_report(string_address name, bench_work work)
 {
-        p64 best = 0;
-
-        for (positive which = 0; which < ALLOCATOR_BENCH_TRIES; which++)
-        {
-                p64 started = get_cpu_time();
-                p64 elapsed;
-
-                work();
-                elapsed = get_cpu_time() - started;
-
-                if (!best || elapsed < best)
-                        best = elapsed;
-        }
-
-        return best;
+        bench_report(name, work, ALLOCATOR_BENCH_TRIES,
+                     ALLOCATOR_BENCH_ROUNDS, (string_address)"pair");
 }
 
-static fn allocator_bench_report(string_address name, allocator_bench_work work)
-{
-        p64 ticks = allocator_bench_best(work);
-        positive scaled =
-                (positive)(ticks * 100 / ALLOCATOR_BENCH_ROUNDS);
-        p8 fraction[3];
-
-        positive_into_padded(fraction, scaled % 100, 2, '0');
-        fraction[2] = end;
-        string_format(log, "  %s  %p.%s ticks/pair\n", name, scaled / 100,
-                      fraction);
-}
-
-static allocator_bench_work allocator_bench_named(string_address name)
+static bench_work allocator_bench_named(string_address name)
 {
         if (string_compare(name, (string_address)"control") == 0)
                 return allocator_bench_control;
@@ -156,7 +130,7 @@ b32 main(void)
 
         if (program_argument_count() > 1)
         {
-                allocator_bench_work work =
+                bench_work work =
                         allocator_bench_named(program_argument(1));
 
                 if (is_null(work))

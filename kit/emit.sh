@@ -56,149 +56,48 @@ emit_unsupported() {
         return 1
 }
 
-reg_0() {
+#
+# The sixteen numbered helpers below were this same three-way mapping written
+# out sixteen times. The rule, once:
+#
+#   x86_64:  0..15 are rax rcx rdx rbx rsp rbp rsi rdi r8..r15, in encoding
+#            order, so the number is the answer.
+#   aarch64: 0..15 are x0..x15.
+#   riscv64: 0..7 land on the argument registers a0..a7 (x10..x17), 8..9 stay
+#            s0/s1 (x8/x9), and 10..15 continue into s2..s7 (x18..x23).
+#
+reg() {
         case "$ARCH" in
-        x86_64) echo 0 ;;   # rax
-        aarch64) echo 0 ;;  # x0
-        riscv64) echo 10 ;; # a0 (x10)
-        *) emit_unsupported reg_0 ;;
+        x86_64 | aarch64) echo "$1" ;;
+        riscv64)
+                if [ "$1" -lt 8 ]; then
+                        echo "$(($1 + 10))"
+                elif [ "$1" -lt 10 ]; then
+                        echo "$1"
+                else
+                        echo "$(($1 + 8))"
+                fi
+                ;;
+        *) emit_unsupported "reg_$1" ;;
         esac
 }
 
-reg_1() {
-        case "$ARCH" in
-        x86_64) echo 1 ;;   # rcx
-        aarch64) echo 1 ;;  # x1
-        riscv64) echo 11 ;; # a1 (x11)
-        *) emit_unsupported reg_1 ;;
-        esac
-}
-
-reg_2() {
-        case "$ARCH" in
-        x86_64) echo 2 ;;   # rdx
-        aarch64) echo 2 ;;  # x2
-        riscv64) echo 12 ;; # a2 (x12)
-        *) emit_unsupported reg_2 ;;
-        esac
-}
-
-reg_3() {
-        case "$ARCH" in
-        x86_64) echo 3 ;;   # rbx
-        aarch64) echo 3 ;;  # x3
-        riscv64) echo 13 ;; # a3 (x13)
-        *) emit_unsupported reg_3 ;;
-        esac
-}
-
-reg_4() {
-        case "$ARCH" in
-        x86_64) echo 4 ;;   # rsp
-        aarch64) echo 4 ;;  # x4
-        riscv64) echo 14 ;; # a4 (x14)
-        *) emit_unsupported reg_4 ;;
-        esac
-}
-
-reg_5() {
-        case "$ARCH" in
-        x86_64) echo 5 ;;   # rbp
-        aarch64) echo 5 ;;  # x5
-        riscv64) echo 15 ;; # a5 (x15)
-        *) emit_unsupported reg_5 ;;
-        esac
-}
-
-reg_6() {
-        case "$ARCH" in
-        x86_64) echo 6 ;;   # rsi
-        aarch64) echo 6 ;;  # x6
-        riscv64) echo 16 ;; # a6 (x16)
-        *) emit_unsupported reg_6 ;;
-        esac
-}
-
-reg_7() {
-        case "$ARCH" in
-        x86_64) echo 7 ;;   # rdi
-        aarch64) echo 7 ;;  # x7
-        riscv64) echo 17 ;; # a7 (x17)
-        *) emit_unsupported reg_7 ;;
-        esac
-}
-
-reg_8() {
-        case "$ARCH" in
-        x86_64) echo 8 ;;  # r8
-        aarch64) echo 8 ;; # x8
-        riscv64) echo 8 ;; # s0/fp (x8)
-        *) emit_unsupported reg_8 ;;
-        esac
-}
-
-reg_9() {
-        case "$ARCH" in
-        x86_64) echo 9 ;;  # r9
-        aarch64) echo 9 ;; # x9
-        riscv64) echo 9 ;; # s1 (x9)
-        *) emit_unsupported reg_9 ;;
-        esac
-}
-
-reg_10() {
-        case "$ARCH" in
-        x86_64) echo 10 ;;  # r10
-        aarch64) echo 10 ;; # x10
-        riscv64) echo 18 ;; # s2 (x18)
-        *) emit_unsupported reg_10 ;;
-        esac
-}
-
-reg_11() {
-        case "$ARCH" in
-        x86_64) echo 11 ;;  # r11
-        aarch64) echo 11 ;; # x11
-        riscv64) echo 19 ;; # s3 (x19)
-        *) emit_unsupported reg_11 ;;
-        esac
-}
-
-reg_12() {
-        case "$ARCH" in
-        x86_64) echo 12 ;;  # r12
-        aarch64) echo 12 ;; # x12
-        riscv64) echo 20 ;; # s4 (x20)
-        *) emit_unsupported reg_12 ;;
-        esac
-}
-
-reg_13() {
-        case "$ARCH" in
-        x86_64) echo 13 ;;  # r13
-        aarch64) echo 13 ;; # x13
-        riscv64) echo 21 ;; # s5 (x21)
-        *) emit_unsupported reg_13 ;;
-        esac
-}
-
-reg_14() {
-        case "$ARCH" in
-        x86_64) echo 14 ;;  # r14
-        aarch64) echo 14 ;; # x14
-        riscv64) echo 22 ;; # s6 (x22)
-        *) emit_unsupported reg_14 ;;
-        esac
-}
-
-reg_15() {
-        case "$ARCH" in
-        x86_64) echo 15 ;;  # r15
-        aarch64) echo 15 ;; # x15
-        riscv64) echo 23 ;; # s7 (x23)
-        *) emit_unsupported reg_15 ;;
-        esac
-}
+reg_0() { reg 0; }
+reg_1() { reg 1; }
+reg_2() { reg 2; }
+reg_3() { reg 3; }
+reg_4() { reg 4; }
+reg_5() { reg 5; }
+reg_6() { reg 6; }
+reg_7() { reg 7; }
+reg_8() { reg 8; }
+reg_9() { reg 9; }
+reg_10() { reg 10; }
+reg_11() { reg 11; }
+reg_12() { reg 12; }
+reg_13() { reg 13; }
+reg_14() { reg 14; }
+reg_15() { reg 15; }
 
 reg_sp() {
         case "$ARCH" in

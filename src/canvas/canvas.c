@@ -142,7 +142,6 @@ struct output
 
         int x, y;
         unsigned int width, height;
-        u32 format;
 
         // Every colour, converted once for this output's format.
         u32 palette[INK_COUNT];
