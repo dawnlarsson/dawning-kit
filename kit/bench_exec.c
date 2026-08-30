@@ -115,6 +115,7 @@ positive bench_spawn_device(string_address path)
         request.envp = 0;
         request.envp_bytes = 0;
         request.envp_count = 0;
+        request.envp_generation = 0;
 
         positive start = now_ns();
         bool failed = false;
@@ -140,6 +141,51 @@ positive bench_spawn_device(string_address path)
         }
 
         return failed ? 0 : now_ns() - start;
+}
+
+/* The shell's exported environment normally does not change between
+   commands. A nonzero generation lets the kernel retain that immutable block
+   on this open descriptor; zero deliberately measures the copying path. */
+positive bench_spawn_environment_submission(string_address path,
+                                             positive generation)
+{
+        struct spawn request;
+        p8 argv_block[128];
+        p8 env_block[8192];
+        positive path_length = string_length(path);
+
+        memory_copy(argv_block, path, path_length + 1);
+        memory_fill(env_block, 'x', sizeof(env_block));
+        for (positive at = 63; at < sizeof(env_block); at += 64)
+                env_block[at] = 0;
+        request.path = (unsigned long)path;
+        request.argv = (unsigned long)argv_block;
+        request.argv_bytes = path_length + 1;
+        request.argv_count = 1;
+        request.envp = (unsigned long)env_block;
+        request.envp_bytes = sizeof(env_block);
+        request.envp_count = sizeof(env_block) / 64;
+        request.envp_generation = generation;
+
+        positive elapsed = 0;
+
+        for (positive i = 0; i < ROUNDS; i++)
+        {
+                positive start = now_ns();
+                bipolar child = system_call_3(syscall(ioctl), device,
+                                              SPARK_IOCTL_SPAWN,
+                                              (positive)address_of request);
+                elapsed += now_ns() - start;
+                positive status = 0;
+
+                if (child < 0 ||
+                    system_call_4(syscall(wait4), child,
+                                  (positive)address_of status, 0, 0) != child ||
+                    status)
+                        return 0;
+        }
+
+        return elapsed;
 }
 
 // execveat on an already open descriptor skips pathname resolution entirely.
@@ -197,6 +243,7 @@ positive bench_spawn_submission(string_address path)
         request.envp = 0;
         request.envp_bytes = 0;
         request.envp_count = 0;
+        request.envp_generation = 0;
 
         positive elapsed = 0;
         bool failed = false;
@@ -315,6 +362,14 @@ b32 main()
         if (at2 && at2 < at_fd)
                 at_fd = at2;
 
+        positive copied_env = 0;
+        positive cached_env = 0;
+        if (device >= 0)
+        {
+                copied_env = bench_spawn_environment_submission("/tiny.spark", 0);
+                cached_env = bench_spawn_environment_submission("/tiny.spark", 1);
+        }
+
         positive nowait = 0;
         if (device >= 0)
         {
@@ -326,6 +381,7 @@ b32 main()
         }
 
         if (!at_fd || (device >= 0 && (!dev || !nowait)) ||
+            (device >= 0 && (!copied_env || !cached_env)) ||
             (device >= 0 && stats_after.loads - stats_before.loads != 3 * ROUNDS))
         {
                 log_error("benchmark launch path did not complete its work\n", 0);
@@ -343,6 +399,13 @@ b32 main()
                 report("/dev/spark     ", dev);
         if (nowait)
                 report("/dev/spark submit", nowait);
+        if (copied_env && cached_env)
+        {
+                report("submit, copy 8K env ", copied_env);
+                report("submit, cache 8K env", cached_env);
+                report_difference("  cached environment      ",
+                                  copied_env, cached_env);
+        }
 
         string_format(log, "\nclear comparisons (lower is faster):\n");
         report_difference("  Spark image versus ELF ", elf, spark);

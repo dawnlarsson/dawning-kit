@@ -14,6 +14,12 @@
 #include <linux/sched/task.h>
 #include <linux/initrd.h>
 #include <linux/console.h>
+#include <linux/overflow.h>
+#include <linux/refcount.h>
+
+#ifdef CONFIG_X86_64
+#include <asm/cpufeature.h>
+#endif
 
 // The graphics headers must precede library.c: it defines "end" as a macro
 // and asm/io.h, reached through drm_client.h, uses that word as a variable.
@@ -40,6 +46,23 @@
 // Defined below, next to the rest of the spawning, and called by the
 // compositor when it has a screen to put something on.
 static int spawn_program(const char *path);
+
+struct spawn_strings
+{
+        refcount_t references;
+        char **vector;
+};
+
+struct pane;
+
+/* One open device is one independent launch/cache and window context. */
+struct device_context
+{
+        struct mutex spawn_lock;
+        struct spawn_strings *environment;
+        unsigned long environment_generation;
+        struct pane *pane;
+};
 
 #ifdef CONFIG_MOONWATER_CANVAS
 #include <linux/workqueue.h>
@@ -371,16 +394,38 @@ static int execute_spark(struct linux_binprm *bprm)
         }
 
 #ifdef CONFIG_X86_64
+        /* CPUID and XGETBV are serialising startup work whose answer the
+           kernel already has.  Spark's private entry ABI hands that answer
+           to _start; an image run by an older loader simply misses the magic
+           and retains its userspace detection fallback. */
+        regs->r12 = SPARK_START_MAGIC;
+        regs->r13 = 0;
+        regs->r14 = task_pid_nr(current);
+
+        if (cpu_feature_enabled(X86_FEATURE_AVX2))
+                regs->r13 |= SPARK_CPU_AVX2;
+
+        if (cpu_feature_enabled(X86_FEATURE_AVX512F) &&
+            cpu_feature_enabled(X86_FEATURE_AVX512BW) &&
+            cpu_feature_enabled(X86_FEATURE_AVX512VL))
+                regs->r13 |= SPARK_CPU_AVX512;
+
         regs->ip = header->entry;
         regs->sp = stack_addr;
         regs->flags = 0x202; // IF flag set
         regs->cs = __USER_CS;
         regs->ss = __USER_DS;
 #elif defined(CONFIG_ARM64)
+        regs->regs[19] = SPARK_START_MAGIC;
+        regs->regs[20] = 0;
+        regs->regs[21] = task_pid_nr(current);
         regs->pc = header->entry;
         regs->sp = stack_addr;
         regs->pstate = PSR_MODE_EL0t;
 #elif defined(CONFIG_RISCV)
+        regs->s2 = SPARK_START_MAGIC;
+        regs->s3 = 0;
+        regs->s4 = task_pid_nr(current);
         regs->epc = header->entry;
         regs->sp = stack_addr;
         regs->status = SR_SPIE;
@@ -413,23 +458,25 @@ static int execute_spark(struct linux_binprm *bprm)
 struct spawn_work
 {
         char *path;
-        char **argv;
-        char *argv_block;
-        char **envp;
-        char *envp_block;
+        struct spawn_strings *arguments;
+        struct spawn_strings *environment;
         unsigned int argc;
         bool shell_fallback;
 };
+
+static void spawn_strings_put(struct spawn_strings *strings)
+{
+        if (strings && refcount_dec_and_test(&strings->references))
+                kvfree(strings);
+}
 
 static void spawn_free(struct spawn_work *work)
 {
         if (!work)
                 return;
 
-        kfree(work->envp_block);
-        kfree(work->envp);
-        kfree(work->argv_block);
-        kfree(work->argv);
+        spawn_strings_put(work->environment);
+        spawn_strings_put(work->arguments);
         kfree(work->path);
         kfree(work);
 }
@@ -451,15 +498,19 @@ static int spawn_program(const char *path)
                 return -ENOMEM;
 
         work->path = kstrdup(path, GFP_KERNEL);
-        work->argv = kcalloc(2, sizeof(char *), GFP_KERNEL);
+        work->arguments = kvmalloc(sizeof(*work->arguments) +
+                                   2 * sizeof(char *), GFP_KERNEL);
 
-        if (!work->path || !work->argv)
+        if (!work->path || !work->arguments)
         {
                 spawn_free(work);
                 return -ENOMEM;
         }
 
-        work->argv[0] = work->path;
+        refcount_set(&work->arguments->references, 1);
+        work->arguments->vector = (char **)(work->arguments + 1);
+        work->arguments->vector[0] = work->path;
+        work->arguments->vector[1] = NULL;
         work->argc = 1;
 
         if (user_mode_thread(spawn_enter, work, SIGCHLD) <= 0)
@@ -503,8 +554,11 @@ static int spawn_enter(void *data)
 
         spawn_default_signals();
 
-        ret = kernel_execve(work->path, (const char *const *)work->argv,
-                            work->envp ? (const char *const *)work->envp : empty_envp);
+        ret = kernel_execve(work->path,
+                            (const char *const *)work->arguments->vector,
+                            work->environment
+                              ? (const char *const *)work->environment->vector
+                              : empty_envp);
 
         /*
          * The shell promises more than execve: ENOEXEC for an executable text
@@ -531,11 +585,11 @@ static int spawn_enter(void *data)
                         script_argv[1] = work->path;
 
                         for (i = 1; i < work->argc; i++)
-                                script_argv[i + 1] = work->argv[i];
+                                script_argv[i + 1] = work->arguments->vector[i];
 
                         ret = kernel_execve(script_argv[0], script_argv,
-                                            work->envp
-                                              ? (const char *const *)work->envp
+                                            work->environment
+                                              ? (const char *const *)work->environment->vector
                                               : empty_envp);
                         kfree(script_argv);
                 }
@@ -564,59 +618,82 @@ static int spawn_enter(void *data)
 // plus a count, so a single copy_from_user brings each across and the pointer
 // array is built by walking it.
 static int copy_strings(unsigned long user_block, unsigned int bytes,
-                              unsigned int count, char **out_block, char ***out_vector)
+                        unsigned int count, struct spawn_strings **out)
 {
+        struct spawn_strings *strings;
         char *block;
         char **vector;
         char *walk;
+        size_t pointer_bytes;
+        size_t allocation;
         unsigned int i;
 
-        if (count == 0 || count > 256 || bytes == 0 || bytes > PAGE_SIZE)
+        if (count == 0 || count > SPARK_SPAWN_MAX_STRINGS || bytes == 0 ||
+            bytes > SPARK_SPAWN_MAX_BYTES)
                 return -EINVAL;
 
-        block = kmalloc(bytes + 1, GFP_KERNEL);
-        if (!block)
+        if (check_mul_overflow((size_t)count + 1, sizeof(char *),
+                               &pointer_bytes) ||
+            check_add_overflow(sizeof(*strings), pointer_bytes, &allocation) ||
+            check_add_overflow(allocation, (size_t)bytes, &allocation))
+                return -EOVERFLOW;
+
+        /* The immutable bytes and their pointers have exactly the same
+           lifetime. One allocation removes a slab round trip from each of
+           argv and envp; kvmalloc keeps generated long commands on the fast
+           path without demanding physically contiguous megabytes. */
+        strings = kvmalloc(allocation, GFP_KERNEL);
+        if (!strings)
                 return -ENOMEM;
+
+        refcount_set(&strings->references, 1);
+        vector = (char **)(strings + 1);
+        strings->vector = vector;
+        block = (char *)vector + pointer_bytes;
 
         if (copy_from_user(block, (const void __user *)user_block, bytes))
         {
-                kfree(block);
+                kvfree(strings);
                 return -EFAULT;
-        }
-
-        block[bytes] = 0;
-
-        vector = kcalloc(count + 1, sizeof(char *), GFP_KERNEL);
-        if (!vector)
-        {
-                kfree(block);
-                return -ENOMEM;
         }
 
         walk = block;
         for (i = 0; i < count; i++)
         {
+                size_t remaining;
+                size_t length;
+
                 if (walk >= block + bytes)
                 {
-                        kfree(vector);
-                        kfree(block);
+                        kvfree(strings);
+                        return -EINVAL;
+                }
+
+                remaining = (size_t)(block + bytes - walk);
+                length = strnlen(walk, remaining);
+
+                if (length == remaining)
+                {
+                        kvfree(strings);
                         return -EINVAL;
                 }
 
                 vector[i] = walk;
-                walk += strlen(walk) + 1;
+                walk += length + 1;
         }
         vector[count] = NULL;
 
-        *out_block = block;
-        *out_vector = vector;
+        *out = strings;
         return 0;
 }
 
-static long do_spawn(struct spawn __user *request, bool shell_fallback)
+static long do_spawn(struct file *file, struct spawn __user *request,
+                     bool shell_fallback)
 {
+        struct device_context *context = file->private_data;
         struct spawn args;
         struct spawn_work *work;
+        struct spawn_strings *old_environment = NULL;
         long ret;
         pid_t pid;
 
@@ -636,16 +713,41 @@ static long do_spawn(struct spawn __user *request, bool shell_fallback)
         }
 
         ret = copy_strings(args.argv, args.argv_bytes, args.argv_count,
-                                 &work->argv_block, &work->argv);
+                           &work->arguments);
         if (ret)
                 goto fail;
 
         if (args.envp && args.envp_count)
         {
-                ret = copy_strings(args.envp, args.envp_bytes, args.envp_count,
-                                         &work->envp_block, &work->envp);
-                if (ret)
-                        goto fail;
+                mutex_lock(&context->spawn_lock);
+                if (args.envp_generation && context->environment &&
+                    context->environment_generation == args.envp_generation)
+                {
+                        refcount_inc(&context->environment->references);
+                        work->environment = context->environment;
+                }
+                mutex_unlock(&context->spawn_lock);
+
+                if (!work->environment)
+                {
+                        ret = copy_strings(args.envp, args.envp_bytes,
+                                           args.envp_count,
+                                           &work->environment);
+                        if (ret)
+                                goto fail;
+
+                        if (args.envp_generation)
+                        {
+                                mutex_lock(&context->spawn_lock);
+                                old_environment = context->environment;
+                                refcount_inc(&work->environment->references);
+                                context->environment = work->environment;
+                                context->environment_generation =
+                                        args.envp_generation;
+                                mutex_unlock(&context->spawn_lock);
+                                spawn_strings_put(old_environment);
+                        }
+                }
         }
 
         work->argc = args.argv_count;
@@ -722,9 +824,9 @@ static long device_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
         switch (cmd)
         {
         case SPARK_IOCTL_SPAWN:
-                return do_spawn((struct spawn __user *)arg, false);
+                return do_spawn(file, (struct spawn __user *)arg, false);
         case SPARK_IOCTL_SPAWN_SHELL:
-                return do_spawn((struct spawn __user *)arg, true);
+                return do_spawn(file, (struct spawn __user *)arg, true);
         case SPARK_IOCTL_STATS:
                 return report_stats((struct stats __user *)arg);
 #ifdef CONFIG_MOONWATER_CANVAS
@@ -743,13 +845,19 @@ static long device_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 }
 
 /*
-        misc_open leaves the miscdevice in private_data for the file operations
-        to use. None here want it, and a window needs the field: one open of
-        this device is one window, and private_data is what says which.
+        misc_open leaves the miscdevice in private_data. Replace it with one
+        context per open: its environment snapshot belongs to that launcher,
+        and its pane belongs to that window client.
 */
 static int device_open(struct inode *inode, struct file *file)
 {
-        file->private_data = NULL;
+        struct device_context *context = kzalloc(sizeof(*context), GFP_KERNEL);
+
+        if (!context)
+                return -ENOMEM;
+
+        mutex_init(&context->spawn_lock);
+        file->private_data = context;
         return 0;
 }
 
@@ -761,7 +869,22 @@ static int device_mmap(struct file *file, struct vm_area_struct *vma)
 
 static int device_close(struct inode *inode, struct file *file)
 {
+        struct device_context *context = file->private_data;
+
         window_release(file);
+        spawn_strings_put(context->environment);
+        kfree(context);
+        return 0;
+}
+#endif
+
+#ifndef CONFIG_MOONWATER_CANVAS
+static int device_close(struct inode *inode, struct file *file)
+{
+        struct device_context *context = file->private_data;
+
+        spawn_strings_put(context->environment);
+        kfree(context);
         return 0;
 }
 #endif
@@ -770,9 +893,9 @@ static const struct file_operations device_ops = {
     .owner = THIS_MODULE,
     .open = device_open,
     .unlocked_ioctl = device_ioctl,
+    .release = device_close,
 #ifdef CONFIG_MOONWATER_CANVAS
     .mmap = device_mmap,
-    .release = device_close,
 #endif
     .llseek = noop_llseek,
 };

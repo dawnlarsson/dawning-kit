@@ -867,6 +867,9 @@ p8 address_to spawn_argv_block;
 positive spawn_argv_room;
 p8 address_to spawn_envp_block;
 positive spawn_envp_room;
+positive spawn_envp_used;
+positive spawn_envp_count;
+positive spawn_envp_generation = positive_max;
 
 //      The environment, flattened into a block that is made to fit it.
 positive shell_flatten_env(positive address_to count_out)
@@ -875,6 +878,23 @@ positive shell_flatten_env(positive address_to count_out)
         positive used = 0;
         positive count = 0;
         positive index = 0;
+
+        /* shell_environment already has a precise generation: it changes
+           only when an exported value changes.  The flat ioctl block is an
+           equally immutable view of that generation, so copying every byte
+           again for every command was pure launch overhead. */
+        if (!shell_envp_dirty &&
+            spawn_envp_generation == shell_envp_generation)
+        {
+                address_to count_out = spawn_envp_count;
+                return spawn_envp_used;
+        }
+
+        if (shell_envp_dirty)
+        {
+                address_to count_out = 0;
+                return 0;
+        }
 
         while (environment[index])
                 used += string_length(environment[index++]) + 1;
@@ -898,6 +918,9 @@ positive shell_flatten_env(positive address_to count_out)
         }
 
         address_to count_out = count;
+        spawn_envp_used = used;
+        spawn_envp_count = count;
+        spawn_envp_generation = shell_envp_generation;
 
         return used;
 }
@@ -936,6 +959,7 @@ bipolar shell_spawn_via_device()
         request.envp_bytes = shell_flatten_env(address_of envc);
         request.envp = (unsigned long)spawn_envp_block;
         request.envp_count = envc;
+        request.envp_generation = spawn_envp_generation;
 
         return system_call_3(syscall(ioctl), spawn_device,
                              SPARK_IOCTL_SPAWN_SHELL,

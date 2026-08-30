@@ -264,6 +264,7 @@ static positive env_index_tombstones;
 string_address address_to shell_envp;
 static positive shell_envp_room;
 static bool shell_envp_dirty = true;
+static positive shell_envp_generation;
 
 static bool env_table_room(positive want)
 {
@@ -700,6 +701,7 @@ string_address address_to shell_environment()
 
         shell_envp[count] = null;
         shell_envp_dirty = false;
+        shell_envp_generation++;
 
         return shell_envp;
 }

@@ -31,6 +31,8 @@
 #ifndef SPARK_INCLUDED
 #define SPARK_INCLUDED
 
+#include "platform/spark.inc"
+
 // "SPRK", little endian
 #define SPARK_MAGIC 0x4b525053u
 
@@ -44,6 +46,17 @@
 // An arbitrary ceiling, well past anything a flat binary should be, that keeps
 // the loader's arithmetic on file supplied sizes far from overflowing.
 #define SPARK_MAX_IMAGE (256UL << 20)
+
+/*
+        Kernel-to-runtime startup handoff.
+
+        A Spark image does not need to interrogate hardware the kernel already
+        brought up and classified.  The loader places this magic in one
+        callee-saved entry register and the feature word in the next one.
+        Ordinary ELF execution and stock kernels do not promise either value,
+        so _start falls back to its own detector unless both sides speak this
+        exact contract.
+*/
 
 struct header {
         unsigned int magic;    // SPARK_MAGIC
@@ -96,14 +109,15 @@ _Static_assert(sizeof(struct header) == SPARK_HEADER_SIZE,
 
 // _IOW('s', 1, struct spawn) -- spelled out so userspace does not need
 // the kernel ioctl macros to talk to it. The size is part of the encoding, so
-// this changes if the request struct does.
-#define SPARK_IOCTL_SPAWN 0x40287301u
+// this changes if the request struct does. Generation-keyed environments make
+// repeated launches on one open descriptor a pointer handoff after the first.
+#define SPARK_IOCTL_SPAWN 0x40307301u
 
 // Same request, with the shell's ENOEXEC rule: executable text without a #!
 // line is handed to /bin/sh. Kept separate so raw spawn remains an exact
 // execve-like interface and callers that do not want shell interpretation do
 // not acquire it accidentally.
-#define SPARK_IOCTL_SPAWN_SHELL 0x40287304u
+#define SPARK_IOCTL_SPAWN_SHELL 0x40307304u
 
 // _IOR('s', 2, struct stats). Nanoseconds accumulated inside the kernel,
 // so the split between creating the task and loading the image is measured
@@ -169,6 +183,7 @@ struct spawn {
         unsigned long envp;       // same shape as argv; may be 0 for none
         unsigned int envp_bytes;
         unsigned int envp_count;
+        unsigned long envp_generation; // 0 copies; equal nonzero values reuse
 };
 
 #endif

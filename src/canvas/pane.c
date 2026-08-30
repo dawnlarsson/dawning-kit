@@ -941,6 +941,7 @@ static void desktop_refresh_panes(void)
 
 static long window_ioctl_create(struct file *file, unsigned long argument)
 {
+        struct device_context *context = file->private_data;
         struct window_request request;
         struct pane *pane;
         unsigned long bytes;
@@ -953,7 +954,7 @@ static long window_ioctl_create(struct file *file, unsigned long argument)
         // Tested and stored under the one lock: two threads on one file used
         // to be able to both create, and the window one of them made was then
         // reachable from nothing and freed by nothing.
-        if (file->private_data)
+        if (context->pane)
         {
                 mutex_unlock(&desktop.lock);
                 return -EBUSY;
@@ -974,7 +975,7 @@ static long window_ioctl_create(struct file *file, unsigned long argument)
         }
 
         bytes = pane->bytes;
-        file->private_data = pane;
+        context->pane = pane;
         pane_focus(pane);
         desktop_redraw();
 
@@ -986,7 +987,9 @@ static long window_ioctl_create(struct file *file, unsigned long argument)
 
 static long window_ioctl_commit(struct file *file)
 {
-        if (!file->private_data)
+        struct device_context *context = file->private_data;
+
+        if (!context->pane)
                 return -EINVAL;
 
         mutex_lock(&desktop.lock);
@@ -1000,7 +1003,8 @@ static long window_ioctl_commit(struct file *file)
 
 static int window_mmap(struct file *file, struct vm_area_struct *vma)
 {
-        struct pane *pane = file->private_data;
+        struct device_context *context = file->private_data;
+        struct pane *pane = context->pane;
 
         if (!pane)
                 return -EINVAL;
@@ -1016,7 +1020,8 @@ static int window_mmap(struct file *file, struct vm_area_struct *vma)
 
 static void window_release(struct file *file)
 {
-        struct pane *pane = file->private_data;
+        struct device_context *context = file->private_data;
+        struct pane *pane = context->pane;
         struct pane *next = NULL;
         struct pane *other;
         _Bool refocus;
@@ -1061,7 +1066,7 @@ static void window_release(struct file *file)
 
         mutex_unlock(&desktop.lock);
 
-        file->private_data = NULL;
+        context->pane = NULL;
 }
 
 /*

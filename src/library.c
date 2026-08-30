@@ -67,7 +67,7 @@
         A .set is a second label on the same address, so there is no wrapper
         and no jump, and which names get one depends on who is linking.
 
-        233 routines (224 public, 9 local), 233 of them on all three.
+        234 routines (225 public, 9 local), 234 of them on all three.
         Raw C purity: 0 function bodies, 0 object definitions, 0 body macros, and 0 object macros (all forbidden).
 
           routine                        scope   x86_64  arm64   riscv64
@@ -221,6 +221,7 @@
           program_arguments_use          public  yes     yes     yes
           program_environment            public  yes     yes     yes
           program_environment_list       public  yes     yes     yes
+          program_initial_identity       public  yes     yes     yes
           shell_set_cursor               public  yes     yes     yes
           sleep                          public  yes     yes     yes
           socket_accept                  public  yes     yes     yes
@@ -6673,7 +6674,18 @@ __asm__(
     "2:  cbz x2, 3f\n   ldrb w6, [x0]\n   ldrb w7, [x1]\n   subs w9, w6, w7\n"
     "b.ne 4f\n   cbz w7, 3f\n   add x0, x0, #1\n"
     "add x1, x1, #1\n"
-    "sub x2, x2, #1\n   cmp x2, #32\n   b.hs 11b\n   b 2b\n"
+    "sub x2, x2, #1\n"
+    //      Back to the wide step once the bound is long enough for it again,
+    //      which is where the byte step is only ever a fence-crossing detour.
+    //      There is no wide step in a kernel build -- the whole block that
+    //      carries label 11 is compiled out above -- so this re-entry has to
+    //      go with it, or the assembler is left with a branch to a label that
+    //      was never emitted. That is what "backward ref to unknown label" is,
+    //      and it stopped the arm64 KERNEL_MODE library compiling at all.
+#ifndef KERNEL_MODE
+    "   cmp x2, #32\n   b.hs 11b\n"
+#endif
+    "   b 2b\n"
     "3:  mov w9, #0\n"
     "4:  mov w0, w9\n"
     ASM_RET
@@ -13158,11 +13170,15 @@ bipolar system_call_6(positive syscall, positive argument_1,
                       positive argument_6);
 
 extern p8 address_to program_stack_base;
+extern positive program_entry_identity;
 
 __asm__(
     ASM_BSS_OBJECT_BEGIN(program_stack_base, 8)
     ".zero 8\n"
     ASM_OBJECT_END(program_stack_base)
+    ASM_HIDDEN_BSS_OBJECT_BEGIN(program_entry_identity, 8)
+    ".zero 8\n"
+    ASM_OBJECT_END(program_entry_identity)
 );
 
 /*

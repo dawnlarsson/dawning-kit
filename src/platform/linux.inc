@@ -12,6 +12,8 @@
 #ifndef STANDARD_MODERN_C_PLATFORM_LINUX
 #define STANDARD_MODERN_C_PLATFORM_LINUX
 
+#include "spark.inc"
+
 struct linux_dirent64
 {
         p64 d_ino;
@@ -27,6 +29,7 @@ bipolar system_read_retry(positive handle, address_any data, positive length);
 bipolar system_wait4_retry(bipolar process, address_any status,
                            positive options, address_any usage);
 bipolar file_slurp(string_address path, p8 address_to into, positive capacity);
+positive program_initial_identity(void);
 
 #define LINUX_RUNTIME_TEXT_INNER(value) #value
 #define LINUX_RUNTIME_TEXT(value) LINUX_RUNTIME_TEXT_INNER(value)
@@ -166,9 +169,31 @@ __asm__(
     ASM_RET
     ASM_END(exit)
 
+    ASM_FUNC(program_initial_identity)
+    "mov program_entry_identity(%rip), %rax\n   test %rax, %rax\n"
+    "jnz .Lprogram_initial_identity_x64_done\n"
+    "mov $" LINUX_RUNTIME_TEXT(syscall(getpid)) ", %eax\n   syscall\n"
+    ".Lprogram_initial_identity_x64_done:\n"
+    ASM_RET
+    ASM_END(program_initial_identity)
+
     ASM_FUNC(_start)
     "xor %ebp, %ebp\n   mov %rsp, program_stack_base(%rip)\n"
-    "and $-16, %rsp\n   call moonwater_cpu_detect\n   call main\n"
+    "and $-16, %rsp\n"
+    /* A Spark loader supplies the already enabled CPU feature set.  Keep the
+       complete detector as the stock-kernel/ELF fallback rather than making
+       the runtime depend on Moonwater merely to start. */
+    "movabs $" LINUX_RUNTIME_TEXT(SPARK_START_MAGIC) ", %rax\n"
+    "cmp %rax, %r12\n   jne .Lstart_x64_detect\n"
+    "mov %r14, program_entry_identity(%rip)\n"
+    "test $" LINUX_RUNTIME_TEXT(SPARK_CPU_AVX2) ", %r13d\n"
+    "jz .Lstart_x64_no_avx2\n   movb $1, cpu_has_avx2(%rip)\n"
+    ".Lstart_x64_no_avx2:\n"
+    "test $" LINUX_RUNTIME_TEXT(SPARK_CPU_AVX512) ", %r13d\n"
+    "jz .Lstart_x64_ready\n   movb $1, cpu_has_avx512(%rip)\n"
+    "jmp .Lstart_x64_ready\n"
+    ".Lstart_x64_detect:\n   call moonwater_cpu_detect\n"
+    ".Lstart_x64_ready:\n   call main\n"
     "mov %eax, %edi\n   call exit\n   hlt\n"
     ASM_END(_start)
 );
@@ -273,9 +298,24 @@ __asm__(
     ASM_RET
     ASM_END(exit)
 
+    ASM_FUNC(program_initial_identity)
+    "adrp x1, program_entry_identity\n"
+    "ldr x0, [x1, :lo12:program_entry_identity]\n   cbnz x0, 1f\n"
+    "mov " SYSCALL_NUMBER_REGISTER ", #" LINUX_RUNTIME_TEXT(syscall(getpid)) "\n"
+    SYSCALL_INSTRUCTION "\n"
+    "1:\n"
+    ASM_RET
+    ASM_END(program_initial_identity)
+
     ASM_FUNC(_start)
     "mov x29, #0\n   mov x30, #0\n   mov x0, sp\n"
     "adrp x1, program_stack_base\n   str x0, [x1, :lo12:program_stack_base]\n"
+    "movz x1, #0x4152\n   movk x1, #0x5354, lsl #16\n"
+    "movk x1, #0x524b, lsl #32\n   movk x1, #0x5350, lsl #48\n"
+    "cmp x19, x1\n   b.ne .Lstart_arm64_ready\n"
+    "adrp x1, program_entry_identity\n"
+    "str x21, [x1, :lo12:program_entry_identity]\n"
+    ".Lstart_arm64_ready:\n"
     "and sp, x0, #-16\n   bl main\n"
     "bl exit\n   brk #0\n"
     ASM_END(_start)
@@ -376,6 +416,13 @@ __asm__(
     ASM_RET
     ASM_END(exit)
 
+    ASM_FUNC(program_initial_identity)
+    "lla t0, program_entry_identity\n   ld a0, 0(t0)\n"
+    "bnez a0, 1f\n   li a7, " LINUX_RUNTIME_TEXT(syscall(getpid)) "\n   ecall\n"
+    "1:\n"
+    ASM_RET
+    ASM_END(program_initial_identity)
+
     ASM_FUNC(_start)
     /* The RISC-V psABI reserves gp for __global_pointer$.  GNU ld relaxes
        accesses to nearby small globals into gp-relative loads and stores,
@@ -388,6 +435,10 @@ __asm__(
     ".option pop\n"
     "li s0, 0\n   li ra, 0\n   mv a0, sp\n"
     "lla t0, program_stack_base\n   sd a0, 0(t0)\n"
+    "li t1, " LINUX_RUNTIME_TEXT(SPARK_START_MAGIC) "\n"
+    "bne s2, t1, .Lstart_riscv64_ready\n"
+    "lla t0, program_entry_identity\n   sd s4, 0(t0)\n"
+    ".Lstart_riscv64_ready:\n"
     "andi sp, sp, -16\n   call main\n"
     "call exit\n   ebreak\n"
     ASM_END(_start)

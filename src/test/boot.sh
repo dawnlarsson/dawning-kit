@@ -82,6 +82,10 @@ echo written > /tmp/boot_probe
 rev < /tmp/boot_probe
 printf 'bytes%s\n' $(wc -c < /tmp/boot_probe)
 printf 'bootenv-%s-%s\n' "${HOME-unset}" "${TERM-unset}"
+export SPARK_CACHE=first
+/shell -c 'printf "cache-%s\n" "$SPARK_CACHE"'
+export SPARK_CACHE=second
+/shell -c 'printf "cache-%s\n" "$SPARK_CACHE"'
 ls /monitor.sh | rev
 printf 'alias-%s\n' "$(readlink /mointor.sh | rev)"
 printf 'path-%s\n' "$(readlink /bin/monitor.sh | rev)"
@@ -151,6 +155,8 @@ says 'the shell on disk'   'llehs/'
 says 'a file written'      'nettirw'
 says 'and measured'        'bytes8'
 says 'empty init environment' 'bootenv-unset-unset'
+says 'cached environment'   'cache-first'
+says 'changed environment'  'cache-second'
 says 'monitor at root'     'hs.rotinom/'
 says 'mointor alias'       'alias-hs.rotinom'
 says 'monitor linked'      'path-hs.rotinom/..'

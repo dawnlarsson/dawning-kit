@@ -203,6 +203,7 @@ static b32 probe_spawn()
                 request.envp = 0;
                 request.envp_bytes = 0;
                 request.envp_count = 0;
+                request.envp_generation = 0;
 
                 log_flush();
 

@@ -727,7 +727,11 @@ static bool stdlib_buffers_are_ours(void)
 */
 fn stdlib_program_starting(void)
 {
+#ifdef LINUX
+        stdlib_process_at_start = program_initial_identity();
+#else
         stdlib_process_at_start = stdlib_process_identity();
+#endif
 
         environ = program_environment_list();
 }
