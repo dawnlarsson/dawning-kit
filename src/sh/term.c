@@ -130,6 +130,7 @@ static positive blank_cell_word()
         return (positive)' ' | (clear_ink << 32) | (clear_paper << 40);
 }
 
+/* Erase in the colours in force, so a program can clear a coloured panel. */
 static fn cells_clear(unsigned int r, unsigned int first, unsigned int count)
 {
         if (!count)
@@ -138,18 +139,6 @@ static fn cells_clear(unsigned int r, unsigned int first, unsigned int count)
         memory_fill_u64_aligned(row_cells(r) + first, count,
                                 blank_cell_word());
         touch(r);
-}
-
-/*
-        Blanked in the colours in force, not in the ones it started in.
-
-        An erase takes the current background, which is what lets a program
-        paint a panel by setting a colour and clearing to the end of the line.
-        Filling with black instead made every such program draw a black hole.
-*/
-static fn cell_clear(unsigned int r, unsigned int c)
-{
-        cells_clear(r, c, 1);
 }
 
 /*
