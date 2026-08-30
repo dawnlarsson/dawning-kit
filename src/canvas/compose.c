@@ -308,6 +308,15 @@ static void compose_cells(struct pane *pane, const struct target *t,
         int first = max((t->clip.x1 - x) / canvas_cell_w, 0);
         int last = min((t->clip.x2 - x + canvas_cell_w - 1) / canvas_cell_w, columns);
 
+        /*
+                Frame and title damage reaches compose_pane too.  With no
+                content cell inside the clip, walking the live view and every
+                folded row can only arrive at compose_row calls that reject
+                themselves.  Stop before any ring arithmetic instead.
+        */
+        if (first_row >= last_row || first >= last)
+                return;
+
         unsigned int skip;
         unsigned int line = pane_view(pane, &skip);
         int row = 0;
@@ -406,6 +415,23 @@ static void compose_bar(struct pane *pane, const struct target *t,
                         const struct shape *shape, int x, int y)
 {
         int bx, by, bw, bh, at, span;
+        int width = BAR_WIDTH * (int)desktop.scale;
+        int height = (int)pane->rows * canvas_cell_h;
+        int left = x + pane->width - width;
+
+        /*
+                Cursor damage is ordinarily one cell nowhere near this bar.
+                pane_bar walks the whole 512-line ring, including two runtime
+                divisions a line, just to discover geometry that cannot reach
+                that damage. Reject by the bar's fixed bounding box first;
+                the expensive extent remains exact whenever any bar pixel can
+                survive the clip.
+        */
+        if (!rects_overlap(left, y, width, height,
+                           t->clip.x1, t->clip.y1,
+                           t->clip.x2 - t->clip.x1,
+                           t->clip.y2 - t->clip.y1))
+                return;
 
         if (!pane_bar(pane, &bx, &by, &bw, &bh, &at, &span))
                 return;
