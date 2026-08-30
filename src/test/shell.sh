@@ -795,6 +795,7 @@ command_answer 'command several lines' 'echo one
 echo two
 echo three'
 command_answer 'command empty'    ''
+command_answer 'command exact no-op' ':'
 command_answer 'command trailing newline' 'echo one
 '
 

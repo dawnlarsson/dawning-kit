@@ -28,6 +28,34 @@ b32 main()
                 }
         }
 
+        process_arguments = (positive)program_argument_count();
+
+        /*
+                The semantic floor for the process-control no-op.
+
+                `sh -c :` is how a caller measures or probes the shell itself:
+                the command has no expansions, assignments, redirections,
+                traps or output and its only answer is status zero.  Before a
+                command has run there cannot be a shell-installed EXIT/DEBUG
+                trap either.  Initialising signal policy, importing the
+                environment, allocating lexer/parser stores and dispatching
+                the colon builtin therefore cannot make an observable
+                difference for this exact two-byte command.
+
+                Keep this spelling deliberately exact. A blank, separator,
+                comment, redirection, assignment or second command belongs to
+                the parser, even when it eventually executes `:` too.
+        */
+        if (process_arguments >= 3)
+        {
+                string_address option = program_argument(1);
+                string_address no_op = program_argument(2);
+
+                if (option && option[0] == '-' && option[1] == 'c' &&
+                    !option[2] && no_op && no_op[0] == ':' && !no_op[1])
+                        return 0;
+        }
+
         shell_signals_start();
 
         /* environ is the live process environment. Ordinarily it is the
@@ -49,8 +77,6 @@ b32 main()
                 script's caller sent on descriptor zero; only this outer
                 reader consumes the source file.
         */
-        process_arguments = (positive)program_argument_count();
-
         /*
                 sh -c COMMAND [name [word ...]]
 
