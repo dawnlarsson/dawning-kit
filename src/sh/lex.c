@@ -98,7 +98,7 @@ static bool lex_room(positive want)
 }
 
 /*
-        The byte sets, already built in the image.
+        The byte sets, built once.
 
         blank        what separates one word from the next
         metachar     what ends a word without being part of it
@@ -121,67 +121,69 @@ static bool lex_room(positive want)
 #define LEX_ESCAPE 4
 #define LEX_STOP 5
 
-static b8 lex_class[256] = {
-        [0] = LEX_STOP,
-        ['\n'] = LEX_STOP,
-        ['#'] = LEX_STOP,
-        [' '] = LEX_BLANK,
-        ['\t'] = LEX_BLANK,
-        ['\''] = LEX_QUOTE,
-        ['"'] = LEX_QUOTE,
-        ['\\'] = LEX_ESCAPE,
-        ['|'] = LEX_OP,
-        ['&'] = LEX_OP,
-        [';'] = LEX_OP,
-        ['<'] = LEX_OP,
-        ['>'] = LEX_OP,
-        ['('] = LEX_OP,
-        [')'] = LEX_OP,
-};
-static b8 lex_blank[STRING_SET_BYTES] = {
-        [' '] = 1,
-        ['\t'] = 1,
-};
-static b8 lex_ordinary[STRING_SET_BYTES] = {
-        [1 ... STRING_SET_BYTES - 1] = 1,
-        [' '] = 0,
-        ['\t'] = 0,
-        ['\n'] = 0,
-        ['|'] = 0,
-        ['&'] = 0,
-        [';'] = 0,
-        ['<'] = 0,
-        ['>'] = 0,
-        ['('] = 0,
-        [')'] = 0,
-        ['\''] = 0,
-        ['"'] = 0,
-        ['\\'] = 0,
-        ['$'] = 0,
-        ['`'] = 0,
-};
-static b8 lex_operator[STRING_SET_BYTES] = {
-        ['|'] = 1,
-        ['&'] = 1,
-        [';'] = 1,
-        ['<'] = 1,
-        ['>'] = 1,
-        ['('] = 1,
-        [')'] = 1,
-};
+static b8 lex_class[256];
+static b8 lex_blank[STRING_SET_BYTES];
+static b8 lex_ordinary[STRING_SET_BYTES];
+static b8 lex_operator[STRING_SET_BYTES];
 // What decides nothing inside a double quote: wider than lex_ordinary,
 // because a blank means nothing in there.
-static b8 lex_in_double[STRING_SET_BYTES] = {
-        [1 ... STRING_SET_BYTES - 1] = 1,
-        ['"'] = 0,
-        ['\\'] = 0,
-        ['$'] = 0,
-        ['`'] = 0,
-};
+static b8 lex_in_double[STRING_SET_BYTES];
+static b32 lex_ready;
 
-/* These tables are compile-time facts. Keeping the old call sites as a
-   no-op documents that scanning depends on them without doing startup work. */
-#define lex_prepare() do { } while (0)
+fn lex_prepare()
+{
+        if (lex_ready)
+                return;
+
+        memory_fill(lex_blank, 0, sizeof(lex_blank));
+        memory_fill(lex_ordinary, 0, sizeof(lex_ordinary));
+        memory_fill(lex_operator, 0, sizeof(lex_operator));
+
+        string_set_add(lex_blank, " \t");
+        string_set_add(lex_operator, "|&;<>()");
+
+        /*
+                Everything a word may hold without a decision being needed.
+
+                The complement of what ends a word, begins a quote, escapes, or
+                starts an expansion -- and never the terminator, or a run would
+                walk off the end of the string.
+        */
+        memory_fill(lex_ordinary + 1, 1, STRING_SET_BYTES - 1);
+        memory_fill(lex_in_double + 1, 1, STRING_SET_BYTES - 1);
+
+        {
+                static const string_address decides = " \t\n|&;<>()'\"\\$`";
+                static const string_address in_double = "\"\\$`";
+
+                for (positive i = 0; decides[i]; i++)
+                        lex_ordinary[decides[i]] = 0;
+
+                for (positive i = 0; in_double[i]; i++)
+                        lex_in_double[in_double[i]] = 0;
+        }
+
+        // The same knowledge as the sets above, as one byte per byte value.
+        memory_fill(lex_class, LEX_ORDINARY, sizeof(lex_class));
+
+        lex_class[0] = LEX_STOP;
+        lex_class['\n'] = LEX_STOP;
+        lex_class['#'] = LEX_STOP;
+        lex_class[' '] = LEX_BLANK;
+        lex_class['\t'] = LEX_BLANK;
+        lex_class['\''] = LEX_QUOTE;
+        lex_class['"'] = LEX_QUOTE;
+        lex_class['\\'] = LEX_ESCAPE;
+
+        {
+                static const string_address ops = "|&;<>()";
+
+                for (positive i = 0; ops[i]; i++)
+                        lex_class[ops[i]] = LEX_OP;
+        }
+
+        lex_ready = true;
+}
 
 // Which operator starts here, and how long it is. Longest forms are tested
 // first, so &>> is never &> followed by > and >> is never two > tokens.
