@@ -373,6 +373,9 @@ static fn shell_words_bind(shell_words address_to list,
 
 #include "lex.c"
 #include "file.c"
+#include "storage_blkid.c"
+#include "storage_discovery.c"
+#include "storage_mount.c"
 #include "text.c"
 #include "awk.c"
 #include "tools.c"
@@ -1120,12 +1123,10 @@ bool shell_builtin(string_address arguments)
         if (command)
         {
 
-                /* Only these two old builtins still consume a rejoined line.
-                   Everyone else reads argv directly, so do not scan and copy
-                   every argument before every ordinary builtin. */
-                if (!arguments &&
-                    (command->function == shell_mount ||
-                     command->function == shell_which))
+                /* This old builtin still consumes a rejoined line.  Everyone
+                   else reads argv directly, so do not scan and copy every
+                   argument before every ordinary builtin. */
+                if (!arguments && command->function == shell_which)
                         arguments = shell_arguments();
 
                 /*

@@ -2217,8 +2217,46 @@ fn check_environment_list()
         }
 }
 
+fn check_argument_list()
+{
+        string_address address_to saved_words = program_words;
+        b32 saved_count = program_words_count;
+        p8 address_to saved_stack = program_stack_base;
+        static string_address borrowed[] = {
+            (string_address) "storage", (string_address) "one", null};
+
+        if (program_stack_base)
+        {
+                string_address address_to list = program_argument_list();
+
+                same("program_argument_list", "process stack vector",
+                     (positive)list, (positive)(program_stack_base + 8));
+                same("program_argument_list", "process stack index zero",
+                     (positive)list[0], (positive)program_argument(0));
+        }
+
+        program_arguments_use(borrowed, 2);
+        same("program_argument_list", "borrowed vector",
+             (positive)program_argument_list(), (positive)borrowed);
+        same("program_argument_list", "borrowed index one",
+             (positive)program_argument_list()[1],
+             (positive)program_argument(1));
+
+        program_arguments_own();
+        program_stack_base = null;
+        same("program_argument_list", "no vector",
+             (positive)program_argument_list(), 0);
+
+        program_stack_base = saved_stack;
+        if (saved_words)
+                program_arguments_use(saved_words, saved_count);
+        else
+                program_arguments_own();
+}
+
 fn check_environment()
 {
+        check_argument_list();
         check_environment_list();
 
         static p8 block[64][48];

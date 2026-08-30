@@ -67,7 +67,7 @@
         A .set is a second label on the same address, so there is no wrapper
         and no jump, and which names get one depends on who is linking.
 
-        234 routines (225 public, 9 local), 234 of them on all three.
+        235 routines (226 public, 9 local), 235 of them on all three.
         Raw C purity: 0 function bodies, 0 object definitions, 0 body macros, and 0 object macros (all forbidden).
 
           routine                        scope   x86_64  arm64   riscv64
@@ -217,6 +217,7 @@
           positive_to_string             public  yes     yes     yes
           program_argument               public  yes     yes     yes
           program_argument_count         public  yes     yes     yes
+          program_argument_list          public  yes     yes     yes
           program_arguments_own          public  yes     yes     yes
           program_arguments_use          public  yes     yes     yes
           program_environment            public  yes     yes     yes
@@ -13255,6 +13256,11 @@ __asm__(
     "2:  xor %eax, %eax\n"
     ASM_RET
     ASM_END(program_argument_count)
+    ASM_FUNC(program_argument_list)
+    "mov program_words(%rip), %rax\n   test %rax, %rax\n   jnz 1f\n"
+    "mov program_stack_base(%rip), %rax\n   test %rax, %rax\n   jz 1f\n   add $8, %rax\n"
+    "1:  " ASM_RET
+    ASM_END(program_argument_list)
     ASM_FUNC(program_argument)
     "test %edi, %edi\n   js 9f\n   mov program_words(%rip), %rax\n   test %rax, %rax\n"
     "jz 1f\n   cmp program_words_count(%rip), %edi\n   jge 9f\n   movslq %edi, %rdi\n"
@@ -13303,6 +13309,12 @@ __asm__(
     "2:  mov w0, wzr\n"
     ASM_RET
     ASM_END(program_argument_count)
+    ASM_FUNC(program_argument_list)
+    "adrp x0, program_words\n   ldr x0, [x0, :lo12:program_words]\n   cbnz x0, 1f\n"
+    "adrp x0, program_stack_base\n   ldr x0, [x0, :lo12:program_stack_base]\n   cbz x0, 1f\n"
+    "add x0, x0, #8\n"
+    "1:  " ASM_RET
+    ASM_END(program_argument_list)
     ASM_FUNC(program_argument)
     "tbnz w0, #31, 9f\n"
     "adrp x1, program_words\n   ldr x1, [x1, :lo12:program_words]\n   cbz x1, 1f\n   adrp x2, program_words_count\n"
@@ -13354,6 +13366,11 @@ __asm__(
     "2:  li a0, 0\n"
     ASM_RET
     ASM_END(program_argument_count)
+    ASM_FUNC(program_argument_list)
+    "lla t0, program_words\n   ld a0, 0(t0)\n   bnez a0, 1f\n"
+    "lla t0, program_stack_base\n   ld a0, 0(t0)\n   beqz a0, 1f\n   addi a0, a0, 8\n"
+    "1:  " ASM_RET
+    ASM_END(program_argument_list)
     ASM_FUNC(program_argument)
     "sext.w a0, a0\n   bltz a0, 9f\n   lla t0, program_words\n   ld t0, 0(t0)\n"
     "beqz t0, 1f\n   lla t1, program_words_count\n   lw t1, 0(t1)\n   bge a0, t1, 9f\n"
@@ -13387,6 +13404,7 @@ __asm__(
 fn program_arguments_use(string_address address_to words, b32 count);
 fn program_arguments_own();
 b32 program_argument_count();
+string_address address_to program_argument_list();
 string_address program_argument(b32 index);
 // Past argv and the null that ends it: one entry, or the vector itself.
 string_address program_environment(b32 index);

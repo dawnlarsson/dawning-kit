@@ -47,10 +47,13 @@ static positive text_arena_used;
 
 #define STATX_BASIC 0x7ff
 #define STATX_BIRTH 0x800
+#define STATX_MOUNT_ID 0x1000
 
-// The basic set stops short of the creation time, and a filesystem that does
-// not keep one says so by leaving its bit out of the mask it answers with.
-#define STATX_WANTED (STATX_BASIC | STATX_BIRTH)
+// The basic set stops short of both creation time and mount identity.  A
+// filesystem that does not keep creation time says so in the returned mask;
+// mount identity is kernel topology and is what findmnt -T and mountpoint use
+// to distinguish a bind mount from its parent.
+#define STATX_WANTED (STATX_BASIC | STATX_BIRTH | STATX_MOUNT_ID)
 
 #define MODE_FORMAT 0170000
 #define MODE_SOCKET 0140000

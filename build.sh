@@ -185,7 +185,8 @@ sensitive filesystem, and this is $(uname). Name a machine that has them with
                 #
                 # tmp, etc and root because everything expects them to be there:
                 # a redirection into /tmp is the first thing anybody tries.
-                mkdir -p fs/sys fs/proc fs/dev fs/tmp fs/etc fs/root fs/bin ||
+                mkdir -p fs/sys fs/proc fs/dev fs/tmp fs/etc fs/root \
+                        fs/bin fs/sbin fs/usr ||
                         die "filesystem setup"
 
                 make_node() {
@@ -635,6 +636,10 @@ STRNCHR:char *strnchr(const char *, __kernel_size_t, int)"
                         die "clearing the last image"
                 find fs/bin -maxdepth 1 \( -type f -o -type l \) -delete ||
                         die "clearing the last /bin image"
+                find fs/sbin -maxdepth 1 \( -type f -o -type l \) -delete ||
+                        die "clearing the last /sbin image"
+                find fs/usr -maxdepth 1 \( -type f -o -type l \) -delete ||
+                        die "clearing the last /usr image"
 
                 # Every program in the image is spark, including the one the kernel
                 # execs as /init, so no ELF is ever loaded on the boot path.
@@ -646,6 +651,8 @@ STRNCHR:char *strnchr(const char *, __kernel_size_t, int)"
                 # the root where a person looking at the initial filesystem
                 # sees it, and make its PATH spelling a link to that one copy.
                 ln -sf ../shell fs/bin/sh || die "linking /bin/sh"
+                ln -sf ../bin fs/usr/bin || die "linking /usr/bin"
+                ln -sf ../sbin fs/usr/sbin || die "linking /usr/sbin"
                 cp programs/monitor.sh fs/monitor.sh || die "installing /monitor.sh"
                 chmod 0755 fs/monitor.sh || die "making /monitor.sh executable"
                 ln -sf monitor.sh fs/mointor.sh || die "linking /mointor.sh"
@@ -666,8 +673,21 @@ STRNCHR:char *strnchr(const char *, __kernel_size_t, int)"
                         rev nl fold ls find stat du df chmod chown chgrp ln readlink \
                         basename dirname realpath mkdir rmdir cp mv rm touch \
                         sleep stty seq yes env id hostname uname ip host fetch \
+                        mount umount mountpoint blkid findmnt findfs \
                         init edit term window text pointer world; do
                         ln -sf shell "fs/$utility" || die "linking $utility"
+                done
+
+                # Conventional util-linux locations. The root spellings keep
+                # Moonwater's one-directory PATH fast; these aliases make
+                # distro and recovery scripts with absolute paths work too.
+                for utility in mount umount mountpoint findmnt; do
+                        ln -sf ../shell "fs/bin/$utility" ||
+                                die "linking /bin/$utility"
+                done
+                for utility in blkid findfs; do
+                        ln -sf ../shell "fs/sbin/$utility" ||
+                                die "linking /sbin/$utility"
                 done
 
         label KERNEL BUILD

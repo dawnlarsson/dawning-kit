@@ -43,7 +43,7 @@ TEST_TALLY="$work/tally"
 export TEST_TALLY
 : > "$TEST_TALLY"
 
-lanes="standard declare allocator error strings stdlib leaving numbers clock math format scan stream spool process signal lock verify exact known socket net slurp wait writer native probe shell expand builtin awk text tools files term edit kit boot canvas"
+lanes="standard declare allocator error strings stdlib leaving numbers clock math format scan stream spool process signal lock verify exact known socket net slurp wait writer native probe shell expand builtin awk text tools files storage term edit kit boot canvas"
 
 describe()
 {
@@ -78,6 +78,7 @@ describe()
         shell)    echo "the shell language against dash, the names it answers to, and the gaps" ;;
         text)     echo "the text utilities against the system's, listed and generated" ;;
         files)    echo "the file utilities against coreutils, by output and by effect" ;;
+        storage)  echo "mount tables and block identities against util-linux, then real namespace effects" ;;
         expand)   echo "quoting, the order the expansions happen in, and the arithmetic" ;;
         builtin)  echo "the commands the shell runs without leaving itself" ;;
         awk)      echo "awk against the one on the machine, listed and generated" ;;
@@ -145,7 +146,8 @@ freestanding()
 #       and so the only shape worth testing.
 utilities="cat awk dd diff ps grep sed cut tr sort uniq head tail wc tee rev nl fold expr cmp mktemp kill date xargs ls find
 stat du df chgrp chmod chown ln readlink basename dirname realpath mkdir rmdir cp mv
-rm touch sleep stty seq yes env id hostname uname ip host fetch"
+rm touch sleep stty seq yes env id hostname uname ip host fetch
+mount umount mountpoint blkid findmnt findfs"
 
 shell_binary=""
 farm=""
@@ -2161,6 +2163,13 @@ lane_files()
         need_shell || return 1
 
         sh src/test/files.sh "$farm"
+}
+
+lane_storage()
+{
+        need_shell || return 1
+
+        sh src/test/storage.sh "$farm" "$shell_binary"
 }
 
 lane_expand()

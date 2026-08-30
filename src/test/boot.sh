@@ -94,6 +94,10 @@ export SPARK_OWNER=parent
 ls /monitor.sh | rev
 printf 'alias-%s\n' "$(readlink /mointor.sh | rev)"
 printf 'path-%s\n' "$(readlink /bin/monitor.sh | rev)"
+printf 'mount-link-%s\n' "$(readlink /bin/mount | rev)"
+printf 'blkid-link-%s\n' "$(readlink /sbin/blkid | rev)"
+/bin/mountpoint -q / && printf 'storage-root\n'
+printf 'storage-target-%s\n' "$(/usr/bin/findmnt -n -r -o TARGET -T /)"
 mointor.sh 1 3 2> /tmp/monitor.err
 printf 'rotinom%s\n' $? | rev
 [ ! -s /tmp/monitor.err ] && printf 'naelc-rotinom\n' | rev
@@ -166,6 +170,10 @@ says 'cache process owner'  'owner-parent'
 says 'monitor at root'     'hs.rotinom/'
 says 'mointor alias'       'alias-hs.rotinom'
 says 'monitor linked'      'path-hs.rotinom/..'
+says 'mount linked'        'mount-link-llehs/..'
+says 'blkid linked'        'blkid-link-llehs/..'
+says 'root is mounted'     'storage-root'
+says 'findmnt linked'      'storage-target-/'
 says 'monitor ran'         '0monitor'
 says 'monitor was visible' 'cpu%'
 says 'monitor was clean'   'monitor-clean'

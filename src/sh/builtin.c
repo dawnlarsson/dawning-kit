@@ -1650,20 +1650,51 @@ fn shell_exec(writer write, string_address input)
 
 
 
-fn shell_mount(writer write, string_address input)
+typedef b32 (address_to storage_command_function)(
+    positive count, string_address address_to words,
+    writer output, writer diagnostic);
+
+static fn shell_storage_command(writer output,
+                                storage_command_function command)
 {
-        if (input == null)
-                return shell_diagnostic(str("mount: missing operand\n"));
+        shell_answer(command(shell_argc, shell_argv, output,
+                             shell_diagnostic));
+}
 
-        string_address destination = string_cut(input, ' ');
+fn shell_mount(writer output, string_address input)
+{
+        (void)input;
+        shell_storage_command(output, storage_mount_command);
+}
 
-        if (destination == null)
-                return shell_diagnostic(str("mount: missing destination\n"));
+fn shell_umount(writer output, string_address input)
+{
+        (void)input;
+        shell_storage_command(output, storage_umount_command);
+}
 
-        if (!system_call_4(syscall(mount), (positive)input, (positive)destination, (positive)input, MS_BIND))
-                return;
+fn shell_mountpoint(writer output, string_address input)
+{
+        (void)input;
+        shell_storage_command(output, storage_mountpoint);
+}
 
-        string_format(shell_diagnostic, "mount: Cannot mount filesystem: %s\n", input);
+fn shell_blkid(writer output, string_address input)
+{
+        (void)input;
+        shell_storage_command(output, storage_blkid_run);
+}
+
+fn shell_findmnt(writer output, string_address input)
+{
+        (void)input;
+        shell_storage_command(output, storage_findmnt);
+}
+
+fn shell_findfs(writer output, string_address input)
+{
+        (void)input;
+        shell_storage_command(output, storage_findfs_run);
 }
 
 fn shell_pwd(writer write, string_address input)
@@ -5033,6 +5064,42 @@ static positive shell_name_index_find(string_address name, address_any table,
         return count;
 }
 
+static b32 storage_program_command(storage_command_function command)
+{
+        return command((positive)program_argument_count(),
+                       program_argument_list(), log, log_error);
+}
+
+static b32 storage_program_mount(void)
+{
+        return storage_program_command(storage_mount_command);
+}
+
+static b32 storage_program_umount(void)
+{
+        return storage_program_command(storage_umount_command);
+}
+
+static b32 storage_program_mountpoint(void)
+{
+        return storage_program_command(storage_mountpoint);
+}
+
+static b32 storage_program_blkid(void)
+{
+        return storage_program_command(storage_blkid_run);
+}
+
+static b32 storage_program_findmnt(void)
+{
+        return storage_program_command(storage_findmnt);
+}
+
+static b32 storage_program_findfs(void)
+{
+        return storage_program_command(storage_findfs_run);
+}
+
 static shell_tool shell_tools[] = {
     {"awk", text_awk},
     {"cat", text_cat},
@@ -5056,6 +5123,7 @@ static shell_tool shell_tools[] = {
     {"wc", text_wc},
 
     {"basename", file_basename},
+    {"blkid", storage_program_blkid},
     {"chgrp", file_chgrp},
     {"chmod", file_chmod},
     {"chown", file_chown},
@@ -5066,6 +5134,8 @@ static shell_tool shell_tools[] = {
     {"du", file_du},
     {"env", file_env},
     {"find", file_find},
+    {"findfs", storage_program_findfs},
+    {"findmnt", storage_program_findmnt},
     {"hostname", file_hostname},
     {"ip", net_ip},
     {"host", net_host},
@@ -5076,6 +5146,8 @@ static shell_tool shell_tools[] = {
     {"ls", file_ls},
     {"mkdir", file_mkdir},
     {"mktemp", file_mktemp},
+    {"mount", storage_program_mount},
+    {"mountpoint", storage_program_mountpoint},
     {"mv", file_mv},
     {"readlink", file_readlink},
     {"realpath", file_realpath},
@@ -5087,6 +5159,7 @@ static shell_tool shell_tools[] = {
     {"stty", file_stty},
     {"touch", file_touch},
     {"uname", file_uname},
+    {"umount", storage_program_umount},
     {"xargs", file_xargs},
     {"yes", file_yes},
 
@@ -5709,6 +5782,7 @@ shell_command shell_commands[] = {
     {".", shell_dot},
     {"[", shell_test},
     {"alias", shell_alias},
+    {"blkid", shell_blkid},
     {"cd", shell_cd},
     {"clear", shell_clear},
     {"command", shell_command_builtin},
@@ -5717,10 +5791,13 @@ shell_command shell_commands[] = {
     {"exec", shell_exec},
     {"exit", shell_exit},
     {"false", shell_false},
+    {"findfs", shell_findfs},
+    {"findmnt", shell_findmnt},
     {"getopts", shell_getopts},
     {"hash", shell_hash},
     {"let", shell_let},
     {"mount", shell_mount},
+    {"mountpoint", shell_mountpoint},
     {"poweroff", shell_poweroff},
     {"printf", shell_printf},
     {"pwd", shell_pwd},
@@ -5738,6 +5815,7 @@ shell_command shell_commands[] = {
     {"true", shell_true},
     {"ulimit", shell_ulimit},
     {"umask", shell_umask},
+    {"umount", shell_umount},
     {"unalias", shell_unalias},
     {"unset", shell_unset},
     {"wait", shell_wait},
