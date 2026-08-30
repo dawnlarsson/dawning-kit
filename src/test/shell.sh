@@ -802,6 +802,12 @@ command_answer 'command newline no-op' '
 command_answer 'command exact no-op' ':'
 command_answer 'command decorated no-op' '  :  # still nothing
 '
+command_answer 'command literal true' ' true # entry floor
+'
+command_answer 'command literal false' ' false # entry floor
+'
+command_answer 'literal operand parses' 'true "$UNSET_ENTRY_OPERAND"'
+command_answer 'literal separator parses' 'false; true'
 command_answer 'colon begins a word' ':#not-a-comment'
 command_answer 'command trailing newline' 'echo one
 '

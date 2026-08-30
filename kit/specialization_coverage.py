@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Audit known-argument specialization coverage for library.c's inventory.
 
-src/compiler_memory.c replaces a call whose size the compiler already knows
-with the line of moves that size needs. Three routines have that today. This
-file is the manifest of what the other two hundred and twenty could have, so
-that the question is asked once per routine and not once per reader.
+src/compiler_memory.c replaces calls whose decisive argument the compiler
+already knows with the narrower operation that argument permits. Forty-five
+routines have that today. This file classifies the complete inventory so that
+the question is asked once per routine and not once per reader.
 
 A row says which parameter a call site might hand the compiler as a literal,
 and what that literal is worth:
@@ -96,7 +96,7 @@ def cover(category, parameter, names, note, expansion=None, evidence=None,
 # ----------------------------------------------------------------------
 #       specialized
 # ----------------------------------------------------------------------
-# The three that exist. Each is a function-like macro naming itself, so a
+# The first family. Each is a function-like macro naming itself, so a
 # folded size expands and anything else is the ordinary call.
 cover('specialized', 'size', 'memory_copy', 'memmove, overlap safe, expanded '
       'to loads before stores up to KNOWN_SIZE_MAX',
@@ -116,7 +116,7 @@ cover('specialized', 'size', 'memory_fill', 'memset, expanded up to '
 # set. gcc folds the build loop over a literal into constants: the bitmap the
 # routine assembles at run time is already there, and for a set of three the
 # probe is three compares and no memory at all.
-cover('worth_it', 'accept', 'string_span_of_set string_first_of_set',
+cover('specialized', 'accept', 'string_span_of_set',
       'Measured, and the win is tiered by how many members the literal has. '
       'One to three members expand to a compare chain and win everywhere '
       'timed: 25% of the routine on an empty run, 39% at eight bytes, 69% at '
@@ -127,7 +127,11 @@ cover('worth_it', 'accept', 'string_span_of_set string_first_of_set',
       'literal, is NOT a win at any run length measured (87% empty, 103-114% '
       'after) and is not proposed: it does the same probe the routine does '
       'and only saves the build',
-      expansion='span_set_known')
+      expansion='set_known_table', evidence='src/test/exact_set.c')
+cover('specialized', 'accept', 'string_first_of_set',
+      'Measured with string_span_of_set: one to three literal members become '
+      'a compare chain, and short larger sets become a register mask',
+      expansion='first_of_set_known', evidence='src/test/exact_set.c')
 cover('specialized', 'reject', 'string_span_without_set',
       'Measured with the pair above and tiered the same way, with the '
       'terminator put into the stopping set so the end of the source stops '
@@ -168,10 +172,16 @@ cover('specialized', 'size', 'memory_compare',
 # ----------------------------------------------------------------------
 #       worth_it -- expected, from the shape of the body
 # ----------------------------------------------------------------------
-cover('worth_it', 'size', 'memory_common_prefix',
-      'the same word walk as memory_compare with a different answer; expected '
-      'to track its table and to want the same KNOWN_COMPARE_MAX rather than '
-      'KNOWN_SIZE_MAX', expansion='compare_known', evidence=None)
+cover('specialized', 'size', 'memory_common_prefix',
+      'Measured. The bounded word walk returns the first differing byte '
+      'directly. Equal-span traffic wins through twenty bytes on native '
+      'x86-64 and under the ARM64/RV64 instruction-set runners. Emulated RV64 '
+      'is the first reversal: 95% of the routine at twenty and 115% at '
+      'twenty-one, so KNOWN_PREFIX_MAX is conservatively twenty rather than '
+      'inheriting the wider memcmp cutoff. Mismatch positions are guarded for '
+      'correctness but are not claimed as native floor measurements',
+      expansion='common_prefix_known',
+      evidence='src/test/exact_prefix.c')
 
 cover('specialized', 'size', 'memory_compare_ascii_case',
       'Measured at caller-shaped protocol-token lengths. The straight folded '
@@ -204,19 +214,36 @@ cover('worth_it', 'needle', 'string_search',
       'the length no longer measured at run time',
       expansion='find_known', evidence=None)
 
-cover('worth_it', 'base', 'positive_into_base string_digits_base_max',
+cover('specialized', 'base', 'positive_into_base',
+      'base ten is positive_into and base sixteen is a shift and a nibble '
+      'table; the general path divides by a register',
+      expansion='into_base_known', evidence='src/test/exact_base.c')
+cover('worth_it', 'base', 'string_digits_base_max',
       'base ten is positive_into and base sixteen is a shift and a nibble '
       'table; the general path divides by a register',
       expansion='into_base_known', evidence=None)
-cover('worth_it', 'base', 'string_to_number string_to_number_unsigned',
+cover('specialized', 'base', 'string_to_number string_to_number_unsigned',
       'base ten and sixteen are the two a caller ever writes down, and each '
       'drops the general digit-value path and the base range check',
-      expansion='to_number_known', evidence=None)
+      expansion='number_known', evidence='src/test/exact_base.c')
 
+cover('specialized', 'bound', 'string_length_max',
+      'Measured literal bounds become a straight bounded word/byte scan',
+      expansion='length_max_known', evidence='src/test/bounded.c')
+cover('specialized', 'bound', 'string_compare_max',
+      'Measured literal bounds become a straight bounded word/byte compare',
+      expansion='compare_max_known', evidence='src/test/bounded.c')
+cover('specialized', 'bound', 'string_append_max',
+      'Measured literal bounds reuse the bounded length and copy expansion',
+      expansion='append_max_known', evidence='src/test/bounded.c')
+cover('specialized', 'bound', 'string_copy_max_end',
+      'Measured literal bounds copy the short known pair directly',
+      expansion='copy_max_end_known', evidence='src/test/bounded.c')
+cover('specialized', 'bound', 'string_copy_max_endptr',
+      'Measured literal bounds copy the short known pair directly',
+      expansion='copy_max_endptr_known', evidence='src/test/bounded.c')
 cover('worth_it', 'bound', '''
-string_length_max string_compare_max string_compare_folded_max
-string_first_of_max string_span_max string_append_max string_copy_max_end
-string_copy_max_endptr
+string_compare_folded_max string_first_of_max string_span_max
 ''', 'a literal bound under about thirty two turns a bounded walk into one or '
      'two word loads and a SWAR test; expected to track memory_compare\'s '
      'measured table, since it is the same shape of body',
@@ -227,10 +254,22 @@ cover('worth_it', 'length', 'string_copy_max',
       'exist; the padding is what makes this one worth more than the rest of '
       'the bounded family', expansion='copy_max_known', evidence=None)
 
+cover('specialized', 'size', 'memory_first_of memory_last_of',
+      'Measured short literal spans skip the width dispatch and tail '
+      'arithmetic', expansion={'memory_first_of': 'first_of_known',
+                               'memory_last_of': 'last_of_known'},
+      evidence='src/test/exact_scan.c')
+cover('specialized', 'size', 'memory_copy_until',
+      'Measured short literal spans expand the stop scan and bounded copy',
+      expansion='copy_until_known', evidence='src/test/exact_family.c')
+cover('specialized', 'source', 'string_copy_end',
+      'A literal source has a folded length; its bytes and terminator use the '
+      'known-size copy and the answer is the terminator address',
+      expansion='copy_end_known', evidence='src/test/exact_family.c')
 cover('worth_it', 'size', '''
-memory_first_of memory_first_of_ascii_case memory_last_of memory_span_byte
-memory_count memory_count_words memory_hash_33 memory_translate
-memory_to_lower_ascii memory_to_upper_ascii memory_reverse memory_copy_until
+memory_first_of_ascii_case memory_span_byte memory_count memory_count_words
+memory_hash_33 memory_translate memory_to_lower_ascii memory_to_upper_ascii
+memory_reverse
 ''', 'a literal size under a block skips the width dispatch and the tail '
      'arithmetic that is most of the work there; expected to win under '
      'thirty two and to be level by a block, unmeasured',
@@ -258,16 +297,22 @@ cover('worth_it', 'which', 'byte_class_holds',
 # ----------------------------------------------------------------------
 #       folds_already
 # ----------------------------------------------------------------------
+cover('specialized', 'value', '''
+bits_counted bits_first_set bits_first_set_wide bits_leading_zeros
+bits_trailing_zeros byte_is_alnum byte_is_alpha byte_is_ascii byte_is_blank
+byte_is_control byte_is_digit byte_is_graphic byte_is_hexadecimal byte_is_lower
+byte_is_printable byte_is_punctuation byte_is_space byte_is_upper byte_to_ascii
+byte_to_lower byte_to_upper
+''', 'A literal value expands through the shared KNOWN_SINGLE shape into the '
+     'branchless range test or hardware bit instruction',
+      expansion='KNOWN_SINGLE', evidence='src/test/single.c')
+
 # Arithmetic leaves. Each body is between one and ten instructions, which is
 # what the call sequence that reaches it costs, so expanding one replaces a
 # call with the instructions the call was going to run anyway.
 cover('folds_already', 'value', '''
-absolute absolute_whole absolute_wide bits_counted bits_first_set
-bits_first_set_wide bits_leading_zeros bits_trailing_zeros byte_is_alnum
-byte_is_alpha byte_is_ascii byte_is_blank byte_is_control byte_is_digit
-byte_is_graphic byte_is_hexadecimal byte_is_lower byte_is_printable
-byte_is_punctuation byte_is_space byte_is_upper byte_to_ascii byte_to_lower
-byte_to_upper bytes_reverse_16 bytes_reverse_32 decimal_ceiling decimal_floor
+absolute absolute_whole absolute_wide bytes_reverse_16 bytes_reverse_32
+decimal_ceiling decimal_floor
 decimal_nearest decimal_rounded decimal_truncated narrow_absolute
 narrow_ceiling narrow_floor narrow_rounded narrow_square_root narrow_truncated
 square_root
@@ -322,7 +367,7 @@ string_to_host
 ''', 'a literal string would fold the whole answer, and no caller parses a '
      'literal; the routines exist for text that arrived at run time')
 cover('folds_already', 'source', '''
-string_length string_compare string_copy string_append string_copy_end
+string_length string_compare string_copy string_append
 string_first_of string_first_of_or_end string_last_of string_last_of_or_end
 string_compare_folded string_digits
 string_digits_exact string_bipolar string_span string_lex_word
@@ -349,6 +394,10 @@ cover('folds_already', 'x', 'shell_set_cursor',
 cover('folds_already', 'size', 'memory memory_free',
       'the size is a literal often enough, and the work is an mmap or an '
       'munmap: nothing on this side of the trap gets shorter')
+cover('folds_already', 'count', 'memory_fill_u32 memory_fill_u64_aligned',
+      'the count is a runtime row or block length at every caller; when it is '
+      'small the assembly routine already selects its scalar tail, and when '
+      'it is large expanding stores would only duplicate its vector loop')
 cover('folds_already', 'want', 'memory_growth memory_reserve',
       'growth policy arithmetic, a handful of instructions with an overflow '
       'check that a literal does not remove')
@@ -412,7 +461,7 @@ cover('folds_already', 'ascii_case', 'memory_search_prepare',
 #       nothing_to_fold
 # ----------------------------------------------------------------------
 cover('nothing_to_fold', None, '''
-_start moonwater_cpu_detect get_cpu_time term_size working_directory_get
+_start moonwater_cpu_detect program_initial_identity get_cpu_time term_size working_directory_get
 working_directory_set program_argument_count program_arguments_own
 program_environment_list log_failed log_failure_reset log_flush sleep buffered_flush
 string_hash_33_length
@@ -505,6 +554,24 @@ def validate():
     declarations = load_declarations()
     specializers = COMPILER_MEMORY.read_text(encoding='utf-8', errors='replace')
     cache = {}
+
+    # A public routine spelled as a function-like macro in the compiler
+    # umbrella is a shipped call-site specializer. Keep this structural fact
+    # tied to the manifest: the old check only proved that a row's helper
+    # existed, so thirty five live macros remained labelled as future work
+    # without failing the audit.
+    macro_specialized = set(re.findall(
+        r'^#define\s+([a-z_][a-z_0-9]*)\s*\(', specializers, re.MULTILINE)) & inventory
+    manifested_specialized = {
+        row.routine for row in ROWS if row.category == 'specialized'
+    }
+    if macro_specialized != manifested_specialized:
+        if macro_specialized - manifested_specialized:
+            errors.append('live specializers not labelled specialized: ' +
+                          ', '.join(sorted(macro_specialized - manifested_specialized)))
+        if manifested_specialized - macro_specialized:
+            errors.append('specialized rows without public macros: ' +
+                          ', '.join(sorted(manifested_specialized - macro_specialized)))
 
     for row in ROWS:
         if row.category not in CATEGORY_DESCRIPTION:

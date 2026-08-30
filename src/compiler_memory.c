@@ -1031,6 +1031,15 @@ static inline INLINE string_address append_max_known(string_address destination,
 #endif
 
 /*
+        Common-prefix expansion turns over first on the RV64 floor: it is
+        still 95% of the routine at twenty equal bytes and 115% at twenty
+        one.  x86-64 hardware and the ARM64 runner both remain below the
+        routine at twenty, so this is deliberately one shared conservative
+        cutoff rather than architecture policy hidden in a call site.
+*/
+#define KNOWN_PREFIX_MAX 20
+
+/*
         These read only inside the caller's bound. Every load lies within
         [block, block + size), the last word of a length that is not a
         multiple of eight overlapping the one before it rather than reaching
@@ -1249,6 +1258,89 @@ static inline INLINE b32 compare_known(const address_any first,
                         return (b32)left[at] - (b32)right[at];
 
         return 0;
+}
+
+/*
+        The length of the common prefix at a size the compiler folded.
+
+        This is compare_known's exact bounded word walk with the useful part
+        of its mismatch answer kept: the byte position rather than the byte
+        difference.  A partial final word begins at size - width and overlaps
+        only bytes an earlier word has already proved equal, so adding the
+        first differing byte inside it still gives the first difference in
+        the complete span without reading outside that span.
+*/
+static inline INLINE positive common_prefix_known(const address_any first,
+                                                   const address_any second,
+                                                   positive size)
+{
+        const p8 address_to left = (const p8 address_to)first;
+        const p8 address_to right = (const p8 address_to)second;
+        positive at = 0;
+
+#if KNOWN_SCAN_WORDS
+        if (size >= 8) {
+                KNOWN_STRAIGHT
+                while (at + 8 <= size) {
+                        p64 one = known_word(left + at, 8);
+                        p64 two = known_word(right + at, 8);
+
+                        if (one != two)
+                                return at + (known_lowest_byte(one ^ two) >> 3);
+                        at += 8;
+                }
+
+                if (at != size) {
+                        p64 one = known_word(left + size - 8, 8);
+                        p64 two = known_word(right + size - 8, 8);
+
+                        if (one != two)
+                                return size - 8 +
+                                       (known_lowest_byte(one ^ two) >> 3);
+                }
+
+                return size;
+        }
+
+        if (size >= 4) {
+                p64 one = known_word(left, 4);
+                p64 two = known_word(right, 4);
+
+                if (one != two)
+                        return known_lowest_byte(one ^ two) >> 3;
+                if (size == 4)
+                        return size;
+                one = known_word(left + size - 4, 4);
+                two = known_word(right + size - 4, 4);
+                if (one != two)
+                        return size - 4 +
+                               (known_lowest_byte(one ^ two) >> 3);
+                return size;
+        }
+
+        if (size >= 2) {
+                p64 one = known_word(left, 2);
+                p64 two = known_word(right, 2);
+
+                if (one != two)
+                        return known_lowest_byte(one ^ two) >> 3;
+                if (size == 2)
+                        return size;
+                one = known_word(left + size - 2, 2);
+                two = known_word(right + size - 2, 2);
+                if (one != two)
+                        return size - 2 +
+                               (known_lowest_byte(one ^ two) >> 3);
+                return size;
+        }
+#endif
+
+        KNOWN_STRAIGHT
+        for (; at < size; at++)
+                if (left[at] != right[at])
+                        return at;
+
+        return size;
 }
 
 /*
@@ -2276,6 +2368,11 @@ static inline INLINE address_any copy_until_known(address_any destination,
         (__builtin_constant_p(size) && (positive)(size) <= KNOWN_COMPARE_MAX  \
                  ? compare_known((first), (second), (size))                   \
                  : memory_compare((first), (second), (size)))
+
+#define memory_common_prefix(first, second, size)                             \
+        (__builtin_constant_p(size) && (positive)(size) <= KNOWN_PREFIX_MAX   \
+                 ? common_prefix_known((first), (second), (size))             \
+                 : memory_common_prefix((first), (second), (size)))
 
 #define memory_compare_ascii_case(first, second, size)                        \
         (__builtin_constant_p(size) &&                                        \

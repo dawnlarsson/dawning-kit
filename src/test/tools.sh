@@ -710,6 +710,23 @@ while [ "$i" -lt 2055 ]; do
 done
 compare_diff 'directory beyond old ceiling' "$work/many1" "$work/many2"
 
+# A recursive walk must release each completed file's matcher workspace. The
+# two base files deliberately have different inodes so the same-file shortcut
+# cannot hide the leak; hard links make a hundred 1 MiB pairs without storing
+# two hundred copies. Retaining every pair used to exhaust the 192 MiB arena
+# near the end and turn an identical-tree answer into status 2.
+mkdir -p "$work/reclaim1" "$work/reclaim2"
+head -c 1048576 /dev/zero > "$work/reclaim-left"
+cp "$work/reclaim-left" "$work/reclaim-right"
+i=0
+while [ "$i" -lt 100 ]; do
+        ln "$work/reclaim-left" "$work/reclaim1/n$i"
+        ln "$work/reclaim-right" "$work/reclaim2/n$i"
+        i=$((i + 1))
+done
+compare_diff 'recursive workspaces reclaimed' -r \
+        "$work/reclaim1" "$work/reclaim2"
+
 #
 #       ps
 #

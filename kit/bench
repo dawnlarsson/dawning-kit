@@ -34,6 +34,7 @@ reverse) source_file=kit/bench_reverse.c ;;
 writer-field) source_file=kit/bench_writer_field.c ;;
 writer-text) source_file=kit/bench_writer_text.c ;;
 text-hot) source_file=kit/bench_text_hot.c ;;
+prefix-known) source_file=kit/bench_prefix_known.c ;;
 translate) source_file=kit/bench_translate.c ;;
 ascii-case) source_file=kit/bench_ascii_case.c ;;
 ascii-case-fold) source_file=kit/bench_ascii_case_fold.c ;;

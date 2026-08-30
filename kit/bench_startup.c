@@ -14,6 +14,8 @@ static startup_void_call volatile startup_cpu_call = moonwater_cpu_detect;
 static startup_void_call volatile startup_begin_call = stdlib_program_starting;
 static startup_identity_call volatile startup_identity =
         stdlib_process_identity;
+static startup_identity_call volatile startup_initial_identity =
+        program_initial_identity;
 static startup_environment_call volatile startup_environment =
         program_environment_list;
 
@@ -62,6 +64,12 @@ static fn startup_identity_work()
 {
         for (positive i = 0; i < STARTUP_ROUNDS; i++)
                 startup_sink += startup_identity();
+}
+
+static fn startup_initial_identity_work()
+{
+        for (positive i = 0; i < STARTUP_ROUNDS; i++)
+                startup_sink += startup_initial_identity();
 }
 
 /* Exact environment half of stdlib_program_starting, without the PID trap. */
@@ -122,6 +130,8 @@ static startup_work startup_named(string_address name)
                 return startup_cpu_floor_work;
         if (string_compare(name, (string_address)"identity") == 0)
                 return startup_identity_work;
+        if (string_compare(name, (string_address)"initial-identity") == 0)
+                return startup_initial_identity_work;
         if (string_compare(name, (string_address)"environment") == 0)
                 return startup_environment_work;
         if (string_compare(name, (string_address)"begin") == 0)
@@ -150,6 +160,8 @@ b32 main(void)
                        startup_cpu_work);
         startup_report((string_address)"process identity syscall",
                        startup_identity_work);
+        startup_report((string_address)"loader identity handoff",
+                       startup_initial_identity_work);
         startup_report((string_address)"environment publication floor",
                        startup_environment_work);
         startup_report((string_address)"stdlib startup", startup_begin_work);

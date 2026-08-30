@@ -186,15 +186,19 @@ __asm__(
     "movabs $" LINUX_RUNTIME_TEXT(SPARK_START_MAGIC) ", %rax\n"
     "cmp %rax, %r12\n   jne .Lstart_x64_detect\n"
     "mov %r14, program_entry_identity(%rip)\n"
-    "test $" LINUX_RUNTIME_TEXT(SPARK_CPU_AVX2) ", %r13d\n"
-    "jz .Lstart_x64_no_avx2\n   movb $1, cpu_has_avx2(%rip)\n"
-    ".Lstart_x64_no_avx2:\n"
-    "test $" LINUX_RUNTIME_TEXT(SPARK_CPU_AVX512) ", %r13d\n"
-    "jz .Lstart_x64_ready\n   movb $1, cpu_has_avx512(%rip)\n"
-    "jmp .Lstart_x64_ready\n"
-    ".Lstart_x64_detect:\n   call moonwater_cpu_detect\n"
+    /* The private feature word carries one already-normalised Boolean byte
+       for each public runtime flag.  Publishing those bytes directly is the
+       hardware floor: two stores and the shift between them, with no policy
+       branch left for userspace to rediscover. */
+    "mov %r13b, cpu_has_avx2(%rip)\n   shr $8, %r13\n"
+    "mov %r13b, cpu_has_avx512(%rip)\n"
     ".Lstart_x64_ready:\n   call main\n"
     "mov %eax, %edi\n   call exit\n   hlt\n"
+    /* Put the compatibility detector behind the non-returning exit path.
+       Spark now falls straight into main; an ordinary ELF pays one jump after
+       the much more expensive CPUID/XGETBV fallback. */
+    ".Lstart_x64_detect:\n   call moonwater_cpu_detect\n"
+    "jmp .Lstart_x64_ready\n"
     ASM_END(_start)
 );
 #elif ARM64

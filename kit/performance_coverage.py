@@ -89,6 +89,11 @@ cover('direct_benchmark', 'kit/bench_human_nearest.c', '''
 positive_into_human_nearest_string
 ''', 'paired former-C/assembly timing for decimal and binary forms')
 
+cover('direct_benchmark', 'kit/bench_startup.c', '''
+moonwater_cpu_detect program_environment_list program_initial_identity
+''', 'isolated runtime-entry components, including the Spark loader identity '
+     'handoff and the stock-kernel fallback')
+
 cover('direct_benchmark', 'kit/bench_paths.c', '''
 path_head_copy path_join path_tail_copy
 ''', 'paired former-C/assembly timing over short, nested, and long paths')
@@ -103,8 +108,9 @@ string_to_field writer_field
 cover('direct_benchmark', 'kit/bench_writer_text.c', '''
 buffered_flush buffered_reserve buffered_write buffered_write_byte buffered_write_deferred_equal log
 ''', 'paired former-C/assembly timing over buffered and direct output shapes')
-cover('direct_benchmark', 'kit/bench_text_hot.c', 'memory_common_prefix',
-      'paired scalar/assembly timing over equal and late-difference text spans')
+cover('direct_benchmark', 'kit/bench_prefix_known.c', 'memory_common_prefix',
+      'literal-size expansion against the out-of-line hardware routine on '
+      'equal spans: native x86-64 plus ARM64/RV64 instruction-set runners')
 cover('direct_benchmark', 'kit/bench_compare_max.c', 'string_compare_max',
       'dynamic-bound first-mismatch semantic floor and equal/late traffic proxies')
 cover('direct_benchmark', 'kit/bench_string_copy.c', 'string_copy',
@@ -212,7 +218,7 @@ byte_class_index decimal_to_string fast_sin file_close file_get_status
 file_load file_new file_read file_valid file_write memory memory_copy_end
 memory_copy_apart_end memory_free memory_search path_basename positive_digits
 positive_into_string positive_to_base_field program_arguments_own
-program_arguments_use program_environment program_environment_list
+program_arguments_use program_environment
 string_append string_bipolar string_copy_max
 string_copy_max_end string_cut string_digits string_digits_exact
 string_digits_max string_find string_first_of_max string_first_of_or_end
@@ -244,12 +250,6 @@ log_direct log_failed log_failure_reset log_flush
 cover('correctness_only', 'src/test/probe.c', '''
 log_error program_argument program_argument_count term_size
 ''', 'focused runtime/probe behavior checks; no isolated timing')
-cover('correctness_only', 'src/test/leaving.c', 'program_initial_identity',
-      'the identity a process records at its first line, which the exit flush '
-      'compares against so a forked child does not write its parent\'s buffer; '
-      'exercised by the fork cases there and by nothing that could time it')
-cover('correctness_only', 'src/test/exact.c', 'moonwater_cpu_detect',
-      'feature dispatch exercised by exact-size correctness tiers')
 cover('correctness_only', 'src/test/wait_retry.c', '''
 system_read_retry system_wait4_retry system_write_all wait_status_code
 ''', 'focused retry/status correctness and signal-interruption checks')

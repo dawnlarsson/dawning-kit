@@ -1749,10 +1749,18 @@ static bool file_take(file_taking address_to taking)
 */
 string_address env_get(const_string name);
 string_address address_to shell_environment();
+bool shell_environment_is_initialized();
 
 static string_address address_to file_environment_all()
 {
         string_address address_to shell = shell_environment();
+
+        /* Once the shell owns export state, even an intentionally empty
+           vector is authoritative and allocation failure must stay visible.
+           Before shell startup, farm-linked utilities still use the process
+           vector directly. */
+        if (shell_environment_is_initialized())
+                return shell;
 
         if (shell && shell[0])
                 return shell;
@@ -2092,6 +2100,8 @@ typedef struct
 } ls_entry;
 
 static ls_entry ls_entries[LS_MAX_ENTRIES];
+static positive ls_sorted[LS_MAX_ENTRIES];
+static positive ls_sort_spare[LS_MAX_ENTRIES];
 static positive ls_count;
 static p8 ls_arena[LS_ARENA];
 static positive ls_used;
@@ -2190,32 +2200,61 @@ static bipolar ls_order(ls_entry address_to left, ls_entry address_to right)
         return string_compare(ls_arena + left->name, ls_arena + right->name);
 }
 
-// Shell sort with Ciura's gaps: no recursion, no second array, and a
-// directory of any size this program will hold sorts in well under the
-// quadratic time an insertion sort would take on it.
+/* Bottom-up merge sort keeps comparison count at n log n on the full 8192
+   entry surface. Only eight-byte indexes move: the old Shell sort moved whole
+   ls_entry records repeatedly and still did superlinear extra comparisons on
+   reverse/random directories. BSS carries the two small index arrays without
+   adding image bytes or startup writes; they are touched only when ls sorts. */
 static fn ls_sort()
 {
-        positive gaps[8] = {701, 301, 132, 57, 23, 10, 4, 1};
+        for (positive i = 0; i < ls_count; i++)
+                ls_sorted[i] = i;
 
-        for (positive g = 0; g < 8; g++)
+        if (ls_count < 2)
+                return;
+
+        positive address_to from = ls_sorted;
+        positive address_to into = ls_sort_spare;
+
+        for (positive width = 1; width < ls_count;)
         {
-                positive gap = gaps[g];
-
-                for (positive i = gap; i < ls_count; i++)
+                for (positive base = 0; base < ls_count; base += width * 2)
                 {
-                        ls_entry held = ls_entries[i];
-                        positive j = i;
+                        positive middle = min(base + width, ls_count);
+                        positive stop = min(middle + width, ls_count);
+                        positive left = base;
+                        positive right = middle;
+                        positive out = base;
 
-                        while (j >= gap && ls_order(address_of ls_entries[j - gap],
-                                                    address_of held) > 0)
-                        {
-                                ls_entries[j] = ls_entries[j - gap];
-                                j -= gap;
-                        }
+                        while (left < middle && right < stop)
+                                into[out++] = ls_order(ls_entries + from[left],
+                                                       ls_entries + from[right]) <= 0
+                                                  ? from[left++]
+                                                  : from[right++];
 
-                        ls_entries[j] = held;
+                        positive tail = left < middle ? middle - left
+                                                       : stop - right;
+                        positive address_to rest = left < middle ? from + left
+                                                                  : from + right;
+
+                        if (tail)
+                                memory_copy_apart(into + out, rest,
+                                                  tail * sizeof(positive));
                 }
+
+                positive address_to swap = from;
+                from = into;
+                into = swap;
+
+                if (width > ls_count / 2)
+                        break;
+
+                width *= 2;
         }
+
+        if (from != ls_sorted)
+                memory_copy_apart(ls_sorted, from,
+                                  ls_count * sizeof(positive));
 }
 
 static fn ls_size_field(p64 value)
@@ -2571,7 +2610,7 @@ static fn ls_print(string_address directory)
         for (positive k = 0; k < ls_count; k++)
         {
                 positive i = ls_reversed ? ls_count - 1 - k : k;
-                ls_entry address_to entry = address_of ls_entries[i];
+                ls_entry address_to entry = address_of ls_entries[ls_sorted[i]];
                 string_address name = ls_arena + entry->name;
 
                 if (ls_inode)
@@ -2706,7 +2745,7 @@ static fn ls_below(string_address path, positive depth)
         for (positive k = 0; k < ls_count; k++)
         {
                 positive i = ls_reversed ? ls_count - 1 - k : k;
-                ls_entry address_to entry = address_of ls_entries[i];
+                ls_entry address_to entry = address_of ls_entries[ls_sorted[i]];
 
                 if ((entry->mode & MODE_FORMAT) != MODE_DIRECTORY)
                         continue;

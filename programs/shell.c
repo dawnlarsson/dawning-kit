@@ -8,13 +8,16 @@
         Comments are only recognised after blanks/newlines because reaching
         this routine already means no word has begun.  `:#text` is therefore
         a command name and is deliberately rejected, while `: # text` is the
-        no-op followed by a comment.  Only one colon command is accepted;
-        separators and further commands belong to the real parser even when
-        their eventual combined status would also be zero.
+        no-op followed by a comment.  Only one literal colon, true or false
+        command is accepted; separators, operands and further commands belong
+        to the real parser even when their eventual combined status would be
+        the same.
 */
-static bool shell_command_is_no_op(string_address command)
+static bool shell_command_literal_status(string_address command,
+                                         b32 address_to status)
 {
-        bool colon = false;
+        bool command_seen = false;
+        b32 answer = 0;
         string_address step = command;
 
         if (!step)
@@ -33,14 +36,42 @@ static bool shell_command_is_no_op(string_address command)
                 }
 
                 if (!*step)
+                {
+                        address_to status = answer;
                         return true;
+                }
 
-                if (!colon && *step == ':' &&
+                if (!command_seen && *step == ':' &&
                     (!step[1] || step[1] == ' ' || step[1] == '\t' ||
                      step[1] == '\n'))
                 {
-                        colon = true;
+                        command_seen = true;
                         step++;
+                        continue;
+                }
+
+                /* Exact literal true/false have no expansion, assignment,
+                   redirection or inherited state to observe.  They can take
+                   the same entry floor as colon; operands deliberately fall
+                   through because expanding one may have side effects. */
+                if (!command_seen && step[0] == 't' && step[1] == 'r' &&
+                    step[2] == 'u' && step[3] == 'e' &&
+                    (!step[4] || step[4] == ' ' || step[4] == '\t' ||
+                     step[4] == '\n'))
+                {
+                        command_seen = true;
+                        step += 4;
+                        continue;
+                }
+
+                if (!command_seen && step[0] == 'f' && step[1] == 'a' &&
+                    step[2] == 'l' && step[3] == 's' && step[4] == 'e' &&
+                    (!step[5] || step[5] == ' ' || step[5] == '\t' ||
+                     step[5] == '\n'))
+                {
+                        command_seen = true;
+                        answer = 1;
+                        step += 5;
                         continue;
                 }
 
@@ -91,8 +122,13 @@ b32 main()
            treated as parser setup. */
         shell_signals_start();
 
-        if (shell_command_is_no_op(command))
-                return 0;
+        {
+                b32 literal_status = 0;
+
+                if (shell_command_literal_status(command,
+                                                 address_of literal_status))
+                        return literal_status;
+        }
 
         /* environ is the live process environment. Ordinarily it is the
            kernel vector published by the startup shim; clone-and-reentry can
@@ -318,15 +354,28 @@ b32 main()
 
                 while (at < total)
                 {
-                        positive stop = at;
+                        positive left = total - at;
+                        p8 address_to newline = null;
+                        positive stop;
 
-                        while (stop < total && shell_buffer[stop] != '\n')
-                                stop++;
+                        /* A function call cannot beat one or two byte
+                           compares.  Peel the blank/colon-sized lines, then
+                           hand every longer scan to the architecture floor. */
+                        if (shell_buffer[at] == '\n')
+                                newline = shell_buffer + at;
+                        else if (left > 1 && shell_buffer[at + 1] == '\n')
+                                newline = shell_buffer + at + 1;
+
+                        if (!newline && left > 2)
+                                newline = (p8 address_to)memory_first_of(
+                                    shell_buffer + at + 2, '\n', left - 2);
 
                         // No newline yet: keep it for the next read rather than
                         // running half a command.
-                        if (stop == total)
+                        if (!newline)
                                 break;
+
+                        stop = (positive)(newline - shell_buffer);
 
                         shell_buffer[stop] = end;
 

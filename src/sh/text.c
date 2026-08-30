@@ -143,6 +143,17 @@ static positive text_arena_used;
 
 static address_any text_arena_take(positive bytes)
 {
+        /* Keep both the alignment addition and the remaining-room test from
+           wrapping. Most callers are bounded before they arrive here, but
+           this is the allocator boundary: a missed product check must fail
+           here rather than turn a large request into a small pointer inside
+           the arena and let the caller write past it. */
+        if (bytes > TEXT_ARENA_BYTES || bytes > positive_max - 15)
+        {
+                text_error(null, "input too large");
+                return null;
+        }
+
         bytes = (bytes + 15) & ~(positive)15;
 
         if (!text_arena)
@@ -160,7 +171,8 @@ static address_any text_arena_take(positive bytes)
                 text_arena_used = 0;
         }
 
-        if (text_arena_used + bytes > TEXT_ARENA_BYTES)
+        if (text_arena_used > TEXT_ARENA_BYTES ||
+            bytes > TEXT_ARENA_BYTES - text_arena_used)
         {
                 text_error(null, "input too large");
                 return null;

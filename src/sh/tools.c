@@ -2593,11 +2593,19 @@ static bool diff_names_sort(diff_names address_to names)
                                                   ? from[left++]
                                                   : from[right++];
 
-                        while (left < middle)
-                                into[out++] = from[left++];
+                        /* Once either run is exhausted the other is already
+                           ordered. Hand the whole pointer tail to the bulk
+                           floor instead of paying one scalar load/store and
+                           one taken branch per name. */
+                        positive tail = left < middle ? middle - left
+                                                       : stop - right;
+                        string_address address_to rest = left < middle
+                                                             ? from + left
+                                                             : from + right;
 
-                        while (right < stop)
-                                into[out++] = from[right++];
+                        if (tail)
+                                memory_copy_apart(into + out, rest,
+                                                  tail * sizeof(string_address));
                 }
 
                 string_address address_to swapped = from;
@@ -2699,6 +2707,12 @@ static b32 diff_directories(string_address left, string_address right, positive 
 
         while (i < names[0].count || j < names[1].count)
         {
+                /* The two gathered name tables have to survive the whole
+                   directory, but paths and file-diff workspaces belong only
+                   to this child. Rewind them after the child returns so a
+                   wide tree costs its maximum file, not the sum of every
+                   file visited before it. */
+                positive child_mark = text_arena_used;
                 b32 order = i >= names[0].count
                                 ? 1
                                 : j >= names[1].count
@@ -2722,6 +2736,8 @@ static b32 diff_directories(string_address left, string_address right, positive 
 
                                 if (worst < one)
                                         worst = one;
+
+                                text_arena_used = child_mark;
                         }
                         else
                         {
@@ -2756,6 +2772,8 @@ static b32 diff_directories(string_address left, string_address right, positive 
 
                                 if (worst < one)
                                         worst = one;
+
+                                text_arena_used = child_mark;
                         }
                         else
                         {
@@ -2799,6 +2817,8 @@ static b32 diff_directories(string_address left, string_address right, positive 
                         if (worst < one)
                                 worst = one;
                 }
+
+                text_arena_used = child_mark;
 
                 i++;
                 j++;
@@ -2862,12 +2882,14 @@ static b32 diff_walk(string_address left, string_address right, positive depth)
         }
 
         bool titled = diff_titled;
+        positive pair_mark = text_arena_used;
 
         diff_titled = depth > 0;
 
         b32 one = diff_pair(left, right);
 
         diff_titled = titled;
+        text_arena_used = pair_mark;
 
         return one;
 }
@@ -3175,6 +3197,7 @@ static p8 address_to ps_read_growing(string_address path, positive first,
 
         positive room = first ? first : 64;
         positive used = 0;
+        positive arena_mark = text_arena_used;
         p8 address_to bytes = (p8 address_to)text_arena_take(room);
 
         if (!bytes)
@@ -3190,20 +3213,27 @@ static p8 address_to ps_read_growing(string_address path, positive first,
                         if (room > positive_max / 2)
                         {
                                 system_call_1(syscall(close), (positive)handle);
+                                text_arena_used = arena_mark;
                                 return null;
                         }
 
                         positive larger = room * 2;
+
+                        /* This buffer is the newest arena object. Rewind and
+                           extend it in place: its bytes remain at the same
+                           address, so growth needs neither another retained
+                           block nor a copy of everything read so far. */
+                        text_arena_used = arena_mark;
                         p8 address_to grown =
                             (p8 address_to)text_arena_take(larger);
 
                         if (!grown)
                         {
                                 system_call_1(syscall(close), (positive)handle);
+                                text_arena_used = arena_mark;
                                 return null;
                         }
 
-                        memory_copy_apart(grown, bytes, used);
                         bytes = grown;
                         room = larger;
                 }
@@ -3214,6 +3244,7 @@ static p8 address_to ps_read_growing(string_address path, positive first,
                 if (got < 0)
                 {
                         system_call_1(syscall(close), (positive)handle);
+                        text_arena_used = arena_mark;
                         return null;
                 }
 
@@ -3225,6 +3256,9 @@ static p8 address_to ps_read_growing(string_address path, positive first,
 
         system_call_1(syscall(close), (positive)handle);
         bytes[used] = end;
+        /* Give the unused half of the last doubling step back before ps
+           starts retaining the next process. */
+        text_arena_used = arena_mark + ((used + 1 + 15) & ~(positive)15);
         address_to length = used;
         return bytes;
 }
@@ -3638,15 +3672,27 @@ static bool ps_gather()
                                 positive one = left;
                                 positive two = middle;
 
-                                while (one < middle || two < right)
+                                while (one < middle && two < right)
                                 {
-                                        if (two >= right ||
-                                            (one < middle &&
-                                             from[one].pid <= from[two].pid))
+                                        if (from[one].pid <= from[two].pid)
                                                 into[left++] = from[one++];
                                         else
                                                 into[left++] = from[two++];
                                 }
+
+                                /* A ps record is much wider than a pointer;
+                                   after one run empties, copying the remaining
+                                   contiguous records in one assembly call is
+                                   cheaper than repeating structure copies. */
+                                positive tail = one < middle ? middle - one
+                                                              : right - two;
+                                ps_process address_to rest = one < middle
+                                                                 ? from + one
+                                                                 : from + two;
+
+                                if (tail)
+                                        memory_copy_apart(into + left, rest,
+                                                          tail * sizeof(ps_process));
                         }
 
                         ps_process address_to swap = from;

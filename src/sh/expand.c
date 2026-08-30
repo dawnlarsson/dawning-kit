@@ -596,31 +596,40 @@ bool shell_parameters_set(string_address address_to words, positive count)
                 return true;
         }
 
-        for (at = 0; at < count; at++)
-        {
-                positive length = string_length(words[at]) + 1;
-
-                if (need > positive_max - length)
-                        return false;
-
-                need += length;
-        }
-
-        if (need == positive_max || count > positive_max - 2 ||
-            !shell_room((address_any address_to)address_of shell_parameter_staging,
-                        address_of shell_parameter_staging_room, need + 1, 1) ||
-            !shell_room((address_any address_to)address_of shell_parameter_bytes,
-                        address_of shell_parameter_bytes_room, need + 1, 1) ||
+        if (count > positive_max - 2 ||
             !shell_room((address_any address_to)address_of shell_parameter,
                         address_of shell_parameter_room, count + 2,
                         sizeof(string_address)))
+                return false;
+
+        /* Measure before changing the live table, so allocation failure leaves
+           the old positional parameters intact.  The bytes still pass through
+           staging because set -- $@ may overlap the live parameter store. */
+        for (at = 0; at < count; at++)
+        {
+                positive length = string_length(words[at]);
+
+                if (length == positive_max ||
+                    need > positive_max - length - 1)
+                        return false;
+
+                need += length + 1;
+        }
+
+        if (need == positive_max ||
+            !shell_room((address_any address_to)address_of shell_parameter_staging,
+                        address_of shell_parameter_staging_room, need + 1, 1) ||
+            !shell_room((address_any address_to)address_of shell_parameter_bytes,
+                        address_of shell_parameter_bytes_room, need + 1, 1))
                 return false;
 
         while (index < count)
         {
                 positive length = string_length(words[index]) + 1;
 
-                memory_copy(shell_parameter_staging + used, words[index], length);
+                memory_copy(shell_parameter_staging + used, words[index],
+                            length);
+                shell_parameter[index] = shell_parameter_bytes + used;
                 used += length;
                 index++;
         }
@@ -628,13 +637,6 @@ bool shell_parameters_set(string_address address_to words, positive count)
         memory_copy(shell_parameter_bytes, shell_parameter_staging, used);
 
         shell_parameter_count = index;
-        used = 0;
-
-        for (at = 0; at < index; at++)
-        {
-                shell_parameter[at] = shell_parameter_bytes + used;
-                used += string_length(shell_parameter_bytes + used) + 1;
-        }
 
         shell_parameter[index] = null;
 
@@ -694,19 +696,24 @@ positive shell_parameters_save()
 static string_address address_to shell_restore_words;
 static positive shell_restore_room;
 
-fn shell_parameters_restore(positive mark, positive count)
+bool shell_parameters_restore_prepare(positive count)
+{
+        return count != positive_max &&
+               shell_room((address_any address_to)address_of shell_restore_words,
+                          address_of shell_restore_room, count + 1,
+                          sizeof(string_address));
+}
+
+bool shell_parameters_restore(positive mark, positive count)
 {
         positive at = mark;
         positive index;
 
         if (mark == EXPAND_NO_ROOM)
-                return;
+                return false;
 
-        if (count == positive_max ||
-            !shell_room((address_any address_to)address_of shell_restore_words,
-                        address_of shell_restore_room, count + 1,
-                        sizeof(string_address)))
-                return;
+        if (!shell_parameters_restore_prepare(count))
+                return false;
 
         for (index = 0; index < count; index++)
         {
@@ -714,8 +721,11 @@ fn shell_parameters_restore(positive mark, positive count)
                 at += string_length(shell_parameter_stack + at) + 1;
         }
 
-        shell_parameters_set(shell_restore_words, count);
+        if (!shell_parameters_set(shell_restore_words, count))
+                return false;
+
         shell_parameter_stack_used = mark;
+        return true;
 }
 
 fn shell_parameters_shift(positive count)

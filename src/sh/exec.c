@@ -934,7 +934,18 @@ static b32 exec_call(b32 body)
         }
 
         saved = shell_parameters_save();
-        shell_parameters_set(shell_argv + 1, shell_argc > 0 ? shell_argc - 1 : 0);
+        if (saved == EXPAND_NO_ROOM ||
+            !shell_parameters_restore_prepare(saved_count) ||
+            !shell_parameters_set(shell_argv + 1,
+                                  shell_argc > 0 ? shell_argc - 1 : 0))
+        {
+                if (saved != EXPAND_NO_ROOM)
+                        shell_parameter_stack_used = saved;
+                shell_local_leave();
+                string_format(exec_error, "No room for function arguments\n");
+                shell_status = 1;
+                return 1;
+        }
 
         exec_function_depth++;
         status = exec_node(body);
@@ -945,7 +956,18 @@ static b32 exec_call(b32 body)
         if (exec_signal == EXEC_SIGNAL_RETURN)
                 exec_signal = EXEC_SIGNAL_NONE;
 
-        shell_parameters_restore(saved, saved_count);
+        if (!shell_parameters_restore(saved, saved_count))
+        {
+                string_format(exec_error,
+                              "No room to restore function arguments\n");
+                shell_status = 2;
+                /* Restore storage was reserved before the function ran, and
+                   the caller's byte/table capacities cannot have shrunk.
+                   Continuing would expose the callee's $@ as caller state;
+                   make an invariant violation terminal instead. */
+                log_flush();
+                exit(2);
+        }
 
         return status;
 }
@@ -1166,6 +1188,13 @@ static bool exec_control_number(string_address word, bool allow_zero,
 
 static b32 exec_dispatch(b32 command_word)
 {
+        /* PATH answers are transient only until exec/spawn has copied argv.
+           Keep one movable room across commands instead of mapping and
+           unmapping it for every external command in a loop.  No parser or
+           expansion pointer refers into this room, and dispatch does not
+           re-enter while shell_execute_command waits for the child. */
+        static p8 address_to found;
+        static positive found_room;
         string_address name = shell_argv[0];
         p8 initial = string_get(name);
         b32 body;
@@ -1246,8 +1275,6 @@ static b32 exec_dispatch(b32 command_word)
                 return shell_status;
 
         {
-                p8 address_to found = null;
-                positive found_room = 0;
                 bipolar located = shell_find_in_path_alloc(name,
                                                             address_of found,
                                                             address_of found_room);
@@ -1263,7 +1290,6 @@ static b32 exec_dispatch(b32 command_word)
                 {
                         shell_status = 126;
                         string_format(exec_error, "%s: cannot run\n", name);
-                        memory_free(found, found_room);
                         return shell_status;
                 }
 
@@ -1272,12 +1298,8 @@ static b32 exec_dispatch(b32 command_word)
                         shell_argv[0] = found;
                         shell_execute_command();
                         shell_argv[0] = name;
-                        memory_free(found, found_room);
                         return shell_status;
                 }
-
-                if (found)
-                        memory_free(found, found_room);
         }
 
         shell_status = 127;

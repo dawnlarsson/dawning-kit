@@ -265,6 +265,7 @@ string_address address_to shell_envp;
 static positive shell_envp_room;
 static bool shell_envp_dirty = true;
 static positive shell_envp_generation;
+static bool shell_env_initialized;
 
 static bool env_table_room(positive want)
 {
@@ -690,7 +691,7 @@ string_address address_to shell_environment()
         if (!shell_room((address_any address_to)address_of shell_envp,
                         address_of shell_envp_room, count + 1,
                         sizeof(shell_envp[0])))
-                return empty;
+                return null;
 
         count = 0;
 
@@ -704,6 +705,11 @@ string_address address_to shell_environment()
         shell_envp_generation++;
 
         return shell_envp;
+}
+
+bool shell_environment_is_initialized()
+{
+        return shell_env_initialized;
 }
 
 static bool env_set_span(const_string name, positive name_len,
@@ -767,6 +773,8 @@ static bool env_borrow_assignment(string_address entry, bool replace)
 fn shell_env_init(string_address address_to process_environment)
 {
         positive inherited = 0;
+
+        shell_env_initialized = true;
 
         while (process_environment && process_environment[inherited])
                 inherited++;
@@ -1557,6 +1565,7 @@ fn shell_exec(writer write, string_address input)
 {
         p8 address_to found = null;
         positive found_room = 0;
+        string_address address_to environment;
         bipolar located;
 
         // With nothing to run, exec is only there for the redirections that
@@ -1602,12 +1611,27 @@ fn shell_exec(writer write, string_address input)
                 return;
         }
 
+        environment = shell_environment();
+        if (!environment)
+        {
+                memory_free(found, found_room);
+                shell_answer(2);
+                string_format(shell_diagnostic, "exec: no room for environment\n");
+
+                if (!shell_is_interactive)
+                {
+                        log_flush();
+                        exit(2);
+                }
+
+                return;
+        }
+
         log_flush();
 
         // From argv[1] on, so the new program is named by what it was asked
         // for and not by the word "exec".
-        shell_exec_file(found, shell_argv + 1, shell_argc - 1,
-                        shell_environment());
+        shell_exec_file(found, shell_argv + 1, shell_argc - 1, environment);
 
         memory_free(found, found_room);
         shell_answer(126);
@@ -2102,8 +2126,12 @@ fn shell_set(writer write, string_address input)
         //      argv is already a contiguous table of the right shape and
         //      shell_parameters_set copies what it is given, so the operands
         //      go straight in rather than through a middleman with a size.
-        if (operands)
-                shell_parameters_set(shell_argv + index, shell_argc - index);
+        if (operands &&
+            !shell_parameters_set(shell_argv + index, shell_argc - index))
+        {
+                shell_diagnostic("set: no room for arguments\n", 0);
+                return shell_answer(2);
+        }
 
         shell_answer(0);
 }
@@ -4951,10 +4979,9 @@ static fn shell_name_index_build(address_any table, positive stride,
                 string_address name =
                     *(string_address address_to)((p8 address_to)table +
                                                   index * stride);
-                positive length = string_length(name);
-                positive hash = env_name_hash(name, length);
+                positive2 answer = string_hash_33_length(name);
 
-                name_index_put(slots, room, hash, length, index,
+                name_index_put(slots, room, answer.x, answer.y, index,
                                address_of tombstones);
         }
 }
@@ -5095,16 +5122,26 @@ static positive shell_tool_find(string_address name)
 */
 static string_address shell_tool_name(string_address path)
 {
-        string_address last = path;
+        string_address slash;
 
         if (!path)
                 return null;
 
-        for (string_address step = path; string_get(step); step++)
-                if (string_get(step) == '/' && string_get(step + 1))
-                        last = step + 1;
+        slash = string_last_of(path, '/');
 
-        return last;
+        if (!slash)
+                return path;
+
+        if (slash[1])
+                return slash + 1;
+
+        /* Preserve the historical spelling for a trailing slash: /bin/sh/
+           is called sh/, not the empty name.  The common path above remains
+           one hardware-floor reverse scan. */
+        slash = (string_address)memory_last_of(path, '/',
+                                               (positive)(slash - path));
+
+        return slash ? slash + 1 : path;
 }
 
 static b32 shell_tool_call(positive which)

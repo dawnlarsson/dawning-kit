@@ -823,6 +823,8 @@ bool shell_redirect()
 
 fn shell_thread_instance()
 {
+        string_address address_to environment;
+
         // Ignored signals cross execve, and this shell ignores interrupt so
         // that control-C does not take it down with the command. Handing that
         // deafness on would leave the command uninterruptible.
@@ -837,9 +839,16 @@ fn shell_thread_instance()
         if (shell_output_file)
                 system_call_3(syscall(dup3), shell_output_file, standard_output_descriptor, 0);
 
+        environment = shell_environment();
+        if (!environment)
+        {
+                string_format(shell_output, "failed: no room for environment\n");
+                log_flush();
+                exit(126);
+        }
+
         bipolar exec_result = shell_exec_file(shell_argv[0], shell_argv,
-                                              shell_argc,
-                                              shell_environment());
+                                              shell_argc, environment);
 
         string_format(shell_output, "failed with error: %b\n", exec_result);
         log_flush();
@@ -892,17 +901,34 @@ positive shell_flatten_env(positive address_to count_out)
 
         if (shell_envp_dirty)
         {
-                address_to count_out = 0;
+                address_to count_out = positive_max;
                 return 0;
         }
 
         while (environment[index])
-                used += string_length(environment[index++]) + 1;
+        {
+                positive length = string_length(environment[index++]);
+
+                if (length == positive_max ||
+                    used > positive_max - length - 1)
+                {
+                        address_to count_out = positive_max;
+                        return 0;
+                }
+
+                used += length + 1;
+        }
+
+        if (used == positive_max)
+        {
+                address_to count_out = positive_max;
+                return 0;
+        }
 
         if (!shell_room((address_any address_to)address_of spawn_envp_block,
                         address_of spawn_envp_room, used + 1, 1))
         {
-                address_to count_out = 0;
+                address_to count_out = positive_max;
                 return 0;
         }
 
@@ -935,7 +961,18 @@ bipolar shell_spawn_via_device()
 
         //      How much the words come to, before any of them is copied.
         while (index < shell_argc)
-                used += string_length(shell_argv[index++]) + 1;
+        {
+                positive length = string_length(shell_argv[index++]);
+
+                if (length == positive_max ||
+                    used > positive_max - length - 1)
+                        return -1;
+
+                used += length + 1;
+        }
+
+        if (used == positive_max)
+                return -1;
 
         if (!shell_room((address_any address_to)address_of spawn_argv_block,
                         address_of spawn_argv_room, used + 1, 1))
@@ -955,8 +992,14 @@ bipolar shell_spawn_via_device()
         request.argv = (unsigned long)spawn_argv_block;
         request.argv_bytes = used;
         request.argv_count = shell_argc;
-        request.envp = (unsigned long)spawn_envp_block;
         request.envp_bytes = shell_flatten_env(address_of envc);
+
+        /* An allocation failure must take the fork/exec fallback.  Sending a
+           syntactically valid request with envc zero silently stripped every
+           exported variable from the child instead. */
+        if (envc == positive_max)
+                return -1;
+
         request.envp = (unsigned long)spawn_envp_block;
         request.envp_count = envc;
         request.envp_generation = spawn_envp_generation;
@@ -1048,6 +1091,13 @@ bool shell_builtin(string_address arguments)
         static shell_command address_to remembered;
         static positive remembered_length;
         shell_command address_to command = null;
+
+        /* A slash is already a complete answer: neither a builtin nor an
+           in-process utility has one in its name.  Direct executable paths
+           are the startup-sensitive case and used to build both static name
+           indexes only to prove two guaranteed misses. */
+        if (string_first_of(shell_argv[0], '/'))
+                return false;
 
         if (!arguments && shell_command_name_stable &&
             shell_argv[0] == shell_command_name_address && remembered &&

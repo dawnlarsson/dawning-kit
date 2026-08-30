@@ -61,6 +61,7 @@ struct device_context
         struct mutex spawn_lock;
         struct spawn_strings *environment;
         unsigned long environment_generation;
+        struct pid *environment_owner;
         struct pane *pane;
 };
 
@@ -694,6 +695,7 @@ static long do_spawn(struct file *file, struct spawn __user *request,
         struct spawn args;
         struct spawn_work *work;
         struct spawn_strings *old_environment = NULL;
+        struct pid *old_owner = NULL;
         long ret;
         pid_t pid;
 
@@ -720,7 +722,13 @@ static long do_spawn(struct file *file, struct spawn __user *request,
         if (args.envp && args.envp_count)
         {
                 mutex_lock(&context->spawn_lock);
+                /* clone inherits the open file description and the shell's
+                   generation counter.  The same generation in two process
+                   branches is not the same environment, so identity is part
+                   of the key.  Holding struct pid prevents numeric PID reuse
+                   from making stale bytes look current later. */
                 if (args.envp_generation && context->environment &&
+                    context->environment_owner == task_tgid(current) &&
                     context->environment_generation == args.envp_generation)
                 {
                         refcount_inc(&context->environment->references);
@@ -740,12 +748,16 @@ static long do_spawn(struct file *file, struct spawn __user *request,
                         {
                                 mutex_lock(&context->spawn_lock);
                                 old_environment = context->environment;
+                                old_owner = context->environment_owner;
                                 refcount_inc(&work->environment->references);
                                 context->environment = work->environment;
                                 context->environment_generation =
                                         args.envp_generation;
+                                context->environment_owner =
+                                        get_pid(task_tgid(current));
                                 mutex_unlock(&context->spawn_lock);
                                 spawn_strings_put(old_environment);
+                                put_pid(old_owner);
                         }
                 }
         }
@@ -873,6 +885,7 @@ static int device_close(struct inode *inode, struct file *file)
 
         window_release(file);
         spawn_strings_put(context->environment);
+        put_pid(context->environment_owner);
         kfree(context);
         return 0;
 }
@@ -884,6 +897,7 @@ static int device_close(struct inode *inode, struct file *file)
         struct device_context *context = file->private_data;
 
         spawn_strings_put(context->environment);
+        put_pid(context->environment_owner);
         kfree(context);
         return 0;
 }

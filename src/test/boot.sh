@@ -86,6 +86,11 @@ export SPARK_CACHE=first
 /shell -c 'printf "cache-%s\n" "$SPARK_CACHE"'
 export SPARK_CACHE=second
 /shell -c 'printf "cache-%s\n" "$SPARK_CACHE"'
+export SPARK_OWNER=base
+/shell -c ':'
+( export SPARK_OWNER=child; /shell -c ':' )
+export SPARK_OWNER=parent
+/shell -c 'printf "owner-%s\n" "$SPARK_OWNER"'
 ls /monitor.sh | rev
 printf 'alias-%s\n' "$(readlink /mointor.sh | rev)"
 printf 'path-%s\n' "$(readlink /bin/monitor.sh | rev)"
@@ -157,6 +162,7 @@ says 'and measured'        'bytes8'
 says 'empty init environment' 'bootenv-unset-unset'
 says 'cached environment'   'cache-first'
 says 'changed environment'  'cache-second'
+says 'cache process owner'  'owner-parent'
 says 'monitor at root'     'hs.rotinom/'
 says 'mointor alias'       'alias-hs.rotinom'
 says 'monitor linked'      'path-hs.rotinom/..'
