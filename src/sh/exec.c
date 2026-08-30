@@ -1613,7 +1613,6 @@ static b32 exec_simple(b32 index)
 
         shell_argc = count - first;
 
-        shell_output_failed = false;
         log_failure_reset();
 
         status = exec_dispatch(node->word + first);
@@ -1623,7 +1622,7 @@ static b32 exec_simple(b32 index)
            flush and leaves its sticky failure bit set. Asking the kernel
            whether stdout was closed before every command duplicated that
            answer and put an fcntl syscall in otherwise kernel-free loops. */
-        if ((log_failed() || shell_output_failed) && !status)
+        if (log_failed() && !status)
                 status = shell_status = 1;
 
         // exec with nothing to run is there for its redirections, and those
@@ -2645,7 +2644,7 @@ static b32 exec_child_status(bipolar child)
         return wait_status_code(state);
 }
 
-static b32 exec_subshell(b32 index)
+static bipolar exec_spawn_node(b32 index)
 {
         bipolar child;
 
@@ -2661,12 +2660,17 @@ static b32 exec_subshell(b32 index)
                 trap_default_all();
                 exec_forked = true;
 
-                status = exec_node(parse_nodes[index].left);
+                status = exec_node(index);
                 log_flush();
                 exit(status);
         }
 
-        return exec_child_status(child);
+        return child;
+}
+
+static b32 exec_subshell(b32 index)
+{
+        return exec_child_status(exec_spawn_node(parse_nodes[index].left));
 }
 
 /*
@@ -2887,24 +2891,7 @@ static b32 exec_and_or(b32 index)
 
 static b32 exec_background(b32 index)
 {
-        bipolar child;
-
-        log_flush();
-        child = shell_clone();
-
-        if (child == 0)
-        {
-                b32 status;
-
-                shell_default(SIGNAL_INTERRUPT);
-                shell_default(SIGNAL_QUIT);
-                trap_default_all();
-                exec_forked = true;
-
-                status = exec_node(index);
-                log_flush();
-                exit(status);
-        }
+        exec_spawn_node(index);
 
         return 0;
 }

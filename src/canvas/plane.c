@@ -16,17 +16,6 @@
         disables every non-primary plane on its device first.
 */
 
-static _Bool canvas_plane_takes_argb(struct drm_plane *plane)
-{
-        unsigned int i;
-
-        for (i = 0; i < plane->format_count; i++)
-                if (plane->format_types[i] == DRM_FORMAT_ARGB8888)
-                        return true;
-
-        return false;
-}
-
 /*
         The lock dance is the one drm_mode_cursor_common does: take the crtc
         and the plane, and back off and retry the whole thing on -EDEADLK. The
@@ -118,13 +107,13 @@ static unsigned int plane_scale(struct output *output, unsigned int scale)
         sends nothing but a position afterwards, which is what makes this
         cheap. Changing shape is therefore a repaint here, not per move.
 */
-static int plane_paint(struct output *output, unsigned int shape, unsigned int scale)
+static int plane_paint(struct output *output, unsigned int shape,
+                       unsigned int fitted_scale)
 {
         u32 opaque_ink[INK_COUNT];
         struct iosys_map map;
         struct target t;
 
-        scale = plane_scale(output, scale);
         canvas_palette(opaque_ink, DRM_FORMAT_ARGB8888);
 
         if (drm_client_buffer_vmap_local(output->cursor_buffer, &map))
@@ -151,14 +140,15 @@ static int plane_paint(struct output *output, unsigned int shape, unsigned int s
         canvas_runs++;
         canvas_rect_fill(t.pixels, t.pitch, t.width, t.height, 0x00000000);
 
-        canvas_draw_cursor(&t, canvas_cursor_hot[shape][0] * (int)scale,
-                           canvas_cursor_hot[shape][1] * (int)scale, shape, scale);
+        canvas_draw_cursor(&t, canvas_cursor_hot[shape][0] * (int)fitted_scale,
+                           canvas_cursor_hot[shape][1] * (int)fitted_scale,
+                           shape, fitted_scale);
 
         drm_client_buffer_vunmap_local(output->cursor_buffer);
         drm_client_buffer_flush(output->cursor_buffer, NULL);
 
         output->cursor_shape = shape;
-        output->cursor_scale = scale;
+        output->cursor_scale = fitted_scale;
         return 0;
 }
 
@@ -166,8 +156,9 @@ static int plane_claim(struct drm_client_dev *client, struct output *output)
 {
         struct drm_plane *plane = output->mode_set->crtc->cursor;
 
-        if (!plane || !plane->funcs->update_plane ||
-            !plane->funcs->disable_plane || !canvas_plane_takes_argb(plane))
+        if (!plane || !plane->funcs->update_plane || !plane->funcs->disable_plane ||
+            canvas_plane_pick_format(plane, DRM_FORMAT_ARGB8888,
+                                     DRM_FORMAT_ARGB8888) == DRM_FORMAT_INVALID)
                 return -ENODEV;
 
         output->cursor_w = client->dev->mode_config.cursor_width ?: CURSOR_W;
@@ -197,15 +188,18 @@ static int plane_claim(struct drm_client_dev *client, struct output *output)
 
 static void cursor_arm_output(struct output *output, _Bool wanted)
 {
+        unsigned int scale;
         int ret;
 
         if (!output->cursor_plane)
                 return;
 
+        scale = wanted ? plane_scale(output, desktop.cursor_scale) : 0;
+
         if (wanted &&
             (output->cursor_shape != desktop.cursor_shape ||
-             output->cursor_scale != plane_scale(output, desktop.cursor_scale)) &&
-            plane_paint(output, desktop.cursor_shape, desktop.cursor_scale))
+             output->cursor_scale != scale) &&
+            plane_paint(output, desktop.cursor_shape, scale))
         {
                 atomic_long_inc(&cursor_plane_failures);
                 plane_drop(output);

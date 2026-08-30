@@ -443,91 +443,6 @@ positive string_append_bounded(string_address destination,
 }
 
 /*
-        memfrob, which is not encryption and has never claimed to be.
-
-        Every byte exclusive-ored with forty two. It is its own inverse, the
-        key is a constant printed in the manual page, and its entire purpose
-        is to make a block of text not look like text to something scanning
-        for it. It is here because it is short and because a program ported
-        from GNU userspace that wants it currently does not link.
-
-        Not borrowed from memory_translate, which would do the same work
-        through a two hundred and fifty six byte table that would have to be
-        built first. The comment that stood here argued that at the sizes
-        anybody frobs -- a password field, a line -- building the table costs
-        more than the whole of this, and that was never measured and is not
-        measured now. What was read is the routine itself: on riscv it is a
-        byte at a time with a load from the table on top of the load from the
-        block, so on the one machine this file has anything to fix, borrowing
-        it would have fixed nothing.
-
-        x86_64 and arm64 keep the plain byte loop, and it is already the
-        floor on both. gcc turns it into a sixteen byte SSE2 body on the one
-        and a sixteen byte NEON body on the other, five instructions to the
-        block, which is what the store port will take and nothing written
-        here beats it. That was checked rather than assumed, and checked in
-        the losing direction too: writing those two as words costs x86_64 the
-        vector body outright -- two xorq to memory in place of one pxor -- and
-        313.2 million instructions became 264.0 million while 59.4 million
-        cycles became 68.7, an eleven percent loss on a four kilobyte block.
-
-        riscv64 is why there is a second arm. The comment that used to stand
-        here said the compiler vectorises this for whatever the build was
-        allowed, and left it at that. What this build allows that machine is
-        rv64imafd_zicsr_zicntr, which has no vector extension in it at all,
-        so what it was actually given was five instructions for every single
-        byte -- and nobody had looked. Eight bytes at a time in an integer
-        register is what it does have, and it is the same SWAR every riscv
-        body in library.c is written in. Measured under qemu against the byte
-        loop it replaces: 5.55x on four kilobytes, 2.25x on sixty four, 1.79x
-        on sixty one bytes from an odd address.
-
-        The head is peeled to an eight byte boundary because baseline RV64I
-        promises nothing about an unaligned load, which is the same reason
-        memory_first_of aligns down and memory_compare byte walks when the two
-        residues disagree. The word then moves through __builtin_memcpy on a
-        pointer that has been told what the peel established, which is the
-        umbrella's known_word spelling and claims no alignment that is not
-        there. The telling is not decoration: without it gcc lowers the copy
-        to eight lbu through a stack slot and the result is slower than the
-        loop it replaced, which is what the first attempt at this did.
-*/
-address_any memory_frob(address_any block, positive size)
-{
-        p8 address_to bytes = (p8 address_to)block;
-        positive index = 0;
-
-#if !X64 && !ARM64
-        while (index < size && ((positive)(bytes + index) & 7))
-        {
-                bytes[index] ^= 42;
-                index += 1;
-        }
-
-        while (size - index >= 8)
-        {
-                p8 address_to at = (p8 address_to)__builtin_assume_aligned(
-                        bytes + index, 8);
-                p64 word;
-
-                __builtin_memcpy(address_of word, at, 8);
-                word ^= (p64)0x2a2a2a2a2a2a2a2aull;
-                __builtin_memcpy(at, address_of word, 8);
-
-                index += 8;
-        }
-#endif
-
-        while (index < size)
-        {
-                bytes[index] ^= 42;
-                index += 1;
-        }
-
-        return block;
-}
-
-/*
         And the names a C program knows these by.
 
         Second labels rather than forwarders, exactly as library.c attaches
@@ -552,7 +467,6 @@ __asm__(
     ASM_ALIAS(strcasestr, string_search_folded)
     ASM_ALIAS(strlcpy,    string_copy_bounded)
     ASM_ALIAS(strlcat,    string_append_bounded)
-    ASM_ALIAS(memfrob,    memory_frob)
 );
 
 #endif // KERNEL_MODE / STANDARD_NO_PLATFORM

@@ -213,7 +213,8 @@ cover('correctness_only', 'src/test/verify.c', '''
 bipolar_into bipolar_into_string bipolar_to_string byte_class_holds
 byte_class_index decimal_to_string fast_sin file_close file_get_status
 file_load file_new file_read file_valid file_write memory memory_copy_end
-memory_copy_apart_end memory_free memory_search path_basename positive_digits
+memory_copy_apart_end memory_exchange_apart memory_frob memory_free memory_search
+path_basename positive_digits
 positive_into_string positive_to_base_field program_argument_list
 program_arguments_own
 program_arguments_use program_environment

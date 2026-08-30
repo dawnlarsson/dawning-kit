@@ -2522,26 +2522,9 @@ static bool cat_at_line_start;
 // nothing, which is why they are not here.
 static fn cat_visible(p8 value)
 {
-        if (value >= 128)
-        {
-                text_put_string((string_address) "M-");
-                value -= 128;
-        }
+        p8 visible[TEXT_VISIBLE_MAX];
 
-        if (value == 127)
-        {
-                text_put_string((string_address) "^?");
-                return;
-        }
-
-        if (value < 32)
-        {
-                text_put_character('^');
-                text_put_character((p8)(value + 64));
-                return;
-        }
-
-        text_put_character(value);
+        text_put(visible, text_visible(visible, value));
 }
 
 static fn cat_number()
@@ -2563,16 +2546,6 @@ static fn cat_number()
         }
 
         cat_line_number++;
-}
-
-static fn cat_plain()
-{
-        while (text_fill())
-        {
-                text_put(text_input.buffer + text_input.position,
-                         text_input.filled - text_input.position);
-                text_input.position = text_input.filled;
-        }
 }
 
 static fn cat_walked()
@@ -2693,7 +2666,7 @@ static b32 text_cat()
         if (!inputs)
         {
                 if (text_open(null))
-                        cat_flags ? cat_walked() : cat_plain();
+                        cat_flags ? cat_walked() : text_put_rest();
 
                 text_close();
                 return text_done(text_status);
@@ -2704,7 +2677,7 @@ static b32 text_cat()
                 if (!text_open(program_argument(i)))
                         continue;
 
-                cat_flags ? cat_walked() : cat_plain();
+                cat_flags ? cat_walked() : text_put_rest();
                 text_close();
         }
 
@@ -2814,14 +2787,19 @@ static b32 text_wc()
 
         b32 selected = (b32)want_lines + (b32)want_words + (b32)want_bytes +
                        (b32)want_chars + (b32)want_longest;
-        b32 inputs = text_files_count ? text_files_count : 1;
+        b32 inputs = text_input_count();
+
+        wc_want_lines = want_lines;
+        wc_want_words = want_words;
+        wc_want_bytes = want_bytes;
+        wc_want_chars = want_chars;
+        wc_want_longest = want_longest;
 
         if (selected > 1 || inputs > 1)
         {
                 for (b32 i = 0; i < inputs; i++)
                 {
-                        string_address name =
-                            text_files_count ? program_argument(text_files[i]) : null;
+                        string_address name = text_file_name(i);
                         positive size = 0;
 
                         if (!name || (name[0] == '-' && !name[1]))
@@ -2857,8 +2835,7 @@ static b32 text_wc()
 
         for (b32 i = 0; i < inputs; i++)
         {
-                string_address name =
-                    text_files_count ? program_argument(text_files[i]) : null;
+                string_address name = text_file_name(i);
                 positive lines = 0, words = 0, bytes = 0;
                 positive longest = 0, column = 0;
                 bool inside = false;
@@ -3011,106 +2988,15 @@ static b32 text_wc()
                 if (longest > total_longest)
                         total_longest = longest;
 
-                bool leading = true;
-
-                if (want_lines)
-                {
-                        positive_to_padded(text_put, lines, width, ' ', 0);
-                        leading = false;
-                }
-
-                if (want_words)
-                {
-                        if (!leading)
-                                text_put_character(' ');
-
-                        positive_to_padded(text_put, words, width, ' ', 0);
-                        leading = false;
-                }
-
-                if (want_chars)
-                {
-                        if (!leading)
-                                text_put_character(' ');
-
-                        positive_to_padded(text_put, bytes, width, ' ', 0);
-                        leading = false;
-                }
-
-                if (want_bytes)
-                {
-                        if (!leading)
-                                text_put_character(' ');
-
-                        positive_to_padded(text_put, bytes, width, ' ', 0);
-                        leading = false;
-                }
-
-                if (want_longest)
-                {
-                        if (!leading)
-                                text_put_character(' ');
-
-                        positive_to_padded(text_put, longest, width, ' ', 0);
-                }
-
-                if (name)
-                {
-                        text_put_character(' ');
-                        text_put_string(name);
-                }
-
-                text_put_character('\n');
+                wc_row(lines, words, bytes, longest, width, name);
         }
 
         if (text_files_count > 1)
         {
-                bool leading = true;
-
-                if (want_lines)
-                {
-                        positive_to_padded(text_put, total_lines, width, ' ', 0);
-                        leading = false;
-                }
-
-                if (want_words)
-                {
-                        if (!leading)
-                                text_put_character(' ');
-
-                        positive_to_padded(text_put, total_words, width, ' ', 0);
-                        leading = false;
-                }
-
-                if (want_chars)
-                {
-                        if (!leading)
-                                text_put_character(' ');
-
-                        positive_to_padded(text_put, total_bytes, width, ' ', 0);
-                        leading = false;
-                }
-
-                if (want_bytes)
-                {
-                        if (!leading)
-                                text_put_character(' ');
-
-                        positive_to_padded(text_put, total_bytes, width, ' ', 0);
-                        leading = false;
-                }
-
                 // The total of the longest lines is the longest of them, not
                 // their sum, which is the one column here that does not add up.
-                if (want_longest)
-                {
-                        if (!leading)
-                                text_put_character(' ');
-
-                        positive_to_padded(text_put, total_longest, width, ' ', 0);
-                }
-
-                text_put_string(" total\n");
+                wc_row(total_lines, total_words, total_bytes, total_longest,
+                       width, (string_address) "total");
         }
 
         return text_done(text_status);
@@ -3143,11 +3029,11 @@ static b32 text_rev()
         if (taking.flags & FILE_FLAG('0'))
                 text_delimiter = '\0';
 
-        b32 inputs = text_files_count ? text_files_count : 1;
+        b32 inputs = text_input_count();
 
         for (b32 i = 0; i < inputs; i++)
         {
-                if (!text_open(text_files_count ? program_argument(text_files[i]) : null))
+                if (!text_open(text_file_name(i)))
                         continue;
 
                 while (text_line_next())
@@ -3318,13 +3204,7 @@ static fn text_stream_from(positive start)
         text_input.filled = 0;
         text_input.position = 0;
         text_input.finished = false;
-
-        while (text_fill())
-        {
-                text_put(text_input.buffer + text_input.position,
-                         text_input.filled - text_input.position);
-                text_input.position = text_input.filled;
-        }
+        text_put_rest();
 }
 
 // Everything from start up to but not including stop, which is where head
@@ -3483,34 +3363,18 @@ static b32 text_head()
         if (taking.flags & FILE_FLAG('z'))
                 text_delimiter = '\0';
 
-        if (said)
-        {
-                // A count written with a minus names what to leave off the
-                // end rather than what to take from the front. A plus is an
-                // explicit ordinary count for head (unlike tail, where it
-                // means a starting position), and GNU accepts it for both
-                // the line and byte forms.
-                if (said[0] == '-')
-                {
-                        from_end = true;
-                        said++;
-                }
-                else if (said[0] == '+')
-                        said++;
+        // A count written with a minus names what to leave off the end rather
+        // than what to take from the front. A plus is an explicit ordinary
+        // count for head, unlike tail where it means a starting position.
+        if (!text_count_option(said, '-', address_of from_end, address_of count))
+                return text_done(1);
 
-                if (!string_digits_exact(said, address_of count))
-                {
-                        text_error(null, "invalid number of lines");
-                        return text_done(1);
-                }
-        }
-
-        b32 inputs = text_files_count ? text_files_count : 1;
+        b32 inputs = text_input_count();
         bool headers = (text_files_count > 1 || loud) && !quiet;
 
         for (b32 i = 0; i < inputs; i++)
         {
-                if (!text_open(text_files_count ? program_argument(text_files[i]) : null))
+                if (!text_open(text_file_name(i)))
                         continue;
 
                 if (headers)
@@ -3619,29 +3483,16 @@ static b32 text_tail()
         if (taking.flags & FILE_FLAG('z'))
                 text_delimiter = '\0';
 
-        if (said)
-        {
-                if (said[0] == '+')
-                {
-                        from_start = true;
-                        said++;
-                }
-                else if (said[0] == '-')
-                        said++;
+        if (!text_count_option(said, '+', address_of from_start,
+                               address_of count))
+                return text_done(1);
 
-                if (!string_digits_exact(said, address_of count))
-                {
-                        text_error(null, "invalid number of lines");
-                        return text_done(1);
-                }
-        }
-
-        b32 inputs = text_files_count ? text_files_count : 1;
+        b32 inputs = text_input_count();
         bool headers = (text_files_count > 1 || loud) && !quiet;
 
         for (b32 i = 0; i < inputs; i++)
         {
-                if (!text_open(text_files_count ? program_argument(text_files[i]) : null))
+                if (!text_open(text_file_name(i)))
                         continue;
 
                 if (headers)
@@ -3932,10 +3783,8 @@ static b32 text_nl()
 
                 if (pattern_count >= 3 ||
                     !regex_compile(said + 1, false, false, false))
-                {
-                        text_error(said + 1, "invalid regular expression");
-                        return text_done(1);
-                }
+                        return text_refuse(said + 1,
+                                           "invalid regular expression", 1);
 
                 regex_keep(nl_patterns + pattern_count);
                 patterns[k] = pattern_count++;
@@ -3983,12 +3832,12 @@ static b32 text_nl()
         if (!join)
                 join = 1;
 
-        b32 inputs = text_files_count ? text_files_count : 1;
+        b32 inputs = text_input_count();
         positive separator_length = string_length(separator);
 
         for (b32 i = 0; i < inputs; i++)
         {
-                if (!text_open(text_files_count ? program_argument(text_files[i]) : null))
+                if (!text_open(text_file_name(i)))
                         continue;
 
                 while (text_line_next())
@@ -4115,17 +3964,14 @@ static b32 text_fold()
             (!text_unsigned_option(file_option_value(address_of taking, 'w'), false,
                                    address_of width) ||
              !width || width == (positive)-1))
-        {
-                text_error(file_option_value(address_of taking, 'w'),
-                           "invalid number of columns");
-                return text_done(1);
-        }
+                return text_refuse(file_option_value(address_of taking, 'w'),
+                                   "invalid number of columns", 1);
 
-        b32 inputs = text_files_count ? text_files_count : 1;
+        b32 inputs = text_input_count();
 
         for (b32 i = 0; i < inputs; i++)
         {
-                if (!text_open(text_files_count ? program_argument(text_files[i]) : null))
+                if (!text_open(text_file_name(i)))
                         continue;
 
                 while (text_line_next())
@@ -4382,16 +4228,13 @@ static b32 text_cut()
                 text_delimiter = '\0';
 
         if (have_list && kinds == 1 && !text_list_parse(said))
-        {
-                text_error(null, "invalid list");
-                return text_done(1);
-        }
+                return text_refuse(null, "invalid list", 1);
 
         if (!have_list)
-        {
-                text_error(null, "you must specify a list of bytes, characters, or fields");
-                return text_done(1);
-        }
+                return text_refuse(
+                    null,
+                    "you must specify a list of bytes, characters, or fields",
+                    1);
 
         /*
                 Three ways of saying the same no. GNU refuses two lists of
@@ -4400,22 +4243,17 @@ static b32 text_cut()
                 stops cut -d: -c1 from quietly ignoring the -d.
         */
         if (kinds > 1)
-        {
-                text_error(null, "only one type of list may be specified");
-                return text_done(1);
-        }
+                return text_refuse(null,
+                                   "only one type of list may be specified", 1);
 
         if (whitespace && have_delimiter)
-        {
-                text_error(null, "-d and -w are mutually exclusive");
-                return text_done(1);
-        }
+                return text_refuse(null, "-d and -w are mutually exclusive", 1);
 
         if (!by_field && (have_delimiter || only_delimited || whitespace))
-        {
-                text_error(null, "an input delimiter makes sense only when operating on fields");
-                return text_done(1);
-        }
+                return text_refuse(
+                    null,
+                    "an input delimiter makes sense only when operating on fields",
+                    1);
 
         // -w splits on runs of blanks and joins with a tab, which is the one
         // place cut's two delimiters are not the same character.
@@ -4425,11 +4263,11 @@ static b32 text_cut()
                 separator_length = 1;
         }
 
-        b32 inputs = text_files_count ? text_files_count : 1;
+        b32 inputs = text_input_count();
 
         for (b32 i = 0; i < inputs; i++)
         {
-                if (!text_open(text_files_count ? program_argument(text_files[i]) : null))
+                if (!text_open(text_file_name(i)))
                         continue;
 
                 for (;;)
@@ -4849,10 +4687,7 @@ static b32 text_tr()
         string_address extra = at < text_argument_count ? program_argument(at++) : null;
 
         if (!first)
-        {
-                text_error(null, "missing operand");
-                return text_done(1);
-        }
+                return text_refuse(null, "missing operand", 1);
 
         /*
                 How many sets each shape of tr wants, which it has to say out
@@ -4861,16 +4696,10 @@ static b32 text_tr()
                 squeeze at once, because the second is what gets squeezed.
         */
         if (extra || (remove && !squeeze && second))
-        {
-                text_error(extra ? extra : second, "extra operand");
-                return text_done(1);
-        }
+                return text_refuse(extra ? extra : second, "extra operand", 1);
 
         if (!second && !remove && !squeeze)
-        {
-                text_error(first, "missing operand after");
-                return text_done(1);
-        }
+                return text_refuse(first, "missing operand after", 1);
 
         text_set_broken = false;
         text_set_build(first, text_set_one, address_of text_set_one_length);
@@ -4879,10 +4708,7 @@ static b32 text_tr()
                 text_set_build(second, text_set_two, address_of text_set_two_length);
 
         if (text_set_broken)
-        {
-                text_error(null, "set too large");
-                return text_done(1);
-        }
+                return text_refuse(null, "set too large", 1);
 
         p8 in_first[256];
         p8 in_second[256];
@@ -5113,18 +4939,12 @@ static b32 text_uniq()
                 text_delimiter = '\0';
 
         if (said && !uniq_grouping_of(said, false, address_of all_how))
-        {
-                text_error(said, "invalid argument");
-                return text_done(1);
-        }
+                return text_refuse(said, "invalid argument", 1);
 
         said = file_option_value(address_of taking, 'G');
 
         if (said && !uniq_grouping_of(said, true, address_of group_how))
-        {
-                text_error(said, "invalid argument");
-                return text_done(1);
-        }
+                return text_refuse(said, "invalid argument", 1);
 
         if (!uniq_number_of(address_of taking, 'f', address_of skip_fields) ||
             !uniq_number_of(address_of taking, 's', address_of skip_characters) ||
@@ -5132,24 +4952,20 @@ static b32 text_uniq()
                 return text_done(1);
 
         if (all_repeated && counting)
-        {
-                text_error(null, "printing all duplicated lines and repeat counts is meaningless");
-                return text_done(1);
-        }
+                return text_refuse(
+                    null,
+                    "printing all duplicated lines and repeat counts is meaningless",
+                    1);
 
         if (grouping && (counting || repeated_only || unique_only || all_repeated))
-        {
-                text_error(null, "--group is mutually exclusive with -c/-d/-D/-u");
-                return text_done(1);
-        }
+                return text_refuse(
+                    null, "--group is mutually exclusive with -c/-d/-D/-u", 1);
 
         if (text_files_count > 2)
-        {
-                text_error(program_argument(text_files[2]), "extra operand");
-                return text_done(1);
-        }
+                return text_refuse(program_argument(text_files[2]),
+                                   "extra operand", 1);
 
-        if (!text_open(text_files_count ? program_argument(text_files[0]) : null))
+        if (!text_open(text_file_name(0)))
                 return text_done(1);
 
         // uniq's second operand is where the answer goes, not another input.
@@ -5159,10 +4975,7 @@ static b32 text_uniq()
                 bipolar target = text_open_handle(name, TEXT_WRITE, 0666);
 
                 if (target < 0)
-                {
-                        text_error(name, "Cannot open file");
-                        return text_done(1);
-                }
+                        return text_refuse(name, "Cannot open file", 1);
 
                 text_out_handle = (positive)target;
         }
@@ -5192,43 +5005,14 @@ static b32 text_uniq()
 
                 if (more)
                 {
-                        positive skip = 0;
-
                         // The compared part starts after the skipped fields
                         // and then after the skipped characters, which is the
                         // order POSIX puts them in.
-                        for (positive f = 0; f < skip_fields; f++)
-                        {
-                                skip += string_span_max(line + skip,
-                                                        line_length - skip,
-                                                        string_set_blanks);
-                                skip += string_span_max(line + skip,
-                                                        line_length - skip, text_inside());
-                        }
-
-                        skip += skip_characters;
-
-                        if (skip > line_length)
-                                skip = line_length;
-
-                        positive previous_skip = 0;
-
-                        for (positive f = 0; f < skip_fields; f++)
-                        {
-                                previous_skip += string_span_max(
-                                    previous + previous_skip,
-                                    previous_length - previous_skip,
-                                    string_set_blanks);
-                                previous_skip += string_span_max(
-                                    previous + previous_skip,
-                                    previous_length - previous_skip,
-                                    text_inside());
-                        }
-
-                        previous_skip += skip_characters;
-
-                        if (previous_skip > previous_length)
-                                previous_skip = previous_length;
+                        positive skip = uniq_skipped(
+                            line, line_length, skip_fields, skip_characters);
+                        positive previous_skip = uniq_skipped(
+                            previous, previous_length, skip_fields,
+                            skip_characters);
 
                         positive one = line_length - skip;
                         positive two = previous_length - previous_skip;
@@ -6460,27 +6244,19 @@ static b32 text_grep()
                 else if (string_equals(said, "skip"))
                         grep_skip_directories = true;
                 else if (!string_equals(said, "read"))
-                {
-                        text_error(said, "invalid argument for --directories");
-                        return text_done(1);
-                }
+                        return text_refuse(
+                            said, "invalid argument for --directories", 1);
         }
 
         said = file_option_value(address_of taking, 'D');
 
         if (said && !grep_word_is(said, "read", "skip", null))
-        {
-                text_error(null, "unknown devices method");
-                return text_done(2);
-        }
+                return text_refuse(null, "unknown devices method", 2);
 
         said = file_option_value(address_of taking, 'N');
 
         if (said && !grep_word_is(said, "binary", "text", "without-match"))
-        {
-                text_error(null, "unknown binary-files type");
-                return text_done(2);
-        }
+                return text_refuse(null, "unknown binary-files type", 2);
 
         said = file_option_value(address_of taking, 'W');
 
@@ -6489,10 +6265,8 @@ static b32 text_grep()
                 b32 when = file_color_when(said, FILE_COLOR_AUTO);
 
                 if (when < 0)
-                {
-                        text_error(said, "invalid argument for --color");
-                        return text_done(2);
-                }
+                        return text_refuse(said,
+                                           "invalid argument for --color", 2);
 
                 grep_coloring = file_color_active(when);
                 grep_colors = file_environment((string_address) "GREP_COLORS");
@@ -6515,10 +6289,8 @@ static b32 text_grep()
                         continue;
 
                 if (!string_digits_exact(said, address_of number))
-                {
-                        text_error(null, "invalid context length argument");
-                        return text_done(2);
-                }
+                        return text_refuse(
+                            null, "invalid context length argument", 2);
 
                 if (letter == 'm')
                         limit = number;
@@ -6537,19 +6309,14 @@ static b32 text_grep()
                 grep_pattern_add(value, string_length(value), fixed, extended);
         }
 
-        if (grep_pattern_broken || text_status)
-        {
-                if (grep_pattern_broken)
-                        text_error(null, "pattern too long");
+        if (grep_pattern_broken)
+                return text_refuse(null, "pattern too long", 2);
 
+        if (text_status)
                 return text_done(2);
-        }
 
         if (!have_pattern)
-        {
-                text_error(null, "no pattern given");
-                return text_done(2);
-        }
+                return text_refuse(null, "no pattern given", 2);
 
         // -x and -w are the pattern with something wrapped around it, which
         // is cheaper than a second answer from the machine.
@@ -6571,10 +6338,7 @@ static b32 text_grep()
                 positive have = head_length + grep_pattern_length + tail_length;
 
                 if (have >= GREP_PATTERN_MAX)
-                {
-                        text_error(null, "pattern too long");
-                        return text_done(2);
-                }
+                        return text_refuse(null, "pattern too long", 2);
 
                 memory_copy_apart(around, head, head_length);
                 memory_copy_apart(around + head_length, grep_pattern,
@@ -6591,10 +6355,7 @@ static b32 text_grep()
         }
 
         if (!never && !regex_compile(grep_pattern, extended, icase, false))
-        {
-                text_error(null, "invalid regular expression");
-                return text_done(2);
-        }
+                return text_refuse(null, "invalid regular expression", 2);
 
         if (!whole_line && !whole_word)
                 grep_literal_keep();
@@ -6832,18 +6593,9 @@ static b32 text_grep()
                         {
                                 if (pending)
                                 {
-                                        if (grouped && separator &&
-                                            (split || (shown && number > shown + 1)))
-                                        {
-                                                grep_color_field(
-                                                    separator,
-                                                    string_length(separator),
-                                                    (string_address) "se",
-                                                    (string_address) "36");
-                                                text_put_character('\n');
-                                        }
-
-                                        split = false;
+                                        grep_group_gap(grouped, separator,
+                                                       address_of split, shown,
+                                                       number);
                                         grep_head(shown_name, '-', number, at);
                                         grep_color_line(text_line, text_line_length,
                                                         true, invert);
@@ -6901,18 +6653,9 @@ static b32 text_grep()
                                         if (n < want || (shown && n <= shown))
                                                 continue;
 
-                                        if (grouped && separator &&
-                                            (split || (shown && n > shown + 1)))
-                                        {
-                                                grep_color_field(
-                                                    separator,
-                                                    string_length(separator),
-                                                    (string_address) "se",
-                                                    (string_address) "36");
-                                                text_put_character('\n');
-                                        }
-
-                                        split = false;
+                                        grep_group_gap(grouped, separator,
+                                                       address_of split, shown,
+                                                       n);
                                         grep_head(shown_name, '-', n, 0);
                                         grep_hold_say(slot, invert);
                                         text_put_character(text_delimiter);
@@ -6961,17 +6704,8 @@ static b32 text_grep()
                                 continue;
                         }
 
-                        if (grouped && separator &&
-                            (split || (shown && number > shown + 1)))
-                        {
-                                grep_color_field(separator,
-                                                 string_length(separator),
-                                                 (string_address) "se",
-                                                 (string_address) "36");
-                                text_put_character('\n');
-                        }
-
-                        split = false;
+                        grep_group_gap(grouped, separator, address_of split,
+                                       shown, number);
                         grep_head(shown_name, ':', number, at);
                         grep_color_line(text_line, text_line_length, false,
                                         !invert);
@@ -8264,10 +7998,7 @@ static b32 text_sed()
         }
 
         if (!have_script)
-        {
-                text_error(null, "no script");
-                return text_done(1);
-        }
+                return text_refuse(null, "no script", 1);
 
         // After the script has been read, not while: -f reads its file with
         // the same reader and a script is lines however the input is split.
@@ -8277,25 +8008,19 @@ static b32 text_sed()
         sed_parse();
 
         if (sed_broken)
-        {
-                text_error(null, "unsupported or invalid script");
-                return text_done(sed_broken_status);
-        }
+                return text_refuse(null, "unsupported or invalid script",
+                                   sed_broken_status);
 
         // -i edits files, and there is nothing to edit when the input is a
         // pipe. GNU says so and stops with four.
         if (sed_in_place && !text_files_count)
-        {
-                text_error(null, "no input files");
-                return text_done(4);
-        }
+                return text_refuse(null, "no input files", 4);
 
-        b32 inputs = text_files_count ? text_files_count : 1;
+        b32 inputs = text_input_count();
 
         for (b32 i = 0; i < inputs && leaving < 0; i++)
         {
-                string_address name =
-                    text_files_count ? program_argument(text_files[i]) : null;
+                string_address name = text_file_name(i);
                 p8 resolved[TEXT_PATH_MAX];
                 p8 temporary[TEXT_PATH_MAX];
                 bipolar written = -1;
@@ -8323,8 +8048,8 @@ static b32 text_sed()
                         if (!sed_temporary(name, temporary, (positive)i))
                         {
                                 text_close();
-                                text_error(name, "cannot make a temporary file beside");
-                                return text_done(4);
+                                return text_refuse(
+                                    name, "cannot make a temporary file beside", 4);
                         }
 
                         // O_EXCL, so a name that is somehow already taken is a
@@ -8334,8 +8059,7 @@ static b32 text_sed()
                         if (written < 0)
                         {
                                 text_close();
-                                text_error(temporary, "cannot create");
-                                return text_done(4);
+                                return text_refuse(temporary, "cannot create", 4);
                         }
 
                         text_out_to((positive)written);
@@ -8718,16 +8442,10 @@ static b32 text_sed()
                                 sed_io_failed = true;
 
         if (sed_io_failed)
-        {
-                text_error(null, "write error");
-                return text_done(4);
-        }
+                return text_refuse(null, "write error", 4);
 
         if (sed_failed)
-        {
-                text_error(null, "no previous regular expression");
-                return text_done(1);
-        }
+                return text_refuse(null, "no previous regular expression", 1);
 
         return text_done(leaving > 0 ? leaving : text_status);
 }
@@ -8929,11 +8647,8 @@ static bipolar sort_compare_number(p8 address_to a, positive la, p8 address_to b
         positive at_a = 0, at_b = 0;
         bool minus_a = false, minus_b = false;
 
-        while (at_a < la && text_blank(a[at_a]))
-                at_a++;
-
-        while (at_b < lb && text_blank(b[at_b]))
-                at_b++;
+        at_a = string_span_max(a, la, string_set_blanks);
+        at_b = string_span_max(b, lb, string_set_blanks);
 
         // A leading plus is not a sign here: GNU sort reads +7 as no number
         // at all, which sorts it with the zeros rather than after the sixes.
@@ -9129,8 +8844,7 @@ static bipolar sort_human_order(p8 address_to at, positive length)
         bipolar sign = 1;
         bool nonzero = false;
 
-        while (scan < length && text_blank(at[scan]))
-                scan++;
+        scan = string_span_max(at, length, string_set_blanks);
 
         // Only a minus: GNU reads +7 as no number at all, here as in every
         // other number this file reads.
@@ -9205,8 +8919,7 @@ static b32 sort_month_of(p8 address_to at, positive length)
 {
         positive scan = 0;
 
-        while (scan < length && text_blank(at[scan]))
-                scan++;
+        scan = string_span_max(at, length, string_set_blanks);
 
         if (length - scan < 3)
                 return 0;
@@ -9463,11 +9176,10 @@ static bipolar sort_compare_keys(positive left, positive right)
 
                 if (sort_skip_blanks)
                 {
-                        while (from_a < a->length && text_blank(a->at[from_a]))
-                                from_a++;
-
-                        while (from_b < b->length && text_blank(b->at[from_b]))
-                                from_b++;
+                        from_a = string_span_max(a->at, a->length,
+                                                 string_set_blanks);
+                        from_b = string_span_max(b->at, b->length,
+                                                 string_set_blanks);
                 }
 
                 bipolar answer = sort_compare_kind(sort_kind, sort_how,
@@ -9954,10 +9666,7 @@ static b32 text_sort()
                         continue;
 
                 if (sort_kind)
-                {
-                        text_error(null, "options are incompatible");
-                        return text_done(2);
-                }
+                        return text_refuse(null, "options are incompatible", 2);
 
                 sort_kind = letter;
         }
@@ -9968,10 +9677,8 @@ static b32 text_sort()
                                  string_equals(said, "silent");
 
                 if (!checking_quiet && !string_equals(said, "diagnose-first"))
-                {
-                        text_error(said, "invalid argument for --check");
-                        return text_done(2);
-                }
+                        return text_refuse(
+                            said, "invalid argument for --check", 2);
         }
 
         said = file_option_value(address_of taking, 'W');
@@ -9992,16 +9699,11 @@ static b32 text_sort()
                         a plausible-looking answer to a different question.
                 */
                 if (!kind)
-                {
-                        text_error(said, "invalid argument for --sort");
-                        return text_done(1);
-                }
+                        return text_refuse(said,
+                                           "invalid argument for --sort", 1);
 
                 if (sort_kind && sort_kind != kind)
-                {
-                        text_error(null, "options are incompatible");
-                        return text_done(2);
-                }
+                        return text_refuse(null, "options are incompatible", 2);
 
                 sort_kind = kind;
         }
@@ -10018,16 +9720,10 @@ static b32 text_sort()
                 bool escaped = said[0] == '\\' && said[1] == '0' && !said[2];
 
                 if (!said[0])
-                {
-                        text_error(null, "empty tab");
-                        return text_done(2);
-                }
+                        return text_refuse(null, "empty tab", 2);
 
                 if (said[1] && !escaped)
-                {
-                        text_error(said, "multi-character tab");
-                        return text_done(2);
-                }
+                        return text_refuse(said, "multi-character tab", 2);
 
                 sort_separator = escaped ? '\0' : said[0];
         }
@@ -10050,7 +9746,7 @@ static b32 text_sort()
         if (null_data)
                 text_delimiter = '\0';
 
-        b32 inputs = text_files_count ? text_files_count : 1;
+        b32 inputs = text_input_count();
         positive address_to run_stop = (positive address_to)text_arena_take(
             ((positive)inputs + 1) * sizeof(positive));
 
@@ -10059,7 +9755,7 @@ static b32 text_sort()
 
         for (b32 i = 0; i < inputs; i++)
         {
-                if (!text_open(text_files_count ? program_argument(text_files[i]) : null))
+                if (!text_open(text_file_name(i)))
                 {
                         run_stop[i] = text_lines_count;
                         continue;
@@ -10076,8 +9772,10 @@ static b32 text_sort()
         // never sorts, so it never allocates the index either.
         if (checking)
         {
-                string_address name = text_files_count ? program_argument(text_files[0])
-                                                       : (string_address) "-";
+                string_address name = text_file_name(0);
+
+                if (!name)
+                        name = (string_address) "-";
 
                 for (positive i = 1; i < text_lines_count; i++)
                 {
@@ -10170,10 +9868,8 @@ static b32 text_sort()
                 bipolar handle = text_open_handle(output, TEXT_WRITE, 0666);
 
                 if (handle < 0)
-                {
-                        text_error(output, "cannot open for writing");
-                        return text_done(2);
-                }
+                        return text_refuse(output,
+                                           "cannot open for writing", 2);
 
                 text_out_to((positive)handle);
         }
@@ -10380,36 +10076,6 @@ static fn cmp_ended(cmp_side address_to side, positive at, positive line,
         text_error_raw("\n");
 }
 
-// A byte the way cmp writes one: ^A for a control, M- in front of anything
-// with the high bit set, and the byte itself when it is printable.
-static positive cmp_shown(p8 address_to into, positive value)
-{
-        positive have = 0;
-
-        if (value >= 128)
-        {
-                into[have++] = 'M';
-                into[have++] = '-';
-                value -= 128;
-        }
-
-        if (value == 127)
-        {
-                into[have++] = '^';
-                into[have++] = '?';
-        }
-        else if (value < 32)
-        {
-                into[have++] = '^';
-                into[have++] = (p8)(value + 64);
-        }
-        else
-                into[have++] = (p8)value;
-
-        into[have] = end;
-        return have;
-}
-
 // A skip or a limit: a count, and one of the suffixes the tool this is
 // measured against multiplies it by.
 static bool cmp_count_of(string_address value, positive address_to result)
@@ -10526,10 +10192,7 @@ static b32 text_cmp()
         string_address said = file_option_value(address_of taking, 'n');
 
         if (said && !cmp_count_of(said, address_of limit))
-        {
-                text_error(said, "invalid --bytes value");
-                return text_done(2);
-        }
+                return text_refuse(said, "invalid --bytes value", 2);
 
         said = file_option_value(address_of taking, 'i');
 
@@ -10546,10 +10209,8 @@ static b32 text_cmp()
                 if (said[split] != ':')
                 {
                         if (!cmp_count_of(said, address_of skip_left))
-                        {
-                                text_error(said, "invalid --ignore-initial value");
-                                return text_done(2);
-                        }
+                                return text_refuse(
+                                    said, "invalid --ignore-initial value", 2);
 
                         skip_right = skip_left;
                 }
@@ -10562,20 +10223,16 @@ static b32 text_cmp()
 
                         if (!cmp_count_of(head, address_of skip_left) ||
                             !cmp_count_of(said + split + 1, address_of skip_right))
-                        {
-                                text_error(said, "invalid --ignore-initial value");
-                                return text_done(2);
-                        }
+                                return text_refuse(
+                                    said, "invalid --ignore-initial value", 2);
                 }
         }
 
         b32 operands = text_argument_count - index;
 
         if (operands < 1 || operands > 4)
-        {
-                text_error(null, operands ? "extra operand" : "missing operand");
-                return text_done(2);
-        }
+                return text_refuse(
+                    null, operands ? "extra operand" : "missing operand", 2);
 
         // The third and fourth operands say the same thing -i does, and say
         // it last, so they win.
@@ -10584,10 +10241,8 @@ static b32 text_cmp()
                 positive value = 0;
 
                 if (!cmp_count_of(program_argument(index + which), address_of value))
-                {
-                        text_error(program_argument(index + which), "invalid byte count");
-                        return text_done(2);
-                }
+                        return text_refuse(program_argument(index + which),
+                                           "invalid byte count", 2);
 
                 if (which == 2)
                         skip_left = value;
@@ -10602,33 +10257,22 @@ static b32 text_cmp()
                                                  : (string_address) "-";
 
         if (!cmp_open(address_of cmp_left, left_name))
-                return text_done(2);
+                return cmp_ends(2);
 
         if (!cmp_open(address_of cmp_right, right_name))
-        {
-                cmp_close(address_of cmp_left);
-                return text_done(2);
-        }
+                return cmp_ends(2);
 
         /* One stream cannot be read at two independent positions. GNU cmp
            treats two identical path spellings -- including "-" -- as the
            same object and answers equal without consuming it. */
         if (string_equals(left_name, right_name))
-        {
-                cmp_close(address_of cmp_left);
-                cmp_close(address_of cmp_right);
-                return text_done(0);
-        }
+                return cmp_ends(0);
 
         cmp_pass(address_of cmp_left, skip_left);
         cmp_pass(address_of cmp_right, skip_right);
 
         if (cmp_left.failed || cmp_right.failed)
-        {
-                cmp_close(address_of cmp_left);
-                cmp_close(address_of cmp_right);
-                return text_done(2);
-        }
+                return cmp_ends(2);
 
         if (listing)
         {
@@ -10681,11 +10325,7 @@ static b32 text_cmp()
                                 }
 
                                 if (silent)
-                                {
-                                        cmp_close(address_of cmp_left);
-                                        cmp_close(address_of cmp_right);
-                                        return text_done(1);
-                                }
+                                        return cmp_ends(1);
 
                                 if (listing)
                                 {
@@ -10742,11 +10382,7 @@ static b32 text_cmp()
                 if (a != b)
                 {
                         if (silent)
-                        {
-                                cmp_close(address_of cmp_left);
-                                cmp_close(address_of cmp_right);
-                                return text_done(1);
-                        }
+                                return cmp_ends(1);
 
                         answer = 1;
 
@@ -10756,8 +10392,8 @@ static b32 text_cmp()
 
                         if (shown)
                         {
-                                wide = cmp_shown(left, (positive)a);
-                                cmp_shown(right, (positive)b);
+                                wide = text_visible(left, (p8)a);
+                                text_visible(right, (p8)b);
                         }
 
                         if (!listing)
@@ -10818,9 +10454,7 @@ static b32 text_cmp()
                         lines++;
         }
 
-        cmp_close(address_of cmp_left);
-        cmp_close(address_of cmp_right);
-        return text_done(answer);
+        return cmp_ends(answer);
 }
 
 // expr ------------------------------------------------------------
@@ -11434,10 +11068,7 @@ static b32 text_expr()
                 expr_at++;
 
         if (expr_at >= expr_count)
-        {
-                text_error(null, "missing operand");
-                return text_done(2);
-        }
+                return text_refuse(null, "missing operand", 2);
 
         result = expr_any();
 

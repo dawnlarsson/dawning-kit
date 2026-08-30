@@ -12,6 +12,8 @@
 #ifndef STANDARD_MODERN_C_NET_DHCP
 #define STANDARD_MODERN_C_NET_DHCP
 
+#include "wait.c"
+
 /*
         The four messages, and the chicken and egg underneath them.
 
@@ -268,32 +270,6 @@ static p8 dhcp_prefix_of(p32 mask)
 }
 
 /*
-        One wait for the socket to have something to read, or zero or less
-        when the time ran out.
-
-        The pollfd is built and thrown away here so the three waits in this
-        file cannot drift apart. ppoll rather than poll for the reason the
-        resolver's identical wait in dns.c spells out: arm64 and riscv64
-        have only ppoll, and it takes the timespec this library already has.
-*/
-static bipolar dhcp_wait_readable(bipolar handle, positive seconds,
-                                  positive nanoseconds)
-{
-        p8 waited[8];
-        timespec limit;
-
-        address_to((b32 address_to)waited) = (b32)handle;
-        address_to((p16 address_to)(waited + 4)) = 1;
-        address_to((p16 address_to)(waited + 6)) = 0;
-
-        limit.tv_sec = seconds;
-        limit.tv_nsec = nanoseconds;
-
-        return system_call_5(syscall(ppoll), (positive)waited, 1,
-                             (positive)address_of limit, 0, 8);
-}
-
-/*
         The exchange, with a schedule rather than a single try.
 
         A server that is slow, or a link that has only just come up and whose
@@ -436,7 +412,7 @@ static bipolar dhcp_ask(string_address device, p8 address_to hardware,
                 {
                         bipolar got;
 
-                        if (dhcp_wait_readable(handle, 0, 250000000) <= 0)
+                        if (network_wait_readable(handle, 0, 250000000) <= 0)
                                 continue;
 
                         got = socket_receive((b32)handle, packet, sizeof packet, 0, 0, 0);
@@ -464,7 +440,7 @@ static bipolar dhcp_ask(string_address device, p8 address_to hardware,
 
                         while (deadline--)
                         {
-                                if (dhcp_wait_readable(handle, 0, 250000000) <= 0)
+                                if (network_wait_readable(handle, 0, 250000000) <= 0)
                                         continue;
 
                                 got = socket_receive((b32)handle, packet, sizeof packet,
@@ -584,7 +560,7 @@ static bipolar dhcp_renew(string_address device, p8 address_to hardware,
         {
                 bipolar got;
 
-                if (dhcp_wait_readable(handle, 1, 0) <= 0)
+                if (network_wait_readable(handle, 1, 0) <= 0)
                         continue;
 
                 got = socket_receive((b32)handle, packet, sizeof packet, 0, 0, 0);

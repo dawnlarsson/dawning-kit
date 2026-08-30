@@ -511,6 +511,14 @@ typedef struct
 
 static sort_odd sort_odds[SORT_MOST];
 
+#define SORT_WIDTH_COUNT 53
+#define SORT_WIDTH_MAX 64
+#define SORT_WIDTH_GUARD 32
+
+static p8 sort_width_storage[SORT_WIDTH_GUARD + 16 +
+                             SORT_WIDTH_COUNT * SORT_WIDTH_MAX +
+                             SORT_WIDTH_GUARD];
+
 static b32 sort_compare_narrow(address_any left, address_any right)
 {
         b32 a = *(b32 address_to)left;
@@ -531,6 +539,12 @@ static b32 sort_compare_odd(address_any left, address_any right)
 {
         return memory_compare(((sort_odd address_to)left)->bytes,
                               ((sort_odd address_to)right)->bytes, 5);
+}
+
+static b32 sort_compare_width(address_any left, address_any right,
+                              address_any context)
+{
+        return memory_compare(left, right, *(positive address_to)context);
 }
 
 //      The comparator qsort_r is given, which reads its answer's direction out
@@ -629,6 +643,62 @@ test(sort_every_shape_at_every_width)
                                 //      that drops one is ordered too.
                                 fail(total == after);
                         }
+                }
+        }
+
+        return true;
+}
+
+test(sort_every_record_width_and_base_residue)
+{
+        positive width;
+
+        for (width = 1; width <= SORT_WIDTH_MAX; width++)
+        {
+                positive residue;
+
+                for (residue = 0; residue < 16; residue++)
+                {
+                        positive begin = SORT_WIDTH_GUARD + residue;
+                        positive used = SORT_WIDTH_COUNT * width;
+                        p8 address_to base = sort_width_storage + begin;
+                        positive index;
+
+                        memory_fill(sort_width_storage, 0xa5,
+                                    sizeof(sort_width_storage));
+
+                        for (index = 0; index < SORT_WIDTH_COUNT; index++)
+                        {
+                                p8 key = (p8)((index * 37) % SORT_WIDTH_COUNT);
+                                positive byte;
+
+                                base[index * width] = key;
+
+                                for (byte = 1; byte < width; byte++)
+                                        base[index * width + byte] =
+                                            (p8)(key ^ (byte * 73 + width));
+                        }
+
+                        qsort_r(base, SORT_WIDTH_COUNT, width, sort_compare_width,
+                                address_of width);
+
+                        for (index = 0; index < SORT_WIDTH_COUNT; index++)
+                        {
+                                positive byte;
+
+                                fail(base[index * width] == (p8)index);
+
+                                for (byte = 1; byte < width; byte++)
+                                        fail(base[index * width + byte] ==
+                                             (p8)(index ^ (byte * 73 + width)));
+                        }
+
+                        for (index = 0; index < begin; index++)
+                                fail(sort_width_storage[index] == 0xa5);
+
+                        for (index = begin + used;
+                             index < sizeof(sort_width_storage); index++)
+                                fail(sort_width_storage[index] == 0xa5);
                 }
         }
 
@@ -842,6 +912,7 @@ test_case test_cases[] = {
         case(environment_grows_past_its_first_vector),
         case(random_defaults_to_seed_one),
         case(sort_every_shape_at_every_width),
+        case(sort_every_record_width_and_base_residue),
         case(sort_leaves_the_degenerate_alone),
         case(sort_with_a_context),
         case(search_finds_and_misses),

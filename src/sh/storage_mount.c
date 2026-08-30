@@ -148,22 +148,19 @@ static bool storage_option_name(string_address item, positive length,
 static bool storage_options_parse(storage_mount_options address_to out,
                                   string_address list)
 {
-        p8 address_to at = list;
+        string_address cursor = list;
+        string_address at;
+        positive length;
 
-        while (at && *at)
+        while ((at = storage_comma_next(address_of cursor, address_of length)))
         {
-                p8 address_to token_end = string_first_of_or_end(at, ',');
-                positive length = (positive)(token_end - at);
                 positive set = 0;
                 positive clear = 0;
                 bool consume = true;
 
                 /* getopt/libmount accept redundant commas in -o lists. */
                 if (!length)
-                {
-                        at = *token_end ? token_end + 1 : null;
                         continue;
-                }
 
 #define STORAGE_OPTION(name, set_bits, clear_bits)                 \
                 if (storage_option_name(at, length, name))         \
@@ -244,7 +241,6 @@ static bool storage_options_parse(storage_mount_options address_to out,
                 out->flags = (out->flags | set) & ~clear;
                 if (!consume && !storage_data_add(out, at, length))
                         return false;
-                at = *token_end ? token_end + 1 : null;
         }
         return true;
 }

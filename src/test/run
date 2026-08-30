@@ -372,6 +372,163 @@ riscv_alignment_gate_audit()
                         return mnemonic[slot] == "j" &&
                                branch_target_slot(slot, 1) == wanted
                 }
+                function li_is(slot, destination, immediate, pieces) {
+                        if (mnemonic[slot] != "li")
+                                return 0
+                        split(operand[slot], pieces, ",")
+                        return pieces[1] == destination &&
+                               immediate_is(pieces[2], immediate)
+                }
+                function exchange_alignment_is(   i, pieces, residue,
+                                                   fast8, fast4,
+                                                   choose8, choose4, choose2,
+                                                   align, dispatch, bytes,
+                                                   wide8, wide4, wide2) {
+                        for (i = 1; i <= instructions; i++) {
+                                split(operand[i], pieces, ",")
+                                if (mnemonic[i] == "xor" && pieces[1] == "t0" &&
+                                    pieces[2] == "a0" && pieces[3] == "a1") {
+                                        if (residue)
+                                                return 0
+                                        residue = i
+                                }
+                        }
+                        if (!residue)
+                                return 0
+
+                        for (i = 1; i < residue; i++)
+                                if (li_is(i, "t0", "8")) {
+                                        split(operand[i + 1], pieces, ",")
+                                        if (mnemonic[i + 1] == "bne" &&
+                                            pieces[1] == "a2" && pieces[2] == "t0") {
+                                                fast8 = i
+                                                fast4 = branch_target_slot(i + 1, 3)
+                                                break
+                                        }
+                                }
+                        if (!fast8 || !fast4 || !li_is(fast4, "t0", "4") ||
+                            branch_target_slot(fast4 + 1, 3) != residue)
+                                return 0
+
+                        split(operand[fast8 + 2], pieces, ",")
+                        if (mnemonic[fast8 + 2] != "or" ||
+                            pieces[1] != "t1" || pieces[2] != "a0" ||
+                            pieces[3] != "a1")
+                                return 0
+                        split(operand[fast8 + 3], pieces, ",")
+                        if (mnemonic[fast8 + 3] != "andi" ||
+                            pieces[1] != "t1" || pieces[2] != "t1" ||
+                            !immediate_is(pieces[3], "7") ||
+                            !branch_is(fast8 + 4, "bnez", "t1") ||
+                            branch_target_slot(fast8 + 4, 2) != residue ||
+                            !zero_memory_is(fast8 + 5, "ld", "t1", "a0") ||
+                            !zero_memory_is(fast8 + 6, "ld", "t2", "a1") ||
+                            !zero_memory_is(fast8 + 7, "sd", "t2", "a0") ||
+                            !zero_memory_is(fast8 + 8, "sd", "t1", "a1") ||
+                            mnemonic[fast8 + 9] != "ret")
+                                return 0
+
+                        split(operand[fast4 + 2], pieces, ",")
+                        if (mnemonic[fast4 + 2] != "or" ||
+                            pieces[1] != "t1" || pieces[2] != "a0" ||
+                            pieces[3] != "a1")
+                                return 0
+                        split(operand[fast4 + 3], pieces, ",")
+                        if (mnemonic[fast4 + 3] != "andi" ||
+                            pieces[1] != "t1" || pieces[2] != "t1" ||
+                            !immediate_is(pieces[3], "3") ||
+                            !branch_is(fast4 + 4, "bnez", "t1") ||
+                            branch_target_slot(fast4 + 4, 2) != residue ||
+                            !zero_memory_is(fast4 + 5, "lw", "t1", "a0") ||
+                            !zero_memory_is(fast4 + 6, "lw", "t2", "a1") ||
+                            !zero_memory_is(fast4 + 7, "sw", "t2", "a0") ||
+                            !zero_memory_is(fast4 + 8, "sw", "t1", "a1") ||
+                            mnemonic[fast4 + 9] != "ret")
+                                return 0
+
+                        split(operand[residue + 1], pieces, ",")
+                        if (mnemonic[residue + 1] != "andi" ||
+                            pieces[1] != "t1" || pieces[2] != "t0" ||
+                            !immediate_is(pieces[3], "7") ||
+                            !branch_is(residue + 2, "beqz", "t1"))
+                                return 0
+                        choose8 = branch_target_slot(residue + 2, 2)
+
+                        split(operand[residue + 3], pieces, ",")
+                        if (mnemonic[residue + 3] != "andi" ||
+                            pieces[1] != "t1" || pieces[2] != "t0" ||
+                            !immediate_is(pieces[3], "3") ||
+                            !branch_is(residue + 4, "beqz", "t1"))
+                                return 0
+                        choose4 = branch_target_slot(residue + 4, 2)
+
+                        split(operand[residue + 5], pieces, ",")
+                        if (mnemonic[residue + 5] != "andi" ||
+                            pieces[1] != "t1" || pieces[2] != "t0" ||
+                            !immediate_is(pieces[3], "1") ||
+                            !branch_is(residue + 6, "beqz", "t1"))
+                                return 0
+                        choose2 = branch_target_slot(residue + 6, 2)
+                        bytes = branch_target_slot(residue + 7, 1)
+
+                        if (!choose8 || !choose4 || !choose2 || !bytes ||
+                            !li_is(choose8, "a3", "8") ||
+                            !li_is(choose4, "a3", "4") ||
+                            !li_is(choose2, "a3", "2"))
+                                return 0
+
+                        align = choose2 + 1
+                        if (!jump_targets(choose8 + 1, align) ||
+                            !jump_targets(choose4 + 1, align) ||
+                            !addi_is(align, "t0", "a3", "-1"))
+                                return 0
+                        split(operand[align + 1], pieces, ",")
+                        if (mnemonic[align + 1] != "and" ||
+                            pieces[1] != "t1" || pieces[2] != "a0" ||
+                            pieces[3] != "t0" ||
+                            !branch_is(align + 2, "beqz", "t1"))
+                                return 0
+                        dispatch = branch_target_slot(align + 2, 2)
+
+                        if (!zero_memory_is(align + 3, "lbu", "t1", "a0") ||
+                            !zero_memory_is(align + 4, "lbu", "t2", "a1") ||
+                            !zero_memory_is(align + 5, "sb", "t2", "a0") ||
+                            !zero_memory_is(align + 6, "sb", "t1", "a1") ||
+                            !addi_is(align + 7, "a0", "a0", "1") ||
+                            !addi_is(align + 8, "a1", "a1", "1") ||
+                            !addi_is(align + 9, "a2", "a2", "-1") ||
+                            !branch_is(align + 10, "beqz", "a2"))
+                                return 0
+                        split(operand[align + 11], pieces, ",")
+                        if (mnemonic[align + 11] != "and" ||
+                            pieces[1] != "t1" || pieces[2] != "a0" ||
+                            pieces[3] != "t0" ||
+                            !branch_is(align + 12, "bnez", "t1") ||
+                            branch_target_slot(align + 12, 2) != align + 3)
+                                return 0
+
+                        if (!li_is(dispatch, "t0", "8"))
+                                return 0
+                        split(operand[dispatch + 1], pieces, ",")
+                        if (mnemonic[dispatch + 1] != "beq" ||
+                            pieces[1] != "a3" || pieces[2] != "t0")
+                                return 0
+                        wide8 = branch_target_slot(dispatch + 1, 3)
+                        if (!li_is(dispatch + 2, "t0", "4"))
+                                return 0
+                        split(operand[dispatch + 3], pieces, ",")
+                        if (mnemonic[dispatch + 3] != "beq" ||
+                            pieces[1] != "a3" || pieces[2] != "t0")
+                                return 0
+                        wide4 = branch_target_slot(dispatch + 3, 3)
+                        wide2 = branch_target_slot(dispatch + 4, 1)
+
+                        return wide8 && wide4 && wide2 &&
+                               li_is(wide8, "t0", "8") &&
+                               li_is(wide4, "t0", "4") &&
+                               li_is(wide2, "t0", "2") &&
+                               branch_is(bytes, "beqz", "a2")
+                }
                 function residue_fallback_is(slot) {
                         if (routine == "string_compare")
                                 return addi_is(slot, "a0", "a0", "1") &&
@@ -426,6 +583,13 @@ riscv_alignment_gate_audit()
                                        addi_is(slot + 1, "a0", "a0", "1") &&
                                        addi_is(slot + 2, "a2", "a2", "-1") &&
                                        branch_is(slot + 3, "beqz", "a2")
+                        if (routine == "memory_frob")
+                                return zero_memory_is(slot, "lbu", "t1", "a0") &&
+                                       mnemonic[slot + 1] == "xori" &&
+                                       zero_memory_is(slot + 2, "sb", "t1", "a0") &&
+                                       addi_is(slot + 3, "a0", "a0", "1") &&
+                                       addi_is(slot + 4, "a1", "a1", "-1") &&
+                                       branch_is(slot + 5, "beqz", "a1")
                         if (routine == "memory_copy_apart")
                                 return zero_memory_is(slot, "lbu", "t1", "a1") &&
                                        zero_memory_is(slot + 1, "sb", "t1", "a0") &&
@@ -448,6 +612,7 @@ riscv_alignment_gate_audit()
                         if (routine == "memory_count")       return 6
                         if (routine == "memory_compare")     return 8
                         if (routine == "memory_fill")        return 4
+                        if (routine == "memory_frob")        return 6
                         if (routine == "memory_copy_apart")   return 6
                         if (routine == "memory_copy")        return 6
                         return 0
@@ -470,6 +635,11 @@ riscv_alignment_gate_audit()
                                        first_is(slot, "t0") &&
                                        mnemonic[slot + 1] == "bltu" &&
                                        first_two_are(slot + 1, "a2", "t0")
+                        if (routine == "memory_frob")
+                                return mnemonic[slot] == "li" &&
+                                       first_is(slot, "t0") &&
+                                       mnemonic[slot + 1] == "bltu" &&
+                                       first_two_are(slot + 1, "a1", "t0")
                         if (routine == "memory_copy_apart")
                                 return mnemonic[slot] == "li" &&
                                        first_is(slot, "t4") &&
@@ -510,6 +680,14 @@ riscv_alignment_gate_audit()
                         instruction_at[address] = instructions
                 }
                 END {
+                        if (routine == "memory_exchange_apart") {
+                                if (!exchange_alignment_is()) {
+                                        print routine ": shared-residue alignment control changed"
+                                        exit 1
+                                }
+                                exit 0
+                        }
+
                         if (residue_gate != "-") {
                                 residue_matches = 0
                                 for (i = 1; i <= instructions; i++) {
@@ -722,6 +900,8 @@ riscv_alignment_audit()
                 'memory_count:2:a0' \
                 'memory_compare:3:a0 a1' \
                 'memory_fill:2:a0' \
+                'memory_frob:2:a0' \
+                'memory_exchange_apart:1:a0 a1' \
                 'memory_copy_apart:3:a0 a1' \
                 'memory_copy:3:a4 a5' \
                 'string_to_positive:1:t3 t6'
@@ -741,6 +921,7 @@ riscv_alignment_audit()
                 string_compare_max) alignment_labels="strncmp string_compare_max" ;;
                 memory_compare)     alignment_labels="memcmp memory_compare" ;;
                 memory_fill)        alignment_labels="__memset memset memory_fill" ;;
+                memory_frob)        alignment_labels="memfrob memory_frob" ;;
                 memory_copy)        alignment_labels="__memcpy memcpy memory_copy" ;;
                 *)                  alignment_labels=$alignment_routine ;;
                 esac
@@ -769,13 +950,13 @@ riscv_alignment_audit()
                         '[[:space:]]andi[[:space:]]+[^,]+,[^,]+,[[:space:]]*(0x)?7([[:space:]]|$)' \
                         "$alignment_dis" || true)
                 alignment_wide_count=$(grep -Ec \
-                        '[[:space:]](ld|sd|lw|sw)[[:space:]]' \
+                        '[[:space:]](ld|sd|lw|sw|lhu|sh)[[:space:]]' \
                         "$alignment_dis" || true)
                 alignment_first_guard=$(grep -En \
                         '[[:space:]]andi[[:space:]]+[^,]+,[^,]+,[[:space:]]*(0x)?7([[:space:]]|$)' \
                         "$alignment_dis" | sed -n '1s/:.*//p')
                 alignment_first_wide=$(grep -En \
-                        '[[:space:]](ld|sd|lw|sw)[[:space:]]' \
+                        '[[:space:]](ld|sd|lw|sw|lhu|sh)[[:space:]]' \
                         "$alignment_dis" | sed -n '1s/:.*//p')
 
                 if [ "$alignment_guard_count" -lt "$alignment_guards" ] || \
@@ -822,6 +1003,14 @@ riscv_alignment_audit()
                 memory_fill)
                         alignment_natural_register=t0
                         alignment_natural_base=a0
+                        ;;
+                memory_frob)
+                        alignment_natural_register=t0
+                        alignment_natural_base=a0
+                        ;;
+                memory_exchange_apart)
+                        alignment_natural_register=-
+                        alignment_natural_base=-
                         ;;
                 memory_copy_apart)
                         alignment_residue_register=t0
@@ -890,7 +1079,8 @@ riscv_alignment_audit()
                                 mnemonic = line
                                 sub(/[[:space:]].*$/, "", mnemonic)
                                 if (mnemonic != "ld" && mnemonic != "sd" &&
-                                    mnemonic != "lw" && mnemonic != "sw")
+                                    mnemonic != "lw" && mnemonic != "sw" &&
+                                    mnemonic != "lhu" && mnemonic != "sh")
                                         next
 
                                 operand = line
@@ -909,7 +1099,12 @@ riscv_alignment_audit()
                                         bad = 1
                                 }
 
-                                alignment = (mnemonic == "lw" || mnemonic == "sw") ? 4 : 8
+                                if (mnemonic == "lhu" || mnemonic == "sh")
+                                        alignment = 2
+                                else if (mnemonic == "lw" || mnemonic == "sw")
+                                        alignment = 4
+                                else
+                                        alignment = 8
                                 if (number(offset) % alignment) {
                                         print routine ": misaligned displacement " operand
                                         bad = 1

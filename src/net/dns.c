@@ -12,6 +12,8 @@
 #ifndef STANDARD_MODERN_C_NET_DNS
 #define STANDARD_MODERN_C_NET_DNS
 
+#include "wait.c"
+
 /*
         The smallest resolver that is not wrong.
 
@@ -319,39 +321,14 @@ static bipolar dns_resolve(p32 server, string_address name, p32 address_to found
                 return DNS_NO_REPLY;
         }
 
-        /*
-                Waiting, with an end to it.
+        //      A resolver that blocks forever on a server that is not there
+        //      looks like a hung machine rather than a network that is down.
+        got = network_wait_readable(handle, seconds, 0);
 
-                ppoll rather than poll, because arm64 and riscv64 have only
-                ppoll -- the asm-generic table dropped the older call -- and
-                it takes a timespec, which is the type this library already
-                has, in nanoseconds. SO_RCVTIMEO would have wanted a timeval
-                in microseconds and a second time type in the graph for the
-                sake of one call.
-
-                A resolver that blocks forever on a server that is not there
-                is the failure that looks like a hung machine rather than a
-                network that is down.
-        */
+        if (got <= 0)
         {
-                p8 waited[8];
-                timespec deadline;
-
-                address_to((b32 address_to)waited) = (b32)handle;
-                address_to((p16 address_to)(waited + 4)) = 1;  // POLLIN
-                address_to((p16 address_to)(waited + 6)) = 0;
-
-                deadline.tv_sec = seconds;
-                deadline.tv_nsec = 0;
-
-                got = system_call_5(syscall(ppoll), (positive)waited, 1,
-                                    (positive)address_of deadline, 0, 8);
-
-                if (got <= 0)
-                {
-                        socket_close((b32)handle);
-                        return DNS_NO_REPLY;
-                }
+                socket_close((b32)handle);
+                return DNS_NO_REPLY;
         }
 
         got = socket_receive((b32)handle, reply, sizeof reply, MSG_TRUNC, 0, 0);
@@ -421,8 +398,7 @@ static bipolar dns_resolve(p32 server, string_address name, p32 address_to found
                 if (kind == DNS_TYPE_A && class == DNS_CLASS_IN && size == 4)
                 {
                         if (found)
-                                address_to found = network_order_32(
-                                    address_to((p32 address_to)(reply + at)));
+                                address_to found = network_load_32(reply + at);
 
                         return DNS_OK;
                 }

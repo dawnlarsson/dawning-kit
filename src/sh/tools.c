@@ -3896,33 +3896,49 @@ static bool ps_value_has(positive address_to values, positive count,
         return false;
 }
 
+typedef struct
+{
+        string_address at;
+        string_address from;
+        positive length;
+} ps_list_cursor;
+
+/* A comma-or-space separated span. The caller supplies the bytes that end
+   its kind of item because a format name also stops at =, while a command
+   name may contain one. A separator-only tail is returned once as an empty
+   span: three readers ignore it, while --sort deliberately refuses it. */
+static bool ps_list_next(ps_list_cursor address_to list,
+                         string_address stops)
+{
+        if (!string_get(list->at))
+                return false;
+
+        list->at += string_span_of_set(list->at, ", ");
+        list->from = list->at;
+        list->length = string_span_without_set(list->at, stops);
+        list->at += list->length;
+        return true;
+}
+
 static bool ps_pid_list(string_address list,
                         positive address_to address_to values,
                         positive address_to count, positive address_to room,
                         bool duplicate_within_operand)
 {
-        string_address at = list;
+        ps_list_cursor item = {.at = list};
         bool any = false;
         positive before = address_to count;
 
-        while (string_get(at))
+        while (ps_list_next(address_of item, (string_address) ", "))
         {
-                while (string_get(at) == ',' || string_get(at) == ' ')
-                        at++;
-
-                if (!string_get(at))
+                if (!item.length)
                         break;
 
                 positive value;
-                string_address from = at;
+                string_address at = item.from;
 
                 if (!dd_digits(address_of at, address_of value) ||
-                    !value ||
-                    (string_get(at) && string_get(at) != ',' &&
-                     string_get(at) != ' '))
-                        return false;
-
-                if (at == from)
+                    !value || (positive)(at - item.from) != item.length)
                         return false;
 
                 /*
@@ -3974,26 +3990,16 @@ static bool ps_command_list(string_address list,
                             string_address address_to address_to values,
                             positive address_to count, positive address_to room)
 {
-        string_address at = list;
+        ps_list_cursor item = {.at = list};
         bool any = false;
 
-        while (string_get(at))
+        while (ps_list_next(address_of item, (string_address) ", "))
         {
-                while (string_get(at) == ',' || string_get(at) == ' ')
-                        at++;
-
-                if (!string_get(at))
+                if (!item.length)
                         break;
 
-                string_address from = at;
-
-                while (string_get(at) && string_get(at) != ',' &&
-                       string_get(at) != ' ')
-                        at++;
-
-                positive length = (positive)(at - from);
-
-                if (!length || !ps_string_add(values, count, room, from, length))
+                if (!ps_string_add(values, count, room, item.from,
+                                   item.length))
                         return false;
 
                 any = true;
@@ -4023,26 +4029,24 @@ static bool ps_command_selected(string_address address_to values,
 
 static bool ps_sort_pid(string_address list, bool address_to reverse)
 {
-        string_address at = list;
+        ps_list_cursor item = {.at = list};
         bool any = false;
 
-        while (string_get(at))
+        while (ps_list_next(address_of item, (string_address) ", "))
         {
-                while (string_get(at) == ',' || string_get(at) == ' ')
-                        at++;
+                string_address from = item.from;
+                positive length = item.length;
+
+                if (!length)
+                        return false;
 
                 bool descending = false;
 
-                if (string_get(at) == '+' || string_get(at) == '-')
-                        descending = string_get(at++) == '-';
-
-                string_address from = at;
-
-                while (string_get(at) && string_get(at) != ',' &&
-                       string_get(at) != ' ')
-                        at++;
-
-                positive length = (positive)(at - from);
+                if (string_get(from) == '+' || string_get(from) == '-')
+                {
+                        descending = string_get(from++) == '-';
+                        length--;
+                }
 
                 if (length != 3 || string_compare_max(from,
                                                        (string_address)"pid", 3))
@@ -4073,27 +4077,21 @@ static bool ps_format_list(string_address list,
                            ps_selected address_to address_to fields,
                            positive address_to count, positive address_to room)
 {
-        string_address at = list;
+        ps_list_cursor item = {.at = list};
         bool any = false;
 
-        while (string_get(at))
+        while (ps_list_next(address_of item, (string_address) "=, "))
         {
-                while (string_get(at) == ',' || string_get(at) == ' ')
-                        at++;
-
-                if (!string_get(at))
-                        break;
-
-                string_address name_from = at;
-
-                while (string_get(at) && string_get(at) != '=' &&
-                       string_get(at) != ',' && string_get(at) != ' ')
-                        at++;
-
-                positive name_length = (positive)(at - name_from);
+                string_address name_from = item.from;
+                positive name_length = item.length;
 
                 if (!name_length)
+                {
+                        if (!string_get(name_from))
+                                break;
+
                         return false;
+                }
 
                 p8 address_to name =
                     (p8 address_to)text_arena_take(name_length + 1);
@@ -4104,17 +4102,16 @@ static bool ps_format_list(string_address list,
                 memory_copy_apart(name, name_from, name_length);
                 name[name_length] = end;
 
-                bool custom = string_get(at) == '=';
+                bool custom = string_get(item.at) == '=';
                 string_address header = null;
 
                 if (custom)
                 {
-                        string_address header_from = ++at;
+                        string_address header_from = ++item.at;
+                        positive header_length = string_span_without_set(
+                            item.at, (string_address) ",");
 
-                        while (string_get(at) && string_get(at) != ',')
-                                at++;
-
-                        positive header_length = (positive)(at - header_from);
+                        item.at += header_length;
                         p8 address_to made =
                             (p8 address_to)text_arena_take(header_length + 1);
 
@@ -4169,9 +4166,6 @@ static bool ps_format_list(string_address list,
                         return false;
 
                 any = true;
-
-                while (string_get(at) == ',' || string_get(at) == ' ')
-                        at++;
         }
 
         return any;

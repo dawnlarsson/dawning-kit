@@ -340,22 +340,34 @@ bool storage_mount_table_load(storage_mount_table address_to table,
         return true;
 }
 
+static string_address storage_comma_next(string_address address_to cursor,
+                                         positive address_to length)
+{
+        string_address at = address_to cursor;
+        string_address comma;
+
+        if (!at || !*at)
+                return null;
+
+        comma = string_first_of_or_end(at, ',');
+        address_to length = (positive)(comma - at);
+        address_to cursor = *comma ? comma + 1 : null;
+        return at;
+}
+
 static bool storage_option_has_length(string_address options,
                                       string_address wanted,
                                       positive wanted_length)
 {
-        string_address at = options;
+        string_address cursor = options;
+        string_address at;
+        positive length;
 
-        while (at && *at)
+        while ((at = storage_comma_next(address_of cursor, address_of length)))
         {
-                string_address comma = string_first_of_or_end(at, ',');
-                positive length = (positive)(comma - at);
-
                 if (length == wanted_length &&
                     !string_compare_max(at, wanted, length))
                         return true;
-
-                at = *comma ? comma + 1 : null;
         }
 
         return false;
@@ -540,8 +552,10 @@ static bool storage_type_match(string_address list, string_address type)
 {
         bool include_seen = false;
         bool included = false;
-        string_address at = list;
+        string_address cursor = list;
+        string_address at;
         positive type_length;
+        positive length;
 
         if (!list)
                 return true;
@@ -550,10 +564,8 @@ static bool storage_type_match(string_address list, string_address type)
 
         type_length = string_length(type);
 
-        while (at && *at)
+        while ((at = storage_comma_next(address_of cursor, address_of length)))
         {
-                string_address comma = string_first_of_or_end(at, ',');
-                positive length = (positive)(comma - at);
                 bool exclude = length > 2 && at[0] == 'n' && at[1] == 'o';
                 string_address name = exclude ? at + 2 : at;
                 positive name_length = length - (exclude ? 2 : 0);
@@ -571,7 +583,6 @@ static bool storage_type_match(string_address list, string_address type)
                                 included = true;
                 }
 
-                at = *comma ? comma + 1 : null;
         }
 
         return !include_seen || included;
@@ -625,23 +636,20 @@ static string_address storage_attached_long(string_address argument,
 static bool storage_mount_options_match(storage_mount address_to mount,
                                         string_address list)
 {
-        string_address at = list;
+        string_address cursor = list;
+        string_address at;
+        positive length;
 
-        if (!at)
+        if (!list)
                 return true;
 
-        while (at && *at)
+        while ((at = storage_comma_next(address_of cursor, address_of length)))
         {
-                string_address comma = string_first_of_or_end(at, ',');
-                positive length = (positive)(comma - at);
-
                 if (!length ||
                     (!storage_option_has_length(mount->options, at, length) &&
                      !storage_option_has_length(mount->filesystem_options,
                                                 at, length)))
                         return false;
-
-                at = *comma ? comma + 1 : null;
         }
 
         return true;
@@ -650,14 +658,14 @@ static bool storage_mount_options_match(storage_mount address_to mount,
 static bool storage_columns(string_address list,
                             storage_findmnt_options address_to options)
 {
-        string_address at = list;
+        string_address cursor = list;
+        string_address at;
+        positive length;
 
         options->count = 0;
 
-        while (at && *at)
+        while ((at = storage_comma_next(address_of cursor, address_of length)))
         {
-                string_address comma = string_first_of_or_end(at, ',');
-                positive length = (positive)(comma - at);
                 enum storage_column column;
 
                 if (length == 6 && !memory_compare_ascii_case(
@@ -697,7 +705,6 @@ static bool storage_columns(string_address list,
                         return false;
 
                 options->columns[options->count++] = column;
-                at = *comma ? comma + 1 : null;
         }
 
         return options->count != 0;
@@ -755,18 +762,16 @@ static string_address storage_findmnt_cell(storage_mount address_to mount,
 static positive storage_combined_options_length(storage_mount address_to mount)
 {
         positive length = string_length(mount->options);
-        string_address at = mount->filesystem_options;
+        string_address cursor = mount->filesystem_options;
+        string_address at;
+        positive token_length;
 
-        while (at && *at)
+        while ((at = storage_comma_next(address_of cursor,
+                                         address_of token_length)))
         {
-                string_address comma = string_first_of_or_end(at, ',');
-                positive token_length = (positive)(comma - at);
-
                 if (token_length && !storage_option_has_length(
                                         mount->options, at, token_length))
                         length += token_length + (length ? 1 : 0);
-
-                at = *comma ? comma + 1 : null;
         }
 
         return length;
@@ -776,7 +781,9 @@ static fn storage_combined_options_write(writer output,
                                          storage_mount address_to mount,
                                          bool raw, bool pairs)
 {
-        string_address at = mount->filesystem_options;
+        string_address cursor = mount->filesystem_options;
+        string_address at;
+        positive token_length;
         bool any = mount->options[0] != end;
 
         if (pairs)
@@ -784,11 +791,9 @@ static fn storage_combined_options_write(writer output,
         else
                 storage_findmnt_value(output, mount->options, raw);
 
-        while (at && *at)
+        while ((at = storage_comma_next(address_of cursor,
+                                         address_of token_length)))
         {
-                string_address comma = string_first_of_or_end(at, ',');
-                positive token_length = (positive)(comma - at);
-
                 if (token_length && !storage_option_has_length(
                                         mount->options, at, token_length))
                 {
@@ -816,8 +821,6 @@ static fn storage_combined_options_write(writer output,
 
                         any = true;
                 }
-
-                at = *comma ? comma + 1 : null;
         }
 }
 

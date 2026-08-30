@@ -67,7 +67,7 @@
         A .set is a second label on the same address, so there is no wrapper
         and no jump, and which names get one depends on who is linking.
 
-        235 routines (226 public, 9 local), 235 of them on all three.
+        237 routines (228 public, 9 local), 237 of them on all three.
         Raw C purity: 0 function bodies, 0 object definitions, 0 body macros, and 0 object macros (all forbidden).
 
           routine                        scope   x86_64  arm64   riscv64
@@ -158,12 +158,14 @@
           memory_count                   public  yes     yes     yes
           memory_count_records_with_prepared public  yes     yes     yes
           memory_count_words             public  yes     yes     yes
+          memory_exchange_apart          public  yes     yes     yes
           memory_fill                    public  yes     yes     yes
           memory_fill_u32                public  yes     yes     yes
           memory_fill_u64_aligned        public  yes     yes     yes
           memory_first_of                public  yes     yes     yes
           memory_first_of_ascii_case     public  yes     yes     yes
           memory_free                    public  yes     yes     yes
+          memory_frob                    public  yes     yes     yes
           memory_growth                  public  yes     yes     yes
           memory_hash_33                 public  yes     yes     yes
           memory_last_of                 public  yes     yes     yes
@@ -3590,6 +3592,34 @@ __asm__(
     ASM_SECTION
     ASM_END(memory_reverse)
 
+    // XOR exactly size bytes with 42 and return the original address.
+    // Userspace retires a vector at a time; the scalar floor stays legal in
+    // kernel builds and handles the exact tail without reading past it.
+    ASM_FUNC(memory_frob)
+    "mov %rdi, %rax\n"
+#ifndef KERNEL_MODE
+    "cmp $16, %rsi\n   jb .Lmemory_frob_x64_words\n"
+    "mov $0x2a2a2a2a, %ecx\n   movd %ecx, %xmm1\n"
+    "pshufd $0, %xmm1, %xmm1\n   .balign 16\n"
+    ".Lmemory_frob_x64_16:\n   movdqu (%rdi), %xmm0\n"
+    "pxor %xmm1, %xmm0\n   movdqu %xmm0, (%rdi)\n"
+    "add $16, %rdi\n   sub $16, %rsi\n   cmp $16, %rsi\n"
+    "jae .Lmemory_frob_x64_16\n"
+#endif
+    ".Lmemory_frob_x64_words:\n   cmp $8, %rsi\n"
+    "jb .Lmemory_frob_x64_tail\n"
+    "movabs $0x2a2a2a2a2a2a2a2a, %r8\n   .balign 16\n"
+    ".Lmemory_frob_x64_8:\n   xorq %r8, (%rdi)\n"
+    "add $8, %rdi\n   sub $8, %rsi\n   cmp $8, %rsi\n"
+    "jae .Lmemory_frob_x64_8\n"
+    ".Lmemory_frob_x64_tail:\n   test %rsi, %rsi\n"
+    "jz .Lmemory_frob_x64_done\n"
+    ".Lmemory_frob_x64_one:\n   xorb $42, (%rdi)\n"
+    "inc %rdi\n   dec %rsi\n   jnz .Lmemory_frob_x64_one\n"
+    ".Lmemory_frob_x64_done:\n"
+    ASM_RET
+    ASM_END(memory_frob)
+
     // Adding 63 maps 'A'..'Z' to the signed interval -128..-103. Nothing
     // else lands below -102, so one signed comparison makes the conversion
     // mask for all sixteen bytes without branches or table loads.
@@ -3762,6 +3792,81 @@ __asm__(
     ".Lmemory_translate_x64_done:\n"
     ASM_RET
     ASM_END(memory_translate)
+
+    /*
+            Exchange two separate byte runs in place.
+
+            The ranges must not overlap. Equal addresses are accepted as the
+            useful exception and do nothing, as does a zero size; neither case
+            reads either address. qsort is the first heavy caller: its elements
+            are separate by construction, and keeping the exchange here avoids
+            choosing a load width in C and dispatching on it for every swap.
+
+            movdqu is the userspace floor on x86_64 and carries arbitrary
+            element alignment. Kernel builds stay in general registers because
+            their vector state is not ours. The small tail is a binary ladder,
+            so the four- and eight-byte qsort cases each take one pair of loads
+            and stores with no loop.
+    */
+    ASM_FUNC(memory_exchange_apart)
+    "cmp %rsi, %rdi\n   je .Lmemory_exchange_apart_x64_done\n"
+    "test %rdx, %rdx\n   jz .Lmemory_exchange_apart_x64_done\n"
+    "cmp $8, %rdx\n   jne .Lmemory_exchange_apart_x64_exact_4\n"
+    "mov (%rdi), %r8\n   mov (%rsi), %r9\n"
+    "mov %r9, (%rdi)\n   mov %r8, (%rsi)\n"
+    ASM_RET
+    ".Lmemory_exchange_apart_x64_exact_4:\n"
+    "cmp $4, %rdx\n   jne .Lmemory_exchange_apart_x64_bulk\n"
+    "mov (%rdi), %r8d\n   mov (%rsi), %r9d\n"
+    "mov %r9d, (%rdi)\n   mov %r8d, (%rsi)\n"
+    ASM_RET
+    ".Lmemory_exchange_apart_x64_bulk:\n"
+#ifndef KERNEL_MODE
+    "cmp $32, %rdx\n   jb .Lmemory_exchange_apart_x64_16\n"
+    ".balign 16\n.Lmemory_exchange_apart_x64_32:\n"
+    "movdqu 0(%rdi), %xmm0\n   movdqu 16(%rdi), %xmm1\n"
+    "movdqu 0(%rsi), %xmm2\n   movdqu 16(%rsi), %xmm3\n"
+    "movdqu %xmm2, 0(%rdi)\n   movdqu %xmm3, 16(%rdi)\n"
+    "movdqu %xmm0, 0(%rsi)\n   movdqu %xmm1, 16(%rsi)\n"
+    "add $32, %rdi\n   add $32, %rsi\n   sub $32, %rdx\n"
+    "jz .Lmemory_exchange_apart_x64_done\n"
+    "cmp $32, %rdx\n   jae .Lmemory_exchange_apart_x64_32\n"
+    ".Lmemory_exchange_apart_x64_16:\n"
+    "cmp $16, %rdx\n   jb .Lmemory_exchange_apart_x64_tail\n"
+    "movdqu (%rdi), %xmm0\n   movdqu (%rsi), %xmm1\n"
+    "movdqu %xmm1, (%rdi)\n   movdqu %xmm0, (%rsi)\n"
+    "add $16, %rdi\n   add $16, %rsi\n   sub $16, %rdx\n"
+    "jz .Lmemory_exchange_apart_x64_done\n"
+#else
+    ".Lmemory_exchange_apart_x64_words:\n"
+    "cmp $8, %rdx\n   jb .Lmemory_exchange_apart_x64_tail\n"
+    "mov (%rdi), %r8\n   mov (%rsi), %r9\n"
+    "mov %r9, (%rdi)\n   mov %r8, (%rsi)\n"
+    "add $8, %rdi\n   add $8, %rsi\n   sub $8, %rdx\n"
+    "jmp .Lmemory_exchange_apart_x64_words\n"
+#endif
+    ".Lmemory_exchange_apart_x64_tail:\n"
+    "test $8, %rdx\n   jz .Lmemory_exchange_apart_x64_4\n"
+    "mov (%rdi), %r8\n   mov (%rsi), %r9\n"
+    "mov %r9, (%rdi)\n   mov %r8, (%rsi)\n"
+    "add $8, %rdi\n   add $8, %rsi\n"
+    ".Lmemory_exchange_apart_x64_4:\n"
+    "test $4, %rdx\n   jz .Lmemory_exchange_apart_x64_2\n"
+    "mov (%rdi), %r8d\n   mov (%rsi), %r9d\n"
+    "mov %r9d, (%rdi)\n   mov %r8d, (%rsi)\n"
+    "add $4, %rdi\n   add $4, %rsi\n"
+    ".Lmemory_exchange_apart_x64_2:\n"
+    "test $2, %rdx\n   jz .Lmemory_exchange_apart_x64_1\n"
+    "movzwl (%rdi), %r8d\n   movzwl (%rsi), %r9d\n"
+    "mov %r9w, (%rdi)\n   mov %r8w, (%rsi)\n"
+    "add $2, %rdi\n   add $2, %rsi\n"
+    ".Lmemory_exchange_apart_x64_1:\n"
+    "test $1, %rdx\n   jz .Lmemory_exchange_apart_x64_done\n"
+    "movzbl (%rdi), %r8d\n   movzbl (%rsi), %r9d\n"
+    "mov %r9b, (%rdi)\n   mov %r8b, (%rsi)\n"
+    ".Lmemory_exchange_apart_x64_done:\n"
+    ASM_RET
+    ASM_END(memory_exchange_apart)
 
     ASM_FUNC(memory_copy_apart)
     KERNEL_BULK_COPY
@@ -7432,6 +7537,35 @@ __asm__(
     ASM_RET
     ASM_END(memory_reverse)
 
+    // Same exact in-place contract as x86_64. NEON is baseline in userspace;
+    // kernel builds enter at the integer-register floor below it.
+    ASM_FUNC(memory_frob)
+    "mov x2, x0\n"
+#ifndef KERNEL_MODE
+    "cmp x1, #16\n   b.lo .Lmemory_frob_arm64_words\n"
+    "movi v1.16b, #42\n   .balign 16\n"
+    ".Lmemory_frob_arm64_16:\n   ldr q0, [x0]\n"
+    "eor v0.16b, v0.16b, v1.16b\n   str q0, [x0], #16\n"
+    "sub x1, x1, #16\n   cmp x1, #16\n"
+    "b.hs .Lmemory_frob_arm64_16\n"
+#endif
+    ".Lmemory_frob_arm64_words:\n   cmp x1, #8\n"
+    "b.lo .Lmemory_frob_arm64_tail\n"
+    "mov w3, #0x2a2a\n   movk w3, #0x2a2a, lsl #16\n"
+    "orr x3, x3, x3, lsl #32\n   .balign 16\n"
+    ".Lmemory_frob_arm64_8:\n   ldr x4, [x0]\n"
+    "eor x4, x4, x3\n   str x4, [x0], #8\n"
+    "sub x1, x1, #8\n   cmp x1, #8\n"
+    "b.hs .Lmemory_frob_arm64_8\n"
+    ".Lmemory_frob_arm64_tail:\n   cbz x1, .Lmemory_frob_arm64_done\n"
+    "mov w4, #42\n"
+    ".Lmemory_frob_arm64_one:\n   ldrb w3, [x0]\n"
+    "eor w3, w3, w4\n   strb w3, [x0], #1\n"
+    "subs x1, x1, #1\n   b.ne .Lmemory_frob_arm64_one\n"
+    ".Lmemory_frob_arm64_done:\n   mov x0, x2\n"
+    ASM_RET
+    ASM_END(memory_frob)
+
     // NEON uses the same wrapped signed interval as x86: add 63 or 31,
     // compare against -102, then apply the resulting 0x20 mask.
     ASM_FUNC(memory_to_lower_ascii)
@@ -7607,6 +7741,66 @@ __asm__(
     ".Lmemory_translate_arm64_done:\n"
     ASM_RET
     ASM_END(memory_translate)
+
+    // memory_exchange_apart: disjoint exchange with equal and zero-sized
+    // no-op cases. The x86_64 block carries the full contract.
+    ASM_FUNC(memory_exchange_apart)
+    "cmp x0, x1\n   b.eq .Lmemory_exchange_apart_arm64_done\n"
+    "cbz x2, .Lmemory_exchange_apart_arm64_done\n"
+    "cmp x2, #8\n   b.ne .Lmemory_exchange_apart_arm64_exact_4\n"
+    "ldr x3, [x0]\n   ldr x4, [x1]\n"
+    "str x4, [x0]\n   str x3, [x1]\n"
+    ASM_RET
+    ".Lmemory_exchange_apart_arm64_exact_4:\n"
+    "cmp x2, #4\n   b.ne .Lmemory_exchange_apart_arm64_bulk\n"
+    "ldr w3, [x0]\n   ldr w4, [x1]\n"
+    "str w4, [x0]\n   str w3, [x1]\n"
+    ASM_RET
+    ".Lmemory_exchange_apart_arm64_bulk:\n"
+#ifndef KERNEL_MODE
+    "cmp x2, #32\n   b.lo .Lmemory_exchange_apart_arm64_16\n"
+    ".balign 16\n.Lmemory_exchange_apart_arm64_32:\n"
+    "ldp q0, q1, [x0]\n   ldp q2, q3, [x1]\n"
+    "stp q2, q3, [x0]\n   stp q0, q1, [x1]\n"
+    "add x0, x0, #32\n   add x1, x1, #32\n   sub x2, x2, #32\n"
+    "cbz x2, .Lmemory_exchange_apart_arm64_done\n"
+    "cmp x2, #32\n   b.hs .Lmemory_exchange_apart_arm64_32\n"
+    ".Lmemory_exchange_apart_arm64_16:\n"
+    "cmp x2, #16\n   b.lo .Lmemory_exchange_apart_arm64_tail\n"
+    "ldr q0, [x0]\n   ldr q1, [x1]\n"
+    "str q1, [x0]\n   str q0, [x1]\n"
+    "add x0, x0, #16\n   add x1, x1, #16\n   sub x2, x2, #16\n"
+    "cbz x2, .Lmemory_exchange_apart_arm64_done\n"
+#else
+    ".Lmemory_exchange_apart_arm64_words:\n"
+    "cmp x2, #8\n   b.lo .Lmemory_exchange_apart_arm64_tail\n"
+    "ldr x3, [x0]\n   ldr x4, [x1]\n"
+    "str x4, [x0]\n   str x3, [x1]\n"
+    "add x0, x0, #8\n   add x1, x1, #8\n   sub x2, x2, #8\n"
+    "b .Lmemory_exchange_apart_arm64_words\n"
+#endif
+    ".Lmemory_exchange_apart_arm64_tail:\n"
+    "tst x2, #8\n   b.eq .Lmemory_exchange_apart_arm64_4\n"
+    "ldr x3, [x0]\n   ldr x4, [x1]\n"
+    "str x4, [x0]\n   str x3, [x1]\n"
+    "add x0, x0, #8\n   add x1, x1, #8\n"
+    ".Lmemory_exchange_apart_arm64_4:\n"
+    "tst x2, #4\n   b.eq .Lmemory_exchange_apart_arm64_2\n"
+    "ldr w3, [x0]\n   ldr w4, [x1]\n"
+    "str w4, [x0]\n   str w3, [x1]\n"
+    "add x0, x0, #4\n   add x1, x1, #4\n"
+    ".Lmemory_exchange_apart_arm64_2:\n"
+    "tst x2, #2\n   b.eq .Lmemory_exchange_apart_arm64_1\n"
+    "ldrh w3, [x0]\n   ldrh w4, [x1]\n"
+    "strh w4, [x0]\n   strh w3, [x1]\n"
+    "add x0, x0, #2\n   add x1, x1, #2\n"
+    ".Lmemory_exchange_apart_arm64_1:\n"
+    "tst x2, #1\n   b.eq .Lmemory_exchange_apart_arm64_done\n"
+    "ldrb w3, [x0]\n   ldrb w4, [x1]\n"
+    "strb w4, [x0]\n   strb w3, [x1]\n"
+    ".Lmemory_exchange_apart_arm64_done:\n"
+    ASM_RET
+    ASM_END(memory_exchange_apart)
 
     ASM_FUNC(memory_copy_apart)
 #ifdef KERNEL_MODE
@@ -10558,6 +10752,32 @@ __asm__(
     ASM_END(memory_reverse)
 #undef RV_REVERSE_FOUR
 
+    // Baseline RV64 does not promise misaligned word access. Peel once, run
+    // aligned doublewords, and finish bytewise at the exact exclusive end.
+    ASM_FUNC(memory_frob)
+    "mv a2, a0\n   beqz a1, .Lmemory_frob_rv_done\n"
+    "andi t0, a0, 7\n   beqz t0, .Lmemory_frob_rv_words\n"
+    ".Lmemory_frob_rv_peel:\n   lbu t1, 0(a0)\n"
+    "xori t1, t1, 42\n   sb t1, 0(a0)\n"
+    "addi a0, a0, 1\n   addi a1, a1, -1\n"
+    "beqz a1, .Lmemory_frob_rv_done\n   andi t0, a0, 7\n"
+    "bnez t0, .Lmemory_frob_rv_peel\n"
+    ".Lmemory_frob_rv_words:\n   li t0, 8\n"
+    "bltu a1, t0, .Lmemory_frob_rv_tail\n"
+    "li t2, 0x2a2a2a2a2a2a2a2a\n   .balign 16\n"
+    ".Lmemory_frob_rv_8:\n   ld t1, 0(a0)\n"
+    "xor t1, t1, t2\n   sd t1, 0(a0)\n"
+    "addi a0, a0, 8\n   addi a1, a1, -8\n"
+    "bgeu a1, t0, .Lmemory_frob_rv_8\n"
+    ".Lmemory_frob_rv_tail:\n   beqz a1, .Lmemory_frob_rv_done\n"
+    ".Lmemory_frob_rv_one:\n   lbu t1, 0(a0)\n"
+    "xori t1, t1, 42\n   sb t1, 0(a0)\n"
+    "addi a0, a0, 1\n   addi a1, a1, -1\n"
+    "bnez a1, .Lmemory_frob_rv_one\n"
+    ".Lmemory_frob_rv_done:\n   mv a0, a2\n"
+    ASM_RET
+    ASM_END(memory_frob)
+
     // Four independent base-ISA byte chains overlap load latency. The macro
     // is source folding only: its expansion is straight RV64I in both bodies.
 #define RV_ASCII_CASE_ONE(OFFSET, VALUE, MASK, BASE, OPERATION)               \
@@ -10693,6 +10913,76 @@ __asm__(
     ".Lmemory_translate_rv_done:\n"
     ASM_RET
     ASM_END(memory_translate)
+
+    // memory_exchange_apart: disjoint exchange with equal and zero-sized
+    // no-op cases. The x86_64 block carries the full contract. RV64 may trap
+    // on an unaligned wide access. The xor chooses the widest shared residue;
+    // one byte peel aligns both pointers, then the same compact loop descends
+    // through eight, four and two-byte lanes before its byte tail.
+    ASM_FUNC(memory_exchange_apart)
+    "beq a0, a1, .Lmemory_exchange_apart_rv_done\n"
+    "beqz a2, .Lmemory_exchange_apart_rv_done\n"
+    "li t0, 8\n   bne a2, t0, .Lmemory_exchange_apart_rv_exact_4\n"
+    "or t1, a0, a1\n   andi t1, t1, 7\n"
+    "bnez t1, .Lmemory_exchange_apart_rv_choose_width\n"
+    "ld t1, 0(a0)\n   ld t2, 0(a1)\n   sd t2, 0(a0)\n   sd t1, 0(a1)\n"
+    ASM_RET
+    ".Lmemory_exchange_apart_rv_exact_4:\n"
+    "li t0, 4\n   bne a2, t0, .Lmemory_exchange_apart_rv_choose_width\n"
+    "or t1, a0, a1\n   andi t1, t1, 3\n"
+    "bnez t1, .Lmemory_exchange_apart_rv_choose_width\n"
+    "lw t1, 0(a0)\n   lw t2, 0(a1)\n   sw t2, 0(a0)\n   sw t1, 0(a1)\n"
+    ASM_RET
+    ".Lmemory_exchange_apart_rv_choose_width:\n"
+    "xor t0, a0, a1\n   andi t1, t0, 7\n"
+    "beqz t1, .Lmemory_exchange_apart_rv_choose_8\n"
+    "andi t1, t0, 3\n   beqz t1, .Lmemory_exchange_apart_rv_choose_4\n"
+    "andi t1, t0, 1\n   beqz t1, .Lmemory_exchange_apart_rv_choose_2\n"
+    "j .Lmemory_exchange_apart_rv_bytes\n"
+    ".Lmemory_exchange_apart_rv_choose_8:\n   li a3, 8\n"
+    "j .Lmemory_exchange_apart_rv_align\n"
+    ".Lmemory_exchange_apart_rv_choose_4:\n   li a3, 4\n"
+    "j .Lmemory_exchange_apart_rv_align\n"
+    ".Lmemory_exchange_apart_rv_choose_2:\n   li a3, 2\n"
+    ".Lmemory_exchange_apart_rv_align:\n"
+    "addi t0, a3, -1\n   and t1, a0, t0\n"
+    "beqz t1, .Lmemory_exchange_apart_rv_dispatch\n"
+    ".Lmemory_exchange_apart_rv_peel:\n"
+    "lbu t1, 0(a0)\n   lbu t2, 0(a1)\n   sb t2, 0(a0)\n   sb t1, 0(a1)\n"
+    "addi a0, a0, 1\n   addi a1, a1, 1\n   addi a2, a2, -1\n"
+    "beqz a2, .Lmemory_exchange_apart_rv_done\n"
+    "and t1, a0, t0\n   bnez t1, .Lmemory_exchange_apart_rv_peel\n"
+    ".Lmemory_exchange_apart_rv_dispatch:\n"
+    "li t0, 8\n   beq a3, t0, .Lmemory_exchange_apart_rv_words_8\n"
+    "li t0, 4\n   beq a3, t0, .Lmemory_exchange_apart_rv_words_4\n"
+    "j .Lmemory_exchange_apart_rv_words_2\n"
+    ".Lmemory_exchange_apart_rv_words_8:\n"
+    "li t0, 8\n   bltu a2, t0, .Lmemory_exchange_apart_rv_words_4\n"
+    ".Lmemory_exchange_apart_rv_8:\n"
+    "ld t1, 0(a0)\n   ld t2, 0(a1)\n   sd t2, 0(a0)\n   sd t1, 0(a1)\n"
+    "addi a0, a0, 8\n   addi a1, a1, 8\n   addi a2, a2, -8\n"
+    "bgeu a2, t0, .Lmemory_exchange_apart_rv_8\n"
+    ".Lmemory_exchange_apart_rv_words_4:\n"
+    "li t0, 4\n   bltu a2, t0, .Lmemory_exchange_apart_rv_words_2\n"
+    ".Lmemory_exchange_apart_rv_4:\n"
+    "lw t1, 0(a0)\n   lw t2, 0(a1)\n   sw t2, 0(a0)\n   sw t1, 0(a1)\n"
+    "addi a0, a0, 4\n   addi a1, a1, 4\n   addi a2, a2, -4\n"
+    "bgeu a2, t0, .Lmemory_exchange_apart_rv_4\n"
+    ".Lmemory_exchange_apart_rv_words_2:\n"
+    "li t0, 2\n   bltu a2, t0, .Lmemory_exchange_apart_rv_bytes\n"
+    ".Lmemory_exchange_apart_rv_2:\n"
+    "lhu t1, 0(a0)\n   lhu t2, 0(a1)\n   sh t2, 0(a0)\n   sh t1, 0(a1)\n"
+    "addi a0, a0, 2\n   addi a1, a1, 2\n   addi a2, a2, -2\n"
+    "bgeu a2, t0, .Lmemory_exchange_apart_rv_2\n"
+    ".Lmemory_exchange_apart_rv_bytes:\n"
+    "beqz a2, .Lmemory_exchange_apart_rv_done\n"
+    ".Lmemory_exchange_apart_rv_byte:\n"
+    "lbu t1, 0(a0)\n   lbu t2, 0(a1)\n   sb t2, 0(a0)\n   sb t1, 0(a1)\n"
+    "addi a0, a0, 1\n   addi a1, a1, 1\n   addi a2, a2, -1\n"
+    "bnez a2, .Lmemory_exchange_apart_rv_byte\n"
+    ".Lmemory_exchange_apart_rv_done:\n"
+    ASM_RET
+    ASM_END(memory_exchange_apart)
 
     ASM_FUNC(memory_copy_apart)
     "mv a3, a0\n   beqz a2, 9f\n   xor t0, a0, a1\n   andi t0, t0, 7\n"
@@ -12646,12 +12936,19 @@ positive2 memory_count_words(address_any block, positive size, bool inside);
 // Reverse exactly size bytes in place. Returns block; sizes below two do not
 // read or write it, so a null block is valid when size is zero.
 address_any memory_reverse(address_any block, positive size);
+// XOR exactly size bytes with 42 and return block. A zero size does not read
+// or write block, so null is valid in that case.
+address_any memory_frob(address_any block, positive size);
 // Convert exactly size bytes in place. Bytes outside the ASCII letter range
 // are unchanged, including NUL and bytes with the high bit set.
 address_any memory_to_lower_ascii(address_any block, positive size);
 address_any memory_to_upper_ascii(address_any block, positive size);
 address_any memory_translate(address_any block, positive size,
                              address_any table);
+// Swap exactly size bytes between separate ranges. The ranges must be
+// disjoint unless left == right; equal addresses and zero size are no-ops and
+// do not dereference either address.
+fn memory_exchange_apart(address_any left, address_any right, positive size);
 address_any memory_copy_apart(address_any destination, address_any source, positive size);
 p8 address_to memory_copy_apart_end(p8 address_to destination, address_any source,
                                    positive size);
@@ -13009,6 +13306,7 @@ __asm__(
             the warning that went with it.
     */
     ASM_ALIAS(memmem,    memory_search)
+    ASM_ALIAS(memfrob,   memory_frob)
 #endif
 );
 

@@ -882,30 +882,20 @@ static int device_mmap(struct file *file, struct vm_area_struct *vma)
 {
         return window_mmap(file, vma);
 }
+#endif
 
 static int device_close(struct inode *inode, struct file *file)
 {
         struct device_context *context = file->private_data;
 
+#ifdef CONFIG_MOONWATER_CANVAS
         window_release(file);
+#endif
         spawn_strings_put(context->environment);
         put_pid(context->environment_owner);
         kfree(context);
         return 0;
 }
-#endif
-
-#ifndef CONFIG_MOONWATER_CANVAS
-static int device_close(struct inode *inode, struct file *file)
-{
-        struct device_context *context = file->private_data;
-
-        spawn_strings_put(context->environment);
-        put_pid(context->environment_owner);
-        kfree(context);
-        return 0;
-}
-#endif
 
 static const struct file_operations device_ops = {
     .owner = THIS_MODULE,

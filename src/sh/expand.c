@@ -34,8 +34,6 @@ fn exec_child_began();
 fn exec_expand_fatal();
 string_address shell_flags_current();
 
-extern writer shell_output;
-extern positive shell_output_file;
 extern b32 shell_status;
 extern b32 shell_is_interactive;
 
@@ -2126,8 +2124,6 @@ static fn expand_run(string_address command, bool quoted)
                 system_call_3(syscall(dup3), (positive)channel[1], standard_output_descriptor, 0);
                 system_call_1(syscall(close), (positive)channel[1]);
 
-                shell_output = log;
-                shell_output_file = 0;
                 expand_in_substitution = true;
 
                 // The parser still holds the line this substitution is a word

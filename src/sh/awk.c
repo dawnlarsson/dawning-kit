@@ -4195,6 +4195,29 @@ static bool awk_is_lvalue(awk_node address_to node)
                         node->kind == N_SUBSCRIPT);
 }
 
+/* Add one expression, then consume the comma and newlines that ask for
+   another. Whether that next expression is allowed is the caller's policy. */
+static bool awk_expression_list_one(awk_node address_to node,
+                                    awk_node address_to address_to last)
+{
+        awk_node address_to one = awk_expression();
+
+        if (address_to last)
+                (address_to last)->next = one;
+        else
+                node->a = one;
+
+        address_to last = one;
+        node->count++;
+
+        if (awk_token != T_COMMA)
+                return false;
+
+        awk_next_token();
+        awk_skip_newlines();
+        return true;
+}
+
 static awk_node address_to awk_subscript_list(b32 array)
 {
         awk_node address_to node = awk_node_new(N_SUBSCRIPT);
@@ -4203,23 +4226,8 @@ static awk_node address_to awk_subscript_list(b32 array)
         node->index = array;
 
         for (;;)
-        {
-                awk_node address_to one = awk_expression();
-
-                if (last)
-                        last->next = one;
-                else
-                        node->a = one;
-
-                last = one;
-                node->count++;
-
-                if (awk_token != T_COMMA)
+                if (!awk_expression_list_one(node, address_of last))
                         break;
-
-                awk_next_token();
-                awk_skip_newlines();
-        }
 
         return node;
 }
@@ -4362,23 +4370,8 @@ static awk_node address_to awk_primary()
                 awk_skip_newlines();
 
                 while (awk_token != T_CLOSE)
-                {
-                        awk_node address_to one = awk_expression();
-
-                        if (last)
-                                last->next = one;
-                        else
-                                node->a = one;
-
-                        last = one;
-                        node->count++;
-
-                        if (awk_token != T_COMMA)
+                        if (!awk_expression_list_one(node, address_of last))
                                 break;
-
-                        awk_next_token();
-                        awk_skip_newlines();
-                }
 
                 awk_print_depth = kept;
                 awk_expect(T_CLOSE, "expected ) after arguments");
@@ -4408,23 +4401,8 @@ static awk_node address_to awk_primary()
                 awk_skip_newlines();
 
                 while (awk_token != T_CLOSE)
-                {
-                        awk_node address_to one = awk_expression();
-
-                        if (last)
-                                last->next = one;
-                        else
-                                node->a = one;
-
-                        last = one;
-                        node->count++;
-
-                        if (awk_token != T_COMMA)
+                        if (!awk_expression_list_one(node, address_of last))
                                 break;
-
-                        awk_next_token();
-                        awk_skip_newlines();
-                }
 
                 awk_print_depth = kept;
                 awk_expect(T_CLOSE, "expected ) after arguments");
@@ -4823,23 +4801,8 @@ static awk_node address_to awk_print_statement(bool formatted)
         if (!awk_statement_ends() && awk_token != T_GREATER && awk_token != T_APPEND &&
             awk_token != T_PIPE)
                 for (;;)
-                {
-                        awk_node address_to one = awk_expression();
-
-                        if (last)
-                                last->next = one;
-                        else
-                                node->a = one;
-
-                        last = one;
-                        node->count++;
-
-                        if (awk_token != T_COMMA)
+                        if (!awk_expression_list_one(node, address_of last))
                                 break;
-
-                        awk_next_token();
-                        awk_skip_newlines();
-                }
 
         // print (a, b) is the list in parentheses, not one expression.
         if (node->count == 1 && node->a->kind == N_GROUP)

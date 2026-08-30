@@ -403,45 +403,9 @@ static fn shell_words_bind(shell_words address_to list,
 p8 address_to shell_buffer;
 positive shell_buffer_room;
 
-bool shell_output_failed;
-
-static fn shell_write(address_any data, positive length)
-{
-        log(data, length);
-}
-
-writer shell_output = shell_write;
-positive shell_output_file;
-
-fn redirect_writer(address_any data, positive length)
-{
-        positive wrote;
-
-        if (!shell_output_file)
-        {
-                shell_output_failed = true;
-                return string_format(shell_output, "Redirection error file not open\n");
-        }
-
-        if (length == 0)
-                length = string_length(data);
-
-        wrote = system_write_all(shell_output_file, data, length);
-
-        if (wrote != length)
-                shell_output_failed = true;
-}
-
-
-/*
-        A line becomes argv here and nowhere else, so the builtin path and the
-        spawn path see the same words. Expansion can make a line longer than it
-        was read at, so the words get storage of their own instead of being cut
-        out of shell_buffer in place.
-*/
-//      The bytes the words of a line are cut into. It grows with the line,
-//      and because a word's address is taken only after the word is finished
-//      it is safe for the block to move while one is being built.
+// Expansion and here-documents share this growable byte arena. A word's
+// address is taken only after it is complete, so the block may move while the
+// word is being built.
 p8 address_to token_storage;
 positive token_storage_room;
 positive token_used;
@@ -453,8 +417,7 @@ static bool token_room(positive want)
                           address_of token_storage_room, want, 1);
 }
 
-//      argv and its parallel operator marks grow with the line. Nothing holds
-//      an address inside either table, so both may move as they grow.
+// Nothing holds an address inside argv, so it may move as the line grows.
 string_address address_to shell_argv;
 positive shell_argv_room;
 positive shell_argc;
@@ -465,11 +428,6 @@ positive shell_argc;
 static bool shell_command_name_stable;
 static string_address shell_command_name_address;
 static positive shell_command_name_length;
-
-// Which words arrived as a bare > or >>. A quoted ">" is a file name and must
-// not be mistaken for the operator, and by then the two look identical.
-bool address_to shell_operator;
-positive shell_operator_room;
 
 p8 address_to argument_line;
 positive argument_line_room;
@@ -499,12 +457,6 @@ static fn token_push_bytes(address_any data, positive length)
         token_used += length;
 }
 
-fn token_push_string(string_address text)
-{
-        if (text)
-                token_push_bytes(text, string_length(text));
-}
-
 /* Assignment syntax is a property of the parsed word, not of an execution.
    Return one for NAME= and two for NAME+=, together with the stable name
    length so the executor can reuse its hash metadata. */
@@ -529,198 +481,6 @@ static p8 shell_assignment_kind(string_address word,
                        string_get(word + length + 1) == '='
                    ? 2
                    : 0;
-}
-
-bool shell_separator(p8 value)
-{
-        return value == ' ' || value == '\t';
-}
-
-// Steps over a $NAME or ${NAME} and appends what it stands for. A name that
-// was never exported expands to nothing, the way every other shell does it.
-string_address shell_expand(string_address step)
-{
-        p8 name[128];
-        positive length = 0;
-
-        step++;
-
-        bool braced = string_is(step, '{');
-
-        if (braced)
-                step++;
-
-        while (expand_name_character(string_get(step)) && length < sizeof(name) - 1)
-                name[length++] = string_get(step++);
-
-        name[length] = end;
-
-        if (braced && string_is(step, '}'))
-                step++;
-
-        /*
-                The special parameters, which are not names and so never
-                matched the loop above. $? is the one everything reaches for.
-        */
-        if (!length)
-        {
-                p8 special = string_get(step);
-
-                if (special == '?')
-                {
-                        positive_to_string(token_push_bytes, (positive)shell_status);
-
-                        return step + 1;
-                }
-
-                token_push('$');
-                return step;
-        }
-
-        token_push_string(env_get(name));
-
-        return step;
-}
-
-string_address shell_single_quoted(string_address step)
-{
-        step++;
-
-        while (string_get(step) && string_not(step, '\''))
-                token_push(string_get(step++));
-
-        if (string_get(step))
-                step++;
-
-        return step;
-}
-
-string_address shell_double_quoted(string_address step)
-{
-        step++;
-
-        while (string_get(step) && string_not(step, '"'))
-        {
-                p8 next = string_get(step + 1);
-
-                if (string_is(step, '\\') && (next == '"' || next == '\\' || next == '$'))
-                {
-                        step++;
-                        token_push(string_get(step++));
-                        continue;
-                }
-
-                if (string_is(step, '$'))
-                {
-                        step = shell_expand(step);
-                        continue;
-                }
-
-                token_push(string_get(step++));
-        }
-
-        if (string_get(step))
-                step++;
-
-        return step;
-}
-
-// Returns the number of words, or negative when the line did not fit.
-b32 shell_tokenize(string_address line)
-{
-        string_address step = line;
-        b32 count = 0;
-
-        token_used = 0;
-        token_overflow = false;
-
-        while (string_get(step))
-        {
-                while (shell_separator(string_get(step)))
-                        step++;
-
-                if (string_is(step, end))
-                        break;
-
-                //      Room for this word and the null that ends the list.
-                if (!shell_room((address_any address_to)address_of shell_argv,
-                                address_of shell_argv_room,
-                                (positive)count + 2, sizeof(string_address)) ||
-                    !shell_room((address_any address_to)address_of shell_operator,
-                                address_of shell_operator_room,
-                                (positive)count + 2, sizeof(bool)))
-                        return -1;
-
-                positive token_at = token_used;
-                bool is_operator = false;
-
-                if (string_is(step, '>'))
-                {
-                        is_operator = true;
-                        token_push(string_get(step++));
-
-                        if (string_is(step, '>'))
-                                token_push(string_get(step++));
-                }
-                else
-                {
-                        while (string_get(step) && !shell_separator(string_get(step)) &&
-                               string_not(step, '>'))
-                        {
-                                if (string_is(step, '\\'))
-                                {
-                                        step++;
-
-                                        if (string_get(step))
-                                                token_push(string_get(step++));
-
-                                        continue;
-                                }
-
-                                if (string_is(step, '\''))
-                                {
-                                        step = shell_single_quoted(step);
-                                        continue;
-                                }
-
-                                if (string_is(step, '"'))
-                                {
-                                        step = shell_double_quoted(step);
-                                        continue;
-                                }
-
-                                if (string_is(step, '$'))
-                                {
-                                        step = shell_expand(step);
-                                        continue;
-                                }
-
-                                token_push(string_get(step++));
-                        }
-                }
-
-                token_push(end);
-
-                if (token_overflow)
-                        return -1;
-
-                shell_operator[count] = is_operator;
-                shell_argv[count] = token_storage + token_at;
-                count++;
-        }
-
-        if (!shell_room((address_any address_to)address_of shell_argv,
-                        address_of shell_argv_room, (positive)count + 2,
-                        sizeof(string_address)) ||
-            !shell_room((address_any address_to)address_of shell_operator,
-                        address_of shell_operator_room, (positive)count + 2,
-                        sizeof(bool)))
-                return -1;
-
-        shell_argv[count] = null;
-        shell_operator[count] = false;
-
-        return count;
 }
 
 // The builtins still take the rest of the line as a single string, so the
@@ -759,63 +519,6 @@ string_address shell_arguments()
         return argument_line;
 }
 
-// Takes "> file" and ">> file" back out of argv and opens the target.
-bool shell_redirect()
-{
-        positive index = 0;
-
-        while (index < shell_argc)
-        {
-                if (!shell_operator[index])
-                {
-                        index++;
-                        continue;
-                }
-
-                bool append = string_is(shell_argv[index] + 1, '>');
-
-                if (index + 1 >= shell_argc || shell_operator[index + 1])
-                {
-                        string_format(shell_output, "Missing file name for redirection\n");
-                        return false;
-                }
-
-                string_address name = shell_argv[index + 1];
-
-                bipolar file_descriptor = system_call_4(syscall(openat), AT_FDCWD, (positive)name,
-                                                        append ? (FILE_READ | FILE_APPEND | FILE_CREATE)
-                                                               : (FILE_WRITE | FILE_CREATE),
-                                                        0666);
-
-                if (file_descriptor < 0)
-                {
-                        string_format(shell_output, "Cannot open file for redirection: %s\n", name);
-                        return false;
-                }
-
-                // Last one on the line wins, so an earlier target is closed
-                // rather than leaked.
-                if (shell_output_file)
-                        system_call_1(syscall(close), shell_output_file);
-
-                shell_output = redirect_writer;
-                shell_output_file = file_descriptor;
-
-                // Include the argv null and its matching false operator slot.
-                positive moving = shell_argc - index - 1;
-
-                memory_copy(shell_argv + index, shell_argv + index + 2,
-                            moving * sizeof(shell_argv[0]));
-                memory_copy(shell_operator + index, shell_operator + index + 2,
-                            moving * sizeof(shell_operator[0]));
-
-                shell_argc -= 2;
-                shell_argv[shell_argc] = null;
-        }
-
-        return true;
-}
-
 fn shell_thread_instance()
 {
         string_address address_to environment;
@@ -829,15 +532,10 @@ fn shell_thread_instance()
         if (!shell_was_ignored(SIGNAL_QUIT))
                 shell_default(SIGNAL_QUIT);
 
-        // The child owns its own descriptors, so a redirection lands here and
-        // never touches the shell's own output.
-        if (shell_output_file)
-                system_call_3(syscall(dup3), shell_output_file, standard_output_descriptor, 0);
-
         environment = shell_environment();
         if (!environment)
         {
-                string_format(shell_output, "failed: no room for environment\n");
+                string_format(log, "failed: no room for environment\n");
                 log_flush();
                 exit(126);
         }
@@ -845,7 +543,7 @@ fn shell_thread_instance()
         bipolar exec_result = shell_exec_file(shell_argv[0], shell_argv,
                                               shell_argc, environment);
 
-        string_format(shell_output, "failed with error: %b\n", exec_result);
+        string_format(log, "failed with error: %b\n", exec_result);
         log_flush();
 
         exit(126);
@@ -1007,7 +705,6 @@ bipolar shell_spawn_via_device()
 fn shell_execute_command()
 {
         bipolar child = -1;
-        bipolar saved_output = -1;
 
         if (!spawn_device_opened)
         {
@@ -1019,29 +716,8 @@ fn shell_execute_command()
 
         log_flush();
 
-        /*
-                The device spawn copies the caller's descriptor table, so a
-                redirection has to be in place on this side before the ioctl
-                and gone again the moment it returns. The copy happens inside
-                the call, which is why putting stdout back straight after is
-                enough.
-        */
-        if (shell_output_file && spawn_device >= 0)
-        {
-                saved_output = system_call_1(syscall(dup), standard_output_descriptor);
-
-                if (saved_output >= 0)
-                        system_call_3(syscall(dup3), shell_output_file, standard_output_descriptor, 0);
-        }
-
-        if (spawn_device >= 0 && (!shell_output_file || saved_output >= 0))
+        if (spawn_device >= 0)
                 child = shell_spawn_via_device();
-
-        if (saved_output >= 0)
-        {
-                system_call_3(syscall(dup3), saved_output, standard_output_descriptor, 0);
-                system_call_1(syscall(close), saved_output);
-        }
 
         if (child < 0)
         {
@@ -1076,7 +752,7 @@ fn shell_execute_command()
                 */
         }
         else
-                string_format(shell_output, "failed with error: %b\n", child);
+                string_format(log, "failed with error: %b\n", child);
 
         log_flush();
 }
@@ -1134,7 +810,7 @@ bool shell_builtin(string_address arguments)
                 shell_status_entering = shell_status;
                 shell_status = 0;
 
-                command->function(shell_output, arguments);
+                command->function(log, arguments);
                 return true;
         }
 
@@ -1160,11 +836,6 @@ bool shell_builtin(string_address arguments)
         that a body is not source and is taken verbatim until its delimiter.
 */
 static bool shell_more;
-
-b32 shell_incomplete()
-{
-        return shell_more;
-}
 
 static fn run_line_inner(string_address line)
 {

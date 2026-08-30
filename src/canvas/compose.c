@@ -397,6 +397,13 @@ static void compose_cells(struct pane *pane, const struct target *t,
 // entirely inside it and the hand got a resize every time.
 #define BAR_WIDTH 10
 
+struct pane_bar_geometry
+{
+        int x, y, width, height;
+        int thumb_at, thumb_span;
+        unsigned int total;
+};
+
 /*
         The bar, and the thumb in it, in the desktop's own coordinates.
 
@@ -405,24 +412,25 @@ static void compose_cells(struct pane *pane, const struct target *t,
         window with nothing to scroll, which is also the answer to whether
         there is anything there to press.
 */
-static _Bool pane_bar(struct pane *pane, int *bx, int *by, int *bw, int *bh,
-                      int *at, int *span)
+static _Bool pane_bar(struct pane *pane, struct pane_bar_geometry *bar)
 {
         unsigned int first, shown, total;
 
         if (!pane_extent(pane, &first, &shown, &total) || !total)
                 return false;
 
-        *bw = BAR_WIDTH * (int)desktop.scale;
-        *bh = (int)pane->rows * canvas_cell_h;
-        *bx = pane->x + (int)pane->width - *bw;
-        *by = pane->y + (pane->style & WINDOW_FRAME ? canvas_title : 0);
+        bar->width = BAR_WIDTH * (int)desktop.scale;
+        bar->height = (int)pane->rows * canvas_cell_h;
+        bar->x = pane->x + (int)pane->width - bar->width;
+        bar->y = pane->y + (pane->style & WINDOW_FRAME ? canvas_title : 0);
+        bar->total = total;
 
-        *span = max((int)((unsigned long)*bh * shown / total), canvas_cell_h);
-        *at = (int)((unsigned long)*bh * first / total);
+        bar->thumb_span = max((int)((unsigned long)bar->height * shown / total),
+                              canvas_cell_h);
+        bar->thumb_at = (int)((unsigned long)bar->height * first / total);
 
-        if (*at + *span > *bh)
-                *at = *bh - *span;
+        if (bar->thumb_at + bar->thumb_span > bar->height)
+                bar->thumb_at = bar->height - bar->thumb_span;
 
         return true;
 }
@@ -430,7 +438,7 @@ static _Bool pane_bar(struct pane *pane, int *bx, int *by, int *bw, int *bh,
 static void compose_bar(struct pane *pane, const struct target *t,
                         const struct shape *shape, int x, int y)
 {
-        int bx, by, bw, bh, at, span;
+        struct pane_bar_geometry bar;
         int width = BAR_WIDTH * (int)desktop.scale;
         int height = (int)pane->rows * canvas_cell_h;
         int left = x + pane->width - width;
@@ -449,11 +457,13 @@ static void compose_bar(struct pane *pane, const struct target *t,
                            t->clip.y2 - t->clip.y1))
                 return;
 
-        if (!pane_bar(pane, &bx, &by, &bw, &bh, &at, &span))
+        if (!pane_bar(pane, &bar))
                 return;
 
-        shape_fill(t, shape, bx - t->x, by - t->y, bw, bh, t->ink[INK_FRAME]);
-        shape_fill(t, shape, bx - t->x, by - t->y + at, bw, span,
+        shape_fill(t, shape, bar.x - t->x, bar.y - t->y,
+                   bar.width, bar.height, t->ink[INK_FRAME]);
+        shape_fill(t, shape, bar.x - t->x, bar.y - t->y + bar.thumb_at,
+                   bar.width, bar.thumb_span,
                    t->ink[INK_TITLE_LIT]);
 }
 
@@ -786,23 +796,6 @@ static _Bool output_describe(struct output *output)
                    (unsigned long long)fb->modifier,
                    map.is_iomem ? "device" : "system");
 
-        /*
-                Which engine, asked here because this is where the device is
-                already being looked at, and asked once because a second
-                output is the same device. It belongs with attach and will
-                move there when that file is not being edited by somebody
-                else.
-        */
-        {
-                static _Bool engine_asked;
-
-                if (!engine_asked)
-                {
-                        engine_asked = true;
-                        canvas_gpu_find(output->buffer->client->dev);
-                }
-        }
-
         drm_client_buffer_vunmap_local(output->buffer);
         return true;
 }
@@ -885,12 +878,6 @@ static void output_repaint(struct output *output, const struct drm_rect *damage,
 
         output_draw_cursor(output, pixels);
 
-        //      Nothing may read these pixels with the processor, and the
-        //      driver may not be told they changed, until the engine has
-        //      finished what it was given. A branch when there is no engine,
-        //      which is every machine until a backend exists.
-        canvas_gpu_settle();
-
         drm_client_buffer_vunmap_local(output->buffer);
         pointer_draw_total += ktime_get_ns() - started;
 
@@ -935,12 +922,6 @@ static void compose_output(struct output *output)
         }
 
         output_draw_cursor(output, pixels);
-
-        //      Nothing may read these pixels with the processor, and the
-        //      driver may not be told they changed, until the engine has
-        //      finished what it was given. A branch when there is no engine,
-        //      which is every machine until a backend exists.
-        canvas_gpu_settle();
 
         drm_client_buffer_vunmap_local(output->buffer);
 

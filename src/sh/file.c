@@ -633,62 +633,81 @@ p8 address_to file_group_text()
         given. /etc/passwd and /etc/group agree on both of those, so one
         reader serves both.
 */
+typedef struct
+{
+        string_address name;
+        positive name_length;
+        string_address value;
+        positive value_length;
+        bool has_value;
+} file_account_record;
+
+/* One bounded record and the requested field inside it. A malformed record
+   still comes back so a matching name can be distinguished from no name at
+   all; has_value says whether it reached the requested column. */
+static bool file_account_next(p8 address_to text, positive address_to at,
+                              positive field,
+                              file_account_record address_to record)
+{
+        if (!text[address_to at])
+                return false;
+
+        positive line = address_to at;
+        positive stop = (positive)(string_first_of_or_end(text + line, '\n') -
+                                   text);
+        p8 address_to mark = (p8 address_to)memory_first_of(
+            text + line, ':', stop - line);
+        positive step = mark ? (positive)(mark - text) : stop;
+        positive column = 0;
+
+        address_to at = text[stop] ? stop + 1 : stop;
+        record->name = text + line;
+        record->name_length = step - line;
+        record->value = text;
+        record->value_length = 0;
+
+        while (step < stop && column < field)
+        {
+                positive start = ++step;
+
+                mark = (p8 address_to)memory_first_of(text + step, ':',
+                                                      stop - step);
+                step = mark ? (positive)(mark - text) : stop;
+                record->value = text + start;
+                record->value_length = step - start;
+                column++;
+        }
+
+        record->has_value = column == field;
+        return true;
+}
+
 bool file_account_name(p8 address_to text, positive wanted, positive field,
                        p8 address_to into, positive limit)
 {
         positive at = 0;
+        file_account_record record;
 
-        while (text[at])
+        while (file_account_next(text, address_of at, field,
+                                 address_of record))
         {
-                positive line = at;
-
-                at = (positive)(string_first_of_or_end(text + at, '\n') - text);
-
-                positive stop = at;
-
-                if (text[at])
-                        at++;
-
-                positive name_start = line;
-                positive name_stop = line;
-
-                while (name_stop < stop && text[name_stop] != ':')
-                        name_stop++;
-
-                positive column = 0;
-                positive step = name_stop;
-                positive value_start = 0;
-                positive value_stop = 0;
-
-                while (step < stop && column < field)
-                {
-                        step++;
-                        column++;
-                        value_start = step;
-
-                        while (step < stop && text[step] != ':')
-                                step++;
-
-                        value_stop = step;
-                }
-
-                if (column != field)
+                if (!record.has_value)
                         continue;
 
                 positive taken;
-                positive value = string_digits_max(text + value_start,
-                                                   value_stop - value_start,
+                positive value = string_digits_max(record.value,
+                                                   record.value_length,
                                                    address_of taken);
 
-                if (taken != value_stop - value_start || !taken || value != wanted)
+                if (taken != record.value_length || !taken || value != wanted)
                         continue;
 
-                positive found = name_stop - name_start;
+                positive found = record.name_length;
 
                 if (found > limit - 1)
                         found = limit - 1;
 
-                memory_copy_apart_end(into, text + name_start, found);
+                memory_copy_apart_end(into, record.name, found);
 
                 return true;
         }
@@ -700,55 +719,26 @@ bipolar file_account_id(p8 address_to text, string_address name, positive field)
 {
         positive wanted = string_length(name);
         positive at = 0;
+        file_account_record record;
 
-        while (text[at])
+        while (file_account_next(text, address_of at, field,
+                                 address_of record))
         {
-                positive line = at;
-
-                at = (positive)(string_first_of_or_end(text + at, '\n') - text);
-
-                positive stop = at;
-
-                if (text[at])
-                        at++;
-
-                positive name_stop = line;
-
-                while (name_stop < stop && text[name_stop] != ':')
-                        name_stop++;
-
-                if (name_stop - line != wanted)
+                if (record.name_length != wanted)
                         continue;
 
-                if (memory_compare(text + line, name, wanted))
+                if (memory_compare(record.name, name, wanted))
                         continue;
 
-                positive column = 0;
-                positive step = name_stop;
-                positive value_start = 0;
-                positive value_stop = 0;
-
-                while (step < stop && column < field)
-                {
-                        step++;
-                        column++;
-                        value_start = step;
-
-                        while (step < stop && text[step] != ':')
-                                step++;
-
-                        value_stop = step;
-                }
-
-                if (column != field)
+                if (!record.has_value)
                         return -1;
 
                 positive taken;
-                positive value = string_digits_max(text + value_start,
-                                                   value_stop - value_start,
+                positive value = string_digits_max(record.value,
+                                                   record.value_length,
                                                    address_of taken);
 
-                if (taken != value_stop - value_start)
+                if (taken != record.value_length)
                         return -1;
 
                 return (bipolar)value;
@@ -1425,6 +1415,27 @@ bool file_is_dot(string_address name)
                 return true;
 
         return string_is(name + 1, '.') && string_is(name + 2, end);
+}
+
+/* The recursive cp walk and the cross-device mv walk consume exactly the
+   same pair of child paths. */
+static bool file_walk_pair(file_walk address_to walk, string_address source,
+                           string_address destination, p8 address_to from,
+                           p8 address_to to)
+{
+        struct linux_dirent64 address_to entry;
+
+        while ((entry = file_walk_next(walk)))
+        {
+                if (file_is_dot(entry->d_name))
+                        continue;
+
+                path_join(from, FILE_PATH_MAX, source, entry->d_name);
+                path_join(to, FILE_PATH_MAX, destination, entry->d_name);
+                return true;
+        }
+
+        return false;
 }
 
 /*
@@ -7717,20 +7728,12 @@ static bool cp_one(string_address source, string_address destination, positive d
 
         cp_said(source, destination);
 
-        struct linux_dirent64 address_to entry;
         bool complete = true;
+        p8 from[FILE_PATH_MAX];
+        p8 to[FILE_PATH_MAX];
 
-        while ((entry = file_walk_next(address_of walk)))
+        while (file_walk_pair(address_of walk, source, destination, from, to))
         {
-                if (file_is_dot(entry->d_name))
-                        continue;
-
-                p8 from[FILE_PATH_MAX];
-                p8 to[FILE_PATH_MAX];
-
-                path_join(from, FILE_PATH_MAX, source, entry->d_name);
-                path_join(to, FILE_PATH_MAX, destination, entry->d_name);
-
                 if (!cp_one(from, to, depth - 1, false))
                         complete = false;
         }
@@ -7848,20 +7851,12 @@ static bool mv_across_directory(string_address source, string_address destinatio
         if (!file_walk_open(address_of walk, AT_FDCWD, source))
                 return false;
 
-        struct linux_dirent64 address_to entry;
         bool complete = true;
+        p8 from[FILE_PATH_MAX];
+        p8 to[FILE_PATH_MAX];
 
-        while ((entry = file_walk_next(address_of walk)))
+        while (file_walk_pair(address_of walk, source, destination, from, to))
         {
-                if (file_is_dot(entry->d_name))
-                        continue;
-
-                p8 from[FILE_PATH_MAX];
-                p8 to[FILE_PATH_MAX];
-
-                path_join(from, FILE_PATH_MAX, source, entry->d_name);
-                path_join(to, FILE_PATH_MAX, destination, entry->d_name);
-
                 if (!mv_across(from, to, depth - 1))
                         complete = false;
         }

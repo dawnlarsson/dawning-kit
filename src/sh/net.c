@@ -980,13 +980,7 @@ static b32 net_watch(void)
                         somebody else being handed it.
                 */
                 {
-                        p8 waited[8];
-                        timespec limit;
                         positive due = 0;
-
-                        address_to((b32 address_to)waited) = (b32)events;
-                        address_to((p16 address_to)(waited + 4)) = 1;
-                        address_to((p16 address_to)(waited + 6)) = 0;
 
                         if (configured && held.lease.seconds)
                         {
@@ -996,11 +990,8 @@ static b32 net_watch(void)
                                 due = gone >= half ? 1 : half - gone;
                         }
 
-                        limit.tv_sec = due ? due : 3600;
-                        limit.tv_nsec = 0;
-
-                        if (system_call_5(syscall(ppoll), (positive)waited, 1,
-                                          (positive)address_of limit, 0, 8) == 0)
+                        if (network_wait_readable(events, due ? due : 3600,
+                                                  0) == 0)
                         {
                                 //      Nothing arrived, so this is the lease
                                 //      falling due. Ask to keep what we have;

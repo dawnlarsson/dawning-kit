@@ -273,7 +273,7 @@ static fn row(string_address name, positive length, bool hold_equal,
                 ratios[t] = (positive)(assembly * 10000 / (former ? former : 1));
         }
 
-        order(ratios);
+        order(ratios, TRIES);
         string_format(log, "  %s  median asm/C %p.%p%%\n", name,
                       ratios[TRIES / 2] / 100, ratios[TRIES / 2] % 100);
 }
@@ -305,7 +305,7 @@ static fn log_row(string_address name, positive length)
                 ratios[t] = (positive)(assembly * 10000 / (former ? former : 1));
         }
 
-        order(ratios);
+        order(ratios, TRIES);
         log_writer_buffer_length = 0;
         string_format(log, "  %s  median current/former %p.%p%%\n", name,
                       ratios[TRIES / 2] / 100, ratios[TRIES / 2] % 100);
@@ -341,7 +341,7 @@ static fn reserve_row()
                 floor_each[t] = (positive)(floor * 100 / BUFFER_ROUNDS);
         }
 
-        order(ratios);
+        order(ratios, TRIES);
         order(assembly_each, TRIES);
         order(floor_each, TRIES);
         string_format(log, "  reserve 16  median asm/C %p.%p%%\n",

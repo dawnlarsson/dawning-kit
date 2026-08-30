@@ -215,14 +215,10 @@ static void resize_move(int x, int y)
         pane_reshape(pane, nx, ny, nw, nh);
 }
 
-static _Bool pane_bar_holds(struct pane *pane, int x, int y)
+static _Bool pane_bar_holds(const struct pane_bar_geometry *bar, int x, int y)
 {
-        int bx, by, bw, bh, at, span;
-
-        if (!pane->cells || !pane_bar(pane, &bx, &by, &bw, &bh, &at, &span))
-                return false;
-
-        return x >= bx && x < bx + bw && y >= by && y < by + bh;
+        return x >= bar->x && x < bar->x + bar->width &&
+               y >= bar->y && y < bar->y + bar->height;
 }
 
 /*
@@ -234,20 +230,16 @@ static _Bool pane_bar_holds(struct pane *pane, int x, int y)
         Grabbed anywhere inside the thumb it stays under the finger, and
         pressed outside it the thumb comes to the finger's middle.
 */
-static void bar_move(int y)
+static void bar_move(struct pane *pane, int y,
+                     const struct pane_bar_geometry *bar)
 {
-        struct pane *pane = desktop.barring;
-        int bx, by, bw, bh, at, span, top;
-        unsigned int first, shown, total, above;
+        int top;
+        unsigned int above;
 
-        if (!pane || !pane_bar(pane, &bx, &by, &bw, &bh, &at, &span))
-                return;
-
-        if (!pane_extent(pane, &first, &shown, &total))
-                return;
-
-        top = clamp(y - desktop.bar_grab - by, 0, max(bh - span, 0));
-        above = (unsigned int)((unsigned long)top * total / (unsigned long)max(bh, 1));
+        top = clamp(y - desktop.bar_grab - bar->y, 0,
+                    max(bar->height - bar->thumb_span, 0));
+        above = (unsigned int)((unsigned long)top * bar->total /
+                               (unsigned long)max(bar->height, 1));
 
         if (!pane_view_set(pane, above))
                 return;
@@ -354,6 +346,7 @@ static void pane_restore_for_drag(struct pane *pane, int x, int y)
 static void drag_press(int x, int y)
 {
         unsigned int edges;
+        struct pane_bar_geometry bar;
         struct pane *pane = pane_under(x, y, &edges);
         struct pane *was = desktop.focused;
         int fx, fy, fw, fh;
@@ -404,17 +397,15 @@ static void drag_press(int x, int y)
                 pixels further in, and there is bar left over on the inside to
                 grab. That is why the bar is ten and not six.
         */
-        if (!edges && pane_bar_holds(pane, x, y))
+        if (!edges && pane_bar(pane, &bar) && pane_bar_holds(&bar, x, y))
         {
-                int bx, by, bw, bh, at, span;
+                int thumb_y = bar.y + bar.thumb_at;
 
-                pane_bar(pane, &bx, &by, &bw, &bh, &at, &span);
-
-                desktop.bar_grab = y >= by + at && y < by + at + span
-                                       ? y - (by + at)
-                                       : span / 2;
+                desktop.bar_grab = y >= thumb_y && y < thumb_y + bar.thumb_span
+                                       ? y - thumb_y
+                                       : bar.thumb_span / 2;
                 desktop.barring = pane;
-                bar_move(y);
+                bar_move(pane, y, &bar);
         }
         else if (edges)
         {

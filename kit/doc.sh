@@ -165,6 +165,13 @@ md_inline_format() {
         printf '%s' "$text"
 }
 
+doc_flush_paragraph() {
+        local paragraph="$1"
+
+        [[ -n "$paragraph" ]] || return 0
+        printf '<p>%s</p>' "$(md_inline_format "$paragraph")"
+}
+
 doc() {
         local input_file="$1"
         local in_code=false
@@ -178,169 +185,133 @@ doc() {
                 return 1
         fi
 
-        if [[ -r "$input_file" ]]; then
-                while IFS= read -r line || [[ -n "$line" ]]; do
+        while IFS= read -r line || [[ -n "$line" ]]; do
 
-                        # Code blocks
-                        if [[ "$line" = '```'* ]]; then
-                                # Flush paragraph buffer
-                                if [[ -n "$paragraph_buffer" ]]; then
-                                        processed=$(md_inline_format "$paragraph_buffer")
-                                        printf '<p>%s</p>' "$processed"
-                                        paragraph_buffer=""
-                                fi
-                                
-                                if $in_code; then
-                                        printf '</code></pre>'
-                                        in_code=false
-                                else
-                                        $in_list && { printf '</ul>'; in_list=false; }
-                                        $in_quote && { printf '</blockquote>'; in_quote=false; }
-                                        local lang="${line#'```'}"
-                                        lang="${lang// /}"
-                                        if [ -n "$lang" ]; then
-                                                printf '<pre><code class="language-%s">' "$(html_escape_attr "$(html_escape_text "$lang")")"
-                                        else
-                                                printf '<pre><code>'
-                                        fi
-                                        in_code=true
-                                fi
-                                continue
-                        fi
+                # Code blocks
+                if [[ "$line" = '```'* ]]; then
+                        doc_flush_paragraph "$paragraph_buffer"
+                        paragraph_buffer=""
 
-                        # Inside code block -- escaped, or a '<' in a sample
-                        # silently becomes a tag in the output.
                         if $in_code; then
-                                printf '%s\n' "$(html_escape_text "$line")"
-                                continue
-                        fi
-
-                        # Horizontal rules
-                        if [[ "$line" =~ ^([-*_]){3,}[[:space:]]*$ ]]; then
-                                # Flush paragraph buffer
-                                if [[ -n "$paragraph_buffer" ]]; then
-                                        processed=$(md_inline_format "$paragraph_buffer")
-                                        printf '<p>%s</p>' "$processed"
-                                        paragraph_buffer=""
-                                fi
+                                printf '</code></pre>'
+                                in_code=false
+                        else
                                 $in_list && { printf '</ul>'; in_list=false; }
                                 $in_quote && { printf '</blockquote>'; in_quote=false; }
-                                printf '<hr>'
-                                continue
-                        fi
-
-                        # Headers
-                        if [[ "$line" =~ ^(#{1,6})[[:space:]]*(.+)$ ]]; then
-                                # Flush paragraph buffer
-                                if [[ -n "$paragraph_buffer" ]]; then
-                                        processed=$(md_inline_format "$paragraph_buffer")
-                                        printf '<p>%s</p>' "$processed"
-                                        paragraph_buffer=""
+                                local lang="${line#'```'}"
+                                lang="${lang// /}"
+                                if [ -n "$lang" ]; then
+                                        printf '<pre><code class="language-%s">' "$(html_escape_attr "$(html_escape_text "$lang")")"
+                                else
+                                        printf '<pre><code>'
                                 fi
-                                
-                                $in_list && { printf '</ul>'; in_list=false; }
-                                $in_quote && { printf '</blockquote>'; in_quote=false; }
-                                local level=${#BASH_REMATCH[1]}
-                                local text="${BASH_REMATCH[2]}"
-                                processed=$(md_inline_format "$text")
-                                printf '<h%d>%s</h%d>' "$level" "$processed" "$level"
-                                continue
+                                in_code=true
                         fi
+                        continue
+                fi
 
-                        # Blockquotes
-                        if [[ "$line" =~ ^">"[[:space:]]*(.*)$ ]]; then
-                                # Flush paragraph buffer
-                                if [[ -n "$paragraph_buffer" ]]; then
-                                        processed=$(md_inline_format "$paragraph_buffer")
-                                        printf '<p>%s</p>' "$processed"
-                                        paragraph_buffer=""
-                                fi
-                                
-                                $in_list && { printf '</ul>'; in_list=false; }
-                                $in_quote || { printf '<blockquote>'; in_quote=true; }
-                                local quote_text="${BASH_REMATCH[1]}"
-                                if [[ -n "$quote_text" ]]; then
-                                        processed=$(md_inline_format "$quote_text")
-                                        printf '<p>%s</p>' "$processed"
-                                fi
-                                continue
-                        fi
+                # Inside code block -- escaped, or a '<' in a sample
+                # silently becomes a tag in the output.
+                if $in_code; then
+                        printf '%s\n' "$(html_escape_text "$line")"
+                        continue
+                fi
 
-                        # Lists
-                        if [[ "$line" =~ ^[-*+][[:space:]]+(.+)$ ]]; then
-                                # Flush paragraph buffer
-                                if [[ -n "$paragraph_buffer" ]]; then
-                                        processed=$(md_inline_format "$paragraph_buffer")
-                                        printf '<p>%s</p>' "$processed"
-                                        paragraph_buffer=""
-                                fi
-                                
-                                $in_quote && { printf '</blockquote>'; in_quote=false; }
-                                $in_list || { printf '<ul>'; in_list=true; }
-                                processed=$(md_inline_format "${BASH_REMATCH[1]}")
-                                printf '<li>%s</li>' "$processed"
-                                continue
-                        fi
-
-                        # Empty lines
-                        if [[ -z "${line// /}" ]]; then
-                                if [[ -n "$paragraph_buffer" ]]; then
-                                        processed=$(md_inline_format "$paragraph_buffer")
-                                        printf '<p>%s</p>' "$processed"
-                                        paragraph_buffer=""
-                                fi
-                                $in_list && { printf '</ul>'; in_list=false; }
-                                $in_quote && { printf '</blockquote>'; in_quote=false; }
-                                continue
-                        fi
-
-                        # Images
-                        if [[ "$line" =~ ^[[:space:]]*\!\[.*\]\(.*\)[[:space:]]*$ ]]; then
-                                # Flush paragraph buffer
-                                if [[ -n "$paragraph_buffer" ]]; then
-                                        processed=$(md_inline_format "$paragraph_buffer")
-                                        printf '<p>%s</p>' "$processed"
-                                        paragraph_buffer=""
-                                fi
-                                $in_list && { printf '</ul>'; in_list=false; }
-                                $in_quote && { printf '</blockquote>'; in_quote=false; }
-                                processed=$(md_inline_format "$line")
-                                printf '%s' "$processed"
-                                continue
-                        fi
-
-                        # HTML tags
-                        if [[ "$line" =~ \<[a-zA-Z] ]]; then
-                                # Flush paragraph buffer
-                                if [[ -n "$paragraph_buffer" ]]; then
-                                        processed=$(md_inline_format "$paragraph_buffer")
-                                        printf '<p>%s</p>' "$processed"
-                                        paragraph_buffer=""
-                                fi
-                                printf '%s\n' "$line"
-                                continue
-                        fi
-
-                        # add to paragraph buffer
+                # Horizontal rules
+                if [[ "$line" =~ ^([-*_]){3,}[[:space:]]*$ ]]; then
+                        doc_flush_paragraph "$paragraph_buffer"
+                        paragraph_buffer=""
                         $in_list && { printf '</ul>'; in_list=false; }
                         $in_quote && { printf '</blockquote>'; in_quote=false; }
-                        
-                        if [[ -n "$paragraph_buffer" ]]; then
-                                paragraph_buffer="$paragraph_buffer $line"
-                        else
-                                paragraph_buffer="$line"
-                        fi
+                        printf '<hr>'
+                        continue
+                fi
 
-                done <"$input_file"
+                # Headers
+                if [[ "$line" =~ ^(#{1,6})[[:space:]]*(.+)$ ]]; then
+                        doc_flush_paragraph "$paragraph_buffer"
+                        paragraph_buffer=""
+
+                        $in_list && { printf '</ul>'; in_list=false; }
+                        $in_quote && { printf '</blockquote>'; in_quote=false; }
+                        local level=${#BASH_REMATCH[1]}
+                        local text="${BASH_REMATCH[2]}"
+                        processed=$(md_inline_format "$text")
+                        printf '<h%d>%s</h%d>' "$level" "$processed" "$level"
+                        continue
+                fi
+
+                # Blockquotes
+                if [[ "$line" =~ ^">"[[:space:]]*(.*)$ ]]; then
+                        doc_flush_paragraph "$paragraph_buffer"
+                        paragraph_buffer=""
+
+                        $in_list && { printf '</ul>'; in_list=false; }
+                        $in_quote || { printf '<blockquote>'; in_quote=true; }
+                        local quote_text="${BASH_REMATCH[1]}"
+                        if [[ -n "$quote_text" ]]; then
+                                processed=$(md_inline_format "$quote_text")
+                                printf '<p>%s</p>' "$processed"
+                        fi
+                        continue
+                fi
+
+                # Lists
+                if [[ "$line" =~ ^[-*+][[:space:]]+(.+)$ ]]; then
+                        doc_flush_paragraph "$paragraph_buffer"
+                        paragraph_buffer=""
+
+                        $in_quote && { printf '</blockquote>'; in_quote=false; }
+                        $in_list || { printf '<ul>'; in_list=true; }
+                        processed=$(md_inline_format "${BASH_REMATCH[1]}")
+                        printf '<li>%s</li>' "$processed"
+                        continue
+                fi
+
+                # Empty lines
+                if [[ -z "${line// /}" ]]; then
+                        doc_flush_paragraph "$paragraph_buffer"
+                        paragraph_buffer=""
+                        $in_list && { printf '</ul>'; in_list=false; }
+                        $in_quote && { printf '</blockquote>'; in_quote=false; }
+                        continue
+                fi
+
+                # Images
+                if [[ "$line" =~ ^[[:space:]]*\!\[.*\]\(.*\)[[:space:]]*$ ]]; then
+                        doc_flush_paragraph "$paragraph_buffer"
+                        paragraph_buffer=""
+                        $in_list && { printf '</ul>'; in_list=false; }
+                        $in_quote && { printf '</blockquote>'; in_quote=false; }
+                        processed=$(md_inline_format "$line")
+                        printf '%s' "$processed"
+                        continue
+                fi
+
+                # HTML tags
+                if [[ "$line" =~ \<[a-zA-Z] ]]; then
+                        doc_flush_paragraph "$paragraph_buffer"
+                        paragraph_buffer=""
+                        printf '%s\n' "$line"
+                        continue
+                fi
+
+                # add to paragraph buffer
+                $in_list && { printf '</ul>'; in_list=false; }
+                $in_quote && { printf '</blockquote>'; in_quote=false; }
 
                 if [[ -n "$paragraph_buffer" ]]; then
-                        processed=$(md_inline_format "$paragraph_buffer")
-                        printf '<p>%s</p>' "$processed"
+                        paragraph_buffer="$paragraph_buffer $line"
+                else
+                        paragraph_buffer="$line"
                 fi
-                $in_code && printf '</code></pre>'
-                $in_list && printf '</ul>'
-                $in_quote && printf '</blockquote>'
-        fi
+
+        done <"$input_file"
+
+        doc_flush_paragraph "$paragraph_buffer"
+        $in_code && printf '</code></pre>'
+        $in_list && printf '</ul>'
+        $in_quote && printf '</blockquote>'
 
         # These trailing tests are false in the common case; without this the
         # function reports failure on every well formed document.

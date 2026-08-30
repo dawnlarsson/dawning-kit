@@ -111,6 +111,23 @@ address_any reference_copy(address_any destination, address_any source, positive
         return destination;
 }
 
+fn reference_exchange(address_any left, address_any right, positive size)
+{
+        p8 address_to a = left;
+        p8 address_to b = right;
+
+        if (a == b)
+                return;
+
+        while (size--)
+        {
+                p8 held = *a;
+
+                *a++ = *b;
+                *b++ = held;
+        }
+}
+
 address_any reference_reverse(address_any block, positive size)
 {
         p8 address_to left = block;
@@ -129,6 +146,16 @@ address_any reference_reverse(address_any block, positive size)
                 address_to left++ = address_to right;
                 address_to right = value;
         }
+
+        return block;
+}
+
+address_any reference_frob(address_any block, positive size)
+{
+        p8 address_to bytes = block;
+
+        while (size--)
+                address_to bytes++ ^= 42;
 
         return block;
 }
@@ -226,6 +253,116 @@ fn check_copy()
 
                 same_bytes("memory_copy_apart", "forward", mine, theirs, ROOM);
         }
+}
+
+/*
+        The qsort floor exchanges disjoint records, but neither record has an
+        alignment promise. Every short width is crossed with every pair of
+        residues, and poison around both records catches a load or store on
+        either side. The larger widths cross the vector/unrolled loop edges.
+        Equal addresses and zero bytes are contractual no-ops and are checked
+        without requiring either address to be readable.
+*/
+#define EXCHANGE_ROOM 4608
+
+static p8 exchange_got[EXCHANGE_ROOM];
+static p8 exchange_want[EXCHANGE_ROOM];
+
+static fn exchange_case(positive left, positive right, positive size,
+                        string_address detail)
+{
+        positive extent = right + size + 32;
+
+        reference_fill(exchange_got, 0xa5, extent);
+        reference_fill(exchange_want, 0xa5, extent);
+
+        for (positive i = 0; i < size; i++)
+        {
+                p8 a = (p8)next();
+                p8 b = (p8)next();
+
+                exchange_got[left + i] = exchange_want[left + i] = a;
+                exchange_got[right + i] = exchange_want[right + i] = b;
+        }
+
+        memory_exchange_apart(exchange_got + left, exchange_got + right, size);
+        reference_exchange(exchange_want + left, exchange_want + right, size);
+        same_bytes("memory_exchange_apart", detail, exchange_got, exchange_want,
+                   extent);
+}
+
+fn check_exchange()
+{
+        static const positive large_widths[] = {
+            129, 255, 256, 257, 511, 512, 513, 1000, 2048,
+        };
+
+        memory_exchange_apart(null, null, 0);
+        memory_exchange_apart(null, null, 37);
+
+        reference_fill(exchange_got, 0xa5, EXCHANGE_ROOM);
+        reference_fill(exchange_want, 0xa5, EXCHANGE_ROOM);
+        memory_exchange_apart(exchange_got + 31, exchange_got + 31, 257);
+        same_bytes("memory_exchange_apart", "equal address is untouched",
+                   exchange_got, exchange_want, EXCHANGE_ROOM);
+
+        for (positive size = 0; size <= 128; size++)
+                for (positive left_residue = 0; left_residue < 16; left_residue++)
+                        for (positive right_residue = 0; right_residue < 16;
+                             right_residue++)
+                                exchange_case(32 + left_residue,
+                                              256 + right_residue, size,
+                                              "every short width and residue");
+
+        for (positive width = 0;
+             width < sizeof(large_widths) / sizeof(large_widths[0]); width++)
+                for (positive left_residue = 0; left_residue < 16; left_residue++)
+                        for (positive right_residue = 0; right_residue < 16;
+                             right_residue++)
+                                exchange_case(64 + left_residue,
+                                              2304 + right_residue,
+                                              large_widths[width],
+                                              "bulk loop edges and residues");
+}
+
+/*
+        Cross every strategy boundary with every residue through a vector,
+        while poison on both sides proves the exact span is the only span
+        written. The second turn checks the defining involution too.
+*/
+fn check_frob()
+{
+        same("memory_frob", "null zero-sized return",
+             (positive)memory_frob(null, 0), 0);
+
+        for (positive e = 0; e < EDGE_COUNT; e++)
+                for (positive residue = 0; residue < 32; residue++)
+                {
+                        positive size = edges[e];
+                        positive offset = 64 + residue;
+
+                        reference_fill(mine, 0xa5, ROOM);
+                        reference_fill(theirs, 0xa5, ROOM);
+
+                        for (positive i = 0; i < size; i++)
+                        {
+                                p8 value = (p8)next();
+
+                                mine[offset + i] = theirs[offset + i] = value;
+                        }
+
+                        same("memory_frob", "returned original address",
+                             (positive)memory_frob(mine + offset, size),
+                             (positive)(address_any)(mine + offset));
+                        reference_frob(theirs + offset, size);
+                        same_bytes("memory_frob", "size, residue, and guards",
+                                   mine, theirs, ROOM);
+
+                        memory_frob(mine + offset, size);
+                        reference_frob(theirs + offset, size);
+                        same_bytes("memory_frob", "second turn restores bytes",
+                                   mine, theirs, ROOM);
+                }
 }
 
 /*
@@ -8124,6 +8261,8 @@ b32 main()
         check_first_of_wide();
         check_hunts_wide();
         check_copy();
+        check_exchange();
+        check_frob();
         check_reverse();
         check_move();
         check_copy_fast_end();

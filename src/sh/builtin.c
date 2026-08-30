@@ -731,8 +731,6 @@ bool shell_environment_is_initialized()
         return shell_env_initialized;
 }
 
-static bool env_set_span(const_string name, positive name_len,
-                         const_string value);
 static bool env_set_hashed_span(const_string name, positive name_len,
                                 positive hash, const_string value);
 string_address env_get(const_string name);
@@ -1011,13 +1009,6 @@ static bool env_set_hashed_span(const_string name, positive name_len,
         return true;
 }
 
-static bool env_set_span(const_string name, positive name_len,
-                         const_string value)
-{
-        return env_set_hashed_span(name, name_len,
-                                   env_name_hash(name, name_len), value);
-}
-
 bool env_set(const_string name, const_string value)
 {
         positive2 answer;
@@ -1051,60 +1042,6 @@ bool env_set(const_string name, const_string value)
 #define MODE_PIPE 0010000
 
 #define SHELL_FLAG(letter) ((positive)1 << ((letter) - 'a'))
-
-/*
-        Leading options, and only the ones the command actually has.
-
-        A word is taken as options only when every letter in it is one the
-        caller named. Swallowing any word that began with a dash meant "echo
-        -foo" printed an empty line, and an option a command does not have
-        vanished instead of being complained about.
-*/
-positive shell_flags(string_address address_to input, string_address allowed)
-{
-        positive flags = 0;
-        string_address step = address_to input;
-
-        while (step && string_is(step, '-') && string_not(step + 1, end))
-        {
-                string_address letter = step + 1;
-                positive taken = 0;
-
-                while (string_get(letter) && string_not(letter, ' '))
-                {
-                        if (!string_first_of(allowed, string_get(letter)))
-                                break;
-
-                        taken |= SHELL_FLAG(string_get(letter));
-                        letter++;
-                }
-
-                // Anything unrecognised in the word makes the whole word an
-                // operand, and the options end there. Nothing is cut until it
-                // has been accepted, so the word is still intact to be one.
-                if (string_get(letter) && string_not(letter, ' '))
-                        break;
-
-                flags |= taken;
-                step = string_cut(step, ' ');
-        }
-
-        address_to input = step;
-
-        return flags;
-}
-
-string_address shell_word(string_address address_to input)
-{
-        string_address word = address_to input;
-
-        if (word == null)
-                return null;
-
-        address_to input = string_cut(word, ' ');
-
-        return word;
-}
 
 // string_to_positive scans backwards from the end of the string, so it reads
 // "0.5" as 5 and anything with a trailing space as 0. Arguments arrive as
@@ -1144,21 +1081,6 @@ fn shell_quoted(writer write, string_address value)
         write("'", 1);
 }
 
-fn shell_named_written(writer write, string_address word, string_address entry)
-{
-        string_address mark = string_first_of(entry, '=');
-
-        string_format(write, "%s ", word);
-
-        if (!mark)
-                return string_format(write, "%s\n", entry);
-
-        write(entry, (positive)(mark - entry));
-        write("=", 1);
-        shell_quoted(write, mark + 1);
-        write("\n", 1);
-}
-
 static bool shell_valid_name(string_address name, positive length)
 {
         if (!length || (string_get(name) >= '0' && string_get(name) <= '9'))
@@ -1180,19 +1102,28 @@ static fn shell_bad_name(string_address command, string_address name,
         expand_fatal();
 }
 
-fn shell_export(writer write, string_address input)
+static positive shell_declaration_options(bool address_to listed)
 {
         positive index = 1;
-        bool listed = shell_argc < 2;
+
+        address_to listed = shell_argc < 2;
 
         while (index < shell_argc && word_is(shell_argv[index], "-p"))
         {
-                listed = true;
+                address_to listed = true;
                 index++;
         }
 
         if (index < shell_argc && word_is(shell_argv[index], "--"))
                 index++;
+
+        return index;
+}
+
+fn shell_export(writer write, string_address input)
+{
+        bool listed;
+        positive index = shell_declaration_options(address_of listed);
 
         if (listed && index >= shell_argc)
         {
@@ -1740,21 +1671,6 @@ fn shell_exit(writer write, string_address input)
 
         exit(exit_code);
 }
-
-
-#define UTSNAME_FIELD 65
-#define UTSNAME_FIELDS 6
-
-fn shell_uname_field(writer write, positive address_to shown, string_address value)
-{
-        if (address_to shown)
-                write(" ", 1);
-
-        address_to shown += 1;
-
-        write(value, 0);
-}
-
 
 
 #define REBOOT_MAGIC 0xfee1dead
@@ -2436,17 +2352,8 @@ fn shell_local(writer write, string_address input)
 
 fn shell_readonly(writer write, string_address input)
 {
-        positive index = 1;
-        bool listed = shell_argc < 2;
-
-        while (index < shell_argc && word_is(shell_argv[index], "-p"))
-        {
-                listed = true;
-                index++;
-        }
-
-        if (index < shell_argc && word_is(shell_argv[index], "--"))
-                index++;
+        bool listed;
+        positive index = shell_declaration_options(address_of listed);
 
         if (listed && index >= shell_argc)
         {
@@ -3549,28 +3456,9 @@ bool read_blank(string_address ifs, positive at)
 // whole seconds, and it keeps the wait in one place.
 bool read_waited(bipolar tenths)
 {
-        struct
-        {
-                b32 descriptor;
-                b16 asked;
-                b16 got;
-        } watch;
+        timespec span = {tenths / 10, (tenths % 10) * 100000000};
 
-        struct
-        {
-                b64 seconds;
-                b64 nanoseconds;
-        } span;
-
-        watch.descriptor = 0;
-        watch.asked = 1;
-        watch.got = 0;
-
-        span.seconds = tenths / 10;
-        span.nanoseconds = (tenths % 10) * 100000000;
-
-        return system_call_5(syscall(ppoll), (positive)address_of watch, 1,
-                             (positive)address_of span, 0, 8) > 0;
+        return descriptor_wait_readable(0, address_of span, null) > 0;
 }
 
 fn shell_read(writer write, string_address input)
@@ -4882,55 +4770,16 @@ fn shell_eval(writer write, string_address input)
 
         eval_storage[used] = end;
 
-        /*
-                The nested line is lexed and parsed over the same arrays as the
-                line that is running, and the walk through those is standing in
-                the middle of them. The lexer's tokens are put back afterwards,
-                text and all -- a word's text goes back to the address it was
-                at, which makes the pointers good again -- and the parser is
-                told to claim from above what is in use rather than over it.
-
-        */
+        /* The nested line gets independent lexer storage and parser marks. */
         {
-                //      The state is set aside rather than copied out and back.
-                //      The nested line gets empty tables of its own and this
-                //      one's are put back afterwards, so an outer word's text
-                //      is still at the address it was at -- not because it was
-                //      restored there, but because it never moved.
-                lex_token address_to kept_tokens = lex_tokens;
-                positive kept_token_room = lex_token_room;
-                p8 address_to kept_text = lex_text;
-                positive kept_text_room = lex_text_room;
-                positive kept_used = lex_used;
-                b32 kept_count = lex_count;
+                lex_frame frame;
 
-                lex_tokens = null;
-                lex_token_room = 0;
-                lex_text = null;
-                lex_text_room = 0;
-                lex_used = 0;
-                lex_count = 0;
-
-                parse_nest_enter();
+                lex_nest_enter(address_of frame);
 
                 run_line(eval_storage);
                 shell_input_end();
 
-                parse_nest_leave();
-
-                if (lex_tokens)
-                        memory_free(lex_tokens,
-                                    lex_token_room * sizeof(lex_token));
-
-                if (lex_text)
-                        memory_free(lex_text, lex_text_room);
-
-                lex_tokens = kept_tokens;
-                lex_token_room = kept_token_room;
-                lex_text = kept_text;
-                lex_text_room = kept_text_room;
-                lex_used = kept_used;
-                lex_count = kept_count;
+                lex_nest_leave(address_of frame);
         }
 
         memory_free(eval_storage, eval_room);
@@ -5630,22 +5479,9 @@ fn shell_dot(writer write, string_address input)
         filled = (positive)got;
 
         {
-                //      Set aside, not copied: see shell_eval above.
-                lex_token address_to kept_tokens = lex_tokens;
-                positive kept_token_room = lex_token_room;
-                p8 address_to kept_text = lex_text;
-                positive kept_text_room = lex_text_room;
-                positive kept_used = lex_used;
-                b32 kept_count = lex_count;
+                lex_frame frame;
 
-                lex_tokens = null;
-                lex_token_room = 0;
-                lex_text = null;
-                lex_text_room = 0;
-                lex_used = 0;
-                lex_count = 0;
-
-                parse_nest_enter();
+                lex_nest_enter(address_of frame);
 
                 while (at < filled)
                 {
@@ -5664,21 +5500,7 @@ fn shell_dot(writer write, string_address input)
 
                 shell_input_end();
 
-                parse_nest_leave();
-
-                if (lex_tokens)
-                        memory_free(lex_tokens,
-                                    lex_token_room * sizeof(lex_token));
-
-                if (lex_text)
-                        memory_free(lex_text, lex_text_room);
-
-                lex_tokens = kept_tokens;
-                lex_token_room = kept_token_room;
-                lex_text = kept_text;
-                lex_text_room = kept_text_room;
-                lex_used = kept_used;
-                lex_count = kept_count;
+                lex_nest_leave(address_of frame);
         }
 
         memory_free(source_text, source_room);
@@ -5686,10 +5508,6 @@ fn shell_dot(writer write, string_address input)
         // The status of the last line it ran, which is already there.
         shell_answer(shell_status);
 }
-
-
-
-
 
 /*
         wait: until the children are gone, or until one of them is.

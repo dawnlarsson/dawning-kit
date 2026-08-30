@@ -54,7 +54,6 @@ static parse_token address_to parse_tokens;
 static positive parse_token_room;
 static positive parse_token_count;
 static shell_store parse_store;
-static shell_mark parse_text_at;
 static parse_token parse_no_token;
 
 #define NODE_SIMPLE 1

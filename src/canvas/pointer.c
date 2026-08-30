@@ -91,12 +91,16 @@ static int accel_apply(int delta, int *remainder, int gain)
 #define CURSOR_MAGNIFIED 3
 #define MAGNIFIED_NS (1200ULL * NSEC_PER_MSEC)
 
-static void pointer_shake(int delta, u64 now)
+static void pointer_shake(int delta)
 {
-        int direction = delta > 0 ? 1 : -1;
+        int direction;
+        u64 now;
 
         if (abs(delta) < SHAKE_STEP)
                 return;
+
+        direction = delta > 0 ? 1 : -1;
+        now = ktime_get_ns();
 
         if (now - desktop.shake_window > SHAKE_WINDOW_NS)
         {
@@ -234,18 +238,22 @@ static void pointer_apply(void)
                                 }
                                 else
                                 {
+                                        struct pane *pane = desktop.barring;
+                                        struct pane_bar_geometry bar;
+
                                         // Bar movement schedules a later
                                         // frame, so both cursor paths land
                                         // synchronously here.
                                         cursor_move(x, y);
+
+                                        if (pane && pane_bar(pane, &bar))
+                                                bar_move(pane, y, &bar);
                                 }
 
                                 if (desktop.dragging)
                                         drag_move(x, y);
                                 else if (desktop.resizing)
                                         resize_move(x, y);
-                                else
-                                        bar_move(y);
                         }
                         else
                         {
@@ -330,11 +338,6 @@ static void pointer_frame(void)
 static void pointer_event_locked(struct input_handle *handle, unsigned int type,
                                  unsigned int code, int value)
 {
-        int x, y;
-
-        x = atomic_read(&desktop.pending_x);
-        y = atomic_read(&desktop.pending_y);
-
         if (type == EV_REL)
         {
                 // Only remembered here. What it means depends on what else
@@ -342,7 +345,7 @@ static void pointer_event_locked(struct input_handle *handle, unsigned int type,
                 if (code == REL_X)
                 {
                         desktop.raw_x += value;
-                        pointer_shake(value, ktime_get_ns());
+                        pointer_shake(value);
                 }
                 else if (code == REL_Y)
                 {
@@ -379,8 +382,14 @@ static void pointer_event_locked(struct input_handle *handle, unsigned int type,
                 // other axis a report out of date.
                 if (desktop.abs_have)
                 {
-                        pointer_commit(desktop.abs_have & 1 ? desktop.abs_x : x,
-                                       desktop.abs_have & 2 ? desktop.abs_y : y);
+                        int x = desktop.abs_have & 1
+                                    ? desktop.abs_x
+                                    : atomic_read(&desktop.pending_x);
+                        int y = desktop.abs_have & 2
+                                    ? desktop.abs_y
+                                    : atomic_read(&desktop.pending_y);
+
+                        pointer_commit(x, y);
                         desktop.abs_have = 0;
                         return;
                 }
@@ -429,8 +438,8 @@ static void pointer_event_locked(struct input_handle *handle, unsigned int type,
                         return;
                 }
 
-                atomic_set(&desktop.button_x, x);
-                atomic_set(&desktop.button_y, y);
+                atomic_set(&desktop.button_x, atomic_read(&desktop.pending_x));
+                atomic_set(&desktop.button_y, atomic_read(&desktop.pending_y));
                 atomic_set(&desktop.button_down, !!value);
                 atomic_set(&desktop.button_changed, 1);
 

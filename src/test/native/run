@@ -53,7 +53,7 @@ python3 "$here/extract.py" "$lib" \
 #       bodies branch to memory_copy_apart by name, and a case that does not
 #       define the plain symbol would stop linking if it pulled them in.
 python3 "$here/extract.py" "$lib" \
-        memory_fill memory_copy_apart memory_copy \
+        memory_fill memory_exchange_apart memory_frob memory_copy_apart memory_copy \
         string_copy string_copy_max string_cut string_replace_all \
         > "$work/bulk.h" || exit 1
 

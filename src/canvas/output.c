@@ -6,23 +6,6 @@
         placement; the desktop is their bounding box.
 */
 
-static _Bool canvas_format_supported(u32 format)
-{
-        return format == DRM_FORMAT_XRGB8888 || format == DRM_FORMAT_ARGB8888;
-}
-
-static u32 canvas_pick_format(struct drm_plane *plane)
-{
-        unsigned int i;
-
-        for (i = 0; i < plane->format_count; i++)
-                if (canvas_format_supported(plane->format_types[i]))
-                        return plane->format_types[i];
-
-        return DRM_FORMAT_INVALID;
-}
-
-
 /*
         Whether this display is a window on somebody else's screen.
 
@@ -246,7 +229,9 @@ static struct output *output_add(struct canvas *canvas, struct drm_mode_set *mod
 {
         unsigned int width = mode_set->mode->hdisplay;
         unsigned int height = mode_set->mode->vdisplay;
-        u32 format = canvas_pick_format(mode_set->crtc->primary);
+        u32 format = canvas_plane_pick_format(mode_set->crtc->primary,
+                                              DRM_FORMAT_XRGB8888,
+                                              DRM_FORMAT_ARGB8888);
         struct output *output;
 
         if (format == DRM_FORMAT_INVALID)

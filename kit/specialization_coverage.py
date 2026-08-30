@@ -267,7 +267,7 @@ cover('specialized', 'source', 'string_copy_end',
 cover('worth_it', 'size', '''
 memory_first_of_ascii_case memory_span_byte memory_count memory_count_words
 memory_hash_33 memory_translate memory_to_lower_ascii memory_to_upper_ascii
-memory_reverse
+memory_reverse memory_exchange_apart memory_frob
 ''', 'a literal size under a block skips the width dispatch and the tail '
      'arithmetic that is most of the work there; expected to win under '
      'thirty two and to be level by a block, unmeasured',
@@ -460,7 +460,7 @@ cover('folds_already', 'ascii_case', 'memory_search_prepare',
 # ----------------------------------------------------------------------
 cover('nothing_to_fold', None, '''
 _start moonwater_cpu_detect program_initial_identity get_cpu_time term_size working_directory_get
-working_directory_set program_argument_count program_arguments_own
+working_directory_set program_argument_count program_argument_list program_arguments_own
 program_environment_list log_failed log_failure_reset log_flush sleep buffered_flush
 string_hash_33_length
 ''', 'no argument, or an argument that is a pointer into memory the caller '

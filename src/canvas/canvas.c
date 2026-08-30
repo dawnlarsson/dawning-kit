@@ -11,10 +11,7 @@
             pane.c      windows: creating, destroying, and reading the shared
                         page without trusting it
             fill.asm    one run of pixels, per architecture. Everything
-                        Canvas draws goes through it, unless an engine took
-                        it instead -- see gpu.c
-            gpu.c       the engine, when the display device has one this
-                        knows how to ask
+                        Canvas draws goes through it
             glyph.asm   one glyph, for the same reason
             paint.c     pixels: a pointer, a pitch, a rectangle
             text.c      words: a box, where the lines break, where they sit
@@ -464,12 +461,24 @@ static _Bool output_holds(struct output *output, int x, int y)
                y >= output->y && y < output->y + (int)output->height;
 }
 
+// The first format in the plane's own order that is one of the two wanted.
+static u32 canvas_plane_pick_format(struct drm_plane *plane, u32 first, u32 second)
+{
+        unsigned int i;
+
+        for (i = 0; i < plane->format_count; i++)
+                if (plane->format_types[i] == first ||
+                    plane->format_types[i] == second)
+                        return plane->format_types[i];
+
+        return DRM_FORMAT_INVALID;
+}
+
 #include "paint.c"
 #include "text.c"
 #include "pane.c"
 #include "../sh/term.c"
 #include "console.c"
-#include "gpu.c"
 #include "compose.c"
 #include "plane.c"
 #include "drag.c"

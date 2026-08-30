@@ -142,7 +142,7 @@ static fn row(positive length)
                                             (former ? former : 1));
         }
 
-        order(ratios);
+        order(ratios, TRIES);
         string_format(log, "  %p bytes  median asm/C %p.%p%%\n", length,
                       ratios[TRIES / 2] / 100, ratios[TRIES / 2] % 100);
 }
@@ -176,7 +176,7 @@ static fn string_row(positive length)
                                             (former ? former : 1));
         }
 
-        order(ratios);
+        order(ratios, TRIES);
         string_format(log, "  %p bytes  median one-pass/two-pass %p.%p%%\n",
                       length, ratios[TRIES / 2] / 100,
                       ratios[TRIES / 2] % 100);

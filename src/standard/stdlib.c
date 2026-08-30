@@ -964,12 +964,6 @@ DEAD_END fn abort(void)
         Sedgewick's partition and the insertion cutoff. The measurement of the
         call's cost is in the notes with the benchmark.
 
-        Swapping is by eight byte word when the element size and the base are
-        both multiples of eight, which is every array of pointers, of longs,
-        and of most structures, and by byte otherwise. The test is made once
-        per sort rather than once per swap. It is by alignment as well as size
-        because riscv64 is entitled to trap an unaligned load and a sort is
-        not the place to find out whether this one does.
 */
 #ifndef STDLIB_SORT_SMALL
 #define STDLIB_SORT_SMALL 12
@@ -981,127 +975,17 @@ typedef b32(address_to stdlib_compare)(address_any left, address_any right);
 typedef b32(address_to stdlib_compare_context)(address_any left, address_any right,
                                                address_any context);
 
-/*
-        How one element moves, decided once for the whole sort.
-
-        This was a single flag: eight byte words when the size and the base
-        were both multiples of eight, and single bytes otherwise. The
-        otherwise is where an array of ints lands -- size four, the commonest
-        thing qsort is handed after an array of pointers -- and four bytes
-        moved with four loads, four stores and a loop around them.
-
-        So the flag is a width, and the two widths that need no loop at all
-        get a case of their own: an eight byte element is one load and one
-        store each way, and a four byte element is the same thing in a
-        narrower register. Anything that is a multiple of four and aligned for
-        it moves four bytes at a time rather than one. The test is by
-        alignment as well as by size, for the reason the old comment gave:
-        riscv64 is entitled to trap an unaligned load and a sort is not the
-        place to find out whether this one does.
-
-        Made once per sort and read once per swap, so it is a predicted
-        compare against an immediate and not an indirect call -- trading a
-        branch the predictor gets right for one it cannot would give the
-        whole win back.
-*/
-#define STDLIB_SORT_MOVE_BYTE 0
-#define STDLIB_SORT_MOVE_QUARTER 1
-#define STDLIB_SORT_MOVE_QUARTERS 2
-#define STDLIB_SORT_MOVE_WORD 3
-#define STDLIB_SORT_MOVE_WORDS 4
-
 typedef struct
 {
         stdlib_compare_context compare;
         address_any context;
         positive size;
-        b32 move;
 } stdlib_sort_plan;
 
 static bool stdlib_sort_before(p8 address_to left, p8 address_to right,
                                stdlib_sort_plan address_to plan)
 {
         return plan->compare(left, right, plan->context) < 0;
-}
-
-static fn stdlib_sort_swap(p8 address_to left, p8 address_to right,
-                           stdlib_sort_plan address_to plan)
-{
-        positive size = plan->size;
-
-        if (left == right)
-                return;
-
-        if (plan->move == STDLIB_SORT_MOVE_WORD)
-        {
-                p64 held = *(p64 address_to)left;
-
-                *(p64 address_to)left = *(p64 address_to)right;
-                *(p64 address_to)right = held;
-
-                return;
-        }
-
-        if (plan->move == STDLIB_SORT_MOVE_WORDS)
-        {
-                p64 address_to a = (p64 address_to)left;
-                p64 address_to b = (p64 address_to)right;
-                positive words = size / 8;
-
-                while (words > 0)
-                {
-                        p64 held = *a;
-
-                        *a = *b;
-                        *b = held;
-                        a++;
-                        b++;
-                        words--;
-                }
-
-                return;
-        }
-
-        if (plan->move == STDLIB_SORT_MOVE_QUARTER)
-        {
-                p32 held = *(p32 address_to)left;
-
-                *(p32 address_to)left = *(p32 address_to)right;
-                *(p32 address_to)right = held;
-
-                return;
-        }
-
-        if (plan->move == STDLIB_SORT_MOVE_QUARTERS)
-        {
-                p32 address_to a = (p32 address_to)left;
-                p32 address_to b = (p32 address_to)right;
-                positive quarters = size / 4;
-
-                while (quarters > 0)
-                {
-                        p32 held = *a;
-
-                        *a = *b;
-                        *b = held;
-                        a++;
-                        b++;
-                        quarters--;
-                }
-
-                return;
-        }
-
-        while (size > 0)
-        {
-                p8 held = *left;
-
-                *left = *right;
-                *right = held;
-                left++;
-                right++;
-                size--;
-        }
 }
 
 //      Which of the three belongs in the middle. Returned as a position
@@ -1137,7 +1021,7 @@ static fn stdlib_sort_insertion(p8 address_to base, positive count,
 
                 while (walk > base && stdlib_sort_before(walk, walk - size, plan))
                 {
-                        stdlib_sort_swap(walk, walk - size, plan);
+                        memory_exchange_apart(walk, walk - size, size);
                         walk -= size;
                 }
         }
@@ -1166,7 +1050,8 @@ static fn stdlib_sort_sift(p8 address_to base, positive root, positive count,
                 if (!stdlib_sort_before(base + root * size, base + child * size, plan))
                         return;
 
-                stdlib_sort_swap(base + root * size, base + child * size, plan);
+                memory_exchange_apart(base + root * size, base + child * size,
+                                      size);
                 root = child;
         }
 }
@@ -1186,7 +1071,7 @@ static fn stdlib_sort_heap(p8 address_to base, positive count,
         while (count > 1)
         {
                 count--;
-                stdlib_sort_swap(base, base + count * size, plan);
+                memory_exchange_apart(base, base + count * size, size);
                 stdlib_sort_sift(base, 0, count, plan);
         }
 }
@@ -1245,7 +1130,7 @@ static fn stdlib_sort_range(p8 address_to base, positive count,
                 //      The pivot is parked at the front, where the right scan
                 //      finds it and stops. Nothing stands at the other end,
                 //      which is what the bound in the left scan is for.
-                stdlib_sort_swap(pivot, low, plan);
+                memory_exchange_apart(pivot, low, size);
                 pivot = low;
 
                 left = low;
@@ -1264,10 +1149,10 @@ static fn stdlib_sort_range(p8 address_to base, positive count,
                         if (left >= right)
                                 break;
 
-                        stdlib_sort_swap(left, right, plan);
+                        memory_exchange_apart(left, right, size);
                 }
 
-                stdlib_sort_swap(low, right, plan);
+                memory_exchange_apart(low, right, size);
 
                 taken = (positive)(right - base) / size;
 
@@ -1300,15 +1185,6 @@ fn qsort_r(address_any base, positive count, positive size,
         plan.compare = compare;
         plan.context = context;
         plan.size = size;
-
-        if ((size % 8) == 0 && ((positive)base % 8) == 0)
-                plan.move = size == 8 ? STDLIB_SORT_MOVE_WORD
-                                      : STDLIB_SORT_MOVE_WORDS;
-        else if ((size % 4) == 0 && ((positive)base % 4) == 0)
-                plan.move = size == 4 ? STDLIB_SORT_MOVE_QUARTER
-                                      : STDLIB_SORT_MOVE_QUARTERS;
-        else
-                plan.move = STDLIB_SORT_MOVE_BYTE;
 
         //      The base two logarithm of the count is the position of its
         //      highest set bit, and bits_leading_zeros is one instruction on

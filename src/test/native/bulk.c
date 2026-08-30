@@ -1,5 +1,5 @@
 /*
-        memset, memcpy, memmove and the string copies, run on this machine.
+        memset, memcpy, memmove, memfrob and the string copies, run on this machine.
 
         The verify lane runs the arm64 block under qemu, which proves the
         answers but not that they came out of an arm64 core. These seven have
@@ -21,6 +21,8 @@ typedef unsigned char u8;
 typedef unsigned long u64;
 
 void *memory_fill(void *, int, u64);
+void memory_exchange_apart(void *, void *, u64);
+void *memory_frob(void *, u64);
 void *memory_copy_apart(void *, const void *, u64);
 void *memory_copy(void *, const void *, u64);
 char *string_copy(char *, const char *);
@@ -52,6 +54,28 @@ static void r_copy(u8 *d, const u8 *s, u64 n)
         } else
                 while (n--)
                         *d++ = *s++;
+}
+
+static void r_exchange(u8 *a, u8 *b, u64 n)
+{
+        if (a == b)
+                return;
+
+        while (n--) {
+                u8 held = *a;
+                *a++ = *b;
+                *b++ = held;
+        }
+}
+
+static void *r_frob(u8 *p, u64 n)
+{
+        u8 *answer = p;
+
+        while (n--)
+                *p++ ^= 42;
+
+        return answer;
 }
 
 static u64 r_len(const char *s)
@@ -127,6 +151,78 @@ static void memory(void)
                                 r_copy(want + base + gap, want + base, size);
                                 whole("memory_copy", size, off);
                         }
+                }
+}
+
+static void exchange_one(u64 left, u64 right, u64 size)
+{
+        r_fill(got, 0xA5, ROOM);
+        r_fill(want, 0xA5, ROOM);
+
+        for (u64 i = 0; i < size; i++) {
+                got[left + i] = want[left + i] = (u8)(i * 37 + left);
+                got[right + i] = want[right + i] = (u8)(i * 73 + right);
+        }
+
+        memory_exchange_apart(got + left, got + right, size);
+        r_exchange(want + left, want + right, size);
+        whole("memory_exchange_apart", size, left);
+}
+
+static void exchange(void)
+{
+        static const u64 large[] = {129, 255, 256, 257, 511, 512, 513, 700, 1000};
+
+        memory_exchange_apart(0, 0, 0);
+        memory_exchange_apart(0, 0, 37);
+
+        r_fill(got, 0xA5, ROOM);
+        r_fill(want, 0xA5, ROOM);
+        memory_exchange_apart(got + 31, got + 31, 1000);
+        whole("memory_exchange_apart equal", 1000, 31);
+
+        for (u64 size = 0; size <= 128; size++)
+                for (u64 left = 0; left < 16; left++)
+                        for (u64 right = 0; right < 16; right++)
+                                exchange_one(32 + left, 1400 + right, size);
+
+        for (u64 width = 0; width < sizeof(large) / sizeof(large[0]); width++)
+                for (u64 left = 0; left < 16; left++)
+                        for (u64 right = 0; right < 16; right++)
+                                exchange_one(32 + left, 1400 + right,
+                                             large[width]);
+}
+
+static void frob(void)
+{
+        static const u64 widths[] = {
+                0, 1, 2, 3, 7, 8, 9, 15, 16, 17, 31, 32, 33,
+                63, 64, 65, 127, 128, 129, 255, 256, 257, 511, 512,
+                700, 1000, 2048,
+        };
+
+        checks++;
+        if (memory_frob(0, 0) != 0)
+                bad++;
+
+        for (u64 width = 0; width < sizeof(widths) / sizeof(widths[0]); width++)
+                for (u64 off = 0; off < 32; off++) {
+                        u64 size = widths[width];
+                        void *answer;
+
+                        for (u64 i = 0; i < ROOM; i++)
+                                got[i] = want[i] = (u8)(i * 37 + size + off);
+
+                        answer = memory_frob(got + 64 + off, size);
+                        r_frob(want + 64 + off, size);
+                        checks++;
+                        if (answer != got + 64 + off)
+                                bad++;
+                        whole("memory_frob", size, off);
+
+                        memory_frob(got + 64 + off, size);
+                        r_frob(want + 64 + off, size);
+                        whole("memory_frob twice", size, off);
                 }
 }
 
@@ -241,6 +337,8 @@ static void strings(void)
 int main(void)
 {
         memory();
+        exchange();
+        frob();
         strings();
 
         printf("arm64 bulk: %lu checks | failures %lu\n", checks, bad);

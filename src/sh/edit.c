@@ -4731,17 +4731,10 @@ static fn edit_window_unblock(positive previous)
 
 static bipolar edit_wait(bool briefly)
 {
-        struct
-        {
-                b32 handle;
-                short wanted;
-                short happened;
-        } watch = {standard_input_descriptor, 1, 0};
         timespec limit = {0, 50000000};
-        bipolar ready = system_call_5(syscall(ppoll), (positive)address_of watch,
-                                      1, briefly ? (positive)address_of limit : 0,
-                                      (positive)address_of edit_window_wait_mask,
-                                      8);
+        bipolar ready = descriptor_wait_readable(
+            standard_input_descriptor, briefly ? address_of limit : null,
+            address_of edit_window_wait_mask);
 
         if (ready > 0)
                 return EDIT_WAIT_INPUT;

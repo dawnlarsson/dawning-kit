@@ -399,8 +399,8 @@ static struct pane *pane_create(unsigned int width, unsigned int height,
                                 _Bool owned)
 {
         unsigned int max_columns, max_rows;
-        unsigned int stride, history;
-        unsigned long ring_bytes;
+        unsigned int stride = 0, history = 0;
+        unsigned long ring_bytes = 0;
         struct window *page;
         struct pane *pane;
         unsigned long bytes;
@@ -409,8 +409,6 @@ static struct pane *pane_create(unsigned int width, unsigned int height,
 
         if (columns && (!max_columns || !max_rows))
                 return NULL;
-
-        pane_ring(max_columns, max_rows, &stride, &history, &ring_bytes);
 
         /*
                 A window of cells is allocated for as many as the desktop
@@ -421,6 +419,7 @@ static struct pane *pane_create(unsigned int width, unsigned int height,
         */
         if (columns)
         {
+                pane_ring(max_columns, max_rows, &stride, &history, &ring_bytes);
                 columns = min(columns, max_columns);
                 rows = min(rows, max_rows);
                 width = columns * (unsigned int)canvas_cell_w;
