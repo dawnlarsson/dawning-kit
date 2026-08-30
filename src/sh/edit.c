@@ -199,12 +199,16 @@ static positive edit_cursor_room;
 //      Whether the file ended with a newline when it was read, which is what
 //      it will end with when it is written.
 static bool edit_final_newline = true;
+// An empty file and a file containing one newline are both one empty line in
+// memory. Keep the one bit that distinguishes their byte representation.
+static bool edit_empty_file = true;
 
 //      What the file is called, whether the bytes on disc still match what is
 //      on the screen, and whether the editor is still running. edit_modified
 //      is deliberately not called edit_dirty: the renderer has rows that are
 //      dirty too and one word for both is one bug waiting.
 static string_address edit_path;
+static p8 EDIT_SPARE edit_path_resolved[4096];
 static bool edit_modified;
 static bool edit_running;
 /*
@@ -715,96 +719,141 @@ static p8 address_to edit_span_take(struct edit_place from,
         of the first and every line between them closed, which is one splice
         and a run of table copies rather than a byte at a time anywhere.
 */
-static fn edit_raw_remove(struct edit_place from, struct edit_place to)
-{
-        if (edit_place_before(to, from))
-                return;
-
-        if (from.line == to.line)
-        {
-                edit_line_splice(from.line, from.column, to.column, null, 0);
-                return;
-        }
-
-        edit_line_splice(from.line, from.column, edit_lines[from.line].length,
-                         edit_lines[to.line].text + to.column,
-                         edit_lines[to.line].length - to.column);
-
-        for (positive at = to.line; at > from.line; at--)
-                edit_line_close(at);
-}
-
 /*
-        Bytes put into the file, with no journal and no cursors touched, and
-        the place just past the last of them.
+        One atomic replacement beneath the journal.
 
-        The tail of the line being split has to be held before the first splice
-        writes over it, because it is going to end up on a line that does not
-        exist yet. It is held on the allocator rather than in a buffer of some
-        chosen size, because "the rest of the line" has no length this can
-        refuse.
+        Every resulting line is allocated and filled before one byte of the
+        document is changed.  That is more than an out-of-memory nicety: the
+        old multi-line join freed all later lines even when growing the first
+        line had failed, and insertion could leave half a paste in the file.
+        Here failure releases only the staged lines and the original document
+        is still byte-for-byte intact.
 */
-static struct edit_place edit_raw_insert(struct edit_place from,
-                                         string_address text, positive length)
+static bool edit_raw_replace(struct edit_place from, struct edit_place to,
+                             string_address text, positive length,
+                             struct edit_place address_to after)
 {
-        struct edit_place after = from;
-        string_address stop = (string_address)memory_first_of((address_any)text,
-                                                              '\n', length);
-        positive first;
-        p8 address_to tail;
-        positive tail_length;
-        positive at;
-        positive line;
+        positive breaks;
+        positive made;
+        positive old_count = edit_line_count;
+        positive new_count;
+        positive input_at = 0;
+        positive suffix_length;
+        string_address suffix;
+        struct edit_line address_to staged;
 
-        if (!stop)
+        if (edit_place_before(to, from))
+                to = from;
+
+        breaks = length ? memory_count(text, length, '\n') : 0;
+
+        /* The overwhelmingly hot case: one line changed in place. Splice
+           reserves before touching bytes, so allocation failure is already
+           transactional, and capacity turns ordinary typing into one copy
+           with no allocator traffic. */
+        if (!breaks && from.line == to.line)
         {
-                edit_line_splice(from.line, from.column, from.column, text,
-                                 length);
-                after.column = from.column + length;
-                return after;
+                if (!edit_line_splice(from.line, from.column, to.column,
+                                      text, length))
+                        return false;
+
+                after->line = from.line;
+                after->column = from.column + length;
+                return true;
         }
 
-        first = (positive)(stop - text);
-        tail_length = edit_lines[from.line].length - from.column;
-        tail = (p8 address_to)memory_take(tail_length + 1);
+        made = breaks + 1;
+        new_count = old_count - (to.line - from.line) + breaks;
+        suffix = edit_lines[to.line].text + to.column;
+        suffix_length = edit_lines[to.line].length - to.column;
 
-        if (!tail)
-                return after;
+        if (!edit_lines_room_for(new_count))
+                return false;
 
-        memory_copy_apart(tail, edit_lines[from.line].text + from.column,
-                          tail_length);
+        staged = (struct edit_line address_to)memory_take(
+            made * sizeof(struct edit_line));
 
-        edit_line_splice(from.line, from.column, edit_lines[from.line].length,
-                         text, first);
+        if (!staged)
+                return false;
 
-        at = first + 1;
-        line = from.line;
+        memory_zero(staged, made * sizeof(struct edit_line));
 
-        while (at <= length)
+        for (positive line = 0; line < made; line++)
         {
-                positive width;
+                string_address stop = line < breaks
+                    ? (string_address)memory_first_of(
+                          (address_any)(text + input_at), '\n',
+                          length - input_at)
+                    : null;
+                positive width = stop ? (positive)(stop - (text + input_at))
+                                      : length - input_at;
+                positive prefix = line ? 0 : from.column;
+                positive tail = line + 1 == made ? suffix_length : 0;
+                positive room = prefix + width + tail;
+                positive allocation = line + 1 == made && room
+                    ? memory_growth(0, room, EDIT_LINE_FIRST)
+                    : room;
+                positive at = 0;
 
-                stop = (string_address)memory_first_of((address_any)(text + at),
-                                                       '\n', length - at);
-                width = stop ? (positive)(stop - (text + at)) : length - at;
+                if (room)
+                {
+                        staged[line].text =
+                            (p8 address_to)memory_take(allocation);
 
-                line++;
+                        if (!staged[line].text)
+                        {
+                                for (positive back = 0; back < line; back++)
+                                        memory_give(staged[back].text);
 
-                if (!edit_line_open(line))
-                        break;
+                                memory_give(staged);
+                                return false;
+                        }
 
-                edit_line_splice(line, 0, 0, text + at, width);
-                at += width + 1;
+                        staged[line].room = allocation;
+                }
 
-                if (!stop)
-                        break;
+                if (prefix)
+                {
+                        memory_copy_apart(staged[line].text,
+                                          edit_lines[from.line].text, prefix);
+                        at += prefix;
+                }
+
+                if (width)
+                {
+                        memory_copy_apart(staged[line].text + at,
+                                          text + input_at, width);
+                        at += width;
+                }
+
+                if (tail)
+                {
+                        memory_copy_apart(staged[line].text + at, suffix, tail);
+                        at += tail;
+                }
+
+                staged[line].length = at;
+                input_at += width + (stop ? 1 : 0);
         }
 
-        after.line = line;
-        after.column = edit_lines[line].length;
-        edit_line_splice(line, after.column, after.column, tail, tail_length);
-        memory_give(tail);
-        return after;
+        after->line = from.line + breaks;
+        after->column = breaks ? staged[breaks].length - suffix_length
+                               : from.column + length;
+
+        for (positive line = from.line; line <= to.line; line++)
+                memory_give(edit_lines[line].text);
+
+        if (to.line + 1 < old_count)
+                memory_copy(edit_lines + from.line + made,
+                            edit_lines + to.line + 1,
+                            (old_count - to.line - 1) *
+                                sizeof(struct edit_line));
+
+        memory_copy_apart(edit_lines + from.line, staged,
+                          made * sizeof(struct edit_line));
+        edit_line_count = new_count;
+        memory_give(staged);
+        return true;
 }
 
 /*
@@ -854,6 +903,8 @@ struct edit_step
         positive after_count;
         p8 kind;
         bool open;
+        bool before_empty;
+        bool after_empty;
 };
 
 static struct edit_step address_to edit_steps;
@@ -973,6 +1024,8 @@ static bool edit_step_start(p8 kind)
         memory_zero(step, sizeof(struct edit_step));
         step->kind = kind;
         step->open = true;
+        step->before_empty = edit_empty_file;
+        step->after_empty = edit_empty_file;
 
         if (!edit_cursors_remember(address_of step->before,
                                    address_of step->before_count))
@@ -1003,6 +1056,7 @@ static fn edit_step_seal()
                 return;
 
         step->open = false;
+        step->after_empty = edit_empty_file;
         edit_cursors_remember(address_of step->after, address_of step->after_count);
 }
 
@@ -1021,6 +1075,7 @@ static fn edit_step_note_cursors()
         if (!step->open)
                 return;
 
+        step->after_empty = edit_empty_file;
         edit_cursors_remember(address_of step->after, address_of step->after_count);
 }
 
@@ -1080,13 +1135,20 @@ static struct edit_place edit_change(struct edit_place from,
                               address_of patch->inserted_room,
                               patch->inserted_length + length, 32))
                 {
+                        if (!edit_raw_replace(from, to, text, length,
+                                              address_of after))
+                        {
+                                memory_give(removed);
+                                return from;
+                        }
+
                         memory_copy_apart(patch->inserted +
                                               patch->inserted_length,
                                           text, length);
                         patch->inserted_length += length;
                         memory_give(removed);
-                        after = edit_raw_insert(from, text, length);
                         edit_cursors_shift(from, to, after);
+                        edit_empty_file = false;
                         edit_modified = true;
                         return after;
                 }
@@ -1101,6 +1163,13 @@ static struct edit_place edit_change(struct edit_place from,
                               address_of patch->removed_room,
                               patch->removed_length + removed_length, 32))
                 {
+                        if (!edit_raw_replace(from, to, null, 0,
+                                              address_of after))
+                        {
+                                memory_give(removed);
+                                return from;
+                        }
+
                         // The run grows at its front, so what was already
                         // remembered moves up and the new bytes go in below it.
                         memory_copy(patch->removed + removed_length,
@@ -1110,8 +1179,8 @@ static struct edit_place edit_change(struct edit_place from,
                         patch->removed_length += removed_length;
                         patch->column = from.column;
                         memory_give(removed);
-                        edit_raw_remove(from, to);
                         edit_cursors_shift(from, to, from);
+                        edit_empty_file = false;
                         edit_modified = true;
                         return from;
                 }
@@ -1149,11 +1218,17 @@ static struct edit_place edit_change(struct edit_place from,
                 patch->inserted_room = length + 1;
         }
 
-        step->patch_count++;
+        if (!edit_raw_replace(from, to, text, length, address_of after))
+        {
+                memory_give(patch->removed);
+                memory_give(patch->inserted);
+                memory_zero(patch, sizeof(struct edit_patch));
+                return from;
+        }
 
-        edit_raw_remove(from, to);
-        after = length ? edit_raw_insert(from, text, length) : from;
+        step->patch_count++;
         edit_cursors_shift(from, to, after);
+        edit_empty_file = false;
         edit_modified = true;
         return after;
 }
@@ -1204,15 +1279,19 @@ static bool edit_undo()
                 struct edit_patch address_to patch = step->patches + at - 1;
                 struct edit_place from = {patch->line, patch->column};
                 struct edit_place to = edit_patch_end(patch);
+                struct edit_place after;
 
-                edit_raw_remove(from, to);
-
-                if (patch->removed_length)
-                        edit_raw_insert(from, patch->removed,
-                                        patch->removed_length);
+                if (!edit_raw_replace(from, to, patch->removed,
+                                      patch->removed_length,
+                                      address_of after))
+                {
+                        edit_step_at++;
+                        return false;
+                }
         }
 
         edit_cursors_restore(step->before, step->before_count);
+        edit_empty_file = step->before_empty;
         edit_view_free = false;
         edit_modified = !edit_step_saved_known || edit_step_saved != edit_step_at;
         return true;
@@ -1232,6 +1311,7 @@ static bool edit_redo()
                 struct edit_patch address_to patch = step->patches + at;
                 struct edit_place from = {patch->line, patch->column};
                 struct edit_place to = from;
+                struct edit_place after;
 
                 if (patch->removed_length)
                 {
@@ -1242,14 +1322,17 @@ static bool edit_redo()
                         to = edit_patch_end(address_of measure);
                 }
 
-                edit_raw_remove(from, to);
-
-                if (patch->inserted_length)
-                        edit_raw_insert(from, patch->inserted,
-                                        patch->inserted_length);
+                if (!edit_raw_replace(from, to, patch->inserted,
+                                      patch->inserted_length,
+                                      address_of after))
+                {
+                        edit_step_at--;
+                        return false;
+                }
         }
 
         edit_cursors_restore(step->after, step->after_count);
+        edit_empty_file = step->after_empty;
         edit_view_free = false;
         edit_modified = !edit_step_saved_known || edit_step_saved != edit_step_at;
         return true;
@@ -1687,10 +1770,10 @@ static p8 edit_status_bytes[EDIT_COLUMNS_MAX * 4];
 static positive edit_status_length;
 static positive edit_status_cells;
 
-static fn edit_status_put(string_address text, positive length)
+static bool edit_status_put(string_address text, positive length)
 {
         if (edit_status_length + length > sizeof(edit_status_bytes))
-                return;
+                return false;
 
         memory_copy_apart(edit_status_bytes + edit_status_length, text, length);
         edit_status_length += length;
@@ -1698,6 +1781,8 @@ static fn edit_status_put(string_address text, positive length)
         for (positive at = 0; at < length; at++)
                 if (!edit_is_continuation((p8)text[at]))
                         edit_status_cells++;
+
+        return true;
 }
 
 static fn edit_status_put_text(string_address text)
@@ -1754,8 +1839,10 @@ static fn edit_status_build()
                 }
         }
 
-        while (edit_status_cells < edit_columns)
-                edit_status_put_text((string_address) " ");
+        while (edit_status_cells < edit_columns &&
+               edit_status_length < sizeof(edit_status_bytes))
+                if (!edit_status_put((string_address) " ", 1))
+                        break;
 
         edit_row_length = 0;
         edit_row_put_text((string_address)TERM_REVERSE);
@@ -3212,6 +3299,24 @@ static positive edit_input_pending;
 static positive edit_input_wanted;
 static bool edit_input_alt;
 
+/*
+        Bracketed paste is one edit, not a stream of commands.
+
+        Without this, a pasted newline went through edit_newline and acquired
+        indentation that was not in the clipboard, while a control byte or an
+        escape sequence could invoke an editor command.  The terminal frames a
+        paste with CSI 200~ and CSI 201~. Hold its bytes until the closing
+        frame, then insert the exact block in one journal step.
+*/
+static p8 address_to edit_input_paste;
+static positive edit_input_paste_length;
+static positive edit_input_paste_room;
+static positive edit_input_paste_match;
+static bool edit_input_pasting;
+static bool edit_input_paste_failed;
+
+static p8 edit_input_paste_end[] = {27, '[', '2', '0', '1', '~'};
+
 static fn edit_key(positive key);
 
 /*
@@ -3384,6 +3489,10 @@ static fn edit_input_reset()
         edit_input_parameters[0] = 0;
         edit_input_private = false;
         edit_input_alt = false;
+        edit_input_pasting = false;
+        edit_input_paste_length = 0;
+        edit_input_paste_match = 0;
+        edit_input_paste_failed = false;
 }
 
 static fn edit_input_deliver(positive key)
@@ -3395,6 +3504,66 @@ static fn edit_input_deliver(positive key)
                 key |= EDIT_KEY_ALT;
 
         edit_key(key);
+}
+
+static bool edit_input_paste_append(string_address bytes, positive length)
+{
+        if (!edit_room(address_of edit_input_paste,
+                       address_of edit_input_paste_room,
+                       edit_input_paste_length + length, 4096))
+        {
+                edit_input_paste_failed = true;
+                return false;
+        }
+
+        memory_copy_apart(edit_input_paste + edit_input_paste_length, bytes,
+                          length);
+        edit_input_paste_length += length;
+        return true;
+}
+
+static fn edit_input_paste_byte(p8 byte)
+{
+        if (byte == edit_input_paste_end[edit_input_paste_match])
+        {
+                edit_input_paste_match++;
+
+                if (edit_input_paste_match == sizeof(edit_input_paste_end))
+                {
+                        edit_input_pasting = false;
+                        edit_input_paste_match = 0;
+
+                        if (edit_input_paste_failed)
+                                edit_status_say((string_address)"paste did not fit");
+                        else if (edit_input_paste_length)
+                        {
+                                edit_insert(edit_input_paste,
+                                            edit_input_paste_length,
+                                            EDIT_STEP_OTHER);
+                                edit_repaint_all();
+                        }
+
+                        edit_input_paste_length = 0;
+                        edit_input_paste_failed = false;
+                }
+
+                return;
+        }
+
+        if (edit_input_paste_match)
+        {
+                edit_input_paste_append(edit_input_paste_end,
+                                        edit_input_paste_match);
+                edit_input_paste_match = 0;
+
+                if (byte == edit_input_paste_end[0])
+                {
+                        edit_input_paste_match = 1;
+                        return;
+                }
+        }
+
+        edit_input_paste_append(address_of byte, 1);
 }
 
 /*
@@ -3410,6 +3579,12 @@ static fn edit_input_deliver(positive key)
 */
 static fn edit_input_byte(p8 byte)
 {
+        if (edit_input_pasting)
+        {
+                edit_input_paste_byte(byte);
+                return;
+        }
+
         switch (edit_input_state)
         {
         case EDIT_INPUT_ESCAPE:
@@ -3552,6 +3727,15 @@ static fn edit_input_byte(p8 byte)
 
                         if (byte == '~')
                         {
+                                if (first == 200)
+                                {
+                                        edit_input_pasting = true;
+                                        edit_input_paste_length = 0;
+                                        edit_input_paste_match = 0;
+                                        edit_input_paste_failed = false;
+                                        return;
+                                }
+
                                 edit_input_deliver(modifiers |
                                                    edit_key_from_tilde(first));
                                 return;
@@ -3667,7 +3851,7 @@ static fn edit_input_idle()
         would still be on. The clipboard deliberately does survive, which is
         how copying in one file and pasting in the next works.
 */
-static fn edit_empty()
+static bool edit_empty()
 {
         while (edit_step_count)
                 edit_step_forget(edit_steps + --edit_step_count);
@@ -3677,6 +3861,7 @@ static fn edit_empty()
         edit_step_saved_known = true;
         edit_modified = false;
         edit_final_newline = true;
+        edit_empty_file = true;
         edit_view_free = false;
         edit_message_length = 0;
         edit_prompt_active = false;
@@ -3686,19 +3871,55 @@ static fn edit_empty()
         while (edit_line_count)
                 edit_line_close(edit_line_count - 1);
 
-        edit_lines_room_for(1);
+        if (!edit_lines_room_for(1) || !edit_cursors_room_for(1))
+                return false;
+
         edit_line_count = 1;
         edit_lines[0].text = null;
         edit_lines[0].length = 0;
         edit_lines[0].room = 0;
 
-        edit_cursors_room_for(1);
         edit_cursor_count = 1;
         memory_zero(edit_cursors, sizeof(struct edit_cursor));
         edit_primary_place = edit_place_clamped(0, 0);
         edit_top = 0;
         edit_left = 0;
         edit_repaint_all();
+        return true;
+}
+
+/* The shell is long lived; quitting a large document must not make that
+   document and its undo history part of the shell's permanent RSS.  The
+   clipboard is intentionally absent so copy in one file can paste in the
+   next. */
+static fn edit_document_release()
+{
+        while (edit_step_count)
+                edit_step_forget(edit_steps + --edit_step_count);
+
+        while (edit_line_count)
+                edit_line_close(edit_line_count - 1);
+
+        memory_give(edit_steps);
+        memory_give(edit_lines);
+        memory_give(edit_cursors);
+        memory_give(edit_input_paste);
+        memory_give(edit_emitted);
+
+        edit_steps = null;
+        edit_step_at = 0;
+        edit_step_room = 0;
+        edit_lines = null;
+        edit_line_room = 0;
+        edit_cursors = null;
+        edit_cursor_count = 0;
+        edit_cursor_room = 0;
+        edit_input_paste = null;
+        edit_input_paste_length = 0;
+        edit_input_paste_room = 0;
+        edit_emitted = null;
+        edit_emitted_length = 0;
+        edit_emitted_room = 0;
 }
 
 static bool edit_load(string_address text, positive length)
@@ -3706,11 +3927,13 @@ static bool edit_load(string_address text, positive length)
         positive at = 0;
         positive line = 0;
 
-        edit_empty();
+        if (!edit_empty())
+                return false;
         //      A file that ended without a newline is written back without
         //      one; one that had nothing in it at all is a new file and gets
         //      the newline every other one has.
         edit_final_newline = length ? text[length - 1] == '\n' : true;
+        edit_empty_file = length == 0;
 
         while (at < length)
         {
@@ -3722,7 +3945,8 @@ static bool edit_load(string_address text, positive length)
                 if (line && !edit_line_open(line))
                         return false;
 
-                edit_line_splice(line, 0, 0, text + at, width);
+                if (!edit_line_splice(line, 0, 0, text + at, width))
+                        return false;
                 line++;
                 at += width;
 
@@ -3756,8 +3980,13 @@ static p8 address_to EDIT_SPARE edit_bytes_take(positive address_to length)
         //      empty file into a one byte one every time it is opened.
         if (edit_line_count == 1 && !edit_lines[0].length)
         {
-                block[0] = 0;
-                address_to length = 0;
+                positive held = edit_final_newline && !edit_empty_file ? 1 : 0;
+
+                if (held)
+                        block[0] = '\n';
+
+                block[held] = 0;
+                address_to length = held;
                 return block;
         }
 
@@ -4153,14 +4382,25 @@ static fn edit_key(positive key)
 #define EDIT_TCSETS 0x5402u
 
 //      c_iflag
+#define EDIT_INPUT_IGNORE_BREAK 0x0001u
+#define EDIT_INPUT_BREAK 0x0002u
+#define EDIT_INPUT_MARK_PARITY 0x0008u
+#define EDIT_INPUT_STRIP 0x0020u
+#define EDIT_INPUT_NL_TO_CR 0x0040u
+#define EDIT_INPUT_IGNORE_CR 0x0080u
 #define EDIT_INPUT_CR_TO_NL 0x0100u
 #define EDIT_INPUT_FLOW 0x0400u
 //      c_oflag
 #define EDIT_OUTPUT_PROCESS 0x0001u
+//      c_cflag
+#define EDIT_HARDWARE_SIZE 0x0030u
+#define EDIT_HARDWARE_EIGHT 0x0030u
+#define EDIT_HARDWARE_PARITY 0x0100u
 //      c_lflag
 #define EDIT_LOCAL_SIGNALS 0x0001u
 #define EDIT_LOCAL_CANONICAL 0x0002u
 #define EDIT_LOCAL_ECHO 0x0008u
+#define EDIT_LOCAL_ECHO_NL 0x0040u
 #define EDIT_LOCAL_EXTENDED 0x8000u
 //      c_cc
 #define EDIT_CONTROL_TIME 5
@@ -4199,10 +4439,16 @@ static bool edit_terminal_raw()
                 return false;
 
         modes = edit_modes_before;
-        modes.arriving &= ~(EDIT_INPUT_CR_TO_NL | EDIT_INPUT_FLOW);
+        modes.arriving &= ~(EDIT_INPUT_IGNORE_BREAK | EDIT_INPUT_BREAK |
+                            EDIT_INPUT_MARK_PARITY | EDIT_INPUT_STRIP |
+                            EDIT_INPUT_NL_TO_CR | EDIT_INPUT_IGNORE_CR |
+                            EDIT_INPUT_CR_TO_NL | EDIT_INPUT_FLOW);
         modes.leaving &= ~EDIT_OUTPUT_PROCESS;
+        modes.hardware &= ~(EDIT_HARDWARE_SIZE | EDIT_HARDWARE_PARITY);
+        modes.hardware |= EDIT_HARDWARE_EIGHT;
         modes.behaviour &= ~(EDIT_LOCAL_SIGNALS | EDIT_LOCAL_CANONICAL |
-                             EDIT_LOCAL_ECHO | EDIT_LOCAL_EXTENDED);
+                             EDIT_LOCAL_ECHO | EDIT_LOCAL_ECHO_NL |
+                             EDIT_LOCAL_EXTENDED);
         modes.controls[EDIT_CONTROL_MIN] = 1;
         modes.controls[EDIT_CONTROL_TIME] = 0;
 
@@ -4224,14 +4470,30 @@ static fn edit_terminal_restore()
         edit_modes_held = false;
 }
 
-static fn edit_flush()
+static bool edit_flush()
 {
-        if (!edit_emitted_length)
-                return;
+        positive wrote;
 
-        system_write_all(standard_output_descriptor, edit_emitted,
-                         edit_emitted_length);
-        edit_emitted_length = 0;
+        if (!edit_emitted_length)
+                return true;
+
+        wrote = system_write_all(standard_output_descriptor, edit_emitted,
+                                 edit_emitted_length);
+
+        if (wrote >= edit_emitted_length)
+        {
+                edit_emitted_length = 0;
+                return true;
+        }
+
+        if (wrote)
+        {
+                memory_copy(edit_emitted, edit_emitted + wrote,
+                            edit_emitted_length - wrote);
+                edit_emitted_length -= wrote;
+        }
+
+        return false;
 }
 
 /*
@@ -4241,7 +4503,14 @@ static fn edit_flush()
         grows its buffer as it goes needs no size from the kernel and therefore
         works on the things that do not have one -- a pipe, a device, /proc.
 */
-static p8 address_to edit_read_file(string_address path, positive address_to length)
+#define EDIT_ENOENT 2
+#define EDIT_ENOMEM 12
+#define EDIT_EEXIST 17
+#define EDIT_PATH_MAX 4096
+
+static p8 address_to edit_read_file(string_address path,
+                                    positive address_to length,
+                                    bipolar address_to failure)
 {
         b32 handle = system_call_4(syscall(openat), AT_FDCWD, (positive)path,
                                    FILE_READ, 0);
@@ -4250,9 +4519,13 @@ static p8 address_to edit_read_file(string_address path, positive address_to len
         positive held = 0;
 
         address_to length = 0;
+        address_to failure = 0;
 
         if (handle < 0)
+        {
+                address_to failure = handle;
                 return null;
+        }
 
         for (;;)
         {
@@ -4260,36 +4533,92 @@ static p8 address_to edit_read_file(string_address path, positive address_to len
 
                 if (!edit_room(address_of block, address_of room, held + 65536,
                                65536))
+                {
+                        address_to failure = -EDIT_ENOMEM;
                         break;
+                }
 
                 got = system_read_retry((positive)handle, block + held,
                                         room - held);
 
-                if (got <= 0)
+                if (got < 0)
+                {
+                        address_to failure = got;
+                        break;
+                }
+
+                if (!got)
                         break;
 
                 held += (positive)got;
         }
 
         system_call_1(syscall(close), (positive)handle);
+
+        if (address_to failure)
+        {
+                memory_give(block);
+                return null;
+        }
+
         address_to length = held;
         return block;
 }
 
+/* A unique-enough O_EXCL name beside the destination, so rename stays atomic. */
+static bool edit_temporary_name(p8 address_to into, positive attempt)
+{
+        string_address slash = string_last_of(edit_path, '/');
+        positive prefix = slash ? (positive)(slash - edit_path) + 1 : 0;
+        positive at = prefix;
+        positive value =
+            (positive)system_call_1(syscall(getpid), 0) * 67 + attempt;
+
+        if (prefix + 32 >= EDIT_PATH_MAX)
+                return false;
+
+        memory_copy(into, edit_path, prefix);
+        memory_copy_apart(into + at, (string_address)".moonwater-edit-", 16);
+        at += 16;
+        positive_into_string(into + at, value);
+        return true;
+}
+
 static bool edit_write_file()
 {
-        b32 handle;
+        b32 handle = -1;
+        file_facts facts;
         p8 address_to block;
+        p8 temporary[EDIT_PATH_MAX];
         positive length = 0;
         positive wrote;
+        positive attempt;
+        bipolar synced;
+        bipolar closed;
+        bipolar named;
+        bipolar chmodded;
+        bool existed = file_look_at(edit_path, address_of facts);
+        positive mode = existed ? facts.mode & 07777 : 0666;
 
         block = edit_bytes_take(address_of length);
 
         if (!block)
                 return false;
 
-        handle = system_call_4(syscall(openat), AT_FDCWD, (positive)edit_path,
-                               FILE_WRITE | FILE_CREATE | FILE_TRUNCATE, 0644);
+        for (attempt = 0; attempt < 64; attempt++)
+        {
+                if (!edit_temporary_name(temporary, attempt))
+                        break;
+
+                handle = system_call_4(syscall(openat), AT_FDCWD,
+                                       (positive)temporary,
+                                       FILE_WRITE | FILE_CREATE |
+                                           FILE_EXCLUSIVE,
+                                       mode);
+
+                if (handle >= 0 || handle != -EDIT_EEXIST)
+                        break;
+        }
 
         if (handle < 0)
         {
@@ -4298,9 +4627,33 @@ static bool edit_write_file()
         }
 
         wrote = system_write_all((positive)handle, block, length);
-        system_call_1(syscall(close), (positive)handle);
+        chmodded = wrote == length && existed
+            ? system_call_2(syscall(fchmod), (positive)handle, mode)
+            : 0;
+        synced = wrote == length && chmodded >= 0
+                     ? system_call_1(syscall(fsync), (positive)handle)
+                     : -1;
+        closed = system_call_1(syscall(close), (positive)handle);
         memory_give(block);
-        return wrote == length;
+
+        if (wrote != length || chmodded < 0 || synced < 0 || closed < 0)
+        {
+                system_call_3(syscall(unlinkat), AT_FDCWD,
+                              (positive)temporary, 0);
+                return false;
+        }
+
+        named = system_call_5(syscall(renameat2),
+                              (positive)(bipolar)AT_FDCWD,
+                              (positive)temporary,
+                              (positive)(bipolar)AT_FDCWD,
+                              (positive)edit_path, 0);
+
+        if (named < 0)
+                system_call_3(syscall(unlinkat), AT_FDCWD,
+                              (positive)temporary, 0);
+
+        return named == 0;
 }
 
 /*
@@ -4317,7 +4670,66 @@ static bool edit_write_file()
         argument is the size of a signal set, which the kernel checks: anything
         but eight is EINVAL.
 */
-static bool edit_wait(bool briefly)
+#define EDIT_EINTR 4
+#define EDIT_SIGNAL_WINCH 28
+#define EDIT_WAIT_ERROR -1
+#define EDIT_WAIT_IDLE 0
+#define EDIT_WAIT_INPUT 1
+#define EDIT_WAIT_REDRAW 2
+#define EDIT_SIGNAL_BLOCK 0
+#define EDIT_SIGNAL_SET_MASK 2
+
+static volatile bool edit_window_pending;
+static positive edit_window_wait_mask;
+
+static fn edit_window_changed_handler(b32 number)
+{
+        (void)number;
+        edit_window_pending = true;
+}
+
+static bool edit_window_signal(positive address_to previous)
+{
+#if defined(__x86_64__) || defined(_M_X64)
+        positive action[4] = {(positive)edit_window_changed_handler,
+                              SIGNAL_RESTORER,
+                              SIGNAL_CATCH_RESTORER, 0};
+#else
+        positive action[4] = {(positive)edit_window_changed_handler, 0, 0, 0};
+#endif
+
+        return system_call_4(syscall(rt_sigaction), EDIT_SIGNAL_WINCH,
+                             (positive)address_of action,
+                             (positive)previous, 8) >= 0;
+}
+
+static fn edit_window_signal_restore(positive address_to previous)
+{
+        system_call_4(syscall(rt_sigaction), EDIT_SIGNAL_WINCH,
+                      (positive)previous, 0, 8);
+}
+
+static bool edit_window_block(positive address_to previous)
+{
+        positive blocked = (positive)1 << (EDIT_SIGNAL_WINCH - 1);
+
+        if (system_call_4(syscall(rt_sigprocmask), EDIT_SIGNAL_BLOCK,
+                          (positive)address_of blocked,
+                          (positive)previous, 8) < 0)
+                return false;
+
+        edit_window_wait_mask = address_to previous & ~blocked;
+        edit_window_pending = false;
+        return true;
+}
+
+static fn edit_window_unblock(positive previous)
+{
+        system_call_4(syscall(rt_sigprocmask), EDIT_SIGNAL_SET_MASK,
+                      (positive)address_of previous, 0, 8);
+}
+
+static bipolar edit_wait(bool briefly)
 {
         struct
         {
@@ -4328,9 +4740,19 @@ static bool edit_wait(bool briefly)
         timespec limit = {0, 50000000};
         bipolar ready = system_call_5(syscall(ppoll), (positive)address_of watch,
                                       1, briefly ? (positive)address_of limit : 0,
-                                      0, 8);
+                                      (positive)address_of edit_window_wait_mask,
+                                      8);
 
-        return ready > 0;
+        if (ready > 0)
+                return EDIT_WAIT_INPUT;
+
+        if (!ready)
+                return EDIT_WAIT_IDLE;
+
+        if (ready == -EDIT_EINTR)
+                return EDIT_WAIT_REDRAW;
+
+        return EDIT_WAIT_ERROR;
 }
 
 // edit ---------------------------------------------------------
@@ -4349,30 +4771,77 @@ static b32 system_edit()
         positive2 size;
         p8 address_to loaded;
         positive length = 0;
+        bipolar read_failure = 0;
+        positive window_action[4] = {0, 0, 0, 0};
+        positive window_mask = 0;
+        b32 result = 0;
 
         edit_path = program_argument_count() > 1 ? program_argument(1) : null;
 
-        edit_empty();
+        // Saving is an atomic rename. Resolve an existing symbolic link first
+        // so that rename replaces its target rather than replacing the link.
+        if (edit_path &&
+            file_resolve(edit_path, edit_path_resolved, true))
+                edit_path = edit_path_resolved;
+
+        if (!edit_empty())
+        {
+                log_direct(str("edit: no memory\n"));
+                edit_document_release();
+                return 1;
+        }
         edit_input_reset();
 
         if (edit_path)
         {
-                loaded = edit_read_file(edit_path, address_of length);
+                loaded = edit_read_file(edit_path, address_of length,
+                                        address_of read_failure);
 
                 if (loaded)
                 {
-                        edit_load(loaded, length);
+                        bool loaded_all = edit_load(loaded, length);
                         memory_give(loaded);
+
+                        if (!loaded_all)
+                        {
+                                log_direct(str("edit: file did not fit\n"));
+                                edit_document_release();
+                                return 1;
+                        }
                 }
-                else
+                else if (read_failure == -EDIT_ENOENT)
                         //      A name that is not there yet is a new file, not
                         //      an error. It is the second thing anybody tries.
                         edit_status_say((string_address) "new file");
+                else
+                {
+                        log_direct(str("edit: could not read file\n"));
+                        edit_document_release();
+                        return 1;
+                }
         }
 
         if (!edit_terminal_raw())
         {
                 log_direct(str("edit: not a terminal\n"));
+                edit_document_release();
+                return 1;
+        }
+
+        if (!edit_window_block(address_of window_mask))
+        {
+                edit_terminal_restore();
+                log_direct(str("edit: could not watch terminal size\n"));
+                edit_document_release();
+                return 1;
+        }
+
+        if (!edit_window_signal(window_action))
+        {
+                edit_window_unblock(window_mask);
+                edit_terminal_restore();
+                log_direct(str("edit: could not watch terminal size\n"));
+                edit_document_release();
                 return 1;
         }
 
@@ -4383,12 +4852,16 @@ static b32 system_edit()
 
         log_flush();
         edit_say_text((string_address)TERM_ALT_BUFFER TERM_RESET
-                          TERM_CLEAR_SCREEN);
+                          TERM_CLEAR_SCREEN "\033[?2004h");
 
         while (edit_running)
         {
                 p8 arriving[512];
                 bipolar got;
+                bipolar waited;
+
+                if (edit_window_pending)
+                        edit_window_pending = false;
 
                 size = term_size();
 
@@ -4396,13 +4869,25 @@ static b32 system_edit()
                         edit_resize(size.width, size.height);
 
                 edit_draw();
-                edit_flush();
+                if (!edit_flush())
+                {
+                        result = 1;
+                        break;
+                }
 
-                if (!edit_wait(edit_input_state != EDIT_INPUT_GROUND))
+                waited = edit_wait(edit_input_state != EDIT_INPUT_GROUND);
+
+                if (waited == EDIT_WAIT_REDRAW)
+                        continue;
+
+                if (waited == EDIT_WAIT_IDLE)
                 {
                         edit_input_idle();
                         continue;
                 }
+
+                if (waited == EDIT_WAIT_ERROR)
+                        break;
 
                 got = system_read_retry(standard_input_descriptor, arriving,
                                         sizeof(arriving));
@@ -4414,12 +4899,16 @@ static b32 system_edit()
                         edit_input_byte(arriving[at]);
         }
 
-        edit_say_text((string_address)TERM_RESET TERM_SHOW_CURSOR
+        edit_say_text((string_address)"\033[?2004l" TERM_RESET TERM_SHOW_CURSOR
                           TERM_MAIN_BUFFER);
-        edit_flush();
+        if (!edit_flush())
+                result = 1;
+        edit_window_signal_restore(window_action);
+        edit_window_unblock(window_mask);
         edit_terminal_restore();
         shell_styles = styles;
-        return 0;
+        edit_document_release();
+        return result;
 }
 
 #else

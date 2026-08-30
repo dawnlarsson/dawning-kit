@@ -238,6 +238,13 @@ static fn feed_keys(string_address text)
                                 begin += 2;
                         }
 
+                        if (begin + 1 == stop)
+                        {
+                                term_key_modified(text[begin], 0, modifiers);
+                                at = text[stop] ? stop + 1 : stop;
+                                continue;
+                        }
+
                         for (positive i = 0; i < sizeof(named_keys) / sizeof(named_keys[0]); i++)
                         {
                                 const char *name = named_keys[i].name;
@@ -924,6 +931,7 @@ same 'arrows'        '[\e[A\e[B\e[C\e[D]'         20 3 edit off keys '<up><down>
 same 'home and end'  '[\e[H\e[F]'                20 3 edit off keys '<home><end>' sent
 same 'delete'        '[\e[3~]'                   20 3 edit off keys '<del>' sent
 same 'control'       '[\x01\x03\x1a]'            20 3 edit off keys '^A^C^Z' sent
+same 'alt character' '[\eb]'                     20 3 edit off keys '<a-b>' sent
 #       DECCKM sends the arrows as SS3 instead, which is what an application
 #       that asked for it is reading for.
 same 'application arrows' '[\eOA\eOD]'           20 3 edit off in '\e[?1h' keys '<up><left>' sent

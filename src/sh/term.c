@@ -1858,6 +1858,9 @@ static fn SPARE term_key_modified(unsigned int character, unsigned int code,
 
         if (character)
         {
+                if (held & WINDOW_KEY_ALT)
+                        emit(27);
+
                 emit(character);
                 return;
         }

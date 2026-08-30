@@ -103,6 +103,7 @@ cat > "$work/harness.c" <<'HARNESS'
 static p8 page[GRID_LINES + GRID_HISTORY * 4];
 static p8 out[65536];
 static positive out_length;
+static p8 hostile_path[4096];
 
 static fn say_byte(unsigned int c)
 {
@@ -492,8 +493,20 @@ b32 main()
                         edit_draw();
                         settle();
                 }
+                else if (string_compare(verb, (string_address) "reset") == 0)
+                        edit_input_reset();
                 else if (string_compare(verb, (string_address) "draw") == 0)
                 {
+                        edit_draw();
+                        settle();
+                }
+                else if (string_compare(verb,
+                                        (string_address) "statusfull") == 0)
+                {
+                        memory_fill(hostile_path, 0x80,
+                                    sizeof(hostile_path) - 1);
+                        hostile_path[sizeof(hostile_path) - 1] = 0;
+                        edit_path = hostile_path;
                         edit_draw();
                         settle();
                 }
@@ -895,6 +908,11 @@ same 'two bytes'       '[1 <00e9>]'     40 6 keys '\xc3\xa9' row 0
 same 'one caret step'  '0,2'            40 6 keys '\xc3\xa9' carets
 same 'backspace whole' ''               40 6 keys '\xc3\xa9<bs>' buffer
 
+group paste
+same 'keeps newlines exact' 'a|  b'      40 6 keys '\e[200~a\n  b\e[201~' buffer
+same 'is one undo step' ''               40 6 keys '\e[200~a\n  b\e[201~^z' buffer
+same 'reset drops partial frame' 'x'     40 6 keys '\e[200~abc' reset keys 'x' buffer
+
 #
 #       The rest of the keys the list names.
 #
@@ -932,6 +950,9 @@ same 'and comes back'  '0,2'            40 6 text 'a\nb\nc\nd\ne\nf\ng' keys '\e
 
 section painting
 
+group bounds
+same 'full status returns' ''             40 6 statusfull buffer
+
 group rows
 #       Typing a character writes the one row it changed. A full repaint of a
 #       screen this size would be five, and over a serial line that is the
@@ -949,7 +970,11 @@ section writing
 group newline
 same 'kept'            'ab|cd|'         40 6 text 'ab\ncd\n' bytes
 same 'absent stays absent' 'ab|cd'      40 6 text 'ab\ncd' bytes
+same 'only newline'    '|'               40 6 text '\n' bytes
+same 'edited empty has newline' '|'      40 6 keys 'x<bs>' bytes
 same 'empty file'      ''               40 6 bytes
+same 'undo restores empty bytes' ''      40 6 keys 'x^z' bytes
+same 'redo undo restores empty bytes' '' 40 6 keys 'x^z^y^z' bytes
 
 
 section

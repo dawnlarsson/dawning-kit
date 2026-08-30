@@ -2200,7 +2200,12 @@ lane_term()
 
 lane_edit()
 {
-        sh src/test/edit.sh
+        sh src/test/edit.sh || return 1
+        need_shell || return 1
+
+        if command -v python3 >/dev/null 2>&1 && [ "$(uname -s)" = Linux ]; then
+                python3 src/test/edit_driver.py "$shell_binary"
+        fi
 }
 
 lane_kit()
