@@ -412,7 +412,10 @@ static _Bool desktop_commit(void)
         }
 
         list_for_each_entry(output, &desktop.outputs, link)
-                cursor_arm_output(output);
+                cursor_arm_output(output,
+                                  output_shows_cursor(output,
+                                                      desktop.cursor_x,
+                                                      desktop.cursor_y));
 
         return complete;
 }

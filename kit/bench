@@ -27,6 +27,7 @@ human)   source_file=kit/bench_human.c ;;
 human-nearest) source_file=kit/bench_human_nearest.c ;;
 hash-33) source_file=kit/bench_hash_33.c ;;
 span-byte) source_file=kit/bench_span_byte.c ;;
+fill-u32) source_file=kit/bench_fill_u32.c ;;
 paths)   source_file=kit/bench_paths.c ;;
 reverse) source_file=kit/bench_reverse.c ;;
 writer-field) source_file=kit/bench_writer_field.c ;;

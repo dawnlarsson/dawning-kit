@@ -335,8 +335,8 @@ static void fill(struct window *window, unsigned int colour)
         unsigned int *pixels = window_pixels(window);
 
         for (unsigned int y = 0; y < window->height; y++)
-                for (unsigned int x = 0; x < window->width; x++)
-                        pixels[y * window->pitch + x] = colour;
+                memory_fill_u32(pixels + y * window->pitch,
+                                window->width, colour);
 }
 
 static void hold(long seconds)

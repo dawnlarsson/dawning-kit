@@ -178,11 +178,6 @@ static void pane_ring(unsigned int max_columns, unsigned int max_rows,
 
 // One line of the ring, and how much of it was written. Any index: it is
 // taken modulo the history, which is what makes head a count and not a cursor.
-static struct window_cell *pane_line(struct pane *pane, unsigned int index)
-{
-        return pane->cells + (index % pane->history) * pane->stride;
-}
-
 static unsigned int pane_length(struct pane *pane, unsigned int index)
 {
         return min(pane->lengths[index % pane->history], pane->stride);

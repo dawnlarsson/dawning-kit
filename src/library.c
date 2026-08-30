@@ -67,7 +67,7 @@
         A .set is a second label on the same address, so there is no wrapper
         and no jump, and which names get one depends on who is linking.
 
-        231 routines (222 public, 9 local), 231 of them on all three.
+        232 routines (223 public, 9 local), 232 of them on all three.
         Raw C purity: 0 function bodies, 0 object definitions, 0 body macros, and 0 object macros (all forbidden).
 
           routine                        scope   x86_64  arm64   riscv64
@@ -159,6 +159,7 @@
           memory_count_records_with_prepared public  yes     yes     yes
           memory_count_words             public  yes     yes     yes
           memory_fill                    public  yes     yes     yes
+          memory_fill_u32                public  yes     yes     yes
           memory_first_of                public  yes     yes     yes
           memory_first_of_ascii_case     public  yes     yes     yes
           memory_free                    public  yes     yes     yes
@@ -3393,6 +3394,38 @@ __asm__(
     "mov %rdx, %rcx\n   rep stosb\n   mov %r11, %rax\n"
     ASM_RET
     ASM_END(memory_fill)
+
+    /*
+            Fill a span of 32-bit words with one value.  This is distinct from
+            memory_fill: a pixel such as 0x0022bb55 is not a repeated byte.
+            Canvas and userspace pixel windows share the contract, and keeping
+            it here gives both the same baseline integer-register floor.
+
+            Small display runs dominate call count, so one through three words
+            avoid the setup cost of the wide path.  At the other end, REP is
+            reserved for spans large enough to repay its fixed startup cost.
+    */
+    ASM_FUNC(memory_fill_u32)
+    "cmp $4, %rsi\n   jae 3f\n"
+    "test %rsi, %rsi\n   jz 9f\n   mov %edx, (%rdi)\n"
+    "mov %edx, -4(%rdi,%rsi,4)\n   cmp $3, %rsi\n   jb 9f\n"
+    "mov %edx, 4(%rdi)\n"
+    "9:  " ASM_RET
+    "3:  mov %edx, %eax\n   mov %eax, %r8d\n   shl $32, %r8\n   or %r8, %rax\n"
+    /* Native Zen 5 paired medians cross decisively at 208 words for both
+       eight-byte alignments: REP is 2.6% and 11.6% faster there, while the
+       scalar path still wins one alignment at 200. */
+    "cmp $208, %rsi\n   jae 5f\n   sub $4, %rsi\n   jb 2f\n"
+    "1:  mov %rax, (%rdi)\n   mov %rax, 8(%rdi)\n   add $16, %rdi\n"
+    "sub $4, %rsi\n   jae 1b\n"
+    "2:  add $4, %rsi\n   jz 8f\n   test $2, %sil\n   jz 4f\n"
+    "mov %rax, (%rdi)\n   add $8, %rdi\n"
+    "4:  test $1, %sil\n   jz 8f\n   mov %eax, (%rdi)\n"
+    "8:  " ASM_RET
+    "5:  mov %rsi, %rcx\n   shr $1, %rcx\n   rep stosq\n"
+    "test $1, %sil\n   jz 6f\n   mov %eax, (%rdi)\n"
+    "6:  " ASM_RET
+    ASM_END(memory_fill_u32)
 
     /*
             Reverse an exact byte span in place and hand its original address
@@ -7196,6 +7229,16 @@ __asm__(
 #endif
     ASM_END(memory_fill)
 
+    // Same 32-bit-span contract and small-run bias as the x86_64 body.
+    ASM_FUNC(memory_fill_u32)
+    "mov w2, w2\n   orr x3, x2, x2, lsl #32\n   cmp x1, #4\n   b.lo 2f\n"
+    "1:  stp x3, x3, [x0], #16\n   sub x1, x1, #4\n"
+    "cmp x1, #4\n   b.hs 1b\n"
+    "2:  tbz x1, #1, 3f\n   str x3, [x0], #8\n"
+    "3:  tbz x1, #0, 4f\n   str w2, [x0]\n"
+    "4:  " ASM_RET
+    ASM_END(memory_fill_u32)
+
     // Same exact in-place contract as x86_64.  Userspace has baseline NEON:
     // rev64 reverses each eight-byte lane and ext exchanges the lanes, so a
     // pair of q registers retires thirty two bytes per turn.  A kernel build
@@ -10309,6 +10352,19 @@ __asm__(
     ASM_RET
     ASM_END(memory_fill)
 
+    // Natural-alignment-safe 32-bit span fill; RV64 does not promise that an
+    // unaligned doubleword store succeeds, even when the implementation does.
+    ASM_FUNC(memory_fill_u32)
+    "slli a2, a2, 32\n   srli a2, a2, 32\n   slli t0, a2, 32\n"
+    "or t0, t0, a2\n   li t1, 2\n   blt a1, t1, 2f\n"
+    "andi t2, a0, 7\n   beqz t2, 1f\n   sw a2, 0(a0)\n"
+    "addi a0, a0, 4\n   addi a1, a1, -1\n   blt a1, t1, 2f\n"
+    "1:  sd t0, 0(a0)\n   addi a0, a0, 8\n   addi a1, a1, -2\n"
+    "bge a1, t1, 1b\n"
+    "2:  beqz a1, 3f\n   sw a2, 0(a0)\n"
+    "3:  " ASM_RET
+    ASM_END(memory_fill_u32)
+
 #define RV_REVERSE_FOUR                                                       \
     "lbu t0, 0(a0)\n   lbu t1, 1(a0)\n   lbu t2, 2(a0)\n"                \
     "lbu t3, 3(a0)\n   lbu t4, -1(a3)\n   lbu t5, -2(a3)\n"             \
@@ -12401,6 +12457,7 @@ positive string_table_find(string_address name, address_any table,
 positive string_lex_word(string_address source, p8 address_to into,
                             const b8 address_to class);
 address_any memory_fill(address_any destination, b8 value, positive size);
+fn memory_fill_u32(address_any destination, positive count, unsigned int value);
 positive memory_common_prefix(address_any one, address_any two, positive size);
 positive memory_hash_33(address_any block, positive size);
 positive2 string_hash_33_length(string_address source);

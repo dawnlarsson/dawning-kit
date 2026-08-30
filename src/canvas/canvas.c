@@ -369,12 +369,14 @@ static u64 canvas_flush_ns;
 static u64 canvas_text_ns;
 
 /*
-        The two loops every pixel goes through, in fill.asm. They are
-        assembly because a full compose is four megabytes of stores and the
-        kernel is built with no vector instructions on x86, so what the C
-        turned into was two four byte stores an iteration.
+        The loops every pixel goes through. The reusable 32-bit span is in
+        library.c; strided rectangles and alpha blits stay in fill.asm, and
+        bitmap expansion stays in glyph.asm. They are assembly because a full
+        compose is four megabytes of stores and the kernel is built with no
+        vector instructions on x86, so what the C turned into was two four
+        byte stores an iteration.
 */
-void canvas_row_fill(u32 *at, unsigned long count, u32 colour);
+void memory_fill_u32(void *at, unsigned long long count, unsigned int value);
 void canvas_rect_fill(u32 *at, unsigned long pitch, unsigned long width,
                       unsigned long height, u32 colour);
 void canvas_glyph(u32 *at, unsigned long pitch, const u8 *bits,

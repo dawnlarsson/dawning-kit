@@ -59,7 +59,7 @@ static void target_row(const struct target *t, int y, int x1, int x2, u32 colour
 
         canvas_painted += (unsigned long)(x2 - x1);
         canvas_runs++;
-        canvas_row_fill(t->pixels + (size_t)y * t->pitch + x1,
+        memory_fill_u32(t->pixels + (size_t)y * t->pitch + x1,
                         (unsigned long)(x2 - x1), colour);
 }
 
@@ -173,18 +173,16 @@ static void shape_blit(const struct target *t, const struct shape *shape,
 */
 static void cell_draw(const struct target *t, const struct shape *shape,
                       int x, int y, const struct window_cell *cell,
+                      const unsigned char *bits, _Bool direct,
                       u32 ink, u32 paper)
 {
-        if (glyph_is_cell() && desktop.scale == 1 &&
-            x >= max(t->clip.x1, 0) && x + WINDOW_CELL_W <= min(t->clip.x2, t->width) &&
-            y >= max(t->clip.y1, 0) && y + WINDOW_CELL_H <= min(t->clip.y2, t->height) &&
-            !round_inset(y - shape->y, shape->h, shape->radius) &&
-            !round_inset(y + WINDOW_CELL_H - 1 - shape->y, shape->h, shape->radius))
+        if (direct && x >= max(t->clip.x1, 0) &&
+            x + WINDOW_CELL_W <= min(t->clip.x2, t->width))
         {
                 canvas_painted += WINDOW_CELL_W * WINDOW_CELL_H;
                 canvas_runs++;
                 canvas_cell(t->pixels + (size_t)y * t->pitch + x, t->pitch,
-                            glyph_bits(cell->character), WINDOW_CELL_H, ink, paper);
+                            bits, WINDOW_CELL_H, ink, paper);
                 return;
         }
 
@@ -205,6 +203,26 @@ static void compose_row(const struct target *t, const struct shape *shape,
                         int used, int first, int last)
 {
         int column = first;
+        const unsigned char *font_data = NULL;
+        size_t glyph_size = 0;
+        _Bool direct = glyph_is_cell() && desktop.scale == 1 &&
+                       y >= max(t->clip.y1, 0) &&
+                       y + WINDOW_CELL_H <= min(t->clip.y2, t->height) &&
+                       !round_inset(y - shape->y, shape->h, shape->radius) &&
+                       !round_inset(y + WINDOW_CELL_H - 1 - shape->y,
+                                    shape->h, shape->radius);
+
+        /*
+                These are properties of the face, not of a cell.  Looking
+                them up in cell_draw made every printable character reload
+                the font descriptor around an out-of-line assembly call.
+        */
+        if (direct)
+        {
+                font_data = font_data_buf(canvas_font->data);
+                glyph_size = font_glyph_size(canvas_font->width,
+                                             canvas_font->height);
+        }
 
         while (column < used)
         {
@@ -216,6 +234,9 @@ static void compose_row(const struct target *t, const struct shape *shape,
                 {
                         cell_draw(t, shape, x + column * canvas_cell_w, y,
                                   &cells[column],
+                                  direct ? font_data + (size_t)character * glyph_size
+                                         : NULL,
+                                  direct,
                                   canvas_terminal[cells[column].ink & 15] | t->opaque,
                                   paper);
                         column++;
@@ -293,8 +314,11 @@ static void compose_cells(struct pane *pane, const struct target *t,
 
         while (row < rows && line != pane->head)
         {
-                unsigned int length = pane_length(pane, line);
-                unsigned int folds = pane_line_rows(pane, line);
+                unsigned int slot = line % pane->history;
+                unsigned int length = min(pane->lengths[slot], pane->stride);
+                unsigned int folds = length ? (length + width - 1) / width : 1;
+                const struct window_cell *cells =
+                    pane->cells + (size_t)slot * pane->stride;
                 unsigned int fold;
 
                 for (fold = skip; fold < folds && row < rows; fold++, row++)
@@ -306,7 +330,7 @@ static void compose_cells(struct pane *pane, const struct target *t,
                                 continue;
 
                         compose_row(t, shape, x, y + row * canvas_cell_h,
-                                    pane_line(pane, line) + from,
+                                    cells + from,
                                     min(used, last), first, last);
                 }
 

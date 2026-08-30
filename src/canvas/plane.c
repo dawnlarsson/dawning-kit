@@ -123,7 +123,6 @@ static int plane_paint(struct output *output, unsigned int shape, unsigned int s
         u32 opaque_ink[INK_COUNT];
         struct iosys_map map;
         struct target t;
-        int row;
 
         scale = plane_scale(output, scale);
         canvas_palette(opaque_ink, DRM_FORMAT_ARGB8888);
@@ -148,8 +147,9 @@ static int plane_paint(struct output *output, unsigned int shape, unsigned int s
 
         // Transparent everywhere the shape does not cover, or it wears a box
         // of whatever the buffer was allocated holding.
-        for (row = 0; row < t.height; row++)
-                target_row(&t, row, 0, t.width, 0x00000000);
+        canvas_painted += (unsigned long)t.width * t.height;
+        canvas_runs++;
+        canvas_rect_fill(t.pixels, t.pitch, t.width, t.height, 0x00000000);
 
         canvas_draw_cursor(&t, canvas_cursor_hot[shape][0] * (int)scale,
                            canvas_cursor_hot[shape][1] * (int)scale, shape, scale);
@@ -195,9 +195,8 @@ static int plane_claim(struct drm_client_dev *client, struct output *output)
         return 0;
 }
 
-static void cursor_arm_output(struct output *output)
+static void cursor_arm_output(struct output *output, _Bool wanted)
 {
-        _Bool wanted = output_shows_cursor(output, desktop.cursor_x, desktop.cursor_y);
         int ret;
 
         if (!output->cursor_plane)
@@ -231,17 +230,6 @@ static void cursor_arm_output(struct output *output)
         plane_drop(output);
 }
 
-static void cursor_paint(struct output *output, int old_x, int old_y,
-                         unsigned int old_shape, int new_x, int new_y)
-{
-        struct drm_rect damage[2];
-
-        cursor_cell(&damage[0], old_x, old_y, old_shape, desktop.drawn_scale);
-        cursor_cell(&damage[1], new_x, new_y, desktop.cursor_shape, desktop.cursor_scale);
-
-        output_repaint(output, damage, 2);
-}
-
 /*
         Moves the one cursor, and changes its shape where that is what changed.
         Only the outputs it left and the outputs it arrived on are touched.
@@ -258,6 +246,7 @@ static _Bool cursor_move_core(int new_x, int new_y, _Bool planes_only)
         int old_y = desktop.drawn_y;
         unsigned int old_shape = desktop.drawn_shape;
         unsigned int old_scale = desktop.drawn_scale;
+        struct drm_rect damage[2];
         struct output *output;
         _Bool plane_presented = false;
         _Bool plane_complete = true;
@@ -269,14 +258,28 @@ static _Bool cursor_move_core(int new_x, int new_y, _Bool planes_only)
         desktop.cursor_x = new_x;
         desktop.cursor_y = new_y;
 
+        /*
+                Cursor geometry is desktop geometry.  Computing both cells
+                once keeps the output walk to two overlap checks; formerly it
+                rebuilt the new cell twice and the old cell once per output,
+                including on the urgent plane-only resize path.
+        */
+        cursor_cell(&damage[0], old_x, old_y, old_shape, old_scale);
+        cursor_cell(&damage[1], new_x, new_y,
+                    desktop.cursor_shape, desktop.cursor_scale);
+
         list_for_each_entry(output, &desktop.outputs, link)
         {
-                struct drm_rect was;
-                _Bool wanted = output_shows_cursor(output, new_x, new_y);
+                _Bool wanted = rects_overlap(
+                    damage[1].x1, damage[1].y1,
+                    damage[1].x2 - damage[1].x1,
+                    damage[1].y2 - damage[1].y1,
+                    output->x, output->y,
+                    (int)output->width, (int)output->height);
 
-                cursor_cell(&was, old_x, old_y, old_shape, old_scale);
-
-                if (!rects_overlap(was.x1, was.y1, was.x2 - was.x1, was.y2 - was.y1,
+                if (!rects_overlap(damage[0].x1, damage[0].y1,
+                                   damage[0].x2 - damage[0].x1,
+                                   damage[0].y2 - damage[0].y1,
                                    output->x, output->y,
                                    (int)output->width, (int)output->height) &&
                     !wanted)
@@ -286,7 +289,7 @@ static _Bool cursor_move_core(int new_x, int new_y, _Bool planes_only)
                 {
                         u64 started = ktime_get_ns();
 
-                        cursor_arm_output(output);
+                        cursor_arm_output(output, wanted);
                         pointer_flush_total += ktime_get_ns() - started;
 
                         if (output->cursor_plane)
@@ -302,7 +305,7 @@ static _Bool cursor_move_core(int new_x, int new_y, _Bool planes_only)
                 plane_complete = false;
 
                 if (!planes_only)
-                        cursor_paint(output, old_x, old_y, old_shape, new_x, new_y);
+                        output_repaint(output, damage, 2);
         }
 
         if (!planes_only)
