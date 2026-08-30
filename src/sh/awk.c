@@ -3538,49 +3538,69 @@ typedef struct
 static awk_word awk_words[] = {
     {"BEGIN", T_BEGIN, 0},
     {"END", T_FINISH, 0},
-    {"function", T_FUNCTION, 0},
-    {"func", T_FUNCTION, 0},
-    {"if", T_IF, 0},
-    {"else", T_ELSE, 0},
-    {"while", T_WHILE, 0},
-    {"for", T_FOR, 0},
-    {"do", T_DO, 0},
+    {"atan2", T_BUILTIN, B_ATAN2},
     {"break", T_BREAK, 0},
     {"continue", T_CONTINUE, 0},
+    {"cos", T_BUILTIN, B_COS},
+    {"close", T_BUILTIN, B_CLOSE},
+    {"do", T_DO, 0},
+    {"delete", T_DELETE, 0},
+    {"else", T_ELSE, 0},
+    {"exit", T_EXIT, 0},
+    {"exp", T_BUILTIN, B_EXP},
+    {"function", T_FUNCTION, 0},
+    {"func", T_FUNCTION, 0},
+    {"for", T_FOR, 0},
+    {"fflush", T_BUILTIN, B_FFLUSH},
+    {"getline", T_GETLINE, 0},
+    {"gsub", T_BUILTIN, B_GSUB},
+    {"if", T_IF, 0},
+    {"in", T_IN, 0},
+    {"index", T_BUILTIN, B_INDEX},
+    {"int", T_BUILTIN, B_INT},
+    {"length", T_BUILTIN, B_LENGTH},
+    {"log", T_BUILTIN, B_LOG},
+    {"match", T_BUILTIN, B_MATCH},
     {"next", T_NEXT, 0},
     {"nextfile", T_NEXTFILE, 0},
-    {"exit", T_EXIT, 0},
-    {"return", T_RETURN, 0},
-    {"delete", T_DELETE, 0},
-    {"in", T_IN, 0},
     {"print", T_PRINT, 0},
     {"printf", T_PRINTF, 0},
-    {"getline", T_GETLINE, 0},
-    {"length", T_BUILTIN, B_LENGTH},
+    {"return", T_RETURN, 0},
+    {"rand", T_BUILTIN, B_RAND},
     {"substr", T_BUILTIN, B_SUBSTR},
-    {"index", T_BUILTIN, B_INDEX},
     {"split", T_BUILTIN, B_SPLIT},
     {"sub", T_BUILTIN, B_SUB},
-    {"gsub", T_BUILTIN, B_GSUB},
-    {"match", T_BUILTIN, B_MATCH},
     {"sprintf", T_BUILTIN, B_SPRINTF},
     {"sin", T_BUILTIN, B_SIN},
-    {"cos", T_BUILTIN, B_COS},
-    {"atan2", T_BUILTIN, B_ATAN2},
-    {"exp", T_BUILTIN, B_EXP},
-    {"log", T_BUILTIN, B_LOG},
     {"sqrt", T_BUILTIN, B_SQRT},
-    {"int", T_BUILTIN, B_INT},
-    {"rand", T_BUILTIN, B_RAND},
     {"srand", T_BUILTIN, B_SRAND},
+    {"system", T_BUILTIN, B_SYSTEM},
     {"tolower", T_BUILTIN, B_TOLOWER},
     {"toupper", T_BUILTIN, B_TOUPPER},
-    {"system", T_BUILTIN, B_SYSTEM},
-    {"close", T_BUILTIN, B_CLOSE},
-    {"fflush", T_BUILTIN, B_FFLUSH},
+    {"while", T_WHILE, 0},
     {null, 0, 0}};
 
 #define AWK_WORD_COUNT (sizeof(awk_words) / sizeof(awk_words[0]) - 1)
+#define AWK_WORD_RANGE(start, count) ((p16)(((start) << 8) | (count)))
+
+/*
+        The table above is grouped by first byte. An identifier already paid
+        to read that byte, so this index rejects most ordinary variable names
+        in one load and narrows the assembly exact-match walk to at most eight
+        entries. The high byte is the first entry and the low byte its count.
+*/
+static const p16 awk_word_range[128] = {
+    ['B'] = AWK_WORD_RANGE(0, 1),  ['E'] = AWK_WORD_RANGE(1, 1),
+    ['a'] = AWK_WORD_RANGE(2, 1),  ['b'] = AWK_WORD_RANGE(3, 1),
+    ['c'] = AWK_WORD_RANGE(4, 3),  ['d'] = AWK_WORD_RANGE(7, 2),
+    ['e'] = AWK_WORD_RANGE(9, 3),  ['f'] = AWK_WORD_RANGE(12, 4),
+    ['g'] = AWK_WORD_RANGE(16, 2), ['i'] = AWK_WORD_RANGE(18, 4),
+    ['l'] = AWK_WORD_RANGE(22, 2), ['m'] = AWK_WORD_RANGE(24, 1),
+    ['n'] = AWK_WORD_RANGE(25, 2), ['p'] = AWK_WORD_RANGE(27, 2),
+    ['r'] = AWK_WORD_RANGE(29, 2), ['s'] = AWK_WORD_RANGE(31, 8),
+    ['t'] = AWK_WORD_RANGE(39, 2), ['w'] = AWK_WORD_RANGE(41, 1)};
+
+_Static_assert(AWK_WORD_COUNT == 42, "update the AWK keyword ranges");
 
 /*
         How many arguments each of them takes.
@@ -3782,21 +3802,28 @@ static fn awk_next_token()
 
                 positive length = awk_source_at - start;
 
-                /*
-                        The source builder always owns one spare byte. Make
-                        this bounded name a string for the assembly table
-                        lookup, then put its delimiter back. That lookup
-                        prepares the wanted word once; the old loop measured
-                        every table entry before it could reject it.
-                */
-                p8 delimiter = awk_source[awk_source_at];
+                positive word = AWK_WORD_COUNT;
 
-                awk_source[awk_source_at] = end;
-                positive word = string_table_find(awk_source + start,
-                                                  awk_words,
-                                                  sizeof(awk_words[0]),
-                                                  AWK_WORD_COUNT);
-                awk_source[awk_source_at] = delimiter;
+                p16 range = awk_word_range[character];
+                positive first = range >> 8;
+                positive count = range & 255;
+
+                if (count)
+                {
+                        /* The source builder owns one spare byte even when
+                           this token ends at the exact end of the program. */
+                        p8 delimiter = awk_source[awk_source_at];
+
+                        awk_source[awk_source_at] = end;
+                        positive found_in_range =
+                            string_table_find(awk_source + start,
+                                              awk_words + first,
+                                              sizeof(awk_words[0]), count);
+                        awk_source[awk_source_at] = delimiter;
+
+                        if (found_in_range < count)
+                                word = first + found_in_range;
+                }
 
                 if (word < AWK_WORD_COUNT)
                 {
