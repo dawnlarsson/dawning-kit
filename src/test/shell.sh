@@ -752,7 +752,10 @@ answer 'exec text without shebang' 'p=/tmp/no-shebang-exec.$$; printf '\''printf
 # pipelines and external tools. A fragment suite did not catch the parser's
 # zero-token first-line crash, so one complete frame is permanent coverage.
 if [ "$(uname -s)" = Linux ]; then
-        if timeout 20 "$subject" programs/monitor.sh 0.05 1 \
+        # One requested frame must not wait the refresh interval: it is the
+        # settling frame already sampled during startup. A deliberately huge
+        # interval makes the time-to-first-render contract deterministic.
+        if timeout 2 "$subject" programs/monitor.sh 10 1 \
                 > "$work/monitor.out" 2> "$work/monitor.err"
         then
                 monitor_status=0

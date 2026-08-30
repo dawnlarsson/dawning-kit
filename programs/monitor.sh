@@ -309,9 +309,12 @@ draw() {
         printf '\033[J'
 }
 
-#       Hide the cursor and take the first pair of samples, so the first
-#       drawn frame already has a delta to work from.
-printf '\033[?1049h\033[?25l\033[2J'
+#       Enter visibly before doing any sampling. The old order cleared into an
+#       empty alternate screen and then slept a whole interval before writing
+#       the first frame, which made a healthy 15 ms launch look like a hung
+#       half-second launch. This title is replaced by the settling frame as
+#       soon as the first /proc walk completes.
+printf '\033[?1049h\033[?25l\033[2J\033[H\033[1m monitor\033[0m  sampling...\033[K'
 sample
 cp "$now_cpu" "$old_cpu" 2>/dev/null
 cp "$now_net" "$old_net" 2>/dev/null
@@ -319,9 +322,17 @@ cp "$now_pid" "$old_pid" 2>/dev/null
 cp "$now_time" "$old_time" 2>/dev/null
 
 count=0
+sample_interval=0.01
 while :; do
-        sleep "$interval"
-        sample
+        # The first sample is already in hand, so draw it immediately. CPU,
+        # network and process rates are the documented settling values on that
+        # frame. Every later frame sleeps first and gets a real delta. Besides
+        # making startup instant, this preserves one sample and one draw per
+        # frame instead of adding a special duplicate path.
+        if [ "$count" -gt 0 ]; then
+                sleep "$interval"
+                sample
+        fi
 
         # The dimensions are live state, not startup configuration. Keep this
         # outside a function: this shell deliberately stores function bodies,
