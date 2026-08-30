@@ -63,12 +63,71 @@ string_address network_argv[] = {(string_address)network_program,
 #define NETWORK_SETTLED_NS 1000000000
 #define NETWORK_GIVE_UP 3
 
-static bipolar start_network(void)
+/*
+        Enter another name of this already mapped program.
+
+        /init, /shell and /ip are links to one Spark image. The boot init has
+        already paid to map that image, so making its first two children exec
+        it again builds a new address space, faults the same pages and runs the
+        loader only to reach bytes that are resident beside this function.
+
+        A clone gives the child private copy-on-write state and the right
+        parent, descriptors, credentials and working directory. Republish the
+        child's argv and runtime ownership, then enter the ordinary multicall
+        main: /shell takes the shell path and /ip takes the utility path.
+        The old two exec calls supplied an empty environment. Linux gives PID
+        1 HOME and TERM, so the child ends that inherited vector with one
+        store before publishing it through environ. This is deliberately used
+        only by the real /init entry below. An `init`
+        command run from an interactive shell has live parser, variables and
+        traps in its image and must retain the clean exec path.
+*/
+static DEAD_END fn system_image_reenter(string_address address_to arguments,
+                                        b32 count)
 {
+        string_address address_to environment = program_environment_list();
+
+        /* The initial vector is writable process-stack memory. Ending it in
+           place is the allocation-free equivalent of execve(..., { NULL })
+           and leaves the parent untouched through clone's copy-on-write. */
+        if (environment)
+                environment[0] = null;
+
+        program_arguments_use(arguments, count);
+        stdlib_program_starting();
+        stdlib_exit_flush_hook = stream_flush_at_exit;
+        stdlib_exit(moonwater_program_main());
+
+        __builtin_unreachable();
+}
+
+static bool system_boot_image()
+{
+        string_address called = program_argument(0);
+
+        // Linux supplies argv[0] as "init" even when the path it opened was
+        // /init. PID 1 is the boundary: executing /init later must not reuse
+        // an interactive shell image whose global parser state is live.
+        return called &&
+               (string_equals(called, "init") ||
+                string_equals(called, "/init")) &&
+               stdlib_process_identity() == 1;
+}
+
+static bipolar start_network(bool reenter)
+{
+        // A re-entering child would otherwise inherit and later flush bytes
+        // which belong to PID 1. exec used to discard that copied buffer.
+        if (reenter)
+                log_flush();
+
         bipolar child = system_call_2(syscall(clone), SIGCHLD, 0);
 
         if (child == 0)
         {
+                if (reenter)
+                        system_image_reenter(network_argv, 2);
+
                 system_call_3(syscall(execve), (positive)network_program,
                               (positive)network_argv, (positive)init_envp);
 
@@ -99,8 +158,22 @@ fn pause_for(positive nanoseconds)
         sleep(address_of span);
 }
 
-bipolar start_shell(b32 device)
+bipolar start_shell(b32 device, bool reenter)
 {
+        if (reenter)
+        {
+                bipolar child;
+
+                log_flush();
+                child = system_call_2(syscall(clone), SIGCHLD, 0);
+
+                if (child == 0)
+                        system_image_reenter(init_argv, 1);
+
+                if (child > 0)
+                        return child;
+        }
+
         if (device >= 0)
         {
                 struct spawn request;
@@ -195,6 +268,8 @@ fn mount_devpts()
 
 static b32 system_init()
 {
+        bool reenter = system_boot_image();
+
         system_call(syscall(setsid));
         mount_devpts();
 
@@ -206,11 +281,11 @@ static b32 system_init()
         positive started = now_ns();
         bipolar wait_error = 0;
 
-        bipolar network = start_network();
+        bipolar network = start_network(reenter);
         positive network_started = now_ns();
         positive network_failures = 0;
 
-        bipolar shell = start_shell(device);
+        bipolar shell = start_shell(device, reenter);
 
         // Returning from PID 1 panics the kernel, which on a machine with no
         // serial console says nothing at all. Retrying at a bounded rate keeps
@@ -223,7 +298,7 @@ static b32 system_init()
                 pause_for(RESTART_BACKOFF_MAX_NS);
 
                 started = now_ns();
-                shell = start_shell(device);
+                shell = start_shell(device, reenter);
         }
 
         while (1)
@@ -276,7 +351,7 @@ static b32 system_init()
                                 }
 
                                 network_started = now_ns();
-                                network = start_network();
+                                network = start_network(reenter);
                                 continue;
                         }
 
@@ -315,7 +390,7 @@ static b32 system_init()
                 }
 
                 started = now_ns();
-                shell = start_shell(device);
+                shell = start_shell(device, reenter);
 
                 // Retried here rather than by falling back into wait4,
                 // which would have no children to wait for and would report
@@ -328,7 +403,7 @@ static b32 system_init()
                         pause_for(RESTART_BACKOFF_MAX_NS);
 
                         started = now_ns();
-                        shell = start_shell(device);
+                        shell = start_shell(device, reenter);
                 }
         }
 }

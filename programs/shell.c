@@ -30,7 +30,10 @@ b32 main()
 
         shell_signals_start();
 
-        shell_env_init(program_environment_list());
+        /* environ is the live process environment. Ordinarily it is the
+           kernel vector published by the startup shim; clone-and-reentry can
+           deliberately replace it without forging another initial stack. */
+        shell_env_init(environ);
 
         /*
                 sh file [word ...]

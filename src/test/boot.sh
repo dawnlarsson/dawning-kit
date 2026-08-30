@@ -81,6 +81,7 @@ ls /shell | rev
 echo written > /tmp/boot_probe
 rev < /tmp/boot_probe
 printf 'bytes%s\n' $(wc -c < /tmp/boot_probe)
+printf 'bootenv-%s-%s\n' "${HOME-unset}" "${TERM-unset}"
 ls /monitor.sh | rev
 printf 'alias-%s\n' "$(readlink /mointor.sh | rev)"
 printf 'path-%s\n' "$(readlink /bin/monitor.sh | rev)"
@@ -149,6 +150,7 @@ says 'the spark device'    'kraps/ved/'
 says 'the shell on disk'   'llehs/'
 says 'a file written'      'nettirw'
 says 'and measured'        'bytes8'
+says 'empty init environment' 'bootenv-unset-unset'
 says 'monitor at root'     'hs.rotinom/'
 says 'mointor alias'       'alias-hs.rotinom'
 says 'monitor linked'      'path-hs.rotinom/..'
