@@ -42,6 +42,7 @@ static b32 exec_function_depth;
 
 static bool exec_tested;
 static bool exec_forked;
+static bool exec_asynchronous;
 
 fn shell_trap_exit();
 fn exec_traps();
@@ -49,6 +50,7 @@ fn exec_traps();
 fn exec_child_began()
 {
         exec_forked = true;
+        shell_background_child();
 }
 
 /*
@@ -1061,7 +1063,7 @@ static bool exec_assign(string_address address_to word_at,
                                 mark + 1, add_length);
         }
 
-        answer = env_set_hashed_span(
+        answer = env_assign_hashed_span(
             word, name_length, name_hash,
             append ? made + name_length + 1 : mark + 1);
         address_to name_end = append ? '+' : '=';
@@ -1156,6 +1158,77 @@ static fn exec_release_assignments(string_address address_to assignments,
                 env_export_release(assignments[count]);
 }
 
+static bool exec_declaration_name(b32 word)
+{
+        if (!(parse_word_flags[word] & PARSE_WORD_LITERAL))
+                return false;
+
+        return word_is(parse_words[word], "export") ||
+               word_is(parse_words[word], "readonly") ||
+               word_is(parse_words[word], "local");
+}
+
+/*
+        The assignment operands of a declaration utility use assignment
+        expansion even though they follow the command name. Issue 8 makes
+        command a declaration utility when the name it invokes is one; walk
+        literal command chains and their options to find that boundary.
+*/
+static b32 exec_declaration_from(parse_node address_to node)
+{
+        b32 at = node->word;
+        b32 stop = at + node->word_count;
+
+        while (at < stop &&
+               (parse_word_flags[at] & PARSE_WORD_ASSIGNMENT))
+                at++;
+
+        while (at < stop)
+        {
+                if (exec_declaration_name(at))
+                        return at + 1;
+
+                if (!(parse_word_flags[at] & PARSE_WORD_LITERAL) ||
+                    !word_is(parse_words[at], "command"))
+                        return stop;
+
+                at++;
+
+                while (at < stop)
+                {
+                        string_address option;
+
+                        if (!(parse_word_flags[at] & PARSE_WORD_LITERAL))
+                                return stop;
+
+                        option = parse_words[at];
+
+                        if (word_is(option, "--"))
+                        {
+                                at++;
+                                break;
+                        }
+
+                        if (string_not(option, '-') || !string_get(option + 1))
+                                break;
+
+                        option++;
+
+                        while (string_get(option))
+                        {
+                                if (string_get(option) != 'p')
+                                        return stop;
+
+                                option++;
+                        }
+
+                        at++;
+                }
+        }
+
+        return stop;
+}
+
 /*
         A control-flow operand that has to fit in b32 without wrapping.
 
@@ -1186,6 +1259,67 @@ static bool exec_control_number(string_address word, bool allow_zero,
         return true;
 }
 
+/* break, continue and return are executor operations, not ordinary C
+   builtins: their result has to unwind the surrounding parse tree. Query mode
+   exposes that same namespace to command/type without copying the name list. */
+bool exec_control_builtin(string_address name, bool run)
+{
+        p8 initial = string_get(name);
+
+        if ((initial == 'b' && !string_compare(name, "break")) ||
+            (initial == 'c' && !string_compare(name, "continue")))
+        {
+                b32 levels = 1;
+
+                if (!run)
+                        return true;
+
+                if (shell_argc > 1 &&
+                    !exec_control_number(shell_argv[1], false,
+                                         address_of levels))
+                {
+                        string_format(exec_error, "%s: Illegal number: %s\n",
+                                      name, shell_argv[1]);
+                        shell_status = 2;
+                        exec_expand_fatal();
+                        return true;
+                }
+
+                if (exec_loop_depth)
+                {
+                        if (levels > exec_loop_depth)
+                                levels = exec_loop_depth;
+
+                        exec_signal = initial == 'b'
+                                          ? EXEC_SIGNAL_BREAK
+                                          : EXEC_SIGNAL_CONTINUE;
+                        exec_signal_level = levels;
+                }
+
+                shell_status = 0;
+                return true;
+        }
+
+        if (initial != 'r' || string_compare(name, "return"))
+                return false;
+
+        if (!run)
+                return true;
+
+        if (shell_argc > 1 &&
+            !exec_control_number(shell_argv[1], true, address_of shell_status))
+        {
+                string_format(exec_error, "return: Illegal number: %s\n",
+                              shell_argv[1]);
+                shell_status = 2;
+                exec_expand_fatal();
+                return true;
+        }
+
+        exec_signal = EXEC_SIGNAL_RETURN;
+        return true;
+}
+
 static b32 exec_dispatch(b32 command_word)
 {
         /* PATH answers are transient only until exec/spawn has copied argv.
@@ -1205,61 +1339,16 @@ static b32 exec_dispatch(b32 command_word)
                 return 0;
         }
 
-        if ((initial == 'b' && !string_compare(name, "break")) ||
-            (initial == 'c' && !string_compare(name, "continue")))
-        {
-                b32 levels = 1;
-
-                if (shell_argc > 1 &&
-                    !exec_control_number(shell_argv[1], false,
-                                         address_of levels))
-                {
-                        string_format(exec_error, "%s: Illegal number: %s\n",
-                                      name, shell_argv[1]);
-                        shell_status = 2;
-                        exec_expand_fatal();
-                        return shell_status;
-                }
-
-                if (exec_loop_depth)
-                {
-                        if (levels > exec_loop_depth)
-                                levels = exec_loop_depth;
-
-                        exec_signal = initial == 'b'
-                                          ? EXEC_SIGNAL_BREAK
-                                          : EXEC_SIGNAL_CONTINUE;
-                        exec_signal_level = levels;
-                }
-
-                shell_status = 0;
-                return 0;
-        }
-
-        if (initial == 'r' && !string_compare(name, "return"))
-        {
-                if (shell_argc > 1)
-                {
-                        if (!exec_control_number(shell_argv[1], true,
-                                                 address_of shell_status))
-                        {
-                                string_format(exec_error,
-                                              "return: Illegal number: %s\n",
-                                              shell_argv[1]);
-                                shell_status = 2;
-                                exec_expand_fatal();
-                                return shell_status;
-                        }
-                }
-
-                exec_signal = EXEC_SIGNAL_RETURN;
+        if (exec_control_builtin(name, true))
                 return shell_status;
-        }
 
         body = exec_function_find(name);
 
         if (body)
+        {
+                shell_tail_command = false;
                 return exec_call(body);
+        }
 
         shell_command_name_stable =
             parse_words[command_word] == name &&
@@ -1271,8 +1360,21 @@ static b32 exec_dispatch(b32 command_word)
                 shell_command_name_length = parse_word_lengths[command_word];
         }
 
-        if (shell_builtin(null))
-                return shell_status;
+        {
+                bool tail = shell_tail_command;
+
+                /* command may still select an external utility, so let that
+                   wrapper preserve the already-isolated process. Every other
+                   builtin can evaluate nested commands and must consume the
+                   one-command tail privilege here. */
+                shell_tail_command =
+                    tail &&
+                    (!shell_command_named(name) ||
+                     (initial == 'c' && !string_compare(name, "command")));
+                if (shell_builtin(null))
+                        return shell_status;
+                shell_tail_command = tail;
+        }
 
         {
                 bipolar located = shell_find_in_path_alloc(name,
@@ -1296,7 +1398,10 @@ static b32 exec_dispatch(b32 command_word)
                 if (located == 1)
                 {
                         shell_argv[0] = found;
-                        shell_execute_command();
+                        if (shell_tail_command)
+                                shell_thread_instance_mode(exec_asynchronous);
+                        else
+                                shell_execute_command();
                         shell_argv[0] = name;
                         return shell_status;
                 }
@@ -1383,6 +1488,7 @@ static b32 exec_simple(b32 index)
         b32 mark = exec_save_count;
         b32 count = 0;
         b32 first = 0;
+        b32 declaration_from = exec_declaration_from(node);
         b32 status;
         b32 at;
         shell_words arguments;
@@ -1431,21 +1537,24 @@ static b32 exec_simple(b32 index)
                 string_address word = parse_words[word_index];
                 p8 word_flags = parse_word_flags[word_index];
                 bool literal = word_flags & PARSE_WORD_LITERAL;
+                bool assignment = word_flags & PARSE_WORD_ASSIGNMENT;
+                bool leading = count == first && assignment;
 
                 /*
-                        An assignment in front of a command is expanded whole:
-                        x="a b" sets x to one value, not two words, and does
-                        not glob. Only in front -- past the command name the
-                        same text is an ordinary argument.
+                        Leading assignments and declaration operands are both
+                        expanded whole. Only a leading assignment is applied
+                        provisionally so the next one can see its value.
                 */
-                if (count == first &&
-                    (word_flags & PARSE_WORD_ASSIGNMENT))
+                if (leading || (assignment && word_index >= declaration_from))
                 {
-                        string_address trial;
+                        positive value_at =
+                            parse_word_name_lengths[word_index] + 1 +
+                            ((word_flags & PARSE_WORD_APPEND) != 0);
 
                         if (!shell_words_add(address_of arguments,
                                              literal ? word
-                                                     : shell_expand_word(word)))
+                                                     : shell_expand_assignment(
+                                                           word, value_at)))
                                 break;
 
                         count = (b32)arguments.count;
@@ -1453,24 +1562,31 @@ static b32 exec_simple(b32 index)
                         if (exec_line_aborted())
                                 break;
 
-                        trial = shell_argv[first];
-
-                        if (!exec_keep_value(expanded_kept + expanded_count,
-                                             trial) ||
-                            !exec_assign(address_of trial,
-                                         parse_word_name_lengths[word_index],
-                                         parse_word_name_hashes[word_index],
-                                         (word_flags & PARSE_WORD_APPEND) != 0))
+                        if (leading)
                         {
-                                exec_put_back(expanded_kept, expanded_count);
-                                shell_store_rewind(address_of exec_store,
-                                                   arena_mark);
-                                shell_status = 2;
-                                return 2;
+                                string_address trial = shell_argv[first];
+
+                                if (!exec_keep_value(
+                                        expanded_kept + expanded_count,
+                                        trial) ||
+                                    !exec_assign(
+                                        address_of trial,
+                                        parse_word_name_lengths[word_index],
+                                        parse_word_name_hashes[word_index],
+                                        (word_flags & PARSE_WORD_APPEND) != 0))
+                                {
+                                        exec_put_back(expanded_kept,
+                                                      expanded_count);
+                                        shell_store_rewind(address_of exec_store,
+                                                           arena_mark);
+                                        shell_status = 2;
+                                        return 2;
+                                }
+
+                                expanded_count++;
+                                first++;
                         }
 
-                        expanded_count++;
-                        first++;
                         continue;
                 }
 
@@ -1499,8 +1615,7 @@ static b32 exec_simple(b32 index)
         {
                 exec_put_back(expanded_kept, expanded_count);
                 shell_store_rewind(address_of exec_store, arena_mark);
-                shell_status = 2;
-                return 2;
+                return shell_status;
         }
 
         exec_put_back(expanded_kept, expanded_count);
@@ -1864,7 +1979,17 @@ static b32 exec_for(b32 index)
 
         for (at = 0; at < count; at++)
         {
-                env_set(name, exec_items[at]);
+                if (!env_assign(name, exec_items[at]))
+                {
+                        string_format(exec_error,
+                                      env_readonly(name)
+                                          ? "%s: is read only\n"
+                                          : "%s: cannot assign\n",
+                                      name);
+                        status = 2;
+                        expand_fatal();
+                        break;
+                }
 
                 exec_loop_depth++;
                 status = exec_node(node->right);
@@ -2696,7 +2821,37 @@ static b32 exec_child_status(bipolar child)
         return wait_status_code(state);
 }
 
-static bipolar exec_spawn_node(b32 index)
+/* Async commands inherit the interactive shell's ignored INT/QUIT state and,
+   without job control, read /dev/null unless the command later supplies its
+   own redirection. fd 0 is already the desired result from openat and must not
+   be closed. */
+static fn exec_child_signals(bool background, bool null_input)
+{
+        if (!background)
+        {
+                shell_default(SIGNAL_INTERRUPT);
+                shell_default(SIGNAL_QUIT);
+                return;
+        }
+
+        shell_ignore(SIGNAL_INTERRUPT);
+        shell_ignore(SIGNAL_QUIT);
+
+        if (null_input)
+        {
+                bipolar null_handle = system_call_4(syscall(openat), AT_FDCWD,
+                                                    (positive)"/dev/null",
+                                                    0, 0);
+
+                if (null_handle > 0)
+                {
+                        system_call_3(syscall(dup3), null_handle, 0, 0);
+                        system_call_1(syscall(close), null_handle);
+                }
+        }
+}
+
+static bipolar exec_spawn_node(b32 index, bool background)
 {
         bipolar child;
 
@@ -2707,10 +2862,19 @@ static bipolar exec_spawn_node(b32 index)
         {
                 b32 status;
 
-                shell_default(SIGNAL_INTERRUPT);
-                shell_default(SIGNAL_QUIT);
+                exec_asynchronous = background;
                 trap_default_all();
-                exec_forked = true;
+                exec_child_signals(background, background);
+                exec_child_began();
+
+                /* The async environment is already a subshell. Turning an
+                   explicit (...) node into its equivalent group avoids a
+                   second process whose PID would not be $!. */
+                if (background && parse_nodes[index].kind == NODE_SUBSHELL)
+                        parse_nodes[index].kind = NODE_GROUP;
+
+                shell_tail_command = background &&
+                                     parse_nodes[index].kind == NODE_SIMPLE;
 
                 status = exec_node(index);
                 log_flush();
@@ -2722,7 +2886,8 @@ static bipolar exec_spawn_node(b32 index)
 
 static b32 exec_subshell(b32 index)
 {
-        return exec_child_status(exec_spawn_node(parse_nodes[index].left));
+        return exec_child_status(exec_spawn_node(parse_nodes[index].left,
+                                                 false));
 }
 
 /*
@@ -2734,7 +2899,8 @@ static b32 exec_subshell(b32 index)
         here is an end of file the reader never sees, and the whole shell
         stops.
 */
-static b32 exec_pipe(b32 first, positive count)
+static b32 exec_pipe(b32 first, positive count, bool background,
+                     bool pipefail, bool invert)
 {
         bipolar address_to children = null;
         positive children_room = 0;
@@ -2774,10 +2940,17 @@ static b32 exec_pipe(b32 first, positive count)
 
                 if (made == 0)
                 {
-                        shell_default(SIGNAL_INTERRUPT);
-                        shell_default(SIGNAL_QUIT);
                         trap_default_all();
-                        exec_forked = true;
+                        if (!trap_ignored(SIGNAL_PIPE))
+                                shell_default(SIGNAL_PIPE);
+                        exec_asynchronous = background;
+                        exec_child_signals(background,
+                                           background && upstream < 0);
+                        exec_child_began();
+                        if (parse_nodes[child].kind == NODE_SUBSHELL)
+                                parse_nodes[child].kind = NODE_GROUP;
+                        shell_tail_command =
+                            parse_nodes[child].kind == NODE_SIMPLE;
 
                         if (upstream >= 0)
                         {
@@ -2831,6 +3004,21 @@ static b32 exec_pipe(b32 first, positive count)
         if (upstream >= 0)
                 system_call_1(syscall(close), upstream);
 
+        if (background && !spawn_failed)
+        {
+                if (!shell_background_started(children, started, pipefail,
+                                              invert))
+                {
+                        string_format(exec_error,
+                                      "No room to retain background pipeline\n");
+                        status = 2;
+                }
+
+                memory_free(children,
+                            children_room * sizeof(children[0]));
+                return status;
+        }
+
         //
         //      Every stage is waited for either way, because a pipeline that
         //      left a child unreaped would leave a zombie per turn of a loop.
@@ -2853,7 +3041,7 @@ static b32 exec_pipe(b32 first, positive count)
                         status = got;
         }
 
-        if (rightmost_failure && shell_pipefail())
+        if (rightmost_failure && pipefail)
                 status = rightmost_failure;
 
         if (spawn_failed)
@@ -2890,7 +3078,10 @@ static b32 exec_pipeline(b32 index)
         if (node->flags)
                 exec_tested = true;
 
-        status = count > 1 ? exec_pipe(node->left, count) : exec_node(node->left);
+        status = count > 1
+                     ? exec_pipe(node->left, count, false, shell_pipefail(),
+                                 false)
+                     : exec_node(node->left);
 
         exec_tested = tested;
 
@@ -2943,7 +3134,50 @@ static b32 exec_and_or(b32 index)
 
 static b32 exec_background(b32 index)
 {
-        exec_spawn_node(index);
+        b32 body = parse_nodes[index].left;
+        bipolar child;
+
+        /* A singleton gets no semantic value from its background-marker
+           AND-OR wrapper. Launching the body itself lets an external command
+           tail-exec into the PID published as $!, and lets a pipeline publish
+           the PID of its last stage as POSIX requires. */
+        if (body && !parse_nodes[body].next)
+        {
+                if (parse_nodes[body].kind == NODE_PIPELINE)
+                {
+                        positive count = 0;
+
+                        for (b32 stage = parse_nodes[body].left; stage;
+                             stage = parse_nodes[stage].next)
+                        {
+                                if (count == positive_max)
+                                {
+                                        string_format(exec_error,
+                                                      "Pipeline too long\n");
+                                        return 2;
+                                }
+                                count++;
+                        }
+
+                        return exec_pipe(parse_nodes[body].left, count, true,
+                                         shell_pipefail(),
+                                         parse_nodes[body].flags);
+                }
+
+                index = body;
+        }
+
+        child = exec_spawn_node(index, true);
+
+        if (child < 0)
+                return 1;
+
+        if (!shell_background_started(address_of child, 1, false, false))
+        {
+                string_format(exec_error,
+                              "No room to retain background command\n");
+                return 2;
+        }
 
         return 0;
 }
@@ -3090,19 +3324,21 @@ fn exec_program(b32 root)
         exec_signal = EXEC_SIGNAL_NONE;
         exec_signal_level = 0;
 
-        // Anything started with & is nobody's to wait for, and a zombie per
-        // background command is a table full of them by the end of a script.
+        // Reap without forgetting: wait still owes the status to the script.
         if (!exec_depth)
-        {
-                positive state = 0;
-
-                while (system_call_4(syscall(wait4), (positive)-1,
-                                     (positive)address_of state, WAIT_NO_HANG, 0) > 0)
-                        ;
-        }
+                shell_background_reap();
 
         exec_depth++;
-        exec_node(root);
+
+        // A one-command list has no NODE_LIST wrapper. Its trailing ampersand
+        // still belongs to the list, and must not become synchronous merely
+        // because no second command followed it on the same physical line.
+        if (root && parse_nodes[root].kind == NODE_ANDOR &&
+            parse_nodes[root].flags)
+                shell_status = exec_background(root);
+        else
+                exec_node(root);
+
         exec_depth--;
 
         shell_store_rewind(address_of exec_store, kept_arena);

@@ -930,6 +930,36 @@ PURE string_address env_get(const_string name)
         return env_get_hashed_span(name, answer.y, answer.x, null);
 }
 
+/*
+        The set variable names beginning with prefix. Bash ${!prefix@} and
+        ${!prefix*} need the same source table as lookup and export; a null
+        destination is the sizing pass before the expander allocates its
+        pointer vector. Exported or readonly names without values are unset
+        and therefore do not take part.
+*/
+positive env_names_prefix(string_address prefix, positive length,
+                          string_address address_to names, positive room)
+{
+        positive count = 0;
+
+        for (positive at = 0; at < shell_var_count; at++)
+        {
+                env_variable address_to variable = shell_vars + at;
+
+                if (!env_variable_has_value(variable) ||
+                    variable->name_length < length ||
+                    memory_compare(variable->text, prefix, length))
+                        continue;
+
+                if (count < room)
+                        names[count] = variable->text;
+
+                count++;
+        }
+
+        return count;
+}
+
 static bool env_write_hashed_span(const_string name, positive name_len,
                                   positive hash, const_string value,
                                   bool assignment)
@@ -1319,21 +1349,34 @@ bool shell_directory_holds()
                test_device(address_of named) == test_device(address_of here);
 }
 
-fn shell_directory_moved(string_address logical)
+static bool shell_cd_variable(string_address name, string_address value)
+{
+        if (env_assign(name, value))
+                return true;
+
+        string_format(shell_diagnostic,
+                      env_readonly(name) ? "cd: %s: is read only\n"
+                                         : "cd: cannot assign %s\n",
+                      name);
+        return false;
+}
+
+bool shell_directory_moved(string_address logical)
 {
         string_copy_max_end(shell_directory_was, shell_directory,
                             sizeof(shell_directory_was) - 1);
 
         string_copy_max_end(shell_directory, logical, SHELL_DIRECTORY_MAX - 1);
 
-        env_assign("OLDPWD", shell_directory_was);
-        env_assign("PWD", shell_directory);
+        return shell_cd_variable("OLDPWD", shell_directory_was) &&
+               shell_cd_variable("PWD", shell_directory);
 }
 
 static p8 shell_cd_target[4096];
 
 bool shell_cd_try(string_address candidate, bool physical,
-                  bool address_to physical_named)
+                  bool address_to physical_named,
+                  bool address_to variables_set)
 {
         p8 wanted[4096];
 
@@ -1347,7 +1390,7 @@ bool shell_cd_try(string_address candidate, bool physical,
 
         address_to physical_named = !physical || shell_here(wanted, sizeof(wanted));
 
-        shell_directory_moved(wanted);
+        address_to variables_set = shell_directory_moved(wanted);
 
         return true;
 }
@@ -1361,12 +1404,14 @@ bool shell_cd_try(string_address candidate, bool physical,
         did not name the place it landed.
 */
 bool shell_cd_walk(bool physical, bool address_to say,
-                   bool address_to physical_named)
+                   bool address_to physical_named,
+                   bool address_to variables_set)
 {
         p8 candidate[4096];
 
         if (shell_cd_target[0] == '/')
-                return shell_cd_try(shell_cd_target, physical, physical_named);
+                return shell_cd_try(shell_cd_target, physical, physical_named,
+                                    variables_set);
 
         if (!(shell_cd_target[0] == '.' &&
               (shell_cd_target[1] == end || shell_cd_target[1] == '/' ||
@@ -1393,7 +1438,8 @@ bool shell_cd_walk(bool physical, bool address_to say,
                                           shell_cd_target);
 
                                 if (shell_cd_try(candidate, physical,
-                                                 physical_named))
+                                                 physical_named,
+                                                 variables_set))
                                 {
                                         address_to say = true;
                                         return true;
@@ -1407,7 +1453,8 @@ bool shell_cd_walk(bool physical, bool address_to say,
         path_join(candidate, sizeof(candidate), shell_directory,
                   shell_cd_target);
 
-        return shell_cd_try(candidate, physical, physical_named);
+        return shell_cd_try(candidate, physical, physical_named,
+                            variables_set);
 }
 
 fn shell_cd(writer write, string_address input)
@@ -1416,6 +1463,7 @@ fn shell_cd(writer write, string_address input)
         bool physical = false;
         bool error_if_unnamed = false;
         bool physical_named = true;
+        bool variables_set = true;
         string_address name = null;
         bool say = false;
 
@@ -1492,13 +1540,17 @@ fn shell_cd(writer write, string_address input)
         string_copy_max_end(shell_cd_target, name, sizeof(shell_cd_target) - 1);
 
         if (!shell_cd_walk(physical, address_of say,
-                           address_of physical_named))
+                           address_of physical_named,
+                           address_of variables_set))
         {
                 shell_answer(2);
 
                 return string_format(shell_diagnostic, "cd: can't cd to %s\n",
                                      shell_cd_target);
         }
+
+        if (!variables_set)
+                return shell_answer(2);
 
         if (say)
                 string_format(write, "%s\n", shell_directory);
@@ -1826,6 +1878,7 @@ static shell_option shell_option_names[] = {
 
 #define SHELL_OPTION_NAMES \
         (sizeof(shell_option_names) / sizeof(shell_option_names[0]))
+#define SHELL_OPTION_MONITOR 4
 #define SHELL_OPTION_NOCLOBBER 11
 #define SHELL_OPTION_PIPEFAIL 16
 
@@ -1842,6 +1895,11 @@ bool shell_option_on(positive index)
 
 fn shell_option_told(positive index, bool on)
 {
+        // A monitor bit without process groups and terminal ownership would
+        // advertise job control the executor does not have.
+        if (index == SHELL_OPTION_MONITOR && on)
+                return;
+
         if (shell_option_names[index].letter >= 'a' &&
             shell_option_names[index].letter <= 'z')
         {
@@ -4371,6 +4429,42 @@ bool trap_waiting()
         return trap_caught && !trap_inside;
 }
 
+bool trap_ignored(positive number)
+{
+        for (positive at = 0; at < trap_count; at++)
+                if (trap_table[at].number == number)
+                        return !string_get(trap_table[at].action);
+
+        return false;
+}
+
+/* wait is the one command POSIX has a caught signal interrupt. Every other
+   blocking command keeps SA_RESTART and runs its trap at the next command
+   boundary. Change only the handlers with executable actions, then put their
+   usual disposition back before wait returns. */
+static fn trap_wait_restarting(bool restart)
+{
+        for (positive at = 0; at < trap_count; at++)
+        {
+                positive number = trap_table[at].number;
+                string_address action = trap_table[at].action;
+
+                if (number && string_get(action) &&
+                    (shell_is_interactive || !shell_was_ignored((b32)number)))
+                        shell_catch_mode((b32)number, restart);
+        }
+}
+
+static bipolar trap_pending_number()
+{
+        if (trap_caught)
+                for (positive number = 1; number <= TRAP_SIGNAL_MAX; number++)
+                        if (trap_pending[number])
+                                return (bipolar)number;
+
+        return -1;
+}
+
 /*
         What is left of a trap in a child.
 
@@ -5083,6 +5177,7 @@ static shell_tool shell_tools[] = {
     {"find", file_find},
     {"findfs", storage_program_findfs},
     {"findmnt", storage_program_findmnt},
+    {"groups", file_groups},
     {"hostname", file_hostname},
     {"ip", net_ip},
     {"host", net_host},
@@ -5091,13 +5186,18 @@ static shell_tool shell_tools[] = {
     {"kill", file_kill},
     {"link", file_link},
     {"ln", file_ln},
+    {"logname", file_logname},
     {"ls", file_ls},
     {"mkdir", file_mkdir},
+    {"mkfifo", file_mkfifo},
+    {"mknod", file_mknod},
     {"mktemp", file_mktemp},
     {"mount", storage_program_mount},
     {"mountpoint", storage_program_mountpoint},
     {"mv", file_mv},
+    {"nice", file_nice},
     {"nproc", file_nproc},
+    {"pathchk", file_pathchk},
     {"printenv", file_printenv},
     {"readlink", file_readlink},
     {"realpath", file_realpath},
@@ -5107,10 +5207,13 @@ static shell_tool shell_tools[] = {
     {"sleep", file_sleep},
     {"stat", file_stat},
     {"stty", file_stty},
+    {"sync", file_sync},
     {"touch", file_touch},
+    {"tty", file_tty},
     {"uname", file_uname},
     {"unlink", file_unlink},
     {"umount", storage_program_umount},
+    {"vdir", file_vdir},
     {"whoami", file_whoami},
     {"xargs", file_xargs},
     {"yes", file_yes},
@@ -5244,6 +5347,13 @@ static bool shell_tool_run(string_address name)
 
         if (which == SHELL_TOOLS)
                 return false;
+
+        if (shell_tail_command)
+        {
+                program_arguments_use(shell_argv, (b32)shell_argc);
+                shell_answer(shell_tool_call(which));
+                return true;
+        }
 
         // Before the fork, or the child inherits a copy of what is waiting in
         // the buffer and writes it out a second time.
@@ -5621,32 +5731,256 @@ fn shell_dot(writer write, string_address input)
         shell_answer(shell_status);
 }
 
-/*
-        wait: until the children are gone, or until one of them is.
-
-        No job control here, so there are no job numbers to name -- a bare wait
-        collects everything and a wait with a number collects that process.
-*/
-fn shell_wait(writer write, string_address input)
+/* A background job remains known after the kernel has reaped it. POSIX lets a
+   later wait recover that status, then requires the successful wait to forget
+   it. A pipeline has several waitable children but one public identity: the
+   PID of its last command. Keeping one flat row per child avoids a second
+   allocation and lets the WNOHANG reaper record any stage directly. */
+typedef struct
 {
-        positive status = 0;
+        bipolar job;
+        bipolar pid;
+        positive status;
+        positive flags;
+} shell_wait_entry;
 
-        if (shell_argc > 1)
+static shell_wait_entry address_to shell_wait_table;
+static positive shell_wait_room;
+static positive shell_wait_count;
+
+#define SHELL_WAIT_NO_HANG 1
+#define SHELL_WAIT_DONE 1
+#define SHELL_WAIT_LAST 2
+#define SHELL_WAIT_PIPEFAIL 4
+#define SHELL_WAIT_INVERT 8
+
+static positive shell_wait_find_job(bipolar job)
+{
+        for (positive at = 0; at < shell_wait_count; at++)
+                if (shell_wait_table[at].job == job)
+                        return at;
+
+        return shell_wait_count;
+}
+
+static positive shell_wait_find_child(bipolar pid)
+{
+        positive at = shell_wait_count;
+
+        /* A reaped, unconsumed stage no longer reserves its numeric PID in
+           the kernel. If it is reused, the newest live row owns the new wait
+           result. */
+        while (at)
         {
-                bipolar want = (bipolar)shell_number(shell_argv[1]);
-                bipolar got = system_call_4(syscall(wait4), want,
-                                            (positive)address_of status, 0, 0);
-
-                if (got < 0)
-                        return shell_answer(127);
-
-                return shell_answer(wait_status_code(status));
+                at--;
+                if (shell_wait_table[at].pid == pid &&
+                    !(shell_wait_table[at].flags & SHELL_WAIT_DONE))
+                        return at;
         }
 
-        while (system_call_4(syscall(wait4), -1, (positive)address_of status, 0, 0) >= 0)
-                ;
+        return shell_wait_count;
+}
 
-        shell_answer(0);
+static fn shell_wait_drop(bipolar job)
+{
+        positive into = 0;
+
+        for (positive at = 0; at < shell_wait_count; at++)
+                if (shell_wait_table[at].job != job)
+                        shell_wait_table[into++] = shell_wait_table[at];
+
+        shell_wait_count = into;
+}
+
+bool shell_background_started(bipolar address_to children, positive count,
+                              bool pipefail, bool invert)
+{
+        positive flags = (pipefail ? SHELL_WAIT_PIPEFAIL : 0) |
+                         (invert ? SHELL_WAIT_INVERT : 0);
+        bipolar job;
+
+        if (!count || children[count - 1] <= 0)
+                return false;
+
+        job = children[count - 1];
+        shell_background_last = job;
+
+        /* A PID can be reused once its old process was reaped. Its new job is
+           the identity POSIX makes available, so an unconsumed old result may
+           no longer occupy that name. */
+        shell_wait_drop(job);
+
+        if (count > positive_max - shell_wait_count ||
+            !shell_room((address_any address_to)address_of shell_wait_table,
+                        address_of shell_wait_room, shell_wait_count + count,
+                        sizeof(shell_wait_table[0])))
+                return false;
+
+        for (positive at = 0; at < count; at++)
+        {
+                shell_wait_entry address_to entry =
+                    shell_wait_table + shell_wait_count++;
+
+                entry->job = job;
+                entry->pid = children[at];
+                entry->status = 0;
+                entry->flags = flags |
+                               (at + 1 == count ? SHELL_WAIT_LAST : 0);
+        }
+
+        return true;
+}
+
+fn shell_background_child()
+{
+        /* $! is part of the inherited shell environment. What a subshell
+           cannot inherit is the parent's right to wait for those children. */
+        shell_wait_count = 0;
+}
+
+static fn shell_background_reaped(bipolar pid, positive status)
+{
+        positive at = shell_wait_find_child(pid);
+
+        // Here-document writers are children too, but never asynchronous jobs.
+        if (at < shell_wait_count)
+        {
+                shell_wait_table[at].status = status;
+                shell_wait_table[at].flags |= SHELL_WAIT_DONE;
+        }
+}
+
+fn shell_background_reap()
+{
+        positive status;
+        bipolar pid;
+
+        while ((pid = system_call_4(syscall(wait4), (positive)-1,
+                                    (positive)address_of status,
+                                    SHELL_WAIT_NO_HANG, 0)) > 0)
+                shell_background_reaped(pid, status);
+}
+
+static bipolar shell_wait_call(bipolar pid, positive address_to status)
+{
+        bipolar got;
+
+        trap_wait_restarting(false);
+        got = system_call_4(syscall(wait4), pid, (positive)status, 0, 0);
+        trap_wait_restarting(true);
+
+        return got;
+}
+
+static b32 shell_wait_one(bipolar job, bool address_to interrupted)
+{
+        positive first = shell_wait_find_job(job);
+        b32 status = 0;
+        b32 rightmost_failure = 0;
+        positive job_flags;
+
+        address_to interrupted = false;
+
+        if (first >= shell_wait_count)
+                return 127;
+
+        job_flags = shell_wait_table[first].flags;
+
+        for (positive at = first; at < shell_wait_count; at++)
+        {
+                shell_wait_entry address_to entry = shell_wait_table + at;
+                positive raw;
+                bipolar got;
+                b32 code;
+
+                if (entry->job != job)
+                        continue;
+
+                if (!(entry->flags & SHELL_WAIT_DONE))
+                {
+                        do
+                                got = shell_wait_call(entry->pid,
+                                                      address_of raw);
+                        while (got == -4 && !trap_waiting());
+
+                        if (got == -4 && trap_waiting())
+                        {
+                                bipolar signal = trap_pending_number();
+
+                                address_to interrupted = true;
+                                return signal > 0 ? 128 + (b32)signal : 129;
+                        }
+
+                        if (got < 0)
+                        {
+                                shell_wait_drop(job);
+                                return 127;
+                        }
+
+                        entry->status = raw;
+                        entry->flags |= SHELL_WAIT_DONE;
+                }
+
+                code = wait_status_code(entry->status);
+                if (code)
+                        rightmost_failure = code;
+                if (entry->flags & SHELL_WAIT_LAST)
+                        status = code;
+        }
+
+        if ((job_flags & SHELL_WAIT_PIPEFAIL) && rightmost_failure)
+                status = rightmost_failure;
+        if (job_flags & SHELL_WAIT_INVERT)
+                status = status ? 0 : 1;
+
+        shell_wait_drop(job);
+        return status;
+}
+
+/* wait: all known asynchronous children, or every PID operand in order. Job
+   identifiers deliberately remain unsupported until the shell owns process
+   groups and a controlling terminal; accepting %1 here would be a lie. */
+fn shell_wait(writer write, string_address input)
+{
+        b32 answer = 0;
+
+        if (shell_argc < 2)
+        {
+                while (shell_wait_count)
+                {
+                        bool interrupted;
+
+                        answer = shell_wait_one(shell_wait_table[0].job,
+                                                address_of interrupted);
+                        if (interrupted)
+                                return shell_answer(answer);
+                }
+
+                return shell_answer(0);
+        }
+
+        for (positive at = 1; at < shell_argc; at++)
+        {
+                positive pid;
+                bool interrupted;
+
+                if (!string_digits_exact(shell_argv[at], address_of pid) ||
+                    pid > (positive)bipolar_max)
+                {
+                        string_format(shell_diagnostic,
+                                      "wait: Illegal number: %s\n",
+                                      shell_argv[at]);
+                        return shell_answer(2);
+                }
+
+                answer = shell_wait_one((bipolar)pid,
+                                        address_of interrupted);
+
+                if (interrupted)
+                        break;
+        }
+
+        shell_answer(answer);
 }
 
 fn shell_help(writer write, string_address input);
@@ -5655,6 +5989,7 @@ fn shell_type(writer write, string_address input);
 fn shell_command_builtin(writer write, string_address input);
 fn shell_hash(writer write, string_address input);
 fn shell_ulimit(writer write, string_address input);
+bool exec_control_builtin(string_address name, bool run);
 
 /*
         Bash's `let` is the command-shaped spelling of the arithmetic engine
@@ -5752,6 +6087,14 @@ static shell_command address_to shell_command_named(string_address name)
             SHELL_COMMAND_INDEX_ROOM, address_of shell_command_index_ready);
 
         return which < SHELL_COMMAND_COUNT ? shell_commands + which : null;
+}
+
+/* Control builtins live in the executor because their result unwinds C
+   frames, but command/type must report the same builtin namespace. */
+static bool shell_command_builtin_here(string_address name)
+{
+        return shell_command_named(name) || shell_tool_here(name) ||
+               exec_control_builtin(name, false);
 }
 
 /*
@@ -6066,16 +6409,9 @@ fn shell_type(writer write, string_address input)
         while (index < shell_argc)
         {
                 string_address name = shell_argv[index++];
-                shell_command address_to command = shell_command_named(name);
                 bipolar located;
 
-                if (command)
-                {
-                        string_format(write, "%s is a shell builtin\n", name);
-                        continue;
-                }
-
-                if (shell_tool_here(name))
+                if (shell_command_builtin_here(name))
                 {
                         string_format(write, "%s is a shell builtin\n", name);
                         continue;
@@ -6172,10 +6508,9 @@ fn shell_command_builtin(writer write, string_address input)
                 while (index < shell_argc)
                 {
                         string_address name = shell_argv[index++];
-                        shell_command address_to command = shell_command_named(name);
                         bipolar located;
 
-                        if (command || shell_tool_here(name))
+                        if (shell_command_builtin_here(name))
                         {
                                 string_format(write,
                                               at_length
@@ -6248,8 +6583,26 @@ fn shell_command_builtin(writer write, string_address input)
                 shell_argv[shell_argc] = null;
         }
 
-        if (shell_builtin(shell_arguments()))
+        if (exec_control_builtin(shell_argv[0], true))
                 return;
+
+        {
+                bool tail = shell_tail_command;
+
+                /* A named builtin may run eval or dot and therefore owns more
+                   than one command. A multicall utility is one disposable
+                   operation and keeps the direct stage. */
+                if (shell_command_named(shell_argv[0]))
+                        shell_tail_command = false;
+
+                if (shell_builtin(shell_arguments()))
+                {
+                        shell_tail_command = tail;
+                        return;
+                }
+
+                shell_tail_command = tail;
+        }
 
         {
                 string_address name = shell_argv[0];
@@ -6288,7 +6641,10 @@ fn shell_command_builtin(writer write, string_address input)
                 }
 
                 shell_argv[0] = found;
-                shell_execute_command();
+                if (shell_tail_command)
+                        shell_thread_instance_mode(true);
+                else
+                        shell_execute_command();
                 shell_argv[0] = name;
                 memory_free(found, found_room);
         }
@@ -6303,12 +6659,9 @@ fn shell_which(writer write, string_address input)
         if (input == null)
                 return shell_diagnostic(str("which: missing operand\n"));
 
-        if (shell_command_named(input))
-                return string_format(write, "%s: shell builtin\n", input);
-
         // Before the path, because that is the order the shell runs them in:
         // a grep on the path is not the grep that would run.
-        if (shell_tool_here(input))
+        if (shell_command_builtin_here(input))
                 return string_format(write, "%s: shell builtin\n", input);
 
         located = shell_find_in_path_alloc(input, address_of found,

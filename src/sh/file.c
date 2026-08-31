@@ -245,8 +245,9 @@ fn file_mode_letters(p8 address_to into, positive mode)
         directory: it grants execute only where something already executes, or
         where the thing is a directory.
 */
-bool file_mode_of(string_address specification, positive current, bool directory,
-                  positive address_to result)
+static bool file_mode_adjust(string_address specification, positive current,
+                             bool directory, positive unnamed,
+                             positive address_to result)
 {
         positive mode = current & 07777;
 
@@ -260,7 +261,10 @@ bool file_mode_of(string_address specification, positive current, bool directory
                 if (string_get(step))
                         return false;
 
-                address_to result = value & 07777;
+                if (value > 07777)
+                        return false;
+
+                address_to result = value;
                 return true;
         }
 
@@ -290,10 +294,10 @@ bool file_mode_of(string_address specification, positive current, bool directory
                         step++;
                 }
 
-                // No who at all is "a", except that the umask would apply --
-                // and with no umask read here, all of them is what is meant.
+                // A caller that creates something supplies a umask-filtered
+                // unnamed set. chmod and find mean all bits here.
                 if (!named)
-                        who = 07777;
+                        who = unnamed;
 
                 if (!string_is(step, '+') && !string_is(step, '-') && !string_is(step, '='))
                         return false;
@@ -357,6 +361,13 @@ bool file_mode_of(string_address specification, positive current, bool directory
         address_to result = mode & 07777;
 
         return true;
+}
+
+bool file_mode_of(string_address specification, positive current, bool directory,
+                  positive address_to result)
+{
+        return file_mode_adjust(specification, current, directory, 07777,
+                                result);
 }
 
 // Looking at files ------------------------------------------
@@ -1669,22 +1680,30 @@ static bool file_option_needs(file_taking address_to taking, string_address word
 static p8 file_long_letter(file_taking address_to taking, string_address name,
                            positive length)
 {
-        if (!taking->longs)
+        if (!taking->longs || !length)
                 return 0;
+
+        p8 candidate = 0;
 
         for (positive i = 0; taking->longs[i].name; i++)
         {
                 string_address spelling = taking->longs[i].name;
 
-                // The whole word or nothing: GNU shortens a long option to
-                // any unambiguous prefix, which is a convenience for a person
-                // typing and a trap for a script that outlives the flag.
-                if (!string_compare_max(spelling, name, length) &&
-                    string_is(spelling + length, end))
+                if (string_compare_max(spelling, name, length))
+                        continue;
+
+                // Prefer an exact spelling; otherwise accept only one GNU
+                // style unambiguous prefix.
+                if (string_is(spelling + length, end))
                         return taking->longs[i].letter;
+
+                if (candidate)
+                        return 0;
+
+                candidate = taking->longs[i].letter;
         }
 
-        return 0;
+        return candidate;
 }
 
 static bool file_take(file_taking address_to taking)
@@ -1881,12 +1900,33 @@ typedef struct
         positive length;
 } file_color_span;
 
-static bool file_output_terminal()
+static bool file_handle_terminal(positive handle)
 {
         p8 settings[64];
 
-        return system_call_3(syscall(ioctl), 1, FILE_TCGETS,
+        return system_call_3(syscall(ioctl), handle, FILE_TCGETS,
                              (positive)settings) == 0;
+}
+
+static bool file_output_terminal()
+{
+        return file_handle_terminal(1);
+}
+
+static bipolar file_input_terminal_name(p8 address_to path, positive limit)
+{
+        if (!file_handle_terminal(0))
+                return -ENOTTY;
+
+        bipolar length = system_call_4(
+            syscall(readlinkat), AT_FDCWD,
+            (positive)(string_address) "/proc/self/fd/0", (positive)path,
+            limit - 1);
+
+        if (length >= 0)
+                path[length] = end;
+
+        return length;
 }
 
 static b32 file_color_when(string_address value, b32 bare)
@@ -2310,6 +2350,7 @@ static bool ls_headings;
 static bool ls_coloring;
 static bool ls_color_started;
 static bool ls_terminal;
+static bool ls_escape;
 static string_address ls_colors;
 
 static b32 ls_status;
@@ -2318,6 +2359,7 @@ static bool ls_broken;
 static b64 ls_now;
 static p8 ls_hidden_option;
 static p8 ls_order_option;
+static string_address ls_program;
 
 static const file_supersede ls_supersedes[] = {
     {(string_address) "aA", address_of ls_hidden_option},
@@ -2329,7 +2371,8 @@ static fn ls_limit(string_address why)
 {
         if (!ls_broken)
         {
-                file_fail("ls: ", 0);
+                file_fail(ls_program, 0);
+                file_fail(": ", 2);
                 file_fail(why, 0);
                 file_fail("\n", 1);
         }
@@ -2637,6 +2680,60 @@ static file_color_span ls_name_color(string_address directory,
 
 static fn ls_name_text(string_address name)
 {
+        if (ls_escape)
+        {
+                static b8 safe[STRING_SET_BYTES];
+                static bool ready;
+
+                if (!ready)
+                {
+                        memory_fill(safe + 32, 1, STRING_SET_BYTES - 32);
+                        safe['\\'] = 0;
+                        safe[127] = 0;
+                        ready = true;
+                }
+
+                for (positive at = 0; string_get(name + at);)
+                {
+                        positive plain = string_span(name + at, safe);
+
+                        if (plain)
+                        {
+                                log(name + at, plain);
+                                at += plain;
+                        }
+
+                        if (!string_get(name + at))
+                                break;
+
+                        p8 byte = string_get(name + at++);
+                        p8 escaped[4] = {'\\', 0, 0, 0};
+                        positive length = 2;
+
+                        escaped[1] = byte == 7      ? 'a'
+                                     : byte == '\b' ? 'b'
+                                     : byte == '\f' ? 'f'
+                                     : byte == '\n' ? 'n'
+                                     : byte == '\r' ? 'r'
+                                     : byte == '\t' ? 't'
+                                     : byte == '\v' ? 'v'
+                                     : byte == '\\' ? '\\'
+                                                     : 0;
+
+                        if (!escaped[1])
+                        {
+                                escaped[1] = (p8)('0' + ((byte >> 6) & 7));
+                                escaped[2] = (p8)('0' + ((byte >> 3) & 7));
+                                escaped[3] = (p8)('0' + (byte & 7));
+                                length = 4;
+                        }
+
+                        log(escaped, length);
+                }
+
+                return;
+        }
+
         bool quoted = false;
 
         if (ls_terminal)
@@ -2768,7 +2865,7 @@ static fn ls_print(string_address directory)
                         group_width = string_length(name);
         }
 
-        if (ls_long)
+        if (ls_long && directory)
         {
                 for (positive i = 0; i < ls_count; i++)
                         blocks += ls_entries[i].blocks;
@@ -2968,8 +3065,9 @@ static fn ls_directory(string_address path, bool heading, positive depth)
 
         if (!file_walk_open(address_of walk, AT_FDCWD, path))
         {
-                string_format(file_fail, "ls: cannot open directory '%s': No such file or directory\n",
-                              path);
+                string_format(file_fail,
+                              "%s: cannot open directory '%s': No such file or directory\n",
+                              ls_program, path);
                 ls_status = 1;
                 return;
         }
@@ -3023,14 +3121,17 @@ static const file_long ls_longs[] = {
     {null, 0},
 };
 
-static b32 file_ls()
+static b32 file_ls_as(string_address program, bool long_default,
+                      bool escape_default)
 {
         positive count = (positive)program_argument_count();
         ls_hidden_option = 0;
         ls_order_option = 0;
+        ls_program = program;
+        ls_escape = escape_default;
 
         file_taking taking = {
-            .program = (string_address) "ls",
+            .program = program,
             .allowed = (string_address) "laARtShr1dinFp",
             .valued = (string_address) "",
             .optional = (string_address) "C",
@@ -3050,7 +3151,8 @@ static b32 file_ls()
 
         ls_now = file_now();
 
-        ls_long = (flags & FILE_FLAG('l')) != 0 || (flags & FILE_FLAG('n')) != 0;
+        ls_long = (flags & (FILE_FLAG('l') | FILE_FLAG('n'))) != 0 ||
+                  (long_default && !(flags & FILE_FLAG('1')));
         ls_hidden = ls_hidden_option == 'a';
         ls_almost = ls_hidden_option == 'A';
         ls_recursive = (flags & FILE_FLAG('R')) != 0;
@@ -3071,7 +3173,9 @@ static b32 file_ls()
         if (ls_colors && string_get(ls_colors) &&
             !file_color_table_valid(ls_colors, false))
         {
-                file_fail("ls: unparsable value for LS_COLORS environment variable\n", 0);
+                string_format(file_fail,
+                              "%s: unparsable value for LS_COLORS environment variable\n",
+                              program);
                 ls_colors = null;
         }
 
@@ -3082,7 +3186,9 @@ static b32 file_ls()
 
                 if (when < 0)
                 {
-                        string_format(file_fail, "ls: invalid argument '%s' for --color\n",
+                        string_format(file_fail,
+                                      "%s: invalid argument '%s' for --color\n",
+                                      program,
                                       file_option_value(address_of taking, 'C'));
                         return 1;
                 }
@@ -3138,9 +3244,9 @@ static b32 file_ls()
                 if (!file_exists(AT_FDCWD, path))
                 {
                         string_format(file_fail,
-                                      "ls: cannot access '%s': No such file or directory\n",
-                                      path);
-                        ls_status = 1;
+                                      "%s: cannot access '%s': No such file or directory\n",
+                                      program, path);
+                        ls_status = 2;
                         continue;
                 }
 
@@ -3214,6 +3320,16 @@ static b32 file_ls()
         log_flush();
 
         return ls_status;
+}
+
+static b32 file_ls()
+{
+        return file_ls_as((string_address) "ls", false, false);
+}
+
+static b32 file_vdir()
+{
+        return file_ls_as((string_address) "vdir", true, true);
 }
 
 // Running a command ------------------------------------------------
@@ -3332,6 +3448,199 @@ static b32 file_run(string_address address_to words)
                 return 125;
 
         return (b32)((status >> 8) & 0xff);
+}
+
+// nice -------------------------------------------------------------
+#define NICE_PROCESS 0
+
+static bool nice_adjustment(string_address text, bipolar address_to value)
+{
+        text += string_span(text, string_set_blanks);
+
+        bool below = string_is(text, '-');
+
+        if (below || string_is(text, '+'))
+                text++;
+
+        positive used;
+        positive magnitude = string_digits_max(
+            text, below ? (positive)bipolar_max + 1 : (positive)bipolar_max,
+            address_of used);
+
+        if (!used || string_get(text + used))
+                return false;
+
+        address_to value = below
+                               ? magnitude == (positive)bipolar_max + 1
+                                     ? bipolar_min
+                                     : -(bipolar)magnitude
+                               : (bipolar)magnitude;
+        return true;
+}
+
+static bool nice_current(bipolar address_to current)
+{
+        bipolar raw = system_call_2(syscall(getpriority), NICE_PROCESS, 0);
+
+        if (raw < 0)
+                return false;
+
+        address_to current = 20 - raw;
+        return true;
+}
+
+static b32 file_nice()
+{
+        positive count = (positive)program_argument_count();
+        positive first = 1;
+        string_address given = null;
+
+        while (first < count)
+        {
+                string_address word = program_argument((b32)first);
+                positive offset = 1 + (string_is(word + 1, '-') ||
+                                       string_is(word + 1, '+'));
+
+                if (string_is(word, '-') && byte_is_digit(string_get(word + offset)))
+                {
+                        given = word + 1;
+                        first++;
+                        continue;
+                }
+
+                if (string_equals(word, "--"))
+                {
+                        first++;
+                        break;
+                }
+
+                if (string_is(word, '-') && string_is(word + 1, 'n'))
+                {
+                        if (string_get(word + 2))
+                                given = word + 2;
+                        else if (++first < count)
+                                given = program_argument((b32)first);
+                        else
+                        {
+                                file_fail("nice: option needs an argument: -n\n", 0);
+                                return 125;
+                        }
+
+                        first++;
+                        continue;
+                }
+
+                if (string_is(word, '-') && string_is(word + 1, '-'))
+                {
+                        string_address name = word + 2;
+                        string_address mark = string_first_of(name, '=');
+                        positive length = mark ? (positive)(mark - name)
+                                               : string_length(name);
+
+                        if (length && length <= string_length("adjustment") &&
+                            !string_compare_max(name, "adjustment", length))
+                        {
+                                if (mark)
+                                        given = mark + 1;
+                                else if (++first < count)
+                                        given = program_argument((b32)first);
+                                else
+                                {
+                                        file_fail("nice: option needs an argument: --adjustment\n",
+                                                  0);
+                                        return 125;
+                                }
+
+                                first++;
+                                continue;
+                        }
+                }
+
+                if (string_is(word, '-') && !string_is(word + 1, end))
+                {
+                        string_format(file_fail, "nice: invalid option '%s'\n", word);
+                        return 125;
+                }
+
+                break;
+        }
+
+        bipolar adjustment = 10;
+
+        if (given)
+        {
+                if (!nice_adjustment(given, address_of adjustment))
+                {
+                        string_format(file_fail, "nice: invalid adjustment '%s'\n",
+                                      given);
+                        return 125;
+                }
+
+                if (adjustment < -39)
+                        adjustment = -39;
+                else if (adjustment > 39)
+                        adjustment = 39;
+        }
+
+        if (first >= count)
+        {
+                if (given)
+                {
+                        file_fail("nice: a command must be given with an adjustment\n",
+                                  0);
+                        return 125;
+                }
+
+                bipolar current;
+
+                if (!nice_current(address_of current))
+                {
+                        file_fail("nice: cannot get niceness\n", 0);
+                        return 125;
+                }
+
+                bipolar_to_string(log, current);
+                log("\n", 1);
+                log_flush();
+                return 0;
+        }
+
+        bipolar current;
+
+        if (!nice_current(address_of current))
+        {
+                file_fail("nice: cannot get niceness\n", 0);
+                return 125;
+        }
+
+        bipolar wanted = current + adjustment;
+
+        if (wanted < -20)
+                wanted = -20;
+        else if (wanted > 19)
+                wanted = 19;
+
+        bipolar changed = system_call_3(syscall(setpriority), NICE_PROCESS, 0,
+                                        (positive)wanted);
+
+        if (changed < 0)
+        {
+                string_format(file_fail, "nice: cannot set niceness: %s\n",
+                              file_reason(changed));
+
+                if (changed != -ERROR_ACCESS && changed != -ERROR_NOT_PERMITTED)
+                        return 125;
+        }
+
+        string_address address_to words = program_argument_list() + first;
+
+        log_flush();
+
+        bipolar answer = file_exec_path_try(words);
+
+        string_format(file_fail, "nice: '%s': %s\n", words[0],
+                      file_reason(answer));
+        return answer == -ERROR_NO_ENTRY ? 127 : 126;
 }
 
 // find ------------------------------------------------------------
@@ -5779,7 +6088,7 @@ static fn df_row(string_address device, string_address type, string_address wher
 }
 
 // Every line of /proc/mounts is device, mount point, type, options; the first
-// three are all df needs and both names may carry \040 where a space was.
+// three are all df needs and names use backslash-octal for whitespace and \.
 static positive df_field(p8 address_to text, positive at, p8 address_to into,
                          positive limit)
 {
@@ -5790,11 +6099,16 @@ static positive df_field(p8 address_to text, positive at, p8 address_to into,
 
         while (text[at] && text[at] != ' ' && text[at] != '\n')
         {
-                if (text[at] == '\\' && text[at + 1] == '0' && text[at + 2] == '4' &&
-                    text[at + 3] == '0')
+                positive used = 0;
+                positive decoded = text[at] == '\\'
+                                       ? string_digits_octal_max(
+                                             text + at + 1, 3, address_of used)
+                                       : 0;
+
+                if (used == 3)
                 {
                         if (filled + 1 < limit)
-                                into[filled++] = ' ';
+                                into[filled++] = (p8)decoded;
 
                         at += 4;
                         continue;
@@ -6665,12 +6979,44 @@ static b32 file_ln()
 static string_address file_simple_operand_list[3];
 static positive file_simple_operand_count;
 
+static b32 address_to file_operand_list;
+static positive file_operand_count;
+static positive file_operand_room;
+static bool file_operand_failed;
+
 static fn file_simple_operand(b32 index)
 {
         if (file_simple_operand_count < 3)
                 file_simple_operand_list[file_simple_operand_count] =
                     program_argument(index);
         file_simple_operand_count++;
+}
+
+static fn file_operand(b32 index)
+{
+        if (file_operand_failed)
+                return;
+
+        if (!shell_room((address_any address_to)address_of file_operand_list,
+                        address_of file_operand_room, file_operand_count + 1,
+                        sizeof(file_operand_list[0])))
+        {
+                file_operand_failed = true;
+                return;
+        }
+
+        file_operand_list[file_operand_count++] = index;
+}
+
+static fn file_operands_begin()
+{
+        file_operand_count = 0;
+        file_operand_failed = false;
+}
+
+static string_address file_operand_at(positive index)
+{
+        return program_argument(file_operand_list[index]);
 }
 
 static b32 file_link()
@@ -7346,6 +7692,194 @@ static b32 file_realpath()
         return status;
 }
 
+// pathchk ----------------------------------------------------------
+#define PATHCHK_POSIX_PATH 256
+#define PATHCHK_POSIX_NAME 14
+
+static const file_long pathchk_longs[] = {
+    {(string_address) "portability", 'Q'},
+    {null, 0},
+};
+
+static COLD bool pathchk_bad(string_address path, string_address why)
+{
+        string_format(file_fail, "pathchk: %s: '%s'\n", why, path);
+        return false;
+}
+
+static bool pathchk_portable_chars(string_address path, positive length)
+{
+        static b8 portable[STRING_SET_BYTES];
+        static bool ready;
+
+        if (!ready)
+        {
+                string_set_add(portable,
+                               (string_address) "/ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+                                                "abcdefghijklmnopqrstuvwxyz"
+                                                "0123456789._-");
+                ready = true;
+        }
+
+        return string_span(path, portable) == length;
+}
+
+static bool pathchk_one(string_address path, bool basic, bool extra)
+{
+        positive length = string_length(path);
+
+        if ((basic || extra) && !length)
+                return pathchk_bad(path, (string_address) "empty file name");
+
+        positive at = 0;
+        positive longest = 0;
+
+        while (at < length)
+        {
+                at += memory_span_byte(path + at, '/', length - at);
+
+                if (at >= length)
+                        break;
+
+                string_address stop = string_first_of_or_end(path + at, '/');
+                positive component = (positive)(stop - path) - at;
+
+                if (extra && string_is(path + at, '-'))
+                        return pathchk_bad(path,
+                                           (string_address) "leading '-' in a component");
+
+                if (component > longest)
+                        longest = component;
+
+                at += component;
+        }
+
+        if (basic && !pathchk_portable_chars(path, length))
+                return pathchk_bad(path, (string_address) "non-portable character");
+
+        if (basic)
+        {
+                if (length >= PATHCHK_POSIX_PATH)
+                        return pathchk_bad(path,
+                                           (string_address) "portable path limit exceeded");
+
+                if (longest > PATHCHK_POSIX_NAME)
+                        return pathchk_bad(path,
+                                           (string_address) "portable component limit exceeded");
+
+                return true;
+        }
+
+        file_facts facts;
+        bipolar looked = system_call_5(syscall(statx), AT_FDCWD,
+                                       (positive)path,
+                                       AT_SYMLINK_NOFOLLOW | AT_NO_AUTOMOUNT,
+                                       STATX_BASIC, (positive)address_of facts);
+
+        if (!looked)
+                return true;
+
+        if (looked != -ERROR_NO_ENTRY || !length)
+                return pathchk_bad(path, file_reason(looked));
+
+        if (length >= FILE_PATH_MAX)
+                return pathchk_bad(path, (string_address) "path limit exceeded");
+
+        // Linux promises at least fourteen bytes in every component. Only a
+        // longer one needs the mount-specific f_namelen walk.
+        if (longest <= PATHCHK_POSIX_NAME)
+                return true;
+
+        p8 prefix[FILE_PATH_MAX];
+        positive filled = 0;
+        positive name_max = PATHCHK_POSIX_NAME;
+        file_mount_facts mount;
+        string_address base = string_is(path, '/') ? (string_address) "/"
+                                                   : (string_address) ".";
+        bipolar mounted = system_call_2(syscall(statfs), (positive)base,
+                                        (positive)address_of mount);
+
+        if (mounted < 0)
+                return pathchk_bad(path, file_reason(mounted));
+
+        if (mount.name_length > 0)
+                name_max = (positive)mount.name_length;
+
+        at = 0;
+
+        if (string_is(path, '/'))
+                prefix[filled++] = '/';
+
+        while (at < length)
+        {
+                at += memory_span_byte(path + at, '/', length - at);
+
+                if (at >= length)
+                        break;
+
+                string_address stop = string_first_of_or_end(path + at, '/');
+                positive component = (positive)(stop - path) - at;
+
+                if (component > name_max)
+                        return pathchk_bad(path,
+                                           (string_address) "component limit exceeded");
+
+                if (filled && prefix[filled - 1] != '/')
+                        prefix[filled++] = '/';
+
+                memory_copy_apart(prefix + filled, path + at, component);
+                filled += component;
+                prefix[filled] = end;
+
+                mounted = system_call_2(syscall(statfs), (positive)prefix,
+                                        (positive)address_of mount);
+
+                if (!mounted && mount.name_length > 0)
+                        name_max = (positive)mount.name_length;
+                else if (mounted < 0 && mounted != -ERROR_NO_ENTRY)
+                        return pathchk_bad(path, file_reason(mounted));
+
+                at += component;
+        }
+
+        return true;
+}
+
+static b32 file_pathchk()
+{
+        file_taking taking = {
+            .program = (string_address) "pathchk",
+            .allowed = (string_address) "pP",
+            .valued = (string_address) "",
+            .longs = pathchk_longs,
+        };
+
+        if (!file_take(address_of taking))
+                return 1;
+
+        positive count = (positive)program_argument_count();
+        positive first = taking.first;
+
+        if (first >= count)
+        {
+                file_fail("pathchk: missing operand\n", 0);
+                return 1;
+        }
+
+        bool basic = (taking.flags &
+                      (FILE_FLAG('p') | FILE_FLAG('Q'))) != 0;
+        bool extra = (taking.flags &
+                      (FILE_FLAG('P') | FILE_FLAG('Q'))) != 0;
+        b32 status = 0;
+
+        while (first < count)
+                if (!pathchk_one(program_argument((b32)first++), basic, extra))
+                        status = 1;
+
+        log_flush();
+        return status;
+}
+
 // mkdir ------------------------------------------------------------
 // mkdir [-p] [-m MODE] DIRECTORY...
 static b32 file_mkdir()
@@ -7418,6 +7952,357 @@ static b32 file_mkdir()
         log_flush();
 
         return status;
+}
+
+// mkfifo / mknod ----------------------------------------------------
+/*
+        Both interfaces are the same operation at the kernel floor.  Their
+        explicit mode starts from a=rw; an omitted `who` is filtered through
+        the process umask, while a named class is not.  The creation syscall
+        applies the umask once more, so an explicit mode is restored after a
+        successful creation exactly as GNU does.
+*/
+static const file_long file_node_longs[] = {
+    {(string_address) "context", 'C'},
+    {(string_address) "mode", 'm'},
+    {null, 0},
+};
+
+static bool file_node_mode(string_address specification,
+                           positive address_to mode)
+{
+        bipolar mask = system_call_1(syscall(umask), 0);
+
+        if (mask < 0)
+                return false;
+
+        system_call_1(syscall(umask), (positive)mask);
+
+        return file_mode_adjust(specification, 0666, false,
+                                07000 | (0777 & ~(positive)mask), mode) &&
+               !(address_to mode & ~0777);
+}
+
+static b32 file_make_node(string_address program, string_address path,
+                          positive kind, positive device, positive mode,
+                          bool given_mode)
+{
+        bipolar made = system_call_4(syscall(mknodat), AT_FDCWD,
+                                     (positive)path, kind | mode, device);
+
+        if (made < 0)
+        {
+                string_format(file_fail, "%s: cannot create '%s': %s\n",
+                              program, path, file_reason(made));
+                return 1;
+        }
+
+        if (given_mode &&
+            system_call_4(syscall(fchmodat), AT_FDCWD, (positive)path,
+                          mode, 0) < 0)
+        {
+                string_format(file_fail,
+                              "%s: cannot set permissions of '%s'\n",
+                              program, path);
+                return 1;
+        }
+
+        return 0;
+}
+
+static bool file_node_options(string_address program, file_taking address_to taking,
+                              positive address_to mode, bool address_to given)
+{
+        file_operands_begin();
+        taking->program = program;
+        taking->allowed = (string_address) "mZ";
+        taking->valued = (string_address) "m";
+        taking->optional = (string_address) "C";
+        taking->longs = file_node_longs;
+        taking->operand = file_operand;
+
+        if (!file_take(taking) || file_operand_failed)
+                return false;
+
+        address_to given = (taking->flags & FILE_FLAG('m')) != 0;
+        address_to mode = 0666;
+
+        if (address_to given &&
+            !file_node_mode(file_option_value(taking, 'm'), mode))
+        {
+                string_format(file_fail, "%s: invalid mode\n", program);
+                return false;
+        }
+
+        // This image has neither SELinux nor SMACK. GNU treats -Z and a bare
+        // --context as no-ops in that case, and only warns for an explicit
+        // context value while leaving the creation and status untouched.
+        if (file_option_value(taking, 'C'))
+                string_format(file_fail,
+                              "%s: warning: ignoring --context; it requires "
+                              "an SELinux/SMACK-enabled kernel\n",
+                              program);
+
+        return true;
+}
+
+static b32 file_mkfifo()
+{
+        file_taking taking = {0};
+        positive mode;
+        bool given_mode;
+
+        if (!file_node_options((string_address) "mkfifo", address_of taking,
+                               address_of mode, address_of given_mode))
+                return 1;
+
+        if (!file_operand_count)
+        {
+                file_fail("mkfifo: missing operand\n", 0);
+                return 1;
+        }
+
+        b32 status = 0;
+
+        for (positive i = 0; i < file_operand_count; i++)
+                status |= file_make_node((string_address) "mkfifo",
+                                         file_operand_at(i), MODE_PIPE, 0,
+                                         mode, given_mode);
+
+        log_flush();
+        return status;
+}
+
+static bool file_device_number(string_address text, p32 address_to value)
+{
+        text += string_span(text, string_set_blanks);
+
+        if (string_is(text, '+'))
+                text++;
+        else if (string_is(text, '-'))
+                return false;
+
+        positive used;
+        positive made;
+
+        if (string_is(text, '0') &&
+            (string_is(text + 1, 'x') || string_is(text + 1, 'X')))
+        {
+                positive digits;
+
+                made = string_digits_hexadecimal_max(text + 2, p32_max,
+                                                     address_of digits);
+
+                if (!digits)
+                        return false;
+
+                used = digits + 2;
+        }
+        else if (string_is(text, '0'))
+                made = string_digits_octal_max(text, p32_max, address_of used);
+        else
+                made = string_digits_max(text, p32_max, address_of used);
+
+        if (!used || string_get(text + used) || made > p32_max)
+                return false;
+
+        address_to value = (p32)made;
+        return true;
+}
+
+static positive file_device(p32 major, p32 minor)
+{
+        return ((positive)minor & 0xff) |
+               (((positive)major & 0xfff) << 8) |
+               (((positive)minor & ~0xffu) << 12) |
+               (((positive)major & ~0xfffu) << 32);
+}
+
+static b32 file_mknod()
+{
+        file_taking taking = {0};
+        positive mode;
+        bool given_mode;
+
+        if (!file_node_options((string_address) "mknod", address_of taking,
+                               address_of mode, address_of given_mode))
+                return 1;
+
+        positive expected = file_operand_count > 1 &&
+                                    string_is(file_operand_at(1), 'p')
+                                ? 2
+                                : 4;
+
+        if (file_operand_count != expected)
+        {
+                file_fail(!file_operand_count
+                              ? (string_address) "mknod: missing operand\n"
+                              : file_operand_count < expected
+                                    ? (string_address) "mknod: missing operand\n"
+                                    : (string_address) "mknod: extra operand\n",
+                          0);
+                return 1;
+        }
+
+        string_address path = file_operand_at(0);
+        p8 type = string_get(file_operand_at(1));
+        positive kind;
+        positive device = 0;
+
+        if (type == 'p')
+                kind = MODE_PIPE;
+        else if (type == 'b' || type == 'c' || type == 'u')
+        {
+                p32 major, minor;
+
+                if (!file_device_number(file_operand_at(2), address_of major))
+                {
+                        string_format(file_fail,
+                                      "mknod: invalid major device number '%s'\n",
+                                      file_operand_at(2));
+                        return 1;
+                }
+
+                if (!file_device_number(file_operand_at(3), address_of minor))
+                {
+                        string_format(file_fail,
+                                      "mknod: invalid minor device number '%s'\n",
+                                      file_operand_at(3));
+                        return 1;
+                }
+
+                kind = type == 'b' ? MODE_BLOCK : MODE_CHARACTER;
+                device = file_device(major, minor);
+        }
+        else
+        {
+                string_format(file_fail, "mknod: invalid device type '%s'\n",
+                              file_operand_at(1));
+                return 1;
+        }
+
+        b32 status = file_make_node((string_address) "mknod", path, kind,
+                                    device, mode, given_mode);
+        log_flush();
+        return status;
+}
+
+// sync -------------------------------------------------------------
+#define FILE_F_GETFL 3
+#define FILE_F_SETFL 4
+
+static const file_long sync_longs[] = {
+    {(string_address) "data", 'd'},
+    {(string_address) "file-system", 'f'},
+    {null, 0},
+};
+
+static bool file_sync_one(string_address path, p8 mode)
+{
+        bipolar opened = system_call_4(syscall(openat), AT_FDCWD,
+                                       (positive)path,
+                                       FILE_READ | O_NONBLOCK, 0);
+        bipolar read_error = opened;
+
+        if (opened < 0)
+                opened = system_call_4(syscall(openat), AT_FDCWD,
+                                       (positive)path, 01 | O_NONBLOCK, 0);
+
+        if (opened < 0)
+        {
+                string_format(file_fail, "sync: error opening '%s': %s\n",
+                              path, file_reason(read_error));
+                return false;
+        }
+
+        bipolar flags = system_call_3(syscall(fcntl), (positive)opened,
+                                      FILE_F_GETFL, 0);
+        bool good = flags >= 0 &&
+                    system_call_3(syscall(fcntl), (positive)opened,
+                                  FILE_F_SETFL,
+                                  (positive)flags & ~O_NONBLOCK) >= 0;
+
+        if (!good)
+                string_format(file_fail,
+                              "sync: couldn't reset non-blocking mode '%s'\n",
+                              path);
+        else
+        {
+                bipolar synced = mode == 'd'
+                                      ? system_call_1(syscall(fdatasync),
+                                                      (positive)opened)
+                                  : mode == 'f'
+                                      ? system_call_1(syscall(syncfs),
+                                                      (positive)opened)
+                                      : system_call_1(syscall(fsync),
+                                                      (positive)opened);
+
+                if (synced < 0)
+                {
+                        string_format(file_fail, "sync: error syncing '%s': %s\n",
+                                      path, file_reason(synced));
+                        good = false;
+                }
+        }
+
+        bipolar closed = system_call_1(syscall(close), (positive)opened);
+
+        if (closed < 0)
+        {
+                string_format(file_fail, "sync: failed to close '%s': %s\n",
+                              path, file_reason(closed));
+                good = false;
+        }
+
+        return good;
+}
+
+static b32 file_sync()
+{
+        file_operands_begin();
+        file_taking taking = {
+            .program = (string_address) "sync",
+            .allowed = (string_address) "df",
+            .valued = (string_address) "",
+            .longs = sync_longs,
+            .operand = file_operand,
+        };
+
+        if (!file_take(address_of taking) || file_operand_failed)
+                return 1;
+
+        bool data = (taking.flags & FILE_FLAG('d')) != 0;
+        bool filesystem = (taking.flags & FILE_FLAG('f')) != 0;
+
+        if (data && filesystem)
+        {
+                file_fail("sync: cannot specify both --data and --file-system\n",
+                          0);
+                return 1;
+        }
+
+        if (data && !file_operand_count)
+        {
+                file_fail("sync: --data needs at least one argument\n", 0);
+                return 1;
+        }
+
+        if (!file_operand_count)
+                system_call(syscall(sync));
+        else
+        {
+                p8 mode = data ? 'd' : filesystem ? 'f' : 0;
+                b32 status = 0;
+
+                for (positive i = 0; i < file_operand_count; i++)
+                        if (!file_sync_one(file_operand_at(i), mode))
+                                status = 1;
+
+                log_flush();
+                return status;
+        }
+
+        return 0;
 }
 
 // rmdir ------------------------------------------------------------
@@ -8812,6 +9697,59 @@ static b32 file_stty()
         return 0;
 }
 
+// tty --------------------------------------------------------------
+static const file_long tty_longs[] = {
+    {(string_address) "quiet", 's'},
+    {(string_address) "silent", 's'},
+    {null, 0},
+};
+
+static b32 file_tty()
+{
+        file_simple_operand_count = 0;
+        file_taking taking = {
+            .program = (string_address) "tty",
+            .allowed = (string_address) "s",
+            .valued = (string_address) "",
+            .longs = tty_longs,
+            .operand = file_simple_operand,
+        };
+
+        if (!file_take(address_of taking))
+                return 2;
+
+        if (file_simple_operand_count)
+        {
+                string_format(file_fail, "tty: extra operand '%s'\n",
+                              file_simple_operand_list[0]);
+                return 2;
+        }
+
+        if (taking.flags & FILE_FLAG('s'))
+                return file_handle_terminal(0) ? 0 : 1;
+
+        p8 path[FILE_PATH_MAX];
+        bipolar length = file_input_terminal_name(path, sizeof(path));
+
+        if (length == -ENOTTY)
+        {
+                file_line((string_address) "not a tty");
+                log_flush();
+                return log_failed() ? 3 : 1;
+        }
+
+        if (length < 0)
+        {
+                string_format(file_fail, "tty: ttyname error: %s\n",
+                              file_reason(length));
+                return 4;
+        }
+
+        file_line(path);
+        log_flush();
+        return log_failed() ? 3 : 0;
+}
+
 // seq ------------------------------------------------------------
 /*
         seq LAST, seq FIRST LAST, seq FIRST INCREMENT LAST.
@@ -10061,8 +10999,6 @@ static b32 file_printenv()
         kernel can only be asked about this process, and this process is not
         the user being asked about.
 */
-#define ID_GROUPS_MAX 64
-
 static const file_long id_longs[] = {
     {(string_address) "context", 'Z'},
     {(string_address) "group", 'g'},
@@ -10107,18 +11043,38 @@ static fn id_alone(positive value, bool group, bool names, bool zero)
         order and does not promise the primary one is among them, so the group
         actually in effect belongs at the front either way.
 */
-static positive id_groups_named(string_address name, positive primary,
-                                p32 address_to into, positive limit)
+static p32 address_to id_group_members;
+static positive id_group_room;
+
+static bool id_group_add(positive value, positive address_to have)
+{
+        for (positive i = 0; i < address_to have; i++)
+                if (id_group_members[i] == (p32)value)
+                        return true;
+
+        if (!shell_room((address_any address_to)address_of id_group_members,
+                        address_of id_group_room, address_to have + 1,
+                        sizeof(id_group_members[0])))
+                return false;
+
+        id_group_members[address_to have] = (p32)value;
+        address_to have = address_to have + 1;
+        return true;
+}
+
+static bool id_groups_named(string_address name, positive primary,
+                            positive address_to have)
 {
         p8 address_to text = file_group_text();
         positive wanted = string_length(name);
-        positive have = 0;
         positive at = 0;
 
-        if (limit)
-                into[have++] = (p32)primary;
+        address_to have = 0;
 
-        while (text[at] && have < limit)
+        if (!id_group_add(primary, have))
+                return false;
+
+        while (text[at])
         {
                 positive stop = (positive)(string_first_of_or_end(text + at, '\n') - text);
 
@@ -10151,7 +11107,9 @@ static positive id_groups_named(string_address name, positive primary,
                         if (i - from == wanted &&
                             !memory_compare(text + from, name, wanted))
                         {
-                                into[have++] = (p32)value;
+                                if (!id_group_add(value, have))
+                                        return false;
+
                                 break;
                         }
 
@@ -10165,7 +11123,36 @@ static positive id_groups_named(string_address name, positive primary,
                         at++;
         }
 
-        return have;
+        return true;
+}
+
+static bool id_groups_process(positive real, positive effective,
+                              positive address_to have)
+{
+        bipolar groups = system_call_2(syscall(getgroups), 0, 0);
+
+        address_to have = 0;
+
+        if (groups < 0 ||
+            !shell_room((address_any address_to)address_of id_group_members,
+                        address_of id_group_room, (positive)groups + 2,
+                        sizeof(id_group_members[0])))
+                return false;
+
+        if (groups &&
+            system_call_2(syscall(getgroups), (positive)groups,
+                          (positive)(id_group_members + 2)) != groups)
+                return false;
+
+        if (!id_group_add(real, have) ||
+            (effective != real && !id_group_add(effective, have)))
+                return false;
+
+        for (positive i = 0; i < (positive)groups; i++)
+                if (!id_group_add(id_group_members[i + 2], have))
+                        return false;
+
+        return true;
 }
 
 static fn id_written(positive user, positive group, p32 address_to members,
@@ -10271,8 +11258,6 @@ static b32 file_id()
 
         positive first = taking.first;
         positive count = (positive)program_argument_count();
-        p32 members[ID_GROUPS_MAX];
-
         if (first < count)
         {
                 b32 status = 0;
@@ -10290,11 +11275,18 @@ static b32 file_id()
                                 continue;
                         }
 
-                        positive have = id_groups_named(who, (positive)group, members,
-                                                        ID_GROUPS_MAX);
+                        positive have;
 
-                        id_written((positive)user, (positive)group, members, have, flags,
-                                   names, zero);
+                        if (!id_groups_named(who, (positive)group,
+                                             address_of have))
+                        {
+                                file_fail("id: group list is too large\n", 0);
+                                status = 1;
+                                continue;
+                        }
+
+                        id_written((positive)user, (positive)group,
+                                   id_group_members, have, flags, names, zero);
                 }
 
                 log_flush();
@@ -10313,28 +11305,113 @@ static b32 file_id()
                 group = effective_group;
         }
 
-        bipolar have = system_call_2(syscall(getgroups), ID_GROUPS_MAX - 1,
-                                     (positive)(members + 1));
+        positive have;
 
-        if (have < 0)
-                have = 0;
+        if (!id_groups_process(group, group, address_of have))
+        {
+                file_fail("id: failed to get groups for the current process\n", 0);
+                return 1;
+        }
 
-        // The kernel hands the supplementary groups back in its own order and
-        // does not promise the primary one is among them; the group actually
-        // in effect belongs at the front.
-        members[0] = (p32)group;
-
-        positive keep = 1;
-
-        for (positive i = 1; i <= (positive)have; i++)
-                if (members[i] != (p32)group)
-                        members[keep++] = members[i];
-
-        id_written(user, group, members, keep, flags, names, zero);
+        id_written(user, group, id_group_members, have, flags, names, zero);
 
         log_flush();
 
         return 0;
+}
+
+// groups ----------------------------------------------------------
+static bool groups_written(positive have)
+{
+        bool known = true;
+
+        for (positive i = 0; i < have; i++)
+        {
+                p8 text[FILE_NAME_MAX];
+
+                if (i)
+                        log(" ", 1);
+
+                if (!file_group_name(id_group_members[i], text,
+                                     FILE_NAME_MAX))
+                {
+                        positive_into_string(text, id_group_members[i]);
+                        string_format(file_fail,
+                                      "groups: cannot find name for group ID %u\n",
+                                      (positive)id_group_members[i]);
+                        known = false;
+                }
+
+                log(text, 0);
+        }
+
+        log("\n", 1);
+        return known;
+}
+
+static b32 file_groups()
+{
+        file_operands_begin();
+        file_taking taking = {
+            .program = (string_address) "groups",
+            .allowed = (string_address) "",
+            .valued = (string_address) "",
+            .operand = file_operand,
+        };
+
+        if (!file_take(address_of taking) || file_operand_failed)
+                return 1;
+
+        b32 status = 0;
+        positive have;
+
+        if (!file_operand_count)
+        {
+                positive real = (positive)system_call(syscall(getgid));
+                positive effective = (positive)system_call(syscall(getegid));
+
+                if (!id_groups_process(real, effective, address_of have))
+                {
+                        file_fail("groups: failed to get groups for the current process\n",
+                                  0);
+                        return 1;
+                }
+
+                status = groups_written(have) ? 0 : 1;
+        }
+        else
+                for (positive i = 0; i < file_operand_count; i++)
+                {
+                        string_address who = file_operand_at(i);
+                        bipolar user = file_user_id(who);
+                        bipolar group = file_account_id(file_password_text(),
+                                                        who, 3);
+
+                        if (user < 0 || group < 0)
+                        {
+                                string_format(file_fail,
+                                              "groups: '%s': no such user\n", who);
+                                status = 1;
+                                continue;
+                        }
+
+                        if (!id_groups_named(who, (positive)group,
+                                             address_of have))
+                        {
+                                file_fail("groups: group list is too large\n", 0);
+                                status = 1;
+                                continue;
+                        }
+
+                        log(who, 0);
+                        log(" : ", 3);
+
+                        if (!groups_written(have))
+                                status = 1;
+                }
+
+        log_flush();
+        return status;
 }
 
 // whoami ---------------------------------------------------------
@@ -10365,6 +11442,145 @@ static b32 file_whoami()
         {
                 string_format(file_fail,
                               "whoami: cannot find name for user ID %u\n", user);
+                return 1;
+        }
+
+        file_line(name);
+        log_flush();
+        return 0;
+}
+
+// logname --------------------------------------------------------
+typedef struct
+{
+        p16 type;
+        p16 padding;
+        p32 process;
+        p8 line[32];
+        p8 identity[4];
+        p8 user[32];
+        p8 host[256];
+        p16 termination;
+        p16 exit;
+        b32 session;
+        b32 seconds;
+        b32 microseconds;
+        p32 address[4];
+        p8 reserved[20];
+} file_utmp;
+
+_Static_assert(sizeof(file_utmp) == 384, "Linux utmp record is 384 bytes");
+_Static_assert(__builtin_offsetof(file_utmp, line) == 8,
+               "Linux utmp line offset");
+_Static_assert(__builtin_offsetof(file_utmp, user) == 44,
+               "Linux utmp user offset");
+
+static bool file_logname_utmp(string_address tty, p8 address_to name)
+{
+        // GNU consults utmp only for the traditional /dev/tty namespace.
+        if (string_compare_max(tty, (string_address) "/dev/tty", 8))
+                return false;
+
+        bipolar handle = system_call_4(syscall(openat), AT_FDCWD,
+                                       (positive)(string_address)
+                                           "/var/run/utmp",
+                                       FILE_READ, 0);
+
+        if (handle < 0)
+                return false;
+
+        string_address wanted = tty + 5;
+        positive wanted_length = string_length(wanted);
+        file_utmp record;
+
+        while (true)
+        {
+                positive filled = 0;
+
+                while (filled < sizeof(record))
+                {
+                        bipolar got = system_read_retry(
+                            (positive)handle, (p8 address_to)address_of record + filled,
+                            sizeof(record) - filled);
+
+                        if (got <= 0)
+                        {
+                                system_call_1(syscall(close), (positive)handle);
+                                return false;
+                        }
+
+                        filled += (positive)got;
+                }
+
+                positive line_length =
+                    string_length_max(record.line, sizeof(record.line));
+                positive user_length =
+                    string_length_max(record.user, sizeof(record.user));
+
+                if (record.type == 7 && user_length &&
+                    line_length == wanted_length &&
+                    !memory_compare(record.line, wanted, wanted_length))
+                {
+                        memory_copy_apart_end(name, record.user, user_length);
+                        system_call_1(syscall(close), (positive)handle);
+                        return true;
+                }
+        }
+}
+
+static b32 file_logname()
+{
+        file_simple_operand_count = 0;
+        file_taking taking = {
+            .program = (string_address) "logname",
+            .allowed = (string_address) "",
+            .valued = (string_address) "",
+            .operand = file_simple_operand,
+        };
+
+        if (!file_take(address_of taking))
+                return 1;
+
+        if (file_simple_operand_count)
+        {
+                string_format(file_fail, "logname: extra operand '%s'\n",
+                              file_simple_operand_list[0]);
+                return 1;
+        }
+
+        p8 loginuid[32];
+        positive user = positive_max;
+        p8 name[65];
+        bool found = file_slurp((string_address) "/proc/self/loginuid", loginuid,
+                                sizeof(loginuid)) > 0 &&
+                     string_digits_exact(loginuid, address_of user) &&
+                     user < p32_max &&
+                     file_user_name(user, name, sizeof(name)) &&
+                     string_length(name) < 64;
+
+        if (!found)
+        {
+                p8 tty[FILE_PATH_MAX];
+
+                if (file_input_terminal_name(tty, sizeof(tty)) >= 0)
+                {
+                        found = file_logname_utmp(tty, name);
+
+                        if (!found)
+                        {
+                                file_facts facts;
+
+                                found = file_look_at(tty, address_of facts) &&
+                                        file_user_name(facts.owner, name,
+                                                       sizeof(name)) &&
+                                        string_length(name) < 64;
+                        }
+                }
+        }
+
+        if (!found)
+        {
+                file_fail("logname: no login name\n", 0);
                 return 1;
         }
 
@@ -10781,6 +11997,9 @@ static positive nproc_cgroup_quota()
 
                                 if (cpus < lowest)
                                         lowest = cpus;
+
+                                if (lowest == 1)
+                                        return 1;
                         }
                 }
 
@@ -10890,6 +12109,8 @@ static b32 file_nproc()
 
                 if (threads)
                         count = threads < limit ? threads : limit;
+                else if (limit == 1)
+                        count = 1;
                 else
                 {
                         positive quota = nproc_cgroup_quota();

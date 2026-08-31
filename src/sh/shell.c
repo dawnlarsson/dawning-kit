@@ -21,6 +21,7 @@
 */
 #define SIGNAL_INTERRUPT 2
 #define SIGNAL_QUIT 3
+#define SIGNAL_PIPE 13
 #define SIGNAL_IGNORE 1
 #define SIGNAL_DEFAULT 0
 
@@ -130,13 +131,13 @@ asm(".text\n"
 
 fn shell_signal_return();
 
-#define SIGNAL_CATCH_FLAGS (SIGNAL_RESTART | SIGNAL_RESTORER)
 #define SIGNAL_CATCH_RESTORER ((positive)shell_signal_return)
+#define SIGNAL_CATCH_FLAGS (SIGNAL_RESTART | SIGNAL_RESTORER)
 
 #else
 
-#define SIGNAL_CATCH_FLAGS SIGNAL_RESTART
 #define SIGNAL_CATCH_RESTORER 0
+#define SIGNAL_CATCH_FLAGS SIGNAL_RESTART
 
 #endif
 
@@ -147,12 +148,22 @@ fn shell_signal_return();
         the shell is only noting down: the action runs when the command it
         interrupted has finished, which is where POSIX says it runs.
 */
-fn shell_catch(b32 number)
+fn shell_catch_mode(b32 number, bool restart)
 {
-        positive action[4] = {(positive)trap_signal_caught, SIGNAL_CATCH_FLAGS,
+        positive flags = SIGNAL_CATCH_FLAGS;
+
+        if (!restart)
+                flags &= ~SIGNAL_RESTART;
+
+        positive action[4] = {(positive)trap_signal_caught, flags,
                               SIGNAL_CATCH_RESTORER, 0};
 
         system_call_4(syscall(rt_sigaction), number, (positive)address_of action, 0, 8);
+}
+
+fn shell_catch(b32 number)
+{
+        shell_catch_mode(number, true);
 }
 
 // Whether anybody is watching. A script and a terminal want different
@@ -371,6 +382,12 @@ static fn shell_words_bind(shell_words address_to list,
         list->count = 0;
 }
 
+/* Set only in a process created solely to run one simple command. Utilities
+   can then use that process directly instead of cloning a disposable wrapper
+   around another disposable child. */
+static bool shell_tail_command;
+fn shell_thread_instance_mode(bool preserve_ignored);
+
 #include "lex.c"
 #include "file.c"
 #include "storage_blkid.c"
@@ -519,17 +536,17 @@ string_address shell_arguments()
         return argument_line;
 }
 
-fn shell_thread_instance()
+fn shell_thread_instance_mode(bool preserve_ignored)
 {
         string_address address_to environment;
 
         // Ignored signals cross execve, and this shell ignores interrupt so
         // that control-C does not take it down with the command. Handing that
         // deafness on would leave the command uninterruptible.
-        if (!shell_was_ignored(SIGNAL_INTERRUPT))
+        if (!preserve_ignored && !shell_was_ignored(SIGNAL_INTERRUPT))
                 shell_default(SIGNAL_INTERRUPT);
 
-        if (!shell_was_ignored(SIGNAL_QUIT))
+        if (!preserve_ignored && !shell_was_ignored(SIGNAL_QUIT))
                 shell_default(SIGNAL_QUIT);
 
         environment = shell_environment();
@@ -547,6 +564,11 @@ fn shell_thread_instance()
         log_flush();
 
         exit(126);
+}
+
+fn shell_thread_instance()
+{
+        shell_thread_instance_mode(false);
 }
 
 // Opened once at startup. Spawning through it skips the fork whose address

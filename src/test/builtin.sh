@@ -344,6 +344,10 @@ written 'P alone permits unnamed directory' 'accepted|' 0 \
         'base=$(mktemp -d); mkdir "$base/gone"; (cd "$base/gone" && rmdir "$base/gone" && cd -P . 2>/dev/null) && echo accepted; rmdir "$base"'
 written 'too many operands rejected' 'rejected same|' 0 \
         'before=$PWD; if cd / /tmp 2>/dev/null; then echo BAD; else printf "rejected "; fi; [ "$PWD" = "$before" ] && echo same'
+answer 'readonly PWD reports update failure' \
+        'cd /tmp; readonly PWD; cd / 2>/dev/null; s=$?; printf "%s:%s:" "$s" "$PWD"; /bin/pwd'
+answer 'readonly OLDPWD stops PWD update' \
+        'cd /tmp; readonly OLDPWD; cd / 2>/dev/null; s=$?; printf "%s:%s:" "$s" "$PWD"; /bin/pwd'
 
 section names
 
@@ -375,6 +379,12 @@ answer 'listed as set'   'set +o'
 answer 'a long name'     'set -o nounset; set +o | grep nounset'
 answer 'turned off'      'set -o nounset; set +o nounset; set +o | grep nounset'
 answer 'letter and name' 'set -e; set +o | grep errexit'
+
+group allexport
+answer 'read assignment' 'unset READV; set -a; printf "value\n" | { read READV; /bin/sh -c '\''echo "$READV"'\''; }'
+answer 'getopts assignments' 'unset OPTION OPTARG; OPTIND=1; set -a; set -- -x value; getopts x: OPTION; /bin/sh -c '\''echo "$OPTION:$OPTARG:$OPTIND"'\'''
+answer 'cd assignments' 'mkdir target; unset PWD OLDPWD; set -a; cd target; /bin/sh -c '\''echo "${PWD##*/}:${OLDPWD##*/}"'\'''
+answer 'readonly assignment' 'unset FIXED; set -a; readonly FIXED=value; /bin/sh -c '\''echo "$FIXED"'\'''
 
 section times
 

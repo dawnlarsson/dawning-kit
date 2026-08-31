@@ -142,6 +142,38 @@ answered() {
         report bad "$name" "want [$(head -c 50 "$work/want" | tr '\n' '|')][$want_status] got [$(head -c 50 "$work/got" | tr '\n' '|')][$got_status]"
 }
 
+# Run both commands with standard input attached to a fresh pseudoterminal.
+# The allocated number is incidental; its shape, output and child status are
+# the contract under test.
+pty_answered() {
+        name=$1
+        tool=$2
+        shift 2
+        arguments=$*
+
+        if script -qec "$tool${arguments:+ $arguments}" /dev/null > "$work/want.raw"; then
+                want_status=0
+        else
+                want_status=$?
+        fi
+
+        if script -qec "$binaries/$tool${arguments:+ $arguments}" /dev/null > "$work/got.raw"; then
+                got_status=0
+        else
+                got_status=$?
+        fi
+
+        tr -d '\r' < "$work/want.raw" | sed -E 's|/dev/pts/[0-9]+|/dev/pts/N|g' > "$work/want"
+        tr -d '\r' < "$work/got.raw" | sed -E 's|/dev/pts/[0-9]+|/dev/pts/N|g' > "$work/got"
+
+        if cmp -s "$work/want" "$work/got" && [ "$want_status" = "$got_status" ]; then
+                report ok
+                return 0
+        fi
+
+        report bad "$name" "want [$(head -c 50 "$work/want" | tr '\n' '|')][$want_status] got [$(head -c 50 "$work/got" | tr '\n' '|')][$got_status]"
+}
+
 generated_answer() {
         name=$1
         want_status=$2
@@ -558,7 +590,7 @@ dump() {
                         # for a file rather than a copy of it, and the two are
                         # the same file by every other measure here.
                         printf '%s %s %s %s' "$entry" \
-                                "$(stat -c '%a %F %s %h' "$entry" 2>/dev/null)" \
+                                "$(stat -c '%a %F %s %h %t:%T' "$entry" 2>/dev/null)" \
                                 "$(modified "$entry")" \
                                 "$(readlink "$entry" 2>/dev/null)"
                         if [ -f "$entry" ] && [ ! -L "$entry" ]; then
@@ -833,6 +865,43 @@ PY
 refuses_realpath_relative_ceiling "$relative_from" "$relative_to"
 refuses_ln_relative_ceiling "$relative_to" "$relative_from/link"
 
+component14=$(python3 - <<'PY'
+print('x' * 14)
+PY
+)
+component15=$(python3 - <<'PY'
+print('x' * 15)
+PY
+)
+component255=$(python3 - <<'PY'
+print('x' * 255)
+PY
+)
+component256=$(python3 - <<'PY'
+print('x' * 256)
+PY
+)
+
+group pathchk
+answered 'ordinary absent' pathchk absent
+answered 'existing' pathchk "$fixture/alpha"
+answered 'default empty' pathchk ''
+answered 'portable empty' pathchk -p ''
+answered 'extra empty' pathchk -P ''
+answered 'portable valid' pathchk -p 'A-z_09.ok/path'
+answered 'portable invalid' pathchk -p 'bad+name'
+answered 'leading hyphen' pathchk -P 'okay/-bad'
+answered 'combined long' pathchk --portability 'okay/name'
+answered 'abbreviated long' pathchk --p 'okay/name'
+answered 'combined invalid' pathchk --portability 'okay/-bad+name'
+answered 'component fourteen' pathchk -p "okay/$component14"
+answered 'component fifteen' pathchk -p "okay/$component15"
+answered 'missing component 255' pathchk "missing/$component255"
+answered 'missing component 256' pathchk "missing/$component256"
+answered 'option after operand' pathchk ordinary -P
+answered 'multiple with failure' pathchk -p okay 'bad+name' also
+answered 'missing operand' pathchk
+
 group id
 same 'default'          id
 same 'user'             id -u
@@ -856,10 +925,22 @@ same 'a named name'     id -un root
 same 'a named groups'   id -G root
 same 'no such user'     id nosuchuseranywhere
 
+group groups
+same 'current process'  groups
+same 'named user'       groups root
+same 'two named users'  groups root root
+answered 'no such user' groups nosuchuseranywhere
+answered 'option after user' groups root -x
+
 group whoami
 same 'effective user'   whoami
 answered 'extra operand' whoami root
 answered 'option after operand' whoami root -x
+
+group logname
+answered 'login identity' logname
+answered 'extra operand' logname root
+answered 'option after operand' logname root -x
 
 group uname
 same 'system'           uname
@@ -873,6 +954,17 @@ same 'machine long'     uname --machine
 same 'processor'        uname -p
 same 'hardware'         uname -i
 same 'not an option'    uname -x
+
+group tty
+answered 'not a terminal' tty
+answered 'silent not terminal' tty -s
+answered 'quiet not terminal' tty --quiet
+answered 'extra operand' tty extra
+answered 'option after operand' tty extra -x
+pty_answered 'terminal name' tty
+pty_answered 'silent terminal' tty -s
+pty_answered 'quiet terminal' tty --quiet
+effect 'closed stdout' tty '$TOOL 1>&-'
 
 group nproc
 same 'available'        nproc
@@ -889,6 +981,24 @@ effect 'OpenMP threads' nproc 'OMP_NUM_THREADS=3 $TOOL > said'
 effect 'OpenMP limit' nproc 'OMP_NUM_THREADS=3 OMP_THREAD_LIMIT=2 $TOOL > said'
 effect 'OpenMP nesting' nproc 'OMP_NUM_THREADS=3,2 $TOOL > said'
 effect 'all ignores OpenMP' nproc 'OMP_NUM_THREADS=3 $TOOL --all > said'
+
+group nice
+same 'current priority'     nice
+same 'default adjustment'   nice nice
+same 'positive adjustment'  nice -n 1 nice
+same 'joined adjustment'    nice -n1 nice
+same 'long adjustment'      nice --adjustment=1 nice
+same 'abbreviated long'     nice --adj=1 nice
+answered 'adjustment needs command' nice -n 1
+answered 'invalid adjustment' nice -n nope true
+answered 'legacy positive clamp' nice -100 sh -c 'printf ok'
+answered 'legacy negative clamp' nice --100 sh -c 'printf ok'
+answered 'legacy explicit plus' nice -+100 sh -c 'printf ok'
+answered 'command status' nice sh -c 'exit 7'
+answered 'missing command' nice nosuchcommandanywhere
+answered 'cannot invoke' nice /
+answered 'invalid option' nice -x
+same 'option after command' nice printf '%s\n' -n
 
 group find
 near 'plain'            'LC_ALL=C sort' find "$fixture"
@@ -1129,6 +1239,24 @@ answered 'time then size' ls -t -S "$fixture"
 answered 'size then time' ls -S -t "$fixture"
 refuses_ls_ceiling "$crowded"
 
+quoted_names=$work/quoted-names
+mkdir "$quoted_names"
+python3 - "$quoted_names" <<'PY'
+import os, sys
+for name in ('line\nbreak', 'tab\tname', 'slash\\name', 'escape\x1bname'):
+    open(os.path.join(sys.argv[1], name), 'wb').close()
+PY
+
+group vdir
+same 'long default'     vdir "$fixture"
+same 'one per line'     vdir -1 "$fixture"
+same 'long then one'    vdir -l -1 "$fixture"
+same 'long restored'    vdir -1 -l "$fixture"
+same 'numeric long'     vdir -n "$fixture"
+same 'escaped controls' vdir "$quoted_names"
+same 'escaped operands' vdir -d "$quoted_names"/*
+answered 'missing path' vdir "$fixture/nothing"
+
 #       A file with two names in the tree is one file. Nothing above has one,
 #       so a tree with a pair of them is built for the tools that have to
 #       count it once, and a second pair on a directory of its own for -S and
@@ -1304,6 +1432,56 @@ effect 'parents mode'   mkdir '$TOOL -p -m 0705 x/y'
 effect 'parents on file' mkdir '$TOOL -p plain'
 effect 'parent is file' mkdir '$TOOL -p plain/child'
 answered 'overlong parents' mkdir -p "$long_path"
+
+group mkfifo
+effect 'default mode'   mkfifo '$TOOL pipe'
+effect 'numeric mode'   mkfifo '$TOOL -m 0620 pipe'
+effect 'symbolic mode'  mkfifo 'umask 027; $TOOL -m u=rw,g=r,o= pipe'
+effect 'umask default'  mkfifo 'umask 027; $TOOL pipe'
+effect 'many'           mkfifo '$TOOL one two three'
+effect 'option after operand' mkfifo '$TOOL one -m 0600 two'
+effect 'context default' mkfifo '$TOOL -Z pipe'
+effect 'context ignored' mkfifo '$TOOL --context=ignored pipe'
+effect 'existing'       mkfifo '$TOOL plain'
+answered 'missing operand' mkfifo
+answered 'sticky rejected' mkfifo -m 1777 pipe
+answered 'setid rejected' mkfifo -m 6777 pipe
+answered 'symbolic sticky rejected' mkfifo -m a+t pipe
+answered 'symbolic setid rejected' mkfifo -m u+s pipe
+
+group mknod
+effect 'fifo'           mknod '$TOOL pipe p'
+effect 'pipe mnemonic'  mknod '$TOOL pipe potato'
+effect 'fifo mode'      mknod '$TOOL -m 0620 pipe p'
+effect 'option after name' mknod '$TOOL pipe -m 0600 p'
+effect 'block mnemonic' mknod '$TOOL block block 1 7'
+effect 'character decimal' mknod '$TOOL char character 1 3'
+effect 'character hex'  mknod '$TOOL char u 0x1 0x3'
+effect 'character octal' mknod '$TOOL char c 01 03'
+effect 'minor byte boundary' mknod '$TOOL char c 1 256'
+effect 'largest Linux device' mknod '$TOOL block b 4095 1048575'
+answered 'major beyond kernel' mknod node b 4096 0
+answered 'minor beyond kernel' mknod node c 1 1048576
+answered 'missing operands' mknod node c
+answered 'fifo with numbers' mknod node p 1 2
+answered 'device without numbers' mknod node c
+answered 'invalid type' mknod node x
+answered 'invalid hex major' mknod node c 0x 1
+answered 'invalid octal minor' mknod node c 1 08
+answered 'negative major' mknod node c -1 2
+answered 'oversized minor' mknod node c 1 4294967296
+answered 'sticky rejected' mknod -m 1777 node p
+
+group sync
+answered 'all filesystems' sync
+answered 'filesystem no file' sync -f
+answered 'regular file'    sync "$fixture/alpha"
+answered 'file data'       sync -d "$fixture/alpha"
+answered 'filesystem'      sync -f "$fixture/alpha"
+answered 'missing file'    sync "$fixture/nothing"
+answered 'data needs file' sync -d
+answered 'conflicting modes' sync -df "$fixture/alpha"
+effect 'fifo never hangs'  sync 'mkfifo pipe; $TOOL pipe'
 
 group rmdir
 effect 'empty'          rmdir 'mkdir gone; $TOOL gone'

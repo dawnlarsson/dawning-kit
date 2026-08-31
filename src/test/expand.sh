@@ -245,6 +245,10 @@ answer 'plus set'       'x=v; printf "[%s]" ${x+p} END; echo'
 answer 'plus empty'     'x=; printf "[%s]" ${x+p} ${x:+p} END; echo'
 answer 'assign'         'printf "[%s]" ${x=d} "$x" END; echo'
 answer 'colon assign'   'x=; printf "[%s]" ${x:=d} "$x" END; echo'
+answer 'assign honors allexport' \
+        'unset ALLEXPAND; set -a; : "${ALLEXPAND:=parameter}"; /bin/sh -c '\''echo "$ALLEXPAND"'\'''
+answer 'readonly assign is fatal' \
+        'readonly LOCKED; echo before; printf "[%s]" "${LOCKED:=value}"; echo after'
 answer 'complain'       'printf "[%s]" ${nosuch?} ; echo after'
 answer 'complain colon' 'x=; printf "[%s]" ${x:?gone} ; echo after'
 #       A bare colon remains invalid and positional-parameter slicing remains
@@ -266,6 +270,70 @@ answer 'plus splits'     'x=v; printf "[%s]" ${x+D E} END; echo'
 answer 'splits on ifs'   'IFS=:; printf "[%s]" ${nosuch-D:E} END; echo'
 answer 'assign splits'   'printf "[%s]" ${x=D E} "$x" END; echo'
 answer 'nested inside'  'printf "[%s]" ${nosuch-${also-deep}} END; echo'
+
+group bash indirect
+bash_answer 'scalar target' \
+        'x=y; y=value; printf "[%s]" "${!x}" END; echo'
+bash_answer 'one level only' \
+        'x=y; y=z; z=value; printf "[%s]" "${!x}" END; echo'
+bash_answer 'unset target' \
+        'x=y; unset y; printf "[%s]" "${!x}" END; echo'
+bash_answer 'target default and assign' \
+        'x=y; unset y; printf "[%s][%s][%s]" "${!x-default}" "${!x:=made}" "$y" END; echo'
+bash_answer 'readonly target assign is fatal' \
+        'readonly target; x=target; echo before; printf "[%s]" "${!x:=made}"; echo after'
+bash_answer 'operator can move environment storage' \
+        'x=target; unset target other; printf "[%s][%s][%s]" "${!x:=${other:=made}}" "$target" "$other" END; echo'
+bash_answer 'positional source and target' \
+        'set -- y two; y=value; x=2; printf "[%s][%s]" "${!1}" "${!x}" END; echo'
+bash_answer 'special sources' \
+        'set -- one two; false; printf "[%s][%s]" "${!?}" "${!#}" END; echo'
+bash_answer 'absent positional source' \
+        'set --; printf "[%s][%s]" "${!1}" "${!1-default}" END; echo'
+bash_answer 'special targets' \
+        'set -- a b; x="#"; printf "[%s]" "${!x}"; false; x="?"; printf "[%s]" "${!x}"; echo'
+bash_answer 'all positional targets' \
+        'set -- "a b" c; x=@; printf "<%s>" "${!x}" END; echo; x="*"; printf "<%s>" "${!x}" END; echo'
+bash_answer 'indirect operators' \
+        'x=y; y=abcabc; printf "[%s][%s][%s]" "${!x#a}" "${!x/b/X}" "${!x:2:3}" END; echo'
+bash_answer 'unset source is fatal' \
+        'unset x; printf "[%s]" "${!x}"; echo after'
+bash_answer 'empty source is fatal' \
+        'x=; printf "[%s]" "${!x}"; echo after'
+bash_answer 'invalid target is fatal' \
+        'x="bad-name"; printf "[%s]" "${!x}"; echo after'
+bash_answer 'nested source syntax is fatal' \
+        'x=y; y=value; printf "[%s]" "${!${x}}"; echo after'
+bash_answer 'nounset target is fatal' \
+        'set -u; x=y; unset y; printf "[%s]" "${!x}"; echo after'
+bash_answer 'prefix names lexical order' \
+        'bash_enum_z=1; bash_enum__=2; bash_enum_A=3; bash_enum_9=4; bash_enum_0=5; bash_enum_=6; printf "<%s>" ${!bash_enum_*} END; echo'
+bash_answer 'prefix at keeps fields' \
+        'bash_enum_a=1; bash_enum_b=2; printf "<%s>" "${!bash_enum_@}" END; echo'
+bash_answer 'prefix star joins first IFS' \
+        'bash_enum_a=1; bash_enum_b=2; IFS=:; printf "<%s>" "${!bash_enum_*}" END; echo'
+bash_answer 'prefix star empty IFS' \
+        'bash_enum_a=1; bash_enum_b=2; IFS=; printf "<%s>" "${!bash_enum_*}" END; echo'
+bash_answer 'prefix at composes fields' \
+        'bash_enum_a=1; bash_enum_b=2; printf "<%s>" "X${!bash_enum_@}Y" END; echo'
+bash_answer 'prefix no matches' \
+        'printf "<%s>" "${!bash_enum_none_@}" END; echo; printf "<%s>" "${!bash_enum_none_*}" END; echo'
+bash_answer 'prefix no matches compose' \
+        'printf "<%s>" "${!bash_enum_none_a@}${!bash_enum_none_b@}" END; echo'
+bash_answer 'prefix no match beside unset' \
+        'unset x; printf "<%s>" "$x${!bash_enum_none_@}" END; echo'
+bash_answer 'prefix no match beside empty quote' \
+        'printf "<%s>" """${!bash_enum_none_@}" END; echo'
+bash_answer 'prefix only set names' \
+        'bash_enum_set=; export bash_enum_export; readonly bash_enum_readonly; bash_enum_gone=1; unset bash_enum_gone; printf "<%s>" ${!bash_enum_*} END; echo'
+bash_answer 'prefix no match ignores nounset' \
+        'set -u; printf "<%s>" "${!bash_enum_none_@}" END; echo'
+bash_answer 'prefix star rejects operator' \
+        'bash_enum_a=1; printf "<%s>" "${!bash_enum_*:-fallback}" END; echo'
+bash_answer 'prefix at rejects operator' \
+        'bash_enum_a=1; printf "<%s>" "${!bash_enum_@+word}" END; echo'
+bash_answer 'empty prefix stays positional' \
+        'set --; printf "<%s>" "${!@}" END; echo; printf "<%s>" "${!*}" END; echo'
 
 group bash replace
 bash_answer 'replace first' 'x=abcabc; printf "[%s]" "${x/b/X}" END; echo'
@@ -385,6 +453,7 @@ answer 'at empty set'   'set --; set -- "$@"; echo $#'
 answer 'at empty joined' 'set --; printf "[%s]" x"$@" END; echo'
 answer 'at empty beside' 'set --; printf "[%s]" "$nosuch$@" END; echo'
 answer 'at empty doubled' 'set --; printf "[%s]" "$@$@" END; echo'
+answer 'at empty braced doubled' 'set --; printf "[%s]" "${@}${@}" END; echo'
 answer 'star empty'     'set --; printf "[%s]" "$*" END; echo'
 answer 'empty word is one' 'printf "[%s]" "" END; echo'
 answer 'unset is none'  'printf "[%s]" $nosuch END; echo'
@@ -494,6 +563,10 @@ answer 'a name reads'   'x=5; echo $((x + 1))'
 answer 'unset is zero'  'echo $((nosuch + 1))'
 answer 'empty is zero'  'x=; echo $((x + 1))'
 answer 'a name writes'  'x=5; echo $((x = x * 2)) $x'
+answer 'write honors allexport' \
+        'unset ALLARITH; set -a; : "$((ALLARITH=7))"; /bin/sh -c '\''echo "$ALLARITH"'\'''
+answer 'readonly write is fatal' \
+        'readonly LOCKED_ARITH=1; echo before; echo "$((LOCKED_ARITH=2))"; echo after'
 answer 'compound'       'x=5; echo $((x += 3)) $((x -= 1)) $((x *= 2)) $x'
 answer 'compound bits'  'x=6; echo $((x &= 3)) $((x |= 8)) $((x ^= 1)) $x'
 answer 'compound shift' 'x=1; echo $((x <<= 4)) $((x >>= 2)) $x'

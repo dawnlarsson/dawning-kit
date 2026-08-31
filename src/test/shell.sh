@@ -125,6 +125,36 @@ bash_remaining()
         won
 }
 
+# One row in the POSIX Issue 8 remaining ledger. The subject's exact current
+# refusal is pinned, and dash must still demonstrate that the family is not a
+# merely unavailable host facility. Closing a row therefore makes the suite
+# demand that it move into the supported surface below.
+posix_remaining()
+{
+        name=$1
+        recorded=$2
+        recorded_status=$3
+        shift 3
+
+        run_both "$@"
+        got_ours=$(shown "$work/got")
+
+        if [ "$got_ours" != "$recorded" ] ||
+                [ "$got_status" != "$recorded_status" ]; then
+                lost "$name" \
+                        "remaining ${recorded}[$recorded_status], now ${got_ours}[$got_status]"
+                return 0
+        fi
+
+        if cmp -s "$work/want" "$work/got" &&
+                [ "$want_status" = "$got_status" ]; then
+                lost "$name" "agrees with dash now -- move it to supported"
+                return 0
+        fi
+
+        won
+}
+
 # A deliberate extension has no POSIX reference answer. Check its bytes and
 # status directly so a future lexer change cannot reinterpret it as another
 # valid command while the dash-comparison lanes remain about POSIX.
@@ -169,9 +199,10 @@ interactive_fatal()
         behavior=${5:-abort}
         recovery=${6:-:}
         recovered=${7:-}
+        expected_status=${8:-2}
 
         if python3 - "$subject" "$diagnostic" "$setup" "$command" \
-                "$behavior" "$recovery" "$recovered" <<'PY'
+                "$behavior" "$recovery" "$recovered" "$expected_status" <<'PY'
 import os
 import pty
 import re
@@ -181,7 +212,7 @@ import sys
 import termios
 import time
 
-subject, diagnostic, setup, command, behavior, recovery, recovered = sys.argv[1:]
+subject, diagnostic, setup, command, behavior, recovery, recovered, expected_status = sys.argv[1:]
 master, slave = pty.openpty()
 settings = termios.tcgetattr(slave)
 settings[3] &= ~termios.ECHO
@@ -241,7 +272,11 @@ good = (
 )
 
 if behavior == "abort":
-    good = good and b"STATUS:2\n" in plain and b"SAME-LINE" not in plain
+    good = (
+        good
+        and ("STATUS:" + expected_status + "\n").encode() in plain
+        and b"SAME-LINE" not in plain
+    )
 else:
     good = good and b"STATUS:0\n" in plain and b"SAME-LINE\n" in plain
 
@@ -952,6 +987,16 @@ check 'out'             'echo x > /tmp/pt1; cat /tmp/pt1'
 check 'append'          'echo a > /tmp/pt2; echo b >> /tmp/pt2; cat /tmp/pt2'
 answer 'noclobber and override' 'p=/tmp/pt-noclobber.$$; echo old > "$p"; set -C; echo new > "$p" 2>/dev/null; a=$?; before=$(cat "$p"); echo forced >| "$p"; b=$?; after=$(cat "$p"); rm -f "$p"; echo "$a:$before $b:$after"'
 answer 'noclobber permits device' 'set -C; echo discarded > /dev/null; echo $?'
+bash_answer 'noclobber force and append' 'p=/tmp/bash-noclobber.$$; echo old > "$p"; set -C; echo forced >| "$p"; a=$?; echo appended >> "$p"; b=$?; value=$(cat "$p"); rm -f "$p"; printf "%s:%s:%s\n" "$a" "$b" "$value"'
+bash_answer 'noclobber regular symlink' 'd=/tmp/bash-noclobber.$$; mkdir "$d"; echo old > "$d/target"; ln -s target "$d/link"; set -C; echo new > "$d/link" 2>/dev/null; s=$?; [ "$s" -ne 0 ] && s=failed; value=$(cat "$d/target"); rm -f "$d/link" "$d/target"; rmdir "$d"; echo "$s:$value"'
+bash_answer 'noclobber device symlink' 'p=/tmp/bash-noclobber.$$; ln -s /dev/null "$p"; set -C; echo discarded > "$p"; s=$?; rm -f "$p"; echo "$s"'
+bash_answer 'noclobber dangling symlink' 'd=/tmp/bash-noclobber.$$; mkdir "$d"; ln -s target "$d/link"; set -C; echo new > "$d/link" 2>/dev/null; s=$?; [ "$s" -ne 0 ] && s=failed; if [ -e "$d/target" ]; then made=yes; else made=no; fi; rm -f "$d/link" "$d/target"; rmdir "$d"; echo "$s:$made"'
+bash_answer 'noclobber dangling force append' 'd=/tmp/bash-noclobber.$$; mkdir "$d"; ln -s target "$d/link"; set -C; echo forced >| "$d/link"; a=$?; echo appended >> "$d/link"; b=$?; value=$(cat "$d/target"); rm -f "$d/link" "$d/target"; rmdir "$d"; printf "%s:%s:%s\n" "$a" "$b" "$value"'
+bash_answer 'noclobber descriptor failure' 'p=/tmp/bash-noclobber.$$; echo old > "$p"; set -C; : 3> "$p" 2>/dev/null; s=$?; [ "$s" -ne 0 ] && s=failed; rm -f "$p"; echo "$s"'
+interactive_fatal 'noclobber interactive recovery' 'Cannot redirect' \
+        'p=/tmp/bash-noclobber-interactive.$$; echo old > "$p"; set -C' \
+        'echo RAN-BAD > "$p"; echo REDIRECT:$?; echo SAME-LINE' \
+        continue 'rm -f "$p"' 'REDIRECT:2'
 expected 'stdout and stderr' 'out|err|' 0 '{ echo out; echo err >&2; } &> /tmp/ptboth.$$; cat /tmp/ptboth.$$; rm /tmp/ptboth.$$'
 expected 'both append' 'first|out|err|' 0 'echo first > /tmp/ptbotha.$$; { echo out; echo err >&2; } &>> /tmp/ptbotha.$$; cat /tmp/ptbotha.$$; rm /tmp/ptbotha.$$'
 expected 'numeric is an arg' '2|' 0 'echo 2&> /tmp/ptbothn.$$; cat /tmp/ptbothn.$$; rm /tmp/ptbothn.$$'
@@ -1222,8 +1267,8 @@ answer 'external exit 127' '/bin/sh -c "exit 127"; echo $?'
 group interactive-fatal
 interactive_fatal 'unsupported transform' 'bad substitution' 'x=ab' \
         'echo RAN-BAD "${x@Q}"; echo SAME-LINE'
-interactive_fatal 'unsupported indirect' 'bad substitution' 'x=ab' \
-        'echo RAN-BAD "${!x}"; echo SAME-LINE'
+interactive_fatal 'invalid indirect' 'invalid variable name' 'x=bad-name' \
+        'echo RAN-BAD "${!x}"; echo SAME-LINE' abort : '' 1
 interactive_fatal 'parameter required' 'x: boom' 'unset x' \
         'echo RAN-BAD "${x:?boom}"; echo SAME-LINE'
 interactive_fatal 'bad arithmetic' 'arithmetic: 1/0' ':' \
@@ -1520,6 +1565,11 @@ answer 'for at is many'  'set -- "a b" c; for i in "$@"; do echo "[$i]"; done'
 answer 'for star is one' 'set -- a b; for i in "$*"; do echo "[$i]"; done'
 answer 'for ifs'         'IFS=:; y=a:b; for i in $y; do echo "[$i]"; done'
 answer 'for unset makes none' 'for i in $nosuch; do echo no; done; echo done'
+answer 'readonly loop variable is fatal' \
+        'readonly item=old
+echo before
+for item in new; do echo body; done
+echo after'
 answer 'break two'       'for i in 1 2; do for j in a b; do break 2; done; echo $i; done; echo done'
 answer 'continue two'    'for i in 1 2; do for j in a b; do continue 2; done; echo $i; done; echo done'
 answer 'recursion'       'f() { [ $1 -gt 0 ] && { echo $1; f $(($1-1)); }; }; f 3'
@@ -1611,7 +1661,41 @@ answer 'exported prefix restores' \
 answer 'twenty prefixed assignments' \
         'A00=0 A01=1 A02=2 A03=3 A04=4 A05=5 A06=6 A07=7 A08=8 A09=9 A10=10 A11=11 A12=12 A13=13 A14=14 A15=15 A16=16 A17=17 A18=18 A19=19 /bin/sh -c '\''echo "$A00:$A09:$A19"'\''; echo "${A00-unset}:${A19-unset}"'
 
+group declaration-command
+answer 'ordinary assignment expands assignment tildes' \
+        'HOME=/tmp; ORDINARY=~:~; printf "[%s]\n" "$ORDINARY"'
+answer 'direct export holds assignment field' \
+        'value="a b"; export DIRECT=$value; printf "[%s]\n" "$DIRECT"'
+answer 'command export holds assignment field' \
+        'value="a b"; command export THROUGH=$value; printf "[%s]\n" "$THROUGH"'
+answer 'command export does not glob assignment' \
+        'mkdir declaration-glob; cd declaration-glob; : > "PATTERN=matched"; command export PATTERN=*; printf "[%s]\n" "$PATTERN"'
+answer 'command export expands assignment tilde' \
+        'HOME=/tmp; command export TILDE=x:~; printf "[%s]\n" "$TILDE"'
+answer 'command options retain declaration context' \
+        'value="c d"; command -p -- export OPTIONS=$value; printf "[%s]\n" "$OPTIONS"'
+answer 'nested command retains declaration context' \
+        'value="i j"; command command export NESTED=$value; printf "[%s]\n" "$NESTED"'
+answer 'command readonly holds assignment field' \
+        'value="e f"; command readonly FIXED=$value; printf "[%s]\n" "$FIXED"'
+expected 'command local holds assignment field' '[g h]|' 0 \
+        'f() { value="g h"; command local LOCAL=$value; printf "[%s]\n" "$LOCAL"; }; f'
+answer 'command declaration change persists' \
+        'unset KEPT; command export KEPT=value; /bin/sh -c '\''echo "$KEPT"'\'''
+answer 'command prefix remains temporary' \
+        'PREFIX=outer; PREFIX=inner command export OTHER=kept; printf "%s:%s\n" "$PREFIX" "$OTHER"'
+
 group export-state
+answer 'allexport ordinary assignment' \
+        'unset A B; set -a; A=one; set +a; B=two; /bin/sh -c '\''echo "$A:${B-unset}"'\'''
+answer 'allexport loop variable' \
+        'unset item; set -a; for item in kept; do :; done; /bin/sh -c '\''echo "$item"'\'''
+answer 'allexport temporary stays scoped' \
+        'unset X; X=outer; set -a; X=inner true; set +a; /bin/sh -c '\''echo "${X-unset}:$X"'\'''
+answer 'allexport special persists' \
+        'unset X; X=outer; set -a; X=inner :; set +a; /bin/sh -c '\''echo "$X"'\'''
+answer 'allexport local restores state' \
+        'unset X; X=outer; f() { local X=inner; /bin/sh -c '\''echo "$X"'\''; }; set -a; f; set +a; /bin/sh -c '\''echo ${X-unset}'\''; echo "$X"'
 answer 'export pending name' \
         'unset X; export X; X=one; /bin/sh -c '\''echo "$X"'\'''
 answer 'exported empty value' \
@@ -1794,6 +1878,79 @@ answer 'trap rejects a large number' 'trap : 999 2>/dev/null; echo $?'
 answer 'trap replacement reclaims' 'i=0; while [ $i -lt 100 ]; do trap "echo padding-padding-padding-padding-$i >/dev/null" EXIT; i=$((i + 1)); done; trap "echo final" EXIT'
 answer 'wait alone'      'wait; echo $?'
 answer 'background wait' 'sleep 0 & wait $!; echo $?'
+answer 'background pid is numeric' \
+        'sleep 0 & p=$!; case $p in ""|*[!0-9]*) echo bad;; *) echo pid;; esac; wait "$p"; echo $?'
+answer 'background pid starts unset under nounset' \
+        'set -u; printf "<%s>\n" "$!"; echo after'
+answer 'completed background status is retained' \
+        '(exit 7) &
+p=$!
+sleep 0.05
+wait "$p"
+echo $?'
+answer 'wait consumes every pid operand' \
+        '(exit 3) & a=$!; (exit 7) & b=$!; wait "$a" "$b"; echo $?'
+answer 'wait unknown pid is 127' 'wait 999999; echo $?'
+expected 'wait forgets a consumed pid' '127|' 0 \
+        '(exit 0) & p=$!; wait "$p"; wait "$p"; echo $?'
+answer 'wait table is a shell environment' \
+        'sleep 0.05 & p=$!; (wait "$p"; echo sub:$?); wait "$p"; echo parent:$?'
+expected 'subshell inherits last pid but not wait rights' 'pid|sub:127|parent:0|' 0 \
+        'sleep 0.05 & p=$!
+(case "$!" in "$p") echo pid;; *) echo bad;; esac; wait "$p"; echo sub:$?)
+wait "$p"; echo parent:$?'
+answer 'wait rejects a non-pid' 'wait nope 2>/dev/null; echo $?'
+expected 'invalid wait consumes earlier pid in order' 'first:2|second:127|' 0 \
+        'sleep 0.01 & p=$!; wait "$p" bad 2>/dev/null; echo first:$?; wait "$p"; echo second:$?'
+answer 'background stdin is devnull' \
+        'read stolen &
+p=$!
+wait "$p"
+echo read:$?
+echo after'
+answer 'background redirection overrides devnull' \
+        'printf "line\n" > /tmp/bg-input.$$; read value < /tmp/bg-input.$$ & p=$!; wait "$p"; s=$?; rm -f /tmp/bg-input.$$; echo "$s"'
+expected 'background devnull may occupy fd zero' '1|' 0 \
+        'exec 0<&-; read value & p=$!; wait "$p"; echo $?'
+answer 'background ignores interrupt and quit' \
+        'for signal in INT QUIT; do
+    (sleep 0.05; echo "$signal-survived") & p=$!
+    sleep 0.01
+    kill -"$signal" "$p"
+    wait "$p"
+    echo "$signal:$?"
+done'
+expected 'tail external keeps asynchronous signal ignores' '0|' 0 \
+        'sleep 0.05 & p=$!; kill -INT "$p"; wait "$p"; echo $?'
+expected 'tail external pid is the command' 'wait:143|done|' 0 \
+        '/bin/sh -c '\''sleep 0.05; echo LEAK'\'' & p=$!
+sleep 0.01; kill -TERM "$p"; wait "$p"; echo wait:$?; sleep 0.06; echo done'
+expected 'command wrapper tail executes external' 'wait:143|done|' 0 \
+        'command /bin/sh -c '\''sleep 0.05; echo LEAK'\'' & p=$!
+sleep 0.01; kill -TERM "$p"; wait "$p"; echo wait:$?; sleep 0.06; echo done'
+answer 'background pipeline status' \
+        'false | (exit 7) & p=$!; wait "$p"; echo $?'
+expected 'background pipeline honors pipefail' '1|' 0 \
+        'set -o pipefail; false | true & p=$!; wait "$p"; echo $?'
+expected 'background pipeline publishes last stage' 'wait:143|done|' 0 \
+        '{ sleep 0.05; echo LEAK; } | cat & p=$!
+sleep 0.01; kill -TERM "$p"; wait "$p"; echo wait:$?; sleep 0.06; echo done'
+expected 'background subshell is its published pid' '130|' 0 \
+        '(trap - INT; sleep 0.05) & p=$!
+sleep 0.01; kill -INT "$p"; wait "$p"; echo $?'
+expected 'completed signal status is retained raw' '143|' 0 \
+        '/bin/sh -c '\''kill -TERM $$'\'' & p=$!; sleep 0.02; wait "$p"; echo $?'
+answer 'wait is interrupted by a trapped signal' \
+        'trap '\''echo caught'\'' USR1
+(sleep 0.05; kill -USR1 $$) & sender=$!
+sleep 0.2 & target=$!
+wait "$target"
+echo wait:$?
+wait "$sender"
+wait "$target"
+echo rewait:$?'
+expected 'monitor stays off without job control' 'off|' 0 \
+        'set -m 2>/dev/null; case $- in *m*) echo on;; *) echo off;; esac'
 
 # set -x, whose output is on standard error and so has to be caught in a file
 # to be compared at all. What is traced is what runs: the words after they are
@@ -2204,6 +2361,106 @@ printf '\''echo "unclosed\n'\'' > "$f"
 echo second'
 
 #
+#       POSIX.1-2024 Issue 8 surface ledger.
+#
+#       The deeper sections above carry adversarial cases. This is the compact
+#       completeness index: every mandatory shell-language chapter and every
+#       special/intrinsic builtin family is represented here as supported or
+#       pinned in the remaining group. A new implementation cannot silently
+#       leave the total unchanged.
+#
+
+section posix-ledger
+
+group language
+answer 'Issue8 2.2 quoting' \
+        'x=value; printf "<%s><%s><%s>\n" a\ b '\''$x'\'' "$x"'
+expected 'Issue8 2.2.4 dollar-single-quotes' '<a|b>|' 0 \
+        'printf "<%s>\n" $'\''a\nb'\'''
+answer 'Issue8 2.3 token recognition' \
+        'echo one;echo two # comment is not a word'
+answer 'Issue8 2.3.1 alias substitution' \
+        'alias say="echo alias"
+say'
+answer 'Issue8 2.4 reserved words' \
+        'if true; then echo reserved; fi'
+answer 'Issue8 2.5 parameters and variables' \
+        'set -- one two; false; printf "%s:%s:%s\n" "$1" "$#" "$?"'
+answer 'Issue8 2.6.1 tilde expansion' \
+        'HOME=/tmp; printf "%s\n" ~'
+answer 'Issue8 2.6.2 parameter expansion' \
+        'x=abcdef; printf "%s:%s\n" "${#x}" "${x%def}"'
+answer 'Issue8 2.6.3 command substitution' \
+        'printf "<%s>\n" "$(printf command)"'
+answer 'Issue8 2.6.4 arithmetic expansion' \
+        'x=3; echo "$((x * 4))"'
+answer 'Issue8 2.6.5 field splitting' \
+        'IFS=:; x=a:b; set -- $x; echo "$#:$1:$2"'
+answer 'Issue8 2.6.6 pathname expansion' \
+        'set -- /bin/s?; [ "$#" -gt 0 ] && echo matched'
+answer 'Issue8 2.6.7 quote removal' \
+        'printf "<%s>\n" "quoted"'
+answer 'Issue8 2.7.1 input redirection' \
+        'p=/tmp/posix-ledger.$$; printf "input\n" > "$p"; cat < "$p"; rm -f "$p"'
+answer 'Issue8 2.7.2 output redirection' \
+        'p=/tmp/posix-ledger.$$; echo output > "$p"; cat "$p"; rm -f "$p"'
+answer 'Issue8 2.7.3 append redirection' \
+        'p=/tmp/posix-ledger.$$; echo one > "$p"; echo two >> "$p"; cat "$p"; rm -f "$p"'
+answer 'Issue8 2.7.4 here-document' 'cat <<EOF
+document
+EOF'
+answer 'Issue8 2.7.5 duplicate input' \
+        'p=/tmp/posix-ledger.$$; echo input > "$p"; exec 3< "$p"; cat <&3; exec 3<&-; rm -f "$p"'
+answer 'Issue8 2.7.6 duplicate output' \
+        'p=/tmp/posix-ledger.$$; exec 3> "$p"; echo output >&3; exec 3>&-; cat "$p"; rm -f "$p"'
+answer 'Issue8 2.7.7 read-write descriptor' \
+        'p=/tmp/posix-ledger.$$; echo content > "$p"; cat <> "$p"; rm -f "$p"'
+answer 'Issue8 2.8 exit status and errors' \
+        'false; echo "$?"'
+answer 'Issue8 2.9.1 simple commands' \
+        'value=assigned; printf "%s\n" "$value"'
+answer 'Issue8 2.9.2 pipelines' \
+        'printf "pipeline\n" | cat'
+answer 'Issue8 2.9.3 lists' \
+        'false || echo or; true && echo and; true & wait "$!"; echo async'
+answer 'Issue8 2.9.4 compound commands' \
+        '{ echo brace; }; (echo subshell); for x in for; do echo "$x"; done; case x in x) echo case;; esac; if true; then echo if; fi; while false; do :; done; until true; do :; done'
+answer 'Issue8 2.9.5 function definitions' \
+        'f() { echo function; }; f'
+answer 'Issue8 2.10 grammar across lines' 'if true
+then
+echo grammar
+fi'
+answer 'Issue8 2.12 signals and traps' \
+        'trap '\''echo trapped'\'' USR1; kill -USR1 $$; echo after'
+answer 'Issue8 2.13 execution environments' \
+        'x=outer; (x=inner; echo "$x"); echo "$x"'
+answer 'Issue8 2.14 pattern matching' \
+        'case alpha5 in [[:alpha:]]*[[:digit:]]) echo pattern;; esac'
+
+group builtin-surface
+expected 'Issue8 2.15 all special builtins' '' 0 \
+        'PATH=; for name in : . break continue eval exec exit export readonly return set shift times trap unset; do command -v "$name" >/dev/null || echo "missing:$name"; done'
+expected 'command -v sees control builtins' 'break|' 0 \
+        'PATH=; command -v break'
+expected 'command -V sees control builtins' 'continue is a shell builtin|' 0 \
+        'PATH=; command -V continue'
+expected 'type sees control builtins' 'return is a shell builtin|' 0 \
+        'PATH=; type return'
+expected 'Issue8 1.7 supported intrinsic utilities' '' 0 \
+        'PATH=; for name in alias cd command getopts hash kill read type ulimit umask unalias wait; do command -v "$name" >/dev/null || echo "missing:$name"; done'
+expected 'Issue8 regular false pwd true utilities' '' 0 \
+        'PATH=; for name in false pwd true; do command -v "$name" >/dev/null || echo "missing:$name"; done'
+
+group remaining
+posix_remaining 'Issue8 2.11 process-group job control' 'off|' 0 \
+        'set -m 2>/dev/null; case $- in *m*) echo on;; *) echo off;; esac'
+posix_remaining 'Issue8 intrinsic bg' '' 127 'bg'
+posix_remaining 'Issue8 intrinsic fg' '' 127 'fg'
+posix_remaining 'Issue8 intrinsic jobs' '' 127 'jobs'
+posix_remaining 'Issue8 intrinsic fc history editing' '' 127 'fc -l'
+
+#
 #       Bash parity ledger.
 #
 #       Every named family is either compared directly with Bash as supported
@@ -2214,6 +2471,126 @@ echo second'
 #
 
 section bash-ledger
+
+# Bash 5.3.15 reports 61 builtins through `compgen -b`. Presence is a
+# separate claim from complete semantics: the deeper rows below remain even
+# for names found here, so adding a stub cannot close a feature.
+bash_builtin_inventory()
+{
+        state=$1
+        shift
+
+        for item
+        do
+                probe="PATH=; type '$item' >/dev/null 2>&1; echo \$?"
+
+                if [ "$state" = supported ]; then
+                        bash_answer "ledger builtin $item" "$probe"
+                else
+                        bash_remaining "ledger builtin $item" '127|' 0 "$probe"
+                fi
+        done
+}
+
+# Grammar words do not appear in this shell's `type` namespace. Exercise each
+# name through the smallest complete construct it participates in instead.
+bash_keyword_inventory()
+{
+        probe=$1
+        shift
+
+        for item
+        do
+                bash_answer "ledger keyword $item" "$probe"
+        done
+}
+
+# Query the state after enabling, rather than accepting status zero from an
+# option name whose behavior remains off (currently monitor).
+bash_set_option_inventory()
+{
+        state=$1
+        shift
+
+        for item
+        do
+                probe="set -o '$item' 2>/dev/null; set -o | while read option value; do [ \"\$option\" = '$item' ] && echo \"\$value\"; done; :"
+
+                if [ "$state" = supported ]; then
+                        bash_answer "ledger set option $item" "$probe"
+                else
+                        recorded=
+                        case $item in
+                        monitor) recorded='off|' ;;
+                        noexec)  recorded='on|' ;;
+                        esac
+                        bash_remaining "ledger set option $item" \
+                                "$recorded" 0 "$probe"
+                fi
+        done
+}
+
+# No shopt name exists yet. Enumerating every 5.3.15 option keeps adding the
+# builtin from hiding fifty-nine independent option-family gaps behind one
+# successful command name.
+bash_shopt_inventory()
+{
+        for item
+        do
+                bash_remaining "ledger shopt option $item" '127|' 0 \
+                        "PATH=; shopt -q '$item'; echo \$?"
+        done
+}
+
+group builtin-index
+bash_builtin_inventory supported \
+        . : '[' alias break cd command continue echo eval exec exit export \
+        false getopts hash help kill let local printf pwd read readonly return \
+        set shift source test times trap true type ulimit umask unalias unset wait
+bash_builtin_inventory remaining \
+        bg bind builtin caller compgen complete compopt declare dirs disown \
+        enable fc fg history jobs logout mapfile popd pushd readarray shopt \
+        suspend typeset
+
+group keyword-index
+bash_keyword_inventory '! false' '!'
+bash_keyword_inventory '[[ x == x ]]' '[[' ']]'
+bash_keyword_inventory 'case x in x) :;; esac' case esac in
+bash_keyword_inventory 'for x in a; do :; done' do done for
+bash_keyword_inventory \
+        'if false; then false; elif true; then :; else false; fi' \
+        elif else fi if then
+bash_keyword_inventory 'function f { :; }; f' function
+bash_keyword_inventory \
+        'while false; do :; done; until true; do :; done' until while
+bash_keyword_inventory '{ :; }' '{' '}'
+bash_remaining 'ledger keyword coproc' '' 2 'coproc C { echo x; }'
+bash_remaining 'ledger keyword select' '' 2 \
+        'select x in a; do echo "$x"; break; done </dev/null'
+bash_remaining 'ledger keyword time' '' 127 'PATH=; time :'
+
+group set-option-index
+bash_set_option_inventory supported \
+        allexport emacs errexit ignoreeof noclobber noglob nolog notify \
+        nounset pipefail verbose vi xtrace
+bash_set_option_inventory remaining \
+        braceexpand errtrace functrace hashall histexpand history \
+        interactive-comments keyword monitor noexec onecmd physical posix \
+        privileged
+
+group shopt-option-index
+bash_shopt_inventory \
+        array_expand_once assoc_expand_once autocd bash_source_fullpath \
+        cdable_vars cdspell checkhash checkjobs checkwinsize cmdhist compat31 \
+        compat32 compat40 compat41 compat42 compat43 compat44 \
+        complete_fullquote direxpand dirspell dotglob execfail expand_aliases \
+        extdebug extglob extquote failglob force_fignore globasciiranges \
+        globskipdots globstar gnu_errfmt histappend histreedit histverify \
+        hostcomplete huponexit inherit_errexit interactive_comments lastpipe \
+        lithist localvar_inherit localvar_unset login_shell mailwarn \
+        no_empty_cmd_completion nocaseglob nocasematch noexpand_translation \
+        nullglob patsub_replacement progcomp progcomp_alias promptvars \
+        restricted_shell shift_verbose sourcepath varredir_close xpg_echo
 
 group supported
 bash_answer 'ledger parameter replace' 'x=aba; echo "${x//a/X}"'
@@ -2242,6 +2619,8 @@ bash_answer 'ledger regex match' '[[ abc =~ ^a ]]'
 bash_answer 'ledger let' 'x=0; let x+=2 x*=3; a=$?; let x-=6; printf "%s:%s:%s\n" "$x" "$a" "$?"'
 bash_answer 'let quoted expression' 'let "x = 2 + 3" "x == 5"; printf "%s:%s\n" "$x" "$?"'
 bash_answer 'let empty and invalid' 'let 2>/dev/null; a=$?; let "1 +" 2>/dev/null; printf "%s:%s\n" "$a" "$?"'
+bash_answer 'ledger indirection' 'x=y; y=value; echo "${!x}"'
+bash_answer 'ledger indirect prefix names' 'bash_prefix_one=1; bash_prefix_two=2; printf "%s\n" "${!bash_prefix_*}"'
 
 group remaining
 bash_remaining 'ledger regex captures' '' 2 '[[ abc =~ ^(a)(b) ]]; echo "${BASH_REMATCH[0]}:${BASH_REMATCH[1]}:${BASH_REMATCH[2]}"'
@@ -2250,15 +2629,11 @@ bash_remaining 'ledger associative arrays' '' 2 'declare -A a; a[k]=v; echo "${a
 bash_remaining 'ledger process substitution' '<>|' 0 'x=$(cat <(printf x)); printf "<%s>\n" "$x"'
 bash_remaining 'ledger extglob' '' 2 'shopt -s extglob; eval '\''case aa in +(a)) echo yes;; esac'\'''
 bash_remaining 'ledger globstar' '' 127 'shopt -s globstar'
-bash_remaining 'ledger declare' '' 127 'declare x=1'
-bash_remaining 'ledger typeset' '' 127 'typeset x=1'
-bash_remaining 'ledger mapfile' '' 127 'printf "a\n" | mapfile a'
-bash_remaining 'ledger readarray' '' 127 'printf "a\n" | readarray a'
-bash_remaining 'ledger shopt' '' 127 'shopt -s nullglob'
-bash_remaining 'ledger select' '' 2 'select x in a; do echo "$x"; break; done </dev/null'
-bash_remaining 'ledger coproc' '' 2 'coproc C { echo x; }'
+bash_remaining 'ledger declare semantics' '' 127 'declare x=1'
+bash_remaining 'ledger typeset semantics' '' 127 'typeset x=1'
+bash_remaining 'ledger mapfile semantics' '' 127 'printf "a\n" | mapfile a'
+bash_remaining 'ledger readarray semantics' '' 127 'printf "a\n" | readarray a'
 bash_remaining 'ledger noclobber status' '2|' 0 'p=/tmp/bash-noclobber.$$; echo a > "$p"; set -C; echo b > "$p"; s=$?; rm -f "$p"; echo "$s"'
-bash_remaining 'ledger indirection' '' 2 'x=y; y=value; echo "${!x}"'
 
 #
 #       What the shell has no answer for at all.
