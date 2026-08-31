@@ -43,7 +43,7 @@ TEST_TALLY="$work/tally"
 export TEST_TALLY
 : > "$TEST_TALLY"
 
-lanes="standard declare allocator error strings stdlib leaving numbers clock math format scan stream spool process signal lock verify exact known socket net slurp wait writer native probe shell expand builtin awk text tools files storage term edit kit boot canvas"
+lanes="standard declare fold allocator error strings stdlib leaving numbers clock math format scan stream spool process signal lock verify exact known socket net slurp wait writer native probe shell expand builtin awk text tools files storage term edit kit boot canvas"
 
 describe()
 {
@@ -53,6 +53,7 @@ describe()
         exact)    echo "every size that is known where the call is written, and both tiers" ;;
         known)    echo "the rest of what folds when the call site knows it" ;;
         declare)  echo "the standard names, declared, compiled twice and diffed" ;;
+        fold)     echo "the constant-size fold we put in the kernel string header" ;;
         allocator) echo "malloc, free, calloc and realloc against glibc's" ;;
         leaving)  echo "what a program writes on the way out, and what a child must not write twice" ;;
         numbers)  echo "strtod and the integer conversions, in ULP against glibc" ;;
@@ -1890,6 +1891,7 @@ known_one()
 }
 
 lane_declare()   { freestanding_checks_lane declare src/test/declare.c; }
+lane_fold()      { freestanding_checks_lane fold src/test/fold.c; }
 lane_allocator() { freestanding_checks_lane allocator src/test/allocator.c; }
 lane_leaving()   { freestanding_checks_lane leaving src/test/leaving.c; }
 lane_numbers()   { freestanding_checks_lane numbers src/test/number.c; }

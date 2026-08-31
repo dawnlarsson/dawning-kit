@@ -1254,6 +1254,12 @@ static b32 parse_for()
                           parse_look(0)->length);
         parse_position++;
 
+        /* The linebreak production is allowed between the loop variable and
+           `in` (or `do`). Without consuming it here, a perfectly ordinary
+           multiline `for name\nin ...` reached the separator cleanup below
+           without ever recognizing its word list. */
+        parse_skip_newlines();
+
         // Without "in" the loop walks the positional parameters, which is a
         // different thing from walking an empty list.
         if (parse_word_is(0, "in"))

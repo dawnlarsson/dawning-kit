@@ -2324,6 +2324,7 @@ static bool regex_search_longest(string_address text, positive length, positive 
 #define TEXT_STAT_MODE 16
 #endif
 #define TEXT_STAT_SIZE 48
+#define TEXT_STAT_BLOCKS 64
 
 static bool text_directory(positive handle)
 {
@@ -2340,6 +2341,7 @@ static bool text_directory(positive handle)
 static bool text_regular_size(positive handle, positive address_to size)
 {
         p8 raw[256];
+        p8 edge;
 
         memory_fill(raw, 0, sizeof(raw));
 
@@ -2351,7 +2353,37 @@ static bool text_regular_size(positive handle, positive address_to size)
         if ((mode & 0170000) != 0100000)
                 return false;
 
-        address_to size = address_to(positive address_to)(raw + TEXT_STAT_SIZE);
+        positive bytes = address_to(positive address_to)(raw + TEXT_STAT_SIZE);
+        positive blocks = address_to(positive address_to)(raw + TEXT_STAT_BLOCKS);
+
+        /*
+                procfs and sysfs present dynamic data as regular files while
+                reporting an inode size of zero or one page. Trusting that
+                number makes wc -c say 0 for /proc/self/status and 4096 for a
+                six-byte sysfs value. Prove both edges with positioned reads:
+                a real file has a byte immediately before st_size and EOF at
+                it, including a sparse file whose final byte is a hole.
+
+                Allocated ordinary files need no proof. Both pseudo files and
+                holes report no blocks, which keeps this check off wc -c's
+                usual one-fstat fast path.
+        */
+        if (!blocks)
+        {
+                bipolar before = bytes
+                                       ? system_call_4(syscall(pread64), handle,
+                                                       (positive)address_of edge,
+                                                       1, bytes - 1)
+                                       : 1;
+                bipolar after = system_call_4(syscall(pread64), handle,
+                                              (positive)address_of edge, 1,
+                                              bytes);
+
+                if ((bytes && before != 1) || after != 0)
+                        return false;
+        }
+
+        address_to size = bytes;
         return true;
 }
 
@@ -2637,6 +2669,7 @@ static const file_long wc_longs[] = {
     {(string_address) "bytes", 'c'},
     {(string_address) "chars", 'm'},
     {(string_address) "max-line-length", 'L'},
+    {(string_address) "total", 'T'},
     // --debug names the counting strategy on the error stream and leaves
     // the counts alone, and there is one strategy here to name. It borrows a
     // D that `allowed` refuses, so wc -D stays the error GNU makes of it.
@@ -2666,6 +2699,38 @@ static bool wc_want_words;
 static bool wc_want_bytes;
 static bool wc_want_chars;
 static bool wc_want_longest;
+
+enum
+{
+        WC_TOTAL_AUTO,
+        WC_TOTAL_ALWAYS,
+        WC_TOTAL_ONLY,
+        WC_TOTAL_NEVER,
+};
+
+// GNU accepts an unambiguous prefix of the four --total values. A bare "a"
+// is ambiguous between auto and always, while "o" and "n" are already
+// enough to choose only and never.
+static bool wc_total_of(string_address said, positive address_to mode)
+{
+        static const string_address names[4] = {
+            (string_address) "auto", (string_address) "always",
+            (string_address) "only", (string_address) "never"};
+        positive length = string_length(said);
+        positive matches = 0;
+
+        for (positive i = 0; i < 4; i++)
+        {
+                if (length <= string_length(names[i]) &&
+                    !string_compare_max(said, names[i], length))
+                {
+                        matches++;
+                        address_to mode = i;
+                }
+        }
+
+        return matches == 1;
+}
 
 static fn wc_row(positive lines, positive words, positive bytes,
                  positive longest, positive width, string_address name)
@@ -2701,7 +2766,7 @@ static b32 text_wc()
         file_taking taking = {
             .program = (string_address) "wc",
             .allowed = (string_address) "Lclmw",
-            .valued = (string_address) "",
+            .valued = (string_address) "T",
             .longs = wc_longs,
             .operand = text_file_add,
         };
@@ -2720,6 +2785,7 @@ static b32 text_wc()
         bool want_bytes = (flags & FILE_FLAG('c')) != 0;
         bool want_chars = (flags & FILE_FLAG('m')) != 0;
         bool want_longest = (flags & FILE_FLAG('L')) != 0;
+        positive total_mode = WC_TOTAL_AUTO;
         positive total_lines = 0, total_words = 0, total_bytes = 0, total_longest = 0;
         positive width = 1;
         positive known = 0;
@@ -2732,6 +2798,12 @@ static b32 text_wc()
                 want_bytes = true;
         }
 
+        if ((flags & FILE_FLAG('T')) &&
+            !wc_total_of(file_option_value(address_of taking, 'T'),
+                         address_of total_mode))
+                return text_refuse(file_option_value(address_of taking, 'T'),
+                                   "invalid argument", 1);
+
         b32 selected = (b32)want_lines + (b32)want_words + (b32)want_bytes +
                        (b32)want_chars + (b32)want_longest;
         b32 inputs = text_input_count();
@@ -2742,7 +2814,7 @@ static b32 text_wc()
         wc_want_chars = want_chars;
         wc_want_longest = want_longest;
 
-        if (selected > 1 || inputs > 1)
+        if (total_mode != WC_TOTAL_ONLY && (selected > 1 || inputs > 1))
         {
                 for (b32 i = 0; i < inputs; i++)
                 {
@@ -2756,6 +2828,23 @@ static b32 text_wc()
                                 else
                                         known += size;
 
+                                continue;
+                        }
+
+                        file_facts facts;
+
+                        if (!file_look_at(name, address_of facts))
+                                continue;
+
+                        if ((facts.mode & MODE_FORMAT) != MODE_FILE)
+                        {
+                                unknown = true;
+                                continue;
+                        }
+
+                        if (facts.blocks)
+                        {
+                                known += facts.size;
                                 continue;
                         }
 
@@ -2935,15 +3024,22 @@ static b32 text_wc()
                 if (longest > total_longest)
                         total_longest = longest;
 
-                wc_row(lines, words, bytes, longest, width, name);
+                if (total_mode != WC_TOTAL_ONLY)
+                        wc_row(lines, words, bytes, longest, width, name);
         }
 
-        if (text_files_count > 1)
+        bool total = total_mode == WC_TOTAL_ALWAYS ||
+                     total_mode == WC_TOTAL_ONLY ||
+                     (total_mode == WC_TOTAL_AUTO && text_files_count > 1);
+
+        if (total)
         {
                 // The total of the longest lines is the longest of them, not
                 // their sum, which is the one column here that does not add up.
                 wc_row(total_lines, total_words, total_bytes, total_longest,
-                       width, (string_address) "total");
+                       total_mode == WC_TOTAL_ONLY ? 1 : width,
+                       total_mode == WC_TOTAL_ONLY ? null
+                                                   : (string_address) "total");
         }
 
         return text_done(text_status);

@@ -1492,6 +1492,13 @@ answer 'case dash last'   'case - in [a-]) echo yes;; *) echo no;; esac'
 answer 'while read'      'printf "1\n2\n" | while read v; do echo "[$v]"; done'
 answer 'until once'      'until true; do echo no; done; echo done'
 answer 'for nothing'     'for i in; do echo $i; done; echo done'
+answer 'for linebreak before in' 'for i
+in a b
+do echo "$i"
+done'
+answer 'for linebreak before do' 'set -- a b; for i
+do echo "$i"
+done'
 # A reserved word is only reserved where a command name was expected, and the
 # list of a for loop is not that place. The list ends at the separator, so
 # "for i in then do; ..." walks two items and finds its own do after them.
@@ -1584,6 +1591,10 @@ answer 'colon keeps it'   'v=o; v=n :; echo "[$v]"'
 answer 'eval keeps it'    'v=o; v=n eval echo "in \$v"; echo "out $v"'
 answer 'plain does not'   'v=o; v=n cd /; echo "[$v]"'
 answer 'two of them'      'a=1; b=2; a=x b=y true; echo "$a$b"'
+answer 'assignments see left neighbors' \
+        'unset a b; a=one b=$a; printf "%s:%s\n" "$a" "$b"'
+answer 'temporary assignments see left neighbors' \
+        'a=old; unset b; a=one b=$a /bin/sh -c '\''printf "%s:%s\n" "$a" "$b"'\''; printf "%s:%s\n" "$a" "${b-unset}"'
 answer 'three prefixed arguments' 'a=1 b=2 c=3 printf "[%s][%s]\\n" x y; echo "[${a-unset}${b-unset}${c-unset}]"'
 answer 'empty value back' 'v=; v=n true; echo "[$v]"'
 answer 'not found either' 'v=o; v=n nosuchcommand12345 2>/dev/null; echo "[$v]"'

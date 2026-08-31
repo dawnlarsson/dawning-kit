@@ -997,6 +997,19 @@ compare 'long words'     wc a    --words
 compare 'long bytes'     wc a    --bytes
 compare 'long chars'     wc a    --chars
 compare 'long longest'   wc wide --max-line-length
+compare 'total always stdin' wc a --total=always
+compare 'total only stdin' wc a --total=only
+compare 'total always one' wc - --total=always "$work/a"
+compare 'total never two' wc - --total=never "$work/a" "$work/b"
+compare 'total only two'  wc - --total=only "$work/a" "$work/b"
+compare 'total error mix' wc - --total=auto "$work/nosuch" "$work/a"
+compare 'total last wins' wc - --total=only --total=always "$work/a"
+compare 'total short value' wc - --total=o "$work/a"
+compare 'total ambiguous' wc - --total=a "$work/a"
+[ ! -r /proc/version ] || \
+        compare 'proc bytes' wc - -c /proc/version
+[ ! -r /sys/kernel/profiling ] || \
+        compare 'sysfs bytes' wc - -c /sys/kernel/profiling
 compare 'long unknown'   wc a    --nosuchflag
 compare 'debug'          wc a    --debug
 

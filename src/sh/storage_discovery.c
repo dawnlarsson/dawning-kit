@@ -608,11 +608,13 @@ typedef struct
 {
         enum storage_column columns[STORAGE_COLUMN_MAX];
         positive count;
+        string_address operand;
         string_address source;
         string_address target;
         string_address type;
         string_address option_filter;
         bool path_query;
+        bool mountpoint_query;
         bool no_headings;
         bool raw;
         bool no_fsroot;
@@ -645,10 +647,38 @@ static bool storage_mount_options_match(storage_mount address_to mount,
 
         while ((at = storage_comma_next(address_of cursor, address_of length)))
         {
-                if (!length ||
-                    (!storage_option_has_length(mount->options, at, length) &&
-                     !storage_option_has_length(mount->filesystem_options,
-                                                at, length)))
+                bool present;
+
+                if (!length)
+                        return false;
+
+                present = storage_option_has_length(mount->options, at, length) ||
+                          storage_option_has_length(mount->filesystem_options,
+                                                    at, length);
+
+                /* The filesystem column is authoritative when it carries a
+                   read-only/read-write state opposite to the VFS column. */
+                if (length == 2 && !memory_compare(at, "rw", 2) &&
+                    storage_option_has(mount->filesystem_options,
+                                       (string_address)"ro"))
+                        present = false;
+                else if (length == 2 && !memory_compare(at, "ro", 2) &&
+                         storage_option_has(mount->filesystem_options,
+                                            (string_address)"rw"))
+                        present = false;
+
+                /* libmount first honours a literal `no...` option.  When
+                   there is none, it treats the spelling as a request that
+                   the positive option be absent: norw matches a read-only
+                   mount, while nodev still matches the actual nodev flag. */
+                if (!present && length > 2 && at[0] == 'n' && at[1] == 'o')
+                        present = !storage_option_has_length(
+                                       mount->options, at + 2, length - 2) &&
+                                  !storage_option_has_length(
+                                       mount->filesystem_options,
+                                       at + 2, length - 2);
+
+                if (!present)
                         return false;
         }
 
@@ -761,18 +791,32 @@ static string_address storage_findmnt_cell(storage_mount address_to mount,
 
 static positive storage_combined_options_length(storage_mount address_to mount)
 {
-        positive length = string_length(mount->options);
-        string_address cursor = mount->filesystem_options;
+        positive length = 0;
+        string_address cursor = mount->options;
         string_address at;
         positive token_length;
 
         while ((at = storage_comma_next(address_of cursor,
                                          address_of token_length)))
         {
+                bool overridden = token_length == 2 &&
+                    ((!memory_compare(at, "rw", 2) &&
+                      storage_option_has(mount->filesystem_options,
+                                         (string_address)"ro")) ||
+                     (!memory_compare(at, "ro", 2) &&
+                      storage_option_has(mount->filesystem_options,
+                                         (string_address)"rw")));
+
+                if (token_length && !overridden)
+                        length += token_length + (length ? 1 : 0);
+        }
+
+        cursor = mount->filesystem_options;
+        while ((at = storage_comma_next(address_of cursor,
+                                         address_of token_length)))
                 if (token_length && !storage_option_has_length(
                                         mount->options, at, token_length))
                         length += token_length + (length ? 1 : 0);
-        }
 
         return length;
 }
@@ -781,16 +825,51 @@ static fn storage_combined_options_write(writer output,
                                          storage_mount address_to mount,
                                          bool raw, bool pairs)
 {
-        string_address cursor = mount->filesystem_options;
+        string_address cursor = mount->options;
         string_address at;
         positive token_length;
-        bool any = mount->options[0] != end;
+        bool any = false;
 
-        if (pairs)
-                storage_write_encoded(output, mount->options);
-        else
-                storage_findmnt_value(output, mount->options, raw);
+        while ((at = storage_comma_next(address_of cursor,
+                                         address_of token_length)))
+        {
+                bool overridden = token_length == 2 &&
+                    ((!memory_compare(at, "rw", 2) &&
+                      storage_option_has(mount->filesystem_options,
+                                         (string_address)"ro")) ||
+                     (!memory_compare(at, "ro", 2) &&
+                      storage_option_has(mount->filesystem_options,
+                                         (string_address)"rw")));
 
+                if (token_length && !overridden)
+                {
+                        if (any)
+                                output((address_any)",", 1);
+
+                        if (pairs)
+                        {
+                                p8 saved = at[token_length];
+
+                                at[token_length] = end;
+                                storage_write_encoded(output, at);
+                                at[token_length] = saved;
+                        }
+                        else if (raw)
+                        {
+                                p8 saved = at[token_length];
+
+                                at[token_length] = end;
+                                storage_findmnt_value(output, at, true);
+                                at[token_length] = saved;
+                        }
+                        else
+                                output((address_any)at, token_length);
+
+                        any = true;
+                }
+        }
+
+        cursor = mount->filesystem_options;
         while ((at = storage_comma_next(address_of cursor,
                                          address_of token_length)))
         {
@@ -1004,11 +1083,20 @@ static bool storage_findmnt_match(storage_mount address_to mount,
         if (matched && have_query_id && mount->id != query_id)
                 matched = false;
 
+        if (matched && options->operand &&
+            string_compare(options->operand, mount->target) &&
+            !storage_source_matches(mount, options->operand))
+                matched = false;
+
         if (matched && options->target && !options->path_query &&
             string_compare(options->target, mount->target))
                 matched = false;
 
-        return options->invert ? !matched : matched;
+        if (options->invert &&
+            (options->operand || options->source || options->target ||
+             options->type || options->option_filter || have_query_id))
+                return !matched;
+        return matched;
 }
 
 /* Reentrant core used unchanged by builtin and multicall dispatch. */
@@ -1032,14 +1120,14 @@ b32 storage_findmnt(positive argc, string_address address_to argv,
 
                 if (word[0] != '-' || !word[1])
                 {
-                        if (options.target)
+                        if (options.operand)
                         {
                                 storage_write_text(diagnostic,
                                     (string_address) "findmnt: too many arguments\n");
                                 return 1;
                         }
 
-                        options.target = *word ? word : (string_address) "/";
+                        options.operand = *word ? word : (string_address) "/";
                         continue;
                 }
 
@@ -1047,8 +1135,8 @@ b32 storage_findmnt(positive argc, string_address address_to argv,
                 {
                         if (++at < argc)
                         {
-                                options.target = *argv[at] ? argv[at] :
-                                                              (string_address) "/";
+                                options.operand = *argv[at] ? argv[at] :
+                                                               (string_address) "/";
                                 at++;
                         }
 
@@ -1118,6 +1206,7 @@ b32 storage_findmnt(positive argc, string_address address_to argv,
                 {
                         options.target = *attached ? attached :
                                                      (string_address) "/";
+                        options.mountpoint_query = true;
                         continue;
                 }
                 attached = storage_attached_long(
@@ -1176,8 +1265,11 @@ b32 storage_findmnt(positive argc, string_address address_to argv,
                         }
                         else if (!string_compare(option,
                                                  (string_address) "--mountpoint"))
+                        {
                                 options.target = *value ? value :
                                                           (string_address) "/";
+                                options.mountpoint_query = true;
+                        }
                         else if (!string_compare(option,
                                                  (string_address) "--types"))
                                 options.type = value;
@@ -1242,8 +1334,11 @@ b32 storage_findmnt(positive argc, string_address address_to argv,
                                         options.path_query = true;
                                 }
                                 else if (word[letter] == 'M')
+                                {
                                         options.target = *value ? value :
                                                                   (string_address) "/";
+                                        options.mountpoint_query = true;
+                                }
                                 else if (word[letter] == 't')
                                         options.type = value;
                                 else if (word[letter] == 'O')
@@ -1265,6 +1360,15 @@ b32 storage_findmnt(positive argc, string_address address_to argv,
                                 return 1;
                         }
                 }
+        }
+
+        if ((options.path_query && options.mountpoint_query) ||
+            (options.operand &&
+             (options.source || options.path_query || options.mountpoint_query)))
+        {
+                storage_write_text(diagnostic,
+                    (string_address) "findmnt: incompatible query arguments\n");
+                return 1;
         }
 
         if (!storage_mount_table_load(address_of table, diagnostic))
@@ -1359,6 +1463,7 @@ b32 storage_findmnt(positive argc, string_address address_to argv,
         }
 
         storage_mount_table_release(address_of table);
+
         return matched ? 0 : 1;
 }
 

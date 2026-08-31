@@ -553,15 +553,11 @@ static b32 storage_mount_list(writer write, writer diagnostic,
                 storage_mount address_to record = table.entry + at;
                 if (storage_type_match(type_filter, record->type))
                 {
-                        if (*record->filesystem_options)
-                                string_format(write, "%s on %s type %s (%s,%s)\n",
-                                              record->source, record->target,
-                                              record->type, record->options,
-                                              record->filesystem_options);
-                        else
-                                string_format(write, "%s on %s type %s (%s)\n",
-                                              record->source, record->target,
-                                              record->type, record->options);
+                        string_format(write, "%s on %s type %s (", record->source,
+                                      record->target, record->type);
+                        storage_combined_options_write(write, record, false,
+                                                       false);
+                        storage_write_text(write, (string_address)")\n");
                 }
         }
         storage_mount_table_release(address_of table);
@@ -1054,6 +1050,7 @@ static b32 storage_umount_recursive(writer diagnostic, string_address program,
 {
         b32 failed = 0;
         positive longest = positive_max;
+        bool found = false;
 
         /* Repeated longest-path selection avoids another allocation and
            guarantees children leave before their parent even if proc changes
@@ -1093,12 +1090,18 @@ static b32 storage_umount_recursive(writer diagnostic, string_address program,
                             storage_path_below(record->target, root) &&
                             storage_type_match(types, record->type))
                         {
+                                found = true;
                                 failed |= storage_umount_one(diagnostic, program,
                                                              record->target, flags,
                                                              read_only);
                                 record->target = null;
                         }
                 }
+        }
+        if (!found)
+        {
+                string_format(diagnostic, "%s: %s: not found\n", program, root);
+                return 1;
         }
         return failed;
 }

@@ -1374,9 +1374,11 @@ static b32 exec_simple(b32 index)
 {
         parse_node address_to node = parse_nodes + index;
         exec_kept_value address_to kept = null;
+        exec_kept_value address_to expanded_kept = null;
         string_address address_to assignments = null;
         shell_mark arena_mark = shell_store_mark(address_of exec_store);
         b32 kept_count = 0;
+        b32 expanded_count = 0;
         b32 temporary_count = 0;
         b32 mark = exec_save_count;
         b32 count = 0;
@@ -1398,6 +1400,31 @@ static b32 exec_simple(b32 index)
         // this while the words and redirect targets below are expanded.
         shell_substitution_status = 0;
 
+        /* Assignment right hand sides are expanded and assigned from left to
+           right: `a=one b=$a` gives b the new value. Keep those provisional
+           values out of command-word expansion, then let the ordinary
+           persistence/export path below apply them for real. */
+        while (expanded_count < node->word_count &&
+               (parse_word_flags[node->word + expanded_count] &
+                PARSE_WORD_ASSIGNMENT))
+                expanded_count++;
+
+        if (expanded_count)
+        {
+                expanded_kept = (exec_kept_value address_to)shell_store_take(
+                    address_of exec_store,
+                    (positive)expanded_count * sizeof(expanded_kept[0]));
+
+                if (!expanded_kept)
+                {
+                        shell_store_rewind(address_of exec_store, arena_mark);
+                        shell_status = 2;
+                        return 2;
+                }
+
+                expanded_count = 0;
+        }
+
         for (at = 0; at < node->word_count; at++)
         {
                 b32 word_index = node->word + at;
@@ -1414,6 +1441,8 @@ static b32 exec_simple(b32 index)
                 if (count == first &&
                     (word_flags & PARSE_WORD_ASSIGNMENT))
                 {
+                        string_address trial;
+
                         if (!shell_words_add(address_of arguments,
                                              literal ? word
                                                      : shell_expand_word(word)))
@@ -1424,8 +1453,31 @@ static b32 exec_simple(b32 index)
                         if (exec_line_aborted())
                                 break;
 
+                        trial = shell_argv[first];
+
+                        if (!exec_keep_value(expanded_kept + expanded_count,
+                                             trial) ||
+                            !exec_assign(address_of trial,
+                                         parse_word_name_lengths[word_index],
+                                         parse_word_name_hashes[word_index],
+                                         (word_flags & PARSE_WORD_APPEND) != 0))
+                        {
+                                exec_put_back(expanded_kept, expanded_count);
+                                shell_store_rewind(address_of exec_store,
+                                                   arena_mark);
+                                shell_status = 2;
+                                return 2;
+                        }
+
+                        expanded_count++;
                         first++;
                         continue;
+                }
+
+                if (expanded_count)
+                {
+                        exec_put_back(expanded_kept, expanded_count);
+                        expanded_count = 0;
                 }
 
                 if (literal)
@@ -1445,10 +1497,13 @@ static b32 exec_simple(b32 index)
 
         if (exec_line_aborted())
         {
+                exec_put_back(expanded_kept, expanded_count);
                 shell_store_rewind(address_of exec_store, arena_mark);
                 shell_status = 2;
                 return 2;
         }
+
+        exec_put_back(expanded_kept, expanded_count);
 
         //      An empty command line never entered the loop, so the table
         //      may not exist yet to hold even the null that ends it.

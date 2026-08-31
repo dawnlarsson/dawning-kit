@@ -67,6 +67,7 @@ set -u
 case "$(key_one arch)" in
 x86_64 | amd64 | x64)
         header=linux/arch/x86/include/asm/string_64.h
+        fold_header=$header
         #
         #       The three the architecture wrote for itself.
         #       Re-measured on a 9950X in kernel shape, in
@@ -337,6 +338,38 @@ if [ -n "${displaces:-}" ]; then
                         "$makefile" || die "displacing $object"
                 echo "  took $object from $(basename "$(dirname "$makefile")")"
         done
+fi
+
+#
+#       The fold, which is the fourth kind of edit and the only one that
+#       changes what a kernel CALL SITE compiles to rather than what a name
+#       resolves to. It is measured in kernel/patch/fold-x86.h.
+#
+#       It goes INSIDE the header's own guards, before "#endif /* __KERNEL__
+#       */", and not appended at the end the way the claims above are. Those
+#       sit after the file's final #endif and work by luck; a macro there
+#       would be re-processed on every inclusion, and a static function
+#       beside it would be a redefinition on the second include.
+#
+#       x86_64 only: the other two have no claims to fold against yet and the
+#       size distribution was counted on this one.
+#
+if [ -n "${fold_header:-}" ] && [ -f kernel/patch/fold-x86.h ] &&
+   ! grep -q MOONWATER_FOLD_X86 "$fold_header"
+then
+        fold_work=$(mktemp)
+        awk -v add=kernel/patch/fold-x86.h '
+                /^#endif \/\* __KERNEL__ \*\/$/ && !placed {
+                        while ((getline line < add) > 0)
+                                print line
+                        placed = 1
+                }
+                { print }
+        ' "$fold_header" > "$fold_work" &&
+        sudo cp "$fold_work" "$fold_header" ||
+                die "folding constant sizes into $fold_header"
+        rm -f "$fold_work"
+        echo "  folded constant memcpy and memset into $(basename "$fold_header")"
 fi
 
 line_add_padded "linux/Kconfig" "source \"kernel/moonwater/Kconfig\""
