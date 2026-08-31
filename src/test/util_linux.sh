@@ -61,6 +61,38 @@ compare()
         fi
 }
 
+compare_signal()
+{
+        name=$1
+        utility=$2
+        shift 2
+        reference=$(command -v "$utility" || true)
+
+        want=$(python3 -c 'import subprocess,sys; print(subprocess.run(sys.argv[1:]).returncode)' \
+                "$reference" "$@")
+        got=$(python3 -c 'import subprocess,sys; print(subprocess.run(sys.argv[1:]).returncode)' \
+                "$work/bin/$utility" "$@")
+        if [ "$want" = "$got" ]; then
+                won
+        else
+                lost "$name" "want signal return $want, got $got"
+        fi
+}
+
+subject()
+{
+        name=$1
+        utility=$2
+        script=$3
+        shift 3
+        if TOOL="$work/bin/$utility" sh -c "$script" "$@" \
+                > "$work/got" 2>/dev/null; then
+                won
+        else
+                lost "$name" "subject failed: $(shown "$work/got")"
+        fi
+}
+
 section util-linux
 
 group reference
@@ -384,6 +416,24 @@ compare 'map current user' unshare \
         '"$TOOL" -Uc /bin/sh -c '\''id -u; id -g; cat /proc/self/uid_map; cat /proc/self/gid_map'\'''
 compare 'map chosen identities' unshare \
         '"$TOOL" -U --map-user=7 --map-group=8 /bin/sh -c '\''id -u; id -g'\'''
+compare 'mapping precedence current' unshare \
+        '"$TOOL" -Urc /bin/sh -c '\''id -u; id -g'\'''
+compare 'mapping precedence root' unshare \
+        '"$TOOL" -Ucr /bin/sh -c '\''id -u; id -g'\'''
+compare 'chosen user supersedes root' unshare \
+        '"$TOOL" -Ur --map-user=7 /bin/sh -c '\''id -u; id -g'\'''
+compare 'root supersedes chosen user' unshare \
+        '"$TOOL" -U --map-user=7 -r /bin/sh -c '\''id -u; id -g'\'''
+compare 'wide mapped identity' unshare \
+        '"$TOOL" -U --map-user=2147483648 /bin/sh -c '\''id -u; cat /proc/self/uid_map'\'''
+compare 'setgroups without gid map' unshare \
+        '"$TOOL" -U --setgroups=deny /bin/sh -c '\''cat /proc/self/setgroups'\'''
+if [ "$(id -u)" != 0 ] && command -v newuidmap >/dev/null 2>&1; then
+        compare 'range merged around single' unshare \
+                '"$TOOL" -U --map-users=0:100000:10 --map-user=5 /bin/sh -c '\''cat /proc/self/uid_map'\'''
+        compare 'repeated mapping ranges' unshare \
+                '"$TOOL" -U --map-users=0:100000:5 --map-users=10:100010:5 /bin/sh -c '\''cat /proc/self/uid_map'\'''
+fi
 compare 'combined namespace cluster' unshare \
         'out=$("$TOOL" -Urnm --propagation unchanged /bin/sh -c '\''for n in user mnt net; do readlink /proc/self/ns/$n; done'\''); status=$?; printf "%s\n" "$out" | sed -E "s/\[[0-9]+\]/[ID]/"; exit "$status"'
 compare 'pid namespace fork' unshare \
@@ -404,6 +454,14 @@ compare 'time offset requires namespace' unshare \
         '"$TOOL" --monotonic 1 /bin/true'
 compare 'setgroups requires namespace' unshare \
         '"$TOOL" --setgroups deny /bin/true'
+compare 'ignored SIGCHLD before fork' unshare \
+        'trap '\'''\'' CHLD; "$TOOL" -Urf /bin/true'
+compare 'default command honors SHELL' unshare \
+        'SHELL=/bin/false "$TOOL" -Ur'
+if command -v python3 >/dev/null 2>&1; then
+        compare_signal 'fork preserves signal death' unshare -Urf \
+                /bin/sh -c 'kill -TERM $$'
+fi
 
 group nsenter
 compare 'enter user mount and net' nsenter \
@@ -418,12 +476,41 @@ compare 'long target root' nsenter \
         'unshare -Ur /bin/sh -c "sleep 5" & target=$!; sleep .1; "$TOOL" -t "$target" -U --preserve-credentials --root /bin/pwd; status=$?; kill "$target" 2>/dev/null; wait "$target" 2>/dev/null; exit "$status"'
 compare 'explicit credentials override preserve' nsenter \
         'unshare -U --map-user=7 --map-group=8 /bin/sh -c "sleep 5" & target=$!; sleep .1; "$TOOL" -t "$target" -U --preserve-credentials --setuid=7 --setgid=8 /bin/sh -c '\''id -u; id -g'\''; status=$?; kill "$target" 2>/dev/null; wait "$target" 2>/dev/null; exit "$status"'
+compare 'follow target credentials' nsenter \
+        'unshare -U --map-user=7 --map-group=8 /bin/sh -c "sleep 5" & target=$!; sleep .1; "$TOOL" -t "$target" -U --preserve-credentials --setuid=follow --setgid=follow /bin/sh -c '\''id -u; id -g'\''; status=$?; kill "$target" 2>/dev/null; wait "$target" 2>/dev/null; exit "$status"'
+subject 'credential aliases last win' nsenter \
+        'unshare -U --map-user=7 --map-group=8 /bin/sh -c "sleep 5" & target=$!; sleep .1; "$TOOL" -t "$target" -U --preserve-credentials -S7 --setuid=invalid -G8 --setgid=invalid /bin/true; status=$?; kill "$target" 2>/dev/null; wait "$target" 2>/dev/null; test "$status" -ne 0'
+subject 'bare root and wd are sticky' nsenter \
+        'unshare -Ur /bin/sh -c "cd /tmp; sleep 5" & target=$!; sleep .1; out=$("$TOOL" -t "$target" -U --preserve-credentials --root=/no --root --wd=/no --wd /bin/pwd); status=$?; kill "$target" 2>/dev/null; wait "$target" 2>/dev/null; test "$status" = 0 && test "$out" = /tmp'
+compare 'wide entered identity' nsenter \
+        'unshare -U --map-user=2147483648 /bin/sh -c "sleep 5" & target=$!; sleep .1; "$TOOL" -t "$target" -U --preserve-credentials --setuid=2147483648 /bin/sh -c '\''id -u'\''; status=$?; kill "$target" 2>/dev/null; wait "$target" 2>/dev/null; exit "$status"'
 compare 'explicit namespace files' nsenter \
         'unshare -Urn /bin/sh -c "sleep 5" & target=$!; sleep .1; out=$("$TOOL" --user="/proc/$target/ns/user" --net="/proc/$target/ns/net" --preserve-credentials /bin/sh -c '\''id -u; readlink /proc/self/ns/net'\''); status=$?; printf "%s\n" "$out" | sed -E "s/\[[0-9]+\]/[ID]/"; kill "$target" 2>/dev/null; wait "$target" 2>/dev/null; exit "$status"'
 compare 'pid namespace forks command' nsenter \
         'mark=$0/pid-target; rm -f "$mark"; unshare -Urp /bin/sh -c '\''sleep 5 & echo $! > "$1"; wait'\'' sh "$mark" & owner=$!; tries=0; while [ ! -s "$mark" ] && [ "$tries" -lt 50 ]; do sleep .02; tries=$((tries + 1)); done; target=$(cat "$mark"); out=$("$TOOL" -t "$target" -U -p --preserve-credentials /bin/sh -c '\''echo $$; readlink /proc/self/ns/pid'\''); status=$?; printf "%s\n" "$out" | sed -E "s/\[[0-9]+\]/[ID]/"; kill "$owner" 2>/dev/null; wait "$owner" 2>/dev/null; rm -f "$mark"; exit "$status"' "$work"
+compare 'attached namespace path' nsenter \
+        '"$TOOL" -m/proc/self/ns/mnt /bin/true'
+compare 'bare wdns keeps command' nsenter \
+        'unshare -Ur /bin/sh -c '\''cd /tmp; sleep 5'\'' & target=$!; sleep .1; "$TOOL" -t "$target" -U --preserve-credentials -W /bin/pwd; status=$?; kill "$target" 2>/dev/null; wait "$target" 2>/dev/null; exit "$status"'
+compare 'default command honors SHELL' nsenter \
+        'SHELL=/bin/false "$TOOL" -U/proc/self/ns/user --preserve-credentials'
 compare 'requires target' nsenter '"$TOOL" -m /bin/true'
 compare 'invalid target' nsenter '"$TOOL" -t impossible -m /bin/true'
+
+if [ "$(id -u)" = 0 ]; then
+        mkdir "$work/root"
+        mkdir "$work/root/proc"
+        cp "$subject" "$work/root/shell"
+        compare 'root precedes proc mount' unshare \
+                '"$TOOL" -m --root="$0" --mount-proc=/proc /shell -c '\''test -r /proc/self/status'\''' \
+                "$work/root"
+        compare 'detached proc root and wd' nsenter \
+                'mark=$0/detached; rm -f "$mark"; unshare -m /bin/sh -c '\''echo $$ > "$1"; umount -l /proc; cd /tmp; sleep 5'\'' sh "$mark" & owner=$!; while [ ! -s "$mark" ]; do sleep .02; done; target=$(cat "$mark"); "$TOOL" -t "$target" -m -r -w /bin/pwd; status=$?; kill "$target" 2>/dev/null; wait "$owner" 2>/dev/null; exit "$status"' \
+                "$work"
+        compare 'all skips current user ns' nsenter \
+                'mark=$0/all; rm -f "$mark"; unshare -mn /bin/sh -c '\''echo $$ > "$1"; sleep 5'\'' sh "$mark" & owner=$!; while [ ! -s "$mark" ]; do sleep .02; done; target=$(cat "$mark"); "$TOOL" -a -t "$target" --preserve-credentials /bin/true; status=$?; kill "$target" 2>/dev/null; wait "$owner" 2>/dev/null; exit "$status"' \
+                "$work"
+fi
 
 # Exact upstream executable denominator. The supported list is intentionally
 # separate: every upstream name must be in exactly one side, and implementing

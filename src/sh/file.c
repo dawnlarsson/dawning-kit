@@ -1613,6 +1613,10 @@ typedef struct
                 --all-repeated turns uniq -Di into a complaint about i.
         */
         string_address optional;
+        // Long-only optional values keep short namespace flags clusterable.
+        string_address long_optional;
+        // A later bare occurrence records `bare` without erasing a path.
+        string_address sticky_optional;
         const file_long address_to longs;
 
         // seq is the one tool here where -4 is a number and not a flag.
@@ -1650,6 +1654,7 @@ typedef struct
         p8 last;
 
         positive flags;
+        positive bare;
         positive first;
         string_address value[FILE_LETTERS];
 } file_taking;
@@ -1768,6 +1773,8 @@ static bool file_take_from(file_taking address_to taking, positive index)
 
                         positive bit = file_letter_bit(letter);
                         bool optional = file_option_among(taking->optional,
+                                                          letter) ||
+                                        file_option_among(taking->long_optional,
                                                           letter);
                         bool valued = string_first_of(taking->valued, letter)
                                       != null;
@@ -1784,7 +1791,15 @@ static bool file_take_from(file_taking address_to taking, positive index)
 
                         if (optional)
                         {
-                                taking->value[bit] = mark ? mark + 1 : null;
+                                if (mark)
+                                        taking->value[bit] = mark + 1;
+                                else
+                                {
+                                        taking->bare |= (positive)1 << bit;
+                                        if (!file_option_among(taking->sticky_optional,
+                                                               letter))
+                                                taking->value[bit] = null;
+                                }
                                 taking->last = letter;
                         }
                         else if (valued)
@@ -1840,7 +1855,12 @@ static bool file_take_from(file_taking address_to taking, positive index)
                         if (string_get(letter + 1))
                                 taking->value[bit] = letter + 1;
                         else if (spare)
-                                taking->value[bit] = null;
+                        {
+                                taking->bare |= (positive)1 << bit;
+                                if (!file_option_among(taking->sticky_optional,
+                                                       string_get(letter)))
+                                        taking->value[bit] = null;
+                        }
                         else if (index < count)
                                 taking->value[bit] = program_argument((b32)index++);
                         else
