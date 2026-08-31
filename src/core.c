@@ -14,7 +14,6 @@
 #include <linux/sched/task.h>
 #include <linux/initrd.h>
 #include <linux/console.h>
-#include <linux/overflow.h>
 #include <linux/refcount.h>
 
 #ifdef CONFIG_X86_64
@@ -115,7 +114,7 @@ typedef struct
         handful of nodes the initramfs was built with -- no /dev/dri, and so
         nothing for the compositor to open.
 */
-MountPoints mounts[] = {
+static const MountPoints mounts[] = {
     {"proc", "/proc", 0},
     {"sysfs", "/sys", 0},
     {"devtmpfs", "/dev", 0},
@@ -207,14 +206,17 @@ static int spark_stack(struct linux_binprm *bprm, unsigned long *out)
         return 0;
 }
 
-static int execute_spark(struct linux_binprm *bprm)
+/* Keeping one epilogue lets the cheap format-rejection gate precede all work;
+   GCC shrink wrapping otherwise emits one restore island per validation exit. */
+static __attribute__((optimize("no-shrink-wrap-separate")))
+int execute_spark(struct linux_binprm *bprm)
 {
-        u64 loader_started = ktime_get_ns();
+        u64 loader_started;
         u64 map_started;
-        struct pt_regs *regs = task_pt_regs(current);
+        struct pt_regs *regs;
         const struct header *header;
-        unsigned long text, data = 0, bss = 0, stack_addr, span;
-        unsigned long text_populate = 0, data_populate = 0, bss_populate = 0;
+        unsigned long text, data, bss, stack_addr, span;
+        unsigned long text_populate, data_populate, bss_populate;
         int ret;
 
         // Everything up to begin_new_exec runs while the old process is still
@@ -225,6 +227,11 @@ static int execute_spark(struct linux_binprm *bprm)
 
         if (header->magic != SPARK_MAGIC)
                 return -ENOEXEC;
+
+        loader_started = ktime_get_ns();
+        regs = task_pt_regs(current);
+        data = bss = 0;
+        text_populate = data_populate = bss_populate = 0;
 
         if (header->version != SPARK_VERSION)
         {
@@ -475,9 +482,6 @@ static void spawn_strings_put(struct spawn_strings *strings)
 
 static void spawn_free(struct spawn_work *work)
 {
-        if (!work)
-                return;
-
         spawn_strings_put(work->environment);
         spawn_strings_put(work->arguments);
         kfree(work->path);
@@ -630,24 +634,21 @@ static int copy_strings(unsigned long user_block, unsigned int bytes,
         char **vector;
         char *walk;
         size_t pointer_bytes;
-        size_t allocation;
         unsigned int i;
 
         if (count == 0 || count > SPARK_SPAWN_MAX_STRINGS || bytes == 0 ||
             bytes > SPARK_SPAWN_MAX_BYTES)
                 return -EINVAL;
 
-        if (check_mul_overflow((size_t)count + 1, sizeof(char *),
-                               &pointer_bytes) ||
-            check_add_overflow(sizeof(*strings), pointer_bytes, &allocation) ||
-            check_add_overflow(allocation, (size_t)bytes, &allocation))
-                return -EOVERFLOW;
+        /* The limits above put this below 3 MiB on every supported 64-bit
+           architecture, so none of the size arithmetic can overflow. */
+        pointer_bytes = ((size_t)count + 1) * sizeof(char *);
 
         /* The immutable bytes and their pointers have exactly the same
            lifetime. One allocation removes a slab round trip from each of
            argv and envp; kvmalloc keeps generated long commands on the fast
            path without demanding physically contiguous megabytes. */
-        strings = kvmalloc(allocation, GFP_KERNEL);
+        strings = kvmalloc(sizeof(*strings) + pointer_bytes + bytes, GFP_KERNEL);
         if (!strings)
                 return -ENOMEM;
 
@@ -877,13 +878,6 @@ static int device_open(struct inode *inode, struct file *file)
         return 0;
 }
 
-#ifdef CONFIG_MOONWATER_CANVAS
-static int device_mmap(struct file *file, struct vm_area_struct *vma)
-{
-        return window_mmap(file, vma);
-}
-#endif
-
 static int device_close(struct inode *inode, struct file *file)
 {
         struct device_context *context = file->private_data;
@@ -903,7 +897,7 @@ static const struct file_operations device_ops = {
     .unlocked_ioctl = device_ioctl,
     .release = device_close,
 #ifdef CONFIG_MOONWATER_CANVAS
-    .mmap = device_mmap,
+    .mmap = window_mmap,
 #endif
     .llseek = noop_llseek,
 };
@@ -924,7 +918,7 @@ static struct miscdevice device = {
 // calls it, so internal linkage is the answer rather than a prefix.
 static fn init_mount()
 {
-        MountPoints address_to mount = mounts;
+        const MountPoints address_to mount = mounts;
 
         while (mount->filesystem)
         {

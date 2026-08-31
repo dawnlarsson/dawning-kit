@@ -23,7 +23,8 @@ def extract_from(text, directory, case):
     candidate = pathlib.Path(directory) / (case + '.c')
     candidate.write_text(text)
     return subprocess.run(
-        [sys.executable, str(extract), str(candidate), 'memory_search'],
+        [sys.executable, str(extract), str(candidate), 'memory_search',
+         'memory_search_prepare', 'memory_search_prepared_core'],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
     )
 
@@ -54,8 +55,8 @@ with tempfile.TemporaryDirectory(prefix='native-extract.') as directory:
         '.section __TEXT,__const',
         '.globl _byte_commonness',
         '_byte_commonness:',
-        'adrp x6, _byte_commonness@PAGE',
-        'add x6, x6, _byte_commonness@PAGEOFF',
+        'adrp x3, _byte_commonness@PAGE',
+        'add x3, x3, _byte_commonness@PAGEOFF',
         'extern const unsigned char byte_commonness[256];',
     ):
         if required not in lifted:

@@ -46,7 +46,8 @@ trap 'rm -rf "$work"' EXIT INT TERM
 python3 "$here/extract.py" "$lib" \
         string_first_of string_first_of_or_end string_first_of_max string_find \
         string_last_of_or_end string_compare_max string_length_max memory_first_of \
-        string_length memory_search memory_compare \
+        string_length memory_search memory_search_prepare \
+        memory_search_prepared_core memory_compare \
         > "$work/lifted.h" || exit 1
 
 #       A header of its own rather than more names in the one above: these

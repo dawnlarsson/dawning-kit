@@ -252,6 +252,16 @@ struct scan_source
 
 #define scan_is_text(source) ((source)->handle == null)
 
+static fn scan_text_take(scan_source address_to source, p8 address_to into,
+                         positive count)
+{
+        if (into != null && count != 0)
+                memory_copy(into, source->text + source->place, count);
+
+        source->place += count;
+        source->consumed += count;
+}
+
 /*
         One byte out, and one byte back.
 
@@ -1797,13 +1807,7 @@ static b32 scan_run(scan_source address_to source, string_address format,
                                                             source->place,
                                                         want);
 
-                                if (into != null && got != 0)
-                                        memory_copy(into,
-                                                    source->text + source->place,
-                                                    got);
-
-                                source->place += got;
-                                source->consumed += got;
+                                scan_text_take(source, into, got);
 
                                 if (got < want)
                                         source->ended = true;
@@ -1857,13 +1861,7 @@ static b32 scan_run(scan_source address_to source, string_address format,
                                 if (got > limit)
                                         got = limit;
 
-                                if (into != null && got != 0)
-                                        memory_copy(into,
-                                                    source->text + source->place,
-                                                    got);
-
-                                source->place += got;
-                                source->consumed += got;
+                                scan_text_take(source, into, got);
                         }
                         else
                         {
@@ -1936,13 +1934,7 @@ static b32 scan_run(scan_source address_to source, string_address format,
                                 if (got > limit)
                                         got = limit;
 
-                                if (into != null && got != 0)
-                                        memory_copy(into,
-                                                    source->text + source->place,
-                                                    got);
-
-                                source->place += got;
-                                source->consumed += got;
+                                scan_text_take(source, into, got);
 
                                 if (got == 0 &&
                                     string_get(source->text + source->place) ==

@@ -51,7 +51,7 @@ static p8 model[GUARD + TOP + 8];
 static p8 taken[GUARD + TOP + 8];
 static p8 spare[GUARD + TOP + 8];
 
-#define NOT_INLINED __attribute__((noinline))
+#define NOT_INLINED __attribute__((noinline, noclone))
 
 //      What each of the six means, spelled out, so the expansion and the
 //      routine are both judged against something neither of them is.

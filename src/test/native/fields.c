@@ -75,14 +75,14 @@ static u64 values[COUNT];
 static u8 output[24];
 static volatile u64 sink;
 
-static __attribute__((noinline)) u64 former_pair(u8 *into, u64 value)
+static __attribute__((noinline, noclone)) u64 former_pair(u8 *into, u64 value)
 {
         into[0] = (u8)('0' + (value / 10) % 10);
         into[1] = (u8)('0' + value % 10);
         return 2;
 }
 
-static __attribute__((noinline)) u64 former_scaled(u8 *into, u64 value, u64 scale)
+static __attribute__((noinline, noclone)) u64 former_scaled(u8 *into, u64 value, u64 scale)
 {
         u64 length = 0;
         while (scale) {

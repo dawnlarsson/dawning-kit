@@ -1,7 +1,7 @@
 /* Former path C bodies against the shared three-architecture ASM paths. */
 #include "../src/compiler_memory.c"
 
-#define NOT_INLINED __attribute__((noinline))
+#define NOT_INLINED __attribute__((noinline, noclone))
 #define TRIES 5
 #define PATH_CAPACITY 4096
 

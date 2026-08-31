@@ -673,8 +673,8 @@ static b32 error_whole(bipolar result)
         return (b32)result;
 }
 
-//      ssize_t and off_t returning calls, where truncating to int would lose
-//      a large read or a file offset past two gigabytes.
+//      Register-width calls, where truncating to int would lose a large read,
+//      file offset or address. Pointer results cast back at their boundary.
 static bipolar error_wide(bipolar result)
 {
         if (error_failed(result))
@@ -684,18 +684,6 @@ static bipolar error_wide(bipolar result)
         }
 
         return result;
-}
-
-//      mmap, which reports failure as MAP_FAILED and not as -1.
-static address_any error_address(bipolar result)
-{
-        if (error_failed(result))
-        {
-                errno = (b32) - result;
-                return address_bad;
-        }
-
-        return (address_any)result;
 }
 
 /*
@@ -1743,10 +1731,10 @@ static p32 umask(p32 mask)
 static address_any mmap(address_any hint, positive length, b32 protection,
                         b32 flags, b32 handle, bipolar offset)
 {
-        return error_address(system_call_6(syscall(mmap), (positive)hint,
-                                           length, (positive)protection,
-                                           (positive)flags, (positive)handle,
-                                           (positive)offset));
+        return (address_any)error_wide(
+            system_call_6(syscall(mmap), (positive)hint, length,
+                          (positive)protection, (positive)flags,
+                          (positive)handle, (positive)offset));
 }
 
 static b32 munmap(address_any address, positive length)
@@ -1876,11 +1864,7 @@ DEAD_END fn _exit(b32 status)
         __builtin_unreachable();
 }
 
-DEAD_END fn _Exit(b32 status)
-{
-        exit(status);
-        __builtin_unreachable();
-}
+DEAD_END fn _Exit(b32 status) __attribute__((alias("_exit")));
 
 static b32 setsid(void)
 {

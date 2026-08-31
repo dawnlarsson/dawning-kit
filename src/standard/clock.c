@@ -53,9 +53,8 @@
         file produces carries tm_isdst zero, tm_gmtoff zero, and tm_zone
         "UTC", because that is what it actually computed -- not because the
         machine happens to be in London. A program that needs a real local
-        time will need a TZif parser, and when one exists the routine to
-        change is clock_local_offset and the two that call it are mktime and
-        localtime_r.
+        time will need a TZif parser; until one exists the local spellings
+        share the UTC entries below.
 */
 
 /*
@@ -343,23 +342,6 @@ static bool clock_break_down(bipolar seconds, tm address_to broken)
 }
 
 /*
-        The offset from UTC that local time is, in seconds, at a given moment.
-
-        It is zero. It is zero because nothing in this tree reads
-        /etc/localtime and there is no zoneinfo on the system to read, and it
-        will keep being zero until a TZif parser exists. The routine is here
-        anyway so that when one does exist there is exactly one place to
-        change and the two callers already going through it, rather than two
-        copies of gmtime wearing a different name.
-*/
-static bipolar clock_local_offset(bipolar seconds)
-{
-        (void)seconds;
-
-        return 0;
-}
-
-/*
         The two traps. Both take a pointer the kernel fills in, both answer
         zero or a negative errno, and neither exists under a different number
         on the three machines: riscv64 shares arm64's asm-generic table, which
@@ -533,18 +515,7 @@ time_t timegm(tm address_to broken)
         return (time_t)seconds;
 }
 
-// Local time is UTC here, so this is timegm with the offset subtracted, and
-// the offset is zero. See clock_local_offset for why the call is written out
-// rather than folded away.
-time_t mktime(tm address_to broken)
-{
-        time_t answer = timegm(broken);
-
-        if (answer == (time_t)-1)
-                return answer;
-
-        return answer - (time_t)clock_local_offset((bipolar)answer);
-}
+time_t mktime(tm address_to broken) __attribute__((alias("timegm")));
 
 tm address_to gmtime_r(const time_t address_to stamp, tm address_to into)
 {
@@ -570,22 +541,12 @@ tm address_to gmtime(const time_t address_to stamp)
         return gmtime_r(stamp, address_of clock_broken_shared);
 }
 
+//      Without a timezone database, the local reentrant spelling is UTC too.
 tm address_to localtime_r(const time_t address_to stamp, tm address_to into)
-{
-        time_t shifted;
-
-        if (is_null(stamp) || is_null(into))
-                return null;
-
-        shifted = address_to stamp + (time_t)clock_local_offset((bipolar)(address_to stamp));
-
-        return gmtime_r(address_of shifted, into);
-}
+        __attribute__((alias("gmtime_r")));
 
 tm address_to localtime(const time_t address_to stamp)
-{
-        return localtime_r(stamp, address_of clock_broken_shared);
-}
+        __attribute__((alias("gmtime")));
 
 /*
         Two shapes of decimal field, which between them are every number this

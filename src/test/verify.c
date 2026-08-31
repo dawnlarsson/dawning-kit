@@ -4324,7 +4324,7 @@ static p8 field_call_first[FIELD_CALL_MAX];
 static address_any field_call_data[FIELD_CALL_MAX];
 static bool field_overflow;
 
-__attribute__((noinline, used))
+__attribute__((noinline, noclone, used))
 fn field_capture(address_any data, positive length)
 {
         p8 address_to bytes = (p8 address_to)data;

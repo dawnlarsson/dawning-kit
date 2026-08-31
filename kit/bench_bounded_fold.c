@@ -11,7 +11,7 @@
 */
 #include "../src/compiler_memory.c"
 
-#define NOT_INLINED __attribute__((noinline))
+#define NOT_INLINED __attribute__((noinline, noclone))
 #define SUBJECTS 64
 #define ROUNDS (1u << 19)
 #define TRIES 9

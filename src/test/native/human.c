@@ -23,11 +23,11 @@ static u64 reference_into(u8 *into, u64 value)
 }
 
 // The two relocations the lifted formatter reaches on its decimal paths.
-__attribute__((noinline)) u64 positive_into(u8 *into, u64 value)
+__attribute__((noinline, noclone)) u64 positive_into(u8 *into, u64 value)
 {
         return reference_into(into, value);
 }
-__attribute__((noinline)) u64 positive_into_string(u8 *into, u64 value)
+__attribute__((noinline, noclone)) u64 positive_into_string(u8 *into, u64 value)
 {
         u64 length = reference_into(into, value);
         into[length] = 0;
@@ -40,7 +40,7 @@ void positive_to_string(void (*write)(void *, u64), u64 value)
         write(digits, length);
 }
 
-static __attribute__((noinline)) u64 former_human(u8 *into, u64 value)
+static __attribute__((noinline, noclone)) u64 former_human(u8 *into, u64 value)
 {
         static u8 units[] = "BKMGTPE";
         u64 divisor = 1, unit = 0;

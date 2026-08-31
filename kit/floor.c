@@ -27,7 +27,7 @@
 #include "../src/compiler_memory.c"
 #include "bench_measure.c"
 
-#define NOT_INLINED __attribute__((noinline))
+#define NOT_INLINED __attribute__((noinline, noclone))
 
 static p8 one[1 << 22] __attribute__((aligned(64)));
 static p8 two[1 << 22] __attribute__((aligned(64)));

@@ -1192,37 +1192,9 @@ fn qsort_r(address_any base, positive count, positive size,
 }
 
 /*
-        qsort is qsort_r with no context, and the comparator is passed through
-        a cast rather than a wrapper.
-
-        A wrapper would be an honest two argument call reached through a three
-        argument pointer, and it would cost a second indirect call on every
-        single comparison -- the most expensive instruction in the sort,
-        doubled. The cast hands a two argument function to a call site that
-        passes three, and the third argument lands in a register the callee
-        never reads. That is not something C guarantees, and it is what glibc
-        does for exactly this reason; it holds on all three of the
-        architectures here, whose calling conventions all pass arguments in
-        registers and none of which make the callee responsible for the
-        argument area.
-*/
-/*
-        The cast this used to do was between two function pointer types of
-        different arity, and the paragraph above admits C does not guarantee
-        it -- it works because none of these three architectures makes the
-        callee responsible for an argument it was never passed. It is still
-        undefined, gcc says so under -Wcast-function-type, and the strict
-        lane that builds the terminal harness would not compile the tree
-        because of it.
-
-        A holder removes the question rather than silencing it. The
-        comparator goes into a structure, the structure's address is the
-        context the three argument engine already carries, and no function
-        pointer is converted to anything. The holder lives in this frame,
-        which outlives the sort it is passed to. What it costs is one
-        indirection per comparison, against a comparator call that was
-        already indirect, and correctness that does not depend on which way
-        the calling convention happens to fall.
+        qsort_r's comparator takes a context and qsort's does not. Holding the
+        plain pointer in that context keeps both function types honest; the
+        forwarder is one load and a tail call on all three architectures.
 */
 typedef struct
 {
@@ -1393,7 +1365,7 @@ static b32 stdlib_random_state[STDLIB_RANDOM_DEGREE] = {
 static positive stdlib_random_front = STDLIB_RANDOM_SEPARATION;
 static positive stdlib_random_rear = 0;
 
-static b32 stdlib_random_draw(void)
+b32 random(void)
 {
         p32 sum = (p32)stdlib_random_state[stdlib_random_front] +
                   (p32)stdlib_random_state[stdlib_random_rear];
@@ -1442,23 +1414,11 @@ fn srandom(p32 seed)
         stdlib_random_front = STDLIB_RANDOM_SEPARATION;
         stdlib_random_rear = 0;
         for (index = 0; index < STDLIB_RANDOM_WARMUP; index++)
-                stdlib_random_draw();
+                random();
 }
 
-b32 random(void)
-{
-        return stdlib_random_draw();
-}
-
-fn srand(p32 seed)
-{
-        srandom(seed);
-}
-
-b32 rand(void)
-{
-        return random();
-}
+fn srand(p32 seed) __attribute__((alias("srandom")));
+b32 rand(void) __attribute__((alias("random")));
 
 /*
         rand_r, which is a different generator entirely and has to be.

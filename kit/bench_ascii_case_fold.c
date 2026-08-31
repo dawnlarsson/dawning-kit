@@ -1,7 +1,7 @@
 /* Literal-size ASCII-folded compare against the out-of-line floor routine. */
 #include "../src/compiler_memory.c"
 
-#define NOT_INLINED __attribute__((noinline))
+#define NOT_INLINED __attribute__((noinline, noclone))
 #define INLINE_ALWAYS __attribute__((always_inline))
 #define SUBJECTS 64
 #define ROUNDS (1u << 19)

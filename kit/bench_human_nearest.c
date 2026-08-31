@@ -1,7 +1,7 @@
 /* dd's nearest human formatter: exact former C body against the ASM leaf. */
 #include "../src/compiler_memory.c"
 
-#define NOT_INLINED __attribute__((noinline))
+#define NOT_INLINED __attribute__((noinline, noclone))
 #define ROUNDS (1u << 18)
 #define VALUE_COUNT 64
 #define TRIES 7

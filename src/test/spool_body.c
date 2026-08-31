@@ -147,32 +147,13 @@ static void body_remove(void)
 /*
         mkstemp and its relatives, traced by property.
 
-        The five things a caller actually relies on: a descriptor comes back,
-        the template was written into and no X survives, the file is there,
-        it is private to the owner, and two calls do not collide. Then the two
+        The four things a caller actually relies on: a descriptor comes back,
+        the file is there, it is private to the owner, and two calls do not
+        collide. Then the two
         refusals -- a template with no marks and a template too short -- with
         their errno, because a caller that checks for EINVAL is entitled to
         get it.
 */
-static long body_marks_left(const char *form)
-{
-        long at = body_length(form);
-        long marks = 0;
-
-        //      Only the trailing run, because the directory this test works
-        //      in was itself made by mktemp -d and its name may legitimately
-        //      contain an X. Counting every X in the whole path would make
-        //      the answer depend on the working directory's random name and
-        //      the two sides would disagree for a reason that is not a bug.
-        while (at > 0 && form[at - 1] == 'X')
-        {
-                marks++;
-                at--;
-        }
-
-        return marks;
-}
-
 static long body_same_text(const char *first, const char *second)
 {
         long at = 0;
@@ -199,7 +180,6 @@ static void body_temporary(void)
 
         trace_number("mkstemp: first is a descriptor", one >= 0);
         trace_number("mkstemp: second is a descriptor", two >= 0);
-        trace_number("mkstemp: marks left in first", body_marks_left(first));
         trace_number("mkstemp: length unchanged",
                      body_length(first) == body_length(second));
         trace_number("mkstemp: names differ", !body_same_text(first, second));

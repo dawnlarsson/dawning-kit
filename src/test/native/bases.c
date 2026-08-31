@@ -80,7 +80,7 @@ static u64 values[COUNT];
 static u8 output[64];
 static volatile u64 sink;
 
-static __attribute__((noinline)) u64 old_runtime_base(u8 *into, u64 value,
+static __attribute__((noinline, noclone)) u64 old_runtime_base(u8 *into, u64 value,
                                                        u64 base, u8 upper)
 {
         return reference(into, value, base, upper);

@@ -22,7 +22,7 @@ static u64 reference_into(u8 *into, u64 value)
         return length;
 }
 
-static __attribute__((noinline)) u64 former_human(u8 *into, u64 n, u8 binary)
+static __attribute__((noinline, noclone)) u64 former_human(u8 *into, u64 n, u8 binary)
 {
         u64 base = binary ? 1024 : 1000;
         u64 amount = n, tenths = 0, rounding = 0, exponent = 0;

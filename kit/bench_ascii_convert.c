@@ -2,7 +2,7 @@
 #include "../src/compiler_memory.c"
 #include "bench_measure.c"
 
-#define NOT_INLINED __attribute__((noinline))
+#define NOT_INLINED __attribute__((noinline, noclone))
 #define TRIES 7
 #define MAXIMUM (1u << 20)
 #define TARGET_BYTES (1u << 24)

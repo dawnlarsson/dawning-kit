@@ -215,9 +215,10 @@ def digit_pair_table():
 
 def body(name):
     for i,l in enumerate(lines):
-        if l.strip()==f'ASM_FUNC({name})' and arch[i]=='ARM64':
+        if l.strip() in (f'ASM_FUNC({name})', f'ASM_LOCAL_FUNC({name})') and arch[i]=='ARM64':
             j=next(k for k in range(i,len(lines))
-                   if lines[k].strip().startswith(f'ASM_END({name})'))
+                   if lines[k].strip().startswith((f'ASM_END({name})',
+                                                   f'ASM_LOCAL_END({name})')))
             out=[]
             for x in lines[i+1:j]:
                 if x.strip().startswith('//'): continue
@@ -225,7 +226,7 @@ def body(name):
                 if indirect:
                     out.append('    "blr %s\\n"' % indirect.group(1))
                     continue
-                out.append(darwin(x.replace('    ASM_RET', '    "ret\\n"')))
+                out.append(darwin(x.replace('ASM_RET', '"ret\\n"')))
             return out
     sys.exit(f"extract: no arm64 {name} in {lib}")
 

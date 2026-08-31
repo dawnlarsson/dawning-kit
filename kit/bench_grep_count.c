@@ -14,7 +14,7 @@
 #include "../src/compiler_memory.c"
 #include "bench_measure.c"
 
-#define NOT_INLINED __attribute__((noinline))
+#define NOT_INLINED __attribute__((noinline, noclone))
 #define TRIES 9
 
 #if defined(__x86_64__)

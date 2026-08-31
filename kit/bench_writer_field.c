@@ -10,7 +10,7 @@
 */
 #include "../src/compiler_memory.c"
 
-#define NOT_INLINED __attribute__((noinline))
+#define NOT_INLINED __attribute__((noinline, noclone))
 #define TRIES 7
 #define TARGET_CALLBACKS (1u << 20)
 #define MAX_ROUNDS (1u << 18)

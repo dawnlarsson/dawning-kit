@@ -13,7 +13,7 @@
 */
 #include "../src/compiler_memory.c"
 
-#define NOT_INLINED __attribute__((noinline))
+#define NOT_INLINED __attribute__((noinline, noclone))
 #define VALUE_COUNT 64
 #define ROUNDS (1u << 17)
 #define TRIES 7

@@ -20,9 +20,8 @@
             prove           assembles two versions for x86_64, arm64 and
                             riscv64 and compares the instructions and the
                             section bytes
-            strip.py        reports which comments only restate the code.
-                            It answered "32 lines of 8808" for this file,
-                            which is why there is no stripping pass.
+            strip.py        removes assembly comments that only restate the
+                            code; it stays a reviewed tool, not a rebuild pass.
 
         Only chain and dedup claim to change nothing, and rebuild proves it
         by running the whole pipeline twice, with and without them, and

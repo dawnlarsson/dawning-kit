@@ -23,7 +23,7 @@ static u8 subjects[SUBJECTS][96];
 static u64 limits[SUBJECTS];
 static volatile u64 sink;
 
-static __attribute__((noinline)) u64 scalar_octal(const u8 *source, u64 bound,
+static __attribute__((noinline, noclone)) u64 scalar_octal(const u8 *source, u64 bound,
                                                    u64 *used)
 {
         u64 value = 0, at = 0;
@@ -35,7 +35,7 @@ static __attribute__((noinline)) u64 scalar_octal(const u8 *source, u64 bound,
         return value;
 }
 
-static __attribute__((noinline)) u64 scalar_hex(const u8 *source, u64 bound,
+static __attribute__((noinline, noclone)) u64 scalar_hex(const u8 *source, u64 bound,
                                                  u64 *used)
 {
         u64 value = 0, at = 0;
@@ -53,7 +53,7 @@ static __attribute__((noinline)) u64 scalar_hex(const u8 *source, u64 bound,
         return value;
 }
 
-static __attribute__((noinline)) u64 scalar_base(const u8 *source, u64 bound,
+static __attribute__((noinline, noclone)) u64 scalar_base(const u8 *source, u64 bound,
                                                   u64 base, u64 *used)
 {
         u64 value = 0, at = 0;
@@ -93,7 +93,7 @@ static u64 ticks(void)
         return value;
 }
 
-static __attribute__((noinline)) u64 run_fixed(fixed_parser parser)
+static __attribute__((noinline, noclone)) u64 run_fixed(fixed_parser parser)
 {
         u64 start = ticks();
         for (u64 round = 0; round < ROUNDS; round++) {
@@ -104,7 +104,7 @@ static __attribute__((noinline)) u64 run_fixed(fixed_parser parser)
         return ticks() - start;
 }
 
-static __attribute__((noinline)) u64 run_base(base_parser parser, u64 base)
+static __attribute__((noinline, noclone)) u64 run_base(base_parser parser, u64 base)
 {
         u64 start = ticks();
         for (u64 round = 0; round < ROUNDS; round++) {

@@ -1,7 +1,7 @@
 /* memory_reverse and the rev fold against the literal C shapes they replace. */
 #include "../src/compiler_memory.c"
 
-#define NOT_INLINED __attribute__((noinline))
+#define NOT_INLINED __attribute__((noinline, noclone))
 #define TRIES 7
 #define MAXIMUM ((1u << 20) + 128)
 #define OUT_MAX (1u << 16)
