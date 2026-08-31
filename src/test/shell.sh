@@ -688,6 +688,34 @@ if [ "$(uname -s)" = Linux ]; then
                         "status $monitor_status, stdout $(wc -c < "$work/monitor.out"), stderr $(wc -c < "$work/monitor.err")"
         fi
 
+        # Expansion and provisional-assignment bytes belong to one simple
+        # command. A loop is one parsed program, so waiting for the top-level
+        # reset made both arenas grow once per iteration without bound.
+        loop_rss=$(timeout 5 "$subject" -c '
+i=0
+while [ "$i" -lt 500000 ]; do
+        x=$i
+        : "$x"
+        i=$(( i + 1 ))
+done
+while read key value unit; do
+        [ "$key" = VmRSS: ] && { echo "$value"; break; }
+done < /proc/$$/status')
+
+        case $loop_rss in
+        ''|*[!0-9]*)
+                lost 'loop arenas reach steady state' "invalid RSS $loop_rss"
+                ;;
+        *)
+                if [ "$loop_rss" -le 8192 ]; then
+                        won
+                else
+                        lost 'loop arenas reach steady state' \
+                                "RSS grew to $loop_rss KiB"
+                fi
+                ;;
+        esac
+
         # stty must query the input terminal, not its piped stdout. Give the
         # subject a deliberately non-default PTY so a hard-coded 24x80 answer
         # cannot pass.

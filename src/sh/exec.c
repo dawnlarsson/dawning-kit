@@ -1772,6 +1772,7 @@ static b32 exec_simple(b32 index)
                 if (node->redirect_count)
                         exec_redirect_restore(mark);
                 shell_status = shell_substitution_status;
+                shell_store_rewind(address_of exec_store, arena_mark);
                 return shell_status;
         }
 
@@ -2695,7 +2696,6 @@ static bool conditional_expression()
 static b32 exec_conditional(b32 index)
 {
         shell_mark arena = shell_store_mark(address_of exec_store);
-        shell_mark expanded = shell_store_mark(address_of expand_store);
         string_address whole = parse_words[parse_nodes[index].word];
         positive length = string_length(whole);
         p8 held;
@@ -2727,7 +2727,6 @@ static b32 exec_conditional(b32 index)
 
         whole[length - 2] = held;
         status = arith_unset ? 1 : conditional_bad ? 2 : value ? 0 : 1;
-        shell_store_rewind(address_of expand_store, expanded);
         shell_store_rewind(address_of exec_store, arena);
         return status;
 }
@@ -3226,6 +3225,7 @@ static b32 exec_node(b32 index)
 static b32 exec_node_kind(b32 index)
 {
         parse_node address_to node;
+        shell_mark expanded;
         b32 mark;
         b32 status;
 
@@ -3236,7 +3236,10 @@ static b32 exec_node_kind(b32 index)
 
         if (node->kind == NODE_SIMPLE)
         {
+                expanded = shell_store_mark(address_of expand_store);
+
                 status = exec_simple(index);
+                shell_store_rewind(address_of expand_store, expanded);
                 shell_status = status;
                 exec_errexit(status);
 
@@ -3256,13 +3259,17 @@ static b32 exec_node_kind(b32 index)
                 return exec_define(index);
 
         // Everything left is a compound command, and every one of them can
-        // carry redirections of its own.
+        // carry redirections of its own. Its expansions live until that
+        // command returns: a for list and case subject span child commands,
+        // while a redirect target dies as soon as its descriptor is open.
+        expanded = shell_store_mark(address_of expand_store);
         mark = exec_save_count;
         token_used = 0;
 
         if (node->redirect_count && !exec_redirect_apply(index))
         {
                 exec_redirect_restore(mark);
+                shell_store_rewind(address_of expand_store, expanded);
                 shell_status = exec_line_aborted() ? 2
                                                    : exec_redirect_status
                                                          ? exec_redirect_status
@@ -3292,6 +3299,7 @@ static b32 exec_node_kind(b32 index)
                 status = exec_node(node->left);
 
         exec_redirect_restore(mark);
+        shell_store_rewind(address_of expand_store, expanded);
         shell_status = status;
 
         if (node->kind == NODE_SUBSHELL || node->kind == NODE_ARITHMETIC ||
