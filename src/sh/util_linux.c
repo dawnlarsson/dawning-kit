@@ -2430,23 +2430,19 @@ static b32 ul_setarch_show(string_address value, b32 pid)
         return 0;
 }
 
+static const p8 ul_setarch_flag_index[128] = {
+    ['R'] = 2, ['F'] = 3, ['Z'] = 4, ['L'] = 5, ['X'] = 6,
+    ['B'] = 7, ['I'] = 8, ['S'] = 9, ['T'] = 10, ['3'] = 11,
+};
+
 static bool ul_setarch_flag(p8 letter, p32 address_to bit,
                             string_address address_to name)
 {
-        switch (letter)
-        {
-        case 'R': address_to bit = UL_ADDR_NO_RANDOMIZE; address_to name = "ADDR_NO_RANDOMIZE"; break;
-        case 'F': address_to bit = UL_FDPIC_FUNCPTRS; address_to name = "FDPIC_FUNCPTRS"; break;
-        case 'Z': address_to bit = UL_MMAP_PAGE_ZERO; address_to name = "MMAP_PAGE_ZERO"; break;
-        case 'L': address_to bit = UL_ADDR_COMPAT_LAYOUT; address_to name = "ADDR_COMPAT_LAYOUT"; break;
-        case 'X': address_to bit = UL_READ_IMPLIES_EXEC; address_to name = "READ_IMPLIES_EXEC"; break;
-        case 'B': address_to bit = UL_ADDR_LIMIT_32BIT; address_to name = "ADDR_LIMIT_32BIT"; break;
-        case 'I': address_to bit = UL_SHORT_INODE; address_to name = "SHORT_INODE"; break;
-        case 'S': address_to bit = UL_WHOLE_SECONDS; address_to name = "WHOLE_SECONDS"; break;
-        case 'T': address_to bit = UL_STICKY_TIMEOUTS; address_to name = "STICKY_TIMEOUTS"; break;
-        case '3': address_to bit = UL_ADDR_LIMIT_3GB; address_to name = "ADDR_LIMIT_3GB"; break;
-        default: return false;
-        }
+        positive which = letter < 128 ? ul_setarch_flag_index[letter] : 0;
+        if (!which)
+                return false;
+        address_to bit = ul_personality_flags[which - 1].value;
+        address_to name = ul_personality_flags[which - 1].name;
         return true;
 }
 
@@ -2914,7 +2910,7 @@ static bool ul_setpriv_id(string_address text, bool group, p32 address_to id)
 
 static b32 ul_cap_max = -1;
 
-static b32 ul_cap_last()
+static COLD b32 ul_cap_last()
 {
         if (ul_cap_max >= 0)
                 return ul_cap_max;
@@ -2937,7 +2933,7 @@ static b32 ul_cap_last()
         return ul_cap_max = 40;
 }
 
-static fn ul_caps_say(p64 mask)
+static COLD fn ul_caps_say(p64 mask)
 {
         bool any = false;
         for (b32 cap = 0; cap <= ul_cap_last(); cap++)
@@ -2956,7 +2952,7 @@ static fn ul_caps_say(p64 mask)
         log("\n", 1);
 }
 
-static bool ul_cap_status(p64 sets[5])
+static COLD bool ul_cap_status(p64 sets[5])
 {
         static const string_address names[] = {
             "CapEff:\t", "CapPrm:\t", "CapInh:\t", "CapAmb:\t", "CapBnd:\t",
@@ -2984,7 +2980,7 @@ static bool ul_cap_status(p64 sets[5])
         return true;
 }
 
-static fn ul_setpriv_secure_say(b32 bits)
+static COLD fn ul_setpriv_secure_say(b32 bits)
 {
         static const ul_named_number names[] = {
             {UL_SECBIT_NOROOT, "noroot"},
@@ -3015,7 +3011,7 @@ static fn ul_setpriv_secure_say(b32 bits)
 }
 
 /* Keep the /proc status block off every ordinary setpriv invocation's stack. */
-static __attribute__((noinline)) b32 ul_setpriv_dump()
+static COLD __attribute__((noinline)) b32 ul_setpriv_dump()
 {
         p32 uid[3], gid[3];
         if (system_call_3(syscall(getresuid), (positive)uid,
