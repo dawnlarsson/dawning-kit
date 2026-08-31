@@ -733,7 +733,7 @@ bool shell_environment_is_initialized()
 
 static bool env_set_hashed_span(const_string name, positive name_len,
                                 positive hash, const_string value);
-string_address env_get(const_string name);
+PURE string_address env_get(const_string name);
 bool env_set(const_string name, const_string value);
 
 /* Adopt a process-lifetime assignment without copying its bytes. */
@@ -904,7 +904,7 @@ string_address env_get_hashed_span(const_string name, positive length,
         return shell_vars[index].text + length + 1;
 }
 
-string_address env_get_span(const_string name, positive length)
+PURE string_address env_get_span(const_string name, positive length)
 {
         if (name == null)
                 return null;
@@ -913,7 +913,7 @@ string_address env_get_span(const_string name, positive length)
                                    env_name_hash(name, length), null);
 }
 
-string_address env_get(const_string name)
+PURE string_address env_get(const_string name)
 {
         positive2 answer;
 
@@ -3389,7 +3389,7 @@ static bool read_reserve(positive want)
 // Whether a byte splits a field. The two questions are different: every byte
 // in IFS ends a field, but only the blanks among them are allowed to run
 // together and to be thrown away at the ends.
-bool read_separates(string_address ifs, positive at)
+PURE bool read_separates(string_address ifs, positive at)
 {
         if (read_literal[at])
                 return false;
@@ -3397,7 +3397,7 @@ bool read_separates(string_address ifs, positive at)
         return string_first_of(ifs, read_line[at]) != null;
 }
 
-bool read_blank(string_address ifs, positive at)
+PURE bool read_blank(string_address ifs, positive at)
 {
         if (read_literal[at])
                 return false;

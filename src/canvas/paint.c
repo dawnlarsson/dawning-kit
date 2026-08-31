@@ -280,8 +280,8 @@ static const int canvas_cursor_hot[CURSOR_SHAPES][2] = {
         the same walk a glyph takes: the outline and the fill never share a
         pixel, so which goes down first does not matter.
 */
-static void canvas_draw_cursor(const struct target *t, int x, int y,
-                               unsigned int shape, unsigned int scale)
+static HOT void canvas_draw_cursor(const struct target *t, int x, int y,
+                                   unsigned int shape, unsigned int scale)
 {
         x -= canvas_cursor_hot[shape][0] * (int)scale;
         y -= canvas_cursor_hot[shape][1] * (int)scale;
@@ -334,4 +334,3 @@ static int round_inset(int row, int height, int radius)
 
         return radius - (int)int_sqrt((unsigned long)(radius * radius - dy * dy));
 }
-

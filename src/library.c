@@ -384,6 +384,9 @@
 
 #define FLAT __attribute__((flatten))
 #define PURE __attribute__((pure))
+#define CONST __attribute__((const))
+#define HOT __attribute__((hot))
+#define COLD __attribute__((cold))
 #define INLINE __attribute__((always_inline))
 #define NO_FRAME __attribute__((noframe))
 #define KEEP __attribute__((used))
@@ -12654,7 +12657,7 @@ string_address string_copy_max(string_address destination, string_address source
 */
 p8 address_to string_copy_max_end(p8 address_to into, string_address source,
                                   positive bound);
-string_address string_last_of(string_address source, p8 character);
+PURE string_address string_last_of(string_address source, p8 character);
 fn string_replace_all(string_address string, b8 cut_symbol, b8 replace_symbol);
 string_address string_cut(string_address string, b8 cut_symbol);
 
@@ -12679,7 +12682,8 @@ positive path_head_copy(p8 address_to destination, positive capacity,
 fn path_basename(writer write, string_address input);
 fn shell_set_cursor(writer write, positive x, positive y);
 p64 get_cpu_time();
-string_address string_get_environment(string_address address_to list, string_address name);
+PURE string_address string_get_environment(string_address address_to list,
+                                           string_address name);
 fn positive_to_string(writer write, positive number);
 /*
         The same digits, into a buffer, and how many of them there were.
@@ -12749,9 +12753,9 @@ positive positive_into_human_nearest_string(p8 address_to into, positive value,
                                             bool binary);
 // Decode a raw wait4 status with a consumer-selected signal base. Base bit
 // 256 also requests gawk's extra 256 when the kernel core flag is set.
-b32 wait_status_code_base(positive raw, b32 signal_base);
+CONST b32 wait_status_code_base(positive raw, b32 signal_base);
 // Decode a raw wait4 status into shell convention (exit byte or 128+signal).
-b32 wait_status_code(positive raw);
+CONST b32 wait_status_code(positive raw);
 /*
         Bases two through thirty six, with letters selected by upper.
 
@@ -12775,12 +12779,12 @@ fn bipolar_to_string(writer write, bipolar number);
         wants a number read forwards from the front wants string_digits below
         instead, which also says where it stopped.
 */
-positive string_to_positive(string_address input);
-bipolar string_to_bipolar(string_address input);
-string_address string_find(string_address string, string_address input);
+PURE positive string_to_positive(string_address input);
+PURE bipolar string_to_bipolar(string_address input);
+PURE string_address string_find(string_address string, string_address input);
 
 //      strstr exactly: an empty needle is the front of the haystack.
-string_address string_search(string_address haystack, string_address needle);
+PURE string_address string_search(string_address haystack, string_address needle);
 /*
         string_length, string_compare and string_first_of under names the kernel has no opinion about.
 
@@ -12790,16 +12794,16 @@ string_address string_search(string_address haystack, string_address needle);
         assembly is the plain names and these are not defined; the table above
         says which of the two an architecture got.
 */
-positive string_length(string_address source);
-b32 string_compare(string_address source, string_address input);
-string_address string_first_of(string_address source, p8 character);
+PURE positive string_length(string_address source);
+PURE b32 string_compare(string_address source, string_address input);
+PURE string_address string_first_of(string_address source, p8 character);
 
-positive string_span(string_address source, const b8 address_to set);
-positive string_span_max(string_address source, positive bound,
-                         const b8 address_to set);
+PURE positive string_span(string_address source, const b8 address_to set);
+PURE positive string_span_max(string_address source, positive bound,
+                              const b8 address_to set);
 positive string_digits(string_address source, positive address_to used);
 bipolar string_bipolar(string_address source, positive address_to used);
-positive positive_digits(positive value);
+CONST positive positive_digits(positive value);
 bool string_digits_exact(string_address source, positive address_to value);
 positive string_digits_max(string_address source, positive bound,
                            positive address_to used);
@@ -12814,39 +12818,40 @@ positive string_digits_hexadecimal_escape_max(string_address source,
                                               positive address_to used);
 positive string_digits_base_max(string_address source, positive bound,
                                 positive base, positive address_to used);
-positive string_table_find(string_address name, address_any table,
-                           positive stride, positive count);
+PURE positive string_table_find(string_address name, address_any table,
+                                positive stride, positive count);
 positive string_lex_word(string_address source, p8 address_to into,
                             const b8 address_to class);
 address_any memory_fill(address_any destination, b8 value, positive size);
 fn memory_fill_u32(address_any destination, positive count, unsigned int value);
 fn memory_fill_u64_aligned(address_any destination, positive count,
                            positive value);
-positive memory_common_prefix(address_any one, address_any two, positive size);
-positive memory_hash_33(address_any block, positive size);
-positive2 string_hash_33_length(string_address source);
-positive memory_span_byte(address_any block, p8 value, positive size);
-b32 memory_compare_ascii_case(address_any one, address_any two, positive size);
-address_any memory_first_of_ascii_case(address_any block, b8 value, positive size);
+PURE positive memory_common_prefix(address_any one, address_any two, positive size);
+PURE positive memory_hash_33(address_any block, positive size);
+PURE positive2 string_hash_33_length(string_address source);
+PURE positive memory_span_byte(address_any block, p8 value, positive size);
+PURE b32 memory_compare_ascii_case(address_any one, address_any two, positive size);
+PURE address_any memory_first_of_ascii_case(address_any block, b8 value,
+                                            positive size);
 // Select the corpus-rarest search anchors once for a needle that will be
 // searched repeatedly.  x is the rarest offset and y the second rarest;
 // ascii_case makes their ranking insensitive to ASCII letter case.
 // The prepared calls take exactly this result: for a nonempty needle every
 // supplied anchor must be below needle_size.  They do not validate anchors,
 // because doing that on every repeated search would undo preparation's point.
-positive2 memory_search_prepare(address_any needle, positive needle_size,
-                                bool ascii_case);
-address_any memory_search_prepared(address_any block, positive size,
-                                   address_any needle, positive needle_size,
-                                   positive anchor, positive second_anchor);
-address_any memory_search_ascii_case_prepared(address_any block, positive size,
-                                              address_any needle,
-                                              positive needle_size,
-                                              positive anchor);
-address_any memory_search_ascii_case(address_any block, positive size,
-                                     address_any needle, positive needle_size);
-address_any memory_last_of(address_any block, b8 value, positive size);
-positive2 memory_count_words(address_any block, positive size, bool inside);
+PURE positive2 memory_search_prepare(address_any needle, positive needle_size,
+                                     bool ascii_case);
+PURE address_any memory_search_prepared(address_any block, positive size,
+                                        address_any needle, positive needle_size,
+                                        positive anchor, positive second_anchor);
+PURE address_any memory_search_ascii_case_prepared(address_any block, positive size,
+                                                   address_any needle,
+                                                   positive needle_size,
+                                                   positive anchor);
+PURE address_any memory_search_ascii_case(address_any block, positive size,
+                                          address_any needle, positive needle_size);
+PURE address_any memory_last_of(address_any block, b8 value, positive size);
+PURE positive2 memory_count_words(address_any block, positive size, bool inside);
 // Reverse exactly size bytes in place. Returns block; sizes below two do not
 // read or write it, so a null block is valid when size is zero.
 address_any memory_reverse(address_any block, positive size);
@@ -12898,18 +12903,18 @@ fn moonwater_cpu_detect(void);
 //      written, nothing is remembered between bytes -- which is why it can
 //      run at the speed the memory arrives and the others cannot.
 //
-positive memory_count(address_any block, positive size, b8 value);
-positive memory_count_records_with_prepared(address_any block, positive size,
-                                            address_any needle,
-                                            positive needle_size,
-                                            positive anchor,
-                                            positive second_anchor,
-                                            b8 delimiter);
+PURE positive memory_count(address_any block, positive size, b8 value);
+PURE positive memory_count_records_with_prepared(address_any block, positive size,
+                                                 address_any needle,
+                                                 positive needle_size,
+                                                 positive anchor,
+                                                 positive second_anchor,
+                                                 b8 delimiter);
 
 // ### First occurrence of a byte in a block
 // returns: its address, or null when the block does not hold one
 // traditional: memory_first_of
-address_any memory_first_of(address_any block, b8 value, positive size);
+PURE address_any memory_first_of(address_any block, b8 value, positive size);
 
 /*
         The bounded and the or-end forms, which had no prototype at all.
@@ -12922,14 +12927,15 @@ address_any memory_first_of(address_any block, b8 value, positive size);
         the file lists and the file's own language cannot name is not a
         routine anybody can use.
 */
-positive string_length_max(string_address source, positive bound);
-b32 string_compare_max(string_address source, string_address input, positive bound);
-string_address string_first_of_or_end(string_address source, p8 character);
-string_address string_first_of_max(string_address source, positive bound, p8 character);
-string_address string_last_of_or_end(string_address source, p8 character);
+PURE positive string_length_max(string_address source, positive bound);
+PURE b32 string_compare_max(string_address source, string_address input, positive bound);
+PURE string_address string_first_of_or_end(string_address source, p8 character);
+PURE string_address string_first_of_max(string_address source, positive bound,
+                                        p8 character);
+PURE string_address string_last_of_or_end(string_address source, p8 character);
 
 //
-b32 memory_compare(const address_any first, const address_any second, positive size);
+PURE b32 memory_compare(const address_any first, const address_any second, positive size);
 
 //
 //      Where one run of bytes sits inside another.
@@ -12940,8 +12946,8 @@ b32 memory_compare(const address_any first, const address_any second, positive s
 //      haystack, which is what memmem answers and is not what string_find
 //      does -- see the note there.
 //
-address_any memory_search(address_any block, positive size,
-                          address_any needle, positive needle_size);
+PURE address_any memory_search(address_any block, positive size,
+                               address_any needle, positive needle_size);
 
 /*
         The length of the run at the start of a string whose bytes are all in a
@@ -13002,8 +13008,8 @@ enum
 };
 
 // Which of the twelve, or -1 for a name that is none of them.
-b32 byte_class_index(string_address name, positive length);
-bool byte_class_holds(b32 which, p8 value);
+PURE b32 byte_class_index(string_address name, positive length);
+CONST bool byte_class_holds(b32 which, p8 value);
 fn string_set_add(b8 address_to set, string_address members);
 
 // ### Fill a memory block with the same value
@@ -13615,12 +13621,12 @@ __asm__(
 
 fn program_arguments_use(string_address address_to words, b32 count);
 fn program_arguments_own();
-b32 program_argument_count();
-string_address address_to program_argument_list();
-string_address program_argument(b32 index);
+PURE b32 program_argument_count();
+PURE string_address address_to program_argument_list();
+PURE string_address program_argument(b32 index);
 // Past argv and the null that ends it: one entry, or the vector itself.
-string_address program_environment(b32 index);
-string_address address_to program_environment_list();
+PURE string_address program_environment(b32 index);
+PURE string_address address_to program_environment_list();
 
 typedef struct timespec
 {
@@ -13632,7 +13638,7 @@ typedef struct timespec
 KEEP b32 main();
 
 // Platform required implementations
-fn exit(b32 code);
+DEAD_END fn exit(b32 code);
 fn sleep(timespec address_to time);
 
 
@@ -13851,7 +13857,7 @@ __declspec(dllimport) FARPROC __stdcall GetProcAddress(HMODULE, LPCSTR);
 __declspec(dllimport) int __stdcall FreeLibrary(HMODULE);
 #endif
 
-bool file_valid(file_address source);
+PURE bool file_valid(file_address source);
 fn file_new_lazy(file_address result, string_address path, positive flags);
 fn file_new(file_address result, string_address path, positive flags);
 address_any file_load(file_address source);
@@ -14743,7 +14749,7 @@ __asm__(
 
 address_any memory(positive size);
 fn memory_free(address_any address, positive size);
-positive memory_growth(positive have, positive want, positive first);
+CONST positive memory_growth(positive have, positive want, positive first);
 bool memory_reserve(address_any address_to held, positive address_to have,
                     positive used, positive want, positive unit, positive first);
 fn memory_release(address_any address_to held, positive address_to have,

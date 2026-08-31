@@ -138,23 +138,24 @@ void address_to memcpy(void address_to destination, const void address_to source
 void address_to memmove(void address_to destination, const void address_to source,
                         sized size);
 void address_to memset(void address_to destination, int value, sized size);
-void address_to memchr(const void address_to block, int value, sized size);
-void address_to memrchr(const void address_to block, int value, sized size);
-int memcmp(const void address_to first, const void address_to second, sized size);
-void address_to memmem(const void address_to haystack, sized haystack_size,
-                       const void address_to needle, sized needle_size);
+PURE void address_to memchr(const void address_to block, int value, sized size);
+PURE void address_to memrchr(const void address_to block, int value, sized size);
+PURE int memcmp(const void address_to first, const void address_to second, sized size);
+PURE void address_to memmem(const void address_to haystack, sized haystack_size,
+                            const void address_to needle, sized needle_size);
 void address_to memccpy(void address_to destination, const void address_to source,
                         int stop, sized size);
 
-sized strlen(const char address_to source);
-sized strnlen(const char address_to source, sized bound);
-int strcmp(const char address_to source, const char address_to input);
-int strncmp(const char address_to source, const char address_to input, sized bound);
-char address_to strchr(const char address_to source, int character);
-char address_to strrchr(const char address_to source, int character);
-char address_to strchrnul(const char address_to source, int character);
-char address_to strnchr(const char address_to source, sized bound, int character);
-char address_to strstr(const char address_to haystack, const char address_to needle);
+PURE sized strlen(const char address_to source);
+PURE sized strnlen(const char address_to source, sized bound);
+PURE int strcmp(const char address_to source, const char address_to input);
+PURE int strncmp(const char address_to source, const char address_to input, sized bound);
+PURE char address_to strchr(const char address_to source, int character);
+PURE char address_to strrchr(const char address_to source, int character);
+PURE char address_to strchrnul(const char address_to source, int character);
+PURE char address_to strnchr(const char address_to source, sized bound, int character);
+PURE char address_to strstr(const char address_to haystack,
+                            const char address_to needle);
 char address_to strcpy(char address_to destination, const char address_to source);
 char address_to strncpy(char address_to destination, const char address_to source,
                         sized bound);
@@ -164,12 +165,13 @@ char address_to strncat(char address_to destination, const char address_to sourc
 char address_to stpcpy(char address_to destination, const char address_to source);
 char address_to stpncpy(char address_to destination, const char address_to source,
                         sized bound);
-sized strspn(const char address_to source, const char address_to accept);
-sized strcspn(const char address_to source, const char address_to reject);
-char address_to strpbrk(const char address_to source, const char address_to accept);
-int strcasecmp(const char address_to source, const char address_to input);
-int strncasecmp(const char address_to source, const char address_to input,
-                sized bound);
+PURE sized strspn(const char address_to source, const char address_to accept);
+PURE sized strcspn(const char address_to source, const char address_to reject);
+PURE char address_to strpbrk(const char address_to source,
+                             const char address_to accept);
+PURE int strcasecmp(const char address_to source, const char address_to input);
+PURE int strncasecmp(const char address_to source, const char address_to input,
+                     sized bound);
 
 /*
         The names an instrumented build routes through, which are the same
@@ -189,7 +191,7 @@ void address_to __memset(void address_to destination, int value, sized size);
         POSIX left them. bcopy takes its arguments the other way round from
         memmove and always has.
 */
-int bcmp(const void address_to first, const void address_to second, sized size);
+PURE int bcmp(const void address_to first, const void address_to second, sized size);
 void bzero(void address_to destination, sized size);
 void bcopy(const void address_to source, void address_to destination, sized size);
 
@@ -204,22 +206,22 @@ void bcopy(const void address_to source, void address_to destination, sized size
         extended byte here, which is measured in src/test/declare.c against
         glibc for every value from -1 to 255.
 */
-int isalnum(int value);
-int isalpha(int value);
-int isblank(int value);
-int iscntrl(int value);
-int isdigit(int value);
-int isgraph(int value);
-int islower(int value);
-int isprint(int value);
-int ispunct(int value);
-int isspace(int value);
-int isupper(int value);
-int isxdigit(int value);
-int tolower(int value);
-int toupper(int value);
-int isascii(int value);
-int toascii(int value);
+CONST int isalnum(int value);
+CONST int isalpha(int value);
+CONST int isblank(int value);
+CONST int iscntrl(int value);
+CONST int isdigit(int value);
+CONST int isgraph(int value);
+CONST int islower(int value);
+CONST int isprint(int value);
+CONST int ispunct(int value);
+CONST int isspace(int value);
+CONST int isupper(int value);
+CONST int isxdigit(int value);
+CONST int tolower(int value);
+CONST int toupper(int value);
+CONST int isascii(int value);
+CONST int toascii(int value);
 
 /*
         <stdlib.h>'s conversions and absolutes.
@@ -230,9 +232,9 @@ int toascii(int value);
         same width in the same register. It would be wrong on a machine where
         they were not, and no such machine is a target.
 */
-int atoi(const char address_to input);
-long atol(const char address_to input);
-long long atoll(const char address_to input);
+PURE int atoi(const char address_to input);
+PURE long atol(const char address_to input);
+PURE long long atoll(const char address_to input);
 long strtol(const char address_to input, char address_to address_to stopped,
             int base);
 long long strtoll(const char address_to input, char address_to address_to stopped,
@@ -241,16 +243,16 @@ unsigned long strtoul(const char address_to input, char address_to address_to st
                       int base);
 unsigned long long strtoull(const char address_to input,
                             char address_to address_to stopped, int base);
-int abs(int value);
-long labs(long value);
-long long llabs(long long value);
+CONST int abs(int value);
+CONST long labs(long value);
+CONST long long llabs(long long value);
 
 /*
         <strings.h> again: the bit index, one based, zero for no bits set.
 */
-int ffs(int value);
-int ffsl(long value);
-int ffsll(long long value);
+CONST int ffs(int value);
+CONST int ffsl(long value);
+CONST int ffsll(long long value);
 
 /*
         <math.h>, the part of it that is one instruction on all three
@@ -261,26 +263,26 @@ int ffsll(long long value);
         there with it.
 */
 double sqrt(double value);
-double fabs(double value);
+CONST double fabs(double value);
 double trunc(double value);
 double floor(double value);
 double ceil(double value);
 double round(double value);
 double nearbyint(double value);
 double rint(double value);
-double copysign(double magnitude, double sign);
+CONST double copysign(double magnitude, double sign);
 double fmin(double first, double second);
 double fmax(double first, double second);
 double fdim(double first, double second);
 double fma(double first, double second, double addend);
 
 float sqrtf(float value);
-float fabsf(float value);
+CONST float fabsf(float value);
 float truncf(float value);
 float floorf(float value);
 float ceilf(float value);
 float roundf(float value);
-float copysignf(float magnitude, float sign);
+CONST float copysignf(float magnitude, float sign);
 float fminf(float first, float second);
 float fmaxf(float first, float second);
 
@@ -302,8 +304,8 @@ char address_to strtok_r(char address_to source, const char address_to delimiter
                          char address_to address_to holder);
 char address_to strsep(char address_to address_to holder,
                        const char address_to delimiters);
-char address_to strcasestr(const char address_to haystack,
-                           const char address_to needle);
+PURE char address_to strcasestr(const char address_to haystack,
+                                const char address_to needle);
 sized strlcpy(char address_to destination, const char address_to source,
               sized bound);
 sized strlcat(char address_to destination, const char address_to source,

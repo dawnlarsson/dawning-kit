@@ -60,7 +60,7 @@ fn exec_child_began()
         break, except that no construct is allowed to consume it. The reader
         clears it when the next top-level input line begins.
 */
-fn exec_expand_fatal()
+COLD fn exec_expand_fatal()
 {
         if (exec_forked)
         {
@@ -1891,7 +1891,7 @@ static b32 exec_arithmetic_command(b32 index)
 
 // A C-for separator is a semicolon in the outer arithmetic grammar, not one
 // inside grouping, a quote, ${...}, $(...), or a backtick substitution.
-static string_address exec_cfor_separator(string_address at)
+static PURE string_address exec_cfor_separator(string_address at)
 {
         positive depth = 0;
 
@@ -2193,7 +2193,7 @@ static bool conditional_integer(positive kind, string_address left,
         return test_ordered(kind, first, second);
 }
 
-static fn conditional_nounset_fatal()
+static COLD fn conditional_nounset_fatal()
 {
         string_format(exec_error, "arithmetic: parameter not set\n");
         shell_status = 1;

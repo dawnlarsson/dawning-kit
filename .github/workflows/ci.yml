@@ -42,7 +42,7 @@ jobs:
         run: |
           for f in kit/bit.sh kit/emit.sh \
                    kit/build kit/spark kit/asm kit/common \
-                   kit/config kit/verify_config kit/asm_replace \
+                   kit/config kit/verify_config kernel/replace/apply \
                    src/test/run src/test/shell.sh src/test/text.sh \
                    src/test/files.sh src/test/kit.sh src/test/probe.sh \
                    src/test/boot.sh \
@@ -57,7 +57,7 @@ jobs:
           shellcheck -S warning \
             kit/bit.sh kit/emit.sh kit/doc.sh kit/utils.sh kit/test.sh \
             kit/build kit/spark kit/asm kit/common \
-            kit/config kit/verify_config kit/asm_replace \
+            kit/config kit/verify_config kernel/replace/apply \
             src/test/run src/test/shell.sh src/test/text.sh \
             src/test/files.sh src/test/kit.sh src/test/probe.sh \
             src/test/boot.sh \

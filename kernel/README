@@ -22,10 +22,38 @@
         measurement was.
 
 
+        patch/
+
+        Every edit this repository makes to Linux's own source, in one script:
+        kernel/patch/apply, which build.sh calls and which does nothing else.
+
+        Four kinds, and the file says which is which as it does them.
+
+        A CLAIM tells an architecture's string.h that it owns a symbol -- a
+        __HAVE_ARCH_ line and a declaration -- so lib/string.c stops defining
+        it and ours links in its place. Ten on x86_64, two each on arm64 and
+        riscv64, because the last two had already written most of them.
+
+        A DISPLACE comments an object out of an architecture's lib/Makefile.
+        It exists for the three where a claim is not enough: x86_64 wrote its
+        own assembly for memcpy, memmove and memset and defines
+        __HAVE_ARCH_MEMCPY itself, so claiming what is already claimed changes
+        nothing and the link then has two definitions.
+
+        A GRAFT adds our Kconfig to the kernel's Kconfig, our objects to
+        kernel/Makefile, and points kernel/moonwater at src/.
+
+        A REPLACE is the fourth and lives in replace/ beside its own script.
+
+        All of it is idempotent -- re-running is a no-op, checked by md5 --
+        and all of it is undone by deleting linux/ and unpacking again, which
+        is what --clean does. There are no patch files here to rebase.
+
+
         replace/
 
         Assembly that stands in for a file the kernel already builds, put in
-        its place by kit/asm_replace before the kernel is configured. This is
+        its place by kernel/replace/apply before the kernel is configured. This is
         the part that is genuinely entangled: a replacement occupies the same
         position in the build as the GPL-2.0 file it displaces, and whether a
         given one is an independent implementation or a derivative work is a
@@ -44,10 +72,5 @@
         and build.sh symlinks that root to src/. Moving them here would mean
         moving the whole library with them.
 
-        The claim and displace tables are still inside build.sh, around the
-        KERNEL CONFIG label. They are the other place this repository writes
-        into the kernel tree: a claim adds a __HAVE_ARCH_ line and a
-        declaration to the architecture's string header, and a displace
-        comments an object out of an architecture's lib/Makefile. Both edit
-        files under linux/, which is downloaded and not part of this
-        repository, and both are undone by a fresh extraction.
+        They were, until recently, still inside build.sh. They are not now:
+        see patch/ above.

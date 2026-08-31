@@ -389,9 +389,9 @@ static _Bool pane_scroll(struct pane *pane, int lines)
         written. Everything that reads a page checks for one first, so an owned
         window is placed, moved and composed like any other.
 */
-static struct pane *pane_create(unsigned int width, unsigned int height,
-                                unsigned int columns, unsigned int rows,
-                                _Bool owned)
+static COLD struct pane *pane_create(unsigned int width, unsigned int height,
+                                     unsigned int columns, unsigned int rows,
+                                     _Bool owned)
 {
         unsigned int max_columns, max_rows;
         unsigned int stride = 0, history = 0;

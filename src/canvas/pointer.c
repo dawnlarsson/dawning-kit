@@ -448,8 +448,8 @@ static void pointer_event_locked(struct input_handle *handle, unsigned int type,
         }
 }
 
-static void pointer_event(struct input_handle *handle, unsigned int type,
-                          unsigned int code, int value)
+static HOT void pointer_event(struct input_handle *handle, unsigned int type,
+                              unsigned int code, int value)
 {
         unsigned long flags;
 
@@ -461,8 +461,9 @@ static void pointer_event(struct input_handle *handle, unsigned int type,
         spin_unlock_irqrestore(&desktop.input_lock, flags);
 }
 
-static int pointer_connect(struct input_handler *handler, struct input_dev *dev,
-                           const struct input_device_id *id)
+static COLD int pointer_connect(struct input_handler *handler,
+                                struct input_dev *dev,
+                                const struct input_device_id *id)
 {
         struct input_handle *handle;
         int ret;
@@ -493,7 +494,7 @@ err_free:
         return ret;
 }
 
-static void pointer_disconnect(struct input_handle *handle)
+static COLD void pointer_disconnect(struct input_handle *handle)
 {
         input_close_device(handle);
         input_unregister_handle(handle);

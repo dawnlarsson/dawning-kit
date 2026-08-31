@@ -1480,7 +1480,7 @@ static fn file_change_paths(positive first, positive count, bool recursive,
 
 // Arguments -------------------------------------------------
 
-positive file_letter_bit(p8 letter)
+CONST positive file_letter_bit(p8 letter)
 {
         if (letter >= 'a' && letter <= 'z')
                 return (positive)(letter - 'a');
@@ -1496,7 +1496,7 @@ positive file_letter_bit(p8 letter)
 
 #define FILE_FLAG(letter) ((positive)1 << file_letter_bit(letter))
 
-fn file_complain(string_address program, string_address message, string_address subject)
+COLD fn file_complain(string_address program, string_address message, string_address subject)
 {
         string_format(file_fail, "%s: %s: %s\n", program, subject, message);
 }
@@ -1836,7 +1836,7 @@ static bool file_take(file_taking address_to taking)
         the process vector. Keeping that distinction here also gives colour
         policy, PATH lookup and temporary-directory lookup one answer.
 */
-string_address env_get(const_string name);
+PURE string_address env_get(const_string name);
 string_address address_to shell_environment();
 bool shell_environment_is_initialized();
 
@@ -1931,10 +1931,10 @@ static bool file_color_active(b32 when)
 // Values here are SGR fragments. GNU dircolors' escaped lc/rc/ec envelope
 // language and escaped colons are deliberately outside this bounded parser;
 // the default ESC[ ... m envelope stays fixed and reset-safe instead.
-static file_color_span file_color_value_aliased(string_address table,
-                                                string_address key,
-                                                string_address alias,
-                                                string_address fallback)
+static PURE file_color_span file_color_value_aliased(string_address table,
+                                                     string_address key,
+                                                     string_address alias,
+                                                     string_address fallback)
 {
         file_color_span answer = {fallback, fallback ? string_length(fallback) : 0};
         positive wanted = string_length(key);
@@ -1966,13 +1966,14 @@ static file_color_span file_color_value_aliased(string_address table,
         return answer;
 }
 
-static file_color_span file_color_value(string_address table, string_address key,
-                                        string_address fallback)
+static PURE file_color_span file_color_value(string_address table,
+                                             string_address key,
+                                             string_address fallback)
 {
         return file_color_value_aliased(table, key, null, fallback);
 }
 
-static bool file_color_has(string_address table, string_address key)
+static PURE bool file_color_has(string_address table, string_address key)
 {
         positive wanted = string_length(key);
 
@@ -2000,7 +2001,7 @@ static bool file_color_span_is(file_color_span span, string_address text)
                !string_compare_max(span.text, text, length);
 }
 
-static bool file_color_table_valid(string_address table, bool bare_flags)
+static PURE bool file_color_table_valid(string_address table, bool bare_flags)
 {
         for (string_address at = table; at && string_get(at);)
         {
@@ -2500,7 +2501,7 @@ static p8 ls_mark(positive mode)
         return 0;
 }
 
-static file_color_span ls_suffix_color(string_address name)
+static PURE file_color_span ls_suffix_color(string_address name)
 {
         file_color_span answer = {null, 0};
         positive name_length = string_length(name);

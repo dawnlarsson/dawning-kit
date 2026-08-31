@@ -60,7 +60,7 @@ fn log_flush();
 fn log(address_any data, positive length);
 fn log_error(address_any data, positive length);
 fn log_failure_reset();
-bool log_failed();
+PURE bool log_failed();
 b32 buffered_flush(positive handle, p8 address_to buffer, positive address_to used);
 p8 address_to buffered_reserve(positive handle, p8 address_to buffer,
                                positive capacity, positive address_to used,

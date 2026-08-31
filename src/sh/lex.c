@@ -412,7 +412,7 @@ static b32 lex_skip_held(string_address address_to at)
 // One Bash arithmetic command token. Keeping its interior whole prevents the
 // shell operators inside ((...)) -- notably ;, &&, < and > -- from becoming
 // command-language tokens before the arithmetic parser sees them.
-static string_address lex_arithmetic_end(string_address start)
+static PURE string_address lex_arithmetic_end(string_address start)
 {
         string_address at = start + 2;
         positive depth = 0;
@@ -446,7 +446,7 @@ static string_address lex_arithmetic_end(string_address start)
 // A Bash [[...]] condition is one command-language token. Its own &&, ||,
 // parentheses, < and > belong to the conditional grammar, while the same
 // bytes after the closing ]] belong to the shell grammar again.
-static string_address lex_conditional_end(string_address start)
+static PURE string_address lex_conditional_end(string_address start)
 {
         string_address at = start + 2;
 
@@ -513,7 +513,7 @@ static string_address lex_nested_at(string_address at)
         no partner, or a trailing backslash -- which is not the same as an
         unclosed quote and the caller reading a line wants to tell them apart.
 */
-static string_address lex_quote_end(string_address at, p8 quote)
+static PURE string_address lex_quote_end(string_address at, p8 quote)
 {
         string_address step = at;
 
@@ -561,7 +561,7 @@ static string_address lex_quote_end(string_address at, p8 quote)
         started when there is no closing byte at all -- an unfinished one is the
         parser's to complain about, the same as an unfinished quote.
 */
-static string_address lex_nesting(string_address at)
+static PURE string_address lex_nesting(string_address at)
 {
         p8 open = string_get(at);
         p8 close = open == '(' ? ')' : open == '{' ? '}' : open;
@@ -836,7 +836,7 @@ static b32 lex_word(string_address address_to at)
         Returns how many, or -1 when there were more than there is room for.
         A comment runs to the end of the line and is not a token.
 */
-b32 lex_line(string_address line)
+HOT b32 lex_line(string_address line)
 {
         string_address step = line;
 

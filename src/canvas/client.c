@@ -16,7 +16,7 @@
         canvas_thread_stop joins a thread that takes desktop.lock, so it runs under
         canvas_list_lock and never under desktop.lock.
 */
-static void client_unregister(struct drm_client_dev *client)
+static COLD void client_unregister(struct drm_client_dev *client)
 {
         struct canvas *canvas = canvas_from_client(client);
 
@@ -34,7 +34,7 @@ static void client_unregister(struct drm_client_dev *client)
         drm_client_release(client);
 }
 
-static void client_free(struct drm_client_dev *client)
+static COLD void client_free(struct drm_client_dev *client)
 {
         kfree(canvas_from_client(client));
 }
@@ -273,7 +273,7 @@ static unsigned int canvas_claim_all(void)
         return taken;
 }
 
-static void canvas_probe(struct work_struct *work)
+static COLD void canvas_probe(struct work_struct *work)
 {
         canvas_claim_all();
         canvas_attempts++;

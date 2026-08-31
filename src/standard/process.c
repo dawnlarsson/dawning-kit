@@ -1907,8 +1907,8 @@ static b32 getopt(b32 count, string_address address_to words,
         a statement in a comma expression, and a do/while would not compile
         where one is used as an expression.
 */
-pub DEAD_END fn __assert_fail(string_address claim, string_address file,
-                          p32 line, string_address function)
+COLD pub DEAD_END fn __assert_fail(string_address claim, string_address file,
+                                  p32 line, string_address function)
 {
         p8 name[PATH_MAX];
         string_address program = program_argument(0);

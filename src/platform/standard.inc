@@ -45,15 +45,15 @@
         is a very large number and fails every range here.
 */
 
-b32 byte_is_digit(b32 value);
-b32 byte_is_upper(b32 value);
-b32 byte_is_lower(b32 value);
-b32 byte_is_alpha(b32 value);
-b32 byte_is_alnum(b32 value);
-b32 byte_is_space(b32 value);
-b32 byte_is_hexadecimal(b32 value);
-b32 byte_to_upper(b32 value);
-b32 byte_to_lower(b32 value);
+CONST b32 byte_is_digit(b32 value);
+CONST b32 byte_is_upper(b32 value);
+CONST b32 byte_is_lower(b32 value);
+CONST b32 byte_is_alpha(b32 value);
+CONST b32 byte_is_alnum(b32 value);
+CONST b32 byte_is_space(b32 value);
+CONST b32 byte_is_hexadecimal(b32 value);
+CONST b32 byte_to_upper(b32 value);
+CONST b32 byte_to_lower(b32 value);
 
 /*
         Absolute value, without a branch and without a comparison.
@@ -70,8 +70,8 @@ b32 byte_to_lower(b32 value);
         register when an int was passed reads whatever happened to be in the
         top half of it.
 */
-b32 absolute_whole(b32 value);
-bipolar absolute_wide(bipolar value);
+CONST b32 absolute_whole(b32 value);
+CONST bipolar absolute_wide(bipolar value);
 
 /*
         Square root, which is one instruction everywhere this runs.
@@ -94,7 +94,7 @@ bipolar absolute_wide(bipolar value);
 */
 #ifndef KERNEL_MODE
 decimal square_root(decimal value);
-decimal absolute(decimal value);
+CONST decimal absolute(decimal value);
 #endif
 
 
@@ -134,13 +134,13 @@ decimal absolute(decimal value);
         toascii is the same bit, discarded rather than tested, and it is the
         only one of these that returns a byte instead of an answer.
 */
-b32 byte_is_printable(b32 value);
-b32 byte_is_graphic(b32 value);
-b32 byte_is_control(b32 value);
-b32 byte_is_punctuation(b32 value);
-b32 byte_is_blank(b32 value);
-b32 byte_is_ascii(b32 value);
-b32 byte_to_ascii(b32 value);
+CONST b32 byte_is_printable(b32 value);
+CONST b32 byte_is_graphic(b32 value);
+CONST b32 byte_is_control(b32 value);
+CONST b32 byte_is_punctuation(b32 value);
+CONST b32 byte_is_blank(b32 value);
+CONST b32 byte_is_ascii(b32 value);
+CONST b32 byte_to_ascii(b32 value);
 
 /*
         The three set scans, which take the set as a string rather than as a
@@ -199,9 +199,9 @@ b32 byte_to_ascii(b32 value);
         string_first_of(source, 0) therefore succeeds at the terminator: this
         routine has no way to ask that question, and never answers it.
 */
-positive string_span_of_set(string_address source, string_address accept);
-positive string_span_without_set(string_address source, string_address reject);
-string_address string_first_of_set(string_address source, string_address accept);
+PURE positive string_span_of_set(string_address source, string_address accept);
+PURE positive string_span_without_set(string_address source, string_address reject);
+PURE string_address string_first_of_set(string_address source, string_address accept);
 
 /*
         Comparison with the two spellings of a letter treated as one.
@@ -308,9 +308,9 @@ string_address string_first_of_set(string_address source, string_address accept)
         vzeroupper on the way out and without a second body to keep correct,
         and that is the trade this made.
 */
-b32 string_compare_folded(string_address source, string_address input);
-b32 string_compare_folded_max(string_address source, string_address input,
-                              positive bound);
+PURE b32 string_compare_folded(string_address source, string_address input);
+PURE b32 string_compare_folded_max(string_address source, string_address input,
+                                   positive bound);
 
 /*
         The five scans and copies a C library still owed, and the two BSD
@@ -456,8 +456,8 @@ bipolar string_to_number(string_address input, string_address address_to stopped
                          b32 base);
 positive string_to_number_unsigned(string_address input,
                                    string_address address_to stopped, b32 base);
-bipolar string_to_whole_wide(string_address input);
-b32 string_to_whole(string_address input);
+PURE bipolar string_to_whole_wide(string_address input);
+PURE b32 string_to_whole(string_address input);
 
 /*
         Counting the set bits of a word, and finding the lowest one of them.
@@ -506,11 +506,11 @@ b32 string_to_whole(string_address input);
         and reading a 64 bit register when an int was passed reads whatever
         happened to be in the top half of it.
 */
-b32 bits_counted(positive value);
-b32 bits_trailing_zeros(positive value);
-b32 bits_leading_zeros(positive value);
-b32 bits_first_set(b32 value);
-b32 bits_first_set_wide(bipolar value);
+CONST b32 bits_counted(positive value);
+CONST b32 bits_trailing_zeros(positive value);
+CONST b32 bits_leading_zeros(positive value);
+CONST b32 bits_first_set(b32 value);
+CONST b32 bits_first_set_wide(bipolar value);
 
 /*
         Rounding a decimal to a whole one, choosing between two, and the
@@ -613,7 +613,7 @@ decimal decimal_floor(decimal value);
 decimal decimal_ceiling(decimal value);
 decimal decimal_rounded(decimal value);
 decimal decimal_nearest(decimal value);
-decimal decimal_with_sign(decimal magnitude, decimal sign);
+CONST decimal decimal_with_sign(decimal magnitude, decimal sign);
 decimal decimal_smaller(decimal first, decimal second);
 decimal decimal_larger(decimal first, decimal second);
 decimal decimal_difference(decimal first, decimal second);
@@ -725,14 +725,14 @@ decimal decimal_multiply_add(decimal first, decimal second, decimal addend);
 */
 #ifndef KERNEL_MODE
 f32 narrow_square_root(f32 value);
-f32 narrow_absolute(f32 value);
+CONST f32 narrow_absolute(f32 value);
 f32 narrow_smaller(f32 value, f32 other);
 f32 narrow_larger(f32 value, f32 other);
 f32 narrow_truncated(f32 value);
 f32 narrow_floor(f32 value);
 f32 narrow_ceiling(f32 value);
 f32 narrow_rounded(f32 value);
-f32 narrow_with_sign(f32 magnitude, f32 sign);
+CONST f32 narrow_with_sign(f32 magnitude, f32 sign);
 #endif
 
 #if X64

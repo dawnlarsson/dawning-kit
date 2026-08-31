@@ -54,7 +54,7 @@ if [ ! -s "$requested" ] && [ ! -f "$manifest" ]; then
 fi
 
 if [ -z "$arch" ]; then
-        echo "asm_replace: no '#> arch' in artifacts/.config" >&2
+        echo "replace: no '#> arch' in artifacts/.config" >&2
         exit 1
 fi
 
@@ -119,7 +119,7 @@ while read -r source target extra; do
         [ -n "${source:-}" ] || continue
 
         if [ -z "${target:-}" ] || [ -n "${extra:-}" ]; then
-                echo "asm_replace: '#> asm $source $target $extra' is not <source.asm> <target>" >&2
+                echo "replace: '#> asm $source $target $extra' is not <source.asm> <target>" >&2
                 exit 1
         fi
 
@@ -127,7 +127,7 @@ while read -r source target extra; do
         # anywhere on the machine as root.
         case "$target" in
         /* | *..*)
-                echo "asm_replace: target must be a path inside linux/: $target" >&2
+                echo "replace: target must be a path inside linux/: $target" >&2
                 exit 1
                 ;;
         esac
@@ -137,13 +137,13 @@ while read -r source target extra; do
         original="$destination.original"
 
         if [ ! -f "$asm" ]; then
-                echo "asm_replace: no such source: $asm" >&2
+                echo "replace: no such source: $asm" >&2
                 exit 1
         fi
 
         if [ ! -f "$destination" ] && [ ! -f "$original" ]; then
-                echo "asm_replace: $target is not a file in the kernel tree" >&2
-                echo "asm_replace: only a file the kernel already builds can be replaced" >&2
+                echo "replace: $target is not a file in the kernel tree" >&2
+                echo "replace: only a file the kernel already builds can be replaced" >&2
                 exit 1
         fi
 

@@ -394,188 +394,15 @@ wgcVXSeiHcXa9SSFDvKn0L1q5nSLQGHp38qUi1ZPf/1uQSuB3ME=
 
         label KERNEL CONFIG
                 #
-                #       Handing a symbol over to src/*.asm means telling the
-                #       architecture's own string.h that it owns it, or
-                #       lib/string.c defines it as well and vmlinux does not
-                #       link. Which symbols there are to hand over differs per
-                #       architecture, and that is the whole shape of this:
+                #       Every edit we make to Linux's own source now lives in
+                #       kernel/patch/apply, because everything that touches the
+                #       kernel belongs under kernel/ and nothing else does.
+                #       What was here was a hundred and eighty lines of claims,
+                #       displacements and grafts, which is the answer to "what
+                #       did you change about the kernel" and was findable only
+                #       by reading a build script.
                 #
-                #       x86_64's asm/string_64.h claims memcpy, memmove and
-                #       memset and leaves the other ten to the byte loops, so
-                #       x86 is catching up on all ten. memcmp is the newest of
-                #       them and the reason it is here rather than in the two
-                #       lists below: arm64 and riscv64 ship their own memcmp
-                #       in assembly already, and claiming it there is a second
-                #       definition rather than a first. arm64 and riscv did
-                #       most of that work already and ship their own; what is
-                #       left is what nobody bothered with -- strchrnul and
-                #       strnchr on both, and memchr on riscv, which are still
-                #       running the byte loop in lib/string.c today.
-                #
-                #       The spellings below are the ones kit/asm normalizes, so
-                #       a profile is free to say arm64 or aarch64 and mean the
-                #       same machine here as it does there.
-                #
-                case "$(key_one arch)" in
-                x86_64 | amd64 | x64)
-                        header=linux/arch/x86/include/asm/string_64.h
-                        #
-                        #       The three the architecture wrote for itself.
-                        #       Measured against them on a 9950X, ours over
-                        #       theirs: memcpy 2.7x at 16 bytes, 5.7x at 256,
-                        #       1.5x at 4096, and 0.87x at a megabyte, which is
-                        #       the one size rep movsb still wins because it
-                        #       turns to non temporal stores there. memset the
-                        #       same shape and 3.2x at sixteen megabytes.
-                        #
-                        #       Kernel copies are small -- headers, structures,
-                        #       names, table entries -- and the sizes where we
-                        #       win by multiples are the sizes it does most.
-                        #
-                        displaces="linux/arch/x86/lib/Makefile:memcpy_\$(BITS).o
-linux/arch/x86/lib/Makefile:memmove_64.o
-linux/arch/x86/lib/Makefile:memset_64.o"
-                        claims="STRCPY:char *strcpy(char *, const char *)
-STRSTR:char *strstr(const char *, const char *)
-STRCAT:char *strcat(char *, const char *)
-STRLEN:__kernel_size_t strlen(const char *)
-STRNCMP:int strncmp(const char *, const char *, __kernel_size_t)
-STRNLEN:__kernel_size_t strnlen(const char *, __kernel_size_t)
-STRCHR:char *strchr(const char *, int)
-MEMCHR:void *memchr(const void *, int, __kernel_size_t)
-MEMCMP:int memcmp(const void *, const void *, __kernel_size_t)
-STRCMP:int strcmp(const char *, const char *)
-STRRCHR:char *strrchr(const char *, int)
-STRCHRNUL:char *strchrnul(const char *, int)
-STRNCHR:char *strnchr(const char *, __kernel_size_t, int)"
-                        ;;
-                arm64 | aarch64)
-                        header=linux/arch/arm64/include/asm/string.h
-                        claims="STRCHRNUL:char *strchrnul(const char *, int)
-STRNCHR:char *strnchr(const char *, __kernel_size_t, int)"
-                        ;;
-                riscv64 | riscv)
-                        #
-                        #       Not memchr, which riscv leaves to lib/string.c
-                        #       and this cannot take: arch/riscv/kernel/pi
-                        #       compiles a second private copy of lib/string.c
-                        #       into .init.pi and objcopies every symbol to
-                        #       __pi_, because that code runs before the MMU
-                        #       and cannot call the ordinary kernel. libfdt
-                        #       uses memchr, so claiming it here leaves
-                        #       __pi_memchr with nothing behind it:
-                        #
-                        #           hidden symbol `__pi_memchr' isn't defined
-                        #
-                        #       arm64 does not hit this -- its pi builds no
-                        #       string.c at all and aliases __pi_ onto its own
-                        #       assembly. Handing riscv's pi an alias to a
-                        #       function outside .init.pi would link and might
-                        #       even boot, and would be a wrong answer about
-                        #       what that code is allowed to reach.
-                        #
-                        header=linux/arch/riscv/include/asm/string.h
-                        claims="STRCHRNUL:char *strchrnul(const char *, int)
-STRNCHR:char *strnchr(const char *, __kernel_size_t, int)"
-                        ;;
-                *)
-                        #
-                        #       An architecture with no arm here claims
-                        #       nothing, which is correct only because every
-                        #       src/*.asm carries an empty "#> arch other"
-                        #       block and so emits no symbol for it either.
-                        #       Those two facts have to move together: an asm
-                        #       block for a new architecture without an arm
-                        #       here defines what lib/string.c also defines,
-                        #       and vmlinux does not link.
-                        #
-                        header=
-                        claims=
-                        ;;
-                esac
-
-                #
-                #       The same switch src/Makefile reads. With it set the
-                #       kernel keeps every symbol it came with, so an image
-                #       built this way and one built without it differ in
-                #       exactly the thing being measured.
-                #
-                if [ -n "${MOONWATER_STOCK:-}" ]; then
-                        claims=
-                        displaces=
-                        echo "  MOONWATER_STOCK: the kernel keeps its own"
-                fi
-
-                if [ -n "$header" ]; then
-                        echo "$claims" | while IFS=: read -r name signature; do
-                                [ -n "$name" ] || continue
-                                line_add "$header" "#define __HAVE_ARCH_$name"
-                                line_add "$header" "extern $signature;"
-                        done
-                fi
-
-                #
-                #       Taking a routine the architecture wrote itself.
-                #
-                #       A claim above tells lib/string.c not to define a symbol,
-                #       which is enough where the generic C is the only other
-                #       definition. It is not enough for memcpy, memset and
-                #       memmove on x86_64: the architecture has its own
-                #       assembly for those, arch/x86/lib/memcpy_64.S and its
-                #       neighbours, and __HAVE_ARCH_MEMCPY is already defined
-                #       in its own string_64.h. Claiming what is already
-                #       claimed changes nothing and the link then has two.
-                #
-                #       So the object has to stop being built. Commenting the
-                #       line out of the architecture's lib/Makefile is the
-                #       whole of it, and it is reversible by --clean because
-                #       the kernel tree is unpacked fresh.
-                #
-                #       Each entry is a makefile, then the object to displace.
-                #
-                if [ -n "${displaces:-}" ]; then
-                        echo "$displaces" | while IFS=: read -r makefile object; do
-                                [ -n "$makefile" ] || continue
-                                [ -f "$makefile" ] || continue
-
-                                if grep -q "^# moonwater took $object" "$makefile"; then
-                                        continue
-                                fi
-
-                                sudo sed -i "s|^\\(.*[^#].*$object.*\\)$|# moonwater took $object\\n#\\1|" \
-                                        "$makefile" || die "displacing $object"
-                                echo "  took $object from $(basename "$(dirname "$makefile")")"
-                        done
-                fi
-
-                line_add_padded "linux/Kconfig" "source \"kernel/moonwater/Kconfig\""
-                line_add_padded "linux/kernel/Makefile" "obj-y += moonwater/"
-
-                #
-                #       The module source is this tree's src/, and the check
-                #       used to be "does the link exist" -- which follows it.
-                #       A build directory copied from somewhere else, or shared
-                #       with another session, carries a link pointing at that
-                #       tree's src, and -e says yes because that directory is
-                #       real. The kernel module then keeps building from source
-                #       nobody here has edited while userspace builds from this
-                #       one, and the two halves of the image disagree without
-                #       a word said about it.
-                #
-                #       So: where does it actually point, and is that here.
-                #
-                want_src="$(pwd)/src"
-                have_src=$(readlink linux/kernel/moonwater 2>/dev/null || true)
-
-                if [ "$have_src" != "$want_src" ]; then
-                        if [ -n "$have_src" ]; then
-                                echo "  the kernel module link pointed at $have_src"
-                                echo "  it should be $want_src -- repointing it"
-                        fi
-                        sudo rm -rf linux/kernel/moonwater
-                        sudo ln -s "$want_src" linux/kernel/moonwater || die "linking kernel module source"
-                fi
-
+                sh kernel/patch/apply || die "patching the kernel source"
                 if is_newer artifacts/.config linux/.config; then
                         (
                                 cd linux || exit 1
@@ -614,7 +441,7 @@ STRNCHR:char *strnchr(const char *, __kernel_size_t, int)"
                 # the kernel already builds. The .asm files that belong to the module
                 # rather than to the kernel need nothing here -- src/Makefile builds
                 # those as part of it.
-                sudo sh kit/asm_replace || die "assembly"
+                sudo sh kernel/replace/apply || die "assembly"
 
         label PRE BUILD
                 eval "$(key "pre")"

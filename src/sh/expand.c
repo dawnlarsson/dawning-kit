@@ -22,7 +22,7 @@
         Named rather than reached for, so this file can be included on either
         side of builtin.c without the two of them needing each other first.
 */
-string_address env_get(const_string name);
+PURE string_address env_get(const_string name);
 string_address env_get_hashed_span(const_string name, positive length,
                                    positive hash,
                                    positive address_to value_length);
@@ -31,7 +31,7 @@ fn run_line(string_address line);
 fn parse_reset_all();
 fn shell_trap_exit();
 fn exec_child_began();
-fn exec_expand_fatal();
+COLD fn exec_expand_fatal();
 string_address shell_flags_current();
 
 extern b32 shell_status;
@@ -229,7 +229,7 @@ bool shell_expand_literal(string_address word, positive length)
                (length == 1 && string_is(word, '['));
 }
 
-static fn expand_complain(address_any data, positive length)
+static COLD fn expand_complain(address_any data, positive length)
 {
         if (length == 0)
                 length = string_length(data);
@@ -995,7 +995,7 @@ static string_address expand_value_of(string_address name, p8 address_to scratch
         }
 }
 
-static fn expand_fatal();
+static COLD fn expand_fatal();
 
 /*
         A parameter pushed with the marks that decide its fate later.
@@ -2299,7 +2299,7 @@ static string_address expand_backtick(string_address step, bool quoted)
         way out. A terminal is the exception, because there is somebody there
         to type the line again.
 */
-static fn expand_fatal()
+static COLD fn expand_fatal()
 {
         shell_status = 2;
 

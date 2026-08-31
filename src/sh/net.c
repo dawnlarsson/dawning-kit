@@ -150,14 +150,14 @@ static bool net_word_is(string_address word, const char *full, positive least)
         return at >= least;
 }
 
-static fn net_complain(string_address message)
+static COLD fn net_complain(string_address message)
 {
         string_format(net_out, "ip: %s\n", message);
         net_flush();
 }
 
 //      The errno the kernel gave, said as plainly as this can say it.
-static b32 net_refused(string_address doing, bipolar status)
+static COLD b32 net_refused(string_address doing, bipolar status)
 {
         if (status == -1)
                 string_format(net_out, "ip: %s: not permitted\n", doing);

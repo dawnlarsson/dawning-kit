@@ -100,7 +100,7 @@ static struct drm_display_mode *output_best_mode(struct drm_connector *connector
         modesets, then the device's mode configuration, which is what guards a
         connector's list of modes.
 */
-static int canvas_probe_modes(struct canvas *canvas, _Bool biggest)
+static COLD int canvas_probe_modes(struct canvas *canvas, _Bool biggest)
 {
         struct drm_client_dev *client = &canvas->client;
         struct drm_device *dev = client->dev;
@@ -491,7 +491,7 @@ static void desktop_repaint(void)
         desktop.damage_count = 0;
 }
 
-static void canvas_release(struct canvas *canvas);
+static COLD void canvas_release(struct canvas *canvas);
 
 static int canvas_build(struct canvas *canvas, _Bool biggest)
 {
@@ -667,7 +667,7 @@ static int canvas_start(struct canvas *canvas)
         return 0;
 }
 
-static void canvas_release(struct canvas *canvas)
+static COLD void canvas_release(struct canvas *canvas)
 {
         struct output *output, *next;
 

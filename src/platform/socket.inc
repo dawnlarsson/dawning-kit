@@ -58,13 +58,13 @@
         under its own name for the callers that mean the bytes.
 */
 
-p32 bytes_reverse_32(p32 value);
-p16 bytes_reverse_16(p16 value);
-p16 network_load_16(p8 address_to at);
-p32 network_load_32(p8 address_to at);
+CONST p32 bytes_reverse_32(p32 value);
+CONST p16 bytes_reverse_16(p16 value);
+PURE p16 network_load_16(p8 address_to at);
+PURE p32 network_load_32(p8 address_to at);
 fn network_store_16(p8 address_to at, p16 value);
 fn network_store_32(p8 address_to at, p32 value);
-bipolar string_to_host(string_address input);
+PURE bipolar string_to_host(string_address input);
 positive host_into(p8 address_to into, p32 host);
 
 #if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__

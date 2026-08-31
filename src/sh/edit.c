@@ -1379,7 +1379,7 @@ static positive edit_display_column(positive line, positive column)
 //      The byte offset a wanted screen column lands on, which is the first
 //      offset at or past it. Landing inside a tab puts the caret after it,
 //      which is what a tab being one thing means.
-static positive edit_column_at_display(positive line, positive wanted)
+static PURE positive edit_column_at_display(positive line, positive wanted)
 {
         struct edit_line address_to text = edit_lines + line;
         positive width = 0;
@@ -1619,7 +1619,7 @@ static fn edit_row_put_number(positive value, positive width)
 //      cursor's caret is sitting on it. Walked rather than indexed because the
 //      list is short and a per-row index would have to be rebuilt on every
 //      edit anyway.
-static bool edit_selected(positive line, positive column)
+static PURE bool edit_selected(positive line, positive column)
 {
         for (positive at = 0; at < edit_cursor_count; at++)
         {
@@ -1640,7 +1640,7 @@ static bool edit_selected(positive line, positive column)
         return false;
 }
 
-static bool edit_extra_caret(positive line, positive column)
+static PURE bool edit_extra_caret(positive line, positive column)
 {
         for (positive at = 0; at < edit_cursor_count; at++)
         {
@@ -2008,7 +2008,7 @@ static bool edit_clip_add(p8 address_to text, positive length)
 #define EDIT_MOVE_FILE_END 11
 
 //      Where the text of a line begins, past whatever it is indented with.
-static positive edit_line_indent(positive line)
+static PURE positive edit_line_indent(positive line)
 {
         struct edit_line address_to text = edit_lines + line;
         positive at = 0;
@@ -2210,7 +2210,7 @@ static struct edit_place edit_motion(p8 kind,
 
 //      Which cursor the window is following, found by its position so that
 //      sorting the list cannot lose it.
-static positive edit_primary_index()
+static PURE positive edit_primary_index()
 {
         for (positive at = 0; at < edit_cursor_count; at++)
                 if (edit_cursors[at].line == edit_primary_place.line &&

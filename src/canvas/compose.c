@@ -207,9 +207,9 @@ static void cell_draw(const struct target *t, const struct shape *shape,
         terminal is mostly empty and a rectangle is what the fill is fastest
         at.
 */
-static void compose_row(const struct target *t, const struct shape *shape,
-                        int x, int y, const struct window_cell *cells,
-                        int used, int first, int last)
+static HOT void compose_row(const struct target *t, const struct shape *shape,
+                            int x, int y, const struct window_cell *cells,
+                            int used, int first, int last)
 {
         int column = first;
         const unsigned char *font_data = NULL;
@@ -661,7 +661,7 @@ static void desktop_fill(const struct target *t, int x1, int y1, int x2, int y2)
         }
 }
 
-static void compose_clip(const struct target *t)
+static HOT void compose_clip(const struct target *t)
 {
         int x1 = max(t->clip.x1, 0);
         int y1 = max(t->clip.y1, 0);
