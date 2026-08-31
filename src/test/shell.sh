@@ -2204,6 +2204,13 @@ emits 'link elsewhere'   'cba|'    "mkdir -p /tmp/sn && ln -sf '$names/rev' /tmp
 emits 'another name'     'hi|'     "ln -sf '$names/rev' /tmp/notatool && printf 'echo hi\n' | /tmp/notatool"
 emits 'the shell itself' 'hi|'     "printf 'echo hi\n' | '$subject'"
 emits 'bare with no path' 'alpha|' "printf 'PATH=\necho alpha | grep alpha\n' | '$subject'"
+emits 'regex policy isolated' 'plus|Xa|1:aaa|' "cat <<'EOF' | '$subject'
+PATH=
+printf 'a\nb\n' | tac -r -s . >/dev/null
+printf 'plus\n' | grep 'pl\+us'
+printf 'aaa\n' | sed 's/a\{2\}/X/'
+printf 'aaa\n' | nl -b 'pa\{2\}' -w1 -s:
+EOF"
 emits 'expr with no path' '2|'    "printf 'PATH=\nexpr 1 + 1\n' | '$subject'"
 emits 'type says utility' '0|'     "printf 'type grep > /dev/null; echo \$?\n' | '$subject'"
 emits 'command v finds'  '0|'      "printf 'PATH=\ncommand -v grep > /dev/null; echo \$?\n' | '$subject'"
@@ -2572,13 +2579,14 @@ bash_shopt_inventory()
 
 group builtin-index
 bash_builtin_inventory supported \
-        . : '[' alias break cd command continue echo eval exec exit export \
-        false getopts hash help kill let local printf pwd read readonly return \
-        set shift source test times trap true type ulimit umask unalias unset wait
+        . : '[' alias break cd command continue declare echo eval exec exit \
+        export false getopts hash help kill let local printf pwd read readonly \
+        return set shift source test times trap true type typeset ulimit umask \
+        unalias unset wait
 bash_builtin_inventory remaining \
-        bg bind builtin caller compgen complete compopt declare dirs disown \
+        bg bind builtin caller compgen complete compopt dirs disown \
         enable fc fg history jobs logout mapfile popd pushd readarray shopt \
-        suspend typeset
+        suspend
 
 group keyword-index
 bash_keyword_inventory '! false' '!'
@@ -2649,6 +2657,41 @@ bash_answer 'let quoted expression' 'let "x = 2 + 3" "x == 5"; printf "%s:%s\n" 
 bash_answer 'let empty and invalid' 'let 2>/dev/null; a=$?; let "1 +" 2>/dev/null; printf "%s:%s\n" "$a" "$?"'
 bash_answer 'ledger indirection' 'x=y; y=value; echo "${!x}"'
 bash_answer 'ledger indirect prefix names' 'bash_prefix_one=1; bash_prefix_two=2; printf "%s\n" "${!bash_prefix_*}"'
+bash_answer 'ledger declare semantics' 'declare x=1; printf "%s\n" "$x"'
+bash_answer 'ledger typeset semantics' 'typeset x=1; printf "%s\n" "$x"'
+bash_answer 'declare assignment expansion' \
+        'value="a b"; declare held=$value; printf "<%s>\n" "$held"'
+bash_answer 'declare append assignment' \
+        'declare held=one; declare held+=two; printf "%s\n" "$held"'
+bash_answer 'declare local scope' \
+        'x=outer; f() { declare x; printf "in=<%s>\n" "$x"; x=inner; }; f; echo "out=$x"'
+bash_answer 'declare global unshadowed' \
+        'x=outer; f() { declare -g x=global; }; f; echo "$x"'
+bash_answer 'declare global under local' \
+        'x=global; f() { local x=local; declare -g x=changed; printf "%s|" "$x"; }; f; echo "$x"'
+bash_answer 'declare global under nested locals' \
+        'x=global; f() { local x=F; g; h; printf "%s|" "$x"; }; g() { local x=H; declare -g x=changed; printf "%s|" "$x"; }; h() { local x=K; printf "%s|" "$x"; }; f; echo "$x"'
+bash_answer 'declare global saved attributes' \
+        'x=G; f() { local x=L; declare -gx x=X; }; f; declare -p x; g() { local x=L; declare -g +x x=Y; }; g; declare -p x'
+bash_answer 'declare global print sees live local' \
+        'x=G; f() { local x=L; declare -gp x; }; f'
+bash_answer 'declare cannot shadow global readonly' \
+        'readonly x=G; f() { declare x=L; printf "%s:%s|" "$?" "$x"; }; f; echo "$x"'
+bash_answer 'declare unset print' 'declare x; declare -p x'
+bash_answer 'declare attributes print' \
+        'declare -rx x=one; declare -p x'
+bash_answer 'declare remove export' \
+        'declare -x x=one; declare +x x; declare -p x'
+bash_answer 'declare attribute clear precedence' \
+        'declare -x +x a=1; declare +x -x b=2; declare -p a b; declare -r +r c=1; c=2; declare +r -r d=1; d=2; printf "%s:%s\n" "$c" "$d"'
+bash_answer 'declare print operand order' \
+        'z=last; a=first; declare -p z a'
+bash_answer 'declare print all name order' \
+        'declare bash_list_z=z bash_list_a=a bash_list_a2=a2; declare -p | while IFS= read -r line; do case $line in "declare -- bash_list_"*) echo "$line";; esac; done'
+bash_answer 'declare print quoting' \
+        'x=$'\''a b"c\\d$e'\''; declare -p x'
+bash_answer 'declare print control bytes' \
+        'x=$'\''line1\nline2\tend\001'\''; declare -p x'
 
 group remaining
 bash_remaining 'ledger regex captures' '' 2 '[[ abc =~ ^(a)(b) ]]; echo "${BASH_REMATCH[0]}:${BASH_REMATCH[1]}:${BASH_REMATCH[2]}"'
@@ -2657,8 +2700,18 @@ bash_remaining 'ledger associative arrays' '' 2 'declare -A a; a[k]=v; echo "${a
 bash_remaining 'ledger process substitution' '<>|' 0 'x=$(cat <(printf x)); printf "<%s>\n" "$x"'
 bash_remaining 'ledger extglob' '' 2 'shopt -s extglob; eval '\''case aa in +(a)) echo yes;; esac'\'''
 bash_remaining 'ledger globstar' '' 127 'shopt -s globstar'
-bash_remaining 'ledger declare semantics' '' 127 'declare x=1'
-bash_remaining 'ledger typeset semantics' '' 127 'typeset x=1'
+bash_remaining 'ledger declare integer attribute' '2:<>|' 0 \
+        'declare -i x=1+2; s=$?; printf "%s:<%s>\n" "$s" "$x"'
+bash_remaining 'ledger declare case attribute' '2:<>|' 0 \
+        'declare -l x=ABC; s=$?; printf "%s:<%s>\n" "$s" "$x"'
+bash_remaining 'ledger declare nameref attribute' '2:<>|' 0 \
+        'target=value; declare -n ref=target; s=$?; printf "%s:<%s>\n" "$s" "$ref"'
+bash_remaining 'ledger declare local readonly' '1:<outer>|outer|' 0 \
+        'x=outer; f() { declare -r x=local; printf "%s:<%s>|" "$?" "$x"; }; f; echo "$x"'
+bash_remaining 'ledger declare plus listing' '' 0 \
+        'a=one; export b=two; declare +x | while read line; do case $line in a=*|b=*) echo "$line";; esac; done'
+bash_remaining 'ledger readonly dynamic local status' '' 2 \
+        'readonly x=G; f() { local x=L; x=M; echo "$?:$x"; }; f; echo "$x"'
 bash_remaining 'ledger mapfile semantics' '' 127 'printf "a\n" | mapfile a'
 bash_remaining 'ledger readarray semantics' '' 127 'printf "a\n" | readarray a'
 bash_remaining 'ledger noclobber status' '2|' 0 'p=/tmp/bash-noclobber.$$; echo a > "$p"; set -C; echo b > "$p"; s=$?; rm -f "$p"; echo "$s"'

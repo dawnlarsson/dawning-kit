@@ -202,34 +202,20 @@ static bool dd_size(string_address text, positive address_to out)
                 if (!dd_digits(address_of at, address_of value))
                         return false;
 
-                positive power = 0;
+                positive power = file_size_power(string_get(at), false);
                 positive multiple = 1;
-                bool scaled = true;
 
-                switch (string_get(at))
+                if (power)
+                        at++;
+                else switch (string_get(at))
                 {
-                case 'b': multiple = 512; scaled = false; at++; break;
-                case 'c': multiple = 1; scaled = false; at++; break;
-                case 'w': multiple = 2; scaled = false; at++; break;
-                case 'B': multiple = 1; scaled = false; at++; break;
-                case 'k':
-                case 'K': power = 1; at++; break;
-                case 'M':
-                case 'm': power = 2; at++; break;
-                case 'G':
-                case 'g': power = 3; at++; break;
-                case 'T':
-                case 't': power = 4; at++; break;
-                case 'P': power = 5; at++; break;
-                case 'E': power = 6; at++; break;
-                case 'Z': power = 7; at++; break;
-                case 'Y': power = 8; at++; break;
-                case 'R': power = 9; at++; break;
-                case 'Q': power = 10; at++; break;
-                default: scaled = false; break;
+                case 'b': multiple = 512; at++; break;
+                case 'c': at++; break;
+                case 'w': multiple = 2; at++; break;
+                case 'B': at++; break;
                 }
 
-                if (scaled)
+                if (power)
                 {
                         positive base = 1024;
 
@@ -4574,3 +4560,5 @@ static b32 tools_ps(void)
 
         return text_done(ps_failed || (selectors && !matched) ? 1 : 0);
 }
+
+#include "util_linux.c"

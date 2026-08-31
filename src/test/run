@@ -43,7 +43,7 @@ TEST_TALLY="$work/tally"
 export TEST_TALLY
 : > "$TEST_TALLY"
 
-lanes="standard declare fold allocator error strings stdlib leaving numbers clock math format scan stream spool process signal lock verify exact known socket net slurp wait writer native probe shell expand builtin awk text tools files storage term edit kit boot canvas"
+lanes="standard declare fold allocator error strings stdlib leaving numbers clock math format scan stream spool process signal lock verify exact known socket net slurp wait writer native probe shell expand builtin awk text tools files storage util term edit kit boot canvas"
 
 describe()
 {
@@ -80,6 +80,7 @@ describe()
         text)     echo "the text utilities against the system's, listed and generated" ;;
         files)    echo "the file utilities against coreutils, by output and by effect" ;;
         storage)  echo "mount tables and block identities against util-linux, then real namespace effects" ;;
+        util)     echo "the pinned util-linux executable denominator and process/I/O policy utilities" ;;
         expand)   echo "quoting, the order the expansions happen in, and the arithmetic" ;;
         builtin)  echo "the commands the shell runs without leaving itself" ;;
         awk)      echo "awk against the one on the machine, listed and generated" ;;
@@ -145,10 +146,10 @@ freestanding()
 #       One binary, and every name it answers to pointing at it. The suites
 #       below run $farm/grep and $farm/ls, which is how the image is laid out
 #       and so the only shape worth testing.
-utilities="cat awk dd diff ps grep sed cut tr sort uniq head tail wc tee rev nl fold expr cmp mktemp kill date xargs ls find
+utilities="cat awk dd diff ps grep sed cut tr sort uniq head tail wc tee rev tac nl fold expr cmp sum mktemp kill date xargs ls find
 stat du df chgrp chmod chown ln readlink basename dirname realpath mkdir rmdir cp mv
-rm touch sleep stty tty seq yes env id groups hostname uname link unlink logname printenv whoami nproc mkfifo mknod sync nice pathchk vdir ip host fetch
-mount umount mountpoint blkid findmnt findfs"
+rm touch truncate sleep stty tty seq yes env id groups hostname uname link unlink logname printenv whoami nproc mkfifo mknod sync nice pathchk vdir ip host fetch
+mount umount mountpoint blkid findmnt findfs setsid setpgid ionice fadvise"
 
 shell_binary=""
 farm=""
@@ -2204,6 +2205,13 @@ lane_storage()
         need_shell || return 1
 
         sh src/test/storage.sh "$farm" "$shell_binary"
+}
+
+lane_util()
+{
+        need_shell || return 1
+
+        sh src/test/util_linux.sh "$shell_binary"
 }
 
 lane_expand()

@@ -1165,7 +1165,9 @@ static bool exec_declaration_name(b32 word)
 
         return word_is(parse_words[word], "export") ||
                word_is(parse_words[word], "readonly") ||
-               word_is(parse_words[word], "local");
+               word_is(parse_words[word], "local") ||
+               word_is(parse_words[word], "declare") ||
+               word_is(parse_words[word], "typeset");
 }
 
 /*
@@ -2404,6 +2406,7 @@ static fn conditional_regex_program(regex_program address_to saved)
         saved->groups = regex_group_count;
         saved->extended = regex_extended;
         saved->icase = regex_icase;
+        saved->policy = regex_policy;
         saved->first_known = regex_first_known;
         saved->last_known = regex_last_known;
         saved->anchored = regex_anchored;
@@ -2453,7 +2456,8 @@ static bool conditional_regex_match(string_address text, string_address pattern,
         memory_copy_apart(last, saved.last, sizeof(last));
         memory_copy_apart(literal, saved.literal, sizeof(literal));
 
-        address_to valid = regex_compile(pattern, true, false, false);
+        address_to valid = regex_compile(pattern, true, false, false,
+                                         REGEX_POLICY_DEFAULT);
 
         if (address_to valid)
                 matched = regex_search(text, string_length(text), 0);

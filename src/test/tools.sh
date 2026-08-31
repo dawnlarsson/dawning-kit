@@ -390,6 +390,7 @@ compare_dd 'summary none'     "$work/none" 's/ copied,.*//' bs=512
 for suffix in c b K KB KiB M MB; do
         compare_dd "size $suffix" "$work/blob" 's/x/x/' bs=1$suffix count=2 status=noxfer
 done
+compare_dd_reject 'lowercase extended size suffix' bs=1p count=1 status=none
 
 compare_dd 'size product'     "$work/blob" 's/x/x/' bs=2x512 count=2 status=noxfer
 

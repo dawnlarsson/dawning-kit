@@ -752,6 +752,17 @@ static bool regex_icase;
 static bool regex_escapes;
 static bool regex_broken;
 
+enum
+{
+        REGEX_DOT_NEWLINE = 1,
+        REGEX_LINE_ANCHORS = 2,
+        REGEX_BASIC_REPEATS = 4,
+        REGEX_POLICY_DEFAULT = REGEX_DOT_NEWLINE | REGEX_BASIC_REPEATS,
+        REGEX_POLICY_TAC = REGEX_LINE_ANCHORS,
+};
+
+static p8 regex_policy = REGEX_POLICY_DEFAULT;
+
 static string_address regex_pattern;
 static positive regex_pattern_length;
 static positive regex_pattern_at;
@@ -1482,7 +1493,9 @@ static fn regex_parse_piece()
                         high = 1;
                         counted = true;
                 }
-                else if (!regex_extended && character == '\\' &&
+                else if ((regex_policy & REGEX_BASIC_REPEATS) &&
+                         !regex_extended &&
+                         character == '\\' &&
                          (regex_peek_at(1) == '+' || regex_peek_at(1) == '?'))
                 {
                         if (regex_peek_at(1) == '+')
@@ -1494,7 +1507,9 @@ static fn regex_parse_piece()
                         counted = true;
                 }
                 else if ((regex_extended && character == '{') ||
-                         (!regex_extended && character == '\\' && regex_peek_at(1) == '{'))
+                         ((regex_policy & REGEX_BASIC_REPEATS) &&
+                          !regex_extended &&
+                          character == '\\' && regex_peek_at(1) == '{'))
                 {
                         if (!regex_parse_interval(address_of low, address_of high))
                                 return;
@@ -1593,6 +1608,7 @@ typedef struct
         b32 groups;
         bool extended;
         bool icase;
+        p8 policy;
         bool first_known;
         bool last_known;
         bool anchored;
@@ -1615,6 +1631,7 @@ static fn regex_select(regex_program address_to which)
         regex_group_count = which->groups;
         regex_extended = which->extended;
         regex_icase = which->icase;
+        regex_policy = which->policy;
         regex_first_known = which->first_known;
         regex_last_known = which->last_known;
         regex_anchored = which->anchored;
@@ -1646,6 +1663,7 @@ static fn regex_keep(regex_program address_to which)
         which->groups = regex_group_count;
         which->extended = regex_extended;
         which->icase = regex_icase;
+        which->policy = regex_policy;
         which->first_known = regex_first_known;
         which->last_known = regex_last_known;
         which->anchored = regex_anchored;
@@ -1713,6 +1731,9 @@ static bool regex_first_walk(b32 pc)
         case REGEX_ANY:
                 memory_fill(regex_first, 1, sizeof(regex_first_store[0]));
 
+                if (!(regex_policy & REGEX_DOT_NEWLINE))
+                        regex_first['\n'] = 0;
+
                 return false;
 
         case REGEX_SET:
@@ -1727,6 +1748,9 @@ static bool regex_first_walk(b32 pc)
                 {
                         memory_fill(regex_first, 1,
                                     sizeof(regex_first_store[0]));
+
+                        if (!(regex_policy & REGEX_DOT_NEWLINE))
+                                regex_first['\n'] = 0;
                 }
                 else if (inst->kind == REGEX_SET)
                 {
@@ -1795,6 +1819,9 @@ static fn regex_last_add(b32 which, p8 kind, p8 value, b32 set)
         if (kind == REGEX_ANY)
         {
                 memory_fill(regex_last, 1, sizeof(regex_last_store[0]));
+
+                if (!(regex_policy & REGEX_DOT_NEWLINE))
+                        regex_last['\n'] = 0;
 
                 return;
         }
@@ -1936,7 +1963,8 @@ static fn regex_finish()
                 regex_literal, regex_literal_length, regex_icase);
 }
 
-static bool regex_compile(string_address pattern, bool extended, bool icase, bool escapes)
+static bool regex_compile(string_address pattern, bool extended, bool icase,
+                          bool escapes, p8 policy)
 {
         regex_code = regex_store + regex_pool_used;
         regex_sets = regex_set_store + regex_pool_sets;
@@ -1954,6 +1982,7 @@ static bool regex_compile(string_address pattern, bool extended, bool icase, boo
         regex_extended = extended;
         regex_icase = icase;
         regex_escapes = escapes;
+        regex_policy = policy;
         regex_broken = false;
         regex_alternates = false;
         regex_pattern = pattern;
@@ -1980,7 +2009,7 @@ static bool regex_compile(string_address pattern, bool extended, bool icase, boo
 static bool regex_single(regex_instruction address_to inst, p8 character)
 {
         if (inst->kind == REGEX_ANY)
-                return true;
+                return (regex_policy & REGEX_DOT_NEWLINE) || character != '\n';
 
         if (inst->kind == REGEX_SET)
                 return regex_set_has(inst->set, character);
@@ -2023,7 +2052,9 @@ static b32 regex_run(b32 pc, positive sp)
                 }
 
                 case REGEX_ANY:
-                        if (sp >= regex_text_length)
+                        if (sp >= regex_text_length ||
+                            (!(regex_policy & REGEX_DOT_NEWLINE) &&
+                             regex_text[sp] == '\n'))
                                 return 0;
 
                         sp++;
@@ -2039,14 +2070,18 @@ static b32 regex_run(b32 pc, positive sp)
                         continue;
 
                 case REGEX_BOL:
-                        if (sp != 0)
+                        if (sp != 0 &&
+                            (!(regex_policy & REGEX_LINE_ANCHORS) ||
+                             regex_text[sp - 1] != '\n'))
                                 return 0;
 
                         pc++;
                         continue;
 
                 case REGEX_EOL:
-                        if (sp != regex_text_length)
+                        if (sp != regex_text_length &&
+                            (!(regex_policy & REGEX_LINE_ANCHORS) ||
+                             regex_text[sp] != '\n'))
                                 return 0;
 
                         pc++;
@@ -2275,11 +2310,8 @@ static bool regex_search(string_address text, positive length, positive from)
         pattern whose length can vary pays for this; one of fixed length
         cannot end anywhere else and skips it.
 */
-static bool regex_search_longest(string_address text, positive length, positive from)
+static bool regex_keep_longest(positive length)
 {
-        if (!regex_search(text, length, from))
-                return false;
-
         if (!regex_alternates)
                 return true;
 
@@ -2291,7 +2323,7 @@ static bool regex_search_longest(string_address text, positive length, positive 
 
         for (positive stop = length; stop > to; stop--)
         {
-                if (regex_last_known && !regex_last[text[stop - 1]])
+                if (regex_last_known && !regex_last[regex_text[stop - 1]])
                         continue;
 
                 regex_clear_state();
@@ -2308,6 +2340,25 @@ static bool regex_search_longest(string_address text, positive length, positive 
         memory_copy_apart(regex_slots, kept, sizeof(kept));
 
         return true;
+}
+
+static bool regex_search_longest(string_address text, positive length, positive from)
+{
+        return regex_search(text, length, from) && regex_keep_longest(length);
+}
+
+/* Match at this exact byte rather than searching at or after it. tac walks
+   possible separator starts from the right, and a bounded prefix matters:
+   after choosing the last byte of a run, the same regexp can have a shorter
+   valid match immediately before it. */
+static bool regex_match_longest(string_address text, positive length,
+                                positive at)
+{
+        regex_text = text;
+        regex_text_length = length;
+        regex_clear_state();
+
+        return regex_run(0, at) && regex_keep_longest(length);
 }
 
 /*
@@ -3034,6 +3085,320 @@ static b32 text_wc()
                                                    : (string_address) "total");
         }
 
+        return text_done(text_status);
+}
+
+// sum ----------------------------------------------------------------
+
+static const file_long sum_longs[] = {
+    {(string_address) "sysv", 's'},
+    {null, 0},
+};
+
+static fn sum_output(p32 checksum, p64 bytes, string_address name,
+                     bool named, bool sysv)
+{
+        positive block = sysv ? 512 : 1024;
+        p64 blocks = bytes / block + (bytes % block != 0);
+
+        if (sysv)
+                positive_to_string(text_put, checksum);
+        else
+                positive_to_padded(text_put, checksum, 5, '0', 0);
+
+        text_put_character(' ');
+
+        if (sysv)
+                positive_to_string(text_put, blocks);
+        else
+                positive_to_padded(text_put, blocks, 5, ' ', 0);
+
+        if (named)
+        {
+                text_put_character(' ');
+                text_put_string(name);
+        }
+
+        text_put_character('\n');
+}
+
+static b32 text_sum()
+{
+        p8 sum_option = 0;
+        file_supersede supersedes[] = {
+            {(string_address) "rs", address_of sum_option},
+            {null, null},
+        };
+        file_taking taking = {
+            .program = (string_address) "sum",
+            .allowed = (string_address) "rs",
+            .valued = (string_address) "",
+            .longs = sum_longs,
+            .operand = text_file_add,
+            .supersedes = supersedes,
+        };
+
+        text_begin("sum");
+
+        if (!file_take(address_of taking) || !text_files_ready())
+                return text_done(1);
+
+        bool sysv = sum_option == 's';
+        bool named = text_files_count != 0;
+        b32 inputs = text_input_count();
+
+        for (b32 i = 0; i < inputs; i++)
+        {
+                string_address name = text_file_name(i);
+
+                if (!text_open(name))
+                        continue;
+
+                p32 checksum = 0;
+                p64 bytes = 0;
+
+                while (text_fill())
+                {
+                        p8 address_to at = text_input.buffer + text_input.position;
+                        positive length = text_input.filled - text_input.position;
+
+                        if (sysv)
+                                checksum += memory_sum_bytes(at, length);
+                        else
+                                checksum = memory_checksum_bsd16(at, length,
+                                                                 checksum);
+
+                        bytes += length;
+                        text_input.position = text_input.filled;
+                }
+
+                text_close();
+
+                if (text_input.failed)
+                        continue;
+
+                if (sysv)
+                {
+                        p32 folded = (checksum & 0xffff) + (checksum >> 16);
+
+                        checksum = (folded & 0xffff) + (folded >> 16);
+                }
+
+                sum_output(checksum, bytes,
+                           name ? name : (string_address) "-", named, sysv);
+        }
+
+        return text_done(text_status);
+}
+
+// tac ----------------------------------------------------------------
+
+typedef struct
+{
+        p8 address_to bytes;
+        positive room;
+        positive used;
+} tac_buffer;
+
+static bool tac_read(tac_buffer address_to buffer, string_address name)
+{
+        buffer->used = 0;
+        bool failed = false;
+
+        if (!text_open(name))
+                return false;
+
+        while (text_fill())
+        {
+                p8 address_to at = text_input.buffer + text_input.position;
+                positive length = text_input.filled - text_input.position;
+
+                if (length > positive_max - buffer->used ||
+                    !memory_reserve(
+                        (address_any address_to)address_of buffer->bytes,
+                        address_of buffer->room, buffer->used,
+                        buffer->used + length, 1, TEXT_READ_MAX))
+                {
+                        text_error(name, "input too large");
+                        text_status = 1;
+                        text_input.finished = true;
+                        failed = true;
+                        break;
+                }
+
+                memory_copy(buffer->bytes + buffer->used, at, length);
+                buffer->used += length;
+                text_input.position = text_input.filled;
+        }
+
+        bool okay = !text_input.failed && !failed;
+        text_close();
+        return okay;
+}
+
+static fn tac_literal(p8 address_to data, positive length,
+                      p8 address_to separator, positive separator_length,
+                      bool before)
+{
+        positive past = length;
+        positive cutoff = length;
+        bool first = true;
+
+        while (cutoff >= separator_length)
+        {
+                positive candidates = cutoff - separator_length + 1;
+                p8 address_to found;
+
+                for (;;)
+                {
+                        found = memory_last_of(data, separator[0], candidates);
+
+                        if (!found || !memory_compare(found, separator,
+                                                      separator_length))
+                                break;
+
+                        candidates = (positive)(found - data);
+                }
+
+                if (!found)
+                        break;
+
+                positive start = (positive)(found - data);
+                positive stop = start + separator_length;
+
+                if (before)
+                {
+                        text_put(data + start, past - start);
+                        past = start;
+                }
+                else
+                {
+                        if (!first || stop != past)
+                                text_put(data + stop, past - stop);
+
+                        past = stop;
+                        first = false;
+                }
+
+                cutoff = start;
+        }
+
+        if (past)
+                text_put(data, past);
+}
+
+static fn tac_regex(p8 address_to data, positive length, bool before)
+{
+        positive past = length;
+        positive cutoff = length;
+        bool first = true;
+
+        while (cutoff)
+        {
+                positive start = cutoff;
+                bool found;
+
+                do
+                {
+                        start--;
+                        found = regex_match_longest(data, cutoff, start);
+                }
+                while (start && !found);
+
+                if (!found)
+                        break;
+
+                positive stop = regex_slots[1];
+
+                if (before)
+                {
+                        text_put(data + start, past - start);
+                        past = start;
+                }
+                else
+                {
+                        if (!first || stop != past)
+                                text_put(data + stop, past - stop);
+
+                        past = stop;
+                        first = false;
+                }
+
+                cutoff = start;
+        }
+
+        if (past)
+                text_put(data, past);
+}
+
+static const file_long tac_longs[] = {
+    {(string_address) "before", 'b'},
+    {(string_address) "regex", 'r'},
+    {(string_address) "separator", 's'},
+    {null, 0},
+};
+
+static b32 text_tac()
+{
+        file_taking taking = {
+            .program = (string_address) "tac",
+            .allowed = (string_address) "brs",
+            .valued = (string_address) "s",
+            .longs = tac_longs,
+            .operand = text_file_add,
+        };
+        tac_buffer input = {0};
+
+        text_begin("tac");
+
+        if (!file_take(address_of taking) || !text_files_ready())
+                return text_done(1);
+
+        string_address separator = file_option_value(address_of taking, 's');
+        bool regex = (taking.flags & FILE_FLAG('r')) != 0;
+        bool before = (taking.flags & FILE_FLAG('b')) != 0;
+        p8 zero = 0;
+
+        if (!separator)
+                separator = (string_address) "\n";
+
+        positive separator_length = string_length(separator);
+
+        if (regex)
+        {
+                if (!separator_length)
+                {
+                        text_error(null, "separator cannot be empty");
+                        return text_done(1);
+                }
+
+                if (!regex_compile(separator, false, false, false,
+                                   REGEX_POLICY_TAC))
+                {
+                        text_error(null, "invalid regular expression");
+                        return text_done(1);
+                }
+        }
+        else if (!separator_length)
+        {
+                separator = address_of zero;
+                separator_length = 1;
+        }
+
+        b32 inputs = text_input_count();
+
+        for (b32 i = 0; i < inputs; i++)
+                if (tac_read(address_of input, text_file_name(i)))
+                {
+                        if (regex)
+                                tac_regex(input.bytes, input.used, before);
+                        else
+                                tac_literal(input.bytes, input.used, separator,
+                                            separator_length, before);
+                }
+
+        memory_release((address_any address_to)address_of input.bytes,
+                       address_of input.room, address_of input.used, 1);
         return text_done(text_status);
 }
 
@@ -3809,7 +4174,8 @@ static b32 text_nl()
                         continue;
 
                 if (pattern_count >= 3 ||
-                    !regex_compile(said + 1, false, false, false))
+                    !regex_compile(said + 1, false, false, false,
+                                   REGEX_POLICY_DEFAULT))
                         return text_refuse(said + 1,
                                            "invalid regular expression", 1);
 
@@ -6337,7 +6703,8 @@ static b32 text_grep()
                 // Taken before the anchors go on: a line without the fixed
                 // string cannot match with them either, and the wrapped
                 // pattern is no longer a fixed string to look at.
-                if (regex_compile(grep_pattern, extended, icase, false))
+                if (regex_compile(grep_pattern, extended, icase, false,
+                                  REGEX_POLICY_DEFAULT))
                         grep_literal_keep();
 
                 p8 around[GREP_PATTERN_MAX];
@@ -6366,7 +6733,8 @@ static b32 text_grep()
                         grep_match_slot = 4;
         }
 
-        if (!never && !regex_compile(grep_pattern, extended, icase, false))
+        if (!never && !regex_compile(grep_pattern, extended, icase, false,
+                                     REGEX_POLICY_DEFAULT))
                 return text_refuse(null, "invalid regular expression", 2);
 
         if (!whole_line && !whole_word)
@@ -6983,7 +7351,8 @@ static b32 sed_compile_regex(string_address pattern, bool icase)
                 return 0;
         }
 
-        if (!regex_compile(pattern, sed_extended, icase, true))
+        if (!regex_compile(pattern, sed_extended, icase, true,
+                           REGEX_POLICY_DEFAULT))
         {
                 sed_broken = true;
                 return 0;
@@ -10658,7 +11027,7 @@ static expr_value expr_matched(expr_value address_to subject,
         string_address rule = expr_shown(pattern);
         positive length = string_length(text);
 
-        if (!regex_compile(rule, false, false, false))
+        if (!regex_compile(rule, false, false, false, REGEX_POLICY_DEFAULT))
         {
                 if (!expr_dead)
                         expr_stop("invalid expression");

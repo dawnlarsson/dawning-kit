@@ -1838,7 +1838,7 @@ static b32 awk_regex_mark_first;
 
 static fn awk_regex_build(regex_program address_to into, string_address pattern)
 {
-        if (!regex_compile(pattern, true, false, true))
+        if (!regex_compile(pattern, true, false, true, REGEX_POLICY_DEFAULT))
                 awk_fatal(pattern, "invalid regular expression");
 
         regex_keep(into);

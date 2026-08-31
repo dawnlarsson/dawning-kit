@@ -176,7 +176,7 @@ static string_address address_to readonly_name;
 static positive readonly_room;
 static positive readonly_count;
 
-bool env_readonly(const_string name)
+PURE bool env_readonly(const_string name)
 {
         return readonly_count &&
                string_table_find((string_address)name, readonly_name,
@@ -250,6 +250,7 @@ typedef struct
         positive temporary;
         bool owned;
         bool permanent;
+        bool declared;
 } env_variable;
 
 static env_variable address_to shell_vars;
@@ -587,6 +588,7 @@ static env_variable address_to env_export_take_hashed(const_string name,
         shell_vars[shell_var_count].temporary = 0;
         shell_vars[shell_var_count].owned = true;
         shell_vars[shell_var_count].permanent = false;
+        shell_vars[shell_var_count].declared = true;
 
         if (!env_index_slots || shell_var_count + 1 > env_index_slots / 2)
                 env_index_rebuild(shell_var_count + 1);
@@ -616,6 +618,43 @@ static bool env_export_active_span(const_string name, positive length)
 bool env_exported(string_address name)
 {
         return name && env_export_active_span(name, string_length(name));
+}
+
+static bool env_declare(string_address name, positive length)
+{
+        env_variable address_to entry = env_export_take(name, length);
+
+        if (!entry)
+                return false;
+
+        entry->declared = true;
+        return true;
+}
+
+static fn env_declare_restore(string_address name, bool declared)
+{
+        positive length = string_length(name);
+        positive found = env_find_span(name, length);
+
+        if (declared)
+        {
+                if (found < shell_var_count)
+                        shell_vars[found].declared = true;
+                else
+                        env_declare(name, length);
+
+                return;
+        }
+
+        if (found < shell_var_count)
+        {
+                shell_vars[found].declared = false;
+
+                if (!shell_vars[found].permanent &&
+                    !shell_vars[found].temporary &&
+                    !env_variable_has_value(shell_vars + found))
+                        env_variable_drop(found);
+        }
 }
 
 static bool env_export_mark_span(const_string name, positive length)
@@ -656,6 +695,7 @@ static fn env_export_restore(string_address name, bool exported)
                 shell_vars[found].permanent = false;
 
                 if (!shell_vars[found].temporary &&
+                    !shell_vars[found].declared &&
                     !env_variable_has_value(shell_vars + found))
                         env_variable_drop(found);
         }
@@ -690,6 +730,7 @@ static fn env_export_release(string_address assignment)
                 shell_vars[found].temporary--;
 
         if (!shell_vars[found].temporary && !shell_vars[found].permanent &&
+            !shell_vars[found].declared &&
             !env_variable_has_value(shell_vars + found))
                 env_variable_drop(found);
 
@@ -779,6 +820,7 @@ static bool env_borrow_assignment(string_address entry, bool replace)
         shell_vars[found].temporary = 0;
         shell_vars[found].owned = false;
         shell_vars[found].permanent = true;
+        shell_vars[found].declared = true;
 
         if (added)
         {
@@ -993,6 +1035,7 @@ static bool env_write_hashed_span(const_string name, positive name_len,
                         memory_copy_end((p8 address_to)(cell + 1) + name_len + 1,
                                         env_reading(value), value_len);
                         shell_vars[idx].value_length = value_len;
+                        shell_vars[idx].declared = true;
                         if (allexport)
                                 shell_vars[idx].permanent = true;
                         if (!shell_envp_dirty &&
@@ -1021,6 +1064,7 @@ static bool env_write_hashed_span(const_string name, positive name_len,
                 shell_vars[idx].text = (string_address)(cell + 1);
                 shell_vars[idx].value_length = value_len;
                 shell_vars[idx].owned = true;
+                shell_vars[idx].declared = true;
                 if (owned)
                         env_cell_drop(old);
         }
@@ -1033,6 +1077,7 @@ static bool env_write_hashed_span(const_string name, positive name_len,
                 shell_vars[shell_var_count].temporary = 0;
                 shell_vars[shell_var_count].owned = true;
                 shell_vars[shell_var_count].permanent = allexport;
+                shell_vars[shell_var_count].declared = true;
                 shell_var_count++;
 
                 if (!env_index_slots || shell_var_count > env_index_slots / 2)
@@ -2244,25 +2289,22 @@ fn shell_unset(writer write, string_address input)
         A name given without a value keeps the value it had. dash does that
         too, and it is the difference between marking a name and clearing it.
 */
-#define LOCAL_ABSENT ((positive)-1)
-
 typedef struct
 {
-        p8 address_to name;
-        positive name_room;
-        positive value;
+        p8 address_to text;
+        positive name_length;
+        positive value_length;
         bool exported;
+        bool declared;
+        bool present;
 } shell_local_entry;
 
 static shell_local_entry address_to local_table;
 static positive local_room;
 static positive local_count;
 static positive local_initialized;
-static shell_store local_storage;
 static positive address_to local_from;
 static positive local_from_room;
-static shell_mark address_to local_held;
-static positive local_held_room;
 static positive local_depth;
 
 bool shell_local_enter()
@@ -2270,17 +2312,13 @@ bool shell_local_enter()
         if (local_depth == positive_max ||
             !shell_room((address_any address_to)address_of local_from,
                         address_of local_from_room, local_depth + 1,
-                        sizeof(local_from[0])) ||
-            !shell_room((address_any address_to)address_of local_held,
-                        address_of local_held_room, local_depth + 1,
-                        sizeof(local_held[0])))
+                        sizeof(local_from[0])))
         {
                 string_format(shell_diagnostic, "No room for function locals\n");
                 return false;
         }
 
         local_from[local_depth] = local_count;
-        local_held[local_depth] = shell_store_mark(address_of local_storage);
         local_depth++;
         return true;
 }
@@ -2302,83 +2340,146 @@ fn shell_local_leave()
         {
                 at--;
 
-                if (local_table[at].value == LOCAL_ABSENT)
-                        env_unset(local_table[at].name);
+                if (!local_table[at].present)
+                        env_unset(local_table[at].text);
                 else
-                        env_set(local_table[at].name,
-                                (string_address)local_table[at].value);
+                        env_set(local_table[at].text,
+                                local_table[at].text +
+                                    local_table[at].name_length + 1);
 
-                env_export_restore(local_table[at].name,
+                env_export_restore(local_table[at].text,
                                    local_table[at].exported);
+                env_declare_restore(local_table[at].text,
+                                    local_table[at].declared);
         }
 
         local_count = local_from[local_depth];
-        shell_store_rewind(address_of local_storage, local_held[local_depth]);
 }
 
-static bool local_remember(string_address name)
+static bool local_text_room(shell_local_entry address_to entry,
+                            positive used, positive wanted)
+{
+        env_cell address_to old = entry->text
+                                      ? ((env_cell address_to)entry->text) - 1
+                                      : null;
+        env_cell address_to made;
+
+        if (old && old->room >= wanted)
+                return true;
+
+        made = env_cell_take(wanted);
+
+        if (!made)
+                return false;
+
+        if (used)
+                memory_copy(made + 1, entry->text, used);
+        if (old)
+                env_cell_drop(entry->text);
+        entry->text = (p8 address_to)(made + 1);
+        return true;
+}
+
+// -1 is allocation failure, zero was already local in this frame, and one is
+// the first declaration here. Callers need that distinction because Bash
+// `declare x` hides an outer value but a second declaration keeps the local.
+static b32 local_remember(string_address name)
 {
         positive begin = local_depth ? local_from[local_depth - 1] : 0;
-        string_address value;
         positive name_length;
+        positive value_length = 0;
+        positive wanted;
+        positive found;
+        positive2 name_info;
+        env_variable address_to variable;
 
         // Twice in one function is once. Without this a local in a loop fills
         // the table an iteration at a time.
         for (positive at = begin; at < local_count; at++)
-                if (!string_compare(local_table[at].name, name))
-                        return true;
+                if (!string_compare(local_table[at].text, name))
+                        return 0;
 
         if (local_count == positive_max ||
             !shell_room((address_any address_to)address_of local_table,
                         address_of local_room, local_count + 1,
                         sizeof(local_table[0])))
-                return false;
+                return -1;
 
         if (local_count == local_initialized)
         {
-                local_table[local_count].name = null;
-                local_table[local_count].name_room = 0;
+                local_table[local_count].text = null;
                 local_initialized++;
         }
 
-        name_length = string_length(name);
+        name_info = string_hash_33_length(name);
+        name_length = name_info.y;
+        found = env_find_hashed_span(name, name_length, name_info.x);
+        variable = found < shell_var_count ? shell_vars + found : null;
+        local_table[local_count].exported =
+            variable && (variable->permanent || variable->temporary);
+        local_table[local_count].declared = variable && variable->declared;
+        local_table[local_count].present =
+            variable && env_variable_has_value(variable);
+
+        if (local_table[local_count].present)
+                value_length = variable->value_length;
 
         if (name_length == positive_max ||
-            !shell_room((address_any address_to)
-                          address_of local_table[local_count].name,
-                        address_of local_table[local_count].name_room,
-                        name_length + 1, 1))
-                return false;
+            value_length > positive_max - name_length - 2)
+                return -1;
 
-        value = env_get(name);
-        local_table[local_count].exported = env_exported(name);
+        wanted = name_length + 1 +
+                 (local_table[local_count].present ? value_length + 1 : 0);
 
-        if (!value)
-                local_table[local_count].value = LOCAL_ABSENT;
-        else
-        {
-                positive length = string_length(env_reading(value));
-                p8 address_to kept = shell_store_take(address_of local_storage,
-                                                       length + 1);
+        if (!local_text_room(local_table + local_count, 0, wanted))
+                return -1;
 
-                if (!kept)
-                        return false;
+        memory_copy_end(local_table[local_count].text, name, name_length);
+        local_table[local_count].name_length = name_length;
+        local_table[local_count].value_length = value_length;
 
-                memory_copy(kept, value, length + 1);
-                local_table[local_count].value = (positive)kept;
-        }
+        if (local_table[local_count].present)
+                memory_copy_end(local_table[local_count].text + name_length + 1,
+                                variable->text + name_length + 1,
+                                value_length);
 
-        string_copy(local_table[local_count].name, name);
         local_count++;
 
+        return 1;
+}
+
+static shell_local_entry address_to local_saved_global(string_address name)
+{
+        for (positive at = 0; at < local_count; at++)
+                if (!string_compare(local_table[at].text, name))
+                        return local_table + at;
+
+        return null;
+}
+
+static bool local_saved_assign(shell_local_entry address_to entry,
+                               string_address value, bool append)
+{
+        positive old_length = append && entry->present ? entry->value_length : 0;
+        positive add_length = string_length(value);
+        positive prefix = entry->name_length + 1;
+
+        if (old_length > positive_max - add_length - 1 ||
+            prefix > positive_max - old_length - add_length - 1 ||
+            !local_text_room(entry, prefix + old_length,
+                             prefix + old_length + add_length + 1))
+                return false;
+
+        memory_copy_end(entry->text + prefix + old_length, value, add_length);
+        entry->value_length = old_length + add_length;
+        entry->present = true;
+        entry->declared = true;
         return true;
 }
 
 fn shell_local(writer write, string_address input)
 {
         positive index = 1;
-        p8 address_to name = null;
-        positive name_room = 0;
         bool failed = false;
 
         if (!local_depth)
@@ -2392,11 +2493,12 @@ fn shell_local(writer write, string_address input)
         {
                 string_address word = shell_argv[index++];
                 string_address mark = string_first_of(word, '=');
-                positive length = mark ? (positive)(mark - word) : string_length(word);
+                string_address name_end = mark;
+                positive length = mark ? (positive)(name_end - word)
+                                       : string_length(word);
+                p8 delimiter = mark ? string_get(name_end) : 0;
 
-                if (!length || length == positive_max ||
-                    !shell_room((address_any address_to)address_of name,
-                                address_of name_room, length + 1, 1))
+                if (!shell_valid_name(word, length))
                 {
                         shell_diagnostic("local: bad name\n", 0);
                         shell_answer(2);
@@ -2404,25 +2506,467 @@ fn shell_local(writer write, string_address input)
                         break;
                 }
 
-                memory_copy_end(name, word, length);
+                if (mark)
+                        address_to name_end = end;
 
-                if (!local_remember(name))
+                if (local_remember(word) < 0)
                 {
                         shell_diagnostic("local: too many\n", 0);
                         shell_answer(2);
                         failed = true;
+                        if (mark)
+                                address_to name_end = delimiter;
                         break;
                 }
 
-                if (mark)
-                        env_assign(name, mark + 1);
-        }
+                if (mark && !env_assign(word, mark + 1))
+                {
+                        shell_diagnostic("local: no room\n", 0);
+                        shell_answer(2);
+                        failed = true;
+                }
 
-        if (name)
-                memory_free(name, name_room);
+                if (mark)
+                        address_to name_end = delimiter;
+
+                if (failed)
+                        break;
+        }
 
         if (!failed)
                 shell_answer(0);
+}
+
+#define DECLARE_EXPORT 1
+#define DECLARE_READONLY 2
+#define DECLARE_PRINT 4
+#define DECLARE_GLOBAL 8
+
+typedef struct
+{
+        positive index;
+        p8 set;
+        p8 clear;
+} shell_declare_state;
+
+static bool shell_declare_options(shell_declare_state address_to state)
+{
+        while (state->index < shell_argc)
+        {
+                string_address word = shell_argv[state->index];
+                p8 direction = string_get(word);
+                string_address option;
+
+                if ((direction != '-' && direction != '+') ||
+                    !string_get(word + 1))
+                        break;
+
+                if (word_is(word, "--"))
+                {
+                        state->index++;
+                        break;
+                }
+
+                option = word + 1;
+
+                while (string_get(option))
+                {
+                        p8 value = string_get(option++);
+                        p8 flag;
+
+                        flag = value == 'x' ? DECLARE_EXPORT
+                               : value == 'r' ? DECLARE_READONLY
+                               : value == 'p' && direction == '-' ? DECLARE_PRINT
+                               : value == 'g' && direction == '-' ? DECLARE_GLOBAL
+                                                                  : 0;
+
+                        if (!flag)
+                        {
+                                string_format(shell_diagnostic,
+                                              "%s: %c%c: invalid option\n",
+                                              shell_argv[0], direction, value);
+                                shell_answer(2);
+                                return false;
+                        }
+
+                        if (direction == '-')
+                                state->set |= flag;
+                        else
+                                state->clear |= flag;
+                }
+
+                state->index++;
+        }
+
+        state->set &= (p8)~state->clear;
+        return true;
+}
+
+static fn shell_declare_quoted(writer write, string_address value)
+{
+        bool control = false;
+        string_address at = value;
+
+        while (string_get(at))
+        {
+                p8 byte = string_get(at++);
+
+                if (byte < ' ' || byte == 127)
+                {
+                        control = true;
+                        break;
+                }
+        }
+
+        write(control ? "$'" : "\"", 2 - !control);
+
+        while (string_get(value))
+        {
+                p8 byte = string_get(value++);
+
+                if (control)
+                {
+                        if (byte == '\n')
+                                write("\\n", 2);
+                        else if (byte == '\r')
+                                write("\\r", 2);
+                        else if (byte == '\t')
+                                write("\\t", 2);
+                        else if (byte < ' ' || byte == 127)
+                        {
+                                p8 octal[4] = {'\\',
+                                               (p8)('0' + (byte >> 6)),
+                                               (p8)('0' + ((byte >> 3) & 7)),
+                                               (p8)('0' + (byte & 7))};
+
+                                write(octal, sizeof(octal));
+                        }
+                        else
+                        {
+                                if (byte == '\\' || byte == '\'')
+                                        write("\\", 1);
+                                write(address_of byte, 1);
+                        }
+                }
+                else
+                {
+                        if (byte == '\\' || byte == '"' || byte == '$' ||
+                            byte == '`')
+                                write("\\", 1);
+                        write(address_of byte, 1);
+                }
+        }
+
+        write(control ? "'" : "\"", 1);
+}
+
+static bool shell_declare_print_one(writer write, string_address name,
+                                    positive length, p8 filter)
+{
+        positive found = env_find_span(name, length);
+        env_variable address_to variable =
+            found < shell_var_count ? shell_vars + found : null;
+        bool readonly = env_readonly((const_string)name);
+        bool exported = variable && variable->permanent;
+
+        if ((!variable || !variable->declared) && !readonly)
+                return false;
+
+        if ((filter & DECLARE_EXPORT) && !exported)
+                return false;
+        if ((filter & DECLARE_READONLY) && !readonly)
+                return false;
+
+        write("declare -", 9);
+
+        if (!readonly && !exported)
+                write("-", 1);
+        else
+        {
+                if (readonly)
+                        write("r", 1);
+                if (exported)
+                        write("x", 1);
+        }
+
+        write(" ", 1);
+        write(name, length);
+
+        if (variable && env_variable_has_value(variable))
+        {
+                write("=", 1);
+                shell_declare_quoted(write,
+                                     variable->text + length + 1);
+        }
+
+        write("\n", 1);
+        return true;
+}
+
+static bool shell_declare_print_all(writer write, p8 filter)
+{
+        positive count = shell_var_count;
+        shell_mark held = shell_store_mark(address_of expand_store);
+        string_address address_to names;
+
+        if (readonly_count > positive_max - count ||
+            count + readonly_count > positive_max / sizeof(names[0]))
+                return false;
+
+        names = (string_address address_to)shell_store_take(
+            address_of expand_store,
+            (count + readonly_count) * sizeof(names[0]));
+
+        if (!names && count + readonly_count)
+                goto failed;
+
+        count = 0;
+
+        for (positive at = 0; at < shell_var_count; at++)
+        {
+                positive length = shell_vars[at].name_length;
+                p8 address_to name = shell_store_take(address_of expand_store,
+                                                        length + 1);
+
+                if (!name)
+                        goto failed;
+
+                memory_copy_end(name, shell_vars[at].text, length);
+                names[count++] = name;
+        }
+
+        for (positive at = 0; at < readonly_count; at++)
+        {
+                positive length = string_length(readonly_name[at]);
+
+                if (env_find_span(readonly_name[at], length) >= shell_var_count)
+                        names[count++] = readonly_name[at];
+        }
+
+        if (!expand_sort_names(names, count))
+                goto failed;
+
+        for (positive at = 0; at < count; at++)
+                shell_declare_print_one(write, names[at],
+                                        string_length(names[at]), filter);
+
+        shell_store_rewind(address_of expand_store, held);
+        return true;
+
+failed:
+        shell_store_rewind(address_of expand_store, held);
+        return false;
+}
+
+static bool shell_declare_assign(string_address name, string_address value,
+                                 bool append)
+{
+        shell_mark held;
+        p8 address_to joined;
+        string_address old;
+        positive old_length;
+        positive add_length;
+        bool answer;
+
+        if (!append)
+                return env_assign(name, value);
+
+        old = env_get(name);
+        old_length = old ? string_length(old) : 0;
+        add_length = string_length(value);
+
+        if (old_length > positive_max - add_length - 1)
+                return false;
+
+        held = shell_store_mark(address_of expand_store);
+        joined = shell_store_take(address_of expand_store,
+                                  old_length + add_length + 1);
+
+        if (!joined)
+        {
+                shell_store_rewind(address_of expand_store, held);
+                return false;
+        }
+
+        if (old_length)
+                memory_copy(joined, old, old_length);
+        memory_copy_end(joined + old_length, value, add_length);
+        answer = env_assign(name, joined);
+        shell_store_rewind(address_of expand_store, held);
+        return answer;
+}
+
+static fn shell_declare(writer write, string_address input)
+{
+        shell_declare_state state = {1};
+        bool failed = false;
+
+        (void)input;
+
+        if (!shell_declare_options(address_of state))
+                return;
+
+        if ((state.set & DECLARE_PRINT) || state.index >= shell_argc)
+        {
+                if (state.index < shell_argc)
+                {
+                        while (state.index < shell_argc)
+                        {
+                                string_address name = shell_argv[state.index++];
+                                positive length = string_length(name);
+
+                                if (!shell_valid_name(name, length) ||
+                                    !shell_declare_print_one(write, name, length,
+                                                             state.set))
+                                {
+                                        string_format(shell_diagnostic,
+                                                      "%s: %s: not found\n",
+                                                      shell_argv[0], name);
+                                        failed = true;
+                                }
+                        }
+                }
+                else
+                        failed = !shell_declare_print_all(write, state.set);
+
+                shell_answer(failed ? 1 : 0);
+                return;
+        }
+
+        while (state.index < shell_argc)
+        {
+                string_address word = shell_argv[state.index++];
+                string_address mark = string_first_of(word, '=');
+                bool append = mark && mark > word && string_is(mark - 1, '+');
+                string_address name_end = mark ? mark - append : null;
+                positive length = mark ? (positive)(name_end - word)
+                                       : string_length(word);
+                bool scoped = local_depth && !(state.set & DECLARE_GLOBAL);
+                shell_local_entry address_to saved_global = null;
+                p8 delimiter = mark ? string_get(name_end) : 0;
+                bool readonly;
+
+                if (!shell_valid_name(word, length))
+                {
+                        shell_bad_name(shell_argv[0], word, length);
+                        return;
+                }
+
+                if (mark)
+                        address_to name_end = end;
+
+                readonly = env_readonly(word);
+                saved_global = state.set & DECLARE_GLOBAL
+                                   ? local_saved_global(word)
+                                   : null;
+
+                /* Dynamic locals are stacked newest-last. The earliest entry
+                   for a name owns the saved global underneath every active
+                   local. Update that stable slot and leave the live local
+                   alone; the ordinary unwind publishes it at global scope. */
+                if (saved_global)
+                {
+                        if ((state.set & DECLARE_READONLY) ||
+                            ((state.clear & DECLARE_READONLY) &&
+                             readonly) || (mark && readonly))
+                        {
+                                string_format(shell_diagnostic,
+                                              "%s: %s: readonly variable\n",
+                                              shell_argv[0], word);
+                                failed = true;
+                        }
+                        else if (mark && !local_saved_assign(
+                                                 saved_global, mark + 1,
+                                                 append))
+                                goto no_room;
+                        else
+                        {
+                                saved_global->declared = true;
+                                if (state.clear & DECLARE_EXPORT)
+                                        saved_global->exported = false;
+                                if (state.set & DECLARE_EXPORT)
+                                        saved_global->exported = true;
+                        }
+
+                        goto next;
+                }
+
+                if (scoped && readonly)
+                {
+                        string_format(shell_diagnostic,
+                                      "%s: %s: readonly variable\n",
+                                      shell_argv[0], word);
+                        failed = true;
+                        goto next;
+                }
+
+                /* readonly_name is process-global today. Marking a dynamic
+                   local there would make the attribute survive the function,
+                   which is worse than refusing the unsupported scoped form. */
+                if (scoped && (state.set & DECLARE_READONLY))
+                {
+                        string_format(shell_diagnostic,
+                                      "%s: %s: local readonly unsupported\n",
+                                      shell_argv[0], word);
+                        failed = true;
+                        goto next;
+                }
+
+                if ((state.clear & DECLARE_READONLY) && readonly)
+                {
+                        string_format(shell_diagnostic,
+                                      "%s: %s: readonly variable\n",
+                                      shell_argv[0], word);
+                        failed = true;
+                        goto next;
+                }
+
+                if (scoped)
+                {
+                        b32 fresh = local_remember(word);
+
+                        if (fresh < 0)
+                                goto no_room;
+
+                        if (fresh)
+                        {
+                                env_unset(word);
+                        }
+                }
+
+                if (mark && readonly)
+                {
+                        string_format(shell_diagnostic, "%s: is read only\n",
+                                      word);
+                        address_to name_end = delimiter;
+                        expand_fatal();
+                        return;
+                }
+                else if (mark ? !shell_declare_assign(word, mark + 1, append)
+                              : !env_declare(word, length))
+                        goto no_room;
+
+                if (state.clear & DECLARE_EXPORT)
+                        env_export_restore(word, false);
+                if ((state.set & DECLARE_EXPORT) && !env_export_mark(word))
+                        failed = true;
+                if ((state.set & DECLARE_READONLY) &&
+                    !readonly_add(word, length))
+                        failed = true;
+
+        next:
+                if (mark)
+                        address_to name_end = delimiter;
+                continue;
+
+        no_room:
+                shell_diagnostic("declare: no room\n", 0);
+                if (mark)
+                        address_to name_end = delimiter;
+                return shell_answer(2);
+        }
+
+        shell_answer(failed ? 1 : 0);
 }
 
 fn shell_readonly(writer write, string_address input)
@@ -5157,6 +5701,8 @@ static shell_tool shell_tools[] = {
     {"rev", text_rev},
     {"sed", text_sed},
     {"sort", text_sort},
+    {"sum", text_sum},
+    {"tac", text_tac},
     {"tail", text_tail},
     {"tee", text_tee},
     {"tr", text_tr},
@@ -5174,6 +5720,7 @@ static shell_tool shell_tools[] = {
     {"dirname", file_dirname},
     {"du", file_du},
     {"env", file_env},
+    {"fadvise", util_linux_fadvise},
     {"find", file_find},
     {"findfs", storage_program_findfs},
     {"findmnt", storage_program_findmnt},
@@ -5183,6 +5730,7 @@ static shell_tool shell_tools[] = {
     {"host", net_host},
     {"fetch", net_fetch},
     {"id", file_id},
+    {"ionice", util_linux_ionice},
     {"kill", file_kill},
     {"link", file_link},
     {"ln", file_ln},
@@ -5204,11 +5752,14 @@ static shell_tool shell_tools[] = {
     {"rm", file_rm},
     {"rmdir", file_rmdir},
     {"seq", file_seq},
+    {"setpgid", util_linux_setpgid},
+    {"setsid", util_linux_setsid},
     {"sleep", file_sleep},
     {"stat", file_stat},
     {"stty", file_stty},
     {"sync", file_sync},
     {"touch", file_touch},
+    {"truncate", file_truncate},
     {"tty", file_tty},
     {"uname", file_uname},
     {"unlink", file_unlink},
@@ -6033,6 +6584,7 @@ shell_command shell_commands[] = {
     {"cd", shell_cd},
     {"clear", shell_clear},
     {"command", shell_command_builtin},
+    {"declare", shell_declare},
     {"echo", shell_echo},
     {"eval", shell_eval},
     {"exec", shell_exec},
@@ -6059,6 +6611,7 @@ shell_command shell_commands[] = {
     {"times", shell_times},
     {"trap", shell_trap},
     {"type", shell_type},
+    {"typeset", shell_declare},
     {"true", shell_true},
     {"ulimit", shell_ulimit},
     {"umask", shell_umask},

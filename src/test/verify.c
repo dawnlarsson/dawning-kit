@@ -160,6 +160,32 @@ address_any reference_frob(address_any block, positive size)
         return block;
 }
 
+static p32 reference_sum_bytes(address_any block, positive size)
+{
+        p8 address_to at = block;
+        p32 sum = 0;
+
+        while (size--)
+                sum += address_to at++;
+
+        return sum;
+}
+
+static p32 reference_checksum_bsd16(address_any block, positive size, p32 sum)
+{
+        p8 address_to at = block;
+
+        sum &= 0xffff;
+
+        while (size--)
+        {
+                sum = (sum >> 1) + ((sum & 1) << 15);
+                sum = (sum + address_to at++) & 0xffff;
+        }
+
+        return sum;
+}
+
 p8 address_to reference_copy_end(p8 address_to destination, address_any source,
                                  positive size)
 {
@@ -514,6 +540,41 @@ fn check_reverse()
         reference_reverse(reverse_large_want + 37, 1 << 20);
         same_bytes("memory_reverse", "one megabyte double reverse",
                    reverse_large_got, reverse_large_want, REVERSE_LARGE);
+}
+
+fn check_checksums()
+{
+        same("memory_sum_bytes", "null zero-sized span",
+             memory_sum_bytes(null, 0), 0);
+        same("memory_checksum_bsd16", "null zero-sized span and seed",
+             memory_checksum_bsd16(null, 0, 0x12345), 0x2345);
+
+        for (positive size = 0; size <= 1024; size++)
+                for (positive residue = 0; residue < 32; residue++)
+                {
+                        p8 address_to at = pattern + residue;
+
+                        for (positive i = 0; i < size; i++)
+                                at[i] = (p8)next();
+
+                        p32 seed = (p32)next();
+
+                        same("memory_sum_bytes", "all small sizes and residues",
+                             memory_sum_bytes(at, size),
+                             reference_sum_bytes(at, size));
+                        same("memory_checksum_bsd16",
+                             "all small sizes, residues, and seeds",
+                             memory_checksum_bsd16(at, size, seed),
+                             reference_checksum_bsd16(at, size, seed));
+
+                        positive split = size ? next() % size : 0;
+                        p32 first = memory_checksum_bsd16(at, split, seed);
+
+                        same("memory_checksum_bsd16", "streaming continuation",
+                             memory_checksum_bsd16(at + split, size - split,
+                                                   first),
+                             reference_checksum_bsd16(at, size, seed));
+                }
 }
 
 // Both directions, and the case where they do not overlap at all: a memmove
@@ -8300,6 +8361,7 @@ b32 main()
         check_exchange();
         check_frob();
         check_reverse();
+        check_checksums();
         check_move();
         check_copy_fast_end();
         check_copy_end();

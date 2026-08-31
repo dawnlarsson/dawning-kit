@@ -204,7 +204,9 @@ socket_option_set socket_receive socket_send socket_shutdown
 cover('static_leaf', 'src/library.c', '''
 get_cpu_time system_call system_call_1 system_call_2 system_call_3
 system_call_4 system_call_5 system_call_6
-''', 'counter read or generic syscall ABI body; statically reviewed only')
+memory_sum_bytes memory_checksum_bsd16
+''', 'counter read, syscall ABI, or checksum leaf loop; statically reviewed '
+     'instruction by instruction on all architecture floors')
 
 
 # Direct correctness references in the exhaustive assembly verifier. None of

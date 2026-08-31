@@ -8305,6 +8305,397 @@ static b32 file_sync()
         return 0;
 }
 
+// truncate ---------------------------------------------------------
+
+enum
+{
+        TRUNCATE_ABSOLUTE,
+        TRUNCATE_RELATIVE,
+        TRUNCATE_AT_MOST,
+        TRUNCATE_AT_LEAST,
+        TRUNCATE_ROUND_DOWN,
+        TRUNCATE_ROUND_UP,
+};
+
+static const file_long truncate_longs[] = {
+    {(string_address) "no-create", 'c'},
+    {(string_address) "io-blocks", 'o'},
+    {(string_address) "reference", 'r'},
+    {(string_address) "size", 's'},
+    {null, 0},
+};
+
+/* The exponent is shared by dd, truncate and util-linux's strtosize. Their
+   surrounding grammars deliberately are not: callers keep their own accepted
+   case, range and trailing-unit rules. A direct ASCII table keeps this cold
+   parser smaller and branchless instead of spelling three switches. */
+static PURE p8 file_size_power(p8 suffix, bool every_lower)
+{
+        static const p8 powers['z' - 'A' + 1] = {
+            ['K' - 'A'] = 1, ['M' - 'A'] = 2, ['G' - 'A'] = 3,
+            ['T' - 'A'] = 4, ['P' - 'A'] = 5, ['E' - 'A'] = 6,
+            ['Z' - 'A'] = 7, ['Y' - 'A'] = 8, ['R' - 'A'] = 9,
+            ['Q' - 'A'] = 10,
+            ['k' - 'A'] = 1, ['m' - 'A'] = 2, ['g' - 'A'] = 3,
+            ['t' - 'A'] = 4, ['p' - 'A'] = 5, ['e' - 'A'] = 6,
+            ['z' - 'A'] = 7, ['y' - 'A'] = 8, ['r' - 'A'] = 9,
+            ['q' - 'A'] = 10,
+        };
+
+        if (suffix < 'A' || suffix > 'z')
+                return 0;
+
+        p8 power = powers[suffix - 'A'];
+
+        return suffix >= 'a' && !every_lower && power > 4
+                   ? 0
+                   : power;
+}
+
+/* GNU's SIZE grammar here is deliberately narrower than dd's: an integer,
+   optionally followed by K..Q, with bare suffixes meaning one. A trailing B
+   selects powers of 1000; no B or iB selects powers of 1024. */
+static bool truncate_size(string_address text, b64 address_to out,
+                          p8 address_to relation)
+{
+        while (byte_is_space(string_get(text)))
+                text++;
+
+        p8 mode = TRUNCATE_ABSOLUTE;
+
+        if (string_is(text, '<'))
+                mode = TRUNCATE_AT_MOST;
+        else if (string_is(text, '>'))
+                mode = TRUNCATE_AT_LEAST;
+        else if (string_is(text, '/'))
+                mode = TRUNCATE_ROUND_DOWN;
+        else if (string_is(text, '%'))
+                mode = TRUNCATE_ROUND_UP;
+
+        if (mode != TRUNCATE_ABSOLUTE)
+        {
+                text++;
+
+                while (byte_is_space(string_get(text)))
+                        text++;
+        }
+
+        bool negative = string_is(text, '-');
+
+        if (negative || string_is(text, '+'))
+        {
+                if (mode != TRUNCATE_ABSOLUTE)
+                        return false;
+
+                mode = TRUNCATE_RELATIVE;
+                text++;
+        }
+
+        p64 magnitude = 0;
+        positive digits = 0;
+
+        while (byte_is_digit(string_get(text)))
+        {
+                p8 digit = string_get(text++) - '0';
+
+                if (magnitude > (p64_max - digit) / 10)
+                        return false;
+
+                magnitude = magnitude * 10 + digit;
+                digits++;
+        }
+
+        positive power = file_size_power(string_get(text), false);
+
+        if (!digits && !power)
+                return false;
+
+        if (power)
+        {
+                if (!digits)
+                        magnitude = 1;
+
+                text++;
+                p64 base = 1024;
+
+                if (string_is(text, 'B'))
+                {
+                        base = 1000;
+                        text++;
+                }
+                else if (string_is(text, 'i') && string_is(text + 1, 'B'))
+                        text += 2;
+
+                while (power--)
+                {
+                        if (magnitude > (p64)b64_max / base)
+                                return false;
+
+                        magnitude *= base;
+                }
+        }
+
+        if (string_get(text) || magnitude > (p64)b64_max + (p64)negative)
+                return false;
+
+        if ((mode == TRUNCATE_ROUND_DOWN || mode == TRUNCATE_ROUND_UP) &&
+            !magnitude)
+                return false;
+
+        address_to out = negative
+                             ? (magnitude == (p64)b64_max + 1
+                                    ? b64_min
+                                    : -(b64)magnitude)
+                             : (b64)magnitude;
+        address_to relation = mode;
+        return true;
+}
+
+static bool truncate_current_size(string_address path, bipolar handle,
+                                  file_facts address_to facts,
+                                  b64 address_to out)
+{
+        bipolar size;
+
+        if ((facts->mode & MODE_FORMAT) == MODE_FILE)
+                size = facts->size > (p64)b64_max ? -ERROR_INVALID
+                                                  : (b64)facts->size;
+        else
+                size = system_call_3(syscall(lseek), handle, 0, FILE_SEEK_END);
+
+        if (size < 0)
+        {
+                string_format(file_fail,
+                              "truncate: cannot get the size of '%s': %s\n",
+                              path, file_reason(size));
+                return false;
+        }
+
+        address_to out = size;
+        return true;
+}
+
+static bool truncate_one(string_address path, b64 size, b64 reference,
+                         p8 relation, bool no_create, bool blocks)
+{
+        positive flags = (FILE_WRITE & ~O_TRUNC) | O_NONBLOCK;
+
+        if (no_create)
+                flags &= ~O_CREAT;
+
+        bipolar handle = system_call_4(syscall(openat), AT_FDCWD,
+                                       (positive)path, flags, 0666);
+
+        if (handle < 0)
+        {
+                if (no_create && handle == -ERROR_NO_ENTRY)
+                        return true;
+
+                string_format(file_fail, "truncate: cannot open '%s' for writing: %s\n",
+                              path, file_reason(handle));
+                return false;
+        }
+
+        file_facts facts;
+        bool need_facts = blocks || (relation && reference < 0);
+
+        if (need_facts &&
+            !file_look(handle, (string_address) "", AT_EMPTY_PATH,
+                       address_of facts))
+        {
+                file_complain((string_address) "truncate", (string_address) "cannot stat",
+                              path);
+                system_call_1(syscall(close), handle);
+                return false;
+        }
+
+        if (blocks)
+        {
+                p64 block = facts.blocksize;
+
+                if (!block || size > b64_max / (b64)block ||
+                    size < b64_min / (b64)block)
+                {
+                        file_complain((string_address) "truncate", (string_address) "size overflow",
+                                      path);
+                        system_call_1(syscall(close), handle);
+                        return false;
+                }
+
+                size *= (b64)block;
+        }
+
+        b64 current = reference;
+
+        if (relation && reference < 0 &&
+            !truncate_current_size(path, handle, address_of facts,
+                                   address_of current))
+        {
+                system_call_1(syscall(close), handle);
+                return false;
+        }
+
+        b64 wanted = size;
+        bool overflow = false;
+
+        if (relation == TRUNCATE_AT_MOST)
+                wanted = current < size ? current : size;
+        else if (relation == TRUNCATE_AT_LEAST)
+                wanted = current > size ? current : size;
+        else if (relation == TRUNCATE_ROUND_DOWN)
+                wanted = current - current % size;
+        else if (relation == TRUNCATE_ROUND_UP)
+        {
+                b64 spare = current % size;
+                b64 add = spare ? size - spare : 0;
+
+                overflow = current > b64_max - add;
+                wanted = overflow ? 0 : current + add;
+        }
+        else if (relation == TRUNCATE_RELATIVE)
+        {
+                /* A file size is nonnegative, so adding a negative signed
+                   SIZE cannot cross INT64_MIN. Only extension can overflow. */
+                overflow = size > 0 && current > b64_max - size;
+                wanted = overflow ? 0 : current + size;
+        }
+
+        if (overflow)
+        {
+                file_complain((string_address) "truncate", (string_address) "size overflow",
+                              path);
+                system_call_1(syscall(close), handle);
+                return false;
+        }
+
+        if (wanted < 0)
+                wanted = 0;
+
+        bipolar done = system_call_2(syscall(ftruncate), handle, (positive)wanted);
+        bipolar closed = system_call_1(syscall(close), handle);
+
+        if (done < 0)
+        {
+                string_format(file_fail, "truncate: failed to truncate '%s': %s\n",
+                              path, file_reason(done));
+                return false;
+        }
+
+        if (closed < 0)
+        {
+                string_format(file_fail, "truncate: failed to close '%s': %s\n",
+                              path, file_reason(closed));
+                return false;
+        }
+
+        return true;
+}
+
+static b32 file_truncate()
+{
+        file_operands_begin();
+        file_taking taking = {
+            .program = (string_address) "truncate",
+            .allowed = (string_address) "cors",
+            .valued = (string_address) "rs",
+            .longs = truncate_longs,
+            .operand = file_operand,
+        };
+
+        if (!file_take(address_of taking) || file_operand_failed)
+                return 1;
+
+        string_address size_text = file_option_value(address_of taking, 's');
+        string_address reference_path = file_option_value(address_of taking, 'r');
+        bool blocks = (taking.flags & FILE_FLAG('o')) != 0;
+        bool no_create = (taking.flags & FILE_FLAG('c')) != 0;
+        b64 size = 0;
+        p8 relation = TRUNCATE_ABSOLUTE;
+
+        if (!reference_path && !size_text)
+        {
+                file_fail("truncate: you must specify either --size or --reference\n", 0);
+                return 1;
+        }
+
+        if (size_text && !truncate_size(size_text, address_of size,
+                                        address_of relation))
+        {
+                string_format(file_fail, "truncate: Invalid number: '%s'\n", size_text);
+                return 1;
+        }
+
+        if (reference_path && size_text && relation == TRUNCATE_ABSOLUTE)
+        {
+                file_fail("truncate: --size must be relative with --reference\n", 0);
+                return 1;
+        }
+
+        if (blocks && !size_text)
+        {
+                file_fail("truncate: --io-blocks requires --size\n", 0);
+                return 1;
+        }
+
+        if (!file_operand_count)
+        {
+                file_fail("truncate: missing file operand\n", 0);
+                return 1;
+        }
+
+        b64 reference = -1;
+
+        if (reference_path)
+        {
+                file_facts facts;
+
+                if (!file_look_at(reference_path, address_of facts))
+                {
+                        string_format(file_fail, "truncate: cannot stat '%s'\n",
+                                      reference_path);
+                        return 1;
+                }
+
+                bipolar handle = -1;
+
+                if ((facts.mode & MODE_FORMAT) != MODE_FILE)
+                        handle = system_call_4(syscall(openat), AT_FDCWD,
+                                               (positive)reference_path,
+                                               FILE_READ, 0);
+
+                if (handle < 0 && (facts.mode & MODE_FORMAT) != MODE_FILE)
+                {
+                        string_format(file_fail,
+                                      "truncate: cannot get the size of '%s': %s\n",
+                                      reference_path, file_reason(handle));
+                        return 1;
+                }
+
+                bool known = truncate_current_size(reference_path, handle,
+                                                   address_of facts,
+                                                   address_of reference);
+
+                if (handle >= 0)
+                        system_call_1(syscall(close), handle);
+
+                if (!known)
+                        return 1;
+
+                if (!size_text)
+                        size = reference;
+        }
+
+        b32 status = 0;
+
+        for (positive i = 0; i < file_operand_count; i++)
+                if (!truncate_one(file_operand_at(i), size, reference,
+                                  relation, no_create, blocks))
+                        status = 1;
+
+        log_flush();
+        return status;
+}
+
 // rmdir ------------------------------------------------------------
 // rmdir [-p] DIRECTORY..., where -p goes on removing the parents while they
 // are empty too.

@@ -28,7 +28,7 @@ string_address env_get_hashed_span(const_string name, positive length,
                                    positive address_to value_length);
 positive env_names_prefix(string_address prefix, positive length,
                           string_address address_to names, positive room);
-bool env_readonly(const_string name);
+PURE bool env_readonly(const_string name);
 bool env_assign(const_string name, const_string value);
 fn run_line(string_address line);
 fn parse_reset_all();

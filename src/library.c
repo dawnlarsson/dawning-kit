@@ -67,7 +67,7 @@
         A .set is a second label on the same address, so there is no wrapper
         and no jump, and which names get one depends on who is linking.
 
-        238 routines (229 public, 9 local), 238 of them on all three.
+        240 routines (231 public, 9 local), 240 of them on all three.
         Raw C purity: 0 function bodies, 0 object definitions, 0 body macros, and 0 object macros (all forbidden).
 
           routine                        scope   x86_64  arm64   riscv64
@@ -146,6 +146,7 @@
           log_failure_reset              public  yes     yes     yes
           log_flush                      public  yes     yes     yes
           memory                         public  yes     yes     yes
+          memory_checksum_bsd16          public  yes     yes     yes
           memory_common_prefix           public  yes     yes     yes
           memory_compare                 public  yes     yes     yes
           memory_compare_ascii_case      public  yes     yes     yes
@@ -182,6 +183,7 @@
           memory_search_prepared         public  yes     yes     yes
           memory_search_prepared_core    local   yes     yes     yes
           memory_span_byte               public  yes     yes     yes
+          memory_sum_bytes               public  yes     yes     yes
           memory_to_lower_ascii          public  yes     yes     yes
           memory_to_upper_ascii          public  yes     yes     yes
           memory_translate               public  yes     yes     yes
@@ -4170,6 +4172,38 @@ __asm__(
     ".Lmemory_case_x64_delta:\n   .fill 16,1,32\n"
     ASM_SECTION
 #endif
+
+    /* The System V checksum's inner operation is a byte sum modulo 2^32.
+       SSE2's psadbw widens before adding, so sixteen bytes retire without
+       overflow in the lanes; only the low 32 bits of their final sum are the
+       public answer. */
+    ASM_FUNC(memory_sum_bytes)
+    "xor %eax, %eax\n   cmp $16, %rsi\n   jb .Lmemory_sum_x64_tail\n"
+    "pxor %xmm0, %xmm0\n   pxor %xmm1, %xmm1\n"
+    ".balign 16\n.Lmemory_sum_x64_16:\n"
+    "movdqu (%rdi), %xmm2\n   psadbw %xmm1, %xmm2\n"
+    "paddq %xmm2, %xmm0\n   add $16, %rdi\n   sub $16, %rsi\n"
+    "cmp $16, %rsi\n   jae .Lmemory_sum_x64_16\n"
+    "movq %xmm0, %rax\n   psrldq $8, %xmm0\n   movq %xmm0, %rdx\n"
+    "add %edx, %eax\n"
+    ".Lmemory_sum_x64_tail:\n   test %rsi, %rsi\n"
+    "jz .Lmemory_sum_x64_done\n"
+    ".Lmemory_sum_x64_one:\n   movzbl (%rdi), %edx\n   add %edx, %eax\n"
+    "inc %rdi\n   dec %rsi\n   jnz .Lmemory_sum_x64_one\n"
+    ".Lmemory_sum_x64_done:\n" ASM_RET
+    ASM_END(memory_sum_bytes)
+
+    /* BSD sum is a serial rotate/add recurrence. Keeping it in the 16-bit
+       register makes both operations wrap in hardware and keeps the load
+       scheduled independently before the dependent rotate. */
+    ASM_FUNC(memory_checksum_bsd16)
+    "movzwl %dx, %eax\n   test %rsi, %rsi\n"
+    "jz .Lmemory_bsd_sum_x64_done\n"
+    ".balign 16\n.Lmemory_bsd_sum_x64_one:\n"
+    "movzbl (%rdi), %edx\n   rorw $1, %ax\n   addw %dx, %ax\n"
+    "inc %rdi\n   dec %rsi\n   jnz .Lmemory_bsd_sum_x64_one\n"
+    ".Lmemory_bsd_sum_x64_done:\n   movzwl %ax, %eax\n" ASM_RET
+    ASM_END(memory_checksum_bsd16)
 
     // Four bytes at once shorten DJB2's multiply dependency chain: 33^4 is
     // 1185921 and the four byte weights are 33^3, 33^2, 33 and one.
@@ -8440,6 +8474,34 @@ __asm__(
     ASM_RET
     ASM_END(memory_to_upper_ascii)
 
+    /* Keep the sum in four 32-bit vector lanes instead of crossing into the
+       scalar register file every sixteen bytes. Pairwise widening prevents
+       byte overflow; lane and final horizontal addition both wrap modulo
+       2^32, which is exactly the System V result. */
+    ASM_FUNC(memory_sum_bytes)
+    "mov x2, x0\n   mov w0, wzr\n   cmp x1, #16\n"
+    "b.lo .Lmemory_sum_arm64_tail\n"
+    "movi v0.4s, #0\n"
+    ".balign 16\n.Lmemory_sum_arm64_16:\n"
+    "ldr q1, [x2], #16\n   uaddlp v1.8h, v1.16b\n"
+    "uadalp v0.4s, v1.8h\n   sub x1, x1, #16\n   cmp x1, #16\n"
+    "b.hs .Lmemory_sum_arm64_16\n"
+    "addv s1, v0.4s\n   fmov w0, s1\n"
+    ".Lmemory_sum_arm64_tail:\n   cbz x1, .Lmemory_sum_arm64_done\n"
+    ".Lmemory_sum_arm64_one:\n   ldrb w3, [x2], #1\n   add w0, w0, w3\n"
+    "subs x1, x1, #1\n   b.ne .Lmemory_sum_arm64_one\n"
+    ".Lmemory_sum_arm64_done:\n" ASM_RET
+    ASM_END(memory_sum_bytes)
+
+    ASM_FUNC(memory_checksum_bsd16)
+    "mov x3, x0\n   uxth w0, w2\n   cbz x1, .Lmemory_bsd_sum_arm64_done\n"
+    ".balign 16\n.Lmemory_bsd_sum_arm64_one:\n"
+    "and w4, w0, #1\n   lsr w0, w0, #1\n   orr w0, w0, w4, lsl #15\n"
+    "ldrb w4, [x3], #1\n   add w0, w0, w4\n   uxth w0, w0\n"
+    "subs x1, x1, #1\n   b.ne .Lmemory_bsd_sum_arm64_one\n"
+    ".Lmemory_bsd_sum_arm64_done:\n" ASM_RET
+    ASM_END(memory_checksum_bsd16)
+
     ASM_FUNC(memory_hash_33)
     "mov x2, #5381\n   cmp x1, #4\n   b.lo .Lmemory_hash_33_arm64_tail\n"
     "movz x3, #0x1881\n   movk x3, #0x12, lsl #16\n"
@@ -11775,6 +11837,43 @@ __asm__(
 #undef RV_ASCII_CASE_FOUR
 #undef RV_ASCII_CASE_ONE
 
+    /* Baseline RV64 has no vector extension and does not promise unaligned
+       word loads. Peel to eight-byte alignment, add byte pairs into four
+       halfword lanes, then use the required M extension as a horizontal sum:
+       multiplying by four packed ones leaves all four lanes in the high
+       halfword. Its maximum is only 2040. */
+    ASM_FUNC(memory_sum_bytes)
+    "mv t0, a0\n   li a0, 0\n   beqz a1, .Lmemory_sum_rv_done\n"
+    ".Lmemory_sum_rv_align:\n   andi t1, t0, 7\n"
+    "beqz t1, .Lmemory_sum_rv_words\n   lbu t2, 0(t0)\n"
+    "addw a0, a0, t2\n   addi t0, t0, 1\n   addi a1, a1, -1\n"
+    "bnez a1, .Lmemory_sum_rv_align\n   j .Lmemory_sum_rv_done\n"
+    ".Lmemory_sum_rv_words:\n   li t1, 8\n"
+    "bltu a1, t1, .Lmemory_sum_rv_tail\n"
+    "li a2, 0x00ff00ff00ff00ff\n   li a3, 0x0001000100010001\n"
+    ".balign 16\n.Lmemory_sum_rv_word:\n   ld t2, 0(t0)\n"
+    "and t3, t2, a2\n   srli t2, t2, 8\n   and t2, t2, a2\n"
+    "add t3, t3, t2\n   mul t3, t3, a3\n   srli t3, t3, 48\n"
+    "addw a0, a0, t3\n"
+    "addi t0, t0, 8\n   addi a1, a1, -8\n   bgeu a1, t1, .Lmemory_sum_rv_word\n"
+    ".Lmemory_sum_rv_tail:\n   beqz a1, .Lmemory_sum_rv_done\n"
+    ".Lmemory_sum_rv_one:\n   lbu t2, 0(t0)\n   addw a0, a0, t2\n"
+    "addi t0, t0, 1\n   addi a1, a1, -1\n   bnez a1, .Lmemory_sum_rv_one\n"
+    ".Lmemory_sum_rv_done:\n" ASM_RET
+    ASM_END(memory_sum_bytes)
+
+    ASM_FUNC(memory_checksum_bsd16)
+    "mv t0, a0\n   slli a0, a2, 48\n   srli a0, a0, 48\n"
+    "beqz a1, .Lmemory_bsd_sum_rv_done\n"
+    ".balign 16\n.Lmemory_bsd_sum_rv_one:\n"
+    "andi t1, a0, 1\n   srli a0, a0, 1\n   slli t1, t1, 15\n"
+    "or a0, a0, t1\n   lbu t1, 0(t0)\n   add a0, a0, t1\n"
+    "slli a0, a0, 48\n   srli a0, a0, 48\n"
+    "addi t0, t0, 1\n   addi a1, a1, -1\n"
+    "bnez a1, .Lmemory_bsd_sum_rv_one\n"
+    ".Lmemory_bsd_sum_rv_done:\n" ASM_RET
+    ASM_END(memory_checksum_bsd16)
+
     // The project RV64 floor includes M; four bytes amortize one dependent
     // multiply by 33^4 exactly as on the other two architectures.
     ASM_FUNC(memory_hash_33)
@@ -14062,6 +14161,8 @@ address_any memory_fill_64(address_any destination, positive value,
                            positive count);
 PURE positive memory_common_prefix(address_any one, address_any two, positive size);
 PURE positive memory_hash_33(address_any block, positive size);
+PURE p32 memory_sum_bytes(address_any block, positive size);
+PURE p32 memory_checksum_bsd16(address_any block, positive size, p32 seed);
 PURE positive2 string_hash_33_length(string_address source);
 PURE positive memory_span_byte(address_any block, p8 value, positive size);
 PURE b32 memory_compare_ascii_case(address_any one, address_any two, positive size);

@@ -1483,6 +1483,55 @@ answered 'data needs file' sync -d
 answered 'conflicting modes' sync -df "$fixture/alpha"
 effect 'fifo never hangs'  sync 'mkfifo pipe; $TOOL pipe'
 
+group sum
+same 'bsd file'           sum "$fixture/alpha"
+same 'sysv file'          sum -s "$fixture/beta.txt"
+same 'sysv long'          sum --sysv "$fixture/beta.txt"
+same 'last mode bsd'      sum -s -r "$fixture/alpha"
+same 'last mode sysv'     sum -r -s "$fixture/alpha"
+same 'multiple files'     sum "$fixture/alpha" "$fixture/beta.txt"
+same 'empty file'         sum /dev/null
+effect 'standard input'   sum 'printf abc | $TOOL > said'
+effect 'named standard input' sum 'printf abc | $TOOL - > said'
+answered 'missing then file' sum "$fixture/nothing" "$fixture/alpha"
+answered 'directory read error' sum "$fixture/sub"
+answered 'invalid option' sum -x "$fixture/alpha"
+dd if=/dev/urandom of="$work/sum-random" bs=65537 count=1 status=none 2>/dev/null
+same 'large binary bsd'   sum "$work/sum-random"
+same 'large binary sysv'  sum -s "$work/sum-random"
+
+group tac
+effect 'default stdin'    tac 'printf "one\ntwo\n" | $TOOL >said'
+effect 'unterminated'     tac 'printf "one\ntwo" | $TOOL >said'
+effect 'empty lines'      tac 'printf "a\n\n\nb\n" | $TOOL >said'
+effect 'empty input'      tac ': | $TOOL >said'
+effect 'before'           tac 'printf "one\ntwo\n" | $TOOL -b >said'
+effect 'before long'      tac 'printf "one\ntwo\n" | $TOOL --before >said'
+effect 'literal separator' tac 'printf "one::two::tail" | $TOOL -s :: >said'
+effect 'separator long'   tac 'printf "one::two::tail" | $TOOL --separator=:: >said'
+effect 'overlap from right' tac 'printf aaaX | $TOOL -s aa >said'
+effect 'literal before'   tac 'printf "one::two::tail" | $TOOL -b -s :: >said'
+effect 'empty means nul'  tac 'printf "a\000b\000" | $TOOL -s "" >said'
+effect 'regex bytes'      tac 'printf abc | $TOOL -r -s . >said'
+effect 'regex dot newline' tac 'printf "ab\ncd\n" | $TOOL -r -s . >said'
+effect 'regex zero length' tac 'printf abc | $TOOL -r -s "x*" >said'
+effect 'regex terminal anchor' tac 'printf abc | $TOOL -r -s "$" >said'
+effect 'regex line anchor' tac 'printf "a\nb\n" | $TOOL -r -s "^" >said'
+effect 'regex overlap'    tac 'printf aaaX | $TOOL -r -s aa >said'
+effect 'regex emacs interval' tac 'printf baaaX | $TOOL -r -s "a\{1,3\}" >said'
+effect 'regex before'     tac 'printf "one12two3tail" | $TOOL -br -s "[0-9][0-9]*" >said'
+effect 'regex long'       tac 'printf "a1b22c" | $TOOL --regex --separator="[0-9][0-9]*" >said'
+effect 'binary regex'     tac 'printf "a\000b" | $TOOL -r -s . >said'
+effect 'multiple files'   tac 'printf "a\nb\n" >one; printf "c\nd" >two; $TOOL one two >said'
+effect 'repeated stdin'   tac 'printf "a\nb\n" | $TOOL - - >said'
+effect 'last separator'   tac 'printf "a:b::c" | $TOOL -s : -s :: >said'
+effect 'option after file' tac 'printf "a\nb\n" >one; $TOOL one -b >said'
+effect 'missing then file' tac '$TOOL absent tree/two >said'
+answered 'directory read error' tac "$fixture/sub"
+answered 'invalid regex' tac -r -s '[' "$fixture/alpha"
+answered 'empty regex'   tac -r -s '' "$fixture/alpha"
+effect 'closed output'   tac '$TOOL tree/two >&-'
+
 group rmdir
 effect 'empty'          rmdir 'mkdir gone; $TOOL gone'
 effect 'not empty'      rmdir '$TOOL tree'
@@ -1598,6 +1647,35 @@ effect 'through broken link' touch 'ln -s absent broken; $TOOL broken'
 effect 'no create broken link' touch 'ln -s absent broken; $TOOL -c broken'
 effect 'broken link itself' touch 'ln -s absent broken; $TOOL -h -d @5 broken'
 effect 'not an option'  touch '$TOOL -W tree/one'
+
+group truncate
+effect 'absolute'       truncate '$TOOL -s 4 plain'
+effect 'create'         truncate '$TOOL -s 4 made'
+effect 'no create'      truncate '$TOOL -c -s 4 absent'
+effect 'extend relative' truncate '$TOOL -s +4 plain'
+effect 'shrink relative' truncate '$TOOL -s -2 plain'
+effect 'at most'        truncate '$TOOL -s "<3" plain'
+effect 'at least'       truncate '$TOOL -s ">9" plain'
+effect 'round down'     truncate '$TOOL -s /4 plain'
+effect 'round up'       truncate '$TOOL -s %4 plain'
+effect 'decimal suffix' truncate '$TOOL -s 2KB plain'
+effect 'binary suffix'  truncate '$TOOL -s 2KiB plain'
+effect 'bare suffix'    truncate '$TOOL -s K plain'
+effect 'reference'      truncate '$TOOL -r tree/two plain'
+effect 'relative reference' truncate '$TOOL -r tree/two -s +2 plain'
+effect 'directory reference' truncate '$TOOL -r tree plain'
+effect 'null reference' truncate '$TOOL -r /dev/null plain'
+effect 'many files'     truncate '$TOOL -s 7 plain tree/one made'
+effect 'option after file' truncate '$TOOL plain -s 8'
+effect 'last size wins' truncate '$TOOL -s 2 -s 9 plain'
+effect 'io blocks'      truncate '$TOOL -o -s 1 plain'
+answered 'missing size' truncate plain
+answered 'missing file' truncate -s 4
+answered 'invalid suffix' truncate -s 1B plain
+answered 'invalid lowercase extended suffix' truncate -s 1p plain
+answered 'division by zero' truncate -s /0 plain
+answered 'absolute with reference' truncate -r "$fixture/alpha" -s 2 "$fixture/beta.txt"
+answered 'blocks without size' truncate -o -r "$fixture/alpha" "$fixture/beta.txt"
 
 group cp
 large_copy_stress

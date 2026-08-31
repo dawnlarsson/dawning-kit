@@ -266,7 +266,8 @@ cover('specialized', 'source', 'string_copy_end',
       expansion='copy_end_known', evidence='src/test/exact_family.c')
 cover('worth_it', 'size', '''
 memory_first_of_ascii_case memory_span_byte memory_count memory_count_words
-memory_hash_33 memory_translate memory_to_lower_ascii memory_to_upper_ascii
+memory_hash_33 memory_sum_bytes memory_checksum_bsd16
+memory_translate memory_to_lower_ascii memory_to_upper_ascii
 memory_reverse memory_exchange_apart memory_frob
 ''', 'a literal size under a block skips the width dispatch and the tail '
      'arithmetic that is most of the work there; expected to win under '
