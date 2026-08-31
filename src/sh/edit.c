@@ -2344,42 +2344,7 @@ static fn edit_insert(string_address text, positive length, p8 kind)
         edit_settle(index);
 }
 
-static fn edit_backspace()
-{
-        positive index = edit_primary_index();
-
-        if (edit_delete_selections(EDIT_STEP_ERASING))
-        {
-                edit_settle(index);
-                return;
-        }
-
-        for (positive at = edit_cursor_count; at; at--)
-        {
-                positive cursor = at - 1;
-                struct edit_place to = edit_cursor_caret(cursor);
-                struct edit_place from = to;
-
-                if (to.column)
-                        from.column = edit_step_back(to.line, to.column);
-                else if (to.line)
-                {
-                        from.line = to.line - 1;
-                        from.column = edit_lines[from.line].length;
-                }
-                else
-                        continue;
-
-                edit_change(from, to, null, 0, EDIT_STEP_ERASING);
-                edit_cursor_place(cursor, from, false);
-                edit_cursors[cursor].wanted =
-                    edit_display_column(from.line, from.column);
-        }
-
-        edit_settle(index);
-}
-
-static fn edit_delete_forward()
+static fn edit_delete_character(bool backward)
 {
         positive index = edit_primary_index();
 
@@ -2395,7 +2360,19 @@ static fn edit_delete_forward()
                 struct edit_place from = edit_cursor_caret(cursor);
                 struct edit_place to = from;
 
-                if (from.column < edit_lines[from.line].length)
+                if (backward)
+                {
+                        if (to.column)
+                                from.column = edit_step_back(to.line, to.column);
+                        else if (to.line)
+                        {
+                                from.line = to.line - 1;
+                                from.column = edit_lines[from.line].length;
+                        }
+                        else
+                                continue;
+                }
+                else if (from.column < edit_lines[from.line].length)
                         to.column = edit_step_forward(from.line, from.column);
                 else if (from.line + 1 < edit_line_count)
                 {
@@ -2407,6 +2384,10 @@ static fn edit_delete_forward()
 
                 edit_change(from, to, null, 0, EDIT_STEP_ERASING);
                 edit_cursor_place(cursor, from, false);
+
+                if (backward)
+                        edit_cursors[cursor].wanted =
+                            edit_display_column(from.line, from.column);
         }
 
         edit_settle(index);
@@ -4298,11 +4279,11 @@ static fn edit_key(positive key)
                 edit_repaint_all();
                 return;
         case EDIT_KEY_BACKSPACE:
-                edit_backspace();
+                edit_delete_character(true);
                 edit_repaint_all();
                 return;
         case EDIT_KEY_REMOVE:
-                edit_delete_forward();
+                edit_delete_character(false);
                 edit_repaint_all();
                 return;
         case EDIT_KEY_ENTER:

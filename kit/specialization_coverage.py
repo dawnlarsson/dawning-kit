@@ -368,7 +368,7 @@ cover('folds_already', 'source', '''
 string_length string_compare string_copy string_append
 string_first_of string_first_of_or_end string_last_of string_last_of_or_end
 string_compare_folded string_digits
-string_digits_exact string_bipolar string_span string_lex_word
+string_digits_exact string_bipolar string_span
 ''', 'the string is foldable only as a literal, and a literal argument to an '
      'unbounded walk folds the answer rather than shortening the walk; the '
      'bounded forms above are where the bound is the useful literal')

@@ -6729,37 +6729,22 @@ static b32 file_readlink()
 
                 if (resolve)
                 {
-                        if (!file_real(path, answer))
-                        {
-                                if (loud)
-                                        string_format(file_fail,
-                                                      "readlink: %s: No such file or directory\n",
-                                                      path);
+                        bool valid = file_real(path, answer);
 
-                                status = 1;
-                                continue;
+                        if (valid && readlink_canonical_option != 'm')
+                        {
+                                p8 above[FILE_PATH_MAX];
+
+                                path_head_copy(above, FILE_PATH_MAX, answer);
+
+                                // -f wants the parent to be real, -e wants
+                                // the whole path to be, -m wants neither.
+                                valid = file_is_directory_through(above) &&
+                                        (readlink_canonical_option != 'e' ||
+                                         file_exists(AT_FDCWD, answer));
                         }
 
-                        p8 above[FILE_PATH_MAX];
-
-                        path_head_copy(above, FILE_PATH_MAX, answer);
-
-                        // -f wants the parent to be real, -e wants the whole
-                        // path to be, -m wants neither.
-                        if (readlink_canonical_option != 'm' &&
-                            !file_is_directory_through(above))
-                        {
-                                if (loud)
-                                        string_format(file_fail,
-                                                      "readlink: %s: No such file or directory\n",
-                                                      path);
-
-                                status = 1;
-                                continue;
-                        }
-
-                        if (readlink_canonical_option == 'e' &&
-                            !file_exists(AT_FDCWD, answer))
+                        if (!valid)
                         {
                                 if (loud)
                                         string_format(file_fail,

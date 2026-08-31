@@ -222,7 +222,7 @@ string_append string_bipolar string_copy_max
 string_copy_max_end string_cut string_digits string_digits_exact
 string_digits_max string_find string_first_of_max string_first_of_or_end
 string_format string_get_environment string_last_of string_length_max
-string_lex_word string_replace_all string_search string_set_add string_span
+string_replace_all string_search string_set_add string_span
 string_span_max string_table_find string_to_bipolar string_to_positive
 wait_status_code_base working_directory_get working_directory_set writer_fill
 ''', 'direct correctness coverage in the assembly verifier')

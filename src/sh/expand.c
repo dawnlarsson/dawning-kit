@@ -3487,6 +3487,17 @@ static fn expand_word(string_address word)
                 expand_quoted_seen = false;
 }
 
+static bool expand_word_ready(string_address word)
+{
+        expand_word(word);
+
+        if (!expand_overflow)
+                return true;
+
+        expand_too_long(word);
+        return false;
+}
+
 //      A directory may hold any number of names, so the answer to a pattern
 //      is not allowed a ceiling either. The table of matches may move; the
 //      names themselves may not, since the table points at them.
@@ -4045,50 +4056,6 @@ static positive expand_split(shell_words address_to out)
         return out->count;
 }
 
-static string_address expand_brace_close(string_address open)
-{
-        positive depth = 1;
-        string_address at = open + 1;
-
-        while (string_get(at))
-        {
-                p8 value = string_get(at);
-
-                if (value == '\\' && string_get(at + 1))
-                {
-                        at += 2;
-                        continue;
-                }
-
-                if (value == '\'' || value == '"')
-                {
-                        at = expand_quoted_run(at, value);
-                        continue;
-                }
-
-                // Parameter braces are expansion syntax, never a brace list.
-                if (value == '$' && string_is(at + 1, '{'))
-                {
-                        string_address stop = expand_brace_end(at + 2);
-
-                        if (stop)
-                        {
-                                at = stop + 1;
-                                continue;
-                        }
-                }
-
-                if (value == '{')
-                        depth++;
-                else if (value == '}' && !--depth)
-                        return at;
-
-                at++;
-        }
-
-        return null;
-}
-
 static string_address expand_brace_comma(string_address at,
                                          string_address close)
 {
@@ -4399,15 +4366,7 @@ static positive shell_expand_braces(string_address word,
 
                 if (string_is(open, '\'') || string_is(open, '"'))
                 {
-                        p8 quote = string_get(open++);
-
-                        while (string_get(open) && string_not(open, quote))
-                                open += quote == '"' && string_is(open, '\\') &&
-                                                string_get(open + 1)
-                                            ? 2
-                                            : 1;
-                        if (string_get(open))
-                                open++;
+                        open = expand_quoted_run(open, string_get(open));
                         continue;
                 }
 
@@ -4418,7 +4377,8 @@ static positive shell_expand_braces(string_address word,
                         continue;
                 }
 
-                if (string_not(open, '{') || !(close = expand_brace_close(open)))
+                if (string_not(open, '{') ||
+                    !(close = expand_brace_end(open + 1)))
                 {
                         open++;
                         continue;
@@ -4451,13 +4411,8 @@ static positive shell_expand_braces(string_address word,
                 return out->count;
         }
 
-        expand_word(word);
-
-        if (expand_overflow)
-        {
-                expand_too_long(word);
+        if (!expand_word_ready(word))
                 return out->count;
-        }
 
         return expand_split(out);
 }
@@ -4494,13 +4449,8 @@ string_address shell_expand_word(string_address word)
 {
         string_address result;
 
-        expand_word(word);
-
-        if (expand_overflow)
-        {
-                expand_too_long(word);
+        if (!expand_word_ready(word))
                 return (string_address) "";
-        }
 
         result = expand_keep(0, expand_length);
 
@@ -4530,13 +4480,8 @@ string_address shell_expand_pattern(string_address word)
         p8 address_to result;
         positive used = 0;
 
-        expand_word(word);
-
-        if (expand_overflow)
-        {
-                expand_too_long(word);
+        if (!expand_word_ready(word))
                 return (string_address) "";
-        }
 
         for (at = 0; at < expand_length; at++)
         {
@@ -4592,13 +4537,8 @@ string_address shell_expand_regex(string_address word)
         positive used = 0;
         p8 address_to result;
 
-        expand_word(word);
-
-        if (expand_overflow)
-        {
-                expand_too_long(word);
+        if (!expand_word_ready(word))
                 return (string_address) "";
-        }
 
         for (at = 0; at < expand_length; at++)
         {

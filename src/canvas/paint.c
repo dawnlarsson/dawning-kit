@@ -113,8 +113,8 @@ static void bits_draw(const struct target *t, int x, int y, int scale,
         Cursors.
 
         One cell for every shape so a shape change is a different bitmap and
-        nothing else -- same buffer, same damage, same hardware plane. X is the
-        outline, . the fill, a space transparent.
+        nothing else -- same buffer, same damage, same hardware plane. Each
+        word is one sixteen-pixel row, in the byte order bits_draw consumes.
 
         The hotspot is the pixel the pointer actually is. It is the corner for
         an arrow and the centre for the resize shapes, which is why it is per
@@ -130,146 +130,31 @@ static void bits_draw(const struct target *t, int x, int y, int scale,
 #define CURSOR_RESIZE_NESW 4
 #define CURSOR_SHAPES 5
 
-static const char canvas_cursors[CURSOR_SHAPES][CURSOR_H][CURSOR_W + 1] = {
-    {
-    "X               ",
-    "XX              ",
-    "X.X             ",
-    "X..X            ",
-    "X...X           ",
-    "X....X          ",
-    "X.....X         ",
-    "X......X        ",
-    "X.......X       ",
-    "X........X      ",
-    "X.....XXXXX     ",
-    "X..X..X         ",
-    "X.X X..X        ",
-    "XX  X..X        ",
-    "X    X..X       ",
-    "     X..X       ",
-    "      X.X       ",
-    "      XXX       ",
-    "                ",
-    "                ",
-    },
-    {
-    "                ",
-    "                ",
-    "                ",
-    "    X     X     ",
-    "   XX     XX    ",
-    "  X.X     X.X   ",
-    " X..XXXXXXX..X  ",
-    "X.............X ",
-    " X..XXXXXXX..X  ",
-    "  X.X     X.X   ",
-    "   XX     XX    ",
-    "    X     X     ",
-    "                ",
-    "                ",
-    "                ",
-    "                ",
-    "                ",
-    "                ",
-    "                ",
-    "                ",
-    },
-    {
-    "       X        ",
-    "      X.X       ",
-    "     X...X      ",
-    "    X.....X     ",
-    "   XXXX.XXXX    ",
-    "      X.X       ",
-    "      X.X       ",
-    "      X.X       ",
-    "      X.X       ",
-    "      X.X       ",
-    "   XXXX.XXXX    ",
-    "    X.....X     ",
-    "     X...X      ",
-    "      X.X       ",
-    "       X        ",
-    "                ",
-    "                ",
-    "                ",
-    "                ",
-    "                ",
-    },
-    {
-    "                ",
-    " XXXXXXX        ",
-    " X....X         ",
-    " X...X          ",
-    " X..XX          ",
-    " X.XX.X         ",
-    " XX  X.X        ",
-    " X    X.X    X  ",
-    "       X.X  XX  ",
-    "        X.XX.X  ",
-    "         XX..X  ",
-    "         X...X  ",
-    "        X....X  ",
-    "       XXXXXXX  ",
-    "                ",
-    "                ",
-    "                ",
-    "                ",
-    "                ",
-    "                ",
-    },
-    {
-    "                ",
-    "       XXXXXXX  ",
-    "        X....X  ",
-    "         X...X  ",
-    "         XX..X  ",
-    "        X.XX.X  ",
-    "       X.X  XX  ",
-    " X    X.X    X  ",
-    " XX  X.X        ",
-    " X.XX.X         ",
-    " X..XX          ",
-    " X...X          ",
-    " X....X         ",
-    " XXXXXXX        ",
-    "                ",
-    "                ",
-    "                ",
-    "                ",
-    "                ",
-    "                ",
-    },
+static const u16 cursor_edge[CURSOR_SHAPES][CURSOR_H] = {
+    {0x0080, 0x00c0, 0x00a0, 0x0090, 0x0088, 0x0084, 0x0082, 0x0081, 0x8080, 0x4080,
+     0xe083, 0x0092, 0x00a9, 0x00c9, 0x8084, 0x8004, 0x8002, 0x8003, 0x0000, 0x0000},
+    {0x0000, 0x0000, 0x0000, 0x2008, 0x3018, 0x2828, 0xe44f, 0x0280, 0xe44f, 0x2828,
+     0x3018, 0x2008, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000},
+    {0x0001, 0x8002, 0x4004, 0x2008, 0xf01e, 0x8002, 0x8002, 0x8002, 0x8002, 0x8002,
+     0xf01e, 0x2008, 0x4004, 0x8002, 0x0001, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000},
+    {0x0000, 0x007f, 0x0042, 0x0044, 0x004c, 0x005a, 0x0065, 0x8442, 0x4c01, 0xb400,
+     0x6400, 0x4400, 0x8400, 0xfc01, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000},
+    {0x0000, 0xfc01, 0x8400, 0x4400, 0x6400, 0xb400, 0x4c01, 0x8442, 0x0065, 0x005a,
+     0x004c, 0x0044, 0x0042, 0x007f, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000},
 };
 
-/*
-        The same shapes as bits, two bytes a row, built once.
-
-        Drawing from the character art meant a test and a branch per pixel in
-        C. As bits it is the same primitive a glyph uses, twice for the two
-        halves of a sixteen wide row and twice again for the two colours.
-*/
-static u8 cursor_edge[CURSOR_SHAPES][CURSOR_H][2];
-static u8 cursor_fill[CURSOR_SHAPES][CURSOR_H][2];
-
-static void canvas_cursor_bits(void)
-{
-        unsigned int shape, row, column;
-
-        for (shape = 0; shape < CURSOR_SHAPES; shape++)
-                for (row = 0; row < CURSOR_H; row++)
-                        for (column = 0; column < CURSOR_W; column++)
-                        {
-                                char pixel = canvas_cursors[shape][row][column];
-                                u8 bit = 0x80 >> (column % 8);
-
-                                if (pixel == 'X')
-                                        cursor_edge[shape][row][column / 8] |= bit;
-                                else if (pixel == '.')
-                                        cursor_fill[shape][row][column / 8] |= bit;
-                        }
-}
+static const u16 cursor_fill[CURSOR_SHAPES][CURSOR_H] = {
+    {0x0000, 0x0000, 0x0040, 0x0060, 0x0070, 0x0078, 0x007c, 0x007e, 0x007f, 0x807f,
+     0x007c, 0x006c, 0x0046, 0x0006, 0x0003, 0x0003, 0x0001, 0x0000, 0x0000, 0x0000},
+    {0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x1010, 0x1830, 0xfc7f, 0x1830, 0x1010,
+     0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000},
+    {0x0000, 0x0001, 0x8003, 0xc007, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001,
+     0x0001, 0xc007, 0x8003, 0x0001, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000},
+    {0x0000, 0x0000, 0x003c, 0x0038, 0x0030, 0x0024, 0x0002, 0x0001, 0x8000, 0x4800,
+     0x1800, 0x3800, 0x7800, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000},
+    {0x0000, 0x0000, 0x7800, 0x3800, 0x1800, 0x4800, 0x8000, 0x0001, 0x0002, 0x0024,
+     0x0030, 0x0038, 0x003c, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000},
+};
 
 static const int canvas_cursor_hot[CURSOR_SHAPES][2] = {
     {0, 0}, {7, 7}, {7, 7}, {7, 7}, {7, 7},
@@ -294,20 +179,20 @@ static HOT void canvas_draw_cursor(const struct target *t, int x, int y,
         {
                 u32 *at = t->pixels + (size_t)y * t->pitch + x;
 
-                canvas_glyph(at, t->pitch, &cursor_fill[shape][0][0], 2,
+                canvas_glyph(at, t->pitch, (const u8 *)cursor_fill[shape], 2,
                              CURSOR_H, t->ink[INK_CURSOR]);
-                canvas_glyph(at + 8, t->pitch, &cursor_fill[shape][0][1], 2,
+                canvas_glyph(at + 8, t->pitch, (const u8 *)cursor_fill[shape] + 1, 2,
                              CURSOR_H, t->ink[INK_CURSOR]);
-                canvas_glyph(at, t->pitch, &cursor_edge[shape][0][0], 2,
+                canvas_glyph(at, t->pitch, (const u8 *)cursor_edge[shape], 2,
                              CURSOR_H, t->ink[INK_CURSOR_EDGE]);
-                canvas_glyph(at + 8, t->pitch, &cursor_edge[shape][0][1], 2,
+                canvas_glyph(at + 8, t->pitch, (const u8 *)cursor_edge[shape] + 1, 2,
                              CURSOR_H, t->ink[INK_CURSOR_EDGE]);
                 return;
         }
 
-        bits_draw(t, x, y, (int)scale, &cursor_fill[shape][0][0], 2, CURSOR_W,
+        bits_draw(t, x, y, (int)scale, (const u8 *)cursor_fill[shape], 2, CURSOR_W,
                   CURSOR_H, t->ink[INK_CURSOR]);
-        bits_draw(t, x, y, (int)scale, &cursor_edge[shape][0][0], 2, CURSOR_W,
+        bits_draw(t, x, y, (int)scale, (const u8 *)cursor_edge[shape], 2, CURSOR_W,
                   CURSOR_H, t->ink[INK_CURSOR_EDGE]);
 }
 

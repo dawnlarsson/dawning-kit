@@ -106,13 +106,15 @@ static fn awk_text_drop(awk_text address_to which)
 }
 
 /*
-        Arithmetic, written out.
+        Arithmetic.
 
-        There is no libm under this and no libgcc either, so the seven
-        functions POSIX asks awk for are here, along with the two conversions
-        between a double and its decimal spelling. The conversions are exact:
-        a double is a finite decimal, and printing 1e300 in full is what the
-        reference does.
+        The freestanding standard layer included above this file supplies the
+        hardware square root and exact modulo used below. Its general
+        transcendental reducers and compensated arithmetic cost 2.7K more
+        linked text than these compact awk routines, so those stay local.
+        The two conversions between a double and its decimal spelling are
+        exact: a double is a finite decimal, and printing 1e300 in full is
+        what the reference does.
 */
 static positive awk_bits_of(decimal value)
 {
@@ -222,46 +224,6 @@ static decimal awk_truncate(decimal value)
                 return value;
 
         return (decimal)(bipolar)value;
-}
-
-static decimal awk_sqrt(decimal value)
-{
-        if (awk_is_nan(value) || value < 0)
-                return awk_not_a_number;
-
-        if (value == 0 || !awk_is_finite(value))
-                return value;
-
-        positive bits = awk_bits_of(value);
-        b32 exponent = (b32)((bits >> 52) & 0x7ff);
-        decimal mantissa;
-
-        if (!exponent)
-        {
-                // A subnormal has no leading one; lift it into range first.
-                value = awk_scale2(value, 200);
-                bits = awk_bits_of(value);
-                exponent = (b32)((bits >> 52) & 0x7ff);
-                exponent -= 200;
-        }
-
-        b32 power = exponent - 1023;
-
-        mantissa = awk_from_bits((bits & (((positive)1 << 52) - 1)) |
-                                 ((positive)1023 << 52));
-
-        if (power & 1)
-        {
-                mantissa *= 2;
-                power--;
-        }
-
-        decimal guess = (mantissa + 1) * 0.5;
-
-        for (b32 i = 0; i < 7; i++)
-                guess = 0.5 * (guess + mantissa / guess);
-
-        return awk_scale2(guess, power / 2);
 }
 
 #define AWK_LN2_HIGH 0.693147180369123816490
@@ -497,44 +459,6 @@ static decimal awk_atan2(decimal y, decimal x)
                 return base;
 
         return y >= 0 ? base + AWK_PI : base - AWK_PI;
-}
-
-/*
-        The remainder, taken by subtraction rather than by division.
-
-        Every subtraction below is between two numbers within a factor of two
-        of each other, which floating point does exactly, so the answer is the
-        one the machine's own instruction would give.
-*/
-static decimal awk_remainder(decimal x, decimal y)
-{
-        if (awk_is_nan(x) || awk_is_nan(y) || y == 0 || !awk_is_finite(x))
-                return awk_not_a_number;
-
-        bool negative = x < 0;
-        decimal left = negative ? -x : x;
-        decimal divisor = y < 0 ? -y : y;
-
-        if (!awk_is_finite(divisor))
-                return x;
-
-        if (left < divisor)
-                return x;
-
-        b32 steps = 0;
-
-        while (awk_scale2(divisor, steps + 1) <= left && steps < 2200)
-                steps++;
-
-        for (b32 i = steps; i >= 0; i--)
-        {
-                decimal piece = awk_scale2(divisor, i);
-
-                if (piece <= left)
-                        left -= piece;
-        }
-
-        return negative ? -left : left;
 }
 
 static decimal awk_power(decimal base, decimal exponent)
@@ -2679,6 +2603,37 @@ static awk_reader address_to awk_reader_for(awk_text address_to name, bool pipe)
         return made;
 }
 
+static inline INLINE b32 awk_writer_close(awk_writer address_to which)
+{
+        awk_writer_flush(which);
+
+        if (which->handle > 2)
+                system_call_1(syscall(close), (positive)which->handle);
+
+        b32 answer = which->kind == AWK_TO_PIPE ? awk_wait_for(which->child) : 0;
+
+        awk_text_drop(which->name);
+        which->name = null;
+        which->live = false;
+        return answer;
+}
+
+static inline INLINE b32 awk_reader_close(awk_reader address_to which)
+{
+        if (which->handle > 2)
+                system_call_1(syscall(close), (positive)which->handle);
+
+        b32 answer = which->pipe ? awk_wait_for(which->child) : 0;
+
+        awk_text_drop(which->name);
+        which->name = null;
+        which->live = false;
+        which->at = 0;
+        which->filled = 0;
+        which->ended = true;
+        return answer;
+}
+
 static b32 awk_close_named(awk_text address_to name)
 {
         b32 answer = -1;
@@ -2691,15 +2646,7 @@ static b32 awk_close_named(awk_text address_to name)
                     memory_compare(which->name->text, name->text, name->length))
                         continue;
 
-                awk_writer_flush(which);
-
-                if (which->handle > 2)
-                        system_call_1(syscall(close), (positive)which->handle);
-
-                answer = which->kind == AWK_TO_PIPE ? awk_wait_for(which->child) : 0;
-                awk_text_drop(which->name);
-                which->name = null;
-                which->live = false;
+                answer = awk_writer_close(which);
         }
 
         for (b32 i = 0; i < AWK_STREAMS_MAX; i++)
@@ -2710,16 +2657,7 @@ static b32 awk_close_named(awk_text address_to name)
                     memory_compare(which->name->text, name->text, name->length))
                         continue;
 
-                if (which->handle > 2)
-                        system_call_1(syscall(close), (positive)which->handle);
-
-                answer = which->pipe ? awk_wait_for(which->child) : 0;
-                awk_text_drop(which->name);
-                which->name = null;
-                which->live = false;
-                which->at = 0;
-                which->filled = 0;
-                which->ended = true;
+                answer = awk_reader_close(which);
         }
 
         return answer;
@@ -2734,15 +2672,7 @@ static fn awk_close_everything()
                 if (!which->live)
                         continue;
 
-                awk_writer_flush(which);
-
-                if (which->handle > 2)
-                        system_call_1(syscall(close), (positive)which->handle);
-
-                if (which->kind == AWK_TO_PIPE)
-                        awk_wait_for(which->child);
-
-                which->live = false;
+                awk_writer_close(which);
         }
 
         for (b32 i = 0; i < AWK_STREAMS_MAX; i++)
@@ -2752,13 +2682,7 @@ static fn awk_close_everything()
                 if (!which->live)
                         continue;
 
-                if (which->handle > 2)
-                        system_call_1(syscall(close), (positive)which->handle);
-
-                if (which->pipe)
-                        awk_wait_for(which->child);
-
-                which->live = false;
+                awk_reader_close(which);
         }
 }
 
@@ -3545,6 +3469,32 @@ static p8 awk_builtin_least[] = {0, 2, 2, 2, 2, 2, 2, 1, 1, 1, 2,
 static p8 awk_builtin_most[] = {1, 3, 2, 3, 3, 3, 2, 255, 1, 1, 2,
                                 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1};
 
+typedef struct
+{
+        p8 one;
+        p8 equal;
+        p8 doubled;
+} awk_operator;
+
+static const awk_operator awk_operators[128] = {
+    ['{'] = {T_OPEN_BRACE},     ['}'] = {T_CLOSE_BRACE},
+    ['('] = {T_OPEN},           [')'] = {T_CLOSE},
+    ['['] = {T_OPEN_SQUARE},    [']'] = {T_CLOSE_SQUARE},
+    [';'] = {T_SEMICOLON},      [','] = {T_COMMA},
+    ['?'] = {T_QUESTION},       [':'] = {T_COLON},
+    ['$'] = {T_DOLLAR},         ['~'] = {T_MATCH},
+    ['+'] = {T_PLUS, T_ASSIGN_ADD, T_PLUS_PLUS},
+    ['-'] = {T_MINUS, T_ASSIGN_SUB, T_MINUS_MINUS},
+    ['*'] = {T_TIMES, T_ASSIGN_MUL, T_POWER},
+    ['/'] = {T_DIVIDE, T_ASSIGN_DIV},
+    ['%'] = {T_MODULO, T_ASSIGN_MOD},
+    ['^'] = {T_POWER, T_ASSIGN_POWER},
+    ['='] = {T_ASSIGN, T_EQUAL},
+    ['!'] = {T_NOT, T_UNEQUAL},
+    ['<'] = {T_LESS, T_LESS_EQUAL},
+    ['>'] = {T_GREATER, T_GREATER_EQUAL, T_APPEND},
+    ['&'] = {0, 0, T_AND},      ['|'] = {T_PIPE, 0, T_OR}};
+
 static string_address awk_source;
 static positive awk_source_length;
 static positive awk_source_at;
@@ -3597,10 +3547,7 @@ static bool awk_name_start(p8 character)
         return byte_is_alpha(character) || character == '_';
 }
 
-static bool awk_name_part(p8 character)
-{
-        return awk_name_start(character) || byte_is_digit(character);
-}
+static b8 awk_name_bytes[STRING_SET_BYTES];
 
 static b32 awk_escape(positive address_to at, positive stop)
 {
@@ -3725,9 +3672,9 @@ static fn awk_next_token()
         {
                 positive start = awk_source_at;
 
-                while (awk_source_at < awk_source_length &&
-                       awk_name_part(awk_source[awk_source_at]))
-                        awk_source_at++;
+                awk_source_at += string_span_max(awk_source + awk_source_at,
+                                                 awk_source_length - awk_source_at,
+                                                 awk_name_bytes);
 
                 positive length = awk_source_at - start;
 
@@ -3864,97 +3811,41 @@ static fn awk_next_token()
 
         p8 next = awk_source_at < awk_source_length ? awk_source[awk_source_at] : 0;
 
-        switch (character)
+        awk_operator op = character < 128 ? awk_operators[character]
+                                          : (awk_operator){0, 0, 0};
+
+        if (next == '=' && op.equal)
         {
-        case '{': awk_token = T_OPEN_BRACE; return;
-        case '}': awk_token = T_CLOSE_BRACE; return;
-        case '(': awk_token = T_OPEN; return;
-        case ')': awk_token = T_CLOSE; return;
-        case '[': awk_token = T_OPEN_SQUARE; return;
-        case ']': awk_token = T_CLOSE_SQUARE; return;
-        case ';': awk_token = T_SEMICOLON; return;
-        case ',': awk_token = T_COMMA; return;
-        case '?': awk_token = T_QUESTION; return;
-        case ':': awk_token = T_COLON; return;
-        case '$': awk_token = T_DOLLAR; return;
-        case '~': awk_token = T_MATCH; return;
-
-        case '+':
-                if (next == '+') { awk_source_at++; awk_token = T_PLUS_PLUS; return; }
-                if (next == '=') { awk_source_at++; awk_token = T_ASSIGN_ADD; return; }
-                awk_token = T_PLUS;
+                awk_source_at++;
+                awk_token = op.equal;
                 return;
+        }
 
-        case '-':
-                if (next == '-') { awk_source_at++; awk_token = T_MINUS_MINUS; return; }
-                if (next == '=') { awk_source_at++; awk_token = T_ASSIGN_SUB; return; }
-                awk_token = T_MINUS;
-                return;
+        if (next == character && op.doubled)
+        {
+                awk_source_at++;
+                awk_token = op.doubled;
 
-        case '*':
-                if (next == '*')
+                if (character == '*' && awk_source_at < awk_source_length &&
+                    awk_source[awk_source_at] == '=')
                 {
                         awk_source_at++;
-
-                        if (awk_source_at < awk_source_length && awk_source[awk_source_at] == '=')
-                        {
-                                awk_source_at++;
-                                awk_token = T_ASSIGN_POWER;
-                                return;
-                        }
-
-                        awk_token = T_POWER;
-                        return;
+                        awk_token = T_ASSIGN_POWER;
                 }
 
-                if (next == '=') { awk_source_at++; awk_token = T_ASSIGN_MUL; return; }
-                awk_token = T_TIMES;
                 return;
+        }
 
-        case '/':
-                if (next == '=') { awk_source_at++; awk_token = T_ASSIGN_DIV; return; }
-                awk_token = T_DIVIDE;
+        if (character == '!' && next == '~')
+        {
+                awk_source_at++;
+                awk_token = T_UNMATCH;
                 return;
+        }
 
-        case '%':
-                if (next == '=') { awk_source_at++; awk_token = T_ASSIGN_MOD; return; }
-                awk_token = T_MODULO;
-                return;
-
-        case '^':
-                if (next == '=') { awk_source_at++; awk_token = T_ASSIGN_POWER; return; }
-                awk_token = T_POWER;
-                return;
-
-        case '=':
-                if (next == '=') { awk_source_at++; awk_token = T_EQUAL; return; }
-                awk_token = T_ASSIGN;
-                return;
-
-        case '!':
-                if (next == '=') { awk_source_at++; awk_token = T_UNEQUAL; return; }
-                if (next == '~') { awk_source_at++; awk_token = T_UNMATCH; return; }
-                awk_token = T_NOT;
-                return;
-
-        case '<':
-                if (next == '=') { awk_source_at++; awk_token = T_LESS_EQUAL; return; }
-                awk_token = T_LESS;
-                return;
-
-        case '>':
-                if (next == '=') { awk_source_at++; awk_token = T_GREATER_EQUAL; return; }
-                if (next == '>') { awk_source_at++; awk_token = T_APPEND; return; }
-                awk_token = T_GREATER;
-                return;
-
-        case '&':
-                if (next == '&') { awk_source_at++; awk_token = T_AND; return; }
-                break;
-
-        case '|':
-                if (next == '|') { awk_source_at++; awk_token = T_OR; return; }
-                awk_token = T_PIPE;
+        if (op.one)
+        {
+                awk_token = op.one;
                 return;
         }
 
@@ -5424,7 +5315,7 @@ static fn awk_do_assign(awk_node address_to node, awk_value address_to out)
                 if (value == 0)
                         awk_fatal(null, "division by zero attempted in %");
 
-                left = awk_remainder(left, value);
+                left = decimal_modulo(left, value);
                 break;
 
         case T_ASSIGN_POWER: left = awk_power(left, value); break;
@@ -5618,7 +5509,7 @@ static fn awk_eval(awk_node address_to node, awk_value address_to out)
                         if (right == 0)
                                 awk_fatal(null, "division by zero attempted in %");
 
-                        awk_set_number(out, awk_remainder(left, right));
+                        awk_set_number(out, decimal_modulo(left, right));
                         return;
                 }
 
@@ -6087,12 +5978,13 @@ static fn awk_builtin(awk_node address_to node, awk_value address_to out)
         case B_COS: awk_set_number(out, awk_cos(awk_eval_number(first))); return;
 
         case B_ATAN2:
-                awk_set_number(out, awk_atan2(awk_eval_number(first), awk_eval_number(second)));
+                awk_set_number(out, awk_atan2(awk_eval_number(first),
+                                              awk_eval_number(second)));
                 return;
 
         case B_EXP: awk_set_number(out, awk_exp(awk_eval_number(first))); return;
         case B_LOG: awk_set_number(out, awk_log(awk_eval_number(first))); return;
-        case B_SQRT: awk_set_number(out, awk_sqrt(awk_eval_number(first))); return;
+        case B_SQRT: awk_set_number(out, square_root(awk_eval_number(first))); return;
 
         case B_INT:
                 awk_set_number(out, awk_truncate(node->count ? awk_eval_number(first) : 0));
@@ -6653,8 +6545,7 @@ static bool awk_assignment(string_address text, positive length)
         if (!length || !awk_name_start(text[0]))
                 return false;
 
-        while (at < length && awk_name_part(text[at]))
-                at++;
+        at = string_span_max(text, length, awk_name_bytes);
 
         if (at >= length || text[at] != '=')
                 return false;
@@ -6933,6 +6824,8 @@ static fn awk_start()
         awk_field_nothing.state = AWK_UNSET;
 
         string_set_add(awk_blank_bytes, " \t\n");
+        string_set_add(awk_name_bytes,
+                       "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_0123456789");
         memory_fill(awk_field_bytes, 1, sizeof(awk_field_bytes));
         awk_field_bytes[' '] = 0;
         awk_field_bytes['\t'] = 0;

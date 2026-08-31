@@ -50,7 +50,6 @@ FROM_MOONWATER = {
     'moonwater_find':                  'string_find',
     'moonwater_format':                'string_format',
     'moonwater_get_environment':       'string_get_environment',
-    'moonwater_lex_word':              'string_lex_word',
     'moonwater_library_close':         'library_close',
     'moonwater_library_get':           'library_get',
     'moonwater_library_open':          'library_open',

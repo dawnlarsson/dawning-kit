@@ -573,13 +573,57 @@ positive spawn_envp_used;
 positive spawn_envp_count;
 positive spawn_envp_generation = positive_max;
 
+/* A spawn vector has one wire shape whether it is argv or envp: a count and
+   one packed run of terminated strings. Keep the overflow proof, sizing and
+   copy together so the two launch paths cannot disagree about that shape. */
+static positive shell_flatten_strings(string_address address_to strings,
+                                      p8 address_to address_to block,
+                                      positive address_to room,
+                                      positive address_to count_out)
+{
+        positive count = 0;
+        positive used = 0;
+
+        while (strings[count])
+        {
+                positive length = string_length(strings[count++]);
+
+                if (length == positive_max ||
+                    used > positive_max - length - 1)
+                {
+                        address_to count_out = positive_max;
+                        return 0;
+                }
+
+                used += length + 1;
+        }
+
+        if (used == positive_max ||
+            !shell_room((address_any address_to)block, room, used + 1, 1))
+        {
+                address_to count_out = positive_max;
+                return 0;
+        }
+
+        used = 0;
+
+        for (positive at = 0; at < count; at++)
+        {
+                positive length = string_length(strings[at]) + 1;
+
+                memory_copy(address_to block + used, strings[at], length);
+                used += length;
+        }
+
+        address_to count_out = count;
+        return used;
+}
+
 //      The environment, flattened into a block that is made to fit it.
 positive shell_flatten_env(positive address_to count_out)
 {
         string_address address_to environment = shell_environment();
-        positive used = 0;
-        positive count = 0;
-        positive index = 0;
+        positive used;
 
         /* shell_environment already has a precise generation: it changes
            only when an exported value changes.  The flat ioctl block is an
@@ -598,47 +642,13 @@ positive shell_flatten_env(positive address_to count_out)
                 return 0;
         }
 
-        while (environment[index])
-        {
-                positive length = string_length(environment[index++]);
-
-                if (length == positive_max ||
-                    used > positive_max - length - 1)
-                {
-                        address_to count_out = positive_max;
-                        return 0;
-                }
-
-                used += length + 1;
-        }
-
-        if (used == positive_max)
-        {
-                address_to count_out = positive_max;
+        used = shell_flatten_strings(environment, address_of spawn_envp_block,
+                                     address_of spawn_envp_room, count_out);
+        if (address_to count_out == positive_max)
                 return 0;
-        }
 
-        if (!shell_room((address_any address_to)address_of spawn_envp_block,
-                        address_of spawn_envp_room, used + 1, 1))
-        {
-                address_to count_out = positive_max;
-                return 0;
-        }
-
-        used = 0;
-
-        while (environment[count])
-        {
-                positive length = string_length(environment[count]) + 1;
-
-                memory_copy(spawn_envp_block + used, environment[count], length);
-                used += length;
-                count++;
-        }
-
-        address_to count_out = count;
         spawn_envp_used = used;
-        spawn_envp_count = count;
+        spawn_envp_count = address_to count_out;
         spawn_envp_generation = shell_envp_generation;
 
         return used;
@@ -648,43 +658,18 @@ positive shell_flatten_env(positive address_to count_out)
 bipolar shell_spawn_via_device()
 {
         struct spawn request;
-        positive used = 0;
-        positive index = 0;
+        positive argc = 0;
         positive envc = 0;
 
-        //      How much the words come to, before any of them is copied.
-        while (index < shell_argc)
-        {
-                positive length = string_length(shell_argv[index++]);
-
-                if (length == positive_max ||
-                    used > positive_max - length - 1)
-                        return -1;
-
-                used += length + 1;
-        }
-
-        if (used == positive_max)
-                return -1;
-
-        if (!shell_room((address_any address_to)address_of spawn_argv_block,
-                        address_of spawn_argv_room, used + 1, 1))
-                return -1;
-
-        used = 0;
-
-        for (index = 0; index < shell_argc; index++)
-        {
-                positive length = string_length(shell_argv[index]) + 1;
-
-                memory_copy(spawn_argv_block + used, shell_argv[index], length);
-                used += length;
-        }
-
         request.path = (unsigned long)shell_argv[0];
+        request.argv_bytes = shell_flatten_strings(
+            shell_argv, address_of spawn_argv_block,
+            address_of spawn_argv_room, address_of argc);
+        if (argc == positive_max)
+                return -1;
+
         request.argv = (unsigned long)spawn_argv_block;
-        request.argv_bytes = used;
-        request.argv_count = shell_argc;
+        request.argv_count = (unsigned int)argc;
         request.envp_bytes = shell_flatten_env(address_of envc);
 
         /* An allocation failure must take the fork/exec fallback.  Sending a
