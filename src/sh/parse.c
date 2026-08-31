@@ -351,7 +351,7 @@ fn parse_reset_all()
         parse_reset();
 }
 
-static parse_token address_to parse_look(b32 ahead)
+static inline INLINE parse_token address_to parse_look(b32 ahead)
 {
         b32 index = parse_position + ahead;
 

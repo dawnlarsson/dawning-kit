@@ -6133,18 +6133,28 @@ static fn awk_builtin(awk_node address_to node, awk_value address_to out)
                 awk_text address_to text = awk_eval_text(first);
                 awk_text address_to made = awk_text_room(text->length);
 
-                for (positive i = 0; i < text->length; i++)
+                if (text->length < 256)
                 {
-                        p8 character = text->text[i];
+                        p8 begin = node->index == B_TOLOWER ? 'A' : 'a';
+                        b32 shift = node->index == B_TOLOWER ? 32 : -32;
+
+                        for (positive i = 0; i < text->length; i++)
+                        {
+                                p8 character = text->text[i];
+
+                                made->text[i] = character >= begin && character <= begin + 25
+                                                    ? (p8)(character + shift)
+                                                    : character;
+                        }
+                }
+                else
+                {
+                        memory_copy_apart(made->text, text->text, text->length);
 
                         if (node->index == B_TOLOWER)
-                                made->text[i] = character >= 'A' && character <= 'Z'
-                                                    ? (p8)(character + 32)
-                                                    : character;
+                                memory_to_lower_ascii(made->text, text->length);
                         else
-                                made->text[i] = character >= 'a' && character <= 'z'
-                                                    ? (p8)(character - 32)
-                                                    : character;
+                                memory_to_upper_ascii(made->text, text->length);
                 }
 
                 awk_text_drop(text);

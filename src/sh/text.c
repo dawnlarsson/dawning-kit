@@ -4055,11 +4055,18 @@ static bool text_list_parse(string_address spec)
                 if (!first)
                         return false;
 
-                if (first < TEXT_LIST_MAX && !text_list[first])
-                        text_list_begins[first] = 1;
+                if (first < TEXT_LIST_MAX)
+                {
+                        if (!text_list[first])
+                                text_list_begins[first] = 1;
 
-                for (positive i = first; i <= last && i < TEXT_LIST_MAX; i++)
-                        text_list[i] = 1;
+                        if (last >= first)
+                        {
+                                positive through = min(last, TEXT_LIST_MAX - 1);
+
+                                memory_fill(text_list + first, 1, through - first + 1);
+                        }
+                }
 
                 if (spec[at] == ',')
                 {

@@ -146,9 +146,11 @@ static void shape_blit(const struct target *t, const struct shape *shape,
                        int band_x, int band_y, int band_w, int band_h,
                        const u32 *source, unsigned int source_pitch)
 {
+        int top = max(max(band_y, t->clip.y1), 0);
+        int bottom = min(min(band_y + band_h, t->clip.y2), t->height);
         int y, x1, x2;
 
-        for (y = band_y; y < band_y + band_h; y++)
+        for (y = top; y < bottom; y++)
         {
                 if (!shape_span(t, shape, band_x, band_w, y, &x1, &x2))
                         continue;

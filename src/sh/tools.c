@@ -1185,15 +1185,6 @@ static bool diff_slurp(diff_side address_to side, string_address path,
         return true;
 }
 
-// Whether a file looks like something to diff by lines at all.
-static bool diff_binary(diff_side address_to side)
-{
-        if (diff_text)
-                return false;
-
-        return memory_first_of(side->base, 0, side->size) != null;
-}
-
 // Lines -----------------------------------------------------
 
 static p8 diff_fold(p8 value)
@@ -2289,7 +2280,10 @@ static b32 diff_pair(string_address left, string_address right)
             !diff_slurp(b, right, diff_new_file))
                 return 2;
 
-        if (diff_binary(a) || diff_binary(b))
+        // Whether either file looks like something to diff by lines at all.
+        if (!diff_text &&
+            (memory_first_of(a->base, 0, a->size) ||
+             memory_first_of(b->base, 0, b->size)))
         {
             if (a->size == b->size && !memory_compare(a->base, b->base, a->size))
                 {

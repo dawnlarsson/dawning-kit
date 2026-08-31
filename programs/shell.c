@@ -87,8 +87,9 @@ static bool shell_start_parameters(string_address address_to arguments,
                         sizeof(shell_argv[0])))
                 return false;
 
-        memory_copy_apart(shell_argv, arguments + first,
-                          count * sizeof(shell_argv[0]));
+        if (count)
+                memory_copy_apart(shell_argv, arguments + first,
+                                  count * sizeof(shell_argv[0]));
         shell_argv[count] = null;
 
         return shell_parameters_set(shell_argv, count);
@@ -129,6 +130,7 @@ b32 main()
         b32 interactive;
         bipolar input = 0;
         bool script_file = false;
+        bool command_option = false;
         string_address command = null;
         string_address address_to arguments;
         positive process_arguments;
@@ -155,13 +157,17 @@ b32 main()
         arguments = program_argument_list();
 
         /* Find the -c command without publishing any shell state yet. */
-        if (process_arguments >= 3)
+        if (process_arguments > 1)
         {
                 string_address option = arguments[1];
 
                 if (option && option[0] == '-' && option[1] == 'c' &&
                     !option[2])
-                        command = arguments[2];
+                {
+                        command_option = true;
+                        if (process_arguments >= 3)
+                                command = arguments[2];
+                }
         }
 
         /* Signal policy is observable even while an otherwise empty shell is
@@ -210,7 +216,7 @@ b32 main()
                 parameters. So `sh -c 'echo $0 $1' name one` prints "name one"
                 rather than treating either as a word of the command.
         */
-        if (process_arguments > 1 && string_equals(arguments[1], "-c"))
+        if (command_option)
         {
                 positive count = process_arguments > 3 ? process_arguments - 4 : 0;
 
@@ -286,17 +292,19 @@ b32 main()
         */
         if (command)
         {
-                string_address first_newline = string_first_of(command, '\n');
+                string_address first_newline =
+                    string_first_of_or_end(command, '\n');
 
                 /* The lexer and parser copy tokens and never write the source.
                    A single command can therefore stay in the process argument
                    block; only multi-line input needs a writable copy whose
                    newlines are ended in place. */
-                if (!first_newline)
+                if (!*first_newline)
                         run_line(command);
                 else
                 {
-                        positive length = string_length(command);
+                        positive length = (positive)(first_newline - command) +
+                                          1 + string_length(first_newline + 1);
                         p8 address_to held_command =
                             (p8 address_to)memory(length + 1);
 

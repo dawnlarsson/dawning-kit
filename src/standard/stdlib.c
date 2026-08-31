@@ -1180,13 +1180,12 @@ fn qsort_r(address_any base, positive count, positive size,
         plan.context = context;
         plan.size = size;
 
-        //      The base two logarithm of the count is the position of its
-        //      highest set bit, and bits_leading_zeros is one instruction on
-        //      all three machines -- bsr on x86_64, clz on the other two --
-        //      where the loop this replaces took one iteration per bit. The
-        //      count is at least two by the test above, so the zero input the
-        //      routine answers 64 for cannot arrive.
+        //      Inline bsr/clz; the RISC-V floor owns its multi-step search.
+#if RISCV64
         budget = 63 - (positive)bits_leading_zeros(count);
+#else
+        budget = (positive)top_bit_known(count);
+#endif
 
         stdlib_sort_range((p8 address_to)base, count, address_of plan, budget * 2);
 }

@@ -154,7 +154,7 @@ static void text_draw(const struct target *t, int x, int y, int w, int h,
                       const char *text, unsigned int length,
                       unsigned int align, int scale, u32 colour)
 {
-        u64 started = ktime_get_ns();
+        u64 started;
         struct target box;
         int cell_w, cell_h;
         _Bool wrap = align & TEXT_WRAP;
@@ -186,6 +186,8 @@ static void text_draw(const struct target *t, int x, int y, int w, int h,
 
         if (!columns)
                 return;
+
+        started = ktime_get_ns();
 
         if (!wrap)
                 columns = length;
