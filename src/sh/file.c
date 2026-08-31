@@ -1771,15 +1771,27 @@ static bool file_take_from(file_taking address_to taking, positive index)
                         }
 
                         positive bit = file_letter_bit(letter);
+                        bool optional = file_option_among(taking->optional,
+                                                          letter);
+                        bool valued = string_first_of(taking->valued, letter)
+                                      != null;
+
+                        if (mark && !optional && !valued)
+                        {
+                                file_complain(taking->program,
+                                              "option does not allow an argument",
+                                              word);
+                                return false;
+                        }
 
                         taking->flags |= (positive)1 << bit;
 
-                        if (file_option_among(taking->optional, letter))
+                        if (optional)
                         {
                                 taking->value[bit] = mark ? mark + 1 : null;
                                 taking->last = letter;
                         }
-                        else if (string_first_of(taking->valued, letter))
+                        else if (valued)
                         {
                                 taking->last = letter;
 

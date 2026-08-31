@@ -2260,23 +2260,11 @@ static const ul_named_number ul_personalities[] = {
     {0x0000, (string_address)"PER_LINUX"},
     {UL_ADDR_LIMIT_32BIT, (string_address)"PER_LINUX_32BIT"},
     {UL_FDPIC_FUNCPTRS, (string_address)"PER_LINUX_FDPIC"},
-    {0x0001 | UL_STICKY_TIMEOUTS | UL_MMAP_PAGE_ZERO, (string_address)"PER_SVR4"},
-    {0x0002 | UL_STICKY_TIMEOUTS | UL_SHORT_INODE, (string_address)"PER_SVR3"},
-    {0x0003 | UL_STICKY_TIMEOUTS | UL_WHOLE_SECONDS | UL_SHORT_INODE, (string_address)"PER_SCOSVR3"},
-    {0x0003 | UL_STICKY_TIMEOUTS | UL_WHOLE_SECONDS, (string_address)"PER_OSR5"},
-    {0x0004 | UL_STICKY_TIMEOUTS | UL_SHORT_INODE, (string_address)"PER_WYSEV386"},
-    {0x0005 | UL_STICKY_TIMEOUTS, (string_address)"PER_ISCR4"},
     {0x0006, (string_address)"PER_BSD"},
     {0x0006 | UL_STICKY_TIMEOUTS, (string_address)"PER_SUNOS"},
-    {0x0007 | UL_STICKY_TIMEOUTS | UL_SHORT_INODE, (string_address)"PER_XENIX"},
     {0x0008, (string_address)"PER_LINUX32"},
     {0x0008 | UL_ADDR_LIMIT_3GB, (string_address)"PER_LINUX32_3GB"},
-    {0x0009 | UL_STICKY_TIMEOUTS, (string_address)"PER_IRIX32"},
-    {0x000a | UL_STICKY_TIMEOUTS, (string_address)"PER_IRIXN32"},
-    {0x000b | UL_STICKY_TIMEOUTS, (string_address)"PER_IRIX64"},
     {0x000c, (string_address)"PER_RISCOS"},
-    {0x000d | UL_STICKY_TIMEOUTS, (string_address)"PER_SOLARIS"},
-    {0x000e | UL_STICKY_TIMEOUTS | UL_MMAP_PAGE_ZERO, (string_address)"PER_UW7"},
     {0x000f, (string_address)"PER_OSF4"},
     {0x0010, (string_address)"PER_HPUX"},
     {0, null},
@@ -2309,7 +2297,7 @@ static const ul_arch ul_arches[] = {
     {(string_address)"armv7l", 0x0008}, {(string_address)"armv8l", 0x0008},
     {(string_address)"armh", 0x0008}, {(string_address)"arm", 0x0008},
     {(string_address)"arm64", 0x0000}, {(string_address)"aarch64", 0x0000},
-#else
+#elif RISCV64 || RISCV32
     {(string_address)"riscv32", 0x0008}, {(string_address)"rv32", 0x0008},
     {(string_address)"riscv64", 0x0000}, {(string_address)"rv64", 0x0000},
 #endif
@@ -2371,12 +2359,20 @@ static bool ul_personality_number(string_address text, p32 address_to out)
 {
         string_address at = text;
         positive value;
+
+        while (byte_is_space(string_get(at)))
+                at++;
+        bool negative = string_is(at, '-');
+        if (negative || string_is(at, '+'))
+                at++;
         if (string_is(at, '0') && byte_to_lower(string_get(at + 1)) == 'x')
                 at += 2;
         if (!ul_size_number(address_of at, 16, address_of value) ||
-            string_get(at) || value > 0x7fffffff)
+            string_get(at) ||
+            (!negative && value > 0x7fffffff) ||
+            (negative && value > ((positive)1 << 63)))
                 return false;
-        address_to out = (p32)value;
+        address_to out = (p32)(negative ? (positive)0 - value : value);
         return true;
 }
 
@@ -2536,7 +2532,6 @@ static b32 util_linux_setarch()
         }
 
         bipolar changed = system_call_1(syscall(personality), personality);
-        if (changed < 0) changed = system_call_1(syscall(personality), personality);
         if (changed < 0) { string_format(file_fail, "setarch: failed to set personality to %s: %s\n", arch ? arch : (string_address)"(null)", file_reason(changed)); return 1; }
 
         if (taking.first < count)
@@ -2616,23 +2611,27 @@ static b32 util_linux_waitpid()
             .allowed = (string_address)"vetcVh",
             .valued = (string_address)"tc",
             .longs = ul_waitpid_longs,
+            .operand = file_operand,
         };
         b32 answer;
-        positive arguments = (positive)program_argument_count();
 
+        file_operand_count = 0;
+        file_operand_failed = false;
         if (!file_take(address_of taking))
                 return 1;
         if (ul_meta(address_of taking, "[options] PID[:inode]...",
                     address_of answer))
                 return answer;
-        if (taking.first >= arguments)
+        if (file_operand_failed)
+                return ul_bad_usage("waitpid", "not enough memory");
+        if (!file_operand_count)
                 return ul_bad_usage("waitpid", "no PIDs specified");
         if ((taking.flags & FILE_FLAG('e')) &&
             (taking.flags & FILE_FLAG('c')))
                 return ul_bad_usage("waitpid",
                                     "options --exited and --count are mutually exclusive");
 
-        positive wanted = arguments - taking.first;
+        positive wanted = file_operand_count;
         positive count = wanted;
         if (taking.flags & FILE_FLAG('c'))
         {
@@ -2667,7 +2666,7 @@ static b32 util_linux_waitpid()
                 b32 pid;
                 p64 inode;
                 string_address operand =
-                    program_argument((b32)(taking.first + i));
+                    program_argument(file_operand_list[i]);
 
                 if (!ul_wait_operand(operand, address_of pid,
                                      address_of inode))
@@ -2727,7 +2726,13 @@ static b32 util_linux_waitpid()
         if (!count)
                 return 0;
 
-        positive deadline = timeout ? ul_now_ns() + timeout : 0;
+        positive deadline = 0;
+        if (timeout)
+        {
+                positive now = ul_now_ns();
+                deadline = timeout > positive_max - now
+                    ? positive_max : now + timeout;
+        }
         while (count)
         {
                 timespec span;
@@ -3137,9 +3142,39 @@ static b32 util_linux_setpriv()
 #undef UL_ID
         set.groups = ul_setpriv_group_option;
         set.group_list = file_option_value(address_of taking, 's');
+        positive group_count = 0;
 
         if ((set.rgid_set || set.egid_set) && !set.groups)
                 return ul_bad_usage("setpriv", "--[re]gid requires a supplementary group option");
+        if (set.groups == 's')
+        {
+                group_count = 1;
+                for (string_address p = set.group_list; string_get(p); p++)
+                        group_count += string_is(p, ',');
+                if (!shell_room(
+                        (address_any address_to)address_of file_id_scratch,
+                        address_of file_id_scratch_room, group_count,
+                        sizeof(file_id_scratch[0])))
+                        return 127;
+                string_address p = set.group_list;
+                for (positive i = 0; i < group_count; i++)
+                {
+                        string_address comma = string_first_of(p, ',');
+                        positive length = comma ? (positive)(comma - p)
+                                                : string_length(p);
+                        if (!length || length >= FILE_NAME_MAX)
+                                return ul_bad_usage(
+                                    "setpriv", "invalid supplementary group id");
+                        p8 name[FILE_NAME_MAX];
+                        memory_copy_apart(name, p, length);
+                        name[length] = 0;
+                        if (!ul_setpriv_id(name, true,
+                                           file_id_scratch + i))
+                                return ul_bad_usage(
+                                    "setpriv", "invalid supplementary group id");
+                        p = comma ? comma + 1 : p + length;
+                }
+        }
         if (taking.flags & FILE_FLAG('p'))
         {
                 string_address value = file_option_value(address_of taking, 'p');
@@ -3158,48 +3193,44 @@ static b32 util_linux_setpriv()
                 else { b32 pid; if (!ul_pid(value, "setpriv", "PID", address_of pid)) return 1; set.ptracer = pid; }
         }
 
-        if ((taking.flags & FILE_FLAG('n')) && ul_prctl(UL_PR_SET_NO_NEW_PRIVS, 1, 0) < 0) return 1;
+        if (set.groups == 'c' &&
+            system_call_2(syscall(setgroups), 0, 0) < 0)
+                return 127;
+        if (set.groups == 's' &&
+            system_call_2(syscall(setgroups), group_count,
+                          (positive)file_id_scratch) < 0)
+                return 127;
 
-        if (set.ruid_set || set.euid_set)
-        {
-                p32 ids[3];
-                if (system_call_3(syscall(getresuid), (positive)ids, (positive)(ids + 1), (positive)(ids + 2)) < 0) return 127;
-                if (set.ruid_set) ids[0] = set.ruid;
-                if (set.euid_set) ids[1] = set.euid;
-                if (system_call_3(syscall(setresuid), ids[0], ids[1], ids[1]) < 0) return 127;
-        }
         if (set.rgid_set || set.egid_set)
         {
                 p32 ids[3];
-                if (system_call_3(syscall(getresgid), (positive)ids, (positive)(ids + 1), (positive)(ids + 2)) < 0) return 127;
+                if (system_call_3(syscall(getresgid), (positive)ids,
+                                  (positive)(ids + 1),
+                                  (positive)(ids + 2)) < 0)
+                        return 127;
                 if (set.rgid_set) ids[0] = set.rgid;
                 if (set.egid_set) ids[1] = set.egid;
-                if (system_call_3(syscall(setresgid), ids[0], ids[1], ids[1]) < 0) return 127;
+                if (system_call_3(syscall(setresgid), ids[0], ids[1],
+                                  ids[2]) < 0)
+                        return 127;
+        }
+        if (set.ruid_set || set.euid_set)
+        {
+                p32 ids[3];
+                if (system_call_3(syscall(getresuid), (positive)ids,
+                                  (positive)(ids + 1),
+                                  (positive)(ids + 2)) < 0)
+                        return 127;
+                if (set.ruid_set) ids[0] = set.ruid;
+                if (set.euid_set) ids[1] = set.euid;
+                if (system_call_3(syscall(setresuid), ids[0], ids[1],
+                                  ids[2]) < 0)
+                        return 127;
         }
 
-        if (set.groups == 'c')
-        {
-                p32 none = 0;
-                if (system_call_2(syscall(setgroups), 0, (positive)address_of none) < 0) return 127;
-        }
-        else if (set.groups == 's')
-        {
-                positive groups = 1;
-                for (string_address p = set.group_list; string_get(p); p++) if (string_is(p, ',')) groups++;
-                if (!shell_room((address_any address_to)address_of file_id_scratch, address_of file_id_scratch_room, groups, sizeof(file_id_scratch[0]))) return 127;
-                string_address p = set.group_list;
-                for (positive i = 0; i < groups; i++)
-                {
-                        string_address comma = string_first_of(p, ',');
-                        positive length = comma ? (positive)(comma - p) : string_length(p);
-                        if (!length || length >= FILE_NAME_MAX) return ul_bad_usage("setpriv", "invalid supplementary group id");
-                        p8 name[FILE_NAME_MAX]; memory_copy_apart(name, p, length); name[length] = 0;
-                        if (!ul_setpriv_id(name, true, file_id_scratch + i)) return ul_bad_usage("setpriv", "invalid supplementary group id");
-                        p = comma ? comma + 1 : p + length;
-                }
-                if (system_call_2(syscall(setgroups), groups, (positive)file_id_scratch) < 0) return 127;
-        }
-
+        if ((taking.flags & FILE_FLAG('n')) &&
+            ul_prctl(UL_PR_SET_NO_NEW_PRIVS, 1, 0) < 0)
+                return 1;
         if (set.death_set && ul_prctl(UL_PR_SET_PDEATHSIG, (positive)(p32)set.death, 0) < 0) return 127;
         if (set.ptracer_set && ul_prctl(UL_PR_SET_PTRACER, (positive)set.ptracer, 0) < 0) return 127;
         return ul_exec(taking.first, "setpriv");

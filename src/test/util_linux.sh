@@ -277,10 +277,14 @@ compare 'incompatible no-fork close' flock \
 group setarch
 compare 'show current personality' setarch '"$TOOL" --show'
 compare 'show named personality flags' setarch '"$TOOL" --show=0x40000'
+compare 'show signed personality' setarch '"$TOOL" --show=-1'
+compare 'show unnamed base personality' setarch '"$TOOL" --show=1'
 compare 'abbreviated show option' setarch '"$TOOL" --sho=0'
 compare 'show own process personality' setarch \
         'exec "$TOOL" --show -p $$'
 compare 'list architectures' setarch '"$TOOL" --list'
+compare 'no-argument option rejects value' setarch \
+        '"$TOOL" --list=garbage'
 compare 'native architecture command' setarch \
         '"$TOOL" "$(uname -m)" /bin/uname -m'
 compare 'linux32 architecture command' setarch \
@@ -310,6 +314,8 @@ compare 'real and effective gid' setpriv \
         '"$TOOL" --regid "$(id -g)" --keep-groups /usr/bin/id -g'
 compare 'keep supplementary groups' setpriv \
         '"$TOOL" --keep-groups /bin/true'
+compare 'invalid groups stop before command' setpriv \
+        '"$TOOL" --groups impossible /bin/sh -c "printf wrong"'
 compare 'parent death signal' setpriv \
         '"$TOOL" --pdeathsig TERM /bin/sh -c '\''"$TOOL" -d | tail -1'\'''
 compare 'lowercase parent death signal' setpriv \
@@ -350,6 +356,8 @@ compare 'already exited pid allowed' waitpid '"$TOOL" -e 2147483647'
 compare 'missing pid rejected' waitpid '"$TOOL" 2147483647'
 compare 'leading plus pid' waitpid '"$TOOL" -e +2147483647'
 compare 'leading blank pid' waitpid '"$TOOL" -e " 2147483647"'
+compare 'option after pid' waitpid '"$TOOL" 2147483647 -e'
+compare 'timeout after pid' waitpid '"$TOOL" 1 -t .01'
 compare 'zero pid rejected' waitpid '"$TOOL" -e 0'
 compare 'timeout status' waitpid '"$TOOL" -t .01 1'
 compare 'whole trailing-dot timeout' waitpid '"$TOOL" -t 0. -e 2147483647'
