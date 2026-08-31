@@ -1,6 +1,6 @@
-<img width="1155" height="130" alt="Dawning Moonwater Linux Header" src="https://github.com/user-attachments/assets/ade939a9-ae94-4643-adea-131ed173b5a2" />
+<img width="1155" height="130" alt="Dawning Linux Header (1) (1)" src="https://github.com/user-attachments/assets/30e9c273-0f93-456a-ae8d-1a3010f3bc24" />
 
-
+<br><br>
 
 Moonwater is a research distro, think "Linux++"
 foundational parts of the common userspace is moved into the moonwater kernel module to provide a immutable working base version of the system regardless of the userspace, performance and latency is a huge part of the why of this project.
