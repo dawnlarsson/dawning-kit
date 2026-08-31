@@ -1369,6 +1369,10 @@ answer 'ternary skips division' 'echo $((0 ? 1/0 : 7)); echo after'
 group redirection
 answer 'to stderr'       'echo x 1>&2 2>/dev/null; echo done'
 answer 'stderr to pipe'  'sh -c "echo e 1>&2" 2>&1 | cat'
+answer 'redirect before words' 'p=/tmp/sr-before.$$; >"$p" echo before words; cat "$p"; rm "$p"'
+answer 'redirect between kept words' 'p=/tmp/sr-between.$$; f() { echo before >"$p" after; }; f; cat "$p"; rm "$p"'
+answer 'redirect after words' 'p=/tmp/sr-after.$$; echo before after >"$p"; cat "$p"; rm "$p"'
+answer 'descriptor redirect between words' 'p=/tmp/sr-fd.$$; echo before 3>"$p" after; cat "$p"; rm "$p"'
 answer 'read write'      'echo abc > /tmp/sr1; exec 3<> /tmp/sr1; read v <&3; echo $v'
 answer 'heredoc expand'  'x=1; cat <<EOF
 $x
@@ -1707,7 +1711,8 @@ answer 'hash says so'    'hash; echo $?'
 answer 'ulimit open files' 'ulimit -n; echo $?'
 answer 'export to child' 'export X=1; sh -c "echo \$X"'
 answer 'unset unknown'   'unset nosuch; echo $?'
-answer 'alias runs'      'alias e=echo; e hi'
+answer 'alias runs'      'alias e=echo
+e hi'
 
 #       Aliases, which were one case until the table they live in was rewritten.
 
@@ -1715,19 +1720,73 @@ answer 'alias listed'    'alias e=echo; alias'
 answer 'alias one listed' 'alias e=echo; alias f=printf; alias e'
 answer 'alias unknown'   'alias nosuch; echo $?'
 answer 'alias redefined' 'alias e=echo; alias e=printf; alias e'
-answer 'alias runs redefined' 'alias e=printf; alias e=echo; e hi'
-answer 'alias with words' 'alias g="echo one two"; g three'
+answer 'alias runs redefined' 'alias e=printf; alias e=echo
+e hi'
+answer 'alias with words' 'alias g="echo one two"
+g three'
 answer 'alias taken away' 'alias e=echo; unalias e; alias e; echo $?'
 answer 'alias middle taken away' 'alias a=echo b=echo c=echo; unalias b; a A; c C; alias b 2>/dev/null; echo $?'
 answer 'alias all away'  'alias a=echo b=echo; unalias -a; alias; echo $?'
 answer 'alias unknown away' 'unalias nosuch; echo $?'
-answer 'alias to a builtin' 'alias c=cd; c /tmp; pwd'
+answer 'alias to a builtin' 'alias c=cd
+c /tmp; pwd'
 answer 'alias not a word' 'alias e=echo; echo e'
-answer 'alias trailing space' 'alias s="echo "; alias e=hi; s e'
-answer 'alias in a function' 'alias e=echo; f() { e inside; }; f'
-answer 'many aliases'    'i=0; while [ $i -lt 20 ]; do eval "alias a$i=echo"; i=$((i + 1)); done; a7 seven; a19 nineteen'
+answer 'alias trailing space' 'alias s="echo "; alias e=hi
+s e'
+answer 'alias in a function' 'alias e=echo
+f() { e inside; }; f'
+answer 'many aliases'    'i=0; while [ $i -lt 20 ]; do eval "alias a$i=echo"; i=$((i + 1)); done
+a7 seven; a19 nineteen'
 answer 'one hundred aliases' 'i=0; while [ $i -lt 100 ]; do eval "alias a$i=echo"; i=$((i + 1)); done; alias | wc -l'
 answer 'alias redefinition reclaims' 'i=0; while [ $i -lt 300 ]; do eval "alias e=echo-value-$i-padding"; i=$((i + 1)); done; alias e'
+
+# Alias substitution is a parser operation. Definitions from a completed
+# parse unit affect the next one; replacements are tokenized as language and
+# can consequently produce reserved words, operators and here-documents.
+answer 'alias produces reserved words' 'alias myif=if
+myif true; then echo yes; fi'
+answer 'alias produces a command list' 'alias both="echo left; echo right"
+both'
+answer 'quoted command word is not an alias' 'alias e=echo
+"e" hidden 2>/dev/null; echo $?'
+answer 'alias after assignment and redirect' 'alias e=echo
+X=1 e assigned
+e redirected >/tmp/alias-redirect.$$
+cat /tmp/alias-redirect.$$
+rm /tmp/alias-redirect.$$'
+answer 'alias touching a redirect' 'alias e="echo joined"
+e>/tmp/alias-joined.$$
+cat /tmp/alias-joined.$$
+rm /tmp/alias-joined.$$'
+answer 'alias trailing blank expands a word' 'alias say="echo "
+alias value=expanded
+say value'
+answer 'alias recursion is suppressed' 'alias a=b
+alias b=a
+a hidden 2>/dev/null; echo $?'
+answer 'alias suppresses itself' 'alias self=self
+self hidden 2>/dev/null; echo $?'
+answer 'alias cycle through assignment' 'alias a="X=1 b"
+alias b="Y=1 a"
+a hidden 2>/dev/null; echo $?'
+answer 'alias replacement spans lines' 'alias lines='\''echo one
+echo two'\''
+lines'
+answer 'alias expands while function parses' 'alias e=echo
+f() { e inside; }
+unalias e
+f'
+answer 'alias comment consumes line tail' 'alias c="echo visible #"
+c hidden
+echo after'
+answer 'alias introduces a here document' 'alias h="cat <<EOF"
+h
+body
+EOF'
+answer 'alias introduces a tabbed here document' 'alias h="cat <<-EOF"
+h
+	tabbed
+	EOF'
 answer 'exec replaces'   'exec echo replaced; echo not reached'
 answer 'trap listed'     'trap "echo x" EXIT; trap'
 answer 'trap rejects a name' 'trap : NOSUCH 2>/dev/null; echo $?'
@@ -1867,6 +1926,18 @@ answer 'while waiting'   'me=$$; trap "echo got" TERM; ( sleep 1; kill -TERM $me
 answer 'a subshell has none' 'trap "echo parent-hit" USR1; ( trap "echo sub" USR1; kill -USR1 $$; echo subdone ); echo parent'
 answer 'listed'          'trap "echo x" USR1; trap'
 answer 'listed after ignore' 'trap "" USR1; trap'
+expected 'Issue 8 trap -p default' 'trap -- - INT|' 0 \
+        'trap -p INT'
+expected 'Issue 8 trap -p ignored' "trap -- '' INT|" 0 \
+        'trap "" INT; trap -p INT'
+expected 'Issue 8 trap -p suitable for reinput' 'one|two|' 0 \
+        'trap "echo one; echo two" INT; saved=$(trap -p INT); trap - INT; eval "$saved"; kill -INT $$'
+expected 'Issue 8 trap -p all conditions' '30|' 0 \
+        'trap -p | wc -l'
+expected 'unsigned trap operand resets' 'trap -- - INT|' 0 \
+        'trap "echo BAD" INT; trap 2; trap -p INT'
+expected 'Issue 8 signal names' '0|' 0 \
+        'trap : CHLD CONT TSTP TTIN TTOU URG XCPU XFSZ VTALRM PROF WINCH POLL SYS; echo $?'
 
 #       Signals the shell was handed already ignored.
 #
@@ -1881,7 +1952,9 @@ answer 'entry ignored'   'trap "echo caught" INT; kill -INT $$; echo after'
 answer 'entry given back' 'trap - INT; kill -INT $$; echo after'
 answer 'entry ignored twice' 'trap "" INT; kill -INT $$; echo after'
 answer 'entry quit'      'trap "echo q" QUIT; kill -QUIT $$; echo after'
-answer 'entry not listed' 'trap "echo x" INT; trap'
+expected 'entry ignored conditions listed' \
+        "trap -- 'echo x' INT|trap -- '' QUIT|" 0 \
+        'trap "echo x" INT; trap'
 answer 'entry no trap'   'kill -INT $$; echo alive'
 answer 'entry others run' 'trap "echo hit" USR1; kill -USR1 $$; echo after'
 answer 'entry in a function' 'f() { trap "echo in" INT; kill -INT $$; }; f; echo after'

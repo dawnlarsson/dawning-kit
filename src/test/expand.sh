@@ -178,6 +178,26 @@ check 'holds a blank'   "printf '[%s]' 'a b' END; echo"
 check 'holds a brace'   "printf '[%s]' '\${x}' END; echo"
 check 'holds a tick'    "printf '[%s]' '\`echo x\`' END; echo"
 
+# POSIX.1-2024 added dollar-single-quotes.  The installed dash can predate
+# Issue 8, so Bash is the oracle for this syntax; only the escape forms POSIX
+# specifies are used here.
+group dollar-single
+bash_answer 'quoted fields' "printf '[%s]' \$'a b' \$'*' END; echo"
+bash_answer 'named escapes' \
+        "printf '%s' \$'\\\"\\'\\\\\\a\\b\\e\\f\\n\\r\\t\\v' | od -An -tu1"
+bash_answer 'numeric escapes' \
+        "printf '%s' \$'\\101\\x42\\cA\\c?\\c\\\\' | od -An -tu1"
+bash_answer 'apostrophe and adjacent text' \
+        "printf '[%s]\n' before\$'a\\'b'after"
+bash_answer 'null discards quoted tail' \
+        "printf '[%s]\n' \$'a\\0discarded'c"
+bash_answer 'literal inside double quotes' \
+        "printf '[%s]\n' \"\$'a\\n'\""
+bash_answer 'delimiter inside command substitution' \
+        "printf '[%s]\n' \"\$(printf %s \$')')\""
+bash_answer 'delimiter inside parameter word' \
+        "unset x; printf '[%s]\n' \"\${x:-\$'}'}\""
+
 group double
 check 'backslash dollar' 'printf "[%s]" "a\$b" END; echo'
 check 'backslash quote'  'printf "[%s]" "a\"b" END; echo'

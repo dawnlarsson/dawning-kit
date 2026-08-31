@@ -2465,18 +2465,37 @@ __asm__(
     ASM_END(memory_count_words)
     ASM_FUNC(memory_compare)
     //
-    //       Three widths, and which one runs is decided by the length rather
-    //       than by taste. Under eight bytes the setup for anything wider
-    //       costs more than the walk; from eight the word loop finds the
-    //       differing byte with one exclusive-or and a bsf; from thirty two
-    //       the wide path reads four blocks a round.
+    //       A ladder on the length, and every rung but the last answers with
+    //       no loop at all. Under eight bytes the setup for anything wider
+    //       costs more than the walk; from eight to thirty one the whole span
+    //       is covered by overlapping eight byte windows read straight
+    //       through; from thirty two a word loop walks the middle; and where
+    //       the processor has the registers for it the wide path below takes
+    //       everything from thirty two up instead.
+    //
+    //       The windows overlap on purpose. Thirteen bytes are the first
+    //       eight and the last eight, which look at three bytes twice, and
+    //       those three are bytes the first window has already found equal --
+    //       the same argument the wide path's last block makes, and the
+    //       reason neither of them needs a byte loop for the remainder.
+    //
+    //       Windows are examined in ascending order and a later one is
+    //       reached only when every earlier one matched, so the lowest
+    //       differing byte a window reports is the lowest differing byte
+    //       there is. That is the whole of what memcmp promises about its
+    //       sign, and bcmp shares this body, so the ordered answer has to
+    //       survive here rather than in the caller.
     //
     //       Both buffers are n bytes long by the caller's word, so every read
     //       here is unaligned and bounded and there is no page argument to
     //       make -- which is the difference between this and string_compare
     //       above, and the reason this one is the easy one.
     //
-    "xor %eax, %eax\n   test %rdx, %rdx\n   jz 9f\n"
+    //       There is no test for a zero length at the top. The bottom rung
+    //       has one, and hoisting it would charge every other length two
+    //       instructions to save four on the one length that reads nothing.
+    //
+    "xor %eax, %eax\n"
     ASM_USERSPACE_WIDE(
     ASM_NARROW("cpu_has_avx2", "5f")
     "cmp $32, %rdx\n   jb 5f\n"
@@ -2520,20 +2539,106 @@ __asm__(
     )
     //
     //       Eight at a time, for a machine without the wide registers and for
-    //       the lengths under a block. Exclusive-or leaves zero bytes where
-    //       the two agree, so the lowest set bit of the difference is inside
-    //       the first byte that does not.
+    //       the lengths under a block.
     //
-    "5:  cmp $8, %rdx\n   jb 7f\n   mov (%rdi), %r8\n   mov (%rsi), %r9\n"
-    "cmp %r8, %r9\n   jne 51f\n   add $8, %rdi\n   add $8, %rsi\n"
-    "sub $8, %rdx\n   jmp 5b\n"
-    "51:  xor %r9, %r8\n   bsf %r8, %rcx\n   shr $3, %rcx\n   movzbl (%rdi,%rcx), %eax\n"
-    "movzbl (%rsi,%rcx), %ecx\n   sub %ecx, %eax\n"
+    //       The first eight bytes are read before the length is asked about
+    //       again, because a memcmp is usually being told no -- a hash bucket
+    //       walk, a magic number, is this the entry I asked for -- and on that
+    //       shape the answer is already in this one compare. Folding the
+    //       second operand into it is what leaves it at one compare: the left
+    //       side sits in %r8 and there is no second load to undo.
+    //
+    "5:  cmp $8, %rdx\n   jb 7f\n"
+    "mov (%rdi), %r8\n   cmp (%rsi), %r8\n   jne 74f\n"
+    "cmp $16, %rdx\n   jb 56f\n"
+    "mov 8(%rdi), %r8\n   cmp 8(%rsi), %r8\n   jne 78f\n"
+    "cmp $32, %rdx\n   jae 50f\n"
+    //
+    //       Sixteen to thirty one: the first sixteen bytes are behind us and
+    //       the last sixteen finish the span, because a length under thirty
+    //       two cannot leave a gap between the two halves.
+    //
+    "mov -16(%rdi,%rdx), %r8\n   cmp -16(%rsi,%rdx), %r8\n   jne 79f\n"
+    "56: mov -8(%rdi,%rdx), %r8\n   cmp -8(%rsi,%rdx), %r8\n   jne 80f\n"
     ASM_RET
+    //
+    //       Thirty two and up. The index counts up to zero so the round ends
+    //       on the flags the increment has already set: five instructions an
+    //       eight bytes, against the eight a compiler gets out of the same
+    //       loop written in C, and against the ten this used to take by
+    //       loading both sides separately and jumping back unconditionally.
+    //
+    //       It starts at sixteen minus the whole word bytes, because the
+    //       first eight are already done and %rcx has to land exactly on
+    //       zero. Three things make it: the start is a multiple of eight, the
+    //       step is eight, and thirty two bytes or more means at least two
+    //       rounds. Break any one of them and this does not terminate.
+    //
+    "50: mov %rdx, %r10\n   and $-8, %r10\n   mov $16, %ecx\n   sub %r10, %rcx\n"
+    "add %r10, %rdi\n   add %r10, %rsi\n"
+    "51: mov (%rdi,%rcx), %r8\n   cmp (%rsi,%rcx), %r8\n   jne 77f\n"
+    "add $8, %rcx\n   jnz 51b\n"
+    //
+    //       What whole words could not reach is under eight bytes, and the
+    //       last window above takes it: %rdx becomes what is left from where
+    //       the pointers now are, so -8(%rdi,%rdx) is the final eight bytes
+    //       of the span whatever that remainder turned out to be.
+    //
+    "sub %r10, %rdx\n   jmp 56b\n"
+    //
+    //       Which byte differs. Exclusive-or leaves zero bytes where the two
+    //       agree, so the lowest set bit of the difference is inside the
+    //       first byte that does not, and the answer is those two bytes read
+    //       as unsigned and subtracted.
+    //
+    //       The first window has a handler to itself because that is the
+    //       common answer and it needs no offset. The others arrive through a
+    //       stub that says where their window was, which costs the rare
+    //       answers one jump and the common one nothing.
+    //
+    "74: mov (%rsi), %r9\n   xor %r9, %r8\n   bsf %r8, %rcx\n   shr $3, %rcx\n"
+    "movzbl (%rdi,%rcx), %eax\n   movzbl (%rsi,%rcx), %ecx\n   sub %ecx, %eax\n"
+    ASM_RET
+    "78: mov $8, %ecx\n   jmp 77f\n"
+    "79: lea -16(%rdx), %rcx\n   jmp 77f\n"
+    "80: lea -8(%rdx), %rcx\n"
+    "77: mov (%rsi,%rcx), %r9\n   xor %r9, %r8\n   bsf %r8, %r9\n   shr $3, %r9\n"
+    "add %r9, %rcx\n   movzbl (%rdi,%rcx), %eax\n   movzbl (%rsi,%rcx), %ecx\n   sub %ecx, %eax\n"
+    ASM_RET
+    //
+    //       Under eight bytes, and the same overlapping pair one width down
+    //       each time: four and four covers four to seven, two and two covers
+    //       two and three, and one byte is one byte. The zero length is
+    //       tested for here rather than at the top, for the reason given
+    //       there.
+    //
     "7:  test %rdx, %rdx\n   jz 9f\n"
-    "71:  movzbl (%rdi), %eax\n   movzbl (%rsi), %ecx\n   sub %ecx, %eax\n   jnz 9f\n"
-    "inc %rdi\n   inc %rsi\n   dec %rdx\n   jnz 71b\n"
+    "cmp $4, %rdx\n   jae 72f\n"
+    "cmp $2, %rdx\n   jae 73f\n"
+    "movzbl (%rdi), %eax\n   movzbl (%rsi), %ecx\n   sub %ecx, %eax\n"
     "9:\n"
+    ASM_RET
+    "72: mov (%rdi), %r8d\n   cmp (%rsi), %r8d\n   jne 75f\n"
+    "mov -4(%rdi,%rdx), %r8d\n   cmp -4(%rsi,%rdx), %r8d\n   jne 76f\n"
+    ASM_RET
+    "76: lea -4(%rdx), %rcx\n   jmp 82f\n"
+    "75: xor %ecx, %ecx\n"
+    "82: mov (%rsi,%rcx), %r9d\n   xor %r9d, %r8d\n   bsf %r8d, %r9d\n   shr $3, %r9d\n"
+    "add %r9, %rcx\n   movzbl (%rdi,%rcx), %eax\n   movzbl (%rsi,%rcx), %ecx\n   sub %ecx, %eax\n"
+    ASM_RET
+    //
+    //       A two byte window places its difference a byte at a time rather
+    //       than reloading four: past a window that short, a four byte reload
+    //       would read two bytes the caller never promised were there.
+    //
+    "73: movzwl (%rdi), %r8d\n   cmp (%rsi), %r8w\n   jne 83f\n"
+    "movzwl -2(%rdi,%rdx), %r8d\n   cmp -2(%rsi,%rdx), %r8w\n   jne 84f\n"
+    ASM_RET
+    "84: lea -2(%rdx), %rcx\n   jmp 85f\n"
+    "83: xor %ecx, %ecx\n"
+    "85: movzbl (%rdi,%rcx), %eax\n   movzbl (%rsi,%rcx), %r9d\n   sub %r9d, %eax\n   jnz 86f\n"
+    "movzbl 1(%rdi,%rcx), %eax\n   movzbl 1(%rsi,%rcx), %ecx\n   sub %ecx, %eax\n"
+    "86:\n"
     ASM_RET
     ASM_END(memory_compare)
     // Length of the equal prefix of two exact bounded spans.  This shares
@@ -4117,15 +4222,48 @@ __asm__(
     ASM_RET
     )
     //
-    //       Under 128 bytes, or with no vector registers to use: eight at a time
-    //       downwards, with the first eight kept in a register so the store that
-    //       ends it does not need memory the loop has already written over.
+    //       Under 128 bytes, or with no vector registers to use -- which is
+    //       every length a kernel build takes this way -- thirty two bytes a
+    //       round downwards. It was eight, and eight is why this was the one
+    //       routine in the library slower than what it displaces: for a four
+    //       kilobyte move it executed 3592 instructions against
+    //       memmove_64.S's 1564, and took 534 cycles on a 9950X against 264,
+    //       on exactly the case the name exists for.
     //
-    "5:  cmp $8, %rdx\n   jb 6f\n   mov (%rsi), %r9\n   lea (%rdi,%rdx), %r8\n"
-    "lea (%rsi,%rdx), %r11\n   lea 8(%rdi), %rcx\n"
-    "7:  cmp %rcx, %r8\n   jbe 8f\n   sub $8, %r8\n   sub $8, %r11\n"
-    "mov (%r11), %r10\n   mov %r10, (%r8)\n   jmp 7b\n"
-    "8:  mov %r9, (%rdi)\n"
+    //       The count carries the loop through its own borrow the way
+    //       memmove_64.S's does, so the two pointers move by lea and leave the
+    //       flags the branch is about to read alone; a sub there would clear
+    //       the borrow and the loop would never end.
+    //
+    //       Nothing is held back for the finish. When the loop stops it has
+    //       written [dst+left, dst+n) and the ladder below reads
+    //       [src, src+left), and this path is only taken when src is below
+    //       dst, so that read is strictly under the lowest byte written and
+    //       still says what it said on entry.
+    //
+    "5:  cmp $32, %rdx\n   jb 3f\n"
+    "add %rdx, %rsi\n   add %rdx, %rdi\n   sub $32, %rdx\n   .balign 16\n"
+    "1:  sub $32, %rdx\n"
+    "mov -8(%rsi), %r8\n   mov -16(%rsi), %r9\n   mov -24(%rsi), %r10\n   mov -32(%rsi), %r11\n"
+    "lea -32(%rsi), %rsi\n"
+    "mov %r8, -8(%rdi)\n   mov %r9, -16(%rdi)\n   mov %r10, -24(%rdi)\n   mov %r11, -32(%rdi)\n"
+    "lea -32(%rdi), %rdi\n   jae 1b\n"
+    "add $32, %rdx\n   sub %rdx, %rsi\n   sub %rdx, %rdi\n"
+    //
+    //       What is left is under thirty two and gets no loop at all: two
+    //       reads that overlap in the middle, then two writes. Everything is in
+    //       registers before anything is written, so it does not matter which
+    //       way the regions lie. Bypassing the eight at a time walk without
+    //       replacing it would have left sixteen to thirty one paying three
+    //       rounds of it, which is the same loss as four kilobytes had, just
+    //       smaller.
+    //
+    "3:  cmp $16, %rdx\n   jb 4f\n"
+    "mov (%rsi), %r8\n   mov 8(%rsi), %r9\n   mov -16(%rsi,%rdx), %r10\n   mov -8(%rsi,%rdx), %r11\n"
+    "mov %r8, (%rdi)\n   mov %r9, 8(%rdi)\n   mov %r10, -16(%rdi,%rdx)\n   mov %r11, -8(%rdi,%rdx)\n"
+    ASM_RET
+    "4:  cmp $8, %rdx\n   jb 6f\n   mov (%rsi), %r8\n   mov -8(%rsi,%rdx), %r9\n"
+    "mov %r8, (%rdi)\n   mov %r9, -8(%rdi,%rdx)\n"
     ASM_RET
     //
     //       Under eight there is no direction left to get wrong: both halves are
@@ -4134,12 +4272,24 @@ __asm__(
     "6:  cmp $4, %rdx\n   jb 9f\n   mov (%rsi), %r9d\n   mov -4(%rsi,%rdx), %r10d\n"
     "mov %r9d, (%rdi)\n   mov %r10d, -4(%rdi,%rdx)\n"
     ASM_RET
-    "9:  test %rdx, %rdx\n   jz 0f\n"
-    // all three read before any is written: at one or two bytes of overlap the
-    // store to the first would otherwise be the load for the middle
-    "movzbl (%rsi), %r9d\n   movzbl -1(%rsi,%rdx), %r10d\n   mov %rdx, %rcx\n   shr $1, %rcx\n"
-    "movzbl (%rsi,%rcx), %r11d\n   mov %r9b, (%rdi)\n   mov %r10b, -1(%rdi,%rdx)\n   mov %r11b, (%rdi,%rcx)\n"
-    "0:\n"
+    //
+    //       One, two and three used to be a single path: the first byte, the
+    //       last and the middle read into three registers, then written. It is
+    //       correct, and for the reason that path gave -- at one byte of overlap
+    //       the store to the first would otherwise be the load for the middle --
+    //       but it is six memory instructions where a pair of overlapping words
+    //       is four, and it costs a shift besides. It used to be reached only by
+    //       a call asking for under four bytes. It is now reached by every
+    //       length one, two or three past a multiple of thirty two as well, and
+    //       there it was measurably worse than the kernel. A word pair reads
+    //       both halves before it writes either, which is the same guarantee in
+    //       fewer instructions.
+    //
+    "9:  cmp $2, %rdx\n   jb 0f\n   movzwl (%rsi), %r9d\n   movzwl -2(%rsi,%rdx), %r10d\n"
+    "mov %r9w, (%rdi)\n   mov %r10w, -2(%rdi,%rdx)\n"
+    ASM_RET
+    "0:  test %rdx, %rdx\n   jz 8f\n   movzbl (%rsi), %r9d\n   mov %r9b, (%rdi)\n"
+    "8:\n"
     ASM_RET
     ASM_END(memory_copy)
     // Exact memmove semantics, followed by one terminator, with the end handed
@@ -7010,8 +7160,6 @@ __asm__(
     ".Lmemory_words_arm64_done:\n   mov x0, x3\n   mov x1, x2\n" ASM_RET
     ASM_END(memory_count_words)
     ASM_FUNC(memory_compare)
-    "mov w9, #0\n"
-    "cbz x2, 9f\n"
 #ifndef KERNEL_MODE
     "cmp x2, #32\n"
     "b.lo 5f\n"
@@ -7031,25 +7179,95 @@ __asm__(
     "b.hs 1b\n"
 #endif
     //
-    //      Eight at a time. Exclusive-or leaves zero bytes where the two
-    //      agree, so the lowest set bit of it is inside the first byte that
-    //      does not, and rbit and clz find it.
+    //      A ladder on the length, as on x86_64 above, and for the same
+    //      reason: a loop that has to ask how much is left before each round
+    //      spends more on the asking than on the comparing. Under thirty two
+    //      bytes the whole span is covered by overlapping windows read
+    //      straight through, and above it a loop walks the middle.
     //
-    "5:  cmp x2, #8\n"
-    "b.lo 7f\n   ldr x3, [x0]\n   ldr x4, [x1]\n   cmp x3, x4\n"
-    "b.ne 51f\n   add x0, x0, #8\n"
-    "add x1, x1, #8\n"
-    "sub x2, x2, #8\n"
-    "b 5b\n"
-    "51:  eor x3, x3, x4\n   rbit x5, x3\n   clz x5, x5\n   lsr x5, x5, #3\n"
-    "ldrb w6, [x0, x5]\n   ldrb w7, [x1, x5]\n   sub w9, w6, w7\n   b 9f\n"
-    "7:  cbz x2, 9f\n"
-    "71:  ldrb w6, [x0]\n   ldrb w7, [x1]\n   subs w9, w6, w7\n   b.ne 9f\n"
-    "add x0, x0, #1\n"
-    "add x1, x1, #1\n"
-    "sub x2, x2, #1\n"
-    "cbnz x2, 71b\n"
-    "9:  mov w0, w9\n"
+    //      Windows overlap and are examined in ascending order, so the lowest
+    //      differing byte a window reports is the lowest there is -- which is
+    //      what memcmp's sign means, and bcmp shares this body.
+    //
+    //      ldp is what makes this cheaper here than the folded compare makes
+    //      it on x86_64: sixteen bytes arrive in one instruction, and ccmp
+    //      tests the second half only when the first half matched, so a
+    //      sixteen byte round is one compare, one ccmp and one branch.
+    //
+    "5:  cmp x2, #8\n   b.lo 7f\n"
+    "cmp x2, #16\n   b.lo 53f\n"
+    "ldp x3, x4, [x0]\n   ldp x6, x7, [x1]\n"
+    "cmp x3, x6\n   ccmp x4, x7, #0, eq\n   b.ne 74f\n"
+    "cmp x2, #32\n   b.hs 50f\n"
+    //
+    //      Seventeen to thirty one, and the tail of the loop below: the last
+    //      sixteen bytes, wherever they fall. x2 is what is left from where
+    //      x0 now points, so x2-16 can be negative -- that reads bytes the
+    //      loop has already found equal, which is the point of an overlap.
+    //
+    "55: sub x5, x2, #16\n   add x12, x0, x5\n   add x13, x1, x5\n"
+    "ldp x3, x4, [x12]\n   ldp x6, x7, [x13]\n"
+    "cmp x3, x6\n   ccmp x4, x7, #0, eq\n   b.ne 79f\n"
+    "9:  mov w0, #0\n"
+    ASM_RET
+    //
+    //      Thirty two and up, sixteen bytes a round with the pointers walking
+    //      themselves. The count is the whole blocks less the one already
+    //      compared above, and thirty two bytes or more leaves at least one,
+    //      so the round runs before it is counted.
+    //
+    "50: lsr x5, x2, #4\n   sub x5, x5, #1\n   add x0, x0, #16\n   add x1, x1, #16\n"
+    "51: ldp x3, x4, [x0], #16\n   ldp x6, x7, [x1], #16\n"
+    "cmp x3, x6\n   ccmp x4, x7, #0, eq\n   b.ne 80f\n"
+    "subs x5, x5, #1\n   b.ne 51b\n"
+    "and x2, x2, #15\n   b 55b\n"
+    //
+    //      Eight to fifteen: the first eight and the last eight, which is the
+    //      whole of it because the two cannot leave a gap at that length.
+    //
+    "53: sub x5, x2, #8\n   ldr x3, [x0]\n   ldr x6, [x1]\n   ldr x4, [x0, x5]\n   ldr x7, [x1, x5]\n"
+    "cmp x3, x6\n   ccmp x4, x7, #0, eq\n   b.ne 78f\n"
+    "mov w0, #0\n"
+    ASM_RET
+    //
+    //      Where it differed. Each site says where its pair of words sat --
+    //      x10 for the earlier, x11 for the later -- and the shared tail asks
+    //      the earlier one first, because a difference in both must be
+    //      reported from the earlier. Exclusive-or leaves zero bytes where
+    //      the two agree, so the lowest set bit of it is inside the first
+    //      byte that does not, and rbit and clz find it.
+    //
+    "74: mov x10, #0\n   mov x11, #8\n   b 81f\n"
+    "78: mov x10, #0\n   mov x11, x5\n   b 81f\n"
+    "79: mov x10, x5\n   add x11, x5, #8\n   b 81f\n"
+    "80: mov x10, #-16\n   mov x11, #-8\n"
+    "81: cmp x3, x6\n   b.ne 82f\n"
+    "mov x3, x4\n   mov x6, x7\n   mov x10, x11\n"
+    "82: eor x3, x3, x6\n   rbit x4, x3\n   clz x4, x4\n   lsr x4, x4, #3\n   add x10, x10, x4\n"
+    "ldrb w6, [x0, x10]\n   ldrb w7, [x1, x10]\n   sub w0, w6, w7\n"
+    ASM_RET
+    //
+    //      Under eight bytes, the same overlapping pair one width down each
+    //      time. The zero length is tested here rather than at the top so
+    //      that only the lengths that reach here pay for the question.
+    //
+    "7:  cbz x2, 9b\n"
+    "cmp x2, #4\n   b.hs 72f\n"
+    "cmp x2, #2\n   b.hs 73f\n"
+    "ldrb w6, [x0]\n   ldrb w7, [x1]\n   sub w0, w6, w7\n"
+    ASM_RET
+    "72: sub x5, x2, #4\n   ldr w3, [x0]\n   ldr w6, [x1]\n   ldr w4, [x0, x5]\n   ldr w7, [x1, x5]\n"
+    "cmp w3, w6\n   ccmp w4, w7, #0, eq\n   b.ne 83f\n"
+    "mov w0, #0\n"
+    ASM_RET
+    "73: sub x5, x2, #2\n   ldrh w3, [x0]\n   ldrh w6, [x1]\n   ldrh w4, [x0, x5]\n   ldrh w7, [x1, x5]\n"
+    "cmp w3, w6\n   ccmp w4, w7, #0, eq\n   b.ne 83f\n"
+    "mov w0, #0\n"
+    ASM_RET
+    "83: mov x10, #0\n   mov x11, x5\n   cmp w3, w6\n   b.ne 84f\n"
+    "mov w3, w4\n   mov w6, w7\n   mov x10, x11\n"
+    "84: eor w3, w3, w6\n   rbit w3, w3\n   clz w3, w3\n   lsr w3, w3, #3\n   add x10, x10, x3\n"
+    "ldrb w6, [x0, x10]\n   ldrb w7, [x1, x10]\n   sub w0, w6, w7\n"
     ASM_RET
     ASM_END(memory_compare)
     ASM_FUNC(memory_common_prefix)
@@ -7191,9 +7409,28 @@ __asm__(
     "b.lo .Lmemory_search_arm64_absent_general\n   cmp x3, #1\n"
     "b.eq .Lmemory_search_arm64_one_general\n"
 #ifndef KERNEL_MODE
-    "sub x4, x1, x3\n   cmp x4, #15\n"
+    //
+    //      Nothing is prepared here any more. Reading the needle for its two
+    //      rarest bytes costs about eleven instructions a byte, and until the
+    //      first block has failed there is no evidence the scan will be long
+    //      enough to earn that back: a haystack with only a block in it has
+    //      no survivors to save, and a match in the first sixteen positions
+    //      -- which is every caller asking whether a buffer starts with
+    //      something -- is found before any of it would have been used.
+    //
+    //      So the first byte and the last go in as a guess, which is a filter
+    //      already, and x7 tells the core they are one it may replace.
+    //
+    "mov x4, #0\n   sub x5, x3, #1\n   cmp x3, #4\n   cset x7, hs\n"
+    "b memory_search_prepared_core\n"
+#else
+    //
+    //      The kernel body has no block loop, so its scan is the counted one
+    //      below sixteen positions and the anchored walk above it, and only
+    //      the second has any use for prepared offsets.
+    //
+    "sub x6, x1, x3\n   cmp x6, #16\n"
     "b.lo .Lmemory_search_arm64_short_general\n"
-#endif
     "cmp x3, #4\n   b.lo .Lmemory_search_arm64_short_general\n"
     "stp x0, x1, [sp, #-48]!\n   stp x2, x3, [sp, #16]\n"
     "str x30, [sp, #32]\n   mov x0, x2\n   mov x1, x3\n   mov x2, #0\n"
@@ -7202,6 +7439,7 @@ __asm__(
     "ldr x30, [sp, #32]\n   add sp, sp, #48\n   b memory_search_prepared_core\n"
     ".Lmemory_search_arm64_short_general:\n   mov x4, #0\n"
     "sub x5, x3, #1\n   b memory_search_prepared_core\n"
+#endif
     ".Lmemory_search_arm64_one_general:\n   ldrb w4, [x2]\n"
     "mov x2, x1\n   mov x1, x4\n   b memory_first_of\n"
     ".Lmemory_search_arm64_empty_general:\n" ASM_RET
@@ -7211,6 +7449,11 @@ __asm__(
     "cbz x3, .Lmemory_search_prepared_arm64_empty\n"
     "cmp x1, x3\n   b.lo .Lmemory_search_prepared_arm64_absent\n"
     "cmp x3, #1\n   b.eq .Lmemory_search_prepared_arm64_one\n"
+#ifndef KERNEL_MODE
+    //      The offsets are the caller's, bought once for many searches. The
+    //      core must not spend them again.
+    "mov x7, #0\n"
+#endif
     "b memory_search_prepared_core\n"
     ".Lmemory_search_prepared_arm64_one:\n   ldrb w4, [x2]\n"
     "mov x2, x1\n   mov x1, x4\n   b memory_first_of\n"
@@ -7218,6 +7461,17 @@ __asm__(
     ".Lmemory_search_prepared_arm64_absent:\n   mov x0, #0\n" ASM_RET
     ASM_END(memory_search_prepared)
     ASM_LOCAL_FUNC(memory_search_prepared_core)
+    //
+    //      How many positions past the first a match could start at, and the
+    //      length that decides the counted path at the bottom of this
+    //      routine. Below it the frame, the calls and the block machinery all
+    //      cost more than walking the positions does, and it is measured:
+    //      counting executed instructions under qemu, a haystack with fewer
+    //      than sixteen of them is answered in about forty against a hundred
+    //      and twenty the other way.
+    //
+    "sub x6, x1, x3\n   cmp x6, #16\n"
+    "b.lo .Lmemory_search_arm64_tiny\n"
     "stp x29, x30, [sp,  #-96]!\n"
     "mov x29, sp\n   stp x19, x20, [sp, #16]\n"
     "stp x21, x22, [sp, #32]\n"
@@ -7233,18 +7487,41 @@ __asm__(
     //      Sixteen positions a block here rather than thirty two, which is
     //      what a NEON register holds. The last block may start fifteen
     //      positions before the last position a match could begin at, and the
-    //      subtraction is in that order because hay_size - needle_size - 15
-    //      on a short haystack is a very large number and not a small one.
+    //      gate above has already proved there are at least sixteen of them,
+    //      so this cannot wrap.
     //
-    "sub x25, x1, x21\n   cmp x25, #15\n"
-    "b.lo 6f\n   sub x25, x25, #15\n"
+    "sub x25, x6, #15\n"
     //
-    //      The two prepared rarest-byte offsets. Preparation keeps them
-    //      distinct even when the bytes at them are equal.
+    //      The two rarest-byte offsets, prepared or guessed. Preparation
+    //      keeps them distinct even when the bytes at them are equal, and a
+    //      guess of the first byte and the last is distinct because a needle
+    //      that reaches here is at least two bytes long.
     //
     "ldrb w10, [x20, x26]\n   dup v2.16b, w10\n   ldrb w10, [x20, x27]\n   dup v3.16b, w10\n"
     "mov x24, #0\n"
-    "mov x23, #0\n"
+    "lsl x23, x7, #1  // bit one: the offsets are still a guess\n"
+    //
+    //      The block at nought, written out here rather than as the first
+    //      turn of the loop, so that the loop below carries no test for it.
+    //      Whichever way it ends -- no survivor, or survivors that were all
+    //      proved wrong -- the next thing reached is the one place the needle
+    //      is read for better offsets, and it is reached at most once.
+    //
+    "ldr q0, [x19, x26]\n   cmeq v0.16b, v0.16b, v2.16b\n   ldr q1, [x19, x27]\n"
+    "cmeq v1.16b, v1.16b, v3.16b\n   and v0.16b, v0.16b, v1.16b\n   shrn v0.8b, v0.8h, #4\n"
+    "fmov x22, d0\n   cbnz x22, 3f\n"
+    //
+    //      The scan has to be long enough to earn the reading back: about
+    //      eleven instructions a needle byte, against the survivors a better
+    //      pair of offsets saves over the blocks that are left. Under four
+    //      blocks it cannot, and a caller that prepared its own offsets has
+    //      already paid and says so in x7.
+    //
+    "5:  tbz x23, #1, 4f\n   cmp x25, #64\n   b.lo 4f\n"
+    "51: mov x0, x20\n   mov x1, x21\n   mov x2, #0\n"
+    "bl memory_search_prepare\n   mov x26, x0\n   mov x27, x1\n"
+    "ldrb w10, [x20, x26]\n   dup v2.16b, w10\n   ldrb w10, [x20, x27]\n   dup v3.16b, w10\n"
+    "b 4f\n"
     "1:  add x6, x19, x24\n   ldr q0, [x6, x26]\n   cmeq v0.16b, v0.16b, v2.16b\n   ldr q1, [x6, x27]\n"
     "cmeq v1.16b, v1.16b, v3.16b\n   and v0.16b, v0.16b, v1.16b\n   shrn v0.8b, v0.8h, #4\n"
     "fmov x22, d0\n   cbnz x22, 3f\n"
@@ -7256,8 +7533,8 @@ __asm__(
     //      is.
     //
     "4:  add x24, x24, #16\n"
-    "cmp x24, x25\n   b.ls 1b\n   cbnz x23, 8f\n   mov x24, x25\n"
-    "mov x23, #1\n"
+    "cmp x24, x25\n   b.ls 1b\n   tbnz x23, #0, 8f\n   mov x24, x25\n"
+    "orr x23, x23, #1\n"
     "b 1b\n"
     //
     //      The survivors of one block, lowest position first. shrn left four
@@ -7266,11 +7543,28 @@ __asm__(
     //
     "3:  rbit x4, x22\n   clz x4, x4\n   mov x5, #15\n"
     "lsl x5, x5, x4\n   bic x22, x22, x5\n   lsr x4, x4, #2\n"
+    //
+    //      A survivor is proved here rather than by a call, for every needle
+    //      that two loads can cover: a pair of words up to eight bytes and a
+    //      pair of doublewords up to sixteen, the second of each placed to
+    //      end where the needle ends. Every byte is covered, the ones in the
+    //      middle twice, and neither load reaches past the needle or past the
+    //      haystack -- a survivor has needle_size bytes behind it by
+    //      construction. A call and its return cost about forty instructions
+    //      and needles this short are most of what grep is handed.
+    //
     "add x28, x19, x24\n   add x28, x28, x4\n   cmp x21, #4\n"
     "b.lo 33f\n   ldr w5, [x28]\n   ldr w6, [x20]\n   cmp w5, w6\n"
     "b.ne 32f\n   cmp x21, #5\n"
     "b.lo 7f  // the four were all of it\n"
-    "add x0, x28, #4\n"
+    "cmp x21, #9\n   b.hs 34f\n"
+    "sub x6, x21, #4\n   ldr w5, [x28, x6]\n   ldr w7, [x20, x6]\n"
+    "cmp w5, w7\n   b.eq 7f\n   b 32f\n"
+    "34:  cmp x21, #17\n   b.hs 35f\n"
+    "ldr x5, [x28]\n   ldr x6, [x20]\n   cmp x5, x6\n   b.ne 32f\n"
+    "sub x6, x21, #8\n   ldr x5, [x28, x6]\n   ldr x7, [x20, x6]\n"
+    "cmp x5, x7\n   b.eq 7f\n   b 32f\n"
+    "35:  add x0, x28, #4\n"
     "add x1, x20, #4\n"
     "sub x2, x21, #4\n"
     "bl memory_compare\n   cbz w0, 7f\n   b 32f\n"
@@ -7291,24 +7585,36 @@ __asm__(
     //      whole sixteen byte lanes.
     //
     "ldrb w10, [x20, x26]\n   dup v2.16b, w10\n   ldrb w10, [x20, x27]\n   dup v3.16b, w10\n"
-    "b 4b\n"
-#endif
+    "cbnz x24, 4b\n"
     //
-    //       The narrow path: every haystack too short for one block.
+    //       Every survivor the guess offered in the first block was wrong,
+    //       which is what a weak filter looks like from here, and there is
+    //       always another block to come or this would not have been reached.
+    //       So the needle is read now rather than after four blocks of it: a
+    //       needle that is all one byte but for one in the middle passes the
+    //       guess at every position and none of the preparation's, and
+    //       waiting costs sixteen wrong survivors a block.
+    //
+    "tbz x23, #1, 4b\n   b 51b\n"
+#else
+    //
+    //       The narrow path, which the kernel body is all of above sixteen
+    //       positions: there is no block to run.
     //       memory_first_of finds an anchor and memcmp says whether the rest
     //       followed.
     //
     //       Which of the two anchors is decided here rather than taken on
     //       trust. A caller that prepared a needle of four bytes or more
     //       handed the rarest and the second rarest in that order and the
-    //       pick is the first of them again; a haystack under fifteen bytes
-    //       past its needle, and a kernel build with a needle of two or
-    //       three, hand the first byte and the last instead, and there it
-    //       decides everything. Hunting the first byte of "aaaaaaab"
-    //       through twenty two bytes of "a" makes a candidate of every
-    //       position: 1128 instructions, against 114 anchored on the "b".
-    //       Two table loads and a csel buy that, seven instructions, and
-    //       they are on this path only.
+    //       pick is the first of them again; a needle of two or three was
+    //       not prepared at all and hands the first byte and the last, and
+    //       there it decides everything. Hunting the first byte of
+    //       "aaaaaaab" through twenty two bytes of "a" makes a candidate of
+    //       every position: 1128 instructions, against 114 anchored on the
+    //       "b" -- a figure from before the counted path existed and not
+    //       re-measured, since that length no longer arrives here. Two table
+    //       loads and a csel buy it, seven instructions, and the counted
+    //       path pays them again for the same reason.
     //
     //       A failed candidate is left one byte, not needle_size: "aab" is in
     //       "aaab", and a scan that resumes past what it matched cannot see
@@ -7327,6 +7633,7 @@ __asm__(
     "mov x28, x0\n   mov x26, x0\n   mov x1, x20\n   mov x2, x21\n"
     "bl memory_compare\n   cbz w0, 7f\n   add x26, x26, #1\n"
     "cmp x26, x27\n   b.ls 61b\n"
+#endif
     "8:  mov x0, #0\n"
     "b 9f\n"
     "7:  mov x0, x28\n"
@@ -7337,6 +7644,61 @@ __asm__(
     "ldp x27, x28, [sp, #80]\n"
     "ldp x29, x30, [sp], #96\n"
     ASM_RET
+    //
+    //      The counted path. x6 is how many positions past the first a match
+    //      could start at and it is under sixteen, so the anchor is picked
+    //      once and the positions are walked a byte at a time. A position
+    //      whose anchor byte is right is proved with the same overlapping
+    //      pair the block loop uses.
+    //
+    //      The anchor is still the rarer of the two offered offsets, read off
+    //      byte_commonness, because it is seven instructions and it is what
+    //      keeps "aaaaaaab" from making a candidate of every position: that
+    //      needle through twenty two bytes of "a" is 114 instructions here
+    //      and 989 for the byte loop this replaces.
+    //
+    //      Nothing is pushed and nothing is called, so x0 is the answer
+    //      already -- it walks the candidate positions, and a return from
+    //      inside the compare returns the position being proved.
+    //
+    ".Lmemory_search_arm64_tiny:\n"
+    "adrp x7, byte_commonness\n   add x7, x7, :lo12:byte_commonness\n"
+    "ldrb w8, [x2, x4]\n   ldrb w8, [x7, x8]\n"
+    "ldrb w9, [x2, x5]\n   ldrb w9, [x7, x9]\n"
+    "cmp w9, w8\n   csel x10, x5, x4, lo\n"
+    "ldrb w11, [x2, x10]  // the byte at the rarer of the two\n"
+    "add x6, x0, x6  // the last address a match could start at\n"
+    ".Lmemory_search_arm64_tiny_scan:\n"
+    "ldrb w12, [x0, x10]\n   cmp w12, w11\n"
+    "b.ne .Lmemory_search_arm64_tiny_next\n"
+    "cmp x3, #8\n   b.lo .Lmemory_search_arm64_tiny_short\n"
+    "sub x16, x3, #8\n   mov x13, #0\n"
+    ".Lmemory_search_arm64_tiny_eight:\n"
+    "ldr x14, [x0, x13]\n   ldr x15, [x2, x13]\n   cmp x14, x15\n"
+    "b.ne .Lmemory_search_arm64_tiny_next\n   add x13, x13, #8\n"
+    "cmp x13, x16\n   b.lo .Lmemory_search_arm64_tiny_eight\n"
+    "ldr x14, [x0, x16]\n   ldr x15, [x2, x16]\n   cmp x14, x15\n"
+    "b.ne .Lmemory_search_arm64_tiny_next\n" ASM_RET
+    ".Lmemory_search_arm64_tiny_short:\n"
+    "cmp x3, #4\n   b.lo .Lmemory_search_arm64_tiny_pair\n"
+    "sub x16, x3, #4\n"
+    "ldr w14, [x0]\n   ldr w15, [x2]\n   cmp w14, w15\n"
+    "b.ne .Lmemory_search_arm64_tiny_next\n"
+    "ldr w14, [x0, x16]\n   ldr w15, [x2, x16]\n   cmp w14, w15\n"
+    "b.ne .Lmemory_search_arm64_tiny_next\n" ASM_RET
+    ".Lmemory_search_arm64_tiny_pair:\n"
+    "cmp x3, #2\n   b.lo .Lmemory_search_arm64_tiny_done\n"
+    "sub x16, x3, #2\n"
+    "ldrh w14, [x0]\n   ldrh w15, [x2]\n   cmp w14, w15\n"
+    "b.ne .Lmemory_search_arm64_tiny_next\n"
+    "ldrh w14, [x0, x16]\n   ldrh w15, [x2, x16]\n   cmp w14, w15\n"
+    "b.ne .Lmemory_search_arm64_tiny_next\n"
+    //      A needle of one byte, and the anchor was the whole of it.
+    ".Lmemory_search_arm64_tiny_done:\n" ASM_RET
+    ".Lmemory_search_arm64_tiny_next:\n"
+    "add x0, x0, #1\n   cmp x0, x6\n"
+    "b.ls .Lmemory_search_arm64_tiny_scan\n"
+    "mov x0, #0\n" ASM_RET
     ASM_LOCAL_END(memory_search_prepared_core)
     ASM_FUNC(memory_count_records_with_prepared)
     // Empty needle: every delimiter ends a record, plus a nonempty final
@@ -7938,13 +8300,74 @@ __asm__(
 #ifdef KERNEL_MODE
     "b memmove\n"
 #else
-    "cmp x0, x1\n   b.ls 1f\n   add x4, x1, x2\n   cmp x0, x4\n"
-    "b.lo 2f\n"
+    //
+    //       The length before the direction, which is the one structural idea
+    //       in arch/arm64/lib/memcpy.S worth taking. Every block below reads
+    //       all of its input into registers before it writes any of its
+    //       output, so no block below can be told which way the two regions
+    //       lie, and the overlap test is not needed to reach one. Only the
+    //       wide loop below cares, and only it pays for asking.
+    //
+    //       This is why __pi_memcpy_generic can serve memcpy and memmove from
+    //       one entry, and why it beat this routine at every length under 128
+    //       until now: ours asked first and then walked eight bytes a round,
+    //       which at 127 bytes was 93 executed instructions against its 26.
+    //
+    //       x0 is never written on any path here, so nothing has to be kept
+    //       and put back to return the destination. The copy of it this used
+    //       to make was restoring a register that had not changed.
+    //
+    "cmp x2, #256\n   b.hi 2f\n"
+    "add x4, x0, x2\n   add x5, x1, x2\n"
+    "cmp x2, #32\n   b.hi 6f\n   cmp x2, #16\n   b.lo 7f\n"
+    "ldr q0, [x1]\n   ldur q1, [x5,  #-16]\n"
+    "str q0, [x0]\n   stur q1, [x4,  #-16]\n   ret\n"
+    //
+    //       Below sixteen a single bit answers the question a compare and a
+    //       branch would: at this point the length is known to be under
+    //       sixteen, so bit three is set exactly when it is eight or more, and
+    //       under eight bit two is set exactly when it is four or more.
+    //
+    "7:  tbz x2, #3, 8f\n   ldr x6, [x1]\n   ldur x7, [x5,  #-8]\n"
+    "str x6, [x0]\n   stur x7, [x4,  #-8]\n   ret\n"
+    "8:  tbz x2, #2, 0f\n   ldr w6, [x1]\n   ldur w7, [x5,  #-4]\n"
+    "str w6, [x0]\n   stur w7, [x4,  #-4]\n   ret\n"
+    //
+    //       One, two and three bytes without a branch between them: the first,
+    //       the last and the middle, all read before any is written, which at
+    //       one byte of overlap is what keeps the store to the first from
+    //       being the load for the middle.
+    //
+    "0:  cbz x2, 9f\n   lsr x8, x2, #1\n"
+    "ldrb w6, [x1]\n   ldurb w7, [x5,  #-1]\n   ldrb w9, [x1, x8]\n"
+    "strb w6, [x0]\n   sturb w7, [x4,  #-1]\n   strb w9, [x0, x8]\n"
+    "9:  ret\n"
+    "6:  cmp x2, #64\n   b.hi 4f\n"
+    "ldp q0, q1, [x1]\n   ldp q2, q3, [x5,  #-32]\n"
+    "stp q0, q1, [x0]\n   stp q2, q3, [x4,  #-32]\n   ret\n"
+    "4:  cmp x2, #128\n   b.hi 3f\n"
+    "ldp q0, q1, [x1]\n   ldp q2, q3, [x1, #32]\n"
+    "ldp q4, q5, [x5,  #-64]\n   ldp q6, q7, [x5,  #-32]\n"
+    "stp q0, q1, [x0]\n   stp q2, q3, [x0, #32]\n"
+    "stp q4, q5, [x4,  #-64]\n   stp q6, q7, [x4,  #-32]\n   ret\n"
+    "3:  ldp q0, q1, [x1]\n   ldp q2, q3, [x1, #32]\n"
+    "ldp q4, q5, [x1, #64]\n   ldp q6, q7, [x1, #96]\n"
+    "ldp q16, q17, [x5,  #-128]\n   ldp q18, q19, [x5,  #-96]\n"
+    "ldp q20, q21, [x5,  #-64]\n   ldp q22, q23, [x5,  #-32]\n"
+    "stp q0, q1, [x0]\n   stp q2, q3, [x0, #32]\n"
+    "stp q4, q5, [x0, #64]\n   stp q6, q7, [x0, #96]\n"
+    "stp q16, q17, [x4,  #-128]\n   stp q18, q19, [x4,  #-96]\n"
+    "stp q20, q21, [x4,  #-64]\n   stp q22, q23, [x4,  #-32]\n   ret\n"
+    //
+    //       Above 256 the copy is a loop and a loop has a direction, so now the
+    //       question has to be asked. The two ends the test computes are the
+    //       two ends the loop wants, so asking costs the loop nothing.
+    //
+    "2:  cmp x0, x1\n   b.ls 1f\n   add x4, x1, x2\n   cmp x0, x4\n   b.lo 5f\n"
     "1:  b memory_copy_apart\n"
-    "2:  mov x3, x0\n   cmp x2, #128\n"
-    "b.lo 5f\n   ldp q4, q5, [x1]\n   ldp q6, q7, [x1, #32]\n"
-    "add x4, x0, x2\n   add x5, x1, x2\n   ldp q16, q17, [x5,  #-64]\n"
-    "ldp q18, q19, [x5,  #-32]\n"
+    "5:  mov x5, x4\n   add x4, x0, x2\n"
+    "ldp q4, q5, [x1]\n   ldp q6, q7, [x1, #32]\n"
+    "ldp q16, q17, [x5,  #-64]\n   ldp q18, q19, [x5,  #-32]\n"
     "mov x6, x4\n   bic x6, x6, #63\n"
     "sub x7, x4, x6\n   sub x8, x5, x7\n   add x9, x0, #64\n"
     "1:  cmp x6, x9\n   b.ls 3f\n   sub x6, x6, #64\n"
@@ -7955,32 +8378,6 @@ __asm__(
     "3:  stp q16, q17, [x4,  #-64]\n"
     "stp q18, q19, [x4,  #-32]\n"
     "stp q4, q5, [x0]\n   stp q6, q7, [x0, #32]\n"
-    "mov x0, x3\n   ret\n"
-    //
-    //       Under 128 bytes: eight at a time downwards, with the first eight
-    //       kept in a register so the store that ends it does not read memory
-    //       the loop has already written over.
-    //
-    "5:  cmp x2, #8\n"
-    "b.lo 6f\n   ldr x6, [x1]\n   add x4, x0, x2\n   add x5, x1, x2\n"
-    "add x7, x0, #8\n"
-    "1:  cmp x4, x7\n   b.ls 3f\n   ldr x8, [x5,  #-8]!\n"
-    "str x8, [x4,  #-8]!\n"
-    "b 1b\n"
-    "3:  str x6, [x0]\n   mov x0, x3\n   ret\n"
-    //
-    //       Under eight there is no direction left to get wrong: everything is
-    //       in registers before any of it is written.
-    //
-    "6:  add x4, x0, x2\n   add x5, x1, x2\n   cmp x2, #4\n"
-    "b.lo 7f\n   ldr w6, [x1]\n   ldur w7, [x5,  #-4]\n"
-    "str w6, [x0]\n   stur w7, [x4,  #-4]\n"
-    "mov x0, x3\n   ret\n"
-    "7:  cbz x2, 9f\n   lsr x8, x2, #1\n"
-    "ldrb w6, [x1]\n   ldurb w7, [x5,  #-1]\n"
-    "ldrb w9, [x1, x8]\n   strb w6, [x0]\n   sturb w7, [x4,  #-1]\n"
-    "strb w9, [x0, x8]\n"
-    "9:  mov x0, x3\n"
     ASM_RET
 #endif
     ASM_END(memory_copy)
@@ -10232,7 +10629,57 @@ __asm__(
     "4:  sext.w a0, a3  # an int return is sign extended in a0\n"
     ASM_RET
     ASM_END(string_compare_max)
-    //       string_length_max: the arm64 block carries the reasoning.
+    //
+    //       string_length_max has two opponents on riscv and only one of them
+    //       is a race. The arm64 block carries the reasoning for the scan
+    //       itself; what follows is why the losses under it are not bugs.
+    //
+    //       arch/riscv/lib/strnlen.S carries two bodies and picks between them
+    //       at boot with __ALTERNATIVE_CFG: one that turns a word into a byte
+    //       mask with orc.b and finds the byte with ctz, and a byte loop for
+    //       machines without Zbb. The floor this library is built to is
+    //       rv64imafd_zicsr_zicntr, which src/test/run pins and then reads
+    //       back out of the ELF attributes, so orc.b and ctz are not ours to
+    //       emit. Coming in at half the Zbb body is not a loss that better
+    //       code here can close; it closes when the floor gains Zbb, and until
+    //       then this paragraph is the answer to it.
+    //
+    //       The byte loop is the one this actually replaces, and against it
+    //       this is ahead everywhere the bound is worth a word. Guest
+    //       instructions per call, counted with a qemu plugin and the driver
+    //       loop subtracted, that byte loop first and this second:
+    //
+    //           bound 4096, no terminator      16388     4617
+    //           bound 4096, ends at 3000       12006     3400
+    //           bound  256, ends at  200         806      250
+    //           bound   64, ends at   40         166       70
+    //           bound   32, ends at   20          86       43
+    //           bound   16, ends at    9          42       34
+    //           bound    8, ends at    4          22       25
+    //           bound    4, ends at    2          14       25
+    //           bound    1, no terminator          8       18
+    //
+    //       An audit once reported this level with that loop at four thousand
+    //       and ninety six bytes. Counted, it is three and a half times ahead
+    //       there, and that row is not the finding.
+    //
+    //       The last three rows are, they are a real loss, and they stay. A
+    //       word scan cannot start for less than about twenty five
+    //       instructions -- five to build the two constants, five to mask off
+    //       whatever sits in front of the string, seven to turn the zero byte
+    //       mask into an index without a count-trailing-zeros, and the rest
+    //       bookkeeping -- and a loop that costs four instructions a byte has
+    //       paid that back by its thirteenth byte. Below that nothing helps. A
+    //       peel long enough to cover the small bounds costs two instructions
+    //       a byte with the same twenty five still behind it, so it only moves
+    //       the same deficit to the lengths just past its own end, the way the
+    //       one in string_copy had to be carried out to forty eight bytes to
+    //       stop doing that; and a peel that has to test the bound as well as
+    //       the byte costs the four instructions a byte it was meant to beat.
+    //       Measured at its best a bounded peel reaches the byte loop's own
+    //       count and stays one instruction behind a C loop's, for four
+    //       hundred bytes of code. That is not a fix, so it is not here.
+    //
     ASM_FUNC(string_length_max)
     "beqz a1, 9f\n   lui t0, 0x1010\n   addi t0, t0, 257\n   slli t1, t0, 32\n"
     "add t0, t0, t1  # 0x0101010101010101\n"
@@ -10351,9 +10798,28 @@ __asm__(
     ".Lmemory_words_rv_done:\n   mv a0, a3\n   mv a1, a2\n" ASM_RET
     ASM_END(memory_count_words)
     ASM_FUNC(memory_compare)
-    "li a3, 0\n   beqz a2, 9f\n   xor t0, a0, a1\n   andi t0, t0, 7\n"
+    //
+    //      The length is asked about before the alignment, because the
+    //      alignment question is only worth asking when a word load could
+    //      follow it. Under eight bytes nothing here beats a byte at a time,
+    //      and paying the residue arithmetic and the peel's entry first is
+    //      how this used to lose to the loop it replaces at every length
+    //      below eight.
+    //
+    //      t4 is one past the last byte of the first buffer, taken once at
+    //      the top. Every road below moves a0 and a2 together, so it is still
+    //      the end wherever the byte road is entered from, and the byte road
+    //      then needs no count of its own.
+    //
+    //      The peel walks at most seven bytes and cannot reach that end now,
+    //      since nothing under eight bytes arrives here any more; its own end
+    //      test is the second of two bounds and stays as the cheaper one to
+    //      keep.
+    //
+    "add t4, a0, a2\n   li t0, 8\n   bltu a2, t0, 7f\n"
+    "xor t0, a0, a1\n   andi t0, t0, 7\n"
     "bnez t0, 7f\n   andi t0, a0, 7\n   beqz t0, 6f\n"
-    "5:  lbu t1, 0(a0)\n   lbu t2, 0(a1)\n   sub a3, t1, t2\n   bnez a3, 9f\n"
+    "5:  lbu t1, 0(a0)\n   lbu t2, 0(a1)\n   sub a3, t1, t2\n   bnez a3, 8f\n"
     "addi a0, a0, 1\n   addi a1, a1, 1\n   addi a2, a2, -1\n   beqz a2, 9f\n"
     "andi t0, a0, 7\n   bnez t0, 5b\n"
     "6:  li t0, 8\n   bltu a2, t0, 7f\n"
@@ -10376,12 +10842,16 @@ __asm__(
     "srli t1, t1, 7\n   lui t3, 0x1010\n   addi t3, t3, 257\n   slli t2, t3, 32\n"
     "add t3, t3, t2  # 0x0101010101010101\n"
     "and t1, t1, t3\n   mul t1, t1, t3\n   srli t1, t1, 56\n   add t2, a0, t1\n"
-    "lbu t4, 0(t2)\n   add t2, a1, t1\n   lbu t5, 0(t2)\n   sub a3, t4, t5\n"
-    "j 9f\n"
+    "lbu t4, 0(t2)\n   add t2, a1, t1\n   lbu t5, 0(t2)\n   sub a0, t4, t5\n"
+    ASM_RET
     "7:  beqz a2, 9f\n"
-    "71:  lbu t1, 0(a0)\n   lbu t2, 0(a1)\n   sub a3, t1, t2\n   bnez a3, 9f\n"
-    "addi a0, a0, 1\n   addi a1, a1, 1\n   addi a2, a2, -1\n   bnez a2, 71b\n"
-    "9:  mv a0, a3\n"
+    "71:  lbu t1, 0(a0)\n   lbu t2, 0(a1)\n   bne t1, t2, 72f\n"
+    "addi a0, a0, 1\n   addi a1, a1, 1\n   bne a0, t4, 71b\n"
+    "9:  li a0, 0\n"
+    ASM_RET
+    "72:  sub a0, t1, t2\n"
+    ASM_RET
+    "8:  mv a0, a3\n"
     ASM_RET
     ASM_END(memory_compare)
     ASM_FUNC(memory_common_prefix)
@@ -11025,10 +11495,64 @@ __asm__(
     "addi a0, a0, 8\n   addi a1, a1, 8\n   addi a2, a2, -8\n"
     "6:  li t4, 4\n   bltu a2, t4, 8f\n   lw t0, 0(a1)\n   sw t0, 0(a0)\n"
     "addi a0, a0, 4\n   addi a1, a1, 4\n   addi a2, a2, -4\n"
-    "8:  beqz a2, 9f\n   lbu t0, 0(a1)\n   sb t0, 0(a0)\n   addi a0, a0, 1\n"
-    "addi a1, a1, 1\n   addi a2, a2, -1\n   j 8b\n"
+    "8:  beqz a2, 9f\n   lbu t0, 0(a1)\n   sb t0, 0(a0)\n   li t4, 17\n"
+    "bgeu a2, t4, 7f  # enough left that merging words earns the setup\n"
+    "addi a0, a0, 1\n   addi a1, a1, 1\n   addi a2, a2, -1\n   beqz a2, 9f\n"
+    "81: lbu t0, 0(a1)\n   sb t0, 0(a0)\n   addi a0, a0, 1\n   addi a1, a1, 1\n"
+    "addi a2, a2, -1\n   bnez a2, 81b\n"
     "9:  mv a0, a3\n"
     ASM_RET
+    //
+    //       Where the byte walk above stops being the answer.
+    //
+    //       Two pointers at different residues used to mean that walk and
+    //       nothing else, and that is a copy the caller could have written by
+    //       hand and had come out faster: seven instructions a byte where a C
+    //       byte loop compiles to five. Four thousand and ninety six bytes
+    //       across a one byte skew counted 32807 guest instructions against
+    //       the C loop's 20486.
+    //
+    //       The stores are what has to be aligned, so the destination is
+    //       walked up to a word boundary and every output word after that is
+    //       built from the two source words it straddles: the first shifted
+    //       down by the residue, the second shifted up by the rest of the
+    //       word, ored together. Ten instructions for eight bytes, and the
+    //       same copy counts 9366.
+    //
+    //       Both loads are aligned, which is what baseline RV64I asks for and
+    //       what every other riscv body here is written around. The second
+    //       load reaches up to seven bytes past the last byte the caller owns
+    //       and cannot fault for it: those bytes share a word, and so a page,
+    //       with bytes this very output word is built from.
+    //
+    //       Under seventeen bytes it is not worth the setup, since aligning
+    //       the destination can eat seven of them by itself, so those stay
+    //       with the byte walk. The byte the walk has already stored is
+    //       simply stored again by the merge, which is cheaper than teaching
+    //       the entry not to.
+    //
+    //       Note for the next audit: the residue branch at the top of this
+    //       routine still lands on the byte walk, which is what the riscv
+    //       alignment gate in src/test/run reads it for, but unequal residues
+    //       no longer stay there. The gate proves the branch target and the
+    //       displacements; it does not prove this arm, and the arm is safe
+    //       for the reason above rather than because the gate says so.
+    //
+    "7:  andi t5, a0, 7\n   beqz t5, .Lmemory_copy_apart_rv_aligned\n"
+    "70: lbu t1, 0(a1)\n   sb t1, 0(a0)\n   addi a0, a0, 1\n   addi a1, a1, 1\n"
+    "addi a2, a2, -1\n   andi t5, a0, 7\n   bnez t5, 70b\n"
+    ".Lmemory_copy_apart_rv_aligned:\n"
+    "andi a4, a1, 7  # what the source is short of a word\n"
+    "beqz a4, 2b  # they agree after all, so the ladder above is the one\n"
+    "andi a1, a1, -8\n   slli a5, a4, 3\n   li a6, 64\n   sub a6, a6, a5\n"
+    "li t4, 8\n   bltu a2, t4, .Lmemory_copy_apart_rv_rest\n   ld t0, 0(a1)\n"
+    ".Lmemory_copy_apart_rv_merge:\n"
+    "ld t1, 8(a1)\n   srl t2, t0, a5\n   sll t3, t1, a6\n   or t2, t2, t3\n"
+    "sd t2, 0(a0)\n   addi a0, a0, 8\n   addi a1, a1, 8\n   addi a2, a2, -8\n"
+    "mv t0, t1\n   bgeu a2, t4, .Lmemory_copy_apart_rv_merge\n"
+    ".Lmemory_copy_apart_rv_rest:\n"
+    "add a1, a1, a4  # the source pointer the byte walk is expecting\n"
+    "beqz a2, 9b\n   j 81b\n"
     ASM_END(memory_copy_apart)
 
     // memory_copy_apart_end: exact non-overlapping copy, one terminator, and
@@ -11041,9 +11565,34 @@ __asm__(
     ASM_END(memory_copy_apart_end)
 
     ASM_FUNC(memory_copy)
-    "bleu a0, a1, 1f\n   sub t0, a0, a1\n   bgeu t0, a2, 1f\n   j 2f\n"
+    //
+    //       The overlapping case is the branch and the forward case the fall
+    //       through, so the jump that used to sit between them is gone. Note
+    //       what the two tests together promise the body below: it is reached
+    //       only when the destination is above the source and the distance
+    //       between them is under the length, which cannot both be true of a
+    //       length of zero. The body used to open by testing for one anyway.
+    //
+    "bleu a0, a1, 1f\n   sub t0, a0, a1\n   bltu t0, a2, 2f\n"
     "1:  tail memory_copy_apart\n"
-    "2:  mv a3, a0\n   add a4, a0, a2\n   add a5, a1, a2\n   beqz a2, 9f\n"
+    //
+    //       a0 is read on every path below and written on none, so the copy of
+    //       it this used to keep in a3, and put back before returning, was
+    //       restoring a register that had not changed.
+    //
+    //       Four instructions off every overlapping call, which is what turns
+    //       17 bytes from 0.89x of arch/riscv/lib/memmove.S into parity and 16
+    //       from 0.97x into 1.12x. The run-up below is where the rest of the
+    //       difference is and it is not touched: src/test/run's riscv alignment
+    //       audit pins its shape instruction for instruction -- two exact
+    //       t0 = a4 & 7 gates with exactly six instructions of peel between
+    //       them -- and that is the tree's proof that no ld or sd here can
+    //       land on an unaligned pointer. A run-up that stops on a pointer
+    //       worked out once is three instructions a byte cheaper and reaches
+    //       parity at every length; it also leaves one gate instead of two, so
+    //       it is not here.
+    //
+    "2:  add a4, a0, a2\n   add a5, a1, a2\n"
     "xor t0, a4, a5\n   andi t0, t0, 7\n   bnez t0, 8f\n   andi t0, a4, 7\n"
     "beqz t0, 3f\n"
     "6:  addi a4, a4, -1\n   addi a5, a5, -1\n   lbu t1, 0(a5)\n   sb t1, 0(a4)\n"
@@ -11059,9 +11608,21 @@ __asm__(
     "ld t0, 0(a5)\n   sd t0, 0(a4)\n   addi a2, a2, -8\n"
     "0:  li t6, 4\n   bltu a2, t6, 8f\n   addi a4, a4, -4\n   addi a5, a5, -4\n"
     "lw t0, 0(a5)\n   sw t0, 0(a4)\n   addi a2, a2, -4\n"
+    //
+    //       A byte a turn, and the only path in this routine that is not a win.
+    //       When the two ends do not agree modulo eight there is no aligned
+    //       load that spans a whole word of the source, and
+    //       arch/riscv/lib/memmove.S answers that by loading aligned words and
+    //       shifting the halves together: 3647 instructions for four kilobytes
+    //       against 28681 here, or 0.13x. memory_copy_apart falls back the same
+    //       way and measures 28679 on the same shape, so this is not memmove's
+    //       to fix alone -- it is the whole riscv64 half of this file having no
+    //       shift-merge loop, and writing one is a new routine rather than a
+    //       change of shape.
+    //
     "8:  beqz a2, 9f\n   addi a4, a4, -1\n   addi a5, a5, -1\n   lbu t0, 0(a5)\n"
     "sb t0, 0(a4)\n   addi a2, a2, -1\n   j 8b\n"
-    "9:  mv a0, a3\n"
+    "9:  "
     ASM_RET
     ASM_END(memory_copy)
     // memory_copy_end: exact overlap-aware copy, one terminator, and dst+n.
@@ -11091,7 +11652,130 @@ __asm__(
     //       of the string can never equal a cut symbol at or below zero, and
     //       that case is decided before the first load.
     //
+    //
+    //       string_copy is forty eight bytes of fused byte copy in front of
+    //       the scan the rest of this block uses, and the reason is
+    //       arithmetic rather than taste.
+    //
+    //       Guest instructions per call, counted with a qemu plugin and the
+    //       driver loop subtracted, against the byte loop a C strcpy compiles
+    //       to. Source and destination at the same residue, and then one byte
+    //       apart, which is the pair the earlier measurement never took:
+    //
+    //                            same residue         one apart
+    //           bytes    loop      was     is       was      is
+    //              0        6       49      3        39       3
+    //              4       26       54     15        67      15
+    //              8       46       62     27       103      27
+    //             16       86       72     51       167      51
+    //             32      166       93     99       295      99
+    //             48      246      116    205       423     183
+    //             64      326      137    228       551     294
+    //           4096    20486     5681   5772     32807    9366
+    //
+    //       There are two faults in the was columns. The near one is that a
+    //       four byte string cost fifty four instructions where the loop being
+    //       replaced needs twenty six. The far one is that a copy between
+    //       pointers at different residues was behind that loop at every
+    //       length, because it ended in memory_copy_apart's byte tail and that
+    //       tail spent seven instructions a byte where the loop spends five.
+    //       The second is fixed in memory_copy_apart; this is the first.
+    //
+    //       The scan is the cheapest thing here per byte and the dearest per
+    //       call. Five instructions build the two constants, five more mask
+    //       off whatever sits in front of the string, seven turn the zero byte
+    //       mask into an index because base rv64 has no count-trailing-zeros,
+    //       and then memory_copy_apart walks its own size ladder before it
+    //       moves anything: about fifty instructions before a four byte string
+    //       is copied, where the loop being replaced has finished it in
+    //       twenty six.
+    //
+    //       So the first forty eight bytes are copied the way that loop copies
+    //       them, at fixed offsets so neither pointer moves: load, store,
+    //       branch on zero. Three instructions a byte against its five, and a
+    //       string that ends inside them builds no constant, computes no
+    //       index, makes no call, and has nothing to put back afterwards
+    //       because a0 is still the destination it was handed.
+    //
+    //       Forty eight is measured, not chosen. The peel saves two
+    //       instructions a byte, the scan behind it costs a fixed sixty odd
+    //       whatever length it is reached at, and what the scan hands over is
+    //       a remainder that at mismatched residues still costs six
+    //       instructions a byte against the loop's five -- so the peel has to
+    //       run long enough to have paid for both. Thirty two was tried: it
+    //       wins everywhere the two pointers share a residue and still loses
+    //       by up to twelve instructions between forty and fifty two bytes
+    //       where they do not. Forty was tried: three instructions of margin
+    //       at sixty. Forty eight clears ten residue pairs at every length on
+    //       the grid, the closest by fifteen instructions at sixty eight. It
+    //       is a multiple of eight so that the source keeps the residue the
+    //       scan would otherwise have to mask off a second time.
+    //
+    //       Past the peel a0 has moved, and that is what costs the tail call:
+    //       memory_copy_apart answers with the destination it was given, so a
+    //       frame and a subtraction buy the original one back. It is only
+    //       worth that when the ladder inside it is worth it. Two pointers at
+    //       different residues with fewer than sixteen bytes left reach its
+    //       byte tail and nothing else, so those bytes are walked here
+    //       instead, without the frame and without the prologue in front of
+    //       that tail.
+    //
+    //       The peel reads no byte it does not copy and writes nothing past
+    //       the terminator, which is stricter than the scan behind it -- that
+    //       reads the whole word the string begins in. Writing nothing past
+    //       the terminator is the half of strcpy's contract that a caller with
+    //       a buffer of exactly the string's size is relying on.
+    //
     ASM_FUNC(string_copy)
+    "lbu t0, 0(a1)\n   sb t0, 0(a0)\n   beqz t0, 9f\n"
+    "lbu t0, 1(a1)\n   sb t0, 1(a0)\n   beqz t0, 9f\n"
+    "lbu t0, 2(a1)\n   sb t0, 2(a0)\n   beqz t0, 9f\n"
+    "lbu t0, 3(a1)\n   sb t0, 3(a0)\n   beqz t0, 9f\n"
+    "lbu t0, 4(a1)\n   sb t0, 4(a0)\n   beqz t0, 9f\n"
+    "lbu t0, 5(a1)\n   sb t0, 5(a0)\n   beqz t0, 9f\n"
+    "lbu t0, 6(a1)\n   sb t0, 6(a0)\n   beqz t0, 9f\n"
+    "lbu t0, 7(a1)\n   sb t0, 7(a0)\n   beqz t0, 9f\n"
+    "lbu t0, 8(a1)\n   sb t0, 8(a0)\n   beqz t0, 9f\n"
+    "lbu t0, 9(a1)\n   sb t0, 9(a0)\n   beqz t0, 9f\n"
+    "lbu t0, 10(a1)\n   sb t0, 10(a0)\n   beqz t0, 9f\n"
+    "lbu t0, 11(a1)\n   sb t0, 11(a0)\n   beqz t0, 9f\n"
+    "lbu t0, 12(a1)\n   sb t0, 12(a0)\n   beqz t0, 9f\n"
+    "lbu t0, 13(a1)\n   sb t0, 13(a0)\n   beqz t0, 9f\n"
+    "lbu t0, 14(a1)\n   sb t0, 14(a0)\n   beqz t0, 9f\n"
+    "lbu t0, 15(a1)\n   sb t0, 15(a0)\n   beqz t0, 9f\n"
+    "lbu t0, 16(a1)\n   sb t0, 16(a0)\n   beqz t0, 9f\n"
+    "lbu t0, 17(a1)\n   sb t0, 17(a0)\n   beqz t0, 9f\n"
+    "lbu t0, 18(a1)\n   sb t0, 18(a0)\n   beqz t0, 9f\n"
+    "lbu t0, 19(a1)\n   sb t0, 19(a0)\n   beqz t0, 9f\n"
+    "lbu t0, 20(a1)\n   sb t0, 20(a0)\n   beqz t0, 9f\n"
+    "lbu t0, 21(a1)\n   sb t0, 21(a0)\n   beqz t0, 9f\n"
+    "lbu t0, 22(a1)\n   sb t0, 22(a0)\n   beqz t0, 9f\n"
+    "lbu t0, 23(a1)\n   sb t0, 23(a0)\n   beqz t0, 9f\n"
+    "lbu t0, 24(a1)\n   sb t0, 24(a0)\n   beqz t0, 9f\n"
+    "lbu t0, 25(a1)\n   sb t0, 25(a0)\n   beqz t0, 9f\n"
+    "lbu t0, 26(a1)\n   sb t0, 26(a0)\n   beqz t0, 9f\n"
+    "lbu t0, 27(a1)\n   sb t0, 27(a0)\n   beqz t0, 9f\n"
+    "lbu t0, 28(a1)\n   sb t0, 28(a0)\n   beqz t0, 9f\n"
+    "lbu t0, 29(a1)\n   sb t0, 29(a0)\n   beqz t0, 9f\n"
+    "lbu t0, 30(a1)\n   sb t0, 30(a0)\n   beqz t0, 9f\n"
+    "lbu t0, 31(a1)\n   sb t0, 31(a0)\n   beqz t0, 9f\n"
+    "lbu t0, 32(a1)\n   sb t0, 32(a0)\n   beqz t0, 9f\n"
+    "lbu t0, 33(a1)\n   sb t0, 33(a0)\n   beqz t0, 9f\n"
+    "lbu t0, 34(a1)\n   sb t0, 34(a0)\n   beqz t0, 9f\n"
+    "lbu t0, 35(a1)\n   sb t0, 35(a0)\n   beqz t0, 9f\n"
+    "lbu t0, 36(a1)\n   sb t0, 36(a0)\n   beqz t0, 9f\n"
+    "lbu t0, 37(a1)\n   sb t0, 37(a0)\n   beqz t0, 9f\n"
+    "lbu t0, 38(a1)\n   sb t0, 38(a0)\n   beqz t0, 9f\n"
+    "lbu t0, 39(a1)\n   sb t0, 39(a0)\n   beqz t0, 9f\n"
+    "lbu t0, 40(a1)\n   sb t0, 40(a0)\n   beqz t0, 9f\n"
+    "lbu t0, 41(a1)\n   sb t0, 41(a0)\n   beqz t0, 9f\n"
+    "lbu t0, 42(a1)\n   sb t0, 42(a0)\n   beqz t0, 9f\n"
+    "lbu t0, 43(a1)\n   sb t0, 43(a0)\n   beqz t0, 9f\n"
+    "lbu t0, 44(a1)\n   sb t0, 44(a0)\n   beqz t0, 9f\n"
+    "lbu t0, 45(a1)\n   sb t0, 45(a0)\n   beqz t0, 9f\n"
+    "lbu t0, 46(a1)\n   sb t0, 46(a0)\n   beqz t0, 9f\n"
+    "lbu t0, 47(a1)\n   sb t0, 47(a0)\n   beqz t0, 9f\n"
+    "addi a0, a0, 48\n   addi a1, a1, 48  # nothing ended in the peel\n"
     "lui t0, 0x1010\n   addi t0, t0, 257\n   slli t1, t0, 32\n   add t0, t0, t1\n"
     "slli t1, t0, 7  # 0x8080808080808080\n"
     "andi a4, a1, 7  # how far into the word it begins\n"
@@ -11104,10 +11788,27 @@ __asm__(
     "addi t2, t2, -1\n   and t2, t2, t0\n   mul t2, t2, t0\n   srli t2, t2, 56\n"
     "addi t2, t2, -1  # its byte within the word\n"
     "add a2, a5, t2\n   sub a2, a2, a1\n   addi a2, a2, 1  # the terminator is copied too\n"
-    "tail memory_copy_apart\n"
+    "xor t4, a0, a1\n   andi t4, t4, 7\n   beqz t4, 8f  # one residue: the ladder earns its frame\n"
+    "li t4, 16\n   bgeu a2, t4, 8f\n"
+    "mv t5, a0  # what is left is only the byte tail, so walk it here\n"
+    "7:  lbu t4, 0(a1)\n   sb t4, 0(a0)\n   addi a0, a0, 1\n   addi a1, a1, 1\n"
+    "addi a2, a2, -1\n   bnez a2, 7b\n"
+    "addi a0, t5, -48  # the destination it was handed\n   ret\n"
+    "8:  addi sp, sp, -16\n   sd ra, 0(sp)\n   call memory_copy_apart\n"
+    "ld ra, 0(sp)\n   addi sp, sp, 16\n   addi a0, a0, -48  # likewise\n   ret\n"
+    "9:\n"
+    ASM_RET
     ASM_END(string_copy)
     ASM_SECTION
-    //       string_append: the x86_64 block carries the reasoning.
+    //       string_append: the x86_64 block carries the reasoning. What it
+    //       costs on riscv is one string_length call and one string_copy call,
+    //       so the peel in string_copy took a good part of it away. Guest
+    //       instructions for appending an empty string went from 79 to 43 onto
+    //       a four byte destination and from 121 to 75 onto a thirty two byte
+    //       one, which the byte loop does in 20 and 104. Short destinations
+    //       are still behind, and what is left of the gap is string_length's
+    //       own fixed cost on a short string, which the block above it says
+    //       stands and which this cannot reach from here.
     ASM_FUNC(string_append)
     "addi sp, sp, -32\n   sd ra, 24(sp)\n   sd s0, 16(sp)\n   sd s1, 8(sp)\n"
     "mv s0, a0\n   mv s1, a1\n   call string_length\n   add a0, s0, a0\n"
@@ -13237,34 +13938,63 @@ __asm__(
 #if (!defined(KERNEL_MODE) || X64) && !defined(STOCK_STRINGS)
     ASM_ALIAS(memchr,    memory_first_of)
     /*
-            memcmp is the one name in this group that does not win outright,
-            and which of two shapes the caller hands it decides the answer.
+            memcmp used to be the one name in this group that did not win
+            outright. It does now, at every length.
+
             Re-measured on a 9950X in kernel shape against lib/string.c --
             which is word at a time there and not a byte loop, so this is the
             only one of the group with a real opponent -- ours over theirs in
-            executed instructions, flat across every size from eight bytes to
-            a kilobyte:
+            executed instructions, before that loop was rotated and after.
+            One harness for both columns: the scalar body, two round counts
+            differenced so start-up cancels, the driver loop subtracted.
 
-                differing at byte three         1.78x
-                differing at byte eleven        1.48x
-                matching all the way            0.91x at four bytes,
-                                                falling to 0.80x by 1024
+                                                before  after
+                differing at byte three         2.29x   2.67x
+                differing at byte eleven        1.67x   2.00x
+                matching, four bytes            0.89x   2.83x
+                matching, eight                 0.81x   1.30x
+                matching, sixteen               0.81x   1.17x
+                matching, thirty two            0.80x   1.12x
+                matching, one kilobyte          0.80x   1.58x
+                matching, four kilobytes        0.80x   1.59x
+
+            Thirty two is the worst length now, and no length from nought to
+            eighty is under one. The entry that stood here quoted 1.78x and
+            1.48x for the two differing shapes; that was a harness with its
+            driver loop still in it, and the before column is the same code
+            measured the way the after column is.
 
             A kernel memcmp is usually being told no: a hash bucket walk, a
             magic number, is this the entry I asked for. On that shape ours
             goes straight to the byte that differs with an exclusive-or and a
             bsf, and lib/string.c leaves its word loop and walks bytes again
-            from offset zero.
+            from offset zero. The full match was the other half of the story
+            and it was a loss, exactly two instructions a round: a word loop
+            that loaded both sides separately and jumped back unconditionally,
+            ten instructions per eight bytes against the eight gcc gets. Ten
+            over eight is 1.25 and one over 1.25 is 0.80, which was the
+            asymptote to two places. It is five instructions now, and the
+            lengths under thirty two do not loop at all.
 
-            The full match loss is the word loop in memory_compare above and
-            it is exactly two instructions a round. That loop loads both sides
-            separately and jumps back unconditionally -- ten instructions per
-            eight bytes, against the eight gcc gets by folding the second
-            operand into the compare and rotating the test to the bottom. Ten
-            over eight is 1.25, one over 1.25 is 0.80, and 0.80 is the
-            measured asymptote to two places. Rotating that loop is the one
-            improvement in this group worth making, and it would turn the
-            worst case here into a win as well.
+            The other two, against the same C in the same units. arm64 had the
+            same unconditional jump-back and the same loss -- 0.87x to 0.92x,
+            asymptote 0.90x -- and is 1.08x at worst and 2.55x by four
+            kilobytes. riscv64 never had that shape; what it had was the
+            alignment question asked before the length question, which cost it
+            every length below eight against a plain byte loop, 0.67x at one
+            byte. Against the byte loop a riscv kernel actually builds -- the
+            word path in lib/string.c there is behind CONFIG_NONPORTABLE -- a zero
+            length now ties and every other length is 1.17x or better, rising
+            to 8x once whole words are in reach.
+
+            What riscv64 still will not do is a misaligned ld, and against a
+            NONPORTABLE build that has one it is behind at every length from
+            eight bytes up: 0.58x at eight, closing on parity without reaching
+            it, 0.998x by four kilobytes. Two pointers whose residues mod
+            eight differ can never be word aligned together, so ours walks
+            them a byte at a time where that build reads words across an
+            alignment RV64I does not promise will complete in hardware, or at
+            all. Closing it is a different routine, not a faster one.
     */
     ASM_ALIAS(memcmp,    memory_compare)
     ASM_ALIAS(strlen,    string_length)

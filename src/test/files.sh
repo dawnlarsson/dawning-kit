@@ -856,6 +856,11 @@ same 'a named name'     id -un root
 same 'a named groups'   id -G root
 same 'no such user'     id nosuchuseranywhere
 
+group whoami
+same 'effective user'   whoami
+answered 'extra operand' whoami root
+answered 'option after operand' whoami root -x
+
 group uname
 same 'system'           uname
 same 'node'             uname -n
@@ -868,6 +873,22 @@ same 'machine long'     uname --machine
 same 'processor'        uname -p
 same 'hardware'         uname -i
 same 'not an option'    uname -x
+
+group nproc
+same 'available'        nproc
+same 'all installed'    nproc --all
+same 'ignore one'       nproc --ignore=1
+same 'ignore plus'      nproc --ignore=+1
+same 'ignore huge'      nproc --ignore=999999999999999999999999
+same 'last ignore wins' nproc --ignore=1 --ignore=2
+answered 'invalid negative' nproc --ignore=-1
+answered 'invalid empty' nproc --ignore=
+answered 'extra operand' nproc extra
+answered 'option after operand' nproc extra --bad
+effect 'OpenMP threads' nproc 'OMP_NUM_THREADS=3 $TOOL > said'
+effect 'OpenMP limit' nproc 'OMP_NUM_THREADS=3 OMP_THREAD_LIMIT=2 $TOOL > said'
+effect 'OpenMP nesting' nproc 'OMP_NUM_THREADS=3,2 $TOOL > said'
+effect 'all ignores OpenMP' nproc 'OMP_NUM_THREADS=3 $TOOL --all > said'
 
 group find
 near 'plain'            'LC_ALL=C sort' find "$fixture"
@@ -1220,6 +1241,18 @@ same 'not an option'    env -x /bin/true
 env_stress
 exec_path_stress
 
+group printenv
+near 'listing'          "grep -v '^_='" printenv
+same 'one value'        printenv PATH
+same 'null value'       printenv -0 PATH
+same 'null long'        printenv --null PATH
+answered 'missing value' printenv COREMOVE_THIS_MISSING
+answered 'found then missing' printenv PATH COREMOVE_THIS_MISSING
+answered 'equals is not a name' printenv PATH=anything
+answered 'options stop at name' printenv PATH -0
+answered 'invalid option status' printenv --bad
+effect 'empty value' printenv 'EMPTY= $TOOL EMPTY > said'
+
 group chown
 effect 'user and group' chown '$TOOL '"$(id -un):$(id -gn)"' tree/one'
 effect 'numeric'        chown '$TOOL '"$(id -u):$(id -g)"' tree/one'
@@ -1334,6 +1367,22 @@ effect 'verbose'        ln '$TOOL -sv tree/one pointer > said'
 effect 'through the link' ln '$TOOL -L link followed'
 effect 'the link itself' ln '$TOOL -P link kept'
 effect 'not an option'  ln '$TOOL -W tree/one pointer'
+
+group link
+effect 'regular file'   link '$TOOL tree/one hard'
+effect 'symlink itself' link '$TOOL link hard'
+effect 'option after source' link '$TOOL tree/one -W'
+effect 'dash operand' link 'printf x > ./-source; $TOOL -- ./-source hard'
+answered 'missing operand' link
+answered 'too many operands' link one two three
+
+group unlink
+effect 'regular file'   unlink '$TOOL plain'
+effect 'symlink'        unlink '$TOOL link'
+effect 'directory refused' unlink '$TOOL tree'
+effect 'dash operand' unlink 'printf x > ./-victim; $TOOL -- ./-victim'
+answered 'missing operand' unlink
+answered 'too many operands' unlink one two
 
 group touch
 effect 'create'         touch '$TOOL fresh'
@@ -1619,6 +1668,12 @@ temporary 'template unmade'    run.XXXXXX     -u run.XXXXXX
 temporary 'long field'         run.XXXXXXXXXXXX run.XXXXXXXXXXXX
 temporary 'least field'        run.XXX        run.XXX
 temporary 'suffix kept'        run.XXXXXX.log run.XXXXXX.log
+temporary 'explicit suffix'    run.XXXXXX.txt --suffix=.txt run.XXXXXX
+temporary 'suffix after template' run.XXXXXX.txt run.XXXXXX --suffix=.txt
+temporary 'suffix begins X'    run.XXXXXX-XXX --suffix=-XXX run.XXXXXX
+temporary 'empty suffix'       run.XXXXXX --suffix= run.XXXXXX
+temporary 'suffix needs final X' run.XXXXXX.log --suffix=.txt run.XXXXXX.log
+temporary 'suffix rejects slash' run.XXXXXX --suffix=/bad run.XXXXXX
 temporary 'too few'            run.XX         run.XX
 temporary 'no field'           run            run
 temporary 'in tmpdir'          run.XXXXXX     -t run.XXXXXX

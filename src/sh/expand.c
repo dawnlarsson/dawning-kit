@@ -2034,6 +2034,16 @@ static string_address expand_quoted_run(string_address at, p8 quote)
         return string_get(at) ? at + 1 : at;
 }
 
+// A dollar-single-quoted run has already been kept whole by the lexer.  Its
+// escaped quote is not the closing quote, so syntax scanners use the same end
+// rule as the lexer rather than the ordinary single-quote rule above.
+static string_address expand_dollar_quoted_run(string_address at)
+{
+        string_address stop = lex_dollar_quote_end(at + 2);
+
+        return string_get(stop) ? stop + 1 : stop;
+}
+
 /*
         The bracket that closes a $( ... ) or a ${ ... }, with quotes and
         nesting counted; nothing when the word runs out first, in which case
@@ -2046,6 +2056,12 @@ static string_address expand_bracket_end(string_address at, p8 open, p8 close)
         while (string_get(at))
         {
                 p8 value = string_get(at);
+
+                if (value == '$' && string_is(at + 1, '\''))
+                {
+                        at = expand_dollar_quoted_run(at);
+                        continue;
+                }
 
                 if (value == '\\' && string_get(at + 1))
                 {
@@ -2446,6 +2462,12 @@ static string_address expand_replace_separator(string_address at)
         while (string_get(at))
         {
                 p8 value = string_get(at);
+
+                if (value == '$' && string_is(at + 1, '\''))
+                {
+                        at = expand_dollar_quoted_run(at);
+                        continue;
+                }
 
                 if (value == '/')
                         return at;
@@ -3246,6 +3268,118 @@ static string_address expand_simple(string_address step, bool quoted)
         return step;
 }
 
+/*
+        POSIX.1-2024 dollar-single-quotes.
+
+        Every byte produced here is quoted: blanks do not split and pattern
+        characters do not glob.  C strings cannot carry a null byte.  POSIX
+        explicitly permits discarding a null escape and the remaining bytes
+        through the closing quote, which is the policy used here; an adjacent
+        piece after the quote is still expanded normally.
+*/
+static string_address expand_dollar_single(string_address step)
+{
+        string_address at = step + 2;
+        bool discard = false;
+
+        expand_quoted_seen = true;
+
+        while (string_get(at) && string_not(at, '\''))
+        {
+                p8 value = string_get(at++);
+
+                if (value != '\\')
+                {
+                        if (!discard)
+                                expand_push(value, MARK_QUOTED);
+                        continue;
+                }
+
+                value = string_get(at);
+
+                if (!value)
+                        break;
+
+                if (value >= '0' && value <= '7')
+                {
+                        positive used;
+                        positive number = string_digits_octal_escape_max(
+                            at, 3, address_of used);
+
+                        at += used;
+                        value = (p8)number;
+                }
+                else if (value == 'x')
+                {
+                        positive used;
+                        positive number = string_digits_hexadecimal_escape_max(
+                            at + 1, 2, address_of used);
+
+                        if (!used)
+                        {
+                                if (!discard)
+                                {
+                                        expand_push('\\', MARK_QUOTED);
+                                        expand_push(value, MARK_QUOTED);
+                                }
+                                at++;
+                                continue;
+                        }
+
+                        at += used + 1;
+                        value = (p8)number;
+                }
+                else if (value == 'c' && string_get(at + 1))
+                {
+                        value = string_get(at + 1);
+
+                        // The operand backslash is itself escaped in source:
+                        // \c\\ denotes FS, not a control backslash followed by
+                        // another escape.
+                        if (value == '\\' && string_is(at + 2, '\\'))
+                                at++;
+
+                        value = value == '?' ? 127 : value & 31;
+                        at += 2;
+                }
+                else
+                {
+                        at++;
+
+                        if (value == 'a')
+                                value = 7;
+                        else if (value == 'b')
+                                value = 8;
+                        else if (value == 'e')
+                                value = 27;
+                        else if (value == 'f')
+                                value = 12;
+                        else if (value == 'n')
+                                value = '\n';
+                        else if (value == 'r')
+                                value = '\r';
+                        else if (value == 't')
+                                value = '\t';
+                        else if (value == 'v')
+                                value = 11;
+                        else if (value != '\\' && value != '\'' && value != '"')
+                        {
+                                // Unspecified by POSIX: preserve the two
+                                // bytes, matching the common shell answer.
+                                if (!discard)
+                                        expand_push('\\', MARK_QUOTED);
+                        }
+                }
+
+                if (!value)
+                        discard = true;
+                else if (!discard)
+                        expand_push(value, MARK_QUOTED);
+        }
+
+        return string_get(at) ? at + 1 : at;
+}
+
 static string_address expand_dollar(string_address step, bool quoted)
 {
         p8 next = string_get(step + 1);
@@ -3262,7 +3396,9 @@ static string_address expand_dollar(string_address step, bool quoted)
 
         expand_depth++;
 
-        if (next == '(' && string_get(step + 2) == '(')
+        if (next == '\'')
+                result = expand_dollar_single(step);
+        else if (next == '(' && string_get(step + 2) == '(')
                 result = expand_arithmetic(step, quoted);
         else if (next == '(')
                 result = expand_command(step, quoted);
@@ -3294,7 +3430,16 @@ string_address shell_expand_here_dollar(string_address step,
 
         expand_begin();
 
-        result = expand_dollar(step, true);
+        // Dollar-single-quotes have no quoting role in a here-document body;
+        // like a single quote there, the bytes are literal.  Return only the
+        // dollar and let the here-body walker copy the following quote/run.
+        if (string_is(step + 1, '\''))
+        {
+                expand_push('$', MARK_QUOTED);
+                result = step + 1;
+        }
+        else
+                result = expand_dollar(step, true);
 
         address_to text = expand_text;
         address_to length = expand_failed ? 0 : expand_length;
@@ -3342,6 +3487,17 @@ static string_address expand_double(string_address step)
 
                 if (seen == '$')
                 {
+                        // An enclosing double quote makes $'...' literal.
+                        // This guard lives here, rather than in expand_dollar,
+                        // because a ${...word...} can carry quoted output while
+                        // dollar-single-quotes in word still retain syntax.
+                        if (string_is(step + 1, '\''))
+                        {
+                                expand_push('$', MARK_QUOTED);
+                                step++;
+                                continue;
+                        }
+
                         step = expand_dollar(step, true);
                         continue;
                 }
@@ -4063,6 +4219,12 @@ static string_address expand_brace_comma(string_address at,
         {
                 p8 value = string_get(at);
 
+                if (value == '$' && string_is(at + 1, '\''))
+                {
+                        at = expand_dollar_quoted_run(at);
+                        continue;
+                }
+
                 if (value == '\\' && at + 1 < close)
                 {
                         at += 2;
@@ -4359,6 +4521,12 @@ static positive shell_expand_braces(string_address word,
                 if (string_is(open, '\\') && string_get(open + 1))
                 {
                         open += 2;
+                        continue;
+                }
+
+                if (string_is(open, '$') && string_is(open + 1, '\''))
+                {
+                        open = expand_dollar_quoted_run(open);
                         continue;
                 }
 

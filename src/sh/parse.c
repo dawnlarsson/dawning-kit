@@ -24,6 +24,13 @@
 #define PT_ARITHMETIC 4
 #define PT_CONDITIONAL 5
 
+typedef struct parse_alias_trace parse_alias_trace;
+
+struct parse_alias_trace
+{
+        parse_alias_trace address_to next;
+        string_address name;
+};
 
 typedef struct
 {
@@ -34,6 +41,11 @@ typedef struct
         b32 joined;
         string_address text;
         positive length;
+        // Alias replacement is recursive, except through a name already in
+        // the replacement chain. A trailing blank also asks that the next
+        // ordinary word be considered even after the command name.
+        parse_alias_trace address_to alias_trace;
+        b32 alias_forced;
 } parse_token;
 
 /*
@@ -55,6 +67,8 @@ static positive parse_token_room;
 static positive parse_token_count;
 static shell_store parse_store;
 static parse_token parse_no_token;
+
+string_address alias_lookup(string_address name);
 
 #define NODE_SIMPLE 1
 #define NODE_PIPELINE 2
@@ -104,7 +118,8 @@ typedef struct
 {
         b32 op;
         b32 fd;
-        b32 word;
+        string_address text;
+        positive text_length;
         // A here-document carries its body in place of a file name. Which of
         // the two arenas the body sits in depends on whether the command it
         // belongs to outlived the line that wrote it.
@@ -633,6 +648,69 @@ static bool parse_hold(string_address line, b32 unfinished)
         return true;
 }
 
+// Lexer's storage is reused on its next call. Copy one token into parser
+// storage, keeping every piece of text in the stable arena.
+static bool parse_copy_lex(parse_token address_to into,
+                           lex_token address_to source,
+                           parse_alias_trace address_to trace)
+{
+        into->kind = source->kind == LEX_WORD
+                         ? PT_WORD
+                         : source->kind == LEX_ARITHMETIC
+                               ? PT_ARITHMETIC
+                               : source->kind == LEX_CONDITIONAL
+                                     ? PT_CONDITIONAL
+                                     : PT_OP;
+        into->op = source->op;
+        into->text = null;
+        into->length = source->length;
+        into->alias_trace = trace;
+        into->alias_forced = false;
+
+        if (into->kind == PT_OP)
+                return true;
+
+        into->text = shell_store_take(address_of parse_store,
+                                      source->length + 1);
+
+        if (!into->text)
+                return false;
+
+        memory_copy_end(into->text, source->text, source->length);
+        return true;
+}
+
+// Register a here-document as soon as its complete token line is available,
+// whether that line came from source or from an alias replacement.
+static bool parse_here_at(b32 at)
+{
+        b32 word = at + 1;
+        string_address delimiter =
+            word < (b32)parse_token_count &&
+                    parse_tokens[word].kind == PT_WORD
+                ? parse_tokens[word].text
+                : null;
+        bool strip = false;
+
+        if (delimiter && parse_tokens[word].joined &&
+            string_is(delimiter, '-'))
+        {
+                strip = true;
+                delimiter++;
+
+                if (!string_get(delimiter))
+                {
+                        word++;
+                        delimiter = word < (b32)parse_token_count &&
+                                            parse_tokens[word].kind == PT_WORD
+                                        ? parse_tokens[word].text
+                                        : null;
+                }
+        }
+
+        return !delimiter || parse_here_register(delimiter, strip);
+}
+
 /*
         A line of source, appended to whatever is already waiting.
 
@@ -644,6 +722,7 @@ static bool parse_hold(string_address line, b32 unfinished)
 bool parse_feed(string_address line)
 {
         b32 count;
+        positive token_start;
         positive previous_stop = 0;
         b32 index;
         b32 unfinished;
@@ -677,6 +756,8 @@ bool parse_feed(string_address line)
         if (count < 0)
                 return false;
 
+        token_start = parse_token_count;
+
         for (index = 0; index < count; index++)
         {
                 lex_token address_to source = lex_tokens + index;
@@ -690,80 +771,20 @@ bool parse_feed(string_address line)
                         return false;
 
                 into = parse_tokens + parse_token_count;
-                into->kind = source->kind == LEX_WORD
-                                 ? PT_WORD
-                                 : source->kind == LEX_ARITHMETIC
-                                       ? PT_ARITHMETIC
-                                       : source->kind == LEX_CONDITIONAL
-                                             ? PT_CONDITIONAL
-                                       : PT_OP;
-                into->op = source->op;
                 into->joined = index && source->at == previous_stop;
-                into->text = null;
-                into->length = source->length;
 
                 previous_stop = source->at + source->length;
 
-                if (source->kind == LEX_WORD ||
-                    source->kind == LEX_ARITHMETIC ||
-                    source->kind == LEX_CONDITIONAL)
-                {
-                        positive length = source->length;
-
-                        p8 address_to kept = shell_store_take(address_of parse_store,
-                                                             length + 1);
-
-                        if (!kept)
-                                return false;
-
-                        memory_copy_end(kept, source->text, length);
-                        into->text = kept;
-                }
+                if (!parse_copy_lex(into, source, null))
+                        return false;
 
                 parse_token_count++;
-
-                // The body of a here-document is read by the caller before the
-                // parser ever runs, so the delimiter has to be noticed now.
-                if (into->kind == PT_OP && into->op == OP_DLESS)
-                {
-                        b32 word = index + 1;
-                        string_address delimiter = null;
-                        bool strip = false;
-
-                        if (word < count && lex_tokens[word].kind == LEX_WORD)
-                                delimiter = lex_tokens[word].text;
-
-                        /*
-                                <<- is one operator that arrives as two tokens.
-
-                                The lexer knows << and it does not know <<-, so
-                                the dash comes back as the start of the word
-                                behind it -- on its own when a blank follows,
-                                and stuck to the delimiter when none does. A
-                                dash with a blank in front of it is a delimiter
-                                beginning with a dash and not the operator.
-                        */
-                        if (delimiter && string_is(delimiter, '-') &&
-                            lex_tokens[word].at == source->at + source->length)
-                        {
-                                strip = true;
-                                delimiter++;
-
-                                if (!string_get(delimiter))
-                                {
-                                        word++;
-                                        delimiter =
-                                            word < count &&
-                                                    lex_tokens[word].kind == LEX_WORD
-                                                ? lex_tokens[word].text
-                                                : null;
-                                }
-                        }
-
-                        if (delimiter && !parse_here_register(delimiter, strip))
-                                return false;
-                }
         }
+
+        for (positive at = token_start; at < parse_token_count; at++)
+                if (parse_tokens[at].kind == PT_OP &&
+                    parse_tokens[at].op == OP_DLESS && !parse_here_at((b32)at))
+                        return false;
 
         /*
                 A comment-only line has no lexer tokens, but it is still a
@@ -782,6 +803,8 @@ bool parse_feed(string_address line)
         parse_tokens[parse_token_count].joined = 0;
         parse_tokens[parse_token_count].text = null;
         parse_tokens[parse_token_count].length = 0;
+        parse_tokens[parse_token_count].alias_trace = null;
+        parse_tokens[parse_token_count].alias_forced = false;
         parse_token_count++;
 
         return true;
@@ -972,6 +995,317 @@ static bool parse_at_redirect()
                parse_redirect_operator(op);
 }
 
+/*
+        Replace one eligible word with the tokens of its alias value.
+
+        This happens in the parser, not at execution. An alias may therefore
+        produce a reserved word, a separator, a redirect, or several commands;
+        rewriting argv after expansion cannot express any of those. The token
+        text is copied into the parser's stable store before the lexer is used
+        again, exactly as source-line tokens are.
+
+        Each replacement token carries the chain which produced it. That is
+        the cycle rule for both the direct `a=a` case and a chain with words or
+        assignments between its names: a name already being expanded is left
+        as a word instead of beginning the chain again.
+*/
+static bool parse_alias_replace(b32 position)
+{
+        parse_token address_to token = parse_tokens + position;
+        parse_alias_trace address_to chain;
+        parse_alias_trace address_to trace;
+        parse_token address_to replacement = null;
+        positive replacement_room = 0;
+        positive replacement_count = 0;
+        string_address value;
+        string_address line;
+        positive value_length;
+        positive removed = 1;
+        b32 forced;
+        b32 joined;
+        bool final_comment = false;
+        bool trailing_blank;
+
+        if (token->kind != PT_WORD || token->alias_forced == 2)
+                return false;
+
+        for (chain = token->alias_trace; chain; chain = chain->next)
+                if (!string_compare(token->text, chain->name))
+                {
+                        // Do not reconsider a cycle when an incomplete parse
+                        // is walked again after another physical line arrives.
+                        token->alias_forced = 2;
+                        return false;
+                }
+
+        value = alias_lookup(token->text);
+
+        if (!value)
+                return false;
+
+        trace = (parse_alias_trace address_to)shell_store_take(
+            address_of parse_store, sizeof(*trace));
+
+        if (!trace)
+        {
+                parse_state = PARSE_SYNTAX;
+                return false;
+        }
+
+        trace->next = token->alias_trace;
+        trace->name = token->text;
+        forced = token->alias_forced;
+        joined = token->joined;
+        value_length = string_length(value);
+        trailing_blank = value_length &&
+                         (value[value_length - 1] == ' ' ||
+                          value[value_length - 1] == '\t');
+        line = value;
+
+        while (true)
+        {
+                b32 count = lex_line(line);
+                b32 index;
+                string_address next_line;
+
+                if (count < 0)
+                {
+                        parse_state = PARSE_SYNTAX;
+                        goto alias_done;
+                }
+
+                if (!shell_room((address_any address_to)address_of replacement,
+                                address_of replacement_room,
+                                replacement_count + (positive)count + 1,
+                                sizeof(replacement[0])))
+                {
+                        parse_state = PARSE_SYNTAX;
+                        goto alias_done;
+                }
+
+                for (index = 0; index < count; index++)
+                {
+                        lex_token address_to source = lex_tokens + index;
+                        parse_token address_to into =
+                            replacement + replacement_count++;
+
+                        into->joined = index &&
+                                       source->at == lex_tokens[index - 1].at +
+                                                         lex_tokens[index - 1].length;
+
+                        if (!parse_copy_lex(into, source, trace))
+                        {
+                                parse_state = PARSE_SYNTAX;
+                                goto alias_done;
+                        }
+                }
+
+                next_line = string_first_of(line, '\n');
+
+                if (!next_line)
+                {
+                        positive stopped = count
+                                               ? lex_tokens[count - 1].at +
+                                                     lex_tokens[count - 1].length
+                                               : 0;
+
+                        while (line[stopped] == ' ' || line[stopped] == '\t')
+                                stopped++;
+
+                        final_comment = line[stopped] == '#';
+                }
+
+                line = next_line;
+
+                if (!line)
+                        break;
+
+                if (!shell_room((address_any address_to)address_of replacement,
+                                address_of replacement_room,
+                                replacement_count + 1,
+                                sizeof(replacement[0])))
+                {
+                        parse_state = PARSE_SYNTAX;
+                        goto alias_done;
+                }
+
+                replacement[replacement_count].kind = PT_NEWLINE;
+                replacement[replacement_count].op = 0;
+                replacement[replacement_count].joined = 0;
+                replacement[replacement_count].text = null;
+                replacement[replacement_count].length = 0;
+                replacement[replacement_count].alias_trace = trace;
+                replacement[replacement_count].alias_forced = false;
+                replacement_count++;
+                line++;
+        }
+
+        if (!shell_room((address_any address_to)address_of parse_tokens,
+                        address_of parse_token_room,
+                        parse_token_count + replacement_count + 1,
+                        sizeof(parse_tokens[0])))
+        {
+                parse_state = PARSE_SYNTAX;
+                goto alias_done;
+        }
+
+        if (final_comment)
+                while (position + (b32)removed < (b32)parse_token_count &&
+                       parse_tokens[position + removed].kind != PT_NEWLINE)
+                        removed++;
+
+        memory_copy(parse_tokens + position + replacement_count,
+                    parse_tokens + position + removed,
+                    (parse_token_count - (positive)position - removed) *
+                        sizeof(parse_tokens[0]));
+        parse_token_count = parse_token_count - removed + replacement_count;
+
+        if (replacement_count)
+        {
+                memory_copy(parse_tokens + position, replacement,
+                            replacement_count * sizeof(replacement[0]));
+                parse_tokens[position].joined = joined;
+                parse_tokens[position].alias_forced = forced;
+        }
+
+        if (position + (b32)replacement_count < (b32)parse_token_count)
+                parse_tokens[position + replacement_count].joined =
+                    replacement_count && !trailing_blank &&
+                    parse_tokens[position + replacement_count].joined;
+
+        // A blank at the end of the value makes the next ordinary word an
+        // alias candidate too. Redirect operands are not command words and
+        // separators begin a fresh command under the ordinary rule.
+        if (trailing_blank)
+        {
+                b32 at = position + (b32)replacement_count;
+
+                while (at < (b32)parse_token_count)
+                {
+                        positive descriptor;
+
+                        if (parse_tokens[at].kind == PT_WORD &&
+                            string_digits_exact(parse_tokens[at].text,
+                                                address_of descriptor) &&
+                            descriptor <= 0x7fffffff &&
+                            at + 1 < (b32)parse_token_count &&
+                            parse_tokens[at + 1].kind == PT_OP &&
+                            parse_tokens[at + 1].joined &&
+                            parse_tokens[at + 1].op != OP_ANDGREAT &&
+                            parse_tokens[at + 1].op != OP_ANDDGREAT &&
+                            parse_redirect_operator(parse_tokens[at + 1].op))
+                                at++;
+
+                        if (parse_tokens[at].kind == PT_WORD)
+                        {
+                                parse_tokens[at].alias_forced = true;
+                                break;
+                        }
+
+                        if (parse_tokens[at].kind == PT_NEWLINE ||
+                            parse_tokens[at].kind == PT_END ||
+                            (parse_tokens[at].kind == PT_OP &&
+                             !parse_redirect_operator(parse_tokens[at].op)))
+                                break;
+
+                        if (parse_tokens[at].kind == PT_OP &&
+                            parse_redirect_operator(parse_tokens[at].op))
+                        {
+                                at++;
+
+                                if (at < (b32)parse_token_count &&
+                                    parse_tokens[at].kind == PT_WORD)
+                                        at++;
+
+                                continue;
+                        }
+
+                        at++;
+                }
+        }
+
+        // Here-documents introduced by an alias are first visible now. The
+        // next physical line is still collected before parsing resumes.
+        for (b32 at = position;
+             at < position + (b32)replacement_count; at++)
+                if (parse_tokens[at].kind == PT_OP &&
+                    parse_tokens[at].op == OP_DLESS && !parse_here_at(at))
+                {
+                        parse_state = PARSE_SYNTAX;
+                        break;
+                }
+
+alias_done:
+        if (replacement)
+                memory_free(replacement,
+                            replacement_room * sizeof(replacement[0]));
+
+        return !parse_state;
+}
+
+// Expand the command-name candidate, skipping assignment prefixes and
+// redirects. A replacement can change which token is the candidate, so the
+// short scan restarts until it reaches a reserved word or a stable name.
+static fn parse_alias_command()
+{
+        while (!parse_state)
+        {
+                b32 at = parse_position;
+
+                while (at < (b32)parse_token_count)
+                {
+                        parse_token address_to token = parse_tokens + at;
+                        positive name_length;
+                        positive descriptor;
+
+                        if (token->kind == PT_WORD &&
+                            shell_assignment_kind(token->text,
+                                                  address_of name_length))
+                        {
+                                at++;
+                                continue;
+                        }
+
+                        if ((token->kind == PT_OP &&
+                             parse_redirect_operator(token->op)) ||
+                            (token->kind == PT_WORD &&
+                             string_digits_exact(token->text,
+                                                 address_of descriptor) &&
+                             descriptor <= 0x7fffffff &&
+                             at + 1 < (b32)parse_token_count &&
+                             parse_tokens[at + 1].kind == PT_OP &&
+                             parse_tokens[at + 1].joined &&
+                             parse_tokens[at + 1].op != OP_ANDGREAT &&
+                             parse_tokens[at + 1].op != OP_ANDDGREAT &&
+                             parse_redirect_operator(parse_tokens[at + 1].op)))
+                        {
+                                if (token->kind == PT_WORD)
+                                        at++;
+
+                                at++;
+
+                                if (at < (b32)parse_token_count &&
+                                    parse_tokens[at].kind == PT_WORD)
+                                        at++;
+
+                                continue;
+                        }
+
+                        if (token->kind != PT_WORD ||
+                            parse_keyword(at - parse_position) ||
+                            parse_word_is_length(at - parse_position,
+                                                 "function", 8) ||
+                            !parse_alias_replace(at))
+                                return;
+
+                        break;
+                }
+
+                if (at >= (b32)parse_token_count)
+                        return;
+        }
+}
+
 static bool parse_take_redirect(b32 index)
 {
         string_address delimiter;
@@ -1047,8 +1381,8 @@ static bool parse_take_redirect(b32 index)
         parse_redirects[slot].raw = false;
         parse_redirects[slot].body = 0;
         parse_redirects[slot].body_length = 0;
-        parse_redirects[slot].word =
-            parse_word_new(delimiter, string_length(delimiter));
+        parse_redirects[slot].text = delimiter;
+        parse_redirects[slot].text_length = string_length(delimiter);
 
         if (op == OP_DLESS)
         {
@@ -1115,6 +1449,12 @@ static b32 parse_simple()
 
         while (!parse_state)
         {
+                if (parse_look(0)->kind == PT_WORD &&
+                    parse_look(0)->alias_forced &&
+                    parse_look(0)->alias_forced != 2 &&
+                    parse_alias_replace(parse_position))
+                        continue;
+
                 if (parse_at_redirect())
                 {
                         parse_take_redirect(index);
@@ -1480,6 +1820,11 @@ static b32 parse_command()
         b32 index;
         b32 compound = true;
 
+        parse_alias_command();
+
+        if (parse_state)
+                return 0;
+
         if (parse_word_is(0, "function"))
                 return parse_function_keyword();
 
@@ -1558,10 +1903,17 @@ static b32 parse_pipeline()
         if (parse_state)
                 return 0;
 
+        parse_alias_command();
+
+        if (parse_state)
+                return 0;
+
         if (parse_word_is(0, "!"))
         {
                 inverted = true;
                 parse_position++;
+                parse_skip_newlines();
+                parse_alias_command();
 
                 // The grammar has one optional Bang, not a repeatable list.
                 // dash rejects a second one rather than cancelling the first.
@@ -1673,6 +2025,7 @@ static b32 parse_list()
                 return 0;
 
         parse_skip_newlines();
+        parse_alias_command();
 
         // A semicolon separates two commands; it cannot stand where no
         // command precedes it. Treating it like a blank line made `;` a
@@ -1745,6 +2098,7 @@ static b32 parse_list()
                         break;
 
                 parse_skip_newlines();
+                parse_alias_command();
 
                 if (parse_look(0)->kind == PT_OP && parse_look(0)->op == OP_SEMI)
                 {
@@ -1903,15 +2257,21 @@ static b32 parse_keep_redirects(b32 first, b32 count)
 
         for (index = 0; index < count; index++)
         {
-                b32 word;
-
                 parse_redirects[base + index] = parse_redirects[first + index];
-                word = parse_keep_words(parse_redirects[first + index].word, 1);
 
-                if (word < 0)
+                if (parse_kept_used +
+                        parse_redirects[first + index].text_length + 1 >
+                    PARSE_KEPT_TEXT)
                         return -1;
 
-                parse_redirects[base + index].word = word;
+                memory_copy_end(
+                    parse_kept_text + parse_kept_used,
+                    parse_redirects[first + index].text,
+                    parse_redirects[first + index].text_length);
+                parse_redirects[base + index].text =
+                    parse_kept_text + parse_kept_used;
+                parse_kept_used +=
+                    parse_redirects[first + index].text_length + 1;
 
                 // A here-document body lives in storage the next line reuses,
                 // so a kept redirection carries a copy of its own.

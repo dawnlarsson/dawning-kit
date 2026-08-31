@@ -260,6 +260,8 @@ group errors
 answer 'unknown option'  'printf "x\n" | { read -Z v 2>/dev/null; echo "[$v] $?"; }'
 answer 'invalid name'    'printf "x\n" | { read 1bad 2>/dev/null; echo $?; }'
 answer 'readonly name'   'readonly v=old; printf "new\n" | { read v 2>/dev/null; echo "[$v] $?"; }'
+written 'readonly assignment order' '2 [one][old][three][four]|' 0 'printf "one two\nthree four\n" | { readonly b=old; read a b 2>/dev/null; s=$?; read c d; printf "%s [%s][%s][%s][%s]\n" "$s" "$a" "$b" "$c" "$d"; }'
+written 'read error is not EOF' '2 []|' 0 'read v <&- 2>/dev/null; printf "%s [%s]\n" "$?" "$v"'
 
 #       -n, -d, -p and -t are not options dash has, so what they are measured
 #       against is what they are for. The wait is per byte rather than per
@@ -286,7 +288,8 @@ answer 'nothing left'    'set -- x; getopts ab o; echo "$? [$o] [${OPTARG-unset}
 answer 'its own words'   'getopts ab o -a -b; echo "$o $OPTIND"'
 answer 'many own words'  'getopts ab o -a one two three four five; echo "$o $OPTIND"'
 answer 'many parameters' 'set -- -a one two three four five; getopts ab o; echo "$o $OPTIND"'
-answer 'no argument set' 'set -- -a; getopts a o; echo "[$o] [${OPTARG-unset}]"'
+written 'no argument unsets OPTARG' 'a [unset]|' 0 'OPTARG=old; set -- -a; getopts a o; echo "$o [${OPTARG-unset}]"'
+written 'end unsets OPTARG' '1 [unset]|' 0 'OPTARG=old; set --; getopts a o; echo "$? [${OPTARG-unset}]"'
 
 group complaining
 answer 'unknown loud'    'set -- -z; getopts ab o 2>/dev/null; echo "[$o] [${OPTARG-unset}]"'
@@ -302,6 +305,10 @@ answer 'unknown in bundle' 'set -- -az; getopts a o 2>/dev/null; echo "$o $OPTIN
 group ours
 written 'OPTIND put back' 'a|' 0 'set -- -a -b; getopts ab o; OPTIND=1; getopts ab o; echo "$o"'
 written 'OPTIND starts at one' '1|' 0 'echo $OPTIND'
+written 'readonly name fails' '2 [old]|' 0 'readonly o=old; set -- -a; getopts a o 2>/dev/null; echo "$? [$o]"'
+written 'readonly OPTIND fails' '2|' 0 'readonly OPTIND; set -- -a; getopts a o 2>/dev/null; echo $?'
+written 'readonly OPTARG fails' '2 [old]|' 0 'OPTARG=old; readonly OPTARG; set -- -a new; getopts a: o 2>/dev/null; echo "$? [$OPTARG]"'
+written 'invalid name rejected' '2|' 0 'set -- -a; getopts a 1bad 2>/dev/null; echo $?'
 
 section cd
 
@@ -325,6 +332,18 @@ group cdpath
 answer 'found along it'  'mkdir -p one/two; CDPATH=$PWD/one; cd two > /dev/null; pwd | sed "s|.*/||"'
 answer 'said out loud'   'mkdir -p one/two; CDPATH=$PWD/one; cd two | sed "s|.*/||"'
 answer 'not for dots'    'mkdir -p one/two two; CDPATH=$PWD/one; cd ./two > /dev/null; pwd | sed "s|.*/one/two$|WRONG|"'
+
+group issue8
+written 'empty operand rejected' 'rejected same|' 0 \
+        'before=$PWD; if cd "" 2>/dev/null; then echo BAD; else printf "rejected "; fi; [ "$PWD" = "$before" ] && echo same'
+written 'combined e and P options' '0 /|' 0 \
+        'cd -Pe /; printf "%s %s\n" "$?" "$PWD"'
+written 'e reports unnamed physical directory' 'reported|' 0 \
+        'base=$(mktemp -d); mkdir "$base/gone"; (cd "$base/gone" && rmdir "$base/gone" && { cd -Pe . 2>/dev/null; [ "$?" -eq 1 ]; }) && echo reported; rmdir "$base"'
+written 'P alone permits unnamed directory' 'accepted|' 0 \
+        'base=$(mktemp -d); mkdir "$base/gone"; (cd "$base/gone" && rmdir "$base/gone" && cd -P . 2>/dev/null) && echo accepted; rmdir "$base"'
+written 'too many operands rejected' 'rejected same|' 0 \
+        'before=$PWD; if cd / /tmp 2>/dev/null; then echo BAD; else printf "rejected "; fi; [ "$PWD" = "$before" ] && echo same'
 
 section names
 

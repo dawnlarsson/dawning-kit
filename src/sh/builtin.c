@@ -154,7 +154,7 @@ bool test_facts(string_address path, file_facts address_to out, bool follow);
 bool word_is(string_address word, string_address text);
 p64 test_device(file_facts address_to facts);
 fn hash_forget();
-fn shell_here(p8 address_to into, positive room);
+bool shell_here(p8 address_to into, positive room);
 
 /*
         The set flags, remembered but not obeyed.
@@ -164,6 +164,8 @@ fn shell_here(p8 address_to into, positive room);
         only where the letters are kept so that code there can ask.
 */
 positive shell_options;
+
+#define SHELL_FLAG(letter) ((positive)1 << ((letter) - 'a'))
 
 /*
         Names an assignment may no longer touch. Held apart from the values so
@@ -731,10 +733,14 @@ bool shell_environment_is_initialized()
         return shell_env_initialized;
 }
 
-static bool env_set_hashed_span(const_string name, positive name_len,
-                                positive hash, const_string value);
+static bool env_write_hashed_span(const_string name, positive name_len,
+                                  positive hash, const_string value,
+                                  bool assignment);
+static bool env_assign_hashed_span(const_string name, positive name_len,
+                                   positive hash, const_string value);
 PURE string_address env_get(const_string name);
 bool env_set(const_string name, const_string value);
+bool env_assign(const_string name, const_string value);
 
 /* Adopt a process-lifetime assignment without copying its bytes. */
 static bool env_borrow_assignment(string_address entry, bool replace)
@@ -924,9 +930,12 @@ PURE string_address env_get(const_string name)
         return env_get_hashed_span(name, answer.y, answer.x, null);
 }
 
-static bool env_set_hashed_span(const_string name, positive name_len,
-                                positive hash, const_string value)
+static bool env_write_hashed_span(const_string name, positive name_len,
+                                  positive hash, const_string value,
+                                  bool assignment)
 {
+        bool allexport = assignment && (shell_options & SHELL_FLAG('a'));
+
         if (!name || !value)
                 return false;
 
@@ -954,6 +963,8 @@ static bool env_set_hashed_span(const_string name, positive name_len,
                         memory_copy_end((p8 address_to)(cell + 1) + name_len + 1,
                                         env_reading(value), value_len);
                         shell_vars[idx].value_length = value_len;
+                        if (allexport)
+                                shell_vars[idx].permanent = true;
                         if (!shell_envp_dirty &&
                             (shell_vars[idx].permanent ||
                              shell_vars[idx].temporary))
@@ -991,7 +1002,7 @@ static bool env_set_hashed_span(const_string name, positive name_len,
                 shell_vars[shell_var_count].value_length = value_len;
                 shell_vars[shell_var_count].temporary = 0;
                 shell_vars[shell_var_count].owned = true;
-                shell_vars[shell_var_count].permanent = false;
+                shell_vars[shell_var_count].permanent = allexport;
                 shell_var_count++;
 
                 if (!env_index_slots || shell_var_count > env_index_slots / 2)
@@ -1002,6 +1013,9 @@ static bool env_set_hashed_span(const_string name, positive name_len,
                                        address_of env_index_tombstones);
         }
 
+        if (allexport)
+                shell_vars[idx].permanent = true;
+
         if (!shell_envp_dirty &&
             (shell_vars[idx].permanent || shell_vars[idx].temporary))
                 shell_envp_dirty = true;
@@ -1009,7 +1023,7 @@ static bool env_set_hashed_span(const_string name, positive name_len,
         return true;
 }
 
-bool env_set(const_string name, const_string value)
+static bool env_write(const_string name, const_string value, bool assignment)
 {
         positive2 answer;
 
@@ -1017,10 +1031,25 @@ bool env_set(const_string name, const_string value)
                 return false;
 
         answer = string_hash_33_length(env_reading(name));
-        return env_set_hashed_span(name, answer.y, answer.x, value);
+        return env_write_hashed_span(name, answer.y, answer.x, value,
+                                     assignment);
 }
 
-#define SHELL_FLAG(letter) ((positive)1 << ((letter) - 'a'))
+bool env_set(const_string name, const_string value)
+{
+        return env_write(name, value, false);
+}
+
+bool env_assign(const_string name, const_string value)
+{
+        return env_write(name, value, true);
+}
+
+static bool env_assign_hashed_span(const_string name, positive name_len,
+                                   positive hash, const_string value)
+{
+        return env_write_hashed_span(name, name_len, hash, value, true);
+}
 
 // string_to_positive scans backwards from the end of the string, so it reads
 // "0.5" as 5 and anything with a trailing space as 0. Arguments arrive as
@@ -1196,10 +1225,10 @@ static p8 shell_directory_assignment[SHELL_DIRECTORY_MAX + 4];
 p8 address_to shell_directory = shell_directory_assignment + 4;
 static p8 shell_directory_was[SHELL_DIRECTORY_MAX];
 
-fn shell_here(p8 address_to into, positive room)
+bool shell_here(p8 address_to into, positive room)
 {
         into[0] = end;
-        system_call_2(syscall(getcwd), (positive)into, room);
+        return system_call_2(syscall(getcwd), (positive)into, room) >= 0;
 }
 
 /*
@@ -1297,13 +1326,14 @@ fn shell_directory_moved(string_address logical)
 
         string_copy_max_end(shell_directory, logical, SHELL_DIRECTORY_MAX - 1);
 
-        env_set("OLDPWD", shell_directory_was);
-        env_set("PWD", shell_directory);
+        env_assign("OLDPWD", shell_directory_was);
+        env_assign("PWD", shell_directory);
 }
 
 static p8 shell_cd_target[4096];
 
-bool shell_cd_try(string_address candidate, bool physical)
+bool shell_cd_try(string_address candidate, bool physical,
+                  bool address_to physical_named)
 {
         p8 wanted[4096];
 
@@ -1315,8 +1345,7 @@ bool shell_cd_try(string_address candidate, bool physical)
         if (system_call_1(syscall(chdir), (positive)wanted))
                 return false;
 
-        if (physical)
-                shell_here(wanted, sizeof(wanted));
+        address_to physical_named = !physical || shell_here(wanted, sizeof(wanted));
 
         shell_directory_moved(wanted);
 
@@ -1331,12 +1360,13 @@ bool shell_cd_try(string_address candidate, bool physical)
         along CDPATH first, and a hit there is said out loud because the script
         did not name the place it landed.
 */
-bool shell_cd_walk(bool physical, bool address_to say)
+bool shell_cd_walk(bool physical, bool address_to say,
+                   bool address_to physical_named)
 {
         p8 candidate[4096];
 
         if (shell_cd_target[0] == '/')
-                return shell_cd_try(shell_cd_target, physical);
+                return shell_cd_try(shell_cd_target, physical, physical_named);
 
         if (!(shell_cd_target[0] == '.' &&
               (shell_cd_target[1] == end || shell_cd_target[1] == '/' ||
@@ -1362,7 +1392,8 @@ bool shell_cd_walk(bool physical, bool address_to say)
                                                               : shell_directory,
                                           shell_cd_target);
 
-                                if (shell_cd_try(candidate, physical))
+                                if (shell_cd_try(candidate, physical,
+                                                 physical_named))
                                 {
                                         address_to say = true;
                                         return true;
@@ -1376,47 +1407,76 @@ bool shell_cd_walk(bool physical, bool address_to say)
         path_join(candidate, sizeof(candidate), shell_directory,
                   shell_cd_target);
 
-        return shell_cd_try(candidate, physical);
+        return shell_cd_try(candidate, physical, physical_named);
 }
 
 fn shell_cd(writer write, string_address input)
 {
         positive index = 1;
         bool physical = false;
+        bool error_if_unnamed = false;
+        bool physical_named = true;
         string_address name = null;
         bool say = false;
 
         if (!shell_directory_holds())
         {
                 shell_here(shell_directory, SHELL_DIRECTORY_MAX);
-                env_set("PWD", shell_directory);
+                env_assign("PWD", shell_directory);
         }
 
         while (index < shell_argc && string_is(shell_argv[index], '-') &&
-               string_get(shell_argv[index] + 1) &&
-               !string_get(shell_argv[index] + 2))
+               string_get(shell_argv[index] + 1))
         {
-                p8 letter = string_get(shell_argv[index] + 1);
+                string_address option = shell_argv[index] + 1;
 
-                if (letter != 'L' && letter != 'P')
+                if (word_is(shell_argv[index], "--"))
+                {
+                        index++;
                         break;
+                }
 
-                physical = letter == 'P';
+                while (string_get(option))
+                {
+                        p8 letter = string_get(option++);
+
+                        if (letter == 'L')
+                                physical = false;
+                        else if (letter == 'P')
+                                physical = true;
+                        else if (letter == 'e')
+                                error_if_unnamed = true;
+                        else
+                        {
+                                string_format(shell_diagnostic,
+                                              "cd: bad option: -%c\n", letter);
+                                return shell_answer(2);
+                        }
+                }
+
                 index++;
         }
 
         if (index < shell_argc)
-                name = shell_argv[index];
+                name = shell_argv[index++];
 
-        if (name && word_is(name, "--") && index + 1 < shell_argc)
-                name = shell_argv[++index];
+        if (index < shell_argc)
+        {
+                shell_diagnostic("cd: too many arguments\n", 0);
+                return shell_answer(2);
+        }
 
         if (!name)
         {
                 name = env_get("HOME");
 
-                if (!name)
+                if (!name || !string_get(name))
                         return shell_answer(0);
+        }
+        else if (!string_get(name))
+        {
+                shell_diagnostic("cd: empty directory\n", 0);
+                return shell_answer(2);
         }
         else if (word_is(name, "-"))
         {
@@ -1431,7 +1491,8 @@ fn shell_cd(writer write, string_address input)
         // first env_set below is free to move out from under them.
         string_copy_max_end(shell_cd_target, name, sizeof(shell_cd_target) - 1);
 
-        if (!shell_cd_walk(physical, address_of say))
+        if (!shell_cd_walk(physical, address_of say,
+                           address_of physical_named))
         {
                 shell_answer(2);
 
@@ -1442,7 +1503,7 @@ fn shell_cd(writer write, string_address input)
         if (say)
                 string_format(write, "%s\n", shell_directory);
 
-        shell_answer(0);
+        shell_answer(error_if_unnamed && physical && !physical_named ? 1 : 0);
 }
 
 fn shell_clear(writer write, string_address input)
@@ -1693,12 +1754,12 @@ fn env_unset(string_address name)
         env_unset_span(name, string_length(env_reading(name)));
 }
 
-fn env_set_number(string_address name, positive value)
+bool env_set_number(string_address name, positive value)
 {
         p8 text[24];
 
         positive_into_string(text, value);
-        env_set(name, text);
+        return env_assign(name, text);
 }
 
 // Forwards, and signed. string_to_bipolar reads from the end of the string,
@@ -2296,7 +2357,7 @@ fn shell_local(writer write, string_address input)
                 }
 
                 if (mark)
-                        env_set(name, mark + 1);
+                        env_assign(name, mark + 1);
         }
 
         if (name)
@@ -2360,7 +2421,7 @@ fn shell_readonly(writer write, string_address input)
                                 return;
                         }
 
-                        set = env_set(word, mark + 1);
+                        set = env_assign(word, mark + 1);
 
                         if (!set || !readonly_add(word, length))
                         {
@@ -3417,6 +3478,18 @@ bool read_waited(bipolar tenths)
         return descriptor_wait_readable(0, address_of span, null) > 0;
 }
 
+static bool read_set(string_address name, string_address value)
+{
+        if (env_assign(name, value))
+                return true;
+
+        string_format(shell_diagnostic,
+                      env_readonly(name) ? "read: %s is readonly\n"
+                                         : "read: no room for %s\n",
+                      name);
+        return false;
+}
+
 fn shell_read(writer write, string_address input)
 {
         bool raw = false;
@@ -3424,6 +3497,7 @@ fn shell_read(writer write, string_address input)
         positive at = 0;
         positive names;
         bool ended = false;
+        bool failed = false;
         bool limited = false;
         positive limit = 0;
         bipolar tenths = -1;
@@ -3538,10 +3612,10 @@ fn shell_read(writer write, string_address input)
 
         names = index;
 
-        // Diagnose names before consuming the record. env_set refuses a bad
-        // or readonly name too, but treating that refusal as success made a
-        // script believe input had been stored when it had only been thrown
-        // away.
+        // A malformed operand is not a variable assignment and can be
+        // rejected before input is touched. A readonly name is different:
+        // Issue 8 requires names before it to have been assigned, so that
+        // error is found only when assignments are performed below.
         if (names >= shell_argc)
         {
                 if (env_readonly("REPLY"))
@@ -3564,13 +3638,6 @@ fn shell_read(writer write, string_address input)
                                 return shell_answer(2);
                         }
 
-                        if (env_readonly(shell_argv[name]))
-                        {
-                                string_format(shell_diagnostic,
-                                              "read: %s is readonly\n",
-                                              shell_argv[name]);
-                                return shell_answer(2);
-                        }
                 }
         }
 
@@ -3590,9 +3657,15 @@ fn shell_read(writer write, string_address input)
                         break;
                 }
 
-                if (system_call_3(syscall(read), 0, (positive)address_of value, 1) != 1)
+                bipolar got = system_call_3(syscall(read), 0,
+                                             (positive)address_of value, 1);
+
+                if (got != 1)
                 {
-                        ended = true;
+                        if (got < 0)
+                                failed = true;
+                        else
+                                ended = true;
                         break;
                 }
 
@@ -3603,9 +3676,15 @@ fn shell_read(writer write, string_address input)
                 {
                         p8 next;
 
-                        if (system_call_3(syscall(read), 0, (positive)address_of next, 1) != 1)
+                        got = system_call_3(syscall(read), 0,
+                                            (positive)address_of next, 1);
+
+                        if (got != 1)
                         {
-                                ended = true;
+                                if (got < 0)
+                                        failed = true;
+                                else
+                                        ended = true;
                                 break;
                         }
 
@@ -3627,13 +3706,10 @@ fn shell_read(writer write, string_address input)
 
         if (names >= shell_argc)
         {
-                if (!env_set("REPLY", read_line))
-                {
-                        shell_diagnostic("read: no room for REPLY\n", 0);
+                if (!read_set("REPLY", read_line))
                         return shell_answer(2);
-                }
 
-                return shell_answer(ended ? 1 : 0);
+                return shell_answer(failed ? 2 : ended ? 1 : 0);
         }
 
         {
@@ -3686,11 +3762,8 @@ fn shell_read(writer write, string_address input)
                                 stop--;
 
                         read_line[stop] = end;
-                        if (!env_set(shell_argv[names], read_line + begin))
-                        {
-                                shell_diagnostic("read: no room for value\n", 0);
+                        if (!read_set(shell_argv[names], read_line + begin))
                                 return shell_answer(2);
-                        }
 
                         at = read_length;
                         names++;
@@ -3724,16 +3797,13 @@ fn shell_read(writer write, string_address input)
                         at = after;
                 }
 
-                if (!env_set(shell_argv[names], read_line + begin))
-                {
-                        shell_diagnostic("read: no room for value\n", 0);
+                if (!read_set(shell_argv[names], read_line + begin))
                         return shell_answer(2);
-                }
 
                 names++;
         }
 
-        shell_answer(ended ? 1 : 0);
+        shell_answer(failed ? 2 : ended ? 1 : 0);
 }
 
 /*
@@ -3751,28 +3821,46 @@ fn shell_read(writer write, string_address input)
 */
 static bipolar getopts_offset = -1;
 
+static bool getopts_optarg(string_address value)
+{
+        if (value)
+                return env_assign("OPTARG", value);
+
+        if (env_readonly("OPTARG"))
+                return false;
+
+        env_unset("OPTARG");
+        return true;
+}
+
 // Nothing left to read: the name is told so, and where the walk stopped is
 // left where it is for a caller that puts OPTIND back.
-fn shell_getopts_done(string_address name, positive next)
+fn shell_getopts_done(string_address name, positive next, bool assigned)
 {
         getopts_offset = -1;
-        env_set_number("OPTIND", next + 1);
-        env_set(name, "?");
 
-        shell_answer(1);
+        if (!env_set_number("OPTIND", next + 1))
+                assigned = false;
+        if (!env_assign(name, "?"))
+                assigned = false;
+
+        shell_answer(assigned ? 1 : 2);
 }
 
 // Where the next call starts, and how far into the word it just read. A step
 // that has nothing after it says the word is finished with.
 fn shell_getopts_answer(string_address name, string_address said,
-                        string_address word, string_address step, positive next)
+                        string_address word, string_address step, positive next,
+                        bool assigned)
 {
         getopts_offset = step && string_get(step) ? (bipolar)(step - word) : -1;
 
-        env_set_number("OPTIND", next + 1);
-        env_set(name, said);
+        if (!env_set_number("OPTIND", next + 1))
+                assigned = false;
+        if (!env_assign(name, said))
+                assigned = false;
 
-        shell_answer(0);
+        shell_answer(assigned ? 0 : 2);
 }
 
 fn shell_getopts(writer write, string_address input)
@@ -3795,6 +3883,9 @@ fn shell_getopts(writer write, string_address input)
         options = shell_argv[1];
         name = shell_argv[2];
         silent = string_is(options, ':');
+
+        if (!shell_valid_name(name, string_length(name)))
+                return shell_answer(2);
 
         if (shell_argc > 3)
         {
@@ -3861,13 +3952,15 @@ fn shell_getopts(writer write, string_address input)
                 step = word;
 
                 if (!step || string_not(step, '-') || !string_get(step + 1))
-                        return shell_getopts_done(name, next);
+                        return shell_getopts_done(name, next,
+                                                  getopts_optarg(null));
 
                 step++;
                 next++;
 
                 if (string_is(step, '-') && !string_get(step + 1))
-                        return shell_getopts_done(name, next);
+                        return shell_getopts_done(name, next,
+                                                  getopts_optarg(null));
         }
 
         letter = string_get(step++);
@@ -3880,16 +3973,19 @@ fn shell_getopts(writer write, string_address input)
 
         if (!found)
         {
+                bool assigned;
+
                 if (silent)
-                        env_set("OPTARG", value);
+                        assigned = getopts_optarg(value);
                 else
                 {
-                        env_unset("OPTARG");
+                        assigned = getopts_optarg(null);
                         string_format(shell_diagnostic,
                                       "getopts: illegal option -- %s\n", value);
                 }
 
-                return shell_getopts_answer(name, "?", word, step, next);
+                return shell_getopts_answer(name, "?", word, step, next,
+                                            assigned);
         }
 
         if (string_is(found + 1, ':'))
@@ -3898,30 +3994,33 @@ fn shell_getopts(writer write, string_address input)
                 {
                         if (silent)
                         {
-                                env_set("OPTARG", value);
+                                bool assigned = getopts_optarg(value);
 
-                                return shell_getopts_answer(name, ":", word, null, next);
+                                return shell_getopts_answer(name, ":", word, null,
+                                                            next, assigned);
                         }
 
-                        env_unset("OPTARG");
+                        bool assigned = getopts_optarg(null);
                         string_format(shell_diagnostic,
                                       "getopts: option requires an argument -- %s\n",
                                       value);
 
-                        return shell_getopts_answer(name, "?", word, null, next);
+                        return shell_getopts_answer(name, "?", word, null, next,
+                                                    assigned);
                 }
 
                 if (!string_get(step))
                         step = shell_getopts_list[next++];
 
-                env_set("OPTARG", step);
+                bool assigned = getopts_optarg(step);
 
-                return shell_getopts_answer(name, value, word, null, next);
+                return shell_getopts_answer(name, value, word, null, next,
+                                            assigned);
         }
 
-        env_set("OPTARG", "");
+        bool assigned = getopts_optarg(null);
 
-        return shell_getopts_answer(name, value, word, step, next);
+        return shell_getopts_answer(name, value, word, step, next, assigned);
 }
 
 /*
@@ -4211,6 +4310,8 @@ static positive trap_count;
 static string_address trap_names[] = {
     "EXIT", "HUP", "INT", "QUIT", "ILL", "TRAP", "ABRT", "BUS",
     "FPE", "KILL", "USR1", "SEGV", "USR2", "PIPE", "ALRM", "TERM",
+    "STKFLT", "CHLD", "CONT", "STOP", "TSTP", "TTIN", "TTOU", "URG",
+    "XCPU", "XFSZ", "VTALRM", "PROF", "WINCH", "POLL", "PWR", "SYS",
     null,
 };
 
@@ -4375,41 +4476,127 @@ string_address trap_action(positive number)
         return null;
 }
 
+static fn trap_write_condition(writer write, positive number,
+                               string_address action)
+{
+        write("trap -- ", 8);
+
+        if (action)
+                shell_quoted(write, action);
+        else
+                write("-", 1);
+
+        write(" ", 1);
+
+        if (number < TRAP_NAMES - 1)
+                string_format(write, "%s", trap_names[number]);
+        else
+                positive_to_string(write, number);
+
+        write("\n", 1);
+}
+
+static bool trap_unsigned(string_address word)
+{
+        positive value;
+
+        return string_digits_exact(word, address_of value);
+}
+
 fn shell_trap(writer write, string_address input)
 {
         positive index = 1;
         string_address action;
         b32 answer = 0;
+        bool print = false;
 
-        if (shell_argc < 2)
+        if (index < shell_argc && word_is(shell_argv[index], "-p"))
         {
-                positive at = 0;
+                print = true;
+                index++;
+        }
 
-                while (at < trap_count)
+        if (index < shell_argc && word_is(shell_argv[index], "--"))
+                index++;
+
+        if (print)
+        {
+                if (index >= shell_argc)
                 {
-                        positive number = trap_table[at].number;
+                        // All conditions the shell accepts, excluding the two
+                        // signals POSIX permits trap -p to omit.
+                        for (positive number = 0; number < TRAP_NAMES - 1;
+                             number++)
+                        {
+                                string_address recorded;
 
-                        string_format(write, "trap -- '%s' ", trap_table[at].action);
+                                if (number == 9 || number == 19)
+                                        continue;
 
-                        if (number < 16)
-                                string_format(write, "%s", trap_names[number]);
-                        else
-                                positive_to_string(write, number);
+                                recorded = trap_action(number);
 
-                        write("\n", 1);
-                        at++;
+                                if (!recorded && number &&
+                                    shell_was_ignored(number))
+                                        recorded = (string_address) "";
+
+                                trap_write_condition(write, number, recorded);
+                        }
+                }
+                else
+                {
+                        while (index < shell_argc)
+                        {
+                                bipolar number = trap_number(shell_argv[index++]);
+
+                                if (number < 0 || number >= TRAP_NAMES - 1)
+                                {
+                                        string_format(shell_diagnostic,
+                                                      "trap: invalid signal: %s\n",
+                                                      shell_argv[index - 1]);
+                                        answer = 1;
+                                        continue;
+                                }
+
+                                string_address recorded =
+                                    trap_action((positive)number);
+
+                                if (!recorded && number &&
+                                    shell_was_ignored((b32)number))
+                                        recorded = (string_address) "";
+
+                                trap_write_condition(write, (positive)number,
+                                                     recorded);
+                        }
+                }
+
+                return shell_answer(answer);
+        }
+
+        if (index >= shell_argc)
+        {
+                // Without -p only non-default conditions are listed.  Query
+                // inherited dispositions as well as the explicit table: an
+                // ignored-on-entry signal has never needed a table entry.
+                for (positive number = 0; number < TRAP_NAMES - 1; number++)
+                {
+                        string_address recorded = trap_action(number);
+
+                        if (!recorded && number && shell_was_ignored((b32)number))
+                                recorded = (string_address) "";
+
+                        if (recorded)
+                                trap_write_condition(write, number, recorded);
                 }
 
                 return shell_answer(0);
         }
 
-        if (word_is(shell_argv[index], "--"))
-                index++;
-
-        if (index >= shell_argc)
-                return shell_answer(0);
-
-        action = shell_argv[index++];
+        // An unsigned first operand is the historical reset form: every word
+        // is a condition, including that first one.  Otherwise it is action.
+        if (trap_unsigned(shell_argv[index]))
+                action = null;
+        else
+                action = shell_argv[index++];
 
         // "trap - INT" and "trap '' INT" both take the handler away; the
         // difference between them is what the signal is set to, which is not
@@ -4423,7 +4610,7 @@ fn shell_trap(writer write, string_address input)
 
                 index++;
 
-                if (number < 0 || number > TRAP_SIGNAL_MAX)
+                if (number < 0 || number >= TRAP_NAMES - 1)
                 {
                         string_format(log_error, "trap: invalid signal: %s\n",
                                       shell_argv[index - 1]);
@@ -4902,6 +5089,7 @@ static shell_tool shell_tools[] = {
     {"fetch", net_fetch},
     {"id", file_id},
     {"kill", file_kill},
+    {"link", file_link},
     {"ln", file_ln},
     {"ls", file_ls},
     {"mkdir", file_mkdir},
@@ -4909,6 +5097,8 @@ static shell_tool shell_tools[] = {
     {"mount", storage_program_mount},
     {"mountpoint", storage_program_mountpoint},
     {"mv", file_mv},
+    {"nproc", file_nproc},
+    {"printenv", file_printenv},
     {"readlink", file_readlink},
     {"realpath", file_realpath},
     {"rm", file_rm},
@@ -4919,7 +5109,9 @@ static shell_tool shell_tools[] = {
     {"stty", file_stty},
     {"touch", file_touch},
     {"uname", file_uname},
+    {"unlink", file_unlink},
     {"umount", storage_program_umount},
+    {"whoami", file_whoami},
     {"xargs", file_xargs},
     {"yes", file_yes},
 

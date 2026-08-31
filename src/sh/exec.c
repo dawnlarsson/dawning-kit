@@ -566,7 +566,7 @@ static bool exec_redirect_apply(b32 index)
         for (at = 0; at < node->redirect_count; at++)
         {
                 parse_redirect address_to want = parse_redirects + node->redirect + at;
-                string_address target = shell_expand_word(parse_words[want->word]);
+                string_address target = shell_expand_word(want->text);
                 bipolar opened = -1;
                 b32 redirect_mark = exec_save_count;
                 bool both = want->op == OP_ANDGREAT || want->op == OP_ANDDGREAT;

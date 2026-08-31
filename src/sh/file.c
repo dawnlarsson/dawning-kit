@@ -6659,6 +6659,91 @@ static b32 file_ln()
         return status;
 }
 
+// link / unlink ------------------------------------------------------
+/* The single-purpose POSIX interfaces are deliberately narrower than ln and
+   rm: no collision policy, directory traversal or symlink dereference. */
+static string_address file_simple_operand_list[3];
+static positive file_simple_operand_count;
+
+static fn file_simple_operand(b32 index)
+{
+        if (file_simple_operand_count < 3)
+                file_simple_operand_list[file_simple_operand_count] =
+                    program_argument(index);
+        file_simple_operand_count++;
+}
+
+static b32 file_link()
+{
+        file_simple_operand_count = 0;
+        file_taking taking = {
+            .program = (string_address) "link",
+            .allowed = (string_address) "",
+            .valued = (string_address) "",
+            .operand = file_simple_operand,
+        };
+
+        if (!file_take(address_of taking))
+                return 1;
+        if (file_simple_operand_count != 2)
+        {
+                file_fail(file_simple_operand_count < 2
+                              ? (string_address) "link: missing operand\n"
+                              : (string_address) "link: too many operands\n",
+                          0);
+                return 1;
+        }
+
+        string_address source = file_simple_operand_list[0];
+        string_address target = file_simple_operand_list[1];
+        bipolar answer = system_call_5(syscall(linkat), AT_FDCWD,
+                                       (positive)source, AT_FDCWD,
+                                       (positive)target, 0);
+
+        if (answer < 0)
+        {
+                string_format(file_fail,
+                              "link: cannot create link '%s' to '%s': %s\n",
+                              target, source, file_reason(answer));
+                return 1;
+        }
+        return 0;
+}
+
+static b32 file_unlink()
+{
+        file_simple_operand_count = 0;
+        file_taking taking = {
+            .program = (string_address) "unlink",
+            .allowed = (string_address) "",
+            .valued = (string_address) "",
+            .operand = file_simple_operand,
+        };
+
+        if (!file_take(address_of taking))
+                return 1;
+        if (file_simple_operand_count != 1)
+        {
+                file_fail(!file_simple_operand_count
+                              ? (string_address) "unlink: missing operand\n"
+                              : (string_address) "unlink: too many operands\n",
+                          0);
+                return 1;
+        }
+
+        string_address path = file_simple_operand_list[0];
+        bipolar answer = system_call_3(syscall(unlinkat), AT_FDCWD,
+                                       (positive)path, 0);
+
+        if (answer < 0)
+        {
+                string_format(file_fail, "unlink: cannot unlink '%s': %s\n",
+                              path, file_reason(answer));
+                return 1;
+        }
+        return 0;
+}
+
 // readlink ------------------------------------------------------------
 /*
         readlink [-f|-e|-m] [-n] [-q] [-z] FILE...
@@ -9910,6 +9995,59 @@ static b32 file_env()
         return answer == -ERROR_ACCESS ? 126 : 127;
 }
 
+// printenv -------------------------------------------------------
+static const file_long printenv_longs[] = {
+    {(string_address) "null", '0'},
+    {null, 0},
+};
+
+static b32 file_printenv()
+{
+        file_taking taking = {
+            .program = (string_address) "printenv",
+            .allowed = (string_address) "0",
+            .valued = (string_address) "",
+            .longs = printenv_longs,
+        };
+
+        // GNU reserves 2 for syntax and 1 for a name that is not present.
+        if (!file_take(address_of taking))
+                return 2;
+
+        positive count = (positive)program_argument_count();
+        positive first = taking.first;
+        bool zero = (taking.flags & FILE_FLAG('0')) != 0;
+
+        if (first == count)
+        {
+                string_address address_to environment = file_environment_all();
+
+                for (positive i = 0; environment && environment[i]; i++)
+                        file_written(environment[i], zero);
+
+                log_flush();
+                return 0;
+        }
+
+        b32 status = 0;
+
+        while (first < count)
+        {
+                string_address name = program_argument((b32)first++);
+                string_address value = string_first_of(name, '=')
+                                           ? null
+                                           : file_environment(name);
+
+                if (value)
+                        file_written(value, zero);
+                else
+                        status = 1;
+        }
+
+        log_flush();
+        return status;
+}
+
 // id ------------------------------------------------------------
 /*
         id [-u|-g|-G] [-n] [-r] [-z] [USER]...
@@ -10199,6 +10337,42 @@ static b32 file_id()
         return 0;
 }
 
+// whoami ---------------------------------------------------------
+static b32 file_whoami()
+{
+        file_simple_operand_count = 0;
+        file_taking taking = {
+            .program = (string_address) "whoami",
+            .allowed = (string_address) "",
+            .valued = (string_address) "",
+            .operand = file_simple_operand,
+        };
+
+        if (!file_take(address_of taking))
+                return 1;
+
+        if (file_simple_operand_count)
+        {
+                string_format(file_fail, "whoami: extra operand '%s'\n",
+                              file_simple_operand_list[0]);
+                return 1;
+        }
+
+        positive user = (positive)system_call(syscall(geteuid));
+        p8 name[FILE_NAME_MAX];
+
+        if (!file_user_name(user, name, FILE_NAME_MAX))
+        {
+                string_format(file_fail,
+                              "whoami: cannot find name for user ID %u\n", user);
+                return 1;
+        }
+
+        file_line(name);
+        log_flush();
+        return 0;
+}
+
 // hostname ------------------------------------------------------------
 // hostname, and hostname -s for the part before the first dot.
 static b32 file_hostname()
@@ -10345,6 +10519,401 @@ static b32 file_uname()
         return 0;
 }
 
+// nproc -----------------------------------------------------------
+/* Both nproc number grammars are saturating decimal. --ignore accepts a
+   leading plus but no trailing space; OpenMP accepts trailing space and a
+   comma-delimited nesting tail, but not a plus. */
+static bool nproc_decimal(string_address text, bool plus, bool trailing,
+                          bool comma, positive address_to value)
+{
+        if (!text)
+                return false;
+
+        while (byte_is_space(string_get(text)))
+                text++;
+
+        if (plus && string_is(text, '+'))
+                text++;
+
+        if (!byte_is_digit(string_get(text)))
+                return false;
+
+        positive number = 0;
+
+        while (byte_is_digit(string_get(text)))
+        {
+                positive digit = (positive)(string_get(text++) - '0');
+
+                if (number > (positive_max - digit) / 10)
+                        number = positive_max;
+                else
+                        number = number * 10 + digit;
+        }
+
+        if (trailing)
+                while (byte_is_space(string_get(text)))
+                        text++;
+
+        if (string_get(text) && !(comma && string_is(text, ',')))
+                return false;
+
+        address_to value = number;
+        return true;
+}
+
+static positive nproc_cpu_list(string_address path)
+{
+        p8 text[FILE_PATH_MAX];
+
+        if (file_slurp(path, text, sizeof(text)) <= 0)
+                return 0;
+
+        positive at = 0;
+        positive total = 0;
+
+        while (text[at])
+        {
+                while (byte_is_space(text[at]))
+                        at++;
+
+                positive used = 0;
+                positive first = string_digits(text + at, address_of used);
+
+                if (!used)
+                        return total;
+
+                at += used;
+
+                positive last = first;
+
+                if (text[at] == '-')
+                {
+                        at++;
+
+                        last = string_digits(text + at, address_of used);
+
+                        if (!used)
+                                return 0;
+
+                        at += used;
+                }
+
+                if (last < first || total > positive_max - (last - first + 1))
+                        return 0;
+
+                total += last - first + 1;
+
+                if (text[at] != ',')
+                {
+                        while (byte_is_space(text[at]))
+                                at++;
+
+                        return text[at] ? 0 : total;
+                }
+
+                at++;
+        }
+
+        return total;
+}
+
+#define NPROC_AFFINITY_WORDS 1024
+static positive nproc_affinity_words[NPROC_AFFINITY_WORDS];
+
+static positive nproc_affinity_count()
+{
+        bipolar used = system_call_3(syscall(sched_getaffinity), 0,
+                                     sizeof(nproc_affinity_words),
+                                     (positive)nproc_affinity_words);
+
+        if (used <= 0 || (positive)used > sizeof(nproc_affinity_words))
+                return 0;
+
+        positive count = 0;
+        positive whole = (positive)used / sizeof(positive);
+        positive spare = (positive)used % sizeof(positive);
+
+        for (positive i = 0; i < whole; i++)
+                count += bits_counted(nproc_affinity_words[i]);
+
+        p8 address_to tail = (p8 address_to)(nproc_affinity_words + whole);
+
+        for (positive i = 0; i < spare; i++)
+                count += bits_counted(tail[i]);
+
+        return count;
+}
+
+static bool nproc_cgroup_mount(p8 address_to into)
+{
+        if (file_exists(AT_FDCWD,
+                        (string_address) "/sys/fs/cgroup/cgroup.controllers"))
+        {
+                string_copy_max_end(into, (string_address) "/sys/fs/cgroup",
+                                    FILE_PATH_MAX - 1);
+                return true;
+        }
+
+        if (file_slurp((string_address) "/proc/mounts", df_text, DF_TEXT) <= 0 &&
+            file_slurp((string_address) "/proc/self/mounts", df_text, DF_TEXT) <= 0)
+                return false;
+
+        positive at = 0;
+
+        while (df_text[at])
+        {
+                p8 device[2];
+                p8 where[FILE_PATH_MAX];
+                p8 kind[32];
+
+                at = df_field(df_text, at, device, sizeof(device));
+                at = df_field(df_text, at, where, sizeof(where));
+                at = df_field(df_text, at, kind, sizeof(kind));
+
+                if (!string_compare(kind, (string_address) "cgroup2"))
+                {
+                        string_copy_max_end(into, where, FILE_PATH_MAX - 1);
+                        return true;
+                }
+
+                while (df_text[at] && df_text[at] != '\n')
+                        at++;
+
+                if (df_text[at])
+                        at++;
+        }
+
+        return false;
+}
+
+static positive nproc_cgroup_quota()
+{
+        bipolar policy = system_call_1(syscall(sched_getscheduler), 0);
+
+        // Realtime and deadline scheduling do not honor CFS CPU quotas.
+        if (policy < 0 || policy == 1 || policy == 2 || policy == 6)
+                return positive_max;
+
+        p8 mount[FILE_PATH_MAX];
+
+        if (!nproc_cgroup_mount(mount))
+                return positive_max;
+
+        p8 record[FILE_PATH_MAX];
+        bipolar length = file_slurp((string_address) "/proc/self/cgroup", record,
+                                    sizeof(record));
+
+        if (length <= 0)
+                return positive_max;
+
+        string_address found = null;
+
+        for (positive at = 0; at < (positive)length;)
+        {
+                if (record[at] == '0' && record[at + 1] == ':' &&
+                    record[at + 2] == ':' && record[at + 3] == '/')
+                {
+                        found = record + at + 3;
+                        break;
+                }
+
+                while (record[at] && record[at] != '\n')
+                        at++;
+
+                if (record[at])
+                        at++;
+        }
+
+        if (!found)
+                return positive_max;
+
+        p8 group[FILE_PATH_MAX];
+        positive group_length = 0;
+
+        while (found[group_length] && found[group_length] != '\n' &&
+               group_length + 1 < sizeof(group))
+        {
+                group[group_length] = string_get(found + group_length);
+                group_length++;
+        }
+
+        group[group_length] = end;
+
+        if (!group_length)
+                return positive_max;
+
+        positive lowest = positive_max;
+
+        for (;;)
+        {
+                p8 directory[FILE_PATH_MAX];
+                p8 path[FILE_PATH_MAX];
+                p8 limit[128];
+
+                path_join(directory, sizeof(directory), mount, group);
+                path_join(path, sizeof(path), directory,
+                          (string_address) "cpu.max");
+
+                if (file_slurp(path, limit, sizeof(limit)) > 0 &&
+                    byte_is_digit(limit[0]))
+                {
+                        positive used = 0;
+                        positive quota = string_digits(limit, address_of used);
+                        positive at = used;
+
+                        while (byte_is_space(limit[at]))
+                                at++;
+
+                        positive period_used = 0;
+                        positive period =
+                            string_digits(limit + at, address_of period_used);
+
+                        if (used && period_used && period)
+                        {
+                                positive cpus = quota / period;
+                                positive remainder = quota % period;
+
+                                if (remainder >= period / 2 + (period & 1))
+                                        cpus++;
+
+                                if (!cpus)
+                                        cpus = 1;
+
+                                if (cpus < lowest)
+                                        lowest = cpus;
+                        }
+                }
+
+                if (group[0] == '/' && !group[1])
+                        break;
+
+                p8 address_to slash = (p8 address_to)string_last_of(group, '/');
+
+                if (!slash)
+                        break;
+
+                if (slash == group)
+                        group[1] = end;
+                else
+                        address_to slash = end;
+        }
+
+        return lowest;
+}
+
+static positive nproc_available(bool all)
+{
+        if (!all)
+        {
+                positive count = nproc_affinity_count();
+
+                if (count)
+                        return count;
+        }
+
+        positive count = nproc_cpu_list(all
+                                            ? (string_address)
+                                                  "/sys/devices/system/cpu/possible"
+                                            : (string_address)
+                                                  "/sys/devices/system/cpu/online");
+
+        if (!count && all)
+                count = nproc_cpu_list(
+                    (string_address) "/sys/devices/system/cpu/present");
+
+        if (!count)
+                count = nproc_affinity_count();
+
+        return count ? count : 1;
+}
+
+static positive nproc_omp(string_address name)
+{
+        positive value = 0;
+
+        if (!nproc_decimal(file_environment(name), false, true, true,
+                           address_of value))
+                return 0;
+
+        return value;
+}
+
+static const file_long nproc_longs[] = {
+    {(string_address) "all", 'a'},
+    {(string_address) "ignore", 'i'},
+    {null, 0},
+};
+
+static b32 file_nproc()
+{
+        file_simple_operand_count = 0;
+        file_taking taking = {
+            .program = (string_address) "nproc",
+            .allowed = (string_address) "",
+            .valued = (string_address) "i",
+            .longs = nproc_longs,
+            .operand = file_simple_operand,
+        };
+
+        if (!file_take(address_of taking))
+                return 1;
+
+        if (file_simple_operand_count)
+        {
+                string_format(file_fail, "nproc: extra operand '%s'\n",
+                              file_simple_operand_list[0]);
+                return 1;
+        }
+
+        positive ignore = 0;
+        string_address ignored = file_option_value(address_of taking, 'i');
+
+        if (ignored &&
+            !nproc_decimal(ignored, true, false, false, address_of ignore))
+        {
+                string_format(file_fail, "nproc: invalid number: '%s'\n", ignored);
+                return 1;
+        }
+
+        bool all = (taking.flags & FILE_FLAG('a')) != 0;
+        positive count;
+
+        if (all)
+                count = nproc_available(true);
+        else
+        {
+                positive threads = nproc_omp((string_address) "OMP_NUM_THREADS");
+                positive limit = nproc_omp((string_address) "OMP_THREAD_LIMIT");
+
+                if (!limit)
+                        limit = positive_max;
+
+                if (threads)
+                        count = threads < limit ? threads : limit;
+                else
+                {
+                        positive quota = nproc_cgroup_quota();
+                        count = nproc_available(false);
+
+                        if (quota < count)
+                                count = quota;
+
+                        if (limit < count)
+                                count = limit;
+                }
+        }
+
+        if (!count || ignore >= count)
+                count = 1;
+        else
+                count -= ignore;
+
+        positive_to_string(log, count);
+        log("\n", 1);
+        log_flush();
+        return 0;
+}
+
 // mktemp ----------------------------------------------------------
 /*
         A name nothing else is using, and the file or directory that claims it.
@@ -10361,6 +10930,16 @@ static b32 file_uname()
 
 static string_address mktemp_letters =
     "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+static string_address mktemp_template;
+static bool mktemp_extra_template;
+
+static fn mktemp_operand(b32 index)
+{
+        if (mktemp_template)
+                mktemp_extra_template = true;
+        else
+                mktemp_template = program_argument(index);
+}
 
 // The kernel's randomness, and the clock when there is none to be had.
 static fn mktemp_letters_into(p8 address_to at, positive count)
@@ -10394,32 +10973,36 @@ static const file_long mktemp_longs[] = {
     {(string_address) "directory", 'd'},
     {(string_address) "dry-run", 'u'},
     {(string_address) "quiet", 'q'},
+    {(string_address) "suffix", 'S'},
     {(string_address) "tmpdir", 'T'},
     {null, 0},
 };
 
 static b32 file_mktemp()
 {
-        positive count = (positive)program_argument_count();
+        mktemp_template = null;
+        mktemp_extra_template = false;
+
         file_taking taking = {
             .program = (string_address) "mktemp",
-            .allowed = (string_address) "dpqtu",
-            .valued = (string_address) "p",
+            .allowed = (string_address) "Sdpqtu",
+            .valued = (string_address) "Sp",
             .optional = (string_address) "T",
             .longs = mktemp_longs,
+            .operand = mktemp_operand,
         };
 
         if (!file_take(address_of taking))
                 return 1;
 
-        positive index = taking.first;
         bool directory = (taking.flags & FILE_FLAG('d')) != 0;
         bool dry = (taking.flags & FILE_FLAG('u')) != 0;
         bool quiet = (taking.flags & FILE_FLAG('q')) != 0;
         bool rooted = (taking.flags & (FILE_FLAG('p') | FILE_FLAG('t') |
                                        FILE_FLAG('T'))) != 0;
         string_address base = file_option_value(address_of taking, 'T');
-        string_address template = null;
+        string_address suffix = file_option_value(address_of taking, 'S');
+        string_address template = mktemp_template;
         p8 path[FILE_PATH_MAX];
         positive length = 0;
         positive marks_at;
@@ -10428,10 +11011,7 @@ static b32 file_mktemp()
         if (!base)
                 base = file_option_value(address_of taking, 'p');
 
-        if (index < count)
-                template = program_argument((b32)index++);
-
-        if (index < count)
+        if (mktemp_extra_template)
         {
                 file_fail("mktemp: too many templates\n", 0);
                 return 1;
@@ -10481,6 +11061,18 @@ static b32 file_mktemp()
 
         marks_at = length;
 
+        if (suffix && (string_first_of(suffix, '/') || !length ||
+                       path[length - 1] != 'X'))
+        {
+                file_fail(string_first_of(suffix, '/')
+                              ? (string_address)
+                                    "mktemp: suffix may not contain a slash\n"
+                              : (string_address)
+                                    "mktemp: with --suffix, template must end in X\n",
+                          0);
+                return 1;
+        }
+
         while (marks_at && path[marks_at - 1] != 'X')
                 marks_at--;
 
@@ -10488,6 +11080,20 @@ static b32 file_mktemp()
         {
                 marks_at--;
                 marks++;
+        }
+
+        if (suffix)
+        {
+                positive suffix_length = string_length(suffix);
+
+                if (suffix_length > FILE_PATH_MAX - 1 - length)
+                {
+                        file_fail("mktemp: template too long\n", 0);
+                        return 1;
+                }
+
+                memory_copy_apart_end(path + length, suffix, suffix_length);
+                length += suffix_length;
         }
 
         if (marks < MKTEMP_LEAST)

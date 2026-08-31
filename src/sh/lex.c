@@ -314,6 +314,22 @@ static string_address lex_nesting(string_address at);
 static string_address lex_quote_end(string_address at, p8 quote);
 
 /*
+        Where a POSIX dollar-single-quoted run closes.
+
+        Unlike an ordinary single quote, a backslash carries the byte behind
+        it, in particular \' does not close the run.  The escape is interpreted
+        immediately before expansion; the lexer only has to keep the quoted
+        bytes together and keep delimiters inside them out of the grammar.
+*/
+static PURE string_address lex_dollar_quote_end(string_address at)
+{
+        while (string_get(at) && string_not(at, '\''))
+                at += string_is(at, '\\') && string_get(at + 1) ? 2 : 1;
+
+        return at;
+}
+
+/*
         Step over whatever begins here that a scanner is not allowed to look
         inside, and say whether anything was stepped over.
 
@@ -339,6 +355,20 @@ static b32 lex_skip_held(string_address address_to at)
 {
         string_address step = address_to at;
         p8 value = string_get(step);
+
+        if (value == '$' && string_is(step + 1, '\''))
+        {
+                string_address stop = lex_dollar_quote_end(step + 2);
+
+                if (!string_get(stop))
+                {
+                        address_to at = stop;
+                        return LEX_SKIP_UNCLOSED;
+                }
+
+                address_to at = stop + 1;
+                return LEX_SKIP_STEPPED;
+        }
 
         if (value == '\\' && string_get(step + 1))
         {
@@ -537,6 +567,17 @@ static PURE string_address lex_nesting(string_address at)
         {
                 p8 c = string_get(step);
 
+                if (c == '$' && string_is(step + 1, '\''))
+                {
+                        string_address stop = lex_dollar_quote_end(step + 2);
+
+                        if (!string_get(stop))
+                                return at;
+
+                        step = stop + 1;
+                        continue;
+                }
+
                 if (c == '\\' && string_get(step + 1))
                 {
                         step += 2;
@@ -663,6 +704,17 @@ b32 lex_unfinished(string_address line)
                         continue;
                 }
 
+                if (c == '$' && string_is(step + 1, '\''))
+                {
+                        step = lex_dollar_quote_end(step + 2);
+
+                        if (!string_get(step))
+                                return LEX_OPEN;
+
+                        step++;
+                        continue;
+                }
+
                 if (c == '\'' || c == '"')
                 {
                         step = lex_quote_end(step + 1, c);
@@ -737,6 +789,22 @@ static b32 lex_word(string_address address_to at)
 
                 lex_text[lex_used++] = c;
                 step++;
+
+                if (c == '$' && string_is(step, '\''))
+                {
+                        string_address stop = lex_dollar_quote_end(step + 1);
+
+                        run = (positive)(stop - step) +
+                              (string_get(stop) ? 1 : 0);
+
+                        if (!lex_room(lex_used + run + 3))
+                                return false;
+
+                        memory_copy_apart(lex_text + lex_used, step, run);
+                        lex_used += run;
+                        step += run;
+                        continue;
+                }
 
                 if (c == '\'' || c == '"')
                 {
