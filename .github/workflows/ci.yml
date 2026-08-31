@@ -1,9 +1,15 @@
 name: CI
 
+# Parked: nothing here runs by itself.
+#
+# The lanes below still work and are still worth running -- shellcheck and the
+# dash parse over every script, the whole suite through src/test/run, and the
+# same three compiling lanes again under clang. What has gone is the push and
+# pull_request triggers, so it costs nothing until somebody asks for it.
+#
+# Run it from the Actions tab, or with: gh workflow run ci.yml
+# Restore automatic runs by putting the push and pull_request keys back.
 on:
-  push:
-    branches: [main]
-  pull_request:
   workflow_dispatch:
 
 env:
