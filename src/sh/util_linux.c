@@ -2731,7 +2731,7 @@ static const file_long ul_nsenter_longs[] = {
     {(string_address)"cgroup", '6'}, {(string_address)"time", '7'},
     {(string_address)"setuid", 's'}, {(string_address)"setgid", 'g'},
     {(string_address)"preserve-credentials", 'q'},
-    {(string_address)"root", 'x'}, {(string_address)"wd", 'y'},
+    {(string_address)"root", 'r'}, {(string_address)"wd", 'w'},
     {(string_address)"wdns", 'W'}, {(string_address)"no-fork", 'F'},
     {(string_address)"help", 'h'}, {(string_address)"version", 'V'},
     {null, 0},
@@ -2743,7 +2743,7 @@ static b32 util_linux_nsenter()
             .program = (string_address)"nsenter",
             .allowed = (string_address)"atmuinpUCTSGrwWFVh",
             .valued = (string_address)"tWSGsg",
-            .optional = (string_address)"01234567xyrw",
+            .optional = (string_address)"01234567rw",
             .longs = ul_nsenter_longs,
         };
         b32 answer;
@@ -2810,12 +2810,8 @@ static b32 util_linux_nsenter()
                 entered_pid |= which == UL_NS_PID;
         }
 
-        string_address root = file_option_value(address_of taking, 'x');
-        string_address wd = file_option_value(address_of taking, 'y');
-        if (!root)
-                root = file_option_value(address_of taking, 'r');
-        if (!wd)
-                wd = file_option_value(address_of taking, 'w');
+        string_address root = file_option_value(address_of taking, 'r');
+        string_address wd = file_option_value(address_of taking, 'w');
         p8 root_path[64];
         p8 wd_path[64];
         if ((taking.flags & FILE_FLAG('r')) && !root)
@@ -2828,9 +2824,7 @@ static b32 util_linux_nsenter()
                 ul_proc_path(wd_path, target, null, "cwd");
                 wd = wd_path;
         }
-        if (root && (system_call_1(syscall(chdir), (positive)root) < 0 ||
-                     system_call_1(syscall(chroot), (positive)".") < 0 ||
-                     system_call_1(syscall(chdir), (positive)"/") < 0))
+        if (root && system_call_1(syscall(chroot), (positive)root) < 0)
                 return ul_bad_usage("nsenter", "cannot change root");
         if (wd && system_call_1(syscall(chdir), (positive)wd) < 0)
                 return ul_bad_usage("nsenter", "cannot change directory");

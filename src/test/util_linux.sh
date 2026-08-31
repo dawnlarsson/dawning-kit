@@ -309,6 +309,10 @@ compare 'long namespace options' nsenter \
         'unshare -Urn /bin/sh -c "sleep 5" & target=$!; sleep .1; out=$("$TOOL" --target "$target" --user --net --preserve-credentials /bin/sh -c '\''id -u; readlink /proc/self/ns/net'\''); status=$?; printf "%s\n" "$out" | sed -E "s/\[[0-9]+\]/[ID]/"; kill "$target" 2>/dev/null; wait "$target" 2>/dev/null; exit "$status"'
 compare 'target working directory' nsenter \
         'unshare -Ur /bin/sh -c '\''cd "$1" && sleep 5'\'' sh "$0" & target=$!; sleep .1; "$TOOL" -t "$target" -U --preserve-credentials -w /bin/pwd; status=$?; kill "$target" 2>/dev/null; wait "$target" 2>/dev/null; exit "$status"' "$work"
+compare 'long target working directory' nsenter \
+        'unshare -Ur /bin/sh -c '\''cd "$1" && sleep 5'\'' sh "$0" & target=$!; sleep .1; "$TOOL" -t "$target" -U --preserve-credentials --wd /bin/pwd; status=$?; kill "$target" 2>/dev/null; wait "$target" 2>/dev/null; exit "$status"' "$work"
+compare 'long target root' nsenter \
+        'unshare -Ur /bin/sh -c "sleep 5" & target=$!; sleep .1; "$TOOL" -t "$target" -U --preserve-credentials --root /bin/pwd; status=$?; kill "$target" 2>/dev/null; wait "$target" 2>/dev/null; exit "$status"'
 compare 'explicit credentials override preserve' nsenter \
         'unshare -U --map-user=7 --map-group=8 /bin/sh -c "sleep 5" & target=$!; sleep .1; "$TOOL" -t "$target" -U --preserve-credentials --setuid=7 --setgid=8 /bin/sh -c '\''id -u; id -g'\''; status=$?; kill "$target" 2>/dev/null; wait "$target" 2>/dev/null; exit "$status"'
 compare 'explicit namespace files' nsenter \
