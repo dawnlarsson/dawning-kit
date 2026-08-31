@@ -22,7 +22,7 @@ trap 'rm -rf "$work"' EXIT INT TERM
 
 mkdir "$work/bin"
 for name in setsid setpgid ionice fadvise taskset renice prlimit chrt \
-        uclampset flock; do
+        uclampset flock unshare nsenter; do
         ln -s "$subject" "$work/bin/$name"
 done
 
@@ -65,7 +65,7 @@ section util-linux
 
 group reference
 for utility in setsid setpgid ionice fadvise taskset renice prlimit chrt \
-        uclampset flock; do
+        uclampset flock unshare nsenter; do
         version=$($utility --version 2>/dev/null | head -1 || true)
         case $version in
         *'util-linux 2.42.2'*) won ;;
@@ -274,11 +274,55 @@ compare 'fcntl byte range' flock \
 compare 'incompatible no-fork close' flock \
         '"$TOOL" --no-fork --close "$0" /bin/true' "$lock"
 
+group unshare
+compare 'map root user' unshare \
+        '"$TOOL" -Ur /bin/sh -c '\''id -u; id -g; cat /proc/self/uid_map; cat /proc/self/gid_map'\'''
+compare 'map current user' unshare \
+        '"$TOOL" -Uc /bin/sh -c '\''id -u; id -g; cat /proc/self/uid_map; cat /proc/self/gid_map'\'''
+compare 'map chosen identities' unshare \
+        '"$TOOL" -U --map-user=7 --map-group=8 /bin/sh -c '\''id -u; id -g'\'''
+compare 'combined namespace cluster' unshare \
+        'out=$("$TOOL" -Urnm --propagation unchanged /bin/sh -c '\''for n in user mnt net; do readlink /proc/self/ns/$n; done'\''); status=$?; printf "%s\n" "$out" | sed -E "s/\[[0-9]+\]/[ID]/"; exit "$status"'
+compare 'pid namespace fork' unshare \
+        '"$TOOL" -Urpf /bin/sh -c '\''echo $$'\'''
+compare 'forked exit status' unshare \
+        '"$TOOL" -Urf /bin/sh -c "exit 7"'
+compare 'forked signal status' unshare \
+        '"$TOOL" -Urf /bin/sh -c '\''kill -TERM $$'\'''
+compare 'time offsets' unshare \
+        '"$TOOL" -UrTf --monotonic 7 --boottime -3 /bin/sh -c '\''cat /proc/self/timens_offsets'\'''
+compare 'working directory' unshare \
+        '"$TOOL" -Ur --wd "$0" /bin/pwd' "$work"
+compare 'long namespace options' unshare \
+        'out=$("$TOOL" --user --map-root-user --net --propagation unchanged /bin/sh -c '\''id -u; readlink /proc/self/ns/net'\''); status=$?; printf "%s\n" "$out" | sed -E "s/\[[0-9]+\]/[ID]/"; exit "$status"'
+compare 'invalid propagation' unshare \
+        '"$TOOL" -Um --propagation impossible /bin/true'
+compare 'time offset requires namespace' unshare \
+        '"$TOOL" --monotonic 1 /bin/true'
+compare 'setgroups requires namespace' unshare \
+        '"$TOOL" --setgroups deny /bin/true'
+
+group nsenter
+compare 'enter user mount and net' nsenter \
+        'unshare -Urnm /bin/sh -c "sleep 5" & target=$!; sleep .1; out=$("$TOOL" -t "$target" -U -m -n --preserve-credentials /bin/sh -c '\''id -u; for n in user mnt net; do readlink /proc/self/ns/$n; done'\''); status=$?; printf "%s\n" "$out" | sed -E "s/\[[0-9]+\]/[ID]/"; kill "$target" 2>/dev/null; wait "$target" 2>/dev/null; exit "$status"'
+compare 'long namespace options' nsenter \
+        'unshare -Urn /bin/sh -c "sleep 5" & target=$!; sleep .1; out=$("$TOOL" --target "$target" --user --net --preserve-credentials /bin/sh -c '\''id -u; readlink /proc/self/ns/net'\''); status=$?; printf "%s\n" "$out" | sed -E "s/\[[0-9]+\]/[ID]/"; kill "$target" 2>/dev/null; wait "$target" 2>/dev/null; exit "$status"'
+compare 'target working directory' nsenter \
+        'unshare -Ur /bin/sh -c '\''cd "$1" && sleep 5'\'' sh "$0" & target=$!; sleep .1; "$TOOL" -t "$target" -U --preserve-credentials -w /bin/pwd; status=$?; kill "$target" 2>/dev/null; wait "$target" 2>/dev/null; exit "$status"' "$work"
+compare 'explicit credentials override preserve' nsenter \
+        'unshare -U --map-user=7 --map-group=8 /bin/sh -c "sleep 5" & target=$!; sleep .1; "$TOOL" -t "$target" -U --preserve-credentials --setuid=7 --setgid=8 /bin/sh -c '\''id -u; id -g'\''; status=$?; kill "$target" 2>/dev/null; wait "$target" 2>/dev/null; exit "$status"'
+compare 'explicit namespace files' nsenter \
+        'unshare -Urn /bin/sh -c "sleep 5" & target=$!; sleep .1; out=$("$TOOL" --user="/proc/$target/ns/user" --net="/proc/$target/ns/net" --preserve-credentials /bin/sh -c '\''id -u; readlink /proc/self/ns/net'\''); status=$?; printf "%s\n" "$out" | sed -E "s/\[[0-9]+\]/[ID]/"; kill "$target" 2>/dev/null; wait "$target" 2>/dev/null; exit "$status"'
+compare 'pid namespace forks command' nsenter \
+        'mark=$0/pid-target; rm -f "$mark"; unshare -Urp /bin/sh -c '\''sleep 5 & echo $! > "$1"; wait'\'' sh "$mark" & owner=$!; tries=0; while [ ! -s "$mark" ] && [ "$tries" -lt 50 ]; do sleep .02; tries=$((tries + 1)); done; target=$(cat "$mark"); out=$("$TOOL" -t "$target" -U -p --preserve-credentials /bin/sh -c '\''echo $$; readlink /proc/self/ns/pid'\''); status=$?; printf "%s\n" "$out" | sed -E "s/\[[0-9]+\]/[ID]/"; kill "$owner" 2>/dev/null; wait "$owner" 2>/dev/null; rm -f "$mark"; exit "$status"' "$work"
+compare 'requires target' nsenter '"$TOOL" -m /bin/true'
+compare 'invalid target' nsenter '"$TOOL" -t impossible -m /bin/true'
+
 # Exact upstream executable denominator. The supported list is intentionally
 # separate: every upstream name must be in exactly one side, and implementing
 # a remaining name makes this fail until the capability claim is moved.
 upstream='addpart agetty bits blkdiscard blkid blkpr blkzone blockdev cal cfdisk chcpu chfn chmem choom chrt chsh col colcrt colrm column copyfilerange coresched ctrlaltdel delpart dmesg eject enosys exch fadvise fallocate fdisk fincore findfs findmnt flock fsck fsck.cramfs fsck.minix fsfreeze fstrim getino getopt hardlink hexdump hwclock ionice ipcmk ipcrm ipcs irqtop isosize kill last lastlog2 ldattach line logger login look losetup lsblk lsclocks lscpu lsfd lsipc lsirq lslocks lslogins lsmem lsns mcookie mesg mkfs mkfs.bfs mkfs.cramfs mkfs.minix mkswap more mount mountpoint namei newgrp nologin nsenter partx pg pipesz pivot_root prlimit readprofile rename renice resizepart rev rfkill rtcwake runuser script scriptlive scriptreplay setarch setpgid setpriv setsid setterm sfdisk su sulogin swaplabel swapoff swapon switch_root taskset tunelp uclampset ul umount unshare utmpdump uuidd uuidgen uuidparse vipw waitpid wall wdctl whereis wipefs write zramctl'
-supported='blkid chrt fadvise findfs findmnt flock ionice kill mount mountpoint prlimit renice rev setpgid setsid taskset uclampset umount'
+supported='blkid chrt fadvise findfs findmnt flock ionice kill mount mountpoint nsenter prlimit renice rev setpgid setsid taskset uclampset umount unshare'
 
 awk '
         /static shell_tool shell_tools\[\]/ { inside=1; next }

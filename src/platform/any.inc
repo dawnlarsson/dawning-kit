@@ -24,6 +24,16 @@
 #define MS_I_VERSION (1 << 23)
 #define MS_STRICTATIME (1 << 24)
 
+/* Linux namespace types, shared by world(1), unshare(1) and nsenter(1). */
+#define CLONE_NEWTIME 0x00000080
+#define CLONE_NEWNS 0x00020000
+#define CLONE_NEWCGROUP 0x02000000
+#define CLONE_NEWUTS 0x04000000
+#define CLONE_NEWIPC 0x08000000
+#define CLONE_NEWUSER 0x10000000
+#define CLONE_NEWPID 0x20000000
+#define CLONE_NEWNET 0x40000000
+
 #define DT_DIR 4
 #define DT_REG 8
 #define DT_LNK 10

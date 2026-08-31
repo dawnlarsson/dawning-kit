@@ -2239,6 +2239,643 @@ static b32 util_linux_flock()
         return answer;
 }
 
+// namespaces ------------------------------------------------------
+
+typedef struct
+{
+        string_address name;
+        p8 option_bit;
+        p8 value_bit;
+        positive flag;
+} ul_namespace;
+
+enum
+{
+        UL_NS_MOUNT,
+        UL_NS_UTS,
+        UL_NS_IPC,
+        UL_NS_NET,
+        UL_NS_PID,
+        UL_NS_USER,
+        UL_NS_CGROUP,
+        UL_NS_TIME,
+        UL_NS_COUNT,
+};
+
+static const ul_namespace ul_namespaces[] = {
+    {(string_address)"mnt", 12, 52, CLONE_NEWNS},
+    {(string_address)"uts", 20, 53, CLONE_NEWUTS},
+    {(string_address)"ipc", 8, 54, CLONE_NEWIPC},
+    {(string_address)"net", 13, 55, CLONE_NEWNET},
+    {(string_address)"pid", 15, 56, CLONE_NEWPID},
+    {(string_address)"user", 46, 57, CLONE_NEWUSER},
+    {(string_address)"cgroup", 28, 58, CLONE_NEWCGROUP},
+    {(string_address)"time", 45, 59, CLONE_NEWTIME},
+};
+
+static bool ul_namespace_selected(file_taking address_to taking,
+                                  const ul_namespace address_to space)
+{
+        return (taking->flags & (((positive)1 << space->option_bit) |
+                                 ((positive)1 << space->value_bit))) != 0;
+}
+
+static string_address ul_namespace_value(file_taking address_to taking,
+                                         const ul_namespace address_to space)
+{
+        return taking->value[space->value_bit];
+}
+
+static fn ul_proc_path(p8 address_to path, b32 pid,
+                       string_address directory, string_address name)
+{
+        positive at = 6;
+
+        memory_copy_apart(path, "/proc/", at);
+        at += positive_into_string(path + at, (positive)(p32)pid);
+        path[at++] = '/';
+        if (directory)
+        {
+                positive length = string_length(directory);
+                memory_copy_apart(path + at, directory, length);
+                at += length;
+                path[at++] = '/';
+        }
+        string_copy_end(path + at, name);
+}
+
+static bipolar ul_namespace_open(string_address program, b32 target,
+                                 const ul_namespace address_to space,
+                                 string_address path)
+{
+        p8 made[64];
+
+        if (!path)
+        {
+                ul_proc_path(made, target, "ns", space->name);
+                path = made;
+        }
+
+        bipolar handle = system_call_4(syscall(openat), AT_FDCWD,
+                                        (positive)path,
+                                        FILE_READ | O_CLOEXEC, 0);
+        if (handle < 0)
+                string_format(file_fail, "%s: cannot open %s: %s\n",
+                              program, path, file_reason(handle));
+        return handle;
+}
+
+static b32 ul_namespace_write(string_address path, address_any bytes,
+                              positive length, string_address program)
+{
+        bipolar handle = system_call_4(syscall(openat), AT_FDCWD,
+                                        (positive)path, FILE_WRITE, 0644);
+        bool failed = handle < 0 ||
+                      system_write_all((positive)handle, bytes, length) != length;
+
+        if (handle >= 0)
+                system_call_1(syscall(close), handle);
+        if (failed)
+                string_format(file_fail, "%s: cannot write %s: %s\n",
+                              program, path,
+                              file_reason(handle < 0 ? handle : -ERROR_INVALID));
+        return failed;
+}
+
+static b32 ul_namespace_map(string_address path, positive inside,
+                            positive outside, positive count,
+                            string_address program)
+{
+        p8 line[96];
+        positive at = positive_into_string(line, inside);
+
+        line[at++] = ' ';
+        at += positive_into_string(line + at, outside);
+        line[at++] = ' ';
+        at += positive_into_string(line + at, count);
+        line[at++] = '\n';
+        return ul_namespace_write(path, line, at, program);
+}
+
+static bool ul_namespace_range(string_address text, positive address_to inside,
+                               positive address_to outside,
+                               positive address_to count)
+{
+        string_address at = text;
+
+        if (!ul_size_number(address_of at, 10, inside) || !string_is(at, ':'))
+                return false;
+        at++;
+        if (!ul_size_number(address_of at, 10, outside) || !string_is(at, ':'))
+                return false;
+        at++;
+        return ul_size_number(address_of at, 10, count) && !string_get(at) &&
+               address_to count != 0;
+}
+
+static bool ul_namespace_id(string_address text, bool group,
+                            positive address_to id)
+{
+        positive parsed;
+
+        if (ul_unsigned(text, b32_max, address_of parsed))
+        {
+                address_to id = parsed;
+                return true;
+        }
+
+        bipolar named = group ? file_group_id(text) : file_user_id(text);
+        if (named < 0)
+                return false;
+        address_to id = (positive)named;
+        return true;
+}
+
+static b32 ul_namespace_identity(string_address program,
+                                 string_address uid_text,
+                                 string_address gid_text,
+                                 bool default_root)
+{
+        positive uid = 0;
+        positive gid = 0;
+
+        if ((uid_text && !ul_namespace_id(uid_text, false, address_of uid)) ||
+            (gid_text && !ul_namespace_id(gid_text, true, address_of gid)))
+                return ul_bad_usage(program, "invalid user or group");
+
+        if ((gid_text || default_root) &&
+            system_call_3(syscall(setresgid), gid, gid, gid) < 0)
+                return ul_bad_usage(program, "setgid failed");
+        if ((uid_text || default_root) &&
+            system_call_3(syscall(setresuid), uid, uid, uid) < 0)
+                return ul_bad_usage(program, "setuid failed");
+        return 0;
+}
+
+static b32 ul_namespace_wait(bipolar child)
+{
+        positive status = 0;
+
+        return system_wait4_retry(child, address_of status, 0, null) < 0
+                   ? 1 : wait_status_code(status);
+}
+
+typedef struct
+{
+        bool uid;
+        bool gid;
+        bool deny_groups;
+        positive uid_inside;
+        positive uid_outside;
+        positive uid_count;
+        positive gid_inside;
+        positive gid_outside;
+        positive gid_count;
+} ul_user_mapping;
+
+/* A task inside a new user namespace cannot authorize its own uid_map.  Leave
+   one tiny helper in the old namespace while the original process unshares;
+   preserving that original PID matters to callers which background unshare. */
+static b32 ul_unshare_user(ul_user_mapping address_to map)
+{
+        b32 ready[2];
+
+        if (system_call_2(syscall(pipe2), (positive)address_of ready, 0) < 0)
+                return ul_bad_usage("unshare", "cannot make mapping channel");
+
+        b32 target = (b32)system_call(syscall(getpid));
+        log_flush();
+        bipolar helper = system_call_2(syscall(clone), SIGCHLD, 0);
+        if (helper < 0)
+        {
+                system_call_1(syscall(close), ready[0]);
+                system_call_1(syscall(close), ready[1]);
+                return ul_bad_usage("unshare", "fork failed");
+        }
+
+        p8 byte = 1;
+        if (!helper)
+        {
+                system_call_1(syscall(close), ready[1]);
+                bool failed = system_call_3(syscall(read), ready[0],
+                                            (positive)address_of byte, 1) != 1;
+                p8 path[64];
+
+                if (!failed && map->deny_groups)
+                {
+                        ul_proc_path(path, target, null, "setgroups");
+                        failed = ul_namespace_write(path, "deny", 4, "unshare");
+                }
+                if (!failed && map->uid)
+                {
+                        ul_proc_path(path, target, null, "uid_map");
+                        failed = ul_namespace_map(path, map->uid_inside,
+                                                  map->uid_outside,
+                                                  map->uid_count, "unshare");
+                }
+                if (!failed && map->gid)
+                {
+                        ul_proc_path(path, target, null, "gid_map");
+                        failed = ul_namespace_map(path, map->gid_inside,
+                                                  map->gid_outside,
+                                                  map->gid_count, "unshare");
+                }
+                system_call_1(syscall(close), ready[0]);
+                log_flush();
+                system_call_1(syscall(exit), failed);
+                return 1;
+        }
+
+        system_call_1(syscall(close), ready[0]);
+        bool failed = system_call_1(syscall(unshare), CLONE_NEWUSER) < 0 ||
+                      system_call_3(syscall(write), ready[1],
+                                    (positive)address_of byte, 1) != 1;
+        system_call_1(syscall(close), ready[1]);
+        b32 answer = ul_namespace_wait(helper);
+        return failed ? 1 : answer;
+}
+
+static const file_long ul_unshare_longs[] = {
+    {(string_address)"mount", '0'}, {(string_address)"uts", '1'},
+    {(string_address)"ipc", '2'}, {(string_address)"net", '3'},
+    {(string_address)"pid", '4'}, {(string_address)"user", '5'},
+    {(string_address)"cgroup", '6'}, {(string_address)"time", '7'},
+    {(string_address)"fork", 'f'}, {(string_address)"mount-proc", 'q'},
+    {(string_address)"propagation", 'P'}, {(string_address)"root", 'R'},
+    {(string_address)"wd", 'w'}, {(string_address)"setuid", 'S'},
+    {(string_address)"setgid", 'G'}, {(string_address)"map-user", 'x'},
+    {(string_address)"map-group", 'y'},
+    {(string_address)"map-root-user", 'r'},
+    {(string_address)"map-current-user", 'c'},
+    {(string_address)"map-users", 'd'},
+    {(string_address)"map-groups", 'g'},
+    {(string_address)"setgroups", 's'},
+    {(string_address)"monotonic", 'o'},
+    {(string_address)"boottime", 'b'},
+    {(string_address)"help", 'h'}, {(string_address)"version", 'V'},
+    {null, 0},
+};
+
+static positive ul_unshare_propagation(string_address text)
+{
+        if (string_equals(text, "private")) return MS_PRIVATE;
+        if (string_equals(text, "shared")) return MS_SHARED;
+        if (string_equals(text, "slave")) return MS_SLAVE;
+        if (string_equals(text, "unchanged")) return 0;
+        return positive_max;
+}
+
+static b32 ul_unshare_time(file_taking address_to taking)
+{
+        p8 line[128];
+        positive at = 0;
+        string_address values[] = {
+            file_option_value(taking, 'o'), file_option_value(taking, 'b')};
+        string_address names[] = {
+            (string_address)"monotonic ", (string_address)"boottime "};
+
+        for (positive which = 0; which < 2; which++)
+        {
+                if (!values[which])
+                        continue;
+                bipolar offset;
+                if (!nice_adjustment(values[which], address_of offset))
+                        return ul_bad_usage("unshare", "invalid time offset");
+                positive length = string_length(names[which]);
+                memory_copy_apart(line + at, names[which], length);
+                at += length;
+                at += bipolar_into_string(line + at, offset);
+                memory_copy_apart(line + at, " 0\n", 3);
+                at += 3;
+        }
+
+        return at ? ul_namespace_write("/proc/self/timens_offsets", line, at,
+                                       "unshare") : 0;
+}
+
+static b32 util_linux_unshare()
+{
+        file_taking taking = {
+            .program = (string_address)"unshare",
+            .allowed = (string_address)"muinpUCTfrcRwSGVh",
+            .valued = (string_address)"PRwSGxydgsob",
+            .optional = (string_address)"01234567q",
+            .longs = ul_unshare_longs,
+        };
+        b32 answer;
+        positive count = (positive)program_argument_count();
+
+        if (!file_take(address_of taking))
+                return 1;
+        if (ul_meta(address_of taking, "[options] [program [argument ...]]",
+                    address_of answer))
+                return answer;
+
+        positive flags = 0;
+        for (positive at = 0; at < UL_NS_COUNT; at++)
+                if (ul_namespace_selected(address_of taking,
+                                          ul_namespaces + at))
+                        flags |= ul_namespaces[at].flag;
+
+        bool map_root = (taking.flags & FILE_FLAG('r')) != 0;
+        bool map_current = (taking.flags & FILE_FLAG('c')) != 0;
+        string_address map_user = file_option_value(address_of taking, 'x');
+        string_address map_group = file_option_value(address_of taking, 'y');
+        string_address users = file_option_value(address_of taking, 'd');
+        string_address groups = file_option_value(address_of taking, 'g');
+        if (map_root && map_current)
+                return ul_bad_usage("unshare", "contradictory user mappings");
+        if (map_root || map_current || map_user || map_group || users || groups)
+                flags |= CLONE_NEWUSER;
+
+        if (taking.flags & FILE_FLAG('q'))
+                flags |= CLONE_NEWNS;
+        if ((file_option_value(address_of taking, 'o') ||
+             file_option_value(address_of taking, 'b')) &&
+            !(flags & CLONE_NEWTIME))
+                return ul_bad_usage("unshare",
+                                    "time offset requires time namespace");
+        string_address setting = file_option_value(address_of taking, 's');
+        if (setting && !(flags & CLONE_NEWUSER))
+                return ul_bad_usage("unshare",
+                                    "setgroups requires user namespace");
+
+        positive other = flags & ~(positive)CLONE_NEWUSER;
+        if (flags & CLONE_NEWUSER)
+        {
+                positive real_uid = (positive)system_call(syscall(getuid));
+                positive real_gid = (positive)system_call(syscall(getgid));
+                ul_user_mapping map = {
+                    .uid = users || map_user || map_root || map_current,
+                    .gid = groups || map_group || map_root || map_current,
+                    .uid_inside = map_root ? 0 : real_uid,
+                    .uid_outside = real_uid,
+                    .uid_count = 1,
+                    .gid_inside = map_root ? 0 : real_gid,
+                    .gid_outside = real_gid,
+                    .gid_count = 1,
+                };
+
+                if (map_user &&
+                    !ul_namespace_id(map_user, false, address_of map.uid_inside))
+                        return ul_bad_usage("unshare", "invalid map user");
+                if (map_group &&
+                    !ul_namespace_id(map_group, true, address_of map.gid_inside))
+                        return ul_bad_usage("unshare", "invalid map group");
+                if (users && !ul_namespace_range(users,
+                                                  address_of map.uid_inside,
+                                                  address_of map.uid_outside,
+                                                  address_of map.uid_count))
+                        return ul_bad_usage("unshare", "invalid user map");
+                if (groups && !ul_namespace_range(groups,
+                                                   address_of map.gid_inside,
+                                                   address_of map.gid_outside,
+                                                   address_of map.gid_count))
+                        return ul_bad_usage("unshare", "invalid group map");
+
+                if (setting && !string_equals(setting, "deny") &&
+                    !string_equals(setting, "allow"))
+                        return ul_bad_usage("unshare", "invalid setgroups mode");
+                map.deny_groups = map.gid &&
+                    (!setting || string_equals(setting, "deny"));
+
+                if (map.uid || map.gid)
+                {
+                        answer = ul_unshare_user(address_of map);
+                        if (answer)
+                                return answer;
+                }
+                else if (system_call_1(syscall(unshare), CLONE_NEWUSER) < 0)
+                        return ul_bad_usage("unshare", "unshare failed");
+        }
+
+        if (other && system_call_1(syscall(unshare), other) < 0)
+                return ul_bad_usage("unshare", "unshare failed");
+        if (ul_unshare_time(address_of taking))
+                return 1;
+
+        positive propagation = file_option_value(address_of taking, 'P')
+            ? ul_unshare_propagation(file_option_value(address_of taking, 'P'))
+            : MS_PRIVATE;
+        if (propagation == positive_max)
+                return ul_bad_usage("unshare", "invalid propagation mode");
+        if ((flags & CLONE_NEWNS) && propagation &&
+            system_call_5(syscall(mount), 0, (positive)"/", 0,
+                          MS_REC | propagation, 0) < 0)
+                return ul_bad_usage("unshare", "cannot change propagation");
+
+        for (positive at = 0; at < UL_NS_COUNT; at++)
+        {
+                string_address target = ul_namespace_value(
+                    address_of taking, ul_namespaces + at);
+                if (!target)
+                        continue;
+                p8 source[64];
+                string_address name = at == UL_NS_PID
+                    ? (string_address)"pid_for_children"
+                    : at == UL_NS_TIME
+                        ? (string_address)"time_for_children"
+                        : ul_namespaces[at].name;
+                ul_proc_path(source, (b32)system_call(syscall(getpid)), "ns",
+                             name);
+                if (system_call_5(syscall(mount), (positive)source,
+                                  (positive)target, 0, MS_BIND, 0) < 0)
+                        return ul_bad_usage("unshare",
+                                            "cannot bind namespace file");
+        }
+
+        if (taking.flags & FILE_FLAG('f'))
+        {
+                log_flush();
+                bipolar child = system_call_2(syscall(clone), SIGCHLD, 0);
+                if (child < 0)
+                        return ul_bad_usage("unshare", "fork failed");
+                if (child > 0)
+                        return ul_namespace_wait(child);
+        }
+
+        string_address proc = file_option_value(address_of taking, 'q');
+        if ((taking.flags & FILE_FLAG('q')) &&
+            system_call_5(syscall(mount), (positive)"proc",
+                          (positive)(proc ? proc : (string_address)"/proc"),
+                          (positive)"proc", MS_NOSUID | MS_NODEV | MS_NOEXEC,
+                          0) < 0)
+                return ul_bad_usage("unshare", "cannot mount proc");
+
+        string_address root = file_option_value(address_of taking, 'R');
+        string_address wd = file_option_value(address_of taking, 'w');
+        if (root && (system_call_1(syscall(chdir), (positive)root) < 0 ||
+                     system_call_1(syscall(chroot), (positive)".") < 0 ||
+                     system_call_1(syscall(chdir), (positive)"/") < 0))
+                return ul_bad_usage("unshare", "cannot change root");
+        if (wd && system_call_1(syscall(chdir), (positive)wd) < 0)
+                return ul_bad_usage("unshare", "cannot change directory");
+
+        if (ul_namespace_identity("unshare",
+                                  file_option_value(address_of taking, 'S'),
+                                  file_option_value(address_of taking, 'G'),
+                                  map_root))
+                return 1;
+
+        string_address shell[] = {(string_address)"/bin/sh", null};
+        return taking.first < count
+            ? ul_exec(taking.first, "unshare")
+            : ul_exec_words(shell, "unshare");
+}
+
+static const file_long ul_nsenter_longs[] = {
+    {(string_address)"all", 'a'}, {(string_address)"target", 't'},
+    {(string_address)"mount", '0'}, {(string_address)"uts", '1'},
+    {(string_address)"ipc", '2'}, {(string_address)"net", '3'},
+    {(string_address)"pid", '4'}, {(string_address)"user", '5'},
+    {(string_address)"cgroup", '6'}, {(string_address)"time", '7'},
+    {(string_address)"setuid", 's'}, {(string_address)"setgid", 'g'},
+    {(string_address)"preserve-credentials", 'q'},
+    {(string_address)"root", 'x'}, {(string_address)"wd", 'y'},
+    {(string_address)"wdns", 'W'}, {(string_address)"no-fork", 'F'},
+    {(string_address)"help", 'h'}, {(string_address)"version", 'V'},
+    {null, 0},
+};
+
+static b32 util_linux_nsenter()
+{
+        file_taking taking = {
+            .program = (string_address)"nsenter",
+            .allowed = (string_address)"atmuinpUCTSGrwWFVh",
+            .valued = (string_address)"tWSGsg",
+            .optional = (string_address)"01234567xyrw",
+            .longs = ul_nsenter_longs,
+        };
+        b32 answer;
+        positive count = (positive)program_argument_count();
+
+        if (!file_take(address_of taking))
+                return 1;
+        if (ul_meta(address_of taking, "[options] [program [argument ...]]",
+                    address_of answer))
+                return answer;
+
+        b32 target = 0;
+        if (file_option_value(address_of taking, 't') &&
+            !ul_pid(file_option_value(address_of taking, 't'), "nsenter",
+                    "target PID", address_of target))
+                return 1;
+
+        bool all = (taking.flags & FILE_FLAG('a')) != 0;
+        bipolar handles[UL_NS_COUNT];
+        memory_fill(handles, -1, sizeof(handles));
+        bool entered_user = false;
+        bool entered_pid = false;
+        positive selected = 0;
+
+        for (positive at = 0; at < UL_NS_COUNT; at++)
+        {
+                if (!all && !ul_namespace_selected(address_of taking,
+                                                    ul_namespaces + at))
+                        continue;
+                string_address path = ul_namespace_value(
+                    address_of taking, ul_namespaces + at);
+                if (!path && !target)
+                        return ul_bad_usage("nsenter", "target PID is required");
+                handles[at] = ul_namespace_open("nsenter", target,
+                                                ul_namespaces + at, path);
+                if (handles[at] < 0)
+                        goto nsenter_failed;
+                selected++;
+        }
+        if (!selected)
+                return ul_bad_usage("nsenter", "no namespace specified");
+
+        /* Enter the user namespace first: its capabilities authorize the
+           remaining setns calls. Mount goes last so /proc cannot move while
+           namespace descriptors and target directories are being opened. */
+        positive order[] = {UL_NS_USER, UL_NS_CGROUP, UL_NS_IPC, UL_NS_UTS,
+                            UL_NS_NET, UL_NS_PID, UL_NS_TIME, UL_NS_MOUNT};
+        for (positive at = 0; at < UL_NS_COUNT; at++)
+        {
+                positive which = order[at];
+                if (handles[which] < 0)
+                        continue;
+                bipolar changed = system_call_2(syscall(setns), handles[which],
+                                                 ul_namespaces[which].flag);
+                system_call_1(syscall(close), handles[which]);
+                handles[which] = -1;
+                if (changed < 0)
+                {
+                        ul_bad_usage("nsenter",
+                                     "reassociate to namespace failed");
+                        goto nsenter_failed;
+                }
+                entered_user |= which == UL_NS_USER;
+                entered_pid |= which == UL_NS_PID;
+        }
+
+        string_address root = file_option_value(address_of taking, 'x');
+        string_address wd = file_option_value(address_of taking, 'y');
+        if (!root)
+                root = file_option_value(address_of taking, 'r');
+        if (!wd)
+                wd = file_option_value(address_of taking, 'w');
+        p8 root_path[64];
+        p8 wd_path[64];
+        if ((taking.flags & FILE_FLAG('r')) && !root)
+        {
+                ul_proc_path(root_path, target, null, "root");
+                root = root_path;
+        }
+        if ((taking.flags & FILE_FLAG('w')) && !wd)
+        {
+                ul_proc_path(wd_path, target, null, "cwd");
+                wd = wd_path;
+        }
+        if (root && (system_call_1(syscall(chdir), (positive)root) < 0 ||
+                     system_call_1(syscall(chroot), (positive)".") < 0 ||
+                     system_call_1(syscall(chdir), (positive)"/") < 0))
+                return ul_bad_usage("nsenter", "cannot change root");
+        if (wd && system_call_1(syscall(chdir), (positive)wd) < 0)
+                return ul_bad_usage("nsenter", "cannot change directory");
+        if (file_option_value(address_of taking, 'W') &&
+            system_call_1(syscall(chdir),
+                          (positive)file_option_value(address_of taking, 'W')) < 0)
+                return ul_bad_usage("nsenter", "cannot change directory");
+
+        bool preserve = (taking.flags & FILE_FLAG('q')) != 0;
+        if (!preserve && entered_user &&
+            system_call_2(syscall(setgroups), 0, 0) < 0)
+                return ul_bad_usage("nsenter", "setgroups failed");
+        string_address uid = file_option_value(address_of taking, 's')
+            ? file_option_value(address_of taking, 's')
+            : file_option_value(address_of taking, 'S');
+        string_address gid = file_option_value(address_of taking, 'g')
+            ? file_option_value(address_of taking, 'g')
+            : file_option_value(address_of taking, 'G');
+        if ((uid || gid || (!preserve && entered_user)) &&
+            ul_namespace_identity("nsenter", uid, gid,
+                                  !preserve && entered_user))
+                return 1;
+
+        if (entered_pid && !(taking.flags & FILE_FLAG('F')))
+        {
+                log_flush();
+                bipolar child = system_call_2(syscall(clone), SIGCHLD, 0);
+                if (child < 0)
+                        return ul_bad_usage("nsenter", "fork failed");
+                if (child > 0)
+                        return ul_namespace_wait(child);
+        }
+
+        string_address shell[] = {(string_address)"/bin/sh", null};
+        return taking.first < count
+            ? ul_exec(taking.first, "nsenter")
+            : ul_exec_words(shell, "nsenter");
+
+nsenter_failed:
+        for (positive at = 0; at < UL_NS_COUNT; at++)
+                if (handles[at] >= 0)
+                        system_call_1(syscall(close), handles[at]);
+        return 1;
+}
+
 static const file_long ul_setsid_longs[] = {
     {(string_address)"ctty", 'c'}, {(string_address)"fork", 'f'},
     {(string_address)"wait", 'w'}, {(string_address)"help", 'h'},

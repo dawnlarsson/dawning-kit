@@ -372,21 +372,6 @@ static b32 system_init()
 
 #define world_label TERM_BOLD "[World]" TERM_RESET " "
 
-// The four that make a root someone else's. Not the network: a world that
-// cannot reach the outside is a different feature, and one nobody has asked
-// for yet.
-#define CLONE_NEWNS 0x00020000
-#define CLONE_NEWUTS 0x04000000
-#define CLONE_NEWIPC 0x08000000
-#define CLONE_NEWPID 0x20000000
-
-#define MS_NOSUID 2
-#define MS_NODEV 4
-#define MS_NOEXEC 8
-#define MS_BIND 4096
-#define MS_REC 16384
-#define MS_PRIVATE (1 << 18)
-
 #define MNT_DETACH 2
 
 #define WORLD_SHELL "/bin/sh"
