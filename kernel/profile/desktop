@@ -70,27 +70,7 @@ CONFIG_TYPEC_TCPM=y
 CONFIG_TYPEC_UCSI=y
 CONFIG_USB_ROLE_SWITCH=y
 
-#
-#       Sixty four processors, and the number is not about how many this
-#       machine has -- it has thirty two. It is about which arm of
-#       include/linux/cpumask.h the compiler takes.
-#
-#       At NR_CPUS over BITS_PER_LONG, cpumask.h sizes small_cpumask_bits as
-#       nr_cpu_ids, which is a RUNTIME GLOBAL. That makes small_const_nbits()
-#       false at every cpumask call site, and small_const_nbits is the test
-#       guarding the single-word inline arms that already sit in find.h and
-#       bitmap.h. So the kernel ships the fast path and limbo's NR_CPUS=128
-#       switches it off: 727 of 1232 bitmap call sites in the built image load
-#       nr_cpu_ids within ten instructions of a call that did not need to
-#       happen. At sixty four or below the same header takes the first branch
-#       and small_cpumask_bits is a compile-time constant.
-#
-#       Measured 1.55x on _find_next_bit at nr_cpu_ids=32 with every bit set,
-#       which is the shape select_task_rq_fair walks on every wakeup -- and
-#       _find_next_bit is the only bitmap symbol above 0.1% in a live profile.
-#
-#       limbo sets 128 and is composed before this file, so this line is the
-#       one that wins. A machine wanting more than sixty four processors wants
-#       the server profile, which composes after this one and says so there.
-#
+# Above BITS_PER_LONG, small_cpumask_bits becomes the runtime nr_cpu_ids and
+# disables the single-word bitmap/find inlines: 727/1232 call sites reload it.
+# Keeping a desktop in one word measured 1.55x on its profiled _find_next_bit.
 CONFIG_NR_CPUS=64

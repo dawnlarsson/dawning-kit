@@ -22,8 +22,5 @@ CONFIG_VT=y
 CONFIG_VT_CONSOLE=y
 CONFIG_CMDLINE=""
 
-#       A server may have more than sixty four processors, so it takes back
-#       what desktop pinned. The cost is the one written out there: the
-#       single-word cpumask arms in find.h stop folding, because cpumask.h
-#       sizes them from a runtime global above BITS_PER_LONG.
+# Servers may exceed the desktop's single-word cpumask limit.
 CONFIG_NR_CPUS=128
