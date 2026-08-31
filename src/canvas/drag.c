@@ -11,32 +11,6 @@
         buffer cannot outgrow the buffer its program asked for.
 */
 
-static unsigned int pane_edges_at(struct pane *pane, int x, int y)
-{
-        unsigned int edges = 0;
-        int fx, fy, fw, fh;
-
-        if (!(pane->style & WINDOW_FRAME) || (pane->style & WINDOW_MINIMIZED))
-                return 0;
-
-        pane_frame(pane, &fx, &fy, &fw, &fh);
-
-        if (x < fx || x >= fx + fw || y < fy || y >= fy + fh)
-                return 0;
-
-        if (x < fx + EDGE_GRIP)
-                edges |= EDGE_LEFT;
-        else if (x >= fx + fw - EDGE_GRIP)
-                edges |= EDGE_RIGHT;
-
-        if (y < fy + EDGE_GRIP)
-                edges |= EDGE_TOP;
-        else if (y >= fy + fh - EDGE_GRIP)
-                edges |= EDGE_BOTTOM;
-
-        return edges;
-}
-
 /*
         The window the pointer is over, and which of its edges it has hold of.
 
@@ -63,7 +37,20 @@ static struct pane *pane_under(int x, int y, unsigned int *edges)
                         continue;
 
                 found = pane;
-                found_edges = pane_edges_at(pane, x, y);
+                found_edges = 0;
+
+                if (!(pane->style & WINDOW_FRAME))
+                        continue;
+
+                if (x < fx + EDGE_GRIP)
+                        found_edges |= EDGE_LEFT;
+                else if (x >= fx + fw - EDGE_GRIP)
+                        found_edges |= EDGE_RIGHT;
+
+                if (y < fy + EDGE_GRIP)
+                        found_edges |= EDGE_TOP;
+                else if (y >= fy + fh - EDGE_GRIP)
+                        found_edges |= EDGE_BOTTOM;
         }
 
         *edges = found_edges;

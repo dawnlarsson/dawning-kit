@@ -258,7 +258,6 @@ static bipolar http_get(p32 host, p16 port, string_address name,
                         string_address path, http_buffer address_to body,
                         b32 address_to code)
 {
-        socket_address_internet where;
         http_buffer whole = {0};
         bipolar handle;
         bipolar got;
@@ -273,10 +272,9 @@ static bipolar http_get(p32 host, p16 port, string_address name,
         if (handle < 0)
                 return HTTP_NO_ROUTE;
 
-        memory_fill(address_of where, 0, sizeof where);
-        where.family = AF_INET;
-        where.port = network_order_16(port);
-        where.host = network_order_32(host);
+        socket_address_internet where = {
+            .family = AF_INET, .port = network_order_16(port),
+            .host = network_order_32(host)};
 
         if (socket_connect((b32)handle, address_of where, sizeof where) < 0)
         {

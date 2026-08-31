@@ -380,21 +380,21 @@ enum
 {
         PARSE_KEYWORD_NONE,
         PARSE_KEYWORD_IF,
+        PARSE_KEYWORD_WHILE,
+        PARSE_KEYWORD_UNTIL,
+        PARSE_KEYWORD_FOR,
+        PARSE_KEYWORD_CASE,
+        PARSE_KEYWORD_OPEN,
         PARSE_KEYWORD_THEN,
         PARSE_KEYWORD_ELSE,
         PARSE_KEYWORD_ELIF,
         PARSE_KEYWORD_FI,
         PARSE_KEYWORD_DO,
         PARSE_KEYWORD_DONE,
-        PARSE_KEYWORD_CASE,
         PARSE_KEYWORD_ESAC,
-        PARSE_KEYWORD_WHILE,
-        PARSE_KEYWORD_UNTIL,
-        PARSE_KEYWORD_FOR,
+        PARSE_KEYWORD_CLOSE,
         PARSE_KEYWORD_IN,
         PARSE_KEYWORD_BANG,
-        PARSE_KEYWORD_OPEN,
-        PARSE_KEYWORD_CLOSE,
 };
 
 /*
@@ -926,14 +926,8 @@ static bool parse_at_list_end()
 
         keyword = parse_keyword(0);
 
-        return keyword == PARSE_KEYWORD_THEN ||
-               keyword == PARSE_KEYWORD_ELIF ||
-               keyword == PARSE_KEYWORD_ELSE ||
-               keyword == PARSE_KEYWORD_FI ||
-               keyword == PARSE_KEYWORD_DO ||
-               keyword == PARSE_KEYWORD_DONE ||
-               keyword == PARSE_KEYWORD_ESAC ||
-               keyword == PARSE_KEYWORD_CLOSE;
+        return keyword > PARSE_KEYWORD_OPEN &&
+               keyword <= PARSE_KEYWORD_CLOSE;
 }
 
 /*
@@ -1459,9 +1453,10 @@ static b32 parse_function_keyword()
 
         parse_skip_newlines();
 
-        if (!(parse_word_is(0, "if") || parse_word_is(0, "while") ||
-              parse_word_is(0, "until") || parse_word_is(0, "for") ||
-              parse_word_is(0, "case") || parse_word_is(0, "{") ||
+        b32 keyword = parse_keyword(0);
+
+        if (!((keyword > PARSE_KEYWORD_NONE &&
+               keyword <= PARSE_KEYWORD_OPEN) ||
               (parse_look(0)->kind == PT_OP &&
                parse_look(0)->op == OP_LPAREN)))
         {
@@ -1510,25 +1505,27 @@ static b32 parse_command()
                 goto command_done;
         }
 
-        if (parse_look(0)->kind == PT_WORD && !parse_reserved(0) &&
+        b32 keyword = parse_keyword(0);
+
+        if (parse_look(0)->kind == PT_WORD && keyword == PARSE_KEYWORD_NONE &&
             parse_look(1)->kind == PT_OP && parse_look(1)->op == OP_LPAREN &&
             parse_look(2)->kind == PT_OP && parse_look(2)->op == OP_RPAREN)
                 return parse_function();
 
-        if (parse_word_is(0, "if"))
+        if (keyword == PARSE_KEYWORD_IF)
         {
                 parse_position++;
                 index = parse_if_tail();
         }
-        else if (parse_word_is(0, "while"))
+        else if (keyword == PARSE_KEYWORD_WHILE)
                 index = parse_loop(NODE_WHILE);
-        else if (parse_word_is(0, "until"))
+        else if (keyword == PARSE_KEYWORD_UNTIL)
                 index = parse_loop(NODE_UNTIL);
-        else if (parse_word_is(0, "for"))
+        else if (keyword == PARSE_KEYWORD_FOR)
                 index = parse_for();
-        else if (parse_word_is(0, "case"))
+        else if (keyword == PARSE_KEYWORD_CASE)
                 index = parse_case();
-        else if (parse_word_is(0, "{"))
+        else if (keyword == PARSE_KEYWORD_OPEN)
                 index = parse_enclosed(NODE_GROUP);
         else if (parse_look(0)->kind == PT_OP && parse_look(0)->op == OP_LPAREN)
                 index = parse_enclosed(NODE_SUBSHELL);

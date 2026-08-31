@@ -282,12 +282,15 @@ static p32 dhcp_transaction(void)
 
 static bipolar dhcp_open(string_address device, p32 host, bool broadcast)
 {
-        socket_address_internet mine;
         bipolar handle = socket_new(AF_INET, SOCK_DGRAM, 0);
         b32 one = 1;
 
         if (handle < 0)
                 return handle;
+
+        socket_address_internet mine = {
+            .family = AF_INET, .port = network_order_16(DHCP_CLIENT_PORT),
+            .host = network_order_32(host)};
 
         if (broadcast)
                 socket_option_set((b32)handle, SOL_SOCKET, SO_BROADCAST,
@@ -297,11 +300,6 @@ static bipolar dhcp_open(string_address device, p32 host, bool broadcast)
                           address_of one, sizeof one);
         socket_option_set((b32)handle, SOL_SOCKET, SO_BINDTODEVICE, device,
                           string_length(device) + 1);
-
-        memory_fill(address_of mine, 0, sizeof mine);
-        mine.family = AF_INET;
-        mine.port = network_order_16(DHCP_CLIENT_PORT);
-        mine.host = network_order_32(host);
 
         if (socket_bind((b32)handle, address_of mine, sizeof mine) < 0)
         {
@@ -360,7 +358,6 @@ static bool dhcp_receive(bipolar handle, p8 address_to packet, positive room,
 static bipolar dhcp_ask(string_address device, p8 address_to hardware,
                         dhcp_lease address_to lease)
 {
-        socket_address_internet where;
         p8 packet[1024];
         p32 transaction;
         bipolar handle;
@@ -371,10 +368,9 @@ static bipolar dhcp_ask(string_address device, p8 address_to hardware,
         memory_fill(lease, 0, sizeof(dhcp_lease));
         transaction = dhcp_transaction();
 
-        memory_fill(address_of where, 0, sizeof where);
-        where.family = AF_INET;
-        where.port = network_order_16(DHCP_SERVER_PORT);
-        where.host = network_order_32(HOST_BROADCAST);
+        socket_address_internet where = {
+            .family = AF_INET, .port = network_order_16(DHCP_SERVER_PORT),
+            .host = network_order_32(HOST_BROADCAST)};
 
         for (attempt = 0; attempt < 20; attempt++)
         {
@@ -496,7 +492,6 @@ static bipolar dhcp_ask(string_address device, p8 address_to hardware,
 static bipolar dhcp_renew(string_address device, p8 address_to hardware,
                           dhcp_lease address_to lease)
 {
-        socket_address_internet where;
         p8 packet[1024];
         p32 transaction;
         dhcp_lease fresh;
@@ -514,10 +509,9 @@ static bipolar dhcp_renew(string_address device, p8 address_to hardware,
         if (handle < 0)
                 return DHCP_NO_SOCKET;
 
-        memory_fill(address_of where, 0, sizeof where);
-        where.family = AF_INET;
-        where.port = network_order_16(DHCP_SERVER_PORT);
-        where.host = network_order_32(lease->server);
+        socket_address_internet where = {
+            .family = AF_INET, .port = network_order_16(DHCP_SERVER_PORT),
+            .host = network_order_32(lease->server)};
 
         length = dhcp_build(packet, sizeof packet, DHCP_REQUEST, transaction,
                             hardware, 0, 0, lease->address);

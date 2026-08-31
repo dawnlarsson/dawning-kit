@@ -1203,11 +1203,17 @@ static bool arith_bash_mode;
 static bool arith_nounset;
 static bool arith_unset;
 
+static inline INLINE string_address arith_skip_space(string_address at)
+{
+        while (string_is(at, ' ') || string_is(at, '\t') || string_is(at, '\n'))
+                at++;
+
+        return at;
+}
+
 static fn arith_space()
 {
-        while (string_is(arith_at, ' ') || string_is(arith_at, '\t') ||
-               string_is(arith_at, '\n'))
-                arith_at++;
+        arith_at = arith_skip_space(arith_at);
 }
 
 static bipolar arith_choose();
@@ -1902,9 +1908,7 @@ static bool arith_simple_addition(string_address text,
         bool valid;
         p8 op;
 
-        while (string_is(at, ' ') || string_is(at, '\t') ||
-               string_is(at, '\n'))
-                at++;
+        at = arith_skip_space(at);
 
         if (!((string_get(at) >= 'a' && string_get(at) <= 'z') ||
               (string_get(at) >= 'A' && string_get(at) <= 'Z') ||
@@ -1916,18 +1920,14 @@ static bool arith_simple_addition(string_address text,
                 at++;
         name_length = at - name_start;
 
-        while (string_is(at, ' ') || string_is(at, '\t') ||
-               string_is(at, '\n'))
-                at++;
+        at = arith_skip_space(at);
 
         op = string_get(at);
         if (op != '+' && op != '-')
                 return false;
         at++;
 
-        while (string_is(at, ' ') || string_is(at, '\t') ||
-               string_is(at, '\n'))
-                at++;
+        at = arith_skip_space(at);
 
         if (string_get(at) < '0' || string_get(at) > '9')
                 return false;
@@ -1935,9 +1935,7 @@ static bool arith_simple_addition(string_address text,
         number_at = at;
         right = expand_base_number(address_of at, address_of valid);
 
-        while (string_is(at, ' ') || string_is(at, '\t') ||
-               string_is(at, '\n'))
-                at++;
+        at = arith_skip_space(at);
 
         if (!valid || at == number_at || string_get(at))
                 return false;

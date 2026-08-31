@@ -272,7 +272,6 @@ static bipolar dns_resolve(p32 server, string_address name, p32 address_to found
 {
         p8 request[DNS_MAX_MESSAGE];
         p8 reply[DNS_MAX_MESSAGE];
-        socket_address_internet where;
         p16 id = dns_transaction();
         bipolar handle;
         bipolar written;
@@ -304,10 +303,9 @@ static bipolar dns_resolve(p32 server, string_address name, p32 address_to found
         if (handle < 0)
                 return DNS_NO_SERVER;
 
-        memory_fill(address_of where, 0, sizeof where);
-        where.family = AF_INET;
-        where.port = network_order_16(DNS_PORT);
-        where.host = network_order_32(server);
+        socket_address_internet where = {
+            .family = AF_INET, .port = network_order_16(DNS_PORT),
+            .host = network_order_32(server)};
 
         if (socket_connect((b32)handle, address_of where, sizeof where) < 0)
         {

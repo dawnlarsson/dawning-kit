@@ -2826,15 +2826,9 @@ static string_address edit_comment_marker()
 }
 
 static bool edit_line_commented(positive line, string_address marker,
-                                positive marker_length)
+                                positive bare)
 {
         positive indent = edit_line_indent(line);
-        positive bare = marker_length;
-
-        // The marker is written with a space after it and recognised without
-        // one, so a line commented by hand as "//x" is still uncommented.
-        while (bare && marker[bare - 1] == ' ')
-                bare--;
 
         if (indent + bare > edit_lines[line].length)
                 return false;
@@ -2847,8 +2841,11 @@ static fn edit_toggle_comment()
         positive index = edit_primary_index();
         string_address marker = edit_comment_marker();
         positive marker_length = string_length(marker);
+        positive marker_bare = marker_length - 1;
         positive claimed = edit_line_count;
 
+        // The marker is written with a space after it and recognised without
+        // one, so a line commented by hand as "//x" is still uncommented.
         edit_step_seal();
 
         for (positive at = edit_cursor_count; at; at--)
@@ -2870,7 +2867,7 @@ static fn edit_toggle_comment()
 
                         any = true;
 
-                        if (!edit_line_commented(line, marker, marker_length))
+                        if (!edit_line_commented(line, marker, marker_bare))
                                 all = false;
                 }
 
@@ -2924,14 +2921,7 @@ static fn edit_toggle_comment()
                         if (to.column > edit_lines[which].length ||
                             memory_compare(edit_lines[which].text + indent,
                                            marker, marker_length) != 0)
-                        {
-                                positive bare = marker_length;
-
-                                while (bare && marker[bare - 1] == ' ')
-                                        bare--;
-
-                                to.column = indent + bare;
-                        }
+                                to.column = indent + marker_bare;
 
                         edit_change(from, to, null, 0, EDIT_STEP_OTHER);
                 }

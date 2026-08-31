@@ -392,7 +392,9 @@ cover('folds_already', 'x', 'shell_set_cursor',
 cover('folds_already', 'size', 'memory memory_free',
       'the size is a literal often enough, and the work is an mmap or an '
       'munmap: nothing on this side of the trap gets shorter')
-cover('folds_already', 'count', 'memory_fill_u32 memory_fill_u64_aligned',
+cover('folds_already', 'count', '''
+memory_fill_u32 memory_fill_u64_aligned memory_fill_32 memory_fill_64
+''',
       'the count is a runtime row or block length at every caller; when it is '
       'small the assembly routine already selects its scalar tail, and when '
       'it is large expanding stores would only duplicate its vector loop')

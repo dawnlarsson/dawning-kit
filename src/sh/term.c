@@ -936,9 +936,7 @@ static fn consume(unsigned int c)
         */
         if (c == 24 || c == 26)
         {
-                in_escape = false;
-                in_csi = false;
-                in_string = false;
+                in_escape = in_csi = in_string = false;
                 utf8_left = 0;
                 return;
         }
@@ -963,10 +961,7 @@ static fn consume(unsigned int c)
                         if (c == 27)
                                 string_escape = true;
                         else if (c == 7)
-                        {
-                                in_string = false;
-                                in_escape = false;
-                        }
+                                in_string = in_escape = false;
 
                         return;
                 }
@@ -980,8 +975,7 @@ static fn consume(unsigned int c)
                         what stops a title nobody terminated from swallowing
                         every sequence sent after it.
                 */
-                string_escape = false;
-                in_string = false;
+                string_escape = in_string = false;
 
                 if (c == '\\')
                 {
@@ -1043,8 +1037,7 @@ static fn consume(unsigned int c)
                 if (c >= '@' && c <= '~')
                 {
                         csi_final(c);
-                        in_csi = false;
-                        in_escape = false;
+                        in_csi = in_escape = false;
                 }
 
                 return;

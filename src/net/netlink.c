@@ -275,16 +275,13 @@ static bool netlink_attribute_add(netlink_buffer address_to buffer, p16 type,
 
 static bipolar netlink_open_groups(p32 groups)
 {
-        socket_address_netlink self;
         bipolar handle = socket_new(AF_NETLINK, SOCK_DGRAM, NETLINK_ROUTE);
         b32 want = 1;
 
         if (handle < 0)
                 return handle;
 
-        memory_fill(address_of self, 0, sizeof self);
-        self.family = AF_NETLINK;
-        self.groups = groups;
+        socket_address_netlink self = {.family = AF_NETLINK, .groups = groups};
 
         if (socket_bind((b32)handle, address_of self, sizeof self) < 0)
         {

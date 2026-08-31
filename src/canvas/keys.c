@@ -99,11 +99,9 @@ static unsigned int key_character(unsigned int code, unsigned int modifiers)
 
         // Control turns a letter into the control code that letter names,
         // which is the whole of why a terminal wants a modifier at all.
-        if ((modifiers & WINDOW_KEY_CONTROL) && c >= 'a' && c <= 'z')
-                return (unsigned int)(c - 'a' + 1);
-
-        if ((modifiers & WINDOW_KEY_CONTROL) && c >= 'A' && c <= 'Z')
-                return (unsigned int)(c - 'A' + 1);
+        if ((modifiers & WINDOW_KEY_CONTROL) &&
+            (unsigned int)((c | 0x20) - 'a') < 26)
+                return (unsigned int)c & 0x1f;
 
         return (unsigned int)(unsigned char)c;
 }
