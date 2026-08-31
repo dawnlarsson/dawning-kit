@@ -350,14 +350,21 @@ static fn ul_cpu_list_say(positive address_to set, positive bytes)
                 positive last = first;
                 positive count = 1;
 
-                while (last + stride < bits &&
-                       ul_cpu_has(set, last + stride))
+                while (last + stride < bits)
                 {
-                        last += stride;
+                        positive next = last + stride;
+                        positive between = last + 1;
+
+                        while (between < next && !ul_cpu_has(set, between))
+                                between++;
+                        if (between < next || !ul_cpu_has(set, next))
+                                break;
+
+                        last = next;
                         count++;
                 }
 
-                if (stride > 1 && count < 3)
+                if (count < 3)
                 {
                         last = first;
                         count = 1;
@@ -954,7 +961,8 @@ static bool ul_limit_value(string_address text, p64 current,
                 address_to value = current;
                 return true;
         }
-        if (string_equals(text, "unlimited") || string_equals(text, "infinity"))
+        if (string_equals(text, "-1") || string_equals(text, "unlimited") ||
+            string_equals(text, "infinity"))
         {
                 address_to value = UL_LIMIT_INFINITE;
                 return true;
@@ -970,6 +978,9 @@ static bool ul_limit_value(string_address text, p64 current,
 static bool ul_limit_parse(string_address text, ul_limit_pair current,
                            ul_limit_pair address_to out)
 {
+        if (!string_get(text))
+                return false;
+
         string_address colon = string_first_of(text, ':');
 
         if (!colon)
@@ -982,6 +993,8 @@ static bool ul_limit_parse(string_address text, ul_limit_pair current,
 
         p8 left[64];
         positive length = (positive)(colon - text);
+        if (!length && !string_get(colon + 1))
+                return false;
         if (length >= sizeof(left))
                 return false;
         memory_copy_apart_end(left, text, length);
@@ -1488,7 +1501,6 @@ static b32 util_linux_chrt()
                 return 1;
 
         bool scheduling_option = ul_chrt_policy || priority_given ||
-            (taking.flags & FILE_FLAG('R')) ||
             file_option_value(address_of taking, 'T') ||
             file_option_value(address_of taking, 'P') ||
             file_option_value(address_of taking, 'D');
@@ -1658,8 +1670,6 @@ static b32 util_linux_uclampset()
             .maximum = file_option_value(address_of taking, 'M') != null,
             .reset = (taking.flags & FILE_FLAG('R')) != 0,
         };
-        work.setting = work.minimum || work.maximum || work.reset;
-
         struct { p8 option; p32 address_to into; } values[] = {
             {'m', address_of work.min}, {'M', address_of work.max},
         };
@@ -1680,8 +1690,15 @@ static b32 util_linux_uclampset()
         bool all = (taking.flags & FILE_FLAG('a')) != 0;
         positive count = (positive)program_argument_count();
 
+        work.setting = work.minimum || work.maximum ||
+                       (work.reset && !pid_text);
+
         if (!pid_text)
                 work.verbose = false;
+
+        if (!system && !pid_text && !work.setting)
+                return ul_usage("uclampset",
+                                "[options] --pid PID | command [argument ...] | --system");
 
         if (system)
         {

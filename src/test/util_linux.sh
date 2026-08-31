@@ -136,6 +136,8 @@ compare 'command current list' taskset \
         'list=$("$TOOL" -pc $$ | sed "s/.*: //"); "$TOOL" -c "$list" /bin/sh -c '\''"$TOOL" -pc $$ | sed "s/pid [0-9]*/pid PID/"'\'''
 compare 'set pid current list' taskset \
         'list=$("$TOOL" -pc $$ | sed "s/.*: //"); "$TOOL" -pc "$list" $$ | sed "s/pid [0-9]*/pid PID/g"'
+compare 'interleaved stride list' taskset \
+        '"$TOOL" -c 0,2,4-6 /bin/sh -c '\''"$TOOL" -pc $$ | sed "s/pid [0-9]*/pid PID/"'\'''
 compare 'invalid CPU list' taskset '"$TOOL" -c impossible /bin/true'
 compare 'missing command' taskset '"$TOOL" -c 0'
 
@@ -144,6 +146,8 @@ compare 'query pid' chrt \
         '"$TOOL" -p $$ | sed "s/pid [0-9]*/pid PID/g"'
 compare 'set pid other policy' chrt \
         '"$TOOL" -v -o -p 0 $$ | sed "s/pid [0-9]*/pid PID/g"'
+compare 'reset alone queries pid' chrt \
+        '"$TOOL" -R -p $$ | sed "s/pid [0-9]*/pid PID/g"'
 compare 'other command' chrt \
         '"$TOOL" -o /bin/sh -c '\''"$TOOL" -p $$ | sed "s/pid [0-9]*/pid PID/g"'\'''
 compare 'priority ranges' chrt '"$TOOL" --max'
@@ -171,6 +175,10 @@ compare 'raw without headings' prlimit \
         '"$TOOL" -p $$ --nofile --raw --noheadings --output RESOURCE,DESCRIPTION,SOFT'
 compare 'command limit pair' prlimit \
         '"$TOOL" --nofile=100:200 /bin/sh -c "ulimit -Sn; ulimit -Hn"'
+compare 'negative one is unlimited' prlimit \
+        '"$TOOL" --core=-1 /bin/sh -c "ulimit -Hc"'
+compare 'reject empty limit' prlimit '"$TOOL" --nofile= /bin/true'
+compare 'reject empty pair' prlimit '"$TOOL" --nofile=: /bin/true'
 compare 'invalid limit' prlimit '"$TOOL" --nofile=bad /bin/true'
 
 group uclampset
@@ -180,6 +188,10 @@ compare 'command clamps' uclampset \
         '"$TOOL" -m 0 -M 1024 /bin/sh -c '\''"$TOOL" -p $$ | sed "s/.* util_clamp:/util_clamp:/"'\'''
 compare 'set pid clamps' uclampset \
         '"$TOOL" -v -m 0 -M 1024 -p $$ | sed "s/.* util_clamp:/util_clamp:/"'
+compare 'reset alone queries pid' uclampset \
+        '"$TOOL" -R -p $$ | sed "s/.* util_clamp:/util_clamp:/"'
+compare 'command needs a clamp' uclampset \
+        '"$TOOL" /bin/sh -c "exit 7" >/dev/null'
 compare 'verbose command clamps' uclampset \
         '"$TOOL" -v -m 0 -M 1024 /bin/true | sed "s/.* util_clamp:/util_clamp:/"'
 compare 'invalid clamp' uclampset '"$TOOL" -m 1025 /bin/true'
