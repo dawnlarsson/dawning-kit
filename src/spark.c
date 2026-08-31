@@ -119,6 +119,12 @@ _Static_assert(sizeof(struct header) == SPARK_HEADER_SIZE,
 // not acquire it accidentally.
 #define SPARK_IOCTL_SPAWN_SHELL 0x40307304u
 
+// Run the argv[0] utility in the immutable system /shell image.
+#define SPARK_IOCTL_SPAWN_TOOL 0x40307307u
+
+// The same launch with stdout and stderr installed before exec.
+#define SPARK_IOCTL_SPAWN_TOOL_TO 0x40387308u
+
 // _IOR('s', 2, struct stats). Nanoseconds accumulated inside the kernel,
 // so the split between creating the task and loading the image is measured
 // where it happens rather than inferred from the outside.
@@ -184,6 +190,12 @@ struct spawn {
         unsigned int envp_bytes;
         unsigned int envp_count;
         unsigned long envp_generation; // 0 copies; equal nonzero values reuse
+};
+
+struct spawn_to {
+        struct spawn spawn;
+        int output;
+        int error;
 };
 
 #endif

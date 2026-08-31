@@ -36,6 +36,12 @@ fn shell_trap_exit();
 fn exec_child_began();
 COLD fn exec_expand_fatal();
 string_address shell_flags_current();
+bool shell_tool_here(string_address name);
+bool shell_command_here(string_address name);
+bool exec_function_here(string_address name);
+string_address alias_lookup(string_address name);
+bipolar shell_spawn_tool(string_address address_to arguments,
+                         b32 output, bool quiet);
 
 extern b32 shell_status;
 extern b32 shell_is_interactive;
@@ -2205,6 +2211,175 @@ static string_address expand_brace_end(string_address at)
 static bool expand_in_substitution;
 
 /*
+        The no-shell command-substitution path.
+
+        A literal multicall utility needs neither the outer shell's address
+        space nor another parser. Strip only quoting whose contents are
+        provably literal, then let Spark attach the existing pipe to a fresh
+        /shell utility. Anything with expansion, globbing, operators, an
+        alias, or a function declines this path and keeps the full shell.
+*/
+static string_address address_to expand_tool_argv;
+static positive expand_tool_argv_room;
+
+/* Remove quoting from one word which has no expansion. Long literal runs use
+   the same hardware-floor byte-set scans as ordinary expansion. */
+static p8 address_to expand_tool_word(string_address word, positive length,
+                                      p8 address_to out)
+{
+        string_address at = word;
+        string_address stop = word + length;
+
+        expand_sets_prepare();
+
+        while (at < stop)
+        {
+                positive run = string_span_max(
+                    at, (positive)(stop - at), expand_literal_set);
+
+                if (run)
+                {
+                        memory_copy_apart(out, at, run);
+                        out += run; at += run;
+                }
+
+                if (at == stop)
+                        break;
+
+                p8 value = *at++;
+
+                if (value == '\'')
+                {
+                        string_address close = (string_address)memory_first_of(
+                            at, '\'', (positive)(stop - at));
+
+                        if (!close)
+                                return null;
+
+                        run = (positive)(close - at);
+                        memory_copy_apart(out, at, run);
+                        out += run; at = close + 1;
+                }
+                else if (value == '"')
+                {
+                        while (true)
+                        {
+                                run = string_span_max(
+                                    at, (positive)(stop - at), expand_inside_set);
+                                if (run)
+                                {
+                                        memory_copy_apart(out, at, run);
+                                        out += run; at += run;
+                                }
+
+                                if (at == stop ||
+                                    (value = *at++) == '$' || value == '`')
+                                        return null;
+                                if (value == '"')
+                                        break;
+                                if (at == stop)
+                                        return null;
+
+                                value = *at++;
+                                if (value == '$' || value == '`' ||
+                                    value == '"' || value == '\\')
+                                        *out++ = value;
+                                else if (value != '\n')
+                                {
+                                        *out++ = '\\';
+                                        *out++ = value;
+                                }
+                        }
+                }
+                else if (value == '\\' && at < stop)
+                {
+                        value = *at++;
+                        if (value != '\n')
+                                *out++ = value;
+                }
+                else
+                        return null; /* expansion, brace expansion or glob */
+        }
+
+        return out;
+}
+
+static bipolar expand_tool_direct(string_address command, b32 output)
+{
+        static p8 address_to text;
+        static positive text_room;
+        b32 count;
+        bipolar child = -1;
+        bool quiet = false;
+        p8 address_to out;
+
+        /* Execution only retains the parser's stable copy of its tokens. The
+           lexer scratch is therefore free to reuse without a nested mapping. */
+        count = lex_line(command);
+
+        // The end token stops short at a top-level newline or comment.
+        if (count <= 0 || string_get(command + lex_tokens[count].at))
+                goto done;
+
+        if (count >= 3)
+        {
+                lex_token address_to descriptor = lex_tokens + count - 3;
+                lex_token address_to redirect = descriptor + 1;
+                lex_token address_to target = redirect + 1;
+
+                if (descriptor->kind == LEX_WORD && descriptor->length == 1 &&
+                    string_is(descriptor->text, '2') &&
+                    redirect->kind == LEX_OPERATOR && redirect->op == OP_GREAT &&
+                    target->kind == LEX_WORD && target->length == 9 &&
+                    !memory_compare(target->text, "/dev/null", 9) &&
+                    descriptor->at + descriptor->length == redirect->at &&
+                    redirect->at + redirect->length == target->at)
+                {
+                        quiet = true;
+                        count -= 3;
+                }
+        }
+
+        if (!count ||
+            !shell_room((address_any address_to)address_of text,
+                        address_of text_room, string_length(command) + 1, 1) ||
+            !shell_room((address_any address_to)address_of expand_tool_argv,
+                        address_of expand_tool_argv_room, (positive)count + 1,
+                        sizeof(*expand_tool_argv)))
+                goto done;
+
+        out = text;
+
+        for (b32 at = 0; at < count; at++)
+        {
+                if (lex_tokens[at].kind != LEX_WORD)
+                        goto done;
+
+                expand_tool_argv[at] = out;
+                out = expand_tool_word(lex_tokens[at].text,
+                                       lex_tokens[at].length, out);
+
+                if (!out)
+                        goto done;
+
+                *out++ = 0;
+        }
+
+        expand_tool_argv[count] = null;
+
+        if (!shell_tool_here(expand_tool_argv[0]) ||
+            shell_command_here(expand_tool_argv[0]) ||
+            exec_function_here(expand_tool_argv[0]) ||
+            alias_lookup(expand_tool_argv[0]))
+                goto done;
+
+        child = shell_spawn_tool(expand_tool_argv, output, quiet);
+
+done:
+        return child;
+}
+
+/*
         A command substitution.
 
         The text runs in a child whose standard output is a pipe, and what it
@@ -2216,7 +2391,7 @@ static fn expand_run(string_address command, bool quoted)
         p8 mark = quoted ? MARK_QUOTED : MARK_FIELD;
         positive start = expand_length;
         b32 channel[2];
-        bipolar child;
+        bipolar child = -1;
         positive status = 0;
 
         // Whatever this shell has buffered belongs to this shell, and a fork
@@ -2226,14 +2401,18 @@ static fn expand_run(string_address command, bool quoted)
         if (system_call_2(syscall(pipe2), (positive)address_of channel, 0) < 0)
                 return;
 
-        child = shell_clone();
+        child = expand_tool_direct(command, channel[1]);
+
+        if (child < 0)
+                child = shell_clone();
 
         if (child == 0)
         {
                 exec_child_began();
 
                 system_call_1(syscall(close), (positive)channel[0]);
-                system_call_3(syscall(dup3), (positive)channel[1], standard_output_descriptor, 0);
+                system_call_3(syscall(dup3), (positive)channel[1],
+                              standard_output_descriptor, 0);
                 system_call_1(syscall(close), (positive)channel[1]);
 
                 expand_in_substitution = true;
@@ -2253,6 +2432,12 @@ static fn expand_run(string_address command, bool quoted)
                         turned into terminators in place rather than into a
                         second buffer.
                 */
+                if (!string_first_of(command, '\n'))
+                {
+                        shell_tail_line_requested = true;
+                        run_line(command);
+                }
+                else
                 {
                         string_address at = command;
 
@@ -2285,8 +2470,8 @@ static fn expand_run(string_address command, bool quoted)
                 while (1)
                 {
                         p8 block[512];
-                        bipolar got = system_read_retry((positive)channel[0], block,
-                                                        sizeof(block));
+                        bipolar got = system_read_retry((positive)channel[0],
+                                                        block, sizeof(block));
 
                         if (got <= 0)
                                 break;

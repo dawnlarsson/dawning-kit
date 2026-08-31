@@ -58,6 +58,8 @@ static bool exec_source_stop();
 bool shell_builtin(string_address arguments);
 string_address shell_arguments();
 fn shell_execute_command();
+bipolar shell_spawn_tool(string_address address_to arguments,
+                         b32 output, bool quiet);
 fn parse_nest_enter();
 fn parse_nest_leave();
 static bool exec_arithmetic_value(string_address text,
@@ -5893,7 +5895,7 @@ fn shell_tool_list(writer write)
 static bool shell_tool_run(string_address name)
 {
         positive which = shell_tool_find(name);
-        bipolar child;
+        bipolar child = -1;
         positive status = 0;
 
         if (which == SHELL_TOOLS)
@@ -5910,7 +5912,12 @@ static bool shell_tool_run(string_address name)
         // the buffer and writes it out a second time.
         log_flush();
 
-        child = system_call_2(syscall(clone), SIGCHLD, 0);
+        /* Spark starts the immutable multicall image without copying this
+           resident shell. A stock kernel takes the direct-function fork. */
+        child = shell_spawn_tool(shell_argv, -1, false);
+
+        if (child < 0)
+                child = system_call_2(syscall(clone), SIGCHLD, 0);
 
         if (child == 0)
         {
@@ -6640,6 +6647,11 @@ static shell_command address_to shell_command_named(string_address name)
             SHELL_COMMAND_INDEX_ROOM, address_of shell_command_index_ready);
 
         return which < SHELL_COMMAND_COUNT ? shell_commands + which : null;
+}
+
+bool shell_command_here(string_address name)
+{
+        return shell_command_named(name) != null;
 }
 
 /* Control builtins live in the executor because their result unwinds C

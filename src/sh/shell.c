@@ -386,6 +386,9 @@ static fn shell_words_bind(shell_words address_to list,
    can then use that process directly instead of cloning a disposable wrapper
    around another disposable child. */
 static bool shell_tail_command;
+// The substitution child grants that privilege after parsing proves the line
+// is one simple command; functions decline it later in exec_dispatch.
+static bool shell_tail_line_requested;
 fn shell_thread_instance_mode(bool preserve_ignored);
 
 #include "lex.c"
@@ -677,22 +680,25 @@ positive shell_flatten_env(positive address_to count_out)
 }
 
 // Returns the child pid, or a negative error if the device could not take it.
-bipolar shell_spawn_via_device()
+static bipolar shell_spawn_via_device(b32 operation, string_address path,
+                                      string_address address_to arguments,
+                                      b32 output, b32 error)
 {
-        struct spawn request;
+        struct spawn_to directed;
+        struct spawn address_to request = address_of directed.spawn;
         positive argc = 0;
         positive envc = 0;
 
-        request.path = (unsigned long)shell_argv[0];
-        request.argv_bytes = shell_flatten_strings(
-            shell_argv, address_of spawn_argv_block,
+        request->path = (unsigned long)path;
+        request->argv_bytes = shell_flatten_strings(
+            arguments, address_of spawn_argv_block,
             address_of spawn_argv_room, address_of argc);
         if (argc == positive_max)
                 return -1;
 
-        request.argv = (unsigned long)spawn_argv_block;
-        request.argv_count = (unsigned int)argc;
-        request.envp_bytes = shell_flatten_env(address_of envc);
+        request->argv = (unsigned long)spawn_argv_block;
+        request->argv_count = (unsigned int)argc;
+        request->envp_bytes = shell_flatten_env(address_of envc);
 
         /* An allocation failure must take the fork/exec fallback.  Sending a
            syntactically valid request with envc zero silently stripped every
@@ -700,19 +706,19 @@ bipolar shell_spawn_via_device()
         if (envc == positive_max)
                 return -1;
 
-        request.envp = (unsigned long)spawn_envp_block;
-        request.envp_count = envc;
-        request.envp_generation = spawn_envp_generation;
+        request->envp = (unsigned long)spawn_envp_block;
+        request->envp_count = envc;
+        request->envp_generation = spawn_envp_generation;
+        directed.output = output;
+        directed.error = error;
 
         return system_call_3(syscall(ioctl), spawn_device,
-                             SPARK_IOCTL_SPAWN_SHELL,
-                             (positive)address_of request);
+                             operation,
+                             (positive)address_of directed);
 }
 
-fn shell_execute_command()
+static bool shell_spawn_device_open()
 {
-        bipolar child = -1;
-
         if (!spawn_device_opened)
         {
                 spawn_device = system_call_4(syscall(openat), AT_FDCWD,
@@ -721,10 +727,42 @@ fn shell_execute_command()
                 spawn_device_opened = true;
         }
 
+        return spawn_device >= 0;
+}
+
+/* argv[0] selects a utility in the kernel-owned /shell image. */
+bipolar shell_spawn_tool(string_address address_to arguments,
+                         b32 output, bool quiet)
+{
+        static b32 null_output = -1;
+
+        if (!shell_spawn_device_open())
+                return -1;
+
+        if (quiet && null_output < 0)
+                null_output = system_call_4(syscall(openat), AT_FDCWD,
+                                             (positive)"/dev/null",
+                                             FILE_READ_WRITE | O_CLOEXEC, 0);
+
+        if (quiet && null_output < 0)
+                return -1;
+
+        return shell_spawn_via_device(output < 0 ? SPARK_IOCTL_SPAWN_TOOL
+                                                 : SPARK_IOCTL_SPAWN_TOOL_TO,
+                                      null, arguments, output,
+                                      quiet ? null_output : -1);
+}
+
+fn shell_execute_command()
+{
+        bipolar child = -1;
+
         log_flush();
 
-        if (spawn_device >= 0)
-                child = shell_spawn_via_device();
+        if (shell_spawn_device_open())
+                child = shell_spawn_via_device(SPARK_IOCTL_SPAWN_SHELL,
+                                               shell_argv[0], shell_argv,
+                                               -1, -1);
 
         if (child < 0)
         {
@@ -894,7 +932,16 @@ static fn run_line_inner(string_address line)
                 return;
         }
 
-        exec_program(root);
+        {
+                bool held_tail = shell_tail_command;
+
+                if (shell_tail_line_requested && root &&
+                    parse_nodes[root].kind == NODE_SIMPLE)
+                        shell_tail_command = true;
+
+                exec_program(root);
+                shell_tail_command = held_tail;
+        }
         parse_reset();
         shell_expand_reset();
 

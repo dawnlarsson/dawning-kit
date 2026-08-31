@@ -16,6 +16,7 @@
 #include <linux/console.h>
 #include <linux/refcount.h>
 #include <linux/cred.h>
+#include <linux/file.h>
 
 #ifdef CONFIG_X86_64
 #include <asm/cpufeature.h>
@@ -503,6 +504,9 @@ struct spawn_work
         struct spawn_strings *environment;
         unsigned int argc;
         bool shell_fallback;
+        bool path_owned;
+        struct file *output;
+        struct file *error;
 };
 
 static void spawn_strings_put(struct spawn_strings *strings)
@@ -513,9 +517,14 @@ static void spawn_strings_put(struct spawn_strings *strings)
 
 static void spawn_free(struct spawn_work *work)
 {
+        if (work->error)
+                fput(work->error);
+        if (work->output)
+                fput(work->output);
         spawn_strings_put(work->environment);
         spawn_strings_put(work->arguments);
-        kfree(work->path);
+        if (work->path_owned)
+                kfree(work->path);
         kfree(work);
 }
 
@@ -594,6 +603,13 @@ static int spawn_enter(void *data)
 
         spawn_default_signals();
 
+        if ((work->output && replace_fd(1, work->output, 0)) ||
+            (work->error && replace_fd(2, work->error, 0)))
+        {
+                ret = -EBADF;
+                goto finished;
+        }
+
         ret = kernel_execve(work->path,
                             (const char *const *)work->arguments->vector,
                             work->environment
@@ -635,6 +651,7 @@ static int spawn_enter(void *data)
                 }
         }
 
+finished:
         stat_exec_ns += ktime_get_ns() - started;
 
         // kernel_execve has copied everything it needs by now, so the request
@@ -725,7 +742,8 @@ static int copy_strings(unsigned long user_block, unsigned int bytes,
 }
 
 static long do_spawn(struct file *file, struct spawn __user *request,
-                     bool shell_fallback)
+                     bool shell_fallback, const char *fixed_path,
+                     int output, int error)
 {
         struct device_context *context = file->private_data;
         struct spawn args;
@@ -743,12 +761,32 @@ static long do_spawn(struct file *file, struct spawn __user *request,
         if (!work)
                 return -ENOMEM;
 
-        work->path = strndup_user((const char __user *)args.path, PATH_MAX);
-        if (IS_ERR(work->path))
+        if (output >= 0 && !(work->output = fget(output)))
         {
-                ret = PTR_ERR(work->path);
-                work->path = NULL;
+                ret = -EBADF;
                 goto fail;
+        }
+
+        if (error >= 0 && !(work->error = fget(error)))
+        {
+                ret = -EBADF;
+                goto fail;
+        }
+
+        if (fixed_path)
+                work->path = (char *)fixed_path;
+        else
+        {
+                work->path = strndup_user((const char __user *)args.path,
+                                          PATH_MAX);
+                if (IS_ERR(work->path))
+                {
+                        ret = PTR_ERR(work->path);
+                        work->path = NULL;
+                        goto fail;
+                }
+
+                work->path_owned = true;
         }
 
         ret = copy_strings(args.argv, args.argv_bytes, args.argv_count,
@@ -878,9 +916,27 @@ static long device_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
         switch (cmd)
         {
         case SPARK_IOCTL_SPAWN:
-                return do_spawn(file, (struct spawn __user *)arg, false);
+                return do_spawn(file, (struct spawn __user *)arg, false, NULL,
+                                -1, -1);
         case SPARK_IOCTL_SPAWN_SHELL:
-                return do_spawn(file, (struct spawn __user *)arg, true);
+                return do_spawn(file, (struct spawn __user *)arg, true, NULL,
+                                -1, -1);
+        case SPARK_IOCTL_SPAWN_TOOL:
+                return do_spawn(file, (struct spawn __user *)arg, false,
+                                "/shell", -1, -1);
+        case SPARK_IOCTL_SPAWN_TOOL_TO:
+        {
+                struct spawn_to __user *request = (struct spawn_to __user *)arg;
+                int output;
+                int error;
+
+                if (get_user(output, &request->output) ||
+                    get_user(error, &request->error))
+                        return -EFAULT;
+
+                return do_spawn(file, &request->spawn, false, "/shell",
+                                output, error);
+        }
         case SPARK_IOCTL_STATS:
                 return report_stats((struct stats __user *)arg);
 #ifdef CONFIG_MOONWATER_CANVAS
