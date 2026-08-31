@@ -500,6 +500,8 @@ wgcVXSeiHcXa9SSFDvKn0L1q5nSLQGHp38qUi1ZPf/1uQSuB3ME=
                         basename dirname realpath mkdir rmdir cp mv rm touch \
                         sleep stty seq yes env id hostname uname ip host fetch \
                         mount umount mountpoint blkid findmnt findfs \
+                        setsid setpgid ionice fadvise taskset renice prlimit \
+                        chrt uclampset flock \
                         init edit term window text pointer world; do
                         ln -sf shell "fs/$utility" || die "linking $utility"
                 done
@@ -507,7 +509,9 @@ wgcVXSeiHcXa9SSFDvKn0L1q5nSLQGHp38qUi1ZPf/1uQSuB3ME=
                 # Conventional util-linux locations. The root spellings keep
                 # Moonwater's one-directory PATH fast; these aliases make
                 # distro and recovery scripts with absolute paths work too.
-                for utility in mount umount mountpoint findmnt; do
+                for utility in mount umount mountpoint findmnt setsid setpgid \
+                        ionice fadvise taskset renice prlimit chrt uclampset \
+                        flock; do
                         ln -sf ../shell "fs/bin/$utility" ||
                                 die "linking /bin/$utility"
                 done

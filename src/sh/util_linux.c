@@ -19,6 +19,40 @@
 #define UL_IOPRIO_SHIFT 13
 #define UL_IOPRIO_DATA_MASK ((1 << UL_IOPRIO_SHIFT) - 1)
 
+#define UL_CLOCK_MONOTONIC 1
+#define UL_LOCK_SHARED 1
+#define UL_LOCK_EXCLUSIVE 2
+#define UL_LOCK_NONBLOCK 4
+#define UL_LOCK_UNLOCK 8
+#define UL_ERROR_AGAIN 11
+
+#define UL_CPU_WORDS 1024
+#define UL_CPU_BITS (UL_CPU_WORDS * positive_bits)
+
+typedef b32 (*ul_task_action)(b32 pid, address_any context);
+
+typedef struct
+{
+        p32 size;
+        p32 policy;
+        p64 flags;
+        b32 nice;
+        p32 priority;
+        p64 runtime;
+        p64 deadline;
+        p64 period;
+        p32 util_min;
+        p32 util_max;
+} ul_sched_attr;
+
+typedef struct
+{
+        p64 soft;
+        p64 hard;
+} ul_limit_pair;
+
+#define UL_LIMIT_INFINITE ((p64)0 - 1)
+
 static COLD b32 ul_usage(string_address program, string_address syntax)
 {
         string_format(log, "Usage: %s %s\n", program, syntax);
@@ -91,6 +125,262 @@ static bool ul_unsigned(string_address text, positive maximum,
 
         address_to value = got;
         return true;
+}
+
+static bool ul_signed(string_address text, bipolar minimum, bipolar maximum,
+                      bipolar address_to value)
+{
+        bipolar got;
+
+        if (!nice_adjustment(text, address_of got) || got < minimum ||
+            got > maximum)
+                return false;
+
+        address_to value = got;
+        return true;
+}
+
+static bool ul_pid(string_address text, string_address program,
+                   string_address kind, b32 address_to value)
+{
+        positive got;
+
+        if (!ul_unsigned(text, b32_max, address_of got))
+        {
+                string_format(file_fail, "%s: invalid %s: %s\n", program,
+                              kind, text);
+                return false;
+        }
+
+        address_to value = (b32)got;
+        return true;
+}
+
+/* taskset, chrt and uclampset all give -a the same meaning. */
+static b32 ul_tasks(b32 pid, bool all, ul_task_action action,
+                    address_any context)
+{
+        if (!all)
+                return action(pid, context);
+
+        p8 path[64] = "/proc/";
+        positive at = 6;
+
+        at += positive_into_string(path + at, (positive)(p32)pid);
+        memory_copy_apart_end(path + at, "/task", 5);
+
+        file_walk walk;
+
+        if (!file_walk_open(address_of walk, AT_FDCWD, path))
+                return 1;
+
+        b32 failed = 0;
+        struct linux_dirent64 address_to entry;
+
+        while ((entry = file_walk_next(address_of walk)))
+        {
+                positive task;
+
+                if (!ul_unsigned((string_address)entry->d_name, b32_max,
+                                 address_of task))
+                        continue;
+
+                if (action((b32)task, context))
+                        failed = 1;
+        }
+
+        file_walk_close(address_of walk);
+        return failed;
+}
+
+static PURE b32 ul_hex(p8 byte)
+{
+        if (byte >= '0' && byte <= '9')
+                return byte - '0';
+        byte = byte_to_lower(byte);
+        return byte >= 'a' && byte <= 'f' ? byte - 'a' + 10 : -1;
+}
+
+static bool ul_cpu_mask(string_address text, positive address_to set)
+{
+        positive length = string_length(text);
+        positive nibble = 0;
+        bool any = false;
+
+        memory_fill(set, 0, UL_CPU_WORDS * sizeof(*set));
+
+        while (length && byte_is_space(string_get(text + length - 1)))
+                length--;
+
+        positive first = string_span(text, string_set_blanks);
+        if (length >= first + 2 && string_is(text + first, '0') &&
+            byte_to_lower(string_get(text + first + 1)) == 'x')
+                first += 2;
+
+        while (length > first)
+        {
+                p8 byte = string_get(text + --length);
+
+                if (byte == ',')
+                        continue;
+
+                b32 digit = ul_hex(byte);
+                if (digit < 0 || nibble >= UL_CPU_BITS / 4)
+                        return false;
+
+                set[nibble / (positive_bits / 4)] |=
+                    (positive)(p32)digit << ((nibble % (positive_bits / 4)) * 4);
+                nibble++;
+                any = true;
+        }
+
+        return any;
+}
+
+static bool ul_cpu_list(string_address text, positive address_to set)
+{
+        string_address at = text;
+        bool any = false;
+
+        memory_fill(set, 0, UL_CPU_WORDS * sizeof(*set));
+
+        while (string_get(at))
+        {
+                positive first;
+                positive last;
+                positive stride = 1;
+
+                if (!ul_size_number(address_of at, 10, address_of first) ||
+                    first >= UL_CPU_BITS)
+                        return false;
+
+                last = first;
+                if (string_is(at, '-'))
+                {
+                        at++;
+                        if (!ul_size_number(address_of at, 10, address_of last) ||
+                            last < first || last >= UL_CPU_BITS)
+                                return false;
+                }
+
+                if (string_is(at, ':'))
+                {
+                        at++;
+                        if (!ul_size_number(address_of at, 10,
+                                            address_of stride) ||
+                            !stride)
+                                return false;
+                }
+
+                for (positive cpu = first; cpu <= last;)
+                {
+                        set[cpu / positive_bits] |=
+                            (positive)1 << (cpu % positive_bits);
+                        any = true;
+
+                        if (last - cpu < stride)
+                                break;
+                        cpu += stride;
+                }
+
+                if (!string_get(at))
+                        break;
+                if (!string_is(at, ','))
+                        return false;
+                at++;
+        }
+
+        return any;
+}
+
+static bool ul_cpu_set(string_address text, bool list,
+                       positive address_to set)
+{
+        return list ? ul_cpu_list(text, set) : ul_cpu_mask(text, set);
+}
+
+static fn ul_cpu_mask_say(positive address_to set, positive bytes)
+{
+        static p8 digits[] = "0123456789abcdef";
+        positive nibbles = bytes * 2;
+
+        while (nibbles > 1)
+        {
+                positive at = nibbles - 1;
+                positive digit = set[at / (positive_bits / 4)] >>
+                                 ((at % (positive_bits / 4)) * 4) & 15;
+                if (digit)
+                        break;
+                nibbles--;
+        }
+
+        for (positive left = nibbles; left; left--)
+        {
+                positive at = left - 1;
+                positive digit = set[at / (positive_bits / 4)] >>
+                                 ((at % (positive_bits / 4)) * 4) & 15;
+
+                if (left != nibbles && !(left % 8))
+                        log(",", 1);
+                log(digits + digit, 1);
+        }
+}
+
+static bool ul_cpu_has(positive address_to set, positive cpu)
+{
+        return (set[cpu / positive_bits] &
+                ((positive)1 << (cpu % positive_bits))) != 0;
+}
+
+static fn ul_cpu_list_say(positive address_to set, positive bytes)
+{
+        bool comma = false;
+        positive bits = bytes * 8;
+
+        for (positive first = 0; first < bits; first++)
+        {
+                if (!ul_cpu_has(set, first))
+                        continue;
+
+                positive second = first + 1;
+                while (second < bits && !ul_cpu_has(set, second))
+                        second++;
+
+                positive stride = second < bits ? second - first : 1;
+                positive last = first;
+                positive count = 1;
+
+                while (last + stride < bits &&
+                       ul_cpu_has(set, last + stride))
+                {
+                        last += stride;
+                        count++;
+                }
+
+                if (stride > 1 && count < 3)
+                {
+                        last = first;
+                        count = 1;
+                }
+
+                if (comma)
+                        log(",", 1);
+                positive_to_string(log, first);
+
+                if (count > 1)
+                {
+                        log("-", 1);
+                        positive_to_string(log, last);
+                        if (stride > 1)
+                        {
+                                log(":", 1);
+                                positive_to_string(log, stride);
+                        }
+                }
+
+                comma = true;
+                first = last;
+        }
 }
 
 /* The exact strtosize grammar shared by util-linux range options. */
@@ -223,18 +513,24 @@ static bool ul_size(string_address text, positive address_to value)
         return true;
 }
 
+static b32 ul_exec_words(string_address address_to words,
+                         string_address program);
+
 static b32 ul_exec(positive first, string_address program)
 {
         positive count = (positive)program_argument_count();
-        string_address address_to words;
-        bipolar answer;
 
         if (first >= count)
                 return ul_bad_usage(program, "no command specified");
 
-        words = program_argument_list() + first;
+        return ul_exec_words(program_argument_list() + first, program);
+}
+
+static b32 ul_exec_words(string_address address_to words,
+                         string_address program)
+{
         log_flush();
-        answer = file_exec_path_try(words);
+        bipolar answer = file_exec_path_try(words);
         string_format(file_fail, "%s: %s: %s\n", program, words[0],
                       file_reason(answer));
         return answer == -ERROR_NO_ENTRY ? 127 : 126;
@@ -258,6 +554,1504 @@ static bool ul_meta(file_taking address_to taking, string_address syntax,
         }
 
         return false;
+}
+
+// taskset ---------------------------------------------------------
+typedef struct
+{
+        positive wanted[UL_CPU_WORDS];
+        bool list;
+        bool setting;
+        bool report;
+} ul_taskset_work;
+
+static fn ul_taskset_say(b32 pid, string_address state, bool list,
+                         positive address_to set, positive bytes)
+{
+        string_format(log, "pid %b's %s affinity %s: ", (bipolar)pid,
+                      state, list ? (string_address)"list"
+                                  : (string_address)"mask");
+        if (list)
+                ul_cpu_list_say(set, bytes);
+        else
+                ul_cpu_mask_say(set, bytes);
+        log("\n", 1);
+}
+
+static b32 ul_taskset_one(b32 pid, address_any context)
+{
+        ul_taskset_work address_to work = context;
+        positive current[UL_CPU_WORDS];
+
+        memory_fill(current, 0, sizeof(current));
+        bipolar used = system_call_3(syscall(sched_getaffinity),
+                                     (positive)(p32)pid, sizeof(current),
+                                     (positive)current);
+
+        if (used < 0)
+        {
+                string_format(file_fail,
+                              "taskset: failed to get pid %b's affinity: %s\n",
+                              (bipolar)pid, file_reason(used));
+                return 1;
+        }
+
+        if (work->report)
+                ul_taskset_say(pid, (string_address)"current", work->list,
+                               current, (positive)used);
+
+        if (!work->setting)
+                return 0;
+
+        bipolar changed = system_call_3(syscall(sched_setaffinity),
+                                        (positive)(p32)pid,
+                                        sizeof(work->wanted),
+                                        (positive)work->wanted);
+        if (changed < 0)
+        {
+                string_format(file_fail,
+                              "taskset: failed to set pid %b's affinity: %s\n",
+                              (bipolar)pid, file_reason(changed));
+                return 1;
+        }
+
+        if (work->report)
+        {
+                memory_fill(current, 0, sizeof(current));
+                used = system_call_3(syscall(sched_getaffinity),
+                                     (positive)(p32)pid, sizeof(current),
+                                     (positive)current);
+                if (used < 0)
+                        return 1;
+                ul_taskset_say(pid, (string_address)"new", work->list,
+                               current, (positive)used);
+        }
+
+        return 0;
+}
+
+static const file_long ul_taskset_longs[] = {
+    {(string_address)"all-tasks", 'a'},
+    {(string_address)"pid", 'p'},
+    {(string_address)"cpu-list", 'c'},
+    {(string_address)"help", 'h'},
+    {(string_address)"version", 'V'},
+    {null, 0},
+};
+
+static b32 util_linux_taskset()
+{
+        file_taking taking = {
+            .program = (string_address)"taskset",
+            .allowed = (string_address)"apcVh",
+            .valued = (string_address)"",
+            .longs = ul_taskset_longs,
+        };
+        positive count = (positive)program_argument_count();
+        ul_taskset_work work = {.list = false, .setting = false, .report = true};
+        b32 answer;
+        b32 pid = 0;
+        bool by_pid;
+        bool all;
+
+        if (!file_take(address_of taking))
+                return 1;
+        if (ul_meta(address_of taking,
+                    "[options] [mask | cpu-list] [pid | command ...]",
+                    address_of answer))
+                return answer;
+
+        by_pid = (taking.flags & FILE_FLAG('p')) != 0;
+        all = (taking.flags & FILE_FLAG('a')) != 0;
+        work.list = (taking.flags & FILE_FLAG('c')) != 0;
+
+        if (by_pid)
+        {
+                positive operands = count - taking.first;
+
+                if (operands != 1 && operands != 2)
+                        return ul_bad_usage("taskset", "bad usage");
+
+                work.setting = operands == 2;
+                if (work.setting &&
+                    !ul_cpu_set(program_argument((b32)taking.first), work.list,
+                                work.wanted))
+                        return ul_bad_usage("taskset",
+                                            work.list
+                                              ? "failed to parse CPU list"
+                                              : "failed to parse CPU mask");
+
+                if (!ul_pid(program_argument((b32)(count - 1)), "taskset",
+                            "PID", address_of pid))
+                        return 1;
+
+                answer = ul_tasks(pid, all, ul_taskset_one, address_of work);
+                log_flush();
+                return answer;
+        }
+
+        if (all || taking.first + 1 >= count)
+                return ul_bad_usage("taskset", "bad usage");
+
+        if (!ul_cpu_set(program_argument((b32)taking.first), work.list,
+                        work.wanted))
+                return ul_bad_usage("taskset",
+                                    work.list ? "failed to parse CPU list"
+                                              : "failed to parse CPU mask");
+
+        work.setting = true;
+        work.report = false;
+        if (ul_taskset_one(0, address_of work))
+                return 1;
+
+        return ul_exec(taking.first + 1, "taskset");
+}
+
+// renice ----------------------------------------------------------
+#define UL_PRIO_PROCESS 0
+#define UL_PRIO_PGRP 1
+#define UL_PRIO_USER 2
+
+static b32 ul_renice_one(string_address operand, b32 which,
+                         bipolar priority, bool relative)
+{
+        positive id;
+
+        if (which == UL_PRIO_USER &&
+            !ul_unsigned(operand, b32_max, address_of id))
+        {
+                bipolar named = file_user_id(operand);
+                if (named < 0)
+                {
+                        string_format(file_fail, "renice: unknown user %s\n",
+                                      operand);
+                        return 1;
+                }
+                id = (positive)named;
+        }
+        else if (!ul_unsigned(operand, b32_max, address_of id))
+        {
+                string_format(file_fail, "renice: bad value: %s\n", operand);
+                return 1;
+        }
+
+        string_address kind = which == UL_PRIO_PROCESS
+                                  ? (string_address)"process ID"
+                              : which == UL_PRIO_PGRP
+                                  ? (string_address)"process group ID"
+                                  : (string_address)"user ID";
+        bipolar raw = system_call_2(syscall(getpriority), (positive)which, id);
+
+        if (raw < 0)
+        {
+                string_format(file_fail,
+                              "renice: failed to get priority for %p (%s): %s\n",
+                              id, kind, file_reason(raw));
+                return 1;
+        }
+
+        bipolar old = 20 - raw;
+        bipolar wanted = relative ? old + priority : priority;
+
+        if (wanted < -20)
+                wanted = -20;
+        else if (wanted > 19)
+                wanted = 19;
+
+        bipolar changed = system_call_3(syscall(setpriority), (positive)which,
+                                        id, (positive)wanted);
+        if (changed < 0)
+        {
+                string_format(file_fail,
+                              "renice: failed to set priority for %p (%s): %s\n",
+                              id, kind, file_reason(changed));
+                return 1;
+        }
+
+        raw = system_call_2(syscall(getpriority), (positive)which, id);
+        bipolar now = raw < 0 ? wanted : 20 - raw;
+
+        string_format(log, "%p (%s) old priority %b, new priority %b\n",
+                      id, kind, old, now);
+        return 0;
+}
+
+static bool ul_renice_long_value(string_address word, string_address name,
+                                 string_address address_to value)
+{
+        positive length = string_length(name);
+
+        if (!string_is(word, '-') || !string_is(word + 1, '-') ||
+            memory_compare(word + 2, name, length))
+                return false;
+
+        if (string_is(word + 2 + length, '='))
+        {
+                address_to value = word + 3 + length;
+                return true;
+        }
+
+        if (!string_get(word + 2 + length))
+        {
+                address_to value = null;
+                return true;
+        }
+
+        return false;
+}
+
+static b32 util_linux_renice()
+{
+        positive count = (positive)program_argument_count();
+        positive at = 1;
+        bool relative = false;
+        string_address priority_text;
+
+        if (at >= count)
+                return ul_bad_usage("renice", "not enough arguments");
+
+        string_address first = program_argument((b32)at++);
+        if (string_equals(first, "-h") || string_equals(first, "--help"))
+                return ul_usage("renice", "priority [-p|-g|-u] ID ...");
+        if (string_equals(first, "-V") || string_equals(first, "--version"))
+        {
+                string_format(log, "renice from dawning-kit\n");
+                log_flush();
+                return 0;
+        }
+
+        string_address value = null;
+        bool short_priority = string_is(first, '-') && string_is(first + 1, 'n');
+        bool long_priority =
+            ul_renice_long_value(first, "priority", address_of value) ||
+            ul_renice_long_value(first, "relative", address_of value);
+
+        if (short_priority || long_priority)
+        {
+                relative = short_priority
+                    ? file_environment("POSIXLY_CORRECT") != null
+                    : string_get(first + 2) == 'r';
+                priority_text = short_priority && string_get(first + 2)
+                                    ? first + 2 : value;
+                if (!priority_text && at < count)
+                        priority_text = program_argument((b32)at++);
+        }
+        else
+                priority_text = first;
+
+        bipolar priority;
+        if (!priority_text ||
+            !ul_signed(priority_text, bipolar_min, bipolar_max,
+                       address_of priority))
+                return ul_bad_usage("renice", "invalid priority");
+
+        b32 which = UL_PRIO_PROCESS;
+        b32 failed = 0;
+        bool identity_option = false;
+        positive ids = 0;
+        bool options = true;
+
+        for (; at < count; at++)
+        {
+                string_address word = program_argument((b32)at);
+
+                if (options && string_equals(word, "--"))
+                {
+                        options = false;
+                        continue;
+                }
+                if (options &&
+                    (string_equals(word, "-p") || string_equals(word, "--pid")))
+                {
+                        which = UL_PRIO_PROCESS;
+                        identity_option = true;
+                        continue;
+                }
+                if (options &&
+                    (string_equals(word, "-g") || string_equals(word, "--pgrp")))
+                {
+                        which = UL_PRIO_PGRP;
+                        identity_option = true;
+                        continue;
+                }
+                if (options &&
+                    (string_equals(word, "-u") || string_equals(word, "--user")))
+                {
+                        which = UL_PRIO_USER;
+                        identity_option = true;
+                        continue;
+                }
+
+                failed |= ul_renice_one(word, which, priority, relative);
+                ids++;
+        }
+
+        log_flush();
+        return ids ? failed : identity_option ? 0
+                                              : ul_bad_usage("renice", "no process ID specified");
+}
+
+// prlimit ---------------------------------------------------------
+static bipolar ul_prlimit(b32 pid, positive resource,
+                          ul_limit_pair address_to in,
+                          ul_limit_pair address_to out)
+{
+        return system_call_4(syscall(prlimit64), (positive)(p32)pid,
+                             resource, (positive)in, (positive)out);
+}
+
+typedef struct
+{
+        string_address name;
+        string_address description;
+        string_address units;
+        p8 letter;
+        p8 resource;
+} ul_resource;
+
+static const ul_resource ul_resources[] = {
+    {"AS", "address space limit", "bytes", 'v', 9},
+    {"CORE", "max core file size", "bytes", 'c', 4},
+    {"CPU", "CPU time", "seconds", 't', 0},
+    {"DATA", "max data size", "bytes", 'd', 2},
+    {"FSIZE", "max file size", "bytes", 'f', 1},
+    {"LOCKS", "max number of file locks held", "locks", 'x', 10},
+    {"MEMLOCK", "max locked-in-memory address space", "bytes", 'l', 8},
+    {"MSGQUEUE", "max bytes in POSIX mqueues", "bytes", 'q', 12},
+    {"NICE", "max nice prio allowed to raise", "", 'e', 13},
+    {"NOFILE", "max number of open files", "files", 'n', 7},
+    {"NPROC", "max number of processes", "processes", 'u', 6},
+    {"RSS", "max resident set size", "bytes", 'm', 5},
+    {"RTPRIO", "max real-time priority", "", 'r', 14},
+    {"RTTIME", "timeout for real-time tasks", "microsecs", 'y', 15},
+    {"SIGPENDING", "max number of pending signals", "signals", 'i', 11},
+    {"STACK", "max stack size", "bytes", 's', 3},
+};
+
+#define UL_RESOURCES (sizeof(ul_resources) / sizeof(ul_resources[0]))
+
+static const file_long ul_prlimit_longs[] = {
+    {(string_address)"pid", 'p'}, {(string_address)"output", 'o'},
+    {(string_address)"noheadings", 'H'}, {(string_address)"raw", 'R'},
+    {(string_address)"verbose", 'z'},
+    {(string_address)"core", 'c'}, {(string_address)"data", 'd'},
+    {(string_address)"nice", 'e'}, {(string_address)"fsize", 'f'},
+    {(string_address)"sigpending", 'i'}, {(string_address)"memlock", 'l'},
+    {(string_address)"rss", 'm'}, {(string_address)"nofile", 'n'},
+    {(string_address)"msgqueue", 'q'}, {(string_address)"rtprio", 'r'},
+    {(string_address)"stack", 's'}, {(string_address)"cpu", 't'},
+    {(string_address)"nproc", 'u'}, {(string_address)"as", 'v'},
+    {(string_address)"locks", 'x'}, {(string_address)"rttime", 'y'},
+    {(string_address)"help", 'h'}, {(string_address)"version", 'V'},
+    {null, 0},
+};
+
+static bool ul_limit_value(string_address text, p64 current,
+                           p64 address_to value)
+{
+        if (!text || !string_get(text))
+        {
+                address_to value = current;
+                return true;
+        }
+        if (string_equals(text, "unlimited") || string_equals(text, "infinity"))
+        {
+                address_to value = UL_LIMIT_INFINITE;
+                return true;
+        }
+
+        positive got;
+        if (!ul_unsigned(text, positive_max, address_of got))
+                return false;
+        address_to value = (p64)got;
+        return true;
+}
+
+static bool ul_limit_parse(string_address text, ul_limit_pair current,
+                           ul_limit_pair address_to out)
+{
+        string_address colon = string_first_of(text, ':');
+
+        if (!colon)
+        {
+                if (!ul_limit_value(text, current.soft, address_of out->soft))
+                        return false;
+                out->hard = out->soft;
+                return true;
+        }
+
+        p8 left[64];
+        positive length = (positive)(colon - text);
+        if (length >= sizeof(left))
+                return false;
+        memory_copy_apart_end(left, text, length);
+
+        return ul_limit_value(left, current.soft, address_of out->soft) &&
+               ul_limit_value(colon + 1, current.hard, address_of out->hard);
+}
+
+enum
+{
+        UL_LIMIT_RESOURCE,
+        UL_LIMIT_DESCRIPTION,
+        UL_LIMIT_SOFT,
+        UL_LIMIT_HARD,
+        UL_LIMIT_UNITS,
+        UL_LIMIT_COLUMNS
+};
+
+static string_address ul_limit_headers[] = {
+    "RESOURCE", "DESCRIPTION", "SOFT", "HARD", "UNITS",
+};
+
+static bool ul_limit_columns(string_address text, p8 address_to columns,
+                             positive address_to count)
+{
+        positive made = 0;
+
+        while (string_get(text))
+        {
+                string_address comma = string_first_of(text, ',');
+                positive length = comma ? (positive)(comma - text)
+                                        : string_length(text);
+                positive found = UL_LIMIT_COLUMNS;
+
+                for (positive at = 0; at < UL_LIMIT_COLUMNS; at++)
+                        if (length == string_length(ul_limit_headers[at]) &&
+                            !memory_compare_ascii_case(text,
+                                                       ul_limit_headers[at],
+                                                       length))
+                        {
+                                found = at;
+                                break;
+                        }
+
+                if (found == UL_LIMIT_COLUMNS || made == UL_LIMIT_COLUMNS)
+                        return false;
+                columns[made++] = (p8)found;
+                text += length;
+                if (!string_get(text))
+                        break;
+                text++;
+        }
+
+        address_to count = made;
+        return made != 0;
+}
+
+static positive ul_limit_text(p64 value, p8 address_to into)
+{
+        if (value == UL_LIMIT_INFINITE)
+        {
+                memory_copy_apart_end(into, "unlimited", 9);
+                return 9;
+        }
+
+        return positive_into_string(into, (positive)value);
+}
+
+static fn ul_limit_raw(string_address text)
+{
+        while (string_get(text))
+        {
+                if (string_is(text, ' '))
+                        log("\\x20", 4);
+                else
+                        log(text, 1);
+                text++;
+        }
+}
+
+static fn ul_limit_field(p8 column, ul_resource const address_to resource,
+                         ul_limit_pair pair, positive width, bool raw)
+{
+        p8 number[32];
+        string_address text;
+
+        if (column == UL_LIMIT_RESOURCE)
+                text = resource->name;
+        else if (column == UL_LIMIT_DESCRIPTION)
+                text = resource->description;
+        else if (column == UL_LIMIT_UNITS)
+                text = resource->units;
+        else
+        {
+                ul_limit_text(column == UL_LIMIT_SOFT ? pair.soft : pair.hard,
+                              number);
+                text = number;
+        }
+
+        if (raw)
+                ul_limit_raw(text);
+        else
+                string_to_field(log, text, width, ' ',
+                                column != UL_LIMIT_SOFT &&
+                                column != UL_LIMIT_HARD);
+}
+
+static b32 util_linux_prlimit()
+{
+        file_taking taking = {
+            .program = (string_address)"prlimit",
+            .allowed = (string_address)"pocdefilmnqrstuvxyVh",
+            .valued = (string_address)"po",
+            .optional = (string_address)"cdefilmnqrstuvxy",
+            .longs = ul_prlimit_longs,
+        };
+        b32 answer;
+
+        if (!file_take(address_of taking))
+                return 1;
+        if (ul_meta(address_of taking,
+                    "[options] [--resource[=limit]] [command ...]",
+                    address_of answer))
+                return answer;
+
+        positive count = (positive)program_argument_count();
+        b32 pid = 0;
+        bool command = taking.first < count;
+
+        if (file_option_value(address_of taking, 'p'))
+        {
+                if (command)
+                        return ul_bad_usage("prlimit",
+                                            "cannot specify a PID and a command");
+                if (!ul_pid(file_option_value(address_of taking, 'p'),
+                            "prlimit", "PID", address_of pid))
+                        return 1;
+        }
+
+        bool selected = false;
+        bool setting = false;
+        b32 failed = 0;
+
+        for (positive at = 0; at < UL_RESOURCES; at++)
+        {
+                ul_resource const address_to resource = ul_resources + at;
+                positive bit = FILE_FLAG(resource->letter);
+
+                if (!(taking.flags & bit))
+                        continue;
+                selected = true;
+
+                string_address value =
+                    file_option_value(address_of taking, resource->letter);
+                if (!value)
+                        continue;
+                setting = true;
+
+                ul_limit_pair old;
+                ul_limit_pair made;
+                bipolar got = ul_prlimit(pid, resource->resource, null,
+                                         address_of old);
+                if (got < 0 || !ul_limit_parse(value, old, address_of made))
+                {
+                        string_format(file_fail,
+                                      "prlimit: failed to parse %s limit\n",
+                                      resource->name);
+                        failed = 1;
+                        continue;
+                }
+
+                got = ul_prlimit(pid, resource->resource, address_of made, null);
+                if (got < 0)
+                {
+                        string_format(file_fail, "prlimit: failed to set %s: %s\n",
+                                      resource->name, file_reason(got));
+                        failed = 1;
+                        continue;
+                }
+
+                if (taking.flags & FILE_FLAG('z'))
+                {
+                        string_format(log, "New %s limit for pid %b: <",
+                                      resource->name, (bipolar)pid);
+                        p8 text[32];
+                        ul_limit_text(made.soft, text);
+                        string_format(log, "%s:", text);
+                        ul_limit_text(made.hard, text);
+                        string_format(log, "%s>\n", text);
+                }
+        }
+
+        if (failed)
+        {
+                log_flush();
+                return 1;
+        }
+
+        if (command)
+                return ul_exec(taking.first, "prlimit");
+
+        p8 columns[UL_LIMIT_COLUMNS] = {
+            UL_LIMIT_RESOURCE, UL_LIMIT_DESCRIPTION, UL_LIMIT_SOFT,
+            UL_LIMIT_HARD, UL_LIMIT_UNITS,
+        };
+        positive column_count = UL_LIMIT_COLUMNS;
+        if (file_option_value(address_of taking, 'o') &&
+            !ul_limit_columns(file_option_value(address_of taking, 'o'),
+                              columns, address_of column_count))
+                return ul_bad_usage("prlimit", "unknown column");
+
+        bool headings = !(taking.flags & FILE_FLAG('H'));
+        bool raw = (taking.flags & FILE_FLAG('R')) != 0;
+        positive widths[UL_LIMIT_COLUMNS] = {0, 0, 0, 0, 0};
+        ul_limit_pair pairs[UL_RESOURCES];
+        bool show[UL_RESOURCES];
+
+        for (positive column = 0; column < UL_LIMIT_COLUMNS; column++)
+                if (headings)
+                        widths[column] = string_length(ul_limit_headers[column]);
+
+        for (positive at = 0; at < UL_RESOURCES; at++)
+        {
+                ul_resource const address_to resource = ul_resources + at;
+                show[at] = (!selected ||
+                            (taking.flags & FILE_FLAG(resource->letter))) &&
+                           !file_option_value(address_of taking,
+                                              resource->letter);
+                if (!show[at])
+                        continue;
+
+                bipolar got = ul_prlimit(pid, resource->resource, null,
+                                         pairs + at);
+                if (got < 0)
+                {
+                        string_format(file_fail, "prlimit: failed to get %s: %s\n",
+                                      resource->name, file_reason(got));
+                        show[at] = false;
+                        failed = 1;
+                        continue;
+                }
+
+                positive lengths[UL_LIMIT_COLUMNS];
+                p8 number[32];
+                lengths[UL_LIMIT_RESOURCE] = string_length(resource->name);
+                lengths[UL_LIMIT_DESCRIPTION] =
+                    string_length(resource->description);
+                lengths[UL_LIMIT_SOFT] =
+                    ul_limit_text(pairs[at].soft, number);
+                lengths[UL_LIMIT_HARD] =
+                    ul_limit_text(pairs[at].hard, number);
+                lengths[UL_LIMIT_UNITS] = string_length(resource->units);
+
+                for (positive column = 0; column < UL_LIMIT_COLUMNS; column++)
+                        if (lengths[column] > widths[column])
+                                widths[column] = lengths[column];
+        }
+
+        if (headings)
+        {
+                for (positive at = 0; at < column_count; at++)
+                {
+                        if (at)
+                                log(" ", 1);
+                        string_to_field(log, ul_limit_headers[columns[at]],
+                                        raw || (at + 1 == column_count &&
+                                                columns[at] != UL_LIMIT_SOFT &&
+                                                columns[at] != UL_LIMIT_HARD)
+                                            ? 0 : widths[columns[at]], ' ',
+                                        columns[at] != UL_LIMIT_SOFT &&
+                                        columns[at] != UL_LIMIT_HARD);
+                }
+                log("\n", 1);
+        }
+
+        for (positive at = 0; at < UL_RESOURCES; at++)
+        {
+                ul_resource const address_to resource = ul_resources + at;
+                if (!show[at])
+                        continue;
+
+                for (positive field = 0; field < column_count; field++)
+                {
+                        if (field)
+                                log(" ", 1);
+                        ul_limit_field(columns[field], resource, pairs[at],
+                                       raw || (field + 1 == column_count &&
+                                               columns[field] != UL_LIMIT_SOFT &&
+                                               columns[field] != UL_LIMIT_HARD)
+                                           ? 0 : widths[columns[field]], raw);
+                }
+                log("\n", 1);
+        }
+
+        log_flush();
+        return failed || (setting && !selected);
+}
+
+// chrt and uclampset ---------------------------------------------
+#define UL_SCHED_RESET_ON_FORK 0x01
+#define UL_SCHED_UTIL_MIN 0x20
+#define UL_SCHED_UTIL_MAX 0x40
+
+static bipolar ul_sched_get(b32 pid, ul_sched_attr address_to attr)
+{
+        memory_fill(attr, 0, sizeof(*attr));
+        attr->size = sizeof(*attr);
+        return system_call_4(syscall(sched_getattr), (positive)(p32)pid,
+                             (positive)attr, sizeof(*attr), 0);
+}
+
+static bipolar ul_sched_set(b32 pid, ul_sched_attr address_to attr)
+{
+        attr->size = sizeof(*attr);
+        return system_call_3(syscall(sched_setattr), (positive)(p32)pid,
+                             (positive)attr, 0);
+}
+
+typedef struct
+{
+        string_address name;
+        p8 option;
+        p8 value;
+} ul_policy;
+
+static const ul_policy ul_policies[] = {
+    {"SCHED_OTHER", 'o', 0}, {"SCHED_FIFO", 'f', 1},
+    {"SCHED_RR", 'r', 2}, {"SCHED_BATCH", 'b', 3},
+    {"SCHED_IDLE", 'i', 5}, {"SCHED_DEADLINE", 'd', 6},
+    {"SCHED_EXT", 'e', 7},
+};
+
+#define UL_POLICIES (sizeof(ul_policies) / sizeof(ul_policies[0]))
+
+static ul_policy const address_to ul_policy_option(p8 option)
+{
+        for (positive at = 0; at < UL_POLICIES; at++)
+                if (ul_policies[at].option == option)
+                        return ul_policies + at;
+        return null;
+}
+
+static ul_policy const address_to ul_policy_value(p32 value)
+{
+        for (positive at = 0; at < UL_POLICIES; at++)
+                if (ul_policies[at].value == value)
+                        return ul_policies + at;
+        return null;
+}
+
+static fn ul_chrt_report(b32 pid, string_address state,
+                         ul_sched_attr address_to attr)
+{
+        ul_policy const address_to policy = ul_policy_value(attr->policy);
+
+        string_format(log, "pid %b's %s scheduling policy: %s\n",
+                      (bipolar)pid, state,
+                      policy ? policy->name : (string_address)"SCHED_UNKNOWN");
+        string_format(log, "pid %b's %s scheduling priority: %p\n",
+                      (bipolar)pid, state, (positive)attr->priority);
+        string_format(log, "pid %b's %s runtime parameter: %p\n",
+                      (bipolar)pid, state, (positive)attr->runtime);
+
+        if (attr->policy == 6)
+        {
+                string_format(log, "pid %b's %s deadline parameter: %p\n",
+                              (bipolar)pid, state, (positive)attr->deadline);
+                string_format(log, "pid %b's %s period parameter: %p\n",
+                              (bipolar)pid, state, (positive)attr->period);
+        }
+}
+
+typedef struct
+{
+        ul_sched_attr attr;
+        bool setting;
+        bool verbose;
+} ul_chrt_work;
+
+static b32 ul_chrt_one(b32 pid, address_any context)
+{
+        ul_chrt_work address_to work = context;
+        ul_sched_attr current;
+
+        if (!work->setting)
+        {
+                bipolar got = ul_sched_get(pid, address_of current);
+                if (got < 0)
+                {
+                        string_format(file_fail,
+                                      "chrt: failed to get pid %b's policy: %s\n",
+                                      (bipolar)pid, file_reason(got));
+                        return 1;
+                }
+                ul_chrt_report(pid, (string_address)"current",
+                               address_of current);
+                return 0;
+        }
+
+        if (work->verbose && ul_sched_get(pid, address_of current) >= 0)
+                ul_chrt_report(pid, (string_address)"current",
+                               address_of current);
+
+        bipolar changed = ul_sched_set(pid, address_of work->attr);
+        if (changed < 0)
+        {
+                string_format(file_fail,
+                              "chrt: failed to set pid %b's policy: %s\n",
+                              (bipolar)pid, file_reason(changed));
+                return 1;
+        }
+
+        if (work->verbose && ul_sched_get(pid, address_of current) >= 0)
+                ul_chrt_report(pid, (string_address)"new", address_of current);
+        return 0;
+}
+
+static p8 ul_chrt_policy;
+static const file_supersede ul_chrt_supersedes[] = {
+    {(string_address)"bdefior", address_of ul_chrt_policy},
+    {null, null},
+};
+
+static const file_long ul_chrt_longs[] = {
+    {(string_address)"batch", 'b'}, {(string_address)"deadline", 'd'},
+    {(string_address)"ext", 'e'}, {(string_address)"fifo", 'f'},
+    {(string_address)"idle", 'i'}, {(string_address)"other", 'o'},
+    {(string_address)"rr", 'r'}, {(string_address)"reset-on-fork", 'R'},
+    {(string_address)"sched-runtime", 'T'},
+    {(string_address)"sched-period", 'P'},
+    {(string_address)"sched-deadline", 'D'},
+    {(string_address)"all-tasks", 'a'}, {(string_address)"max", 'm'},
+    {(string_address)"pid", 'p'}, {(string_address)"verbose", 'v'},
+    {(string_address)"help", 'h'}, {(string_address)"version", 'V'},
+    {null, 0},
+};
+
+static b32 ul_chrt_max()
+{
+        for (positive at = 0; at < UL_POLICIES; at++)
+        {
+                bipolar low = system_call_1(syscall(sched_get_priority_min),
+                                            ul_policies[at].value);
+                bipolar high = system_call_1(syscall(sched_get_priority_max),
+                                             ul_policies[at].value);
+                if (low < 0 || high < 0)
+                        continue;
+
+                string_format(log, "%s min/max priority\t: %b/%b\n",
+                              ul_policies[at].name, low, high);
+        }
+        log_flush();
+        return 0;
+}
+
+static b32 util_linux_chrt()
+{
+        file_taking taking = {
+            .program = (string_address)"chrt",
+            .allowed = (string_address)"bdefiorRTPDampvVh",
+            .valued = (string_address)"TPD",
+            .longs = ul_chrt_longs,
+            .supersedes = ul_chrt_supersedes,
+        };
+        b32 answer;
+
+        ul_chrt_policy = 0;
+        if (!file_take(address_of taking))
+                return 1;
+        if (ul_meta(address_of taking,
+                    "[options] [priority] command | -p [priority] PID",
+                    address_of answer))
+                return answer;
+        if (taking.flags & FILE_FLAG('m'))
+                return ul_chrt_max();
+
+        positive count = (positive)program_argument_count();
+        bool by_pid = (taking.flags & FILE_FLAG('p')) != 0;
+        bool all = (taking.flags & FILE_FLAG('a')) != 0;
+        ul_policy const address_to policy =
+            ul_policy_option(ul_chrt_policy ? ul_chrt_policy : 'r');
+        positive priority = 0;
+        positive first = taking.first;
+        bool priority_given = false;
+
+        if (first < count && (!by_pid || count - first > 1) &&
+            ul_unsigned(program_argument((b32)first), p32_max, address_of priority))
+        {
+                priority_given = true;
+                first++;
+        }
+
+        if (by_pid)
+        {
+                if (first + 1 != count)
+                        return ul_bad_usage("chrt", "bad usage");
+        }
+        else if (first >= count || all)
+                return ul_bad_usage("chrt", "bad usage");
+
+        b32 pid = 0;
+        if (by_pid && !ul_pid(program_argument((b32)first), "chrt", "PID",
+                              address_of pid))
+                return 1;
+
+        bool scheduling_option = ul_chrt_policy || priority_given ||
+            (taking.flags & FILE_FLAG('R')) ||
+            file_option_value(address_of taking, 'T') ||
+            file_option_value(address_of taking, 'P') ||
+            file_option_value(address_of taking, 'D');
+
+        if (by_pid && !scheduling_option)
+        {
+                ul_chrt_work query = {.setting = false, .verbose = true};
+                answer = ul_tasks(pid, all, ul_chrt_one, address_of query);
+                log_flush();
+                return answer;
+        }
+
+        if ((policy->value == 1 || policy->value == 2) && !priority_given)
+                return ul_bad_usage("chrt", "missing priority");
+
+        ul_chrt_work work;
+        memory_fill(address_of work, 0, sizeof(work));
+        work.setting = true;
+        work.verbose = (taking.flags & FILE_FLAG('v')) != 0;
+        work.attr.size = sizeof(work.attr);
+        work.attr.policy = policy->value;
+        work.attr.priority = (p32)priority;
+        work.attr.flags = (taking.flags & FILE_FLAG('R'))
+                              ? UL_SCHED_RESET_ON_FORK
+                              : 0;
+
+        struct { p8 option; p64 address_to into; } parameters[] = {
+            {'T', address_of work.attr.runtime},
+            {'D', address_of work.attr.deadline},
+            {'P', address_of work.attr.period},
+        };
+        for (positive at = 0; at < sizeof(parameters) / sizeof(parameters[0]); at++)
+        {
+                string_address value =
+                    file_option_value(address_of taking, parameters[at].option);
+                positive got;
+                if (value && !ul_unsigned(value, positive_max, address_of got))
+                        return ul_bad_usage("chrt", "invalid scheduling parameter");
+                if (value)
+                        address_to parameters[at].into = (p64)got;
+        }
+
+        if (ul_tasks(pid, all, ul_chrt_one, address_of work))
+        {
+                log_flush();
+                return 1;
+        }
+        log_flush();
+        return by_pid ? 0 : ul_exec(first, "chrt");
+}
+
+typedef struct
+{
+        bool setting;
+        bool verbose;
+        bool minimum;
+        bool maximum;
+        p32 min;
+        p32 max;
+        bool reset;
+} ul_uclamp_work;
+
+static fn ul_uclamp_name(b32 pid, p8 address_to name)
+{
+        p8 path[64] = "/proc/";
+        positive at = 6;
+
+        at += positive_into_string(path + at, (positive)(p32)pid);
+        memory_copy_apart_end(path + at, "/comm", 5);
+        bipolar got = file_slurp(path, name, FILE_NAME_MAX);
+        if (got <= 0)
+        {
+                memory_copy_apart_end(name, "unknown", 7);
+                return;
+        }
+        p8 address_to newline = (p8 address_to)memory_first_of(name, '\n',
+                                                               (positive)got);
+        if (newline)
+                address_to newline = end;
+}
+
+static fn ul_uclamp_report(b32 pid, ul_sched_attr address_to attr)
+{
+        p8 name[FILE_NAME_MAX];
+        ul_uclamp_name(pid, name);
+        string_format(log, "%s (%b) util_clamp: min: %p max: %p\n", name,
+                      (bipolar)pid, (positive)attr->util_min,
+                      (positive)attr->util_max);
+}
+
+static b32 ul_uclamp_one(b32 pid, address_any context)
+{
+        ul_uclamp_work address_to work = context;
+        ul_sched_attr attr;
+        bipolar got = ul_sched_get(pid, address_of attr);
+
+        if (got < 0)
+        {
+                string_format(file_fail,
+                              "uclampset: failed to get pid %b's attributes: %s\n",
+                              (bipolar)pid, file_reason(got));
+                return 1;
+        }
+
+        if (work->setting)
+        {
+                if (work->minimum)
+                {
+                        attr.util_min = work->min;
+                        attr.flags |= UL_SCHED_UTIL_MIN;
+                }
+                if (work->maximum)
+                {
+                        attr.util_max = work->max;
+                        attr.flags |= UL_SCHED_UTIL_MAX;
+                }
+                if (work->reset)
+                        attr.flags |= UL_SCHED_RESET_ON_FORK;
+
+                got = ul_sched_set(pid, address_of attr);
+                if (got < 0)
+                {
+                        string_format(file_fail,
+                                      "uclampset: failed to set pid %b's attributes: %s\n",
+                                      (bipolar)pid, file_reason(got));
+                        return 1;
+                }
+
+                if (!work->verbose)
+                        return 0;
+                if (ul_sched_get(pid, address_of attr) < 0)
+                        return 1;
+        }
+
+        ul_uclamp_report(pid, address_of attr);
+        return 0;
+}
+
+static const file_long ul_uclamp_longs[] = {
+    {(string_address)"all-tasks", 'a'}, {(string_address)"pid", 'p'},
+    {(string_address)"system", 's'}, {(string_address)"reset-on-fork", 'R'},
+    {(string_address)"verbose", 'v'}, {(string_address)"help", 'h'},
+    {(string_address)"version", 'V'}, {null, 0},
+};
+
+static b32 util_linux_uclampset()
+{
+        file_taking taking = {
+            .program = (string_address)"uclampset",
+            .allowed = (string_address)"mMapsRvVh",
+            .valued = (string_address)"mMp",
+            .longs = ul_uclamp_longs,
+        };
+        b32 answer;
+
+        if (!file_take(address_of taking))
+                return 1;
+        if (ul_meta(address_of taking,
+                    "[options] --pid PID | command [argument ...] | --system",
+                    address_of answer))
+                return answer;
+
+        ul_uclamp_work work = {
+            .setting = false,
+            .verbose = (taking.flags & FILE_FLAG('v')) != 0,
+            .minimum = file_option_value(address_of taking, 'm') != null,
+            .maximum = file_option_value(address_of taking, 'M') != null,
+            .reset = (taking.flags & FILE_FLAG('R')) != 0,
+        };
+        work.setting = work.minimum || work.maximum || work.reset;
+
+        struct { p8 option; p32 address_to into; } values[] = {
+            {'m', address_of work.min}, {'M', address_of work.max},
+        };
+        for (positive at = 0; at < 2; at++)
+        {
+                string_address value = file_option_value(address_of taking,
+                                                          values[at].option);
+                bipolar got;
+                if (value && !ul_signed(value, -1, 1024, address_of got))
+                        return ul_bad_usage("uclampset",
+                                            "utilization value must be -1..1024");
+                if (value)
+                        address_to values[at].into = (p32)got;
+        }
+
+        bool system = (taking.flags & FILE_FLAG('s')) != 0;
+        string_address pid_text = file_option_value(address_of taking, 'p');
+        bool all = (taking.flags & FILE_FLAG('a')) != 0;
+        positive count = (positive)program_argument_count();
+
+        if (!pid_text)
+                work.verbose = false;
+
+        if (system)
+        {
+                if (pid_text || all || taking.first < count)
+                        return ul_bad_usage("uclampset", "bad usage");
+
+                string_address paths[] = {
+                    "/proc/sys/kernel/sched_util_clamp_min",
+                    "/proc/sys/kernel/sched_util_clamp_max",
+                };
+                p32 values_out[2];
+
+                for (positive at = 0; at < 2; at++)
+                {
+                        p8 text[32];
+                        if ((at == 0 ? work.minimum : work.maximum) &&
+                            work.setting)
+                        {
+                                p32 value = at == 0 ? work.min : work.max;
+                                positive length = positive_into_string(
+                                    text, value == (p32)-1
+                                              ? (at == 0 ? 0 : 1024)
+                                              : value);
+                                bipolar handle = system_call_4(
+                                    syscall(openat), AT_FDCWD,
+                                    (positive)paths[at], FILE_WRITE, 0);
+                                if (handle < 0 ||
+                                    system_call_3(syscall(write), handle,
+                                                  (positive)text, length) < 0)
+                                {
+                                        if (handle >= 0)
+                                                system_call_1(syscall(close), handle);
+                                        return ul_bad_usage("uclampset",
+                                                            "cannot set system clamp");
+                                }
+                                system_call_1(syscall(close), handle);
+                        }
+
+                        positive parsed;
+                        positive used;
+                        bipolar length = file_slurp(paths[at], text,
+                                                    sizeof(text));
+                        parsed = string_digits_max(text, 1024, address_of used);
+                        if (length <= 0 || !used)
+                                values_out[at] = at ? 1024 : 0;
+                        else
+                                values_out[at] = (p32)parsed;
+                }
+
+                string_format(log, "System util_clamp: min: %p max: %p\n",
+                              (positive)values_out[0], (positive)values_out[1]);
+                log_flush();
+                return 0;
+        }
+
+        b32 pid = 0;
+        if (pid_text)
+        {
+                if (taking.first < count ||
+                    !ul_pid(pid_text, "uclampset", "PID", address_of pid))
+                        return 1;
+        }
+        else if (taking.first >= count || all)
+                return ul_bad_usage("uclampset", "bad usage");
+
+        if (ul_tasks(pid, all, ul_uclamp_one, address_of work))
+        {
+                log_flush();
+                return 1;
+        }
+        log_flush();
+        return pid_text ? 0 : ul_exec(taking.first, "uclampset");
+}
+
+// flock -----------------------------------------------------------
+#define UL_F_OFD_SETLK 37
+#define UL_F_OFD_SETLKW 38
+#define UL_F_RDLCK 0
+#define UL_F_WRLCK 1
+#define UL_F_UNLCK 2
+
+typedef struct
+{
+        p16 type;
+        p16 whence;
+        b64 start;
+        b64 length;
+        b32 pid;
+        b32 padding;
+} ul_flock_range;
+
+static bool ul_duration(string_address text, positive address_to nanoseconds)
+{
+        string_address at = text;
+        positive seconds;
+        positive fraction = 0;
+        positive places = 0;
+
+        if (!ul_size_number(address_of at, 10, address_of seconds))
+                return false;
+        if (string_is(at, '.'))
+        {
+                at++;
+                while (byte_is_digit(string_get(at)))
+                {
+                        if (places < 9)
+                        {
+                                fraction = fraction * 10 +
+                                           string_get(at) - '0';
+                                places++;
+                        }
+                        at++;
+                }
+        }
+        if (string_get(at) || seconds > positive_max / 1000000000)
+                return false;
+
+        while (places++ < 9)
+                fraction *= 10;
+        address_to nanoseconds = seconds * 1000000000 + fraction;
+        return true;
+}
+
+static positive ul_now_ns()
+{
+        timespec now = {0, 0};
+
+        if (system_call_2(syscall(clock_gettime), UL_CLOCK_MONOTONIC,
+                          (positive)address_of now) < 0)
+                return 0;
+        return (positive)now.tv_sec * 1000000000 + (positive)now.tv_nsec;
+}
+
+static bipolar ul_flock_try(b32 handle, p8 kind, bool nonblocking,
+                            bool fcntl, positive start, positive length)
+{
+        if (!fcntl)
+        {
+                positive operation = kind == 's' ? UL_LOCK_SHARED
+                                     : kind == 'u' ? UL_LOCK_UNLOCK
+                                                   : UL_LOCK_EXCLUSIVE;
+                if (nonblocking)
+                        operation |= UL_LOCK_NONBLOCK;
+                return system_call_2(syscall(flock), (positive)handle,
+                                     operation);
+        }
+
+        ul_flock_range range = {
+            .type = kind == 's' ? UL_F_RDLCK
+                    : kind == 'u' ? UL_F_UNLCK
+                                  : UL_F_WRLCK,
+            .whence = 0,
+            .start = (b64)start,
+            .length = (b64)length,
+        };
+        return system_call_3(syscall(fcntl), (positive)handle,
+                             nonblocking ? UL_F_OFD_SETLK : UL_F_OFD_SETLKW,
+                             (positive)address_of range);
+}
+
+static b32 ul_flock_acquire(b32 handle, p8 kind, bool nonblocking,
+                            bool timed, positive timeout, bool fcntl,
+                            positive start, positive length,
+                            b32 conflict)
+{
+        positive began = timed ? ul_now_ns() : 0;
+
+        for (;;)
+        {
+                bipolar answer = ul_flock_try(handle, kind,
+                                              nonblocking || timed, fcntl,
+                                              start, length);
+                if (answer >= 0)
+                        return 0;
+                if (answer != -UL_ERROR_AGAIN && answer != -ERROR_ACCESS)
+                {
+                        string_format(file_fail, "flock: cannot lock: %s\n",
+                                      file_reason(answer));
+                        return 1;
+                }
+                if (nonblocking && !timed)
+                        return conflict;
+
+                positive now = ul_now_ns();
+                positive elapsed = now >= began ? now - began : timeout;
+                if (elapsed >= timeout)
+                        return conflict;
+
+                positive left = timeout - elapsed;
+                positive nap = left < 10000000 ? left : 10000000;
+                timespec span = {nap / 1000000000, nap % 1000000000};
+                system_call_2(syscall(nanosleep), (positive)address_of span, 0);
+        }
+}
+
+static p8 ul_flock_kind;
+static const file_supersede ul_flock_supersedes[] = {
+    {(string_address)"sxu", address_of ul_flock_kind}, {null, null},
+};
+
+static const file_long ul_flock_longs[] = {
+    {(string_address)"shared", 's'}, {(string_address)"exclusive", 'x'},
+    {(string_address)"unlock", 'u'}, {(string_address)"nb", 'n'},
+    {(string_address)"nonblocking", 'n'}, {(string_address)"timeout", 'w'},
+    {(string_address)"wait", 'w'},
+    {(string_address)"conflict-exit-code", 'E'},
+    {(string_address)"close", 'o'}, {(string_address)"command", 'c'},
+    {(string_address)"no-fork", 'F'}, {(string_address)"fcntl", 'L'},
+    {(string_address)"start", 'S'}, {(string_address)"length", 'N'},
+    {(string_address)"verbose", 'v'}, {(string_address)"help", 'h'},
+    {(string_address)"version", 'V'}, {null, 0},
+};
+
+static b32 util_linux_flock()
+{
+        file_taking taking = {
+            .program = (string_address)"flock",
+            .allowed = (string_address)"sxunwEocFVh",
+            .valued = (string_address)"wEcSN",
+            .longs = ul_flock_longs,
+            .supersedes = ul_flock_supersedes,
+        };
+        b32 answer;
+
+        ul_flock_kind = 0;
+        if (!file_take(address_of taking))
+                return 64;
+        if (ul_meta(address_of taking,
+                    "[options] file|directory command [argument ...] | descriptor",
+                    address_of answer))
+                return answer;
+
+        bool no_fork = (taking.flags & FILE_FLAG('F')) != 0;
+        bool close_child = (taking.flags & FILE_FLAG('o')) != 0;
+        if (no_fork && close_child)
+        {
+                ul_bad_usage("flock",
+                             "the --no-fork and --close options are incompatible");
+                return 64;
+        }
+
+        positive count = (positive)program_argument_count();
+        if (taking.first >= count)
+                return 64;
+
+        b32 conflict = 1;
+        positive parsed;
+        if (file_option_value(address_of taking, 'E'))
+        {
+                if (!ul_unsigned(file_option_value(address_of taking, 'E'), 255,
+                                 address_of parsed))
+                        return 64;
+                conflict = (b32)parsed;
+        }
+
+        bool timed = file_option_value(address_of taking, 'w') != null;
+        positive timeout = 0;
+        if (timed && !ul_duration(file_option_value(address_of taking, 'w'),
+                                  address_of timeout))
+        {
+                ul_bad_usage("flock", "invalid timeout");
+                return 64;
+        }
+
+        bool fcntl = (taking.flags & FILE_FLAG('L')) ||
+                     file_option_value(address_of taking, 'S') ||
+                     file_option_value(address_of taking, 'N');
+        positive start = 0;
+        positive length = 0;
+        if ((file_option_value(address_of taking, 'S') &&
+             !ul_size(file_option_value(address_of taking, 'S'), address_of start)) ||
+            (file_option_value(address_of taking, 'N') &&
+             !ul_size(file_option_value(address_of taking, 'N'), address_of length)))
+        {
+                ul_bad_usage("flock", "invalid lock range");
+                return 64;
+        }
+
+        string_address target = program_argument((b32)taking.first);
+        string_address command_text = file_option_value(address_of taking, 'c');
+        bool command_option = command_text != null;
+
+        /* GNU getopt accepts the documented `flock file -c command` order.
+           The shared scanner deliberately stops at the first operand, so
+           consume this one post-operand spelling here instead of teaching
+           every file applet to permute options. */
+        if (!command_option && taking.first + 2 < count &&
+            string_equals(program_argument((b32)taking.first + 1), "-c"))
+        {
+                command_text = program_argument((b32)taking.first + 2);
+                command_option = true;
+        }
+        bool descriptor = !command_option && taking.first + 1 == count &&
+                          ul_unsigned(target, b32_max, address_of parsed);
+        b32 handle;
+
+        if (descriptor)
+                handle = (b32)parsed;
+        else
+        {
+                handle = (b32)system_call_4(syscall(openat), AT_FDCWD,
+                                             (positive)target,
+                                             FILE_READ_WRITE | FILE_CREATE,
+                                             0666);
+                if (handle == -ERROR_IS_DIRECTORY)
+                        handle = (b32)system_call_4(syscall(openat), AT_FDCWD,
+                                                     (positive)target,
+                                                     FILE_READ, 0);
+                if (handle < 0)
+                {
+                        string_format(file_fail, "flock: cannot open %s: %s\n",
+                                      target, file_reason(handle));
+                        return 66;
+                }
+        }
+
+        answer = ul_flock_acquire(handle, ul_flock_kind ? ul_flock_kind : 'x',
+                                  (taking.flags & FILE_FLAG('n')) != 0,
+                                  timed, timeout, fcntl, start, length,
+                                  conflict);
+        if (answer || descriptor || ul_flock_kind == 'u')
+        {
+                if (!descriptor)
+                        system_call_1(syscall(close), handle);
+                return answer;
+        }
+
+        string_address command_words[] = {
+            (string_address)"/bin/sh", (string_address)"-c",
+            command_text, null,
+        };
+        string_address address_to words = command_option
+            ? command_words : program_argument_list() + taking.first + 1;
+
+        if ((!words[0]) || (!command_option && taking.first + 1 >= count))
+        {
+                system_call_1(syscall(close), handle);
+                return 64;
+        }
+
+        if (no_fork)
+        {
+                answer = ul_exec_words(words, "flock");
+                system_call_1(syscall(close), handle);
+                return answer;
+        }
+
+        log_flush();
+        bipolar child = system_call_2(syscall(clone), SIGCHLD, 0);
+        if (child == 0)
+        {
+                if (close_child)
+                        system_call_1(syscall(close), handle);
+                system_call_1(syscall(exit), ul_exec_words(words, "flock"));
+        }
+        if (child < 0)
+        {
+                system_call_1(syscall(close), handle);
+                return 1;
+        }
+
+        if (!close_child)
+                system_call_1(syscall(close), handle);
+
+        positive status = 0;
+        answer = system_wait4_retry(child, address_of status, 0, null) < 0
+                   ? 1 : wait_status_code(status);
+        if (close_child)
+                system_call_1(syscall(close), handle);
+        return answer;
 }
 
 static const file_long ul_setsid_longs[] = {

@@ -5714,6 +5714,7 @@ static shell_tool shell_tools[] = {
     {"basename", file_basename},
     {"blkid", storage_program_blkid},
     {"chgrp", file_chgrp},
+    {"chrt", util_linux_chrt},
     {"chmod", file_chmod},
     {"chown", file_chown},
     {"cp", file_cp},
@@ -5726,6 +5727,7 @@ static shell_tool shell_tools[] = {
     {"find", file_find},
     {"findfs", storage_program_findfs},
     {"findmnt", storage_program_findmnt},
+    {"flock", util_linux_flock},
     {"groups", file_groups},
     {"hostname", file_hostname},
     {"ip", net_ip},
@@ -5749,8 +5751,10 @@ static shell_tool shell_tools[] = {
     {"nproc", file_nproc},
     {"pathchk", file_pathchk},
     {"printenv", file_printenv},
+    {"prlimit", util_linux_prlimit},
     {"readlink", file_readlink},
     {"realpath", file_realpath},
+    {"renice", util_linux_renice},
     {"rm", file_rm},
     {"rmdir", file_rmdir},
     {"seq", file_seq},
@@ -5760,10 +5764,12 @@ static shell_tool shell_tools[] = {
     {"stat", file_stat},
     {"stty", file_stty},
     {"sync", file_sync},
+    {"taskset", util_linux_taskset},
     {"touch", file_touch},
     {"truncate", file_truncate},
     {"tty", file_tty},
     {"uname", file_uname},
+    {"uclampset", util_linux_uclampset},
     {"unlink", file_unlink},
     {"umount", storage_program_umount},
     {"vdir", file_vdir},
@@ -7263,8 +7269,6 @@ fn shell_which(writer write, string_address input)
         hundred and twelve byte blocks and memory in kilobytes since long
         before either of us, so each limit carries the number it is divided by.
 */
-#define LIMIT_INFINITE ((p64)0 - 1)
-
 typedef struct
 {
         string_address name;
@@ -7289,34 +7293,17 @@ static shell_limit shell_limits[] = {
     {null, 0, 0, 0},
 };
 
-typedef struct
-{
-        p64 soft;
-        p64 hard;
-} shell_limit_pair;
-
-bool shell_limit_read(positive resource, shell_limit_pair address_to out)
-{
-        return system_call_4(syscall(prlimit64), 0, resource, 0,
-                             (positive)out) == 0;
-}
-
-bool shell_limit_write(positive resource, shell_limit_pair address_to in)
-{
-        return system_call_4(syscall(prlimit64), 0, resource, (positive)in, 0) == 0;
-}
-
 fn shell_limit_said(writer write, shell_limit address_to limit, bool hard)
 {
-        shell_limit_pair pair;
+        ul_limit_pair pair;
         p64 value;
 
-        if (!shell_limit_read(limit->resource, address_of pair))
+        if (ul_prlimit(0, limit->resource, null, address_of pair) < 0)
                 return string_format(write, "unlimited\n");
 
         value = hard ? pair.hard : pair.soft;
 
-        if (value == LIMIT_INFINITE)
+        if (value == UL_LIMIT_INFINITE)
                 return string_format(write, "unlimited\n");
 
         positive_to_string(write, (positive)(value / limit->step));
@@ -7417,14 +7404,14 @@ fn shell_ulimit(writer write, string_address input)
         }
 
         {
-                shell_limit_pair pair;
+                ul_limit_pair pair;
                 p64 value;
 
-                if (!shell_limit_read(chosen->resource, address_of pair))
+                if (ul_prlimit(0, chosen->resource, null, address_of pair) < 0)
                         return shell_answer(1);
 
                 if (word_is(shell_argv[index], "unlimited"))
-                        value = LIMIT_INFINITE;
+                        value = UL_LIMIT_INFINITE;
                 else
                 {
                         bool good;
@@ -7450,7 +7437,7 @@ fn shell_ulimit(writer write, string_address input)
                 if (soft || !hard)
                         pair.soft = value;
 
-                if (!shell_limit_write(chosen->resource, address_of pair))
+                if (ul_prlimit(0, chosen->resource, address_of pair, null) < 0)
                 {
                         shell_answer(2);
 
