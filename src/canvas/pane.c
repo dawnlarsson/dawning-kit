@@ -935,6 +935,52 @@ static void desktop_refresh_panes(void)
                 pane_damage_rows(pane, pane->damage_row, pane->damage_rows);
         }
 
+        /*
+                The keyboard follows what the user can actually see.
+
+                A program owns its style word, and pane_refresh above has just
+                read it back: it can set MINIMIZED, which compose draws
+                nowhere, and PASSTHROUGH, which drag lets the pointer fall
+                straight through. Neither bit moved focus, so a window could
+                take the keyboard on creation and then make itself invisible
+                and untouchable while every keystroke kept arriving in the
+                ring it shares. That is a keylogger built entirely out of the
+                documented interface, with no bug to find.
+
+                pane_minimize_focused already holds this invariant for the
+                compositor's own minimize. This is the same rule applied to
+                the path the program drives.
+
+                Only a pane with a shared page. An owned one -- the console
+                -- has no program behind it and no page to set a style
+                through, so it cannot be the thing this guards against, and
+                pane_focusable rejects it for the unrelated reason that it
+                has no page at all. pane_under does not skip it, so a click
+                can focus it, and without this test that focus would be taken
+                straight back on the next pass.
+
+                Mid Alt-Tab a minimized window is legitimately focused, so
+                cycling passes include_minimized and only PASSTHROUGH revokes.
+                Both flags are read, not just focus_cycling: releasing Alt
+                clears cycling and sets commit in one step, and until the
+                canvas thread runs pane_focus_commit the window it is about to
+                restore is still minimized. A refresh in that gap -- any
+                program can drive one through WINDOW_IOCTL_COMMIT -- would
+                otherwise revoke the focus commit was on its way to keep.
+        */
+        if (desktop.focused && desktop.focused->shared &&
+            !pane_focusable(desktop.focused,
+                            atomic_read(&desktop.focus_cycling) ||
+                            atomic_read(&desktop.focus_commit)))
+        {
+                pane_focus(pane_topmost(desktop.focused, false));
+
+                // pane_focus restyles every titlebar, and the damage loop
+                // above has already run. Every other caller pairs it with a
+                // redraw; this is that, without recursing into one.
+                desktop.damage_all = true;
+        }
+
         list_sort(NULL, &desktop.windows, pane_by_z);
 }
 
@@ -974,7 +1020,16 @@ static long window_ioctl_create(struct file *file, unsigned long argument)
         }
 
         bytes = pane->bytes;
-        context->pane = pane;
+
+        /*
+                Released, because window_mmap reads this pointer without the
+                desktop lock and must not see it before the pane it points at.
+                Two threads on one descriptor -- create here, mmap there -- is
+                allowed, and on a weakly ordered machine the store of the
+                pointer can otherwise land ahead of the stores that filled in
+                bytes and mapping. Free on x86, a compiler barrier only.
+        */
+        smp_store_release(&context->pane, pane);
         pane_focus(pane);
         desktop_redraw();
 
@@ -1003,7 +1058,7 @@ static long window_ioctl_commit(struct file *file)
 static int window_mmap(struct file *file, struct vm_area_struct *vma)
 {
         struct device_context *context = file->private_data;
-        struct pane *pane = context->pane;
+        struct pane *pane = smp_load_acquire(&context->pane);
 
         if (!pane)
                 return -EINVAL;

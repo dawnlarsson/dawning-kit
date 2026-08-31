@@ -15,6 +15,7 @@
 #include <linux/initrd.h>
 #include <linux/console.h>
 #include <linux/refcount.h>
+#include <linux/cred.h>
 
 #ifdef CONFIG_X86_64
 #include <asm/cpufeature.h>
@@ -63,6 +64,19 @@ struct device_context
         struct spawn_strings *environment;
         unsigned long environment_generation;
         struct pid *environment_owner;
+        /*
+                The credentials the cached environment was copied under.
+
+                tgid survives execve, so it alone cannot tell "the same shell
+                asking again" from "that shell after it exec'd something
+                setuid". Without this a non-CLOEXEC descriptor carried across
+                a privilege change lets the stale, unprivileged environment be
+                substituted for the one the now-privileged caller passed in.
+
+                A cred is immutable and refcounted, so identity is the pointer
+                and the fast path stays a single compare.
+        */
+        const struct cred *environment_cred;
         struct pane *pane;
 };
 
@@ -99,6 +113,23 @@ int init_mkdir(const char *pathname, umode_t mode);
 
 #define log_k(fmt, ...) \
         pr_alert("[moonwater] " fmt, ##__VA_ARGS__)
+
+/*
+        The same line, for the paths an unprivileged caller reaches.
+
+        A rejected image and a failed spawn are both driven entirely by the
+        caller: any user can execve a file carrying our magic and a bad
+        version, or ask the device to spawn a path that is not there. At
+        pr_alert those go to the console, and on this system the console is
+        the desktop -- so an unratelimited one is a loop that makes the
+        machine unusable without needing a bug to do it.
+
+        Boot and teardown keep the plain form. They happen once, nobody
+        outside can provoke them, and losing one to a suppression window
+        would lose the reason a machine did not start.
+*/
+#define log_k_caller(fmt, ...) \
+        pr_alert_ratelimited("[moonwater] " fmt, ##__VA_ARGS__)
 
 typedef struct
 {
@@ -235,7 +266,7 @@ int execute_spark(struct linux_binprm *bprm)
 
         if (header->version != SPARK_VERSION)
         {
-                log_k("unsupported spark version %u\n", header->version);
+                log_k_caller("unsupported spark version %u\n", header->version);
                 return -ENOEXEC;
         }
 
@@ -301,7 +332,7 @@ int execute_spark(struct linux_binprm *bprm)
         ret = setup_arg_pages(bprm, STACK_TOP, EXSTACK_DEFAULT);
         if (ret < 0)
         {
-                log_k("setup_arg_pages failed: %d\n", ret);
+                log_k_caller("setup_arg_pages failed: %d\n", ret);
                 force_fatal_sig(SIGKILL);
                 return ret;
         }
@@ -328,7 +359,7 @@ int execute_spark(struct linux_binprm *bprm)
         if (IS_ERR_VALUE(text))
         {
                 mmap_write_unlock(current->mm);
-                log_k("mapping text failed: %ld\n", (long)text);
+                log_k_caller("mapping text failed: %ld\n", (long)text);
                 force_fatal_sig(SIGKILL);
                 return (int)text;
         }
@@ -345,7 +376,7 @@ int execute_spark(struct linux_binprm *bprm)
                 if (IS_ERR_VALUE(data))
                 {
                         mmap_write_unlock(current->mm);
-                        log_k("mapping data failed: %ld\n", (long)data);
+                        log_k_caller("mapping data failed: %ld\n", (long)data);
                         force_fatal_sig(SIGKILL);
                         return (int)data;
                 }
@@ -365,7 +396,7 @@ int execute_spark(struct linux_binprm *bprm)
                 if (IS_ERR_VALUE(bss))
                 {
                         mmap_write_unlock(current->mm);
-                        log_k("mapping bss failed: %ld\n", (long)bss);
+                        log_k_caller("mapping bss failed: %ld\n", (long)bss);
                         force_fatal_sig(SIGKILL);
                         return (int)bss;
                 }
@@ -398,7 +429,7 @@ int execute_spark(struct linux_binprm *bprm)
 
         if (ret)
         {
-                log_k("could not lay out the arguments: %d\n", ret);
+                log_k_caller("could not lay out the arguments: %d\n", ret);
                 force_fatal_sig(SIGKILL);
                 return ret;
         }
@@ -616,7 +647,7 @@ static int spawn_enter(void *data)
                 // cannot come back as an ioctl error. Exiting 127 is what a
                 // shell reports for "could not run it", and it keeps the
                 // caller from mistaking the failure for a clean exit.
-                log_k("spawn: exec failed: %d\n", ret);
+                log_k_caller("spawn: exec failed: %d\n", ret);
                 do_exit(127 << 8);
         }
 
@@ -701,6 +732,7 @@ static long do_spawn(struct file *file, struct spawn __user *request,
         struct spawn_work *work;
         struct spawn_strings *old_environment = NULL;
         struct pid *old_owner = NULL;
+        const struct cred *old_cred = NULL;
         long ret;
         pid_t pid;
 
@@ -734,6 +766,7 @@ static long do_spawn(struct file *file, struct spawn __user *request,
                    from making stale bytes look current later. */
                 if (args.envp_generation && context->environment &&
                     context->environment_owner == task_tgid(current) &&
+                    context->environment_cred == current_cred() &&
                     context->environment_generation == args.envp_generation)
                 {
                         refcount_inc(&context->environment->references);
@@ -754,15 +787,19 @@ static long do_spawn(struct file *file, struct spawn __user *request,
                                 mutex_lock(&context->spawn_lock);
                                 old_environment = context->environment;
                                 old_owner = context->environment_owner;
+                                old_cred = context->environment_cred;
                                 refcount_inc(&work->environment->references);
                                 context->environment = work->environment;
                                 context->environment_generation =
                                         args.envp_generation;
                                 context->environment_owner =
                                         get_pid(task_tgid(current));
+                                context->environment_cred =
+                                        get_cred(current_cred());
                                 mutex_unlock(&context->spawn_lock);
                                 spawn_strings_put(old_environment);
                                 put_pid(old_owner);
+                                put_cred(old_cred);
                         }
                 }
         }
@@ -887,6 +924,7 @@ static int device_close(struct inode *inode, struct file *file)
 #endif
         spawn_strings_put(context->environment);
         put_pid(context->environment_owner);
+        put_cred(context->environment_cred);
         kfree(context);
         return 0;
 }
