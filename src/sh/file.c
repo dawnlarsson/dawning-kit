@@ -1712,10 +1712,6 @@ static bool file_take_from(file_taking address_to taking, positive index)
 {
         positive count = (positive)program_argument_count();
 
-        taking->flags = 0;
-
-        memory_fill(taking->value, 0, sizeof(taking->value));
-
         while (index < count)
         {
                 string_address word = program_argument((b32)index);

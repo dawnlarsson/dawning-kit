@@ -2756,8 +2756,6 @@ static b32 util_linux_waitpid()
                         limit = address_of span;
                 }
 
-                for (positive i = 0; i < active; i++)
-                        ul_wait_pids[i].returned = 0;
                 bipolar ready = system_call_5(syscall(ppoll),
                                                (positive)ul_wait_pids, active,
                                                (positive)limit, 0, 8);
