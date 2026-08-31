@@ -161,6 +161,8 @@ compare 'explicit priority option' renice \
         '"$TOOL" -n 0 -p $$ | sed "s/^[0-9]*/PID/"'
 compare 'relative zero' renice \
         '"$TOOL" --relative 0 -p $$ | sed "s/^[0-9]*/PID/"'
+compare 'relative overflow clamps' renice \
+        'nice -n 1 sleep 1 & pid=$!; sleep .02; out=$("$TOOL" --relative 9223372036854775807 -p "$pid"); status=$?; kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; printf "%s\n" "$out" | sed "s/^[0-9]*/PID/"; exit "$status"'
 compare 'priority option after pid' renice \
         'out=$("$TOOL" -p $$ -n 0); status=$?; printf "%s" "$out"; exit "$status"'
 compare 'invalid priority' renice '"$TOOL" impossible -p $$'

@@ -35,6 +35,8 @@ static positive text_arena_used;
 
 #define ERROR_NOT_PERMITTED 1
 #define ERROR_NO_ENTRY 2
+#define ERROR_NO_PROCESS 3
+#define ERROR_BAD_DESCRIPTOR 9
 #define ERROR_ACCESS 13
 #define ERROR_ARGUMENT_LIST 7
 #define ERROR_EXISTS 17
@@ -2071,6 +2073,12 @@ string_address file_reason(bipolar code)
 
         if (code == ERROR_NO_ENTRY)
                 return (string_address) "No such file or directory";
+
+        if (code == ERROR_NO_PROCESS)
+                return (string_address) "No such process";
+
+        if (code == ERROR_BAD_DESCRIPTOR)
+                return (string_address) "Bad file descriptor";
 
         if (code == ERROR_NOT_PERMITTED)
                 return (string_address) "Operation not permitted";

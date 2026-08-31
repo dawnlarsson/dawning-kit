@@ -26,7 +26,6 @@
 #define UL_LOCK_UNLOCK 8
 #define UL_ERROR_INTERRUPTED (-4)
 #define UL_ERROR_AGAIN 11
-#define UL_ERROR_BAD_DESCRIPTOR 9
 
 #define UL_CPU_WORDS 1024
 #define UL_CPU_BITS (UL_CPU_WORDS * positive_bits)
@@ -760,7 +759,15 @@ static b32 ul_renice_one(string_address operand, b32 which,
         }
 
         bipolar old = 20 - raw;
-        bipolar wanted = relative ? old + priority : priority;
+        bipolar wanted = priority;
+
+        if (relative && __builtin_add_overflow(old, priority,
+                                               address_of wanted))
+        {
+                string_format(file_fail,
+                              "renice: relative priority is out of range\n");
+                return 1;
+        }
 
         if (wanted < -20)
                 wanted = -20;
@@ -1962,7 +1969,7 @@ static b32 ul_flock_acquire(b32 handle, p8 kind, bool nonblocking,
                         return conflict;
                 string_format(file_fail, "flock: cannot lock: %s\n",
                               file_reason(answer));
-                return answer == -UL_ERROR_BAD_DESCRIPTOR ? 65 : 1;
+                return answer == -ERROR_BAD_DESCRIPTOR ? 65 : 1;
         }
         if (!timed)
         {
@@ -1972,7 +1979,7 @@ static b32 ul_flock_acquire(b32 handle, p8 kind, bool nonblocking,
                         return 0;
                 string_format(file_fail, "flock: cannot lock: %s\n",
                               file_reason(answer));
-                return answer == -UL_ERROR_BAD_DESCRIPTOR ? 65 : 1;
+                return answer == -ERROR_BAD_DESCRIPTOR ? 65 : 1;
         }
 
         signal_interval prior;
@@ -2014,7 +2021,7 @@ static b32 ul_flock_acquire(b32 handle, p8 kind, bool nonblocking,
                 return conflict;
         string_format(file_fail, "flock: cannot lock: %s\n",
                       file_reason(answer));
-        return answer == -UL_ERROR_BAD_DESCRIPTOR ? 65 : 1;
+        return answer == -ERROR_BAD_DESCRIPTOR ? 65 : 1;
 }
 
 static b32 ul_flock_exec(string_address address_to words)

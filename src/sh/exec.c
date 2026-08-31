@@ -169,8 +169,6 @@ static b32 exec_save_count;
 static b32 exec_redirect_status;
 
 #define F_DUPFD_CLOEXEC 1030
-#define ERROR_BAD_DESCRIPTOR 9
-
 // A save may not occupy a descriptor this command is going to redirect. An
 // open duplication source is occupied already; a closed one is detected later
 // by exec_saved_fd_is, so neither kind needs to force every save above it.
