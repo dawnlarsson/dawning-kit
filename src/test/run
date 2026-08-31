@@ -922,7 +922,15 @@ riscv_alignment_audit()
                 memory_compare)     alignment_labels="memcmp memory_compare" ;;
                 memory_fill)        alignment_labels="__memset memset memory_fill" ;;
                 memory_frob)        alignment_labels="memfrob memory_frob" ;;
-                memory_copy)        alignment_labels="__memcpy memcpy memory_copy" ;;
+                #       Each routine hunts the label its own alias put on it.
+                #       memcpy is memory_copy_apart now and memmove is
+                #       memory_copy, so looking for "memcpy" at memory_copy's
+                #       address finds the other routine and reports this one
+                #       as having lost its residue gate -- which is what it
+                #       did report. The expected[] map below was already
+                #       written for this arrangement.
+                memory_copy)        alignment_labels="__memmove memmove memory_copy" ;;
+                memory_copy_apart)  alignment_labels="__memcpy memcpy memory_copy_apart" ;;
                 *)                  alignment_labels=$alignment_routine ;;
                 esac
 

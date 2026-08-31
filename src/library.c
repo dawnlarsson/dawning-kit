@@ -67,7 +67,7 @@
         A .set is a second label on the same address, so there is no wrapper
         and no jump, and which names get one depends on who is linking.
 
-        236 routines (227 public, 9 local), 236 of them on all three.
+        238 routines (229 public, 9 local), 238 of them on all three.
         Raw C purity: 0 function bodies, 0 object definitions, 0 body macros, and 0 object macros (all forbidden).
 
           routine                        scope   x86_64  arm64   riscv64
@@ -160,6 +160,8 @@
           memory_count_words             public  yes     yes     yes
           memory_exchange_apart          public  yes     yes     yes
           memory_fill                    public  yes     yes     yes
+          memory_fill_32                 public  yes     yes     yes
+          memory_fill_64                 public  yes     yes     yes
           memory_fill_u32                public  yes     yes     yes
           memory_fill_u64_aligned        public  yes     yes     yes
           memory_first_of                public  yes     yes     yes
@@ -3522,6 +3524,117 @@ __asm__(
     "5:  mov %rdx, %rax\n   mov %rsi, %rcx\n   rep stosq\n"
     ASM_RET
     ASM_END(memory_fill_u64_aligned)
+    /*
+            memset32 and memset64 -- the kernel's names for the same two
+            fills, in the order the kernel passes its arguments and answering
+            with the destination the way memset does.
+
+            Two names for one shape is worth the paragraph.  memory_fill_u32
+            above takes the count before the value and answers with nothing,
+            which is what canvas and the shell want from it; the kernel's
+            memset32 takes the value before the count and answers with the
+            destination.  A .set is a second label on one address and can
+            express neither difference, and a shim that fixes both costs five
+            register moves on every call -- which is most of what a fill of
+            three words costs at all.  Counted on arm64, the shim form is
+            1.79x lib/string.c at eight words where writing the loop out in
+            the kernel's own order is 2.27x.  So the store loop is written
+            twice and the call is paid for once.
+
+            Instructions per call against lib/string.c's while loop, counted
+            with a qemu TCG plugin and differenced across two iteration
+            totals rather than timed, because wall clock under an emulator is
+            the emulator working.  Both sides compiled with the
+            architecture's own kernel flags -- -mgeneral-regs-only on arm64 --
+            so the loop this races is the scalar one a kernel really runs:
+
+                                 arm64                   riscv64
+                words     ours  kernel  ratio     ours  kernel  ratio
+                    8       15      34  2.27x       26      36  1.38x
+                   16       23      66  2.87x       42      68  1.62x
+                   32       39     130  3.33x       74     132  1.78x
+                   64       71     258  3.63x      138     260  1.88x
+                  128      135     514  3.81x      266     516  1.94x
+                  256      263    1026  3.90x      522    1028  1.97x
+                  512      519    2050  3.95x     1034    2052  1.98x
+
+            That is the distribution the callers use, not a convenient one:
+            drivers/tty/vt/vt.c fills a console line, so vc_cols, eighty to
+            two hundred and forty; i915 fills fifteen, twenty one, thirty two
+            and a hundred and twenty eight; page table work fills
+            PTRS_PER_PTE and PAGE_SIZE/8, both five hundred and twelve.
+
+            Where it loses, and by how much.  A count of zero costs seven
+            instructions against the kernel's one and a count of one costs
+            eight against six; riscv64's memset32 is still behind at a count
+            of two, fourteen against twelve, because it proves the pointer
+            eight byte aligned before it uses a doubleword store.  Seven
+            instructions is the whole of the loss, and every size from three
+            words up is a win, so nothing in the distribution above pays it.
+
+            x86_64 is not claimed and this body is here for parity and for
+            userspace.  asm/string_64.h inlines rep stosl and rep stosq for
+            all three of memset16, memset32 and memset64, so there is no
+            lib/string.c definition for a claim to displace and no object in
+            arch/x86/lib to comment out -- taking them there means editing
+            that header, which is a kind of edit kernel/patch/apply does not
+            make yet.  It would be worth making: timed on a 9950X, minimum of
+            four hundred runs, ours over an out of line rep stos, 2.4x at
+            eight words, 3.9x at thirty two, 1.4x at a hundred and twenty
+            eight for the 32 bit form and 4.8x at sixteen for the 64 bit one,
+            reaching parity above a hundred and twenty eight where this body
+            turns into rep stosq itself.  rep stos costs fourteen cycles
+            before it stores anything and thirty six once the count crosses a
+            cache line, and the kernel's fills are mostly shorter than that
+            is worth.
+    */
+    ASM_FUNC(memory_fill_32)
+    "mov %rdi, %r8  # the destination is the answer\n"
+    "cmp $4, %rdx\n   jae 3f\n   test %rdx, %rdx\n   jz 9f\n"
+    "mov %esi, (%rdi)\n   mov %esi, -4(%rdi,%rdx,4)\n"
+    "cmp $3, %rdx\n   jb 9f\n   mov %esi, 4(%rdi)\n"
+    "9:  mov %r8, %rax\n"
+    ASM_RET
+    "3:  mov %esi, %ecx\n   mov %rcx, %r9\n   shl $32, %r9\n   or %r9, %rcx\n"
+    "cmp $208, %rdx\n   jae 5f\n   sub $4, %rdx\n   jb 2f\n"
+    "1:  mov %rcx, (%rdi)\n   mov %rcx, 8(%rdi)\n   add $16, %rdi\n"
+    "sub $4, %rdx\n   jae 1b\n"
+    "2:  add $4, %rdx\n   jz 8f\n   test $2, %dl\n   jz 4f\n"
+    "mov %rcx, (%rdi)\n   add $8, %rdi\n"
+    "4:  test $1, %dl\n   jz 8f\n   mov %ecx, (%rdi)\n"
+    "8:  mov %r8, %rax\n"
+    ASM_RET
+    "5:  mov %rcx, %rax\n   mov %rdx, %rcx\n   shr $1, %rcx\n   rep stosq\n"
+    "test $1, %dl\n   jz 6f\n   mov %eax, (%rdi)\n"
+    "6:  mov %r8, %rax\n"
+    ASM_RET
+    ASM_END(memory_fill_32)
+
+    /*
+            The 64 bit width of the same contract.  The crossover into rep
+            stosq is 104 elements here and 208 there for the reason the two
+            routines above carry: the same number of bytes, counted in units
+            twice the size.
+    */
+    ASM_FUNC(memory_fill_64)
+    "mov %rdi, %r8  # the destination is the answer\n"
+    "cmp $4, %rdx\n   jae 3f\n   test %rdx, %rdx\n   jz 9f\n"
+    "mov %rsi, (%rdi)\n   mov %rsi, -8(%rdi,%rdx,8)\n"
+    "cmp $3, %rdx\n   jb 9f\n   mov %rsi, 8(%rdi)\n"
+    "9:  mov %r8, %rax\n"
+    ASM_RET
+    "3:  cmp $104, %rdx\n   jae 5f\n   sub $4, %rdx\n   jb 2f\n"
+    "1:  mov %rsi, (%rdi)\n   mov %rsi, 8(%rdi)\n"
+    "mov %rsi, 16(%rdi)\n   mov %rsi, 24(%rdi)\n"
+    "add $32, %rdi\n   sub $4, %rdx\n   jae 1b\n"
+    "2:  add $4, %rdx\n   jz 8f\n   test $2, %dl\n   jz 4f\n"
+    "mov %rsi, (%rdi)\n   mov %rsi, 8(%rdi)\n   add $16, %rdi\n"
+    "4:  test $1, %dl\n   jz 8f\n   mov %rsi, (%rdi)\n"
+    "8:  mov %r8, %rax\n"
+    ASM_RET
+    "5:  mov %rsi, %rax\n   mov %rdx, %rcx\n   rep stosq\n   mov %r8, %rax\n"
+    ASM_RET
+    ASM_END(memory_fill_64)
 
     /*
             Reverse an exact byte span in place and hand its original address
@@ -6185,6 +6298,8 @@ ASM_EXPORT(strnchr);
 ASM_EXPORT(strncmp);
 ASM_EXPORT(strnlen);
 ASM_EXPORT(strrchr);
+ASM_EXPORT(strcspn);
+ASM_EXPORT(strpbrk);
 #endif
 #elif ARM64
 __asm__(
@@ -7399,6 +7514,31 @@ __asm__(
     "3:  tbz x1, #0, 4f\n   str x2, [x0]\n"
     "4:  " ASM_RET
     ASM_END(memory_fill_u64_aligned)
+
+    //       memset32 and memset64 in the kernel's argument order.  Why they
+    //       are here twice rather than aliased onto the two above, what they
+    //       measure against lib/string.c, and where they lose, is over
+    //       memory_fill_32 in the x86_64 block.  x4 is the cursor so that x0
+    //       stays the destination the caller gets back, and the value
+    //       arrives in w1, whose top half AAPCS64 leaves unspecified.
+    ASM_FUNC(memory_fill_32)
+    "mov w1, w1\n   orr x3, x1, x1, lsl #32\n   mov x4, x0\n"
+    "cmp x2, #4\n   b.lo 2f\n"
+    "1:  stp x3, x3, [x4], #16\n   sub x2, x2, #4\n"
+    "cmp x2, #4\n   b.hs 1b\n"
+    "2:  tbz x2, #1, 3f\n   str x3, [x4], #8\n"
+    "3:  tbz x2, #0, 4f\n   str w1, [x4]\n"
+    "4:  " ASM_RET
+    ASM_END(memory_fill_32)
+
+    ASM_FUNC(memory_fill_64)
+    "mov x4, x0\n   cmp x2, #4\n   b.lo 2f\n"
+    "1:  stp x1, x1, [x4], #16\n   stp x1, x1, [x4], #16\n"
+    "sub x2, x2, #4\n   cmp x2, #4\n   b.hs 1b\n"
+    "2:  tbz x2, #1, 3f\n   stp x1, x1, [x4], #16\n"
+    "3:  tbz x2, #0, 4f\n   str x1, [x4]\n"
+    "4:  " ASM_RET
+    ASM_END(memory_fill_64)
 
     // Same exact in-place contract as x86_64.  Userspace has baseline NEON:
     // rev64 reverses each eight-byte lane and ext exchanges the lanes, so a
@@ -9638,6 +9778,18 @@ ASM_FUNC(positive_to_string)
 ASM_EXPORT(strchrnul);
 ASM_EXPORT(strnchr);
 #endif
+//
+//      lib/string.c exports memset32 and memset64, and stops doing so once
+//      this architecture claims them, so a claimed name that is not exported
+//      here leaves every module wanting one failing at modpost. Guarded on
+//      STOCK_STRINGS as well as on KERNEL_MODE, because with the stock
+//      switch set the alias below is not emitted and there is nothing for
+//      the export to name.
+//
+#if defined(KERNEL_MODE) && !defined(STOCK_STRINGS)
+ASM_EXPORT(memset32);
+ASM_EXPORT(memset64);
+#endif
 #elif RISCV64
 __asm__(
     ASM_SECTION
@@ -10553,6 +10705,36 @@ __asm__(
     "3:  andi t0, a1, 1\n   beqz t0, 4f\n   sd a2, 0(a0)\n"
     "4:  " ASM_RET
     ASM_END(memory_fill_u64_aligned)
+
+    // memset32 and memset64 in the kernel's argument order; the reasoning is
+    // over memory_fill_32 in the x86_64 block.  a3 is the cursor so a0 stays
+    // the answer, and the doubleword store is entered only from an address
+    // whose low three bits have been proved zero, because RV64 does not
+    // promise an unaligned sd succeeds even where the implementation allows
+    // it.  memory_fill_64 needs no such peel: its elements are doublewords
+    // and its callers hand it a doubleword pointer, which is the same
+    // assumption lib/string.c's own loop makes from a uint64_t *.
+    ASM_FUNC(memory_fill_32)
+    "slli a1, a1, 32\n   srli a1, a1, 32\n   slli t0, a1, 32\n"
+    "or t0, t0, a1\n   mv a3, a0\n   li t1, 2\n   blt a2, t1, 2f\n"
+    "andi t2, a3, 7\n   beqz t2, 1f\n   sw a1, 0(a3)\n"
+    "addi a3, a3, 4\n   addi a2, a2, -1\n   blt a2, t1, 2f\n"
+    "1:  sd t0, 0(a3)\n   addi a3, a3, 8\n   addi a2, a2, -2\n"
+    "bge a2, t1, 1b\n"
+    "2:  beqz a2, 3f\n   sw a1, 0(a3)\n"
+    "3:  " ASM_RET
+    ASM_END(memory_fill_32)
+
+    ASM_FUNC(memory_fill_64)
+    "mv a3, a0\n   li t0, 4\n   blt a2, t0, 2f\n"
+    "1:  sd a1, 0(a3)\n   sd a1, 8(a3)\n   sd a1, 16(a3)\n"
+    "sd a1, 24(a3)\n   addi a3, a3, 32\n   addi a2, a2, -4\n"
+    "bge a2, t0, 1b\n"
+    "2:  andi t0, a2, 2\n   beqz t0, 3f\n"
+    "sd a1, 0(a3)\n   sd a1, 8(a3)\n   addi a3, a3, 16\n"
+    "3:  andi t0, a2, 1\n   beqz t0, 4f\n   sd a1, 0(a3)\n"
+    "4:  " ASM_RET
+    ASM_END(memory_fill_64)
 
 #define RV_REVERSE_FOUR                                                       \
     "lbu t0, 0(a0)\n   lbu t1, 1(a0)\n   lbu t2, 2(a0)\n"                \
@@ -12234,6 +12416,18 @@ ASM_FUNC(positive_to_string)
 ASM_EXPORT(strchrnul);
 ASM_EXPORT(strnchr);
 #endif
+//
+//      lib/string.c exports memset32 and memset64, and stops doing so once
+//      this architecture claims them, so a claimed name that is not exported
+//      here leaves every module wanting one failing at modpost. Guarded on
+//      STOCK_STRINGS as well as on KERNEL_MODE, because with the stock
+//      switch set the alias below is not emitted and there is nothing for
+//      the export to name.
+//
+#if defined(KERNEL_MODE) && !defined(STOCK_STRINGS)
+ASM_EXPORT(memset32);
+ASM_EXPORT(memset64);
+#endif
 #endif
 
 /*
@@ -12694,6 +12888,14 @@ address_any memory_fill(address_any destination, b8 value, positive size);
 fn memory_fill_u32(address_any destination, positive count, unsigned int value);
 fn memory_fill_u64_aligned(address_any destination, positive count,
                            positive value);
+//      The same two fills in the kernel's own order -- the value before the
+//      count -- answering with the destination the way memset does. These
+//      are what memset32 and memset64 are aliased onto in a kernel build on
+//      the architectures that claim them.
+address_any memory_fill_32(address_any destination, unsigned int value,
+                           positive count);
+address_any memory_fill_64(address_any destination, positive value,
+                           positive count);
 PURE positive memory_common_prefix(address_any one, address_any two, positive size);
 PURE positive memory_hash_33(address_any block, positive size);
 PURE positive2 string_hash_33_length(string_address source);
@@ -13009,6 +13211,7 @@ fn string_format(writer write, string_address format, ...);
     ".set " #name ", " #target "\n"
 
 __asm__(
+    ""
 //      An empty string to begin with, because STOCK_STRINGS can take every
 //      line below it away and __asm__() with nothing in it is not a thing
 //      the compiler will accept.
@@ -13028,6 +13231,36 @@ __asm__(
 */
 #if (!defined(KERNEL_MODE) || X64) && !defined(STOCK_STRINGS)
     ASM_ALIAS(memchr,    memory_first_of)
+    /*
+            memcmp is the one name in this group that does not win outright,
+            and which of two shapes the caller hands it decides the answer.
+            Re-measured on a 9950X in kernel shape against lib/string.c --
+            which is word at a time there and not a byte loop, so this is the
+            only one of the group with a real opponent -- ours over theirs in
+            executed instructions, flat across every size from eight bytes to
+            a kilobyte:
+
+                differing at byte three         1.78x
+                differing at byte eleven        1.48x
+                matching all the way            0.91x at four bytes,
+                                                falling to 0.80x by 1024
+
+            A kernel memcmp is usually being told no: a hash bucket walk, a
+            magic number, is this the entry I asked for. On that shape ours
+            goes straight to the byte that differs with an exclusive-or and a
+            bsf, and lib/string.c leaves its word loop and walks bytes again
+            from offset zero.
+
+            The full match loss is the word loop in memory_compare above and
+            it is exactly two instructions a round. That loop loads both sides
+            separately and jumps back unconditionally -- ten instructions per
+            eight bytes, against the eight gcc gets by folding the second
+            operand into the compare and rotating the test to the bottom. Ten
+            over eight is 1.25, one over 1.25 is 0.80, and 0.80 is the
+            measured asymptote to two places. Rotating that loop is the one
+            improvement in this group worth making, and it would turn the
+            worst case here into a win as well.
+    */
     ASM_ALIAS(memcmp,    memory_compare)
     ASM_ALIAS(strlen,    string_length)
     ASM_ALIAS(strnlen,   string_length_max)
@@ -13046,13 +13279,41 @@ __asm__(
             only ones left and the kernel needs them by name -- seventeen
             references to __memcpy, sixteen to __memset, ten to __memmove.
 
-            Still x86_64 only. arm64 and riscv64 keep their own; nothing has
-            measured ours against those.
+            Still x86_64 only, and on arm64 for a reason no measurement can
+            move. The bodies these names would point at are a single branch
+            to the architecture's own -- memory_copy is "b memmove" and
+            memory_fill is "b memset" a few hundred lines up -- and an alias
+            is a second label on the same address. memcpy and memmove would
+            both become memory_copy, so memory_copy's first instruction,
+            "b memmove", would be a branch to itself. Counted under qemu ours
+            costs the architecture's plus one: 31 against 30 for memcpy at
+            every size on the grid, 25 against 24 for memset. riscv64 keeps
+            its own and nobody has measured it.
     */
-    ASM_ALIAS(memcpy,    memory_copy)
+    /*
+            memcpy goes to the APART body and memmove to the overlapping one,
+            which is the difference between what the two names promise.
+
+            Both pointed at memory_copy until the kernel audit measured what
+            that cost. Above thirty two bytes memory_copy hands the work to
+            the same rep movsb arch/x86/lib/memcpy_64.S uses, so the two run
+            the identical instruction and ours only paid the dispatch to
+            reach it: twenty executed instructions a call against ten, six of
+            the extra being an overlap test memcpy is not allowed to need.
+            A flat 0.90x from thirty three bytes to sixteen megabytes.
+
+            memory_copy_apart measures 0.99x-1.00x above the line and keeps
+            the 2.1x below it, and it is what C already says about memcpy.
+            Safe by the kernel's own standard too: the stock __memcpy this
+            displaces is a bare rep movsb, already wrong for a destination
+            above an overlapping source.
+
+            memmove keeps memory_copy, the body that promises overlap.
+    */
+    ASM_ALIAS(memcpy,    memory_copy_apart)
     ASM_ALIAS(memmove,   memory_copy)
     ASM_ALIAS(memset,    memory_fill)
-    ASM_ALIAS(__memcpy,  memory_copy)
+    ASM_ALIAS(__memcpy,  memory_copy_apart)
     ASM_ALIAS(__memmove, memory_copy)
     ASM_ALIAS(__memset,  memory_fill)
     /*
@@ -13080,9 +13341,90 @@ __asm__(
             The narrow body picks the rarest byte now. Against lib/string.c:
             15.0x on that miss, 13.4x on a late hit, 12.5x through varied
             bytes, 4.1x on a short haystack, level on a hit at the front.
+
+            Short there meant scores of bytes and not a handful, and the
+            handful is worth writing down. Re-measured in kernel shape through
+            a haystack of one repeated byte the needle is not in, ours over
+            lib/string.c in EXECUTED INSTRUCTIONS: 0.26x at eight bytes, 0.52x
+            at twelve, 0.77x at sixteen, level at twenty four, and from thirty
+            two upwards it climbs to 8.0x at four kilobytes. Choosing the
+            rarest byte costs about three hundred and seventy instructions
+            before the hunt starts, and a haystack under twenty four bytes is
+            over before that has paid for itself. The call sites are mostly
+            command lines, module parameters and /proc text and are longer
+            than that, so the claim stands -- but a strstr into a handful of
+            bytes is slower here than the byte loop it displaced.
+
+            That 8.0x is the favourable end of the range and not a typical
+            figure: a haystack of one repeated byte gives the rarest byte
+            heuristic no candidate position at all to reject. The 0.3x on a
+            pathological needle recorded above is what the other end looked
+            like before the rewrite, and nothing has re-measured that shape.
     */
     ASM_ALIAS(strstr,    string_search)
     ASM_ALIAS(strcat,    string_append)
+    /*
+            The two set scans the kernel is better off with, measured on a
+            9950X against lib/string.c's own byte loops built with the
+            kernel's flags. Ours build a thirty two byte bitmap on the stack
+            and then run flat; the kernel walks the whole set again for every
+            byte of the source, so the two cross at a run of two bytes
+            whatever the set size. In cycles: strcspn 1.06x at a run of two,
+            1.4x at four, 1.9x at sixteen; strpbrk 1.19x at two, 2.3x at
+            sixteen.
+
+            The claim rests on where the callers actually are, which is well
+            past that. The fifteen strcspn(page, "\n") sites are sysfs and
+            configfs stores of a name, a label, a serial number or an NQN --
+            runs of eight to forty bytes, 1.7x to 1.9x -- and the eighteen
+            strcspn(p, ",") sites are parameter tokens of similar length. The
+            four strcspn(init_utsname()->version, " ") sites are the
+            exception: their run is two bytes and 1.06x is at the crossover
+            rather than past it, which is a tie and not a win.
+
+            strspn is deliberately not here. Its own callers are the short
+            ones -- skipping a space, looking at one byte of a printf format
+            -- and there it measured 0.79x to 0.99x, so it stays userspace
+            only and lib/string.c keeps the kernel's.
+
+            Claiming strpbrk also makes the kernel's own strsep faster
+            without claiming strsep, because lib/string.c writes strsep in
+            terms of it.
+
+            arm64 and riscv64 emit the same three bodies now and claim none
+            of them, which is 292 and 296 bytes of unreferenced text in those
+            modules. That is the price of keeping one copy of these routines
+            rather than three, and it is what the audit for those machines
+            will need in place before it can claim anything.
+    */
+    ASM_ALIAS(strcspn,   string_span_without_set)
+    ASM_ALIAS(strpbrk,   string_first_of_set)
+#endif
+/*
+        memset32 and memset64, on the two architectures where the kernel
+        still fills a span of words with a while loop.
+
+        Not in the group above, because that group is x86_64 only in a kernel
+        build and this is the other two: arch/x86/include/asm/string_64.h
+        already inlines rep stosl and rep stosq for these names, so there is
+        nothing on x86_64 for a claim to displace. What ours measures against
+        that inline, and why taking it would need a kind of edit
+        kernel/patch/apply does not make, is over memory_fill_32.
+
+        Named architectures rather than "not x86_64", because a fourth one
+        arriving with no memory_fill_32 body would otherwise get a .set
+        against a name that is not there.
+
+        A claim and an alias move together: kernel/patch/apply claims
+        MEMSET32 and MEMSET64 in the arm64 and riscv64 arms, and without
+        these two lines that claim is a name lib/string.c no longer defines
+        and nothing else does. The claim is also what declares memset32 and
+        memset64 to C, and EXPORT_SYMBOL needs that declaration, so dropping
+        the claim and keeping the export does not compile at all.
+*/
+#if defined(KERNEL_MODE) && (ARM64 || RISCV64) && !defined(STOCK_STRINGS)
+    ASM_ALIAS(memset32,  memory_fill_32)
+    ASM_ALIAS(memset64,  memory_fill_64)
 #endif
 #ifndef KERNEL_MODE
     ASM_ALIAS(strncpy,   string_copy_max)

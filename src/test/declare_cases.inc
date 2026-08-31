@@ -594,8 +594,25 @@ static void declare_cases(void)
                 __attribute__((alias)) -- what allocator.c uses for malloc --
                 is not.
         */
-        declare_same("memcpy is memory_copy", memcpy, memory_copy);
-        declare_same("memmove is memcpy", memmove, memcpy);
+        /*
+                memcpy and memmove are no longer one address.
+
+                They were one routine until the kernel audit measured what the
+                shared body cost: memory_copy tests for overlap first, and
+                above thirty two bytes hands the work to the same rep movsb
+                the architecture's own memcpy uses -- so both ran the same
+                instruction and ours paid six extra to reach it, a flat 0.90x
+                from thirty three bytes to sixteen megabytes.
+
+                memcpy is memory_copy_apart now, which is what C already says
+                about it; memmove keeps memory_copy, the body that promises
+                overlap. The behavioural check below, which slides a block
+                over itself both ways, is what proves memmove kept that
+                promise. This pair only records that the two names stopped
+                being one routine.
+        */
+        declare_same("memcpy is memory_copy_apart", memcpy, memory_copy_apart);
+        declare_same("memmove is memory_copy", memmove, memory_copy);
         declare_same("memset is memory_fill", memset, memory_fill);
         declare_same("memcmp is memory_compare", memcmp, memory_compare);
         declare_same("bcmp is memory_compare", bcmp, memory_compare);

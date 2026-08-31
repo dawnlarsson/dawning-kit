@@ -69,16 +69,44 @@ x86_64 | amd64 | x64)
         header=linux/arch/x86/include/asm/string_64.h
         #
         #       The three the architecture wrote for itself.
-        #       Measured against them on a 9950X, ours over
-        #       theirs: memcpy 2.7x at 16 bytes, 5.7x at 256,
-        #       1.5x at 4096, and 0.87x at a megabyte, which is
-        #       the one size rep movsb still wins because it
-        #       turns to non temporal stores there. memset the
-        #       same shape and 3.2x at sixteen megabytes.
+        #       Re-measured on a 9950X in kernel shape, in
+        #       cycles, ours against what they actually run --
+        #       which on this part is rep movsb and rep stosb,
+        #       because it reports fsrm and arch/x86/kernel/
+        #       cpu/amd.c gives FSRS to anything that does.
         #
-        #       Kernel copies are small -- headers, structures,
-        #       names, table entries -- and the sizes where we
-        #       win by multiples are the sizes it does most.
+        #       At thirty two bytes and below, ours over theirs
+        #       over the ladder 4 8 12 16 24 32: memcpy 1.7x to
+        #       3.1x, memmove 2.3x to 3.3x, memset 1.0x to
+        #       2.1x. Above thirty two, from thirty three bytes
+        #       to sixteen megabytes: memcpy a flat 0.90x,
+        #       memmove 0.97x to 1.04x, memset 0.97x to 1.01x.
+        #
+        #       There is no crossover any more, and the numbers
+        #       that used to stand here -- 5.7x at 256, 0.87x
+        #       at a megabyte -- do not describe this tree.
+        #       KERNEL_BULK_COPY in src/library.c hands
+        #       anything over thirty two bytes to the same rep
+        #       movsb memcpy_64.S uses, so above that line the
+        #       two are the identical instruction and ours only
+        #       pays the dispatch to reach it. The whole of the
+        #       win is at thirty two and below, where it is two
+        #       to three times, and that is where a kernel
+        #       copies -- headers, structures, names, table
+        #       entries.
+        #
+        #       memcpy is the one of the three that is worse
+        #       above the line rather than level, and the ten
+        #       per cent is the overlap test memory_copy makes
+        #       and the kernel's own __memcpy does not. It is a
+        #       flat ten per cent and not a growing one, since
+        #       both sides converge on the one instruction, so
+        #       it is a bounded price on the tail for twice the
+        #       speed at the mode. Pointing the memcpy alias at
+        #       memory_copy_apart instead measured 0.99x to
+        #       1.00x above the line while keeping the win
+        #       below it, and matches what memcpy already
+        #       promises about regions that do not overlap.
         #
         displaces="linux/arch/x86/lib/Makefile:memcpy_\$(BITS).o
 linux/arch/x86/lib/Makefile:memmove_64.o
@@ -95,36 +123,152 @@ MEMCMP:int memcmp(const void *, const void *, __kernel_size_t)
 STRCMP:int strcmp(const char *, const char *)
 STRRCHR:char *strrchr(const char *, int)
 STRCHRNUL:char *strchrnul(const char *, int)
-STRNCHR:char *strnchr(const char *, __kernel_size_t, int)"
+STRNCHR:char *strnchr(const char *, __kernel_size_t, int)
+STRCSPN:__kernel_size_t strcspn(const char *, const char *)
+STRPBRK:char *strpbrk(const char *, const char *)"
         ;;
 arm64 | aarch64)
         header=linux/arch/arm64/include/asm/string.h
+        #
+        #       memset32 and memset64 are the two lib/string.c still writes
+        #       as "while (count--) *xs++ = v" on this machine. Instructions
+        #       per call against that loop, counted with a qemu plugin, both
+        #       sides built with this architecture's own kernel flags:
+        #       2.27x at eight words, 2.87x at sixteen, 3.63x at sixty four,
+        #       3.95x at five hundred and twelve. It is behind at a count of
+        #       zero and a count of one, by seven instructions and by two,
+        #       and ahead from three words up -- which is under every caller:
+        #       vt.c fills vc_cols, i915 fills fifteen to a hundred and
+        #       twenty eight, page table work fills five hundred and twelve.
+        #
+        #       Not memset16, which has no caller this tree can reach at
+        #       all: outside its own tests the only one in Linux is
+        #       arch/arc/net/bpf_jit_core.c, on an architecture nothing here
+        #       builds. A routine at this parity costs three bodies, and
+        #       three bodies for nought call sites is not a trade.
+        #
         claims="STRCHRNUL:char *strchrnul(const char *, int)
-STRNCHR:char *strnchr(const char *, __kernel_size_t, int)"
+STRNCHR:char *strnchr(const char *, __kernel_size_t, int)
+MEMSET32:void *memset32(uint32_t *, uint32_t, __kernel_size_t)
+MEMSET64:void *memset64(uint64_t *, uint64_t, __kernel_size_t)"
         ;;
 riscv64 | riscv)
         #
-        #       Not memchr, which riscv leaves to lib/string.c
-        #       and this cannot take: arch/riscv/kernel/pi
-        #       compiles a second private copy of lib/string.c
-        #       into .init.pi and objcopies every symbol to
-        #       __pi_, because that code runs before the MMU
-        #       and cannot call the ordinary kernel. libfdt
-        #       uses memchr, so claiming it here leaves
-        #       __pi_memchr with nothing behind it:
+        #       Two names, and the reason it is not more is
+        #       mostly arch/riscv/kernel/pi rather than anything
+        #       about how fast the routines are. The three pi
+        #       leaves alone are refused further down, on their
+        #       measurements.
+        #
+        #       That directory compiles a second private copy of
+        #       lib/string.c into .init.pi and objcopies every
+        #       symbol in it to __pi_, because the code there
+        #       runs before the MMU and cannot call the ordinary
+        #       kernel. A claim tells lib/string.c to stop
+        #       defining a name, and it stops defining it in that
+        #       copy as well, so the __pi_ name standing in front
+        #       of it has nothing left behind it:
         #
         #           hidden symbol `__pi_memchr' isn't defined
         #
-        #       arm64 does not hit this -- its pi builds no
-        #       string.c at all and aliases __pi_ onto its own
+        #       Six names are reached from there and so none of
+        #       them can be claimed here. strstr is
+        #       cmdline_early.c; memchr, memcmp, strcspn, strpbrk
+        #       and strncasecmp are fdt_early.c and the two
+        #       libfdt files compiled beside it. memcmp is worth
+        #       naming twice, because the paragraph at the top of
+        #       this switch says arm64 and riscv64 both ship
+        #       their own and only arm64 does: there is no
+        #       memcmp.S in arch/riscv/lib and no
+        #       __HAVE_ARCH_MEMCMP in its string.h. riscv's
+        #       memcmp is lib/string.c's byte loop, and pi is the
+        #       only reason it stays there.
+        #
+        #       arm64 does not hit any of this -- its pi builds
+        #       no string.c at all and aliases __pi_ onto its own
         #       assembly. Handing riscv's pi an alias to a
         #       function outside .init.pi would link and might
-        #       even boot, and would be a wrong answer about
-        #       what that code is allowed to reach.
+        #       even boot, and would be a wrong answer about what
+        #       that code is allowed to reach.
+        #
+        #       The nine the architecture wrote for itself are
+        #       shut behind the same door from the other side.
+        #       memcpy, memmove, memset, strlen, strnlen, strcmp,
+        #       strncmp, strchr and strrchr already define
+        #       __HAVE_ARCH_, so taking one means displacing its
+        #       object out of arch/riscv/lib the way x86 does --
+        #       and the SYM_FUNC_ALIAS that gives pi its __pi_
+        #       name is inside that same object.
+        #
+        #       Measuring them anyway said not to want them.
+        #       Executed instructions under a qemu plugin, ours
+        #       against the architecture's own with Zbb patched
+        #       in, which is what CONFIG_RISCV_ISA_ZBB=y in
+        #       profile/arch/riscv gets on any core that reports
+        #       it: strlen 0.50x at four thousand bytes, strcmp
+        #       0.64x, strnlen 0.56x, strncmp 0.83x. orc.b and
+        #       ctz are one instruction each and ours spends
+        #       seven getting the same answer, so the wide body
+        #       loses to the wide body it has no instructions for.
+        #
+        #       What is left is strcpy, strcat and bcmp, and
+        #       measuring those said no as well. Ours against
+        #       lib/string.c, averaged over all eight starting
+        #       alignments:
+        #
+        #           strcpy   0.33x at 4 bytes, 0.48x at 8,
+        #                    0.79x at 16, level at 24, 1.86x at 64
+        #           strcat   0.23x at 4, 0.35x at 8, 0.58x at 16,
+        #                    level at 32, 1.49x at 64
+        #
+        #       and the kernel's own string literals have a
+        #       median length of six, with 86 per cent of the
+        #       ones handed to strcpy and strcat under twelve.
+        #       Both are losses at the length the kernel is
+        #       actually at. bcmp would be free to take and is
+        #       not worth taking: gcc on riscv lowers memcmp == 0
+        #       to memcmp rather than to bcmp, and nothing
+        #       outside arch/x86 calls it.
+        #
+        #       stpcpy cannot be claimed by any architecture.
+        #       lib/string.c defines it outside any __HAVE_ARCH_
+        #       guard, so a define here changes nothing and ours
+        #       would be a second definition rather than a first.
+        #
+        #       The two below stay, with the number that says
+        #       where they earn it. Ours crosses lib/string.c's
+        #       byte loop at about eighteen bytes of scan for
+        #       strchrnul and about fifteen for strnchr, and is
+        #       0.46x at six bytes and 0.32x at four -- a word at
+        #       a time body on a machine with neither orc.b nor
+        #       ctz spends about thirty three instructions before
+        #       its first compare, and a six byte string cannot
+        #       amortise that. The callers this costs are
+        #       of_node_name_eq and of_find_node_opts_by_path
+        #       hunting an at sign or a slash in a device tree
+        #       node name, which is most of what riscv does at
+        #       boot and is under that crossover. The prologue is
+        #       the thing to shorten, not the claim to drop.
         #
         header=linux/arch/riscv/include/asm/string.h
+        #
+        #       memset32 and memset64 for the reason the arm64 arm above
+        #       gives, and the numbers are that architecture's; here the same
+        #       count is 1.38x at eight words, 1.62x at sixteen, 1.88x at
+        #       sixty four and 1.98x at five hundred and twelve, with
+        #       memset32 behind through a count of two because it proves the
+        #       pointer eight byte aligned before it stores a doubleword.
+        #
+        #       Neither of these is in arch/riscv/kernel/pi. That code
+        #       compiles its own copy of lib/string.c and reaches nothing
+        #       outside .init.pi, which is what stops memchr going over --
+        #       but nothing in pi, and nothing in the libfdt it builds, fills
+        #       a span of words.
+        #
         claims="STRCHRNUL:char *strchrnul(const char *, int)
-STRNCHR:char *strnchr(const char *, __kernel_size_t, int)"
+STRNCHR:char *strnchr(const char *, __kernel_size_t, int)
+MEMSET32:void *memset32(uint32_t *, uint32_t, __kernel_size_t)
+MEMSET64:void *memset64(uint64_t *, uint64_t, __kernel_size_t)"
         ;;
 *)
         #
