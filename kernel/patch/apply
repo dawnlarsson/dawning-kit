@@ -236,19 +236,33 @@ riscv64 | riscv)
         #       would be a second definition rather than a first.
         #
         #       The two below stay, with the number that says
-        #       where they earn it. Ours crosses lib/string.c's
-        #       byte loop at about eighteen bytes of scan for
-        #       strchrnul and about fifteen for strnchr, and is
-        #       0.46x at six bytes and 0.32x at four -- a word at
-        #       a time body on a machine with neither orc.b nor
-        #       ctz spends about thirty three instructions before
-        #       its first compare, and a six byte string cannot
-        #       amortise that. The callers this costs are
-        #       of_node_name_eq and of_find_node_opts_by_path
-        #       hunting an at sign or a slash in a device tree
-        #       node name, which is most of what riscv does at
-        #       boot and is under that crossover. The prologue is
-        #       the thing to shorten, not the claim to drop.
+        #       where they earn it. The prologue was the thing to
+        #       shorten rather than the claim to drop, and it has
+        #       been shortened: strchrnul takes the branch past
+        #       the whole prefix fixup on an eight byte aligned
+        #       pointer that strchr beside it always had, and
+        #       builds the byte that stands in for the bytes in
+        #       front of the string as ~c with bit zero forced on
+        #       -- neither zero nor c, for every c -- out of the
+        #       broadcast already in a register rather than out
+        #       of a second multiply. Eleven instructions to the
+        #       first compare on an aligned pointer where there
+        #       were twenty two, and twenty where it is not.
+        #
+        #       Guest instructions per call against lib/string.c's
+        #       byte loop, counted with a qemu plugin over a scan
+        #       that runs the whole string, aligned: 0.74x at
+        #       four bytes, 0.94x at eight, 1.35x at twelve,
+        #       1.37x at sixteen, 1.83x at thirty two. The
+        #       crossover was about eighteen bytes of scan and is
+        #       about nine; unaligned it is about eleven. strnchr
+        #       is unchanged and crosses at about fifteen. The
+        #       callers this used to cost are of_node_name_eq and
+        #       of_find_node_opts_by_path hunting an at sign or a
+        #       slash in a device tree node name, which is most
+        #       of what riscv does at boot and is mostly under
+        #       twelve bytes -- which is now over the line rather
+        #       than under it.
         #
         header=linux/arch/riscv/include/asm/string.h
         #

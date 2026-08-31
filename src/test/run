@@ -536,13 +536,19 @@ riscv_alignment_gate_audit()
                                        addi_is(slot + 1, "a1", "a1", "1") &&
                                        mnemonic[slot + 2] == "j"
 
+                        # string_compare_max walks to an end address rather
+                        # than counting the bound down, so the question its byte
+                        # fallback opens with is still "is there a byte left",
+                        # spelt against a4 instead of against a2.
+                        if (routine == "string_compare_max")
+                                return mnemonic[slot] == "bgeu" &&
+                                       first_two_are(slot, "a0", "a4") &&
+                                       zero_memory_is(slot + 1, "lbu", "t3", "a0") &&
+                                       zero_memory_is(slot + 2, "lbu", "t4", "a1")
+
                         if (mnemonic[slot] != "beqz" ||
                             !first_is(slot, "a2"))
                                 return 0
-
-                        if (routine == "string_compare_max")
-                                return zero_memory_is(slot + 1, "lbu", "t3", "a0") &&
-                                       zero_memory_is(slot + 2, "lbu", "t4", "a1")
                         if (routine == "memory_compare")
                                 return zero_memory_is(slot + 1, "lbu", "t1", "a0") &&
                                        zero_memory_is(slot + 2, "lbu", "t2", "a1")
@@ -561,10 +567,11 @@ riscv_alignment_gate_audit()
                         if (routine == "string_compare_max")
                                 return zero_memory_is(slot, "lbu", "t3", "a0") &&
                                        zero_memory_is(slot + 1, "lbu", "t4", "a1") &&
-                                       addi_is(slot + 5, "a0", "a0", "1") &&
-                                       addi_is(slot + 6, "a1", "a1", "1") &&
-                                       addi_is(slot + 7, "a2", "a2", "-1") &&
-                                       branch_is(slot + 8, "beqz", "a2")
+                                       addi_is(slot + 2, "a0", "a0", "1") &&
+                                       addi_is(slot + 3, "a1", "a1", "1") &&
+                                       mnemonic[slot + 4] == "bne" &&
+                                       first_two_are(slot + 4, "t3", "t4") &&
+                                       branch_is(slot + 5, "beqz", "t3")
                         if (routine == "memory_count")
                                 return zero_memory_is(slot, "lbu", "t4", "a0") &&
                                        mnemonic[slot + 1] == "bne" &&
@@ -609,7 +616,7 @@ riscv_alignment_gate_audit()
                         return 0
                 }
                 function natural_peel_span() {
-                        if (routine == "string_compare_max") return 9
+                        if (routine == "string_compare_max") return 6
                         if (routine == "memory_count")       return 6
                         if (routine == "memory_compare")     return 8
                         if (routine == "memory_fill")        return 4
@@ -619,8 +626,11 @@ riscv_alignment_gate_audit()
                         return 0
                 }
                 function natural_wide_entry_is(slot) {
+                        if (routine == "string_compare_max")
+                                return addi_is(slot, "a5", "a4", "-8") &&
+                                       mnemonic[slot + 1] == "bltu" &&
+                                       first_two_are(slot + 1, "a5", "a0")
                         if (routine == "string_compare" ||
-                            routine == "string_compare_max" ||
                             routine == "memory_count")
                                 return mnemonic[slot] == "lui" &&
                                        first_is(slot, "t0") &&
@@ -2243,6 +2253,7 @@ lane_edit()
 
 lane_kit()
 {
+        python3 kit/surface.d/coreutils_gap.py || return 1
         sh src/test/kit.sh
 }
 
