@@ -1233,7 +1233,7 @@ static decimal awk_scan_number(string_address text, positive length, positive ad
                 at++;
         }
 
-        while (at < length && text_digit(text[at]))
+        while (at < length && byte_is_digit(text[at]))
         {
                 any = true;
 
@@ -1252,7 +1252,7 @@ static decimal awk_scan_number(string_address text, positive length, positive ad
         {
                 at++;
 
-                while (at < length && text_digit(text[at]))
+                while (at < length && byte_is_digit(text[at]))
                 {
                         any = true;
 
@@ -1283,11 +1283,11 @@ static decimal awk_scan_number(string_address text, positive length, positive ad
                         step++;
                 }
 
-                if (step < length && text_digit(text[step]))
+                if (step < length && byte_is_digit(text[step]))
                 {
                         b32 value = 0;
 
-                        while (step < length && text_digit(text[step]))
+                        while (step < length && byte_is_digit(text[step]))
                         {
                                 if (value < 100000)
                                         value = value * 10 + (text[step] - '0');
@@ -3594,13 +3594,12 @@ static bool awk_operand_before()
 
 static bool awk_name_start(p8 character)
 {
-        return (character >= 'a' && character <= 'z') ||
-               (character >= 'A' && character <= 'Z') || character == '_';
+        return byte_is_alpha(character) || character == '_';
 }
 
 static bool awk_name_part(p8 character)
 {
-        return awk_name_start(character) || text_digit(character);
+        return awk_name_start(character) || byte_is_digit(character);
 }
 
 static b32 awk_escape(positive address_to at, positive stop)
@@ -3708,9 +3707,9 @@ static fn awk_next_token()
                 return;
         }
 
-        if (text_digit(character) ||
+        if (byte_is_digit(character) ||
             (character == '.' && awk_source_at + 1 < awk_source_length &&
-             text_digit(awk_source[awk_source_at + 1])))
+             byte_is_digit(awk_source[awk_source_at + 1])))
         {
                 positive used;
 

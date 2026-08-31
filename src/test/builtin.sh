@@ -39,44 +39,9 @@ fi
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT INT TERM
 
-pass=0
-fail=0
-current=""
-section_name=""
-section_pass=0
-section_total=0
-
-section()
-{
-        [ -z "$section_name" ] ||
-                printf '  %-12s %s of %s\n' \
-                        "$section_name" "$section_pass" "$section_total"
-
-        [ -z "$section_name" ] || [ -z "${TEST_TALLY:-}" ] ||
-                printf '%s %s %s\n' \
-                        "$section_name" "$section_pass" "$section_total" \
-                        >> "$TEST_TALLY"
-
-        section_name=$1
-        section_pass=0
-        section_total=0
-}
-
-group() { current=$1; }
-
-won()
-{
-        pass=$((pass + 1))
-        section_pass=$((section_pass + 1))
-        section_total=$((section_total + 1))
-}
-
-lost()
-{
-        fail=$((fail + 1))
-        section_total=$((section_total + 1))
-        printf '  %-14s %-26s %s\n' "$current" "$1" "$2"
-}
+test_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+. "$test_dir/tally.sh"
+. "$test_dir/shell_compare.sh"
 
 #       A case is a name and a fragment. The fragment is fed to both shells on
 #       standard input, which is how a script arrives, and from inside the work
@@ -106,22 +71,6 @@ run_both()
 }
 
 shown() { head -c 60 "$1" | tr '\n' '|'; }
-
-answer()
-{
-        name=$1
-        shift
-        run_both "$@"
-
-        if cmp -s "$work/want" "$work/got" &&
-                [ "$want_status" = "$got_status" ]; then
-                won
-                return 0
-        fi
-
-        lost "$name" \
-                "want $(shown "$work/want")[$want_status]   got $(shown "$work/got")[$got_status]"
-}
 
 #       What POSIX asks for, where dash is not the thing to ask. The expected
 #       output has its newlines written as | so a case stays one line.

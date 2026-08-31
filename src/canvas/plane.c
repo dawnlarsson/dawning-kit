@@ -152,38 +152,37 @@ static int plane_paint(struct output *output, unsigned int shape,
         return 0;
 }
 
-static int plane_claim(struct drm_client_dev *client, struct output *output)
+static void plane_claim(struct drm_client_dev *client, struct output *output)
 {
         struct drm_plane *plane = output->mode_set->crtc->cursor;
 
         if (!plane || !plane->funcs->update_plane || !plane->funcs->disable_plane ||
             canvas_plane_pick_format(plane, DRM_FORMAT_ARGB8888,
                                      DRM_FORMAT_ARGB8888) == DRM_FORMAT_INVALID)
-                return -ENODEV;
+                return;
 
         output->cursor_w = client->dev->mode_config.cursor_width ?: CURSOR_W;
         output->cursor_h = client->dev->mode_config.cursor_height ?: CURSOR_H;
 
         if (output->cursor_w < CURSOR_W || output->cursor_h < CURSOR_H)
-                return -ENODEV;
+                return;
 
         output->cursor_buffer = drm_client_buffer_create_dumb(
             client, output->cursor_w, output->cursor_h, DRM_FORMAT_ARGB8888);
         if (IS_ERR(output->cursor_buffer))
         {
                 output->cursor_buffer = NULL;
-                return -ENOMEM;
+                return;
         }
 
         if (plane_paint(output, CURSOR_ARROW, 1))
         {
                 drm_client_buffer_delete(output->cursor_buffer);
                 output->cursor_buffer = NULL;
-                return -EIO;
+                return;
         }
 
         output->cursor_plane = plane;
-        return 0;
 }
 
 static void cursor_arm_output(struct output *output, _Bool wanted)

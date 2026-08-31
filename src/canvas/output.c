@@ -268,8 +268,7 @@ static struct output *output_add(struct canvas *canvas, struct drm_mode_set *mod
                 return NULL;
         }
 
-        if (plane_claim(&canvas->client, output))
-                output->cursor_plane = NULL;
+        plane_claim(&canvas->client, output);
 
         return output;
 }
@@ -362,10 +361,13 @@ static void desktop_attach_buffers(void)
 static _Bool desktop_commit(void)
 {
         struct canvas *committed = NULL;
+        struct drm_rect cursor;
         struct output *output;
         _Bool complete = true;
 
         desktop_attach_buffers();
+        cursor_cell(&cursor, desktop.cursor_x, desktop.cursor_y,
+                    desktop.cursor_shape, desktop.cursor_scale);
 
         list_for_each_entry(output, &desktop.outputs, link)
         {
@@ -397,9 +399,7 @@ static _Bool desktop_commit(void)
 
         list_for_each_entry(output, &desktop.outputs, link)
                 cursor_arm_output(output,
-                                  output_shows_cursor(output,
-                                                      desktop.cursor_x,
-                                                      desktop.cursor_y));
+                                  output_touched(output, &cursor, 1));
 
         return complete;
 }
@@ -409,6 +409,7 @@ static _Bool desktop_commit(void)
 static void cursor_plane_recover(void)
 {
         struct output *output;
+        _Bool complete;
 
         if (!cursor_plane_recovery)
                 return;
@@ -418,30 +419,32 @@ static void cursor_plane_recover(void)
                         output->cursor_recovery = 2;
 
         cursor_plane_recovery = false;
-
-        if (!desktop_commit())
-        {
-                list_for_each_entry(output, &desktop.outputs, link)
-                        if (output->cursor_recovery == 2)
-                                output->cursor_recovery = 1;
-
-                cursor_plane_recovery = true;
-                return;
-        }
+        complete = desktop_commit();
 
         // The successful full commit covered state 2. A failure while its
         // post-commit cursor arms ran is new state 1 and needs the next pass.
         list_for_each_entry(output, &desktop.outputs, link)
-                if (output->cursor_recovery == 2)
-                {
-                        if (output->cursor_buffer)
-                        {
-                                drm_client_buffer_delete(output->cursor_buffer);
-                                output->cursor_buffer = NULL;
-                        }
+        {
+                if (output->cursor_recovery != 2)
+                        continue;
 
-                        output->cursor_recovery = 0;
+                if (!complete)
+                {
+                        output->cursor_recovery = 1;
+                        continue;
                 }
+
+                if (output->cursor_buffer)
+                {
+                        drm_client_buffer_delete(output->cursor_buffer);
+                        output->cursor_buffer = NULL;
+                }
+
+                output->cursor_recovery = 0;
+        }
+
+        if (!complete)
+                cursor_plane_recovery = true;
 }
 
 static void desktop_redraw(void)

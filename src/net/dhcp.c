@@ -269,6 +269,66 @@ static p8 dhcp_prefix_of(p32 mask)
         return bits ? bits : 24;
 }
 
+static p32 dhcp_transaction(void)
+{
+        p32 transaction;
+
+        if (system_call_3(syscall(getrandom), (positive)address_of transaction,
+                          sizeof transaction, 1) != sizeof transaction)
+                transaction = (p32)get_cpu_time();
+
+        return transaction;
+}
+
+static bipolar dhcp_open(string_address device, p32 host, bool broadcast)
+{
+        socket_address_internet mine;
+        bipolar handle = socket_new(AF_INET, SOCK_DGRAM, 0);
+        b32 one = 1;
+
+        if (handle < 0)
+                return handle;
+
+        if (broadcast)
+                socket_option_set((b32)handle, SOL_SOCKET, SO_BROADCAST,
+                                  address_of one, sizeof one);
+
+        socket_option_set((b32)handle, SOL_SOCKET, SO_REUSEADDR,
+                          address_of one, sizeof one);
+        socket_option_set((b32)handle, SOL_SOCKET, SO_BINDTODEVICE, device,
+                          string_length(device) + 1);
+
+        memory_fill(address_of mine, 0, sizeof mine);
+        mine.family = AF_INET;
+        mine.port = network_order_16(DHCP_CLIENT_PORT);
+        mine.host = network_order_32(host);
+
+        if (socket_bind((b32)handle, address_of mine, sizeof mine) < 0)
+        {
+                socket_close((b32)handle);
+                return -1;
+        }
+
+        return handle;
+}
+
+static bool dhcp_receive(bipolar handle, p8 address_to packet, positive room,
+                         p32 transaction, p8 address_to hardware,
+                         dhcp_lease address_to lease, p8 address_to kind,
+                         positive seconds, positive nanoseconds)
+{
+        bipolar got;
+
+        if (network_wait_readable(handle, seconds, nanoseconds) <= 0)
+                return false;
+
+        got = socket_receive((b32)handle, packet, room, 0, 0, 0);
+
+        return got > 0 &&
+               dhcp_read(packet, (positive)got, transaction, hardware,
+                         lease, kind) >= 0;
+}
+
 /*
         The exchange, with a schedule rather than a single try.
 
@@ -305,15 +365,11 @@ static bipolar dhcp_ask(string_address device, p8 address_to hardware,
         p32 transaction;
         bipolar handle;
         positive length;
-        b32 one = 1;
         positive attempt;
         positive wait;
 
         memory_fill(lease, 0, sizeof(dhcp_lease));
-
-        if (system_call_3(syscall(getrandom), (positive)address_of transaction,
-                          sizeof transaction, 1) != sizeof transaction)
-                transaction = (p32)get_cpu_time();
+        transaction = dhcp_transaction();
 
         memory_fill(address_of where, 0, sizeof where);
         where.family = AF_INET;
@@ -324,7 +380,6 @@ static bipolar dhcp_ask(string_address device, p8 address_to hardware,
         {
                 p8 kind = 0;
                 positive deadline;
-                socket_address_internet mine;
 
                 /*
                         A socket per attempt, not one for the whole exchange.
@@ -337,47 +392,10 @@ static bipolar dhcp_ask(string_address device, p8 address_to hardware,
                         no state from before the link was live is carried into
                         an attempt after it. The real delay was getrandom.
                 */
-                handle = socket_new(AF_INET, SOCK_DGRAM, 0);
+                handle = dhcp_open(device, HOST_ANY, true);
 
                 if (handle < 0)
                         return DHCP_NO_SOCKET;
-
-                socket_option_set((b32)handle, SOL_SOCKET, SO_BROADCAST,
-                                  address_of one, sizeof one);
-                socket_option_set((b32)handle, SOL_SOCKET, SO_REUSEADDR,
-                                  address_of one, sizeof one);
-
-                //      Without this the send has no route and fails: there is
-                //      no address yet, so nothing in the routing table can
-                //      carry it.
-                socket_option_set((b32)handle, SOL_SOCKET, SO_BINDTODEVICE, device,
-                                  string_length(device) + 1);
-
-                memory_fill(address_of mine, 0, sizeof mine);
-                mine.family = AF_INET;
-                mine.port = network_order_16(DHCP_CLIENT_PORT);
-                mine.host = network_order_32(HOST_ANY);
-
-                if (socket_bind((b32)handle, address_of mine, sizeof mine) < 0)
-                {
-                        socket_close((b32)handle);
-                        return DHCP_NO_SOCKET;
-                }
-
-                /*
-                        A second apart for the first eight, then backing off.
-
-                        Doubling from the start reads well and behaves badly
-                        at boot. Carrier arrives about three seconds in, and
-                        attempts at one, three and seven seconds all straddle
-                        it -- measured, the lease landed at thirteen seconds
-                        on a machine that was ready at three. A fixed second
-                        between the early tries means the first DISCOVER after
-                        the cable comes alive is at most a second behind it.
-
-                        The backoff still exists, because a network with no
-                        server on it should not be broadcast at forever.
-                */
                 /*
                         A quarter second apart while it matters.
 
@@ -410,18 +428,9 @@ static bipolar dhcp_ask(string_address device, p8 address_to hardware,
 
                 while (deadline--)
                 {
-                        bipolar got;
-
-                        if (network_wait_readable(handle, 0, 250000000) <= 0)
-                                continue;
-
-                        got = socket_receive((b32)handle, packet, sizeof packet, 0, 0, 0);
-
-                        if (got <= 0)
-                                continue;
-
-                        if (dhcp_read(packet, (positive)got, transaction, hardware,
-                                      lease, address_of kind) < 0)
+                        if (!dhcp_receive(handle, packet, sizeof packet, transaction,
+                                          hardware, lease, address_of kind,
+                                          0, 250000000))
                                 continue;
 
                         if (kind != DHCP_OFFER)
@@ -440,29 +449,15 @@ static bipolar dhcp_ask(string_address device, p8 address_to hardware,
 
                         while (deadline--)
                         {
-                                if (network_wait_readable(handle, 0, 250000000) <= 0)
+                                if (!dhcp_receive(handle, packet, sizeof packet,
+                                                  transaction, hardware, lease,
+                                                  address_of kind, 0, 250000000))
                                         continue;
 
-                                got = socket_receive((b32)handle, packet, sizeof packet,
-                                                     0, 0, 0);
-
-                                if (got <= 0)
-                                        continue;
-
-                                if (dhcp_read(packet, (positive)got, transaction,
-                                              hardware, lease, address_of kind) < 0)
-                                        continue;
-
-                                if (kind == DHCP_ACK)
+                                if (kind == DHCP_ACK || kind == DHCP_NAK)
                                 {
                                         socket_close((b32)handle);
-                                        return DHCP_OK;
-                                }
-
-                                if (kind == DHCP_NAK)
-                                {
-                                        socket_close((b32)handle);
-                                        return DHCP_REFUSED;
+                                        return kind == DHCP_ACK ? DHCP_OK : DHCP_REFUSED;
                                 }
                         }
 
@@ -508,38 +503,16 @@ static bipolar dhcp_renew(string_address device, p8 address_to hardware,
         bipolar handle;
         positive length;
         positive deadline;
-        b32 one = 1;
         p8 kind = 0;
 
         if (!lease->address || !lease->server)
                 return DHCP_NO_OFFER;
 
-        if (system_call_3(syscall(getrandom), (positive)address_of transaction,
-                          sizeof transaction, 1) != sizeof transaction)
-                transaction = (p32)get_cpu_time();
-
-        handle = socket_new(AF_INET, SOCK_DGRAM, 0);
+        transaction = dhcp_transaction();
+        handle = dhcp_open(device, lease->address, false);
 
         if (handle < 0)
                 return DHCP_NO_SOCKET;
-
-        socket_option_set((b32)handle, SOL_SOCKET, SO_REUSEADDR, address_of one,
-                          sizeof one);
-        socket_option_set((b32)handle, SOL_SOCKET, SO_BINDTODEVICE, device,
-                          string_length(device) + 1);
-
-        //      Bound to the address we hold, because that is the one the
-        //      server will answer to.
-        memory_fill(address_of where, 0, sizeof where);
-        where.family = AF_INET;
-        where.port = network_order_16(DHCP_CLIENT_PORT);
-        where.host = network_order_32(lease->address);
-
-        if (socket_bind((b32)handle, address_of where, sizeof where) < 0)
-        {
-                socket_close((b32)handle);
-                return DHCP_NO_SOCKET;
-        }
 
         memory_fill(address_of where, 0, sizeof where);
         where.family = AF_INET;
@@ -558,20 +531,11 @@ static bipolar dhcp_renew(string_address device, p8 address_to hardware,
 
         for (deadline = 0; deadline < 4; deadline++)
         {
-                bipolar got;
-
-                if (network_wait_readable(handle, 1, 0) <= 0)
-                        continue;
-
-                got = socket_receive((b32)handle, packet, sizeof packet, 0, 0, 0);
-
-                if (got <= 0)
-                        continue;
-
                 memory_fill(address_of fresh, 0, sizeof fresh);
 
-                if (dhcp_read(packet, (positive)got, transaction, hardware,
-                              address_of fresh, address_of kind) < 0)
+                if (!dhcp_receive(handle, packet, sizeof packet, transaction,
+                                  hardware, address_of fresh, address_of kind,
+                                  1, 0))
                         continue;
 
                 if (kind == DHCP_ACK && fresh.address == lease->address)

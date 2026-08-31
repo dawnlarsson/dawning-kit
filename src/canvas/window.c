@@ -449,11 +449,6 @@ static long window_call(long number, long a, long b, long c, long d, long e, lon
 #endif
 #endif
 
-static unsigned long window_bytes(struct window *window)
-{
-        return window->mapping;
-}
-
 /*
         One file per window: the ioctl sizes it and the mapping is at offset
         zero, so there is no offset for either side to get wrong, and closing
@@ -551,7 +546,7 @@ static void window_close(struct window *window)
 {
         long file = window->handle;
 
-        window_call(WINDOW_SYS_MUNMAP, (long)window, window_bytes(window), 0, 0, 0, 0);
+        window_call(WINDOW_SYS_MUNMAP, (long)window, window->mapping, 0, 0, 0, 0);
         window_call(WINDOW_SYS_CLOSE, file, 0, 0, 0, 0, 0);
 }
 

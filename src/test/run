@@ -1772,69 +1772,9 @@ target_tools()
         esac
 }
 
-verify_one()
-{
-        name=$1
-        cross=$2
-        runner=$3
+verify_one() { freestanding_checks_one verify src/test/verify.c "$@"; }
 
-        if ! command -v "$cross" > /dev/null 2>&1; then
-                note "$name: NOT RUN -- no $cross"
-                return 2
-        fi
-
-        if [ -n "$runner" ] && ! command -v "$runner" > /dev/null 2>&1; then
-                note "$name: NOT RUN -- no $runner"
-                return 2
-        fi
-
-        saved=$compiler
-        compiler=$cross
-        freestanding src/test/verify.c "$work/verify.$name" "$name" || {
-                compiler=$saved
-                return 1
-        }
-        compiler=$saved
-
-        $runner "$work/verify.$name" > "$work/verify.$name.out" 2>&1
-        status=$?
-
-        sed -n '/FAIL/p;/ABSENT/p;/under neither name here/p' "$work/verify.$name.out"
-
-        line=$(sed -n 's/^\([0-9]*\) checks, \([0-9]*\) failures$/\1 \2/p' \
-                "$work/verify.$name.out")
-
-        [ -n "$line" ] || { note "$name printed no verdict"; return 1; }
-
-        checks=${line% *}
-        bad=${line#* }
-
-        tally "verify-$name" "$((checks - bad))" "$checks"
-
-        [ "$status" = 0 ] && [ "$bad" = 0 ]
-}
-
-lane_verify()
-{
-        failed=0
-        missing=0
-
-        for target in x86_64 arm64 riscv64; do
-                target_tools "$target"
-                outcome=0
-                verify_one "$target" "$target_compiler" "$target_runner" || outcome=$?
-
-                case $outcome in
-                0) ;;
-                2) missing=1 ;;
-                *) failed=1 ;;
-                esac
-        done
-
-        [ "$failed" = 0 ] || return 1
-        [ "$missing" = 0 ] || return 2
-        return 0
-}
+lane_verify() { target_lane verify_one; }
 
 #       The sizes that never reach the routine.
 #
@@ -1848,52 +1788,11 @@ lane_verify()
 #       On all three machines, because the expansion differs on each: x86 has a
 #       hand written window between thirty three and a hundred and twenty eight
 #       bytes and the other two do not.
-exact_one()
-{
-        name=$1
-        cross=$2
-        runner=$3
-
-        if ! command -v "$cross" > /dev/null 2>&1; then
-                note "$name: NOT RUN -- no $cross"
-                return 2
-        fi
-
-        if [ -n "$runner" ] && ! command -v "$runner" > /dev/null 2>&1; then
-                note "$name: NOT RUN -- no $runner"
-                return 2
-        fi
-
-        saved=$compiler
-        compiler=$cross
-        freestanding src/test/exact.c "$work/exact.$name" "$name" || {
-                compiler=$saved
-                return 1
-        }
-        compiler=$saved
-
-        $runner "$work/exact.$name" > "$work/exact.$name.out" 2>&1
-        status=$?
-
-        sed -n '/FAIL/p' "$work/exact.$name.out"
-
-        line=$(sed -n 's/^\([0-9]*\) checks, \([0-9]*\) failures$/\1 \2/p' \
-                "$work/exact.$name.out")
-
-        [ -n "$line" ] || { note "$name printed no verdict"; return 1; }
-
-        checks=${line% *}
-        bad=${line#* }
-
-        tally "exact-$name" "$((checks - bad))" "$checks"
-
-        [ "$status" = 0 ] && [ "$bad" = 0 ]
-}
+exact_one() { freestanding_checks_one exact src/test/exact.c "$@"; }
 
 lane_exact()
 {
-        failed=0
-        missing=0
+        generated=0
 
         #
         #       The file is generated, so the file can drift from what
@@ -1906,27 +1805,17 @@ lane_exact()
                 if ! python3 kit/exact.py | diff -q - src/test/exact.c > /dev/null; then
                         note "src/test/exact.c is not what kit/exact.py writes"
                         note "  regenerate it: python3 kit/exact.py > src/test/exact.c"
-                        failed=1
+                        generated=1
                 fi
         else
                 note "no python3, so exact.c was not checked against its generator"
         fi
 
-        for target in x86_64 arm64 riscv64; do
-                target_tools "$target"
-                outcome=0
-                exact_one "$target" "$target_compiler" "$target_runner" || outcome=$?
+        outcome=0
+        target_lane exact_one || outcome=$?
 
-                case $outcome in
-                0) ;;
-                2) missing=1 ;;
-                *) failed=1 ;;
-                esac
-        done
-
-        [ "$failed" = 0 ] || return 1
-        [ "$missing" = 0 ] || return 2
-        return 0
+        [ "$generated" = 0 ] || return 1
+        return "$outcome"
 }
 
 #
@@ -2011,24 +1900,7 @@ lane_stream()    { sh src/test/stream.sh; }
 
 lane_known()
 {
-        failed=0
-        missing=0
-
-        for target in x86_64 arm64 riscv64; do
-                target_tools "$target"
-                outcome=0
-                known_one "$target" "$target_compiler" "$target_runner" || outcome=$?
-
-                case $outcome in
-                0) ;;
-                2) missing=1 ;;
-                *) failed=1 ;;
-                esac
-        done
-
-        [ "$failed" = 0 ] || return 1
-        [ "$missing" = 0 ] || return 2
-        return 0
+        target_lane known_one
 }
 
 
@@ -2061,7 +1933,12 @@ freestanding_checks_one()
         $runner "$work/$suite.$name" > "$work/$suite.$name.out" 2>&1
         status=$?
 
-        sed -n '/FAIL/p' "$work/$suite.$name.out"
+        if [ "$suite" = verify ]; then
+                sed -n '/FAIL/p;/ABSENT/p;/under neither name here/p' \
+                        "$work/$suite.$name.out"
+        else
+                sed -n '/FAIL/p' "$work/$suite.$name.out"
+        fi
 
         line=$(sed -n 's/^\([0-9]*\) checks, \([0-9]*\) failures$/\1 \2/p' \
                 "$work/$suite.$name.out")
@@ -2080,14 +1957,21 @@ freestanding_checks_lane()
 {
         suite=$1
         source=$2
+        target_lane freestanding_checks_one "$suite" "$source"
+}
+
+target_lane()
+{
+        check=$1
+        shift
         failed=0
         missing=0
 
         for target in x86_64 arm64 riscv64; do
                 target_tools "$target"
                 outcome=0
-                freestanding_checks_one "$suite" "$source" "$target" \
-                        "$target_compiler" "$target_runner" || outcome=$?
+                "$check" "$@" "$target" "$target_compiler" "$target_runner" ||
+                        outcome=$?
 
                 case $outcome in
                 0) ;;
@@ -2107,52 +1991,7 @@ freestanding_checks_lane()
 #       hands straight to the host kernel, so all three targets open real
 #       sockets rather than only compiling the calls.
 #
-lane_socket()
-{
-        freestanding_checks_lane socket src/test/socket.c
-}
-
-net_one()
-{
-        name=$1
-        cross=$2
-        runner=$3
-
-        if ! command -v "$cross" > /dev/null 2>&1; then
-                note "$name: NOT RUN -- no $cross"
-                return 2
-        fi
-
-        if [ -n "$runner" ] && ! command -v "$runner" > /dev/null 2>&1; then
-                note "$name: NOT RUN -- no $runner"
-                return 2
-        fi
-
-        saved=$compiler
-        compiler=$cross
-        freestanding src/test/net.c "$work/net.$name" "$name" || {
-                compiler=$saved
-                return 1
-        }
-        compiler=$saved
-
-        $runner "$work/net.$name" > "$work/net.$name.out" 2>&1
-        status=$?
-
-        sed -n '/FAIL/p' "$work/net.$name.out"
-
-        line=$(sed -n 's/^\([0-9]*\) checks, \([0-9]*\) failures$/\1 \2/p' \
-                "$work/net.$name.out")
-
-        [ -n "$line" ] || { note "$name printed no verdict"; return 1; }
-
-        checks=${line% *}
-        bad=${line#* }
-
-        tally "net-$name" "$((checks - bad))" "$checks"
-
-        [ "$status" = 0 ] && [ "$bad" = 0 ]
-}
+lane_socket() { freestanding_checks_lane socket src/test/socket.c; }
 
 #
 #       The message building half is arithmetic and proves itself anywhere.
@@ -2162,27 +2001,7 @@ net_one()
 #       `unshare -rn` and the same binary configures a real interface instead,
 #       which is how the mutation path is actually covered.
 #
-lane_net()
-{
-        failed=0
-        missing=0
-
-        for target in x86_64 arm64 riscv64; do
-                target_tools "$target"
-                outcome=0
-                net_one "$target" "$target_compiler" "$target_runner" || outcome=$?
-
-                case $outcome in
-                0) ;;
-                2) missing=1 ;;
-                *) failed=1 ;;
-                esac
-        done
-
-        [ "$failed" = 0 ] || return 1
-        [ "$missing" = 0 ] || return 2
-        return 0
-}
+lane_net() { freestanding_checks_lane net src/test/net.c; }
 
 
 lane_slurp()

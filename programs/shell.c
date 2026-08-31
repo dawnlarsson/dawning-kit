@@ -79,12 +79,58 @@ static bool shell_command_literal_status(string_address command,
         }
 }
 
+static bool shell_start_parameters(string_address address_to arguments,
+                                   positive first, positive count)
+{
+        if (!shell_room((address_any address_to)address_of shell_argv,
+                        address_of shell_argv_room, count + 1,
+                        sizeof(shell_argv[0])))
+                return false;
+
+        memory_copy_apart(shell_argv, arguments + first,
+                          count * sizeof(shell_argv[0]));
+        shell_argv[count] = null;
+
+        return shell_parameters_set(shell_argv, count);
+}
+
+static positive shell_run_complete_lines(p8 address_to text, positive length)
+{
+        positive at = 0;
+
+        while (at < length)
+        {
+                positive left = length - at;
+                p8 address_to newline = null;
+
+                /* A call cannot beat one or two byte compares. Longer scans
+                   belong to the architecture floor. */
+                if (text[at] == '\n')
+                        newline = text + at;
+                else if (left > 1 && text[at + 1] == '\n')
+                        newline = text + at + 1;
+                else if (left > 2)
+                        newline = (p8 address_to)memory_first_of(
+                            text + at + 2, '\n', left - 2);
+
+                if (!newline)
+                        break;
+
+                address_to newline = end;
+                run_line(text + at);
+                at = (positive)(newline - text) + 1;
+        }
+
+        return at;
+}
+
 b32 main()
 {
         b32 interactive;
         bipolar input = 0;
         bool script_file = false;
         string_address command = null;
+        string_address address_to arguments;
         positive process_arguments;
 
         /*
@@ -106,15 +152,16 @@ b32 main()
         }
 
         process_arguments = (positive)program_argument_count();
+        arguments = program_argument_list();
 
         /* Find the -c command without publishing any shell state yet. */
         if (process_arguments >= 3)
         {
-                string_address option = program_argument(1);
+                string_address option = arguments[1];
 
                 if (option && option[0] == '-' && option[1] == 'c' &&
                     !option[2])
-                        command = program_argument(2);
+                        command = arguments[2];
         }
 
         /* Signal policy is observable even while an otherwise empty shell is
@@ -163,10 +210,9 @@ b32 main()
                 parameters. So `sh -c 'echo $0 $1' name one` prints "name one"
                 rather than treating either as a word of the command.
         */
-        if (process_arguments > 1 && string_equals(program_argument(1), "-c"))
+        if (process_arguments > 1 && string_equals(arguments[1], "-c"))
         {
                 positive count = process_arguments > 3 ? process_arguments - 4 : 0;
-                positive at;
 
                 if (process_arguments < 3)
                 {
@@ -174,20 +220,7 @@ b32 main()
                         return 2;
                 }
 
-                if (!shell_room((address_any address_to)address_of shell_argv,
-                                address_of shell_argv_room, count + 1,
-                                sizeof(shell_argv[0])))
-                {
-                        log_error("sh: no room for arguments\n", 0);
-                        return 1;
-                }
-
-                for (at = 0; at < count; at++)
-                        shell_argv[at] = program_argument((b32)(at + 4));
-
-                shell_argv[count] = null;
-
-                if (!shell_parameters_set(shell_argv, count))
+                if (!shell_start_parameters(arguments, 4, count))
                 {
                         log_error("sh: no room for arguments\n", 0);
                         return 1;
@@ -197,18 +230,17 @@ b32 main()
                 //      dash does is use the path it was invoked as. That is
                 //      more use than the word "sh" when a message has to say
                 //      where it came from.
-                shell_script_name = process_arguments > 3 ? program_argument(3)
-                                                          : program_argument(0);
+                shell_script_name = process_arguments > 3 ? arguments[3]
+                                                          : arguments[0];
                 shell_option_flags = (string_address) "c";
                 script_file = true;
         }
         else if (process_arguments > 1)
         {
-                string_address script = program_argument(1);
+                string_address script = arguments[1];
                 positive count = process_arguments - 2;
                 bipolar handle = system_call_3(syscall(openat), AT_FDCWD,
                                                 (positive)script, FILE_READ);
-                positive at;
 
                 if (handle < 0)
                 {
@@ -216,21 +248,7 @@ b32 main()
                         return 2;
                 }
 
-                if (!shell_room((address_any address_to)address_of shell_argv,
-                                address_of shell_argv_room, count + 1,
-                                sizeof(shell_argv[0])))
-                {
-                        system_call_1(syscall(close), (positive)handle);
-                        log_error("sh: no room for arguments\n", 0);
-                        return 1;
-                }
-
-                for (at = 0; at < count; at++)
-                        shell_argv[at] = program_argument((b32)(at + 2));
-
-                shell_argv[count] = null;
-
-                if (!shell_parameters_set(shell_argv, count))
+                if (!shell_start_parameters(arguments, 2, count))
                 {
                         system_call_1(syscall(close), (positive)handle);
                         log_error("sh: no room for arguments\n", 0);
@@ -292,23 +310,11 @@ b32 main()
                         memory_copy(held_command, command, length + 1);
 
                         {
-                                p8 address_to at = held_command;
+                                positive at = shell_run_complete_lines(
+                                    held_command, length);
 
-                                while (string_get(at))
-                                {
-                                        p8 address_to stop =
-                                            string_first_of(at, '\n');
-
-                                        if (stop)
-                                                address_to stop = end;
-
-                                        run_line(at);
-
-                                        if (!stop)
-                                                break;
-
-                                        at = stop + 1;
-                                }
+                                if (at < length)
+                                        run_line(held_command + at);
                         }
 
                         memory_free(held_command, length + 1);
@@ -350,39 +356,7 @@ b32 main()
                         break;
 
                 total = held + (positive)got;
-                at = 0;
-
-                while (at < total)
-                {
-                        positive left = total - at;
-                        p8 address_to newline = null;
-                        positive stop;
-
-                        /* A function call cannot beat one or two byte
-                           compares.  Peel the blank/colon-sized lines, then
-                           hand every longer scan to the architecture floor. */
-                        if (shell_buffer[at] == '\n')
-                                newline = shell_buffer + at;
-                        else if (left > 1 && shell_buffer[at + 1] == '\n')
-                                newline = shell_buffer + at + 1;
-
-                        if (!newline && left > 2)
-                                newline = (p8 address_to)memory_first_of(
-                                    shell_buffer + at + 2, '\n', left - 2);
-
-                        // No newline yet: keep it for the next read rather than
-                        // running half a command.
-                        if (!newline)
-                                break;
-
-                        stop = (positive)(newline - shell_buffer);
-
-                        shell_buffer[stop] = end;
-
-                        run_line(shell_buffer + at);
-
-                        at = stop + 1;
-                }
+                at = shell_run_complete_lines(shell_buffer, total);
 
                 held = total - at;
 

@@ -167,7 +167,7 @@ static bool dd_digits(string_address address_to text, positive address_to value)
         positive made = 0;
         bool any = false;
 
-        while (text_digit(string_get(at)))
+        while (byte_is_digit(string_get(at)))
         {
                 positive digit = (positive)(string_get(at) - '0');
 
@@ -1198,8 +1198,8 @@ static bool diff_binary(diff_side address_to side)
 
 static p8 diff_fold(p8 value)
 {
-        if (diff_icase && value >= 'A' && value <= 'Z')
-                return (p8)(value + 32);
+        if (diff_icase)
+                return (p8)byte_to_lower(value);
 
         return value;
 }
@@ -3374,7 +3374,7 @@ static bool ps_gather()
 
         while ((entry = file_walk_next(address_of walk)))
         {
-                if (!text_digit(entry->d_name[0]))
+                if (!byte_is_digit(entry->d_name[0]))
                         continue;
 
                 p8 path[64];
@@ -4292,7 +4292,7 @@ static b32 tools_ps(void)
 
                         continue;
                 }
-                else if (argument[0] == 'p' && text_digit(argument[1]))
+                else if (argument[0] == 'p' && byte_is_digit(argument[1]))
                 {
                         if (!ps_pid_list(argument + 1, address_of selected_pids,
                                          address_of selected_count,

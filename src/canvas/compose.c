@@ -52,15 +52,6 @@ static _Bool output_touched(struct output *output, const struct drm_rect *damage
         return false;
 }
 
-static _Bool output_shows_cursor(struct output *output, int x, int y)
-{
-        struct drm_rect cell;
-
-        cursor_cell(&cell, x, y, desktop.cursor_shape, desktop.cursor_scale);
-
-        return output_touched(output, &cell, 1);
-}
-
 struct shape
 {
         int x, y, w, h;
@@ -334,7 +325,7 @@ static void compose_cells(struct pane *pane, const struct target *t,
                 return;
 
         unsigned int skip;
-        unsigned int line = pane_view(pane, &skip);
+        unsigned int line = pane_view_at(pane, pane->view, &skip);
         int row = 0;
 
         while (row < rows && line != pane->head)
@@ -728,11 +719,13 @@ static void compose_rect(struct output *output, u32 *pixels,
 */
 static void output_draw_cursor(struct output *output, u32 *pixels)
 {
+        struct drm_rect cell;
         struct target t;
 
-        output->cursor_shown =
-            !output->cursor_plane &&
-            output_shows_cursor(output, desktop.cursor_x, desktop.cursor_y);
+        cursor_cell(&cell, desktop.cursor_x, desktop.cursor_y,
+                    desktop.cursor_shape, desktop.cursor_scale);
+        output->cursor_shown = !output->cursor_plane &&
+                               output_touched(output, &cell, 1);
 
         if (!output->cursor_shown)
                 return;
@@ -838,8 +831,16 @@ static void output_repaint(struct output *output, const struct drm_rect *damage,
                 four: where its frame was and is, where the cursor was and is,
                 and those chain.
         */
-        for (i = 0; i < count; i++)
+        flush = merged[kept++] = damage[0];
+
+        for (i = 1; i < count; i++)
+        {
                 merged[kept++] = damage[i];
+                flush.x1 = min(flush.x1, damage[i].x1);
+                flush.y1 = min(flush.y1, damage[i].y1);
+                flush.x2 = max(flush.x2, damage[i].x2);
+                flush.y2 = max(flush.y2, damage[i].y2);
+        }
 
         for (joined = true; joined;)
         {
@@ -880,16 +881,6 @@ static void output_repaint(struct output *output, const struct drm_rect *damage,
 
         drm_client_buffer_vunmap_local(output->buffer);
         pointer_draw_total += ktime_get_ns() - started;
-
-        flush = damage[0];
-
-        for (i = 1; i < count; i++)
-        {
-                flush.x1 = min(flush.x1, damage[i].x1);
-                flush.y1 = min(flush.y1, damage[i].y1);
-                flush.x2 = max(flush.x2, damage[i].x2);
-                flush.y2 = max(flush.y2, damage[i].y2);
-        }
 
         flush.x1 = max(flush.x1 - output->x, 0);
         flush.y1 = max(flush.y1 - output->y, 0);

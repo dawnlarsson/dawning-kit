@@ -81,11 +81,7 @@ size() {
         echo "$size bytes ($((size / 1024)).$(((size % 1024) * 10 / 1024)) KB, $((size / 1048576)).$(((size % 1048576) * 10 / 1048576)) MB)"
 }
 
-is_file() {
-        if [ ! -f "$1" ]; then
-                return 1
-        fi
-}
+is_file() { [ -f "$1" ]; }
 
 # Every path in these scripts is relative to the repository root, so running
 # one from anywhere else quietly writes into the wrong place. Checked by
@@ -127,13 +123,7 @@ key_one() {
         key "$1"
 }
 
-line_has() {
-        is_file "$1" || return 1
-        [ -z "$2" ] && return 1
-
-        grep -F -q "$2" "$1"
-        return $?
-}
+line_has() { is_file "$1" && [ -n "$2" ] && grep -F -q "$2" "$1"; }
 
 line_add() {
         line_has "$1" "$2" && return 0

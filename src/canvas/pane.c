@@ -271,11 +271,6 @@ static unsigned int pane_view_at(struct pane *pane, unsigned int view,
         return at;
 }
 
-static unsigned int pane_view(struct pane *pane, unsigned int *skip)
-{
-        return pane_view_at(pane, pane->view, skip);
-}
-
 /*
         Where the view sits in what there is, for something to draw a bar with.
 
@@ -292,7 +287,7 @@ static _Bool pane_extent(struct pane *pane, unsigned int *first,
         if (!pane->cells)
                 return false;
 
-        top = pane_view(pane, &skip);
+        top = pane_view_at(pane, pane->view, &skip);
 
         *shown = pane_rows(pane);
         *total = 0;
@@ -433,18 +428,15 @@ static struct pane *pane_create(unsigned int width, unsigned int height,
             width > (unsigned int)desktop.width || height > (unsigned int)desktop.height)
                 return NULL;
 
-        pane = kzalloc(sizeof(*pane), GFP_KERNEL);
-        if (!pane)
-                return NULL;
-
         bytes = PAGE_ALIGN(WINDOW_PIXELS +
                            (columns ? ring_bytes : (unsigned long)width * height * 4));
 
         if (canvas_pane_bytes + bytes > canvas_pane_budget())
-        {
-                kfree(pane);
                 return NULL;
-        }
+
+        pane = kzalloc(sizeof(*pane), GFP_KERNEL);
+        if (!pane)
+                return NULL;
 
         // Not vmalloc_user when it is the compositor's own: nothing maps it.
         pane->mapping = owned ? vzalloc(bytes) : vmalloc_user(bytes);

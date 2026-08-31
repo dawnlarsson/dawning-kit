@@ -48,44 +48,9 @@ compiler=${CC:-gcc}
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT INT TERM
 
-pass=0
-fail=0
-current=""
-section_name=""
-section_pass=0
-section_total=0
-
-section()
-{
-        [ -z "$section_name" ] ||
-                printf '  %-12s %s of %s\n' \
-                        "$section_name" "$section_pass" "$section_total"
-
-        [ -z "$section_name" ] || [ -z "${TEST_TALLY:-}" ] ||
-                printf '%s %s %s\n' \
-                        "$section_name" "$section_pass" "$section_total" \
-                        >> "$TEST_TALLY"
-
-        section_name=$1
-        section_pass=0
-        section_total=0
-}
-
-group() { current=$1; }
-
-won()
-{
-        pass=$((pass + 1))
-        section_pass=$((section_pass + 1))
-        section_total=$((section_total + 1))
-}
-
-lost()
-{
-        fail=$((fail + 1))
-        section_total=$((section_total + 1))
-        printf '  %-12s %-24s %s\n' "$current" "$1" "$2"
-}
+test_group_width=12
+test_case_width=24
+. "$here/tally.sh"
 
 #       The emulator, with a page of memory where the window would be.
 cat > "$work/harness.c" <<'HARNESS'
@@ -95,111 +60,9 @@ cat > "$work/harness.c" <<'HARNESS'
 #include "src/sh/term.c"
 #include "src/sh/screen.c"
 
-#define GRID_STRIDE 256
-#define GRID_HISTORY 64
-#define GRID_LINES (WINDOW_PIXELS + GRID_HISTORY * GRID_STRIDE * (positive)sizeof(struct window_cell))
-
-static p8 page[GRID_LINES + GRID_HISTORY * 4];
-static p8 out[16384];
-static positive out_length;
-
-static fn say_byte(unsigned int c)
-{
-        if (out_length < sizeof(out))
-                out[out_length++] = (p8)c;
-}
-
-static fn tell(const char *text)
-{
-        while (*text)
-                say_byte((p8)*text++);
-}
-
-static fn say_number(unsigned int value)
-{
-        if (value >= 10)
-                say_number(value / 10);
-
-        say_byte('0' + value % 10);
-}
-
-static fn say_hex(unsigned int value, unsigned int digits)
-{
-        while (digits--)
-                say_byte("0123456789abcdef"[(value >> (digits * 4)) & 15]);
-}
-
-static unsigned int number(string_address text)
-{
-        unsigned int value = 0;
-
-        while (*text >= '0' && *text <= '9')
-                value = value * 10 + (unsigned int)(*text++ - '0');
-
-        return value;
-}
-
-static bipolar next_byte(string_address text, positive *at)
-{
-        unsigned int c = text[*at];
-
-        if (!c)
-                return -1;
-
-        (*at)++;
-
-        if (c != '\\')
-                return (bipolar)c;
-
-        c = text[*at];
-
-        if (!c)
-                return '\\';
-
-        (*at)++;
-
-        switch (c)
-        {
-        case 'e':
-                return 27;
-        case 'n':
-                return '\n';
-        case 'r':
-                return '\r';
-        case 't':
-                return '\t';
-        case 'b':
-                return 8;
-        case 'a':
-                return 7;
-        case '0':
-                return 0;
-        case 'x':
-        {
-                unsigned int value = 0;
-
-                for (int i = 0; i < 2; i++)
-                {
-                        unsigned int d = text[*at];
-
-                        if (d >= '0' && d <= '9')
-                                value = value * 16 + d - '0';
-                        else if (d >= 'a' && d <= 'f')
-                                value = value * 16 + d - 'a' + 10;
-                        else if (d >= 'A' && d <= 'F')
-                                value = value * 16 + d - 'A' + 10;
-                        else
-                                break;
-
-                        (*at)++;
-                }
-
-                return (bipolar)value;
-        }
-        }
-
-        return (bipolar)c;
-}
+#define TERMINAL_FIXTURE_OUTPUT 16384
+#define TERMINAL_FIXTURE_BELL
+#include "src/test/terminal_fixture.inc"
 
 static const struct
 {
@@ -286,30 +149,6 @@ static fn feed_keys(string_address text)
         }
 }
 
-static fn say_row(unsigned int r)
-{
-        struct window_cell *cells = row_cells(r);
-        unsigned int length = *row_length(r);
-
-        say_byte('[');
-
-        for (unsigned int c = 0; c < length; c++)
-        {
-                unsigned int character = cells[c].character;
-
-                if (character >= ' ' && character < 127)
-                        say_byte(character);
-                else
-                {
-                        say_byte('<');
-                        say_hex(character, character > 0xfffff ? 6 : character > 0xffff ? 5 : 4);
-                        say_byte('>');
-                }
-        }
-
-        tell("]\n");
-}
-
 b32 main()
 {
         b32 count = program_argument_count();
@@ -324,19 +163,7 @@ b32 main()
         columns = number(program_argument(1));
         rows = number(program_argument(2));
 
-        window = (struct window *)page;
-        window->stride = GRID_STRIDE;
-        window->history = GRID_HISTORY;
-        window->lines = GRID_LINES;
-        window->head = GRID_HISTORY + rows;
-        window->columns = columns;
-        window->rows = rows;
-        window->max_columns = GRID_STRIDE;
-        window->max_rows = GRID_HISTORY;
-
-        COLUMNS = columns;
-        ROWS = rows;
-        full_reset();
+        terminal_fixture_start(columns, rows);
 
         for (b32 i = 3; i < count; i++)
         {
@@ -408,18 +235,7 @@ b32 main()
                         cursor_show();
                 else if (string_compare(verb, (string_address) "attr") == 0)
                 {
-                        positive at = 0;
-                        unsigned int r = number(argument);
-                        unsigned int c;
-
-                        while (argument[at] && argument[at] != ',')
-                                at++;
-
-                        c = number(argument + at + 1);
-                        say_number(row_cells(r)[c].ink);
-                        say_byte(',');
-                        say_number(row_cells(r)[c].paper);
-                        say_byte('\n');
+                        say_attribute(argument);
                         i++;
                 }
                 else if (string_compare(verb, (string_address) "sent") == 0)
@@ -918,6 +734,7 @@ group multibyte
 same 'two bytes'      '[a<00e9>b]'               8 2 in 'a\xc3\xa9b' row 0
 same 'three bytes'    '[<2500>]'                 8 2 in '\xe2\x94\x80' row 0
 same 'four bytes'     '[<1f600>]'                8 2 in '\xf0\x9f\x98\x80' row 0
+same 'six hex digits' '[<10ffff>]'               8 2 in '\xf4\x8f\xbf\xbf' row 0
 same 'one cell each'  '0,3'                      8 2 in '\xc3\xa9\xc3\xa9\xc3\xa9' cursor
 
 group malformed

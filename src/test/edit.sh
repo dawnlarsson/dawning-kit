@@ -46,44 +46,9 @@ compiler=${CC:-gcc}
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT INT TERM
 
-pass=0
-fail=0
-current=""
-section_name=""
-section_pass=0
-section_total=0
-
-section()
-{
-        [ -z "$section_name" ] ||
-                printf '  %-12s %s of %s\n' \
-                        "$section_name" "$section_pass" "$section_total"
-
-        [ -z "$section_name" ] || [ -z "${TEST_TALLY:-}" ] ||
-                printf '%s %s %s\n' \
-                        "$section_name" "$section_pass" "$section_total" \
-                        >> "$TEST_TALLY"
-
-        section_name=${1:-}
-        section_pass=0
-        section_total=0
-}
-
-group() { current=$1; }
-
-won()
-{
-        pass=$((pass + 1))
-        section_pass=$((section_pass + 1))
-        section_total=$((section_total + 1))
-}
-
-lost()
-{
-        fail=$((fail + 1))
-        section_total=$((section_total + 1))
-        printf '  %-12s %-24s %s\n' "$current" "$1" "$2"
-}
+test_group_width=12
+test_case_width=24
+. "$here/tally.sh"
 
 cat > "$work/harness.c" <<'HARNESS'
 #include "src/compiler_memory.c"
@@ -96,104 +61,9 @@ cat > "$work/harness.c" <<'HARNESS'
 #define EDIT_NO_DRIVER
 #include "src/sh/edit.c"
 
-#define GRID_STRIDE 256
-#define GRID_HISTORY 64
-#define GRID_LINES (WINDOW_PIXELS + GRID_HISTORY * GRID_STRIDE * (positive)sizeof(struct window_cell))
-
-static p8 page[GRID_LINES + GRID_HISTORY * 4];
-static p8 out[65536];
-static positive out_length;
+#define TERMINAL_FIXTURE_OUTPUT 65536
+#include "src/test/terminal_fixture.inc"
 static p8 hostile_path[4096];
-
-static fn say_byte(unsigned int c)
-{
-        if (out_length < sizeof(out))
-                out[out_length++] = (p8)c;
-}
-
-static fn tell(const char *text)
-{
-        while (*text)
-                say_byte((p8)*text++);
-}
-
-static fn say_number(unsigned int value)
-{
-        if (value >= 10)
-                say_number(value / 10);
-
-        say_byte('0' + value % 10);
-}
-
-static fn say_hex(unsigned int value, unsigned int digits)
-{
-        while (digits--)
-                say_byte("0123456789abcdef"[(value >> (digits * 4)) & 15]);
-}
-
-static unsigned int number(string_address text)
-{
-        unsigned int value = 0;
-
-        while (*text >= '0' && *text <= '9')
-                value = value * 10 + (unsigned int)(*text++ - '0');
-
-        return value;
-}
-
-static bipolar next_byte(string_address text, positive *at)
-{
-        unsigned int c = text[*at];
-
-        if (!c)
-                return -1;
-
-        (*at)++;
-
-        if (c != '\\')
-                return (bipolar)c;
-
-        c = text[*at];
-
-        if (!c)
-                return '\\';
-
-        (*at)++;
-
-        switch (c)
-        {
-        case 'e': return 27;
-        case 'n': return '\n';
-        case 'r': return '\r';
-        case 't': return '\t';
-        case 'b': return 8;
-        case '0': return 0;
-        case 'x':
-        {
-                unsigned int value = 0;
-
-                for (int i = 0; i < 2; i++)
-                {
-                        unsigned int d = text[*at];
-
-                        if (d >= '0' && d <= '9')
-                                value = value * 16 + d - '0';
-                        else if (d >= 'a' && d <= 'f')
-                                value = value * 16 + d - 'a' + 10;
-                        else if (d >= 'A' && d <= 'F')
-                                value = value * 16 + d - 'A' + 10;
-                        else
-                                break;
-
-                        (*at)++;
-                }
-
-                return (bipolar)value;
-        }
-        }
-
-        return (bipolar)c;
-}
 
 //      Everything the editor emitted, put through the emulator. The two are
 //      only ever joined here: the editor writes bytes and the terminal turns
@@ -402,30 +272,6 @@ static fn feed_keys(string_address text)
         }
 }
 
-static fn say_row(unsigned int r)
-{
-        struct window_cell *cells = row_cells(r);
-        unsigned int length = *row_length(r);
-
-        say_byte('[');
-
-        for (unsigned int c = 0; c < length; c++)
-        {
-                unsigned int character = cells[c].character;
-
-                if (character >= ' ' && character < 127)
-                        say_byte(character);
-                else
-                {
-                        say_byte('<');
-                        say_hex(character, character > 0xffff ? 5 : 4);
-                        say_byte('>');
-                }
-        }
-
-        tell("]\n");
-}
-
 b32 main()
 {
         b32 count = program_argument_count();
@@ -440,19 +286,7 @@ b32 main()
         columns = number(program_argument(1));
         rows = number(program_argument(2));
 
-        window = (struct window *)page;
-        window->stride = GRID_STRIDE;
-        window->history = GRID_HISTORY;
-        window->lines = GRID_LINES;
-        window->head = GRID_HISTORY + rows;
-        window->columns = columns;
-        window->rows = rows;
-        window->max_columns = GRID_STRIDE;
-        window->max_rows = GRID_HISTORY;
-
-        COLUMNS = columns;
-        ROWS = rows;
-        full_reset();
+        terminal_fixture_start(columns, rows);
 
         edit_empty();
         edit_input_reset();
@@ -536,21 +370,9 @@ b32 main()
                 }
                 else if (string_compare(verb, (string_address) "attr") == 0)
                 {
-                        positive at = 0;
-                        unsigned int r = number(argument);
-                        unsigned int c;
-
                         edit_draw();
                         settle();
-
-                        while (argument[at] && argument[at] != ',')
-                                at++;
-
-                        c = number(argument + at + 1);
-                        say_number(row_cells(r)[c].ink);
-                        say_byte(',');
-                        say_number(row_cells(r)[c].paper);
-                        say_byte('\n');
+                        say_attribute(argument);
                         i++;
                 }
                 else if (string_compare(verb, (string_address) "buffer") == 0)
@@ -905,6 +727,7 @@ same 'csi u redo'      'hi'             40 6 keys 'hi^z\e[122;6u' buffer
 
 group utf8
 same 'two bytes'       '[1 <00e9>]'     40 6 keys '\xc3\xa9' row 0
+same 'six hex digits'  '[1 <10ffff>]'   40 6 keys '\xf4\x8f\xbf\xbf' row 0
 same 'one caret step'  '0,2'            40 6 keys '\xc3\xa9' carets
 same 'backspace whole' ''               40 6 keys '\xc3\xa9<bs>' buffer
 

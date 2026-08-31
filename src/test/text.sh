@@ -111,6 +111,29 @@ case_start()
         group=$1
 }
 
+compared()
+{
+        if cmp -s "$1" "$2" && [ "$want_status" = "$got_status" ]; then
+                pass=$((pass + 1))
+                return 0
+        fi
+
+        fail=$((fail + 1))
+        return 1
+}
+
+compare_report()
+{
+        name=$1
+
+        compared "$2" "$3" && return 0
+
+        printf '  %-8s %-30s want %-24s got %s\n' \
+                "$group" "$name" \
+                "$(head -c 34 "$2" | tr '\n\t' '|>')[$want_status]" \
+                "$(head -c 34 "$3" | tr '\n\t' '|>')[$got_status]"
+}
+
 # Runs one command both ways. The tool is the first argument; everything
 # after it is passed to both, and standard input comes from the named file.
 compare()
@@ -132,16 +155,7 @@ compare()
                 got_status=$?
         fi
 
-        if cmp -s "$work/want" "$work/got" && [ "$want_status" = "$got_status" ]; then
-                pass=$((pass + 1))
-                return 0
-        fi
-
-        fail=$((fail + 1))
-        printf '  %-8s %-30s want %-24s got %s\n' \
-                "$group" "$name" \
-                "$(head -c 34 "$work/want" | tr '\n\t' '|>')[$want_status]" \
-                "$(head -c 34 "$work/got" | tr '\n\t' '|>')[$got_status]"
+        compare_report "$name" "$work/want" "$work/got"
 }
 
 grep_color_compare()
@@ -155,16 +169,7 @@ grep_color_compare()
         GREP_COLORS=$colors "$bin/grep" "$@" > "$work/got" 2>/dev/null
         got_status=$?
 
-        if cmp -s "$work/want" "$work/got" && [ "$want_status" = "$got_status" ]; then
-                pass=$((pass + 1))
-                return 0
-        fi
-
-        fail=$((fail + 1))
-        printf '  %-8s %-30s want %-24s got %s\n' \
-                "$group" "$name" \
-                "$(head -c 34 "$work/want" | tr '\n\t' '|>')[$want_status]" \
-                "$(head -c 34 "$work/got" | tr '\n\t' '|>')[$got_status]"
+        compare_report "$name" "$work/want" "$work/got"
 }
 
 grep_color_status()
@@ -243,10 +248,7 @@ grep_color_pty_compare()
         grep_pty_capture "$work/got" "$colors" unset "$bin/grep" "$@"
         got_status=$?
 
-        if cmp -s "$work/want" "$work/got" && [ "$want_status" = "$got_status" ]; then
-                pass=$((pass + 1))
-        else
-                fail=$((fail + 1))
+        if ! compared "$work/want" "$work/got"; then
                 printf '  %-8s %-30s want pty[%s] got pty[%s]\n' \
                         "$group" "$name" "$want_status" "$got_status"
         fi
@@ -259,10 +261,7 @@ grep_color_no_color()
         grep_pty_capture "$work/got" 'mt=31' set "$bin/grep" --color=auto alpha "$work/grep_color"
         got_status=$?
 
-        if cmp -s "$work/want" "$work/got" && [ "$want_status" = "$got_status" ]; then
-                pass=$((pass + 1))
-        else
-                fail=$((fail + 1))
+        if ! compared "$work/want" "$work/got"; then
                 printf '  %-8s %-30s NO_COLOR auto leaked ANSI or changed output\n' \
                         "$group" 'colour NO_COLOR'
         fi
@@ -275,10 +274,7 @@ grep_color_no_color_always()
         NO_COLOR=1 GREP_COLORS='mt=31' "$bin/grep" --color=always alpha "$work/grep_color" > "$work/got" 2>/dev/null
         got_status=$?
 
-        if cmp -s "$work/want" "$work/got" && [ "$want_status" = "$got_status" ]; then
-                pass=$((pass + 1))
-        else
-                fail=$((fail + 1))
+        if ! compared "$work/want" "$work/got"; then
                 printf '  %-8s %-30s NO_COLOR overrode explicit always\n' \
                         "$group" 'colour NO_COLOR always'
         fi
@@ -292,10 +288,7 @@ grep_color_multicall()
         "${bin%/bin}/shell" -c "$command" > "$work/got" 2>/dev/null
         got_status=$?
 
-        if cmp -s "$work/want" "$work/got" && [ "$want_status" = "$got_status" ]; then
-                pass=$((pass + 1))
-        else
-                fail=$((fail + 1))
+        if ! compared "$work/want" "$work/got"; then
                 printf '  %-8s %-30s colour state leaked between calls\n' \
                         "$group" 'colour multicall reset'
         fi
@@ -347,16 +340,7 @@ compare_edit()
         "$bin/$tool" "$@" "$work/edit_got" > /dev/null 2>&1
         got_status=$?
 
-        if cmp -s "$work/edit_want" "$work/edit_got" && [ "$want_status" = "$got_status" ]; then
-                pass=$((pass + 1))
-                return 0
-        fi
-
-        fail=$((fail + 1))
-        printf '  %-8s %-30s want %-24s got %s\n' \
-                "$group" "$name" \
-                "$(head -c 34 "$work/edit_want" | tr '\n\t' '|>')[$want_status]" \
-                "$(head -c 34 "$work/edit_got" | tr '\n\t' '|>')[$got_status]"
+        compare_report "$name" "$work/edit_want" "$work/edit_got"
 }
 
 # --follow-symlinks changes which inode -i replaces. Keep two identical
@@ -394,12 +378,10 @@ compare_follow_edit()
                 [ -L "$work/follow_got/link" ] && printf 'link\n'
         } > "$work/got"
 
-        if cmp -s "$work/want" "$work/got"; then
-                pass=$((pass + 1))
+        if compared "$work/want" "$work/got"; then
                 return 0
         fi
 
-        fail=$((fail + 1))
         printf '  %-8s %-30s want %-24s got %s\n' \
                 "$group" "$name" \
                 "$(head -c 34 "$work/want" | tr '\n\t' '|>')" \
@@ -429,16 +411,7 @@ compare_side()
         cat "$work/side_want" >> "$work/want" 2> /dev/null
         cat "$work/side_got" >> "$work/got" 2> /dev/null
 
-        if cmp -s "$work/want" "$work/got" && [ "$want_status" = "$got_status" ]; then
-                pass=$((pass + 1))
-                return 0
-        fi
-
-        fail=$((fail + 1))
-        printf '  %-8s %-30s want %-24s got %s\n' \
-                "$group" "$name" \
-                "$(head -c 34 "$work/want" | tr '\n\t' '|>')[$want_status]" \
-                "$(head -c 34 "$work/got" | tr '\n\t' '|>')[$got_status]"
+        compare_report "$name" "$work/want" "$work/got"
 }
 
 # A fixed-memory tool may refuse a record it cannot hold, but it must not

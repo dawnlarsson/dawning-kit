@@ -1029,32 +1029,12 @@ static positive file_month_days(b64 year, b64 month)
         return lengths[month - 1];
 }
 
-static bool file_blank(p8 letter)
-{
-        return letter == ' ' || letter == '\t';
-}
-
-static bool file_digit(p8 letter)
-{
-        return letter >= '0' && letter <= '9';
-}
-
-static p8 file_lower(p8 letter)
-{
-        return letter >= 'A' && letter <= 'Z' ? (p8)(letter + 32) : letter;
-}
-
-static bool file_letter(p8 letter)
-{
-        return file_lower(letter) >= 'a' && file_lower(letter) <= 'z';
-}
-
 static bool file_same_word(string_address text, positive length, string_address word)
 {
         positive i = 0;
 
         while (i < length && string_get(word + i) &&
-               file_lower(string_get(text + i)) == string_get(word + i))
+               byte_to_lower(string_get(text + i)) == string_get(word + i))
                 i++;
 
         return i == length && !string_get(word + i);
@@ -1158,7 +1138,7 @@ bool file_moment_read(string_address text, b64 now, b64 address_to out)
                         at += string_span(text + at, string_set_blanks);
                 }
 
-                if (file_digit(string_get(text + at)))
+                if (byte_is_digit(string_get(text + at)))
                 {
                         positive digits;
                         b64 value;
@@ -1245,7 +1225,7 @@ bool file_moment_read(string_address text, b64 now, b64 address_to out)
 
                         positive length = 0;
 
-                        while (file_letter(string_get(text + at + length)))
+                        while (byte_is_alpha(string_get(text + at + length)))
                                 length++;
 
                         const file_unit address_to unit = file_unit_of(text + at, length);
@@ -1263,12 +1243,12 @@ bool file_moment_read(string_address text, b64 now, b64 address_to out)
                         continue;
                 }
 
-                if (marked || !file_letter(string_get(text + at)))
+                if (marked || !byte_is_alpha(string_get(text + at)))
                         return false;
 
                 positive length = 0;
 
-                while (file_letter(string_get(text + at + length)))
+                while (byte_is_alpha(string_get(text + at + length)))
                         length++;
 
                 string_address word = text + at;
@@ -1294,7 +1274,7 @@ bool file_moment_read(string_address text, b64 now, b64 address_to out)
                 if (file_same_word(word, length, (string_address) "yesterday") ||
                     file_same_word(word, length, (string_address) "tomorrow"))
                 {
-                        recent = file_lower(string_get(word)) == 'y' ? -86400 : 86400;
+                        recent = byte_to_lower(string_get(word)) == 'y' ? -86400 : 86400;
                         recent_months = 0;
                         shift += recent;
 
@@ -1309,7 +1289,7 @@ bool file_moment_read(string_address text, b64 now, b64 address_to out)
 
                         positive wide = 0;
 
-                        while (file_letter(string_get(text + at + wide)))
+                        while (byte_is_alpha(string_get(text + at + wide)))
                                 wide++;
 
                         const file_unit address_to unit = file_unit_of(text + at, wide);
@@ -1740,13 +1720,13 @@ static bool file_take(file_taking address_to taking)
                 }
 
                 if (taking->numbers && !string_is(word + 1, '-') &&
-                    (file_digit(string_get(word + 1)) ||
+                    (byte_is_digit(string_get(word + 1)) ||
                      string_is(word + 1, '.')))
                         break;
 
                 index++;
 
-                if (taking->digits && file_digit(string_get(word + 1)))
+                if (taking->digits && byte_is_digit(string_get(word + 1)))
                 {
                         positive bit = file_letter_bit(taking->digits);
 
@@ -3647,7 +3627,7 @@ static fn find_lowered(string_address text, p8 address_to into)
 
         while (string_get(text + i) && i < FILE_PATH_MAX - 1)
         {
-                into[i] = file_lower(string_get(text + i));
+                into[i] = (p8)byte_to_lower(string_get(text + i));
                 i++;
         }
 
@@ -8635,7 +8615,7 @@ static bool sleep_read(string_address text, p64 address_to seconds,
         {
                 text++;
 
-                while (file_digit(string_get(text)))
+                while (byte_is_digit(string_get(text)))
                 {
                         if (scale > 0)
                         {
@@ -11858,7 +11838,7 @@ static b32 file_xargs()
 
                         // -I reads a line at a time, and the blanks around it
                         // are not part of what the mark stands for.
-                        if (file_blank(letter))
+                        if (byte_is_blank(letter))
                         {
                                 if (xargs_replace)
                                 {

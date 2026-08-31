@@ -62,44 +62,9 @@ fi
 # an answer.
 [ -x "$reference" ] || { echo "  expand       no $reference, skipped"; exit 0; }
 
-pass=0
-fail=0
-current=""
-section_name=""
-section_pass=0
-section_total=0
-
-section()
-{
-        [ -z "$section_name" ] ||
-                printf '  %-12s %s of %s\n' \
-                        "$section_name" "$section_pass" "$section_total"
-
-        [ -z "$section_name" ] || [ -z "${TEST_TALLY:-}" ] ||
-                printf '%s %s %s\n' \
-                        "$section_name" "$section_pass" "$section_total" \
-                        >> "$TEST_TALLY"
-
-        section_name=$1
-        section_pass=0
-        section_total=0
-}
-
-group() { current=$1; }
-
-won()
-{
-        pass=$((pass + 1))
-        section_pass=$((section_pass + 1))
-        section_total=$((section_total + 1))
-}
-
-lost()
-{
-        fail=$((fail + 1))
-        section_total=$((section_total + 1))
-        printf '  %-14s %-26s %s\n' "$current" "$1" "$2"
-}
+test_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+. "$test_dir/tally.sh"
+. "$test_dir/shell_compare.sh"
 
 #       One fixed directory for every case that asks the filesystem, so that a
 #       glob answers the same thing on a laptop as it does in a container.
@@ -177,63 +142,6 @@ run_both()
 
 shown() { head -c 44 "$1" | tr '\n' '|'; }
 
-check()
-{
-        name=$1
-        shift
-        run_both "$@"
-
-        if cmp -s "$work/want" "$work/got"; then
-                won
-                return 0
-        fi
-
-        lost "$name" "want $(shown "$work/want")   got $(shown "$work/got")"
-}
-
-answer()
-{
-        name=$1
-        shift
-        run_both "$@"
-
-        if cmp -s "$work/want" "$work/got" &&
-                [ "$want_status" = "$got_status" ]; then
-                won
-                return 0
-        fi
-
-        lost "$name" \
-                "want $(shown "$work/want")[$want_status]   got $(shown "$work/got")[$got_status]"
-}
-
-# Bash extensions are compared to Bash directly and kept out of the POSIX
-# reference stream. They remain ordinary pass/fail cases in the same lane.
-bash_answer()
-{
-        name=$1
-        shift
-
-        [ -x /bin/bash ] || {
-                lost "$name" "/bin/bash is required for a Bash extension case"
-                return 0
-        }
-
-        held_reference=$reference
-        reference=/bin/bash
-        run_both "$@"
-        reference=$held_reference
-
-        if cmp -s "$work/want" "$work/got" &&
-                [ "$want_status" = "$got_status" ]; then
-                won
-                return 0
-        fi
-
-        lost "$name" \
-                "bash $(shown "$work/want")[$want_status]   got $(shown "$work/got")[$got_status]"
-}
-
 bash_check()
 {
         name=$1
@@ -255,33 +163,6 @@ bash_check()
         fi
 
         lost "$name" "bash $(shown "$work/want")   got $(shown "$work/got")"
-}
-
-# What ours says where dash says something else. Both halves are checked: if
-# ours starts agreeing with dash the case fails and moves up into answer, and
-# if ours changes to a third thing it fails too.
-differs()
-{
-        name=$1
-        recorded=$2
-        recorded_status=$3
-        shift 3
-        run_both "$@"
-
-        got_ours=$(shown "$work/got")
-
-        if [ "$got_ours" != "$recorded" ] || [ "$got_status" != "$recorded_status" ]; then
-                lost "$name" "recorded ${recorded}[$recorded_status]   now ${got_ours}[$got_status]"
-                return 0
-        fi
-
-        if cmp -s "$work/want" "$work/got" &&
-                [ "$want_status" = "$got_status" ]; then
-                lost "$name" "agrees with dash now -- move it into answer"
-                return 0
-        fi
-
-        won
 }
 
 #

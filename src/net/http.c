@@ -263,6 +263,7 @@ static bipolar http_get(p32 host, p16 port, string_address name,
         bipolar handle;
         bipolar got;
         bipolar header;
+        bipolar status = HTTP_MALFORMED;
         positive length = 0;
         string_address value;
         positive value_length = 0;
@@ -279,8 +280,8 @@ static bipolar http_get(p32 host, p16 port, string_address name,
 
         if (socket_connect((b32)handle, address_of where, sizeof where) < 0)
         {
-                socket_close((b32)handle);
-                return HTTP_NO_ROUTE;
+                status = HTTP_NO_ROUTE;
+                goto done;
         }
 
         //      HTTP/1.0 with an explicit close, so the server ends the body by
@@ -288,10 +289,7 @@ static bipolar http_get(p32 host, p16 port, string_address name,
         //      Host: is sent anyway, because a name-based server needs it and
         //      answers 400 without it whatever the version says.
         if (!http_room(address_of whole, 65536))
-        {
-                socket_close((b32)handle);
-                return HTTP_MALFORMED;
-        }
+                goto done;
 
         {
                 p8 request[1024];
@@ -308,20 +306,15 @@ static bipolar http_get(p32 host, p16 port, string_address name,
 
                 if (socket_send((b32)handle, request, used, 0, 0, 0) < 0)
                 {
-                        socket_close((b32)handle);
-                        http_forget(address_of whole);
-                        return HTTP_NO_REPLY;
+                        status = HTTP_NO_REPLY;
+                        goto done;
                 }
         }
 
         for (;;)
         {
                 if (!http_room(address_of whole, whole.used + 65536))
-                {
-                        socket_close((b32)handle);
-                        http_forget(address_of whole);
-                        return HTTP_MALFORMED;
-                }
+                        goto done;
 
                 got = socket_receive((b32)handle, whole.bytes + whole.used,
                                      whole.room - whole.used - 1, 0, 0, 0);
@@ -333,19 +326,17 @@ static bipolar http_get(p32 host, p16 port, string_address name,
         }
 
         socket_close((b32)handle);
+        handle = -1;
 
         if (whole.used < 12)
         {
-                http_forget(address_of whole);
-                return HTTP_NO_REPLY;
+                status = HTTP_NO_REPLY;
+                goto done;
         }
 
         //      "HTTP/1.x NNN "
         if (string_compare_max(whole.bytes, (string_address) "HTTP/1.", 7))
-        {
-                http_forget(address_of whole);
-                return HTTP_MALFORMED;
-        }
+                goto done;
 
         if (code)
                 address_to code = (b32)string_digits_max(
@@ -354,10 +345,7 @@ static bipolar http_get(p32 host, p16 port, string_address name,
         header = http_header_end(whole.bytes, whole.used);
 
         if (header < 0)
-        {
-                http_forget(address_of whole);
-                return HTTP_MALFORMED;
-        }
+                goto done;
 
         value = http_header(whole.bytes, (positive)header,
                             (string_address) "transfer-encoding", address_of value_length);
@@ -370,10 +358,7 @@ static bipolar http_get(p32 host, p16 port, string_address name,
                 bipolar plain = http_unchunk(whole.bytes + header, length);
 
                 if (plain < 0)
-                {
-                        http_forget(address_of whole);
-                        return HTTP_MALFORMED;
-                }
+                        goto done;
 
                 length = (positive)plain;
         }
@@ -393,18 +378,21 @@ static bipolar http_get(p32 host, p16 port, string_address name,
         }
 
         if (!http_room(body, length + 1))
-        {
-                http_forget(address_of whole);
-                return HTTP_MALFORMED;
-        }
+                goto done;
 
         memory_copy(body->bytes, whole.bytes + header, length);
         body->used = length;
         body->bytes[length] = end;
 
+        status = HTTP_OK;
+
+done:
+        if (handle >= 0)
+                socket_close((b32)handle);
+
         http_forget(address_of whole);
 
-        return HTTP_OK;
+        return status;
 }
 
 #endif // STANDARD_MODERN_C_NET_HTTP

@@ -342,21 +342,15 @@ static bipolar stdlib_environment_find(string_address name, positive length)
 //      entry nothing could ever look up again.
 static bool stdlib_environment_name_valid(string_address name, positive address_to length)
 {
-        positive walk = 0;
-
-        if (is_null(name) || name[0] == end)
+        if (is_null(name))
                 return false;
 
-        while (name[walk] != end)
-        {
-                if (name[walk] == '=')
-                        return false;
+        string_address stop = string_first_of_or_end(name, '=');
 
-                walk++;
-        }
+        if (stop == name || stop[0] == '=')
+                return false;
 
-        *length = walk;
-
+        *length = (positive)(stop - name);
         return true;
 }
 

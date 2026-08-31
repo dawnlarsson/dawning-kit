@@ -679,6 +679,7 @@ static void canvas_input_stats(struct input_stats *out)
 
 static void canvas_cursor_stats(struct cursor_stats *out)
 {
+        struct drm_rect cursor;
         struct output *output;
 
         memory_fill(out, 0, sizeof(*out));
@@ -692,10 +693,12 @@ static void canvas_cursor_stats(struct cursor_stats *out)
         out->requested_y = cursor_plane_requested_y;
         out->armed_x = cursor_plane_armed_x;
         out->armed_y = cursor_plane_armed_y;
+        cursor_cell(&cursor, desktop.cursor_x, desktop.cursor_y,
+                    desktop.cursor_shape, desktop.cursor_scale);
 
         list_for_each_entry(output, &desktop.outputs, link)
         {
-                if (output_shows_cursor(output, desktop.cursor_x, desktop.cursor_y))
+                if (output_touched(output, &cursor, 1))
                         out->wanted++;
 
                 if (output->cursor_plane)

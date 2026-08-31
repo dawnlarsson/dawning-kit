@@ -1559,52 +1559,28 @@ fn shell_exec(writer write, string_address input)
 
 
 
-typedef b32 (address_to storage_command_function)(
-    positive count, string_address address_to words,
-    writer output, writer diagnostic);
+#define STORAGE_ADAPTER(name, command)                                      \
+        fn shell_##name(writer output, string_address input)                \
+        {                                                                   \
+                (void)input;                                                \
+                shell_answer(command(shell_argc, shell_argv, output,        \
+                                     shell_diagnostic));                    \
+        }                                                                   \
+                                                                            \
+        static b32 storage_program_##name(void)                             \
+        {                                                                   \
+                return command((positive)program_argument_count(),          \
+                               program_argument_list(), log, log_error);     \
+        }
 
-static fn shell_storage_command(writer output,
-                                storage_command_function command)
-{
-        shell_answer(command(shell_argc, shell_argv, output,
-                             shell_diagnostic));
-}
+STORAGE_ADAPTER(mount, storage_mount_command)
+STORAGE_ADAPTER(umount, storage_umount_command)
+STORAGE_ADAPTER(mountpoint, storage_mountpoint)
+STORAGE_ADAPTER(blkid, storage_blkid_run)
+STORAGE_ADAPTER(findmnt, storage_findmnt)
+STORAGE_ADAPTER(findfs, storage_findfs_run)
 
-fn shell_mount(writer output, string_address input)
-{
-        (void)input;
-        shell_storage_command(output, storage_mount_command);
-}
-
-fn shell_umount(writer output, string_address input)
-{
-        (void)input;
-        shell_storage_command(output, storage_umount_command);
-}
-
-fn shell_mountpoint(writer output, string_address input)
-{
-        (void)input;
-        shell_storage_command(output, storage_mountpoint);
-}
-
-fn shell_blkid(writer output, string_address input)
-{
-        (void)input;
-        shell_storage_command(output, storage_blkid_run);
-}
-
-fn shell_findmnt(writer output, string_address input)
-{
-        (void)input;
-        shell_storage_command(output, storage_findmnt);
-}
-
-fn shell_findfs(writer output, string_address input)
-{
-        (void)input;
-        shell_storage_command(output, storage_findfs_run);
-}
+#undef STORAGE_ADAPTER
 
 fn shell_pwd(writer write, string_address input)
 {
@@ -4882,42 +4858,6 @@ static positive shell_name_index_find(string_address name, address_any table,
         }
 
         return count;
-}
-
-static b32 storage_program_command(storage_command_function command)
-{
-        return command((positive)program_argument_count(),
-                       program_argument_list(), log, log_error);
-}
-
-static b32 storage_program_mount(void)
-{
-        return storage_program_command(storage_mount_command);
-}
-
-static b32 storage_program_umount(void)
-{
-        return storage_program_command(storage_umount_command);
-}
-
-static b32 storage_program_mountpoint(void)
-{
-        return storage_program_command(storage_mountpoint);
-}
-
-static b32 storage_program_blkid(void)
-{
-        return storage_program_command(storage_blkid_run);
-}
-
-static b32 storage_program_findmnt(void)
-{
-        return storage_program_command(storage_findmnt);
-}
-
-static b32 storage_program_findfs(void)
-{
-        return storage_program_command(storage_findfs_run);
 }
 
 static shell_tool shell_tools[] = {

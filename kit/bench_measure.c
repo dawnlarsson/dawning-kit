@@ -68,4 +68,47 @@ static fn order(positive address_to values, positive count)
         }
 }
 
+#ifdef BENCH_PAIRED_INDEXED
+typedef positive (*bench_indexed_work)(positive);
+
+static p64 bench_indexed_once(bench_indexed_work run)
+{
+        p64 started = get_cpu_time();
+
+        for (positive round = 0; round < ROUNDS; round++)
+                sink += run(round & (SUBJECTS - 1));
+
+        return get_cpu_time() - started;
+}
+
+static positive bench_paired_median(bench_indexed_work one,
+                                    bench_indexed_work two)
+{
+        positive samples[TRIES];
+
+        for (positive trial = 0; trial < TRIES; trial++)
+        {
+                p64 first;
+                p64 second;
+
+                if (trial & 1)
+                {
+                        second = bench_indexed_once(two);
+                        first = bench_indexed_once(one);
+                }
+                else
+                {
+                        first = bench_indexed_once(one);
+                        second = bench_indexed_once(two);
+                }
+
+                samples[trial] =
+                    (positive)(second * 10000 / (first ? first : 1));
+        }
+
+        order(samples, TRIES);
+        return samples[TRIES / 2];
+}
+#endif
+
 #endif

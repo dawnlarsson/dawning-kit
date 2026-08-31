@@ -76,9 +76,8 @@ host=${MOONWATER_BUILD_HOST:-}
 #       always gets the same directory and two checkouts never share one.
 #       MOONWATER_BUILD_DIR still overrides it.
 #
-here_path=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-tree_mark=$(printf '%s' "$here_path" | cksum | cut -d' ' -f1)
-remote=${MOONWATER_BUILD_DIR:-/tmp/moonwater-$(basename "$here_path")-$tree_mark}
+tree_mark=$(printf '%s' "$here" | cksum | cut -d' ' -f1)
+remote=${MOONWATER_BUILD_DIR:-/tmp/moonwater-$(basename "$here")-$tree_mark}
 extra=""
 do_run=0
 do_build=1

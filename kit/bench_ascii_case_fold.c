@@ -11,6 +11,9 @@ static p8 left[SUBJECTS][40];
 static p8 right[SUBJECTS][40];
 static volatile positive sink;
 
+#define BENCH_PAIRED_INDEXED
+#include "bench_measure.c"
+
 static inline INLINE_ALWAYS p8 case_byte(p8 value)
 {
         return value >= 'a' && value <= 'z' ? (p8)(value - 32) : value;
@@ -65,55 +68,11 @@ DEFINE_SIZE(16)
 DEFINE_SIZE(24)
 DEFINE_SIZE(32)
 
-typedef positive (*operation)(positive);
-
-static p64 once(operation run)
+static fn row(positive size, bench_indexed_work routine,
+              bench_indexed_work folded)
 {
-        p64 start = get_cpu_time();
+        positive got = bench_paired_median(routine, folded);
 
-        for (positive round = 0; round < ROUNDS; round++)
-                sink += run(round & (SUBJECTS - 1));
-
-        return get_cpu_time() - start;
-}
-
-static fn row(positive size, operation routine, operation folded)
-{
-        positive samples[TRIES];
-
-        for (positive trial = 0; trial < TRIES; trial++)
-        {
-                p64 one;
-                p64 two;
-
-                if (trial & 1)
-                {
-                        two = once(folded);
-                        one = once(routine);
-                }
-                else
-                {
-                        one = once(routine);
-                        two = once(folded);
-                }
-
-                samples[trial] = (positive)(two * 10000 / (one ? one : 1));
-        }
-
-        for (positive at = 1; at < TRIES; at++)
-        {
-                positive value = samples[at];
-                positive before = at;
-
-                while (before && samples[before - 1] > value)
-                {
-                        samples[before] = samples[before - 1];
-                        before--;
-                }
-                samples[before] = value;
-        }
-
-        positive got = samples[TRIES / 2];
         string_format(log, "  %p bytes: folded/routine %p.%p%%\n", size,
                       got / 100, got % 100);
 }

@@ -556,23 +556,8 @@ static fn text_put_rest()
         }
 }
 
-static p8 text_lower(p8 character)
-{
-        return character >= 'A' && character <= 'Z' ? (p8)(character + 32) : character;
-}
-
-static bool text_digit(p8 character)
-{
-        return character >= '0' && character <= '9';
-}
-
-static bool text_blank(p8 character)
-{
-        return character == ' ' || character == '\t';
-}
-
 /*
-        text_blank's complement, for string_span_max.
+        byte_is_blank's complement, for string_span_max.
 
         Not the library's own string_set_not_blanks, which leaves the
         terminator out so that a run has somewhere to stop when the caller
@@ -592,12 +577,6 @@ static const b8 address_to text_inside()
         }
 
         return text_set_inside;
-}
-
-static bool text_space(p8 character)
-{
-        return character == ' ' || character == '\t' || character == '\n' ||
-               character == '\v' || character == '\f' || character == '\r';
 }
 
 /*
@@ -620,7 +599,7 @@ static bool text_unsigned_option(string_address source, bool saturate,
         if (!source)
                 return false;
 
-        while (text_space(source[at]))
+        while (byte_is_space(source[at]))
                 at++;
 
         if (source[at] == '+')
@@ -628,7 +607,7 @@ static bool text_unsigned_option(string_address source, bool saturate,
         else if (source[at] == '-')
                 return false;
 
-        while (text_digit(source[at]))
+        while (byte_is_digit(source[at]))
         {
                 positive digit = source[at++] - '0';
 
@@ -652,9 +631,7 @@ static bool text_unsigned_option(string_address source, bool saturate,
 
 static bool text_word(p8 character)
 {
-        return (character >= 'a' && character <= 'z') ||
-               (character >= 'A' && character <= 'Z') ||
-               text_digit(character) || character == '_';
+        return byte_is_alnum(character) || character == '_';
 }
 
 /*
@@ -1108,7 +1085,7 @@ static fn regex_emit_class_escape(p8 which)
 
         for (b32 c = 0; c < 256; c++)
         {
-                bool wanted = space ? text_space((p8)c) : text_word((p8)c);
+                bool wanted = space ? byte_is_space((p8)c) : text_word((p8)c);
 
                 if (wanted != negate)
                         regex_set_add(set, (p8)c);
@@ -1123,7 +1100,7 @@ static fn regex_emit_literal(p8 character)
 {
         b32 at = regex_emit(REGEX_CHAR);
 
-        regex_code[at].value = regex_icase ? text_lower(character) : character;
+        regex_code[at].value = regex_icase ? (p8)byte_to_lower(character) : character;
 }
 
 // True where a * or a ^ has nothing to its left, which in basic syntax is
@@ -2008,7 +1985,7 @@ static bool regex_single(regex_instruction address_to inst, p8 character)
         if (inst->kind == REGEX_SET)
                 return regex_set_has(inst->set, character);
 
-        return (regex_icase ? text_lower(character) : character) == inst->value;
+        return (regex_icase ? byte_to_lower(character) : character) == inst->value;
 }
 
 static b32 regex_run(b32 pc, positive sp)
@@ -2035,7 +2012,7 @@ static b32 regex_run(b32 pc, positive sp)
                         p8 character = regex_text[sp];
 
                         if (regex_icase)
-                                character = text_lower(character);
+                                character = (p8)byte_to_lower(character);
 
                         if (character != inst->value)
                                 return 0;
@@ -2930,7 +2907,7 @@ static b32 text_wc()
 
                                 if (want_words)
                                 {
-                                        if (text_space(character))
+                                        if (byte_is_space(character))
                                         {
                                                 inside = false;
                                         }
@@ -3971,7 +3948,7 @@ static b32 text_fold()
                                         column = after;
                                         at++;
 
-                                        if (spaces && text_blank(character))
+                                        if (spaces && byte_is_blank(character))
                                                 gap = at;
                                 }
 
@@ -4348,7 +4325,7 @@ static b32 text_cut()
                                 bool split = false;
 
                                 for (positive c = 0; c < line_length; c++)
-                                        if (whitespace ? text_blank(line[c])
+                                        if (whitespace ? byte_is_blank(line[c])
                                                        : line[c] == delimiter)
                                         {
                                                 split = true;
@@ -4378,7 +4355,7 @@ static b32 text_cut()
                                         positive from = at;
 
                                         while (at < line_length &&
-                                               (whitespace ? !text_blank(line[at])
+                                               (whitespace ? !byte_is_blank(line[at])
                                                            : line[at] != delimiter))
                                                 at++;
 
@@ -4406,7 +4383,7 @@ static b32 text_cut()
 
                                         if (whitespace)
                                                 while (at < line_length &&
-                                                       text_blank(line[at]))
+                                                       byte_is_blank(line[at]))
                                                         at++;
 
                                         which++;
@@ -4558,7 +4535,7 @@ static fn text_set_build(string_address spec, p8 address_to into, positive addre
                         if (spec[scan] == '0')
                                 base = 8;
 
-                        while (scan < length && text_digit(spec[scan]))
+                        while (scan < length && byte_is_digit(spec[scan]))
                         {
                                 positive digit = (positive)(spec[scan] - '0');
 
@@ -6928,7 +6905,7 @@ static p8 sed_peek()
 
 static fn sed_skip_blanks()
 {
-        while (sed_at < sed_script_length && text_blank(sed_script[sed_at]))
+        while (sed_at < sed_script_length && byte_is_blank(sed_script[sed_at]))
                 sed_at++;
 }
 
@@ -7050,7 +7027,7 @@ static positive sed_label_of(p8 address_to into, positive room)
                 sed_at++;
         }
 
-        while (have && text_blank(into[have - 1]))
+        while (have && byte_is_blank(into[have - 1]))
                 have--;
 
         into[have] = '\0';
@@ -7072,7 +7049,7 @@ static bool sed_parse_address(p8 address_to type, positive address_to line,
                 return true;
         }
 
-        if (text_digit(character))
+        if (byte_is_digit(character))
         {
                 positive value = sed_number_at();
 
@@ -7299,7 +7276,7 @@ static fn sed_parse()
                                         icase = true;
                                 else if (flag == 'm' || flag == 'M')
                                         (void)flag;
-                                else if (text_digit(flag))
+                                else if (byte_is_digit(flag))
                                 {
                                         command->which = sed_number_at();
                                         continue;
@@ -7708,7 +7685,7 @@ static bool sed_substitute(sed_command address_to command)
                                 {
                                         p8 next = replacement[++c];
 
-                                        if (text_digit(next))
+                                        if (byte_is_digit(next))
                                         {
                                                 copy_from = regex_slots[(next - '0') * 2];
                                                 copy_to = regex_slots[(next - '0') * 2 + 1];
@@ -8606,10 +8583,10 @@ static bipolar sort_compare_number(p8 address_to a, positive la, p8 address_to b
 
         positive int_a = at_a, int_b = at_b;
 
-        while (at_a < la && text_digit(a[at_a]))
+        while (at_a < la && byte_is_digit(a[at_a]))
                 at_a++;
 
-        while (at_b < lb && text_digit(b[at_b]))
+        while (at_b < lb && byte_is_digit(b[at_b]))
                 at_b++;
 
         positive int_a_stop = at_a, int_b_stop = at_b;
@@ -8620,7 +8597,7 @@ static bipolar sort_compare_number(p8 address_to a, positive la, p8 address_to b
         {
                 frac_a = ++at_a;
 
-                while (at_a < la && text_digit(a[at_a]))
+                while (at_a < la && byte_is_digit(a[at_a]))
                         at_a++;
 
                 frac_a_stop = at_a;
@@ -8630,7 +8607,7 @@ static bipolar sort_compare_number(p8 address_to a, positive la, p8 address_to b
         {
                 frac_b = ++at_b;
 
-                while (at_b < lb && text_digit(b[at_b]))
+                while (at_b < lb && byte_is_digit(b[at_b]))
                         at_b++;
 
                 frac_b_stop = at_b;
@@ -8684,22 +8661,15 @@ static bipolar sort_compare_number(p8 address_to a, positive la, p8 address_to b
         }
 }
 
-// -d keeps blanks and letters and digits; -i keeps what a terminal would
-// show. A byte neither keeps is not there at all, so the two sides walk at
-// their own pace rather than in step.
-static bool sort_letter_or_digit(p8 character)
-{
-        return text_digit(character) ||
-               (character >= 'a' && character <= 'z') ||
-               (character >= 'A' && character <= 'Z');
-}
-
 static bool sort_looked_at(p8 character, positive how)
 {
+        // -d keeps blanks and alphanumerics; -i keeps what a terminal would
+        // show. A byte neither keeps is not there at all, so the two sides
+        // walk at their own pace rather than in step.
         // Alphanumeric, not a word character: sort -d keeps no underscore,
         // which is what separates it from every other definition here.
         if ((how & SORT_DICTIONARY) &&
-            !(text_blank(character) || sort_letter_or_digit(character)))
+            !(byte_is_blank(character) || byte_is_alnum(character)))
                 return false;
 
         if ((how & SORT_PRINTABLE) && (character < 0x20 || character >= 0x7f))
@@ -8796,7 +8766,7 @@ static bipolar sort_human_order(p8 address_to at, positive length)
 
         // The increment is its own statement. Written into the test it stops
         // happening the moment nonzero is true, and the loop never ends.
-        while (scan < length && text_digit(at[scan]))
+        while (scan < length && byte_is_digit(at[scan]))
         {
                 if (at[scan] != '0')
                         nonzero = true;
@@ -8811,7 +8781,7 @@ static bipolar sort_human_order(p8 address_to at, positive length)
         {
                 scan++;
 
-                while (scan < length && text_digit(at[scan]))
+                while (scan < length && byte_is_digit(at[scan]))
                 {
                         if (at[scan] != '0')
                                 nonzero = true;
@@ -8913,7 +8883,7 @@ static bipolar sort_compare_month(p8 address_to a, positive la, p8 address_to b,
 */
 static b32 sort_version_order(p8 character)
 {
-        if (text_digit(character))
+        if (byte_is_digit(character))
                 return 0;
 
         if ((character >= 'a' && character <= 'z') ||
@@ -8935,7 +8905,8 @@ static bipolar sort_version_walk(p8 address_to a, positive la, p8 address_to b, 
         {
                 bipolar first = 0;
 
-                while ((i < la && !text_digit(a[i])) || (j < lb && !text_digit(b[j])))
+                while ((i < la && !byte_is_digit(a[i])) ||
+                       (j < lb && !byte_is_digit(b[j])))
                 {
                         b32 one = i < la ? sort_version_order(a[i]) : 0;
                         b32 two = j < lb ? sort_version_order(b[j]) : 0;
@@ -8953,7 +8924,8 @@ static bipolar sort_version_walk(p8 address_to a, positive la, p8 address_to b, 
                 while (j < lb && b[j] == '0')
                         j++;
 
-                while (i < la && j < lb && text_digit(a[i]) && text_digit(b[j]))
+                while (i < la && j < lb && byte_is_digit(a[i]) &&
+                       byte_is_digit(b[j]))
                 {
                         if (!first)
                                 first = (bipolar)a[i] - (bipolar)b[j];
@@ -8962,10 +8934,10 @@ static bipolar sort_version_walk(p8 address_to a, positive la, p8 address_to b, 
                         j++;
                 }
 
-                if (i < la && text_digit(a[i]))
+                if (i < la && byte_is_digit(a[i]))
                         return 1;
 
-                if (j < lb && text_digit(b[j]))
+                if (j < lb && byte_is_digit(b[j]))
                         return -1;
 
                 if (first)
@@ -8995,7 +8967,8 @@ static positive sort_version_stem(p8 address_to at, positive length)
                 {
                         positive c = j + 1;
 
-                        if (c >= length || text_digit(at[c]) || !sort_version_tail(at[c]))
+                        if (c >= length || byte_is_digit(at[c]) ||
+                            !sort_version_tail(at[c]))
                                 break;
 
                         c++;
@@ -10022,7 +9995,7 @@ static bool cmp_count_of(string_address value, positive address_to result)
         if (!value)
                 return false;
 
-        while (text_space(value[at]))
+        while (byte_is_space(value[at]))
                 at++;
 
         if (value[at] == '+')
@@ -10031,7 +10004,7 @@ static bool cmp_count_of(string_address value, positive address_to result)
         positive start = at;
         total = 0;
 
-        while (text_digit(value[at]))
+        while (byte_is_digit(value[at]))
         {
                 positive digit = value[at++] - '0';
 

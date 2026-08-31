@@ -1638,32 +1638,6 @@ answered 'overlong tmpdir' mktemp --tmpdir="$long_path"
 #       which is how a leap year or a month boundary gets found by something
 #       other than luck.
 
-# The status too, which the comparison above does not look at and which is
-# the whole of what a date it cannot read has to say.
-answered() {
-        name=$1
-        shift
-
-        if date "$@" > "$work/want" 2>/dev/null; then
-                want_status=0
-        else
-                want_status=$?
-        fi
-
-        if "$binaries/date" "$@" > "$work/got" 2>/dev/null; then
-                got_status=0
-        else
-                got_status=$?
-        fi
-
-        if cmp -s "$work/want" "$work/got" && [ "$want_status" = "$got_status" ]; then
-                report ok
-                return 0
-        fi
-
-        report bad "$name" "want [$(head -c 40 "$work/want")][$want_status] got [$(head -c 40 "$work/got")][$got_status]"
-}
-
 epochs="0 1 -1 86399 86400 951782400 951868800 68169600 1709164800 1709251200
 2147483647 -2208988800 4102444800 1000000000 1234567890 1709251199 946684800"
 
@@ -1836,28 +1810,28 @@ adrift 'next month'      'next month'
 adrift 'last year'       'last year'
 
 # What it will not read is refused, and refused the same way.
-answered 'a date it cannot read' -d nonsense
-answered 'an epoch with more' -d '@1000000000 +1 day'
-answered 'a month past twelve' -d '2001-13-09'
-answered 'a day past thirty one' -d '2001-09-32'
-answered 'a day the month has not' -d '2001-09-31'
-answered 'february in a plain year' -d '1900-02-29'
+answered 'a date it cannot read' date -d nonsense
+answered 'an epoch with more' date -d '@1000000000 +1 day'
+answered 'a month past twelve' date -d '2001-13-09'
+answered 'a day past thirty one' date -d '2001-09-32'
+answered 'a day the month has not' date -d '2001-09-31'
+answered 'february in a plain year' date -d '1900-02-29'
 reads 'february in a leap one' '2000-02-29'
-answered 'an hour past twenty three' -d '2001-09-09 24:00'
-answered 'a date said twice' -d '2001-09-09 2002-01-01'
-answered 'a time said twice' -d '2001-09-09 01:00 02:00'
-answered 'an empty date'    -d ''
+answered 'an hour past twenty three' date -d '2001-09-09 24:00'
+answered 'a date said twice' date -d '2001-09-09 2002-01-01'
+answered 'a time said twice' date -d '2001-09-09 01:00 02:00'
+answered 'an empty date'    date -d ''
 same 'iso day'           date -d @1000000000 -I
 same 'iso hours'         date -d @1000000000 -Ihours
 same 'iso minutes'       date -d @1000000000 -Iminutes
 same 'iso seconds'       date -d @1000000000 -Iseconds
 same 'iso long'          date -d @1000000000 --iso-8601=seconds
 same 'iso long alone'    date -d @1000000000 --iso-8601
-answered 'iso of nothing' -d @1000000000 -Ifurlongs
+answered 'iso of nothing' date -d @1000000000 -Ifurlongs
 same 'reference long'    date --reference="$fixture/alpha" +%F
-answered 'a file that is not there' -r "$fixture/nothing"
-answered 'setting the time' 1000000000
-answered 'an option it has not' -x
+answered 'a file that is not there' date -r "$fixture/nothing"
+answered 'setting the time' date 1000000000
+answered 'an option it has not' date -x
 
 swept 'swept iso'        '+%Y-%m-%d'
 swept 'swept time'       '+%H:%M:%S'

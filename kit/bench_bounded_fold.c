@@ -21,6 +21,9 @@ static p8 right[SUBJECTS][32];
 static p8 target[SUBJECTS][32];
 static volatile positive sink;
 
+#define BENCH_PAIRED_INDEXED
+#include "bench_measure.c"
+
 static fn prepare(void)
 {
         for (positive which = 0; which < SUBJECTS; which++)
@@ -74,61 +77,10 @@ DEFINE_BOUND(8)
 DEFINE_BOUND(11)
 DEFINE_BOUND(15)
 
-typedef positive (*operation)(positive);
-
-static p64 once(operation run)
-{
-        p64 started = get_cpu_time();
-
-        for (positive round = 0; round < ROUNDS; round++)
-                sink += run(round & (SUBJECTS - 1));
-
-        return get_cpu_time() - started;
-}
-
-static positive ratio(operation routine, operation folded)
-{
-        positive samples[TRIES];
-
-        for (positive trial = 0; trial < TRIES; trial++)
-        {
-                p64 one;
-                p64 two;
-
-                if (trial & 1)
-                {
-                        two = once(folded);
-                        one = once(routine);
-                }
-                else
-                {
-                        one = once(routine);
-                        two = once(folded);
-                }
-
-                samples[trial] = (positive)(two * 10000 / (one ? one : 1));
-        }
-
-        for (positive at = 1; at < TRIES; at++)
-        {
-                positive value = samples[at];
-                positive before = at;
-
-                while (before && samples[before - 1] > value)
-                {
-                        samples[before] = samples[before - 1];
-                        before--;
-                }
-                samples[before] = value;
-        }
-
-        return samples[TRIES / 2];
-}
-
 static fn show(string_address name, positive bound,
-               operation routine, operation folded)
+               bench_indexed_work routine, bench_indexed_work folded)
 {
-        positive got = ratio(routine, folded);
+        positive got = bench_paired_median(routine, folded);
 
         string_format(log, "  %s %p: folded/routine %p.%p%%\n", name, bound,
                       got / 100, got % 100);
@@ -138,7 +90,8 @@ static fn show(string_address name, positive bound,
         show((string_address)"length", (B), length_routine_##B,              \
              length_folded_##B);                                              \
         show((string_address)"compare", (B),                                \
-             (operation)compare_routine_##B, (operation)compare_folded_##B);  \
+             (bench_indexed_work)compare_routine_##B,                         \
+             (bench_indexed_work)compare_folded_##B);                         \
         show((string_address)"copy-end", (B), copy_routine_##B,              \
              copy_folded_##B)
 
