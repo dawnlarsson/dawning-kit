@@ -124,8 +124,7 @@ STRCMP:int strcmp(const char *, const char *)
 STRRCHR:char *strrchr(const char *, int)
 STRCHRNUL:char *strchrnul(const char *, int)
 STRNCHR:char *strnchr(const char *, __kernel_size_t, int)
-STRCSPN:__kernel_size_t strcspn(const char *, const char *)
-STRPBRK:char *strpbrk(const char *, const char *)"
+"
         ;;
 arm64 | aarch64)
         header=linux/arch/arm64/include/asm/string.h

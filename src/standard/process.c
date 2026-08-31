@@ -1684,6 +1684,14 @@ static string_address process_getopt_place = null;
 */
 static bool process_getopt_started = false;
 
+static COLD fn process_getopt_complain(string_address program, p8 letter,
+                                       string_address reason)
+{
+        p8 shown[2] = {letter, end};
+
+        string_format(log_error, reason, program, shown);
+}
+
 /*
         getopt, and the one place it deliberately differs from glibc.
 
@@ -1809,15 +1817,9 @@ static b32 getopt(b32 count, string_address address_to words,
                 optopt = letter;
 
                 if (opterr && !silent)
-                {
-                        p8 shown[2];
-
-                        shown[0] = letter;
-                        shown[1] = end;
-                        string_format(log_error,
-                                      (string_address) "%s: invalid option -- '%s'\n",
-                                      (string_address)words[0], shown);
-                }
+                        process_getopt_complain(
+                            (string_address)words[0], letter,
+                            (string_address) "%s: invalid option -- '%s'\n");
 
                 return '?';
         }
@@ -1853,15 +1855,10 @@ static b32 getopt(b32 count, string_address address_to words,
                 process_getopt_place = null;
 
                 if (opterr && !silent)
-                {
-                        p8 shown[2];
-
-                        shown[0] = letter;
-                        shown[1] = end;
-                        string_format(log_error,
-                                      (string_address) "%s: option requires an argument -- '%s'\n",
-                                      (string_address)words[0], shown);
-                }
+                        process_getopt_complain(
+                            (string_address)words[0], letter,
+                            (string_address)
+                                "%s: option requires an argument -- '%s'\n");
 
                 return silent ? ':' : '?';
         }

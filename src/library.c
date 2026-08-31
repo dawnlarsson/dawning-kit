@@ -6298,8 +6298,13 @@ ASM_EXPORT(strnchr);
 ASM_EXPORT(strncmp);
 ASM_EXPORT(strnlen);
 ASM_EXPORT(strrchr);
-ASM_EXPORT(strcspn);
-ASM_EXPORT(strpbrk);
+//      strcspn and strpbrk are not exported, because they are not claimed --
+//      the three edits that make a name ours are the claim, the alias and the
+//      export, and all three came out together when the bodies turned out to
+//      be outside every kernel build. An export without a definition is what
+//      modpost calls "references X, but it does not seem to be an export
+//      symbol"; an export beside the kernel's own is "exported twice". This
+//      block saw both in one afternoon.
 #endif
 #elif ARM64
 __asm__(
@@ -13397,8 +13402,29 @@ __asm__(
             rather than three, and it is what the audit for those machines
             will need in place before it can claim anything.
     */
-    ASM_ALIAS(strcspn,   string_span_without_set)
-    ASM_ALIAS(strpbrk,   string_first_of_set)
+    /*
+            WITHDRAWN, and the reason is where the bodies live rather than
+            how fast they are.
+
+            The measurements stand: strcspn crosses the kernel's nested
+            strchr loop at a run of two bytes and reaches 1.7x-1.9x at the
+            lengths its callers use, strpbrk 1.7x-3.8x. What does not stand
+            is the assumption that claiming them was two lines.
+
+            These two aliases sit in a block that an x86_64 KERNEL build
+            emits. The BODIES are in platform/standard.inc, which is included
+            inside "#ifndef KERNEL_MODE" -- so no kernel build has them, and
+            an alias to a symbol that is not there is what modpost reported:
+            ".export_symbol section references string_span_without_set, but
+            it does not seem to be an export symbol". The kernel build did not
+            fail at the link, it failed at modpost, which is later and reads
+            as something else entirely.
+
+            A claim, its alias and the body it names move together or not at
+            all. Taking these needs the set-scan bodies moved into the kernel
+            half first, which is a change to what standard.inc is for, not a
+            line in this block.
+    */
 #endif
 /*
         memset32 and memset64, on the two architectures where the kernel
