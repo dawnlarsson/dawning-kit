@@ -3182,7 +3182,7 @@ static b32 util_linux_setpriv()
                 if (string_equals(value, "clear")) set.death = 0;
                 else if (string_equals(value, "keep")) {
                         if (ul_prctl(UL_PR_GET_PDEATHSIG, (positive)address_of set.death, 0) < 0) return 127;
-                } else if ((set.death = (b32)ul_signal_number(value)) < 0) return ul_bad_usage("setpriv", "unknown signal");
+                } else if ((set.death = (b32)ul_signal_number(value)) <= 0) return ul_bad_usage("setpriv", "unknown signal");
         }
         if (taking.flags & FILE_FLAG('P'))
         {
@@ -3190,7 +3190,7 @@ static b32 util_linux_setpriv()
                 set.ptracer_set = true;
                 if (string_equals(value, "any")) set.ptracer = -1;
                 else if (string_equals(value, "none")) set.ptracer = 0;
-                else { b32 pid; if (!ul_pid(value, "setpriv", "PID", address_of pid)) return 1; set.ptracer = pid; }
+                else { b32 pid; if (!ul_pid(value, "setpriv", "PID", address_of pid) || !pid) return 1; set.ptracer = pid; }
         }
 
         if (set.groups == 'c' &&

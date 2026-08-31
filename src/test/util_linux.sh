@@ -320,7 +320,10 @@ compare 'parent death signal' setpriv \
         '"$TOOL" --pdeathsig TERM /bin/sh -c '\''"$TOOL" -d | tail -1'\'''
 compare 'lowercase parent death signal' setpriv \
         '"$TOOL" --pdeathsig term /bin/true'
+compare 'zero parent death signal rejected' setpriv \
+        '"$TOOL" --pdeathsig 0 /bin/true'
 compare 'ptracer none' setpriv '"$TOOL" --ptracer none /bin/true'
+compare 'zero ptracer rejected' setpriv '"$TOOL" --ptracer 0 /bin/true'
 compare 'gid requires group policy' setpriv \
         '"$TOOL" --regid "$(id -g)" /bin/true'
 compare 'duplicate no new privileges' setpriv \
