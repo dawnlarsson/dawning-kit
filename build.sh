@@ -501,7 +501,8 @@ wgcVXSeiHcXa9SSFDvKn0L1q5nSLQGHp38qUi1ZPf/1uQSuB3ME=
                         sleep stty seq yes env id hostname uname ip host fetch \
                         mount umount mountpoint blkid findmnt findfs \
                         setsid setpgid ionice fadvise taskset renice prlimit \
-                        chrt uclampset flock unshare nsenter \
+                        chrt uclampset flock unshare nsenter setarch setpriv \
+                        waitpid \
                         init edit term window text pointer world; do
                         ln -sf shell "fs/$utility" || die "linking $utility"
                 done
@@ -511,7 +512,7 @@ wgcVXSeiHcXa9SSFDvKn0L1q5nSLQGHp38qUi1ZPf/1uQSuB3ME=
                 # distro and recovery scripts with absolute paths work too.
                 for utility in mount umount mountpoint findmnt setsid setpgid \
                         ionice fadvise taskset renice prlimit chrt uclampset \
-                        flock unshare nsenter; do
+                        flock unshare nsenter setarch setpriv waitpid; do
                         ln -sf ../shell "fs/bin/$utility" ||
                                 die "linking /bin/$utility"
                 done

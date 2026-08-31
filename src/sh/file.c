@@ -1708,10 +1708,9 @@ static p8 file_long_letter(file_taking address_to taking, string_address name,
         return candidate;
 }
 
-static bool file_take(file_taking address_to taking)
+static bool file_take_from(file_taking address_to taking, positive index)
 {
         positive count = (positive)program_argument_count();
-        positive index = 1;
 
         taking->flags = 0;
 
@@ -1849,6 +1848,11 @@ static bool file_take(file_taking address_to taking)
         taking->first = index;
 
         return true;
+}
+
+static bool file_take(file_taking address_to taking)
+{
+        return file_take_from(taking, 1);
 }
 
 /*
@@ -11442,21 +11446,22 @@ static fn id_alone(positive value, bool group, bool names, bool zero)
         order and does not promise the primary one is among them, so the group
         actually in effect belongs at the front either way.
 */
-static p32 address_to id_group_members;
-static positive id_group_room;
+/* Reusable numeric-ID vector for id and the util-linux process applets. */
+static p32 address_to file_id_scratch;
+static positive file_id_scratch_room;
 
 static bool id_group_add(positive value, positive address_to have)
 {
         for (positive i = 0; i < address_to have; i++)
-                if (id_group_members[i] == (p32)value)
+                if (file_id_scratch[i] == (p32)value)
                         return true;
 
-        if (!shell_room((address_any address_to)address_of id_group_members,
-                        address_of id_group_room, address_to have + 1,
-                        sizeof(id_group_members[0])))
+        if (!shell_room((address_any address_to)address_of file_id_scratch,
+                        address_of file_id_scratch_room, address_to have + 1,
+                        sizeof(file_id_scratch[0])))
                 return false;
 
-        id_group_members[address_to have] = (p32)value;
+        file_id_scratch[address_to have] = (p32)value;
         address_to have = address_to have + 1;
         return true;
 }
@@ -11533,14 +11538,14 @@ static bool id_groups_process(positive real, positive effective,
         address_to have = 0;
 
         if (groups < 0 ||
-            !shell_room((address_any address_to)address_of id_group_members,
-                        address_of id_group_room, (positive)groups + 2,
-                        sizeof(id_group_members[0])))
+            !shell_room((address_any address_to)address_of file_id_scratch,
+                        address_of file_id_scratch_room, (positive)groups + 2,
+                        sizeof(file_id_scratch[0])))
                 return false;
 
         if (groups &&
             system_call_2(syscall(getgroups), (positive)groups,
-                          (positive)(id_group_members + 2)) != groups)
+                          (positive)(file_id_scratch + 2)) != groups)
                 return false;
 
         if (!id_group_add(real, have) ||
@@ -11548,7 +11553,7 @@ static bool id_groups_process(positive real, positive effective,
                 return false;
 
         for (positive i = 0; i < (positive)groups; i++)
-                if (!id_group_add(id_group_members[i + 2], have))
+                if (!id_group_add(file_id_scratch[i + 2], have))
                         return false;
 
         return true;
@@ -11685,7 +11690,7 @@ static b32 file_id()
                         }
 
                         id_written((positive)user, (positive)group,
-                                   id_group_members, have, flags, names, zero);
+                                   file_id_scratch, have, flags, names, zero);
                 }
 
                 log_flush();
@@ -11712,7 +11717,7 @@ static b32 file_id()
                 return 1;
         }
 
-        id_written(user, group, id_group_members, have, flags, names, zero);
+        id_written(user, group, file_id_scratch, have, flags, names, zero);
 
         log_flush();
 
@@ -11731,13 +11736,13 @@ static bool groups_written(positive have)
                 if (i)
                         log(" ", 1);
 
-                if (!file_group_name(id_group_members[i], text,
+                if (!file_group_name(file_id_scratch[i], text,
                                      FILE_NAME_MAX))
                 {
-                        positive_into_string(text, id_group_members[i]);
+                        positive_into_string(text, file_id_scratch[i]);
                         string_format(file_fail,
                                       "groups: cannot find name for group ID %u\n",
-                                      (positive)id_group_members[i]);
+                                      (positive)file_id_scratch[i]);
                         known = false;
                 }
 

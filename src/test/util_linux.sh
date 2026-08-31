@@ -22,7 +22,7 @@ trap 'rm -rf "$work"' EXIT INT TERM
 
 mkdir "$work/bin"
 for name in setsid setpgid ionice fadvise taskset renice prlimit chrt \
-        uclampset flock unshare nsenter; do
+        uclampset flock unshare nsenter setarch setpriv waitpid; do
         ln -s "$subject" "$work/bin/$name"
 done
 
@@ -65,7 +65,7 @@ section util-linux
 
 group reference
 for utility in setsid setpgid ionice fadvise taskset renice prlimit chrt \
-        uclampset flock unshare nsenter; do
+        uclampset flock unshare nsenter setarch setpriv waitpid; do
         version=$($utility --version 2>/dev/null | head -1 || true)
         case $version in
         *'util-linux 2.42.2'*) won ;;
@@ -274,6 +274,98 @@ compare 'fcntl byte range' flock \
 compare 'incompatible no-fork close' flock \
         '"$TOOL" --no-fork --close "$0" /bin/true' "$lock"
 
+group setarch
+compare 'show current personality' setarch '"$TOOL" --show'
+compare 'show named personality flags' setarch '"$TOOL" --show=0x40000'
+compare 'abbreviated show option' setarch '"$TOOL" --sho=0'
+compare 'show own process personality' setarch \
+        'exec "$TOOL" --show -p $$'
+compare 'list architectures' setarch '"$TOOL" --list'
+compare 'native architecture command' setarch \
+        '"$TOOL" "$(uname -m)" /bin/uname -m'
+compare 'linux32 architecture command' setarch \
+        '"$TOOL" linux32 /bin/uname -m'
+compare 'architecture option boundary' setarch \
+        '"$TOOL" "$(uname -m)" -- /bin/echo boundary'
+compare 'uname 2.6 personality' setarch \
+        '"$TOOL" -v --uname-2.6 /bin/uname -r'
+compare 'pid requires show' setarch '"$TOOL" -p $$ /bin/true'
+compare 'unknown architecture' setarch '"$TOOL" impossible /bin/true'
+compare 'ignored 4gb alone has no policy' setarch '"$TOOL" --4gb /bin/true'
+
+group setpriv
+compare 'dump process privileges' setpriv '"$TOOL" -d'
+compare 'dump capability sets' setpriv '"$TOOL" -dd'
+compare 'dump saved identities' setpriv '"$TOOL" -ddd'
+compare 'list known capabilities' setpriv '"$TOOL" --list-caps'
+compare 'no new privileges' setpriv \
+        '"$TOOL" --nnp /bin/sh -c '\''"$TOOL" -d | grep "^no_new_privs:"'\'''
+compare 'real and effective uid' setpriv \
+        '"$TOOL" --reuid "$(id -u)" /usr/bin/id -u'
+compare 'real uid only' setpriv \
+        '"$TOOL" --ruid "$(id -ru)" /usr/bin/id -ru'
+compare 'effective uid only' setpriv \
+        '"$TOOL" --euid "$(id -u)" /usr/bin/id -u'
+compare 'real and effective gid' setpriv \
+        '"$TOOL" --regid "$(id -g)" --keep-groups /usr/bin/id -g'
+compare 'keep supplementary groups' setpriv \
+        '"$TOOL" --keep-groups /bin/true'
+compare 'parent death signal' setpriv \
+        '"$TOOL" --pdeathsig TERM /bin/sh -c '\''"$TOOL" -d | tail -1'\'''
+compare 'lowercase parent death signal' setpriv \
+        '"$TOOL" --pdeathsig term /bin/true'
+compare 'ptracer none' setpriv '"$TOOL" --ptracer none /bin/true'
+compare 'gid requires group policy' setpriv \
+        '"$TOOL" --regid "$(id -g)" /bin/true'
+compare 'duplicate no new privileges' setpriv \
+        '"$TOOL" --nnp --nnp /bin/true'
+compare 'dump excludes commands' setpriv '"$TOOL" -d /bin/true'
+
+# These security policies need substantially different state engines.  The
+# denominator recognizes every spelling and refuses it before exec, so a
+# caller can never mistake an ignored privilege request for success.
+setpriv_gap()
+{
+        if "$work/bin/setpriv" "$@" /bin/true >/dev/null 2>&1; then
+                lost "$1" 'unsupported policy was silently accepted'
+        elif [ "$?" = 1 ]; then won
+        else lost "$1" 'unsupported policy did not fail with usage status 1'
+        fi
+}
+group setpriv-explicit-gaps
+setpriv_gap --inh-caps=-all
+setpriv_gap --ambient-caps=-all
+setpriv_gap --bounding-set=-all
+setpriv_gap --securebits=-all
+setpriv_gap --init-groups --ruid "$(id -u)"
+setpriv_gap --selinux-label=test
+setpriv_gap --apparmor-profile=test
+setpriv_gap --landlock-access=fs
+setpriv_gap --landlock-rule=path-beneath:read-file:/
+setpriv_gap --seccomp-filter=/no/such/filter
+setpriv_gap --reset-env
+
+group waitpid
+compare 'already exited pid allowed' waitpid '"$TOOL" -e 2147483647'
+compare 'missing pid rejected' waitpid '"$TOOL" 2147483647'
+compare 'leading plus pid' waitpid '"$TOOL" -e +2147483647'
+compare 'leading blank pid' waitpid '"$TOOL" -e " 2147483647"'
+compare 'zero pid rejected' waitpid '"$TOOL" -e 0'
+compare 'timeout status' waitpid '"$TOOL" -t .01 1'
+compare 'whole trailing-dot timeout' waitpid '"$TOOL" -t 0. -e 2147483647'
+compare 'wait for process' waitpid \
+        'sleep .03 & pid=$!; "$TOOL" -v -t 1 "$pid" | sed "s/PID [0-9]*/PID PID/"; wait "$pid"'
+compare 'wait for one of two' waitpid \
+        'sleep .03 & one=$!; sleep .2 & two=$!; "$TOOL" -v -t 1 -c 1 "$one" "$two" | sed "s/PID [0-9]*/PID PID/"; wait "$one"; wait "$two"'
+compare 'pidfd inode validation' waitpid \
+        'sleep .05 & pid=$!; ino=$(python3 -c '\''import os,sys; fd=os.pidfd_open(int(sys.argv[1])); print(os.fstat(fd).st_ino)'\'' "$pid"); "$TOOL" -t 1 "$pid:$ino"; wait "$pid"'
+compare 'wrong pidfd inode rejected' waitpid '"$TOOL" -t .01 1:1'
+compare 'count exceeds operands' waitpid '"$TOOL" -c 2 -t .01 1'
+compare 'count excludes exited mode' waitpid \
+        '"$TOOL" -c 1 -e 2147483647'
+compare 'invalid timeout' waitpid '"$TOOL" -t impossible 1'
+
+
 group unshare
 compare 'map root user' unshare \
         '"$TOOL" -Ur /bin/sh -c '\''id -u; id -g; cat /proc/self/uid_map; cat /proc/self/gid_map'\'''
@@ -326,7 +418,7 @@ compare 'invalid target' nsenter '"$TOOL" -t impossible -m /bin/true'
 # separate: every upstream name must be in exactly one side, and implementing
 # a remaining name makes this fail until the capability claim is moved.
 upstream='addpart agetty bits blkdiscard blkid blkpr blkzone blockdev cal cfdisk chcpu chfn chmem choom chrt chsh col colcrt colrm column copyfilerange coresched ctrlaltdel delpart dmesg eject enosys exch fadvise fallocate fdisk fincore findfs findmnt flock fsck fsck.cramfs fsck.minix fsfreeze fstrim getino getopt hardlink hexdump hwclock ionice ipcmk ipcrm ipcs irqtop isosize kill last lastlog2 ldattach line logger login look losetup lsblk lsclocks lscpu lsfd lsipc lsirq lslocks lslogins lsmem lsns mcookie mesg mkfs mkfs.bfs mkfs.cramfs mkfs.minix mkswap more mount mountpoint namei newgrp nologin nsenter partx pg pipesz pivot_root prlimit readprofile rename renice resizepart rev rfkill rtcwake runuser script scriptlive scriptreplay setarch setpgid setpriv setsid setterm sfdisk su sulogin swaplabel swapoff swapon switch_root taskset tunelp uclampset ul umount unshare utmpdump uuidd uuidgen uuidparse vipw waitpid wall wdctl whereis wipefs write zramctl'
-supported='blkid chrt fadvise findfs findmnt flock ionice kill mount mountpoint nsenter prlimit renice rev setpgid setsid taskset uclampset umount unshare'
+supported='blkid chrt fadvise findfs findmnt flock ionice kill mount mountpoint nsenter prlimit renice rev setarch setpgid setpriv setsid taskset uclampset umount unshare waitpid'
 
 awk '
         /static shell_tool shell_tools\[\]/ { inside=1; next }
