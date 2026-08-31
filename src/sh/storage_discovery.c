@@ -672,11 +672,24 @@ static bool storage_mount_options_match(storage_mount address_to mount,
                    the positive option be absent: norw matches a read-only
                    mount, while nodev still matches the actual nodev flag. */
                 if (!present && length > 2 && at[0] == 'n' && at[1] == 'o')
-                        present = !storage_option_has_length(
-                                       mount->options, at + 2, length - 2) &&
-                                  !storage_option_has_length(
-                                       mount->filesystem_options,
-                                       at + 2, length - 2);
+                {
+                        bool positive_present = storage_option_has_length(
+                            mount->options, at + 2, length - 2) ||
+                            storage_option_has_length(mount->filesystem_options,
+                                                      at + 2, length - 2);
+
+                        if (length == 4 && !memory_compare(at + 2, "rw", 2) &&
+                            storage_option_has(mount->filesystem_options,
+                                               (string_address)"ro"))
+                                positive_present = false;
+                        else if (length == 4 &&
+                                 !memory_compare(at + 2, "ro", 2) &&
+                                 storage_option_has(mount->filesystem_options,
+                                                    (string_address)"rw"))
+                                positive_present = false;
+
+                        present = !positive_present;
+                }
 
                 if (!present)
                         return false;
@@ -799,24 +812,27 @@ static positive storage_combined_options_length(storage_mount address_to mount)
         while ((at = storage_comma_next(address_of cursor,
                                          address_of token_length)))
         {
-                bool overridden = token_length == 2 &&
-                    ((!memory_compare(at, "rw", 2) &&
-                      storage_option_has(mount->filesystem_options,
-                                         (string_address)"ro")) ||
-                     (!memory_compare(at, "ro", 2) &&
-                      storage_option_has(mount->filesystem_options,
-                                         (string_address)"rw")));
-
-                if (token_length && !overridden)
+                if (token_length)
                         length += token_length + (length ? 1 : 0);
         }
 
         cursor = mount->filesystem_options;
         while ((at = storage_comma_next(address_of cursor,
                                          address_of token_length)))
-                if (token_length && !storage_option_has_length(
-                                        mount->options, at, token_length))
+        {
+                bool represented = storage_option_has_length(
+                    mount->options, at, token_length) ||
+                    (token_length == 2 &&
+                     ((!memory_compare(at, "ro", 2) &&
+                       storage_option_has(mount->options,
+                                          (string_address)"rw")) ||
+                      (!memory_compare(at, "rw", 2) &&
+                       storage_option_has(mount->options,
+                                          (string_address)"ro"))));
+
+                if (token_length && !represented)
                         length += token_length + (length ? 1 : 0);
+        }
 
         return length;
 }
@@ -841,8 +857,14 @@ static fn storage_combined_options_write(writer output,
                       storage_option_has(mount->filesystem_options,
                                          (string_address)"rw")));
 
-                if (token_length && !overridden)
+                if (token_length)
                 {
+                        string_address shown = overridden
+                            ? (!memory_compare(at, "rw", 2)
+                                   ? (string_address)"ro"
+                                   : (string_address)"rw")
+                            : at;
+
                         if (any)
                                 output((address_any)",", 1);
 
@@ -850,20 +872,24 @@ static fn storage_combined_options_write(writer output,
                         {
                                 p8 saved = at[token_length];
 
-                                at[token_length] = end;
-                                storage_write_encoded(output, at);
-                                at[token_length] = saved;
+                                if (!overridden)
+                                        at[token_length] = end;
+                                storage_write_encoded(output, shown);
+                                if (!overridden)
+                                        at[token_length] = saved;
                         }
                         else if (raw)
                         {
                                 p8 saved = at[token_length];
 
-                                at[token_length] = end;
-                                storage_findmnt_value(output, at, true);
-                                at[token_length] = saved;
+                                if (!overridden)
+                                        at[token_length] = end;
+                                storage_findmnt_value(output, shown, true);
+                                if (!overridden)
+                                        at[token_length] = saved;
                         }
                         else
-                                output((address_any)at, token_length);
+                                output((address_any)shown, token_length);
 
                         any = true;
                 }
@@ -873,8 +899,17 @@ static fn storage_combined_options_write(writer output,
         while ((at = storage_comma_next(address_of cursor,
                                          address_of token_length)))
         {
-                if (token_length && !storage_option_has_length(
-                                        mount->options, at, token_length))
+                bool represented = storage_option_has_length(
+                    mount->options, at, token_length) ||
+                    (token_length == 2 &&
+                     ((!memory_compare(at, "ro", 2) &&
+                       storage_option_has(mount->options,
+                                          (string_address)"rw")) ||
+                      (!memory_compare(at, "rw", 2) &&
+                       storage_option_has(mount->options,
+                                          (string_address)"ro"))));
+
+                if (token_length && !represented)
                 {
                         if (any)
                                 output((address_any)",", 1);

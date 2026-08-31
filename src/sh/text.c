@@ -2356,18 +2356,10 @@ static bool text_regular_size(positive handle, positive address_to size)
         positive bytes = address_to(positive address_to)(raw + TEXT_STAT_SIZE);
         positive blocks = address_to(positive address_to)(raw + TEXT_STAT_BLOCKS);
 
-        /*
-                procfs and sysfs present dynamic data as regular files while
-                reporting an inode size of zero or one page. Trusting that
-                number makes wc -c say 0 for /proc/self/status and 4096 for a
-                six-byte sysfs value. Prove both edges with positioned reads:
-                a real file has a byte immediately before st_size and EOF at
-                it, including a sparse file whose final byte is a hole.
-
-                Allocated ordinary files need no proof. Both pseudo files and
-                holes report no blocks, which keeps this check off wc -c's
-                usual one-fstat fast path.
-        */
+        /* procfs and sysfs report dynamic regular files as zero bytes or one
+           page. For an unallocated file, prove st_size by finding its last
+           byte and EOF; sparse files pass, pseudo files fall back to reading.
+           Allocated ordinary files keep wc -c's one-fstat fast path. */
         if (!blocks)
         {
                 bipolar before = bytes

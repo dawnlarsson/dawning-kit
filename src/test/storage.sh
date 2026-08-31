@@ -180,6 +180,24 @@ blkid --match-tag=UUID --output=value "$work/ext4.img" > "$work/want"
 "$farm/blkid" --match-tag=UUID --output=value "$work/ext4.img" > "$work/got"
 same_file "blkid long equals options" "$work/want" "$work/got"
 
+# Repeated selectors accumulate.  util-linux emits selected fields in its
+# canonical identity order rather than retaining only the last -s.
+blkid -s TYPE -s UUID "$work/ext4.img" > "$work/want"
+want_status=$?
+"$farm/blkid" -s TYPE -s UUID "$work/ext4.img" > "$work/got"
+got_status=$?
+same_status "blkid repeated selectors status" "$want_status" "$got_status"
+same_file "blkid repeated selectors output" "$work/want" "$work/got"
+
+# An unknown field is an empty projection over a recognised device, not an
+# invocation error and not an unrecognised filesystem.
+blkid -s NOT_A_TAG "$work/ext4.img" > "$work/want"
+want_status=$?
+"$farm/blkid" -s NOT_A_TAG "$work/ext4.img" > "$work/got"
+got_status=$?
+same_status "blkid unknown selector status" "$want_status" "$got_status"
+same_file "blkid unknown selector output" "$work/want" "$work/got"
+
 truncate -s 16M "$work/swap.img"
 mkswap -q -L moonswap \
         -U 87654321-4321-8765-cba9-876543210fed "$work/swap.img"
@@ -491,6 +509,44 @@ findmnt -n -r -f -i -T / -o TARGET > "$work/want"
 "$farm/findmnt" -n -r -f -i -T / -o TARGET > "$work/got"
 same_file "findmnt inverted target" "$work/want" "$work/got"
 
+# A positional query is either a source or a target.  The root device spelling
+# specifically catches implementations which only compare mountpoints.
+root_source=$(findmnt -n -r -o SOURCE -T /)
+findmnt -n -r -o TARGET "$root_source" > "$work/want"
+want_status=$?
+"$farm/findmnt" -n -r -o TARGET "$root_source" > "$work/got"
+got_status=$?
+same_status "findmnt positional source status" "$want_status" "$got_status"
+same_file "findmnt positional source output" "$work/want" "$work/got"
+
+findmnt -n -r -O norw -o TARGET > "$work/want"
+want_status=$?
+"$farm/findmnt" -n -r -O norw -o TARGET > "$work/got"
+got_status=$?
+same_status "findmnt negative option status" "$want_status" "$got_status"
+same_file "findmnt negative option output" "$work/want" "$work/got"
+
+findmnt -n -r -i -o TARGET > "$work/want"
+want_status=$?
+"$farm/findmnt" -n -r -i -o TARGET > "$work/got"
+got_status=$?
+same_status "findmnt empty inversion status" "$want_status" "$got_status"
+same_file "findmnt empty inversion output" "$work/want" "$work/got"
+
+if findmnt -n -r -T / -M /proc -o TARGET > "$work/want" 2>/dev/null; then
+        want_status=0
+else
+        want_status=$?
+fi
+if "$farm/findmnt" -n -r -T / -M /proc -o TARGET \
+        > "$work/got" 2>/dev/null; then
+        got_status=0
+else
+        got_status=$?
+fi
+same_status "findmnt incompatible queries" "$want_status" "$got_status"
+same_file "findmnt incompatible output" "$work/want" "$work/got"
+
 # Empty values still carry getopt meaning.  In util-linux an empty type list
 # selects no filesystem types, while an empty path query selects the root.
 # Neither is the same as omitting its option.
@@ -541,6 +597,23 @@ want_status=$?
 got_status=$?
 same_status "mount empty types status" "$want_status" "$got_status"
 same_file "mount empty types output" "$work/want" "$work/got"
+
+mount -t proc > "$work/want"
+"$farm/mount" -t proc > "$work/got"
+same_file "mount option reconciliation" "$work/want" "$work/got"
+
+if umount -R "$work/not-a-recursive-mount" > /dev/null 2>&1; then
+        want_status=0
+else
+        want_status=$?
+fi
+if "$farm/umount" -R "$work/not-a-recursive-mount" \
+        > /dev/null 2>&1; then
+        got_status=0
+else
+        got_status=$?
+fi
+same_status "umount recursive missing" "$want_status" "$got_status"
 
 # findfs is also the conventional no-op source canonicalizer for paths with
 # no TAG= prefix.  This is used by callers that accept either a device path or
