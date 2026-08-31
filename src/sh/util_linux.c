@@ -24,7 +24,9 @@
 #define UL_LOCK_EXCLUSIVE 2
 #define UL_LOCK_NONBLOCK 4
 #define UL_LOCK_UNLOCK 8
+#define UL_ERROR_INTERRUPTED (-4)
 #define UL_ERROR_AGAIN 11
+#define UL_ERROR_BAD_DESCRIPTOR 9
 
 #define UL_CPU_WORDS 1024
 #define UL_CPU_BITS (UL_CPU_WORDS * positive_bits)
@@ -1135,7 +1137,6 @@ static b32 util_linux_prlimit()
         }
 
         bool selected = false;
-        bool setting = false;
         b32 failed = 0;
 
         for (positive at = 0; at < UL_RESOURCES; at++)
@@ -1151,8 +1152,6 @@ static b32 util_linux_prlimit()
                     file_option_value(address_of taking, resource->letter);
                 if (!value)
                         continue;
-                setting = true;
-
                 ul_limit_pair old;
                 ul_limit_pair made;
                 bipolar got = ul_prlimit(pid, resource->resource, null,
@@ -1175,10 +1174,12 @@ static b32 util_linux_prlimit()
                         continue;
                 }
 
-                if (taking.flags & FILE_FLAG('z'))
+                if ((taking.flags & FILE_FLAG('z')) && !command)
                 {
+                        b32 shown_pid = pid ? pid
+                                            : (b32)system_call(syscall(getpid));
                         string_format(log, "New %s limit for pid %b: <",
-                                      resource->name, (bipolar)pid);
+                                      resource->name, (bipolar)shown_pid);
                         p8 text[32];
                         ul_limit_text(made.soft, text);
                         string_format(log, "%s:", text);
@@ -1211,6 +1212,7 @@ static b32 util_linux_prlimit()
         positive widths[UL_LIMIT_COLUMNS] = {0, 0, 0, 0, 0};
         ul_limit_pair pairs[UL_RESOURCES];
         bool show[UL_RESOURCES];
+        bool any_show = false;
 
         for (positive column = 0; column < UL_LIMIT_COLUMNS; column++)
                 if (headings)
@@ -1236,6 +1238,7 @@ static b32 util_linux_prlimit()
                         failed = 1;
                         continue;
                 }
+                any_show = true;
 
                 positive lengths[UL_LIMIT_COLUMNS];
                 p8 number[32];
@@ -1253,7 +1256,7 @@ static b32 util_linux_prlimit()
                                 widths[column] = lengths[column];
         }
 
-        if (headings)
+        if (headings && any_show)
         {
                 for (positive at = 0; at < column_count; at++)
                 {
@@ -1290,7 +1293,7 @@ static b32 util_linux_prlimit()
         }
 
         log_flush();
-        return failed || (setting && !selected);
+        return failed;
 }
 
 // chrt and uclampset ---------------------------------------------
@@ -1793,32 +1796,83 @@ typedef struct
 static bool ul_duration(string_address text, positive address_to nanoseconds)
 {
         string_address at = text;
-        positive seconds;
+        positive made = 0;
         positive fraction = 0;
-        positive places = 0;
+        positive dropped = 0;
+        bool point = false;
+        bool any = false;
 
-        if (!ul_size_number(address_of at, 10, address_of seconds))
-                return false;
-        if (string_is(at, '.'))
-        {
+        while (byte_is_space(string_get(at)))
                 at++;
+        if (string_is(at, '+'))
+                at++;
+
+        while (byte_is_digit(string_get(at)) ||
+               (!point && string_is(at, '.')))
+        {
+                if (string_is(at, '.'))
+                {
+                        point = true;
+                        at++;
+                        continue;
+                }
+
+                positive digit = string_get(at++) - '0';
+                any = true;
+                if (point)
+                        fraction++;
+                if (made <= (positive_max - digit) / 10)
+                        made = made * 10 + digit;
+                else
+                        dropped++;
+        }
+        if (!any)
+                return false;
+
+        bipolar exponent = 0;
+        if (string_is(at, 'e') || string_is(at, 'E'))
+        {
+                bool negative = false;
+                positive magnitude = 0;
+
+                at++;
+                if (string_is(at, '+') || string_is(at, '-'))
+                        negative = string_get(at++) == '-';
+                if (!byte_is_digit(string_get(at)))
+                        return false;
                 while (byte_is_digit(string_get(at)))
                 {
-                        if (places < 9)
-                        {
-                                fraction = fraction * 10 +
-                                           string_get(at) - '0';
-                                places++;
-                        }
+                        if (magnitude < 1000000)
+                                magnitude = magnitude * 10 +
+                                            string_get(at) - '0';
                         at++;
                 }
+                exponent = negative ? -(bipolar)magnitude
+                                    : (bipolar)magnitude;
         }
-        if (string_get(at) || seconds > positive_max / 1000000000)
+        if (string_get(at))
                 return false;
 
-        while (places++ < 9)
-                fraction *= 10;
-        address_to nanoseconds = seconds * 1000000000 + fraction;
+        bipolar scale = 9 + exponent - (bipolar)fraction +
+                        (bipolar)dropped;
+        if (!made)
+        {
+                address_to nanoseconds = 0;
+                return true;
+        }
+        while (scale > 0)
+        {
+                if (made > positive_max / 10)
+                        return false;
+                made *= 10;
+                scale--;
+        }
+        while (scale < 0 && made)
+        {
+                made /= 10;
+                scale++;
+        }
+        address_to nanoseconds = made;
         return true;
 }
 
@@ -1859,17 +1913,19 @@ static bipolar ul_flock_try(b32 handle, p8 kind, bool nonblocking,
                              (positive)address_of range);
 }
 
-static b32 ul_flock_acquire(b32 handle, p8 kind, bool nonblocking,
-                            bool timed, positive timeout, bool fcntl,
-                            positive start, positive length,
-                            b32 conflict)
+static fn ul_flock_alarm(b32 number)
 {
-        positive began = timed ? ul_now_ns() : 0;
+        (void)number;
+}
+
+static b32 ul_flock_poll(b32 handle, p8 kind, positive timeout, bool fcntl,
+                         positive start, positive length, b32 conflict)
+{
+        positive began = ul_now_ns();
 
         for (;;)
         {
-                bipolar answer = ul_flock_try(handle, kind,
-                                              nonblocking || timed, fcntl,
+                bipolar answer = ul_flock_try(handle, kind, true, fcntl,
                                               start, length);
                 if (answer >= 0)
                         return 0;
@@ -1879,9 +1935,6 @@ static b32 ul_flock_acquire(b32 handle, p8 kind, bool nonblocking,
                                       file_reason(answer));
                         return 1;
                 }
-                if (nonblocking && !timed)
-                        return conflict;
-
                 positive now = ul_now_ns();
                 positive elapsed = now >= began ? now - began : timeout;
                 if (elapsed >= timeout)
@@ -1892,6 +1945,83 @@ static b32 ul_flock_acquire(b32 handle, p8 kind, bool nonblocking,
                 timespec span = {nap / 1000000000, nap % 1000000000};
                 system_call_2(syscall(nanosleep), (positive)address_of span, 0);
         }
+}
+
+static b32 ul_flock_acquire(b32 handle, p8 kind, bool nonblocking,
+                            bool timed, positive timeout, bool fcntl,
+                            positive start, positive length,
+                            b32 conflict)
+{
+        if (nonblocking || (timed && !timeout))
+        {
+                bipolar answer = ul_flock_try(handle, kind, true, fcntl,
+                                              start, length);
+                if (answer >= 0)
+                        return 0;
+                if (answer == -UL_ERROR_AGAIN || answer == -ERROR_ACCESS)
+                        return conflict;
+                string_format(file_fail, "flock: cannot lock: %s\n",
+                              file_reason(answer));
+                return answer == -UL_ERROR_BAD_DESCRIPTOR ? 65 : 1;
+        }
+        if (!timed)
+        {
+                bipolar answer = ul_flock_try(handle, kind, false, fcntl,
+                                              start, length);
+                if (answer >= 0)
+                        return 0;
+                string_format(file_fail, "flock: cannot lock: %s\n",
+                              file_reason(answer));
+                return answer == -UL_ERROR_BAD_DESCRIPTOR ? 65 : 1;
+        }
+
+        signal_interval prior;
+        if (system_call_2(syscall(getitimer), SIGNAL_TIMER_REAL,
+                          (positive)address_of prior) < 0 ||
+            prior.first_seconds || prior.first_microseconds)
+                return ul_flock_poll(handle, kind, timeout, fcntl, start,
+                                     length, conflict);
+
+        signal_action wanted;
+        signal_action had;
+        memory_zero(address_of wanted, sizeof wanted);
+        wanted.handler = ul_flock_alarm;
+        if (signal_action_change(SIGALRM, address_of wanted, address_of had) < 0)
+                return ul_flock_poll(handle, kind, timeout, fcntl, start,
+                                     length, conflict);
+
+        signal_interval timer = {0, 0, (bipolar)(timeout / 1000000000),
+                                 (bipolar)((timeout % 1000000000 + 999) / 1000)};
+        if (timer.first_microseconds == 1000000)
+        {
+                timer.first_seconds++;
+                timer.first_microseconds = 0;
+        }
+        bipolar answer = system_call_3(syscall(setitimer), SIGNAL_TIMER_REAL,
+                                       (positive)address_of timer, 0);
+        if (answer >= 0)
+                answer = ul_flock_try(handle, kind, false, fcntl,
+                                      start, length);
+
+        signal_interval stopped = {0, 0, 0, 0};
+        system_call_3(syscall(setitimer), SIGNAL_TIMER_REAL,
+                      (positive)address_of stopped, 0);
+        signal_action_change(SIGALRM, address_of had, null);
+
+        if (answer >= 0)
+                return 0;
+        if (answer == UL_ERROR_INTERRUPTED)
+                return conflict;
+        string_format(file_fail, "flock: cannot lock: %s\n",
+                      file_reason(answer));
+        return answer == -UL_ERROR_BAD_DESCRIPTOR ? 65 : 1;
+}
+
+static b32 ul_flock_exec(string_address address_to words)
+{
+        b32 answer = ul_exec_words(words, "flock");
+
+        return answer == 126 || answer == 127 ? 69 : answer;
 }
 
 static p8 ul_flock_kind;
@@ -1985,25 +2115,38 @@ static b32 util_linux_flock()
            The shared scanner deliberately stops at the first operand, so
            consume this one post-operand spelling here instead of teaching
            every file applet to permute options. */
-        if (!command_option && taking.first + 2 < count &&
+        if (!command_option && taking.first + 1 < count &&
             string_equals(program_argument((b32)taking.first + 1), "-c"))
         {
+                if (taking.first + 3 != count)
+                        return 64;
                 command_text = program_argument((b32)taking.first + 2);
                 command_option = true;
         }
-        bool descriptor = !command_option && taking.first + 1 == count &&
-                          ul_unsigned(target, b32_max, address_of parsed);
+        else if (command_option && taking.first + 1 != count)
+                return 64;
+        bool descriptor = false;
+        bipolar descriptor_number = 0;
+        if (!command_option && taking.first + 1 == count)
+        {
+                if (!ul_signed(target, b32_min, b32_max,
+                               address_of descriptor_number))
+                        return 64;
+                descriptor = true;
+        }
         b32 handle;
 
         if (descriptor)
-                handle = (b32)parsed;
+                handle = (b32)descriptor_number;
         else
         {
                 handle = (b32)system_call_4(syscall(openat), AT_FDCWD,
                                              (positive)target,
                                              FILE_READ_WRITE | FILE_CREATE,
                                              0666);
-                if (handle == -ERROR_IS_DIRECTORY)
+                if (handle < 0 &&
+                    (!fcntl || ul_flock_kind == 's' ||
+                     ul_flock_kind == 'u'))
                         handle = (b32)system_call_4(syscall(openat), AT_FDCWD,
                                                      (positive)target,
                                                      FILE_READ, 0);
@@ -2011,15 +2154,31 @@ static b32 util_linux_flock()
                 {
                         string_format(file_fail, "flock: cannot open %s: %s\n",
                                       target, file_reason(handle));
-                        return 66;
+                        return handle == -ERROR_IS_DIRECTORY ? 65 : 66;
                 }
         }
 
+        bool verbose = (taking.flags & FILE_FLAG('v')) != 0;
+        positive began = verbose ? ul_now_ns() : 0;
         answer = ul_flock_acquire(handle, ul_flock_kind ? ul_flock_kind : 'x',
                                   (taking.flags & FILE_FLAG('n')) != 0,
                                   timed, timeout, fcntl, start, length,
                                   conflict);
-        if (answer || descriptor || ul_flock_kind == 'u')
+        if (answer && verbose && timed && answer == conflict)
+                string_format(file_fail,
+                              "flock: timeout while waiting to get lock\n");
+        if (!answer && verbose)
+        {
+                positive elapsed = ul_now_ns() - began;
+                p8 fraction_text[32];
+                positive_into_string(fraction_text,
+                                     (elapsed % 1000000000) / 1000);
+                string_format(log, "flock: getting lock took %p.",
+                              elapsed / 1000000000);
+                string_to_field(log, fraction_text, 6, '0', false);
+                string_format(log, " seconds\n");
+        }
+        if (answer || descriptor)
         {
                 if (!descriptor)
                         system_call_1(syscall(close), handle);
@@ -2038,10 +2197,12 @@ static b32 util_linux_flock()
                 system_call_1(syscall(close), handle);
                 return 64;
         }
+        if (verbose)
+                string_format(log, "flock: executing %s\n", words[0]);
 
         if (no_fork)
         {
-                answer = ul_exec_words(words, "flock");
+                answer = ul_flock_exec(words);
                 system_call_1(syscall(close), handle);
                 return answer;
         }
@@ -2052,7 +2213,7 @@ static b32 util_linux_flock()
         {
                 if (close_child)
                         system_call_1(syscall(close), handle);
-                system_call_1(syscall(exit), ul_exec_words(words, "flock"));
+                system_call_1(syscall(exit), ul_flock_exec(words));
         }
         if (child < 0)
         {

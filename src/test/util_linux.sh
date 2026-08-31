@@ -177,6 +177,8 @@ compare 'command limit pair' prlimit \
         '"$TOOL" --nofile=100:200 /bin/sh -c "ulimit -Sn; ulimit -Hn"'
 compare 'negative one is unlimited' prlimit \
         '"$TOOL" --core=-1 /bin/sh -c "ulimit -Hc"'
+compare 'setting only is silent' prlimit \
+        '"$TOOL" --nofile=100:200'
 compare 'reject empty limit' prlimit '"$TOOL" --nofile= /bin/true'
 compare 'reject empty pair' prlimit '"$TOOL" --nofile=: /bin/true'
 compare 'invalid limit' prlimit '"$TOOL" --nofile=bad /bin/true'
@@ -228,11 +230,35 @@ compare 'missing file' fadvise '"$TOOL" /no/such/fadvise-file'
 compare 'too many files' fadvise '"$TOOL" "$0" "$0"' "$work/data"
 
 lock=$work/lock
+ro_lock=$work/read-only-lock
+: > "$ro_lock"
+chmod 444 "$ro_lock"
 group flock
 compare 'file command status' flock \
         '"$TOOL" "$0" /bin/sh -c "printf locked; exit 7"' "$lock"
 compare 'command string' flock \
         '"$TOOL" "$0" -c "printf command"' "$lock"
+compare 'unlock still executes command' flock \
+        '"$TOOL" -u "$0" /bin/sh -c "printf unlocked; exit 7"' "$lock"
+compare 'read-only classic lock' flock \
+        '"$TOOL" "$0" /bin/true' "$ro_lock"
+compare 'fraction-only timeout' flock \
+        '"$TOOL" -w .01 "$0" /bin/true' "$lock"
+compare 'scientific timeout' flock \
+        '"$TOOL" -w 1e-3 "$0" /bin/true' "$lock"
+compare 'plus timeout' flock '"$TOOL" -w +0.01 "$0" /bin/true' "$lock"
+compare 'blank timeout' flock '"$TOOL" -w " 0.01" "$0" /bin/true' "$lock"
+compare 'verbose acquisition and execution' flock \
+        '"$TOOL" --verbose "$0" /bin/true | sed "s/took [0-9.]* seconds/took TIME seconds/"' "$lock"
+compare 'missing executable is unavailable' flock \
+        '"$TOOL" "$0" /no/such/util-linux-command' "$lock"
+compare 'command string rejects extras' flock \
+        '"$TOOL" "$0" -c "printf wrong" extra' "$lock"
+compare 'sole non-descriptor has no side effect' flock \
+        'cd "$0"; "$TOOL" abc >/dev/null 2>&1; status=$?; [ ! -e abc ]; clean=$?; printf "%s:%s" "$status" "$clean"' "$work"
+compare 'negative descriptor' flock '"$TOOL" -- -1'
+compare 'overflow descriptor' flock '"$TOOL" 4294967296'
+compare 'closed descriptor' flock '"$TOOL" 9'
 compare 'nonblocking conflict code' flock \
         '"$TOOL" -n "$0" /bin/sh -c '\''"$TOOL" -n -E 42 "$1" /bin/true'\'' sh "$0"' "$lock"
 compare 'timed conflict code' flock \
