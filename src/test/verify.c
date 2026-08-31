@@ -236,6 +236,41 @@ fn check_fill()
         }
 }
 
+/*
+        The two wide fills, which write a repeated four or eight byte pattern
+        rather than a repeated byte.
+
+        Their count is in ELEMENTS and not in bytes, which is the one thing a
+        caller gets wrong about them, so the buffer is poisoned either side
+        and compared whole: a routine that reads its count as bytes writes a
+        quarter or an eighth of what it should, and the poison says so rather
+        than the comparison passing on the part that was written.
+*/
+fn check_fill_wide()
+{
+        for (positive e = 0; e < EDGE_COUNT; e++)
+        {
+                positive count = edges[e] / 8;
+                p32 narrow = (p32)next() | 1u;
+                positive wide = ((positive)next() << 32) | (positive)next() | 1u;
+                positive at;
+
+                reference_fill(mine, 0xA5, ROOM);
+                reference_fill(theirs, 0xA5, ROOM);
+                memory_fill_32(mine + 64, narrow, count);
+                for (at = 0; at < count; at++)
+                        reference_copy(theirs + 64 + at * 4, address_of narrow, 4);
+                same_bytes("memory_fill_32", "whole buffer", mine, theirs, ROOM);
+
+                reference_fill(mine, 0xA5, ROOM);
+                reference_fill(theirs, 0xA5, ROOM);
+                memory_fill_64(mine + 64, wide, count);
+                for (at = 0; at < count; at++)
+                        reference_copy(theirs + 64 + at * 8, address_of wide, 8);
+                same_bytes("memory_fill_64", "whole buffer", mine, theirs, ROOM);
+        }
+}
+
 fn check_copy()
 {
         for (positive i = 0; i < ROOM; i++)
@@ -8228,6 +8263,7 @@ b32 main()
         check_formatters();
 #else
         check_fill();
+        check_fill_wide();
         check_count();
         check_memory_compare();
 #if RISCV64
