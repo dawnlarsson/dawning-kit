@@ -2694,14 +2694,6 @@ static b32 util_linux_unshare()
                         return ul_namespace_wait(child);
         }
 
-        string_address proc = file_option_value(address_of taking, 'q');
-        if ((taking.flags & FILE_FLAG('q')) &&
-            system_call_5(syscall(mount), (positive)"proc",
-                          (positive)(proc ? proc : (string_address)"/proc"),
-                          (positive)"proc", MS_NOSUID | MS_NODEV | MS_NOEXEC,
-                          0) < 0)
-                return ul_bad_usage("unshare", "cannot mount proc");
-
         string_address root = file_option_value(address_of taking, 'R');
         string_address wd = file_option_value(address_of taking, 'w');
         if (root && (system_call_1(syscall(chdir), (positive)root) < 0 ||
@@ -2710,6 +2702,14 @@ static b32 util_linux_unshare()
                 return ul_bad_usage("unshare", "cannot change root");
         if (wd && system_call_1(syscall(chdir), (positive)wd) < 0)
                 return ul_bad_usage("unshare", "cannot change directory");
+
+        string_address proc = file_option_value(address_of taking, 'q');
+        if ((taking.flags & FILE_FLAG('q')) &&
+            system_call_5(syscall(mount), (positive)"proc",
+                          (positive)(proc ? proc : (string_address)"/proc"),
+                          (positive)"proc", MS_NOSUID | MS_NODEV | MS_NOEXEC,
+                          0) < 0)
+                return ul_bad_usage("unshare", "cannot mount proc");
 
         if (ul_namespace_identity("unshare",
                                   file_option_value(address_of taking, 'S'),
