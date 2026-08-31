@@ -591,7 +591,6 @@ static b32 ul_taskset_one(b32 pid, address_any context)
         ul_taskset_work address_to work = context;
         positive current[UL_CPU_WORDS];
 
-        memory_fill(current, 0, sizeof(current));
         bipolar used = system_call_3(syscall(sched_getaffinity),
                                      (positive)(p32)pid, sizeof(current),
                                      (positive)current);
@@ -625,7 +624,6 @@ static b32 ul_taskset_one(b32 pid, address_any context)
 
         if (work->report)
         {
-                memory_fill(current, 0, sizeof(current));
                 used = system_call_3(syscall(sched_getaffinity),
                                      (positive)(p32)pid, sizeof(current),
                                      (positive)current);
@@ -759,15 +757,9 @@ static b32 ul_renice_one(string_address operand, b32 which,
         }
 
         bipolar old = 20 - raw;
-        bipolar wanted = priority;
-
-        if (relative && __builtin_add_overflow(old, priority,
-                                               address_of wanted))
-        {
-                string_format(file_fail,
-                              "renice: relative priority is out of range\n");
-                return 1;
-        }
+        /* Upstream narrows the adjustment to int before adding it. */
+        bipolar wanted = relative
+            ? old + (bipolar)(b32)(p32)priority : priority;
 
         if (wanted < -20)
                 wanted = -20;
@@ -4190,19 +4182,15 @@ static b32 util_linux_nsenter()
         string_address root = file_option_value(address_of taking, 'r');
         string_address wd = file_option_value(address_of taking, 'w');
         string_address wdns = file_option_value(address_of taking, 'W');
-        p8 wdns_path[FILE_PATH_MAX];
         bool target_root = (taking.bare & FILE_FLAG('r')) != 0;
         bool target_wd = (taking.bare & FILE_FLAG('w')) != 0;
+        bool caller_wd = (taking.bare & FILE_FLAG('W')) != 0;
 
-        if (taking.bare & FILE_FLAG('W'))
+        if (caller_wd)
         {
-                if (system_call_2(syscall(getcwd), (positive)wdns_path,
-                                  sizeof(wdns_path)) < 0)
-                {
-                        ul_bad_usage("nsenter", "cannot read working directory");
+                old_cwd = ul_directory_open("nsenter", ".");
+                if (old_cwd < 0)
                         goto nsenter_failed;
-                }
-                wdns = wdns_path;
         }
 
         if (target_root)
@@ -4218,9 +4206,12 @@ static b32 util_linux_nsenter()
         }
         if (root_handle >= 0)
         {
-                old_cwd = ul_directory_open("nsenter", ".");
                 if (old_cwd < 0)
-                        goto nsenter_failed;
+                {
+                        old_cwd = ul_directory_open("nsenter", ".");
+                        if (old_cwd < 0)
+                                goto nsenter_failed;
+                }
         }
         else if (target_root || root)
                 goto nsenter_failed;
@@ -4338,7 +4329,7 @@ static b32 util_linux_nsenter()
         if (root_handle >= 0 &&
             (system_call_1(syscall(fchdir), root_handle) < 0 ||
              system_call_1(syscall(chroot), (positive)".") < 0 ||
-             (wd_handle < 0 && !wdns &&
+             (wd_handle < 0 && (caller_wd || !wdns) &&
               system_call_1(syscall(fchdir), old_cwd) < 0)))
         {
                 ul_bad_usage("nsenter", "cannot change root");
@@ -4349,7 +4340,14 @@ static b32 util_linux_nsenter()
                 ul_bad_usage("nsenter", "cannot change directory");
                 goto nsenter_failed;
         }
-        if (wdns && system_call_1(syscall(chdir), (positive)wdns) < 0)
+        if (caller_wd && root_handle < 0 &&
+            system_call_1(syscall(fchdir), old_cwd) < 0)
+        {
+                ul_bad_usage("nsenter", "cannot change directory");
+                goto nsenter_failed;
+        }
+        if (!caller_wd && wdns &&
+            system_call_1(syscall(chdir), (positive)wdns) < 0)
         {
                 ul_bad_usage("nsenter", "cannot change directory");
                 goto nsenter_failed;
