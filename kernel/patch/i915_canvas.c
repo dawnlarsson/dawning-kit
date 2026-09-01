@@ -15,6 +15,8 @@
 #include <drm/drm_gem_framebuffer_helper.h>
 #include <drm/drm_print.h>
 
+#include <linux/moduleparam.h>
+
 #include "gem/i915_gem_object.h"
 #include "gt/intel_engine.h"
 #include "gt/intel_engine_pm.h"
@@ -29,6 +31,11 @@
 #define CANVAS_REQUEST_DWORDS 768
 #define XY_MONO_SRC_COPY_IMM_CMD (2u << 29 | 0x71u << 22)
 
+static bool enable_canvas_accel;
+module_param_named(canvas_accel, enable_canvas_accel, bool, 0400);
+MODULE_PARM_DESC(canvas_accel,
+		 "enable the experimental in-kernel Canvas copy-engine backend");
+
 static int canvas_target(struct drm_framebuffer *fb,
 			 struct drm_i915_private **i915_out,
 			 struct drm_i915_gem_object **obj_out,
@@ -38,6 +45,9 @@ static int canvas_target(struct drm_framebuffer *fb,
 	struct drm_i915_gem_object *obj;
 	struct drm_gem_object *gem;
 	struct intel_engine_cs *engine;
+
+	if (!enable_canvas_accel)
+		return -EOPNOTSUPP;
 
 	if (!fb || !fb->dev || !fb->dev->driver ||
 	    strcmp(fb->dev->driver->name, "i915"))
