@@ -386,22 +386,6 @@ then
         echo "  folded constant memcpy and memset into $(basename "$fold_header")"
 fi
 
-#
-#       Canvas submits its native drawing primitives straight to i915's
-#       copy engine.  The implementation belongs beside the private VMA and
-#       request machinery it uses; the narrow command-list ABI is the only
-#       part the compositor sees.
-#
-if ! cmp -s kernel/patch/drm_canvas.h linux/include/drm/drm_canvas.h; then
-        sudo cp kernel/patch/drm_canvas.h linux/include/drm/drm_canvas.h ||
-                die "installing the Canvas DRM contract"
-fi
-if ! cmp -s kernel/patch/i915_canvas.c linux/drivers/gpu/drm/i915/i915_canvas.c; then
-        sudo cp kernel/patch/i915_canvas.c linux/drivers/gpu/drm/i915/i915_canvas.c ||
-                die "installing the i915 Canvas backend"
-fi
-line_add "linux/drivers/gpu/drm/i915/Makefile" "i915-y += i915_canvas.o"
-
 line_add_padded "linux/Kconfig" "source \"kernel/moonwater/Kconfig\""
 line_add_padded "linux/kernel/Makefile" "obj-y += moonwater/"
 

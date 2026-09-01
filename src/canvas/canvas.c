@@ -33,7 +33,6 @@
 */
 
 #include "window.c"
-#include <drm/drm_canvas.h>
 
 #define log_canvas(fmt, ...) pr_info("[moonwater canvas] " fmt, ##__VA_ARGS__)
 
@@ -148,11 +147,6 @@ struct output
         // Said once. Everything drawn goes through the mapping, so a failure
         // to make one is a screen with nothing on it, not a dropped frame.
         _Bool unmappable;
-
-        // Ordered hardware primitives, allocated only for an i915 scanout.
-        struct drm_canvas_command *gpu_commands;
-        unsigned int gpu_capacity;
-        _Bool gpu_failed;
 
         // Null means the cursor is drawn into this output's framebuffer.
         struct drm_plane *cursor_plane;
@@ -411,7 +405,6 @@ struct target
         u32 opaque;
         const u32 *ink;
         struct drm_rect clip;
-        struct canvas_gpu_batch *gpu;
 };
 
 static void target_row(const struct target *t, int y, int x1, int x2, u32 colour);
@@ -481,7 +474,6 @@ static u32 canvas_plane_pick_format(struct drm_plane *plane, u32 first, u32 seco
         return DRM_FORMAT_INVALID;
 }
 
-#include "gpu.c"
 #include "paint.c"
 #include "text.c"
 #include "pane.c"

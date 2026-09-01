@@ -54,24 +54,12 @@ static void bits_draw(const struct target *t, int x, int y, int scale,
 {
         unsigned int row, column;
 
-        if (x >= max(t->clip.x1, 0) &&
-            x + (int)w * scale <= min(t->clip.x2, t->width) &&
-            y >= max(t->clip.y1, 0) &&
-            y + (int)h * scale <= min(t->clip.y2, t->height) &&
-            canvas_gpu_mono(t, x, y, scale, bits, pitch, w, h,
-                            colour, 0, true))
-        {
-                canvas_painted += (unsigned long)w * h * scale * scale;
-                canvas_runs++;
-                return;
-        }
-
         /*
                 The whole thing in one call, when it is entirely inside the
                 damage and drawn at its own size. That is nearly every glyph;
                 the rest go the long way round below.
         */
-        if (!t->gpu && scale == 1 && w == 8 && pitch == 1 &&
+        if (scale == 1 && w == 8 && pitch == 1 &&
             x >= max(t->clip.x1, 0) && x + 8 <= min(t->clip.x2, t->width) &&
             y >= max(t->clip.y1, 0) && y + (int)h <= min(t->clip.y2, t->height))
         {
@@ -185,7 +173,7 @@ static HOT void canvas_draw_cursor(const struct target *t, int x, int y,
 
         // The whole cell in four calls, when it is at its own size and
         // entirely inside the damage. Two halves of a row, two colours.
-        if (!t->gpu && scale == 1 &&
+        if (scale == 1 &&
             x >= max(t->clip.x1, 0) && x + CURSOR_W <= min(t->clip.x2, t->width) &&
             y >= max(t->clip.y1, 0) && y + CURSOR_H <= min(t->clip.y2, t->height))
         {
