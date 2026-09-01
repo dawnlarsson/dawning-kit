@@ -3438,11 +3438,10 @@ static bool ul_namespace_id(string_address text, bool group,
 static b32 ul_namespace_identity(string_address program,
                                  string_address uid_text,
                                  string_address gid_text,
+                                 positive uid, positive gid,
                                  bool uid_root, bool gid_root,
                                  bipolar follow_handle, bool groups_cleared)
 {
-        positive uid = 0;
-        positive gid = 0;
         file_facts facts;
         bool follow_uid = uid_text && string_equals(uid_text, "follow");
         bool follow_gid = gid_text && string_equals(gid_text, "follow");
@@ -3454,12 +3453,6 @@ static b32 ul_namespace_identity(string_address program,
 
         if (follow_uid) uid = facts.owner;
         if (follow_gid) gid = facts.group;
-
-        if ((uid_text && !follow_uid &&
-             !ul_namespace_id(uid_text, false, address_of uid)) ||
-            (gid_text && !follow_gid &&
-             !ul_namespace_id(gid_text, true, address_of gid)))
-                return ul_bad_usage(program, "invalid user or group");
 
         if (gid_text && !groups_cleared &&
             system_call_2(syscall(setgroups), 0, 0) < 0)
@@ -3973,13 +3966,12 @@ static b32 util_linux_unshare()
                 return ul_bad_usage("unshare", "invalid propagation mode");
         string_address set_uid = file_option_value(address_of taking, 'S');
         string_address set_gid = file_option_value(address_of taking, 'G');
-        positive checked;
+        positive uid = 0;
+        positive gid = 0;
         if ((set_uid && (string_equals(set_uid, "follow") ||
-                         !ul_namespace_id(set_uid, false,
-                                          address_of checked))) ||
+                         !ul_namespace_id(set_uid, false, address_of uid))) ||
             (set_gid && (string_equals(set_gid, "follow") ||
-                         !ul_namespace_id(set_gid, true,
-                                          address_of checked))))
+                         !ul_namespace_id(set_gid, true, address_of gid))))
                 return ul_bad_usage("unshare", "invalid user or group");
 
         positive other = flags & ~(positive)CLONE_NEWUSER;
@@ -4121,8 +4113,7 @@ static b32 util_linux_unshare()
                         return ul_bad_usage("unshare", "cannot mount proc");
         }
 
-        if (ul_namespace_identity("unshare",
-                                  set_uid, set_gid,
+        if (ul_namespace_identity("unshare", set_uid, set_gid, uid, gid,
                                   uid_choice == 'r', gid_choice == 'r', -1,
                                   (flags & CLONE_NEWUSER) != 0 && set_gid))
                 return 1;
@@ -4206,7 +4197,10 @@ static b32 util_linux_nsenter()
         if (target_root)
         {
                 if (target_handle < 0)
-                        return ul_bad_usage("nsenter", "target PID is required");
+                {
+                        ul_bad_usage("nsenter", "target PID is required");
+                        goto nsenter_failed;
+                }
                 root_handle = ul_directory_open_at("nsenter", target_handle,
                                                    "root");
         }
@@ -4244,23 +4238,21 @@ static b32 util_linux_nsenter()
 
         string_address uid = file_option_value(address_of taking, 'S');
         string_address gid = file_option_value(address_of taking, 'G');
-        positive checked;
+        positive uid_id = 0;
+        positive gid_id = 0;
         if ((uid && !string_equals(uid, "follow") &&
-             !ul_namespace_id(uid, false, address_of checked)) ||
+             !ul_namespace_id(uid, false, address_of uid_id)) ||
             (gid && !string_equals(gid, "follow") &&
-             !ul_namespace_id(gid, true, address_of checked)))
+             !ul_namespace_id(gid, true, address_of gid_id)))
         {
                 ul_bad_usage("nsenter", "invalid user or group");
                 goto nsenter_failed;
         }
-        if ((uid && string_equals(uid, "follow")) ||
-            (gid && string_equals(gid, "follow")))
+        if (((uid && string_equals(uid, "follow")) ||
+             (gid && string_equals(gid, "follow"))) && target_handle < 0)
         {
-                if (target_handle < 0)
-                {
-                        ul_bad_usage("nsenter", "target PID is required");
-                        goto nsenter_failed;
-                }
+                ul_bad_usage("nsenter", "target PID is required");
+                goto nsenter_failed;
         }
         bool preserve = (taking.flags & FILE_FLAG('q')) != 0;
         bool explicit_user =
@@ -4368,7 +4360,7 @@ static b32 util_linux_nsenter()
         root_handle = wd_handle = old_cwd = -1;
 
         if ((uid || gid || (!preserve && entered_user)) &&
-            ul_namespace_identity("nsenter", uid, gid,
+            ul_namespace_identity("nsenter", uid, gid, uid_id, gid_id,
                                   !preserve && entered_user,
                                   !preserve && entered_user, target_handle,
                                   groups_cleared))
