@@ -268,6 +268,7 @@ static struct output *output_add(struct canvas *canvas, struct drm_mode_set *mod
                 return NULL;
         }
 
+        canvas_gpu_start(output);
         plane_claim(&canvas->client, output);
 
         return output;
@@ -310,6 +311,7 @@ static void output_disable_modeset(struct drm_device *dev,
 static void output_drop(struct output *output)
 {
         plane_drop(output);
+        canvas_gpu_stop(output);
 
         if (output->buffer)
                 drm_client_buffer_delete(output->buffer);

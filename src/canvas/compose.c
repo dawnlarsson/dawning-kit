@@ -66,8 +66,9 @@ static void target_row(const struct target *t, int y, int x1, int x2, u32 colour
 
         canvas_painted += (unsigned long)(x2 - x1);
         canvas_runs++;
-        memory_fill_u32(t->pixels + (size_t)y * t->pitch + x1,
-                        (unsigned long)(x2 - x1), colour);
+        if (!canvas_gpu_fill(t, x1, y, (unsigned int)(x2 - x1), 1, colour))
+                memory_fill_u32(t->pixels + (size_t)y * t->pitch + x1,
+                                (unsigned long)(x2 - x1), colour);
 }
 
 /*
@@ -130,10 +131,16 @@ static void shape_fill(const struct target *t, const struct shape *shape,
                         canvas_painted += (unsigned long)(x2 - x1) *
                                           (curve_bottom - curve_top);
                         canvas_runs++;
-                        canvas_rect_fill(t->pixels + (size_t)curve_top * t->pitch + x1,
-                                         t->pitch, (unsigned long)(x2 - x1),
-                                         (unsigned long)(curve_bottom - curve_top),
-                                         colour);
+                        if (!canvas_gpu_fill(t, x1, curve_top,
+                                             (unsigned int)(x2 - x1),
+                                             (unsigned int)(curve_bottom - curve_top),
+                                             colour))
+                                canvas_rect_fill(t->pixels +
+                                                     (size_t)curve_top * t->pitch + x1,
+                                                 t->pitch,
+                                                 (unsigned long)(x2 - x1),
+                                                 (unsigned long)(curve_bottom - curve_top),
+                                                 colour);
                 }
         }
 
@@ -149,6 +156,65 @@ static void shape_blit(const struct target *t, const struct shape *shape,
         int top = max(max(band_y, t->clip.y1), 0);
         int bottom = min(min(band_y + band_h, t->clip.y2), t->height);
         int y, x1, x2;
+
+        if (t->gpu)
+        {
+                int curve_top = clamp(shape->y + shape->radius, top, bottom);
+                int curve_bottom = clamp(shape->y + shape->h - shape->radius,
+                                         top, bottom);
+
+                for (y = top; y < curve_top; y++)
+                        if (shape_span(t, shape, band_x, band_w, y, &x1, &x2))
+                        {
+                                canvas_painted += (unsigned long)(x2 - x1);
+                                canvas_runs++;
+                                canvas_gpu_copy(t, x1, y,
+                                                (unsigned int)(x2 - x1), 1,
+                                                source +
+                                                    (size_t)(y - band_y) *
+                                                        source_pitch +
+                                                    (x1 - band_x),
+                                                source_pitch);
+                        }
+
+                if (curve_bottom > curve_top)
+                {
+                        x1 = max(max(shape->x, band_x), t->clip.x1);
+                        x2 = min(min(shape->x + shape->w, band_x + band_w),
+                                 min(t->clip.x2, t->width));
+
+                        if (x2 > x1)
+                        {
+                                canvas_painted += (unsigned long)(x2 - x1) *
+                                                  (curve_bottom - curve_top);
+                                canvas_runs++;
+                                canvas_gpu_copy(t, x1, curve_top,
+                                                (unsigned int)(x2 - x1),
+                                                (unsigned int)(curve_bottom - curve_top),
+                                                source +
+                                                    (size_t)(curve_top - band_y) *
+                                                        source_pitch +
+                                                    (x1 - band_x),
+                                                source_pitch);
+                        }
+                }
+
+                for (y = curve_bottom; y < bottom; y++)
+                        if (shape_span(t, shape, band_x, band_w, y, &x1, &x2))
+                        {
+                                canvas_painted += (unsigned long)(x2 - x1);
+                                canvas_runs++;
+                                canvas_gpu_copy(t, x1, y,
+                                                (unsigned int)(x2 - x1), 1,
+                                                source +
+                                                    (size_t)(y - band_y) *
+                                                        source_pitch +
+                                                    (x1 - band_x),
+                                                source_pitch);
+                        }
+
+                return;
+        }
 
         for (y = top; y < bottom; y++)
         {
@@ -190,8 +256,19 @@ static void cell_draw(const struct target *t, const struct shape *shape,
         {
                 canvas_painted += WINDOW_CELL_W * WINDOW_CELL_H;
                 canvas_runs++;
-                canvas_cell(t->pixels + (size_t)y * t->pitch + x, t->pitch,
-                            bits, WINDOW_CELL_H, ink, paper);
+                if (canvas_gpu_mono(t, x, y, 1, bits, 1,
+                                    WINDOW_CELL_W, WINDOW_CELL_H,
+                                    ink, paper, false))
+                        return;
+
+                if (t->gpu)
+                {
+                        t->gpu->failed = true;
+                        return;
+                }
+
+                canvas_cell(t->pixels + (size_t)y * t->pitch + x,
+                            t->pitch, bits, WINDOW_CELL_H, ink, paper);
                 return;
         }
 
@@ -655,9 +732,13 @@ static void desktop_fill(const struct target *t, int x1, int y1, int x2, int y2)
 
                 canvas_painted += (unsigned long)w * h;
                 canvas_runs++;
-                canvas_rect_fill(t->pixels + (size_t)piece[i].y1 * t->pitch + piece[i].x1,
-                                 t->pitch, (unsigned long)w, (unsigned long)h,
-                                 t->ink[INK_DESKTOP]);
+                if (!canvas_gpu_fill(t, piece[i].x1, piece[i].y1,
+                                     (unsigned int)w, (unsigned int)h,
+                                     t->ink[INK_DESKTOP]))
+                        canvas_rect_fill(t->pixels +
+                                             (size_t)piece[i].y1 * t->pitch + piece[i].x1,
+                                         t->pitch, (unsigned long)w,
+                                         (unsigned long)h, t->ink[INK_DESKTOP]);
         }
 }
 
@@ -680,6 +761,7 @@ static HOT void compose_clip(const struct target *t)
 // damage. The clip is in target coordinates; the rectangle asked for is in
 // desktop ones.
 static struct target target_of(struct output *output, u32 *pixels,
+                               struct canvas_gpu_batch *gpu,
                                int rx, int ry, int rw, int rh)
 {
         struct target t;
@@ -692,6 +774,7 @@ static struct target target_of(struct output *output, u32 *pixels,
         t.y = output->y;
         t.opaque = output->opaque;
         t.ink = output->palette;
+        t.gpu = gpu;
 
         t.clip.x1 = max(rx - output->x, 0);
         t.clip.y1 = max(ry - output->y, 0);
@@ -707,9 +790,10 @@ static struct target target_of(struct output *output, u32 *pixels,
         of writes. The rectangle is in desktop coordinates.
 */
 static void compose_rect(struct output *output, u32 *pixels,
+                         struct canvas_gpu_batch *gpu,
                          int rx, int ry, int rw, int rh)
 {
-        struct target t = target_of(output, pixels, rx, ry, rw, rh);
+        struct target t = target_of(output, pixels, gpu, rx, ry, rw, rh);
 
         if (t.clip.x2 > t.clip.x1 && t.clip.y2 > t.clip.y1)
                 compose_clip(&t);
@@ -719,7 +803,8 @@ static void compose_rect(struct output *output, u32 *pixels,
         The cursor, where this output shows it. On a hardware plane it is never
         drawn in, and on the outputs it is not over there is nothing to draw.
 */
-static void output_draw_cursor(struct output *output, u32 *pixels)
+static void output_draw_cursor(struct output *output, u32 *pixels,
+                               struct canvas_gpu_batch *gpu)
 {
         struct drm_rect cell;
         struct target t;
@@ -732,7 +817,7 @@ static void output_draw_cursor(struct output *output, u32 *pixels)
         if (!output->cursor_shown)
                 return;
 
-        t = target_of(output, pixels, output->x, output->y,
+        t = target_of(output, pixels, gpu, output->x, output->y,
                       (int)output->width, (int)output->height);
 
         canvas_draw_cursor(&t, desktop.cursor_x - output->x,
@@ -817,7 +902,7 @@ static void output_repaint(struct output *output, const struct drm_rect *damage,
         unsigned int kept = 0;
         _Bool joined;
 
-        if (!count || count > ARRAY_SIZE(merged) || !output_map(output, &map))
+        if (!count || count > ARRAY_SIZE(merged))
                 return;
 
         /*
@@ -870,16 +955,48 @@ static void output_repaint(struct output *output, const struct drm_rect *damage,
                         }
         }
 
+        if (output->gpu_commands && !output->gpu_failed)
+        {
+                struct canvas_gpu_batch batch = {.output = output};
+                unsigned long painted = canvas_painted;
+                unsigned long runs = canvas_runs;
+                u64 text_ns = canvas_text_ns;
+
+                started = ktime_get_ns();
+
+                for (i = 0; i < kept; i++)
+                        compose_rect(output, NULL, &batch,
+                                     merged[i].x1, merged[i].y1,
+                                     merged[i].x2 - merged[i].x1,
+                                     merged[i].y2 - merged[i].y1);
+
+                output_draw_cursor(output, NULL, &batch);
+
+                if (canvas_gpu_submit(&batch))
+                {
+                        pointer_draw_total += ktime_get_ns() - started;
+                        return;
+                }
+
+                // The retry is the compose that happened; do not count both.
+                canvas_painted = painted;
+                canvas_runs = runs;
+                canvas_text_ns = text_ns;
+        }
+
+        if (!output_map(output, &map))
+                return;
+
         pixels = map.vaddr;
         started = ktime_get_ns();
 
         for (i = 0; i < kept; i++)
-                compose_rect(output, pixels,
+                compose_rect(output, pixels, NULL,
                              merged[i].x1, merged[i].y1,
                              merged[i].x2 - merged[i].x1,
                              merged[i].y2 - merged[i].y1);
 
-        output_draw_cursor(output, pixels);
+        output_draw_cursor(output, pixels, NULL);
 
         drm_client_buffer_vunmap_local(output->buffer);
         pointer_draw_total += ktime_get_ns() - started;
@@ -902,19 +1019,42 @@ static void compose_output(struct output *output)
         struct iosys_map map;
         u32 *pixels;
 
+        if (output->gpu_commands && !output->gpu_failed)
+        {
+                struct canvas_gpu_batch batch = {.output = output};
+                unsigned long painted = canvas_painted;
+                unsigned long runs = canvas_runs;
+                u64 text_ns = canvas_text_ns;
+                struct target t = target_of(output, NULL, &batch,
+                                            output->x, output->y,
+                                            (int)output->width,
+                                            (int)output->height);
+
+                compose_clip(&t);
+                output_draw_cursor(output, NULL, &batch);
+
+                if (canvas_gpu_submit(&batch))
+                        return;
+
+                canvas_painted = painted;
+                canvas_runs = runs;
+                canvas_text_ns = text_ns;
+        }
+
         if (!output_map(output, &map))
                 return;
 
         pixels = map.vaddr;
 
         {
-                struct target t = target_of(output, pixels, output->x, output->y,
+                struct target t = target_of(output, pixels, NULL,
+                                            output->x, output->y,
                                             (int)output->width, (int)output->height);
 
                 compose_clip(&t);
         }
 
-        output_draw_cursor(output, pixels);
+        output_draw_cursor(output, pixels, NULL);
 
         drm_client_buffer_vunmap_local(output->buffer);
 
