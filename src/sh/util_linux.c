@@ -3439,20 +3439,17 @@ static b32 ul_namespace_identity(string_address program,
                                  string_address uid_text,
                                  string_address gid_text,
                                  positive uid, positive gid,
+                                 p8 following,
                                  bool uid_root, bool gid_root,
                                  bipolar follow_handle, bool groups_cleared)
 {
         file_facts facts;
-        bool follow_uid = uid_text && string_equals(uid_text, "follow");
-        bool follow_gid = gid_text && string_equals(gid_text, "follow");
 
-        if ((follow_uid || follow_gid) &&
-            (follow_handle < 0 ||
-             !file_look(follow_handle, "", AT_EMPTY_PATH, address_of facts)))
+        if (following &&
+            !file_look(follow_handle, "", AT_EMPTY_PATH, address_of facts))
                 return ul_bad_usage(program, "cannot follow target identity");
-
-        if (follow_uid) uid = facts.owner;
-        if (follow_gid) gid = facts.group;
+        if (following & 1) uid = facts.owner;
+        if (following & 2) gid = facts.group;
 
         if (gid_text && !groups_cleared &&
             system_call_2(syscall(setgroups), 0, 0) < 0)
@@ -3969,9 +3966,11 @@ static b32 util_linux_unshare()
         positive uid = 0;
         positive gid = 0;
         if ((set_uid && (string_equals(set_uid, "follow") ||
-                         !ul_namespace_id(set_uid, false, address_of uid))) ||
+                         !ul_unsigned(set_uid, (positive)p32_max - 1,
+                                      address_of uid))) ||
             (set_gid && (string_equals(set_gid, "follow") ||
-                         !ul_namespace_id(set_gid, true, address_of gid))))
+                         !ul_unsigned(set_gid, (positive)p32_max - 1,
+                                      address_of gid))))
                 return ul_bad_usage("unshare", "invalid user or group");
 
         positive other = flags & ~(positive)CLONE_NEWUSER;
@@ -4113,7 +4112,7 @@ static b32 util_linux_unshare()
                         return ul_bad_usage("unshare", "cannot mount proc");
         }
 
-        if (ul_namespace_identity("unshare", set_uid, set_gid, uid, gid,
+        if (ul_namespace_identity("unshare", set_uid, set_gid, uid, gid, 0,
                                   uid_choice == 'r', gid_choice == 'r', -1,
                                   (flags & CLONE_NEWUSER) != 0 && set_gid))
                 return 1;
@@ -4240,16 +4239,17 @@ static b32 util_linux_nsenter()
         string_address gid = file_option_value(address_of taking, 'G');
         positive uid_id = 0;
         positive gid_id = 0;
-        if ((uid && !string_equals(uid, "follow") &&
-             !ul_namespace_id(uid, false, address_of uid_id)) ||
-            (gid && !string_equals(gid, "follow") &&
-             !ul_namespace_id(gid, true, address_of gid_id)))
+        bool follow_uid = uid && string_equals(uid, "follow");
+        bool follow_gid = gid && string_equals(gid, "follow");
+        if ((uid && !follow_uid &&
+             !ul_unsigned(uid, (positive)p32_max - 1, address_of uid_id)) ||
+            (gid && !follow_gid &&
+             !ul_unsigned(gid, (positive)p32_max - 1, address_of gid_id)))
         {
                 ul_bad_usage("nsenter", "invalid user or group");
                 goto nsenter_failed;
         }
-        if (((uid && string_equals(uid, "follow")) ||
-             (gid && string_equals(gid, "follow"))) && target_handle < 0)
+        if ((follow_uid || follow_gid) && target_handle < 0)
         {
                 ul_bad_usage("nsenter", "target PID is required");
                 goto nsenter_failed;
@@ -4361,6 +4361,7 @@ static b32 util_linux_nsenter()
 
         if ((uid || gid || (!preserve && entered_user)) &&
             ul_namespace_identity("nsenter", uid, gid, uid_id, gid_id,
+                                  follow_uid | (follow_gid << 1),
                                   !preserve && entered_user,
                                   !preserve && entered_user, target_handle,
                                   groups_cleared))
