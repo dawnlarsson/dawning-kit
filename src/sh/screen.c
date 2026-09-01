@@ -483,10 +483,7 @@ static char typed[TYPED_MAX];
 static unsigned int at;
 
 // The rows are the last lines of the ring, the same as any window of cells.
-static struct window_cell *text_row(unsigned int row)
-{
-        return window_line(window, window->head - rows + row);
-}
+#define text_row(row) window_line(window, window->head - rows + (row))
 
 static void text_write(unsigned int row, unsigned int column,
                        unsigned int character, unsigned char ink,

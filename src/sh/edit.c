@@ -323,21 +323,14 @@ static bool edit_line_room_for(struct edit_line address_to line, positive want)
                          EDIT_LINE_FIRST);
 }
 
-static bool edit_lines_room_for(positive want)
-{
-        return edit_room((p8 address_to address_to)address_of edit_lines,
-                         address_of edit_line_room,
-                         want * sizeof(struct edit_line),
-                         EDIT_TABLE_FIRST * sizeof(struct edit_line));
-}
-
-static bool edit_cursors_room_for(positive want)
-{
-        return edit_room((p8 address_to address_to)address_of edit_cursors,
-                         address_of edit_cursor_room,
-                         want * sizeof(struct edit_cursor),
-                         EDIT_TABLE_FIRST * sizeof(struct edit_cursor));
-}
+#define edit_table_room_for(table, room, want)                               \
+        edit_room((p8 address_to address_to)address_of (table),              \
+                  address_of (room), (want) * sizeof((table)[0]),             \
+                  EDIT_TABLE_FIRST * sizeof((table)[0]))
+#define edit_lines_room_for(want)                                            \
+        edit_table_room_for(edit_lines, edit_line_room, (want))
+#define edit_cursors_room_for(want)                                          \
+        edit_table_room_for(edit_cursors, edit_cursor_room, (want))
 
 /*
         Bytes taken out of one line and bytes put in, in one call.
@@ -3387,68 +3380,40 @@ static positive edit_key_from_control(p8 byte)
 //      agrees with them.
 static positive edit_key_from_tilde(positive value)
 {
-        switch (value)
-        {
-        case 1:
-        case 7:
+        if (value == 1 || value == 7)
                 return EDIT_KEY_HOME;
-        case 2:
+        if (value == 2)
                 return EDIT_KEY_INSERT;
-        case 3:
+        if (value == 3)
                 return EDIT_KEY_REMOVE;
-        case 4:
-        case 8:
+        if (value == 4 || value == 8)
                 return EDIT_KEY_END;
-        case 5:
+        if (value == 5)
                 return EDIT_KEY_PAGE_UP;
-        case 6:
+        if (value == 6)
                 return EDIT_KEY_PAGE_DOWN;
-        case 11:
-        case 12:
-        case 13:
-        case 14:
+        if (value >= 11 && value <= 14)
                 return EDIT_KEY_FUNCTION + value - 10;
-        case 15:
+        if (value == 15)
                 return EDIT_KEY_FUNCTION + 5;
-        case 17:
-        case 18:
-        case 19:
-        case 20:
-        case 21:
+        if (value >= 17 && value <= 21)
                 return EDIT_KEY_FUNCTION + value - 11;
-        case 23:
-        case 24:
+        if (value >= 23 && value <= 24)
                 return EDIT_KEY_FUNCTION + value - 12;
-        }
 
         return EDIT_KEY_NONE;
 }
 
 static positive edit_key_from_final(p8 final)
 {
-        switch (final)
-        {
-        case 'A':
-                return EDIT_KEY_UP;
-        case 'B':
-                return EDIT_KEY_DOWN;
-        case 'C':
-                return EDIT_KEY_RIGHT;
-        case 'D':
-                return EDIT_KEY_LEFT;
-        case 'H':
-                return EDIT_KEY_HOME;
-        case 'F':
+        if (final >= 'A' && final <= 'D')
+                return EDIT_KEY_UP + final - 'A';
+        if (final >= 'P' && final <= 'S')
+                return EDIT_KEY_FUNCTION + final - 'P' + 1;
+        if (final == 'F')
                 return EDIT_KEY_END;
-        case 'P':
-                return EDIT_KEY_FUNCTION + 1;
-        case 'Q':
-                return EDIT_KEY_FUNCTION + 2;
-        case 'R':
-                return EDIT_KEY_FUNCTION + 3;
-        case 'S':
-                return EDIT_KEY_FUNCTION + 4;
-        }
+        if (final == 'H')
+                return EDIT_KEY_HOME;
 
         return EDIT_KEY_NONE;
 }

@@ -122,13 +122,9 @@ fn shell_expand_reset()
 
 //      Room for want bytes in both halves at once, since a byte and its mark
 //      are always written together.
-static bool expand_room(positive want)
-{
-        return shell_room((address_any address_to)address_of expand_text,
-                          address_of expand_text_room, want, 1) &&
-               shell_room((address_any address_to)address_of expand_mark,
-                          address_of expand_mark_room, want, 1);
-}
+#define expand_room(want)                                                    \
+        shell_byte_pair_room(expand_text, expand_text_room, expand_mark,     \
+                             expand_mark_room, (want))
 
 // One short of the end, because trimming writes a terminator at the length.
 static fn expand_push(p8 value, p8 mark)
@@ -681,10 +677,10 @@ bool shell_parameters_set(string_address address_to words, positive count)
         }
 
         if (need == positive_max ||
-            !shell_room((address_any address_to)address_of shell_parameter_staging,
-                        address_of shell_parameter_staging_room, need + 1, 1) ||
-            !shell_room((address_any address_to)address_of shell_parameter_bytes,
-                        address_of shell_parameter_bytes_room, need + 1, 1))
+            !shell_byte_pair_room(shell_parameter_staging,
+                                  shell_parameter_staging_room,
+                                  shell_parameter_bytes,
+                                  shell_parameter_bytes_room, need + 1))
                 return false;
 
         while (index < count)
@@ -2151,15 +2147,8 @@ static PURE string_address expand_bracket_end(string_address at, p8 open, p8 clo
         return null;
 }
 
-static PURE string_address expand_paren_end(string_address at)
-{
-        return expand_bracket_end(at, '(', ')');
-}
-
-static PURE string_address expand_brace_end(string_address at)
-{
-        return expand_bracket_end(at, '{', '}');
-}
+#define expand_paren_end(at) expand_bracket_end((at), '(', ')')
+#define expand_brace_end(at) expand_bracket_end((at), '{', '}')
 
 /*
         Whether this process is a substitution's child.

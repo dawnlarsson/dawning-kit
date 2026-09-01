@@ -2038,17 +2038,9 @@ static b32 vsscanf(string_address text, string_address format, var_args list)
         return scan_run(address_of source, format, list);
 }
 
-static b32 sscanf(string_address text, string_address format, ...)
-{
-        var_args list;
-        b32 answer;
-
-        var_list(list, format);
-        answer = vsscanf(text, format, list);
-        var_list_end(list);
-
-        return answer;
-}
+var_list_entry(sscanf, b32,
+               (string_address text, string_address format, ...), format,
+               vsscanf(text, format, _variadic_list))
 
 #if SCAN_STREAMS
 
@@ -2071,29 +2063,11 @@ static b32 vscanf(string_address format, var_args list)
         return vfscanf(stdin, format, list);
 }
 
-static b32 fscanf(scan_stream handle, string_address format, ...)
-{
-        var_args list;
-        b32 answer;
-
-        var_list(list, format);
-        answer = vfscanf(handle, format, list);
-        var_list_end(list);
-
-        return answer;
-}
-
-static b32 scanf(string_address format, ...)
-{
-        var_args list;
-        b32 answer;
-
-        var_list(list, format);
-        answer = vfscanf(stdin, format, list);
-        var_list_end(list);
-
-        return answer;
-}
+var_list_entry(fscanf, b32,
+               (scan_stream handle, string_address format, ...), format,
+               vfscanf(handle, format, _variadic_list))
+var_list_entry(scanf, b32, (string_address format, ...), format,
+               vfscanf(stdin, format, _variadic_list))
 
 #endif // SCAN_STREAMS
 

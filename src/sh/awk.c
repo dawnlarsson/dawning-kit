@@ -116,21 +116,8 @@ static fn awk_text_drop(awk_text address_to which)
         exact: a double is a finite decimal, and printing 1e300 in full is
         what the reference does.
 */
-static positive awk_bits_of(decimal value)
-{
-        positive bits;
-
-        memory_copy(address_of bits, address_of value, 8);
-        return bits;
-}
-
-static decimal awk_from_bits(positive bits)
-{
-        decimal value;
-
-        memory_copy(address_of value, address_of bits, 8);
-        return value;
-}
+#define awk_bits_of(value) memory_cast(positive, (value))
+#define awk_from_bits(value) memory_cast(decimal, (value))
 
 static decimal awk_infinity = 0;
 static decimal awk_not_a_number = 0;

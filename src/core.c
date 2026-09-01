@@ -892,29 +892,17 @@ static long report_stats(struct stats __user *out)
 }
 
 #ifdef CONFIG_MOONWATER_CANVAS
-static long report_input(struct input_stats __user *out)
-{
-        struct input_stats stats;
+#define REPORT_CANVAS(name, type, collect)                                   \
+        static long name(struct type __user *out)                            \
+        {                                                                    \
+                struct type stats;                                           \
+                collect(&stats);                                             \
+                return copy_to_user(out, &stats, sizeof(stats)) ? -EFAULT : 0; \
+        }
 
-        canvas_input_stats(&stats);
-
-        if (copy_to_user(out, &stats, sizeof(stats)))
-                return -EFAULT;
-
-        return 0;
-}
-
-static long report_cursor(struct cursor_stats __user *out)
-{
-        struct cursor_stats stats;
-
-        canvas_cursor_stats(&stats);
-
-        if (copy_to_user(out, &stats, sizeof(stats)))
-                return -EFAULT;
-
-        return 0;
-}
+REPORT_CANVAS(report_input, input_stats, canvas_input_stats)
+REPORT_CANVAS(report_cursor, cursor_stats, canvas_cursor_stats)
+#undef REPORT_CANVAS
 #endif
 
 static long device_ioctl(struct file *file, unsigned int cmd, unsigned long arg)

@@ -1082,43 +1082,26 @@ static positive process_execute_gather(string_address words[],
         return 0;
 }
 
-static b32 execl(string_address path, string_address first, ...)
-{
-        string_address words[PROCESS_ARGUMENT_MAX];
-        var_args list;
-        positive count;
-
-        var_list(list, first);
-        count = process_execute_gather(words, first, address_of list);
-        var_list_end(list);
-
-        if (count == 0)
-        {
-                errno = E2BIG;
-                return -1;
+#define PROCESS_EXECL(name, vector)                                          \
+        static b32 name(string_address path, string_address first, ...)      \
+        {                                                                    \
+                string_address words[PROCESS_ARGUMENT_MAX];                  \
+                var_args list;                                               \
+                var_list(list, first);                                       \
+                positive count = process_execute_gather(                     \
+                    words, first, address_of list);                           \
+                var_list_end(list);                                          \
+                if (!count)                                                  \
+                {                                                            \
+                        errno = E2BIG;                                        \
+                        return -1;                                            \
+                }                                                            \
+                return vector(path, words);                                  \
         }
 
-        return execv(path, words);
-}
-
-static b32 execlp(string_address name, string_address first, ...)
-{
-        string_address words[PROCESS_ARGUMENT_MAX];
-        var_args list;
-        positive count;
-
-        var_list(list, first);
-        count = process_execute_gather(words, first, address_of list);
-        var_list_end(list);
-
-        if (count == 0)
-        {
-                errno = E2BIG;
-                return -1;
-        }
-
-        return execvp(name, words);
-}
+PROCESS_EXECL(execl, execv)
+PROCESS_EXECL(execlp, execvp)
+#undef PROCESS_EXECL
 
 static b32 execle(string_address path, string_address first, ...)
 {

@@ -157,56 +157,36 @@ static bipolar errno = 0;
 */
 static string_address strerror(b32 code)
 {
+        static const char address_to messages[40] = {
+                [0] = "Success",
+                [1] = "Operation not permitted",
+                [2] = "No such file or directory",
+                [3] = "No such process",
+                [4] = "Interrupted system call",
+                [5] = "Input/output error",
+                [9] = "Bad file descriptor",
+                [11] = "Resource temporarily unavailable",
+                [12] = "Cannot allocate memory",
+                [13] = "Permission denied",
+                [14] = "Bad address",
+                [17] = "File exists",
+                [18] = "Invalid cross-device link",
+                [20] = "Not a directory",
+                [21] = "Is a directory",
+                [22] = "Invalid argument",
+                [24] = "Too many open files",
+                [25] = "Inappropriate ioctl for device",
+                [28] = "No space left on device",
+                [32] = "Broken pipe",
+                [39] = "Directory not empty",
+        };
+
         if (code < 0)
                 code = -code;
 
-        switch (code)
-        {
-        case 0:
-                return (string_address) "Success";
-        case 1:
-                return (string_address) "Operation not permitted";
-        case 2:
-                return (string_address) "No such file or directory";
-        case 3:
-                return (string_address) "No such process";
-        case 4:
-                return (string_address) "Interrupted system call";
-        case 5:
-                return (string_address) "Input/output error";
-        case 9:
-                return (string_address) "Bad file descriptor";
-        case 11:
-                return (string_address) "Resource temporarily unavailable";
-        case 12:
-                return (string_address) "Cannot allocate memory";
-        case 13:
-                return (string_address) "Permission denied";
-        case 14:
-                return (string_address) "Bad address";
-        case 17:
-                return (string_address) "File exists";
-        case 18:
-                return (string_address) "Invalid cross-device link";
-        case 20:
-                return (string_address) "Not a directory";
-        case 21:
-                return (string_address) "Is a directory";
-        case 22:
-                return (string_address) "Invalid argument";
-        case 24:
-                return (string_address) "Too many open files";
-        case 25:
-                return (string_address) "Inappropriate ioctl for device";
-        case 28:
-                return (string_address) "No space left on device";
-        case 32:
-                return (string_address) "Broken pipe";
-        case 39:
-                return (string_address) "Directory not empty";
-        }
-
-        return (string_address) "Unknown error";
+        return (string_address)(code < 40 && messages[code]
+                                    ? messages[code]
+                                    : "Unknown error");
 }
 
 #define FORMAT_OWNS_PERROR 1
@@ -1895,54 +1875,17 @@ static bipolar vsprintf(p8 address_to into, string_address format, var_args list
         return (bipolar)sink.counted;
 }
 
-static bipolar printf(string_address format, ...)
-{
-        var_args list;
-        bipolar written;
-
-        var_list(list, format);
-        written = vprintf(format, list);
-        var_list_end(list);
-
-        return written;
-}
-
-static bipolar fprintf(format_stream stream, string_address format, ...)
-{
-        var_args list;
-        bipolar written;
-
-        var_list(list, format);
-        written = vfprintf(stream, format, list);
-        var_list_end(list);
-
-        return written;
-}
-
-static bipolar snprintf(p8 address_to into, positive size, string_address format,
-                        ...)
-{
-        var_args list;
-        bipolar written;
-
-        var_list(list, format);
-        written = vsnprintf(into, size, format, list);
-        var_list_end(list);
-
-        return written;
-}
-
-static bipolar sprintf(p8 address_to into, string_address format, ...)
-{
-        var_args list;
-        bipolar written;
-
-        var_list(list, format);
-        written = vsprintf(into, format, list);
-        var_list_end(list);
-
-        return written;
-}
+var_list_entry(printf, bipolar, (string_address format, ...), format,
+               vprintf(format, _variadic_list))
+var_list_entry(fprintf, bipolar,
+               (format_stream stream, string_address format, ...), format,
+               vfprintf(stream, format, _variadic_list))
+var_list_entry(snprintf, bipolar,
+               (p8 address_to into, positive size, string_address format, ...),
+               format, vsnprintf(into, size, format, _variadic_list))
+var_list_entry(sprintf, bipolar,
+               (p8 address_to into, string_address format, ...), format,
+               vsprintf(into, format, _variadic_list))
 
 /*
         The entries that write bytes without reading a format.

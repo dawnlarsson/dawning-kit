@@ -3477,9 +3477,11 @@ static b32 ul_exec_shell(string_address program)
                 file_account_record record;
 
                 shell = null;
-                if (file_account_name(file_password_text(), uid, 2, account,
+                if (file_account_name(file_account_text(FILE_ACCOUNT_USER), uid,
+                                      2, account,
                                       sizeof(account)))
-                while (file_account_next(file_password_text(), address_of at,
+                while (file_account_next(file_account_text(FILE_ACCOUNT_USER),
+                                         address_of at,
                                          6, address_of record))
                 {
                         if (!record.has_value || !record.value_length ||

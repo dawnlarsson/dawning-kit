@@ -44,29 +44,9 @@ typedef struct
         string_address value;
 } storage_selector;
 
-static p16 storage_le16(p8 address_to at)
-{
-        p16 value;
-
-        memory_copy(address_of value, at, sizeof(value));
-        return value;
-}
-
-static p32 storage_le32(p8 address_to at)
-{
-        p32 value;
-
-        memory_copy(address_of value, at, sizeof(value));
-        return value;
-}
-
-static p64 storage_le64(p8 address_to at)
-{
-        p64 value;
-
-        memory_copy(address_of value, at, sizeof(value));
-        return value;
-}
+#define storage_le16(at) memory_load_unaligned(p16, (at))
+#define storage_le32(at) memory_load_unaligned(p32, (at))
+#define storage_le64(at) memory_load_unaligned(p64, (at))
 
 #define storage_be16 network_load_16
 #define storage_be32 network_load_32

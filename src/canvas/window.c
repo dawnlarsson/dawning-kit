@@ -286,10 +286,9 @@ struct window_cell
 #define WINDOW_CELL_W 8
 #define WINDOW_CELL_H 16
 
-static inline struct window_cell *window_cells(struct window *window)
-{
-        return (struct window_cell *)((char *)window + WINDOW_PIXELS);
-}
+#define window_at(window, type, offset)                                       \
+        ((type *)((char *)(window) + (offset)))
+#define window_cells(window) window_at((window), struct window_cell, WINDOW_PIXELS)
 
 // One line of the ring. Any index at all: it is taken modulo the history, so
 // counting forever is what a caller is meant to do with head.
@@ -301,10 +300,7 @@ static inline struct window_cell *window_line(struct window *window,
 
 // How much of each line has been written. Nothing past this is drawn, so a
 // line that shrinks does not leave the rest of what was there on the screen.
-static inline unsigned int *window_lengths(struct window *window)
-{
-        return (unsigned int *)((char *)window + window->lines);
-}
+#define window_lengths(window) window_at((window), unsigned int, (window)->lines)
 
 static inline unsigned int *window_length(struct window *window,
                                           unsigned int index)
@@ -361,10 +357,7 @@ static inline int window_key(struct window *window, struct window_key *key)
         return 1;
 }
 
-static inline unsigned int *window_pixels(struct window *window)
-{
-        return (unsigned int *)((char *)window + WINDOW_PIXELS);
-}
+#define window_pixels(window) window_at((window), unsigned int, WINDOW_PIXELS)
 
 #ifndef KERNEL_MODE
 

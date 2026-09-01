@@ -249,6 +249,13 @@ static bool shell_room(address_any address_to held, positive address_to have,
         shell_room((address_any address_to)address_of (array),               \
                    address_of (room), (want), sizeof((array)[0]))
 
+// Parallel byte stores share one capacity decision at their call sites.
+#define shell_byte_pair_room(first, first_room, second, second_room, want)    \
+        (shell_room((address_any address_to)address_of (first),               \
+                    address_of (first_room), (want), 1) &&                    \
+         shell_room((address_any address_to)address_of (second),              \
+                    address_of (second_room), (want), 1))
+
 //      Bytes that will not move for as long as the line lasts.
 static p8 address_to shell_store_take(shell_store address_to store, positive room)
 {

@@ -144,25 +144,20 @@ static bool storage_read_all(string_address path, p8 address_to address_to text,
         return true;
 }
 
-fn storage_mount_table_release(storage_mount_table address_to table)
-{
-        memory_release((address_any address_to)address_of table->text,
-                       address_of table->text_room,
-                       address_of table->text_used, 1);
-        memory_release((address_any address_to)address_of table->entry,
-                       address_of table->entry_room,
-                       address_of table->count, sizeof(storage_mount));
-}
+#define STORAGE_TABLE_RELEASE(name, type)                                    \
+        fn name(type address_to table)                                       \
+        {                                                                    \
+                memory_release((address_any address_to)address_of table->text, \
+                               address_of table->text_room,                   \
+                               address_of table->text_used, 1);               \
+                memory_release((address_any address_to)address_of table->entry, \
+                               address_of table->entry_room,                  \
+                               address_of table->count, sizeof(table->entry[0])); \
+        }
 
-fn storage_fstab_table_release(storage_fstab_table address_to table)
-{
-        memory_release((address_any address_to)address_of table->text,
-                       address_of table->text_room,
-                       address_of table->text_used, 1);
-        memory_release((address_any address_to)address_of table->entry,
-                       address_of table->entry_room,
-                       address_of table->count, sizeof(storage_fstab));
-}
+STORAGE_TABLE_RELEASE(storage_mount_table_release, storage_mount_table)
+STORAGE_TABLE_RELEASE(storage_fstab_table_release, storage_fstab_table)
+#undef STORAGE_TABLE_RELEASE
 
 static bool storage_octal(p8 address_to at, p8 address_to value)
 {

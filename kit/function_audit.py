@@ -30,11 +30,20 @@ Definition = namedtuple('Definition', 'path line name kind')
 # first macro argument.  Keeping this table tiny and explicit also makes a new
 # body-generating macro a visible inventory event rather than a parser guess.
 GENERATORS = {
+    ('src/core.c', 'REPORT_CANVAS'): ('{}',),
     ('src/sh/awk.c', 'AWK_LOGICAL_LEVEL'): ('{}',),
     ('src/sh/awk.c', 'AWK_EVALUATOR'): ('{}',),
     ('src/sh/expand.c', 'ARITH_BIT_LEVEL'): ('{}',),
     ('src/sh/builtin.c', 'STORAGE_ADAPTER'):
         ('shell_{}', 'storage_program_{}'),
+    ('src/sh/storage_discovery.c', 'STORAGE_TABLE_RELEASE'): ('{}',),
+    ('src/standard/process.c', 'PROCESS_EXECL'): ('{}',),
+    ('src/standard/error.c', 'ERROR_OPEN'): ('{}',),
+    ('src/standard/error.c', 'ERROR_ENTRY'): ('{}',),
+    ('src/standard/error.c', 'var_list_entry'): ('{}',),
+    ('src/standard/format.c', 'var_list_entry'): ('{}',),
+    ('src/standard/scan.c', 'var_list_entry'): ('{}',),
+    ('src/standard/stdlib.c', 'STDLIB_DIVIDE'): ('{}',),
 }
 
 

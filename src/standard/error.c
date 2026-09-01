@@ -1249,39 +1249,29 @@ typedef struct stat
 
 //      -- descriptors ------------------------------------------------------
 
-static b32 openat(b32 directory, string_address path, b32 flags, ...)
-{
-        var_args list;
-        p32 mode = 0;
+#define ERROR_ENTRY(name, returned, parameters, translate, call)             \
+        static returned name parameters { return translate(call); }
 
-        if (flags & (O_CREAT | O_TMPFILE_CREATE))
-        {
-                var_list(list, flags);
-                mode = var_list_get(list, p32);
-                var_list_end(list);
+#define ERROR_OPEN(name, parameters, directory)                              \
+        static b32 name parameters                                           \
+        {                                                                    \
+                p32 mode = 0;                                                \
+                if (flags & (O_CREAT | O_TMPFILE_CREATE))                    \
+                {                                                            \
+                        var_args list;                                        \
+                        var_list(list, flags);                                \
+                        mode = var_list_get(list, p32);                       \
+                        var_list_end(list);                                   \
+                }                                                            \
+                return error_whole(system_call_4(                            \
+                    syscall(openat), (positive)(directory), (positive)path,  \
+                    (positive)flags, (positive)mode));                        \
         }
 
-        return error_whole(system_call_4(syscall(openat), (positive)directory,
-                                         (positive)path, (positive)flags,
-                                         (positive)mode));
-}
-
-static b32 open(string_address path, b32 flags, ...)
-{
-        var_args list;
-        p32 mode = 0;
-
-        if (flags & (O_CREAT | O_TMPFILE_CREATE))
-        {
-                var_list(list, flags);
-                mode = var_list_get(list, p32);
-                var_list_end(list);
-        }
-
-        return error_whole(system_call_4(syscall(openat), ERROR_AT_HERE,
-                                         (positive)path, (positive)flags,
-                                         (positive)mode));
-}
+ERROR_OPEN(openat,
+           (b32 directory, string_address path, b32 flags, ...), directory)
+ERROR_OPEN(open, (string_address path, b32 flags, ...), ERROR_AT_HERE)
+#undef ERROR_OPEN
 
 //      creat is open with the three flags spelled out, and is here because
 //      shell scripts and old C both still use it.
@@ -1293,10 +1283,8 @@ static b32 creat(string_address path, p32 mode)
                                          (positive)mode));
 }
 
-static b32 close(b32 handle)
-{
-        return error_whole(system_call_1(syscall(close), (positive)handle));
-}
+ERROR_ENTRY(close, b32, (b32 handle), error_whole,
+            system_call_1(syscall(close), (positive)handle))
 
 /*
         read and write return ssize_t and not int, and the difference is
@@ -1305,44 +1293,27 @@ static b32 close(b32 handle)
         the answer for anything above that, and pread on a large file has an
         offset that certainly does not fit.
 */
-static bipolar read(b32 handle, address_any buffer, positive count)
-{
-        return error_wide(system_call_3(syscall(read), (positive)handle,
-                                        (positive)buffer, count));
-}
-
-static bipolar write(b32 handle, const address_any buffer, positive count)
-{
-        return error_wide(system_call_3(syscall(write), (positive)handle,
-                                        (positive)buffer, count));
-}
-
-static bipolar pread(b32 handle, address_any buffer, positive count,
-                     bipolar offset)
-{
-        return error_wide(system_call_4(syscall(pread64), (positive)handle,
-                                        (positive)buffer, count,
-                                        (positive)offset));
-}
-
-static bipolar pwrite(b32 handle, const address_any buffer, positive count,
-                      bipolar offset)
-{
-        return error_wide(system_call_4(syscall(pwrite64), (positive)handle,
-                                        (positive)buffer, count,
-                                        (positive)offset));
-}
-
-static bipolar lseek(b32 handle, bipolar offset, b32 whence)
-{
-        return error_wide(system_call_3(syscall(lseek), (positive)handle,
-                                        (positive)offset, (positive)whence));
-}
-
-static b32 dup(b32 handle)
-{
-        return error_whole(system_call_1(syscall(dup), (positive)handle));
-}
+ERROR_ENTRY(read, bipolar, (b32 handle, address_any buffer, positive count),
+            error_wide, system_call_3(syscall(read), (positive)handle,
+                                      (positive)buffer, count))
+ERROR_ENTRY(write, bipolar,
+            (b32 handle, const address_any buffer, positive count), error_wide,
+            system_call_3(syscall(write), (positive)handle, (positive)buffer,
+                          count))
+ERROR_ENTRY(pread, bipolar,
+            (b32 handle, address_any buffer, positive count, bipolar offset),
+            error_wide, system_call_4(syscall(pread64), (positive)handle,
+                                      (positive)buffer, count, (positive)offset))
+ERROR_ENTRY(pwrite, bipolar,
+            (b32 handle, const address_any buffer, positive count,
+             bipolar offset),
+            error_wide, system_call_4(syscall(pwrite64), (positive)handle,
+                                      (positive)buffer, count, (positive)offset))
+ERROR_ENTRY(lseek, bipolar, (b32 handle, bipolar offset, b32 whence),
+            error_wide, system_call_3(syscall(lseek), (positive)handle,
+                                      (positive)offset, (positive)whence))
+ERROR_ENTRY(dup, b32, (b32 handle), error_whole,
+            system_call_1(syscall(dup), (positive)handle))
 
 /*
         dup2 is dup3 with no flags, except in the one case where they are not
@@ -1354,11 +1325,9 @@ static b32 dup(b32 handle)
         dup2 on a closed descriptor must still fail with EBADF rather than
         silently succeeding.
 */
-static b32 dup3(b32 from, b32 to, b32 flags)
-{
-        return error_whole(system_call_3(syscall(dup3), (positive)from,
-                                         (positive)to, (positive)flags));
-}
+ERROR_ENTRY(dup3, b32, (b32 from, b32 to, b32 flags), error_whole,
+            system_call_3(syscall(dup3), (positive)from, (positive)to,
+                          (positive)flags))
 
 static b32 dup2(b32 from, b32 to)
 {
@@ -1379,42 +1348,19 @@ static b32 dup2(b32 from, b32 to)
         return dup3(from, to, 0);
 }
 
-static b32 pipe2(b32 address_to pair, b32 flags)
-{
-        return error_whole(system_call_2(syscall(pipe2), (positive)pair,
-                                         (positive)flags));
-}
+ERROR_ENTRY(pipe2, b32, (b32 address_to pair, b32 flags), error_whole,
+            system_call_2(syscall(pipe2), (positive)pair, (positive)flags))
+ERROR_ENTRY(pipe, b32, (b32 address_to pair), error_whole,
+            system_call_2(syscall(pipe2), (positive)pair, 0))
 
-static b32 pipe(b32 address_to pair)
-{
-        return error_whole(system_call_2(syscall(pipe2), (positive)pair, 0));
-}
-
-static b32 fcntl(b32 handle, b32 command, ...)
-{
-        var_args list;
-        positive argument;
-
-        var_list(list, command);
-        argument = var_list_get(list, positive);
-        var_list_end(list);
-
-        return error_whole(system_call_3(syscall(fcntl), (positive)handle,
-                                         (positive)command, argument));
-}
-
-static b32 ioctl(b32 handle, positive request, ...)
-{
-        var_args list;
-        positive argument;
-
-        var_list(list, request);
-        argument = var_list_get(list, positive);
-        var_list_end(list);
-
-        return error_whole(system_call_3(syscall(ioctl), (positive)handle,
-                                         request, argument));
-}
+var_list_entry(fcntl, b32, (b32 handle, b32 command, ...), command,
+               error_whole(system_call_3(
+                   syscall(fcntl), (positive)handle, (positive)command,
+                   var_list_get(_variadic_list, positive))))
+var_list_entry(ioctl, b32, (b32 handle, positive request, ...), request,
+               error_whole(system_call_3(
+                   syscall(ioctl), (positive)handle, request,
+                   var_list_get(_variadic_list, positive))))
 
 /*
         isatty, which is a question with no syscall of its own.
@@ -1446,26 +1392,17 @@ b32 isatty(b32 handle)
 
 //      -- names in the file system ----------------------------------------
 
-static b32 fstatat(b32 directory, string_address path, stat_address into,
-                   b32 flags)
-{
-        return error_whole(system_call_4(syscall(newfstatat),
-                                         (positive)directory, (positive)path,
-                                         (positive)into, (positive)flags));
-}
-
-static b32 stat(string_address path, stat_address into)
-{
-        return error_whole(system_call_4(syscall(newfstatat), ERROR_AT_HERE,
-                                         (positive)path, (positive)into, 0));
-}
-
-static b32 lstat(string_address path, stat_address into)
-{
-        return error_whole(system_call_4(syscall(newfstatat), ERROR_AT_HERE,
-                                         (positive)path, (positive)into,
-                                         AT_SYMLINK_NOFOLLOW));
-}
+ERROR_ENTRY(fstatat, b32,
+            (b32 directory, string_address path, stat_address into, b32 flags),
+            error_whole, system_call_4(syscall(newfstatat),
+                                       (positive)directory, (positive)path,
+                                       (positive)into, (positive)flags))
+ERROR_ENTRY(stat, b32, (string_address path, stat_address into), error_whole,
+            system_call_4(syscall(newfstatat), ERROR_AT_HERE, (positive)path,
+                          (positive)into, 0))
+ERROR_ENTRY(lstat, b32, (string_address path, stat_address into), error_whole,
+            system_call_4(syscall(newfstatat), ERROR_AT_HERE, (positive)path,
+                          (positive)into, AT_SYMLINK_NOFOLLOW))
 
 /*
         fstat has a syscall of its own on all three, and is not newfstatat
@@ -1473,43 +1410,24 @@ static b32 lstat(string_address path, stat_address into)
         string and the plain form does not, and the plain form is one number
         on every machine here.
 */
-static b32 fstat(b32 handle, stat_address into)
-{
-        return error_whole(system_call_2(syscall(fstat), (positive)handle,
-                                         (positive)into));
-}
-
-static b32 unlinkat(b32 directory, string_address path, b32 flags)
-{
-        return error_whole(system_call_3(syscall(unlinkat),
-                                         (positive)directory, (positive)path,
-                                         (positive)flags));
-}
-
-static b32 unlink(string_address path)
-{
-        return error_whole(system_call_3(syscall(unlinkat), ERROR_AT_HERE,
-                                         (positive)path, 0));
-}
-
-static b32 rmdir(string_address path)
-{
-        return error_whole(system_call_3(syscall(unlinkat), ERROR_AT_HERE,
-                                         (positive)path, AT_REMOVEDIR));
-}
-
-static b32 mkdirat(b32 directory, string_address path, p32 mode)
-{
-        return error_whole(system_call_3(syscall(mkdirat),
-                                         (positive)directory, (positive)path,
-                                         (positive)mode));
-}
-
-static b32 mkdir(string_address path, p32 mode)
-{
-        return error_whole(system_call_3(syscall(mkdirat), ERROR_AT_HERE,
-                                         (positive)path, (positive)mode));
-}
+ERROR_ENTRY(fstat, b32, (b32 handle, stat_address into), error_whole,
+            system_call_2(syscall(fstat), (positive)handle, (positive)into))
+ERROR_ENTRY(unlinkat, b32,
+            (b32 directory, string_address path, b32 flags), error_whole,
+            system_call_3(syscall(unlinkat), (positive)directory,
+                          (positive)path, (positive)flags))
+ERROR_ENTRY(unlink, b32, (string_address path), error_whole,
+            system_call_3(syscall(unlinkat), ERROR_AT_HERE, (positive)path, 0))
+ERROR_ENTRY(rmdir, b32, (string_address path), error_whole,
+            system_call_3(syscall(unlinkat), ERROR_AT_HERE, (positive)path,
+                          AT_REMOVEDIR))
+ERROR_ENTRY(mkdirat, b32,
+            (b32 directory, string_address path, p32 mode), error_whole,
+            system_call_3(syscall(mkdirat), (positive)directory,
+                          (positive)path, (positive)mode))
+ERROR_ENTRY(mkdir, b32, (string_address path, p32 mode), error_whole,
+            system_call_3(syscall(mkdirat), ERROR_AT_HERE, (positive)path,
+                          (positive)mode))
 
 /*
         rename is renameat2 with no flags, not renameat.
@@ -1520,36 +1438,22 @@ static b32 mkdir(string_address path, p32 mode)
         else or nothing there. renameat2 is 276 on both and does everything
         renameat does when its flags are zero.
 */
-static b32 renameat2(b32 from_directory, string_address from,
-                     b32 to_directory, string_address to, p32 flags)
-{
-        return error_whole(system_call_5(syscall(renameat2),
-                                         (positive)from_directory,
-                                         (positive)from,
-                                         (positive)to_directory,
-                                         (positive)to, (positive)flags));
-}
-
-static b32 rename(string_address from, string_address to)
-{
-        return error_whole(system_call_5(syscall(renameat2), ERROR_AT_HERE,
-                                         (positive)from, ERROR_AT_HERE,
-                                         (positive)to, 0));
-}
-
-static b32 link(string_address from, string_address to)
-{
-        return error_whole(system_call_5(syscall(linkat), ERROR_AT_HERE,
-                                         (positive)from, ERROR_AT_HERE,
-                                         (positive)to, 0));
-}
-
-static b32 symlink(string_address target, string_address path)
-{
-        return error_whole(system_call_3(syscall(symlinkat),
-                                         (positive)target, ERROR_AT_HERE,
-                                         (positive)path));
-}
+ERROR_ENTRY(renameat2, b32,
+            (b32 from_directory, string_address from, b32 to_directory,
+             string_address to, p32 flags),
+            error_whole, system_call_5(syscall(renameat2),
+                                       (positive)from_directory,
+                                       (positive)from, (positive)to_directory,
+                                       (positive)to, (positive)flags))
+ERROR_ENTRY(rename, b32, (string_address from, string_address to), error_whole,
+            system_call_5(syscall(renameat2), ERROR_AT_HERE, (positive)from,
+                          ERROR_AT_HERE, (positive)to, 0))
+ERROR_ENTRY(link, b32, (string_address from, string_address to), error_whole,
+            system_call_5(syscall(linkat), ERROR_AT_HERE, (positive)from,
+                          ERROR_AT_HERE, (positive)to, 0))
+ERROR_ENTRY(symlink, b32, (string_address target, string_address path),
+            error_whole, system_call_3(syscall(symlinkat), (positive)target,
+                                       ERROR_AT_HERE, (positive)path))
 
 /*
         readlink returns the number of bytes it placed and does not terminate
@@ -1557,20 +1461,16 @@ static b32 symlink(string_address target, string_address path)
         here: a caller that hands it a buffer of exactly the link's length
         gets that length back and a string with no end on it.
 */
-static bipolar readlink(string_address path, string_address into,
-                        positive size)
-{
-        return error_wide(system_call_4(syscall(readlinkat), ERROR_AT_HERE,
-                                        (positive)path, (positive)into, size));
-}
-
-static bipolar readlinkat(b32 directory, string_address path,
-                          string_address into, positive size)
-{
-        return error_wide(system_call_4(syscall(readlinkat),
-                                        (positive)directory, (positive)path,
-                                        (positive)into, size));
-}
+ERROR_ENTRY(readlink, bipolar,
+            (string_address path, string_address into, positive size),
+            error_wide, system_call_4(syscall(readlinkat), ERROR_AT_HERE,
+                                      (positive)path, (positive)into, size))
+ERROR_ENTRY(readlinkat, bipolar,
+            (b32 directory, string_address path, string_address into,
+             positive size),
+            error_wide, system_call_4(syscall(readlinkat),
+                                      (positive)directory, (positive)path,
+                                      (positive)into, size))
 
 /*
         access asks the kernel with the real user and group rather than the
@@ -1580,11 +1480,9 @@ static bipolar readlinkat(b32 directory, string_address path,
         AT_EACCESS is faccessat2, which is a much newer number and is not
         used here.
 */
-static b32 access(string_address path, b32 mode)
-{
-        return error_whole(system_call_3(syscall(faccessat), ERROR_AT_HERE,
-                                         (positive)path, (positive)mode));
-}
+ERROR_ENTRY(access, b32, (string_address path, b32 mode), error_whole,
+            system_call_3(syscall(faccessat), ERROR_AT_HERE, (positive)path,
+                          (positive)mode))
 
 static b32 faccessat(b32 directory, string_address path, b32 mode, b32 flags)
 {
@@ -1596,72 +1494,35 @@ static b32 faccessat(b32 directory, string_address path, b32 mode, b32 flags)
 
 //      fchmodat on asm-generic is three arguments; the flags-taking form is
 //      fchmodat2 and is newer than the floor this targets.
-static b32 chmod(string_address path, p32 mode)
-{
-        return error_whole(system_call_3(syscall(fchmodat), ERROR_AT_HERE,
-                                         (positive)path, (positive)mode));
-}
-
-static b32 fchmod(b32 handle, p32 mode)
-{
-        return error_whole(system_call_2(syscall(fchmod), (positive)handle,
-                                         (positive)mode));
-}
-
-static b32 chown(string_address path, p32 owner, p32 group)
-{
-        return error_whole(system_call_5(syscall(fchownat), ERROR_AT_HERE,
-                                         (positive)path, (positive)owner,
-                                         (positive)group, 0));
-}
-
-static b32 lchown(string_address path, p32 owner, p32 group)
-{
-        return error_whole(system_call_5(syscall(fchownat), ERROR_AT_HERE,
-                                         (positive)path, (positive)owner,
-                                         (positive)group,
-                                         AT_SYMLINK_NOFOLLOW));
-}
-
-static b32 fchown(b32 handle, p32 owner, p32 group)
-{
-        return error_whole(system_call_3(syscall(fchown), (positive)handle,
-                                         (positive)owner, (positive)group));
-}
-
-static b32 truncate(string_address path, bipolar length)
-{
-        return error_whole(system_call_2(syscall(truncate), (positive)path,
-                                         (positive)length));
-}
-
-static b32 ftruncate(b32 handle, bipolar length)
-{
-        return error_whole(system_call_2(syscall(ftruncate),
-                                         (positive)handle,
-                                         (positive)length));
-}
-
-static b32 fsync(b32 handle)
-{
-        return error_whole(system_call_1(syscall(fsync), (positive)handle));
-}
-
-static b32 fdatasync(b32 handle)
-{
-        return error_whole(system_call_1(syscall(fdatasync),
-                                         (positive)handle));
-}
-
-static b32 chdir(string_address path)
-{
-        return error_whole(system_call_1(syscall(chdir), (positive)path));
-}
-
-static b32 fchdir(b32 handle)
-{
-        return error_whole(system_call_1(syscall(fchdir), (positive)handle));
-}
+ERROR_ENTRY(chmod, b32, (string_address path, p32 mode), error_whole,
+            system_call_3(syscall(fchmodat), ERROR_AT_HERE, (positive)path,
+                          (positive)mode))
+ERROR_ENTRY(fchmod, b32, (b32 handle, p32 mode), error_whole,
+            system_call_2(syscall(fchmod), (positive)handle, (positive)mode))
+ERROR_ENTRY(chown, b32, (string_address path, p32 owner, p32 group),
+            error_whole, system_call_5(syscall(fchownat), ERROR_AT_HERE,
+                                       (positive)path, (positive)owner,
+                                       (positive)group, 0))
+ERROR_ENTRY(lchown, b32, (string_address path, p32 owner, p32 group),
+            error_whole, system_call_5(syscall(fchownat), ERROR_AT_HERE,
+                                       (positive)path, (positive)owner,
+                                       (positive)group, AT_SYMLINK_NOFOLLOW))
+ERROR_ENTRY(fchown, b32, (b32 handle, p32 owner, p32 group), error_whole,
+            system_call_3(syscall(fchown), (positive)handle, (positive)owner,
+                          (positive)group))
+ERROR_ENTRY(truncate, b32, (string_address path, bipolar length), error_whole,
+            system_call_2(syscall(truncate), (positive)path, (positive)length))
+ERROR_ENTRY(ftruncate, b32, (b32 handle, bipolar length), error_whole,
+            system_call_2(syscall(ftruncate), (positive)handle,
+                          (positive)length))
+ERROR_ENTRY(fsync, b32, (b32 handle), error_whole,
+            system_call_1(syscall(fsync), (positive)handle))
+ERROR_ENTRY(fdatasync, b32, (b32 handle), error_whole,
+            system_call_1(syscall(fdatasync), (positive)handle))
+ERROR_ENTRY(chdir, b32, (string_address path), error_whole,
+            system_call_1(syscall(chdir), (positive)path))
+ERROR_ENTRY(fchdir, b32, (b32 handle), error_whole,
+            system_call_1(syscall(fchdir), (positive)handle))
 
 /*
         getcwd is the one call here whose C shape and syscall shape disagree
@@ -1697,12 +1558,9 @@ static string_address getcwd(string_address into, positive size)
         return into;
 }
 
-static b32 getdents64(b32 handle, address_any into, positive size)
-{
-        return error_whole(system_call_3(syscall(getdents64),
-                                         (positive)handle, (positive)into,
-                                         size));
-}
+ERROR_ENTRY(getdents64, b32, (b32 handle, address_any into, positive size),
+            error_whole, system_call_3(syscall(getdents64), (positive)handle,
+                                       (positive)into, size))
 
 //      umask cannot fail: it returns the previous mask and there is no error
 //      the kernel can report, so no translation happens and errno is not
@@ -1737,18 +1595,12 @@ static address_any mmap(address_any hint, positive length, b32 protection,
                           (positive)handle, (positive)offset));
 }
 
-static b32 munmap(address_any address, positive length)
-{
-        return error_whole(system_call_2(syscall(munmap), (positive)address,
-                                         length));
-}
-
-static b32 mprotect(address_any address, positive length, b32 protection)
-{
-        return error_whole(system_call_3(syscall(mprotect),
-                                         (positive)address, length,
-                                         (positive)protection));
-}
+ERROR_ENTRY(munmap, b32, (address_any address, positive length), error_whole,
+            system_call_2(syscall(munmap), (positive)address, length))
+ERROR_ENTRY(mprotect, b32,
+            (address_any address, positive length, b32 protection), error_whole,
+            system_call_3(syscall(mprotect), (positive)address, length,
+                          (positive)protection))
 
 //      -- processes -------------------------------------------------------
 
@@ -1784,19 +1636,14 @@ static p32 getegid(void)
         return (p32)system_call(syscall(getegid));
 }
 
-static b32 kill(b32 process, b32 signal)
-{
-        return error_whole(system_call_2(syscall(kill), (positive)process,
-                                         (positive)signal));
-}
-
-static b32 execve(string_address path, string_address address_to arguments,
-                  string_address address_to environment)
-{
-        return error_whole(system_call_3(syscall(execve), (positive)path,
-                                         (positive)arguments,
-                                         (positive)environment));
-}
+ERROR_ENTRY(kill, b32, (b32 process, b32 signal), error_whole,
+            system_call_2(syscall(kill), (positive)process, (positive)signal))
+ERROR_ENTRY(execve, b32,
+            (string_address path, string_address address_to arguments,
+             string_address address_to environment),
+            error_whole, system_call_3(syscall(execve), (positive)path,
+                                       (positive)arguments,
+                                       (positive)environment))
 
 /*
         fork, which is clone with one flag and nothing else.
@@ -1812,10 +1659,8 @@ static b32 execve(string_address path, string_address address_to arguments,
         SIGCHLD and makes wait work, and is the whole of what distinguishes
         this from a thread.
 */
-static b32 fork(void)
-{
-        return error_whole(system_call_5(syscall(clone), SIGCHLD, 0, 0, 0, 0));
-}
+ERROR_ENTRY(fork, b32, (void), error_whole,
+            system_call_5(syscall(clone), SIGCHLD, 0, 0, 0, 0))
 
 /*
         wait4 without the EINTR retry that library.c's system_wait4_retry
@@ -1827,26 +1672,19 @@ static b32 fork(void)
         wait is entitled to be. The retrying version is still there under its
         own name for anything that wants it.
 */
-static b32 wait4(b32 process, b32 address_to status, b32 options,
-                 address_any usage)
-{
-        return error_whole(system_call_4(syscall(wait4), (positive)process,
-                                         ERROR_STATUS_ADDRESS(status),
-                                         (positive)options, (positive)usage));
-}
-
-static b32 waitpid(b32 process, b32 address_to status, b32 options)
-{
-        return error_whole(system_call_4(syscall(wait4), (positive)process,
-                                         ERROR_STATUS_ADDRESS(status),
-                                         (positive)options, 0));
-}
-
-static b32 wait(b32 address_to status)
-{
-        return error_whole(system_call_4(syscall(wait4), (positive)(bipolar)-1,
-                                         ERROR_STATUS_ADDRESS(status), 0, 0));
-}
+ERROR_ENTRY(wait4, b32,
+            (b32 process, b32 address_to status, b32 options,
+             address_any usage),
+            error_whole, system_call_4(syscall(wait4), (positive)process,
+                                       ERROR_STATUS_ADDRESS(status),
+                                       (positive)options, (positive)usage))
+ERROR_ENTRY(waitpid, b32,
+            (b32 process, b32 address_to status, b32 options), error_whole,
+            system_call_4(syscall(wait4), (positive)process,
+                          ERROR_STATUS_ADDRESS(status), (positive)options, 0))
+ERROR_ENTRY(wait, b32, (b32 address_to status), error_whole,
+            system_call_4(syscall(wait4), (positive)(bipolar)-1,
+                          ERROR_STATUS_ADDRESS(status), 0, 0))
 
 /*
         _exit and _Exit, which are exit_group and not exit.
@@ -1866,15 +1704,10 @@ DEAD_END fn _exit(b32 status)
 
 DEAD_END fn _Exit(b32 status) __attribute__((alias("_exit")));
 
-static b32 setsid(void)
-{
-        return error_whole(system_call(syscall(setsid)));
-}
+ERROR_ENTRY(setsid, b32, (void), error_whole, system_call(syscall(setsid)))
+ERROR_ENTRY(sync, b32, (void), error_whole, system_call(syscall(sync)))
 
-static b32 sync(void)
-{
-        return error_whole(system_call(syscall(sync)));
-}
+#undef ERROR_ENTRY
 
 #endif // KERNEL_MODE / STANDARD_NO_PLATFORM
 

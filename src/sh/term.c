@@ -110,15 +110,8 @@ static fn touch_all()
         compositor's count while the cells are still laid out at this one is a
         line taken from somewhere else entirely.
 */
-static struct window_cell address_to row_cells(unsigned int r)
-{
-        return window_line(window, window->head - ROWS + r);
-}
-
-static unsigned int address_to row_length(unsigned int r)
-{
-        return window_length(window, window->head - ROWS + r);
-}
+#define row_cells(row) window_line(window, window->head - ROWS + (row))
+#define row_length(row) window_length(window, window->head - ROWS + (row))
 
 /*
         A cell is eight bytes and the ring begins 4096 bytes into its

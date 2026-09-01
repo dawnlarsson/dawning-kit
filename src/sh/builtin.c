@@ -141,16 +141,18 @@ bipolar shell_exec_file(string_address path,
 
 extern p8 address_to shell_directory;
 
-bipolar shell_find_in_path_alloc(string_address name,
-                                 p8 address_to address_to into,
-                                 positive address_to room);
-bipolar shell_find_in_path_query_alloc(string_address name,
-                                       p8 address_to address_to into,
-                                       positive address_to room);
-static bipolar shell_find_in_standard_path_alloc(string_address name,
-                                                  p8 address_to address_to into,
-                                                  positive address_to room,
-                                                  bool query);
+static bipolar shell_find_in_path_alloc_mode(string_address name,
+                                              p8 address_to address_to into,
+                                              positive address_to room,
+                                              bool query,
+                                              string_address fixed_path);
+#define shell_find_in_path_alloc(name, into, room)                            \
+        shell_find_in_path_alloc_mode((name), (into), (room), false, null)
+#define shell_find_in_path_query_alloc(name, into, room)                      \
+        shell_find_in_path_alloc_mode((name), (into), (room), true, null)
+#define shell_find_in_standard_path_alloc(name, into, room, query)            \
+        shell_find_in_path_alloc_mode((name), (into), (room), (query),        \
+                                      "/bin:/usr/bin")
 bipolar shell_signed(string_address input, bool address_to good);
 bool test_facts(string_address path, file_facts address_to out, bool follow);
 bool word_is(string_address word, string_address text);
@@ -2014,17 +2016,10 @@ fn shell_options_started(bool interactive)
         This is the seventeenth table entry above. Reading its named-option
         bit directly keeps every pipeline out of the general name lookup.
 */
-PURE bool shell_pipefail()
-{
-        return (shell_options_named &
-                ((positive)1 << SHELL_OPTION_PIPEFAIL)) != 0;
-}
-
-PURE bool shell_noclobber()
-{
-        return (shell_options_named &
-                ((positive)1 << SHELL_OPTION_NOCLOBBER)) != 0;
-}
+#define shell_named_option(which)                                            \
+        ((shell_options_named & ((positive)1 << (which))) != 0)
+#define shell_pipefail() shell_named_option(SHELL_OPTION_PIPEFAIL)
+#define shell_noclobber() shell_named_option(SHELL_OPTION_NOCLOBBER)
 
 fn shell_options_listed(writer write, bool as_commands)
 {
@@ -3158,15 +3153,8 @@ bool test_unary(p8 op, string_address value)
 }
 
 // The three fields test wants out of statx.
-PURE b64 test_modified(file_facts address_to facts)
-{
-        return facts->modified.seconds;
-}
-
-PURE p32 test_modified_fraction(file_facts address_to facts)
-{
-        return facts->modified.nanoseconds;
-}
+#define test_modified(facts) ((facts)->modified.seconds)
+#define test_modified_fraction(facts) ((facts)->modified.nanoseconds)
 
 PURE bool test_is_unary(string_address word)
 {
@@ -4028,13 +4016,9 @@ static positive read_length;
 // retained while they grow. Keep both mappings for the next call: a shell that
 // reads a long-lived stream reaches a steady state instead of allocating once
 // per line.
-static bool read_reserve(positive want)
-{
-        return shell_room((address_any address_to)address_of read_line,
-                          address_of read_line_room, want, 1) &&
-               shell_room((address_any address_to)address_of read_literal,
-                          address_of read_literal_room, want, 1);
-}
+#define read_reserve(want)                                                   \
+        shell_byte_pair_room(read_line, read_line_room, read_literal,        \
+                             read_literal_room, (want))
 
 // Whether a byte splits a field. The two questions are different: every byte
 // in IFS ends a field, but only the blanks among them are allowed to run
@@ -6843,29 +6827,6 @@ static bipolar shell_find_in_path_alloc_mode(string_address name,
                 return 2;
 
         return 0;
-}
-
-bipolar shell_find_in_path_alloc(string_address name,
-                                 p8 address_to address_to into,
-                                 positive address_to room)
-{
-        return shell_find_in_path_alloc_mode(name, into, room, false, null);
-}
-
-bipolar shell_find_in_path_query_alloc(string_address name,
-                                       p8 address_to address_to into,
-                                       positive address_to room)
-{
-        return shell_find_in_path_alloc_mode(name, into, room, true, null);
-}
-
-static bipolar shell_find_in_standard_path_alloc(string_address name,
-                                                  p8 address_to address_to into,
-                                                  positive address_to room,
-                                                  bool query)
-{
-        return shell_find_in_path_alloc_mode(name, into, room, query,
-                                             "/bin:/usr/bin");
 }
 
 /*

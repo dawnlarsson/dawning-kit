@@ -339,12 +339,13 @@ static bool text_reader_open(text_reader address_to reader, string_address path)
         return true;
 }
 
-static fn text_reader_close(text_reader address_to reader)
+static inline INLINE fn text_close_handle(bool address_to opened,
+                                          positive handle)
 {
-        if (reader->opened)
-                system_call_1(syscall(close), reader->handle);
+        if (address_to opened)
+                system_call_1(syscall(close), handle);
 
-        reader->opened = false;
+        address_to opened = false;
 }
 
 /*
@@ -399,7 +400,7 @@ static bool text_open(string_address path)
 
 static fn text_close()
 {
-        text_reader_close(address_of text_input);
+        text_close_handle(address_of text_input.opened, text_input.handle);
 }
 
 static bool text_fill()
@@ -10356,21 +10357,13 @@ static bool cmp_fill(cmp_side address_to side)
         return true;
 }
 
-static fn cmp_close(cmp_side address_to side)
-{
-        if (side->opened)
-                system_call_1(syscall(close), side->handle);
-
-        side->opened = false;
-}
-
 // Both sides shut and the answer handed back, which is how every exit from
 // the comparison below leaves. A shell runs cmp as a builtin and goes on
 // living, so a descriptor left open here is a descriptor leaked for good.
 static b32 cmp_ends(b32 code)
 {
-        cmp_close(address_of cmp_left);
-        cmp_close(address_of cmp_right);
+        text_close_handle(address_of cmp_left.opened, cmp_left.handle);
+        text_close_handle(address_of cmp_right.opened, cmp_right.handle);
 
         return text_done(code);
 }

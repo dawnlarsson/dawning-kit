@@ -1035,54 +1035,21 @@ static fn clock_format_number_spaced(clock_format_state address_to state,
         clock_format_number(state, value, least);
 }
 
-// The name tables, guarded, answering what glibc answers for an index that is
-// outside them rather than reading past the end of the table.
-static const char address_to clock_weekday_name(b32 weekday, bool full,
-                                                positive address_to length)
+// Guard and append either calendar-name table with the same out-of-range rule.
+static fn clock_format_name(clock_format_state address_to state, b32 index,
+                            bool full, b32 count,
+                            const char address_to short_names[],
+                            const char address_to long_names[],
+                            const p8 address_to long_lengths)
 {
-        if (weekday < 0 || weekday > 6)
-        {
-                address_to length = 1;
-                return clock_unknown_name;
-        }
+        if (index < 0 || index >= count)
+                return clock_format_append(state, (address_any)clock_unknown_name,
+                                           1);
 
-        address_to length = full ? clock_weekday_long_length[weekday] : 3;
-
-        return full ? clock_weekday_long[weekday] : clock_weekday_short[weekday];
-}
-
-static const char address_to clock_month_name(b32 month, bool full,
-                                              positive address_to length)
-{
-        if (month < 0 || month > 11)
-        {
-                address_to length = 1;
-                return clock_unknown_name;
-        }
-
-        address_to length = full ? clock_month_long_length[month] : 3;
-
-        return full ? clock_month_long[month] : clock_month_short[month];
-}
-
-static fn clock_format_weekday(clock_format_state address_to state,
-                               b32 weekday, bool full)
-{
-        positive length;
-        const char address_to name =
-                clock_weekday_name(weekday, full, address_of length);
-
-        clock_format_append(state, (address_any)name, length);
-}
-
-static fn clock_format_month(clock_format_state address_to state, b32 month,
-                             bool full)
-{
-        positive length;
-        const char address_to name =
-                clock_month_name(month, full, address_of length);
-
-        clock_format_append(state, (address_any)name, length);
+        clock_format_append(state,
+                            (address_any)(full ? long_names[index]
+                                              : short_names[index]),
+                            full ? long_lengths[index] : 3);
 }
 
 /*
@@ -1341,7 +1308,10 @@ static fn clock_format_core(clock_format_state address_to state,
                                 state->to_lower = false;
                         }
 
-                        clock_format_weekday(state, broken->tm_wday, false);
+                        clock_format_name(state, broken->tm_wday, false, 7,
+                                          clock_weekday_short,
+                                          clock_weekday_long,
+                                          clock_weekday_long_length);
                         break;
 
                 case 'A':
@@ -1351,12 +1321,17 @@ static fn clock_format_core(clock_format_state address_to state,
                                 state->to_lower = false;
                         }
 
-                        clock_format_weekday(state, broken->tm_wday, true);
+                        clock_format_name(state, broken->tm_wday, true, 7,
+                                          clock_weekday_short,
+                                          clock_weekday_long,
+                                          clock_weekday_long_length);
                         break;
 
                 case 'b':
                 case 'h':
-                        clock_format_month(state, broken->tm_mon, false);
+                        clock_format_name(state, broken->tm_mon, false, 12,
+                                          clock_month_short, clock_month_long,
+                                          clock_month_long_length);
                         break;
 
                 case 'B':
@@ -1366,7 +1341,9 @@ static fn clock_format_core(clock_format_state address_to state,
                                 state->to_lower = false;
                         }
 
-                        clock_format_month(state, broken->tm_mon, true);
+                        clock_format_name(state, broken->tm_mon, true, 12,
+                                          clock_month_short, clock_month_long,
+                                          clock_month_long_length);
                         break;
 
                 case 'c':

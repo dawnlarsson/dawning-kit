@@ -611,39 +611,38 @@ bool file_real(string_address path, p8 address_to into)
 // back to anyway.
 #define FILE_ACCOUNTS_MAX 65536
 
-static p8 file_password_store[FILE_ACCOUNTS_MAX];
-static p8 file_group_store[FILE_ACCOUNTS_MAX];
-static bool file_password_read;
-static bool file_group_read;
+typedef struct
+{
+        p8 text[FILE_ACCOUNTS_MAX];
+        p8 seen_name[FILE_NAME_MAX];
+        positive seen;
+        bool read;
+        bool seen_set;
+        bool seen_known;
+} file_account_cache;
+
+#define FILE_ACCOUNT_USER 0
+#define FILE_ACCOUNT_GROUP 1
+
+static file_account_cache file_accounts[2];
+static const string_address file_account_paths[2] = {"/etc/passwd", "/etc/group"};
 
 // ls -l asks for a name per entry, so the file is read once and kept rather
 // than opened again for every line of a listing.
-RETURNS_NONNULL p8 address_to file_password_text()
+static RETURNS_NONNULL p8 address_to file_account_text(positive which)
 {
-        if (!file_password_read)
-        {
-                file_password_read = true;
+        file_account_cache address_to cache = file_accounts + which;
 
-                if (file_slurp((string_address) "/etc/passwd", file_password_store,
+        if (!cache->read)
+        {
+                cache->read = true;
+
+                if (file_slurp(file_account_paths[which], cache->text,
                                FILE_ACCOUNTS_MAX) <= 0)
-                        file_password_store[0] = end;
+                        cache->text[0] = end;
         }
 
-        return file_password_store;
-}
-
-RETURNS_NONNULL p8 address_to file_group_text()
-{
-        if (!file_group_read)
-        {
-                file_group_read = true;
-
-                if (file_slurp((string_address) "/etc/group", file_group_store,
-                               FILE_ACCOUNTS_MAX) <= 0)
-                        file_group_store[0] = end;
-        }
-
-        return file_group_store;
+        return cache->text;
 }
 
 /*
@@ -765,67 +764,41 @@ bipolar file_account_id(p8 address_to text, string_address name, positive field)
         return -1;
 }
 
-// One remembered answer each, because a directory listing asks the same
+// One remembered answer per table, because a directory listing asks the same
 // question once per entry and almost every entry gives the same id.
-static positive file_user_seen = (positive)-1;
-static p8 file_user_seen_name[FILE_NAME_MAX];
-static bool file_user_seen_known;
-
-static positive file_group_seen = (positive)-1;
-static p8 file_group_seen_name[FILE_NAME_MAX];
-static bool file_group_seen_known;
-
-bool file_user_name(positive id, p8 address_to into, positive limit)
+static bool file_account_cached_name(positive which, positive id,
+                                     p8 address_to into, positive limit)
 {
+        file_account_cache address_to cache = file_accounts + which;
+
         if (!limit)
                 return false;
 
-        if (id != file_user_seen)
+        if (!cache->seen_set || id != cache->seen)
         {
-                file_user_seen = id;
-                file_user_seen_known = file_account_name(file_password_text(), id, 2,
-                                                         file_user_seen_name,
-                                                         FILE_NAME_MAX);
+                cache->seen_set = true;
+                cache->seen = id;
+                cache->seen_known = file_account_name(
+                    file_account_text(which), id, 2, cache->seen_name,
+                    FILE_NAME_MAX);
         }
 
-        if (!file_user_seen_known)
+        if (!cache->seen_known)
                 return false;
 
-        string_copy_max_end(into, file_user_seen_name, limit - 1);
+        string_copy_max_end(into, cache->seen_name, limit - 1);
 
         return true;
 }
 
-bool file_group_name(positive id, p8 address_to into, positive limit)
-{
-        if (!limit)
-                return false;
-
-        if (id != file_group_seen)
-        {
-                file_group_seen = id;
-                file_group_seen_known = file_account_name(file_group_text(), id, 2,
-                                                          file_group_seen_name,
-                                                          FILE_NAME_MAX);
-        }
-
-        if (!file_group_seen_known)
-                return false;
-
-        string_copy_max_end(into, file_group_seen_name, limit - 1);
-
-        return true;
-}
-
-bipolar file_user_id(string_address name)
-{
-        return file_account_id(file_password_text(), name, 2);
-}
-
-bipolar file_group_id(string_address name)
-{
-        return file_account_id(file_group_text(), name, 2);
-}
+#define file_user_name(id, into, limit)                                      \
+        file_account_cached_name(FILE_ACCOUNT_USER, (id), (into), (limit))
+#define file_group_name(id, into, limit)                                     \
+        file_account_cached_name(FILE_ACCOUNT_GROUP, (id), (into), (limit))
+#define file_user_id(name)                                                   \
+        file_account_id(file_account_text(FILE_ACCOUNT_USER), (name), 2)
+#define file_group_id(name)                                                  \
+        file_account_id(file_account_text(FILE_ACCOUNT_GROUP), (name), 2)
 
 // Time ------------------------------------------------------
 
@@ -11474,7 +11447,7 @@ static bool id_group_add(positive value, positive address_to have)
 static bool id_groups_named(string_address name, positive primary,
                             positive address_to have)
 {
-        p8 address_to text = file_group_text();
+        p8 address_to text = file_account_text(FILE_ACCOUNT_GROUP);
         positive wanted = string_length(name);
         positive at = 0;
 
@@ -11673,7 +11646,8 @@ static b32 file_id()
                 {
                         string_address who = program_argument((b32)first++);
                         bipolar user = file_user_id(who);
-                        bipolar group = file_account_id(file_password_text(), who, 3);
+                        bipolar group = file_account_id(
+                            file_account_text(FILE_ACCOUNT_USER), who, 3);
 
                         if (user < 0 || group < 0)
                         {
@@ -11791,8 +11765,8 @@ static b32 file_groups()
                 {
                         string_address who = file_operand_at(i);
                         bipolar user = file_user_id(who);
-                        bipolar group = file_account_id(file_password_text(),
-                                                        who, 3);
+                        bipolar group = file_account_id(
+                            file_account_text(FILE_ACCOUNT_USER), who, 3);
 
                         if (user < 0 || group < 0)
                         {

@@ -32,6 +32,16 @@
                 }                                             \
         } while (0)
 
+#define var_list_entry(name, returned, parameters, last, call)               \
+        static returned name parameters                                      \
+        {                                                                    \
+                var_args _variadic_list;                                     \
+                var_list(_variadic_list, last);                              \
+                returned _variadic_answer = (call);                          \
+                var_list_end(_variadic_list);                                \
+                return _variadic_answer;                                     \
+        }
+
 #ifdef LIBRARY_API
 
 #define api_function(name, returned_type, default, args...) \
@@ -49,6 +59,22 @@
         pub type name = default;
 
 #endif // LIBRARY_API
+
+/* Typed, unaligned loads and same-width bit casts.  __builtin_memcpy is the
+   compiler's one spelling that is both alias-safe and architecture-safe. */
+#define memory_load_unaligned(type, source)                                  \
+        ({ type _memory_loaded;                                              \
+           __builtin_memcpy(address_of _memory_loaded, (source),             \
+                            sizeof(_memory_loaded));                          \
+           _memory_loaded; })
+
+#define memory_cast(type, value)                                             \
+        ({ __auto_type _memory_from = (value); type _memory_to;              \
+           _Static_assert(sizeof(_memory_to) == sizeof(_memory_from),         \
+                          "memory_cast changes width");                     \
+           __builtin_memcpy(address_of _memory_to, address_of _memory_from,  \
+                            sizeof(_memory_to));                              \
+           _memory_to; })
 
 /*
         Sizes that are known where the call is written.
@@ -693,20 +719,12 @@ static inline INLINE address_any search_case_known(address_any block, positive s
 */
 static inline INLINE p64 bound_word_at(string_address where)
 {
-        p64 word;
-
-        __builtin_memcpy(&word, where, sizeof(word));
-
-        return word;
+        return memory_load_unaligned(p64, where);
 }
 
 static inline INLINE p32 bound_narrow_at(string_address where)
 {
-        p32 word;
-
-        __builtin_memcpy(&word, where, sizeof(word));
-
-        return word;
+        return memory_load_unaligned(p32, where);
 }
 
 #define KNOWN_ENDS(word) (((word) - KNOWN_BOUND_ONES) & ~(word) & KNOWN_BOUND_HIGH)

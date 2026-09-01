@@ -731,26 +731,29 @@ fn stdlib_program_starting(void)
         environ = program_environment_list();
 }
 
-b32 atexit(stdlib_exit_handler handler)
+static inline INLINE b32 stdlib_handler_add(stdlib_exit_handler handler,
+                                            stdlib_exit_handler list[],
+                                            positive address_to count)
 {
-        if (is_null(handler) || stdlib_exit_count >= STDLIB_EXIT_HANDLERS)
+        if (is_null(handler) || address_to count >= STDLIB_EXIT_HANDLERS)
                 return -1;
 
-        stdlib_exit_list[stdlib_exit_count] = handler;
-        stdlib_exit_count++;
+        list[address_to count] = handler;
+        address_to count += 1;
 
         return 0;
 }
 
+b32 atexit(stdlib_exit_handler handler)
+{
+        return stdlib_handler_add(handler, stdlib_exit_list,
+                                  address_of stdlib_exit_count);
+}
+
 b32 at_quick_exit(stdlib_exit_handler handler)
 {
-        if (is_null(handler) || stdlib_quick_count >= STDLIB_EXIT_HANDLERS)
-                return -1;
-
-        stdlib_quick_list[stdlib_quick_count] = handler;
-        stdlib_quick_count++;
-
-        return 0;
+        return stdlib_handler_add(handler, stdlib_quick_list,
+                                  address_of stdlib_quick_count);
 }
 
 DEAD_END fn stdlib_exit(b32 code)
@@ -1273,35 +1276,18 @@ address_any bsearch(address_any key, address_any base, positive count,
         Writing it by hand would produce the same instructions and would have
         to be written three times to say so.
 */
-CONST div_t div(b32 numerator, b32 denominator)
-{
-        div_t answer;
+#define STDLIB_DIVIDE(name, type, result)                                    \
+        CONST result name(type numerator, type denominator)                  \
+        {                                                                    \
+                result answer = {numerator / denominator,                    \
+                                 numerator % denominator};                   \
+                return answer;                                               \
+        }
 
-        answer.quot = numerator / denominator;
-        answer.rem = numerator % denominator;
-
-        return answer;
-}
-
-CONST ldiv_t ldiv(b64 numerator, b64 denominator)
-{
-        ldiv_t answer;
-
-        answer.quot = numerator / denominator;
-        answer.rem = numerator % denominator;
-
-        return answer;
-}
-
-CONST lldiv_t lldiv(b64 numerator, b64 denominator)
-{
-        lldiv_t answer;
-
-        answer.quot = numerator / denominator;
-        answer.rem = numerator % denominator;
-
-        return answer;
-}
+STDLIB_DIVIDE(div, b32, div_t)
+STDLIB_DIVIDE(ldiv, b64, ldiv_t)
+STDLIB_DIVIDE(lldiv, b64, lldiv_t)
+#undef STDLIB_DIVIDE
 
 /*
         rand, and the decision to be bit for bit what glibc is.
