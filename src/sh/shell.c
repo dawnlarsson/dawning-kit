@@ -734,9 +734,9 @@ static bool shell_spawn_device_open()
 {
         if (!spawn_device_opened)
         {
-                spawn_device = system_call_4(syscall(openat), AT_FDCWD,
-                                             (positive)SPARK_DEVICE,
-                                             FILE_READ_WRITE, 0);
+                spawn_device = system_open_at(AT_FDCWD,
+                                             SPARK_DEVICE,
+                                             FILE_READ_WRITE);
                 spawn_device_opened = true;
         }
 
@@ -753,9 +753,9 @@ bipolar shell_spawn_tool(string_address address_to arguments,
                 return -1;
 
         if (quiet && null_output < 0)
-                null_output = system_call_4(syscall(openat), AT_FDCWD,
-                                             (positive)"/dev/null",
-                                             FILE_READ_WRITE | O_CLOEXEC, 0);
+                null_output = system_open_at(AT_FDCWD,
+                                             "/dev/null",
+                                             FILE_READ_WRITE | O_CLOEXEC);
 
         if (quiet && null_output < 0)
                 return -1;
@@ -786,7 +786,7 @@ fn shell_execute_command()
                 // left child_stack as whatever happened to be in the second
                 // argument register, so the child started on a garbage stack
                 // and execve was handed an empty path.
-                child = system_call_2(syscall(clone), SIGCHLD, 0);
+                child = system_fork();
 
                 if (child == 0)
                         shell_thread_instance();

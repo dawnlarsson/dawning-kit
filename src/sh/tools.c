@@ -941,14 +941,14 @@ static b32 tools_dd(void)
                 }
         }
 
-        if (out_handle != 1 && system_call_1(syscall(close), out_handle) < 0)
+        if (out_handle != 1 && system_close(out_handle) < 0)
         {
                 text_error(output, "close failed");
                 result = 1;
         }
 
         if (in_handle != 0)
-                system_call_1(syscall(close), in_handle);
+                system_close(in_handle);
 
         text_flush();
         dd_summary();
@@ -1086,7 +1086,7 @@ static bool diff_slurp(diff_side address_to side, string_address path,
                 if (got < 0)
                 {
                         if (handle > 0)
-                                system_call_1(syscall(close), handle);
+                                system_close(handle);
 
                         text_error(path ? path : (string_address) "standard input",
                                    "Read error");
@@ -1103,7 +1103,7 @@ static bool diff_slurp(diff_side address_to side, string_address path,
         }
 
         if (handle > 0)
-                system_call_1(syscall(close), handle);
+                system_close(handle);
 
         if (diff_strip_cr && have > 1)
         {
@@ -2539,46 +2539,8 @@ static bool diff_names_sort(diff_names address_to names)
         if (!spare)
                 return false;
 
-        string_address address_to from = names->at;
-        string_address address_to into = spare;
-
-        for (positive width = 1; width < names->count; width *= 2)
-        {
-                for (positive base = 0; base < names->count; base += width * 2)
-                {
-                        positive middle = min(base + width, names->count);
-                        positive stop = min(middle + width, names->count);
-                        positive left = base;
-                        positive right = middle;
-                        positive out = base;
-
-                        while (left < middle && right < stop)
-                                into[out++] = string_compare(from[left], from[right]) <= 0
-                                                  ? from[left++]
-                                                  : from[right++];
-
-                        /* Once either run is exhausted the other is already
-                           ordered. Hand the whole pointer tail to the bulk
-                           floor instead of paying one scalar load/store and
-                           one taken branch per name. */
-                        positive tail = left < middle ? middle - left
-                                                       : stop - right;
-                        string_address address_to rest = left < middle
-                                                             ? from + left
-                                                             : from + right;
-
-                        if (tail)
-                                memory_copy_apart(into + out, rest,
-                                                  tail * sizeof(string_address));
-                }
-
-                string_address address_to swapped = from;
-
-                from = into;
-                into = swapped;
-        }
-
-        names->at = from;
+        names->at = array_merge_sort(names->at, spare, names->count,
+                                     string_compare);
         return true;
 }
 
@@ -3125,6 +3087,8 @@ typedef struct
         string_address user;
 } ps_process;
 
+#define ps_pid_order(left, right) ((left).pid <= (right).pid ? -1 : 1)
+
 static ps_process address_to ps_list;
 static positive ps_count;
 static positive ps_room_processes;
@@ -3157,7 +3121,7 @@ static p8 address_to ps_read_growing(string_address path, positive first,
 
         if (!bytes)
         {
-                system_call_1(syscall(close), (positive)handle);
+                system_close(handle);
                 return null;
         }
 
@@ -3167,7 +3131,7 @@ static p8 address_to ps_read_growing(string_address path, positive first,
                 {
                         if (room > positive_max / 2)
                         {
-                                system_call_1(syscall(close), (positive)handle);
+                                system_close(handle);
                                 text_arena_used = arena_mark;
                                 return null;
                         }
@@ -3184,7 +3148,7 @@ static p8 address_to ps_read_growing(string_address path, positive first,
 
                         if (!grown)
                         {
-                                system_call_1(syscall(close), (positive)handle);
+                                system_close(handle);
                                 text_arena_used = arena_mark;
                                 return null;
                         }
@@ -3198,7 +3162,7 @@ static p8 address_to ps_read_growing(string_address path, positive first,
 
                 if (got < 0)
                 {
-                        system_call_1(syscall(close), (positive)handle);
+                        system_close(handle);
                         text_arena_used = arena_mark;
                         return null;
                 }
@@ -3209,7 +3173,7 @@ static p8 address_to ps_read_growing(string_address path, positive first,
                 used += (positive)got;
         }
 
-        system_call_1(syscall(close), (positive)handle);
+        system_close(handle);
         bytes[used] = end;
         /* Give the unused half of the last doubling step back before ps
            starts retaining the next process. */
@@ -3539,55 +3503,8 @@ static bool ps_gather()
                 if (!spare)
                         return false;
 
-                ps_process address_to from = ps_list;
-                ps_process address_to into = spare;
-
-                for (positive width = 1; width < ps_count;)
-                {
-                        for (positive base = 0; base < ps_count; base += 2 * width)
-                        {
-                                positive left = base;
-                                positive middle = base + width < ps_count
-                                                      ? base + width
-                                                      : ps_count;
-                                positive right = base + 2 * width < ps_count
-                                                     ? base + 2 * width
-                                                     : ps_count;
-                                positive one = left;
-                                positive two = middle;
-
-                                while (one < middle && two < right)
-                                {
-                                        if (from[one].pid <= from[two].pid)
-                                                into[left++] = from[one++];
-                                        else
-                                                into[left++] = from[two++];
-                                }
-
-                                /* A ps record is much wider than a pointer;
-                                   after one run empties, copying the remaining
-                                   contiguous records in one assembly call is
-                                   cheaper than repeating structure copies. */
-                                positive tail = one < middle ? middle - one
-                                                              : right - two;
-                                ps_process address_to rest = one < middle
-                                                                 ? from + one
-                                                                 : from + two;
-
-                                if (tail)
-                                        memory_copy_apart(into + left, rest,
-                                                          tail * sizeof(ps_process));
-                        }
-
-                        ps_process address_to swap = from;
-                        from = into;
-                        into = swap;
-
-                        if (width > ps_count / 2)
-                                break;
-
-                        width *= 2;
-                }
+                ps_process address_to from = array_merge_sort(
+                    ps_list, spare, ps_count, ps_pid_order);
 
                 if (from != ps_list)
                         memory_copy_apart(ps_list, from,
@@ -3596,6 +3513,8 @@ static bool ps_gather()
 
         return true;
 }
+
+#undef ps_pid_order
 
 /*
         A field is drawn into a small buffer first, because a column is padded

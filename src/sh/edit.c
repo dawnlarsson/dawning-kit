@@ -4383,8 +4383,8 @@ static p8 address_to edit_read_file(string_address path,
                                     positive address_to length,
                                     bipolar address_to failure)
 {
-        b32 handle = system_call_4(syscall(openat), AT_FDCWD, (positive)path,
-                                   FILE_READ, 0);
+        b32 handle = system_open_at(AT_FDCWD, path,
+                                   FILE_READ);
         p8 address_to block = null;
         positive room = 0;
         positive held = 0;
@@ -4424,7 +4424,7 @@ static p8 address_to edit_read_file(string_address path,
                 held += (positive)got;
         }
 
-        system_call_1(syscall(close), (positive)handle);
+        system_close(handle);
 
         if (address_to failure)
         {
@@ -4481,8 +4481,8 @@ static bool edit_write_file()
                 if (!edit_temporary_name(temporary, attempt))
                         break;
 
-                handle = system_call_4(syscall(openat), AT_FDCWD,
-                                       (positive)temporary,
+                handle = system_open_at_mode(AT_FDCWD,
+                                       temporary,
                                        FILE_WRITE | FILE_CREATE |
                                            FILE_EXCLUSIVE,
                                        mode);
@@ -4504,13 +4504,13 @@ static bool edit_write_file()
         synced = wrote == length && chmodded >= 0
                      ? system_call_1(syscall(fsync), (positive)handle)
                      : -1;
-        closed = system_call_1(syscall(close), (positive)handle);
+        closed = system_close(handle);
         memory_give(block);
 
         if (wrote != length || chmodded < 0 || synced < 0 || closed < 0)
         {
-                system_call_3(syscall(unlinkat), AT_FDCWD,
-                              (positive)temporary, 0);
+                system_remove_at(AT_FDCWD,
+                              temporary, 0);
                 return false;
         }
 
@@ -4521,8 +4521,8 @@ static bool edit_write_file()
                               (positive)edit_path, 0);
 
         if (named < 0)
-                system_call_3(syscall(unlinkat), AT_FDCWD,
-                              (positive)temporary, 0);
+                system_remove_at(AT_FDCWD,
+                              temporary, 0);
 
         return named == 0;
 }

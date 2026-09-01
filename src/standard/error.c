@@ -1263,9 +1263,8 @@ typedef struct stat
                         mode = var_list_get(list, p32);                       \
                         var_list_end(list);                                   \
                 }                                                            \
-                return error_whole(system_call_4(                            \
-                    syscall(openat), (positive)(directory), (positive)path,  \
-                    (positive)flags, (positive)mode));                        \
+                return error_whole(system_open_at_mode(                     \
+                    directory, path, flags, mode));                          \
         }
 
 ERROR_OPEN(openat,
@@ -1277,14 +1276,12 @@ ERROR_OPEN(open, (string_address path, b32 flags, ...), ERROR_AT_HERE)
 //      shell scripts and old C both still use it.
 static b32 creat(string_address path, p32 mode)
 {
-        return error_whole(system_call_4(syscall(openat), ERROR_AT_HERE,
-                                         (positive)path,
-                                         O_WRONLY | O_CREAT | O_TRUNC,
-                                         (positive)mode));
+        return error_whole(system_open_at_mode(
+            ERROR_AT_HERE, path, O_WRONLY | O_CREAT | O_TRUNC, mode));
 }
 
 ERROR_ENTRY(close, b32, (b32 handle), error_whole,
-            system_call_1(syscall(close), (positive)handle))
+            system_close(handle))
 
 /*
         read and write return ssize_t and not int, and the difference is
@@ -1326,8 +1323,7 @@ ERROR_ENTRY(dup, b32, (b32 handle), error_whole,
         silently succeeding.
 */
 ERROR_ENTRY(dup3, b32, (b32 from, b32 to, b32 flags), error_whole,
-            system_call_3(syscall(dup3), (positive)from, (positive)to,
-                          (positive)flags))
+            system_duplicate(from, to, flags))
 
 static b32 dup2(b32 from, b32 to)
 {
@@ -1349,9 +1345,9 @@ static b32 dup2(b32 from, b32 to)
 }
 
 ERROR_ENTRY(pipe2, b32, (b32 address_to pair, b32 flags), error_whole,
-            system_call_2(syscall(pipe2), (positive)pair, (positive)flags))
+            system_pipe(pair, flags))
 ERROR_ENTRY(pipe, b32, (b32 address_to pair), error_whole,
-            system_call_2(syscall(pipe2), (positive)pair, 0))
+            system_pipe(pair, 0))
 
 var_list_entry(fcntl, b32, (b32 handle, b32 command, ...), command,
                error_whole(system_call_3(
@@ -1414,13 +1410,11 @@ ERROR_ENTRY(fstat, b32, (b32 handle, stat_address into), error_whole,
             system_call_2(syscall(fstat), (positive)handle, (positive)into))
 ERROR_ENTRY(unlinkat, b32,
             (b32 directory, string_address path, b32 flags), error_whole,
-            system_call_3(syscall(unlinkat), (positive)directory,
-                          (positive)path, (positive)flags))
+            system_remove_at(directory, path, flags))
 ERROR_ENTRY(unlink, b32, (string_address path), error_whole,
-            system_call_3(syscall(unlinkat), ERROR_AT_HERE, (positive)path, 0))
+            system_remove_at(ERROR_AT_HERE, path, 0))
 ERROR_ENTRY(rmdir, b32, (string_address path), error_whole,
-            system_call_3(syscall(unlinkat), ERROR_AT_HERE, (positive)path,
-                          AT_REMOVEDIR))
+            system_remove_at(ERROR_AT_HERE, path, AT_REMOVEDIR))
 ERROR_ENTRY(mkdirat, b32,
             (b32 directory, string_address path, p32 mode), error_whole,
             system_call_3(syscall(mkdirat), (positive)directory,
@@ -1642,7 +1636,7 @@ ERROR_ENTRY(execve, b32,
         this from a thread.
 */
 ERROR_ENTRY(fork, b32, (void), error_whole,
-            system_call_5(syscall(clone), SIGCHLD, 0, 0, 0, 0))
+            system_fork())
 
 /*
         wait4 without the EINTR retry that library.c's system_wait4_retry

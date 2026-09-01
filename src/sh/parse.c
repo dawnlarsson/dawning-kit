@@ -345,7 +345,7 @@ fn parse_reset_all()
         parse_reset();
 }
 
-static inline INLINE parse_token address_to parse_look(b32 ahead)
+static PURE inline INLINE parse_token address_to parse_look(b32 ahead)
 {
         b32 index = parse_position + ahead;
 
@@ -355,8 +355,8 @@ static inline INLINE parse_token address_to parse_look(b32 ahead)
         return parse_tokens + index;
 }
 
-static bool parse_word_is_length(b32 ahead, string_address text,
-                                 positive length)
+static PURE bool parse_word_is_length(b32 ahead, string_address text,
+                                      positive length)
 {
         parse_token address_to token = parse_look(ahead);
 
@@ -394,10 +394,9 @@ enum
 /*
         Classify once instead of asking fifteen exact string comparisons.
         Ordinary commands are overwhelmingly not keywords, so length rejects
-        them immediately; the few equal-length candidates are verified by the
-        hardware-floor memory comparator.
+        them immediately; packed loads verify the few equal-length candidates.
 */
-static b32 parse_keyword(b32 ahead)
+static PURE HOT b32 parse_keyword(b32 ahead)
 {
         parse_token address_to token = parse_look(ahead);
         string_address text;
@@ -410,30 +409,41 @@ static b32 parse_keyword(b32 ahead)
         switch (token->length)
         {
         case 1:
-                if (text[0] == '!') return PARSE_KEYWORD_BANG;
-                if (text[0] == '{') return PARSE_KEYWORD_OPEN;
-                if (text[0] == '}') return PARSE_KEYWORD_CLOSE;
-                return PARSE_KEYWORD_NONE;
+                switch (text[0])
+                {
+                case '!': return PARSE_KEYWORD_BANG;
+                case '{': return PARSE_KEYWORD_OPEN;
+                case '}': return PARSE_KEYWORD_CLOSE;
+                default: return PARSE_KEYWORD_NONE;
+                }
         case 2:
-                if (!memory_compare(text, "if", 2)) return PARSE_KEYWORD_IF;
-                if (!memory_compare(text, "fi", 2)) return PARSE_KEYWORD_FI;
-                if (!memory_compare(text, "do", 2)) return PARSE_KEYWORD_DO;
-                if (!memory_compare(text, "in", 2)) return PARSE_KEYWORD_IN;
-                return PARSE_KEYWORD_NONE;
+                switch (memory_load_unaligned(p16, text))
+                {
+                case byte_word_2('i', 'f'): return PARSE_KEYWORD_IF;
+                case byte_word_2('f', 'i'): return PARSE_KEYWORD_FI;
+                case byte_word_2('d', 'o'): return PARSE_KEYWORD_DO;
+                case byte_word_2('i', 'n'): return PARSE_KEYWORD_IN;
+                default: return PARSE_KEYWORD_NONE;
+                }
         case 3:
-                return !memory_compare(text, "for", 3) ? PARSE_KEYWORD_FOR
-                                                        : PARSE_KEYWORD_NONE;
+                return memory_is_2(text, 'f', 'o') && text[2] == 'r'
+                           ? PARSE_KEYWORD_FOR : PARSE_KEYWORD_NONE;
         case 4:
-                if (!memory_compare(text, "then", 4)) return PARSE_KEYWORD_THEN;
-                if (!memory_compare(text, "else", 4)) return PARSE_KEYWORD_ELSE;
-                if (!memory_compare(text, "elif", 4)) return PARSE_KEYWORD_ELIF;
-                if (!memory_compare(text, "done", 4)) return PARSE_KEYWORD_DONE;
-                if (!memory_compare(text, "case", 4)) return PARSE_KEYWORD_CASE;
-                if (!memory_compare(text, "esac", 4)) return PARSE_KEYWORD_ESAC;
-                return PARSE_KEYWORD_NONE;
+                switch (memory_load_unaligned(p32, text))
+                {
+                case byte_word_4('t', 'h', 'e', 'n'): return PARSE_KEYWORD_THEN;
+                case byte_word_4('e', 'l', 's', 'e'): return PARSE_KEYWORD_ELSE;
+                case byte_word_4('e', 'l', 'i', 'f'): return PARSE_KEYWORD_ELIF;
+                case byte_word_4('d', 'o', 'n', 'e'): return PARSE_KEYWORD_DONE;
+                case byte_word_4('c', 'a', 's', 'e'): return PARSE_KEYWORD_CASE;
+                case byte_word_4('e', 's', 'a', 'c'): return PARSE_KEYWORD_ESAC;
+                default: return PARSE_KEYWORD_NONE;
+                }
         case 5:
-                if (!memory_compare(text, "while", 5)) return PARSE_KEYWORD_WHILE;
-                if (!memory_compare(text, "until", 5)) return PARSE_KEYWORD_UNTIL;
+                if (memory_is_4(text, 'w', 'h', 'i', 'l') && text[4] == 'e')
+                        return PARSE_KEYWORD_WHILE;
+                if (memory_is_4(text, 'u', 'n', 't', 'i') && text[4] == 'l')
+                        return PARSE_KEYWORD_UNTIL;
                 return PARSE_KEYWORD_NONE;
         default:
                 return PARSE_KEYWORD_NONE;
@@ -937,24 +947,32 @@ static bool parse_redirect_operator(b32 op)
                op == OP_HERESTRING;
 }
 
-static bool parse_at_redirect()
+/* Return the number of descriptor tokens before a redirect operator, or -1.
+   Alias scans and the grammar must agree on this exact two-token prefix. */
+static PURE b32 parse_redirect_prefix(b32 at)
 {
-        parse_token address_to token = parse_look(0);
+        if (at >= (b32)parse_token_count)
+                return -1;
+
+        parse_token address_to token = parse_tokens + at;
         positive descriptor;
 
         if (token->kind == PT_OP && parse_redirect_operator(token->op))
-                return true;
+                return 0;
 
-        b32 op = parse_look(1)->op;
+        if (at + 1 >= (b32)parse_token_count)
+                return -1;
+
+        parse_token address_to next = token + 1;
 
         // &> always means descriptors one and two. In "echo 2&>file", the 2
         // is therefore an argument, unlike the descriptor prefix in 2>file.
         return token->kind == PT_WORD &&
                string_digits_exact(token->text, address_of descriptor) &&
                descriptor <= 0x7fffffff &&
-               parse_look(1)->kind == PT_OP && parse_look(1)->joined &&
-               op != OP_ANDGREAT && op != OP_ANDDGREAT &&
-               parse_redirect_operator(op);
+               next->kind == PT_OP && next->joined &&
+               next->op != OP_ANDGREAT && next->op != OP_ANDDGREAT &&
+               parse_redirect_operator(next->op) ? 1 : -1;
 }
 
 /*
@@ -1138,21 +1156,9 @@ static bool parse_alias_replace(b32 position)
 
                 while (at < (b32)parse_token_count)
                 {
-                        positive descriptor;
+                        b32 prefix = parse_redirect_prefix(at);
 
-                        if (parse_tokens[at].kind == PT_WORD &&
-                            string_digits_exact(parse_tokens[at].text,
-                                                address_of descriptor) &&
-                            descriptor <= 0x7fffffff &&
-                            at + 1 < (b32)parse_token_count &&
-                            parse_tokens[at + 1].kind == PT_OP &&
-                            parse_tokens[at + 1].joined &&
-                            parse_tokens[at + 1].op != OP_ANDGREAT &&
-                            parse_tokens[at + 1].op != OP_ANDDGREAT &&
-                            parse_redirect_operator(parse_tokens[at + 1].op))
-                                at++;
-
-                        if (parse_tokens[at].kind == PT_WORD)
+                        if (prefix < 0 && parse_tokens[at].kind == PT_WORD)
                         {
                                 parse_tokens[at].alias_forced = true;
                                 break;
@@ -1164,10 +1170,9 @@ static bool parse_alias_replace(b32 position)
                              !parse_redirect_operator(parse_tokens[at].op)))
                                 break;
 
-                        if (parse_tokens[at].kind == PT_OP &&
-                            parse_redirect_operator(parse_tokens[at].op))
+                        if (prefix >= 0)
                         {
-                                at++;
+                                at += prefix + 1;
 
                                 if (at < (b32)parse_token_count &&
                                     parse_tokens[at].kind == PT_WORD)
@@ -1212,7 +1217,6 @@ static fn parse_alias_command()
                 {
                         parse_token address_to token = parse_tokens + at;
                         positive name_length;
-                        positive descriptor;
 
                         if (token->kind == PT_WORD &&
                             shell_assignment_kind(token->text,
@@ -1222,23 +1226,11 @@ static fn parse_alias_command()
                                 continue;
                         }
 
-                        if ((token->kind == PT_OP &&
-                             parse_redirect_operator(token->op)) ||
-                            (token->kind == PT_WORD &&
-                             string_digits_exact(token->text,
-                                                 address_of descriptor) &&
-                             descriptor <= 0x7fffffff &&
-                             at + 1 < (b32)parse_token_count &&
-                             parse_tokens[at + 1].kind == PT_OP &&
-                             parse_tokens[at + 1].joined &&
-                             parse_tokens[at + 1].op != OP_ANDGREAT &&
-                             parse_tokens[at + 1].op != OP_ANDDGREAT &&
-                             parse_redirect_operator(parse_tokens[at + 1].op)))
-                        {
-                                if (token->kind == PT_WORD)
-                                        at++;
+                        b32 prefix = parse_redirect_prefix(at);
 
-                                at++;
+                        if (prefix >= 0)
+                        {
+                                at += prefix + 1;
 
                                 if (at < (b32)parse_token_count &&
                                     parse_tokens[at].kind == PT_WORD)
@@ -1374,7 +1366,7 @@ static bool parse_take_redirect(b32 index)
 
 static fn parse_take_redirects(b32 index)
 {
-        while (!parse_state && parse_at_redirect())
+        while (!parse_state && parse_redirect_prefix(parse_position) >= 0)
                 parse_take_redirect(index);
 }
 
@@ -1411,7 +1403,7 @@ static b32 parse_simple()
                     parse_alias_replace(parse_position))
                         continue;
 
-                if (parse_at_redirect())
+                if (parse_redirect_prefix(parse_position) >= 0)
                 {
                         parse_take_redirect(index);
                         continue;

@@ -1009,7 +1009,7 @@ static bool env_write_hashed_span(const_string name, positive name_len,
                 return false;
 
         // Every path remembered was an answer about the old PATH.
-        if (name_len == 4 && !memory_compare(name, "PATH", 4))
+        if (name_len == 4 && memory_is_4(name, 'P', 'A', 'T', 'H'))
                 hash_forget();
 
         positive value_len = string_length(env_reading(value));
@@ -1920,7 +1920,7 @@ static shell_option shell_option_names[] = {
 };
 
 #define SHELL_OPTION_NAMES \
-        (sizeof(shell_option_names) / sizeof(shell_option_names[0]))
+        (array_count(shell_option_names))
 #define SHELL_OPTION_MONITOR 4
 #define SHELL_OPTION_NOCLOBBER 11
 #define SHELL_OPTION_PIPEFAIL 16
@@ -4851,7 +4851,7 @@ static string_address trap_names[] = {
     null,
 };
 
-#define TRAP_NAMES (sizeof(trap_names) / sizeof(trap_names[0]))
+#define TRAP_NAMES (array_count(trap_names))
 
 bipolar trap_number(string_address word)
 {
@@ -5646,7 +5646,7 @@ static shell_tool shell_tools[] = {
     {null, null},
 };
 
-#define SHELL_TOOLS (sizeof(shell_tools) / sizeof(shell_tools[0]) - 1)
+#define SHELL_TOOLS (array_count(shell_tools) - 1)
 #define SHELL_TOOL_INDEX_ROOM 128
 
 static shell_name_slot shell_tool_index[SHELL_TOOL_INDEX_ROOM];
@@ -5782,7 +5782,7 @@ static bool shell_tool_run(string_address name)
         child = shell_spawn_tool(shell_argv, -1, false);
 
         if (child < 0)
-                child = system_call_2(syscall(clone), SIGCHLD, 0);
+                child = system_fork();
 
         if (child == 0)
         {
@@ -5861,7 +5861,7 @@ fn shell_trap_exit()
         string_address action = trap_detach(0, address_of action_room);
         b32 leaving = shell_status;
 
-        if (!action || !run_line || !string_get(action))
+        if (!action || !string_get(action))
         {
                 if (action)
                         memory_free(action, action_room);
@@ -5937,8 +5937,8 @@ static bipolar shell_source_open(string_address name,
                 bipolar handle;
 
                 do
-                        handle = system_call_4(syscall(openat), AT_FDCWD,
-                                               (positive)name, FILE_READ, 0);
+                        handle = system_open_at(AT_FDCWD,
+                                               name, FILE_READ);
                 while (handle == -4);
 
                 return handle;
@@ -5986,8 +5986,8 @@ static bipolar shell_source_open(string_address name,
                 string_copy(*found + used, name);
 
                 do
-                        handle = system_call_4(syscall(openat), AT_FDCWD,
-                                               (positive)*found, FILE_READ, 0);
+                        handle = system_open_at(AT_FDCWD,
+                                               *found, FILE_READ);
                 while (handle == -4);
 
                 if (handle >= 0)
@@ -6038,7 +6038,7 @@ static bipolar shell_source_read(bipolar handle,
 
                 if (got < 0)
                 {
-                        system_call_1(syscall(close), (positive)handle);
+                        system_close(handle);
                         return got;
                 }
 
@@ -6048,7 +6048,7 @@ static bipolar shell_source_read(bipolar handle,
                 used += (positive)got;
         }
 
-        system_call_1(syscall(close), (positive)handle);
+        system_close(handle);
 
         if (*no_room)
                 return -1;
@@ -6070,8 +6070,8 @@ fn shell_dot(writer write, string_address input)
         bool no_room = false;
         bipolar handle;
 
-        if (shell_argc < 2 || !run_line)
-                return shell_answer(shell_argc < 2 ? 2 : 0);
+        if (shell_argc < 2)
+                return shell_answer(2);
 
         path = shell_argv[1];
         handle = shell_source_open(path, address_of found, address_of found_room,
@@ -6496,7 +6496,7 @@ shell_command shell_commands[] = {
     {null, null},
 };
 
-#define SHELL_COMMAND_COUNT ((sizeof(shell_commands) / sizeof(shell_commands[0])) - 1)
+#define SHELL_COMMAND_COUNT ((array_count(shell_commands)) - 1)
 #define SHELL_COMMAND_INDEX_ROOM 128
 
 static shell_name_slot shell_command_index[SHELL_COMMAND_INDEX_ROOM];
@@ -6822,7 +6822,7 @@ fn shell_type(writer write, string_address input)
                         continue;
                 }
 
-                if (exec_function_here && exec_function_here(name))
+                if (exec_function_here(name))
                 {
                         string_format(write, "%s is a shell function\n", name);
                         continue;
@@ -6926,7 +6926,7 @@ fn shell_command_builtin(writer write, string_address input)
                                 continue;
                         }
 
-                        if (exec_function_here && exec_function_here(name))
+                        if (exec_function_here(name))
                         {
                                 string_format(write,
                                               at_length

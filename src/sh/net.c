@@ -676,9 +676,9 @@ static fn net_write_resolv(p32 nameserver)
         b32 handle;
 
         //      O_WRONLY | O_CREAT | O_TRUNC, 0644
-        handle = (b32)system_call_4(syscall(openat), (positive)-100,
-                                    (positive) "/etc/resolv.conf",
-                                    (positive)(1 | 0100 | 01000), 0644);
+        handle = (b32)system_open_at_mode(AT_FDCWD,
+                                     "/etc/resolv.conf",
+                                    (1 | 0100 | 01000), 0644);
 
         if (handle < 0)
                 return;
@@ -698,7 +698,7 @@ static fn net_write_resolv(p32 nameserver)
                 system_write_all((positive)handle, line, used);
         }
 
-        system_call_1(syscall(close), (positive)handle);
+        system_close(handle);
 }
 
 /*
@@ -934,8 +934,8 @@ static b32 net_watch(void)
 
         //      O_WRONLY. A failure leaves the handle at -1 and net_out at
         //      log, which is exactly the old behaviour.
-        net_kmsg_handle = (b32)system_call_4(syscall(openat), (positive)-100,
-                                             (positive) "/dev/kmsg", 1, 0);
+        net_kmsg_handle = (b32)system_open_at(AT_FDCWD,
+                                              "/dev/kmsg", 1);
 
         if (net_kmsg_handle >= 0)
         {

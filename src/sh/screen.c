@@ -136,8 +136,8 @@ static b32 screen_term()
 
         for (int tries = 0; tries < 200 && master < 0; tries++)
         {
-                master = system_call_4(syscall(openat), AT_FDCWD, (positive)"/dev/ptmx",
-                                       FILE_READ_WRITE | O_NONBLOCK, 0);
+                master = system_open_at(AT_FDCWD, "/dev/ptmx",
+                                       FILE_READ_WRITE | O_NONBLOCK);
 
                 if (master < 0)
                         system_call_2(syscall(nanosleep), (positive)address_of wait, 0);
@@ -160,8 +160,8 @@ static b32 screen_term()
 
         at += positive_into_string(name + at, number);
 
-        b32 slave = system_call_4(syscall(openat), AT_FDCWD, (positive)name,
-                                  FILE_READ_WRITE, 0);
+        b32 slave = system_open_at(AT_FDCWD, name,
+                                  FILE_READ_WRITE);
 
         if (slave < 0)
         {
@@ -175,7 +175,7 @@ static b32 screen_term()
 
         system_call_3(syscall(ioctl), master, TIOCSWINSZ, (positive)address_of size);
 
-        bipolar child = system_call_2(syscall(clone), SIGCHLD, 0);
+        bipolar child = system_fork();
 
         if (child == 0)
         {
@@ -184,17 +184,17 @@ static b32 screen_term()
 
                 system_call(syscall(setsid));
                 system_call_3(syscall(ioctl), slave, TIOCSCTTY, 0);
-                system_call_3(syscall(dup3), slave, 0, 0);
-                system_call_3(syscall(dup3), slave, 1, 0);
-                system_call_3(syscall(dup3), slave, 2, 0);
-                system_call_1(syscall(close), master);
+                system_duplicate(slave, 0, 0);
+                system_duplicate(slave, 1, 0);
+                system_duplicate(slave, 2, 0);
+                system_close(master);
 
                 system_call_3(syscall(execve), (positive)SHELL,
                               (positive)argv, (positive)envp);
                 system_call_1(syscall(exit), 127);
         }
 
-        system_call_1(syscall(close), slave);
+        system_close(slave);
 
         window->region = WINDOW_CENTRED;
         window_damage(window, 0, ROWS);
@@ -350,7 +350,7 @@ static b32 screen_term()
         positive status = 0;
 
         system_wait4_retry(child, address_of status, 0, null);
-        system_call_1(syscall(close), master);
+        system_close(master);
         window_close(window);
 
         return 0;
@@ -609,8 +609,8 @@ static b32 screen_text()
 // cursor being on screen. Move the mouse, then run this.
 static b32 screen_pointer()
 {
-        b32 device = system_call_4(syscall(openat), AT_FDCWD,
-                                   (positive)SPARK_DEVICE, FILE_READ_WRITE, 0);
+        b32 device = system_open_at(AT_FDCWD,
+                                   SPARK_DEVICE, FILE_READ_WRITE);
 
         if (device < 0)
         {

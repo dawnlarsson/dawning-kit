@@ -79,20 +79,13 @@ static fn storage_write_text(writer output, string_address text)
                 output((address_any)text, string_length(text));
 }
 
-static fn storage_write_two(writer output, string_address first,
-                            string_address second)
-{
-        storage_write_text(output, first);
-        storage_write_text(output, second);
-}
-
 /* Read the whole file.  A short read is not EOF for procfs, and one more byte
    is always reserved for the terminator rather than borrowed from the file. */
 static bool storage_read_all(string_address path, byte_store address_to text)
 {
-        bipolar handle = system_call_4(syscall(openat), AT_FDCWD,
-                                       (positive)path,
-                                       STORAGE_OPEN_CLOEXEC, 0);
+        bipolar handle = system_open_at(AT_FDCWD,
+                                       path,
+                                       STORAGE_OPEN_CLOEXEC);
 
         if (handle < 0)
                 return false;
@@ -105,7 +98,7 @@ static bool storage_read_all(string_address path, byte_store address_to text)
 
                 if (text->used > positive_max - 4097)
                 {
-                        system_call_1(syscall(close), (positive)handle);
+                        system_close(handle);
                         return false;
                 }
 
@@ -113,7 +106,7 @@ static bool storage_read_all(string_address path, byte_store address_to text)
 
                 if (!byte_store_reserve(text, want, 4096))
                 {
-                        system_call_1(syscall(close), (positive)handle);
+                        system_close(handle);
                         return false;
                 }
 
@@ -122,7 +115,7 @@ static bool storage_read_all(string_address path, byte_store address_to text)
 
                 if (got < 0)
                 {
-                        system_call_1(syscall(close), (positive)handle);
+                        system_close(handle);
                         return false;
                 }
 
@@ -132,7 +125,7 @@ static bool storage_read_all(string_address path, byte_store address_to text)
                 text->used += (positive)got;
         }
 
-        system_call_1(syscall(close), (positive)handle);
+        system_close(handle);
         text->bytes[text->used] = end;
         return true;
 }
@@ -435,8 +428,9 @@ bool storage_fstab_table_load(storage_fstab_table address_to table,
         {
                 if (!missing_ok)
                 {
-                        storage_write_two(diagnostic,
-                                          (string_address) "cannot read ", path);
+                        storage_write_text(diagnostic,
+                                           (string_address) "cannot read ");
+                        storage_write_text(diagnostic, path);
                         storage_write_text(diagnostic, (string_address) "\n");
                 }
 
@@ -665,11 +659,11 @@ static PURE bool storage_mount_options_match(storage_mount address_to mount,
 
                 /* The filesystem column is authoritative when it carries a
                    read-only/read-write state opposite to the VFS column. */
-                if (length == 2 && !memory_compare(at, "rw", 2) &&
+                if (length == 2 && memory_is_2(at, 'r', 'w') &&
                     storage_option_has(mount->filesystem_options,
                                        (string_address)"ro"))
                         present = false;
-                else if (length == 2 && !memory_compare(at, "ro", 2) &&
+                else if (length == 2 && memory_is_2(at, 'r', 'o') &&
                          storage_option_has(mount->filesystem_options,
                                             (string_address)"rw"))
                         present = false;
@@ -685,12 +679,12 @@ static PURE bool storage_mount_options_match(storage_mount address_to mount,
                             storage_option_has_length(mount->filesystem_options,
                                                       at + 2, length - 2);
 
-                        if (length == 4 && !memory_compare(at + 2, "rw", 2) &&
+                        if (length == 4 && memory_is_2(at + 2, 'r', 'w') &&
                             storage_option_has(mount->filesystem_options,
                                                (string_address)"ro"))
                                 positive_present = false;
                         else if (length == 4 &&
-                                 !memory_compare(at + 2, "ro", 2) &&
+                                 memory_is_2(at + 2, 'r', 'o') &&
                                  storage_option_has(mount->filesystem_options,
                                                     (string_address)"rw"))
                                 positive_present = false;
@@ -774,9 +768,9 @@ static PURE inline INLINE bool storage_filesystem_option_represented(
 {
         return storage_option_has_length(mount->options, option, length) ||
             (length == 2 &&
-             ((!memory_compare(option, "ro", 2) &&
+             ((memory_is_2(option, 'r', 'o') &&
                storage_option_has(mount->options, (string_address)"rw")) ||
-              (!memory_compare(option, "rw", 2) &&
+              (memory_is_2(option, 'r', 'w') &&
                storage_option_has(mount->options, (string_address)"ro"))));
 }
 
@@ -821,17 +815,17 @@ static fn storage_combined_options_write(writer output,
                                          address_of token_length)))
         {
                 bool overridden = token_length == 2 &&
-                    ((!memory_compare(at, "rw", 2) &&
+                    ((memory_is_2(at, 'r', 'w') &&
                       storage_option_has(mount->filesystem_options,
                                          (string_address)"ro")) ||
-                     (!memory_compare(at, "ro", 2) &&
+                     (memory_is_2(at, 'r', 'o') &&
                       storage_option_has(mount->filesystem_options,
                                          (string_address)"rw")));
 
                 if (token_length)
                 {
                         string_address shown = overridden
-                            ? (!memory_compare(at, "rw", 2)
+                            ? (memory_is_2(at, 'r', 'w')
                                    ? (string_address)"ro"
                                    : (string_address)"rw")
                             : at;
@@ -1527,7 +1521,8 @@ static fn storage_mountpoint_error(writer diagnostic, bool quiet,
         if (quiet)
                 return;
 
-        storage_write_two(diagnostic, (string_address) "mountpoint: ", path);
+        storage_write_text(diagnostic, (string_address) "mountpoint: ");
+        storage_write_text(diagnostic, path);
         storage_write_text(diagnostic, reason);
 }
 
@@ -1638,12 +1633,11 @@ b32 storage_mountpoint(positive argc, string_address address_to argv,
                 return 0;
         }
 
-        bipolar handle = system_call_4(syscall(openat), AT_FDCWD,
-                                       (positive)path,
+        bipolar handle = system_open_at(AT_FDCWD,
+                                       path,
                                        STORAGE_OPEN_PATH |
                                            STORAGE_OPEN_CLOEXEC |
-                                           (nofollow ? STORAGE_OPEN_NOFOLLOW : 0),
-                                       0);
+                                           (nofollow ? STORAGE_OPEN_NOFOLLOW : 0));
         bool mounted = false;
         bool inspected = false;
         file_facts here;
@@ -1696,7 +1690,7 @@ b32 storage_mountpoint(positive argc, string_address address_to argv,
                 if (resolved)
                         memory_free(resolved, resolved_room);
 
-                system_call_1(syscall(close), (positive)handle);
+                system_close(handle);
         }
 
         if (!inspected)

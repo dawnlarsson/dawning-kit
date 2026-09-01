@@ -208,7 +208,7 @@ static bipolar exec_save_duplicate(b32 fd, parse_node address_to node, b32 floor
                 if (!exec_redirect_target_is(node, (b32)saved))
                         return saved;
 
-                system_call_1(syscall(close), saved);
+                system_close(saved);
 
                 if (saved >= 0x7ffffffe)
                         return -1;
@@ -267,12 +267,12 @@ static fn exec_redirect_restore(b32 mark)
 
                 if (saved->saved >= 0)
                 {
-                        system_call_3(syscall(dup3), saved->saved, saved->fd, 0);
-                        system_call_1(syscall(close), saved->saved);
+                        system_duplicate(saved->saved, saved->fd, 0);
+                        system_close(saved->saved);
                         continue;
                 }
 
-                system_call_1(syscall(close), saved->fd);
+                system_close(saved->fd);
         }
 }
 
@@ -286,7 +286,7 @@ static fn exec_redirect_forget(b32 mark)
                 exec_saved_fd address_to saved = exec_saves + --exec_save_count;
 
                 if (saved->saved >= 0)
-                        system_call_1(syscall(close), saved->saved);
+                        system_close(saved->saved);
         }
 }
 
@@ -305,7 +305,7 @@ static fn exec_redirect_diagnostic_restore(b32 mark)
                         continue;
 
                 if (saved->saved >= 0)
-                        system_call_3(syscall(dup3), saved->saved, 2, 0);
+                        system_duplicate(saved->saved, 2, 0);
 
                 return;
         }
@@ -390,7 +390,7 @@ static bool exec_here_expand_isolated(string_address body, positive length,
         b32 ends[2];
         bipolar child;
 
-        if (system_call_2(syscall(pipe2), (positive)ends, 0) < 0)
+        if (system_pipe(ends, 0) < 0)
                 return false;
 
         log_flush();
@@ -401,7 +401,7 @@ static bool exec_here_expand_isolated(string_address body, positive length,
                 string_address expanded;
                 positive made;
 
-                system_call_1(syscall(close), ends[0]);
+                system_close(ends[0]);
                 exec_child_began();
                 trap_default_all();
                 token_overflow = false;
@@ -421,11 +421,11 @@ static bool exec_here_expand_isolated(string_address body, positive length,
                 system_call_1(syscall(exit_group), 0);
         }
 
-        system_call_1(syscall(close), ends[1]);
+        system_close(ends[1]);
 
         if (child < 0)
         {
-                system_call_1(syscall(close), ends[0]);
+                system_close(ends[0]);
                 return false;
         }
 
@@ -451,7 +451,7 @@ static bool exec_here_expand_isolated(string_address body, positive length,
                 filled += (positive)got;
         }
 
-        system_call_1(syscall(close), ends[0]);
+        system_close(ends[0]);
 
         system_wait4_retry(child, address_of raw_status, 0, null);
 
@@ -482,7 +482,7 @@ static bipolar exec_here_pipe(string_address body, positive length)
         b32 ends[2];
         bipolar child;
 
-        if (system_call_2(syscall(pipe2), (positive)ends, 0) < 0)
+        if (system_pipe(ends, 0) < 0)
                 return -1;
 
         if (length <= PIPE_HOLDS)
@@ -490,7 +490,7 @@ static bipolar exec_here_pipe(string_address body, positive length)
                 if (length)
                         system_call_3(syscall(write), ends[1], (positive)body, length);
 
-                system_call_1(syscall(close), ends[1]);
+                system_close(ends[1]);
 
                 return ends[0];
         }
@@ -500,7 +500,7 @@ static bipolar exec_here_pipe(string_address body, positive length)
 
         if (child == 0)
         {
-                system_call_1(syscall(close), ends[0]);
+                system_close(ends[0]);
                 trap_default_all();
 
                 system_write_all(ends[1], body, length);
@@ -508,11 +508,11 @@ static bipolar exec_here_pipe(string_address body, positive length)
                 exit(0);
         }
 
-        system_call_1(syscall(close), ends[1]);
+        system_close(ends[1]);
 
         if (child < 0)
         {
-                system_call_1(syscall(close), ends[0]);
+                system_close(ends[0]);
                 return -1;
         }
 
@@ -530,16 +530,16 @@ static bipolar exec_output_open(string_address target, bool force)
         bipolar opened;
 
         if (force || !shell_noclobber())
-                return system_call_4(syscall(openat), AT_FDCWD,
-                                     (positive)target, FILE_WRITE, 0666);
+                return system_open_at_mode(AT_FDCWD,
+                                     target, FILE_WRITE, 0666);
 
-        opened = system_call_4(syscall(openat), AT_FDCWD, (positive)target,
+        opened = system_open_at_mode(AT_FDCWD, target,
                                FILE_WRITE | FILE_EXCLUSIVE, 0666);
 
         if (opened != -ERROR_EXISTS)
                 return opened;
 
-        opened = system_call_4(syscall(openat), AT_FDCWD, (positive)target, 01, 0);
+        opened = system_open_at(AT_FDCWD, target, 01);
 
         if (opened >= 0)
         {
@@ -548,7 +548,7 @@ static bipolar exec_output_open(string_address target, bool force)
                 if (!file_look(opened, "", AT_EMPTY_PATH, address_of facts) ||
                     (facts.mode & MODE_FORMAT) == MODE_FILE)
                 {
-                        system_call_1(syscall(close), opened);
+                        system_close(opened);
                         opened = -ERROR_EXISTS;
                 }
         }
@@ -588,8 +588,8 @@ static bool exec_redirect_apply(b32 index)
                         if (!exec_save_fd(1, node) || !exec_save_fd(2, node))
                                 return false;
 
-                        system_call_1(syscall(close), 1);
-                        system_call_1(syscall(close), 2);
+                        system_close(1);
+                        system_close(2);
                 }
                 else
                 {
@@ -600,7 +600,7 @@ static bool exec_redirect_apply(b32 index)
                         // its target stays live until that atomic replacement.
                         // This also preserves the source == target no-op.
                         if (want->op != OP_GREATAND && want->op != OP_LESSAND)
-                                system_call_1(syscall(close), want->fd);
+                                system_close(want->fd);
                 }
 
                 if (want->op == OP_DLESS)
@@ -645,7 +645,7 @@ static bool exec_redirect_apply(b32 index)
 
                         if (string_is(target, '-') && string_is(target + 1, end))
                         {
-                                system_call_1(syscall(close), want->fd);
+                                system_close(want->fd);
                                 continue;
                         }
 
@@ -663,17 +663,17 @@ static bool exec_redirect_apply(b32 index)
                         if ((b32)source == want->fd)
                                 continue;
 
-                        opened = system_call_3(syscall(dup3), source, want->fd, 0);
+                        opened = system_duplicate(source, want->fd, 0);
                 }
                 else if (want->op == OP_LESS)
-                        opened = system_call_4(syscall(openat), AT_FDCWD,
-                                               (positive)target, FILE_READ, 0);
+                        opened = system_open_at(AT_FDCWD,
+                                               target, FILE_READ);
                 else if (want->op == OP_DGREAT || want->op == OP_ANDDGREAT)
-                        opened = system_call_4(syscall(openat), AT_FDCWD,
-                                               (positive)target, FILE_APPEND, 0666);
+                        opened = system_open_at_mode(AT_FDCWD,
+                                               target, FILE_APPEND, 0666);
                 else if (want->op == OP_LESSGREAT)
-                        opened = system_call_4(syscall(openat), AT_FDCWD,
-                                               (positive)target,
+                        opened = system_open_at_mode(AT_FDCWD,
+                                               target,
                                                FILE_READ_WRITE | FILE_CREATE, 0666);
                 else
                         opened = exec_output_open(target,
@@ -702,16 +702,16 @@ static bool exec_redirect_apply(b32 index)
                 {
                         if (opened != 1)
                         {
-                                if (system_call_3(syscall(dup3), opened, 1, 0) < 0)
+                                if (system_duplicate(opened, 1, 0) < 0)
                                 {
-                                        system_call_1(syscall(close), opened);
+                                        system_close(opened);
                                         return false;
                                 }
 
-                                system_call_1(syscall(close), opened);
+                                system_close(opened);
                         }
 
-                        if (system_call_3(syscall(dup3), 1, 2, 0) < 0)
+                        if (system_duplicate(1, 2, 0) < 0)
                                 return false;
 
                         continue;
@@ -722,9 +722,9 @@ static bool exec_redirect_apply(b32 index)
                 // exactly that descriptor when it was the lowest one free.
                 if (opened != want->fd)
                 {
-                        if (system_call_3(syscall(dup3), opened, want->fd, 0) < 0)
+                        if (system_duplicate(opened, want->fd, 0) < 0)
                         {
-                                system_call_1(syscall(close), opened);
+                                system_close(opened);
                                 exec_redirect_status = 2;
                                 exec_redirect_diagnostic_restore(redirect_mark);
                                 string_format(exec_error,
@@ -733,7 +733,7 @@ static bool exec_redirect_apply(b32 index)
                                 return false;
                         }
 
-                        system_call_1(syscall(close), opened);
+                        system_close(opened);
                 }
         }
 
@@ -1087,8 +1087,8 @@ static bool exec_special_builtin(string_address name)
         };
 
         return string_table_find(name, names, sizeof(names[0]),
-                                 sizeof(names) / sizeof(names[0])) <
-               sizeof(names) / sizeof(names[0]);
+                                 array_count(names)) <
+               array_count(names);
 }
 
 /*
@@ -1433,7 +1433,7 @@ fn exec_traps()
         bool action_fatal = false;
         bipolar number;
 
-        if (exec_line_aborted() || !trap_waiting() || !run_line)
+        if (exec_line_aborted() || !trap_waiting())
                 return;
 
         trap_entered(true);
@@ -2792,14 +2792,14 @@ static fn exec_child_signals(bool background, bool null_input)
 
         if (null_input)
         {
-                bipolar null_handle = system_call_4(syscall(openat), AT_FDCWD,
-                                                    (positive)"/dev/null",
-                                                    0, 0);
+                bipolar null_handle = system_open_at(AT_FDCWD,
+                                                    "/dev/null",
+                                                    0);
 
                 if (null_handle > 0)
                 {
-                        system_call_3(syscall(dup3), null_handle, 0, 0);
-                        system_call_1(syscall(close), null_handle);
+                        system_duplicate(null_handle, 0, 0);
+                        system_close(null_handle);
                 }
         }
 }
@@ -2880,7 +2880,7 @@ static b32 exec_pipe(b32 first, positive count, bool background,
                 ends[0] = -1;
                 ends[1] = -1;
 
-                if (!last && system_call_2(syscall(pipe2), (positive)ends, 0) < 0)
+                if (!last && system_pipe(ends, 0) < 0)
                 {
                         spawn_failed = true;
                         break;
@@ -2905,15 +2905,15 @@ static b32 exec_pipe(b32 first, positive count, bool background,
 
                         if (upstream >= 0)
                         {
-                                system_call_3(syscall(dup3), upstream, 0, 0);
-                                system_call_1(syscall(close), upstream);
+                                system_duplicate(upstream, 0, 0);
+                                system_close(upstream);
                         }
 
                         if (!last)
                         {
-                                system_call_1(syscall(close), ends[0]);
-                                system_call_3(syscall(dup3), ends[1], 1, 0);
-                                system_call_1(syscall(close), ends[1]);
+                                system_close(ends[0]);
+                                system_duplicate(ends[1], 1, 0);
+                                system_close(ends[1]);
                         }
 
                         status = exec_node(child);
@@ -2924,12 +2924,12 @@ static b32 exec_pipe(b32 first, positive count, bool background,
                 if (made < 0)
                 {
                         if (upstream >= 0)
-                                system_call_1(syscall(close), upstream);
+                                system_close(upstream);
 
                         if (!last)
                         {
-                                system_call_1(syscall(close), ends[0]);
-                                system_call_1(syscall(close), ends[1]);
+                                system_close(ends[0]);
+                                system_close(ends[1]);
                         }
 
                         upstream = -1;
@@ -2938,13 +2938,13 @@ static b32 exec_pipe(b32 first, positive count, bool background,
                 }
 
                 if (upstream >= 0)
-                        system_call_1(syscall(close), upstream);
+                        system_close(upstream);
 
                 upstream = -1;
 
                 if (!last)
                 {
-                        system_call_1(syscall(close), ends[1]);
+                        system_close(ends[1]);
                         upstream = ends[0];
                 }
 
@@ -2953,7 +2953,7 @@ static b32 exec_pipe(b32 first, positive count, bool background,
         }
 
         if (upstream >= 0)
-                system_call_1(syscall(close), upstream);
+                system_close(upstream);
 
         if (background && !spawn_failed)
         {

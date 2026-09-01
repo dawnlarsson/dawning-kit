@@ -389,37 +389,6 @@ static bipolar expand_base_number(string_address address_to at, bool address_to 
 }
 
 /*
-        Past a [:alpha:], or nothing when none starts here.
-
-        The ] that closes one of these is not the ] that closes the set around
-        it: read as one, [[:alpha:]] was a set holding a bracket, a colon and
-        five letters, followed by a stray ].
-
-        [.x.] and [=x=] are not here because dash has neither, and a pattern
-        that matches something on one shell and nothing on the other is worse
-        than a pattern that matches nothing on both.
-*/
-static PURE string_address expand_class_end(string_address at)
-{
-        string_address step;
-
-        if (string_not(at, '[') || string_not(at + 1, ':'))
-                return null;
-
-        step = at + 2;
-
-        while (string_get(step))
-        {
-                if (string_is(step, ':') && string_is(step + 1, ']'))
-                        return step + 2;
-
-                step++;
-        }
-
-        return null;
-}
-
-/*
         A bracket set: where it ends, and whether a byte is in it.
 
         A [ with no ] anywhere after it is a plain [ and not a set at all, which
@@ -438,7 +407,7 @@ static PURE string_address expand_set_end(string_address at)
 
         while (string_get(step) && string_not(step, ']'))
         {
-                string_address past = expand_class_end(step);
+                string_address past = byte_class_end(step, null);
 
                 step = past ? past : step + 1;
         }
@@ -463,7 +432,7 @@ static PURE bool expand_in_set(string_address at, string_address stop, p8 value)
                 p8 low;
 
                 {
-                        string_address past = expand_class_end(step);
+                        string_address past = byte_class_end(step, null);
 
                         if (past && past <= stop)
                         {
@@ -825,7 +794,7 @@ fn shell_pid_ensure()
 bipolar shell_clone()
 {
         shell_pid_ensure();
-        return system_call_2(syscall(clone), SIGCHLD, 0);
+        return system_fork();
 }
 
 static b8 expand_ifs_set[256];
@@ -2309,7 +2278,7 @@ static fn expand_run(string_address command, bool quoted)
         // with it still in hand prints all of it a second time.
         log_flush();
 
-        if (system_call_2(syscall(pipe2), (positive)address_of channel, 0) < 0)
+        if (system_pipe(address_of channel, 0) < 0)
                 return;
 
         child = expand_tool_direct(command, channel[1]);
@@ -2321,10 +2290,10 @@ static fn expand_run(string_address command, bool quoted)
         {
                 exec_child_began();
 
-                system_call_1(syscall(close), (positive)channel[0]);
-                system_call_3(syscall(dup3), (positive)channel[1],
+                system_close(channel[0]);
+                system_duplicate(channel[1],
                               standard_output_descriptor, 0);
-                system_call_1(syscall(close), (positive)channel[1]);
+                system_close(channel[1]);
 
                 expand_in_substitution = true;
 
@@ -2374,7 +2343,7 @@ static fn expand_run(string_address command, bool quoted)
                 system_call_1(syscall(exit_group), (positive)shell_status);
         }
 
-        system_call_1(syscall(close), (positive)channel[1]);
+        system_close(channel[1]);
 
         if (child > 0)
         {
@@ -2391,7 +2360,7 @@ static fn expand_run(string_address command, bool quoted)
                 }
         }
 
-        system_call_1(syscall(close), (positive)channel[0]);
+        system_close(channel[0]);
 
         if (child > 0)
                 system_wait4_retry(child, address_of status, 0, null);
@@ -4247,8 +4216,8 @@ static fn glob_walk(p8 address_to prefix, positive used, string_address pattern,
 
                 prefix[used] = end;
 
-                directory = system_call_3(syscall(openat), AT_FDCWD,
-                                          (positive)(used ? prefix : (string_address) "."),
+                directory = system_open_at(AT_FDCWD,
+                                          (used ? prefix : (string_address) "."),
                                           FILE_READ | O_DIRECTORY);
 
                 if (directory < 0)
@@ -4310,7 +4279,7 @@ static fn glob_walk(p8 address_to prefix, positive used, string_address pattern,
                                 break;
                 }
 
-                system_call_1(syscall(close), (positive)directory);
+                system_close(directory);
         }
 }
 
@@ -4318,60 +4287,14 @@ static fn glob_walk(p8 address_to prefix, positive used, string_address pattern,
 // twice should be told the same story both times.
 static bool expand_sort_names(string_address address_to names, positive count)
 {
-        positive width;
-        string_address address_to source = names;
-        string_address address_to target;
-
         if (count < 2)
                 return true;
 
         if (!shell_array_room(expand_sort_room, expand_sort_room_count, count))
                 return false;
 
-        target = expand_sort_room;
-
-        for (width = 1; width < count; width *= 2)
-        {
-                positive left;
-
-                for (left = 0; left < count; left += width * 2)
-                {
-                        positive middle = left + width;
-                        positive stop = left + width * 2;
-                        positive a = left;
-                        positive b;
-                        positive out = left;
-
-                        if (middle > count)
-                                middle = count;
-
-                        if (stop > count)
-                                stop = count;
-
-                        b = middle;
-
-                        while (a < middle && b < stop)
-                                target[out++] = string_compare(source[a], source[b]) <= 0
-                                                    ? source[a++]
-                                                    : source[b++];
-
-                        while (a < middle)
-                                target[out++] = source[a++];
-
-                        while (b < stop)
-                                target[out++] = source[b++];
-                }
-
-                {
-                        string_address address_to swap = source;
-
-                        source = target;
-                        target = swap;
-                }
-
-                if (width > count / 2)
-                        break;
-        }
+        string_address address_to source = array_merge_sort(
+            names, expand_sort_room, count, string_compare);
 
         if (source != names)
                 memory_copy(names, source, count * sizeof(string_address));

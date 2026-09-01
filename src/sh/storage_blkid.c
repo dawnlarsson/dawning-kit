@@ -886,7 +886,7 @@ static bool storage_udf_metadata(bipolar handle,
         positive block_sizes[] = {512, 1024, 2048, 4096};
 
         for (positive which = 0;
-             which < sizeof(block_sizes) / sizeof(block_sizes[0]); which++)
+             which < array_count(block_sizes); which++)
         {
                 positive block = block_sizes[which];
                 positive have = storage_read(handle, descriptor, block,
@@ -976,20 +976,20 @@ static fn storage_probe_udf(bipolar handle,
 
                 name = descriptor + 1;
 
-                if (!memory_compare(name, "BEA01", 5))
+                if (memory_is_5(name, 'B', 'E', 'A', '0', '1'))
                 {
                         if (beginning || namespace_seen)
                                 return;
                         beginning = true;
                 }
-                else if (!memory_compare(name, "NSR02", 5) ||
-                         !memory_compare(name, "NSR03", 5))
+                else if (memory_is_5(name, 'N', 'S', 'R', '0', '2') ||
+                         memory_is_5(name, 'N', 'S', 'R', '0', '3'))
                 {
                         if (!beginning || namespace_seen)
                                 return;
                         namespace_seen = true;
                 }
-                else if (!memory_compare(name, "TEA01", 5))
+                else if (memory_is_5(name, 'T', 'E', 'A', '0', '1'))
                 {
                         if (!beginning || !namespace_seen ||
                             !storage_udf_metadata(handle, identity))
@@ -1000,8 +1000,8 @@ static fn storage_probe_udf(bipolar handle,
                                      (string_address)"udf");
                         return;
                 }
-                else if (memory_compare(name, "BOOT2", 5) &&
-                         memory_compare(name, "CD001", 5))
+                else if (!memory_is_5(name, 'B', 'O', 'O', 'T', '2') &&
+                         !memory_is_5(name, 'C', 'D', '0', '0', '1'))
                         return;
         }
 }
@@ -1088,7 +1088,7 @@ static fn storage_probe_swap(bipolar handle,
         bool recognised = false;
 
         for (positive at = 0;
-             at < sizeof(page_sizes) / sizeof(page_sizes[0]); at++)
+             at < array_count(page_sizes); at++)
         {
                 positive page = page_sizes[at];
                 p8 address_to signature;
@@ -1281,13 +1281,13 @@ static fn storage_probe_partition(string_address path,
         used += positive_into_string(sysfs + used, minor);
         memory_copy(sysfs + used, "/uevent", sizeof("/uevent"));
 
-        handle = system_call_4(syscall(openat), AT_FDCWD, (positive)sysfs,
-                               FILE_READ | O_CLOEXEC, 0);
+        handle = system_open_at(AT_FDCWD, sysfs,
+                               FILE_READ | O_CLOEXEC);
         if (handle < 0)
                 return;
 
         got = system_read_retry((positive)handle, text, sizeof(text) - 1);
-        system_call_1(syscall(close), (positive)handle);
+        system_close(handle);
         if (got <= 0)
                 return;
         text[got] = end;
@@ -1333,7 +1333,7 @@ bool storage_probe_device(string_address path,
         memory_zero(identity, sizeof(*identity));
         identity->path = path;
         storage_probe_partition(path, identity);
-        handle = system_call_3(syscall(openat), AT_FDCWD, (positive)path,
+        handle = system_open_at(AT_FDCWD, path,
                                FILE_READ | O_CLOEXEC);
         if (handle < 0)
                 return identity->partuuid_length || identity->partlabel_length;
@@ -1372,7 +1372,7 @@ bool storage_probe_device(string_address path,
         if (!identity->type_length)
                 storage_probe_iso9660(handle, identity, bytes);
 
-        system_call_1(syscall(close), (positive)handle);
+        system_close(handle);
         return identity->type_length || identity->partuuid_length ||
                identity->partlabel_length;
 }
@@ -1380,7 +1380,7 @@ bool storage_probe_device(string_address path,
 static const storage_tag_descriptor address_to storage_tag_find(
     string_address tag, positive length)
 {
-        for (positive at = 0; at < sizeof(storage_tags) / sizeof(storage_tags[0]);
+        for (positive at = 0; at < array_count(storage_tags);
              at++)
                 if (length == storage_tags[at].length &&
                     !memory_compare_ascii_case(tag, storage_tags[at].name,
@@ -1445,8 +1445,8 @@ static bool storage_each_device(storage_visitor visit, address_any context)
         p8 block[STORAGE_DEVICE_BLOCK];
         bool stopped = false;
 
-        directory = system_call_3(syscall(openat), AT_FDCWD,
-                                  (positive)"/sys/class/block",
+        directory = system_open_at(AT_FDCWD,
+                                  "/sys/class/block",
                                   FILE_READ | O_DIRECTORY | O_CLOEXEC);
         if (directory < 0)
                 return false;
@@ -1511,7 +1511,7 @@ static bool storage_each_device(storage_visitor visit, address_any context)
                 }
         }
 
-        system_call_1(syscall(close), (positive)directory);
+        system_close(directory);
         return stopped;
 }
 
@@ -1822,7 +1822,7 @@ b32 storage_blkid_run(positive argc, string_address address_to argv,
         storage_blkid_context context;
         string_address inline_devices[8];
         string_address address_to devices = inline_devices;
-        positive device_room = sizeof(inline_devices) / sizeof(inline_devices[0]);
+        positive device_room = array_count(inline_devices);
         positive device_count = 0;
         bool option_end = false;
 

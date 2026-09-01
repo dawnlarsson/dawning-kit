@@ -265,8 +265,8 @@ static address_any text_arena_take(positive bytes)
 
 static bipolar text_open_handle(string_address path, positive flags, positive mode)
 {
-        return system_call_4(syscall(openat), (positive)(bipolar)AT_FDCWD,
-                             (positive)path, flags, mode);
+        return system_open_at_mode(AT_FDCWD,
+                             path, flags, mode);
 }
 
 typedef struct
@@ -343,7 +343,7 @@ static inline INLINE fn text_close_handle(bool address_to opened,
                                           positive handle)
 {
         if (address_to opened)
-                system_call_1(syscall(close), handle);
+                system_close(handle);
 
         address_to opened = false;
 }
@@ -1031,20 +1031,6 @@ static fn regex_set_add_folded(b32 which, p8 character)
                 regex_set_add(which, (p8)(character + 32));
 }
 
-static bool regex_named_class(b32 which, string_address name)
-{
-        b32 class = byte_class_index(name, string_length(name));
-
-        if (class < 0)
-                return false;
-
-        for (b32 c = 0; c < 256; c++)
-                if (byte_class_holds(class, (p8)c))
-                        regex_set_add_folded(which, (p8)c);
-
-        return true;
-}
-
 // [abc], [^a-z], [[:digit:]] -- and the two rules everybody forgets: a ] that
 // comes first is a literal, and so is a - that comes first or last.
 static b32 regex_parse_set()
@@ -1078,19 +1064,19 @@ static b32 regex_parse_set()
 
                 if (character == '[' && regex_peek_at(1) == ':')
                 {
-                        p8 name[16];
-                        positive have = 0;
-                        positive at = regex_pattern_at + 2;
+                        positive used;
+                        b32 class = byte_class_parse(
+                            regex_pattern + regex_pattern_at,
+                            regex_pattern_length - regex_pattern_at,
+                            address_of used);
 
-                        while (at < regex_pattern_length && regex_pattern[at] != ':' && have < 15)
-                                name[have++] = regex_pattern[at++];
-
-                        name[have] = '\0';
-
-                        if (at + 1 < regex_pattern_length && regex_pattern[at] == ':' &&
-                            regex_pattern[at + 1] == ']' && regex_named_class(which, name))
+                        if (class >= 0)
                         {
-                                regex_pattern_at = at + 2;
+                                for (b32 c = 0; c < 256; c++)
+                                        if (byte_class_holds(class, (p8)c))
+                                                regex_set_add_folded(which,
+                                                                     (p8)c);
+                                regex_pattern_at += used;
                                 continue;
                         }
                 }
@@ -1676,18 +1662,39 @@ static fn regex_keep(regex_program address_to which)
         regex_pool_sets += regex_set_count;
 }
 
-static fn regex_first_add(p8 character)
+/* Add one consuming VM instruction to a possible first/last-byte table. */
+static inline INLINE fn regex_edge_add(p8 address_to table, p8 kind,
+                                       p8 value, b32 set)
 {
-        regex_first[character] = 1;
+        if (kind == REGEX_ANY)
+        {
+                memory_fill(table, 1, 256);
+
+                if (!(regex_policy & REGEX_DOT_NEWLINE))
+                        table['\n'] = 0;
+
+                return;
+        }
+
+        if (kind == REGEX_SET)
+        {
+                for (b32 c = 0; c < 256; c++)
+                        if (regex_set_has(set, (p8)c))
+                                table[c] = 1;
+
+                return;
+        }
+
+        table[value] = 1;
 
         if (!regex_icase)
                 return;
 
-        if (character >= 'a' && character <= 'z')
-                regex_first[character - 32] = 1;
+        if (value >= 'a' && value <= 'z')
+                table[value - 32] = 1;
 
-        if (character >= 'A' && character <= 'Z')
-                regex_first[character + 32] = 1;
+        if (value >= 'A' && value <= 'Z')
+                table[value + 32] = 1;
 }
 
 // True where a match could begin without eating a character, which is what
@@ -1718,44 +1725,20 @@ static bool regex_first_walk(b32 pc)
         }
 
         case REGEX_CHAR:
-                regex_first_add(inst->value);
+                regex_edge_add(regex_first, REGEX_CHAR, inst->value, 0);
                 return false;
 
         case REGEX_ANY:
-                memory_fill(regex_first, 1, sizeof(regex_first_store[0]));
-
-                if (!(regex_policy & REGEX_DOT_NEWLINE))
-                        regex_first['\n'] = 0;
-
+                regex_edge_add(regex_first, REGEX_ANY, 0, 0);
                 return false;
 
         case REGEX_SET:
-                for (b32 c = 0; c < 256; c++)
-                        if (regex_set_has(inst->set, (p8)c))
-                                regex_first[c] = 1;
-
+                regex_edge_add(regex_first, REGEX_SET, 0, inst->set);
                 return false;
 
         case REGEX_REPEAT:
-                if (inst->kind == REGEX_ANY)
-                {
-                        memory_fill(regex_first, 1,
-                                    sizeof(regex_first_store[0]));
-
-                        if (!(regex_policy & REGEX_DOT_NEWLINE))
-                                regex_first['\n'] = 0;
-                }
-                else if (inst->kind == REGEX_SET)
-                {
-                        for (b32 c = 0; c < 256; c++)
-                                if (regex_set_has(inst->set, (p8)c))
-                                        regex_first[c] = 1;
-                }
-                else
-                {
-                        regex_first_add(inst->value);
-                }
-
+                regex_edge_add(regex_first, inst->kind, inst->value,
+                               inst->set);
                 return inst->low == 0 ? regex_first_walk(inst->x) : false;
 
         default:
@@ -1807,39 +1790,6 @@ static bool regex_tail_walk(b32 pc)
         }
 }
 
-static fn regex_last_add(b32 which, p8 kind, p8 value, b32 set)
-{
-        if (kind == REGEX_ANY)
-        {
-                memory_fill(regex_last, 1, sizeof(regex_last_store[0]));
-
-                if (!(regex_policy & REGEX_DOT_NEWLINE))
-                        regex_last['\n'] = 0;
-
-                return;
-        }
-
-        if (kind == REGEX_SET)
-        {
-                for (b32 c = 0; c < 256; c++)
-                        if (regex_set_has(set, (p8)c))
-                                regex_last[c] = 1;
-
-                return;
-        }
-
-        regex_last[value] = 1;
-
-        if (!regex_icase)
-                return;
-
-        if (value >= 'a' && value <= 'z')
-                regex_last[value - 32] = 1;
-
-        if (value >= 'A' && value <= 'Z')
-                regex_last[value + 32] = 1;
-}
-
 /*
         What a match can end with.
 
@@ -1876,7 +1826,8 @@ static fn regex_find_last()
                 if (!regex_tail_walk(after))
                         continue;
 
-                regex_last_add(i, code == REGEX_REPEAT ? regex_code[i].kind : code,
+                regex_edge_add(regex_last,
+                               code == REGEX_REPEAT ? regex_code[i].kind : code,
                                regex_code[i].value, regex_code[i].set);
         }
 }
@@ -2894,7 +2845,7 @@ static b32 text_wc()
                         else
                                 known += size;
 
-                        system_call_1(syscall(close), (positive)probe);
+                        system_close(probe);
                 }
 
                 if (unknown)
@@ -4056,7 +4007,7 @@ static b32 text_tee()
         }
 
         for (positive i = 0; i < handle_count; i++)
-                if (system_call_1(syscall(close), handles[i]) < 0)
+                if (system_close(handles[i]) < 0)
                         text_status = 1;
 
         if (handles)
@@ -4872,21 +4823,6 @@ static fn text_set_put(p8 address_to into, positive address_to have, p8 characte
                 text_set_broken = true;
 }
 
-static bool text_set_class(p8 address_to into, positive address_to have,
-                           string_address name)
-{
-        b32 class = byte_class_index(name, string_length(name));
-
-        if (class < 0)
-                return false;
-
-        for (b32 c = 0; c < 256; c++)
-                if (byte_class_holds(class, (p8)c))
-                        text_set_put(into, have, (p8)c);
-
-        return true;
-}
-
 static p8 text_escape(string_address spec, positive address_to at)
 {
         p8 character = spec[address_to at];
@@ -4931,19 +4867,16 @@ static fn text_set_build(string_address spec, p8 address_to into, positive addre
         {
                 if (spec[at] == '[' && spec[at + 1] == ':')
                 {
-                        p8 name[16];
-                        positive fill = 0;
-                        positive scan = at + 2;
+                        positive used;
+                        b32 class = byte_class_parse(spec + at, length - at,
+                                                     address_of used);
 
-                        while (scan < length && spec[scan] != ':' && fill < 15)
-                                name[fill++] = spec[scan++];
-
-                        name[fill] = '\0';
-
-                        if (scan + 1 < length && spec[scan] == ':' && spec[scan + 1] == ']' &&
-                            text_set_class(into, have, name))
+                        if (class >= 0)
                         {
-                                at = scan + 2;
+                                for (b32 c = 0; c < 256; c++)
+                                        if (byte_class_holds(class, (p8)c))
+                                                text_set_put(into, have, (p8)c);
+                                at += used;
                                 continue;
                         }
                 }
@@ -6143,7 +6076,7 @@ static p32 text_path_mode(string_address path)
 
         bipolar told = system_call_2(syscall(fstat), (positive)handle, (positive)raw);
 
-        system_call_1(syscall(close), (positive)handle);
+        system_close(handle);
 
         if (told < 0)
                 return 0;
@@ -6244,7 +6177,7 @@ static bool grep_walk(string_address path, b32 depth)
                         if (grep_seen_device[up] == device &&
                             grep_seen_node[up] == node)
                         {
-                                system_call_1(syscall(close), (positive)handle);
+                                system_close(handle);
                                 return true;
                         }
 
@@ -6315,7 +6248,7 @@ static bool grep_walk(string_address path, b32 depth)
                 }
         }
 
-        system_call_1(syscall(close), (positive)handle);
+        system_close(handle);
         return fine;
 }
 
@@ -8053,7 +7986,7 @@ static fn sed_put_file(string_address name)
                 text_put(window, (positive)got);
         }
 
-        system_call_1(syscall(close), (positive)handle);
+        system_close(handle);
 }
 
 static bool sed_substitute(sed_command address_to command)
@@ -8746,13 +8679,13 @@ static b32 text_sed()
 
                         text_flush();
                         text_out_to(1);
-                        closed = system_call_1(syscall(close), (positive)written);
+                        closed = system_close(written);
 
                         /* Never replace the input with a partial temporary. */
                         if (text_out_failed || closed < 0)
                         {
-                                system_call_3(syscall(unlinkat), AT_FDCWD,
-                                              (positive)temporary, 0);
+                                system_remove_at(AT_FDCWD,
+                                              temporary, 0);
                                 text_error(name, "write error");
                                 text_status = 4;
                                 break;
@@ -8786,8 +8719,7 @@ static b32 text_sed()
 
         for (b32 c = 0; c < sed_file_count; c++)
                 if (sed_files[c].handle >= 0)
-                        if (system_call_1(syscall(close),
-                                          (positive)sed_files[c].handle) < 0)
+                        if (system_close(sed_files[c].handle) < 0)
                                 sed_io_failed = true;
 
         if (sed_io_failed)
@@ -9464,7 +9396,7 @@ static PURE bipolar sort_compare_kind(p8 kind, positive how, p8 address_to a, po
 static positive address_to sort_span_from;
 static positive address_to sort_span_to;
 
-static bipolar sort_compare_keys(positive left, positive right)
+static PURE HOT bipolar sort_compare_keys(positive left, positive right)
 {
         text_slice address_to a = text_lines + left;
         text_slice address_to b = text_lines + right;
@@ -9523,7 +9455,7 @@ static bipolar sort_compare_keys(positive left, positive right)
 // The last resort, which is the whole line compared as bytes when every key
 // said the two were the same. -u drops what the keys called equal, so it
 // stops before this.
-static bipolar sort_compare(positive left, positive right)
+static PURE HOT bipolar sort_compare(positive left, positive right)
 {
         bipolar answer = sort_compare_keys(left, right);
 
@@ -9672,28 +9604,6 @@ static fn sort_radix(positive from, positive to, positive depth)
         sort_insertion(from, to);
 }
 
-static fn sort_merge_into(positive address_to source,
-                          positive address_to destination, positive from,
-                          positive middle, positive to)
-{
-        positive left = from;
-        positive right = middle;
-        positive at = from;
-
-        while (left < middle && right < to)
-        {
-                if (sort_compare(source[right], source[left]) < 0)
-                        destination[at++] = source[right++];
-                else
-                        destination[at++] = source[left++];
-        }
-
-        memory_copy_apart(destination + at, source + left,
-                         (middle - left) * sizeof(positive));
-        memory_copy_apart(destination + at + (middle - left), source + right,
-                         (to - right) * sizeof(positive));
-}
-
 /*
         Stable bottom-up merge sort with the two index arrays changing roles.
 
@@ -9705,38 +9615,11 @@ static fn sort_merge_into(positive address_to source,
 */
 static fn sort_run(positive count)
 {
-        positive address_to source = sort_order;
-        positive address_to destination = sort_spare;
-
         if (count < 2)
                 return;
 
-        for (positive width = 1; width < count;)
-        {
-                positive from = 0;
-
-                while (from < count)
-                {
-                        positive middle = min(from + width, count);
-                        positive to = min(middle + width, count);
-
-                        sort_merge_into(source, destination, from, middle, to);
-                        from = to;
-                }
-
-                {
-                        positive address_to swap = source;
-
-                        source = destination;
-                        destination = swap;
-                }
-
-                if (width > count / 2)
-                        break;
-                width *= 2;
-        }
-
-        sort_order = source;
+        sort_order = array_merge_sort(sort_order, sort_spare, count,
+                                      sort_compare);
 }
 
 static positive sort_key_flags(sort_key address_to key, string_address spec,

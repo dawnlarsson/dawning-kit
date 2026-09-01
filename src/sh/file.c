@@ -1298,7 +1298,7 @@ typedef struct
 
 bool file_walk_open(file_walk address_to walk, bipolar directory, string_address path)
 {
-        walk->handle = system_call_3(syscall(openat), directory, (positive)path,
+        walk->handle = system_open_at(directory, path,
                                      FILE_READ | O_DIRECTORY);
         walk->have = 0;
         walk->at = 0;
@@ -1331,7 +1331,7 @@ struct linux_dirent64 address_to file_walk_next(file_walk address_to walk)
 fn file_walk_close(file_walk address_to walk)
 {
         if (walk->handle >= 0)
-                system_call_1(syscall(close), walk->handle);
+                system_close(walk->handle);
 
         walk->handle = -1;
 }
@@ -1868,6 +1868,45 @@ typedef struct
         positive length;
 } file_color_span;
 
+typedef struct
+{
+        file_color_span key;
+        file_color_span value;
+        bool assigned;
+} file_color_entry;
+
+/* LS_COLORS and GREP_COLORS share one key[=value]: record machine.  Looking
+   for ':' and '=' together avoids the two full scans each former consumer
+   performed, while still exposing bare flags to the one grammar allowing
+   them. */
+static inline INLINE bool file_color_next(string_address address_to cursor,
+                                          file_color_entry address_to entry)
+{
+        string_address start = address_to cursor;
+        string_address split;
+        string_address stop;
+
+        if (!start || !string_get(start))
+                return false;
+
+        split = string_first_of_set(start, (string_address)":=");
+        entry->assigned = split && string_is(split, '=');
+
+        if (entry->assigned)
+                stop = string_first_of_or_end(split + 1, ':');
+        else
+                stop = split ? split : start + string_length(start);
+
+        entry->key = (file_color_span){start,
+            (positive)((entry->assigned ? split : stop) - start)};
+        entry->value = entry->assigned
+                           ? (file_color_span){split + 1,
+                               (positive)(stop - split - 1)}
+                           : (file_color_span){null, 0};
+        address_to cursor = string_get(stop) ? stop + 1 : stop;
+        return true;
+}
+
 static bool file_handle_terminal(positive handle)
 {
         p8 settings[64];
@@ -1951,24 +1990,18 @@ static PURE file_color_span file_color_value_aliased(string_address table,
         if (!table)
                 return answer;
 
-        for (string_address at = table; string_get(at);)
+        string_address at = table;
+        file_color_entry entry;
+
+        while (file_color_next(address_of at, address_of entry))
         {
-                string_address stop = string_first_of_or_end(at, ':');
-                string_address mark = string_first_of_or_end(at, '=');
-
-                positive length = mark < stop ? (positive)(mark - at) : 0;
-
-                if (mark < stop &&
-                    ((length == wanted &&
-                      !string_compare_max(at, key, wanted)) ||
-                     (alias && length == alias_length &&
-                      !string_compare_max(at, alias, alias_length))))
-                {
-                        answer.text = mark + 1;
-                        answer.length = (positive)(stop - mark - 1);
-                }
-
-                at = string_get(stop) ? stop + 1 : stop;
+                if (entry.assigned &&
+                    ((entry.key.length == wanted &&
+                      !string_compare_max(entry.key.text, key, wanted)) ||
+                     (alias && entry.key.length == alias_length &&
+                      !string_compare_max(entry.key.text, alias,
+                                          alias_length))))
+                        answer = entry.value;
         }
 
         return answer;
@@ -1984,19 +2017,12 @@ static PURE file_color_span file_color_value(string_address table,
 static PURE bool file_color_has(string_address table, string_address key)
 {
         positive wanted = string_length(key);
+        file_color_entry entry;
 
-        for (string_address at = table; at && string_get(at);)
-        {
-                string_address stop = string_first_of_or_end(at, ':');
-                string_address mark = string_first_of_or_end(at, '=');
-                string_address end_of_key = mark < stop ? mark : stop;
-
-                if ((positive)(end_of_key - at) == wanted &&
-                    !string_compare_max(at, key, wanted))
+        while (file_color_next(address_of table, address_of entry))
+                if (entry.key.length == wanted &&
+                    !string_compare_max(entry.key.text, key, wanted))
                         return true;
-
-                at = string_get(stop) ? stop + 1 : stop;
-        }
 
         return false;
 }
@@ -2011,16 +2037,11 @@ static bool file_color_span_is(file_color_span span, string_address text)
 
 static PURE bool file_color_table_valid(string_address table, bool bare_flags)
 {
-        for (string_address at = table; at && string_get(at);)
-        {
-                string_address stop = string_first_of_or_end(at, ':');
-                string_address mark = string_first_of_or_end(at, '=');
+        file_color_entry entry;
 
-                if (mark >= stop && stop > at && !bare_flags)
+        while (file_color_next(address_of table, address_of entry))
+                if (!entry.assigned && entry.key.length && !bare_flags)
                         return false;
-
-                at = string_get(stop) ? stop + 1 : stop;
-        }
 
         return true;
 }
@@ -2037,43 +2058,22 @@ CONST RETURNS_NONNULL string_address file_reason(bipolar code)
         if (code < 0)
                 code = -code;
 
-        if (code == ERROR_NO_ENTRY)
-                return (string_address) "No such file or directory";
-
-        if (code == ERROR_NO_PROCESS)
-                return (string_address) "No such process";
-
-        if (code == ERROR_BAD_DESCRIPTOR)
-                return (string_address) "Bad file descriptor";
-
-        if (code == ERROR_NOT_PERMITTED)
-                return (string_address) "Operation not permitted";
-
-        if (code == ERROR_ACCESS)
-                return (string_address) "Permission denied";
-
-        if (code == ERROR_EXISTS)
-                return (string_address) "File exists";
-
-        if (code == ERROR_NOT_DIRECTORY)
-                return (string_address) "Not a directory";
-
-        if (code == ERROR_IS_DIRECTORY)
-                return (string_address) "Is a directory";
-
-        if (code == ERROR_NOT_EMPTY)
-                return (string_address) "Directory not empty";
-
-        if (code == ERROR_INVALID)
-                return (string_address) "Invalid argument";
-
-        if (code == ERROR_NOT_TERMINAL)
-                return (string_address) "Inappropriate ioctl for device";
-
-        if (code == ERROR_CROSS_DEVICE)
-                return (string_address) "Invalid cross-device link";
-
-        return (string_address) "Error";
+        switch (code)
+        {
+        case ERROR_NO_ENTRY: return (string_address)"No such file or directory";
+        case ERROR_NO_PROCESS: return (string_address)"No such process";
+        case ERROR_BAD_DESCRIPTOR: return (string_address)"Bad file descriptor";
+        case ERROR_NOT_PERMITTED: return (string_address)"Operation not permitted";
+        case ERROR_ACCESS: return (string_address)"Permission denied";
+        case ERROR_EXISTS: return (string_address)"File exists";
+        case ERROR_NOT_DIRECTORY: return (string_address)"Not a directory";
+        case ERROR_IS_DIRECTORY: return (string_address)"Is a directory";
+        case ERROR_NOT_EMPTY: return (string_address)"Directory not empty";
+        case ERROR_INVALID: return (string_address)"Invalid argument";
+        case ERROR_NOT_TERMINAL: return (string_address)"Inappropriate ioctl for device";
+        case ERROR_CROSS_DEVICE: return (string_address)"Invalid cross-device link";
+        default: return (string_address)"Error";
+        }
 }
 
 // Copying, removing, making --------------------------------
@@ -2091,18 +2091,18 @@ static p8 file_transfer[FILE_TRANSFER_SIZE];
 bool file_copy_contents(bipolar from_directory, string_address from,
                         bipolar to_directory, string_address to, positive mode)
 {
-        bipolar in = system_call_3(syscall(openat), from_directory, (positive)from,
+        bipolar in = system_open_at(from_directory, from,
                                    FILE_READ);
 
         if (in < 0)
                 return false;
 
-        bipolar out = system_call_4(syscall(openat), to_directory, (positive)to,
+        bipolar out = system_open_at_mode(to_directory, to,
                                     FILE_WRITE, mode);
 
         if (out < 0)
         {
-                system_call_1(syscall(close), in);
+                system_close(in);
                 return false;
         }
 
@@ -2130,8 +2130,8 @@ bool file_copy_contents(bipolar from_directory, string_address from,
                 }
         }
 
-        system_call_1(syscall(close), in);
-        system_call_1(syscall(close), out);
+        system_close(in);
+        system_close(out);
 
         return complete;
 }
@@ -2375,7 +2375,8 @@ static bool ls_keep(string_address name, positive address_to where)
         return true;
 }
 
-static bipolar ls_order(ls_entry address_to left, ls_entry address_to right)
+static PURE HOT bipolar ls_order(ls_entry address_to left,
+                                 ls_entry address_to right)
 {
         if (ls_by_time)
         {
@@ -2397,6 +2398,9 @@ static bipolar ls_order(ls_entry address_to left, ls_entry address_to right)
         return string_compare(ls_arena + left->name, ls_arena + right->name);
 }
 
+#define ls_index_order(left, right) \
+        ls_order(ls_entries + (left), ls_entries + (right))
+
 /* Bottom-up merge sort keeps comparison count at n log n on the full 8192
    entry surface. Only eight-byte indexes move: the old Shell sort moved whole
    ls_entry records repeatedly and still did superlinear extra comparisons on
@@ -2410,44 +2414,8 @@ static fn ls_sort()
         if (ls_count < 2)
                 return;
 
-        positive address_to from = ls_sorted;
-        positive address_to into = ls_sort_spare;
-
-        for (positive width = 1; width < ls_count;)
-        {
-                for (positive base = 0; base < ls_count; base += width * 2)
-                {
-                        positive middle = min(base + width, ls_count);
-                        positive stop = min(middle + width, ls_count);
-                        positive left = base;
-                        positive right = middle;
-                        positive out = base;
-
-                        while (left < middle && right < stop)
-                                into[out++] = ls_order(ls_entries + from[left],
-                                                       ls_entries + from[right]) <= 0
-                                                  ? from[left++]
-                                                  : from[right++];
-
-                        positive tail = left < middle ? middle - left
-                                                       : stop - right;
-                        positive address_to rest = left < middle ? from + left
-                                                                  : from + right;
-
-                        if (tail)
-                                memory_copy_apart(into + out, rest,
-                                                  tail * sizeof(positive));
-                }
-
-                positive address_to swap = from;
-                from = into;
-                into = swap;
-
-                if (width > ls_count / 2)
-                        break;
-
-                width *= 2;
-        }
+        positive address_to from = array_merge_sort(
+            ls_sorted, ls_sort_spare, ls_count, ls_index_order);
 
         if (from != ls_sorted)
                 memory_copy_apart(ls_sorted, from,
@@ -2510,26 +2478,21 @@ static PURE file_color_span ls_suffix_color(string_address name)
 {
         file_color_span answer = {null, 0};
         positive name_length = string_length(name);
+        string_address at = ls_colors;
+        file_color_entry entry;
 
-        for (string_address at = ls_colors; at && string_get(at);)
+        while (file_color_next(address_of at, address_of entry))
         {
-                string_address stop = string_first_of_or_end(at, ':');
-                string_address mark = string_first_of_or_end(at, '=');
-
-                if (mark < stop && string_is(at, '*'))
+                if (entry.assigned && string_is(entry.key.text, '*'))
                 {
-                        positive suffix = (positive)(mark - at - 1);
+                        positive suffix = entry.key.length - 1;
 
                         if (suffix <= name_length &&
-                            !string_compare_max(at + 1, name + name_length - suffix,
+                            !string_compare_max(entry.key.text + 1,
+                                                name + name_length - suffix,
                                                 suffix))
-                        {
-                                answer.text = mark + 1;
-                                answer.length = (positive)(stop - mark - 1);
-                        }
+                                answer = entry.value;
                 }
-
-                at = string_get(stop) ? stop + 1 : stop;
         }
 
         return answer;
@@ -3381,7 +3344,7 @@ static b32 file_run(string_address address_to words)
 
         log_flush();
 
-        bipolar child = system_call_2(syscall(clone), SIGCHLD, 0);
+        bipolar child = system_fork();
 
         if (child == 0)
                 file_exec_path(words);
@@ -3680,7 +3643,7 @@ static bool find_facts_follow;
 */
 static positive find_mode_from_type(p8 type)
 {
-        return type < sizeof(file_kinds) / sizeof(file_kinds[0]) &&
+        return type < array_count(file_kinds) &&
                        file_kinds[type].name
                    ? (positive)type << 12
                    : 0;
@@ -4751,8 +4714,8 @@ static bool find_true(b32 which)
 
         case 'D':
         {
-                bipolar gone = system_call_3(
-                    syscall(unlinkat), AT_FDCWD, (positive)find_path,
+                bipolar gone = system_remove_at(
+                    AT_FDCWD, find_path,
                     (find_facts->mode & MODE_FORMAT) == MODE_DIRECTORY ? AT_REMOVEDIR : 0);
 
                 if (gone < 0)
@@ -6734,7 +6697,7 @@ static bool ln_make(string_address target, string_address name)
                 return false;
 
         if (ln_force || ln_ask)
-                system_call_3(syscall(unlinkat), AT_FDCWD, (positive)name, 0);
+                system_remove_at(AT_FDCWD, name, 0);
 
         bipolar done;
 
@@ -6976,8 +6939,8 @@ static b32 file_unlink()
         }
 
         string_address path = file_simple_operand_list[0];
-        bipolar answer = system_call_3(syscall(unlinkat), AT_FDCWD,
-                                       (positive)path, 0);
+        bipolar answer = system_remove_at(AT_FDCWD,
+                                       path, 0);
 
         if (answer < 0)
         {
@@ -8097,14 +8060,14 @@ static const file_long sync_longs[] = {
 
 static bool file_sync_one(string_address path, p8 mode)
 {
-        bipolar opened = system_call_4(syscall(openat), AT_FDCWD,
-                                       (positive)path,
-                                       FILE_READ | O_NONBLOCK, 0);
+        bipolar opened = system_open_at(AT_FDCWD,
+                                       path,
+                                       FILE_READ | O_NONBLOCK);
         bipolar read_error = opened;
 
         if (opened < 0)
-                opened = system_call_4(syscall(openat), AT_FDCWD,
-                                       (positive)path, 01 | O_NONBLOCK, 0);
+                opened = system_open_at(AT_FDCWD,
+                                       path, 01 | O_NONBLOCK);
 
         if (opened < 0)
         {
@@ -8143,7 +8106,7 @@ static bool file_sync_one(string_address path, p8 mode)
                 }
         }
 
-        bipolar closed = system_call_1(syscall(close), (positive)opened);
+        bipolar closed = system_close(opened);
 
         if (closed < 0)
         {
@@ -8381,8 +8344,8 @@ static bool truncate_one(string_address path, b64 size, b64 reference,
         if (no_create)
                 flags &= ~O_CREAT;
 
-        bipolar handle = system_call_4(syscall(openat), AT_FDCWD,
-                                       (positive)path, flags, 0666);
+        bipolar handle = system_open_at_mode(AT_FDCWD,
+                                       path, flags, 0666);
 
         if (handle < 0)
         {
@@ -8403,7 +8366,7 @@ static bool truncate_one(string_address path, b64 size, b64 reference,
         {
                 file_complain((string_address) "truncate", (string_address) "cannot stat",
                               path);
-                system_call_1(syscall(close), handle);
+                system_close(handle);
                 return false;
         }
 
@@ -8416,7 +8379,7 @@ static bool truncate_one(string_address path, b64 size, b64 reference,
                 {
                         file_complain((string_address) "truncate", (string_address) "size overflow",
                                       path);
-                        system_call_1(syscall(close), handle);
+                        system_close(handle);
                         return false;
                 }
 
@@ -8429,7 +8392,7 @@ static bool truncate_one(string_address path, b64 size, b64 reference,
             !truncate_current_size(path, handle, address_of facts,
                                    address_of current))
         {
-                system_call_1(syscall(close), handle);
+                system_close(handle);
                 return false;
         }
 
@@ -8462,7 +8425,7 @@ static bool truncate_one(string_address path, b64 size, b64 reference,
         {
                 file_complain((string_address) "truncate", (string_address) "size overflow",
                               path);
-                system_call_1(syscall(close), handle);
+                system_close(handle);
                 return false;
         }
 
@@ -8470,7 +8433,7 @@ static bool truncate_one(string_address path, b64 size, b64 reference,
                 wanted = 0;
 
         bipolar done = system_call_2(syscall(ftruncate), handle, (positive)wanted);
-        bipolar closed = system_call_1(syscall(close), handle);
+        bipolar closed = system_close(handle);
 
         if (done < 0)
         {
@@ -8557,9 +8520,9 @@ static b32 file_truncate()
                 bipolar handle = -1;
 
                 if ((facts.mode & MODE_FORMAT) != MODE_FILE)
-                        handle = system_call_4(syscall(openat), AT_FDCWD,
-                                               (positive)reference_path,
-                                               FILE_READ, 0);
+                        handle = system_open_at(AT_FDCWD,
+                                               reference_path,
+                                               FILE_READ);
 
                 if (handle < 0 && (facts.mode & MODE_FORMAT) != MODE_FILE)
                 {
@@ -8574,7 +8537,7 @@ static b32 file_truncate()
                                                    address_of reference);
 
                 if (handle >= 0)
-                        system_call_1(syscall(close), handle);
+                        system_close(handle);
 
                 if (!known)
                         return 1;
@@ -8623,7 +8586,7 @@ static b32 file_rmdir()
         while (first < count)
         {
                 string_address path = program_argument((b32)first++);
-                bipolar gone = system_call_3(syscall(unlinkat), AT_FDCWD, (positive)path,
+                bipolar gone = system_remove_at(AT_FDCWD, path,
                                              AT_REMOVEDIR);
 
                 if (gone < 0)
@@ -8653,7 +8616,7 @@ static b32 file_rmdir()
                         if (string_is(above, '/') && string_is(above + 1, end))
                                 break;
 
-                        if (system_call_3(syscall(unlinkat), AT_FDCWD, (positive)above,
+                        if (system_remove_at(AT_FDCWD, above,
                                           AT_REMOVEDIR) < 0)
                                 break;
 
@@ -8779,7 +8742,7 @@ static fn cp_said(string_address source, string_address destination)
 static bool cp_linked(string_address source, string_address destination)
 {
         if (cp_force || cp_ask || cp_never_clobber)
-                system_call_3(syscall(unlinkat), AT_FDCWD, (positive)destination, 0);
+                system_remove_at(AT_FDCWD, destination, 0);
 
         bipolar done;
 
@@ -8878,7 +8841,7 @@ static bool cp_one(string_address source, string_address destination, positive d
                         return false;
                 }
 
-                system_call_3(syscall(unlinkat), AT_FDCWD, (positive)destination, 0);
+                system_remove_at(AT_FDCWD, destination, 0);
 
                 if (system_call_3(syscall(symlinkat), (positive)target, AT_FDCWD,
                                   (positive)destination) < 0)
@@ -8908,7 +8871,7 @@ static bool cp_one(string_address source, string_address destination, positive d
                                 return false;
                         }
 
-                        system_call_3(syscall(unlinkat), AT_FDCWD, (positive)destination, 0);
+                        system_remove_at(AT_FDCWD, destination, 0);
 
                         if (!file_copy_contents(AT_FDCWD, source, AT_FDCWD, destination,
                                                 facts.mode & 07777))
@@ -9103,7 +9066,7 @@ static bool mv_across_directory(string_address source, string_address destinatio
         file_walk_close(address_of walk);
 
         if (complete)
-                system_call_3(syscall(unlinkat), AT_FDCWD, (positive)source, AT_REMOVEDIR);
+                system_remove_at(AT_FDCWD, source, AT_REMOVEDIR);
 
         return complete;
 }
@@ -9140,7 +9103,7 @@ static bool mv_across(string_address source, string_address destination, positiv
                 if (file_link_text(source, target, FILE_PATH_MAX) < 0)
                         return false;
 
-                system_call_3(syscall(unlinkat), AT_FDCWD, (positive)destination, 0);
+                system_remove_at(AT_FDCWD, destination, 0);
 
                 if (system_call_3(syscall(symlinkat), (positive)target, AT_FDCWD,
                                   (positive)destination) < 0)
@@ -9160,7 +9123,7 @@ static bool mv_across(string_address source, string_address destination, positiv
         system_call_4(syscall(utimensat), AT_FDCWD, (positive)destination,
                       (positive)times, AT_SYMLINK_NOFOLLOW);
 
-        return system_call_3(syscall(unlinkat), AT_FDCWD, (positive)source, 0) == 0;
+        return system_remove_at(AT_FDCWD, source, 0) == 0;
 }
 
 // -n, -i and -f are the same question mv asks about a destination that is
@@ -9382,7 +9345,7 @@ static bool rm_tree(bipolar directory, string_address name, string_address shown
         */
         if (!rm_careful)
         {
-                if (system_call_3(syscall(unlinkat), directory, (positive)name, 0) == 0)
+                if (system_remove_at(directory, name, 0) == 0)
                         return true;
         }
         else if (!file_look(directory, name, AT_SYMLINK_NOFOLLOW, address_of facts))
@@ -9402,7 +9365,7 @@ static bool rm_tree(bipolar directory, string_address name, string_address shown
                                         shown))
                         return false;
 
-                if (system_call_3(syscall(unlinkat), directory, (positive)name, 0) == 0)
+                if (system_remove_at(directory, name, 0) == 0)
                 {
                         rm_said(shown, false);
                         return true;
@@ -9450,7 +9413,7 @@ static bool rm_tree(bipolar directory, string_address name, string_address shown
                                         (string_address) "descend into directory", shown))
                         return false;
 
-                bipolar inside = system_call_3(syscall(openat), directory, (positive)name,
+                bipolar inside = system_open_at(directory, name,
                                                FILE_READ | O_DIRECTORY);
 
                 if (inside < 0)
@@ -9467,14 +9430,14 @@ static bool rm_tree(bipolar directory, string_address name, string_address shown
 
                 complete = rm_contents(inside, shown, depth - 1);
 
-                system_call_1(syscall(close), inside);
+                system_close(inside);
         }
 
         if (rm_ask && !rm_recursive &&
             !file_ask((string_address) "rm", (string_address) "remove directory", shown))
                 return false;
 
-        bipolar gone = system_call_3(syscall(unlinkat), directory, (positive)name,
+        bipolar gone = system_remove_at(directory, name,
                                      AT_REMOVEDIR);
 
         if (gone < 0)
@@ -9806,8 +9769,8 @@ static b32 file_touch()
                         if (no_create)
                                 continue;
 
-                        bipolar made = system_call_4(syscall(openat), AT_FDCWD,
-                                                     (positive)path, FILE_WRITE & ~O_TRUNC,
+                        bipolar made = system_open_at_mode(AT_FDCWD,
+                                                     path, FILE_WRITE & ~O_TRUNC,
                                                      0666);
 
                         if (made < 0)
@@ -9818,7 +9781,7 @@ static b32 file_touch()
                                 continue;
                         }
 
-                        system_call_1(syscall(close), made);
+                        system_close(made);
                 }
 
                 bipolar done = system_call_4(syscall(utimensat), AT_FDCWD, (positive)path,
@@ -11740,10 +11703,9 @@ static bool file_logname_utmp(string_address tty, p8 address_to name)
         if (string_compare_max(tty, (string_address) "/dev/tty", 8))
                 return false;
 
-        bipolar handle = system_call_4(syscall(openat), AT_FDCWD,
-                                       (positive)(string_address)
-                                           "/var/run/utmp",
-                                       FILE_READ, 0);
+        bipolar handle = system_open_at(AT_FDCWD,
+                                       "/var/run/utmp",
+                                       FILE_READ);
 
         if (handle < 0)
                 return false;
@@ -11764,7 +11726,7 @@ static bool file_logname_utmp(string_address tty, p8 address_to name)
 
                         if (got <= 0)
                         {
-                                system_call_1(syscall(close), (positive)handle);
+                                system_close(handle);
                                 return false;
                         }
 
@@ -11781,7 +11743,7 @@ static bool file_logname_utmp(string_address tty, p8 address_to name)
                     !memory_compare(record.line, wanted, wanted_length))
                 {
                         memory_copy_apart_end(name, record.user, user_length);
-                        system_call_1(syscall(close), (positive)handle);
+                        system_close(handle);
                         return true;
                 }
         }
@@ -11972,7 +11934,7 @@ static b32 file_uname()
         if (!flags)
                 flags = FILE_FLAG('s');
 
-        for (positive i = 0; i < sizeof(fields) / sizeof(fields[0]); i++)
+        for (positive i = 0; i < array_count(fields); i++)
         {
                 bool asked = (flags & FILE_FLAG(fields[i].letter)) != 0;
                 bool wanted = all ? fields[i].part_of_all ||
@@ -12598,13 +12560,13 @@ static b32 file_mktemp()
                                                (positive)path, 0700);
                 else
                 {
-                        answer = system_call_4(syscall(openat),
-                                               (positive)(bipolar)AT_FDCWD,
-                                               (positive)path,
+                        answer = system_open_at_mode(
+                                               AT_FDCWD,
+                                               path,
                                                FILE_WRITE | FILE_EXCLUSIVE, 0600);
 
                         if (answer >= 0)
-                                system_call_1(syscall(close), (positive)answer);
+                                system_close(answer);
                 }
 
                 if (answer >= 0)
@@ -13209,15 +13171,15 @@ static bipolar xargs_execute(string_address address_to words,
 
         log_flush();
 
-        if (system_call_2(syscall(pipe2), (positive)ends,
+        if (system_pipe(ends,
                           XARGS_O_CLOEXEC) < 0)
                 return XARGS_EXEC_SYSTEM;
 
-        bipolar child = system_call_2(syscall(clone), SIGCHLD, 0);
+        bipolar child = system_fork();
 
         if (child == 0)
         {
-                system_call_1(syscall(close), (positive)ends[0]);
+                system_close(ends[0]);
                 bipolar answer = file_exec_path_try(words);
 
                 system_write_all((positive)ends[1], address_of answer,
@@ -13225,12 +13187,12 @@ static bipolar xargs_execute(string_address address_to words,
                 exit(answer == -ERROR_ACCESS ? 126 : 127);
         }
 
-        system_call_1(syscall(close), (positive)ends[1]);
+        system_close(ends[1]);
 
 
         if (child < 0)
         {
-                system_call_1(syscall(close), (positive)ends[0]);
+                system_close(ends[0]);
                 return XARGS_EXEC_SYSTEM;
         }
 
@@ -13238,7 +13200,7 @@ static bipolar xargs_execute(string_address address_to words,
         bipolar got = system_read_retry((positive)ends[0], address_of exec_error,
                                         sizeof(exec_error));
 
-        system_call_1(syscall(close), (positive)ends[0]);
+        system_close(ends[0]);
         system_wait4_retry(child, address_of status, 0, null);
 
         if (got == sizeof(exec_error))

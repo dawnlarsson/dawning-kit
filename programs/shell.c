@@ -245,8 +245,7 @@ b32 main()
         {
                 string_address script = arguments[1];
                 positive count = process_arguments - 2;
-                bipolar handle = system_call_3(syscall(openat), AT_FDCWD,
-                                                (positive)script, FILE_READ);
+                bipolar handle = system_open_at(AT_FDCWD, script, FILE_READ);
 
                 if (handle < 0)
                 {
@@ -256,7 +255,7 @@ b32 main()
 
                 if (!shell_start_parameters(arguments, 2, count))
                 {
-                        system_call_1(syscall(close), (positive)handle);
+                        system_close(handle);
                         log_error("sh: no room for arguments\n", 0);
                         return 1;
                 }
@@ -386,7 +385,7 @@ b32 main()
         shell_input_end();
 
         if (script_file)
-                system_call_1(syscall(close), (positive)input);
+                system_close(input);
 
         // Input ran out, which is a way of leaving like any other.
         shell_trap_exit();

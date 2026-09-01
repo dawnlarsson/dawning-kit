@@ -377,14 +377,14 @@ static bipolar stream_trap_seek(b32 descriptor, bipolar offset, b32 whence)
 
 static bipolar stream_trap_close(b32 descriptor)
 {
-        return system_call_1(syscall(close), (positive)(bipolar)descriptor);
+        return system_close(descriptor);
 }
 
 static bipolar stream_trap_open(string_address path, b32 flags, b32 permissions)
 {
-        return system_call_4(syscall(openat), (positive)(bipolar)AT_FDCWD,
-                             (positive)path, (positive)(bipolar)flags,
-                             (positive)(bipolar)permissions);
+        return system_open_at_mode(AT_FDCWD,
+                             path, flags,
+                             permissions);
 }
 
 /*

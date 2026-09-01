@@ -2360,30 +2360,30 @@ static bipolar awk_spawn(string_address command, b32 into, b32 out_of)
 
         awk_flush_everything();
 
-        child = system_call_2(syscall(clone), SIGCHLD, 0);
+        child = system_fork();
 
         if (child)
                 return child;
 
         if (into >= 0)
         {
-                system_call_3(syscall(dup3), (positive)into, 0, 0);
-                system_call_1(syscall(close), (positive)into);
+                system_duplicate(into, 0, 0);
+                system_close(into);
         }
 
         if (out_of >= 0)
         {
-                system_call_3(syscall(dup3), (positive)out_of, 1, 0);
-                system_call_1(syscall(close), (positive)out_of);
+                system_duplicate(out_of, 1, 0);
+                system_close(out_of);
         }
 
         for (b32 i = 0; i < AWK_STREAMS_MAX; i++)
         {
                 if (awk_writers[i].live && awk_writers[i].handle > 2)
-                        system_call_1(syscall(close), (positive)awk_writers[i].handle);
+                        system_close(awk_writers[i].handle);
 
                 if (awk_readers[i].live && awk_readers[i].handle > 2)
-                        system_call_1(syscall(close), (positive)awk_readers[i].handle);
+                        system_close(awk_readers[i].handle);
         }
 
         system_call_3(syscall(execve), (positive) "/bin/sh", (positive)words,
@@ -2450,7 +2450,7 @@ static awk_writer address_to awk_writer_for(awk_text address_to name, p8 kind)
         {
                 b32 ends[2];
 
-                if (system_call_2(syscall(pipe2), (positive)ends, 0) < 0)
+                if (system_pipe(ends, 0) < 0)
                         awk_fatal(null, "cannot open pipe");
 
                 // The child has to be told about its own end of the pipe
@@ -2458,7 +2458,7 @@ static awk_writer address_to awk_writer_for(awk_text address_to name, p8 kind)
                 // command never sees the input stop.
                 made->handle = ends[1];
                 made->child = awk_spawn(name->text, ends[0], -1);
-                system_call_1(syscall(close), (positive)ends[0]);
+                system_close(ends[0]);
                 return made;
         }
 
@@ -2560,13 +2560,13 @@ static awk_reader address_to awk_reader_for(awk_text address_to name, bool pipe)
         {
                 b32 ends[2];
 
-                if (system_call_2(syscall(pipe2), (positive)ends, 0) < 0)
+                if (system_pipe(ends, 0) < 0)
                         return null;
 
                 made->handle = ends[0];
                 made->live = true;
                 made->child = awk_spawn(name->text, -1, ends[1]);
-                system_call_1(syscall(close), (positive)ends[1]);
+                system_close(ends[1]);
                 return made;
         }
 
@@ -2596,7 +2596,7 @@ static inline INLINE b32 awk_writer_close(awk_writer address_to which)
         awk_writer_flush(which);
 
         if (which->handle > 2)
-                system_call_1(syscall(close), (positive)which->handle);
+                system_close(which->handle);
 
         b32 answer = which->kind == AWK_TO_PIPE ? awk_wait_for(which->child) : 0;
 
@@ -2609,7 +2609,7 @@ static inline INLINE b32 awk_writer_close(awk_writer address_to which)
 static inline INLINE b32 awk_reader_close(awk_reader address_to which)
 {
         if (which->handle > 2)
-                system_call_1(syscall(close), (positive)which->handle);
+                system_close(which->handle);
 
         b32 answer = which->pipe ? awk_wait_for(which->child) : 0;
 
@@ -3422,7 +3422,7 @@ static awk_word awk_words[] = {
     {"while", T_WHILE, 0},
     {null, 0, 0}};
 
-#define AWK_WORD_COUNT (sizeof(awk_words) / sizeof(awk_words[0]) - 1)
+#define AWK_WORD_COUNT (array_count(awk_words) - 1)
 #define AWK_WORD_RANGE(start, count) ((p16)(((start) << 8) | (count)))
 
 /*
@@ -6573,7 +6573,7 @@ static fn awk_close_main()
                 return;
 
         if (awk_main.handle > 2)
-                system_call_1(syscall(close), (positive)awk_main.handle);
+                system_close(awk_main.handle);
 
         awk_text_drop(awk_main.name);
         awk_main.name = null;
@@ -6892,7 +6892,7 @@ static bool awk_option_seen(p8 letter, string_address value)
         }
 
         if (handle > 0)
-                system_call_1(syscall(close), (positive)handle);
+                system_close(handle);
 
         awk_builder_char(awk_reading, '\n');
         awk_have_program = true;

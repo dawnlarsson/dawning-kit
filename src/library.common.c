@@ -28,6 +28,113 @@
                             sizeof(_memory_to));                              \
            _memory_to; })
 
+/* Compile-time keys for the little-endian machine floor shared by x86-64,
+   AArch64 and RV64.  Pair them with memory_load_unaligned for short grammar
+   words; no general string comparator should survive for two or four bytes. */
+#define byte_word_2(a, b) ((p16)(p8)(a) | ((p16)(p8)(b) << 8))
+#define byte_word_4(a, b, c, d)                                              \
+        ((p32)byte_word_2(a, b) | ((p32)byte_word_2(c, d) << 16))
+
+#if RISCV64
+/* Baseline RV64 has no unaligned word load: spelling the bytes lets GCC keep
+   them independent instead of synthesizing a packed integer. */
+#define memory_is_2(source, a, b)                                            \
+        ({ __auto_type _memory_source = (source);                            \
+           _memory_source[0] == (p8)(a) && _memory_source[1] == (p8)(b); })
+#define memory_is_4(source, a, b, c, d)                                      \
+        ({ __auto_type _memory_source = (source);                            \
+           _memory_source[0] == (p8)(a) && _memory_source[1] == (p8)(b) &&  \
+           _memory_source[2] == (p8)(c) && _memory_source[3] == (p8)(d); })
+#else
+#define memory_is_2(source, a, b)                                            \
+        (memory_load_unaligned(p16, (source)) == byte_word_2(a, b))
+#define memory_is_4(source, a, b, c, d)                                      \
+        (memory_load_unaligned(p32, (source)) == byte_word_4(a, b, c, d))
+#endif
+#define memory_is_5(source, a, b, c, d, e)                                   \
+        ({ __auto_type _memory_source = (source);                            \
+           memory_is_4(_memory_source, a, b, c, d) &&                        \
+               _memory_source[4] == (p8)(e); })
+
+/* Compile-time array shape, never a separately maintained count. */
+#define array_count(array) (sizeof(array) / sizeof((array)[0]))
+
+/* One stable bottom-up merge machine for indexes, pointers and full records.
+   The comparator and element type remain visible at every expansion, while
+   exhausted runs fall through to the architecture's bulk copy floor. */
+#define array_merge_sort(array, spare, count, order)                         \
+        ({ __auto_type _merge_origin = (array);                             \
+           __auto_type _merge_from = _merge_origin;                         \
+           __auto_type _merge_into = (spare);                               \
+           positive _merge_count = (count);                                 \
+           for (positive _merge_width = 1; _merge_width < _merge_count;) {  \
+                   for (positive _merge_base = 0; _merge_base < _merge_count;\
+                        _merge_base += _merge_width * 2) {                    \
+                           positive _merge_middle =                          \
+                               min(_merge_base + _merge_width, _merge_count);\
+                           positive _merge_stop =                            \
+                               min(_merge_middle + _merge_width, _merge_count);\
+                           positive _merge_left = _merge_base;               \
+                           positive _merge_right = _merge_middle;            \
+                           positive _merge_out = _merge_base;                \
+                           while (_merge_left < _merge_middle &&             \
+                                  _merge_right < _merge_stop)                \
+                                   _merge_into[_merge_out++] =               \
+                                       order(_merge_from[_merge_left],        \
+                                             _merge_from[_merge_right]) <= 0 \
+                                           ? _merge_from[_merge_left++]       \
+                                           : _merge_from[_merge_right++];     \
+                           positive _merge_tail =                            \
+                               _merge_left < _merge_middle                   \
+                                   ? _merge_middle - _merge_left             \
+                                   : _merge_stop - _merge_right;             \
+                           __auto_type _merge_rest =                         \
+                               _merge_left < _merge_middle                   \
+                                   ? _merge_from + _merge_left               \
+                                   : _merge_from + _merge_right;             \
+                           if (_merge_tail)                                  \
+                                   memory_copy_apart(                        \
+                                       _merge_into + _merge_out, _merge_rest,\
+                                       _merge_tail * sizeof(_merge_from[0])); \
+                   }                                                        \
+                   __auto_type _merge_swap = _merge_from;                   \
+                   _merge_from = _merge_into;                               \
+                   _merge_into = _merge_swap;                               \
+                   if (_merge_width > _merge_count / 2)                     \
+                           break;                                           \
+                   _merge_width *= 2;                                       \
+           }                                                                \
+           _merge_from; })
+
+/* Cleanup paths neither need nor want close(2)'s errno translation. */
+#define system_close(handle)                                                 \
+        system_call_1(syscall(close), (positive)(handle))
+
+/* Raw openat has two real call shapes: three arguments when the mode is
+   ignored, four when creation consumes it.  These fronts keep the syscall
+   number and ABI casts at the same floor without turning the three-argument
+   form into an extra register move. */
+#define system_open_at(directory, path, flags)                               \
+        system_call_3(syscall(openat), (positive)(bipolar)(directory),       \
+                      (positive)(path), (positive)(flags))
+
+#define system_open_at_mode(directory, path, flags, mode)                    \
+        system_call_4(syscall(openat), (positive)(bipolar)(directory),       \
+                      (positive)(path), (positive)(flags), (positive)(mode))
+
+#define system_pipe(pair, flags)                                             \
+        system_call_2(syscall(pipe2), (positive)(pair), (positive)(flags))
+
+#define system_duplicate(from, to, flags)                                    \
+        system_call_3(syscall(dup3), (positive)(from), (positive)(to),       \
+                      (positive)(flags))
+
+#define system_fork() system_call_2(syscall(clone), SIGCHLD, 0)
+
+#define system_remove_at(directory, path, flags)                             \
+        system_call_3(syscall(unlinkat), (positive)(bipolar)(directory),     \
+                      (positive)(path), (positive)(flags))
+
 /* The common moving byte store.  Naming the three words once also names the
    only correct reserve/release argument order; subsystems keep semantic
    typedefs without rebuilding either operation around them. */
@@ -175,6 +282,40 @@ static const p8 byte_simple_escapes[256] = {
 };
 
 #define byte_simple_escape(value) byte_simple_escapes[(p8)(value)]
+
+/* Regex, glob and tr share the [:name:] submachine.  A null limit means the
+   surrounding string's terminator is the bound. */
+static PURE inline INLINE string_address byte_class_end(string_address text,
+                                                         string_address limit)
+{
+        if (text[0] != '[' || text[1] != ':')
+                return null;
+
+        for (text += 2; (!limit || text + 1 < limit) && string_get(text); text++)
+                if (text[0] == ':' && text[1] == ']')
+                        return text + 2;
+
+        return null;
+}
+
+static inline INLINE b32 byte_class_parse(string_address text, positive length,
+                                          positive address_to used)
+{
+        if (length < 5)
+                return -1;
+
+        string_address past = byte_class_end(text, text + length);
+
+        if (!past)
+                return -1;
+
+        b32 which = byte_class_index(text + 2, (positive)(past - text - 4));
+
+        if (which >= 0)
+                address_to used = (positive)(past - text);
+
+        return which;
+}
 
 /* Environment vectors and env(1) use exactly the same NAME= key grammar. */
 static inline INLINE bool environment_key_is(string_address entry,

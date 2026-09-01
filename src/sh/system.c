@@ -116,7 +116,7 @@ static bipolar start_service(b32 device, string_address path,
 
 portable:
         {
-                bipolar child = system_call_2(syscall(clone), SIGCHLD, 0);
+                bipolar child = system_fork();
 
                 if (child == 0)
                 {
@@ -217,13 +217,13 @@ fn mount_devpts()
         }
 }
 
-static b32 system_init()
+static DEAD_END b32 system_init()
 {
         system_call(syscall(setsid));
         mount_devpts();
 
-        b32 device = system_call_4(syscall(openat), AT_FDCWD,
-                                   (positive)SPARK_DEVICE, FILE_READ_WRITE, 0);
+        b32 device = system_open_at(AT_FDCWD,
+                                   SPARK_DEVICE, FILE_READ_WRITE);
 
         positive quick_exits = 0;
         positive backoff = 0;
@@ -532,7 +532,7 @@ static b32 system_world()
                 return 1;
         }
 
-        child = system_call_2(syscall(clone), SIGCHLD, 0);
+        child = system_fork();
 
         if (child < 0)
         {

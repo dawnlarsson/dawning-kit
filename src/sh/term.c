@@ -1844,7 +1844,7 @@ static const struct
 
 static string_address key_sequence(unsigned int code)
 {
-        for (positive i = 0; i < sizeof(key_sequences) / sizeof(key_sequences[0]); i++)
+        for (positive i = 0; i < array_count(key_sequences); i++)
                 if (key_sequences[i].code == code)
                         return (string_address)(application_keys && key_sequences[i].application
                                                     ? key_sequences[i].application
@@ -1983,8 +1983,8 @@ fn claim_standard_descriptors()
 {
         for (b32 i = 0; i < 3; i++)
                 if (system_call_3(syscall(fcntl), i, F_GETFD, 0) < 0)
-                        system_call_4(syscall(openat), AT_FDCWD, (positive)"/dev/null",
-                                      FILE_READ_WRITE, 0);
+                        system_open_at(AT_FDCWD, "/dev/null",
+                                      FILE_READ_WRITE);
 }
 
 #endif

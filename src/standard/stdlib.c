@@ -1474,7 +1474,7 @@ b32 system(string_address command)
         //      time, so it is written out once, here, before the fork.
         log_flush();
 
-        child = system_call_2(syscall(clone), SIGCHLD, 0);
+        child = system_fork();
 
         if (child < 0)
                 return -1;
