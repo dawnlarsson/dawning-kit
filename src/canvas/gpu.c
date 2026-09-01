@@ -28,7 +28,12 @@ static void canvas_gpu_start(struct output *output)
         int ret = drm_i915_canvas_probe(output->buffer->fb);
 
         if (ret)
+        {
+                if (ret != -EOPNOTSUPP)
+                        log_canvas_error("i915 composition self-test failed (%d), using the processor\n",
+                                         ret);
                 return;
+        }
 
         output->gpu_commands = kvmalloc_array(CANVAS_GPU_COMMANDS,
                                                sizeof(*output->gpu_commands),

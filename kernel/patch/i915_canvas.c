@@ -13,6 +13,7 @@
 #include <drm/drm_fourcc.h>
 #include <drm/drm_framebuffer.h>
 #include <drm/drm_gem_framebuffer_helper.h>
+#include <drm/drm_print.h>
 
 #include "gem/i915_gem_object.h"
 #include "gt/intel_engine.h"
@@ -71,16 +72,6 @@ static int canvas_target(struct drm_framebuffer *fb,
 	*engine_out = engine;
 	return 0;
 }
-
-int drm_i915_canvas_probe(struct drm_framebuffer *fb)
-{
-	struct drm_i915_private *i915;
-	struct drm_i915_gem_object *obj;
-	struct intel_engine_cs *engine;
-
-	return canvas_target(fb, &i915, &obj, &engine);
-}
-EXPORT_SYMBOL_GPL(drm_i915_canvas_probe);
 
 static int canvas_validate(const struct drm_framebuffer *fb,
 			   const struct drm_canvas_command *command)
@@ -325,7 +316,7 @@ static int canvas_submit(struct intel_engine_cs *engine, struct i915_vma *vma,
 			 struct i915_request **wait)
 {
 	struct i915_request *rq;
-	u64 address = i915_vma_offset(vma);
+	u64 address = i915_vma_offset(vma) + fb->offsets[0];
 	u64 stage_address = stage_vma ? i915_vma_offset(stage_vma) : 0;
 	unsigned int i;
 	bool copies = false;
@@ -365,9 +356,9 @@ static int canvas_submit(struct intel_engine_cs *engine, struct i915_vma *vma,
 	return err;
 }
 
-int drm_i915_canvas_render(struct drm_framebuffer *fb,
-			   const struct drm_canvas_command *commands,
-			   unsigned int count)
+static int canvas_render(struct drm_framebuffer *fb,
+			 const struct drm_canvas_command *commands,
+			 unsigned int count, long timeout)
 {
 	struct drm_i915_private *i915;
 	struct drm_i915_gem_object *obj, *stage;
@@ -473,8 +464,14 @@ out_wait:
 		i915_vma_unpin(vma);
 out_ww:
 	i915_gem_ww_ctx_fini(&ww);
-	if (wait && i915_request_wait(wait, 0, MAX_SCHEDULE_TIMEOUT) < 0 && !err)
-		err = -EIO;
+	if (wait) {
+		long left = i915_request_wait(wait, 0, timeout);
+
+		if (left < 0 && !err)
+			err = left;
+		else if (READ_ONCE(wait->fence.error) && !err)
+			err = READ_ONCE(wait->fence.error);
+	}
 	if (wait)
 		i915_request_put(wait);
 	if (stage_vma)
@@ -483,4 +480,96 @@ out_vma:
 	i915_vma_put(vma);
 	return err;
 }
+
+int drm_i915_canvas_render(struct drm_framebuffer *fb,
+			   const struct drm_canvas_command *commands,
+			   unsigned int count)
+{
+	return canvas_render(fb, commands, count, MAX_SCHEDULE_TIMEOUT);
+}
 EXPORT_SYMBOL_GPL(drm_i915_canvas_render);
+
+/*
+ * Do not make the first real screen our hardware test.  These three pixels
+ * exercise every packet Canvas emits, including the upload object used by
+ * COPY.  A bad generation assumption, address-space choice or wedged copy
+ * engine therefore leaves Canvas on its mapped-buffer path instead of
+ * presenting an untouched black framebuffer.
+ */
+int drm_i915_canvas_probe(struct drm_framebuffer *fb)
+{
+	static const u8 mono = 0x80;
+	struct drm_canvas_command commands[3];
+	struct drm_i915_private *i915;
+	struct drm_i915_gem_object *obj;
+	struct intel_engine_cs *engine;
+	u32 saved[ARRAY_SIZE(commands)], expected[ARRAY_SIZE(commands)];
+	u32 opaque, *map;
+	unsigned int i;
+	int err;
+
+	err = canvas_target(fb, &i915, &obj, &engine);
+	if (err)
+		return err;
+	if (fb->width < ARRAY_SIZE(commands))
+		return -EOPNOTSUPP;
+
+	map = i915_gem_object_pin_map_unlocked(obj, I915_MAP_WC);
+	if (IS_ERR(map))
+		return PTR_ERR(map);
+	memcpy(saved, (u8 *)map + fb->offsets[0], sizeof(saved));
+	i915_gem_object_unpin_map(obj);
+
+	opaque = fb->format->format == DRM_FORMAT_ARGB8888 ? 0xff000000 : 0;
+	expected[0] = opaque | 0x0011263b;
+	expected[1] = opaque | 0x004c8a19;
+	expected[2] = opaque | 0x00972d65;
+	commands[0] = (struct drm_canvas_command){
+		.foreground = expected[0],
+		.width = 1,
+		.height = 1,
+		.type = DRM_CANVAS_FILL,
+	};
+	commands[1] = (struct drm_canvas_command){
+		.bits = &mono,
+		.foreground = expected[1],
+		.x = 1,
+		.width = 1,
+		.height = 1,
+		.stride = 1,
+		.scale = 1,
+		.type = DRM_CANVAS_MONO,
+	};
+	commands[2] = (struct drm_canvas_command){
+		.bits = (const u8 *)&expected[2],
+		.x = 2,
+		.width = 1,
+		.height = 1,
+		.stride = 1,
+		.scale = 1,
+		.type = DRM_CANVAS_COPY,
+	};
+
+	err = canvas_render(fb, commands, ARRAY_SIZE(commands), HZ);
+	if (err)
+		return err;
+
+	map = i915_gem_object_pin_map_unlocked(obj, I915_MAP_WC);
+	if (IS_ERR(map))
+		return PTR_ERR(map);
+	for (i = 0; i < ARRAY_SIZE(commands); i++)
+		if (*((u32 *)((u8 *)map + fb->offsets[0]) + i) != expected[i]) {
+			drm_err(&i915->drm,
+				"Canvas command %u self-test wrote %08x, expected %08x\n",
+				i, *((u32 *)((u8 *)map + fb->offsets[0]) + i),
+				expected[i]);
+			err = -EIO;
+			break;
+		}
+	memcpy((u8 *)map + fb->offsets[0], saved, sizeof(saved));
+	i915_gem_object_flush_map(obj);
+	i915_gem_object_unpin_map(obj);
+
+	return err;
+}
+EXPORT_SYMBOL_GPL(drm_i915_canvas_probe);
