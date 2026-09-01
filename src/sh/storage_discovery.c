@@ -636,6 +636,30 @@ static string_address storage_attached_long(string_address argument,
         return argument + length + 1;
 }
 
+static PURE bool storage_rw_opposite(string_address options,
+                                     string_address option, positive length)
+{
+        return length == 2 &&
+            ((memory_is_2(option, 'r', 'w') &&
+              storage_option_has_length(options, (string_address)"ro", 2)) ||
+             (memory_is_2(option, 'r', 'o') &&
+              storage_option_has_length(options, (string_address)"rw", 2)));
+}
+
+/* The filesystem column wins when its ro/rw state overrides the VFS column.
+   Both a literal option and the positive half of a requested no-option ask
+   this same question. */
+static PURE bool storage_mount_option_present(storage_mount address_to mount,
+                                               string_address option,
+                                               positive length)
+{
+        bool present = storage_option_has_length(mount->options, option, length) ||
+            storage_option_has_length(mount->filesystem_options, option, length);
+
+        return present && !storage_rw_opposite(mount->filesystem_options,
+                                               option, length);
+}
+
 static PURE bool storage_mount_options_match(storage_mount address_to mount,
                                         string_address list)
 {
@@ -648,49 +672,18 @@ static PURE bool storage_mount_options_match(storage_mount address_to mount,
 
         while ((at = storage_comma_next(address_of cursor, address_of length)))
         {
-                bool present;
-
                 if (!length)
                         return false;
 
-                present = storage_option_has_length(mount->options, at, length) ||
-                          storage_option_has_length(mount->filesystem_options,
-                                                    at, length);
-
-                /* The filesystem column is authoritative when it carries a
-                   read-only/read-write state opposite to the VFS column. */
-                if (length == 2 && memory_is_2(at, 'r', 'w') &&
-                    storage_option_has(mount->filesystem_options,
-                                       (string_address)"ro"))
-                        present = false;
-                else if (length == 2 && memory_is_2(at, 'r', 'o') &&
-                         storage_option_has(mount->filesystem_options,
-                                            (string_address)"rw"))
-                        present = false;
+                bool present = storage_mount_option_present(mount, at, length);
 
                 /* libmount first honours a literal `no...` option.  When
                    there is none, it treats the spelling as a request that
                    the positive option be absent: norw matches a read-only
                    mount, while nodev still matches the actual nodev flag. */
                 if (!present && length > 2 && at[0] == 'n' && at[1] == 'o')
-                {
-                        bool positive_present = storage_option_has_length(
-                            mount->options, at + 2, length - 2) ||
-                            storage_option_has_length(mount->filesystem_options,
-                                                      at + 2, length - 2);
-
-                        if (length == 4 && memory_is_2(at + 2, 'r', 'w') &&
-                            storage_option_has(mount->filesystem_options,
-                                               (string_address)"ro"))
-                                positive_present = false;
-                        else if (length == 4 &&
-                                 memory_is_2(at + 2, 'r', 'o') &&
-                                 storage_option_has(mount->filesystem_options,
-                                                    (string_address)"rw"))
-                                positive_present = false;
-
-                        present = !positive_present;
-                }
+                        present = !storage_mount_option_present(
+                            mount, at + 2, length - 2);
 
                 if (!present)
                         return false;
@@ -767,11 +760,7 @@ static PURE inline INLINE bool storage_filesystem_option_represented(
     storage_mount address_to mount, string_address option, positive length)
 {
         return storage_option_has_length(mount->options, option, length) ||
-            (length == 2 &&
-             ((memory_is_2(option, 'r', 'o') &&
-               storage_option_has(mount->options, (string_address)"rw")) ||
-              (memory_is_2(option, 'r', 'w') &&
-               storage_option_has(mount->options, (string_address)"ro"))));
+            storage_rw_opposite(mount->options, option, length);
 }
 
 static PURE positive storage_combined_options_length(storage_mount address_to mount)
@@ -814,13 +803,8 @@ static fn storage_combined_options_write(writer output,
         while ((at = storage_comma_next(address_of cursor,
                                          address_of token_length)))
         {
-                bool overridden = token_length == 2 &&
-                    ((memory_is_2(at, 'r', 'w') &&
-                      storage_option_has(mount->filesystem_options,
-                                         (string_address)"ro")) ||
-                     (memory_is_2(at, 'r', 'o') &&
-                      storage_option_has(mount->filesystem_options,
-                                         (string_address)"rw")));
+                bool overridden = storage_rw_opposite(
+                    mount->filesystem_options, at, token_length);
 
                 if (token_length)
                 {

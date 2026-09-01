@@ -298,35 +298,22 @@ static decimal awk_log(decimal value)
 #define AWK_PIO2_2 6.07710050650619224932e-11
 #define AWK_PIO2_3 2.02226624879595063154e-21
 
-static decimal awk_sin_kernel(decimal r)
-{
-        decimal square = r * r;
-        decimal term = r;
-        decimal sum = r;
-
-        for (b32 i = 3; i <= 19; i += 2)
-        {
-                term *= -square / (decimal)(i * (i - 1));
-                sum += term;
-        }
-
-        return sum;
+#define AWK_TRIG_KERNEL(name, seed, first, last)                             \
+static decimal name(decimal r)                                              \
+{                                                                           \
+        decimal square = r * r;                                             \
+        decimal term = (seed);                                              \
+        decimal sum = (seed);                                               \
+        for (b32 i = (first); i <= (last); i += 2)                          \
+        {                                                                   \
+                term *= -square / (decimal)(i * (i - 1));                   \
+                sum += term;                                                \
+        }                                                                   \
+        return sum;                                                         \
 }
-
-static decimal awk_cos_kernel(decimal r)
-{
-        decimal square = r * r;
-        decimal term = 1;
-        decimal sum = 1;
-
-        for (b32 i = 2; i <= 20; i += 2)
-        {
-                term *= -square / (decimal)(i * (i - 1));
-                sum += term;
-        }
-
-        return sum;
-}
+AWK_TRIG_KERNEL(awk_sin_kernel, r, 3, 19)
+AWK_TRIG_KERNEL(awk_cos_kernel, 1, 2, 20)
+#undef AWK_TRIG_KERNEL
 
 static b32 awk_reduce_quarter(decimal value, decimal address_to rest)
 {
@@ -346,41 +333,26 @@ static b32 awk_reduce_quarter(decimal value, decimal address_to rest)
         return (b32)(quarter & 3);
 }
 
-static decimal awk_sin(decimal value)
-{
-        if (awk_is_nan(value) || !awk_is_finite(value))
-                return awk_not_a_number;
-
-        decimal r;
-        b32 quarter = awk_reduce_quarter(value, address_of r);
-
-        switch (quarter)
-        {
-        case 0: return awk_sin_kernel(r);
-        case 1: return awk_cos_kernel(r);
-        case 2: return -awk_sin_kernel(r);
-        }
-
-        return -awk_cos_kernel(r);
+#define AWK_TRIG(name, at_zero, at_one, at_two, at_three)                    \
+static decimal name(decimal value)                                          \
+{                                                                           \
+        if (awk_is_nan(value) || !awk_is_finite(value))                     \
+                return awk_not_a_number;                                    \
+        decimal r;                                                          \
+        b32 quarter = awk_reduce_quarter(value, address_of r);              \
+        switch (quarter)                                                    \
+        {                                                                   \
+        case 0: return (at_zero);                                           \
+        case 1: return (at_one);                                            \
+        case 2: return (at_two);                                            \
+        }                                                                   \
+        return (at_three);                                                  \
 }
-
-static decimal awk_cos(decimal value)
-{
-        if (awk_is_nan(value) || !awk_is_finite(value))
-                return awk_not_a_number;
-
-        decimal r;
-        b32 quarter = awk_reduce_quarter(value, address_of r);
-
-        switch (quarter)
-        {
-        case 0: return awk_cos_kernel(r);
-        case 1: return -awk_sin_kernel(r);
-        case 2: return -awk_cos_kernel(r);
-        }
-
-        return awk_sin_kernel(r);
-}
+AWK_TRIG(awk_sin, awk_sin_kernel(r), awk_cos_kernel(r),
+         -awk_sin_kernel(r), -awk_cos_kernel(r))
+AWK_TRIG(awk_cos, awk_cos_kernel(r), -awk_sin_kernel(r),
+         -awk_cos_kernel(r), awk_sin_kernel(r))
+#undef AWK_TRIG
 
 static decimal awk_atan_small(decimal x)
 {
@@ -1892,42 +1864,33 @@ static bool awk_record_stale;
 static awk_text address_to awk_record_separator;
 static awk_value awk_field_nothing;
 
-static positive address_to awk_piece_start;
-static positive address_to awk_piece_length;
+typedef struct
+{
+        positive start;
+        positive length;
+} awk_piece;
+
+static awk_piece address_to awk_pieces;
 static positive awk_piece_count;
 static positive awk_piece_room;
 
-static fn awk_pieces_room(positive want)
+static HOT fn awk_piece_add(positive start, positive length)
 {
-        if (want <= awk_piece_room)
-                return;
+        if (unlikely(awk_piece_count >= awk_piece_room))
+        {
+                positive bytes = awk_piece_room * sizeof(awk_piece);
 
-        positive room = memory_growth(awk_piece_room, want, 64);
+                if (awk_piece_count >= positive_max / sizeof(awk_piece) ||
+                    !memory_resize_reserve(
+                        address_of awk_pieces, address_of bytes,
+                        (awk_piece_count + 1) * sizeof(awk_piece),
+                        64 * sizeof(awk_piece)))
+                        awk_out_of_memory();
 
-        if (!room)
-                awk_out_of_memory();
+                awk_piece_room = bytes / sizeof(awk_piece);
+        }
 
-        positive address_to starts = (positive address_to)awk_take(room * sizeof(positive));
-        positive address_to lengths = (positive address_to)awk_take(room * sizeof(positive));
-
-        memory_copy_apart(starts, awk_piece_start,
-                         awk_piece_count * sizeof(positive));
-        memory_copy_apart(lengths, awk_piece_length,
-                         awk_piece_count * sizeof(positive));
-
-        memory_give(awk_piece_start);
-        memory_give(awk_piece_length);
-        awk_piece_start = starts;
-        awk_piece_length = lengths;
-        awk_piece_room = room;
-}
-
-static fn awk_piece_add(positive start, positive length)
-{
-        awk_pieces_room(awk_piece_count + 1);
-        awk_piece_start[awk_piece_count] = start;
-        awk_piece_length[awk_piece_count] = length;
-        awk_piece_count++;
+        awk_pieces[awk_piece_count++] = (awk_piece){start, length};
 }
 
 /*
@@ -2132,7 +2095,8 @@ static fn awk_split_record()
 
         for (positive i = 0; i < awk_piece_count; i++)
                 awk_set_input_bytes(address_of awk_fields[i + 1],
-                                    record->text + awk_piece_start[i], awk_piece_length[i]);
+                                    record->text + awk_pieces[i].start,
+                                    awk_pieces[i].length);
 
         for (positive i = awk_piece_count + 1; i <= (positive)awk_nf; i++)
                 awk_value_clear(address_of awk_fields[i]);
@@ -2386,8 +2350,7 @@ static bipolar awk_spawn(string_address command, b32 into, b32 out_of)
                         system_close(awk_readers[i].handle);
         }
 
-        system_call_3(syscall(execve), (positive) "/bin/sh", (positive)words,
-                      (positive)awk_child_environment);
+        system_execute("/bin/sh", words, awk_child_environment);
         exit(127);
         return -1;
 }
@@ -5797,8 +5760,8 @@ static fn awk_builtin(awk_node address_to node, awk_value address_to out)
                         awk_slot address_to slot = awk_array_place(array, name, at);
 
                         awk_set_input_bytes(address_of slot->value,
-                                            text->text + awk_piece_start[i],
-                                            awk_piece_length[i]);
+                                            text->text + awk_pieces[i].start,
+                                            awk_pieces[i].length);
                 }
 
                 awk_set_number(out, (decimal)awk_piece_count);

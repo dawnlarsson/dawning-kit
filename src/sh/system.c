@@ -104,10 +104,8 @@ static bipolar start_service(b32 device, string_address path,
                 request.envp_generation = 0;
 
                 {
-                        bipolar spawned =
-                            system_call_3(syscall(ioctl), device,
-                                          SPARK_IOCTL_SPAWN,
-                                          (positive)address_of request);
+                        bipolar spawned = system_control(
+                            device, SPARK_IOCTL_SPAWN, address_of request);
 
                         if (spawned > 0)
                                 return spawned;
@@ -120,9 +118,7 @@ portable:
 
                 if (child == 0)
                 {
-                        system_call_3(syscall(execve), (positive)path,
-                                      (positive)arguments,
-                                      (positive)init_envp);
+                        system_execute(path, arguments, init_envp);
 
                         system_call_1(syscall(exit), 127);
                 }
@@ -193,8 +189,7 @@ fn report_exit(positive status)
 */
 fn mount_devpts()
 {
-        bipolar made = system_call_3(syscall(mkdirat), AT_FDCWD,
-                                     (positive)"/dev/pts", 0755);
+        bipolar made = system_make_directory_at(AT_FDCWD, "/dev/pts", 0755);
 
         if (made < 0 && made != -ERROR_EXISTS)
         {
@@ -202,9 +197,7 @@ fn mount_devpts()
                 log_flush();
         }
 
-        bipolar mounted = system_call_5(syscall(mount), (positive)"devpts",
-                                        (positive)"/dev/pts",
-                                        (positive)"devpts", 0, 0);
+        bipolar mounted = system_mount("devpts", "/dev/pts", "devpts", 0, 0);
 
         // Nothing needs a pty this early, so this is not worth refusing to
         // boot over. It is worth saying: without it the terminal fails much
@@ -410,7 +403,7 @@ fn world_fail(string_address text, bipolar code)
 
 static bipolar world_mkdir(string_address path)
 {
-        bipolar made = system_call_3(syscall(mkdirat), AT_FDCWD, (positive)path, 0755);
+        bipolar made = system_make_directory_at(AT_FDCWD, path, 0755);
 
         return made == -ERROR_EXISTS ? 0 : made;
 }
@@ -428,17 +421,17 @@ static bipolar world_enter(string_address root)
 {
         bipolar failed;
 
-        failed = system_call_5(syscall(mount), 0, (positive)"/", 0,
+        failed = system_mount(0, "/", 0,
                                MS_REC | MS_PRIVATE, 0);
         if (failed)
                 return failed;
 
-        failed = system_call_5(syscall(mount), (positive)root, (positive)root, 0,
+        failed = system_mount(root, root, 0,
                                MS_BIND | MS_REC, 0);
         if (failed)
                 return failed;
 
-        failed = system_call_1(syscall(chdir), (positive)root);
+        failed = system_change_directory(root);
         if (failed)
                 return failed;
 
@@ -450,7 +443,7 @@ static bipolar world_enter(string_address root)
         if (failed)
                 return failed;
 
-        return system_call_1(syscall(chdir), (positive)"/");
+        return system_change_directory("/");
 }
 
 // A root missing /sys is still a root worth being in, so a mount that will not
@@ -465,9 +458,8 @@ fn world_populate()
                 if (world_mkdir(point->target) < 0)
                         continue;
 
-                failed = system_call_5(syscall(mount), (positive)point->source,
-                                       (positive)point->target,
-                                       (positive)point->filesystem, point->flags, 0);
+                failed = system_mount(point->source, point->target,
+                                      point->filesystem, point->flags, 0);
 
                 if (failed)
                         world_fail(point->target, failed);
@@ -557,9 +549,8 @@ static b32 system_world()
                 system_call_2(syscall(sethostname), (positive)name,
                               string_length((string_address)name));
 
-                world_fail(program, system_call_3(syscall(execve), (positive)program,
-                                                  (positive)world_argv,
-                                                  (positive)world_envp));
+                world_fail(program,
+                           system_execute(program, world_argv, world_envp));
                 exit(127);
         }
 

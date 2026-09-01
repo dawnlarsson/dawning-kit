@@ -1943,8 +1943,7 @@ static bool file_handle_terminal(positive handle)
 {
         p8 settings[64];
 
-        return system_call_3(syscall(ioctl), handle, FILE_TCGETS,
-                             (positive)settings) == 0;
+        return system_control(handle, FILE_TCGETS, settings) == 0;
 }
 
 static bool file_output_terminal()
@@ -2185,8 +2184,7 @@ bool file_make_parents(string_address path, positive mode)
 
                 work[i] = end;
 
-                bipolar made = system_call_3(syscall(mkdirat), AT_FDCWD,
-                                             (positive)work, mode);
+                bipolar made = system_make_directory_at(AT_FDCWD, work, mode);
 
                 if (made < 0 &&
                     (made != -ERROR_EXISTS || !file_is_directory_through(work)))
@@ -2198,7 +2196,7 @@ bool file_make_parents(string_address path, positive mode)
                 work[i] = '/';
         }
 
-        bipolar made = system_call_3(syscall(mkdirat), AT_FDCWD, (positive)work, mode);
+        bipolar made = system_make_directory_at(AT_FDCWD, work, mode);
 
         return made == 0 ||
                (made == -ERROR_EXISTS && file_is_directory_through(work));
@@ -3290,8 +3288,7 @@ static bipolar file_exec_path_try_in(string_address name,
 
         if (string_first_of(name, '/'))
         {
-                bipolar answer = system_call_3(syscall(execve), (positive)name,
-                                               (positive)words, (positive)environment);
+                bipolar answer = system_execute(name, words, environment);
 
                 return answer;
         }
@@ -3329,9 +3326,7 @@ static bipolar file_exec_path_try_in(string_address name,
                                 memory_copy_apart_end(candidate + filled, name, named);
 
                                 bipolar answer =
-                                    system_call_3(syscall(execve), (positive)candidate,
-                                                  (positive)words,
-                                                  (positive)environment);
+                                    system_execute(candidate, words, environment);
 
                                 if (answer == -ERROR_ARGUMENT_LIST)
                                         return answer;
@@ -3412,11 +3407,7 @@ static bool nice_adjustment(string_address text, bipolar address_to value)
         if (!used || string_get(text + used))
                 return false;
 
-        address_to value = below
-                               ? magnitude == (positive)bipolar_max + 1
-                                     ? bipolar_min
-                                     : -(bipolar)magnitude
-                               : (bipolar)magnitude;
+        address_to value = bipolar_from_magnitude(magnitude, below);
         return true;
 }
 
@@ -6323,7 +6314,7 @@ static fn chmod_one(bipolar directory, string_address name, string_address shown
                 return;
         }
 
-        bipolar done = system_call_4(syscall(fchmodat), directory, (positive)name, wanted, 0);
+        bipolar done = system_change_mode_at(directory, name, wanted);
 
         if (done < 0)
         {
@@ -6485,8 +6476,8 @@ static fn chown_one(bipolar directory, string_address name, string_address shown
         file_facts facts;
         bool known = file_look(directory, name, through, address_of facts);
 
-        bipolar done = system_call_5(syscall(fchownat), directory, (positive)name,
-                                     (positive)chown_user, (positive)chown_group, through);
+        bipolar done = system_change_owner_at(
+            directory, name, chown_user, chown_group, through);
 
         if (done < 0)
         {
@@ -6734,12 +6725,10 @@ static bool ln_make(string_address target, string_address name)
         bipolar done;
 
         if (ln_symbolic)
-                done = system_call_3(syscall(symlinkat), (positive)target, AT_FDCWD,
-                                     (positive)name);
+                done = system_symbolic_link_at(target, AT_FDCWD, name);
         else
-                done = system_call_5(syscall(linkat), AT_FDCWD, (positive)target,
-                                     AT_FDCWD, (positive)name,
-                                     ln_through ? AT_SYMLINK_FOLLOW : 0);
+                done = system_link_at(AT_FDCWD, target, AT_FDCWD, name,
+                                      ln_through ? AT_SYMLINK_FOLLOW : 0);
 
         if (done < 0)
         {
@@ -6935,9 +6924,7 @@ static b32 file_link()
 
         string_address source = file_simple_operand_list[0];
         string_address target = file_simple_operand_list[1];
-        bipolar answer = system_call_5(syscall(linkat), AT_FDCWD,
-                                       (positive)source, AT_FDCWD,
-                                       (positive)target, 0);
+        bipolar answer = system_link_at(AT_FDCWD, source, AT_FDCWD, target, 0);
 
         if (answer < 0)
         {
@@ -7825,13 +7812,12 @@ static b32 file_mkdir()
                         }
 
                         if (given_mode)
-                                system_call_4(syscall(fchmodat), AT_FDCWD, (positive)path,
-                                              mode, 0);
+                                system_change_mode_at(AT_FDCWD, path, mode);
 
                         continue;
                 }
 
-                bipolar made = system_call_3(syscall(mkdirat), AT_FDCWD, (positive)path, mode);
+                bipolar made = system_make_directory_at(AT_FDCWD, path, mode);
 
                 if (made < 0)
                 {
@@ -7890,8 +7876,7 @@ static b32 file_make_node(string_address program, string_address path,
         }
 
         if (given_mode &&
-            system_call_4(syscall(fchmodat), AT_FDCWD, (positive)path,
-                          mode, 0) < 0)
+            system_change_mode_at(AT_FDCWD, path, mode) < 0)
         {
                 string_format(file_fail,
                               "%s: cannot set permissions of '%s'\n",
@@ -8463,7 +8448,7 @@ static bool truncate_one(string_address path, b64 size, b64 reference,
         if (wanted < 0)
                 wanted = 0;
 
-        bipolar done = system_call_2(syscall(ftruncate), handle, (positive)wanted);
+        bipolar done = system_truncate_handle(handle, wanted);
         bipolar closed = system_close(handle);
 
         if (done < 0)
@@ -8710,19 +8695,18 @@ static fn cp_keep(string_address destination, file_facts address_to facts)
         times[2] = (p64)facts->modified.seconds;
         times[3] = facts->modified.nanoseconds;
 
-        system_call_5(syscall(fchownat), AT_FDCWD, (positive)destination,
-                      facts->owner, facts->group, AT_SYMLINK_NOFOLLOW);
+        system_change_owner_at(AT_FDCWD, destination, facts->owner,
+                               facts->group, AT_SYMLINK_NOFOLLOW);
 
-        system_call_4(syscall(utimensat), AT_FDCWD, (positive)destination,
-                      (positive)times, AT_SYMLINK_NOFOLLOW);
+        system_update_times_at(AT_FDCWD, destination, times,
+                               AT_SYMLINK_NOFOLLOW);
 
         // A symbolic link has no mode of its own, and fchmodat has no way to
         // stop at one: the chmod would land on whatever it points at.
         if ((facts->mode & MODE_FORMAT) == MODE_LINK)
                 return;
 
-        system_call_4(syscall(fchmodat), AT_FDCWD, (positive)destination,
-                      facts->mode & 07777, 0);
+        system_change_mode_at(AT_FDCWD, destination, facts->mode & 07777);
 }
 
 // -n, -i and -u are three ways of asking the same question about a
@@ -8790,12 +8774,10 @@ static bool cp_linked(string_address source, string_address destination)
                         return false;
                 }
 
-                done = system_call_3(syscall(symlinkat), (positive)source, AT_FDCWD,
-                                     (positive)destination);
+                done = system_symbolic_link_at(source, AT_FDCWD, destination);
         }
         else
-                done = system_call_5(syscall(linkat), AT_FDCWD, (positive)source,
-                                     AT_FDCWD, (positive)destination, 0);
+                done = system_link_at(AT_FDCWD, source, AT_FDCWD, destination, 0);
 
         if (done < 0)
         {
@@ -8874,8 +8856,7 @@ static bool cp_one(string_address source, string_address destination, positive d
 
                 system_remove_at(AT_FDCWD, destination, 0);
 
-                if (system_call_3(syscall(symlinkat), (positive)target, AT_FDCWD,
-                                  (positive)destination) < 0)
+                if (system_symbolic_link_at(target, AT_FDCWD, destination) < 0)
                 {
                         string_format(file_fail, "cp: cannot create link '%s'\n", destination);
                         cp_status = 1;
@@ -8916,8 +8897,7 @@ static bool cp_one(string_address source, string_address destination, positive d
                 // The open above only sets the mode on a file it created, so a
                 // destination that was already there keeps whatever it had
                 // unless the mode is written afterwards.
-                system_call_4(syscall(fchmodat), AT_FDCWD, (positive)destination,
-                              facts.mode & 07777, 0);
+                system_change_mode_at(AT_FDCWD, destination, facts.mode & 07777);
 
                 cp_keep(destination, address_of facts);
                 cp_said(source, destination);
@@ -8939,8 +8919,8 @@ static bool cp_one(string_address source, string_address destination, positive d
                 return false;
         }
 
-        bipolar made = system_call_3(syscall(mkdirat), AT_FDCWD, (positive)destination,
-                                     facts.mode & 07777);
+        bipolar made = system_make_directory_at(
+            AT_FDCWD, destination, facts.mode & 07777);
 
         if (made < 0 && made != -ERROR_EXISTS)
         {
@@ -9118,8 +9098,8 @@ static bool mv_across(string_address source, string_address destination, positiv
 
         if (kind == MODE_DIRECTORY)
         {
-                bipolar made = system_call_3(syscall(mkdirat), AT_FDCWD,
-                                             (positive)destination, facts.mode & 07777);
+                bipolar made = system_make_directory_at(
+                    AT_FDCWD, destination, facts.mode & 07777);
 
                 if (made < 0 && made != -ERROR_EXISTS)
                         return false;
@@ -9136,8 +9116,7 @@ static bool mv_across(string_address source, string_address destination, positiv
 
                 system_remove_at(AT_FDCWD, destination, 0);
 
-                if (system_call_3(syscall(symlinkat), (positive)target, AT_FDCWD,
-                                  (positive)destination) < 0)
+                if (system_symbolic_link_at(target, AT_FDCWD, destination) < 0)
                         return false;
         }
         else if (!file_copy_contents(AT_FDCWD, source, AT_FDCWD, destination,
@@ -9151,8 +9130,8 @@ static bool mv_across(string_address source, string_address destination, positiv
         times[2] = (p64)facts.modified.seconds;
         times[3] = facts.modified.nanoseconds;
 
-        system_call_4(syscall(utimensat), AT_FDCWD, (positive)destination,
-                      (positive)times, AT_SYMLINK_NOFOLLOW);
+        system_update_times_at(AT_FDCWD, destination, times,
+                               AT_SYMLINK_NOFOLLOW);
 
         return system_remove_at(AT_FDCWD, source, 0) == 0;
 }
@@ -9195,8 +9174,8 @@ static fn mv_one(string_address source, string_address destination)
                 return;
         }
 
-        bipolar done = system_call_5(syscall(renameat2), AT_FDCWD, (positive)source,
-                                     AT_FDCWD, (positive)destination, 0);
+        bipolar done = system_rename_at(
+            AT_FDCWD, source, AT_FDCWD, destination, 0);
 
         if (done == 0)
         {
@@ -9815,9 +9794,9 @@ static b32 file_touch()
                         system_close(made);
                 }
 
-                bipolar done = system_call_4(syscall(utimensat), AT_FDCWD, (positive)path,
-                                             (positive)times,
-                                             through ? 0 : AT_SYMLINK_NOFOLLOW);
+                bipolar done = system_update_times_at(
+                    AT_FDCWD, path, times,
+                    through ? 0 : AT_SYMLINK_NOFOLLOW);
 
                 if (done < 0)
                 {
@@ -9963,8 +9942,8 @@ static b32 file_stty()
         }
 
         file_window_size size = {0, 0, 0, 0};
-        bipolar answer = system_call_3(syscall(ioctl), 0, FILE_TIOCGWINSZ,
-                                       (positive)address_of size);
+        bipolar answer = system_control(0, FILE_TIOCGWINSZ,
+                                       address_of size);
 
         if (answer < 0)
         {
@@ -10103,11 +10082,7 @@ static bool seq_number(string_address text, bipolar address_to value)
         if (!string_digits_exact(digits, address_of magnitude))
                 return false;
 
-        if (minus && magnitude == (positive)bipolar_max + 1)
-                address_to value = bipolar_min;
-        else
-                address_to value = minus ? -(bipolar)magnitude
-                                         : (bipolar)magnitude;
+        address_to value = bipolar_from_magnitude(magnitude, minus);
 
         return true;
 }
@@ -10294,11 +10269,7 @@ static bool seq_decimal_number(string_address text, seq_decimal address_to out)
                 effective = 0;
         }
 
-        out->coefficient = minus
-                               ? (coefficient == (positive)bipolar_max + 1
-                                      ? bipolar_min
-                                      : -(bipolar)coefficient)
-                               : (bipolar)coefficient;
+        out->coefficient = bipolar_from_magnitude(coefficient, minus);
         out->scale = (positive)effective;
         out->shown = shown;
         out->negative_zero = minus && coefficient == 0;
@@ -10323,11 +10294,8 @@ static bool seq_decimal_rescale(seq_decimal address_to number, positive scale)
                 return false;
 
         magnitude *= multiplier;
-        number->coefficient = number->coefficient < 0
-                                  ? (magnitude == (positive)bipolar_max + 1
-                                         ? bipolar_min
-                                         : -(bipolar)magnitude)
-                                  : (bipolar)magnitude;
+        number->coefficient = bipolar_from_magnitude(
+            magnitude, number->coefficient < 0);
         number->scale = scale;
         return true;
 }
@@ -11155,7 +11123,7 @@ static b32 file_env()
                 return 0;
         }
 
-        if (where && system_call_1(syscall(chdir), (positive)where) < 0)
+        if (where && system_change_directory(where) < 0)
         {
                 string_format(file_fail, "env: cannot change directory to %s\n", where);
                 return 125;
@@ -12586,9 +12554,7 @@ static b32 file_mktemp()
                         break;
 
                 if (directory)
-                        answer = system_call_3(syscall(mkdirat),
-                                               (positive)(bipolar)AT_FDCWD,
-                                               (positive)path, 0700);
+                        answer = system_make_directory_at(AT_FDCWD, path, 0700);
                 else
                 {
                         answer = system_open_at_mode(

@@ -31,8 +31,11 @@ Definition = namedtuple('Definition', 'path line name kind')
 # body-generating macro a visible inventory event rather than a parser guess.
 GENERATORS = {
     ('src/core.c', 'REPORT_CANVAS'): ('{}',),
+    ('src/compiler_memory.c', 'SEARCH_KNOWN'): ('{}',),
     ('src/sh/awk.c', 'AWK_LOGICAL_LEVEL'): ('{}',),
     ('src/sh/awk.c', 'AWK_EVALUATOR'): ('{}',),
+    ('src/sh/awk.c', 'AWK_TRIG_KERNEL'): ('{}',),
+    ('src/sh/awk.c', 'AWK_TRIG'): ('{}',),
     ('src/sh/expand.c', 'ARITH_BIT_LEVEL'): ('{}',),
     ('src/sh/expand.c', 'ARITH_LOGICAL_LEVEL'): ('{}',),
     ('src/sh/exec.c', 'CONDITIONAL_LOGICAL_LEVEL'): ('{}',),
@@ -42,6 +45,7 @@ GENERATORS = {
     ('src/sh/builtin.c', 'TEST_LOGICAL_LEVEL'): ('{}',),
     ('src/sh/storage_discovery.c', 'STORAGE_TABLE_RELEASE'): ('{}',),
     ('src/sh/text.c', 'EXPR_LOGICAL_LEVEL'): ('{}',),
+    ('src/sh/tools.c', 'PS_TAKE'): ('{}',),
     ('src/standard/process.c', 'PROCESS_EXECL'): ('{}',),
     ('src/standard/error.c', 'ERROR_OPEN'): ('{}',),
     ('src/standard/error.c', 'ERROR_ENTRY'): ('{}',),
@@ -51,6 +55,8 @@ GENERATORS = {
     ('src/standard/scan.c', 'var_list_entry'): ('{}',),
     ('src/standard/numbers.c', 'NUMBERS_EXACT'): ('{}',),
     ('src/standard/numbers.c', 'NUMBERS_TO'): ('{}',),
+    ('src/standard/signal.c', 'SIGNAL_SET_CHANGE'): ('{}',),
+    ('src/standard/spool.c', 'SPOOL_PIPELINE_SLOT'): ('{}',),
     ('src/standard/stdlib.c', 'STDLIB_DIVIDE'): ('{}',),
 }
 

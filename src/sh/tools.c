@@ -61,7 +61,7 @@ static fn dd_listen(b32 number)
         positive action[4] = {(positive)dd_info_caught, SIGNAL_CATCH_FLAGS,
                               SIGNAL_CATCH_RESTORER, 0};
 
-        system_call_4(syscall(rt_sigaction), number, (positive)address_of action, 0, 8);
+        system_signal_action(number, address_of action, 0, 8);
 }
 
 static fn dd_say_number(positive value)
@@ -704,8 +704,8 @@ static b32 tools_dd(void)
                 }
                 else if (!(conv & DD_NOTRUNC))
                 {
-                        bipolar truncated = system_call_2(syscall(ftruncate), out_handle,
-                                                          want);
+                        bipolar truncated =
+                            system_truncate_handle(out_handle, want);
 
                         if (truncated < 0)
                         {
@@ -1021,6 +1021,7 @@ static bool diff_slurp(diff_side address_to side, string_address path,
                        bool allow_missing)
 {
         bipolar handle = 0;
+        bool close_handle = false;
 
         side->base = null;
         side->size = 0;
@@ -1065,45 +1066,26 @@ static bool diff_slurp(diff_side address_to side, string_address path,
                         text_error_raw("\n");
                         return false;
                 }
+
+                close_handle = true;
         }
 
-        p8 address_to start = null;
         positive have = 0;
+        bool read_failed;
+        p8 address_to start = text_arena_read_all(
+            (positive)handle, TEXT_READ_MAX, address_of have,
+            address_of read_failed);
 
-        while (1)
+        if (close_handle)
+                system_close(handle);
+
+        if (!start)
         {
-                p8 address_to block = (p8 address_to)text_arena_take(TEXT_READ_MAX);
-
-                if (!block)
-                        return false;
-
-                if (!start)
-                        start = block;
-
-                bipolar got = system_read_retry((positive)handle, block,
-                                                TEXT_READ_MAX);
-
-                if (got < 0)
-                {
-                        if (handle > 0)
-                                system_close(handle);
-
+                if (read_failed)
                         text_error(path ? path : (string_address) "standard input",
                                    "Read error");
-                        return false;
-                }
-
-                if (!got)
-                        break;
-
-                have += (positive)got;
-
-                if ((positive)got < TEXT_READ_MAX)
-                        break;
+                return false;
         }
-
-        if (handle > 0)
-                system_close(handle);
 
         if (diff_strip_cr && have > 1)
         {
@@ -2478,9 +2460,8 @@ typedef struct
 
 static bool diff_name_add(diff_names address_to names, string_address value)
 {
-        if (!text_arena_grow(address_of names->at, address_of names->room,
-                             names->count, names->count + 1,
-                             sizeof(string_address), 32))
+        if (!array_arena_reserve(names->at, names->room, names->count,
+                                 names->count + 1, 32, text_arena_grow))
                 return false;
 
         names->at[names->count++] = value;
@@ -3066,86 +3047,10 @@ static positive ps_read_file(string_address path, p8 address_to into, positive l
         return got > 0 ? (positive)got : 0;
 }
 
-static p8 address_to ps_read_growing(string_address path, positive first,
-                                     positive address_to length)
-{
-        bipolar handle = text_open_handle(path, FILE_READ, 0);
-
-        if (handle < 0)
-                return null;
-
-        positive room = first ? first : 64;
-        positive used = 0;
-        positive arena_mark = text_arena_used;
-        p8 address_to bytes = (p8 address_to)text_arena_take(room);
-
-        if (!bytes)
-        {
-                system_close(handle);
-                return null;
-        }
-
-        for (;;)
-        {
-                if (used + 1 >= room)
-                {
-                        if (room > positive_max / 2)
-                        {
-                                system_close(handle);
-                                text_arena_used = arena_mark;
-                                return null;
-                        }
-
-                        positive larger = room * 2;
-
-                        /* This buffer is the newest arena object. Rewind and
-                           extend it in place: its bytes remain at the same
-                           address, so growth needs neither another retained
-                           block nor a copy of everything read so far. */
-                        text_arena_used = arena_mark;
-                        p8 address_to grown =
-                            (p8 address_to)text_arena_take(larger);
-
-                        if (!grown)
-                        {
-                                system_close(handle);
-                                text_arena_used = arena_mark;
-                                return null;
-                        }
-
-                        bytes = grown;
-                        room = larger;
-                }
-
-                bipolar got = system_read_retry((positive)handle, bytes + used,
-                                                 room - used - 1);
-
-                if (got < 0)
-                {
-                        system_close(handle);
-                        text_arena_used = arena_mark;
-                        return null;
-                }
-
-                if (!got)
-                        break;
-
-                used += (positive)got;
-        }
-
-        system_close(handle);
-        bytes[used] = end;
-        /* Give the unused half of the last doubling step back before ps
-           starts retaining the next process. */
-        text_arena_used = arena_mark + ((used + 1 + 15) & ~(positive)15);
-        address_to length = used;
-        return bytes;
-}
-
 static ps_process address_to ps_process_add()
 {
-        if (!text_arena_grow(address_of ps_list, address_of ps_room_processes,
-                             ps_count, ps_count + 1, sizeof(ps_process), 128))
+        if (!array_arena_reserve(ps_list, ps_room_processes, ps_count,
+                                 ps_count + 1, 128, text_arena_grow))
                 return null;
 
         ps_process address_to made = ps_list + ps_count;
@@ -3158,26 +3063,19 @@ static ps_process address_to ps_process_add()
 static b8 ps_blank_bytes[STRING_SET_BYTES];
 static b8 ps_field_bytes[STRING_SET_BYTES];
 
-static positive ps_take(string_address address_to at)
-{
-        string_address here = address_to at + string_span(address_to at, ps_blank_bytes);
-        positive taken;
-        positive value = string_digits(here, address_of taken);
-
-        address_to at = here + taken;
-
-        return value;
+#define PS_TAKE(name, type, parse)                                           \
+static type name(string_address address_to at)                              \
+{                                                                           \
+        string_address here = address_to at +                               \
+            string_span(address_to at, ps_blank_bytes);                     \
+        positive taken;                                                     \
+        type value = parse(here, address_of taken);                          \
+        address_to at = here + taken;                                       \
+        return value;                                                       \
 }
-
-static bipolar ps_signed(string_address address_to at)
-{
-        string_address here = address_to at + string_span(address_to at, ps_blank_bytes);
-        positive taken;
-        bipolar value = string_bipolar(here, address_of taken);
-
-        address_to at = here + taken;
-        return value;
-}
+PS_TAKE(ps_take, positive, string_digits)
+PS_TAKE(ps_signed, bipolar, string_bipolar)
+#undef PS_TAKE
 
 static fn ps_pass(string_address address_to at, positive fields)
 {
@@ -3412,8 +3310,14 @@ static bool ps_gather()
                 string_copy(path + base, "/cmdline");
 
                 positive got = 0;
-                p8 address_to arguments = ps_read_growing(path, 256,
-                                                          address_of got);
+                bipolar handle = text_open_handle(path, FILE_READ, 0);
+                p8 address_to arguments = handle < 0
+                    ? null
+                    : text_arena_read_all((positive)handle, 256,
+                                          address_of got, null);
+
+                if (handle >= 0)
+                        system_close(handle);
 
                 if (arguments && got)
                 {
@@ -3486,18 +3390,24 @@ static positive ps_room_used;
 static positive ps_room_size;
 static bool ps_failed;
 
-static bool ps_room_add(positive extra)
+static HOT bool ps_room_add(positive extra)
 {
         if (ps_room_used == positive_max ||
-            extra > positive_max - ps_room_used - 1 ||
+            extra > positive_max - ps_room_used - 1)
+                goto failed;
+
+        positive wanted = ps_room_used + extra + 1;
+
+        if (wanted > ps_room_size &&
             !text_arena_grow(address_of ps_room, address_of ps_room_size,
-                             ps_room_used, ps_room_used + extra + 1, 1, 64))
-        {
-                ps_failed = true;
-                return false;
-        }
+                             ps_room_used, wanted, 1, 64))
+                goto failed;
 
         return true;
+
+failed:
+        ps_failed = true;
+        return false;
 }
 
 static fn ps_byte(p8 value)

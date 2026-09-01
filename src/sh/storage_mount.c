@@ -330,12 +330,11 @@ static bipolar storage_mount_one(string_address source, string_address target,
                 type = identity.type;
 
         if (options->flags & STORAGE_MS_MOVE)
-                return system_call_5(syscall(mount), (positive)resolved,
-                                     (positive)target, 0, STORAGE_MS_MOVE, 0);
+                return system_mount(resolved, target, 0, STORAGE_MS_MOVE, 0);
 
         if (options->propagation &&
             !(options->flags & ~(STORAGE_MS_REC)))
-                return system_call_5(syscall(mount), 0, (positive)target, 0,
+                return system_mount(0, target, 0,
                                      options->propagation, 0);
 
         if (options->flags & STORAGE_MS_BIND)
@@ -357,10 +356,8 @@ static bipolar storage_mount_one(string_address source, string_address target,
                 {
                         positive bind_flags = STORAGE_MS_BIND |
                                               (options->flags & STORAGE_MS_REC);
-                        answer = system_call_5(syscall(mount),
-                                               (positive)resolved,
-                                               (positive)target, 0,
-                                               bind_flags, 0);
+                        answer = system_mount(resolved, target, 0,
+                                              bind_flags, 0);
                         if (answer)
                                 return answer;
 
@@ -405,7 +402,7 @@ static bipolar storage_mount_one(string_address source, string_address target,
                 storage_options_free(address_of effective);
 
         if (!answer && options->propagation)
-                answer = system_call_5(syscall(mount), 0, (positive)target, 0,
+                answer = system_mount(0, target, 0,
                                        options->propagation, 0);
         return answer;
 }

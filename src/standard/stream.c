@@ -66,11 +66,9 @@
         take the diagnostic path down with it.
 */
 address_any malloc(positive size);
-address_any realloc(address_any block, positive size);
 fn free(address_any block);
 
 #define stream_allocate(size) malloc(size)
-#define stream_reallocate(block, size) realloc((block), (size))
 #define stream_release(block) free(block)
 
 /*
@@ -399,9 +397,8 @@ bool stream_is_terminal(b32 descriptor)
 {
         p64 attributes[16];
 
-        return system_call_3(syscall(ioctl), (positive)(bipolar)descriptor,
-                             stream_terminal_attributes_request,
-                             (positive)attributes) == 0;
+        return system_control(descriptor, stream_terminal_attributes_request,
+                              attributes) == 0;
 }
 
 /*
@@ -1533,15 +1530,10 @@ bipolar stream_get_delimited(address_any line, sized address_to capacity,
         stream_face_reading(handle);
 
         if (address_to held == null)
-        {
-                p8 address_to fresh = (p8 address_to)stream_allocate(120);
+                address_to capacity = 0;
 
-                if (fresh == null)
-                        return -1;
-
-                address_to held = fresh;
-                address_to capacity = 120;
-        }
+        if (!memory_resize_reserve(held, capacity, 120, 120))
+                return -1;
 
         while (!found && !ended)
         {
@@ -1550,21 +1542,9 @@ bipolar stream_get_delimited(address_any line, sized address_to capacity,
 
                 if (filled + 1 >= (positive)address_to capacity)
                 {
-                        positive want = memory_growth((positive)address_to capacity,
-                                                      filled + 2, 120);
-                        p8 address_to grown;
-
-                        if (want == 0)
+                        if (!memory_resize_reserve(held, capacity,
+                                                   filled + 2, 120))
                                 return -1;
-
-                        grown = (p8 address_to)stream_reallocate(address_to held,
-                                                                 want);
-
-                        if (grown == null)
-                                return -1;
-
-                        address_to held = grown;
-                        address_to capacity = (sized)want;
                 }
 
                 room = (positive)address_to capacity - 1 - filled;

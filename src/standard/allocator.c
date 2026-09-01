@@ -822,6 +822,33 @@ pub address_any memory_resize(address_any block, positive bytes)
         return grown;
 }
 
+/* The cold half of memory_resize_reserve. On x86 GCC's IPA folding produces
+   the smaller image when it may choose the outline boundary itself; on the
+   fixed-width targets keeping it cold and out of line avoids cloning this
+   allocator path into every editor and getline caller. */
+#if X64
+#define MEMORY_RESIZE_GROWTH
+#else
+#define MEMORY_RESIZE_GROWTH COLD __attribute__((noinline))
+#endif
+static address_any MEMORY_RESIZE_GROWTH memory_resize_growth(
+    address_any block, positive have, positive wanted, positive first,
+    positive address_to grown)
+{
+        positive room = memory_growth(have, wanted, first);
+
+        if (!room)
+                return null;
+
+        block = memory_resize(block, room);
+
+        if (block)
+                address_to grown = room;
+
+        return block;
+}
+#undef MEMORY_RESIZE_GROWTH
+
 /*
         aligned_alloc, and the shifted block it invents.
 

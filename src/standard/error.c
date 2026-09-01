@@ -1371,8 +1371,7 @@ var_list_entry(ioctl, b32, (b32 handle, positive request, ...), request,
 b32 isatty(b32 handle)
 {
         p8 attributes[64];
-        bipolar answer = system_call_3(syscall(ioctl), (positive)handle,
-                                       0x5401, (positive)attributes);
+        bipolar answer = system_control(handle, 0x5401, attributes);
 
         if (error_failed(answer))
         {
@@ -1387,15 +1386,11 @@ b32 isatty(b32 handle)
 
 ERROR_ENTRY(fstatat, b32,
             (b32 directory, string_address path, stat_address into, b32 flags),
-            error_whole, system_call_4(syscall(newfstatat),
-                                       (positive)directory, (positive)path,
-                                       (positive)into, (positive)flags))
+            error_whole, system_status_at(directory, path, into, flags))
 ERROR_ENTRY(stat, b32, (string_address path, stat_address into), error_whole,
-            system_call_4(syscall(newfstatat), ERROR_AT_HERE, (positive)path,
-                          (positive)into, 0))
+            system_status_at(ERROR_AT_HERE, path, into, 0))
 ERROR_ENTRY(lstat, b32, (string_address path, stat_address into), error_whole,
-            system_call_4(syscall(newfstatat), ERROR_AT_HERE, (positive)path,
-                          (positive)into, AT_SYMLINK_NOFOLLOW))
+            system_status_at(ERROR_AT_HERE, path, into, AT_SYMLINK_NOFOLLOW))
 
 /*
         fstat has a syscall of its own on all three, and is not newfstatat
@@ -1414,11 +1409,9 @@ ERROR_ENTRY(rmdir, b32, (string_address path), error_whole,
             system_remove_at(ERROR_AT_HERE, path, AT_REMOVEDIR))
 ERROR_ENTRY(mkdirat, b32,
             (b32 directory, string_address path, p32 mode), error_whole,
-            system_call_3(syscall(mkdirat), (positive)directory,
-                          (positive)path, (positive)mode))
+            system_make_directory_at(directory, path, mode))
 ERROR_ENTRY(mkdir, b32, (string_address path, p32 mode), error_whole,
-            system_call_3(syscall(mkdirat), ERROR_AT_HERE, (positive)path,
-                          (positive)mode))
+            system_make_directory_at(ERROR_AT_HERE, path, mode))
 
 /*
         rename is renameat2 with no flags, not renameat.
@@ -1432,19 +1425,15 @@ ERROR_ENTRY(mkdir, b32, (string_address path, p32 mode), error_whole,
 ERROR_ENTRY(renameat2, b32,
             (b32 from_directory, string_address from, b32 to_directory,
              string_address to, p32 flags),
-            error_whole, system_call_5(syscall(renameat2),
-                                       (positive)from_directory,
-                                       (positive)from, (positive)to_directory,
-                                       (positive)to, (positive)flags))
+            error_whole,
+            system_rename_at(from_directory, from, to_directory, to, flags))
 ERROR_ENTRY(rename, b32, (string_address from, string_address to), error_whole,
-            system_call_5(syscall(renameat2), ERROR_AT_HERE, (positive)from,
-                          ERROR_AT_HERE, (positive)to, 0))
+            system_rename_at(ERROR_AT_HERE, from, ERROR_AT_HERE, to, 0))
 ERROR_ENTRY(link, b32, (string_address from, string_address to), error_whole,
-            system_call_5(syscall(linkat), ERROR_AT_HERE, (positive)from,
-                          ERROR_AT_HERE, (positive)to, 0))
+            system_link_at(ERROR_AT_HERE, from, ERROR_AT_HERE, to, 0))
 ERROR_ENTRY(symlink, b32, (string_address target, string_address path),
-            error_whole, system_call_3(syscall(symlinkat), (positive)target,
-                                       ERROR_AT_HERE, (positive)path))
+            error_whole,
+            system_symbolic_link_at(target, ERROR_AT_HERE, path))
 
 /*
         readlink returns the number of bytes it placed and does not terminate
@@ -1470,46 +1459,39 @@ ERROR_ENTRY(readlinkat, bipolar,
         used here.
 */
 ERROR_ENTRY(access, b32, (string_address path, b32 mode), error_whole,
-            system_call_3(syscall(faccessat), ERROR_AT_HERE, (positive)path,
-                          (positive)mode))
+            system_access_at(ERROR_AT_HERE, path, mode))
 
 static b32 faccessat(b32 directory, string_address path, b32 mode, b32 flags)
 {
         (void)flags;
-        return error_whole(system_call_3(syscall(faccessat),
-                                         (positive)directory, (positive)path,
-                                         (positive)mode));
+        return error_whole(system_access_at(directory, path, mode));
 }
 
 //      fchmodat on asm-generic is three arguments; the flags-taking form is
 //      fchmodat2 and is newer than the floor this targets.
 ERROR_ENTRY(chmod, b32, (string_address path, p32 mode), error_whole,
-            system_call_3(syscall(fchmodat), ERROR_AT_HERE, (positive)path,
-                          (positive)mode))
+            system_change_mode_at(ERROR_AT_HERE, path, mode))
 ERROR_ENTRY(fchmod, b32, (b32 handle, p32 mode), error_whole,
             system_call_2(syscall(fchmod), (positive)handle, (positive)mode))
 ERROR_ENTRY(chown, b32, (string_address path, p32 owner, p32 group),
-            error_whole, system_call_5(syscall(fchownat), ERROR_AT_HERE,
-                                       (positive)path, (positive)owner,
-                                       (positive)group, 0))
+            error_whole,
+            system_change_owner_at(ERROR_AT_HERE, path, owner, group, 0))
 ERROR_ENTRY(lchown, b32, (string_address path, p32 owner, p32 group),
-            error_whole, system_call_5(syscall(fchownat), ERROR_AT_HERE,
-                                       (positive)path, (positive)owner,
-                                       (positive)group, AT_SYMLINK_NOFOLLOW))
+            error_whole, system_change_owner_at(
+                ERROR_AT_HERE, path, owner, group, AT_SYMLINK_NOFOLLOW))
 ERROR_ENTRY(fchown, b32, (b32 handle, p32 owner, p32 group), error_whole,
             system_call_3(syscall(fchown), (positive)handle, (positive)owner,
                           (positive)group))
 ERROR_ENTRY(truncate, b32, (string_address path, bipolar length), error_whole,
             system_call_2(syscall(truncate), (positive)path, (positive)length))
 ERROR_ENTRY(ftruncate, b32, (b32 handle, bipolar length), error_whole,
-            system_call_2(syscall(ftruncate), (positive)handle,
-                          (positive)length))
+            system_truncate_handle(handle, length))
 ERROR_ENTRY(fsync, b32, (b32 handle), error_whole,
             system_call_1(syscall(fsync), (positive)handle))
 ERROR_ENTRY(fdatasync, b32, (b32 handle), error_whole,
             system_call_1(syscall(fdatasync), (positive)handle))
 ERROR_ENTRY(chdir, b32, (string_address path), error_whole,
-            system_call_1(syscall(chdir), (positive)path))
+            system_change_directory(path))
 ERROR_ENTRY(fchdir, b32, (b32 handle), error_whole,
             system_call_1(syscall(fchdir), (positive)handle))
 
@@ -1611,9 +1593,7 @@ ERROR_ENTRY(kill, b32, (b32 process, b32 signal), error_whole,
 ERROR_ENTRY(execve, b32,
             (string_address path, string_address address_to arguments,
              string_address address_to environment),
-            error_whole, system_call_3(syscall(execve), (positive)path,
-                                       (positive)arguments,
-                                       (positive)environment))
+            error_whole, system_execute(path, arguments, environment))
 
 /*
         fork, which is clone with one flag and nothing else.

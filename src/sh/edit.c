@@ -236,47 +236,12 @@ static p8 address_to edit_emitted;
 static positive edit_emitted_length;
 static positive edit_emitted_room;
 
-/*
-        A store that grows, on the allocator rather than on the mapper.
-
-        memory_reserve is the library's grower and is what the shell uses, but
-        it allocates with memory(), which is mmap and therefore a page at a
-        minimum. An editor holds one store per line, so a ten thousand line
-        file would take forty megabytes of pages to hold two hundred kilobytes
-        of text. memory_growth is the same doubling policy memory_reserve
-        applies; memory_resize is the allocator underneath it that hands back
-        thirty two bytes when thirty two bytes were asked for.
-*/
-static bool edit_room(p8 address_to address_to held, positive address_to room,
-                      positive want, positive first)
-{
-        positive grown;
-        p8 address_to block;
-
-        if (address_to room >= want)
-                return true;
-
-        grown = memory_growth(address_to room, want, first);
-
-        if (!grown)
-                return false;
-
-        block = (p8 address_to)memory_resize(address_to held, grown);
-
-        if (!block)
-                return false;
-
-        address_to held = block;
-        address_to room = grown;
-        return true;
-}
-
 static fn edit_say(address_any text, positive length)
 {
         if (!length)
                 return;
 
-        if (!edit_room(address_of edit_emitted, address_of edit_emitted_room,
+        if (!memory_resize_reserve(address_of edit_emitted, address_of edit_emitted_room,
                        edit_emitted_length + length, 4096))
                 return;
 
@@ -312,12 +277,12 @@ static fn edit_say_at(positive screen_row, positive screen_column)
 //      the element width is folded in here rather than at every call.
 static bool edit_line_room_for(struct edit_line address_to line, positive want)
 {
-        return edit_room(address_of line->text, address_of line->room, want,
+        return memory_resize_reserve(address_of line->text, address_of line->room, want,
                          EDIT_LINE_FIRST);
 }
 
 #define edit_table_room_for(table, room, want)                               \
-        edit_room((p8 address_to address_to)address_of (table),              \
+        memory_resize_reserve((p8 address_to address_to)address_of (table),              \
                   address_of (room), (want) * sizeof((table)[0]),             \
                   EDIT_TABLE_FIRST * sizeof((table)[0]))
 #define edit_lines_room_for(want)                                            \
@@ -988,7 +953,7 @@ static bool edit_step_start(p8 kind)
                 step->open = false;
         }
 
-        if (!edit_room((p8 address_to address_to)address_of edit_steps,
+        if (!memory_resize_reserve((p8 address_to address_to)address_of edit_steps,
                        address_of edit_step_room,
                        (edit_step_count + 1) * sizeof(struct edit_step),
                        32 * sizeof(struct edit_step)))
@@ -1094,7 +1059,7 @@ static struct edit_place edit_change(struct edit_place from,
             !memory_first_of(patch->inserted, '\n', patch->inserted_length) &&
             !memory_first_of((address_any)text, '\n', length))
         {
-                if (edit_room(address_of patch->inserted,
+                if (memory_resize_reserve(address_of patch->inserted,
                               address_of patch->inserted_room,
                               patch->inserted_length + length, 32))
                 {
@@ -1122,7 +1087,7 @@ static struct edit_place edit_change(struct edit_place from,
             patch->column == to.column && from.line == to.line &&
             !memory_first_of(patch->removed, '\n', patch->removed_length))
         {
-                if (edit_room(address_of patch->removed,
+                if (memory_resize_reserve(address_of patch->removed,
                               address_of patch->removed_room,
                               patch->removed_length + removed_length, 32))
                 {
@@ -1149,7 +1114,7 @@ static struct edit_place edit_change(struct edit_place from,
                 }
         }
 
-        if (!edit_room((p8 address_to address_to)address_of step->patches,
+        if (!memory_resize_reserve((p8 address_to address_to)address_of step->patches,
                        address_of step->patch_room,
                        (step->patch_count + 1) * sizeof(struct edit_patch),
                        4 * sizeof(struct edit_patch)))
@@ -1936,7 +1901,7 @@ static fn edit_clips_empty()
 
 static bool edit_clip_add(p8 address_to text, positive length)
 {
-        if (!edit_room((p8 address_to address_to)address_of edit_clips,
+        if (!memory_resize_reserve((p8 address_to address_to)address_of edit_clips,
                        address_of edit_clip_room,
                        (edit_clip_count + 1) * sizeof(struct edit_clip),
                        4 * sizeof(struct edit_clip)))
@@ -3410,7 +3375,7 @@ static fn edit_input_deliver(positive key)
 
 static bool edit_input_paste_append(string_address bytes, positive length)
 {
-        if (!edit_room(address_of edit_input_paste,
+        if (!memory_resize_reserve(address_of edit_input_paste,
                        address_of edit_input_paste_room,
                        edit_input_paste_length + length, 4096))
         {
@@ -4305,8 +4270,8 @@ static bool edit_terminal_raw()
 {
         edit_terminal_modes modes;
 
-        if (system_call_3(syscall(ioctl), standard_input_descriptor,
-                          EDIT_TCGETS, (positive)address_of edit_modes_before) != 0)
+        if (system_control(standard_input_descriptor, EDIT_TCGETS,
+                           address_of edit_modes_before) != 0)
                 return false;
 
         modes = edit_modes_before;
@@ -4323,8 +4288,8 @@ static bool edit_terminal_raw()
         modes.controls[EDIT_CONTROL_MIN] = 1;
         modes.controls[EDIT_CONTROL_TIME] = 0;
 
-        if (system_call_3(syscall(ioctl), standard_input_descriptor,
-                          EDIT_TCSETS, (positive)address_of modes) != 0)
+        if (system_control(standard_input_descriptor, EDIT_TCSETS,
+                           address_of modes) != 0)
                 return false;
 
         edit_modes_held = true;
@@ -4336,8 +4301,8 @@ static fn edit_terminal_restore()
         if (!edit_modes_held)
                 return;
 
-        system_call_3(syscall(ioctl), standard_input_descriptor, EDIT_TCSETS,
-                      (positive)address_of edit_modes_before);
+        system_control(standard_input_descriptor, EDIT_TCSETS,
+                       address_of edit_modes_before);
         edit_modes_held = false;
 }
 
@@ -4402,7 +4367,7 @@ static p8 address_to edit_read_file(string_address path,
         {
                 bipolar got;
 
-                if (!edit_room(address_of block, address_of room, held + 65536,
+                if (!memory_resize_reserve(address_of block, address_of room, held + 65536,
                                65536))
                 {
                         address_to failure = -EDIT_ENOMEM;
@@ -4514,11 +4479,7 @@ static bool edit_write_file()
                 return false;
         }
 
-        named = system_call_5(syscall(renameat2),
-                              (positive)(bipolar)AT_FDCWD,
-                              (positive)temporary,
-                              (positive)(bipolar)AT_FDCWD,
-                              (positive)edit_path, 0);
+        named = system_rename_at(AT_FDCWD, temporary, AT_FDCWD, edit_path, 0);
 
         if (named < 0)
                 system_remove_at(AT_FDCWD,
@@ -4569,24 +4530,21 @@ static bool edit_window_signal(positive address_to previous)
         positive action[4] = {(positive)edit_window_changed_handler, 0, 0, 0};
 #endif
 
-        return system_call_4(syscall(rt_sigaction), EDIT_SIGNAL_WINCH,
-                             (positive)address_of action,
-                             (positive)previous, 8) >= 0;
+        return system_signal_action(EDIT_SIGNAL_WINCH, address_of action,
+                                    previous, 8) >= 0;
 }
 
 static fn edit_window_signal_restore(positive address_to previous)
 {
-        system_call_4(syscall(rt_sigaction), EDIT_SIGNAL_WINCH,
-                      (positive)previous, 0, 8);
+        system_signal_action(EDIT_SIGNAL_WINCH, previous, 0, 8);
 }
 
 static bool edit_window_block(positive address_to previous)
 {
         positive blocked = (positive)1 << (EDIT_SIGNAL_WINCH - 1);
 
-        if (system_call_4(syscall(rt_sigprocmask), EDIT_SIGNAL_BLOCK,
-                          (positive)address_of blocked,
-                          (positive)previous, 8) < 0)
+        if (system_signal_mask(EDIT_SIGNAL_BLOCK, address_of blocked,
+                               previous, 8) < 0)
                 return false;
 
         edit_window_wait_mask = address_to previous & ~blocked;
@@ -4596,8 +4554,7 @@ static bool edit_window_block(positive address_to previous)
 
 static fn edit_window_unblock(positive previous)
 {
-        system_call_4(syscall(rt_sigprocmask), EDIT_SIGNAL_SET_MASK,
-                      (positive)address_of previous, 0, 8);
+        system_signal_mask(EDIT_SIGNAL_SET_MASK, address_of previous, 0, 8);
 }
 
 static bipolar edit_wait(bool briefly)

@@ -398,31 +398,20 @@ b32 signal_set_fill(signal_set address_to set)
         return 0;
 }
 
-b32 signal_set_add(signal_set address_to set, b32 number)
-{
-        if (signal_number_bad(number))
-        {
-                errno = EINVAL;
-                return -1;
-        }
-
-        set->words[0] |= (positive)1 << (number - 1);
-
-        return 0;
+#define SIGNAL_SET_CHANGE(name, operation, mask)                             \
+b32 name(signal_set address_to set, b32 number)                             \
+{                                                                           \
+        if (signal_number_bad(number))                                      \
+        {                                                                   \
+                errno = EINVAL;                                             \
+                return -1;                                                  \
+        }                                                                   \
+        set->words[0] operation (mask);                                      \
+        return 0;                                                           \
 }
-
-b32 signal_set_remove(signal_set address_to set, b32 number)
-{
-        if (signal_number_bad(number))
-        {
-                errno = EINVAL;
-                return -1;
-        }
-
-        set->words[0] &= ~((positive)1 << (number - 1));
-
-        return 0;
-}
+SIGNAL_SET_CHANGE(signal_set_add, |=, (positive)1 << (number - 1))
+SIGNAL_SET_CHANGE(signal_set_remove, &=, ~((positive)1 << (number - 1)))
+#undef SIGNAL_SET_CHANGE
 
 b32 signal_set_has(const signal_set address_to set, b32 number)
 {
@@ -826,8 +815,8 @@ b32 signal_wait(void)
 {
         positive mask = 0;
 
-        system_call_4(syscall(rt_sigprocmask), SIG_BLOCK, 0,
-                      (positive)address_of mask, SIGNAL_KERNEL_SET_BYTES);
+        system_signal_mask(SIG_BLOCK, 0, address_of mask,
+                           SIGNAL_KERNEL_SET_BYTES);
 
         return error_whole(system_call_2(syscall(rt_sigsuspend),
                                          (positive)address_of mask,
@@ -863,8 +852,8 @@ KEEP fn signal_jump_save(jump_state state, b32 save_mask)
         if (!save_mask)
                 return;
 
-        system_call_4(syscall(rt_sigprocmask), SIG_BLOCK, 0,
-                      (positive)address_of mask, SIGNAL_KERNEL_SET_BYTES);
+        system_signal_mask(SIG_BLOCK, 0, address_of mask,
+                           SIGNAL_KERNEL_SET_BYTES);
 
         state[SIGNAL_JUMP_MASK] = mask;
 }
@@ -895,9 +884,8 @@ fn signal_jump_to_mark(jump_state state, b32 value)
         {
                 positive mask = state[SIGNAL_JUMP_MASK];
 
-                system_call_4(syscall(rt_sigprocmask), SIG_SETMASK,
-                              (positive)address_of mask, 0,
-                              SIGNAL_KERNEL_SET_BYTES);
+                system_signal_mask(SIG_SETMASK, address_of mask, 0,
+                                   SIGNAL_KERNEL_SET_BYTES);
         }
 
         jump_to_mark(state, value);

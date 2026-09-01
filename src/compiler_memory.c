@@ -533,24 +533,18 @@ static inline INLINE string_address first_of_set_known(string_address source,
 */
 #define KNOWN_NEEDLE_MAX 1
 
-static inline INLINE address_any search_known(address_any block, positive size,
-                                              address_any needle,
-                                              positive needle_size)
-{
-        if (needle_size == 0)
-                return block;
-        return memory_first_of(block, ((const p8 address_to)needle)[0], size);
+#define SEARCH_KNOWN(name, find)                                             \
+static inline INLINE address_any name(address_any block, positive size,     \
+                                      address_any needle,                   \
+                                      positive needle_size)                 \
+{                                                                           \
+        if (needle_size == 0)                                                \
+                return block;                                               \
+        return find(block, ((const p8 address_to)needle)[0], size);          \
 }
-
-static inline INLINE address_any search_case_known(address_any block, positive size,
-                                                   address_any needle,
-                                                   positive needle_size)
-{
-        if (needle_size == 0)
-                return block;
-        return memory_first_of_ascii_case(block,
-                                          ((const p8 address_to)needle)[0], size);
-}
+SEARCH_KNOWN(search_known, memory_first_of)
+SEARCH_KNOWN(search_case_known, memory_first_of_ascii_case)
+#undef SEARCH_KNOWN
 
 //====================================================================
 //      bounded-string

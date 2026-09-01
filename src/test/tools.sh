@@ -65,12 +65,6 @@
 #           large file whose first zero byte is a long way in is binary to us
 #           and text to GNU.
 #
-#         * A read that comes back short from a pipe that is still being
-#           written. The one case below that reaches it uses a fifo with a
-#           pause in it, and only to check that a signal does not shorten a
-#           read. Two runs of a racing writer do not agree with each other,
-#           so there is no comparison against the reference to be had.
-#
 #         * ps content. RSS here is the page count out of /proc/PID/stat
 #           rather than the field procps reads, STIME is UTC, and C is a
 #           simpler ratio than the reference computes. The ps cases compare
@@ -604,6 +598,24 @@ compare_in 'stdin left'        diff "$work/a" - "$work/b"
 compare_in 'stdin right'       diff "$work/b" "$work/a" -
 compare_in 'stdin twice'       diff "$work/a" - -
 compare_in 'stdin twice report' diff "$work/a" -s - -
+
+# A pipe's short read is not its end. Compare the completed stream with a
+# regular copy rather than racing two writers against one another.
+mkfifo "$work/diff-pipe" 2> /dev/null
+if [ -p "$work/diff-pipe" ]; then
+        (printf 'alpha\n'; sleep 0.2; printf 'beta\n') > "$work/diff-pipe" &
+        writer=$!
+        "$bin/diff" "$work/diff-pipe" "$work/tight" > "$work/got" 2> /dev/null
+        got_status=$?
+        wait "$writer"
+
+        if [ "$got_status" = 0 ] && [ ! -s "$work/got" ]; then
+                pass=$((pass + 1))
+        else
+                report 'pipe short read continues' \
+                        "status $got_status, output $(show "$work/got")"
+        fi
+fi
 
 compare_diff 'normal long'     --normal "$work/a" "$work/b"
 compare_diff 'report same'     -s "$work/a" "$work/a2"

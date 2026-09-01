@@ -32,7 +32,7 @@ fn shell_signal(b32 number, positive disposition)
 {
         positive action[4] = {disposition, 0, 0, 0};
 
-        system_call_4(syscall(rt_sigaction), number, (positive)address_of action, 0, 8);
+        system_signal_action(number, address_of action, 0, 8);
 }
 
 #define shell_ignore(n) shell_signal(n, SIGNAL_IGNORE)
@@ -68,8 +68,7 @@ static bool shell_signal_was_ignored(b32 number)
         {
                 positive action[4] = {0, 0, 0, 0};
 
-                if (system_call_4(syscall(rt_sigaction), number, 0,
-                                  (positive)address_of action, 8) >= 0 &&
+                if (system_signal_action(number, 0, address_of action, 8) >= 0 &&
                     action[0] == SIGNAL_IGNORE)
                         shell_signals_ignored |= mask;
 
@@ -95,9 +94,9 @@ fn shell_signals_start()
                 b32 number = numbers[at];
                 positive mask = (positive)1 << number;
 
-                if (system_call_4(syscall(rt_sigaction), number,
-                                  (positive)address_of ignored,
-                                  (positive)address_of old, 8) >= 0)
+                if (system_signal_action(number,
+                                  address_of ignored,
+                                  address_of old, 8) >= 0)
                 {
                         shell_signals_known |= mask;
 
@@ -158,7 +157,7 @@ fn shell_catch_mode(b32 number, bool restart)
         positive action[4] = {(positive)trap_signal_caught, flags,
                               SIGNAL_CATCH_RESTORER, 0};
 
-        system_call_4(syscall(rt_sigaction), number, (positive)address_of action, 0, 8);
+        system_signal_action(number, address_of action, 0, 8);
 }
 
 fn shell_catch(b32 number)
@@ -725,9 +724,7 @@ static bipolar shell_spawn_via_device(b32 operation, string_address path,
         directed.output = output;
         directed.error = error;
 
-        return system_call_3(syscall(ioctl), spawn_device,
-                             operation,
-                             (positive)address_of directed);
+        return system_control(spawn_device, operation, address_of directed);
 }
 
 static bool shell_spawn_device_open()
@@ -1040,5 +1037,5 @@ static b32 shell_interactive()
 {
         p8 settings[64];
 
-        return system_call_3(syscall(ioctl), 0, TCGETS, (positive)settings) == 0;
+        return system_control(0, TCGETS, settings) == 0;
 }

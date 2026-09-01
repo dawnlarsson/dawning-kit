@@ -2113,6 +2113,6 @@ fn regrid(b32 master)
         size.x_pixels = (unsigned short)(COLUMNS * WINDOW_CELL_W);
         size.y_pixels = (unsigned short)(ROWS * WINDOW_CELL_H);
 
-        system_call_3(syscall(ioctl), master, TIOCSWINSZ, (positive)address_of size);
+        system_control(master, TIOCSWINSZ, address_of size);
 #endif
 }

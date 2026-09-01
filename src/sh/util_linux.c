@@ -2531,9 +2531,7 @@ static b32 util_linux_setarch()
         string_address shell_words[2] = {(string_address)"-sh", null};
         if (ul_setarch_verbose) string_format(log, "Execute command `/bin/sh'.\n");
         log_flush();
-        changed = system_call_3(syscall(execve), (positive)"/bin/sh",
-                                (positive)shell_words,
-                                (positive)file_environment_all());
+        changed = system_execute("/bin/sh", shell_words, file_environment_all());
         string_format(file_fail, "setarch: /bin/sh: %s\n", file_reason(changed));
         return changed == -ERROR_NO_ENTRY ? 127 : 126;
 }
@@ -3430,8 +3428,7 @@ static b32 ul_namespace_wait(bipolar child, bool job_control)
                         positive action[4] = {0, 0, 0, 0};
 
                         log_flush();
-                        system_call_4(syscall(rt_sigaction), signal,
-                                      (positive)address_of action, 0, 8);
+                        system_signal_action(signal, address_of action, 0, 8);
                         system_call_2(syscall(kill),
                                       system_call(syscall(getpid)), signal);
                         return 128 + signal;
@@ -3748,9 +3745,7 @@ static bool ul_namespace_persistence_start(
                                 : ul_namespaces[i].name;
                         p8 source[64];
                         ul_proc_path(source, target, "ns", name);
-                        if (system_call_5(syscall(mount), (positive)source,
-                                          (positive)destination, 0,
-                                          MS_BIND, 0) < 0)
+                        if (system_mount(source, destination, 0, MS_BIND, 0) < 0)
                         {
                                 file_fail("unshare: cannot bind namespace file\n",
                                           0);
@@ -3984,7 +3979,7 @@ static b32 util_linux_unshare()
         }
 
         if ((flags & CLONE_NEWNS) && propagation &&
-            system_call_5(syscall(mount), 0, (positive)"/", 0,
+            system_mount(0, "/", 0,
                           MS_REC | propagation, 0) < 0)
         {
                 ul_namespace_persistence_finish(address_of persistence, false);
@@ -3998,39 +3993,35 @@ static b32 util_linux_unshare()
                 positive blocked = ((positive)1 << 1) | ((positive)1 << 14);
                 positive old = 0;
 
-                if (system_call_4(syscall(rt_sigprocmask), UL_SIGNAL_BLOCK,
-                                  (positive)address_of blocked,
-                                  (positive)address_of old, 8) < 0)
+                if (system_signal_mask(UL_SIGNAL_BLOCK, address_of blocked,
+                                       address_of old, 8) < 0)
                         return ul_bad_usage("unshare", "cannot block signals");
                 process_signal_default(SIGCHLD);
                 log_flush();
                 bipolar child = system_fork();
                 if (child < 0)
                 {
-                        system_call_4(syscall(rt_sigprocmask),
-                                      UL_SIGNAL_SET_MASK,
-                                      (positive)address_of old, 0, 8);
+                        system_signal_mask(UL_SIGNAL_SET_MASK,
+                                           address_of old, 0, 8);
                         return ul_bad_usage("unshare", "fork failed");
                 }
                 if (child > 0)
                 {
                         answer = ul_namespace_wait(child, false);
-                        system_call_4(syscall(rt_sigprocmask),
-                                      UL_SIGNAL_SET_MASK,
-                                      (positive)address_of old, 0, 8);
+                        system_signal_mask(UL_SIGNAL_SET_MASK,
+                                           address_of old, 0, 8);
                         return answer;
                 }
-                system_call_4(syscall(rt_sigprocmask), UL_SIGNAL_SET_MASK,
-                              (positive)address_of old, 0, 8);
+                system_signal_mask(UL_SIGNAL_SET_MASK, address_of old, 0, 8);
         }
 
         string_address root = file_option_value(address_of taking, 'R');
         string_address wd = file_option_value(address_of taking, 'w');
-        if (root && (system_call_1(syscall(chdir), (positive)root) < 0 ||
+        if (root && (system_change_directory(root) < 0 ||
                      system_call_1(syscall(chroot), (positive)".") < 0 ||
-                     system_call_1(syscall(chdir), (positive)"/") < 0))
+                     system_change_directory("/") < 0))
                 return ul_bad_usage("unshare", "cannot change root");
-        if (wd && system_call_1(syscall(chdir), (positive)wd) < 0)
+        if (wd && system_change_directory(wd) < 0)
                 return ul_bad_usage("unshare", "cannot change directory");
 
         string_address proc = file_option_value(address_of taking, 'q');
@@ -4046,8 +4037,7 @@ static b32 util_linux_unshare()
                                 return ul_bad_usage("unshare",
                                                     "cannot privatize proc");
                 }
-                if (system_call_5(syscall(mount), (positive)"proc",
-                                  (positive)target, (positive)"proc",
+                if (system_mount("proc", target, "proc",
                                   MS_NOSUID | MS_NODEV | MS_NOEXEC, 0) < 0)
                         return ul_bad_usage("unshare", "cannot mount proc");
         }
@@ -4289,7 +4279,7 @@ static b32 util_linux_nsenter()
                 goto nsenter_failed;
         }
         if (!caller_wd && wdns &&
-            system_call_1(syscall(chdir), (positive)wdns) < 0)
+            system_change_directory(wdns) < 0)
         {
                 ul_bad_usage("nsenter", "cannot change directory");
                 goto nsenter_failed;
@@ -4400,7 +4390,7 @@ static b32 util_linux_setsid()
         }
 
         if ((taking.flags & FILE_FLAG('c')) &&
-            system_call_3(syscall(ioctl), 0, UL_TIOCSCTTY, 1) < 0)
+            system_control(0, UL_TIOCSCTTY, 1) < 0)
                 return ul_bad_usage("setsid",
                                     "failed to set the controlling terminal");
 
@@ -4451,22 +4441,20 @@ static b32 util_linux_setpgid()
                         positive old = 0;
                         bipolar group = system_call_1(syscall(getpgid), 0);
 
-                        if (system_call_4(syscall(rt_sigprocmask),
-                                          UL_SIGNAL_BLOCK,
-                                          (positive)address_of blocked,
-                                          (positive)address_of old, 8) < 0 ||
+                        if (system_signal_mask(UL_SIGNAL_BLOCK,
+                                               address_of blocked,
+                                               address_of old, 8) < 0 ||
                             group < 0 ||
-                            system_call_3(syscall(ioctl), handle, UL_TIOCSPGRP,
-                                          (positive)address_of group) < 0)
+                            system_control(handle, UL_TIOCSPGRP,
+                                           address_of group) < 0)
                         {
                                 system_close(handle);
                                 return ul_bad_usage("setpgid",
                                                     "cannot set foreground process group");
                         }
 
-                        system_call_4(syscall(rt_sigprocmask),
-                                      UL_SIGNAL_SET_MASK,
-                                      (positive)address_of old, 0, 8);
+                        system_signal_mask(UL_SIGNAL_SET_MASK,
+                                           address_of old, 0, 8);
                         system_close(handle);
                 }
         }
@@ -4926,9 +4914,8 @@ static b32 util_linux_exch()
 
         string_address old = program_argument((b32)taking.first);
         string_address new = program_argument((b32)taking.first + 1);
-        bipolar changed = system_call_5(syscall(renameat2), AT_FDCWD,
-                                        (positive)old, AT_FDCWD,
-                                        (positive)new, UL_RENAME_EXCHANGE);
+        bipolar changed = system_rename_at(
+            AT_FDCWD, old, AT_FDCWD, new, UL_RENAME_EXCHANGE);
         if (changed < 0)
         {
                 string_format(file_fail,

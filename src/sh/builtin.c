@@ -87,9 +87,7 @@ bipolar shell_exec_file(string_address path,
                          positive count,
                          string_address address_to environment)
 {
-        bipolar answered = system_call_3(syscall(execve), (positive)path,
-                                         (positive)arguments,
-                                         (positive)environment);
+        bipolar answered = system_execute(path, arguments, environment);
         string_address address_to fallback;
         positive entries;
         positive bytes;
@@ -119,18 +117,12 @@ bipolar shell_exec_file(string_address path,
 
         fallback[count + 1] = null;
 
-        answered = system_call_3(syscall(execve),
-                                 (positive)fallback[0],
-                                 (positive)fallback,
-                                 (positive)environment);
+        answered = system_execute(fallback[0], fallback, environment);
 
         if (answered < 0)
         {
                 fallback[0] = (string_address)"/bin/sh";
-                answered = system_call_3(syscall(execve),
-                                         (positive)fallback[0],
-                                         (positive)fallback,
-                                         (positive)environment);
+                answered = system_execute(fallback[0], fallback, environment);
         }
 
         memory_free(fallback, bytes);
@@ -1432,7 +1424,7 @@ bool shell_cd_try(string_address candidate, bool physical,
         if (!physical)
                 shell_path_tidy(wanted);
 
-        if (system_call_1(syscall(chdir), (positive)wanted))
+        if (system_change_directory(wanted))
                 return false;
 
         address_to physical_named = !physical || shell_here(wanted, sizeof(wanted));
@@ -3083,8 +3075,7 @@ bool test_unary(p8 op, string_address value)
                 p8 settings[64];
                 bipolar descriptor = value ? (bipolar)shell_number(value) : 1;
 
-                return system_call_3(syscall(ioctl), descriptor, BUILTIN_TCGETS,
-                                     (positive)settings) == 0;
+                return system_control(descriptor, BUILTIN_TCGETS, settings) == 0;
         }
 
         if (op == 'r' || op == 'w' || op == 'x')
@@ -3092,8 +3083,7 @@ bool test_unary(p8 op, string_address value)
                 positive mode = op == 'r' ? ACCESS_READ
                                           : (op == 'w' ? ACCESS_WRITE : ACCESS_EXECUTE);
 
-                return system_call_4(syscall(faccessat), AT_FDCWD, (positive)value,
-                                     mode, 0) == 0;
+                return system_access_at(AT_FDCWD, value, mode) == 0;
         }
 
         // The only two that are asked about the link itself; everything else
@@ -6652,8 +6642,7 @@ static b32 shell_find_in_path_mode(string_address name, p8 address_to into,
 
         if (string_first_of(name, '/'))
         {
-                if (system_call_4(syscall(faccessat), AT_FDCWD, (positive)name,
-                                  access, 0))
+                if (system_access_at(AT_FDCWD, name, access))
                         return false;
 
                 if (string_length(name) >= room)
@@ -6692,8 +6681,7 @@ static b32 shell_find_in_path_mode(string_address name, p8 address_to into,
                 {
                         string_copy(into, name);
 
-                        if (!system_call_4(syscall(faccessat), AT_FDCWD,
-                                           (positive)into, access, 0))
+                        if (!system_access_at(AT_FDCWD, into, access))
                         {
                                 if (use_hash)
                                         hash_remember(name, into);
@@ -6712,8 +6700,7 @@ static b32 shell_find_in_path_mode(string_address name, p8 address_to into,
 
                         string_copy(into + length, name);
 
-                        if (!system_call_4(syscall(faccessat), AT_FDCWD,
-                                           (positive)into, access, 0))
+                        if (!system_access_at(AT_FDCWD, into, access))
                         {
                                 if (use_hash)
                                         hash_remember(name, into);

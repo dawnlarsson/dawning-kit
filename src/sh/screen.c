@@ -79,8 +79,7 @@ static fn term_follow_modes(b32 master)
 {
         terminal_modes modes;
 
-        if (system_call_3(syscall(ioctl), master, TCGETS,
-                          (positive)address_of modes) != 0)
+        if (system_control(master, TCGETS, address_of modes) != 0)
                 return;
 
         term_line_editing((modes.behaviour & TERMINAL_CANONICAL) != 0);
@@ -92,7 +91,7 @@ static fn term_follow_modes(b32 master)
                 return;
 
         modes.behaviour &= ~TERMINAL_ECHO;
-        system_call_3(syscall(ioctl), master, TCSETS, (positive)address_of modes);
+        system_control(master, TCSETS, address_of modes);
 }
 
 // term ---------------------------------------------------------
@@ -151,8 +150,8 @@ static b32 screen_term()
         int unlock = 0;
         unsigned int number = 0;
 
-        system_call_3(syscall(ioctl), master, TIOCSPTLCK, (positive)address_of unlock);
-        system_call_3(syscall(ioctl), master, TIOCGPTN, (positive)address_of number);
+        system_control(master, TIOCSPTLCK, address_of unlock);
+        system_control(master, TIOCGPTN, address_of number);
 
         p8 name[32] = "/dev/pts/";
         positive at = 9;
@@ -172,7 +171,7 @@ static b32 screen_term()
                         (unsigned short)(COLUMNS * WINDOW_CELL_W),
                         (unsigned short)(ROWS * WINDOW_CELL_H)};
 
-        system_call_3(syscall(ioctl), master, TIOCSWINSZ, (positive)address_of size);
+        system_control(master, TIOCSWINSZ, address_of size);
 
         bipolar child = system_fork();
 
@@ -182,14 +181,13 @@ static b32 screen_term()
                 string_address envp[] = {"TERM=ansi", null};
 
                 system_call(syscall(setsid));
-                system_call_3(syscall(ioctl), slave, TIOCSCTTY, 0);
+                system_control(slave, TIOCSCTTY, 0);
                 system_duplicate(slave, 0, 0);
                 system_duplicate(slave, 1, 0);
                 system_duplicate(slave, 2, 0);
                 system_close(master);
 
-                system_call_3(syscall(execve), (positive)SHELL,
-                              (positive)argv, (positive)envp);
+                system_execute(SHELL, argv, envp);
                 system_call_1(syscall(exit), 127);
         }
 
@@ -620,16 +618,16 @@ static b32 screen_pointer()
         struct input_stats stats;
         struct cursor_stats cursor;
 
-        if (system_call_3(syscall(ioctl), device, SPARK_IOCTL_INPUT_STATS,
-                          (positive)address_of stats) != 0)
+        if (system_control(device, SPARK_IOCTL_INPUT_STATS,
+                          address_of stats) != 0)
         {
                 string_format(log, "could not read input stats\n");
                 log_flush();
                 return 1;
         }
 
-        if (system_call_3(syscall(ioctl), device, SPARK_IOCTL_CURSOR_STATS,
-                          (positive)address_of cursor) != 0)
+        if (system_control(device, SPARK_IOCTL_CURSOR_STATS,
+                          address_of cursor) != 0)
         {
                 string_format(log, "could not read cursor stats\n");
                 log_flush();

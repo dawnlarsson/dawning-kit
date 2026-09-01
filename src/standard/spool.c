@@ -582,35 +582,23 @@ static spool_pipeline spool_pipeline_table[SPOOL_CHILDREN];
 //      A free slot, or -1. The array is small and walked twice in a
 //      pipeline's life, which is cheaper than any structure that would avoid
 //      the walk.
-static bipolar spool_pipeline_free_slot(void)
-{
-        positive at = 0;
-
-        while (at < SPOOL_CHILDREN)
-        {
-                if (is_null(spool_pipeline_table[at].handle))
-                        return (bipolar)at;
-
-                at++;
-        }
-
-        return -1;
+#define SPOOL_PIPELINE_SLOT(name, parameters, matches)                       \
+static bipolar name parameters                                              \
+{                                                                           \
+        positive at = 0;                                                    \
+        while (at < SPOOL_CHILDREN)                                         \
+        {                                                                   \
+                if (matches)                                                \
+                        return (bipolar)at;                                 \
+                at++;                                                       \
+        }                                                                   \
+        return -1;                                                          \
 }
-
-static bipolar spool_pipeline_slot_of(stream address_to handle)
-{
-        positive at = 0;
-
-        while (at < SPOOL_CHILDREN)
-        {
-                if (spool_pipeline_table[at].handle == handle)
-                        return (bipolar)at;
-
-                at++;
-        }
-
-        return -1;
-}
+SPOOL_PIPELINE_SLOT(spool_pipeline_free_slot, (void),
+                    is_null(spool_pipeline_table[at].handle))
+SPOOL_PIPELINE_SLOT(spool_pipeline_slot_of, (stream address_to handle),
+                    spool_pipeline_table[at].handle == handle)
+#undef SPOOL_PIPELINE_SLOT
 
 //      Run in the child, between the fork and the exec: every pipe belonging
 //      to a pipeline this process opened earlier is not this child's business.

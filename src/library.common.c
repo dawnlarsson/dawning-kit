@@ -59,6 +59,19 @@
 /* Compile-time array shape, never a separately maintained count. */
 #define array_count(array) (sizeof(array) / sizeof((array)[0]))
 
+/* The negative half of a signed range has one extra magnitude. Keeping that
+   conversion unsigned until the minimum case is selected avoids overflowing
+   the signed type in every parser that accepts the full native range. */
+static inline INLINE CONST bipolar bipolar_from_magnitude(positive magnitude,
+                                                          bool negative)
+{
+        return negative
+            ? magnitude == (positive)bipolar_max + 1
+                  ? bipolar_min
+                  : -(bipolar)magnitude
+            : (bipolar)magnitude;
+}
+
 /* One stable bottom-up merge machine for indexes, pointers and full records.
    The comparator and element type remain visible at every expansion, while
    exhausted runs fall through to the architecture's bulk copy floor. */
@@ -152,12 +165,84 @@
                       (positive)(path), (positive)(flags), (positive)(mask), \
                       (positive)(into))
 
+#define system_status_at(directory, path, into, flags)                       \
+        system_call_4(syscall(newfstatat),                                   \
+                      (positive)(bipolar)(directory), (positive)(path),      \
+                      (positive)(into), (positive)(flags))
+
 #define system_pipe(pair, flags)                                             \
         system_call_2(syscall(pipe2), (positive)(pair), (positive)(flags))
 
 #define system_duplicate(from, to, flags)                                    \
         system_call_3(syscall(dup3), (positive)(from), (positive)(to),       \
                       (positive)(flags))
+
+#define system_control(handle, request, argument)                            \
+        system_call_3(syscall(ioctl), (positive)(handle),                    \
+                      (positive)(request), (positive)(argument))
+
+#define system_execute(path, arguments, environment)                        \
+        system_call_3(syscall(execve), (positive)(path),                     \
+                      (positive)(arguments), (positive)(environment))
+
+#define system_mount(source, target, type, flags, data)                      \
+        system_call_5(syscall(mount), (positive)(source),                    \
+                      (positive)(target), (positive)(type),                  \
+                      (positive)(flags), (positive)(data))
+
+#define system_change_directory(path)                                       \
+        system_call_1(syscall(chdir), (positive)(path))
+
+#define system_make_directory_at(directory, path, mode)                     \
+        system_call_3(syscall(mkdirat), (positive)(bipolar)(directory),      \
+                      (positive)(path), (positive)(mode))
+
+#define system_rename_at(from_directory, from, to_directory, to, flags)      \
+        system_call_5(syscall(renameat2),                                    \
+                      (positive)(bipolar)(from_directory), (positive)(from), \
+                      (positive)(bipolar)(to_directory), (positive)(to),     \
+                      (positive)(flags))
+
+#define system_access_at(directory, path, mode)                              \
+        system_call_3(syscall(faccessat), (positive)(bipolar)(directory),    \
+                      (positive)(path), (positive)(mode))
+
+#define system_change_mode_at(directory, path, mode)                         \
+        system_call_3(syscall(fchmodat), (positive)(bipolar)(directory),     \
+                      (positive)(path), (positive)(mode))
+
+#define system_change_owner_at(directory, path, owner, group, flags)         \
+        system_call_5(syscall(fchownat), (positive)(bipolar)(directory),     \
+                      (positive)(path), (positive)(owner),                   \
+                      (positive)(group), (positive)(flags))
+
+#define system_link_at(from_directory, from, to_directory, to, flags)        \
+        system_call_5(syscall(linkat),                                       \
+                      (positive)(bipolar)(from_directory), (positive)(from), \
+                      (positive)(bipolar)(to_directory), (positive)(to),     \
+                      (positive)(flags))
+
+#define system_symbolic_link_at(target, directory, path)                     \
+        system_call_3(syscall(symlinkat), (positive)(target),                \
+                      (positive)(bipolar)(directory), (positive)(path))
+
+#define system_update_times_at(directory, path, times, flags)                \
+        system_call_4(syscall(utimensat), (positive)(bipolar)(directory),    \
+                      (positive)(path), (positive)(times), (positive)(flags))
+
+#define system_truncate_handle(handle, length)                               \
+        system_call_2(syscall(ftruncate), (positive)(handle),                \
+                      (positive)(length))
+
+#define system_signal_action(number, action, previous, set_bytes)            \
+        system_call_4(syscall(rt_sigaction), (positive)(number),             \
+                      (positive)(action), (positive)(previous),              \
+                      (positive)(set_bytes))
+
+#define system_signal_mask(how, set, previous, set_bytes)                    \
+        system_call_4(syscall(rt_sigprocmask), (positive)(how),              \
+                      (positive)(set), (positive)(previous),                 \
+                      (positive)(set_bytes))
 
 #define system_fork() system_call_2(syscall(clone), SIGCHLD, 0)
 
@@ -186,6 +271,29 @@ typedef struct
         memory_release((address_any address_to)address_of (array),            \
                        address_of (room), address_of (used),                  \
                        sizeof((array)[0]))
+
+/* Allocator-backed stores have a different slow path from mmap-backed
+   memory_reserve: realloc knows the old allocation's size, so the caller only
+   carries its pointer and capacity. Keep the typed, overwhelmingly-hot check
+   here and the allocation policy in allocator.c. */
+static address_any memory_resize_growth(address_any block, positive have,
+                                        positive wanted, positive first,
+                                        positive address_to grown);
+
+#define memory_resize_reserve(held, room, wanted, first)                     \
+        ({ __auto_type _held = (held); __auto_type _room = (room);           \
+           positive _wanted = (wanted), _grown;                             \
+           address_any _block = (address_any)address_to _held;              \
+           bool _resize_ok = _wanted <= (positive)address_to _room;         \
+           if (!_resize_ok &&                                               \
+               (_block = memory_resize_growth(                              \
+                    _block, (positive)address_to _room, _wanted, (first),    \
+                    address_of _grown))) {                                  \
+                   address_to _held = (__typeof__(address_to _held))_block; \
+                   address_to _room = (__typeof__(address_to _room))_grown; \
+                   _resize_ok = true;                                       \
+           }                                                                \
+           _resize_ok; })
 
 /* Arena vectors cannot resize their last block.  Their hot path is only this
    typed capacity check; a subsystem supplies one cold grow/copy body for all

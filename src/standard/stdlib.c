@@ -833,8 +833,8 @@ static fn stdlib_signal_unblock(b32 number)
 {
         positive mask = (positive)1 << (number - 1);
 
-        system_call_4(syscall(rt_sigprocmask), STDLIB_SIGNAL_UNBLOCK,
-                      (positive)address_of mask, 0, STDLIB_SIGNAL_SET_BYTES);
+        system_signal_mask(STDLIB_SIGNAL_UNBLOCK, address_of mask, 0,
+                           STDLIB_SIGNAL_SET_BYTES);
 }
 
 /* The raw default-action shape is shared by abort and namespace launchers;
@@ -843,8 +843,8 @@ static inline INLINE fn process_signal_default(b32 number)
 {
         positive action[4] = {0, 0, 0, 0};
 
-        system_call_4(syscall(rt_sigaction), (positive)number,
-                      (positive)address_of action, 0, STDLIB_SIGNAL_SET_BYTES);
+        system_signal_action(number, address_of action, 0,
+                             STDLIB_SIGNAL_SET_BYTES);
 }
 
 static fn stdlib_signal_raise(b32 number)
@@ -1459,9 +1459,8 @@ b32 system(string_address command)
                 //      that does not exist and is answered EINVAL. library.c
                 //      has the same warning beside memory() about the mmap
                 //      flags, and it is the same mistake.
-                return system_call_3(syscall(faccessat), (positive)AT_FDCWD,
-                                     (positive)(address_any)STDLIB_SHELL,
-                                     STDLIB_ACCESS_EXECUTE) == 0;
+                return system_access_at(AT_FDCWD, STDLIB_SHELL,
+                                        STDLIB_ACCESS_EXECUTE) == 0;
         }
 
         words[0] = (string_address)STDLIB_SHELL;
@@ -1481,9 +1480,8 @@ b32 system(string_address command)
 
         if (child == 0)
         {
-                system_call_3(syscall(execve), (positive)(address_any)STDLIB_SHELL,
-                              (positive)(address_any)words,
-                              (positive)(address_any)stdlib_environment_list());
+                system_execute((address_any)STDLIB_SHELL, (address_any)words,
+                               (address_any)stdlib_environment_list());
 
                 //      execve only returns when it failed, and the shell's
                 //      own answer for a command it could not run is 127.

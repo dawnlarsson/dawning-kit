@@ -242,6 +242,74 @@ static address_any text_arena_take(positive bytes)
         return at;
 }
 
+/* Read an unbounded descriptor into the newest arena object. Rewinding before
+   each doubling keeps its address stable and makes growth a capacity change,
+   not an allocate-and-copy loop. The final rewind gives unused capacity back
+   before the caller retains anything else. */
+static p8 address_to text_arena_read_all(positive handle, positive first,
+                                         positive address_to length,
+                                         bool address_to read_failed)
+{
+        positive mark = text_arena_used;
+        positive room = first;
+        positive used = 0;
+        p8 address_to bytes = (p8 address_to)text_arena_take(room);
+
+        address_to length = 0;
+        if (read_failed)
+                address_to read_failed = false;
+        if (!bytes)
+                return null;
+
+        while (true)
+        {
+                if (used == room)
+                {
+                        positive larger = room < positive_max
+                            ? memory_growth(room, room + 1, first)
+                            : 0;
+                        positive available = TEXT_ARENA_BYTES - mark;
+
+                        if (larger > available)
+                                larger = room < available ? available : 0;
+
+                        if (!larger)
+                                goto failed;
+
+                        text_arena_used = mark;
+                        bytes = (p8 address_to)text_arena_take(larger);
+
+                        if (!bytes)
+                                goto failed;
+
+                        room = larger;
+                }
+
+                bipolar got = system_read_retry(handle, bytes + used,
+                                                room - used);
+
+                if (got < 0)
+                {
+                        if (read_failed)
+                                address_to read_failed = true;
+                        goto failed;
+                }
+                if (!got)
+                        break;
+
+                used += (positive)got;
+        }
+
+        bytes[used] = end;
+        text_arena_used = mark + ((used + 1 + 15) & ~(positive)15);
+        address_to length = used;
+        return bytes;
+
+failed:
+        text_arena_used = mark;
+        return null;
+}
+
 /*
         Reading.
 
@@ -8700,15 +8768,12 @@ static b32 text_sed()
                                         memory_copy(kept, name, length);
                                         memory_copy_apart_end(
                                             kept + length, sed_in_place, extra);
-                                        system_call_5(syscall(renameat2), (positive)(bipolar)AT_FDCWD,
-                                                      (positive)name, (positive)(bipolar)AT_FDCWD,
-                                                      (positive)kept, 0);
+                                        system_rename_at(AT_FDCWD, name,
+                                                         AT_FDCWD, kept, 0);
                                 }
                         }
 
-                        system_call_5(syscall(renameat2), (positive)(bipolar)AT_FDCWD,
-                                      (positive)temporary, (positive)(bipolar)AT_FDCWD,
-                                      (positive)name, 0);
+                        system_rename_at(AT_FDCWD, temporary, AT_FDCWD, name, 0);
                 }
 
                 if (sed_failed || sed_io_failed)

@@ -4658,11 +4658,7 @@ static bool expand_brace_number(string_address text, positive length,
                 magnitude = magnitude * 10 + digit;
         }
 
-        if (minus && magnitude == (positive)bipolar_max + 1)
-                address_to value = bipolar_min;
-        else
-                address_to value = minus ? -(bipolar)magnitude
-                                         : (bipolar)magnitude;
+        address_to value = bipolar_from_magnitude(magnitude, minus);
 
         return true;
 }
