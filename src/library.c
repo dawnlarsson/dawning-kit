@@ -394,6 +394,7 @@
 #define NO_FRAME __attribute__((noframe))
 #define KEEP __attribute__((used))
 #define DEAD_END __attribute__((noreturn))
+#define RETURNS_NONNULL __attribute__((returns_nonnull))
 #define WEAK __attribute__((weak))
 
 #define pub extern __attribute__((visibility("default"))) KEEP
@@ -4183,7 +4184,9 @@ __asm__(
        overflow in the lanes; only the low 32 bits of their final sum are the
        public answer. */
     ASM_FUNC(memory_sum_bytes)
-    "xor %eax, %eax\n   cmp $16, %rsi\n   jb .Lmemory_sum_x64_tail\n"
+    "xor %eax, %eax\n"
+#ifndef KERNEL_MODE
+    "cmp $16, %rsi\n   jb .Lmemory_sum_x64_tail\n"
     "pxor %xmm0, %xmm0\n   pxor %xmm1, %xmm1\n"
     ".balign 16\n.Lmemory_sum_x64_16:\n"
     "movdqu (%rdi), %xmm2\n   psadbw %xmm1, %xmm2\n"
@@ -4191,6 +4194,7 @@ __asm__(
     "cmp $16, %rsi\n   jae .Lmemory_sum_x64_16\n"
     "movq %xmm0, %rax\n   psrldq $8, %xmm0\n   movq %xmm0, %rdx\n"
     "add %edx, %eax\n"
+#endif
     ".Lmemory_sum_x64_tail:\n   test %rsi, %rsi\n"
     "jz .Lmemory_sum_x64_done\n"
     ".Lmemory_sum_x64_one:\n   movzbl (%rdi), %edx\n   add %edx, %eax\n"
@@ -8484,7 +8488,9 @@ __asm__(
        byte overflow; lane and final horizontal addition both wrap modulo
        2^32, which is exactly the System V result. */
     ASM_FUNC(memory_sum_bytes)
-    "mov x2, x0\n   mov w0, wzr\n   cmp x1, #16\n"
+    "mov x2, x0\n   mov w0, wzr\n"
+#ifndef KERNEL_MODE
+    "cmp x1, #16\n"
     "b.lo .Lmemory_sum_arm64_tail\n"
     "movi v0.4s, #0\n"
     ".balign 16\n.Lmemory_sum_arm64_16:\n"
@@ -8492,6 +8498,7 @@ __asm__(
     "uadalp v0.4s, v1.8h\n   sub x1, x1, #16\n   cmp x1, #16\n"
     "b.hs .Lmemory_sum_arm64_16\n"
     "addv s1, v0.4s\n   fmov w0, s1\n"
+#endif
     ".Lmemory_sum_arm64_tail:\n   cbz x1, .Lmemory_sum_arm64_done\n"
     ".Lmemory_sum_arm64_one:\n   ldrb w3, [x2], #1\n   add w0, w0, w3\n"
     "subs x1, x1, #1\n   b.ne .Lmemory_sum_arm64_one\n"

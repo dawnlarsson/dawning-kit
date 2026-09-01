@@ -6133,7 +6133,7 @@ static bool grep_glob_add(grep_glob address_to address_to list,
         return true;
 }
 
-static bool grep_globs_have(grep_glob address_to list, string_address name)
+static PURE bool grep_globs_have(grep_glob address_to list, string_address name)
 {
         for (; list; list = list->next)
                 if (shell_match(list->value, name))
@@ -6142,7 +6142,7 @@ static bool grep_globs_have(grep_glob address_to list, string_address name)
         return false;
 }
 
-static bool grep_wanted_file(string_address path)
+static PURE bool grep_wanted_file(string_address path)
 {
         string_address name = file_last_component(path);
 
@@ -6152,7 +6152,7 @@ static bool grep_wanted_file(string_address path)
         return !grep_globs_have(grep_exclude, name);
 }
 
-static bool grep_wanted_directory(string_address path)
+static PURE bool grep_wanted_directory(string_address path)
 {
         return !grep_globs_have(grep_exclude_dir, file_last_component(path));
 }
@@ -9023,7 +9023,7 @@ static positive sort_zero_prefix(p8 address_to text, positive from, positive sto
         return from;
 }
 
-static bipolar sort_compare_number(p8 address_to a, positive la, p8 address_to b, positive lb)
+static PURE bipolar sort_compare_number(p8 address_to a, positive la, p8 address_to b, positive lb)
 {
         positive at_a = 0, at_b = 0;
         bool minus_a = false, minus_b = false;
@@ -9142,7 +9142,7 @@ static bool sort_looked_at(p8 character, positive how)
         return true;
 }
 
-static bipolar sort_compare_bytes(p8 address_to a, positive la, p8 address_to b, positive lb,
+static PURE bipolar sort_compare_bytes(p8 address_to a, positive la, p8 address_to b, positive lb,
                                   positive how)
 {
         if (!how)
@@ -9272,7 +9272,7 @@ static bipolar sort_human_order(p8 address_to at, positive length)
         }
 }
 
-static bipolar sort_compare_human(p8 address_to a, positive la, p8 address_to b, positive lb)
+static PURE bipolar sort_compare_human(p8 address_to a, positive la, p8 address_to b, positive lb)
 {
         bipolar one = sort_human_order(a, la);
         bipolar two = sort_human_order(b, lb);
@@ -9360,7 +9360,7 @@ static b32 sort_version_order(p8 character)
         return (b32)character + 256;
 }
 
-static bipolar sort_version_walk(p8 address_to a, positive la, p8 address_to b, positive lb)
+static PURE bipolar sort_version_walk(p8 address_to a, positive la, p8 address_to b, positive lb)
 {
         positive i = 0;
         positive j = 0;
@@ -9416,7 +9416,7 @@ static bool sort_version_tail(p8 character)
         return text_word(character) || character == '~';
 }
 
-static positive sort_version_stem(p8 address_to at, positive length)
+static PURE positive sort_version_stem(p8 address_to at, positive length)
 {
         // From one, never zero: a name that is all suffix has no stem left to
         // compare, and .bashrc is a name rather than a suffix of nothing.
@@ -9450,7 +9450,7 @@ static positive sort_version_stem(p8 address_to at, positive length)
         return length;
 }
 
-static bipolar sort_compare_version(p8 address_to a, positive la, p8 address_to b, positive lb)
+static PURE bipolar sort_compare_version(p8 address_to a, positive la, p8 address_to b, positive lb)
 {
         if (!la || !lb)
                 return la == lb ? 0 : (la ? 1 : -1);
@@ -9485,7 +9485,7 @@ static bipolar sort_compare_version(p8 address_to a, positive la, p8 address_to 
         return sort_version_walk(a, la, b, lb);
 }
 
-static bipolar sort_compare_kind(p8 kind, positive how, p8 address_to a, positive la,
+static PURE bipolar sort_compare_kind(p8 kind, positive how, p8 address_to a, positive la,
                                  p8 address_to b, positive lb)
 {
         if (kind == 'n')

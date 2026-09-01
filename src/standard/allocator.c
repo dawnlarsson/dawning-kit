@@ -644,7 +644,7 @@ pub fn memory_give(address_any block)
         size of a live malloc block is the common call, and needs only the one
         range check before the table lookup.
 */
-pub positive memory_usable_size(address_any block)
+pub PURE positive memory_usable_size(address_any block)
 {
         if (!block)
                 return 0;
@@ -939,7 +939,7 @@ pub b32 posix_memalign(address_any address_to result, positive alignment,
                        positive bytes)
         __attribute__((alias("memory_take_aligned_into")));
 
-pub positive malloc_usable_size(address_any block)
+pub PURE positive malloc_usable_size(address_any block)
         __attribute__((alias("memory_usable_size")));
 
 //      memalign is aligned_alloc with the arguments in the same order and

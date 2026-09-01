@@ -331,8 +331,8 @@ string_address string_split_next(string_address address_to holder,
 */
 #define TEXT_SEARCH_WINDOW 1024
 
-string_address string_search_folded(string_address haystack,
-                                    string_address needle)
+PURE string_address string_search_folded(string_address haystack,
+                                         string_address needle)
 {
         positive needle_length = string_length(needle);
         positive window;

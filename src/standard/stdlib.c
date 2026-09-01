@@ -325,7 +325,7 @@ static bool stdlib_environment_is(string_address entry, string_address name,
 //      that carries an equals of its own -- the very case this comment says
 //      can never be found -- and which reads `length` bytes of an entry whose
 //      key is shorter than that before deciding it does not match.
-static bipolar stdlib_environment_find(string_address name, positive length)
+static PURE bipolar stdlib_environment_find(string_address name, positive length)
 {
         positive index;
 
@@ -807,12 +807,7 @@ DEAD_END fn _Exit(b32 code)
 #endif
 
 #ifndef STANDARD_NO_UNDERSCORE_EXIT
-DEAD_END fn _exit(b32 code)
-{
-        exit(code);
-
-        __builtin_unreachable();
-}
+DEAD_END fn _exit(b32 code) __attribute__((alias("_Exit")));
 #endif
 
 /*
@@ -1278,7 +1273,7 @@ address_any bsearch(address_any key, address_any base, positive count,
         Writing it by hand would produce the same instructions and would have
         to be written three times to say so.
 */
-div_t div(b32 numerator, b32 denominator)
+CONST div_t div(b32 numerator, b32 denominator)
 {
         div_t answer;
 
@@ -1288,7 +1283,7 @@ div_t div(b32 numerator, b32 denominator)
         return answer;
 }
 
-ldiv_t ldiv(b64 numerator, b64 denominator)
+CONST ldiv_t ldiv(b64 numerator, b64 denominator)
 {
         ldiv_t answer;
 
@@ -1298,7 +1293,7 @@ ldiv_t ldiv(b64 numerator, b64 denominator)
         return answer;
 }
 
-lldiv_t lldiv(b64 numerator, b64 denominator)
+CONST lldiv_t lldiv(b64 numerator, b64 denominator)
 {
         lldiv_t answer;
 

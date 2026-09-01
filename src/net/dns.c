@@ -131,7 +131,7 @@ static bipolar dns_write_name(p8 address_to into, positive room, string_address 
         the pointer led. Every jump is counted against the size of the whole
         message, which a legitimate reply cannot exceed.
 */
-static bipolar dns_skip_name(p8 address_to message, positive size, positive at)
+static PURE bipolar dns_skip_name(p8 address_to message, positive size, positive at)
 {
         positive jumps = 0;
         bipolar ended = -1;
@@ -276,6 +276,7 @@ static bipolar dns_resolve(p32 server, string_address name, p32 address_to found
         bipolar handle;
         bipolar written;
         bipolar got;
+        p16 flags;
         positive at;
         positive answers;
         positive question_length;
@@ -343,7 +344,9 @@ static bipolar dns_resolve(p32 server, string_address name, p32 address_to found
         if (network_load_16(reply) != id)
                 return DNS_MALFORMED;
 
-        if (!(network_load_16(reply + 2) & DNS_FLAG_RESPONSE))
+        flags = network_load_16(reply + 2);
+
+        if (!(flags & DNS_FLAG_RESPONSE) || (flags & DNS_FLAG_TRUNCATED))
                 return DNS_MALFORMED;
 
         if (network_load_16(reply + 4) != 1)
@@ -354,7 +357,7 @@ static bipolar dns_resolve(p32 server, string_address name, p32 address_to found
             memory_compare(reply + DNS_HEADER, request + DNS_HEADER, question_length))
                 return DNS_MALFORMED;
 
-        switch (network_load_16(reply + 2) & DNS_CODE_MASK)
+        switch (flags & DNS_CODE_MASK)
         {
         case 0:
                 break;

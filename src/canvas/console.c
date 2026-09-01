@@ -42,6 +42,9 @@ static void console_put_line(struct console *console, const char *text,
 
         spin_lock_irqsave(&console_cells, flags);
 
+        // This record is its own message; it does not continue the last one.
+        term_record_begin();
+
         /*
                 A newline here is a line feed and nothing else.
 

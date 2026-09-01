@@ -416,7 +416,7 @@ static bipolar expand_base_number(string_address address_to at, bool address_to 
         that matches something on one shell and nothing on the other is worse
         than a pattern that matches nothing on both.
 */
-static string_address expand_class_end(string_address at)
+static PURE string_address expand_class_end(string_address at)
 {
         string_address step;
 
@@ -442,7 +442,7 @@ static string_address expand_class_end(string_address at)
         A [ with no ] anywhere after it is a plain [ and not a set at all, which
         is why the end is found first and the membership asked second.
 */
-static string_address expand_set_end(string_address at)
+static PURE string_address expand_set_end(string_address at)
 {
         string_address step = at + 1;
 
@@ -463,7 +463,7 @@ static string_address expand_set_end(string_address at)
         return string_get(step) ? step : null;
 }
 
-static bool expand_in_set(string_address at, string_address stop, p8 value)
+static PURE bool expand_in_set(string_address at, string_address stop, p8 value)
 {
         string_address step = at + 1;
         bool invert = false;
@@ -527,7 +527,7 @@ static bool expand_in_set(string_address at, string_address stop, p8 value)
         component of a path -- one pattern language, matched one way, so that a
         case arm and a glob cannot disagree about what a star is.
 */
-bool shell_match(string_address pattern, string_address text)
+PURE bool shell_match(string_address pattern, string_address text)
 {
         string_address star = null;
         string_address back = null;
@@ -808,7 +808,7 @@ fn shell_parameters_shift(positive count)
         all, and collapsing the two is how a script that clears IFS on purpose
         gets its fields taken apart anyway.
 */
-static string_address expand_ifs()
+static PURE string_address expand_ifs()
 {
         /* djb2("IFS"). The name and its extent are invariant, so sending it
            through the NUL-scanning hash path on every split only rediscovers
@@ -1283,7 +1283,7 @@ static bool arith_bash_mode;
 static bool arith_nounset;
 static bool arith_unset;
 
-static inline INLINE string_address arith_skip_space(string_address at)
+static PURE inline INLINE string_address arith_skip_space(string_address at)
 {
         while (string_is(at, ' ') || string_is(at, '\t') || string_is(at, '\n'))
                 at++;
@@ -2086,7 +2086,7 @@ static string_address shell_expand_arithmetic_text(string_address text)
         find it inside quotes. Written out three times, the three had to be
         kept level by hand.
 */
-static string_address expand_quoted_run(string_address at, p8 quote)
+static PURE string_address expand_quoted_run(string_address at, p8 quote)
 {
         at++;
 
@@ -2113,7 +2113,7 @@ static string_address expand_dollar_quoted_run(string_address at)
         nesting counted; nothing when the word runs out first, in which case
         the $ was only a $.
 */
-static string_address expand_bracket_end(string_address at, p8 open, p8 close)
+static PURE string_address expand_bracket_end(string_address at, p8 open, p8 close)
 {
         positive depth = 1;
 
@@ -2151,12 +2151,12 @@ static string_address expand_bracket_end(string_address at, p8 open, p8 close)
         return null;
 }
 
-static string_address expand_paren_end(string_address at)
+static PURE string_address expand_paren_end(string_address at)
 {
         return expand_bracket_end(at, '(', ')');
 }
 
-static string_address expand_brace_end(string_address at)
+static PURE string_address expand_brace_end(string_address at)
 {
         return expand_bracket_end(at, '{', '}');
 }
@@ -2703,7 +2703,7 @@ static fn expand_trim(positive start, string_address pattern, bool prefix, bool 
 //      The slash separating a Bash replacement pattern from its replacement.
 //      A slash hidden by a quote, a backslash or a nested expansion belongs to
 //      that word and is not the separator of the outer ${.../.../...}.
-static string_address expand_replace_separator(string_address at)
+static PURE string_address expand_replace_separator(string_address at)
 {
         while (string_get(at))
         {
@@ -2934,7 +2934,7 @@ static fn expand_replace(string_address name, string_address pattern_text,
 // The length separator in ${name:offset:length}. A colon paired with a
 // top-level arithmetic ?: belongs to the offset; parentheses and nested
 // expansions keep all of their colons inside too.
-static string_address expand_substring_separator(string_address at)
+static PURE string_address expand_substring_separator(string_address at)
 {
         positive parentheses = 0;
         positive choices = 0;
@@ -3864,7 +3864,7 @@ static string_address expand_dollar(string_address step, bool quoted)
         unsupported braced operators. Its bytes are copied into the command's
         existing token arena, where the literal runs around it already live.
 */
-string_address shell_expand_here_dollar(string_address step,
+RETURNS_NONNULL string_address shell_expand_here_dollar(string_address step,
                                         string_address address_to text,
                                         positive address_to length,
                                         bool address_to overflow)
@@ -4158,7 +4158,7 @@ static shell_store glob_store;
 static positive glob_count;
 static bool glob_failed;
 
-static bool glob_magic(string_address pattern)
+static PURE bool glob_magic(string_address pattern)
 {
         while (string_get(pattern))
         {
@@ -4700,7 +4700,7 @@ static positive expand_split(shell_words address_to out)
         return out->count;
 }
 
-static string_address expand_brace_comma(string_address at,
+static PURE string_address expand_brace_comma(string_address at,
                                          string_address close)
 {
         positive depth = 0;
@@ -5101,7 +5101,7 @@ positive shell_expand_fields(string_address word, shell_words address_to out)
         two places POSIX does not split and does not glob, and this is what they
         are supposed to call.
 */
-string_address shell_expand_word(string_address word)
+RETURNS_NONNULL string_address shell_expand_word(string_address word)
 {
         string_address result;
 
@@ -5124,7 +5124,7 @@ string_address shell_expand_word(string_address word)
         command name. Keep it whole like a leading assignment, and recognize
         the additional tilde-prefix positions after '=' and unquoted ':'.
 */
-string_address shell_expand_assignment(string_address word, positive value_at)
+RETURNS_NONNULL string_address shell_expand_assignment(string_address word, positive value_at)
 {
         string_address result;
 
@@ -5153,7 +5153,7 @@ string_address shell_expand_assignment(string_address word, positive value_at)
         literal metacharacter, so preserving that distinction needs no second
         pattern language.
 */
-string_address shell_expand_pattern(string_address word)
+RETURNS_NONNULL string_address shell_expand_pattern(string_address word)
 {
         positive room = 1;
         positive at;
@@ -5210,7 +5210,7 @@ static bool expand_regex_metacharacter(p8 value)
                value == '|' || value == '\\';
 }
 
-string_address shell_expand_regex(string_address word)
+RETURNS_NONNULL string_address shell_expand_regex(string_address word)
 {
         positive room = 1;
         positive at;

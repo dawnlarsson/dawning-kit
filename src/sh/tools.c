@@ -1321,7 +1321,7 @@ static bool diff_stub(diff_side address_to side, bipolar middle)
                side->prefix + (positive)middle == side->lines - 1;
 }
 
-static positive diff_hash(diff_side address_to side, bipolar middle)
+static PURE positive diff_hash(diff_side address_to side, bipolar middle)
 {
         positive length = diff_line_length(side, middle);
 
@@ -1345,7 +1345,7 @@ static positive diff_hash(diff_side address_to side, bipolar middle)
         return value * 2 + (diff_stub(side, middle) ? 1 : 0);
 }
 
-static bool diff_same(diff_side address_to a, bipolar i, diff_side address_to b,
+static PURE bool diff_same(diff_side address_to a, bipolar i, diff_side address_to b,
                       bipolar j)
 {
         diff_scan left, right;
@@ -1947,7 +1947,7 @@ static bool diff_build()
 }
 
 // Whether every line a change touches is one -B was told to skip over.
-static bool diff_trivial(positive from, positive to)
+static PURE bool diff_trivial(positive from, positive to)
 {
         if (!diff_blank_lines)
                 return false;
@@ -2112,7 +2112,7 @@ static fn diff_normal_output()
 
 // A hunk runs on while the gap to the next change is smaller than the
 // context it would print on either side of it.
-static positive diff_hunk_end(positive start)
+static PURE positive diff_hunk_end(positive start)
 {
         positive c = start;
 

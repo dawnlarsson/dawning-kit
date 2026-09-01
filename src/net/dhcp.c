@@ -256,7 +256,7 @@ static bipolar dhcp_read(p8 address_to packet, positive size, p32 transaction,
 }
 
 //      A mask of n leading bits, said as the prefix length a route wants.
-static p8 dhcp_prefix_of(p32 mask)
+static CONST p8 dhcp_prefix_of(p32 mask)
 {
         p8 bits = 0;
 
@@ -367,6 +367,10 @@ static bipolar dhcp_ask(string_address device, p8 address_to hardware,
 
         memory_fill(lease, 0, sizeof(dhcp_lease));
         transaction = dhcp_transaction();
+        handle = dhcp_open(device, HOST_ANY, true);
+
+        if (handle < 0)
+                return DHCP_NO_SOCKET;
 
         socket_address_internet where = {
             .family = AF_INET, .port = network_order_16(DHCP_SERVER_PORT),
@@ -377,21 +381,6 @@ static bipolar dhcp_ask(string_address device, p8 address_to hardware,
                 p8 kind = 0;
                 positive deadline;
 
-                /*
-                        A socket per attempt, not one for the whole exchange.
-
-                        This was added on a wrong diagnosis -- that a socket
-                        bound to a device with no carrier stayed stale once
-                        the carrier arrived -- and measuring it showed no
-                        difference at all. It is kept because it costs two
-                        syscalls a quarter second for a few seconds and means
-                        no state from before the link was live is carried into
-                        an attempt after it. The real delay was getrandom.
-                */
-                handle = dhcp_open(device, HOST_ANY, true);
-
-                if (handle < 0)
-                        return DHCP_NO_SOCKET;
                 /*
                         A quarter second apart while it matters.
 
@@ -415,10 +404,9 @@ static bipolar dhcp_ask(string_address device, p8 address_to hardware,
                 if (socket_send((b32)handle, packet, length, 0, address_of where,
                                 sizeof where) < 0)
                 {
-                        //      No route yet, most likely. Close this one and
-                        //      try again with a fresh one rather than giving
-                        //      up on the whole exchange.
-                        socket_close((b32)handle);
+                        //      No route yet, most likely. An unconnected UDP
+                        //      socket routes every send afresh, so carrier can
+                        //      appear underneath this one before the next try.
                         continue;
                 }
 
@@ -459,10 +447,9 @@ static bipolar dhcp_ask(string_address device, p8 address_to hardware,
 
                         break;
                 }
-
-                socket_close((b32)handle);
         }
 
+        socket_close((b32)handle);
         return DHCP_NO_OFFER;
 }
 

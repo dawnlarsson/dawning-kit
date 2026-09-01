@@ -546,8 +546,13 @@ static int spawn_program(const char *path)
                 return -ENOMEM;
 
         work->path = kstrdup(path, GFP_KERNEL);
+        work->path_owned = true;
         work->arguments = kvmalloc(sizeof(*work->arguments) +
                                    2 * sizeof(char *), GFP_KERNEL);
+
+        /* spawn_free handles either allocation failing. */
+        if (work->arguments)
+                refcount_set(&work->arguments->references, 1);
 
         if (!work->path || !work->arguments)
         {
@@ -555,7 +560,6 @@ static int spawn_program(const char *path)
                 return -ENOMEM;
         }
 
-        refcount_set(&work->arguments->references, 1);
         work->arguments->vector = (char **)(work->arguments + 1);
         work->arguments->vector[0] = work->path;
         work->arguments->vector[1] = NULL;
@@ -696,7 +700,9 @@ static int copy_strings(unsigned long user_block, unsigned int bytes,
            lifetime. One allocation removes a slab round trip from each of
            argv and envp; kvmalloc keeps generated long commands on the fast
            path without demanding physically contiguous megabytes. */
-        strings = kvmalloc(sizeof(*strings) + pointer_bytes + bytes, GFP_KERNEL);
+        /* A generated environment can remain pinned to an open descriptor. */
+        strings = kvmalloc(sizeof(*strings) + pointer_bytes + bytes,
+                           GFP_KERNEL_ACCOUNT);
         if (!strings)
                 return -ENOMEM;
 

@@ -574,9 +574,9 @@ static b32 error_number_storage;
         one external symbol in this file; everything else is static, so a
         program pays only for the wrappers it actually calls.
 */
-pub b32 address_to __errno_location(void);
+pub CONST RETURNS_NONNULL b32 address_to __errno_location(void);
 
-b32 address_to __errno_location(void)
+CONST RETURNS_NONNULL b32 address_to __errno_location(void)
 {
         return address_of error_number_storage;
 }

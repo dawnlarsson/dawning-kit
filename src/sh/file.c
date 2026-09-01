@@ -167,7 +167,7 @@ fn file_written(string_address text, bool zero)
 
 // Modes -----------------------------------------------------
 
-p8 file_kind_letter(positive mode)
+CONST p8 file_kind_letter(positive mode)
 {
         positive kind = mode & MODE_FORMAT;
 
@@ -192,7 +192,7 @@ p8 file_kind_letter(positive mode)
         return '-';
 }
 
-string_address file_kind_name(positive mode)
+CONST RETURNS_NONNULL string_address file_kind_name(positive mode)
 {
         positive kind = mode & MODE_FORMAT;
 
@@ -215,6 +215,11 @@ string_address file_kind_name(positive mode)
                 return (string_address) "socket";
 
         return (string_address) "regular file";
+}
+
+static inline INLINE CONST p64 file_device_key(p32 major, p32 minor)
+{
+        return ((p64)major << 32) | minor;
 }
 
 fn file_mode_letters(p8 address_to into, positive mode)
@@ -613,7 +618,7 @@ static bool file_group_read;
 
 // ls -l asks for a name per entry, so the file is read once and kept rather
 // than opened again for every line of a listing.
-p8 address_to file_password_text()
+RETURNS_NONNULL p8 address_to file_password_text()
 {
         if (!file_password_read)
         {
@@ -627,7 +632,7 @@ p8 address_to file_password_text()
         return file_password_store;
 }
 
-p8 address_to file_group_text()
+RETURNS_NONNULL p8 address_to file_group_text()
 {
         if (!file_group_read)
         {
@@ -1018,7 +1023,7 @@ static const file_unit file_units[] = {
 // The inverse of file_civil: a day number from a calendar date, and the same
 // arithmetic run backwards. A day past the end of its month runs on into the
 // next one, which is what a month added to the 31st has to do.
-b64 file_days(b64 year, b64 month, b64 day)
+CONST b64 file_days(b64 year, b64 month, b64 day)
 {
         year -= month <= 2;
 
@@ -1399,7 +1404,7 @@ fn file_walk_close(file_walk address_to walk)
         walk->handle = -1;
 }
 
-bool file_is_dot(string_address name)
+PURE bool file_is_dot(string_address name)
 {
         if (!string_is(name, '.'))
                 return false;
@@ -2099,7 +2104,7 @@ static fn file_color_sgr(writer write, file_color_span color)
         write((address_any) "m", 1);
 }
 
-string_address file_reason(bipolar code)
+CONST RETURNS_NONNULL string_address file_reason(bipolar code)
 {
         if (code < 0)
                 code = -code;
@@ -4938,7 +4943,7 @@ static fn find_walk(string_address path, string_address name, positive depth, bo
         }
 
         if (named)
-                find_device = ((p64)facts.device_major << 32) | facts.device_minor;
+                find_device = file_device_key(facts.device_major, facts.device_minor);
 
         bool directory = (facts.mode & MODE_FORMAT) == MODE_DIRECTORY;
         bool wanted = depth >= find_minimum && depth <= find_maximum;
@@ -4950,7 +4955,7 @@ static fn find_walk(string_address path, string_address name, positive depth, bo
 
         if (descend && find_one_system &&
             (!find_facts_ready() ||
-             (((p64)facts.device_major << 32) | facts.device_minor) != find_device))
+             file_device_key(facts.device_major, facts.device_minor) != find_device))
                 descend = false;
 
         bool facts_known_here = find_facts_known;
@@ -5626,11 +5631,6 @@ static bool du_seen_broken;
 static bool du_depth_broken;
 static p8 du_unit_option;
 
-static p64 du_where(file_facts address_to facts)
-{
-        return ((p64)facts->device_major << 32) | facts->device_minor;
-}
-
 static bool du_seen_grow()
 {
         if (du_seen_room && du_seen_have + 1 < du_seen_room / 2)
@@ -5692,7 +5692,7 @@ static bool du_already(file_facts address_to facts)
         if (!du_seen_grow())
                 return true;
 
-        p64 device = du_where(facts);
+        p64 device = file_device_key(facts->device_major, facts->device_minor);
         positive slot = (positive)(facts->inode * 1099511628211u + device) &
                         (du_seen_room - 1);
 
@@ -5771,8 +5771,9 @@ static p64 du_walk(string_address path, positive depth, bool named, positive lev
         du_was_directory = (facts.mode & MODE_FORMAT) == MODE_DIRECTORY;
 
         if (named)
-                du_device = du_where(address_of facts);
-        else if (du_one_system && du_where(address_of facts) != du_device)
+                du_device = file_device_key(facts.device_major, facts.device_minor);
+        else if (du_one_system &&
+                 file_device_key(facts.device_major, facts.device_minor) != du_device)
                 return 0;
 
         if (du_already(address_of facts))
@@ -8140,7 +8141,7 @@ static bool file_device_number(string_address text, p32 address_to value)
         return true;
 }
 
-static positive file_device(p32 major, p32 minor)
+static CONST positive file_device(p32 major, p32 minor)
 {
         return ((positive)minor & 0xff) |
                (((positive)major & 0xfff) << 8) |

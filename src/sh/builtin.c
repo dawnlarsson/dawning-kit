@@ -154,7 +154,6 @@ static bipolar shell_find_in_standard_path_alloc(string_address name,
 bipolar shell_signed(string_address input, bool address_to good);
 bool test_facts(string_address path, file_facts address_to out, bool follow);
 bool word_is(string_address word, string_address text);
-p64 test_device(file_facts address_to facts);
 fn hash_forget();
 bool shell_here(p8 address_to into, positive room);
 
@@ -422,7 +421,7 @@ static bool env_index_rebuild(positive count)
         return true;
 }
 
-static positive env_find_hashed_span(const_string name, positive length,
+static PURE positive env_find_hashed_span(const_string name, positive length,
                                      positive hash)
 {
         if (env_index_slots)
@@ -464,7 +463,7 @@ static positive env_find_hashed_span(const_string name, positive length,
         return shell_var_count;
 }
 
-static positive env_find_span(const_string name, positive length)
+static PURE positive env_find_span(const_string name, positive length)
 {
         return env_find_hashed_span(name, length,
                                     env_name_hash(name, length));
@@ -605,7 +604,7 @@ static env_variable address_to env_export_take(const_string name,
                                       env_name_hash(name, length));
 }
 
-static bool env_export_active_span(const_string name, positive length)
+static PURE bool env_export_active_span(const_string name, positive length)
 {
         positive found = env_find_span(name, length);
 
@@ -613,7 +612,7 @@ static bool env_export_active_span(const_string name, positive length)
                                            shell_vars[found].temporary);
 }
 
-bool env_exported(string_address name)
+PURE bool env_exported(string_address name)
 {
         return name && env_export_active_span(name, string_length(name));
 }
@@ -765,7 +764,7 @@ string_address address_to shell_environment()
         return shell_envp;
 }
 
-bool shell_environment_is_initialized()
+PURE bool shell_environment_is_initialized()
 {
         return shell_env_initialized;
 }
@@ -1387,7 +1386,8 @@ bool shell_directory_holds()
                 return false;
 
         return named.inode == here.inode &&
-               test_device(address_of named) == test_device(address_of here);
+               file_device_key(named.device_major, named.device_minor) ==
+               file_device_key(here.device_major, here.device_minor);
 }
 
 static bool shell_cd_variable(string_address name, string_address value)
@@ -1751,7 +1751,7 @@ fn shell_pwd(writer write, string_address input)
 
 fn shell_trap_exit();
 
-fn shell_exit(writer write, string_address input)
+DEAD_END fn shell_exit(writer write, string_address input)
 {
         bipolar exit_code = shell_status_entering;
         bool good = true;
@@ -1829,7 +1829,7 @@ fn shell_poweroff(writer write, string_address input)
 // has already been read.
 #define BUILTIN_TCGETS 0x5401u
 
-bool word_is(string_address word, string_address text)
+PURE bool word_is(string_address word, string_address text)
 {
         return word && !string_compare(word, text);
 }
@@ -1925,7 +1925,7 @@ static shell_option shell_option_names[] = {
 
 static positive shell_options_named;
 
-bool shell_option_on(positive index)
+PURE bool shell_option_on(positive index)
 {
         if (shell_option_names[index].letter >= 'a' &&
             shell_option_names[index].letter <= 'z')
@@ -1967,7 +1967,7 @@ fn shell_option_told(positive index, bool on)
         than the order in which set saw them; doing the same makes the value
         stable enough for scripts to save and restore.
 */
-string_address shell_flags_current()
+RETURNS_NONNULL string_address shell_flags_current()
 {
         static p8 flags[16];
         static p8 order[] = "ubaCvxsiImfne";
@@ -2014,13 +2014,13 @@ fn shell_options_started(bool interactive)
         This is the seventeenth table entry above. Reading its named-option
         bit directly keeps every pipeline out of the general name lookup.
 */
-bool shell_pipefail()
+PURE bool shell_pipefail()
 {
         return (shell_options_named &
                 ((positive)1 << SHELL_OPTION_PIPEFAIL)) != 0;
 }
 
-bool shell_noclobber()
+PURE bool shell_noclobber()
 {
         return (shell_options_named &
                 ((positive)1 << SHELL_OPTION_NOCLOBBER)) != 0;
@@ -2440,7 +2440,7 @@ static b32 local_remember(string_address name)
         return 1;
 }
 
-static shell_local_entry address_to local_saved_global(string_address name)
+static PURE shell_local_entry address_to local_saved_global(string_address name)
 {
         for (positive at = 0; at < local_count; at++)
                 if (!string_compare(local_table[at].text, name))
@@ -3158,23 +3158,17 @@ bool test_unary(p8 op, string_address value)
 }
 
 // The three fields test wants out of statx.
-b64 test_modified(file_facts address_to facts)
+PURE b64 test_modified(file_facts address_to facts)
 {
         return facts->modified.seconds;
 }
 
-p32 test_modified_fraction(file_facts address_to facts)
+PURE p32 test_modified_fraction(file_facts address_to facts)
 {
         return facts->modified.nanoseconds;
 }
 
-p64 test_device(file_facts address_to facts)
-{
-        return ((p64)facts->device_major << 32) | facts->device_minor;
-}
-
-
-bool test_is_unary(string_address word)
+PURE bool test_is_unary(string_address word)
 {
         p8 letter;
 
@@ -3191,7 +3185,7 @@ bool test_is_unary(string_address word)
                letter == 'S';
 }
 
-positive test_is_binary(string_address word)
+PURE positive test_is_binary(string_address word)
 {
         p8 first;
         p8 second;
@@ -3259,7 +3253,7 @@ positive test_is_binary(string_address word)
         one list to answer a shade differently from the other, in the one kind
         of code where nobody would think to look.
 */
-bool test_ordered(positive kind, bipolar first, bipolar second)
+CONST bool test_ordered(positive kind, bipolar first, bipolar second)
 {
         if (kind == TEST_EQUAL)
                 return first == second;
@@ -3316,7 +3310,8 @@ bool test_compare(positive kind, string_address left, string_address right)
 
                 if (kind == TEST_SAME_FILE)
                         return one.inode == two.inode &&
-                               test_device(address_of one) == test_device(address_of two);
+                               file_device_key(one.device_major, one.device_minor) ==
+                               file_device_key(two.device_major, two.device_minor);
 
                 // Two files written in the same second are not the same age,
                 // and a script that touches one after the other says so.
@@ -3653,7 +3648,7 @@ string_address printf_next()
         carry on reading; an octal run is up to three digits, and \0 in front
         of it is what POSIX writes even though every shell also takes it bare.
 */
-string_address printf_escape(writer write, string_address step)
+RETURNS_NONNULL string_address printf_escape(writer write, string_address step)
 {
         p8 value;
 
@@ -4962,7 +4957,7 @@ bool trap_waiting()
         return trap_caught && !trap_inside;
 }
 
-bool trap_ignored(positive number)
+PURE bool trap_ignored(positive number)
 {
         for (positive at = 0; at < trap_count; at++)
                 if (trap_table[at].number == number)
@@ -5086,7 +5081,7 @@ static bool trap_record(positive number, string_address action)
         return true;
 }
 
-string_address trap_action(positive number)
+PURE string_address trap_action(positive number)
 {
         positive index = 0;
 
@@ -5307,7 +5302,7 @@ static shell_alias_entry address_to alias_table;
 static positive alias_room;
 static positive alias_count;
 
-string_address alias_lookup(string_address name)
+PURE string_address alias_lookup(string_address name)
 {
         positive at = string_table_find(name, alias_table, sizeof(alias_table[0]),
                                         alias_count);
@@ -6232,7 +6227,7 @@ static positive shell_wait_count;
 #define SHELL_WAIT_PIPEFAIL 4
 #define SHELL_WAIT_INVERT 8
 
-static positive shell_wait_find_job(bipolar job)
+static PURE positive shell_wait_find_job(bipolar job)
 {
         for (positive at = 0; at < shell_wait_count; at++)
                 if (shell_wait_table[at].job == job)
@@ -6607,7 +6602,7 @@ fn hash_forget()
         hash_used = 0;
 }
 
-string_address hash_find(string_address name)
+PURE string_address hash_find(string_address name)
 {
         positive at = string_table_find(name, hash_name, sizeof(hash_name[0]),
                                         hash_count);

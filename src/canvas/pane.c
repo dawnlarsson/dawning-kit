@@ -597,7 +597,7 @@ static void pane_refresh(struct pane *pane)
                 pane->x = READ_ONCE(shared->x);
                 pane->y = READ_ONCE(shared->y);
         }
-        pane->z = READ_ONCE(shared->z);
+        pane->z = clamp(READ_ONCE(shared->z), -WINDOW_Z_MAX, WINDOW_Z_MAX);
         pane->region = READ_ONCE(shared->region);
         pane->display = READ_ONCE(shared->display);
         pane->style = READ_ONCE(shared->style);
@@ -694,7 +694,8 @@ static _Bool pane_focusable(struct pane *pane, _Bool include_minimized)
         one leaving, and Alt-Tab starts from the top of the whole stack; this
         walk was written once per caller before it was written here.
 */
-static struct pane *pane_topmost(struct pane *except, _Bool include_minimized)
+static PURE struct pane *pane_topmost(struct pane *except,
+                                      _Bool include_minimized)
 {
         struct pane *pane;
         struct pane *top = NULL;

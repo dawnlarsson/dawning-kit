@@ -787,7 +787,8 @@ static string_address awk_not_finite_name(decimal value)
         return value < 0 ? "-inf" : "+inf";
 }
 
-static positive awk_write_fixed(decimal value, b32 precision, p8 address_to out, bool point_always)
+static positive awk_write_fixed(decimal value, b32 precision,
+                                p8 address_to restrict out, bool point_always)
 {
         positive at = 0;
 
@@ -965,8 +966,8 @@ static positive awk_write_general(decimal value, b32 precision, p8 address_to ou
         if (cut == stop)
                 return length;
 
-        for (positive i = stop; i < length; i++)
-                out[cut++] = out[i];
+        copy_short_apart(out + cut, out + stop, length - stop, 5);
+        cut += length - stop;
 
         out[cut] = end;
         return cut;
@@ -1072,7 +1073,7 @@ static p32 awk_five_power[13] = {1,        5,        25,       125,      625,
         twenty five -- so the whole division is one truncation, and whether
         anything was truncated is remembered and decides the rounding.
 */
-static decimal awk_scale_ten(positive mantissa, b32 power)
+static PURE decimal awk_scale_ten(positive mantissa, b32 power)
 {
         awk_big big;
 
@@ -1231,7 +1232,7 @@ static decimal awk_scan_number(string_address text, positive length, positive ad
         return negative ? -value : value;
 }
 
-static bool awk_looks_numeric(string_address text, positive length)
+static PURE bool awk_looks_numeric(string_address text, positive length)
 {
         positive used;
 
@@ -1247,7 +1248,7 @@ static bool awk_looks_numeric(string_address text, positive length)
         return used == length;
 }
 
-static decimal awk_number_of(string_address text, positive length)
+static PURE decimal awk_number_of(string_address text, positive length)
 {
         positive used;
 
@@ -1568,7 +1569,7 @@ static fn awk_array_grow(awk_array address_to which)
         which->width = width;
 }
 
-static awk_slot address_to awk_array_find_hash(awk_array address_to which,
+static PURE awk_slot address_to awk_array_find_hash(awk_array address_to which,
                                                string_address key,
                                                positive length, positive hash)
 {
@@ -1582,7 +1583,7 @@ static awk_slot address_to awk_array_find_hash(awk_array address_to which,
         return null;
 }
 
-static awk_slot address_to awk_array_find(awk_array address_to which,
+static PURE awk_slot address_to awk_array_find(awk_array address_to which,
                                           string_address key, positive length)
 {
         return awk_array_find_hash(which, key, length, awk_hash(key, length));

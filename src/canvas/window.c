@@ -81,6 +81,9 @@
 */
 #define WINDOW_PASSTHROUGH 8u
 
+/* Keep pane_raise's top + 1 away from overflow on an untrusted shared page. */
+#define WINDOW_Z_MAX (1 << 24)
+
 // state
 #define WINDOW_FOCUSED 1u
 
@@ -135,7 +138,7 @@ struct window
 {
         // The program writes these, and the compositor writes x, y and z back
         // when it is the one that moved them.
-        int x, y, z; // higher is in front
+        int x, y, z; // higher is in front, clamped to +/-WINDOW_Z_MAX
         unsigned int width, height;
         unsigned int region;  // WINDOW_FREE, WINDOW_CENTRED
         unsigned int display; // which output a region is measured against

@@ -2030,7 +2030,7 @@ static PURE positive edit_line_indent(positive line)
         middle of, which is why walking off the end of a line lands at the
         start of the next rather than at its first word.
 */
-static struct edit_place edit_word_right(struct edit_place place)
+static PURE struct edit_place edit_word_right(struct edit_place place)
 {
         struct edit_line address_to text;
 
@@ -2068,7 +2068,7 @@ static struct edit_place edit_word_right(struct edit_place place)
         return place;
 }
 
-static struct edit_place edit_word_left(struct edit_place place)
+static PURE struct edit_place edit_word_left(struct edit_place place)
 {
         struct edit_line address_to text;
 

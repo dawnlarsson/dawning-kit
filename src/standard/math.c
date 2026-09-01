@@ -2906,7 +2906,7 @@ static decimal tanh(decimal value) { return hyperbolic_tangent(value); }
 static decimal fmod(decimal left, decimal right) { return decimal_modulo(left, right); }
 static decimal remainder(decimal left, decimal right) { return decimal_remainder(left, right); }
 static decimal ldexp(decimal value, b32 exponent) { return decimal_scaled(value, exponent); }
-static decimal scalbn(decimal value, b32 exponent) { return decimal_scaled(value, exponent); }
+static decimal scalbn(decimal value, b32 exponent) __attribute__((alias("ldexp")));
 static decimal frexp(decimal value, b32 address_to exponent) { return decimal_split_exponent(value, exponent); }
 static decimal modf(decimal value, decimal address_to whole) { return decimal_split_whole(value, whole); }
 

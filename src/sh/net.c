@@ -321,7 +321,7 @@ static fn net_names_gather(b32 handle)
                      net_name_seen, null);
 }
 
-static string_address net_name_of(p32 index)
+static PURE string_address net_name_of(p32 index)
 {
         positive at;
 

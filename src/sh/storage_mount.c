@@ -1004,7 +1004,7 @@ static bool storage_path_below(string_address path, string_address root)
         return (length == 1 && root[0] == '/') || path[length] == '/';
 }
 
-static string_address storage_umount_target(storage_mount_table address_to table,
+static PURE string_address storage_umount_target(storage_mount_table address_to table,
                                             string_address asked)
 {
         string_address found = asked;

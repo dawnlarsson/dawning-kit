@@ -355,7 +355,7 @@ static string_address storage_comma_next(string_address address_to cursor,
         return at;
 }
 
-static bool storage_option_has_length(string_address options,
+static PURE bool storage_option_has_length(string_address options,
                                       string_address wanted,
                                       positive wanted_length)
 {
@@ -373,7 +373,7 @@ static bool storage_option_has_length(string_address options,
         return false;
 }
 
-static bool storage_option_has(string_address options, string_address wanted)
+static PURE bool storage_option_has(string_address options, string_address wanted)
 {
         return storage_option_has_length(options, wanted,
                                          string_length(wanted));
@@ -516,7 +516,7 @@ bool storage_fstab_table_load(storage_fstab_table address_to table,
         return true;
 }
 
-storage_mount address_to storage_mount_find_id(
+PURE storage_mount address_to storage_mount_find_id(
     storage_mount_table address_to table, positive id)
 {
         for (positive at = 0; at < table->count; at++)
@@ -526,7 +526,7 @@ storage_mount address_to storage_mount_find_id(
         return null;
 }
 
-storage_mount address_to storage_mount_find_target(
+PURE storage_mount address_to storage_mount_find_target(
     storage_mount_table address_to table, string_address target)
 {
         /* The last record is the visible top of a stacked mount. */
@@ -537,7 +537,7 @@ storage_mount address_to storage_mount_find_target(
         return null;
 }
 
-storage_fstab address_to storage_fstab_find(
+PURE storage_fstab address_to storage_fstab_find(
     storage_fstab_table address_to table, string_address name)
 {
         for (positive at = 0; at < table->count; at++)
@@ -548,7 +548,7 @@ storage_fstab address_to storage_fstab_find(
         return null;
 }
 
-static bool storage_type_match(string_address list, string_address type)
+static PURE bool storage_type_match(string_address list, string_address type)
 {
         bool include_seen = false;
         bool included = false;
@@ -635,7 +635,7 @@ static string_address storage_attached_long(string_address argument,
         return argument + length + 1;
 }
 
-static bool storage_mount_options_match(storage_mount address_to mount,
+static PURE bool storage_mount_options_match(storage_mount address_to mount,
                                         string_address list)
 {
         string_address cursor = list;
@@ -802,7 +802,7 @@ static string_address storage_findmnt_cell(storage_mount address_to mount,
         }
 }
 
-static inline INLINE bool storage_filesystem_option_represented(
+static PURE inline INLINE bool storage_filesystem_option_represented(
     storage_mount address_to mount, string_address option, positive length)
 {
         return storage_option_has_length(mount->options, option, length) ||
@@ -813,7 +813,7 @@ static inline INLINE bool storage_filesystem_option_represented(
                storage_option_has(mount->options, (string_address)"ro"))));
 }
 
-static positive storage_combined_options_length(storage_mount address_to mount)
+static PURE positive storage_combined_options_length(storage_mount address_to mount)
 {
         positive length = 0;
         string_address cursor = mount->options;
@@ -941,7 +941,7 @@ static bool storage_source_has_root(storage_mount address_to mount)
                !string_equals(mount->root, "/");
 }
 
-static positive storage_findmnt_cell_length(storage_mount address_to mount,
+static PURE positive storage_findmnt_cell_length(storage_mount address_to mount,
                                             enum storage_column column,
                                             bool show_fsroot)
 {
@@ -1095,7 +1095,7 @@ static fn storage_findmnt_row(writer output, storage_mount address_to mount,
         output((address_any)"\n", 1);
 }
 
-static bool storage_findmnt_match(storage_mount address_to mount,
+static PURE bool storage_findmnt_match(storage_mount address_to mount,
                                   storage_findmnt_options address_to options,
                                   bool have_query_id, positive query_id)
 {

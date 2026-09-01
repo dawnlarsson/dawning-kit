@@ -33,7 +33,7 @@ static _Bool canvas_is_virtual(struct drm_device *dev)
         return false;
 }
 
-static unsigned int output_mode_count(struct drm_connector *connector)
+static PURE unsigned int output_mode_count(struct drm_connector *connector)
 {
         struct drm_display_mode *mode;
         unsigned int count = 0;

@@ -1174,7 +1174,7 @@ static bool exec_declaration_name(b32 word)
         command a declaration utility when the name it invokes is one; walk
         literal command chains and their options to find that boundary.
 */
-static b32 exec_declaration_from(parse_node address_to node)
+static PURE b32 exec_declaration_from(parse_node address_to node)
 {
         b32 at = node->word;
         b32 stop = at + node->word_count;

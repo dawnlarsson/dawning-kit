@@ -545,7 +545,7 @@ string_address shell_arguments()
         return argument_line;
 }
 
-fn shell_thread_instance_mode(bool preserve_ignored)
+DEAD_END fn shell_thread_instance_mode(bool preserve_ignored)
 {
         string_address address_to environment;
 
@@ -575,7 +575,7 @@ fn shell_thread_instance_mode(bool preserve_ignored)
         exit(126);
 }
 
-fn shell_thread_instance()
+DEAD_END fn shell_thread_instance()
 {
         shell_thread_instance_mode(false);
 }

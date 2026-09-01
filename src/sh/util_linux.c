@@ -2839,18 +2839,6 @@ static bipolar ul_prctl(positive option, positive one, positive two)
         return system_call_5(syscall(prctl), option, one, two, 0, 0);
 }
 
-static bool ul_word_case(string_address text, positive length,
-                         string_address word)
-{
-        if (string_length(word) != length)
-                return false;
-        for (positive i = 0; i < length; i++)
-                if (byte_to_lower(string_get(text + i)) !=
-                    byte_to_lower(string_get(word + i)))
-                        return false;
-        return true;
-}
-
 static bipolar ul_signal_number(string_address text)
 {
         p8 name[16];

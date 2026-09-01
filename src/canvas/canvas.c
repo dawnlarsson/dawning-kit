@@ -462,7 +462,7 @@ static _Bool output_holds(struct output *output, int x, int y)
 }
 
 // The first format in the plane's own order that is one of the two wanted.
-static u32 canvas_plane_pick_format(struct drm_plane *plane, u32 first, u32 second)
+static PURE u32 canvas_plane_pick_format(struct drm_plane *plane, u32 first, u32 second)
 {
         unsigned int i;
 

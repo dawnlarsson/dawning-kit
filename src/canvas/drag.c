@@ -16,15 +16,16 @@
 
         A window blocks over all of itself, not only over the parts that
         answer: its middle is not a hole through to whatever is behind. The
-        list is walked back to front and the last match wins, which is the
-        topmost, and a window can opt out with WINDOW_PASSTHROUGH.
+        list is walked front to back and the first match wins, which is the
+        topmost; a window can opt out with WINDOW_PASSTHROUGH.
 */
 static struct pane *pane_under(int x, int y, unsigned int *edges)
 {
-        struct pane *pane, *found = NULL;
-        unsigned int found_edges = 0;
+        struct pane *pane;
 
-        list_for_each_entry(pane, &desktop.windows, link)
+        *edges = 0;
+
+        list_for_each_entry_reverse(pane, &desktop.windows, link)
         {
                 int fx, fy, fw, fh;
 
@@ -36,25 +37,23 @@ static struct pane *pane_under(int x, int y, unsigned int *edges)
                 if (x < fx || x >= fx + fw || y < fy || y >= fy + fh)
                         continue;
 
-                found = pane;
-                found_edges = 0;
-
                 if (!(pane->style & WINDOW_FRAME))
-                        continue;
+                        return pane;
 
                 if (x < fx + EDGE_GRIP)
-                        found_edges |= EDGE_LEFT;
+                        *edges |= EDGE_LEFT;
                 else if (x >= fx + fw - EDGE_GRIP)
-                        found_edges |= EDGE_RIGHT;
+                        *edges |= EDGE_RIGHT;
 
                 if (y < fy + EDGE_GRIP)
-                        found_edges |= EDGE_TOP;
+                        *edges |= EDGE_TOP;
                 else if (y >= fy + fh - EDGE_GRIP)
-                        found_edges |= EDGE_BOTTOM;
+                        *edges |= EDGE_BOTTOM;
+
+                return pane;
         }
 
-        *edges = found_edges;
-        return found;
+        return NULL;
 }
 
 /*
@@ -78,7 +77,7 @@ static unsigned int cursor_for_edges(unsigned int edges)
         return cursor_by_edges[edges & 15];
 }
 
-static unsigned int cursor_shape_at(int x, int y)
+static PURE unsigned int cursor_shape_at(int x, int y)
 {
         unsigned int edges;
 

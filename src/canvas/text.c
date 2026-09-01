@@ -124,8 +124,8 @@ static unsigned int text_line_next(const char *text, unsigned int length, unsign
         return stop;
 }
 
-static unsigned int text_line_count(const char *text, unsigned int length,
-                                    unsigned int columns, _Bool wrap)
+static PURE unsigned int text_line_count(const char *text, unsigned int length,
+                                         unsigned int columns, _Bool wrap)
 {
         unsigned int start = 0, lines = 0;
 

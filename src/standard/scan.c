@@ -1163,6 +1163,7 @@ static fn scan_store_whole(address_any into, positive length, positive value)
         worth of object and a double's worth of digits, and printf in this
         tree does not read the L at all.
 */
+#ifndef SCAN_DECIMAL_WIDE
 static fn scan_store_wide_decimal(address_any into, decimal value)
 {
         union {
@@ -1250,6 +1251,7 @@ static fn scan_store_wide_decimal(address_any into, decimal value)
         address_to (f128 address_to)into = (f128)value;
 #endif
 }
+#endif // !SCAN_DECIMAL_WIDE
 
 /*
         The three widths, each asking the parser that owns it.

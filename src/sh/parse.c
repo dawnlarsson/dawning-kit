@@ -519,7 +519,7 @@ fn parse_here_close();
 
 // Which delimiter the reader is waiting for, or nothing when it is waiting for
 // a command.
-string_address parse_here_open()
+PURE string_address parse_here_open()
 {
         if (here_filled >= here_wanted)
                 return null;

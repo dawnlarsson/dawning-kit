@@ -325,13 +325,13 @@ b32 stream_seek(stream address_to handle, bipolar offset, b32 whence);
 bipolar stream_tell(stream address_to handle);
 fn stream_rewind(stream address_to handle);
 b32 stream_flush(stream address_to handle);
-b32 stream_at_end(stream address_to handle);
-b32 stream_failed(stream address_to handle);
+PURE b32 stream_at_end(stream address_to handle);
+PURE b32 stream_failed(stream address_to handle);
 fn stream_clear_state(stream address_to handle);
 b32 stream_set_buffering(stream address_to handle, string_address buffer,
                          b32 mode, sized size);
 fn stream_set_buffer(stream address_to handle, string_address buffer);
-b32 stream_descriptor(stream address_to handle);
+PURE b32 stream_descriptor(stream address_to handle);
 b32 stream_get_byte(stream address_to handle);
 b32 stream_get_byte_standard(void);
 b32 stream_unget_byte(b32 byte, stream address_to handle);
@@ -1695,7 +1695,7 @@ fn stream_rewind(stream address_to handle)
         reason stream_refill separates zero from short is to make this
         answerable.
 */
-b32 stream_at_end(stream address_to handle)
+PURE b32 stream_at_end(stream address_to handle)
 {
         if (handle == null)
                 return 0;
@@ -1703,7 +1703,7 @@ b32 stream_at_end(stream address_to handle)
         return (handle->flags & STREAM_AT_END) != 0;
 }
 
-b32 stream_failed(stream address_to handle)
+PURE b32 stream_failed(stream address_to handle)
 {
         if (handle == null)
                 return 0;
@@ -1719,7 +1719,7 @@ fn stream_clear_state(stream address_to handle)
         handle->flags &= ~(STREAM_AT_END | STREAM_FAILED);
 }
 
-b32 stream_descriptor(stream address_to handle)
+PURE b32 stream_descriptor(stream address_to handle)
 {
         if (handle == null)
                 return -1;
@@ -1846,9 +1846,9 @@ fn rewind(stream address_to handle)
         __attribute__((alias("stream_rewind"), used));
 b32 fflush(stream address_to handle)
         __attribute__((alias("stream_flush"), used));
-b32 feof(stream address_to handle)
+PURE b32 feof(stream address_to handle)
         __attribute__((alias("stream_at_end"), used));
-b32 ferror(stream address_to handle)
+PURE b32 ferror(stream address_to handle)
         __attribute__((alias("stream_failed"), used));
 fn clearerr(stream address_to handle)
         __attribute__((alias("stream_clear_state"), used));
@@ -1856,7 +1856,7 @@ b32 setvbuf(stream address_to handle, string_address buffer, b32 mode, sized siz
         __attribute__((alias("stream_set_buffering"), used));
 fn setbuf(stream address_to handle, string_address buffer)
         __attribute__((alias("stream_set_buffer"), used));
-b32 fileno(stream address_to handle)
+PURE b32 fileno(stream address_to handle)
         __attribute__((alias("stream_descriptor"), used));
 b32 fgetc(stream address_to handle)
         __attribute__((alias("stream_get_byte"), used));

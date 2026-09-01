@@ -188,6 +188,12 @@ static fn scroll_up(unsigned int count)
 {
         if (region_top == 0 && region_bottom == ROWS)
         {
+                /* Canvas calls this with interrupts off. Beyond ROWS the
+                   visible result is already blank, so never let a hostile
+                   CSI count turn that critical section into a long loop. */
+                if (count > ROWS)
+                        count = ROWS;
+
                 while (count--)
                         ring_scroll();
 
@@ -676,17 +682,18 @@ static fn csi_final(unsigned int final)
         case 'A':
                 row = row > a ? row - a : 0;
                 break;
+        /* Compare against room left: a hostile CSI count can wrap row + a. */
         case 'B':
-                row = row + a < ROWS ? row + a : ROWS - 1;
+                row = a < ROWS - row ? row + a : ROWS - 1;
                 break;
         case 'C':
-                column = column + a < COLUMNS ? column + a : COLUMNS - 1;
+                column = a < COLUMNS - column ? column + a : COLUMNS - 1;
                 break;
         case 'D':
                 column = column > a ? column - a : 0;
                 break;
         case 'E':
-                row = row + a < ROWS ? row + a : ROWS - 1;
+                row = a < ROWS - row ? row + a : ROWS - 1;
                 column = 0;
                 break;
         case 'F':
@@ -1149,6 +1156,19 @@ static fn consume(unsigned int c)
 
         utf8_byte(c);
 }
+
+#ifdef KERNEL_MODE
+/* A pty is a stream, but printk records are unrelated messages. Do not let an
+   unfinished escape or UTF-8 sequence in attacker-controlled log text consume
+   later diagnostics. */
+static fn term_record_begin()
+{
+        in_escape = in_csi = in_string = false;
+        escape_intermediate = csi_private = string_escape = false;
+        parameter_count = 0;
+        utf8_left = 0;
+}
+#endif
 
 static fn cursor_hide()
 {

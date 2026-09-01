@@ -1118,27 +1118,12 @@ static stream address_to fmemopen(address_any bytes, sized size,
         The _unlocked family, which in a single-threaded library is the same
         family with a different spelling.
 
-        These exist in the wild for one reason: a program that has taken
-        flockfile itself, and is doing many small operations under it, wants
-        the per-call lock skipped. There is no per-call lock here, so each of
-        these is the plain entry and the compiler makes them identical.
+        There is no per-call stream lock, so the matching signatures below
+        are aliases of the plain entries. If stream.c gains locking, these
+        declarations become the lock-free bodies instead.
 
-        That is the right answer today and it stops being the right answer the
-        moment stream.c grows a lock, so it is written here as wrappers rather
-        than as #defines: when the locked versions gain a lock, these fifteen
-        lines are where the unlocked ones do not, and a #define would have to
-        be untangled instead of edited.
-
-        flockfile, funlockfile and ftrylockfile are the other half of the same
-        contract and are the same no-op for the same reason. What making them
-        real would cost is now a measured number rather than a guess: one lock
-        word in struct stream -- four bytes, and the struct has padding to
-        spend so it may cost nothing -- plus a take and a release around each
-        of the twenty entries stream.c exports, at the price src/test/lock.c
-        measures for an uncontended take-and-release pair. ftrylockfile
-        returning success when nothing was locked is what the standard
-        requires of a library with one thread; it is not a lie, there is
-        genuinely no contention.
+        flockfile and funlockfile are consequently no-ops, and ftrylockfile
+        succeeds: in a single-threaded library there is no contention.
 */
 static fn flockfile(stream address_to handle)
 {
@@ -1158,29 +1143,15 @@ static b32 ftrylockfile(stream address_to handle)
 }
 
 static b32 getc_unlocked(stream address_to handle)
-{
-        return stream_get_byte(handle);
-}
-
+        __attribute__((alias("stream_get_byte")));
 static b32 fgetc_unlocked(stream address_to handle)
-{
-        return stream_get_byte(handle);
-}
-
+        __attribute__((alias("stream_get_byte")));
 static b32 getchar_unlocked(void)
-{
-        return stream_get_byte_standard();
-}
-
+        __attribute__((alias("stream_get_byte_standard")));
 static b32 putc_unlocked(b32 byte, stream address_to handle)
-{
-        return stream_put_byte(byte, handle);
-}
-
+        __attribute__((alias("stream_put_byte")));
 static b32 fputc_unlocked(b32 byte, stream address_to handle)
-{
-        return stream_put_byte(byte, handle);
-}
+        __attribute__((alias("stream_put_byte")));
 
 static b32 putchar_unlocked(b32 byte)
 {
@@ -1188,52 +1159,27 @@ static b32 putchar_unlocked(b32 byte)
 }
 
 static b32 fputs_unlocked(string_address text, stream address_to handle)
-{
-        return stream_put_string(text, handle);
-}
-
+        __attribute__((alias("stream_put_string")));
 static string_address fgets_unlocked(string_address into, b32 limit,
                                      stream address_to handle)
-{
-        return stream_get_line(into, limit, handle);
-}
-
+        __attribute__((alias("stream_get_line")));
 static sized fread_unlocked(address_any into, sized size, sized count,
                             stream address_to handle)
-{
-        return stream_read(into, size, count, handle);
-}
-
+        __attribute__((alias("stream_read")));
 static sized fwrite_unlocked(address_any from, sized size, sized count,
                              stream address_to handle)
-{
-        return stream_write(from, size, count, handle);
-}
-
+        __attribute__((alias("stream_write")));
 static b32 fflush_unlocked(stream address_to handle)
-{
-        return stream_flush(handle);
-}
+        __attribute__((alias("stream_flush")));
 
-static b32 feof_unlocked(stream address_to handle)
-{
-        return stream_at_end(handle);
-}
-
-static b32 ferror_unlocked(stream address_to handle)
-{
-        return stream_failed(handle);
-}
-
+static PURE b32 feof_unlocked(stream address_to handle)
+        __attribute__((alias("stream_at_end")));
+static PURE b32 ferror_unlocked(stream address_to handle)
+        __attribute__((alias("stream_failed")));
 static fn clearerr_unlocked(stream address_to handle)
-{
-        stream_clear_state(handle);
-}
-
-static b32 fileno_unlocked(stream address_to handle)
-{
-        return stream_descriptor(handle);
-}
+        __attribute__((alias("stream_clear_state")));
+static PURE b32 fileno_unlocked(stream address_to handle)
+        __attribute__((alias("stream_descriptor")));
 
 /*
         open_memstream is deliberately not here.

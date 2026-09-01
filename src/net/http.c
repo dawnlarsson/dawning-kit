@@ -185,18 +185,20 @@ static string_address http_header(p8 address_to bytes, positive size,
         return null;
 }
 
-//      Appending, with the room checked once per piece rather than never.
-static positive http_add(p8 address_to into, positive used, positive room,
-                         string_address text)
+//      Append one request piece, refusing the whole request rather than
+//      silently sending a valid-looking prefix when the fixed buffer is full.
+static bool http_add(p8 address_to into, positive address_to used,
+                     positive room, string_address text)
 {
         positive length = string_length(text);
 
-        if (used + length + 1 > room)
-                return used;
+        if (address_to used > room || length > room - address_to used)
+                return false;
 
-        memory_copy(into + used, text, length);
+        memory_copy(into + address_to used, text, length);
+        address_to used += length;
 
-        return used + length;
+        return true;
 }
 
 /*
@@ -293,14 +295,19 @@ static bipolar http_get(p32 host, p16 port, string_address name,
                 p8 request[1024];
                 positive used = 0;
 
-                used = http_add(request, used, sizeof request, (string_address) "GET ");
-                used = http_add(request, used, sizeof request, path);
-                used = http_add(request, used, sizeof request,
-                                (string_address) " HTTP/1.0\r\nHost: ");
-                used = http_add(request, used, sizeof request, name);
-                used = http_add(request, used, sizeof request,
-                                (string_address) "\r\nUser-Agent: dawning\r\n"
-                                                 "Connection: close\r\n\r\n");
+                if (!http_add(request, address_of used, sizeof request,
+                              (string_address) "GET ") ||
+                    !http_add(request, address_of used, sizeof request, path) ||
+                    !http_add(request, address_of used, sizeof request,
+                              (string_address) " HTTP/1.0\r\nHost: ") ||
+                    !http_add(request, address_of used, sizeof request, name) ||
+                    !http_add(request, address_of used, sizeof request,
+                              (string_address) "\r\nUser-Agent: dawning\r\n"
+                                               "Connection: close\r\n\r\n"))
+                {
+                        status = HTTP_BAD_URL;
+                        goto done;
+                }
 
                 if (socket_send((b32)handle, request, used, 0, 0, 0) < 0)
                 {

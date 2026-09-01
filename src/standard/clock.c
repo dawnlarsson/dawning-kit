@@ -458,7 +458,7 @@ b32 gettimeofday(timeval address_to into, address_any zone)
 
 // Seconds between two points, as a decimal because the standard says so and
 // because the difference of two 64-bit times does not always fit in one.
-decimal difftime(time_t later, time_t earlier)
+CONST decimal difftime(time_t later, time_t earlier)
 {
         return (decimal)later - (decimal)earlier;
 }
