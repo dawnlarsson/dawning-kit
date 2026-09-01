@@ -298,29 +298,9 @@ static bool stdlib_environment_grow(void)
         return true;
 }
 
-/*
-        Is this entry's key exactly this name?
-
-        The key ends at the first equals, so string_first_of_or_end finds the
-        end of it in one vectorised scan and memory_compare answers the rest.
-        The shape this replaced walked the two strings a byte at a time and
-        stopped at the equals itself, which is the same answer reached by the
-        only means the library asks nobody to use.
-*/
-static bool stdlib_environment_is(string_address entry, string_address name,
-                                  positive length)
-{
-        string_address equals = string_first_of_or_end(entry, '=');
-
-        if ((positive)(equals - entry) != length || equals[0] != '=')
-                return false;
-
-        return memory_compare(entry, name, length) == 0;
-}
-
 //      The index of the entry whose key is exactly this name, or -1. It is
-//      the question above asked of every entry in turn, and it asks it
-//      through the same routine: the older spelling here compared first and
+//      library.common.c's NAME= question asked of every entry in turn. The
+//      older spelling here compared first and
 //      looked for the equals afterwards, which answers differently for a name
 //      that carries an equals of its own -- the very case this comment says
 //      can never be found -- and which reads `length` bytes of an entry whose
@@ -330,8 +310,8 @@ static PURE bipolar stdlib_environment_find(string_address name, positive length
         positive index;
 
         for (index = 0; index < stdlib_environment_count; index++)
-                if (stdlib_environment_is(stdlib_environment_vector[index],
-                                          name, length))
+                if (environment_key_is(stdlib_environment_vector[index],
+                                       name, length))
                         return (bipolar)index;
 
         return -1;
@@ -452,8 +432,8 @@ b32 unsetenv(string_address name)
 
         while (index < stdlib_environment_count)
         {
-                if (stdlib_environment_is(stdlib_environment_vector[index],
-                                          name, name_length))
+                if (environment_key_is(stdlib_environment_vector[index],
+                                       name, name_length))
                 {
                         //      Everything above the entry moves down one
                         //      place, the null that ends the vector included,
@@ -857,7 +837,9 @@ static fn stdlib_signal_unblock(b32 number)
                       (positive)address_of mask, 0, STDLIB_SIGNAL_SET_BYTES);
 }
 
-static fn stdlib_signal_default(b32 number)
+/* The raw default-action shape is shared by abort and namespace launchers;
+   it is four zero words on every supported kernel ABI. */
+static inline INLINE fn process_signal_default(b32 number)
 {
         positive action[4] = {0, 0, 0, 0};
 
@@ -879,7 +861,7 @@ DEAD_END fn abort(void)
         stdlib_signal_unblock(SIGABRT);
         stdlib_signal_raise(SIGABRT);
 
-        stdlib_signal_default(SIGABRT);
+        process_signal_default(SIGABRT);
         stdlib_signal_unblock(SIGABRT);
         stdlib_signal_raise(SIGABRT);
 

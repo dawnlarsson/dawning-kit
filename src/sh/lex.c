@@ -65,18 +65,6 @@ typedef struct
         line past it was refused, which a generated command list or one very
         long argument reaches without trying.
 */
-static lex_token address_to lex_tokens;
-static positive lex_token_room;
-static p8 address_to lex_text;
-static positive lex_text_room;
-static positive lex_used;
-static b32 lex_count;
-
-/*
-        A nested source gets empty lexer storage of its own. Keeping the outer
-        blocks rather than copying them preserves every token address while
-        eval or dot grows and frees the nested blocks independently.
-*/
 typedef struct
 {
         lex_token address_to tokens;
@@ -87,24 +75,29 @@ typedef struct
         b32 count;
 } lex_frame;
 
+/*
+        A nested source gets empty lexer storage of its own. Keeping the outer
+        blocks rather than copying them preserves every token address while
+        eval or dot grows and frees the nested blocks independently. Current
+        and saved state have one shape, so a new store cannot be omitted from
+        one side of the transition.
+*/
+static lex_frame lex_context;
+
+#define lex_tokens lex_context.tokens
+#define lex_token_room lex_context.token_room
+#define lex_text lex_context.text
+#define lex_text_room lex_context.text_room
+#define lex_used lex_context.used
+#define lex_count lex_context.count
+
 fn parse_nest_enter();
 fn parse_nest_leave();
 
 static fn lex_nest_enter(lex_frame address_to frame)
 {
-        frame->tokens = lex_tokens;
-        frame->token_room = lex_token_room;
-        frame->text = lex_text;
-        frame->text_room = lex_text_room;
-        frame->used = lex_used;
-        frame->count = lex_count;
-
-        lex_tokens = null;
-        lex_token_room = 0;
-        lex_text = null;
-        lex_text_room = 0;
-        lex_used = 0;
-        lex_count = 0;
+        address_to frame = lex_context;
+        lex_context = (lex_frame){0};
 
         parse_nest_enter();
 }
@@ -119,12 +112,7 @@ static fn lex_nest_leave(lex_frame address_to frame)
         if (lex_text)
                 memory_free(lex_text, lex_text_room);
 
-        lex_tokens = frame->tokens;
-        lex_token_room = frame->token_room;
-        lex_text = frame->text;
-        lex_text_room = frame->text_room;
-        lex_used = frame->used;
-        lex_count = frame->count;
+        lex_context = address_to frame;
 }
 
 //      Room for want bytes of token text, moving what is already handed out

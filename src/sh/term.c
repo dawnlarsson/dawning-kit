@@ -342,9 +342,8 @@ static fn emit(unsigned int byte)
         if (to_shell_length < TO_SHELL_MAX)
                 to_shell[to_shell_length++] = (p8)byte;
 #else
-        if (memory_reserve((address_any address_to)address_of to_shell,
-                           address_of to_shell_room, to_shell_length,
-                           to_shell_length + 1, sizeof(*to_shell), 64))
+        if (array_store_reserve(to_shell, to_shell_room, to_shell_length,
+                                to_shell_length + 1, 64))
                 to_shell[to_shell_length++] = (p8)byte;
 #endif
 }
@@ -361,9 +360,8 @@ static fn emit_bytes(address_any data, positive length)
         to_shell_length += take;
 #else
         if (!length ||
-            !memory_reserve((address_any address_to)address_of to_shell,
-                            address_of to_shell_room, to_shell_length,
-                            to_shell_length + length, sizeof(*to_shell), 64))
+            !array_store_reserve(to_shell, to_shell_room, to_shell_length,
+                                 to_shell_length + length, 64))
                 return;
 
         memory_copy_apart(to_shell + to_shell_length, data, length);
@@ -1476,9 +1474,8 @@ static fn line_hide()
 
 static fn line_insert(unsigned int character)
 {
-        if (!memory_reserve((address_any address_to)address_of line,
-                            address_of line_room, line_length,
-                            line_length + 1, sizeof(*line), 64))
+        if (!array_store_reserve(line, line_room, line_length,
+                                 line_length + 1, 64))
                 return;
 
         memory_copy(line + line_point + 1, line + line_point,
@@ -1521,9 +1518,7 @@ static fn line_from_history()
                               ? history_length[history_at % LINE_HISTORY]
                               : history_held_length;
 
-        if (!memory_reserve((address_any address_to)address_of line,
-                            address_of line_room, line_length, length,
-                            sizeof(*line), 64))
+        if (!array_store_reserve(line, line_room, line_length, length, 64))
                 return;
 
         memory_copy_apart(line, (address_any)from, length);
@@ -1556,9 +1551,8 @@ static fn line_remember()
 
         slot = history_count % LINE_HISTORY;
 
-        if (!memory_reserve((address_any address_to)(history + slot),
-                            history_room + slot, history_length[slot],
-                            line_length, sizeof(*history[slot]), 64))
+        if (!array_store_reserve(history[slot], history_room[slot],
+                                 history_length[slot], line_length, 64))
                 return;
 
         memory_copy_apart(history[slot], line, line_length);
@@ -1666,10 +1660,8 @@ static b32 line_key(unsigned int character, unsigned int code)
                         Ctrl-L copied whatever happened to be at row zero and
                         restored two command characters as the prompt.
                 */
-                if (memory_reserve(
-                        (address_any address_to)address_of line_prompt,
-                        address_of line_prompt_room, line_prompt_length, prompt,
-                        sizeof(*line_prompt), 64))
+                if (array_store_reserve(line_prompt, line_prompt_room,
+                                        line_prompt_length, prompt, 64))
                 {
                         memory_copy_apart(line_prompt, row_cells(row),
                                           prompt * sizeof(*line_prompt));
@@ -1713,11 +1705,9 @@ static b32 line_key(unsigned int character, unsigned int code)
 
                 if (history_at == history_count)
                 {
-                        if (!memory_reserve(
-                                (address_any address_to)address_of history_held,
-                                address_of history_held_room,
-                                history_held_length, line_length,
-                                sizeof(*history_held), 64))
+                        if (!array_store_reserve(
+                                history_held, history_held_room,
+                                history_held_length, line_length, 64))
                                 return true;
 
                         memory_copy_apart(history_held, line, line_length);

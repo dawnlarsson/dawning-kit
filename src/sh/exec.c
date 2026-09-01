@@ -2385,34 +2385,6 @@ static COLD fn conditional_nounset_fatal()
         system_call_1(syscall(exit_group), 1);
 }
 
-static fn conditional_regex_program(regex_program address_to saved)
-{
-        saved->code = regex_code;
-        saved->sets = regex_sets;
-        saved->first = regex_first;
-        saved->last = regex_last;
-        saved->literal = regex_literal;
-        saved->literal_length = regex_literal_length;
-        saved->length = regex_length_code;
-        saved->groups = regex_group_count;
-        saved->extended = regex_extended;
-        saved->icase = regex_icase;
-        saved->policy = regex_policy;
-        saved->first_known = regex_first_known;
-        saved->last_known = regex_last_known;
-        saved->anchored = regex_anchored;
-        saved->alternates = regex_alternates;
-        saved->slot_used = regex_slot_used;
-        saved->loop_count = regex_loop_count;
-
-        if (regex_loop_count)
-                memory_copy_apart(saved->loops, regex_loop_list,
-                                 (positive)(regex_loop_count < REGEX_LOOPS_KEPT
-                                                ? regex_loop_count
-                                                : REGEX_LOOPS_KEPT) *
-                                     sizeof(saved->loops[0]));
-}
-
 /*
         The regex engine is shared by grep, sed, AWK, and the shell. A [[ =~ ]]
         compile is transient: restore both the selected program and every pool
@@ -2441,11 +2413,11 @@ static bool conditional_regex_match(string_address text, string_address pattern,
         p8 literal[REGEX_LITERAL_MAX];
         bool matched = false;
 
-        conditional_regex_program(address_of saved);
+        regex_capture(address_of saved);
         memory_copy_apart(slots, regex_slots, sizeof(slots));
-        memory_copy_apart(first, saved.first, sizeof(first));
-        memory_copy_apart(last, saved.last, sizeof(last));
-        memory_copy_apart(literal, saved.literal, sizeof(literal));
+        memory_copy_apart(first, saved.state.first, sizeof(first));
+        memory_copy_apart(last, saved.state.last, sizeof(last));
+        memory_copy_apart(literal, saved.state.literal, sizeof(literal));
 
         address_to valid = regex_compile(pattern, true, false, false,
                                          REGEX_POLICY_DEFAULT);
@@ -2456,9 +2428,9 @@ static bool conditional_regex_match(string_address text, string_address pattern,
         regex_pool_used = code_mark;
         regex_pool_sets = set_mark;
         regex_first_used = first_mark;
-        memory_copy_apart(saved.first, first, sizeof(first));
-        memory_copy_apart(saved.last, last, sizeof(last));
-        memory_copy_apart(saved.literal, literal, sizeof(literal));
+        memory_copy_apart(saved.state.first, first, sizeof(first));
+        memory_copy_apart(saved.state.last, last, sizeof(last));
+        memory_copy_apart(saved.state.literal, literal, sizeof(literal));
         regex_select(address_of saved);
         regex_set_count = set_count;
         regex_escapes = escapes;
@@ -2650,43 +2622,30 @@ static bool conditional_negation()
         return conditional_primary();
 }
 
-static bool conditional_conjunction()
-{
-        bool value = conditional_negation();
-
-        while (conditional_is("&&"))
-        {
-                bool held = conditional_active;
-                bool other;
-
-                conditional_at++;
-                conditional_active = held && value;
-                other = conditional_negation();
-                conditional_active = held;
-                value = value && other;
+#define CONDITIONAL_LOGICAL_LEVEL(name, lower, spelling, wanted, operation)  \
+        static bool name()                                                  \
+        {                                                                    \
+                bool value = lower();                                       \
+                                                                             \
+                while (conditional_is(spelling))                            \
+                {                                                            \
+                        bool held = conditional_active;                      \
+                                                                             \
+                        conditional_at++;                                   \
+                        conditional_active = held && (wanted);              \
+                        bool other = lower();                               \
+                        conditional_active = held;                          \
+                        value = value operation other;                       \
+                }                                                            \
+                                                                             \
+                return value;                                                \
         }
 
-        return value;
-}
-
-static bool conditional_expression()
-{
-        bool value = conditional_conjunction();
-
-        while (conditional_is("||"))
-        {
-                bool held = conditional_active;
-                bool other;
-
-                conditional_at++;
-                conditional_active = held && !value;
-                other = conditional_conjunction();
-                conditional_active = held;
-                value = value || other;
-        }
-
-        return value;
-}
+CONDITIONAL_LOGICAL_LEVEL(conditional_conjunction, conditional_negation,
+                          "&&", value, &&)
+CONDITIONAL_LOGICAL_LEVEL(conditional_expression, conditional_conjunction,
+                          "||", !value, ||)
+#undef CONDITIONAL_LOGICAL_LEVEL
 
 static b32 exec_conditional(b32 index)
 {

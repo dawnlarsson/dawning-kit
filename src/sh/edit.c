@@ -271,7 +271,7 @@ static bool edit_room(p8 address_to address_to held, positive address_to room,
         return true;
 }
 
-static fn edit_say(string_address text, positive length)
+static fn edit_say(address_any text, positive length)
 {
         if (!length)
                 return;
@@ -294,13 +294,6 @@ static fn edit_say_byte(p8 character)
         edit_say(address_of character, 1);
 }
 
-static fn edit_say_number(positive value)
-{
-        p8 digits[32];
-
-        edit_say(digits, positive_into(digits, value));
-}
-
 //      Where the next character written goes, in the terminal's own one based
 //      counting. Everything the renderer draws is placed rather than assumed,
 //      because a renderer that only ever moves relatively has no way back from
@@ -308,9 +301,9 @@ static fn edit_say_number(positive value)
 static fn edit_say_at(positive screen_row, positive screen_column)
 {
         edit_say_text((string_address)ANSI);
-        edit_say_number(screen_row + 1);
+        positive_to_string(edit_say, screen_row + 1);
         edit_say_byte(';');
-        edit_say_number(screen_column + 1);
+        positive_to_string(edit_say, screen_column + 1);
         edit_say_byte('H');
 }
 
@@ -499,21 +492,13 @@ static fn edit_cursors_shift(struct edit_place from, struct edit_place to,
 
 //      The caret and the anchor of one cursor, as a pair of places, and the
 //      selection they make in the order the file has them in.
-static struct edit_place edit_cursor_caret(positive at)
-{
-        struct edit_place place = {edit_cursors[at].line,
-                                   edit_cursors[at].column};
-
-        return place;
-}
-
-static struct edit_place edit_cursor_anchor(positive at)
-{
-        struct edit_place place = {edit_cursors[at].anchor_line,
-                                   edit_cursors[at].anchor_column};
-
-        return place;
-}
+#define edit_cursor_place_of(at, row, column)                                \
+        ({ positive _cursor = (at);                                         \
+           (struct edit_place){edit_cursors[_cursor].row,                    \
+                               edit_cursors[_cursor].column}; })
+#define edit_cursor_caret(at) edit_cursor_place_of(at, line, column)
+#define edit_cursor_anchor(at)                                              \
+        edit_cursor_place_of(at, anchor_line, anchor_column)
 
 static bool edit_cursor_has_selection(positive at)
 {

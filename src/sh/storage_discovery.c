@@ -46,9 +46,7 @@ typedef struct
 
 typedef struct
 {
-        p8 address_to text;
-        positive text_room;
-        positive text_used;
+        byte_store text;
         storage_mount address_to entry;
         positive entry_room;
         positive count;
@@ -68,9 +66,7 @@ typedef struct
 
 typedef struct
 {
-        p8 address_to text;
-        positive text_room;
-        positive text_used;
+        byte_store text;
         storage_fstab address_to entry;
         positive entry_room;
         positive count;
@@ -92,9 +88,7 @@ static fn storage_write_two(writer output, string_address first,
 
 /* Read the whole file.  A short read is not EOF for procfs, and one more byte
    is always reserved for the terminator rather than borrowed from the file. */
-static bool storage_read_all(string_address path, p8 address_to address_to text,
-                             positive address_to room,
-                             positive address_to used)
+static bool storage_read_all(string_address path, byte_store address_to text)
 {
         bipolar handle = system_call_4(syscall(openat), AT_FDCWD,
                                        (positive)path,
@@ -103,29 +97,28 @@ static bool storage_read_all(string_address path, p8 address_to address_to text,
         if (handle < 0)
                 return false;
 
-        address_to used = 0;
+        text->used = 0;
 
         while (true)
         {
                 positive want;
 
-                if (*used > positive_max - 4097)
+                if (text->used > positive_max - 4097)
                 {
                         system_call_1(syscall(close), (positive)handle);
                         return false;
                 }
 
-                want = *used + 4097;
+                want = text->used + 4097;
 
-                if (!memory_reserve((address_any address_to)text, room,
-                                    *used, want, 1, 4096))
+                if (!byte_store_reserve(text, want, 4096))
                 {
                         system_call_1(syscall(close), (positive)handle);
                         return false;
                 }
 
                 bipolar got = system_read_retry((positive)handle,
-                                                *text + *used, 4096);
+                                                text->bytes + text->used, 4096);
 
                 if (got < 0)
                 {
@@ -136,23 +129,20 @@ static bool storage_read_all(string_address path, p8 address_to address_to text,
                 if (!got)
                         break;
 
-                address_to used += (positive)got;
+                text->used += (positive)got;
         }
 
         system_call_1(syscall(close), (positive)handle);
-        (*text)[*used] = end;
+        text->bytes[text->used] = end;
         return true;
 }
 
 #define STORAGE_TABLE_RELEASE(name, type)                                    \
         fn name(type address_to table)                                       \
         {                                                                    \
-                memory_release((address_any address_to)address_of table->text, \
-                               address_of table->text_room,                   \
-                               address_of table->text_used, 1);               \
-                memory_release((address_any address_to)address_of table->entry, \
-                               address_of table->entry_room,                  \
-                               address_of table->count, sizeof(table->entry[0])); \
+                byte_store_release(address_of table->text);                  \
+                array_store_release(table->entry, table->entry_room,         \
+                                    table->count);                            \
         }
 
 STORAGE_TABLE_RELEASE(storage_mount_table_release, storage_mount_table)
@@ -202,6 +192,27 @@ static fn storage_unescape(string_address field)
         }
 
         *write = end;
+}
+
+/* Both kernel tables are newline records over the same owned byte store.
+   Return one mutable, terminated record and advance the caller's cursor. */
+static inline INLINE p8 address_to storage_line_next(
+    p8 address_to address_to cursor, p8 address_to limit)
+{
+        p8 address_to line = address_to cursor;
+        p8 address_to newline;
+
+        if (line >= limit)
+                return null;
+
+        newline = (p8 address_to)memory_first_of(
+            line, '\n', (positive)(limit - line));
+        address_to cursor = newline ? newline + 1 : limit;
+
+        if (newline)
+                address_to newline = end;
+
+        return line;
 }
 
 /* Return one whitespace-delimited field and terminate it in place. */
@@ -267,9 +278,8 @@ static bool storage_mount_line(storage_mount_table address_to table,
             !string_digits_exact(first[1], address_of parent))
                 return false;
 
-        if (!memory_reserve((address_any address_to)address_of table->entry,
-                            address_of table->entry_room, table->count,
-                            table->count + 1, sizeof(storage_mount), 32))
+        if (!array_store_reserve(table->entry, table->entry_room,
+                                 table->count, table->count + 1, 32))
                 return false;
 
         storage_unescape(first[3]);
@@ -300,27 +310,19 @@ bool storage_mount_table_load(storage_mount_table address_to table,
         memory_fill(table, 0, sizeof(*table));
 
         if (!storage_read_all((string_address) "/proc/self/mountinfo",
-                              address_of table->text,
-                              address_of table->text_room,
-                              address_of table->text_used))
+                              address_of table->text))
         {
                 storage_write_text(diagnostic,
                                    (string_address) "cannot read /proc/self/mountinfo\n");
                 return false;
         }
 
-        p8 address_to line = table->text;
-        p8 address_to limit = table->text + table->text_used;
+        p8 address_to cursor = table->text.bytes;
+        p8 address_to limit = cursor + table->text.used;
+        p8 address_to line;
 
-        while (line < limit)
+        while ((line = storage_line_next(address_of cursor, limit)))
         {
-                p8 address_to newline = (p8 address_to)memory_first_of(
-                    line, '\n', (positive)(limit - line));
-                p8 address_to next = newline ? newline + 1 : limit;
-
-                if (newline)
-                        *newline = end;
-
                 if (*line && !storage_mount_line(table, line))
                 {
                         storage_write_text(diagnostic,
@@ -328,8 +330,6 @@ bool storage_mount_table_load(storage_mount_table address_to table,
                         storage_mount_table_release(table);
                         return false;
                 }
-
-                line = next;
         }
 
         return true;
@@ -431,9 +431,7 @@ bool storage_fstab_table_load(storage_fstab_table address_to table,
 {
         memory_fill(table, 0, sizeof(*table));
 
-        if (!storage_read_all(path, address_of table->text,
-                              address_of table->text_room,
-                              address_of table->text_used))
+        if (!storage_read_all(path, address_of table->text))
         {
                 if (!missing_ok)
                 {
@@ -445,22 +443,17 @@ bool storage_fstab_table_load(storage_fstab_table address_to table,
                 return missing_ok;
         }
 
-        p8 address_to line = table->text;
-        p8 address_to limit = table->text + table->text_used;
+        p8 address_to cursor = table->text.bytes;
+        p8 address_to limit = cursor + table->text.used;
+        p8 address_to line;
         positive line_number = 0;
 
-        while (line < limit)
+        while ((line = storage_line_next(address_of cursor, limit)))
         {
-                p8 address_to newline = (p8 address_to)memory_first_of(
-                    line, '\n', (positive)(limit - line));
-                p8 address_to next = newline ? newline + 1 : limit;
                 string_address fields[7];
                 positive count;
 
                 line_number++;
-
-                if (newline)
-                        *newline = end;
 
                 count = storage_fstab_fields(line, fields, 7);
 
@@ -478,14 +471,12 @@ bool storage_fstab_table_load(storage_fstab_table address_to table,
                                             (string_address) " -- ignored\n");
                                 }
                                 table->malformed = true;
-                                line = next;
                                 continue;
                         }
 
-                        if (!memory_reserve(
-                                (address_any address_to)address_of table->entry,
-                                address_of table->entry_room, table->count,
-                                table->count + 1, sizeof(storage_fstab), 32))
+                        if (!array_store_reserve(
+                                table->entry, table->entry_room, table->count,
+                                table->count + 1, 32))
                         {
                                 storage_fstab_table_release(table);
                                 return false;
@@ -504,8 +495,6 @@ bool storage_fstab_table_load(storage_fstab_table address_to table,
                                                          (string_address) "noauto"),
                         };
                 }
-
-                line = next;
         }
 
         return true;
@@ -1483,8 +1472,7 @@ static p8 address_to storage_fd_path(bipolar handle, positive address_to room)
 {
         p8 name[64];
         p8 number[32];
-        p8 address_to path = null;
-        positive path_room = 0;
+        byte_store path = {0};
         positive used = positive_into_string(number, (positive)handle);
 
         memory_copy_apart(name, "/proc/self/fd/", 14);
@@ -1492,33 +1480,33 @@ static p8 address_to storage_fd_path(bipolar handle, positive address_to room)
 
         while (true)
         {
-                positive want = path_room ? path_room * 2 : 256;
+                positive want = path.room ? path.room * 2 : 256;
 
-                if (want <= path_room ||
-                    !memory_reserve((address_any address_to)address_of path,
-                                    address_of path_room, 0, want, 1, 256))
+                if (want <= path.room ||
+                    !byte_store_reserve(address_of path, want, 256))
                 {
-                        memory_release((address_any address_to)address_of path,
-                                       address_of path_room, room, 1);
+                        byte_store_release(address_of path);
+                        address_to room = 0;
                         return null;
                 }
 
                 bipolar got = system_call_4(syscall(readlinkat), AT_FDCWD,
-                                             (positive)name, (positive)path,
-                                             path_room - 1);
+                                             (positive)name,
+                                             (positive)path.bytes,
+                                             path.room - 1);
 
                 if (got < 0)
                 {
-                        memory_release((address_any address_to)address_of path,
-                                       address_of path_room, room, 1);
+                        byte_store_release(address_of path);
+                        address_to room = 0;
                         return null;
                 }
 
-                if ((positive)got < path_room - 1)
+                if ((positive)got < path.room - 1)
                 {
-                        path[got] = end;
-                        address_to room = path_room;
-                        return path;
+                        path.bytes[got] = end;
+                        address_to room = path.room;
+                        return path.bytes;
                 }
         }
 }

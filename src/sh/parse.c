@@ -162,9 +162,6 @@ static positive parse_kept_used;
 #define PARSE_INCOMPLETE 1
 #define PARSE_SYNTAX 2
 
-static b32 parse_position;
-static b32 parse_state;
-
 /*
         Where this parse starts, which is not always the beginning.
 
@@ -173,11 +170,32 @@ static b32 parse_state;
         from where the outer one stopped and gives that back when it is done,
         rather than from zero over the top of what is still in use.
 */
-static b32 parse_node_base = 1;
-static b32 parse_word_base;
-static b32 parse_redirect_base;
-static positive parse_token_base;
-static shell_mark parse_text_base;
+typedef struct
+{
+        b32 node, word, redirect, position, state;
+        positive token;
+        shell_mark token_text;
+        b32 wanted, filled, taken;
+        positive used, names_used;
+} parse_frame;
+
+/* Live marks and saved marks intentionally have one shape. One assignment is
+   the complete nest transition, so future state cannot drift between entry
+   and return. */
+static parse_frame parse_context = {.node = 1};
+
+#define parse_node_base parse_context.node
+#define parse_word_base parse_context.word
+#define parse_redirect_base parse_context.redirect
+#define parse_position parse_context.position
+#define parse_state parse_context.state
+#define parse_token_base parse_context.token
+#define parse_text_base parse_context.token_text
+#define here_wanted parse_context.wanted
+#define here_filled parse_context.filled
+#define here_taken parse_context.taken
+#define here_used parse_context.used
+#define here_names_used parse_context.names_used
 
 /*
         Here-documents, which arrive after the line that asked for them.
@@ -202,15 +220,10 @@ typedef struct
 
 static here_document address_to here_documents;
 static positive here_document_room;
-static b32 here_wanted;
-static b32 here_filled;
-static b32 here_taken;
 static p8 address_to here_text;
 static positive here_text_room;
-static positive here_used;
 static p8 address_to here_names;
 static positive here_names_room;
-static positive here_names_used;
 
 /*
         A line the language is not finished with.
@@ -254,15 +267,6 @@ fn parse_reset()
         nesting costs a few words and not a copy of the arrays. The stack is
         here rather than at the caller because its shape is nobody else's.
 */
-typedef struct
-{
-        b32 node, word, redirect, position, state;
-        positive token;
-        shell_mark token_text;
-        b32 wanted, filled, taken;
-        positive used, names_used;
-} parse_frame;
-
 static parse_frame address_to parse_frames;
 static positive parse_frame_room;
 static b32 parse_nest_depth;
@@ -281,18 +285,7 @@ fn parse_nest_enter()
 
         frame = parse_frames + parse_nest_depth++;
 
-        frame->node = parse_node_base;
-        frame->word = parse_word_base;
-        frame->redirect = parse_redirect_base;
-        frame->token = parse_token_base;
-        frame->token_text = parse_text_base;
-        frame->position = parse_position;
-        frame->state = parse_state;
-        frame->wanted = here_wanted;
-        frame->filled = here_filled;
-        frame->taken = here_taken;
-        frame->used = here_used;
-        frame->names_used = here_names_used;
+        address_to frame = parse_context;
 
         parse_node_base = parse_node_used;
         parse_word_base = parse_word_used;
@@ -328,18 +321,7 @@ fn parse_nest_leave()
         parse_token_count = parse_token_base;
         shell_store_rewind(address_of parse_store, parse_text_base);
 
-        parse_node_base = frame->node;
-        parse_word_base = frame->word;
-        parse_redirect_base = frame->redirect;
-        parse_token_base = frame->token;
-        parse_text_base = frame->token_text;
-        parse_position = frame->position;
-        parse_state = frame->state;
-        here_wanted = frame->wanted;
-        here_filled = frame->filled;
-        here_taken = frame->taken;
-        here_used = frame->used;
-        here_names_used = frame->names_used;
+        parse_context = address_to frame;
 }
 
 // What a child of this shell has to know about being one. Declared here and

@@ -424,6 +424,13 @@ static _Bool rects_overlap(int ax, int ay, int aw, int ah,
         return ax < bx + bw && bx < ax + aw && ay < by + bh && by < ay + ah;
 }
 
+static inline _Bool point_in_rect(int x, int y, int width, int height,
+                                  int point_x, int point_y)
+{
+        return point_x >= x && point_x < x + width &&
+               point_y >= y && point_y < y + height;
+}
+
 // Everything the compositor draws for itself, in device pixels.
 #define canvas_title (WINDOW_TITLE * (int)desktop.scale)
 #define canvas_border (2 * (int)desktop.scale)
@@ -442,24 +449,12 @@ static void pane_frame(struct pane *pane, int *x, int *y, int *w, int *h)
         *h = pane->height + title + border * 3;
 }
 
-static _Bool pane_titlebar_holds(struct pane *pane, int x, int y)
-{
-        return x >= pane->x && x < pane->x + pane->width &&
-               y >= pane->y && y < pane->y + canvas_title;
-}
-
 // Which edges of a window's frame a point is close enough to take hold of.
 #define EDGE_LEFT 1u
 #define EDGE_RIGHT 2u
 #define EDGE_TOP 4u
 #define EDGE_BOTTOM 8u
 #define EDGE_GRIP 6
-
-static _Bool output_holds(struct output *output, int x, int y)
-{
-        return x >= output->x && x < output->x + (int)output->width &&
-               y >= output->y && y < output->y + (int)output->height;
-}
 
 // The first format in the plane's own order that is one of the two wanted.
 static PURE u32 canvas_plane_pick_format(struct drm_plane *plane, u32 first, u32 second)

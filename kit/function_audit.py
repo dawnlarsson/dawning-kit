@@ -35,6 +35,7 @@ GENERATORS = {
     ('src/sh/awk.c', 'AWK_EVALUATOR'): ('{}',),
     ('src/sh/expand.c', 'ARITH_BIT_LEVEL'): ('{}',),
     ('src/sh/expand.c', 'ARITH_LOGICAL_LEVEL'): ('{}',),
+    ('src/sh/exec.c', 'CONDITIONAL_LOGICAL_LEVEL'): ('{}',),
     ('src/sh/builtin.c', 'STORAGE_ADAPTER'):
         ('shell_{}', 'storage_program_{}'),
     ('src/sh/builtin.c', 'SHELL_ASSIGNER'): ('{}',),
@@ -44,6 +45,7 @@ GENERATORS = {
     ('src/standard/process.c', 'PROCESS_EXECL'): ('{}',),
     ('src/standard/error.c', 'ERROR_OPEN'): ('{}',),
     ('src/standard/error.c', 'ERROR_ENTRY'): ('{}',),
+    ('src/standard/error.c', 'ERROR_ID'): ('{}',),
     ('src/standard/error.c', 'var_list_entry'): ('{}',),
     ('src/standard/format.c', 'var_list_entry'): ('{}',),
     ('src/standard/scan.c', 'var_list_entry'): ('{}',),

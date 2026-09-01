@@ -201,12 +201,6 @@ static void resize_move(int x, int y)
         pane_reshape(pane, nx, ny, nw, nh);
 }
 
-static _Bool pane_bar_holds(const struct pane_bar_geometry *bar, int x, int y)
-{
-        return x >= bar->x && x < bar->x + bar->width &&
-               y >= bar->y && y < bar->y + bar->height;
-}
-
 /*
         The bar under the hand, in rows.
 
@@ -271,7 +265,9 @@ static void pane_maximize(struct pane *pane, int at_x, int at_y)
         // monitor. Keep the index in sync so fullscreen requests agree later.
         list_for_each_entry(candidate, &desktop.outputs, link)
         {
-                if (output_holds(candidate, at_x, at_y))
+                if (point_in_rect(candidate->x, candidate->y,
+                                  (int)candidate->width,
+                                  (int)candidate->height, at_x, at_y))
                 {
                         output = candidate;
                         display = index;
@@ -362,7 +358,8 @@ static void drag_press(int x, int y)
                 desktop.press_ns = now;
 
                 if (again && (pane->style & WINDOW_FRAME) &&
-                    pane_titlebar_holds(pane, x, y))
+                    point_in_rect(pane->x, pane->y, pane->width,
+                                  canvas_title, x, y))
                 {
                         // Cleared, so a third click is a first one again
                         // rather than the window flickering under a hand that
@@ -383,7 +380,8 @@ static void drag_press(int x, int y)
                 pixels further in, and there is bar left over on the inside to
                 grab. That is why the bar is ten and not six.
         */
-        if (!edges && pane_bar(pane, &bar) && pane_bar_holds(&bar, x, y))
+        if (!edges && pane_bar(pane, &bar) &&
+            point_in_rect(bar.x, bar.y, bar.width, bar.height, x, y))
         {
                 int thumb_y = bar.y + bar.thumb_at;
 
@@ -406,7 +404,9 @@ static void drag_press(int x, int y)
                 desktop.resize_w = pane->width;
                 desktop.resize_h = pane->height;
         }
-        else if ((pane->style & WINDOW_FRAME) && pane_titlebar_holds(pane, x, y))
+        else if ((pane->style & WINDOW_FRAME) &&
+                 point_in_rect(pane->x, pane->y, pane->width,
+                               canvas_title, x, y))
         {
                 if (pane->maximized)
                         pane_restore_for_drag(pane, x, y);

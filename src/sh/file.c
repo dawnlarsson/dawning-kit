@@ -167,54 +167,57 @@ fn file_written(string_address text, bool zero)
 
 // Modes -----------------------------------------------------
 
+/* Linux deliberately gives d_type the same low nibble that st_mode carries
+   in bits 12..15. One sparse schema therefore drives stat's letter/name,
+   find's d_type and -type mappings, and ls's classification and colours. */
+typedef struct
+{
+        string_address name;
+        string_address colour_key;
+        string_address colour_fallback;
+        p8 letter;
+        p8 mark;
+} file_kind_descriptor;
+
+#define FILE_KIND_ROWS(X)                                                   \
+        X(PIPE,      'p', '|', "fifo",                   "pi", "33")       \
+        X(CHARACTER, 'c',  0,  "character special file", "cd", "33;01")    \
+        X(DIRECTORY, 'd', '/', "directory",              0,    0)           \
+        X(BLOCK,     'b',  0,  "block special file",     "bd", "33;01")    \
+        X(FILE,      'f',  0,  "regular file",           0,    0)           \
+        X(LINK,      'l', '@', "symbolic link",          0,    0)           \
+        X(SOCKET,    's', '=', "socket",                 "so", "01;35")
+
+#define FILE_KIND_DESCRIPTOR(kind, letter, mark, name, colour, fallback)    \
+        [MODE_##kind >> 12] = {(string_address)name,                         \
+                               (string_address)colour,                       \
+                               (string_address)fallback, letter, mark},
+static const file_kind_descriptor file_kinds[16] = {
+    FILE_KIND_ROWS(FILE_KIND_DESCRIPTOR)};
+#undef FILE_KIND_DESCRIPTOR
+
+#define FILE_KIND_LETTER(kind, letter, mark, name, colour, fallback)        \
+        [letter] = MODE_##kind >> 12,
+static const p8 file_kind_from_letter[128] = {
+    FILE_KIND_ROWS(FILE_KIND_LETTER)};
+#undef FILE_KIND_LETTER
+#undef FILE_KIND_ROWS
+
+#define file_kind_of(mode)                                                   \
+        (address_of file_kinds[((mode) & MODE_FORMAT) >> 12])
+
 CONST p8 file_kind_letter(positive mode)
 {
-        positive kind = mode & MODE_FORMAT;
+        const file_kind_descriptor address_to kind = file_kind_of(mode);
 
-        if (kind == MODE_DIRECTORY)
-                return 'd';
-
-        if (kind == MODE_LINK)
-                return 'l';
-
-        if (kind == MODE_CHARACTER)
-                return 'c';
-
-        if (kind == MODE_BLOCK)
-                return 'b';
-
-        if (kind == MODE_PIPE)
-                return 'p';
-
-        if (kind == MODE_SOCKET)
-                return 's';
-
-        return '-';
+        return kind->name && kind->letter != 'f' ? kind->letter : '-';
 }
 
 CONST RETURNS_NONNULL string_address file_kind_name(positive mode)
 {
-        positive kind = mode & MODE_FORMAT;
+        string_address name = file_kind_of(mode)->name;
 
-        if (kind == MODE_DIRECTORY)
-                return (string_address) "directory";
-
-        if (kind == MODE_LINK)
-                return (string_address) "symbolic link";
-
-        if (kind == MODE_CHARACTER)
-                return (string_address) "character special file";
-
-        if (kind == MODE_BLOCK)
-                return (string_address) "block special file";
-
-        if (kind == MODE_PIPE)
-                return (string_address) "fifo";
-
-        if (kind == MODE_SOCKET)
-                return (string_address) "socket";
-
-        return (string_address) "regular file";
+        return name ? name : file_kinds[MODE_FILE >> 12].name;
 }
 
 static inline INLINE CONST p64 file_device_key(p32 major, p32 minor)
@@ -802,47 +805,22 @@ static bool file_account_cached_name(positive which, positive id,
 
 // Time ------------------------------------------------------
 
-/*
-        Days since the epoch turned back into a date, by the standard shift of
-        the year to start in March: with the leap day last, the month lengths
-        repeat on a 153 day pattern and the whole thing is arithmetic with no
-        table and no loop.
-
-        Everything printed here is UTC. Converting to the machine's own zone
-        means reading and understanding /usr/share/zoneinfo, which is a
-        binary format none of the rest of this tree has any use for.
-*/
-fn file_civil(b64 days, b64 address_to year, positive address_to month,
-              positive address_to day)
-{
-        b64 shifted = days + 719468;
-        b64 era = (shifted >= 0 ? shifted : shifted - 146096) / 146097;
-        b64 of_era = shifted - era * 146097;
-        b64 year_of_era = (of_era - of_era / 1460 + of_era / 36524 - of_era / 146096) / 365;
-        b64 value = year_of_era + era * 400;
-        b64 of_year = of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
-        b64 pattern = (5 * of_year + 2) / 153;
-
-        address_to day = (positive)(of_year - (153 * pattern + 2) / 5 + 1);
-        address_to month = (positive)(pattern + (pattern < 10 ? 3 : -9));
-        address_to year = value + (address_to month <= 2 ? 1 : 0);
-}
-
 fn file_split_moment(b64 seconds, b64 address_to year, positive address_to month,
                      positive address_to day, positive address_to hour,
                      positive address_to minute, positive address_to second)
 {
-        b64 days = seconds / 86400;
-        b64 rest = seconds % 86400;
+        b64 days = clock_floor_divide(seconds, CLOCK_SECONDS_PER_DAY);
+        b64 rest = seconds - days * CLOCK_SECONDS_PER_DAY;
+        bipolar civil_year;
+        bipolar civil_month;
+        bipolar civil_day;
 
-        if (rest < 0)
-        {
-                rest += 86400;
-                days--;
-        }
+        clock_civil_from_days(days, address_of civil_year,
+                              address_of civil_month, address_of civil_day);
 
-        file_civil(days, year, month, day);
-
+        address_to year = civil_year;
+        address_to month = (positive)civil_month;
+        address_to day = (positive)civil_day;
         address_to hour = (positive)(rest / 3600);
         address_to minute = (positive)((rest / 60) % 60);
         address_to second = (positive)(rest % 60);
@@ -2517,27 +2495,15 @@ static fn ls_owner_text(positive id, bool group, p8 address_to into)
 // directory that -p asks for on its own, and the rest of them for -F.
 static p8 ls_mark(positive mode)
 {
-        positive kind = mode & MODE_FORMAT;
-
-        if (kind == MODE_DIRECTORY)
-                return '/';
+        p8 mark = file_kind_of(mode)->mark;
 
         if (!ls_classify)
-                return 0;
+                return mark == '/' ? mark : 0;
 
-        if (kind == MODE_LINK)
-                return '@';
-
-        if (kind == MODE_PIPE)
-                return '|';
-
-        if (kind == MODE_SOCKET)
-                return '=';
-
-        if (kind == MODE_FILE && (mode & 0111))
+        if ((mode & MODE_FORMAT) == MODE_FILE && (mode & 0111))
                 return '*';
 
-        return 0;
+        return mark;
 }
 
 static PURE file_color_span ls_suffix_color(string_address name)
@@ -2627,25 +2593,10 @@ static file_color_span ls_name_color(string_address directory,
 
                 return link_color;
         }
-        else if (kind == MODE_PIPE)
+        else if (file_kind_of(mode)->colour_key)
         {
-                key = (string_address) "pi";
-                fallback = (string_address) "33";
-        }
-        else if (kind == MODE_SOCKET)
-        {
-                key = (string_address) "so";
-                fallback = (string_address) "01;35";
-        }
-        else if (kind == MODE_BLOCK)
-        {
-                key = (string_address) "bd";
-                fallback = (string_address) "33;01";
-        }
-        else if (kind == MODE_CHARACTER)
-        {
-                key = (string_address) "cd";
-                fallback = (string_address) "33;01";
+                key = file_kind_of(mode)->colour_key;
+                fallback = file_kind_of(mode)->colour_fallback;
         }
         else if (mode & 04000)
         {
@@ -3729,22 +3680,10 @@ static bool find_facts_follow;
 */
 static positive find_mode_from_type(p8 type)
 {
-        if (type == DT_DIR)
-                return MODE_DIRECTORY;
-        if (type == DT_REG)
-                return MODE_FILE;
-        if (type == DT_LNK)
-                return MODE_LINK;
-        if (type == DT_FIFO)
-                return MODE_PIPE;
-        if (type == DT_SOCK)
-                return MODE_SOCKET;
-        if (type == DT_CHR)
-                return MODE_CHARACTER;
-        if (type == DT_BLK)
-                return MODE_BLOCK;
-
-        return 0;
+        return type < sizeof(file_kinds) / sizeof(file_kinds[0]) &&
+                       file_kinds[type].name
+                   ? (positive)type << 12
+                   : 0;
 }
 
 static bool find_facts_ready()
@@ -3805,30 +3744,9 @@ static bool find_size_holds(find_node address_to test, file_facts address_to fac
 
 static bool find_type_holds(p8 wanted, positive mode)
 {
-        positive kind = mode & MODE_FORMAT;
+        p8 kind = wanted < 128 ? file_kind_from_letter[wanted] : 0;
 
-        if (wanted == 'f')
-                return kind == MODE_FILE;
-
-        if (wanted == 'd')
-                return kind == MODE_DIRECTORY;
-
-        if (wanted == 'l')
-                return kind == MODE_LINK;
-
-        if (wanted == 'b')
-                return kind == MODE_BLOCK;
-
-        if (wanted == 'c')
-                return kind == MODE_CHARACTER;
-
-        if (wanted == 'p')
-                return kind == MODE_PIPE;
-
-        if (wanted == 's')
-                return kind == MODE_SOCKET;
-
-        return false;
+        return kind && kind == ((mode & MODE_FORMAT) >> 12);
 }
 
 static bool find_empty(string_address path, file_facts address_to facts)
@@ -4197,10 +4115,9 @@ static b32 find_parse_primary()
 
                         find_nodes[node].extra--;
 
-                        if (!memory_reserve(
-                                (address_any address_to)address_of find_batches,
-                                address_of find_batch_room, find_batch_have,
-                                find_batch_have + 1, sizeof(find_batch), 2))
+                        if (!array_store_reserve(
+                                find_batches, find_batch_room, find_batch_have,
+                                find_batch_have + 1, 2))
                         {
                                 shell_memory_failed = true;
                                 file_fail("find: out of memory while reading -exec\n", 0);
@@ -11007,23 +10924,13 @@ static string_address address_to env_list;
 static positive env_room;
 static positive env_have;
 
-static bool env_same_key(string_address entry, string_address name, positive length)
-{
-        string_address mark = string_first_of(entry, '=');
-
-        if (!mark || (positive)(mark - entry) != length)
-                return false;
-
-        return memory_compare(entry, name, length) == 0;
-}
-
 static fn env_drop(string_address name)
 {
         positive length = string_length(name);
         positive keep = 0;
 
         for (positive i = 0; i < env_have; i++)
-                if (!env_same_key(env_list[i], name, length))
+                if (!environment_key_is(env_list[i], name, length))
                         env_list[keep++] = env_list[i];
 
         env_have = keep;
@@ -11039,7 +10946,7 @@ static bool env_put(string_address entry)
 
                 for (positive i = 0; i < env_have; i++)
                 {
-                        if (env_same_key(env_list[i], entry, length))
+                        if (environment_key_is(env_list[i], entry, length))
                         {
                                 env_list[i] = entry;
                                 return true;
@@ -12962,248 +12869,52 @@ static b32 file_kill()
 }
 
 // date ------------------------------------------------------------
-/*
-        A moment, printed how the format asks for it.
-
-        Everything here is UTC, for the reason file_civil gives: the machine's
-        own zone is a binary file this tree has no reader for. TZ=UTC0 is what
-        the system's own date has to be told to agree.
-
-        The conversion is already written -- file_split_moment -- so what is
-        left is the walk over the format, and the four tables a name comes out
-        of.
-*/
-static string_address date_day_short[7] = {"Sun", "Mon", "Tue", "Wed",
-                                           "Thu", "Fri", "Sat"};
-static string_address date_day_long[7] = {"Sunday", "Monday", "Tuesday",
-                                          "Wednesday", "Thursday", "Friday",
-                                          "Saturday"};
-static string_address date_month_short[12] = {"Jan", "Feb", "Mar", "Apr",
-                                              "May", "Jun", "Jul", "Aug",
-                                              "Sep", "Oct", "Nov", "Dec"};
-static string_address date_month_long[12] = {
-    "January", "February", "March",     "April",   "May",      "June",
-    "July",    "August",   "September", "October", "November", "December"};
-
-typedef struct
+/* date and strftime used to carry separate calendar-format state machines.
+   Keep one engine: the stack covers ordinary command lines and an exceptional
+   width grows through the shared byte store until the bounded formatter fits. */
+static bool date_shape(writer write, b64 when, string_address format)
 {
-        b64 when;
-        b64 year;
-        positive month;
-        positive day;
-        positive hour;
-        positive minute;
-        positive second;
-        positive weekday;
-        positive yearday;
-} date_moment;
+        time_t stamp = (time_t)when;
+        tm broken;
+        p8 fixed[512];
+        positive length;
 
-static fn date_take(b64 when, date_moment address_to out)
-{
-        b64 days = when / 86400;
-        positive before[12] = {0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334};
-        bool leap;
+        if (!gmtime_r(address_of stamp, address_of broken))
+                return false;
 
-        if (when % 86400 < 0)
-                days--;
-
-        out->when = when;
-
-        file_split_moment(when, address_of out->year, address_of out->month,
-                          address_of out->day, address_of out->hour,
-                          address_of out->minute, address_of out->second);
-
-        // The first of January 1970 was a Thursday, which is what the four is.
-        out->weekday = (positive)(((days % 7) + 11) % 7);
-
-        leap = (out->year % 4 == 0 && out->year % 100 != 0) || out->year % 400 == 0;
-        out->yearday = before[out->month - 1] + out->day +
-                       (leap && out->month > 2 ? 1 : 0);
-}
-
-// A one means the format asked for no padding at all, which is not the same
-// as not asking, and a zero cannot say both.
-static fn date_field(writer write, positive value, positive width, p8 pad, p8 fallback)
-{
-        positive_to_padded(write, value, width,
-                           pad == 1 ? 0 : pad ? pad : fallback, 0);
-}
-
-static fn date_signed(writer write, b64 value)
-{
-        bipolar_to_string(write, (bipolar)value);
-}
-
-static fn date_shape(writer write, date_moment address_to at, string_address format);
-
-/*
-        The week of the year, three ways.
-
-        %U and %W count from the first Sunday and the first Monday. ISO 8601
-        counts from the week holding the first Thursday, which is why it is
-        found by walking to this week's Thursday and asking what year and what
-        day of the year that landed on -- the last days of December belong to
-        the next year's week one, and the first of January often to the last.
-*/
-static positive date_week(date_moment address_to at, p8 which)
-{
-        positive from_monday = (at->weekday + 6) % 7;
-
-        if (which == 'U')
-                return (at->yearday + 6 - at->weekday) / 7;
-
-        return (at->yearday + 6 - from_monday) / 7;
-}
-
-static fn date_thursday(date_moment address_to at, date_moment address_to out)
-{
-        positive iso = at->weekday ? at->weekday : 7;
-
-        date_take(at->when + (b64)(4 - (bipolar)iso) * 86400, out);
-}
-
-static fn date_letter(writer write, date_moment address_to at, p8 letter, p8 pad)
-{
-        positive twelve;
-
-        switch (letter)
+        length = clock_format_extended(fixed, sizeof(fixed), format,
+                                       address_of broken);
+        if (length || !string_get(format))
         {
-        case 'Y':
-                return date_field(write, (positive)at->year, 4, pad, '0');
-        case 'y':
-                return date_field(write, (positive)(at->year % 100), 2, pad, '0');
-        case 'C':
-                return date_field(write, (positive)(at->year / 100), 2, pad, '0');
-        case 'm':
-                return date_field(write, at->month, 2, pad, '0');
-        case 'd':
-                return date_field(write, at->day, 2, pad, '0');
-        case 'e':
-                return date_field(write, at->day, 2, pad, ' ');
-        case 'H':
-                return date_field(write, at->hour, 2, pad, '0');
-        case 'k':
-                return date_field(write, at->hour, 2, pad, ' ');
-        case 'I':
-        case 'l':
-                twelve = at->hour % 12;
-                twelve = twelve ? twelve : 12;
-                return date_field(write, twelve, 2, pad,
-                                  letter == 'l' ? ' ' : '0');
-        case 'M':
-                return date_field(write, at->minute, 2, pad, '0');
-        case 'S':
-                return date_field(write, at->second, 2, pad, '0');
-        case 'j':
-                return date_field(write, at->yearday, 3, pad, '0');
-        case 'a':
-                return write(date_day_short[at->weekday], 0);
-        case 'A':
-                return write(date_day_long[at->weekday], 0);
-        case 'b':
-        case 'h':
-                return write(date_month_short[at->month - 1], 0);
-        case 'B':
-                return write(date_month_long[at->month - 1], 0);
-        case 'p':
-                return write(at->hour < 12 ? "AM" : "PM", 2);
-        case 'P':
-                return write(at->hour < 12 ? "am" : "pm", 2);
-        case 'u':
-                return positive_to_string(write, at->weekday ? at->weekday : 7);
-        case 'w':
-                return positive_to_string(write, at->weekday);
-        case 'Z':
-                return write("UTC", 3);
-        case 'z':
-                return write("+0000", 5);
-        case 's':
-                return date_signed(write, at->when);
-        case 'n':
-                return write("\n", 1);
-        case 't':
-                return write("\t", 1);
-        case '%':
-                return write("%", 1);
-        case 'q':
-                return positive_to_string(write, (at->month + 2) / 3);
-        case 'N':
-                return write("000000000", 9);
-        case 'U':
-        case 'W':
-                return date_field(write, date_week(at, letter), 2, pad, '0');
-        case 'V':
-        case 'G':
-        case 'g':
-        {
-                date_moment middle;
-
-                date_thursday(at, address_of middle);
-
-                if (letter == 'V')
-                        return date_field(write, (middle.yearday - 1) / 7 + 1, 2, pad, '0');
-
-                if (letter == 'g')
-                        return date_field(write, (positive)(middle.year % 100), 2, pad, '0');
-
-                return date_field(write, (positive)middle.year, 4, pad, '0');
-        }
-        case 'c':
-                return date_shape(write, at, "%a %b %e %H:%M:%S %Y");
-        case 'x':
-                return date_shape(write, at, "%m/%d/%y");
-        case 'X':
-                return date_shape(write, at, "%H:%M:%S");
-        case 'F':
-                return date_shape(write, at, "%Y-%m-%d");
-        case 'T':
-                return date_shape(write, at, "%H:%M:%S");
-        case 'R':
-                return date_shape(write, at, "%H:%M");
-        case 'D':
-                return date_shape(write, at, "%m/%d/%y");
-        case 'r':
-                return date_shape(write, at, "%I:%M:%S %p");
+                if (length)
+                        write(fixed, length);
+                return true;
         }
 
-        // What the tool this is measured against does with a letter it has no
-        // meaning for: hand it back.
-        write("%", 1);
-        write(address_of letter, 1);
-}
+        byte_store grown = {0};
+        positive wanted = sizeof(fixed) * 2;
 
-static fn date_shape(writer write, date_moment address_to at, string_address format)
-{
-        while (string_get(format))
+        while (wanted)
         {
-                string_address mark = string_first_of_or_end(format, '%');
-                p8 pad = 0;
+                if (!byte_store_reserve(address_of grown, wanted, wanted))
+                        break;
 
-                if (mark != format)
-                        write(format, (positive)(mark - format));
-
-                if (!string_get(mark))
-                        return;
-
-                format = mark + 1;
-                p8 letter = string_get(format);
-
-                while (letter == '-' || letter == '_' || letter == '0')
+                length = clock_format_extended(grown.bytes, grown.room,
+                                               format, address_of broken);
+                if (length)
                 {
-                        pad = letter == '-' ? 1 : letter == '_' ? ' ' : '0';
-                        format++;
-                        letter = string_get(format);
+                        write(grown.bytes, length);
+                        byte_store_release(address_of grown);
+                        return true;
                 }
 
-                if (!letter)
-                {
-                        write("%", 1);
-                        return;
-                }
-
-                format++;
-                date_letter(write, at, letter, pad);
+                if (wanted > positive_max / 2)
+                        break;
+                wanted *= 2;
         }
+
+        byte_store_release(address_of grown);
+        return false;
 }
 
 static const file_long date_longs[] = {
@@ -13238,7 +12949,6 @@ static b32 file_date()
         string_address iso = null;
         bool rfc = (taking.flags & FILE_FLAG('R')) != 0;
         b64 when;
-        date_moment at;
 
         if (taking.flags & FILE_FLAG('I'))
         {
@@ -13307,14 +13017,17 @@ static b32 file_date()
         else
                 when = file_now();
 
-        date_take(when, address_of at);
-
         if (!format)
                 format = iso   ? iso
                          : rfc ? (string_address) "%a, %d %b %Y %H:%M:%S %z"
                                : (string_address) "%a %b %e %H:%M:%S %Z %Y";
 
-        date_shape(log, address_of at, format);
+        if (!date_shape(log, when, format))
+        {
+                file_fail("date: formatted value is too large\n", 0);
+                return 1;
+        }
+
         log("\n", 1);
         log_flush();
 

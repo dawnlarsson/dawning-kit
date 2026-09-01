@@ -1131,9 +1131,7 @@ static fn flockfile(stream address_to handle)
 }
 
 static fn funlockfile(stream address_to handle)
-{
-        (void)handle;
-}
+        __attribute__((alias("flockfile")));
 
 static b32 ftrylockfile(stream address_to handle)
 {

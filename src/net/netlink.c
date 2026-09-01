@@ -163,8 +163,8 @@ typedef struct
 
 static bool net_room(netlink_buffer address_to buffer, positive want)
 {
-        if (!memory_reserve((address_any address_to)address_of buffer->bytes,
-                            address_of buffer->room, buffer->used, want, 1, 4096))
+        if (!array_store_reserve(buffer->bytes, buffer->room,
+                                 buffer->used, want, 4096))
         {
                 buffer->failed = true;
                 return false;
@@ -175,8 +175,7 @@ static bool net_room(netlink_buffer address_to buffer, positive want)
 
 static fn netlink_forget(netlink_buffer address_to buffer)
 {
-        memory_release((address_any address_to)address_of buffer->bytes,
-                       address_of buffer->room, address_of buffer->used, 1);
+        array_store_release(buffer->bytes, buffer->room, buffer->used);
         buffer->failed = false;
 }
 
@@ -242,13 +241,15 @@ static bool netlink_attribute_add(netlink_buffer address_to buffer, p16 type,
         attribute->type = type;
 
         if (size)
-                memory_copy(buffer->bytes + buffer->used + sizeof(netlink_attribute),
+                memory_copy(buffer->bytes + buffer->used +
+                                sizeof(netlink_attribute),
                             data, size);
 
         //      The pad is sent, so it is zeroed rather than left as whatever
         //      the mapping held.
         if (padded > length)
-                memory_fill(buffer->bytes + buffer->used + length, 0, padded - length);
+                memory_fill(buffer->bytes + buffer->used + length,
+                            0, padded - length);
 
         buffer->used += padded;
 
@@ -312,7 +313,9 @@ static bipolar netlink_open(void)
 */
 static bipolar netlink_receive(b32 handle, netlink_buffer address_to buffer)
 {
-        bipolar size = socket_receive(handle, buffer->bytes ? buffer->bytes : (address_any)&size,
+        bipolar size = socket_receive(handle,
+                                      buffer->bytes ? buffer->bytes
+                                                    : (address_any)&size,
                                       buffer->bytes ? buffer->room : 0,
                                       MSG_PEEK | MSG_TRUNC, 0, 0);
         bipolar got;

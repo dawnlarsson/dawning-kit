@@ -1697,18 +1697,12 @@ fn stream_rewind(stream address_to handle)
 */
 PURE b32 stream_at_end(stream address_to handle)
 {
-        if (handle == null)
-                return 0;
-
-        return (handle->flags & STREAM_AT_END) != 0;
+        return handle && (handle->flags & STREAM_AT_END) != 0;
 }
 
 PURE b32 stream_failed(stream address_to handle)
 {
-        if (handle == null)
-                return 0;
-
-        return (handle->flags & STREAM_FAILED) != 0;
+        return handle && (handle->flags & STREAM_FAILED) != 0;
 }
 
 fn stream_clear_state(stream address_to handle)

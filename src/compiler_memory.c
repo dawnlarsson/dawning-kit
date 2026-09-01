@@ -13,6 +13,7 @@
 #define STANDARD_MODERN_C_COMPILER_MEMORY
 
 #include "library.c"
+#include "library.common.c"
 
 /*
         Source-generating conveniences are compiler policy too.
@@ -59,136 +60,6 @@
         pub type name = default;
 
 #endif // LIBRARY_API
-
-/* Typed, unaligned loads and same-width bit casts.  __builtin_memcpy is the
-   compiler's one spelling that is both alias-safe and architecture-safe. */
-#define memory_load_unaligned(type, source)                                  \
-        ({ type _memory_loaded;                                              \
-           __builtin_memcpy(address_of _memory_loaded, (source),             \
-                            sizeof(_memory_loaded));                          \
-           _memory_loaded; })
-
-#define memory_cast(type, value)                                             \
-        ({ __auto_type _memory_from = (value); type _memory_to;              \
-           _Static_assert(sizeof(_memory_to) == sizeof(_memory_from),         \
-                          "memory_cast changes width");                     \
-           __builtin_memcpy(address_of _memory_to, address_of _memory_from,  \
-                            sizeof(_memory_to));                              \
-           _memory_to; })
-
-/* The common moving byte store.  Naming the three words once also names the
-   only correct reserve/release argument order; subsystems keep semantic
-   typedefs without rebuilding either operation around them. */
-typedef struct
-{
-        p8 address_to bytes;
-        positive room;
-        positive used;
-} byte_store;
-
-/* Tables that turn a long name into one byte of grammar use this same row in
-   both the shell and its utilities. */
-typedef struct
-{
-        string_address name;
-        p8 value;
-} named_byte;
-
-/* printf and scanf have one length-modifier grammar.  Their consumers assign
-   different meanings to `l`, but the byte state machine that recognizes h,
-   hh, l, ll, q, z, t, j and L is identical. */
-#define CONVERSION_FLAG_LEFT 1
-#define CONVERSION_FLAG_PLUS 2
-#define CONVERSION_FLAG_SPACE 4
-#define CONVERSION_FLAG_ALTERNATE 8
-#define CONVERSION_FLAG_ZERO 16
-
-static const p8 conversion_flag_bytes[128] = {
-    ['-'] = CONVERSION_FLAG_LEFT, ['+'] = CONVERSION_FLAG_PLUS,
-    [' '] = CONVERSION_FLAG_SPACE, ['#'] = CONVERSION_FLAG_ALTERNATE,
-    ['0'] = CONVERSION_FLAG_ZERO,
-};
-
-static inline INLINE positive conversion_flags_take(
-    string_address address_to source)
-{
-        string_address at = address_to source;
-        positive flags = 0;
-
-        while (true)
-        {
-                p8 byte = string_get(at);
-                p8 flag = byte < 128 ? conversion_flag_bytes[byte] : 0;
-
-                if (!flag)
-                        break;
-
-                flags |= flag;
-                at++;
-        }
-
-        address_to source = at;
-        return flags;
-}
-
-#define CONVERSION_LENGTH_INT 0
-#define CONVERSION_LENGTH_CHAR 1
-#define CONVERSION_LENGTH_SHORT 2
-#define CONVERSION_LENGTH_LONG 3
-#define CONVERSION_LENGTH_LONG_LONG 4
-#define CONVERSION_LENGTH_SIZE 5
-#define CONVERSION_LENGTH_DIFFERENCE 6
-#define CONVERSION_LENGTH_WIDEST 7
-#define CONVERSION_LENGTH_WIDE_DECIMAL 8
-
-static const p8 conversion_single_lengths[128] = {
-    ['q'] = CONVERSION_LENGTH_LONG_LONG,
-    ['z'] = CONVERSION_LENGTH_SIZE,
-    ['t'] = CONVERSION_LENGTH_DIFFERENCE,
-    ['j'] = CONVERSION_LENGTH_WIDEST,
-    ['L'] = CONVERSION_LENGTH_WIDE_DECIMAL,
-};
-
-static inline INLINE positive conversion_length_take(
-    string_address address_to source)
-{
-        string_address at = address_to source;
-        p8 byte = string_get(at);
-        positive length;
-
-        if (byte == 'h' || byte == 'l')
-        {
-                at++;
-                bool doubled = string_is(at, byte);
-
-                at += doubled;
-                length = byte == 'h'
-                             ? (doubled ? CONVERSION_LENGTH_CHAR
-                                        : CONVERSION_LENGTH_SHORT)
-                             : (doubled ? CONVERSION_LENGTH_LONG_LONG
-                                        : CONVERSION_LENGTH_LONG);
-        }
-        else
-        {
-                length = byte < 128 ? conversion_single_lengths[byte] : 0;
-                at += length != 0;
-        }
-
-        address_to source = at;
-        return length;
-}
-
-#define byte_store_reserve(store, wanted, step)                              \
-        ({ __auto_type _byte_store = (store);                                \
-           memory_reserve((address_any address_to)address_of _byte_store->bytes, \
-                          address_of _byte_store->room, _byte_store->used,   \
-                          (wanted), 1, (step)); })
-
-#define byte_store_release(store)                                            \
-        ({ __auto_type _byte_store = (store);                                \
-           memory_release((address_any address_to)address_of _byte_store->bytes, \
-                          address_of _byte_store->room,                      \
-                          address_of _byte_store->used, 1); })
 
 /*
         Sizes that are known where the call is written.
@@ -2114,21 +1985,6 @@ static inline INLINE b32 known_to_upper(b32 value)
 { return value - (known_is_lower(value) << 5); }
 static inline INLINE b32 known_to_lower(b32 value)
 { return value + (known_is_upper(value) << 5); }
-
-/*
-        The seven byte escapes shared by shell quoting, printf, awk and tr.
-
-        Zero means "not one of them", so a caller can preserve an unknown
-        backslash pair when its grammar requires that without another lookup.
-        A direct byte table is both the whole state transition and the
-        compiler's cheapest answer for a value not known at the call site.
-*/
-static const p8 byte_simple_escapes[256] = {
-    ['a'] = 7,  ['b'] = 8,  ['f'] = 12, ['n'] = '\n',
-    ['r'] = '\r', ['t'] = '\t', ['v'] = 11,
-};
-
-#define byte_simple_escape(value) byte_simple_escapes[(p8)(value)]
 
 /*
         Bits folded in pairs, then in nibbles, then in bytes, and the eight

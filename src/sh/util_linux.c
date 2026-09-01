@@ -3414,19 +3414,11 @@ static b32 ul_namespace_identity(string_address program,
         return 0;
 }
 
-static fn ul_namespace_sigchld_default()
-{
-        positive action[4] = {0, 0, 0, 0};
-
-        system_call_4(syscall(rt_sigaction), SIGCHLD,
-                      (positive)address_of action, 0, 8);
-}
-
 static b32 ul_namespace_wait(bipolar child, bool job_control)
 {
         positive status = 0;
 
-        ul_namespace_sigchld_default();
+        process_signal_default(SIGCHLD);
         while (system_wait4_retry(child, address_of status,
                                   job_control ? 2 : 0, null) >= 0)
         {
@@ -3610,7 +3602,7 @@ static b32 ul_namespace_run_mapper(b32 target, bool group,
         }
         words[at] = null;
 
-        ul_namespace_sigchld_default();
+        process_signal_default(SIGCHLD);
         log_flush();
         bipolar child = system_call_2(syscall(clone), SIGCHLD, 0);
         if (!child)
@@ -3653,7 +3645,7 @@ static b32 ul_unshare_user(ul_user_mapping address_to map)
                 return ul_bad_usage("unshare", "cannot make mapping channel");
 
         b32 target = (b32)system_call(syscall(getpid));
-        ul_namespace_sigchld_default();
+        process_signal_default(SIGCHLD);
         log_flush();
         bipolar helper = system_call_2(syscall(clone), SIGCHLD, 0);
         if (helper < 0)
@@ -3729,7 +3721,7 @@ static bool ul_namespace_persistence_start(
         if (system_call_2(syscall(pipe2), (positive)address_of channel,
                           O_CLOEXEC) < 0)
                 return false;
-        ul_namespace_sigchld_default();
+        process_signal_default(SIGCHLD);
         log_flush();
         state->child = system_call_2(syscall(clone), SIGCHLD, 0);
         if (state->child < 0)
@@ -4015,7 +4007,7 @@ static b32 util_linux_unshare()
                                   (positive)address_of blocked,
                                   (positive)address_of old, 8) < 0)
                         return ul_bad_usage("unshare", "cannot block signals");
-                ul_namespace_sigchld_default();
+                process_signal_default(SIGCHLD);
                 log_flush();
                 bipolar child = system_call_2(syscall(clone), SIGCHLD, 0);
                 if (child < 0)
@@ -4327,7 +4319,7 @@ static b32 util_linux_nsenter()
 
         if (entered_pid && !(taking.flags & FILE_FLAG('F')))
         {
-                ul_namespace_sigchld_default();
+                process_signal_default(SIGCHLD);
                 log_flush();
                 bipolar child = system_call_2(syscall(clone), SIGCHLD, 0);
                 if (child < 0)

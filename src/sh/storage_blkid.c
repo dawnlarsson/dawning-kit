@@ -1849,12 +1849,9 @@ b32 storage_blkid_run(positive argc, string_address address_to argv,
                                         string_address address_to grown = null;
                                         positive grown_room = 0;
 
-                                        if (!memory_reserve(
-                                                (address_any address_to)
-                                                    address_of grown,
-                                                address_of grown_room, 0,
-                                                device_count + 1,
-                                                sizeof(grown[0]), 8))
+                                        if (!array_store_reserve(
+                                                grown, grown_room, 0,
+                                                device_count + 1, 8))
                                                 goto usage;
                                         memory_copy_apart(grown, inline_devices,
                                                           device_count *
@@ -1862,12 +1859,9 @@ b32 storage_blkid_run(positive argc, string_address address_to argv,
                                         devices = grown;
                                         device_room = grown_room;
                                 }
-                                else if (!memory_reserve(
-                                             (address_any address_to)
-                                                 address_of devices,
-                                             address_of device_room,
-                                             device_count, device_count + 1,
-                                             sizeof(devices[0]), 8))
+                                else if (!array_store_reserve(
+                                             devices, device_room,
+                                             device_count, device_count + 1, 8))
                                         goto usage;
                         }
                         devices[device_count++] = argument;
@@ -1980,10 +1974,7 @@ b32 storage_blkid_run(positive argc, string_address address_to argv,
                 b32 answer = context.found ? 0 : 2;
 
                 if (devices != inline_devices)
-                        memory_release((address_any address_to)address_of devices,
-                                       address_of device_room,
-                                       address_of device_count,
-                                       sizeof(devices[0]));
+                        array_store_release(devices, device_room, device_count);
                 return answer;
         }
 
@@ -1991,9 +1982,7 @@ usage:
         error("blkid: usage: blkid [-s TAG] [-o full|value|device|export] "
               "[-t TAG=VALUE] [-U UUID] [-L LABEL] [DEVICE ...]\n", 0);
         if (devices != inline_devices)
-                memory_release((address_any address_to)address_of devices,
-                               address_of device_room, address_of device_count,
-                               sizeof(devices[0]));
+                array_store_release(devices, device_room, device_count);
         return 4;
 }
 

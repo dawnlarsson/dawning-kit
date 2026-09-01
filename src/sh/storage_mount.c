@@ -92,9 +92,7 @@ typedef struct
         positive flags;
         positive mentioned;
         positive propagation;
-        p8 address_to data;
-        positive data_room;
-        positive data_used;
+        byte_store data;
         bool noauto;
         bool nofail;
         bool unsupported_loop;
@@ -102,28 +100,25 @@ typedef struct
 
 static fn storage_options_free(storage_mount_options address_to options)
 {
-        memory_release((address_any address_to)address_of options->data,
-                       address_of options->data_room,
-                       address_of options->data_used, 1);
+        byte_store_release(address_of options->data);
         memory_fill(options, 0, sizeof(*options));
 }
 
 static bool storage_data_add(storage_mount_options address_to options,
                              string_address item, positive length)
 {
-        positive extra = length + (options->data_used ? 1 : 0) + 1;
+        positive extra = length + (options->data.used ? 1 : 0) + 1;
 
-        if (extra > positive_max - options->data_used ||
-            !memory_reserve((address_any address_to)address_of options->data,
-                            address_of options->data_room,
-                            options->data_used,
-                            options->data_used + extra, 1, 64))
+        if (extra > positive_max - options->data.used ||
+            !byte_store_reserve(address_of options->data,
+                                options->data.used + extra, 64))
                 return false;
-        if (options->data_used)
-                options->data[options->data_used++] = ',';
-        memory_copy_apart(options->data + options->data_used, item, length);
-        options->data_used += length;
-        options->data[options->data_used] = 0;
+        if (options->data.used)
+                options->data.bytes[options->data.used++] = ',';
+        memory_copy_apart(options->data.bytes + options->data.used,
+                          item, length);
+        options->data.used += length;
+        options->data.bytes[options->data.used] = 0;
         return true;
 }
 
@@ -249,8 +244,8 @@ static bool storage_options_merge(storage_mount_options address_to into,
         into->nofail |= extra->nofail;
         into->unsupported_loop |= extra->unsupported_loop;
 
-        return !extra->data_used ||
-               storage_data_add(into, extra->data, extra->data_used);
+        return !extra->data.used ||
+               storage_data_add(into, extra->data.bytes, extra->data.used);
 }
 
 /*
@@ -403,7 +398,7 @@ static bipolar storage_mount_one(string_address source, string_address target,
                 answer = system_call_5(
                     syscall(mount), (positive)resolved, (positive)target,
                     (positive)type, used->flags,
-                    (positive)(used->data_used ? used->data : null));
+                    (positive)(used->data.used ? used->data.bytes : null));
         }
 
         if (effective_live)
@@ -1194,10 +1189,8 @@ b32 storage_umount_command(positive argc, string_address address_to argv,
                 }
                 else
                 {
-                        if (!memory_reserve(
-                                (address_any address_to)address_of operand,
-                                address_of operand_room, operands, operands + 1,
-                                sizeof(operand[0]), 16))
+                        if (!array_store_reserve(operand, operand_room,
+                                                 operands, operands + 1, 16))
                         {
                                 string_format(diagnostic, "umount: no memory\n");
                                 goto failed_early;
@@ -1207,10 +1200,8 @@ b32 storage_umount_command(positive argc, string_address address_to argv,
         }
         while (at < argc)
         {
-                if (!memory_reserve(
-                        (address_any address_to)address_of operand,
-                        address_of operand_room, operands, operands + 1,
-                        sizeof(operand[0]), 16))
+                if (!array_store_reserve(operand, operand_room,
+                                         operands, operands + 1, 16))
                 {
                         string_format(diagnostic, "umount: no memory\n");
                         goto failed_early;
@@ -1265,16 +1256,12 @@ b32 storage_umount_command(positive argc, string_address address_to argv,
         }
 
         storage_mount_table_release(address_of table);
-        memory_release((address_any address_to)address_of operand,
-                       address_of operand_room, address_of operands,
-                       sizeof(operand[0]));
+        array_store_release(operand, operand_room, operands);
         return failed;
 
 missing_option:
         string_format(diagnostic, "umount: option requires an argument\n");
 failed_early:
-        memory_release((address_any address_to)address_of operand,
-                       address_of operand_room, address_of operands,
-                       sizeof(operand[0]));
+        array_store_release(operand, operand_room, operands);
         return 1;
 }

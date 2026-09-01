@@ -743,13 +743,7 @@ static p8 regex_set_store[REGEX_SET_MAX][32];
 static b32 regex_pool_used;
 static b32 regex_pool_sets;
 
-static regex_instruction address_to regex_code = regex_store;
-static p8(address_to regex_sets)[32] = regex_set_store;
-static b32 regex_length_code;
 static b32 regex_set_count;
-static b32 regex_group_count;
-static bool regex_extended;
-static bool regex_icase;
 static bool regex_escapes;
 static bool regex_broken;
 
@@ -761,8 +755,6 @@ enum
         REGEX_POLICY_DEFAULT = REGEX_DOT_NEWLINE | REGEX_BASIC_REPEATS,
         REGEX_POLICY_TAC = REGEX_LINE_ANCHORS,
 };
-
-static p8 regex_policy = REGEX_POLICY_DEFAULT;
 
 static string_address regex_pattern;
 static positive regex_pattern_length;
@@ -809,20 +801,69 @@ static p8 regex_first_store[REGEX_FIRST_MAX][256];
 static p8 regex_last_store[REGEX_FIRST_MAX][256];
 static p8 regex_literal_store[REGEX_FIRST_MAX][REGEX_LITERAL_MAX];
 static b32 regex_first_used;
-static p8 address_to regex_first = regex_first_store[0];
-static p8 address_to regex_last = regex_last_store[0];
-static p8 address_to regex_literal = regex_literal_store[0];
-static positive regex_literal_length;
-static positive2 regex_literal_anchors;
-static bool regex_first_known;
-static bool regex_last_known;
-static bool regex_anchored;
-static bool regex_alternates;
 static positive regex_stop_wanted = TEXT_UNSET;
-static positive regex_slot_used = REGEX_SLOT_MAX;
 static b32 regex_loop_list[REGEX_LOOPS_KEPT];
-static b32 regex_loop_count;
 static p8 regex_visited[REGEX_CODE_MAX];
+
+/* One shape is both the live VM selection and the persistent part of a saved
+   program.  Capture/select therefore cannot drift when another derived field
+   is added, while the uncommon loop vector retains its conditional copy. */
+typedef struct
+{
+        regex_instruction address_to code;
+        p8(address_to sets)[32];
+        p8 address_to first;
+        p8 address_to last;
+        p8 address_to literal;
+        positive literal_length;
+        positive2 literal_anchors;
+        b32 length;
+        b32 groups;
+        bool extended;
+        bool icase;
+        p8 policy;
+        bool first_known;
+        bool last_known;
+        bool anchored;
+        bool alternates;
+        positive slot_used;
+        b32 loop_count;
+} regex_state;
+
+typedef struct
+{
+        regex_state state;
+        b32 loops[REGEX_LOOPS_KEPT];
+} regex_program;
+
+static regex_state regex_context = {
+    .code = regex_store,
+    .sets = regex_set_store,
+    .first = regex_first_store[0],
+    .last = regex_last_store[0],
+    .literal = regex_literal_store[0],
+    .policy = REGEX_POLICY_DEFAULT,
+    .slot_used = REGEX_SLOT_MAX,
+};
+
+#define regex_code regex_context.code
+#define regex_sets regex_context.sets
+#define regex_first regex_context.first
+#define regex_last regex_context.last
+#define regex_literal regex_context.literal
+#define regex_literal_length regex_context.literal_length
+#define regex_literal_anchors regex_context.literal_anchors
+#define regex_length_code regex_context.length
+#define regex_group_count regex_context.groups
+#define regex_extended regex_context.extended
+#define regex_icase regex_context.icase
+#define regex_policy regex_context.policy
+#define regex_first_known regex_context.first_known
+#define regex_last_known regex_context.last_known
+#define regex_anchored regex_context.anchored
+#define regex_alternates regex_context.alternates
+#define regex_slot_used regex_context.slot_used
+#define regex_loop_count regex_context.loop_count
 
 static bool regex_set_has(b32 which, p8 character)
 {
@@ -1596,81 +1637,25 @@ static b32 regex_parse_alternation()
         return start;
 }
 
-typedef struct
-{
-        regex_instruction address_to code;
-        p8(address_to sets)[32];
-        p8 address_to first;
-        p8 address_to last;
-        p8 address_to literal;
-        positive literal_length;
-        positive2 literal_anchors;
-        b32 length;
-        b32 groups;
-        bool extended;
-        bool icase;
-        p8 policy;
-        bool first_known;
-        bool last_known;
-        bool anchored;
-        bool alternates;
-        positive slot_used;
-        b32 loops[REGEX_LOOPS_KEPT];
-        b32 loop_count;
-} regex_program;
-
 static fn regex_select(regex_program address_to which)
 {
-        regex_code = which->code;
-        regex_sets = which->sets;
-        regex_first = which->first;
-        regex_last = which->last;
-        regex_literal = which->literal;
-        regex_literal_length = which->literal_length;
-        regex_literal_anchors = which->literal_anchors;
-        regex_length_code = which->length;
-        regex_group_count = which->groups;
-        regex_extended = which->extended;
-        regex_icase = which->icase;
-        regex_policy = which->policy;
-        regex_first_known = which->first_known;
-        regex_last_known = which->last_known;
-        regex_anchored = which->anchored;
-        regex_alternates = which->alternates;
-        regex_slot_used = which->slot_used;
-        regex_loop_count = which->loop_count;
+        regex_context = which->state;
 
-        if (which->loop_count > 0)
+        if (regex_loop_count > 0)
                 memory_copy_apart(
                     regex_loop_list, which->loops,
-                    (positive)(which->loop_count < REGEX_LOOPS_KEPT
-                                   ? which->loop_count
+                    (positive)(regex_loop_count < REGEX_LOOPS_KEPT
+                                   ? regex_loop_count
                                    : REGEX_LOOPS_KEPT) *
                         sizeof(b32));
 }
 
-// Takes what was just compiled out of the pool's free space and hands back a
-// handle to it, so the next compile starts after it rather than over it.
-static fn regex_keep(regex_program address_to which)
+/* Snapshot the selected VM program without changing pool ownership.  The
+   shell conditional engine uses this transiently; cached grep, sed and AWK
+   programs commit the same snapshot with regex_keep below. */
+static fn regex_capture(regex_program address_to which)
 {
-        which->code = regex_code;
-        which->sets = regex_sets;
-        which->first = regex_first;
-        which->last = regex_last;
-        which->literal = regex_literal;
-        which->literal_length = regex_literal_length;
-        which->literal_anchors = regex_literal_anchors;
-        which->length = regex_length_code;
-        which->groups = regex_group_count;
-        which->extended = regex_extended;
-        which->icase = regex_icase;
-        which->policy = regex_policy;
-        which->first_known = regex_first_known;
-        which->last_known = regex_last_known;
-        which->anchored = regex_anchored;
-        which->alternates = regex_alternates;
-        which->slot_used = regex_slot_used;
-        which->loop_count = regex_loop_count;
+        which->state = regex_context;
 
         if (regex_loop_count > 0)
                 memory_copy_apart(
@@ -1680,6 +1665,13 @@ static fn regex_keep(regex_program address_to which)
                                    : REGEX_LOOPS_KEPT) *
                         sizeof(b32));
 
+}
+
+// Takes what was just compiled out of the pool's free space and hands back a
+// handle to it, so the next compile starts after it rather than over it.
+static fn regex_keep(regex_program address_to which)
+{
+        regex_capture(which);
         regex_pool_used += regex_length_code;
         regex_pool_sets += regex_set_count;
 }
@@ -5557,13 +5549,9 @@ static positive grep_pattern_length;
 static bool grep_pattern_any;
 static bool grep_pattern_broken;
 
-static fn grep_pattern_put(p8 character)
-{
-        if (grep_pattern_length < GREP_PATTERN_MAX - 1)
-                grep_pattern[grep_pattern_length++] = character;
-        else
-                grep_pattern_broken = true;
-}
+#define grep_pattern_put(character)                                          \
+        fixed_store_byte(grep_pattern, grep_pattern_length,                  \
+                         grep_pattern_broken, character)
 
 static fn grep_pattern_add(string_address text, positive length, bool fixed, bool extended)
 {
@@ -7215,13 +7203,8 @@ static bool sed_quiet;
 static bool sed_last;
 static bool sed_space_ended;
 
-static fn sed_script_put(p8 character)
-{
-        if (sed_script_length < SED_SCRIPT_MAX - 1)
-                sed_script[sed_script_length++] = character;
-        else
-                sed_broken = true;
-}
+#define sed_script_put(character)                                            \
+        fixed_store_byte(sed_script, sed_script_length, sed_broken, character)
 
 static fn sed_script_add(string_address text)
 {

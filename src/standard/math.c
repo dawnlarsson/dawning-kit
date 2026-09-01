@@ -278,9 +278,7 @@ static decimal math_magnitude(decimal value)
 //      against zero, and it is the whole reason the routine exists.
 static bool decimal_sign_bit(decimal value)
 {
-        math_shape shape;
-        shape.value = value;
-        return (shape.bits >> 63) != 0;
+        return (memory_cast(p64, value) >> 63) != 0;
 }
 
 static b32 decimal_class(decimal value)
@@ -339,9 +337,7 @@ static bool narrow_is_normal(f32 value)
 
 static bool narrow_sign_bit(f32 value)
 {
-        math_narrow_shape shape;
-        shape.value = value;
-        return (shape.bits >> 31) != 0;
+        return (memory_cast(p32, value) >> 31) != 0;
 }
 
 static b32 narrow_class(f32 value)

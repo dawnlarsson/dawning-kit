@@ -1604,37 +1604,19 @@ ERROR_ENTRY(mprotect, b32,
 
 //      -- processes -------------------------------------------------------
 
-//      getpid and its four relatives cannot fail, so like umask they are
-//      unwrapped casts and leave errno alone.
-static b32 getpid(void)
-{
-        return (b32)system_call(syscall(getpid));
-}
+//      Process identities cannot fail, so like umask they are one generated
+//      unwrapped cast apiece and leave errno alone.
+#define ERROR_ID(name, type)                                                 \
+        static type name(void)                                               \
+        { return (type)system_call(syscall(name)); }
 
-static b32 getppid(void)
-{
-        return (b32)system_call(syscall(getppid));
-}
-
-static p32 getuid(void)
-{
-        return (p32)system_call(syscall(getuid));
-}
-
-static p32 geteuid(void)
-{
-        return (p32)system_call(syscall(geteuid));
-}
-
-static p32 getgid(void)
-{
-        return (p32)system_call(syscall(getgid));
-}
-
-static p32 getegid(void)
-{
-        return (p32)system_call(syscall(getegid));
-}
+ERROR_ID(getpid, b32)
+ERROR_ID(getppid, b32)
+ERROR_ID(getuid, p32)
+ERROR_ID(geteuid, p32)
+ERROR_ID(getgid, p32)
+ERROR_ID(getegid, p32)
+#undef ERROR_ID
 
 ERROR_ENTRY(kill, b32, (b32 process, b32 signal), error_whole,
             system_call_2(syscall(kill), (positive)process, (positive)signal))
