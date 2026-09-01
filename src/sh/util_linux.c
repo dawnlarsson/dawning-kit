@@ -590,22 +590,24 @@ static b32 ul_taskset_one(b32 pid, address_any context)
 {
         ul_taskset_work address_to work = context;
         positive current[UL_CPU_WORDS];
-
-        bipolar used = system_call_3(syscall(sched_getaffinity),
-                                     (positive)(p32)pid, sizeof(current),
-                                     (positive)current);
-
-        if (used < 0)
-        {
-                string_format(file_fail,
-                              "taskset: failed to get pid %b's affinity: %s\n",
-                              (bipolar)pid, file_reason(used));
-                return 1;
-        }
+        bipolar used;
 
         if (work->report)
+        {
+                used = system_call_3(syscall(sched_getaffinity),
+                                     (positive)(p32)pid, sizeof(current),
+                                     (positive)current);
+                if (used < 0)
+                {
+                        string_format(file_fail,
+                                      "taskset: failed to get pid %b's affinity: %s\n",
+                                      (bipolar)pid, file_reason(used));
+                        return 1;
+                }
+
                 ul_taskset_say(pid, (string_address)"current", work->list,
                                current, (positive)used);
+        }
 
         if (!work->setting)
                 return 0;
