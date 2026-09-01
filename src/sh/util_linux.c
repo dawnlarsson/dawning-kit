@@ -1886,16 +1886,6 @@ static bool ul_duration(string_address text, positive address_to nanoseconds)
         return true;
 }
 
-static positive ul_now_ns()
-{
-        timespec now = {0, 0};
-
-        if (system_call_2(syscall(clock_gettime), UL_CLOCK_MONOTONIC,
-                          (positive)address_of now) < 0)
-                return 0;
-        return (positive)now.tv_sec * 1000000000 + (positive)now.tv_nsec;
-}
-
 static bipolar ul_flock_try(b32 handle, p8 kind, bool nonblocking,
                             bool fcntl, positive start, positive length)
 {
@@ -1931,7 +1921,7 @@ static fn ul_flock_alarm(b32 number)
 static b32 ul_flock_poll(b32 handle, p8 kind, positive timeout, bool fcntl,
                          positive start, positive length, b32 conflict)
 {
-        positive began = ul_now_ns();
+        positive began = clock_monotonic_nanoseconds();
 
         for (;;)
         {
@@ -1945,7 +1935,7 @@ static b32 ul_flock_poll(b32 handle, p8 kind, positive timeout, bool fcntl,
                                       file_reason(answer));
                         return 1;
                 }
-                positive now = ul_now_ns();
+                positive now = clock_monotonic_nanoseconds();
                 positive elapsed = now >= began ? now - began : timeout;
                 if (elapsed >= timeout)
                         return conflict;
@@ -2169,7 +2159,7 @@ static b32 util_linux_flock()
         }
 
         bool verbose = (taking.flags & FILE_FLAG('v')) != 0;
-        positive began = verbose ? ul_now_ns() : 0;
+        positive began = verbose ? clock_monotonic_nanoseconds() : 0;
         answer = ul_flock_acquire(handle, ul_flock_kind ? ul_flock_kind : 'x',
                                   (taking.flags & FILE_FLAG('n')) != 0,
                                   timed, timeout, fcntl, start, length,
@@ -2179,7 +2169,7 @@ static b32 util_linux_flock()
                               "flock: timeout while waiting to get lock\n");
         if (!answer && verbose)
         {
-                positive elapsed = ul_now_ns() - began;
+                positive elapsed = clock_monotonic_nanoseconds() - began;
                 p8 fraction_text[32];
                 positive_into_string(fraction_text,
                                      (elapsed % 1000000000) / 1000);
@@ -2735,7 +2725,7 @@ static b32 util_linux_waitpid()
         positive deadline = 0;
         if (timeout)
         {
-                positive now = ul_now_ns();
+                positive now = clock_monotonic_nanoseconds();
                 deadline = timeout > positive_max - now
                     ? positive_max : now + timeout;
         }
@@ -2745,7 +2735,7 @@ static b32 util_linux_waitpid()
                 timespec address_to limit = null;
                 if (deadline)
                 {
-                        positive now = ul_now_ns();
+                        positive now = clock_monotonic_nanoseconds();
                         if (now >= deadline)
                                 return ul_wait_timed_out(active, verbose);
                         positive left = deadline - now;

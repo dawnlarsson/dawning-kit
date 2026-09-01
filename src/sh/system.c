@@ -137,20 +137,6 @@ static bipolar start_network(b32 device)
                              network_argv, 2);
 }
 
-positive now_ns()
-{
-        timespec now = {0, 0};
-
-        // A clock that will not answer leaves every lifetime measured as zero,
-        // which counts every restart as a quick one: the backoff comes on
-        // early rather than never.
-        if (system_call_2(syscall(clock_gettime), CLOCK_MONOTONIC,
-                          (positive)address_of now))
-                return 0;
-
-        return (positive)now.tv_sec * 1000000000 + (positive)now.tv_nsec;
-}
-
 fn pause_for(positive nanoseconds)
 {
         timespec span = {nanoseconds / 1000000000, nanoseconds % 1000000000};
@@ -174,7 +160,7 @@ static bipolar start_shell_until_ready(b32 device, positive address_to started)
                               init_program, shell);
                 log_flush();
                 pause_for(RESTART_BACKOFF_MAX_NS);
-                address_to started = now_ns();
+                address_to started = clock_monotonic_nanoseconds();
         }
 
         return shell;
@@ -241,12 +227,12 @@ static b32 system_init()
 
         positive quick_exits = 0;
         positive backoff = 0;
-        positive started = now_ns();
+        positive started = clock_monotonic_nanoseconds();
         bipolar wait_error = 0;
 
 #ifndef SHELL_NO_UTILITIES
         bipolar network = start_network(device);
-        positive network_started = now_ns();
+        positive network_started = clock_monotonic_nanoseconds();
         positive network_failures = 0;
 #endif
 
@@ -290,7 +276,8 @@ static b32 system_init()
 #ifndef SHELL_NO_UTILITIES
                         if (reaped == network)
                         {
-                                if (now_ns() - network_started >= NETWORK_SETTLED_NS)
+                                if (clock_monotonic_nanoseconds() - network_started >=
+                                    NETWORK_SETTLED_NS)
                                         network_failures = 0;
                                 else
                                         network_failures++;
@@ -305,7 +292,7 @@ static b32 system_init()
                                         continue;
                                 }
 
-                                network_started = now_ns();
+                                network_started = clock_monotonic_nanoseconds();
                                 network = start_network(device);
                                 continue;
                         }
@@ -326,7 +313,7 @@ static b32 system_init()
                 else
                         report_exit(status);
 
-                if (now_ns() - started >= SHELL_SETTLED_NS)
+                if (clock_monotonic_nanoseconds() - started >= SHELL_SETTLED_NS)
                 {
                         quick_exits = 0;
                         backoff = 0;
@@ -345,7 +332,7 @@ static b32 system_init()
                         pause_for(backoff);
                 }
 
-                started = now_ns();
+                started = clock_monotonic_nanoseconds();
                 // Retried here rather than by falling back into wait4,
                 // which would have no children to wait for and would report
                 // the shell as having died when it never started.

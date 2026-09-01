@@ -34,15 +34,21 @@ GENERATORS = {
     ('src/sh/awk.c', 'AWK_LOGICAL_LEVEL'): ('{}',),
     ('src/sh/awk.c', 'AWK_EVALUATOR'): ('{}',),
     ('src/sh/expand.c', 'ARITH_BIT_LEVEL'): ('{}',),
+    ('src/sh/expand.c', 'ARITH_LOGICAL_LEVEL'): ('{}',),
     ('src/sh/builtin.c', 'STORAGE_ADAPTER'):
         ('shell_{}', 'storage_program_{}'),
+    ('src/sh/builtin.c', 'SHELL_ASSIGNER'): ('{}',),
+    ('src/sh/builtin.c', 'TEST_LOGICAL_LEVEL'): ('{}',),
     ('src/sh/storage_discovery.c', 'STORAGE_TABLE_RELEASE'): ('{}',),
+    ('src/sh/text.c', 'EXPR_LOGICAL_LEVEL'): ('{}',),
     ('src/standard/process.c', 'PROCESS_EXECL'): ('{}',),
     ('src/standard/error.c', 'ERROR_OPEN'): ('{}',),
     ('src/standard/error.c', 'ERROR_ENTRY'): ('{}',),
     ('src/standard/error.c', 'var_list_entry'): ('{}',),
     ('src/standard/format.c', 'var_list_entry'): ('{}',),
     ('src/standard/scan.c', 'var_list_entry'): ('{}',),
+    ('src/standard/numbers.c', 'NUMBERS_EXACT'): ('{}',),
+    ('src/standard/numbers.c', 'NUMBERS_TO'): ('{}',),
     ('src/standard/stdlib.c', 'STDLIB_DIVIDE'): ('{}',),
 }
 

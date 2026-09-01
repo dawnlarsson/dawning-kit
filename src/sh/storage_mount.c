@@ -63,18 +63,7 @@ static bool storage_prefix(string_address word, string_address prefix)
         return !string_compare_max(word, prefix, count);
 }
 
-typedef struct
-{
-        p8 address_to text;
-        positive room;
-        positive used;
-} storage_mount_word;
-
-static fn storage_mount_word_free(storage_mount_word address_to word)
-{
-        memory_release((address_any address_to)address_of word->text,
-                       address_of word->room, address_of word->used, 1);
-}
+typedef byte_store storage_mount_word;
 
 static bool storage_mount_tag(storage_mount_word address_to word,
                               string_address tag, string_address value)
@@ -87,13 +76,12 @@ static bool storage_mount_tag(storage_mount_word address_to word,
             value_length > positive_max - tag_length - 2)
                 return false;
         wanted = tag_length + value_length + 2;
-        if (!memory_reserve((address_any address_to)address_of word->text,
-                            address_of word->room, word->used, wanted, 1, 64))
+        if (!byte_store_reserve(word, wanted, 64))
                 return false;
 
-        memory_copy_apart(word->text, tag, tag_length);
-        word->text[tag_length] = '=';
-        memory_copy_apart(word->text + tag_length + 1, value,
+        memory_copy_apart(word->bytes, tag, tag_length);
+        word->bytes[tag_length] = '=';
+        memory_copy_apart(word->bytes + tag_length + 1, value,
                           value_length + 1);
         word->used = wanted;
         return true;
@@ -675,7 +663,7 @@ b32 storage_mount_command(positive argc, string_address address_to argv,
                                                           (string_address)"UUID",
                                                         value))
                                                         goto no_memory;
-                                                named_source = tag_source.text;
+                                                named_source = tag_source.bytes;
                                         }
                                 }
                                 else
@@ -726,7 +714,7 @@ b32 storage_mount_command(positive argc, string_address address_to argv,
                                                (string_address)"LABEL",
                                                argv[at++]))
                                 goto no_memory;
-                        named_source = tag_source.text;
+                        named_source = tag_source.bytes;
                 }
                 else if (storage_prefix(word, "--label="))
                 {
@@ -734,7 +722,7 @@ b32 storage_mount_command(positive argc, string_address address_to argv,
                                                (string_address)"LABEL",
                                                word + sizeof("--label=") - 1))
                                 goto no_memory;
-                        named_source = tag_source.text;
+                        named_source = tag_source.bytes;
                 }
                 else if (storage_word(word, "--uuid"))
                 {
@@ -744,7 +732,7 @@ b32 storage_mount_command(positive argc, string_address address_to argv,
                                                (string_address)"UUID",
                                                argv[at++]))
                                 goto no_memory;
-                        named_source = tag_source.text;
+                        named_source = tag_source.bytes;
                 }
                 else if (storage_prefix(word, "--uuid="))
                 {
@@ -752,7 +740,7 @@ b32 storage_mount_command(positive argc, string_address address_to argv,
                                                (string_address)"UUID",
                                                word + sizeof("--uuid=") - 1))
                                 goto no_memory;
-                        named_source = tag_source.text;
+                        named_source = tag_source.bytes;
                 }
                 else if (storage_word(word, "--source"))
                 {
@@ -986,7 +974,7 @@ no_memory:
         string_format(diagnostic, "mount: no memory\n");
 done:
         storage_options_free(address_of options);
-        storage_mount_word_free(address_of tag_source);
+        byte_store_release(address_of tag_source);
         return status;
 }
 

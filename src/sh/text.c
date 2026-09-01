@@ -3194,12 +3194,7 @@ static b32 text_sum()
 
 // tac ----------------------------------------------------------------
 
-typedef struct
-{
-        p8 address_to bytes;
-        positive room;
-        positive used;
-} tac_buffer;
+typedef byte_store tac_buffer;
 
 static bool tac_read(tac_buffer address_to buffer, string_address name)
 {
@@ -3215,10 +3210,8 @@ static bool tac_read(tac_buffer address_to buffer, string_address name)
                 positive length = text_input.filled - text_input.position;
 
                 if (length > positive_max - buffer->used ||
-                    !memory_reserve(
-                        (address_any address_to)address_of buffer->bytes,
-                        address_of buffer->room, buffer->used,
-                        buffer->used + length, 1, TEXT_READ_MAX))
+                    !byte_store_reserve(buffer, buffer->used + length,
+                                        TEXT_READ_MAX))
                 {
                         text_error(name, "input too large");
                         text_status = 1;
@@ -3398,8 +3391,7 @@ static b32 text_tac()
                                             separator_length, before);
                 }
 
-        memory_release((address_any address_to)address_of input.bytes,
-                       address_of input.room, address_of input.used, 1);
+        byte_store_release(address_of input);
         return text_done(text_status);
 }
 
@@ -4917,18 +4909,10 @@ static p8 text_escape(string_address spec, positive address_to at)
 
         address_to at += 2;
 
-        switch (next)
-        {
-        case 'n': return '\n';
-        case 't': return '\t';
-        case 'r': return '\r';
-        case 'a': return 7;
-        case 'b': return 8;
-        case 'f': return 12;
-        case 'v': return 11;
-        case '\\': return '\\';
-        default: break;
-        }
+        p8 escaped = byte_simple_escape(next);
+
+        if (escaped)
+                return escaped;
 
         if (next >= '0' && next <= '7')
         {
@@ -8896,24 +8880,27 @@ static positive sort_separator_from(p8 address_to at, positive length, positive 
         return found ? (positive)(found - at) : length;
 }
 
-static positive sort_field_start(p8 address_to at, positive length, positive field)
+static inline INLINE positive sort_field_edge(p8 address_to at,
+                                              positive length,
+                                              positive field, bool stop)
 {
         positive scan = 0;
+        positive first = stop ? 0 : 1;
 
         if (sort_have_separator)
         {
-                for (positive i = 1; i < field && scan < length; i++)
+                for (positive i = first; i < field && scan < length; i++)
                 {
                         scan = sort_separator_from(at, length, scan);
 
-                        if (scan < length)
+                        if (scan < length && (!stop || i + 1 < field))
                                 scan++;
                 }
 
                 return scan;
         }
 
-        for (positive i = 1; i < field && scan < length; i++)
+        for (positive i = first; i < field && scan < length; i++)
         {
                 scan += string_span_max(at + scan, length - scan, string_set_blanks);
                 scan += string_span_max(at + scan, length - scan, text_inside());
@@ -8922,31 +8909,10 @@ static positive sort_field_start(p8 address_to at, positive length, positive fie
         return scan;
 }
 
-static positive sort_field_stop(p8 address_to at, positive length, positive field)
-{
-        positive scan = 0;
-
-        if (sort_have_separator)
-        {
-                for (positive i = 0; i < field && scan < length; i++)
-                {
-                        scan = sort_separator_from(at, length, scan);
-
-                        if (i + 1 < field && scan < length)
-                                scan++;
-                }
-
-                return scan;
-        }
-
-        for (positive i = 0; i < field && scan < length; i++)
-        {
-                scan += string_span_max(at + scan, length - scan, string_set_blanks);
-                scan += string_span_max(at + scan, length - scan, text_inside());
-        }
-
-        return scan;
-}
+#define sort_field_start(at, length, field)                                 \
+        sort_field_edge((at), (length), (field), false)
+#define sort_field_stop(at, length, field)                                  \
+        sort_field_edge((at), (length), (field), true)
 
 static fn sort_key_span(sort_key address_to key, p8 address_to at, positive length,
                         positive address_to from, positive address_to to)
@@ -10278,84 +10244,8 @@ static b32 text_sort()
         front -- and -n says how far to go. -b puts the differing bytes
         themselves beside their octal, the way a terminal can show them.
 */
-#define CMP_BLOCK 65536
-
-typedef struct
-{
-        positive handle;
-        positive filled;
-        positive position;
-        bool finished;
-        bool failed;
-        bool opened;
-        string_address name;
-        p8 buffer[CMP_BLOCK];
-} cmp_side;
-
-static cmp_side cmp_left;
-static cmp_side cmp_right;
-
-static bool cmp_open(cmp_side address_to side, string_address path)
-{
-        bipolar handle;
-
-        side->filled = 0;
-        side->position = 0;
-        side->finished = false;
-        side->failed = false;
-        side->opened = false;
-        side->name = path;
-
-        if (path[0] == '-' && !path[1])
-        {
-                side->handle = 0;
-                return true;
-        }
-
-        handle = text_open_handle(path, FILE_READ, 0);
-
-        if (handle < 0)
-        {
-                text_error(path, "No such file or directory");
-                return false;
-        }
-
-        side->handle = (positive)handle;
-        side->opened = true;
-
-        return true;
-}
-
-static bool cmp_fill(cmp_side address_to side)
-{
-        if (side->position == side->filled)
-        {
-                bipolar got;
-
-                if (side->finished)
-                        return false;
-
-                got = system_read_retry(side->handle, side->buffer, CMP_BLOCK);
-
-                if (got <= 0)
-                {
-                        side->finished = true;
-
-                        if (got < 0)
-                        {
-                                side->failed = true;
-                                text_error(side->name, "Read error");
-                        }
-
-                        return false;
-                }
-
-                side->filled = (positive)got;
-                side->position = 0;
-        }
-
-        return true;
-}
+static text_reader cmp_left;
+static text_reader cmp_right;
 
 // Both sides shut and the answer handed back, which is how every exit from
 // the comparison below leaves. A shell runs cmp as a builtin and goes on
@@ -10368,9 +10258,9 @@ static b32 cmp_ends(b32 code)
         return text_done(code);
 }
 
-static bipolar cmp_byte(cmp_side address_to side)
+static bipolar cmp_byte(text_reader address_to side)
 {
-        if (!cmp_fill(side))
+        if (!text_reader_fill(side))
                 return -1;
 
         return side->buffer[side->position++];
@@ -10379,7 +10269,7 @@ static bipolar cmp_byte(cmp_side address_to side)
 // What is left of a side, which is the whole of it until -i has skipped
 // something. Nothing, for a pipe: what is behind one has no length until it
 // has ended.
-static positive cmp_length(cmp_side address_to side)
+static positive cmp_length(text_reader address_to side)
 {
         bipolar here = system_call_3(syscall(lseek), side->handle, 0, FILE_SEEK_CUR);
         bipolar last;
@@ -10395,7 +10285,7 @@ static positive cmp_length(cmp_side address_to side)
 
 // Past a skip, by seeking where that is allowed and by reading where it is
 // not. A skip past the end leaves the side empty rather than failing.
-static fn cmp_pass(cmp_side address_to side, positive count)
+static fn cmp_pass(text_reader address_to side, positive count)
 {
         if (!count)
                 return;
@@ -10409,7 +10299,7 @@ static fn cmp_pass(cmp_side address_to side, positive count)
 
 // The line is left out when the differences were listed, because that is
 // what the tool this is measured against does.
-static fn cmp_ended(cmp_side address_to side, positive at, positive line,
+static fn cmp_ended(text_reader address_to side, positive at, positive line,
                     bool newline, bool listing)
 {
         p8 text[24];
@@ -10619,10 +10509,10 @@ static b32 text_cmp()
         string_address right_name = operands > 1 ? program_argument(index + 1)
                                                  : (string_address) "-";
 
-        if (!cmp_open(address_of cmp_left, left_name))
+        if (!text_reader_open(address_of cmp_left, left_name))
                 return cmp_ends(2);
 
-        if (!cmp_open(address_of cmp_right, right_name))
+        if (!text_reader_open(address_of cmp_right, right_name))
                 return cmp_ends(2);
 
         /* One stream cannot be read at two independent positions. GNU cmp
@@ -10660,8 +10550,8 @@ static b32 text_cmp()
                         the wide byte counter; only a block containing the
                         first difference falls back to the byte path below.
                 */
-                if (!scalar_left && cmp_fill(address_of cmp_left) &&
-                    cmp_fill(address_of cmp_right))
+                if (!scalar_left && text_reader_fill(address_of cmp_left) &&
+                    text_reader_fill(address_of cmp_right))
                 {
                         positive left = cmp_left.filled - cmp_left.position;
                         positive right = cmp_right.filled - cmp_right.position;
@@ -11362,53 +11252,42 @@ static expr_value expr_compare_level()
         return left;
 }
 
-static expr_value expr_both_level()
-{
-        expr_value left = expr_compare_level();
-
-        while (!expr_fault && expr_is("&"))
-        {
-                bool decided = !expr_true(address_of left);
-                expr_value right;
-
-                expr_at++;
-                expr_dead += decided;
-                right = expr_compare_level();
-                expr_dead -= decided;
-
-                if (expr_fault)
-                        break;
-
-                if (decided || !expr_true(address_of right))
-                        left = expr_zero();
+#define EXPR_LOGICAL_LEVEL(name, lower, spelling, any)                       \
+        static expr_value name()                                            \
+        {                                                                    \
+                expr_value left = lower();                                  \
+                                                                             \
+                while (!expr_fault && expr_is(spelling))                    \
+                {                                                            \
+                        bool decided = expr_true(address_of left) == (any);  \
+                                                                             \
+                        expr_at++;                                           \
+                        expr_dead += decided;                                \
+                        expr_value right = lower();                          \
+                        expr_dead -= decided;                                \
+                                                                             \
+                        if (expr_fault)                                      \
+                                break;                                       \
+                        if (decided)                                         \
+                        {                                                    \
+                                if (!(any))                                  \
+                                        left = expr_zero();                  \
+                        }                                                    \
+                        else if (expr_true(address_of right))                \
+                        {                                                    \
+                                if (any)                                     \
+                                        left = right;                        \
+                        }                                                    \
+                        else                                                 \
+                                left = expr_zero();                          \
+                }                                                            \
+                                                                             \
+                return left;                                                 \
         }
 
-        return left;
-}
-
-static expr_value expr_any()
-{
-        expr_value left = expr_both_level();
-
-        while (!expr_fault && expr_is("|"))
-        {
-                bool decided = expr_true(address_of left);
-                expr_value right;
-
-                expr_at++;
-                expr_dead += decided;
-                right = expr_both_level();
-                expr_dead -= decided;
-
-                if (expr_fault)
-                        break;
-
-                if (!decided)
-                        left = expr_true(address_of right) ? right : expr_zero();
-        }
-
-        return left;
-}
+EXPR_LOGICAL_LEVEL(expr_both_level, expr_compare_level, "&", false)
+EXPR_LOGICAL_LEVEL(expr_any, expr_both_level, "|", true)
+#undef EXPR_LOGICAL_LEVEL
 
 static b32 text_expr()
 {

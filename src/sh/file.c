@@ -993,21 +993,6 @@ static const file_unit file_units[] = {
     {null, 0, 0},
 };
 
-// The inverse of file_civil: a day number from a calendar date, and the same
-// arithmetic run backwards. A day past the end of its month runs on into the
-// next one, which is what a month added to the 31st has to do.
-CONST b64 file_days(b64 year, b64 month, b64 day)
-{
-        year -= month <= 2;
-
-        b64 era = (year >= 0 ? year : year - 399) / 400;
-        b64 of_era = year - era * 400;
-        b64 of_year = (153 * (month + (month > 2 ? -3 : 9)) + 2) / 5 + day - 1;
-        b64 day_of_era = of_year + 365 * of_era + of_era / 4 - of_era / 100;
-
-        return era * 146097 + day_of_era - 719468;
-}
-
 // A day written down has to be a day the month has; a day arrived at by
 // adding months to another one does not, and rolls into the month after.
 static positive file_month_days(b64 year, b64 month)
@@ -1022,13 +1007,8 @@ static positive file_month_days(b64 year, b64 month)
 
 static bool file_same_word(string_address text, positive length, string_address word)
 {
-        positive i = 0;
-
-        while (i < length && string_get(word + i) &&
-               byte_to_lower(string_get(text + i)) == string_get(word + i))
-                i++;
-
-        return i == length && !string_get(word + i);
+        return string_length(word) == length &&
+               !memory_compare_ascii_case(text, word, length);
 }
 
 static const file_unit address_to file_unit_of(string_address text, positive length)
@@ -1320,7 +1300,8 @@ bool file_moment_read(string_address text, b64 now, b64 address_to out)
         b64 reach = year * 12 + (b64)month - 1 + months;
         b64 landed = reach >= 0 ? reach / 12 : -((-reach + 11) / 12);
 
-        address_to out = file_days(landed, reach - landed * 12 + 1, day) * 86400 +
+        address_to out = clock_days_from_civil(
+                             landed, reach - landed * 12 + 1, day) * 86400 +
                          (b64)hour * 3600 + (b64)minute * 60 + (b64)second + shift;
 
         return true;
@@ -1531,11 +1512,7 @@ bool file_ask(string_address program, string_address question, string_address su
         which is how --relative-to gets a bit of the flag word to live in
         without inventing a -R that GNU has not got.
 */
-typedef struct
-{
-        string_address name;
-        p8 letter;
-} file_long;
+typedef named_byte file_long;
 
 /*
         The options that supersede one another.
@@ -1680,12 +1657,12 @@ static p8 file_long_letter(file_taking address_to taking, string_address name,
                 // Prefer an exact spelling; otherwise accept only one GNU
                 // style unambiguous prefix.
                 if (string_is(spelling + length, end))
-                        return taking->longs[i].letter;
+                        return taking->longs[i].value;
 
                 if (candidate)
                         return 0;
 
-                candidate = taking->longs[i].letter;
+                candidate = taking->longs[i].value;
         }
 
         return candidate;
@@ -9773,7 +9750,7 @@ static bool touch_stamp(string_address text, b64 now, b64 address_to out)
             field[4] > 23 || field[5] > 59)
                 return false;
 
-        address_to out = file_days(year, field[2], field[3]) * 86400 +
+        address_to out = clock_days_from_civil(year, field[2], field[3]) * 86400 +
                          field[4] * 3600 + field[5] * 60 +
                          (has_fraction ? fraction : 0);
 
@@ -10513,11 +10490,7 @@ typedef struct
         positive after;
         positive width;
         positive precision;
-        bool left;
-        bool plus;
-        bool space;
-        bool zero;
-        bool alternate;
+        positive flags;
 } seq_format;
 
 static bool seq_format_read(string_address text, seq_format address_to format)
@@ -10544,18 +10517,10 @@ static bool seq_format_read(string_address text, seq_format address_to format)
                 found = true;
                 format->directive = at++;
 
-                bool flags = true;
+                string_address flags_at = text + at;
 
-                while (flags)
-                        switch (text[at])
-                        {
-                        case '-': format->left = true; at++; break;
-                        case '+': format->plus = true; at++; break;
-                        case ' ': format->space = true; at++; break;
-                        case '0': format->zero = true; at++; break;
-                        case '#': format->alternate = true; at++; break;
-                        default: flags = false; break;
-                        }
+                format->flags = conversion_flags_take(address_of flags_at);
+                at = (positive)(flags_at - text);
 
                 while (text[at] >= '0' && text[at] <= '9')
                 {
@@ -10644,27 +10609,33 @@ static fn seq_format_write(writer write, seq_format address_to format,
         positive divisor = seq_power_ten(stored);
         positive whole = magnitude / divisor;
         positive fraction = magnitude % divisor;
-        positive sign = minus || format->plus || format->space;
+        positive sign = minus ||
+                        (format->flags & (CONVERSION_FLAG_PLUS |
+                                          CONVERSION_FLAG_SPACE));
         positive body = positive_digits(whole) + sign +
-                        (precision || format->alternate ? precision + 1 : 0);
+                        (precision ||
+                                 (format->flags & CONVERSION_FLAG_ALTERNATE)
+                             ? precision + 1 : 0);
         positive padding = format->width > body ? format->width - body : 0;
 
-        if (!format->left && !format->zero)
+        if (!(format->flags & CONVERSION_FLAG_LEFT) &&
+            !(format->flags & CONVERSION_FLAG_ZERO))
                 writer_fill(write, padding, ' ');
 
         if (minus)
                 write("-", 1);
-        else if (format->plus)
+        else if (format->flags & CONVERSION_FLAG_PLUS)
                 write("+", 1);
-        else if (format->space)
+        else if (format->flags & CONVERSION_FLAG_SPACE)
                 write(" ", 1);
 
-        if (!format->left && format->zero)
+        if (!(format->flags & CONVERSION_FLAG_LEFT) &&
+            (format->flags & CONVERSION_FLAG_ZERO))
                 writer_fill(write, padding, '0');
 
         positive_to_string(write, whole);
 
-        if (precision || format->alternate)
+        if (precision || (format->flags & CONVERSION_FLAG_ALTERNATE))
         {
                 write(".", 1);
 
@@ -10675,7 +10646,7 @@ static fn seq_format_write(writer write, seq_format address_to format,
                         writer_fill(write, precision - stored, '0');
         }
 
-        if (format->left)
+        if (format->flags & CONVERSION_FLAG_LEFT)
                 writer_fill(write, padding, ' ');
 
         string_address suffix = format->text + format->after;

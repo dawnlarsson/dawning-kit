@@ -286,23 +286,23 @@ static fn format_fill(format_sink address_to sink, p8 byte, positive count)
 
 //      The five flags, packed so a whole specifier fits in registers.
 
-#define FORMAT_FLAG_LEFT 1
-#define FORMAT_FLAG_PLUS 2
-#define FORMAT_FLAG_SPACE 4
-#define FORMAT_FLAG_ALTERNATE 8
-#define FORMAT_FLAG_ZERO 16
+#define FORMAT_FLAG_LEFT CONVERSION_FLAG_LEFT
+#define FORMAT_FLAG_PLUS CONVERSION_FLAG_PLUS
+#define FORMAT_FLAG_SPACE CONVERSION_FLAG_SPACE
+#define FORMAT_FLAG_ALTERNATE CONVERSION_FLAG_ALTERNATE
+#define FORMAT_FLAG_ZERO CONVERSION_FLAG_ZERO
 
 //      The length modifiers, one code each rather than the one or two bytes
 //      they are spelled with.
 
-#define FORMAT_LENGTH_INT 0
-#define FORMAT_LENGTH_CHAR 1
-#define FORMAT_LENGTH_SHORT 2
-#define FORMAT_LENGTH_LONG 3
-#define FORMAT_LENGTH_LONG_LONG 4
-#define FORMAT_LENGTH_SIZE 5
-#define FORMAT_LENGTH_DIFFERENCE 6
-#define FORMAT_LENGTH_WIDEST 7
+#define FORMAT_LENGTH_INT CONVERSION_LENGTH_INT
+#define FORMAT_LENGTH_CHAR CONVERSION_LENGTH_CHAR
+#define FORMAT_LENGTH_SHORT CONVERSION_LENGTH_SHORT
+#define FORMAT_LENGTH_LONG CONVERSION_LENGTH_LONG
+#define FORMAT_LENGTH_LONG_LONG CONVERSION_LENGTH_LONG_LONG
+#define FORMAT_LENGTH_SIZE CONVERSION_LENGTH_SIZE
+#define FORMAT_LENGTH_DIFFERENCE CONVERSION_LENGTH_DIFFERENCE
+#define FORMAT_LENGTH_WIDEST CONVERSION_LENGTH_WIDEST
 /*
         L is parsed and then ignored, which is not the same as supported.
 
@@ -321,7 +321,7 @@ static fn format_fill(format_sink address_to sink, p8 byte, positive count)
         exponent without complaint; it is the argument fetch and the libgcc
         dependency that are the work.
 */
-#define FORMAT_LENGTH_WIDE_DECIMAL 8
+#define FORMAT_LENGTH_WIDE_DECIMAL CONVERSION_LENGTH_WIDE_DECIMAL
 
 typedef struct
 {
@@ -1407,7 +1407,6 @@ static fn format_run(format_sink address_to sink, string_address format,
                 string_address start = at;
                 format_spec spec;
                 positive base = 10;
-                bool done;
 
                 //      MEASURED, AND LEFT AS A BYTE LOOP ON PURPOSE.
                 //
@@ -1439,41 +1438,10 @@ static fn format_run(format_sink address_to sink, string_address format,
                 start = at;
                 at++;
 
-                spec.flags = 0;
+                spec.flags = conversion_flags_take(address_of at);
                 spec.width = 0;
                 spec.precision = -1;
                 spec.length = FORMAT_LENGTH_INT;
-                done = false;
-
-                while (!done)
-                {
-                        switch (string_get(at))
-                        {
-                        case '-':
-                                spec.flags |= FORMAT_FLAG_LEFT;
-                                at++;
-                                break;
-                        case '+':
-                                spec.flags |= FORMAT_FLAG_PLUS;
-                                at++;
-                                break;
-                        case ' ':
-                                spec.flags |= FORMAT_FLAG_SPACE;
-                                at++;
-                                break;
-                        case '#':
-                                spec.flags |= FORMAT_FLAG_ALTERNATE;
-                                at++;
-                                break;
-                        case '0':
-                                spec.flags |= FORMAT_FLAG_ZERO;
-                                at++;
-                                break;
-                        default:
-                                done = true;
-                                break;
-                        }
-                }
 
                 if (string_get(at) == '*')
                 {
@@ -1532,57 +1500,7 @@ static fn format_run(format_sink address_to sink, string_address format,
                         }
                 }
 
-                switch (string_get(at))
-                {
-                case 'h':
-                        at++;
-
-                        if (string_get(at) == 'h')
-                        {
-                                at++;
-                                spec.length = FORMAT_LENGTH_CHAR;
-                        }
-                        else
-                        {
-                                spec.length = FORMAT_LENGTH_SHORT;
-                        }
-
-                        break;
-                case 'l':
-                        at++;
-
-                        if (string_get(at) == 'l')
-                        {
-                                at++;
-                                spec.length = FORMAT_LENGTH_LONG_LONG;
-                        }
-                        else
-                        {
-                                spec.length = FORMAT_LENGTH_LONG;
-                        }
-
-                        break;
-                case 'q':
-                        at++;
-                        spec.length = FORMAT_LENGTH_LONG_LONG;
-                        break;
-                case 'z':
-                        at++;
-                        spec.length = FORMAT_LENGTH_SIZE;
-                        break;
-                case 't':
-                        at++;
-                        spec.length = FORMAT_LENGTH_DIFFERENCE;
-                        break;
-                case 'j':
-                        at++;
-                        spec.length = FORMAT_LENGTH_WIDEST;
-                        break;
-                case 'L':
-                        at++;
-                        spec.length = FORMAT_LENGTH_WIDE_DECIMAL;
-                        break;
-                }
+                spec.length = conversion_length_take(address_of at);
 
                 spec.conversion = string_get(at);
 

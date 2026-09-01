@@ -44,6 +44,38 @@ typedef struct
         string_address value;
 } storage_selector;
 
+#define STORAGE_SHOW_LABEL     1
+#define STORAGE_SHOW_UUID      2
+#define STORAGE_SHOW_TYPE      4
+#define STORAGE_SHOW_PARTLABEL 8
+#define STORAGE_SHOW_PARTUUID  16
+#define STORAGE_SHOW_DEVNAME   32
+
+/* One tag schema drives selection and blkid's output mask.  DEVNAME is the
+   sole direct pointer; the others name an inline byte array and its length. */
+typedef struct
+{
+        string_address name;
+        p8 length;
+        p8 show;
+        p16 value_offset;
+        p16 length_offset;
+} storage_tag_descriptor;
+
+#define STORAGE_TAG(name, member, length_member, flag)                      \
+        {(string_address)#name, sizeof(#name) - 1, STORAGE_SHOW_##flag,      \
+         __builtin_offsetof(storage_identity, member),                      \
+         __builtin_offsetof(storage_identity, length_member)}
+static const storage_tag_descriptor storage_tags[] = {
+    STORAGE_TAG(UUID, uuid, uuid_length, UUID),
+    STORAGE_TAG(LABEL, label, label_length, LABEL),
+    STORAGE_TAG(PARTUUID, partuuid, partuuid_length, PARTUUID),
+    STORAGE_TAG(PARTLABEL, partlabel, partlabel_length, PARTLABEL),
+    STORAGE_TAG(TYPE, type, type_length, TYPE),
+    {(string_address)"DEVNAME", 7, STORAGE_SHOW_DEVNAME, 0, 0},
+};
+#undef STORAGE_TAG
+
 #define storage_le16(at) memory_load_unaligned(p16, (at))
 #define storage_le32(at) memory_load_unaligned(p32, (at))
 #define storage_le64(at) memory_load_unaligned(p64, (at))
@@ -1345,33 +1377,35 @@ bool storage_probe_device(string_address path,
                identity->partlabel_length;
 }
 
-static bool storage_tag_is(storage_selector address_to selector,
-                           string_address name)
+static const storage_tag_descriptor address_to storage_tag_find(
+    string_address tag, positive length)
 {
-        positive length = string_length(name);
+        for (positive at = 0; at < sizeof(storage_tags) / sizeof(storage_tags[0]);
+             at++)
+                if (length == storage_tags[at].length &&
+                    !memory_compare_ascii_case(tag, storage_tags[at].name,
+                                               length))
+                        return storage_tags + at;
 
-        return selector->tag_length == length &&
-               !memory_compare_ascii_case(selector->tag, name, length);
+        return null;
 }
 
 static string_address storage_selected_value(
     storage_identity address_to identity,
     storage_selector address_to selector)
 {
-        if (storage_tag_is(selector, (string_address)"UUID"))
-                return identity->uuid_length ? identity->uuid : null;
-        if (storage_tag_is(selector, (string_address)"LABEL"))
-                return identity->label_length ? identity->label : null;
-        if (storage_tag_is(selector, (string_address)"PARTUUID"))
-                return identity->partuuid_length ? identity->partuuid : null;
-        if (storage_tag_is(selector, (string_address)"PARTLABEL"))
-                return identity->partlabel_length ? identity->partlabel : null;
-        if (storage_tag_is(selector, (string_address)"TYPE"))
-                return identity->type_length ? identity->type : null;
-        if (storage_tag_is(selector, (string_address)"DEVNAME"))
+        const storage_tag_descriptor address_to descriptor = storage_tag_find(
+            selector->tag, selector->tag_length);
+
+        if (!descriptor)
+                return null;
+        if (descriptor->show == STORAGE_SHOW_DEVNAME)
                 return identity->path;
 
-        return null;
+        return memory_load_unaligned(
+                   positive, (p8 address_to)identity + descriptor->length_offset)
+                   ? (p8 address_to)identity + descriptor->value_offset
+                   : null;
 }
 
 static bool storage_identity_matches(
@@ -1542,30 +1576,12 @@ typedef struct
         bool first_only;
 } storage_blkid_context;
 
-#define STORAGE_SHOW_LABEL     1
-#define STORAGE_SHOW_UUID      2
-#define STORAGE_SHOW_TYPE      4
-#define STORAGE_SHOW_PARTLABEL 8
-#define STORAGE_SHOW_PARTUUID  16
-#define STORAGE_SHOW_DEVNAME   32
-
 static positive storage_show_tag(string_address tag, positive length)
 {
-        storage_selector selector = {.tag = tag, .tag_length = length};
+        const storage_tag_descriptor address_to descriptor =
+            storage_tag_find(tag, length);
 
-        if (storage_tag_is(address_of selector, (string_address)"LABEL"))
-                return STORAGE_SHOW_LABEL;
-        if (storage_tag_is(address_of selector, (string_address)"UUID"))
-                return STORAGE_SHOW_UUID;
-        if (storage_tag_is(address_of selector, (string_address)"TYPE"))
-                return STORAGE_SHOW_TYPE;
-        if (storage_tag_is(address_of selector, (string_address)"PARTLABEL"))
-                return STORAGE_SHOW_PARTLABEL;
-        if (storage_tag_is(address_of selector, (string_address)"PARTUUID"))
-                return STORAGE_SHOW_PARTUUID;
-        if (storage_tag_is(address_of selector, (string_address)"DEVNAME"))
-                return STORAGE_SHOW_DEVNAME;
-        return 0;
+        return descriptor ? descriptor->show : 0;
 }
 
 /* One storage-family escaping engine.  blkid leaves spaces literal and quotes

@@ -376,11 +376,56 @@ static fn emit_string(const char address_to text)
         emit_bytes((address_any)text, string_length((string_address)text));
 }
 
-// One escape sequence at a time, so the parser is a state and a few numbers.
-#define PARAMETERS 16
-static unsigned int parameters[PARAMETERS];
-static unsigned int parameter_count;
-static b32 in_escape, in_csi, in_string, escape_intermediate, csi_private;
+/* One CSI parameter machine serves both terminal output and editor input.
+   The final byte is deliberately not stored: it is the caller's action, while
+   digits, separators and the private marker are the reusable transition. */
+#define TERMINAL_PARAMETERS 16
+typedef struct
+{
+        unsigned int value[TERMINAL_PARAMETERS];
+        unsigned int count;
+        p8 marker;
+} terminal_parameters;
+
+#define terminal_parameters_reset(sequence)                                 \
+        ((sequence)->count = 0, (sequence)->marker = 0,                     \
+         (sequence)->value[0] = 0)
+
+static inline INLINE bool terminal_parameters_take(
+    terminal_parameters address_to sequence, unsigned int byte)
+{
+        if (byte >= '0' && byte <= '9')
+        {
+                if (!sequence->count)
+                        sequence->count = 1;
+
+                sequence->value[sequence->count - 1] =
+                    sequence->value[sequence->count - 1] * 10 + byte - '0';
+                return false;
+        }
+
+        if (byte == ';' || byte == ':')
+        {
+                if (!sequence->count)
+                        sequence->count = 1;
+
+                if (sequence->count < TERMINAL_PARAMETERS)
+                        sequence->value[sequence->count++] = 0;
+
+                return false;
+        }
+
+        if (byte == '?' || byte == '<' || byte == '=' || byte == '>')
+        {
+                sequence->marker = (p8)byte;
+                return false;
+        }
+
+        return byte >= '@' && byte <= '~';
+}
+
+static terminal_parameters terminal_csi;
+static b32 in_escape, in_csi, in_string, escape_intermediate;
 
 // A string sequence ends at ST, and ST is two bytes with an ESC in front.
 static b32 string_escape;
@@ -473,27 +518,29 @@ static unsigned char colour_rgb(unsigned int r, unsigned int g, unsigned int b)
 // over the ones an extended colour is spelled with.
 static unsigned int sgr_extended(unsigned int at, unsigned char address_to which)
 {
-        unsigned int kind = at + 1 < parameter_count ? parameters[at + 1] : 0;
+        unsigned int kind = at + 1 < terminal_csi.count
+                                ? terminal_csi.value[at + 1] : 0;
 
-        if (kind == 5 && at + 2 < parameter_count)
+        if (kind == 5 && at + 2 < terminal_csi.count)
         {
-                address_to which = colour_256(parameters[at + 2]);
+                address_to which = colour_256(terminal_csi.value[at + 2]);
                 return 2;
         }
 
-        if (kind == 2 && at + 4 < parameter_count)
+        if (kind == 2 && at + 4 < terminal_csi.count)
         {
-                address_to which = colour_rgb(parameters[at + 2], parameters[at + 3],
-                                              parameters[at + 4]);
+                address_to which = colour_rgb(
+                    terminal_csi.value[at + 2], terminal_csi.value[at + 3],
+                    terminal_csi.value[at + 4]);
                 return 4;
         }
 
-        return parameter_count - at - 1;
+        return terminal_csi.count - at - 1;
 }
 
 static fn sgr()
 {
-        if (!parameter_count)
+        if (!terminal_csi.count)
         {
                 ink = 7;
                 paper = 0;
@@ -501,9 +548,9 @@ static fn sgr()
                 return;
         }
 
-        for (unsigned int i = 0; i < parameter_count; i++)
+        for (unsigned int i = 0; i < terminal_csi.count; i++)
         {
-                unsigned int p = parameters[i];
+                unsigned int p = terminal_csi.value[i];
 
                 if (p == 0)
                 {
@@ -603,11 +650,11 @@ static fn alternate_leave()
 
 static fn mode_set(b32 on)
 {
-        for (unsigned int i = 0; i < parameter_count; i++)
+        for (unsigned int i = 0; i < terminal_csi.count; i++)
         {
-                unsigned int p = parameters[i];
+                unsigned int p = terminal_csi.value[i];
 
-                if (!csi_private)
+                if (!terminal_csi.marker)
                 {
                         if (p == 4)
                                 insert_mode = on;
@@ -662,8 +709,10 @@ static fn full_reset()
 
 static fn csi_final(unsigned int final)
 {
-        unsigned int a = parameter_count > 0 && parameters[0] ? parameters[0] : 1;
-        unsigned int b = parameter_count > 1 && parameters[1] ? parameters[1] : 1;
+        unsigned int a = terminal_csi.count && terminal_csi.value[0]
+                             ? terminal_csi.value[0] : 1;
+        unsigned int b = terminal_csi.count > 1 && terminal_csi.value[1]
+                             ? terminal_csi.value[1] : 1;
 
         switch (final)
         {
@@ -701,17 +750,17 @@ static fn csi_final(unsigned int final)
                 row = a - 1 < ROWS ? a - 1 : ROWS - 1;
                 break;
         case 'J':
-                if (parameter_count && parameters[0] == 1)
+                if (terminal_csi.count && terminal_csi.value[0] == 1)
                         erase(0, 0, row, column);
-                else if (parameter_count && parameters[0] >= 2)
+                else if (terminal_csi.count && terminal_csi.value[0] >= 2)
                         erase(0, 0, ROWS - 1, COLUMNS - 1);
                 else
                         erase(row, column, ROWS - 1, COLUMNS - 1);
                 break;
         case 'K':
-                if (parameter_count && parameters[0] == 1)
+                if (terminal_csi.count && terminal_csi.value[0] == 1)
                         erase(row, 0, row, column);
-                else if (parameter_count && parameters[0] == 2)
+                else if (terminal_csi.count && terminal_csi.value[0] == 2)
                         erase(row, 0, row, COLUMNS - 1);
                 else
                         erase(row, column, row, COLUMNS - 1);
@@ -770,7 +819,7 @@ static fn csi_final(unsigned int final)
                 scroll_down(a);
                 break;
         case 'g':
-                if (parameter_count && parameters[0] == 3)
+                if (terminal_csi.count && terminal_csi.value[0] == 3)
                 {
                         memory_fill(tab_stop, 0, sizeof(tab_stop));
                 }
@@ -789,7 +838,7 @@ static fn csi_final(unsigned int final)
         case 'n':
                 // The cursor is reported one based, which is the same
                 // counting CUP takes it back in.
-                if (parameter_count && parameters[0] == 6)
+                if (terminal_csi.count && terminal_csi.value[0] == 6)
                 {
                         emit_string("\x1b[");
                         positive_to_string(emit_bytes, row + 1);
@@ -798,7 +847,7 @@ static fn csi_final(unsigned int final)
                                            column < COLUMNS ? column + 1 : COLUMNS);
                         emit('R');
                 }
-                else if (parameter_count && parameters[0] == 5)
+                else if (terminal_csi.count && terminal_csi.value[0] == 5)
                         emit_string("\x1b[0n");
                 break;
         case 'c':
@@ -810,11 +859,13 @@ static fn csi_final(unsigned int final)
                 unsigned int top;
                 unsigned int bottom;
 
-                if (csi_private)
+                if (terminal_csi.marker)
                         break;
 
-                top = parameter_count > 0 && parameters[0] ? parameters[0] - 1 : 0;
-                bottom = parameter_count > 1 && parameters[1] ? parameters[1] : ROWS;
+                top = terminal_csi.count && terminal_csi.value[0]
+                          ? terminal_csi.value[0] - 1 : 0;
+                bottom = terminal_csi.count > 1 && terminal_csi.value[1]
+                             ? terminal_csi.value[1] : ROWS;
 
                 if (bottom > ROWS)
                         bottom = ROWS;
@@ -998,47 +1049,11 @@ static fn consume(unsigned int c)
 
         if (in_csi)
         {
-                if (c >= '0' && c <= '9')
-                {
-                        if (!parameter_count)
-                                parameter_count = 1;
-
-                        parameters[parameter_count - 1] =
-                            parameters[parameter_count - 1] * 10 + (c - '0');
+                if (!terminal_parameters_take(address_of terminal_csi, c))
                         return;
-                }
 
-                /*
-                        A separator ends the parameter it follows, so an empty
-                        one before it counts. Beginning a parameter here
-                        instead read ESC[;5H as ESC[5H, and a row nobody asked
-                        to move became the row moved to.
-                */
-                if (c == ';' || c == ':')
-                {
-                        if (!parameter_count)
-                                parameter_count = 1;
-
-                        if (parameter_count < PARAMETERS)
-                                parameters[parameter_count++] = 0;
-
-                        return;
-                }
-
-                // The marker that says the parameters are a private mode's
-                // and not ECMA-48's, which is the whole difference between
-                // ESC[?25l and ESC[25l.
-                if (c == '?' || c == '<' || c == '=' || c == '>')
-                {
-                        csi_private = true;
-                        return;
-                }
-
-                if (c >= '@' && c <= '~')
-                {
-                        csi_final(c);
-                        in_csi = in_escape = false;
-                }
+                csi_final(c);
+                in_csi = in_escape = false;
 
                 return;
         }
@@ -1048,9 +1063,7 @@ static fn consume(unsigned int c)
                 if (c == '[')
                 {
                         in_csi = true;
-                        csi_private = false;
-                        parameter_count = 0;
-                        parameters[0] = 0;
+                        terminal_parameters_reset(address_of terminal_csi);
                         return;
                 }
 
@@ -1157,8 +1170,8 @@ static fn consume(unsigned int c)
 static fn term_record_begin()
 {
         in_escape = in_csi = in_string = false;
-        escape_intermediate = csi_private = string_escape = false;
-        parameter_count = 0;
+        escape_intermediate = string_escape = false;
+        terminal_parameters_reset(address_of terminal_csi);
         utf8_left = 0;
 }
 #endif

@@ -1392,17 +1392,21 @@ bool shell_directory_holds()
                file_device_key(here.device_major, here.device_minor);
 }
 
-static bool shell_cd_variable(string_address name, string_address value)
-{
-        if (env_assign(name, value))
-                return true;
+#define SHELL_ASSIGNER(function, readonly_text, failed_text)                 \
+        static bool function(string_address name, string_address value)     \
+        {                                                                    \
+                if (env_assign(name, value))                                 \
+                        return true;                                         \
+                string_format(shell_diagnostic,                             \
+                              env_readonly(name) ? (readonly_text)           \
+                                                 : (failed_text), name);     \
+                return false;                                                \
+        }
 
-        string_format(shell_diagnostic,
-                      env_readonly(name) ? "cd: %s: is read only\n"
-                                         : "cd: cannot assign %s\n",
-                      name);
-        return false;
-}
+SHELL_ASSIGNER(shell_cd_variable, "cd: %s: is read only\n",
+               "cd: cannot assign %s\n")
+SHELL_ASSIGNER(read_set, "read: %s is readonly\n", "read: no room for %s\n")
+#undef SHELL_ASSIGNER
 
 bool shell_directory_moved(string_address logical)
 {
@@ -1903,11 +1907,7 @@ fn shell_parameters_shift(positive count);
         four of the names have no letter at all. The ones that do are kept in
         the same bits the letters use, so the two spellings cannot disagree.
 */
-typedef struct
-{
-        string_address name;
-        p8 letter;
-} shell_option;
+typedef named_byte shell_option;
 
 static shell_option shell_option_names[] = {
     {"errexit", 'e'},    {"noglob", 'f'},   {"ignoreeof", 'I'},
@@ -1929,9 +1929,9 @@ static positive shell_options_named;
 
 PURE bool shell_option_on(positive index)
 {
-        if (shell_option_names[index].letter >= 'a' &&
-            shell_option_names[index].letter <= 'z')
-                return (shell_options & SHELL_FLAG(shell_option_names[index].letter)) != 0;
+        if (shell_option_names[index].value >= 'a' &&
+            shell_option_names[index].value <= 'z')
+                return (shell_options & SHELL_FLAG(shell_option_names[index].value)) != 0;
 
         return (shell_options_named & ((positive)1 << index)) != 0;
 }
@@ -1943,13 +1943,13 @@ fn shell_option_told(positive index, bool on)
         if (index == SHELL_OPTION_MONITOR && on)
                 return;
 
-        if (shell_option_names[index].letter >= 'a' &&
-            shell_option_names[index].letter <= 'z')
+        if (shell_option_names[index].value >= 'a' &&
+            shell_option_names[index].value <= 'z')
         {
                 if (on)
-                        shell_options |= SHELL_FLAG(shell_option_names[index].letter);
+                        shell_options |= SHELL_FLAG(shell_option_names[index].value);
                 else
-                        shell_options &= ~SHELL_FLAG(shell_option_names[index].letter);
+                        shell_options &= ~SHELL_FLAG(shell_option_names[index].value);
 
                 return;
         }
@@ -1981,7 +1981,7 @@ RETURNS_NONNULL string_address shell_flags_current()
                 positive index;
 
                 for (index = 0; index < SHELL_OPTION_NAMES; index++)
-                        if (shell_option_names[index].letter == letter)
+                        if (shell_option_names[index].value == letter)
                                 break;
 
                 if (index < SHELL_OPTION_NAMES && shell_option_on(index))
@@ -2134,7 +2134,7 @@ fn shell_set(writer write, string_address input)
 
                                 for (option = 0; option < SHELL_OPTION_NAMES;
                                      option++)
-                                        if (shell_option_names[option].letter == value)
+                                        if (shell_option_names[option].value == value)
                                                 break;
 
                                 if (option < SHELL_OPTION_NAMES)
@@ -3407,39 +3407,27 @@ bool test_negation()
         return test_primary();
 }
 
-bool test_conjunction()
-{
-        bool value = test_negation();
-
-        // The right side is read whatever the left said: skipping it would
-        // leave the parser standing in the middle of the expression.
-        while (test_at < test_stop && word_is(shell_argv[test_at], "-a"))
-        {
-                bool other;
-
-                test_at++;
-                other = test_negation();
-                value = value && other;
+#define TEST_LOGICAL_LEVEL(name, lower, spelling, operation)                 \
+        bool name()                                                         \
+        {                                                                    \
+                bool value = lower();                                       \
+                                                                             \
+                /* Parse the right side even when truth is already known:   \
+                   the cursor must leave the complete expression. */        \
+                while (test_at < test_stop &&                               \
+                       word_is(shell_argv[test_at], (spelling)))             \
+                {                                                            \
+                        test_at++;                                           \
+                        bool other = lower();                                \
+                        value = value operation other;                       \
+                }                                                            \
+                                                                             \
+                return value;                                                \
         }
 
-        return value;
-}
-
-bool test_expression()
-{
-        bool value = test_conjunction();
-
-        while (test_at < test_stop && word_is(shell_argv[test_at], "-o"))
-        {
-                bool other;
-
-                test_at++;
-                other = test_conjunction();
-                value = value || other;
-        }
-
-        return value;
-}
+TEST_LOGICAL_LEVEL(test_conjunction, test_negation, "-a", &&)
+TEST_LOGICAL_LEVEL(test_expression, test_conjunction, "-o", ||)
+#undef TEST_LOGICAL_LEVEL
 
 /*
         The short forms, counted before they are parsed.
@@ -3667,22 +3655,12 @@ RETURNS_NONNULL string_address printf_escape(writer write, string_address step)
                 return step;
         }
 
-        if (value == 'n')
-                value = '\n';
-        else if (value == 't')
-                value = '\t';
-        else if (value == 'r')
-                value = '\r';
-        else if (value == 'a')
-                value = 7;
-        else if (value == 'b')
-                value = 8;
-        else if (value == 'e')
+        p8 escaped = byte_simple_escape(value);
+
+        if (value == 'e')
                 value = 27;
-        else if (value == 'f')
-                value = 12;
-        else if (value == 'v')
-                value = 11;
+        else if (escaped)
+                value = escaped;
         else if (value == '\\')
                 value = '\\';
         else
@@ -4049,18 +4027,6 @@ bool read_waited(bipolar tenths)
         timespec span = {tenths / 10, (tenths % 10) * 100000000};
 
         return descriptor_wait_readable(0, address_of span, null) > 0;
-}
-
-static bool read_set(string_address name, string_address value)
-{
-        if (env_assign(name, value))
-                return true;
-
-        string_format(shell_diagnostic,
-                      env_readonly(name) ? "read: %s is readonly\n"
-                                         : "read: no room for %s\n",
-                      name);
-        return false;
 }
 
 fn shell_read(writer write, string_address input)

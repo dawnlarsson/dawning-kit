@@ -249,13 +249,9 @@ static COLD fn expand_complain(address_any data, positive length)
         system_call_3(syscall(write), standard_error_descriptor, (positive)data, length);
 }
 
-static bool expand_name_character(p8 value)
-{
-        return (value >= 'a' && value <= 'z') ||
-               (value >= 'A' && value <= 'Z') ||
-               (value >= '0' && value <= '9') ||
-               value == '_';
-}
+#define expand_name_character(value) (byte_is_alnum(value) || (value) == '_')
+#define expand_assignable_name(name)                                        \
+        (byte_is_alpha(string_get(name)) || string_is((name), '_'))
 
 // A scalar parameter name after Bash's indirect ${!name}. Arrays have their
 // own grammar and representation and are deliberately not smuggled in here.
@@ -274,8 +270,7 @@ static bool expand_parameter_name(string_address name, positive length)
 
         numeric = first >= '0' && first <= '9';
 
-        if (!numeric && !((first >= 'a' && first <= 'z') ||
-                          (first >= 'A' && first <= 'Z') || first == '_'))
+        if (!numeric && !expand_assignable_name(name))
                 return false;
 
         for (positive at = 1; at < length; at++)
@@ -288,14 +283,6 @@ static bool expand_parameter_name(string_address name, positive length)
         }
 
         return true;
-}
-
-static bool expand_assignable_name(string_address name)
-{
-        p8 first = string_get(name);
-
-        return (first >= 'a' && first <= 'z') ||
-               (first >= 'A' && first <= 'Z') || first == '_';
 }
 
 /*
@@ -1857,53 +1844,30 @@ ARITH_BIT_LEVEL(arith_bit_and, arith_equal, '&', &, true)
 ARITH_BIT_LEVEL(arith_bit_xor, arith_bit_and, '^', ^, false)
 ARITH_BIT_LEVEL(arith_bit_or, arith_bit_xor, '|', |, true)
 
-static bipolar arith_and()
-{
-        bipolar value = arith_bit_or();
-
-        while (1)
-        {
-                bipolar right;
-                bool active;
-
-                arith_space();
-
-                if (!string_is(arith_at, '&') || string_get(arith_at + 1) != '&')
-                        return value;
-
-                // Both sides are parsed so the cursor reaches the end, but a
-                // false left side makes the right side grammar-only.
-                arith_at += 2;
-                active = arith_active;
-                arith_active = active && value;
-                right = arith_bit_or();
-                arith_active = active;
-                value = active ? (value && right) : 0;
+#define ARITH_LOGICAL_LEVEL(name, lower, byte, wanted, operation)            \
+        static bipolar name()                                               \
+        {                                                                    \
+                bipolar value = lower();                                    \
+                                                                             \
+                while (true)                                                 \
+                {                                                            \
+                        arith_space();                                        \
+                        if (!string_is(arith_at, (byte)) ||                  \
+                            string_get(arith_at + 1) != (byte))              \
+                                return value;                                \
+                                                                             \
+                        arith_at += 2;                                        \
+                        bool active = arith_active;                          \
+                        arith_active = active && (wanted);                   \
+                        bipolar right = lower();                             \
+                        arith_active = active;                               \
+                        value = active ? (value operation right) : 0;        \
+                }                                                            \
         }
-}
 
-static bipolar arith_or()
-{
-        bipolar value = arith_and();
-
-        while (1)
-        {
-                bipolar right;
-                bool active;
-
-                arith_space();
-
-                if (!string_is(arith_at, '|') || string_get(arith_at + 1) != '|')
-                        return value;
-
-                arith_at += 2;
-                active = arith_active;
-                arith_active = active && !value;
-                right = arith_and();
-                arith_active = active;
-                value = active ? (value || right) : 0;
-        }
-}
+ARITH_LOGICAL_LEVEL(arith_and, arith_bit_or, '&', value, &&)
+ARITH_LOGICAL_LEVEL(arith_or, arith_and, '|', !value, ||)
+#undef ARITH_LOGICAL_LEVEL
 
 /*
         The ternary, looser than the two logical levels and tighter than an
@@ -3777,23 +3741,12 @@ static string_address expand_dollar_single(string_address step)
                 else
                 {
                         at++;
+                        p8 escaped = byte_simple_escape(value);
 
-                        if (value == 'a')
-                                value = 7;
-                        else if (value == 'b')
-                                value = 8;
-                        else if (value == 'e')
+                        if (value == 'e')
                                 value = 27;
-                        else if (value == 'f')
-                                value = 12;
-                        else if (value == 'n')
-                                value = '\n';
-                        else if (value == 'r')
-                                value = '\r';
-                        else if (value == 't')
-                                value = '\t';
-                        else if (value == 'v')
-                                value = 11;
+                        else if (escaped)
+                                value = escaped;
                         else if (value != '\\' && value != '\'' && value != '"')
                         {
                                 // Unspecified by POSIX: preserve the two

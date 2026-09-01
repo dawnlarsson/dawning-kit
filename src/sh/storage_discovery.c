@@ -583,21 +583,44 @@ static PURE bool storage_type_match(string_address list, string_address type)
         return !include_seen || included;
 }
 
+/* One column schema drives option parsing, headings and record projection.
+   A zero offset names a computed numeric column; every textual member begins
+   after the two ids, so zero is an unambiguous sentinel. */
+#define STORAGE_COLUMNS(X)                                                   \
+        X(SOURCE, "SOURCE", __builtin_offsetof(storage_mount, source))      \
+        X(TARGET, "TARGET", __builtin_offsetof(storage_mount, target))      \
+        X(FSTYPE, "FSTYPE", __builtin_offsetof(storage_mount, type))        \
+        X(OPTIONS, "OPTIONS", __builtin_offsetof(storage_mount, options))   \
+        X(FSROOT, "FSROOT", __builtin_offsetof(storage_mount, root))        \
+        X(MAJMIN, "MAJ:MIN", __builtin_offsetof(storage_mount, device))     \
+        X(ID, "ID", 0) X(PARENT, "PARENT", 0)                             \
+        X(VFS_OPTIONS, "VFS-OPTIONS",                                      \
+          __builtin_offsetof(storage_mount, options))                        \
+        X(FS_OPTIONS, "FS-OPTIONS",                                        \
+          __builtin_offsetof(storage_mount, filesystem_options))
+
+#define STORAGE_COLUMN_ENUM(symbol, name, offset) STORAGE_##symbol,
 enum storage_column
 {
-        STORAGE_SOURCE,
-        STORAGE_TARGET,
-        STORAGE_FSTYPE,
-        STORAGE_OPTIONS,
-        STORAGE_FSROOT,
-        STORAGE_MAJMIN,
-        STORAGE_ID,
-        STORAGE_PARENT,
-        STORAGE_VFS_OPTIONS,
-        STORAGE_FS_OPTIONS,
+        STORAGE_COLUMNS(STORAGE_COLUMN_ENUM)
+        STORAGE_COLUMN_MAX
 };
+#undef STORAGE_COLUMN_ENUM
 
-#define STORAGE_COLUMN_MAX 10
+typedef struct
+{
+        string_address name;
+        p8 length;
+        p16 offset;
+} storage_column_descriptor;
+
+#define STORAGE_COLUMN_ENTRY(symbol, text, member_offset)                   \
+        [STORAGE_##symbol] = {(string_address)text, sizeof(text) - 1,        \
+                              (p16)(member_offset)},
+static const storage_column_descriptor storage_column_table[] = {
+    STORAGE_COLUMNS(STORAGE_COLUMN_ENTRY)};
+#undef STORAGE_COLUMN_ENTRY
+#undef STORAGE_COLUMNS
 
 typedef struct
 {
@@ -704,66 +727,33 @@ static bool storage_columns(string_address list,
 
         while ((at = storage_comma_next(address_of cursor, address_of length)))
         {
-                enum storage_column column;
+                positive column;
 
-                if (length == 6 && !memory_compare_ascii_case(
-                                           at, (string_address) "SOURCE", 6))
-                        column = STORAGE_SOURCE;
-                else if (length == 6 && !memory_compare_ascii_case(
-                                                at, (string_address) "TARGET", 6))
-                        column = STORAGE_TARGET;
-                else if (length == 6 && !memory_compare_ascii_case(
-                                                at, (string_address) "FSTYPE", 6))
-                        column = STORAGE_FSTYPE;
-                else if (length == 7 && !memory_compare_ascii_case(
-                                                at, (string_address) "OPTIONS", 7))
-                        column = STORAGE_OPTIONS;
-                else if (length == 6 && !memory_compare_ascii_case(
-                                                at, (string_address) "FSROOT", 6))
-                        column = STORAGE_FSROOT;
-                else if (length == 7 && !memory_compare_ascii_case(
-                                                at, (string_address) "MAJ:MIN", 7))
-                        column = STORAGE_MAJMIN;
-                else if (length == 2 && !memory_compare_ascii_case(
-                                                at, (string_address) "ID", 2))
-                        column = STORAGE_ID;
-                else if (length == 6 && !memory_compare_ascii_case(
-                                                at, (string_address) "PARENT", 6))
-                        column = STORAGE_PARENT;
-                else if (length == 11 && !memory_compare_ascii_case(
-                                                at, (string_address) "VFS-OPTIONS", 11))
-                        column = STORAGE_VFS_OPTIONS;
-                else if (length == 10 && !memory_compare_ascii_case(
-                                                at, (string_address) "FS-OPTIONS", 10))
-                        column = STORAGE_FS_OPTIONS;
-                else
+                for (column = 0; column < STORAGE_COLUMN_MAX; column++)
+                {
+                        const storage_column_descriptor address_to descriptor =
+                            storage_column_table + column;
+
+                        if (length == descriptor->length &&
+                            !memory_compare_ascii_case(at, descriptor->name,
+                                                       length))
+                                break;
+                }
+
+                if (column == STORAGE_COLUMN_MAX)
                         return false;
 
                 if (options->count == STORAGE_COLUMN_MAX)
                         return false;
 
-                options->columns[options->count++] = column;
+                options->columns[options->count++] =
+                    (enum storage_column)column;
         }
 
         return options->count != 0;
 }
 
-static string_address storage_column_name(enum storage_column column)
-{
-        switch (column)
-        {
-        case STORAGE_SOURCE: return (string_address) "SOURCE";
-        case STORAGE_TARGET: return (string_address) "TARGET";
-        case STORAGE_FSTYPE: return (string_address) "FSTYPE";
-        case STORAGE_OPTIONS: return (string_address) "OPTIONS";
-        case STORAGE_FSROOT: return (string_address) "FSROOT";
-        case STORAGE_MAJMIN: return (string_address) "MAJ:MIN";
-        case STORAGE_ID: return (string_address) "ID";
-        case STORAGE_PARENT: return (string_address) "PARENT";
-        case STORAGE_VFS_OPTIONS: return (string_address) "VFS-OPTIONS";
-        default: return (string_address) "FS-OPTIONS";
-        }
-}
+#define storage_column_name(column) storage_column_table[(column)].name
 
 static fn storage_findmnt_value(writer output, string_address value, bool raw)
 {
@@ -783,18 +773,11 @@ static string_address storage_findmnt_cell(storage_mount address_to mount,
         if (heading)
                 return storage_column_name(column);
 
-        switch (column)
-        {
-        case STORAGE_SOURCE:  return mount->source;
-        case STORAGE_TARGET:  return mount->target;
-        case STORAGE_FSTYPE:  return mount->type;
-        case STORAGE_VFS_OPTIONS: return mount->options;
-        case STORAGE_OPTIONS: return mount->options;
-        case STORAGE_FSROOT: return mount->root;
-        case STORAGE_MAJMIN: return mount->device;
-        case STORAGE_FS_OPTIONS: return mount->filesystem_options;
-        default: return null;
-        }
+        p16 offset = storage_column_table[column].offset;
+
+        return offset ? memory_load_unaligned(
+                            string_address, (p8 address_to)mount + offset)
+                      : null;
 }
 
 static PURE inline INLINE bool storage_filesystem_option_represented(

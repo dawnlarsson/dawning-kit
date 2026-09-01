@@ -521,21 +521,17 @@ static bool edit_cursor_has_selection(positive at)
                !edit_place_same(edit_cursor_caret(at), edit_cursor_anchor(at));
 }
 
-static struct edit_place edit_selection_start(positive at)
+static inline INLINE struct edit_place edit_selection_edge(positive at,
+                                                           bool last)
 {
         struct edit_place caret = edit_cursor_caret(at);
         struct edit_place anchor = edit_cursor_anchor(at);
 
-        return edit_place_before(anchor, caret) ? anchor : caret;
+        return edit_place_before(anchor, caret) == last ? caret : anchor;
 }
 
-static struct edit_place edit_selection_end(positive at)
-{
-        struct edit_place caret = edit_cursor_caret(at);
-        struct edit_place anchor = edit_cursor_anchor(at);
-
-        return edit_place_before(anchor, caret) ? caret : anchor;
-}
+#define edit_selection_start(at) edit_selection_edge((at), false)
+#define edit_selection_end(at) edit_selection_edge((at), true)
 
 //      Where a cursor is put, with the anchor either following it or staying
 //      where it was. Every movement in this file ends in one of these two.
@@ -1036,7 +1032,7 @@ static bool edit_step_start(p8 kind)
         every keystroke that moved a caret. A step whose after-list was never
         written is a step whose redo puts the carets nowhere.
 */
-static fn edit_step_seal()
+static inline INLINE fn edit_step_cursors(bool close)
 {
         struct edit_step address_to step;
 
@@ -1048,7 +1044,9 @@ static fn edit_step_seal()
         if (!step->open)
                 return;
 
-        step->open = false;
+        if (close)
+                step->open = false;
+
         step->after_empty = edit_empty_file;
         edit_cursors_remember(address_of step->after, address_of step->after_count);
 }
@@ -1056,21 +1054,8 @@ static fn edit_step_seal()
 //      The after-list kept level with the cursors while a step is still being
 //      added to, so that a run of typing that is never followed by another key
 //      still redoes to the right place.
-static fn edit_step_note_cursors()
-{
-        struct edit_step address_to step;
-
-        if (!edit_step_count)
-                return;
-
-        step = edit_steps + edit_step_count - 1;
-
-        if (!step->open)
-                return;
-
-        step->after_empty = edit_empty_file;
-        edit_cursors_remember(address_of step->after, address_of step->after_count);
-}
+#define edit_step_seal() edit_step_cursors(true)
+#define edit_step_note_cursors() edit_step_cursors(false)
 
 /*
         One span replaced by one string, journalled, with every other cursor
@@ -3256,9 +3241,7 @@ static bool EDIT_SPARE edit_cursor_add(positive line, positive column)
 #define EDIT_INPUT_UTF8 4
 
 static p8 edit_input_state;
-static positive edit_input_parameters[8];
-static positive edit_input_parameter_count;
-static bool edit_input_private;
+static terminal_parameters edit_input_csi;
 static positive edit_input_pending;
 static positive edit_input_wanted;
 static bool edit_input_alt;
@@ -3421,9 +3404,7 @@ static positive edit_key_from_final(p8 final)
 static fn edit_input_reset()
 {
         edit_input_state = EDIT_INPUT_GROUND;
-        edit_input_parameter_count = 0;
-        edit_input_parameters[0] = 0;
-        edit_input_private = false;
+        terminal_parameters_reset(address_of edit_input_csi);
         edit_input_alt = false;
         edit_input_pasting = false;
         edit_input_paste_length = 0;
@@ -3527,9 +3508,7 @@ static fn edit_input_byte(p8 byte)
                 if (byte == '[')
                 {
                         edit_input_state = EDIT_INPUT_CSI;
-                        edit_input_parameter_count = 0;
-                        edit_input_parameters[0] = 0;
-                        edit_input_private = false;
+                        terminal_parameters_reset(address_of edit_input_csi);
                         return;
                 }
 
@@ -3563,47 +3542,17 @@ static fn edit_input_byte(p8 byte)
                 return;
 
         case EDIT_INPUT_CSI:
-                if (byte == '<' || byte == '?' || byte == '>')
-                {
-                        edit_input_private = byte == '<';
-                        return;
-                }
-
-                if (byte >= '0' && byte <= '9')
-                {
-                        if (edit_input_parameter_count >=
-                            sizeof(edit_input_parameters) /
-                                sizeof(edit_input_parameters[0]))
-                                return;
-
-                        edit_input_parameters[edit_input_parameter_count] =
-                            edit_input_parameters[edit_input_parameter_count] *
-                                10 +
-                            (positive)(byte - '0');
-                        return;
-                }
-
-                if (byte == ';' || byte == ':')
-                {
-                        if (edit_input_parameter_count + 1 <
-                            sizeof(edit_input_parameters) /
-                                sizeof(edit_input_parameters[0]))
-                                edit_input_parameters
-                                    [++edit_input_parameter_count] = 0;
-
-                        return;
-                }
-
-                if (byte < '@' || byte > '~')
+                if (!terminal_parameters_take(address_of edit_input_csi,
+                                              byte))
                         return;
 
                 edit_input_state = EDIT_INPUT_GROUND;
-                edit_input_parameter_count++;
 
                 {
-                        positive first = edit_input_parameters[0];
-                        positive second = edit_input_parameter_count > 1
-                                              ? edit_input_parameters[1]
+                        positive first = edit_input_csi.count
+                                             ? edit_input_csi.value[0] : 0;
+                        positive second = edit_input_csi.count > 1
+                                              ? edit_input_csi.value[1]
                                               : 0;
                         positive modifiers = edit_modifiers_from(second);
                         positive key;
@@ -3611,11 +3560,12 @@ static fn edit_input_byte(p8 byte)
                         //      A mouse report, in either of the two shapes a
                         //      terminal sends one, handed to whoever owns the
                         //      mouse.
-                        if (edit_input_private && (byte == 'M' || byte == 'm'))
+                        if (edit_input_csi.marker == '<' &&
+                            (byte == 'M' || byte == 'm'))
                         {
                                 positive third =
-                                    edit_input_parameter_count > 2
-                                        ? edit_input_parameters[2]
+                                    edit_input_csi.count > 2
+                                        ? edit_input_csi.value[2]
                                         : 1;
                                 p8 what = byte == 'm' ? EDIT_MOUSE_RELEASE
                                           : (first & 32) ? EDIT_MOUSE_DRAG
@@ -3652,8 +3602,8 @@ static fn edit_input_byte(p8 byte)
                         if (byte == '~' && first == 27)
                         {
                                 positive third =
-                                    edit_input_parameter_count > 2
-                                        ? edit_input_parameters[2]
+                                    edit_input_csi.count > 2
+                                        ? edit_input_csi.value[2]
                                         : 0;
 
                                 edit_input_deliver(edit_modifiers_from(second) |

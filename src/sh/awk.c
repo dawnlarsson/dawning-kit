@@ -3483,6 +3483,26 @@ static const awk_operator awk_operators[128] = {
     ['>'] = {T_GREATER, T_GREATER_EQUAL, T_APPEND},
     ['&'] = {0, 0, T_AND},      ['|'] = {T_PIPE, 0, T_OR}};
 
+/* The lexer and parser ask two versions of the same token-class question.
+   One property table keeps the grammar in one place and makes either answer
+   one indexed bit instead of two independent branch trees. */
+#define AWK_TOKEN_BEFORE 1
+#define AWK_TOKEN_STARTS 2
+static const p8 awk_token_properties[T_PIPE + 1] = {
+    [T_NUMBER] = 3,       [T_STRING] = 3,      [T_ERE] = 3,
+    [T_NAME] = 3,         [T_BUILTIN] = 3,     [T_PLUS_PLUS] = 3,
+    [T_MINUS_MINUS] = 3,  [T_CLOSE] = AWK_TOKEN_BEFORE,
+    [T_CLOSE_SQUARE] = AWK_TOKEN_BEFORE,
+    [T_CALL_NAME] = AWK_TOKEN_STARTS,
+    [T_DOLLAR] = AWK_TOKEN_STARTS, [T_OPEN] = AWK_TOKEN_STARTS,
+    [T_NOT] = AWK_TOKEN_STARTS,
+};
+
+#define awk_operand_before()                                                \
+        (awk_token_properties[awk_last_token] & AWK_TOKEN_BEFORE)
+#define awk_starts_operand()                                                \
+        (awk_token_properties[awk_token] & AWK_TOKEN_STARTS)
+
 static string_address awk_source;
 static positive awk_source_length;
 static positive awk_source_at;
@@ -3511,25 +3531,6 @@ static fn awk_syntax(string_address reason)
         awk_leave(1);
 }
 
-static bool awk_operand_before()
-{
-        switch (awk_last_token)
-        {
-        case T_NUMBER:
-        case T_STRING:
-        case T_NAME:
-        case T_ERE:
-        case T_CLOSE:
-        case T_CLOSE_SQUARE:
-        case T_PLUS_PLUS:
-        case T_MINUS_MINUS:
-        case T_BUILTIN:
-                return true;
-        }
-
-        return false;
-}
-
 static bool awk_name_start(p8 character)
 {
         return byte_is_alpha(character) || character == '_';
@@ -3540,22 +3541,14 @@ static b8 awk_name_bytes[STRING_SET_BYTES];
 static b32 awk_escape(positive address_to at, positive stop)
 {
         p8 character = awk_source[address_to at];
+        p8 escaped;
 
         address_to at += 1;
 
-        switch (character)
-        {
-        case 'n': return '\n';
-        case 't': return '\t';
-        case 'r': return '\r';
-        case '\\': return '\\';
-        case '"': return '"';
-        case '/': return '/';
-        case 'a': return 7;
-        case 'b': return 8;
-        case 'f': return 12;
-        case 'v': return 11;
-        }
+        escaped = byte_simple_escape(character);
+
+        if (escaped)
+                return escaped;
 
         if (character >= '0' && character <= '7')
         {
@@ -4415,27 +4408,6 @@ static awk_node address_to awk_add_level()
         }
 
         return node;
-}
-
-static bool awk_starts_operand()
-{
-        switch (awk_token)
-        {
-        case T_NUMBER:
-        case T_STRING:
-        case T_ERE:
-        case T_NAME:
-        case T_CALL_NAME:
-        case T_BUILTIN:
-        case T_DOLLAR:
-        case T_OPEN:
-        case T_NOT:
-        case T_PLUS_PLUS:
-        case T_MINUS_MINUS:
-                return true;
-        }
-
-        return false;
 }
 
 static awk_node address_to awk_concat_level()
@@ -6450,18 +6422,12 @@ static awk_text address_to awk_unescape(string_address text, positive length)
 
                 p8 character = text[i];
 
-                switch (character)
+                p8 escaped = byte_simple_escape(character);
+
+                if (escaped)
                 {
-                case 'n': awk_builder_char(address_of build, '\n'); continue;
-                case 't': awk_builder_char(address_of build, '\t'); continue;
-                case 'r': awk_builder_char(address_of build, '\r'); continue;
-                case 'a': awk_builder_char(address_of build, 7); continue;
-                case 'b': awk_builder_char(address_of build, 8); continue;
-                case 'f': awk_builder_char(address_of build, 12); continue;
-                case 'v': awk_builder_char(address_of build, 11); continue;
-                case '\\': awk_builder_char(address_of build, '\\'); continue;
-                case '"': awk_builder_char(address_of build, '"'); continue;
-                case '/': awk_builder_char(address_of build, '/'); continue;
+                        awk_builder_char(address_of build, escaped);
+                        continue;
                 }
 
                 if (character >= '0' && character <= '7')

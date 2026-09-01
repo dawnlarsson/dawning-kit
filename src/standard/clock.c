@@ -420,6 +420,18 @@ b32 clock_gettime(clockid_t which, timespec address_to into)
         return clock_read((b32)which, into) < 0 ? -1 : 0;
 }
 
+/* One monotonic nanosecond clock for every polling/backoff state machine in
+   the combined shell.  A failed clock safely reads as zero for all of them. */
+static HOT positive clock_monotonic_nanoseconds()
+{
+        timespec now = {0, 0};
+
+        if (clock_read(CLOCK_MONOTONIC, address_of now) < 0)
+                return 0;
+
+        return (positive)now.tv_sec * 1000000000 + (positive)now.tv_nsec;
+}
+
 b32 clock_getres(clockid_t which, timespec address_to into)
 {
         return (bipolar)system_call_2(syscall(clock_getres), (positive)which,
@@ -802,22 +814,29 @@ typedef struct clock_format_state
         width and no fold. It is the only place that decides there is no room,
         so every other writer here is bounded by having gone through it.
 */
-static fn clock_format_raw(clock_format_state address_to state,
-                           address_any bytes, positive length)
+static inline INLINE bool clock_format_room(clock_format_state address_to state,
+                                            positive length)
 {
         if (state->failed)
-                return;
+                return false;
 
         if (length > state->max || state->used > state->max - length)
         {
                 state->failed = true;
-                return;
+                return false;
         }
 
-        if (length)
-                memory_copy_apart(state->into + state->used, bytes, length);
-
         state->used += length;
+        return true;
+}
+
+static fn clock_format_raw(clock_format_state address_to state,
+                           address_any bytes, positive length)
+{
+        positive where = state->used;
+
+        if (clock_format_room(state, length) && length)
+                memory_copy_apart(state->into + where, bytes, length);
 }
 
 /*
@@ -829,19 +848,10 @@ static fn clock_format_raw(clock_format_state address_to state,
 static fn clock_format_run(clock_format_state address_to state, p8 byte,
                            positive count)
 {
-        if (state->failed)
-                return;
+        positive where = state->used;
 
-        if (count > state->max || state->used > state->max - count)
-        {
-                state->failed = true;
-                return;
-        }
-
-        if (count)
-                memory_fill(state->into + state->used, (b8)byte, count);
-
-        state->used += count;
+        if (clock_format_room(state, count) && count)
+                memory_fill(state->into + where, (b8)byte, count);
 }
 
 /*

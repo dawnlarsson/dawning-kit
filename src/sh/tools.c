@@ -3656,23 +3656,15 @@ static fn ps_digits(positive value)
         ps_bytes(have, length);
 }
 
-static fn ps_pair(positive value)
-{
-        p8 pair[2];
-        positive length = positive_into_pair(pair, value);
-
-        ps_bytes(pair, length);
-}
-
 static fn ps_put_time(positive ticks)
 {
         positive seconds = ticks / ps_clock;
 
         positive_to_padded(ps_bytes, seconds / 3600, 2, '0', 0);
         ps_byte(':');
-        ps_pair((seconds / 60) % 60);
+        file_two(ps_bytes, (seconds / 60) % 60);
         ps_byte(':');
-        ps_pair(seconds % 60);
+        file_two(ps_bytes, seconds % 60);
 }
 
 static fn ps_put_elapsed(positive seconds)
@@ -3684,7 +3676,7 @@ static fn ps_put_elapsed(positive seconds)
         {
                 ps_digits(days);
                 ps_byte('-');
-                ps_pair(rest / 3600);
+                file_two(ps_bytes, rest / 3600);
         }
         else if (rest >= 3600)
         {
@@ -3694,14 +3686,14 @@ static fn ps_put_elapsed(positive seconds)
         {
                 positive_to_padded(ps_bytes, (rest / 60) % 60, 2, '0', 0);
                 ps_byte(':');
-                ps_pair(rest % 60);
+                file_two(ps_bytes, rest % 60);
                 return;
         }
 
         ps_byte(':');
-        ps_pair((rest / 60) % 60);
+        file_two(ps_bytes, (rest / 60) % 60);
         ps_byte(':');
-        ps_pair(rest % 60);
+        file_two(ps_bytes, rest % 60);
 }
 
 static fn ps_put_tty(positive tty)
@@ -3781,7 +3773,7 @@ static fn ps_draw(ps_process address_to one, positive field)
                 {
                         positive_to_padded(ps_bytes, hour, 2, '0', 0);
                         ps_byte(':');
-                        ps_pair(minute);
+                        file_two(ps_bytes, minute);
                 }
                 else if (year == year_now)
                 {

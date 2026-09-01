@@ -2332,61 +2332,34 @@ static const decimal numbers_power_of_ten[23] = {
 static const f32 numbers_narrow_power_of_ten[11] = {
         1e0f, 1e1f, 1e2f, 1e3f, 1e4f, 1e5f, 1e6f, 1e7f, 1e8f, 1e9f, 1e10f};
 
-static bool numbers_exact_double(numbers_scan address_to number, decimal address_to answer)
-{
-        b32 power;
-        decimal value;
+#define NUMBERS_EXACT(name, type, bits, limit, powers)                       \
+        static bool name(numbers_scan address_to number,                    \
+                         type address_to answer)                             \
+        {                                                                    \
+                if (number->truncated ||                                    \
+                    number->significant != number->packed_count ||          \
+                    number->packed > ((p64)1 << (bits)))                     \
+                        return false;                                        \
+                                                                             \
+                b32 power = number->point - number->significant;             \
+                                                                             \
+                if (power > (limit) || power < -(limit))                     \
+                        return false;                                        \
+                                                                             \
+                type value = (type)number->packed;                           \
+                                                                             \
+                if (power > 0)                                               \
+                        value *= (powers)[power];                             \
+                else if (power < 0)                                          \
+                        value /= (powers)[-power];                            \
+                                                                             \
+                address_to answer = number->negative ? -value : value;       \
+                return true;                                                 \
+        }
 
-        if (number->truncated || number->significant != number->packed_count)
-                return false;
-
-        if (number->packed > ((p64)1 << 53))
-                return false;
-
-        power = number->point - number->significant;
-
-        if (power > 22 || power < -22)
-                return false;
-
-        value = (decimal)number->packed;
-
-        if (power > 0)
-                value = value * numbers_power_of_ten[power];
-        else if (power < 0)
-                value = value / numbers_power_of_ten[-power];
-
-        address_to answer = number->negative ? -value : value;
-
-        return true;
-}
-
-static bool numbers_exact_narrow(numbers_scan address_to number, f32 address_to answer)
-{
-        b32 power;
-        f32 value;
-
-        if (number->truncated || number->significant != number->packed_count)
-                return false;
-
-        if (number->packed > ((p64)1 << 24))
-                return false;
-
-        power = number->point - number->significant;
-
-        if (power > 10 || power < -10)
-                return false;
-
-        value = (f32)number->packed;
-
-        if (power > 0)
-                value = value * numbers_narrow_power_of_ten[power];
-        else if (power < 0)
-                value = value / numbers_narrow_power_of_ten[-power];
-
-        address_to answer = number->negative ? -value : value;
-
-        return true;
-}
+NUMBERS_EXACT(numbers_exact_double, decimal, 53, 22, numbers_power_of_ten)
+NUMBERS_EXACT(numbers_exact_narrow, f32, 24, 10, numbers_narrow_power_of_ten)
+#undef NUMBERS_EXACT
 
 /*
         The two answers that are not numbers, built out of the format rather
@@ -2445,117 +2418,69 @@ static p128 numbers_special(const numbers_format address_to shape, bool negative
         through both and diff -- which is how a defect in a fast tier gets
         found without a reference library being in the loop.
 */
-static decimal string_to_decimal(string_address input, string_address address_to stopped)
-{
-        numbers_scan number;
-        numbers_shape shape;
-        b32 condition = NUMBERS_FINE;
-
-        numbers_read(input, address_of number);
-
-        if (stopped)
-                address_to stopped = number.stopped;
-
-        if (number.kind == NUMBERS_NONE)
-                return 0.0;
-
-        if (number.kind == NUMBERS_INFINITE || number.kind == NUMBERS_NOT_A_NUMBER)
-        {
-                shape.bits = (p64)numbers_special(address_of numbers_binary64,
-                                                  number.negative, number.kind,
-                                                  number.packed);
-                return shape.value;
-        }
-
-        if (number.hexadecimal)
-        {
-                shape.bits = (p64)numbers_round_binary(address_of number,
-                                                       address_of numbers_binary64,
-                                                       address_of condition);
-        }
-        else
-        {
 #ifndef NUMBERS_SLOW_TIER_ONLY
-                decimal quick;
-                p64 estimate;
-
-                if (numbers_exact_double(address_of number, address_of quick))
-                        return quick;
-
-                if (numbers_estimated(address_of number,
-                                      address_of numbers_binary64,
-                                      address_of estimate))
-                {
-                        shape.bits = estimate;
-                        return shape.value;
-                }
+#define NUMBERS_FAST(type, exact, format, bits_type)                         \
+        do                                                                   \
+        {                                                                    \
+                type quick;                                                  \
+                p64 estimate;                                                \
+                                                                             \
+                if (exact(address_of number, address_of quick))              \
+                        return quick;                                        \
+                if (numbers_estimated(address_of number, address_of format,  \
+                                      address_of estimate))                  \
+                {                                                            \
+                        shape.bits = (bits_type)estimate;                     \
+                        return shape.value;                                  \
+                }                                                            \
+        } while (0)
+#else
+#define NUMBERS_FAST(type, exact, format, bits_type) do { } while (0)
 #endif
-                shape.bits = (p64)numbers_assemble(address_of number,
-                                                   address_of numbers_binary64,
-                                                   address_of condition);
+
+#define NUMBERS_TO(name, type, shape_type, zero, format, bits_type, exact)   \
+        static type name(string_address input,                              \
+                         string_address address_to stopped)                  \
+        {                                                                    \
+                numbers_scan number;                                         \
+                shape_type shape;                                            \
+                b32 condition = NUMBERS_FINE;                                \
+                                                                             \
+                numbers_read(input, address_of number);                      \
+                if (stopped)                                                 \
+                        address_to stopped = number.stopped;                 \
+                if (number.kind == NUMBERS_NONE)                             \
+                        return (zero);                                       \
+                if (number.kind == NUMBERS_INFINITE ||                       \
+                    number.kind == NUMBERS_NOT_A_NUMBER)                     \
+                {                                                            \
+                        shape.bits = (bits_type)numbers_special(             \
+                            address_of format, number.negative, number.kind,  \
+                            number.packed);                                  \
+                        return shape.value;                                  \
+                }                                                            \
+                if (number.hexadecimal)                                      \
+                        shape.bits = (bits_type)numbers_round_binary(        \
+                            address_of number, address_of format,            \
+                            address_of condition);                           \
+                else                                                         \
+                {                                                            \
+                        NUMBERS_FAST(type, exact, format, bits_type);         \
+                        shape.bits = (bits_type)numbers_assemble(            \
+                            address_of number, address_of format,            \
+                            address_of condition);                           \
+                }                                                            \
+                if (condition != NUMBERS_FINE)                               \
+                        errno = ERANGE;                                       \
+                return shape.value;                                          \
         }
 
-        if (condition != NUMBERS_FINE)
-                errno = ERANGE;
-
-        return shape.value;
-}
-
-static f32 string_to_narrow(string_address input, string_address address_to stopped)
-{
-        numbers_scan number;
-        numbers_narrow_shape shape;
-        b32 condition = NUMBERS_FINE;
-
-        numbers_read(input, address_of number);
-
-        if (stopped)
-                address_to stopped = number.stopped;
-
-        if (number.kind == NUMBERS_NONE)
-                return 0.0f;
-
-        if (number.kind == NUMBERS_INFINITE || number.kind == NUMBERS_NOT_A_NUMBER)
-        {
-                shape.bits = (p32)numbers_special(address_of numbers_binary32,
-                                                  number.negative, number.kind,
-                                                  number.packed);
-                return shape.value;
-        }
-
-        if (number.hexadecimal)
-        {
-                shape.bits = (p32)numbers_round_binary(address_of number,
-                                                       address_of numbers_binary32,
-                                                       address_of condition);
-        }
-        else
-        {
-#ifndef NUMBERS_SLOW_TIER_ONLY
-                f32 quick;
-                p64 estimate;
-
-                if (numbers_exact_narrow(address_of number, address_of quick))
-                        return quick;
-
-                if (numbers_estimated(address_of number,
-                                      address_of numbers_binary32,
-                                      address_of estimate))
-                {
-                        shape.bits = (p32)estimate;
-                        return shape.value;
-                }
-#endif
-                shape.bits = (p32)numbers_assemble(address_of number,
-                                                   address_of numbers_binary32,
-                                                   address_of condition);
-        }
-
-        if (condition != NUMBERS_FINE)
-                errno = ERANGE;
-
-        return shape.value;
-}
+NUMBERS_TO(string_to_decimal, decimal, numbers_shape, 0.0,
+           numbers_binary64, p64, numbers_exact_double)
+NUMBERS_TO(string_to_narrow, f32, numbers_narrow_shape, 0.0f,
+           numbers_binary32, p32, numbers_exact_narrow)
+#undef NUMBERS_TO
+#undef NUMBERS_FAST
 
 /*
         long double, which is eighty bit x87 on x86_64 and binary128 on arm64

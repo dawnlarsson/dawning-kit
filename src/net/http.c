@@ -41,24 +41,8 @@
 #define HTTP_MALFORMED (-5)
 #define HTTP_NOT_PLAIN (-6)
 
-typedef struct
-{
-        p8 address_to bytes;
-        positive room;
-        positive used;
-} http_buffer;
-
-static bool http_room(http_buffer address_to buffer, positive want)
-{
-        return memory_reserve((address_any address_to)address_of buffer->bytes,
-                              address_of buffer->room, buffer->used, want, 1, 65536);
-}
-
-static fn http_forget(http_buffer address_to buffer)
-{
-        memory_release((address_any address_to)address_of buffer->bytes,
-                       address_of buffer->room, address_of buffer->used, 1);
-}
+typedef byte_store http_buffer;
+#define http_forget(buffer) byte_store_release(buffer)
 
 /*
         http://host[:port][/path] taken apart.
@@ -288,7 +272,7 @@ static bipolar http_get(p32 host, p16 port, string_address name,
         //      ending the connection and there is no keep-alive to unwind.
         //      Host: is sent anyway, because a name-based server needs it and
         //      answers 400 without it whatever the version says.
-        if (!http_room(address_of whole, 65536))
+        if (!byte_store_reserve(address_of whole, 65536, 65536))
                 goto done;
 
         {
@@ -318,7 +302,8 @@ static bipolar http_get(p32 host, p16 port, string_address name,
 
         for (;;)
         {
-                if (!http_room(address_of whole, whole.used + 65536))
+                if (!byte_store_reserve(address_of whole,
+                                        whole.used + 65536, 65536))
                         goto done;
 
                 got = socket_receive((b32)handle, whole.bytes + whole.used,
@@ -382,7 +367,7 @@ static bipolar http_get(p32 host, p16 port, string_address name,
                 }
         }
 
-        if (!http_room(body, length + 1))
+        if (!byte_store_reserve(body, length + 1, 65536))
                 goto done;
 
         memory_copy(body->bytes, whole.bytes + header, length);
@@ -395,7 +380,7 @@ done:
         if (handle >= 0)
                 socket_close((b32)handle);
 
-        http_forget(address_of whole);
+        byte_store_release(address_of whole);
 
         return status;
 }

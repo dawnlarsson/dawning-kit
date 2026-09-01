@@ -434,6 +434,18 @@ static fn scan_skip_white(scan_source address_to source)
 #define SCAN_LENGTH_DECIMAL 9
 #define SCAN_LENGTH_WIDE_DECIMAL 10
 
+static const p8 scan_conversion_lengths[] = {
+    [CONVERSION_LENGTH_INT] = SCAN_LENGTH_INT,
+    [CONVERSION_LENGTH_CHAR] = SCAN_LENGTH_CHAR,
+    [CONVERSION_LENGTH_SHORT] = SCAN_LENGTH_SHORT,
+    [CONVERSION_LENGTH_LONG] = SCAN_LENGTH_DECIMAL,
+    [CONVERSION_LENGTH_LONG_LONG] = SCAN_LENGTH_WIDE,
+    [CONVERSION_LENGTH_SIZE] = SCAN_LENGTH_WIDE,
+    [CONVERSION_LENGTH_DIFFERENCE] = SCAN_LENGTH_WIDE,
+    [CONVERSION_LENGTH_WIDEST] = SCAN_LENGTH_WIDE,
+    [CONVERSION_LENGTH_WIDE_DECIMAL] = SCAN_LENGTH_WIDE_DECIMAL,
+};
+
 /*
         The staging buffer and what is in it.
 
@@ -1520,50 +1532,8 @@ static b32 scan_run(scan_source address_to source, string_address format,
                                 at++;
                         }
 
-                        switch (string_get(at))
-                        {
-                        case 'h':
-                                at++;
-
-                                if (string_get(at) == 'h')
-                                {
-                                        at++;
-                                        length = SCAN_LENGTH_CHAR;
-                                }
-                                else
-                                {
-                                        length = SCAN_LENGTH_SHORT;
-                                }
-
-                                break;
-                        case 'l':
-                                at++;
-
-                                if (string_get(at) == 'l')
-                                {
-                                        at++;
-                                        length = SCAN_LENGTH_WIDE;
-                                }
-                                else
-                                {
-                                        length = SCAN_LENGTH_DECIMAL;
-                                }
-
-                                break;
-                        case 'q':
-                        case 'z':
-                        case 't':
-                        case 'j':
-                                at++;
-                                length = SCAN_LENGTH_WIDE;
-                                break;
-                        case 'L':
-                                at++;
-                                length = SCAN_LENGTH_WIDE_DECIMAL;
-                                break;
-                        default:
-                                break;
-                        }
+                        length = scan_conversion_lengths[
+                            conversion_length_take(address_of at)];
 
                         //      "%%" is a percent in the input, and it is
                         //      NOT the same thing as writing a percent as an
